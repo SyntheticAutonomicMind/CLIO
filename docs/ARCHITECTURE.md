@@ -1,7 +1,6 @@
 # CLIO Architecture
 
-**Current Status:** Pre-release (Jan 2026)  
-**Implementation:** 85% complete (core features working, advanced features partial)
+**Last Updated:** January 2025
 
 ---
 
@@ -36,15 +35,28 @@ Terminal Output
 
 ## System Components
 
+### 0. Top-Level Utilities
+**Files:** `lib/CLIO/`
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| Codebase Analyzer | `CodebaseAnalyzer.pm` | Analyze entire codebase structure |
+| Files | `Files.pm` | File utilities |
+| Model Manager | `ModelManager.pm` | Manage AI models |
+| NL Prompt Processor | `NLPromptProcessor.pm` | Natural language prompt processing |
+| Operations | `Operations.pm` | General operations |
+| Providers | `Providers.pm` | AI provider definitions |
+| Utils | `Utils.pm` | General utilities |
+
 ### 1. User Interface Layer
 **Files:** `lib/CLIO/UI/`
 
-| Component | File | Purpose | Status |
-|-----------|------|---------|--------|
-| Terminal UI | `Chat.pm` (150KB) | Main interaction loop, streaming output | ✅ Complete |
-| Markdown Renderer | `Markdown.pm` | Convert markdown to ANSI | ✅ Complete |
-| Color/ANSI | `ANSI.pm` | ANSI escape sequences | ✅ Complete |
-| Themes | `Theme.pm` | Color themes and styling | ⚠️ Mostly done (415 hardcoded prints bypass system) |
+| Component | File | Purpose |
+|-----------|------|---------|
+| Terminal UI | `Chat.pm` | Main interaction loop, streaming output |
+| Markdown Renderer | `Markdown.pm` | Convert markdown to ANSI |
+| Color/ANSI | `ANSI.pm` | ANSI escape sequences |
+| Themes | `Theme.pm` | Color themes and styling |
 
 **How it works:**
 1. User types message
@@ -56,16 +68,30 @@ Terminal Output
 ### 2. Core AI & Workflow
 **Files:** `lib/CLIO/Core/`
 
-| Component | File | Purpose | Status |
-|-----------|------|---------|--------|
-| API Manager | `APIManager.pm` (70KB) | AI provider integration | ✅ Complete |
-| Simple AI Agent | `SimpleAIAgent.pm` | Handles AI requests/responses | ✅ Complete |
-| Workflow Orchestrator | `WorkflowOrchestrator.pm` | Complex multi-step workflows | ⚠️ Partial |
-| Tool Executor | `ToolExecutor.pm` | Invokes tools | ✅ Complete |
-| Prompt Manager | `PromptManager.pm` (823 lines) | System prompts + custom instructions | ✅ Complete |
-| Instructions Reader | `InstructionsReader.pm` | Reads `.clio/instructions.md` | ✅ Complete |
-| Config | `Config.pm` | API keys, provider selection | ✅ Complete |
-| ReadLine | `ReadLine.pm` | Command history & editing | ✅ Complete |
+| Component | File | Purpose |
+|-----------|------|---------|
+| API Manager | `APIManager.pm` | AI provider integration |
+| Simple AI Agent | `SimpleAIAgent.pm` | Handles AI requests/responses |
+| AI Agent | `AIAgent.pm` | Advanced AI agent capabilities |
+| Workflow Orchestrator | `WorkflowOrchestrator.pm` | Complex multi-step workflows |
+| Task Orchestrator | `TaskOrchestrator.pm` | Task management and orchestration |
+| Tool Executor | `ToolExecutor.pm` | Invokes tools |
+| Tool Call Extractor | `ToolCallExtractor.pm` | Extract tool calls from AI responses |
+| Prompt Manager | `PromptManager.pm` | System prompts + custom instructions |
+| Instructions Reader | `InstructionsReader.pm` | Reads `.clio/instructions.md` |
+| Protocol Integration | `ProtocolIntegration.pm` | Integrate protocol handlers |
+| Natural Language | `NaturalLanguage.pm` | Natural language processing |
+| Config | `Config.pm` | API keys, provider selection |
+| ReadLine | `ReadLine.pm` | Command history & editing |
+| Command Parser | `CommandParser.pm` | Parse user commands |
+| Editor | `Editor.pm` | Core editing functionality |
+| Hashtag Parser | `HashtagParser.pm` | Parse hashtag commands |
+| Tab Completion | `TabCompletion.pm` | Tab completion support |
+| Skill Manager | `SkillManager.pm` | Manage AI skills |
+| GitHub Auth | `GitHubAuth.pm` | GitHub OAuth authentication |
+| GitHub Copilot Models API | `GitHubCopilotModelsAPI.pm` | Access GitHub Copilot models |
+| Performance Monitor | `PerformanceMonitor.pm` | Track performance metrics |
+| Logger | `Logger.pm` | Debug and trace output |
 
 **How it works:**
 1. APIManager connects to AI provider (GitHub Copilot, OpenAI, etc.)
@@ -77,32 +103,36 @@ Terminal Output
 ### 3. Tool System
 **Files:** `lib/CLIO/Tools/`
 
-| Tool | File | Operations | Status |
-|------|------|-----------|--------|
-| File Operations | `FileOperations.pm` (52KB) | read, write, search, create, delete, rename, etc. | ✅ Complete |
-| Version Control | `VersionControl.pm` | git status, log, diff, commit, branch, push, pull | ✅ Complete |
-| Terminal | `TerminalOperations.pm` | exec - run shell commands | ✅ Complete |
-| Memory | `MemoryOperations.pm` | store, retrieve, search, list, delete | ✅ Complete |
-| Todo | `TodoList.pm` (19KB) | create, update, complete, list, track tasks | ✅ Complete |
-| Code Intelligence | `CodeIntelligence.pm` | list_usages - find symbol references | ⚠️ Partial |
-| Web | `WebOperations.pm` | fetch_url, search_web | ✅ Complete |
-| User Collaboration | `UserCollaboration.pm` | request_input - checkpoint prompts | ✅ Complete |
+| Tool | File | Operations |
+|------|------|------------|
+| File Operations | `FileOperations.pm` | read, write, search, create, delete, rename, etc. |
+| Version Control | `VersionControl.pm` | git status, log, diff, commit, branch, push, pull |
+| Terminal | `TerminalOperations.pm` | exec - run shell commands |
+| Memory | `MemoryOperations.pm` | store, retrieve, search, list, delete |
+| Todo | `TodoList.pm` | create, update, complete, list, track tasks |
+| Code Intelligence | `CodeIntelligence.pm` | list_usages - find symbol references |
+| Web | `WebOperations.pm` | fetch_url, search_web |
+| User Collaboration | `UserCollaboration.pm` | request_input - checkpoint prompts |
+| Result Storage | `ResultStorage.pm` | Store and retrieve tool results |
+| Base Tool | `Tool.pm` | Abstract base class for all tools |
+| Registry | `Registry.pm` | Tool registration and lookup |
 
 **Architecture:**
-- Base class: `Tool.pm` (abstract interface)
-- Each tool extends Tool.pm
-- Registry.pm manages tool registration
-- ToolExecutor.pm invokes them
+- Base class: `Tool.pm` provides abstract interface
+- Each tool extends Tool.pm and implements execute()
+- `Registry.pm` maintains tool registry and handles lookup
+- `ToolExecutor.pm` (in Core) invokes tools and manages execution
+- `ResultStorage.pm` caches large tool outputs for efficiency
 
 ### 4. Session Management
 **Files:** `lib/CLIO/Session/`
 
-| Component | File | Purpose | Status |
-|-----------|------|---------|--------|
-| Session Manager | `Manager.pm` | Create/load/resume sessions | ✅ Complete |
-| Session State | `State.pm` | Conversation history, metadata | ✅ Complete |
-| Todo Store | `TodoStore.pm` | Persist todos across sessions | ✅ Complete |
-| Tool Result Store | `ToolResultStore.pm` | Cache tool results for large output | ✅ Complete |
+| Component | File | Purpose |
+|-----------|------|---------|
+| Session Manager | `Manager.pm` | Create/load/resume sessions |
+| Session State | `State.pm` | Conversation history, metadata |
+| Todo Store | `TodoStore.pm` | Persist todos across sessions |
+| Tool Result Store | `ToolResultStore.pm` | Cache tool results for large output |
 
 **How it works:**
 1. New session: Create `sessions/UUID.json`
@@ -113,35 +143,42 @@ Terminal Output
 ### 5. Memory System
 **Files:** `lib/CLIO/Memory/`
 
-| Component | File | Purpose | Status |
-|-----------|------|---------|--------|
-| Short-Term | `ShortTerm.pm` | Session context | ⚠️ Partial |
-| Long-Term | `LongTerm.pm` | Persistent storage | ⚠️ Partial |
-| YaRN | `YaRN.pm` | Conversation threading | ✅ Core done |
-| Token Estimator | `TokenEstimator.pm` | Count tokens for context | ✅ Complete |
+| Component | File | Purpose |
+|-----------|------|---------|
+| Short-Term | `ShortTerm.pm` | Session context |
+| Long-Term | `LongTerm.pm` | Persistent storage |
+| YaRN | `YaRN.pm` | Conversation threading |
+| Token Estimator | `TokenEstimator.pm` | Count tokens for context |
 
-**Status:** Basic implementation works, optimization needed for large projects.
+**How it works:**
+- Short-term memory maintains current session context
+- Long-term memory provides persistent storage across sessions
+- YaRN manages conversation threading and context windows
+- Token estimator prevents context overflow
 
 ### 6. Code Analysis
 **Files:** `lib/CLIO/Code/`
 
-| Component | File | Purpose | Status |
-|-----------|------|---------|--------|
-| Tree-sitter | `TreeSitter.pm` | Parse code into AST | ⚠️ Parser available, limited use |
-| Symbols | `Symbols.pm` | Extract function/class names | ⚠️ Basic extraction |
-| Relations | `Relations.pm` | Map symbol relationships | ⚠️ Partial |
+| Component | File | Purpose |
+|-----------|------|---------|
+| Tree-sitter | `TreeSitter.pm` | Parse code into AST |
+| Symbols | `Symbols.pm` | Extract function/class names |
+| Relations | `Relations.pm` | Map symbol relationships |
 
-**Status:** Foundation present, not heavily used yet.
+**How it works:**
+- TreeSitter parses source code into abstract syntax trees
+- Symbols extracts function/class/variable definitions
+- Relations maps dependencies and call graphs
 
 ### 7. Security
 **Files:** `lib/CLIO/Security/`
 
-| Component | File | Purpose | Status |
-|-----------|------|---------|--------|
-| Auth | `Auth.pm` | GitHub OAuth, token storage | ✅ Complete |
-| Authz | `Authz.pm` | Check file access permissions | ✅ Complete |
-| Path Authorizer | `PathAuthorizer.pm` | Control file access | ✅ Complete |
-| Manager | `Manager.pm` | Overall security | ✅ Complete |
+| Component | File | Purpose |
+|-----------|------|---------|
+| Auth | `Auth.pm` | GitHub OAuth, token storage |
+| Authz | `Authz.pm` | Check file access permissions |
+| Path Authorizer | `PathAuthorizer.pm` | Control file access |
+| Manager | `Manager.pm` | Overall security |
 
 **How it works:**
 1. User runs `/login` → GitHub device flow
@@ -152,11 +189,11 @@ Terminal Output
 ### 8. Logging & Monitoring
 **Files:** `lib/CLIO/Logging/`, `lib/CLIO/Core/`
 
-| Component | File | Purpose | Status |
-|-----------|------|---------|--------|
-| Logger | `Core/Logger.pm` | Debug/trace output | ✅ Complete |
-| Tool Logger | `Logging/ToolLogger.pm` | Log tool operations | ✅ Complete |
-| Performance Monitor | `Core/PerformanceMonitor.pm` | Track timing | ⚠️ Partial |
+| Component | File | Purpose |
+|-----------|------|---------|
+| Logger | `Core/Logger.pm` | Debug/trace output |
+| Tool Logger | `Logging/ToolLogger.pm` | Log tool operations |
+| Performance Monitor | `Core/PerformanceMonitor.pm` | Track timing |
 
 **How it works:**
 - Debug mode: `clio --debug`
@@ -166,16 +203,17 @@ Terminal Output
 ### 9. Protocol System
 **Files:** `lib/CLIO/Protocols/`
 
-| Protocol | File | Purpose | Status |
-|----------|------|---------|--------|
-| Architect | `Architect.pm` (24KB) | Problem-solving design | ✅ Complete |
-| Editor | `Editor.pm` (25KB) | Code modification format | ✅ Complete |
-| Validate | `Validate.pm` (18KB) | Code validation | ✅ Complete |
-| Tree-sitter | `TreeSit.pm` (22KB) | AST integration | ⚠️ Partial |
-| RepoMap | `RepoMap.pm` (26KB) | Repository mapping | ⚠️ Partial |
-| Recall | `Recall.pm` | Memory recall | ✅ Basic |
-| Handler | `Handler.pm` | Protocol base class | ✅ Complete |
-| Manager | `Manager.pm` | Protocol registry | ✅ Complete |
+| Protocol | File | Purpose |
+|----------|------|---------|
+| Architect | `Architect.pm` | Problem-solving design |
+| Editor | `Editor.pm` | Code modification format |
+| Validate | `Validate.pm` | Code validation |
+| Tree-sitter | `TreeSit.pm` | AST integration |
+| RepoMap | `RepoMap.pm` | Repository mapping |
+| Recall | `Recall.pm` | Memory recall |
+| Model | `Model.pm` | AI model management protocol |
+| Handler | `Handler.pm` | Protocol base class |
+| Manager | `Manager.pm` | Protocol registry |
 
 **How it works:**
 1. AI returns natural language protocol commands
@@ -306,25 +344,34 @@ clio --new           # First run
 
 ## Dependencies
 
-### Required (Perl Core)
+### Required (Perl Core Only)
 - `strict`, `warnings` (language features)
-- `JSON::PP` (JSON parsing)
-- `HTTP::Tiny` (HTTP requests, built-in)
-- `File::Spec` (cross-platform paths)
-- `File::Temp` (temporary files)
-- `Cwd` (working directory)
-- `FindBin` (script location)
-- Plus many other core modules
+- `JSON::PP` (JSON parsing, core since 5.14)
+- `HTTP::Tiny` (HTTP requests, core since 5.14)
+- `MIME::Base64` (base64 encoding, core since 5.8)
+- `Digest::SHA` (SHA hashing, core since 5.10)
+- `File::Spec` (cross-platform paths, core)
+- `File::Path` (directory operations, core)
+- `File::Temp` (temporary files, core)
+- `File::Find` (file tree traversal, core)
+- `File::Basename` (path manipulation, core)
+- `Time::HiRes` (high-resolution timers, core since 5.8)
+- `POSIX` (POSIX functions, core)
+- `Cwd` (working directory, core)
+- Plus other core modules
 
-### Optional
-- `Term::ReadLine` (command history)
-- System `git` (version control)
-- System `perl` (for script execution)
+### Optional (Non-Core, Graceful Degradation)
+- `Text::Diff` (diff visualization - has fallback if not installed)
+
+### External Tools Required
+- System `git` (for version control operations)
+- System `perl` 5.20+ (for script execution)
 
 ### NOT Used
-- ❌ CPAN modules (intentional design choice)
-- ❌ External npm/pip packages
+- ❌ CPAN modules (except optional Text::Diff with fallback)
+- ❌ External npm/pip packages  
 - ❌ Build tools like Make or Gradle
+- ❌ Term::ReadLine (not required, uses basic readline if missing)
 
 ---
 
@@ -367,21 +414,19 @@ clio --new           # First run
 
 ---
 
-## Limitations & Future Work
+## Architectural Considerations
 
-### Known Limitations
-1. **Hardcoded prints** - 415 debug statements bypass theme system
-2. **Code analysis** - Tree-sitter integration limited
-3. **Memory optimization** - Caching could be smarter
-4. **Tab completion** - Only basic support
-5. **IDE plugins** - None yet
+### Design Principles
+1. **Modularity** - Each component has a single, well-defined responsibility
+2. **Extensibility** - Tools and protocols can be added without modifying core
+3. **Separation of Concerns** - UI, AI, tools, and storage are independent layers
+4. **Graceful Degradation** - Optional features fail safely (e.g., Text::Diff)
 
-### Future Improvements
-- [📋] IDE integrations (VSCode, Vim)
-- [📋] Advanced code analysis
-- [📋] Machine learning for smarter suggestions
-- [📋] Community protocol handlers
-- [📋] Performance profiling & optimization
+### Extension Points
+- **Tools**: Create new tool in `lib/CLIO/Tools/`, register in Registry
+- **Protocols**: Create protocol handler in `lib/CLIO/Protocols/`, extend Handler.pm
+- **UI Themes**: Add theme file in `themes/`, define color scheme
+- **AI Providers**: Add provider logic in Core/APIManager.pm
 
 ---
 
@@ -389,51 +434,95 @@ clio --new           # First run
 
 ```
 lib/CLIO/
+├── Top-Level Utilities
+│   ├── CodebaseAnalyzer.pm  # Codebase analysis
+│   ├── Files.pm             # File utilities
+│   ├── ModelManager.pm       # AI model management
+│   ├── NLPromptProcessor.pm  # Natural language prompts
+│   ├── Operations.pm         # General operations
+│   ├── Providers.pm          # AI provider definitions
+│   └── Utils.pm              # General utilities
 ├── UI/                      # Terminal interface
-│   ├── Chat.pm             # Main interactive loop
-│   ├── Markdown.pm         # Markdown to ANSI
-│   ├── ANSI.pm             # Color codes
-│   └── Theme.pm            # Color themes
-├── Core/                   # Core AI functionality
-│   ├── APIManager.pm       # AI provider integration
-│   ├── SimpleAIAgent.pm    # AI request/response
-│   ├── PromptManager.pm    # System prompts
+│   ├── Chat.pm              # Main interactive loop
+│   ├── Markdown.pm          # Markdown to ANSI
+│   ├── ANSI.pm              # Color codes
+│   └── Theme.pm             # Color themes
+├── Core/                    # Core AI functionality
+│   ├── APIManager.pm        # AI provider integration
+│   ├── SimpleAIAgent.pm     # AI request/response
+│   ├── AIAgent.pm           # Advanced AI agent
+│   ├── PromptManager.pm     # System prompts
 │   ├── InstructionsReader.pm # Custom instructions
 │   ├── WorkflowOrchestrator.pm # Multi-step workflows
-│   ├── ToolExecutor.pm     # Tool invocation
-│   ├── Config.pm           # Configuration
-│   └── ... (10+ other core modules)
-├── Tools/                  # Tool implementations
-│   ├── FileOperations.pm   # File I/O
-│   ├── VersionControl.pm   # Git
+│   ├── TaskOrchestrator.pm  # Task orchestration
+│   ├── ToolExecutor.pm      # Tool invocation
+│   ├── ToolCallExtractor.pm # Extract tool calls
+│   ├── ProtocolIntegration.pm # Protocol integration
+│   ├── NaturalLanguage.pm   # NL processing
+│   ├── Config.pm            # Configuration
+│   ├── ReadLine.pm          # Command history
+│   ├── CommandParser.pm     # Command parsing
+│   ├── Editor.pm            # Core editing
+│   ├── HashtagParser.pm     # Hashtag commands
+│   ├── TabCompletion.pm     # Tab completion
+│   ├── SkillManager.pm      # AI skills
+│   ├── GitHubAuth.pm        # OAuth
+│   ├── GitHubCopilotModelsAPI.pm # Copilot models
+│   ├── PerformanceMonitor.pm # Performance tracking
+│   └── Logger.pm            # Logging
+├── Tools/                   # Tool implementations
+│   ├── Tool.pm              # Base class
+│   ├── Registry.pm          # Tool registry
+│   ├── ResultStorage.pm     # Result caching
+│   ├── FileOperations.pm    # File I/O
+│   ├── VersionControl.pm    # Git
 │   ├── TerminalOperations.pm # Shell execution
-│   ├── Memory.pm           # Memory operations
-│   ├── TodoList.pm         # Todo tracking
-│   └── ... (other tools)
-├── Session/                # Session management
-│   ├── Manager.pm          # Session CRUD
-│   ├── State.pm            # Conversation state
-│   ├── TodoStore.pm        # Todo persistence
-│   └── ToolResultStore.pm  # Result caching
-├── Memory/                 # Memory systems
-│   ├── ShortTerm.pm        # Session context
-│   ├── LongTerm.pm         # Persistent storage
-│   ├── YaRN.pm             # Conversation threading
-│   └── TokenEstimator.pm   # Token counting
-├── Code/                   # Code analysis
-│   ├── TreeSitter.pm       # AST parsing
-│   ├── Symbols.pm          # Symbol extraction
-│   └── Relations.pm        # Symbol relationships
-├── Protocols/              # Protocol handlers
-│   ├── Manager.pm          # Protocol registry
-│   ├── Architect.pm        # Design protocol
-│   ├── Editor.pm           # Code editing protocol
-│   └── ... (other protocols)
-├── Security/               # Security & auth
-│   ├── Auth.pm             # OAuth
-│   ├── Authz.pm            # Authorization
-│   └── PathAuthorizer.pm   # File access control
-└── ... (other modules)
+│   ├── MemoryOperations.pm  # Memory operations
+│   ├── TodoList.pm          # Todo tracking
+│   ├── CodeIntelligence.pm  # Code analysis
+│   ├── UserCollaboration.pm # User checkpoints
+│   └── WebOperations.pm     # Web operations
+├── Session/                 # Session management
+│   ├── Manager.pm           # Session CRUD
+│   ├── State.pm             # Conversation state
+│   ├── TodoStore.pm         # Todo persistence
+│   └── ToolResultStore.pm   # Result caching
+├── Memory/                  # Memory systems
+│   ├── ShortTerm.pm         # Session context
+│   ├── LongTerm.pm          # Persistent storage
+│   ├── YaRN.pm              # Conversation threading
+│   └── TokenEstimator.pm    # Token counting
+├── Code/                    # Code analysis
+│   ├── TreeSitter.pm        # AST parsing
+│   ├── Symbols.pm           # Symbol extraction
+│   └── Relations.pm         # Symbol relationships
+├── Protocols/               # Protocol handlers
+│   ├── Manager.pm           # Protocol registry
+│   ├── Handler.pm           # Base class
+│   ├── Architect.pm         # Design protocol
+│   ├── Editor.pm            # Code editing protocol
+│   ├── Validate.pm          # Validation protocol
+│   ├── TreeSit.pm           # Tree-sitter protocol
+│   ├── RepoMap.pm           # Repository mapping
+│   ├── Recall.pm            # Memory recall
+│   └── Model.pm             # Model management
+├── Security/                # Security & auth
+│   ├── Auth.pm              # OAuth
+│   ├── Authz.pm             # Authorization
+│   ├── PathAuthorizer.pm    # File access control
+│   └── Manager.pm           # Security manager
+├── Logging/                 # Logging system
+│   └── ToolLogger.pm        # Tool operation logging
+├── Test/                    # Testing framework
+│   └── Framework.pm         # Test utilities
+├── Util/                    # Utility modules
+│   ├── PathResolver.pm      # Path resolution
+│   ├── TextSanitizer.pm     # Text sanitization
+│   └── ... (other utilities)
+├── NaturalLanguage/         # NL processing
+│   └── ... (NL modules)
+└── Compat/                  # Compatibility layer
+    └── ... (compatibility modules)
 ```
 
 ---
@@ -469,13 +558,25 @@ lib/CLIO/
 
 ## Summary
 
-CLIO is a **well-architected, modular system** with:
-- ✅ Clear separation of concerns
-- ✅ Extensible tool and protocol systems
-- ✅ Persistent session management
-- ✅ Custom instructions per-project
-- ✅ Professional terminal UI
-- ⚠️ Some advanced features partially complete
-- 📋 Room for optimization and expansion
+CLIO follows a **layered architecture** with clear separation of concerns:
 
-The codebase is **designed for clarity and maintainability**, making it straightforward to understand, extend, and improve.
+```
+┌─────────────────────────────────┐
+│   User Interface Layer       │  (UI/)
+├─────────────────────────────────┤
+│   AI & Workflow Layer        │  (Core/)
+├─────────────────────────────────┤
+│   Tool Execution Layer       │  (Tools/)
+├─────────────────────────────────┤
+│   Storage & Persistence      │  (Session/, Memory/)
+└─────────────────────────────────┘
+```
+
+**Key Architectural Features:**
+- **Plugin-based tool system** - Tools register dynamically
+- **Protocol-driven AI interaction** - Structured AI communication
+- **Persistent session state** - Conversation history survives restarts
+- **Zero external dependencies** - Runs with Perl core modules only
+- **Modular design** - Each component can evolve independently
+
+The architecture prioritizes **clarity, maintainability, and extensibility** - making it straightforward for developers to understand the codebase and add new capabilities.
