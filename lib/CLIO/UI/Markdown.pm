@@ -300,7 +300,7 @@ sub process_inline_formatting {
     my $bold_color = $self->color('markdown_bold');
     
     # Debug: Check if we have a bold color
-    if ($has_bold && !$bold_color) {
+    if ($has_bold && !$bold_color && should_log('WARNING')) {
         print STDERR "[WARN][Markdown] Bold detected but bold_color is empty! theme_mgr defined: " . 
                      (defined $self->{theme_mgr} ? "yes" : "no") . "\n";
     }
