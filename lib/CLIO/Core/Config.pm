@@ -1,0 +1,407 @@
+package CLIO::Core::Config;
+
+use strict;
+use warnings;
+use CLIO::Core::Logger qw(should_log);
+use CLIO::Providers qw(get_provider list_providers provider_exists);
+use JSON::PP qw(encode_json decode_json);
+use File::Path qw(make_path);
+use File::Spec;
+
+=head1 NAME
+
+CLIO::Core::Config - Configuration management for CLIO
+
+=head1 DESCRIPTION
+
+Manages configuration for API settings, model selection, and provider selection.
+Config file location: ~/.clio/config.json
+
+Only user-explicitly-set values are saved to config file.
+Provider defaults come from CLIO::Providers and are applied dynamically.
+
+Priority: User-set values > Provider defaults > System defaults
+
+=cut
+
+# Log level constants
+use constant LOG_LEVEL => {
+    ERROR => 0,
+    WARNING => 1,
+    INFO => 2,
+    DEBUG => 3,
+};
+
+# Default configuration (system-level defaults only)
+# Provider-specific defaults come from CLIO::Providers
+use constant DEFAULT_CONFIG => {
+    api_key => '',
+    provider => 'github_copilot',  # Default provider
+    editor => $ENV{EDITOR} || $ENV{VISUAL} || 'vim',  # Default editor
+    log_level => 'INFO',  # Default log level: ERROR, WARNING, INFO, DEBUG
+};
+
+sub new {
+    my ($class, %args) = @_;
+    
+    my $self = {
+        debug => $args{debug} || 0,
+        config_dir => $args{config_dir} || File::Spec->catdir($ENV{HOME}, '.clio'),
+        config_file => undef,  # Will be set in _get_config_path
+        config => {},
+        user_set => {},  # Track which values user explicitly configured
+    };
+    
+    bless $self, $class;
+    
+    $self->{config_file} = $self->_get_config_path();
+    $self->load();
+    
+    return $self;
+}
+
+=head2 _get_config_path
+
+Get the full path to the config file
+
+=cut
+
+sub _get_config_path {
+    my ($self) = @_;
+    
+    return File::Spec->catfile($self->{config_dir}, 'config.json');
+}
+
+=head2 load
+
+Load configuration from file and apply provider defaults
+
+Only user-explicitly-set values are loaded from file.
+Provider defaults (api_base, model) come from CLIO::Providers dynamically.
+
+=cut
+
+sub load {
+    my ($self) = @_;
+    
+    # Start with system defaults
+    my %config = %{DEFAULT_CONFIG()};
+    
+    # Reset user_set tracking
+    $self->{user_set} = {};
+    
+    # Try to load user-explicitly-set values from file
+    if (-f $self->{config_file}) {
+        eval {
+            open my $fh, '<', $self->{config_file} or die "Cannot open: $!";
+            my $json = do { local $/; <$fh> };
+            close $fh;
+            
+            my $file_config = decode_json($json);
+            
+            # Load user-set values and mark them as user-set
+            for my $key (keys %$file_config) {
+                $config{$key} = $file_config->{$key};
+                $self->{user_set}->{$key} = 1;  # Mark as user-explicitly-set
+            }
+            
+            print STDERR "[DEBUG][Config] Loaded user config from $self->{config_file}\n" if should_log('DEBUG');
+            print STDERR "[DEBUG][Config] User-set keys: " . join(', ', sort keys %{$self->{user_set}}) . "\n" if should_log('DEBUG') && %{$self->{user_set}};
+        };
+        
+        if ($@) {
+            print STDERR "[WARN][Config] Failed to load config file: $@\n";
+        }
+    } else {
+        print STDERR "[DEBUG][Config] No config file found at $self->{config_file}\n" if should_log('DEBUG');
+    }
+    
+    # Apply provider defaults if provider is set and user hasn't overridden
+    if ($config{provider}) {
+        my $provider_config = get_provider($config{provider});
+        if ($provider_config) {
+            # Apply provider's api_base unless user explicitly set it
+            unless ($self->{user_set}->{api_base}) {
+                $config{api_base} = $provider_config->{api_base};
+                print STDERR "[DEBUG][Config] Using api_base from provider '$config{provider}': $config{api_base}\n" if should_log('DEBUG');
+            }
+            
+            # Apply provider's model unless user explicitly set it
+            unless ($self->{user_set}->{model}) {
+                $config{model} = $provider_config->{model};
+                print STDERR "[DEBUG][Config] Using model from provider '$config{provider}': $config{model}\n" if should_log('DEBUG');
+            }
+        } else {
+            print STDERR "[WARN][Config] Unknown provider '$config{provider}', using defaults\n" if should_log('WARNING');
+        }
+    } else {
+        # No provider set - use openai defaults
+        my $provider_config = get_provider('openai');
+        if ($provider_config) {
+            $config{api_base} = $provider_config->{api_base} unless $self->{user_set}->{api_base};
+            $config{model} = $provider_config->{model} unless $self->{user_set}->{model};
+        }
+    }
+    
+    # Override log level from environment variable (transient, not saved)
+    if ($ENV{CLIO_DEBUG}) {
+        my $level = uc($ENV{CLIO_DEBUG});
+        if (exists LOG_LEVEL->{$level}) {
+            $config{log_level} = $level;
+            print STDERR "[DEBUG][Config] Using log level from CLIO_DEBUG: $level\n" if should_log('DEBUG');
+        } else {
+            print STDERR "[WARNING][Config] Invalid CLIO_DEBUG: $ENV{CLIO_DEBUG}\n" if should_log('WARNING');
+        }
+    }
+    
+    $self->{config} = \%config;
+    
+    return 1;
+}
+
+=head2 save
+
+Save ONLY user-explicitly-set values to file
+
+Provider defaults (api_base, model from provider) are NOT saved.
+Only saves what user explicitly configured via /api commands.
+
+=cut
+
+sub save {
+    my ($self) = @_;
+    
+    # Ensure config directory exists
+    unless (-d $self->{config_dir}) {
+        make_path($self->{config_dir}) or die "Cannot create config dir: $!";
+    }
+    
+    # Build config to save - ONLY user-explicitly-set values
+    my %config_to_save;
+    for my $key (keys %{$self->{user_set}}) {
+        $config_to_save{$key} = $self->{config}->{$key};
+    }
+    
+    # Log what we're saving
+    if (should_log('DEBUG')) {
+        print STDERR "[DEBUG][Config] Saving user-set values: " . join(', ', sort keys %config_to_save) . "\n";
+    }
+    
+    # Save config
+    eval {
+        open my $fh, '>', $self->{config_file} or die "Cannot write: $!";
+        print $fh encode_json(\%config_to_save);
+        close $fh;
+        
+        print STDERR "[DEBUG][Config] Saved to $self->{config_file}\n" if should_log('DEBUG');
+    };
+    
+    if ($@) {
+        print STDERR "[ERROR][Config] Failed to save config: $@\n";
+        return 0;
+    }
+    
+    return 1;
+}
+
+=head2 get
+
+Get a configuration value
+
+=cut
+
+sub get {
+    my ($self, $key) = @_;
+    
+    return $self->{config}->{$key};
+}
+
+=head2 set
+
+Set a configuration value (marks as user-explicitly-set)
+
+When called via /api commands, marks the value as user-set so it gets saved.
+
+=cut
+
+sub set {
+    my ($self, $key, $value, $mark_user_set) = @_;
+    
+    $self->{config}->{$key} = $value;
+    
+    # Mark as user-set unless explicitly told not to (default: mark as user-set)
+    if (!defined $mark_user_set || $mark_user_set) {
+        $self->{user_set}->{$key} = 1;
+        print STDERR "[DEBUG][Config] Marked '$key' as user-set\n" if should_log('DEBUG');
+    }
+    
+    return 1;
+}
+
+=head2 set_provider
+
+Switch to a provider (applies provider defaults from CLIO::Providers)
+
+Provider defaults (api_base, model) are NOT marked as user-set.
+Only the provider name itself is marked as user-set.
+User can override individual settings later.
+
+=cut
+
+sub set_provider {
+    my ($self, $provider) = @_;
+    
+    # Check if provider exists in Providers.pm
+    unless (provider_exists($provider)) {
+        print STDERR "[ERROR][Config] Unknown provider: $provider\n";
+        print STDERR "[ERROR][Config] Available providers: " . join(', ', list_providers()) . "\n";
+        return 0;
+    }
+    
+    my $provider_config = get_provider($provider);
+    
+    # Set provider name (this IS user-set - they chose the provider)
+    $self->set('provider', $provider, 1);  # Mark as user-set
+    
+    # Apply provider defaults (these are NOT user-set - they come from provider definition)
+    $self->{config}->{api_base} = $provider_config->{api_base};
+    $self->{config}->{model} = $provider_config->{model};
+    
+    # CRITICAL: Clear old API key when switching providers
+    # Each provider has its own authentication mechanism
+    # (SAM uses api_key, GitHub Copilot uses OAuth tokens, etc.)
+    # Keeping the old key causes authentication to fail
+    delete $self->{config}->{api_key};
+    delete $self->{user_set}->{api_key};
+    print STDERR "[DEBUG][Config] Cleared api_key when switching to $provider\n" if should_log('DEBUG');
+    
+    # Remove api_base and model from user_set if they were there
+    # (user is now using provider defaults, not custom values)
+    delete $self->{user_set}->{api_base};
+    delete $self->{user_set}->{model};
+    
+    print STDERR "[DEBUG][Config] Switched to provider: $provider\n" if should_log('DEBUG');
+    print STDERR "[DEBUG][Config]   api_base: $provider_config->{api_base} (from provider)\n" if should_log('DEBUG');
+    print STDERR "[DEBUG][Config]   model: $provider_config->{model} (from provider)\n" if should_log('DEBUG');
+    
+    return 1;
+}
+
+=head2 get_all
+
+Get the entire configuration hash
+
+=cut
+
+sub get_all {
+    my ($self) = @_;
+    
+    return $self->{config};
+}
+
+=head2 display
+
+Display current configuration (with masked API key)
+
+Shows current provider, settings, and which values are user-set vs provider defaults.
+
+=cut
+
+sub display {
+    my ($self) = @_;
+    
+    my $config = $self->{config};
+    
+    my @lines;
+    
+    push @lines, "Current Configuration:";
+    push @lines, "=" x 50;
+    
+    my $current_provider = $config->{provider} || 'openai';
+    my $key = $config->{api_key};
+    my $key_display = '(not set)';
+    
+    # Check for GitHub token
+    if ($current_provider eq 'github_copilot') {
+        # Check for GitHub Copilot token
+        require CLIO::Core::GitHubAuth;
+        my $gh_auth = CLIO::Core::GitHubAuth->new(debug => $self->{debug});
+        if ($gh_auth->is_authenticated()) {
+            my $token = $gh_auth->get_copilot_token();
+            $key_display = $token ? 
+                substr($token, 0, 8) . '...' . substr($token, -4) : 
+                '(GitHub authenticated)';
+        }
+    } elsif ($key) {
+        $key_display = substr($key, 0, 8) . '...' . substr($key, -4);
+    }
+    
+    push @lines, sprintf("API Key:   %s%s", 
+        $key_display,
+        $self->{user_set}->{api_key} ? ' (user-set)' : '');
+    
+    # API Base - show if user-set or from provider
+    push @lines, sprintf("API Base:  %s%s", 
+        $config->{api_base} || '(not set)',
+        $self->{user_set}->{api_base} ? ' (user-set)' : ' (from provider)');
+    
+    # Model - show if user-set or from provider
+    push @lines, sprintf("Model:     %s%s", 
+        $config->{model} || '(not set)',
+        $self->{user_set}->{model} ? ' (user-set)' : ' (from provider)');
+    
+    # Log Level
+    push @lines, sprintf("Log Level: %s", $config->{log_level} || 'INFO');
+    
+    # Current Provider
+    push @lines, sprintf("Provider:  %s%s", 
+        $current_provider,
+        $self->{user_set}->{provider} ? ' (user-set)' : ' (default)');
+    
+    # Available providers from Providers.pm
+    push @lines, "";
+    push @lines, "Available Providers:";
+    push @lines, "-" x 50;
+    
+    for my $provider (list_providers()) {
+        my $provider_config = get_provider($provider);
+        my $marker = ($provider eq $current_provider) ? '* ' : '  ';
+        push @lines, sprintf("%s%-15s  %s", 
+            $marker,
+            $provider, 
+            $provider_config->{api_base}
+        );
+    }
+    
+    return join("\n", @lines);
+}
+
+1;
+
+__END__
+
+=head1 USAGE
+
+    use CLIO::Core::Config;
+    
+    my $config = CLIO::Core::Config->new(debug => 1);
+    
+    # Get values
+    my $api_key = $config->get('api_key');
+    my $model = $config->get('model');
+    
+    # Set values
+    $config->set('model', 'gpt-4-turbo');
+    $config->set_provider('openai');  # Quick switch
+    
+    # Save to file
+    $config->save();
+    
+    # Display
+    print $config->display();
+
+=head1 AUTHOR
+
+Fewtarius
+
+=cut

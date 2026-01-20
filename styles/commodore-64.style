@@ -1,0 +1,43 @@
+# CLIO Style: commodore-64
+# Commodore 64 color palette - the most iconic 8-bit computer
+# Blue background with light blue text (represented as blue/cyan on black terminal)
+
+name=commodore-64
+
+# User interaction colors - light blue (Commodore's signature color)
+user_prompt=@BRIGHT_CYAN@
+user_text=@CYAN@
+
+# Agent/Assistant colors - light blue and white (classic C64)
+agent_label=@BRIGHT_CYAN@@BOLD@
+agent_text=@WHITE@
+
+# System messages - using C64 palette
+system_message=@BRIGHT_BLUE@
+error_message=@BRIGHT_RED@
+
+# UI elements - Commodore blue
+banner=@BRIGHT_BLUE@@BOLD@
+app_title=@BRIGHT_CYAN@
+app_subtitle=@CYAN@
+data=@BRIGHT_WHITE@
+dim=@BLUE@
+theme_header=@BRIGHT_CYAN@@BOLD@
+prompt_indicator=@BRIGHT_CYAN@
+
+# Markdown element colors - C64 palette (blue, cyan, white)
+markdown_bold=@BOLD@@BRIGHT_WHITE@
+markdown_italic=@CYAN@
+markdown_code=@BRIGHT_CYAN@@BOLD@
+markdown_link_text=@BRIGHT_CYAN@@UNDERLINE@
+markdown_link_url=@CYAN@
+markdown_header1=@BOLD@@BRIGHT_CYAN@
+markdown_header2=@BOLD@@CYAN@
+markdown_header3=@BOLD@@WHITE@
+markdown_list_bullet=@BRIGHT_CYAN@
+markdown_quote=@BLUE@
+markdown_code_block=@BRIGHT_CYAN@
+
+# Table colors
+table_border=@CYAN@
+table_header=@BOLD@@BRIGHT_CYAN@

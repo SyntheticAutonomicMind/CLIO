@@ -1,0 +1,43 @@
+# CLIO Style: green-screen
+# Classic green phosphor monochrome terminal
+# The iconic green glow of early computer terminals and mainframe systems
+
+name=green-screen
+
+# User interaction colors - bright green for input
+user_prompt=@BRIGHT_GREEN@
+user_text=@GREEN@
+
+# Agent/Assistant colors - green spectrum
+agent_label=@BRIGHT_GREEN@@BOLD@
+agent_text=@GREEN@
+
+# System messages - using green with bold for emphasis
+system_message=@GREEN@@BOLD@
+error_message=@BRIGHT_RED@
+
+# UI elements - classic phosphor green
+banner=@BRIGHT_GREEN@@BOLD@
+app_title=@BRIGHT_GREEN@
+app_subtitle=@GREEN@
+data=@BRIGHT_GREEN@
+dim=@GREEN@
+theme_header=@BRIGHT_GREEN@@BOLD@
+prompt_indicator=@BRIGHT_GREEN@
+
+# Markdown element colors - green monochrome with intensity variations
+markdown_bold=@BOLD@@BRIGHT_GREEN@
+markdown_italic=@DIM@@GREEN@
+markdown_code=@BRIGHT_GREEN@@BOLD@
+markdown_link_text=@GREEN@@UNDERLINE@
+markdown_link_url=@DIM@@GREEN@
+markdown_header1=@BOLD@@BRIGHT_GREEN@
+markdown_header2=@BRIGHT_GREEN@
+markdown_header3=@GREEN@
+markdown_list_bullet=@BRIGHT_GREEN@
+markdown_quote=@DIM@@GREEN@
+markdown_code_block=@BRIGHT_GREEN@
+
+# Table colors
+table_border=@GREEN@
+table_header=@BOLD@@BRIGHT_GREEN@

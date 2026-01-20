@@ -1,0 +1,43 @@
+# CLIO Style: amber-terminal
+# Warm amber/yellow glow reminiscent of classic amber CRT monitors
+# Popular in early Unix terminals and vintage computer systems
+
+name=amber-terminal
+
+# User interaction colors - amber glow
+user_prompt=@BRIGHT_YELLOW@
+user_text=@YELLOW@
+
+# Agent/Assistant colors - warmer amber tones
+agent_label=@BRIGHT_YELLOW@@BOLD@
+agent_text=@YELLOW@
+
+# System messages - using amber spectrum
+system_message=@YELLOW@@BOLD@
+error_message=@BRIGHT_RED@
+
+# UI elements - classic amber terminal warmth
+banner=@BRIGHT_YELLOW@@BOLD@
+app_title=@BRIGHT_YELLOW@
+app_subtitle=@YELLOW@
+data=@BRIGHT_YELLOW@
+dim=@YELLOW@
+theme_header=@BRIGHT_YELLOW@@BOLD@
+prompt_indicator=@BRIGHT_YELLOW@
+
+# Markdown element colors - amber monochrome with bold for emphasis
+markdown_bold=@BOLD@@BRIGHT_YELLOW@
+markdown_italic=@DIM@@YELLOW@
+markdown_code=@BRIGHT_YELLOW@@BOLD@
+markdown_link_text=@YELLOW@@UNDERLINE@
+markdown_link_url=@DIM@@YELLOW@
+markdown_header1=@BOLD@@BRIGHT_YELLOW@
+markdown_header2=@BRIGHT_YELLOW@
+markdown_header3=@YELLOW@
+markdown_list_bullet=@BRIGHT_YELLOW@
+markdown_quote=@DIM@@YELLOW@
+markdown_code_block=@BRIGHT_YELLOW@
+
+# Table colors
+table_border=@YELLOW@
+table_header=@BOLD@@BRIGHT_YELLOW@

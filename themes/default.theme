@@ -1,0 +1,34 @@
+# CLIO Theme: default
+# Standard output format with all elements visible
+
+name=default
+
+# Prompts
+user_prompt_format={style.user_prompt}: @RESET@
+agent_prefix={style.agent_label}AGENT: @RESET@
+system_prefix={style.system_message}SYSTEM: @RESET@
+error_prefix={style.error_message}ERROR: @RESET@
+
+# Banner (displayed at session start)
+banner_line1={style.app_title}CLIO@RESET@ {style.app_subtitle}- Command Line Intelligence Orchestrator@RESET@
+banner_line2=Session ID: {style.data}{var.session_id}@RESET@
+banner_line3=You are connected to {style.data}{var.model}@RESET@
+banner_line4={style.dim}Press "?" for a list of commands.@RESET@
+
+# Help system
+help_header={style.data}{var.title}@RESET@
+help_section={style.data}{var.section}@RESET@
+help_command={style.prompt_indicator}{var.command}@RESET@
+
+# Status indicators
+thinking_indicator={style.dim}(thinking...)@RESET@
+
+# Navigation
+nav_next={style.prompt_indicator}[N]ext@RESET@
+nav_previous={style.prompt_indicator}[P]revious@RESET@
+nav_quit={style.prompt_indicator}[Q]uit@RESET@
+pagination_info={style.dim}{var.info}@RESET@
+
+# Messages
+user_message_prefix={style.user_text}You: @RESET@
+agent_message_prefix={style.agent_label}AGENT: @RESET@

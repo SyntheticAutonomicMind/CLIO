@@ -1,0 +1,43 @@
+# CLIO Style: bbs-bright
+# Classic BBS bright cyan - the iconic bulletin board system header color
+# Reminiscent of 80s/90s BBS systems with bright cyan menus and headers
+
+name=bbs-bright
+
+# User interaction colors - bright cyan for that BBS menu feel
+user_prompt=@BRIGHT_GREEN@
+user_text=@BRIGHT_WHITE@
+
+# Agent/Assistant colors - bright yellow for responses (classic BBS message color)
+agent_label=@BRIGHT_YELLOW@
+agent_text=@WHITE@
+
+# System messages
+system_message=@BRIGHT_MAGENTA@
+error_message=@BRIGHT_RED@
+
+# UI elements - bright cyan headers (THE classic BBS color)
+banner=@BRIGHT_CYAN@@BOLD@
+app_title=@BRIGHT_CYAN@
+app_subtitle=@CYAN@
+data=@BRIGHT_WHITE@
+dim=@CYAN@
+theme_header=@BRIGHT_CYAN@@BOLD@
+prompt_indicator=@BRIGHT_GREEN@
+
+# Markdown element colors - punchy BBS style
+markdown_bold=@BOLD@@BRIGHT_WHITE@
+markdown_italic=@BRIGHT_CYAN@
+markdown_code=@BRIGHT_YELLOW@
+markdown_link_text=@BRIGHT_BLUE@@UNDERLINE@
+markdown_link_url=@BLUE@
+markdown_header1=@BOLD@@BRIGHT_CYAN@
+markdown_header2=@BOLD@@CYAN@
+markdown_header3=@BOLD@@WHITE@
+markdown_list_bullet=@BRIGHT_GREEN@@BOLD@
+markdown_quote=@CYAN@
+markdown_code_block=@BRIGHT_YELLOW@
+
+# Table colors
+table_border=@BRIGHT_CYAN@
+table_header=@BOLD@@BRIGHT_CYAN@

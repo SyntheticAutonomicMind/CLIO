@@ -1,0 +1,43 @@
+# CLIO Style: photon
+# PhotonBBS-inspired retro color scheme
+# Classic BBS bright colors for that authentic 80s/90s feel
+
+name=photon
+
+# User interaction colors - bright green for classic BBS prompt feel
+user_prompt=@BRIGHT_GREEN@
+user_text=@BRIGHT_CYAN@
+
+# Agent/Assistant colors - bright yellow stands out like BBS messages
+agent_label=@BRIGHT_YELLOW@
+agent_text=@BRIGHT_WHITE@
+
+# System messages - bright magenta for system/admin messages
+system_message=@BRIGHT_MAGENTA@
+error_message=@BRIGHT_RED@
+
+# UI elements - cyan headers, white data (classic BBS palette)
+banner=@BRIGHT_CYAN@@BOLD@
+app_title=@BRIGHT_BLUE@@BOLD@
+app_subtitle=@DIM@@CYAN@
+data=@BRIGHT_WHITE@
+dim=@CYAN@
+theme_header=@BRIGHT_CYAN@@BOLD@
+prompt_indicator=@BRIGHT_GREEN@@BOLD@
+
+# Markdown element colors - punchy BBS style
+markdown_bold=@BOLD@@BRIGHT_WHITE@
+markdown_italic=@BRIGHT_CYAN@
+markdown_code=@BRIGHT_YELLOW@@BOLD@
+markdown_link_text=@BRIGHT_BLUE@@UNDERLINE@
+markdown_link_url=@BLUE@
+markdown_header1=@BOLD@@BRIGHT_YELLOW@
+markdown_header2=@BOLD@@BRIGHT_CYAN@
+markdown_header3=@BOLD@@BRIGHT_GREEN@
+markdown_list_bullet=@BRIGHT_GREEN@@BOLD@
+markdown_quote=@CYAN@
+markdown_code_block=@BRIGHT_YELLOW@
+
+# Table colors - bold and bright
+table_border=@BRIGHT_WHITE@@BOLD@
+table_header=@BOLD@@BRIGHT_YELLOW@

@@ -1,0 +1,43 @@
+# CLIO Style: slate
+# Professional blue/grey retro terminal aesthetic
+# Inspired by Terminal Tavern (PhotonBBS) - blues and greys for extended readability
+
+name=slate
+
+# User interaction colors - bright blue command line feel
+user_prompt=@BRIGHT_BLUE@
+user_text=@BRIGHT_CYAN@
+
+# Agent/Assistant colors - professional and readable
+agent_label=@CYAN@@BOLD@
+agent_text=@WHITE@
+
+# System messages - grey (unobtrusive) and red (errors)
+system_message=@BRIGHT_BLACK@
+error_message=@BRIGHT_RED@
+
+# UI elements - crisp whites and subtle blues
+banner=@BRIGHT_WHITE@@BOLD@
+app_title=@BRIGHT_BLUE@@BOLD@
+app_subtitle=@DIM@@WHITE@
+data=@BRIGHT_WHITE@
+dim=@BLUE@
+theme_header=@BRIGHT_BLUE@@BOLD@
+prompt_indicator=@BRIGHT_BLUE@@BOLD@
+
+# Markdown element colors - blue/grey/white hierarchy
+markdown_bold=@BOLD@@WHITE@
+markdown_italic=@DIM@@CYAN@
+markdown_code=@BRIGHT_CYAN@
+markdown_link_text=@BLUE@@UNDERLINE@
+markdown_link_url=@DIM@@BLUE@
+markdown_header1=@BOLD@@BRIGHT_BLUE@
+markdown_header2=@BOLD@@CYAN@
+markdown_header3=@BOLD@@WHITE@
+markdown_list_bullet=@BRIGHT_BLUE@
+markdown_quote=@DIM@@CYAN@
+markdown_code_block=@CYAN@
+
+# Table colors - clean blue and white
+table_border=@BLUE@
+table_header=@BOLD@@BRIGHT_BLUE@

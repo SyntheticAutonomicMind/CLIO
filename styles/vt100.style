@@ -1,0 +1,43 @@
+# CLIO Style: vt100
+# DEC VT100 terminal - the legendary terminal that defined modern terminals
+# Clean, professional green/white on black - the Unix sysadmin classic
+
+name=vt100
+
+# User interaction colors - professional green
+user_prompt=@GREEN@
+user_text=@WHITE@
+
+# Agent/Assistant colors - bright output
+agent_label=@BRIGHT_GREEN@
+agent_text=@WHITE@
+
+# System messages - reserved colors
+system_message=@BRIGHT_WHITE@@BOLD@
+error_message=@BRIGHT_RED@
+
+# UI elements - minimal, professional
+banner=@BRIGHT_GREEN@
+app_title=@BRIGHT_GREEN@
+app_subtitle=@GREEN@
+data=@WHITE@
+dim=@DIM@
+theme_header=@BRIGHT_WHITE@
+prompt_indicator=@GREEN@
+
+# Markdown element colors - VT100 minimalism
+markdown_bold=@BOLD@@WHITE@
+markdown_italic=@DIM@@WHITE@
+markdown_code=@BRIGHT_GREEN@
+markdown_link_text=@BRIGHT_WHITE@@UNDERLINE@
+markdown_link_url=@WHITE@
+markdown_header1=@BOLD@@BRIGHT_GREEN@
+markdown_header2=@BOLD@@GREEN@
+markdown_header3=@BOLD@@WHITE@
+markdown_list_bullet=@GREEN@
+markdown_quote=@DIM@@GREEN@
+markdown_code_block=@BRIGHT_GREEN@
+
+# Table colors
+table_border=@WHITE@
+table_header=@BOLD@@BRIGHT_GREEN@

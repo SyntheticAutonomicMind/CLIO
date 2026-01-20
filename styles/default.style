@@ -1,0 +1,42 @@
+# CLIO Style: default
+# Default color scheme - bright colors on dark background
+
+name=default
+
+# User interaction colors
+user_prompt=@BRIGHT_GREEN@
+user_text=@BRIGHT_YELLOW@
+
+# Agent/Assistant colors
+agent_label=@BRIGHT_BLUE@
+agent_text=@WHITE@
+
+# System messages
+system_message=@BRIGHT_MAGENTA@
+error_message=@BRIGHT_RED@
+
+# UI elements
+banner=@BRIGHT_CYAN@
+app_title=@BRIGHT_GREEN@
+app_subtitle=@GREEN@
+data=@BRIGHT_WHITE@
+dim=@DIM@
+theme_header=@BRIGHT_CYAN@
+prompt_indicator=@BRIGHT_GREEN@
+
+# Markdown element colors
+markdown_bold=@BOLD@
+markdown_italic=@DIM@
+markdown_code=@BRIGHT_YELLOW@
+markdown_link_text=@BRIGHT_BLUE@@UNDERLINE@
+markdown_link_url=@DIM@@BLUE@
+markdown_header1=@BOLD@@BRIGHT_CYAN@
+markdown_header2=@BOLD@@CYAN@
+markdown_header3=@BOLD@@WHITE@
+markdown_list_bullet=@BRIGHT_GREEN@
+markdown_quote=@DIM@@CYAN@
+markdown_code_block=@YELLOW@
+
+# Table colors
+table_border=@BRIGHT_WHITE@
+table_header=@BOLD@@CYAN@
