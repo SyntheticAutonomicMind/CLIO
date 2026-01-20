@@ -758,6 +758,23 @@ git status
 | `scratch/CODEBASE_REVIEW.md` | Code health assessment | Developers |
 | `scratch/ACTION_PLAN.md` | Refactoring roadmap | Developers |
 
+### Scratch Directory
+The `scratch/` directory is for temporary development files that should **NEVER** be committed to git:
+
+- **Debug scripts**: One-off test scripts, debugging tools, exploratory code
+- **Session state files**: `.clio/` internal state shouldn't be in version control
+- **Large test data**: Temporary datasets created during development
+- **Local configuration**: Machine-specific settings
+
+**Rule:** Before committing, ensure no debug scripts end up in the repository. Move them to `scratch/` instead.
+
+**Example:** If you create `debug_session_load.pl` while investigating an issue:
+```bash
+mv debug_session_load.pl scratch/
+git add -A  # Now git will ignore it
+git commit -m "fix(feature): description"
+```
+
 ---
 
 ## Quality Standards
