@@ -7,10 +7,10 @@ use Time::HiRes qw(time);
 
 sub new {
     my ($class, %args) = @_;
-    print STDERR "[PROTO][DEBUG] Handler::new called for class $class\n" if $ENV{CLIO_DEBUG} || $args{debug};
+    print STDERR "[PROTO][DEBUG] Handler::new called for class $class\n" if should_log('DEBUG') || $args{debug};
     my $self = { debug => $args{debug} // 0 };
     bless $self, $class;
-    print STDERR "[PROTO][DEBUG] Handler::new returning object of class " . ref($self) . "\n" if $ENV{CLIO_DEBUG} || $args{debug};
+    print STDERR "[PROTO][DEBUG] Handler::new returning object of class " . ref($self) . "\n" if should_log('DEBUG') || $args{debug};
     return $self;
 }
 
@@ -36,7 +36,7 @@ sub validate_input {
 
 sub process_request {
     my ($self, $input) = @_;
-    print STDERR "[PROTO][DEBUG] Base Handler::process_request called for class " . ref($self) . "\n" if $ENV{CLIO_DEBUG} || $self->{debug};
+    print STDERR "[PROTO][DEBUG] Base Handler::process_request called for class " . ref($self) . "\n" if should_log('DEBUG') || $self->{debug};
     return { success => 1, data => undef };
 }
 

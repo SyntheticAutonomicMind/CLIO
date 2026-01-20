@@ -2,10 +2,9 @@ package CLIO::Core::CommandParser;
 
 use strict;
 use warnings;
+use CLIO::Core::Logger qw(should_log);
 
-if ($ENV{CLIO_DEBUG}) {
-    print STDERR "[TRACE] CLIO::Core::CommandParser loaded\n";
-}
+print STDERR "[TRACE] CLIO::Core::CommandParser loaded\n" if should_log('DEBUG');
 
 sub new {
     my ($class, %args) = @_;
@@ -28,7 +27,7 @@ sub parse_commands {
     my $quote_char = '';
     my $escaped = 0;
     
-    if ($ENV{CLIO_DEBUG} || $self->{debug}) {
+    if (should_log('DEBUG')) {
         print STDERR "[CommandParser] parse_commands: input='$input'\n";
     }
     
@@ -76,7 +75,7 @@ sub parse_commands {
     my $trimmed = $self->_trim($current_command);
     push @commands, $trimmed if length($trimmed) > 0;
     
-    if ($ENV{CLIO_DEBUG} || $self->{debug}) {
+    if (should_log('DEBUG')) {
         print STDERR "[CommandParser] parsed commands: " . join(' | ', @commands) . "\n";
     }
     
@@ -102,13 +101,13 @@ sub extract_recall_context {
     my ($self, $command, $memory) = @_;
     return undef unless $memory && $memory->can('search_context');
     
-    if ($ENV{CLIO_DEBUG} || $self->{debug}) {
+    if (should_log('DEBUG')) {
         print STDERR "[CommandParser] extract_recall_context: command='$command'\n";
     }
     
     my $result = $memory->search_context($command);
     
-    if ($ENV{CLIO_DEBUG} || $self->{debug}) {
+    if (should_log('DEBUG')) {
         if ($result) {
             print STDERR "[CommandParser] Found recall context: role=$result->{role}, content=$result->{content}\n";
         } else {

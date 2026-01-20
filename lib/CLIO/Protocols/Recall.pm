@@ -35,7 +35,7 @@ Protocol format: [RECALL:query=<base64>:limit=<num>]
 sub process_request {
     my ($self, $input, $session) = @_;
     
-    print STDERR "[RECALL] Processing request\n" if $ENV{CLIO_DEBUG} || $self->{debug};
+    print STDERR "[RECALL] Processing request\n" if should_log('DEBUG');
     
     # Validate input
     unless ($self->validate_input($input)) {

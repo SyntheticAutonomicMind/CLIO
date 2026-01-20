@@ -1,11 +1,11 @@
-if ($ENV{CLIO_DEBUG}) {
-    print STDERR "[TRACE] CLIO::Memory::ShortTerm loaded\n";
-}
 package CLIO::Memory::ShortTerm;
 
 use strict;
 use warnings;
+use CLIO::Core::Logger qw(should_log);
 use JSON::PP;
+
+print STDERR "[TRACE] CLIO::Memory::ShortTerm loaded\n" if should_log('DEBUG');
 
 sub new {
     my ($class, %args) = @_;
@@ -43,7 +43,7 @@ sub search_context {
     my ($self, $query) = @_;
     return undef unless defined $query;
     
-    if ($ENV{CLIO_DEBUG} || $self->{debug}) {
+    if (should_log('DEBUG')) {
         print STDERR "[STM] search_context: query='$query'\n";
     }
     
@@ -69,14 +69,14 @@ sub search_context {
         $keyword =~ s/\?.*$//;  # Remove trailing question marks
         $keyword =~ s/^\s+|\s+$//g;  # Trim whitespace
         
-        if ($ENV{CLIO_DEBUG} || $self->{debug}) {
+        if (should_log('DEBUG')) {
             print STDERR "[STM] Searching for keyword: '$keyword'\n";
         }
         
         my @user_messages = grep { $_->{role} eq 'user' } @{$self->{history}};
         for my $msg (@user_messages) {
             if (lc($msg->{content}) =~ /\Q$keyword\E/) {
-                if ($ENV{CLIO_DEBUG} || $self->{debug}) {
+                if (should_log('DEBUG')) {
                     print STDERR "[STM] Found matching message: $msg->{content}\n";
                 }
                 return $msg;
@@ -160,7 +160,7 @@ sub _get_user_message_by_position {
     # Get all user messages
     my @user_messages = grep { $_->{role} eq 'user' } @{$self->{history}};
     
-    if ($ENV{CLIO_DEBUG} || $self->{debug}) {
+    if (should_log('DEBUG')) {
         print STDERR "[STM] _get_user_message_by_position: position=$position, total_user_messages=" . scalar(@user_messages) . "\n";
     }
     

@@ -54,14 +54,14 @@ SLASH COMMANDS:
     Type /help in the application for available commands
 
 ENVIRONMENT:
-    CLIO_DEBUG=1    Enable debug output
+    None - use --debug flag instead
 
 HELP
     exit 0;
 }
 
-# Set debug level from environment or args
-my $debug = ($ENV{CLIO_DEBUG} || grep { $_ eq '--debug' } @ARGV) ? 1 : 0;
+# Set debug level from --debug flag
+my $debug = grep { $_ eq '--debug' } @ARGV ? 1 : 0;
 
 # Set CLIO_LOG_LEVEL for should_log() to work across all modules
 if ($debug) {
@@ -147,10 +147,10 @@ for (my $i = 0; $i < @ARGV; $i++) {
 
 # Default to 'new' mode if not specified
 if (!$mode) {
-    print STDERR "[TRACE] No mode specified, defaulting to 'new'\n" if $debug || $ENV{CLIO_DEBUG};
+    print STDERR "[TRACE] No mode specified, defaulting to 'new'\n" if $debug;
     $mode = 'new';
 }
-print STDERR "[TRACE] Mode before session creation: $mode\n" if $debug || $ENV{CLIO_DEBUG};
+print STDERR "[TRACE] Mode before session creation: $mode\n" if $debug;
 
 # Create or load session
 if ($mode eq 'new') {
@@ -162,15 +162,15 @@ if ($mode eq 'new') {
         );
     };
     $eval_err = $@;
-    if ($debug || $ENV{CLIO_DEBUG}) {
+    if ($debug) {
         require Data::Dumper;
         print STDERR "[DEBUG] Session object after create: " . Data::Dumper::Dumper($session);
         print STDERR "[DEBUG] session_id after create: ", (defined $session ? $session->{session_id} // '[undef]' : '[no session]'), "\n";
         print STDERR "[TRACE][EVAL] Error during create: $eval_err\n" if $eval_err;
     }
     $session_id = $session->{session_id} // ($session->{state} ? $session->{state}->{session_id} : undef) if $session;
-    print "[DEBUG] Created new session: $session_id\n" if ($debug || $ENV{CLIO_DEBUG}) && $session_id;
-    print STDERR "[TRACE] After new: session defined? ", (defined $session ? 'yes' : 'no'), "\n" if $debug || $ENV{CLIO_DEBUG};
+    print "[DEBUG] Created new session: $session_id\n" if $debug && $session_id;
+    print STDERR "[TRACE] After new: session defined? ", (defined $session ? 'yes' : 'no'), "\n" if $debug;
     
     # Add system prompt to session history ONCE at session start (not on every request!)
     if ($session) {
@@ -178,7 +178,7 @@ if ($mode eq 'new') {
         my $pm = CLIO::Core::PromptManager->new(debug => $debug, skip_custom => $skip_custom);
         my $system_prompt = $pm->get_system_prompt();
         $session->add_message('system', $system_prompt);
-        print STDERR "[DEBUG] Added system prompt to session history (" . length($system_prompt) . " chars)\n" if $debug || $ENV{CLIO_DEBUG};
+        print STDERR "[DEBUG] Added system prompt to session history (" . length($system_prompt) . " chars)\n" if $debug;
     }
 } elsif ($mode eq 'resume') {
     my $eval_err;
@@ -187,8 +187,8 @@ if ($mode eq 'new') {
             $session = CLIO::Session::Manager->load($session_id, debug => $debug);
         };
         $eval_err = $@;
-        print STDERR "[TRACE][EVAL] Error during load by id: $eval_err\n" if $debug || $ENV{CLIO_DEBUG};
-        print STDERR "[TRACE] After load by id: session defined? ", (defined $session ? 'yes' : 'no'), "\n" if $debug || $ENV{CLIO_DEBUG};
+        print STDERR "[TRACE][EVAL] Error during load by id: $eval_err\n" if $debug;
+        print STDERR "[TRACE] After load by id: session defined? ", (defined $session ? 'yes' : 'no'), "\n" if $debug;
         if (!$session) {
             print "[ERROR] Failed to load session $session_id\n";
         }
@@ -204,8 +204,8 @@ if ($mode eq 'new') {
                 $session = CLIO::Session::Manager->load($session_id, debug => $debug);
             };
             $eval_err = $@;
-            print STDERR "[TRACE][EVAL] Error during load most recent: $eval_err\n" if $debug || $ENV{CLIO_DEBUG};
-            print STDERR "[TRACE] After load most recent: session defined? ", (defined $session ? 'yes' : 'no'), "\n" if $debug || $ENV{CLIO_DEBUG};
+            print STDERR "[TRACE][EVAL] Error during load most recent: $eval_err\n" if $debug;
+            print STDERR "[TRACE] After load most recent: session defined? ", (defined $session ? 'yes' : 'no'), "\n" if $debug;
             if (!$session) {
                 print "[ERROR] Failed to load most recent session $session_id\n";
             }
@@ -218,9 +218,9 @@ if ($mode eq 'new') {
         };
         $eval_err = $@;
         $session_id = $session->{session_id} // ($session->{state} ? $session->{state}->{session_id} : undef) if $session;
-        print "[DEBUG] Created new session (fallback): $session_id\n" if ($debug || $ENV{CLIO_DEBUG}) && $session_id;
-        print STDERR "[TRACE][EVAL] Error during fallback create: $eval_err\n" if $debug || $ENV{CLIO_DEBUG};
-        print STDERR "[TRACE] After fallback create: session defined? ", (defined $session ? 'yes' : 'no'), "\n" if $debug || $ENV{CLIO_DEBUG};
+        print "[DEBUG] Created new session (fallback): $session_id\n" if $debug && $session_id;
+        print STDERR "[TRACE][EVAL] Error during fallback create: $eval_err\n" if $debug;
+        print STDERR "[TRACE] After fallback create: session defined? ", (defined $session ? 'yes' : 'no'), "\n" if $debug;
         
         # Add system prompt to fallback session (same as regular new session)
         if ($session) {
@@ -228,20 +228,20 @@ if ($mode eq 'new') {
             my $pm = CLIO::Core::PromptManager->new(debug => $debug, skip_custom => $skip_custom);
             my $system_prompt = $pm->get_system_prompt();
             $session->add_message('system', $system_prompt);
-            print STDERR "[DEBUG] Added system prompt to fallback session (" . length($system_prompt) . " chars)\n" if $debug || $ENV{CLIO_DEBUG};
+            print STDERR "[DEBUG] Added system prompt to fallback session (" . length($system_prompt) . " chars)\n" if $debug;
         }
     } else {
         $session_id = $session->{session_id} // ($session->{state} ? $session->{state}->{session_id} : undef);
-        print "[DEBUG] Resumed session: $session_id\n" if $debug || $ENV{CLIO_DEBUG};
+        print "[DEBUG] Resumed session: $session_id\n" if $debug;
     }
 }
 
-print STDERR "[TRACE] Before session check: session defined? ", (defined $session ? 'yes' : 'no'), "\n" if $debug || $ENV{CLIO_DEBUG};
+print STDERR "[TRACE] Before session check: session defined? ", (defined $session ? 'yes' : 'no'), "\n" if $debug;
 if (!$session) {
     print "[ERROR] Could not create or load a session. Exiting.\n";
     exit 2;
 }
-print "[SESSION] Using session: $session_id\n" if $debug || $ENV{CLIO_DEBUG};
+print "[SESSION] Using session: $session_id\n" if $debug;
 
 # Initialize API manager and AI agent
 my $api = CLIO::Core::APIManager->new(
@@ -255,7 +255,7 @@ my $ai_agent = CLIO::Core::SimpleAIAgent->new(
     api => $api
 );
 
-if ($debug || $ENV{CLIO_DEBUG}) {
+if ($debug) {
     my $cfg = $config->get_all();
     print "[DEBUG] API base: " . ($cfg->{api_base} || '(not set)') . "\n";
     print "[DEBUG] Model: " . ($cfg->{model} || '(not set)') . "\n";
@@ -267,7 +267,7 @@ if ($input) {
     if ($input =~ /^\[MEMORY:/) {
         my $resp = CLIO::Protocols::Manager->handle($input, $session);
         $session->save();
-        print "[DEBUG] Session saved to $session->{state}->{file}\n" if $debug || $ENV{CLIO_DEBUG};
+        print "[DEBUG] Session saved to $session->{state}->{file}\n" if $debug;
         require Data::Dumper;
         print Data::Dumper::Dumper($resp);
         exit 0;
@@ -277,7 +277,7 @@ if ($input) {
     my $parser = CLIO::Core::CommandParser->new(debug => $debug);
     my $commands = $parser->parse_commands($input);
     
-    if ($ENV{CLIO_DEBUG} || $debug) {
+    if ($debug) {
         print "[DEBUG] Processing " . scalar(@$commands) . " commands\n";
     }
     
@@ -285,7 +285,7 @@ if ($input) {
     for my $i (0 .. $#{$commands}) {
         my $command = $commands->[$i];
         
-        if ($ENV{CLIO_DEBUG} || $debug) {
+        if ($debug) {
             print "[DEBUG] Processing command " . ($i + 1) . ": '$command'\n";
         }
         

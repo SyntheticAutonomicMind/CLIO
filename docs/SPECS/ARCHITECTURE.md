@@ -420,9 +420,9 @@ $ENV{GITHUB_COPILOT_TOKEN}  # Not stored in session files
 GITHUB_COPILOT_TOKEN  # AI provider token (default)
 OPENAI_API_KEY        # OpenAI provider
 DEEPSEEK_API_KEY      # DeepSeek provider
-CLIO_DEBUG            # Enable debug output
 CLIO_SESSION_DIR      # Custom session directory
 CLIO_MODEL            # Model selection
+CLIO_LOG_LEVEL        # Debug level (automatically set by --debug flag)
 ```
 
 ### Configuration File

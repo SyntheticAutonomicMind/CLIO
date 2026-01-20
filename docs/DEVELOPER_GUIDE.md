@@ -215,7 +215,7 @@ sudo ./install.sh
 perl -I lib clio --new
 
 # With debug output
-CLIO_DEBUG=1 perl -I lib clio --new
+perl -I lib clio --debug --new
 ```
 
 **With installed version:**
@@ -777,8 +777,8 @@ print STDERR "[DEBUG][Module] Message\n" if should_log('DEBUG');
 # Error logging
 print STDERR "[ERROR][Module] Error message\n";
 
-# Trace logging
-print STDERR "[TRACE][Module] Detail\n" if $ENV{CLIO_DEBUG};
+# Trace logging (automatic when --debug is used)
+print STDERR "[TRACE][Module] Detail\n" if should_log('DEBUG');
 ```
 
 **No CPAN Dependencies:**

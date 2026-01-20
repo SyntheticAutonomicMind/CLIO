@@ -307,11 +307,10 @@ Enable debug logging from CLIO:
 : /debug on
 ```
 
-Or via environment variable before starting:
+Or via command-line flag:
 
 ```bash
-export CLIO_DEBUG=DEBUG
-./clio
+./clio --debug
 ```
 
 #### Custom Working Directory
@@ -687,7 +686,7 @@ After installation:
 **Issues during installation?**
 
 1. Check this troubleshooting section
-2. Run with debug mode: `CLIO_DEBUG=1 clio --new`
+2. Run with debug mode: `clio --debug --new`
 3. Search [GitHub Issues](https://github.com/fewtarius/clio/issues)
 4. Create a new issue with:
    - Your OS and version

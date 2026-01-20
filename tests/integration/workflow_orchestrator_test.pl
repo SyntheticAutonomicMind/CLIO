@@ -20,7 +20,7 @@ unless ($ENV{OPENAI_API_KEY}) {
 print "Configuration:\n";
 print "  API Base: " . ($ENV{OPENAI_API_BASE} || 'openai') . "\n";
 print "  Model: " . ($ENV{OPENAI_MODEL} || 'qwen3-coder-max') . "\n";
-print "  Debug: " . ($ENV{CLIO_DEBUG} ? 'ON' : 'OFF') . "\n";
+print "  Debug: " . ($ENV{CLIO_LOG_LEVEL} ? 'ON' : 'OFF') . "\n";
 print "\n";
 
 # Initialize components
@@ -35,7 +35,7 @@ print "  ✓ Protocol handlers registered\n";
 
 require CLIO::Core::APIManager;
 my $api_manager = CLIO::Core::APIManager->new(
-    debug => $ENV{CLIO_DEBUG} || 0
+    debug => $ENV{CLIO_LOG_LEVEL} ? 1 : 0
 );
 print "  ✓ APIManager initialized\n";
 
@@ -43,7 +43,7 @@ require CLIO::Core::WorkflowOrchestrator;
 my $orchestrator = CLIO::Core::WorkflowOrchestrator->new(
     api_manager => $api_manager,
     session => undef,  # No session for this test
-    debug => $ENV{CLIO_DEBUG} || 0
+    debug => $ENV{CLIO_LOG_LEVEL} ? 1 : 0
 );
 print "  ✓ WorkflowOrchestrator initialized\n";
 print "\n";

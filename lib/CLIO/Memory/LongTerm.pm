@@ -1,11 +1,11 @@
-if ($ENV{CLIO_DEBUG}) {
-    print STDERR "[TRACE] CLIO::Memory::LongTerm loaded\n";
-}
 package CLIO::Memory::LongTerm;
 
 use strict;
 use warnings;
+use CLIO::Core::Logger qw(should_log);
 use JSON::PP;
+
+print STDERR "[TRACE] CLIO::Memory::LongTerm loaded\n" if should_log('DEBUG');
 
 sub new {
     my ($class, %args) = @_;
@@ -18,14 +18,14 @@ sub new {
 
 sub store_pattern {
     my ($self, $key, $value) = @_;
-    warn "[LTM][DEBUG] store_pattern: key='$key', value='$value', self=$self\n" if $ENV{CLIO_DEBUG} || $self->{debug};
+    warn "[LTM][DEBUG] store_pattern: key='$key', value='$value', self=$self\n" if should_log('DEBUG');
     $self->{store}{$key} = $value;
 }
 
 sub retrieve_pattern {
     my ($self, $key) = @_;
     my $val = $self->{store}{$key};
-    warn "[LTM][DEBUG] retrieve_pattern: key='$key', val='" . (defined $val ? $val : '[undef]') . "', self=$self\n" if $ENV{CLIO_DEBUG} || $self->{debug};
+    warn "[LTM][DEBUG] retrieve_pattern: key='$key', val='" . (defined $val ? $val : '[undef]') . "', self=$self\n" if should_log('DEBUG');
     return $val;
 }
 

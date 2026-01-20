@@ -581,9 +581,11 @@ classDiagram
 Use consistent format for debug logs:
 
 ```perl
-print STDERR "[DEBUG][ModuleName] Message\n" if $self->{debug};
+use CLIO::Core::Logger qw(should_log);
+
+print STDERR "[DEBUG][ModuleName] Message\n" if should_log('DEBUG');
 print STDERR "[ERROR][ModuleName] Error: $error\n";
-print STDERR "[TRACE][ModuleName] Detail: $detail\n" if $ENV{CLIO_DEBUG} eq 'TRACE';
+print STDERR "[TRACE][ModuleName] Detail: $detail\n" if should_log('DEBUG');
 ```
 
 **Guidelines:**
