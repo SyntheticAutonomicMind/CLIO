@@ -54,7 +54,7 @@ CLIO is part of the [Synthetic Autonomic Mind (SAM)](https://github.com/Syntheti
 
 ```bash
 # Clone the repository
-git clone https://github.com/fewtarius/clio.git
+git clone https://github.com/SyntheticAutonomicMind/CLIO.git
 cd clio
 
 # Run the installer
@@ -307,5 +307,5 @@ See [LICENSE](LICENSE) for full license text.
 
 ## Support
 
-- **Issues:** [GitHub Issues](https://github.com/fewtarius/clio/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/fewtarius/clio/discussions)
+- **Issues:** [GitHub Issues](https://github.com/SyntheticAutonomicMind/CLIO/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/SyntheticAutonomicMind/CLIO/discussions)
