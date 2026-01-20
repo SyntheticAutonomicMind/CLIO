@@ -5,6 +5,7 @@ use warnings;
 use utf8;
 use Encode qw(decode encode);
 use CLIO::Core::Logger qw(should_log);
+use CLIO::Util::JSONRepair qw(repair_malformed_json);
 use JSON::PP qw(encode_json decode_json);
 use MIME::Base64 qw(encode_base64 decode_base64);
 use CLIO::Session::ToolResultStore;
@@ -129,7 +130,7 @@ sub execute_tool {
     my $arguments;
     eval {
         # Repair malformed JSON from AI (e.g., "offset":, → "offset":null,)
-        my $json_str = $self->_repair_malformed_json($arguments_json);
+        my $json_str = repair_malformed_json($arguments_json, should_log('DEBUG'));
         
         # decode_json expects BYTES (not Perl's internal UTF-8 character strings)
         # If the string is UTF-8 flagged (wide characters), encode it to bytes first
@@ -288,40 +289,6 @@ sub execute_tool {
         # Error
         return "ERROR: " . ($result->{error} || 'Unknown error');
     }
-}
-
-=head2 _repair_malformed_json
-
-Repair common AI-generated JSON errors before parsing.
-
-AI models sometimes generate malformed JSON like: {"offset":,"length":8192}
-This repairs such patterns: "param":, → "param":null,
-
-Arguments:
-- $json_str: JSON string to repair
-
-Returns:
-- Repaired JSON string
-
-=cut
-
-sub _repair_malformed_json {
-    my ($self, $json_str) = @_;
-    
-    my $original = $json_str;
-    
-    # Fix pattern: "param":, (missing value) → "param":null,
-    # This handles cases where AI omits values for optional parameters
-    $json_str =~ s/"(\w+)":,/"$1":null,/g;
-    
-    # Fix trailing comma before } (another common AI mistake)
-    $json_str =~ s/,\s*}/}/g;
-    
-    if ($json_str ne $original && should_log('DEBUG')) {
-        print STDERR "[DEBUG][ToolExecutor] Repaired malformed JSON\n";
-    }
-    
-    return $json_str;
 }
 
 =head2 _execute_file_operations
