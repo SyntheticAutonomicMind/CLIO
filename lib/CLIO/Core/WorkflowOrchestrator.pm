@@ -7,6 +7,7 @@ binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use CLIO::Core::Logger qw(should_log);
 use CLIO::Util::TextSanitizer qw(sanitize_text);
+use CLIO::Util::JSONRepair qw(repair_malformed_json);
 use JSON::PP qw(encode_json decode_json);
 use Encode qw(encode_utf8);  # For handling Unicode in JSON
 use Time::HiRes qw(time);
@@ -237,12 +238,27 @@ sub process_input {
             # Provide a default no-op callback if none specified
             my $callback = $on_chunk || sub { };  # No-op callback
             
+            # Define tool call callback to show tool names as they stream in
+            my $tool_callback = sub {
+                my ($tool_name) = @_;
+                
+                # Clear any spinner or pending output
+                print "\r\e[K";  # Clear line
+                
+                # Show tool call immediately
+                print $COLORS{SYSTEM}, "SYSTEM: ", $COLORS{RESET};
+                print $COLORS{TOOL}, "[", $tool_name, "]", $COLORS{RESET};
+                print " (streaming...)\n";
+                $| = 1;
+            };
+            
             $self->{api_manager}->send_request_streaming(
                 undef,  # No direct input (using messages)
                 messages => $alternated_messages,  # Use alternation-enforced messages
                 tools => $tools,
                 tool_call_iteration => $iteration,  # Track iteration for billing
-                on_chunk => $callback
+                on_chunk => $callback,
+                on_tool_call => $tool_callback
             );
         };
         
@@ -367,7 +383,7 @@ sub process_input {
                             print STDERR "[DEBUG][WorkflowOrchestrator] Original JSON arguments (first 300 chars): $preview\n";
                         }
                         
-                        $json_str = $self->_repair_malformed_json($json_str);
+                        $json_str = repair_malformed_json($json_str, $self->{debug});
                         
                         # Debug: Show repaired JSON
                         if ($self->{debug}) {
@@ -468,7 +484,8 @@ sub process_input {
                 }
                 
                 # Show user-visible feedback BEFORE tool execution (for interactive tools like user_collaboration)
-                # NOTE: Don't add leading newline - creates extra blank lines
+                # NOTE: Update existing "(streaming...)" message to show execution started
+                print "\r\e[K";  # Clear the "(streaming...)" line
                 print $COLORS{SYSTEM}, "SYSTEM: ", $COLORS{RESET};
                 print $COLORS{TOOL}, "[", $tool_name, "]", $COLORS{RESET};
                 print "\n";
@@ -629,89 +646,6 @@ Returns:
 - System prompt string
 
 =cut
-
-=head2 _repair_malformed_json
-
-Repair common AI-generated JSON errors before parsing.
-
-AI models sometimes generate malformed JSON like: {"offset":,"length":8192}
-This repairs such patterns: "param":, → "param":null,
-
-Also detects and converts XML/Anthropic parameter format to JSON.
-
-Arguments:
-- $json_str: JSON string to repair
-
-Returns:
-- Repaired JSON string
-
-=cut
-
-sub _repair_malformed_json {
-    my ($self, $json_str) = @_;
-    
-    my $original = $json_str;
-    
-    # Check if this is Anthropic/Claude XML parameter format: <parameter name="...">value</parameter>
-    # This happens when the model uses XML-style tool calling instead of JSON
-    if ($json_str =~ /<parameter|<\/parameter>/) {
-        print STDERR "[DEBUG][WorkflowOrchestrator] Detected XML parameter format, converting to JSON\n" if $self->{debug};
-        
-        # Extract parameters from XML format
-        my %params;
-        while ($json_str =~ /<parameter\s+name="([^"]+)"[^>]*>([^<]*)<\/parameter>/gs) {
-            my ($name, $value) = ($1, $2);
-            # Try to detect value type
-            if ($value =~ /^-?\d+$/) {
-                $params{$name} = $value + 0;  # Integer
-            } elsif ($value =~ /^-?\d+\.\d+$/) {
-                $params{$name} = $value + 0;  # Float
-            } elsif (lc($value) eq 'true') {
-                $params{$name} = \1;  # JSON true
-            } elsif (lc($value) eq 'false') {
-                $params{$name} = \0;  # JSON false
-            } elsif ($value eq 'null' || $value eq '') {
-                $params{$name} = undef;  # JSON null
-            } else {
-                $params{$name} = $value;  # String
-            }
-        }
-        
-        if (%params) {
-            require JSON::PP;
-            $json_str = JSON::PP::encode_json(\%params);
-            print STDERR "[DEBUG][WorkflowOrchestrator] Converted XML to JSON: $json_str\n" if $self->{debug};
-            return $json_str;
-        }
-    }
-    
-    # Fix pattern: "param":, (missing value) → "param":null,
-    # This handles cases where AI omits values for optional parameters
-    $json_str =~ s/"(\w+)":,/"$1":null,/g;
-    
-    # Fix trailing comma before } or ] (common AI mistake)
-    $json_str =~ s/,\s*}/}/g;
-    $json_str =~ s/,\s*\]/]/g;
-    
-    # Fix unescaped quotes inside string values (but not property names)
-    # Pattern: "key": "value with " unescaped quote"
-    # This is tricky - we need to escape quotes that are inside string values
-    # but not the quotes that delimit the string itself
-    # For now, we'll handle the most common case: trailing unescaped quotes
-    
-    # Fix: "value": "text", "length": number} → ensure proper structure
-    # Remove any stray quotes or commas that break JSON structure
-    $json_str =~ s/"\s*,\s*"/","/g;  # Normalize quote-comma-quote spacing
-    
-    if ($json_str ne $original && $self->{debug}) {
-        print STDERR "[DEBUG][WorkflowOrchestrator] Repaired malformed JSON\n";
-        my $changes = $original ne $json_str ? " (made changes)" : " (no changes)";
-        print STDERR "[DEBUG][WorkflowOrchestrator] Repair result$changes\n";
-    }
-    
-    return $json_str;
-}
-
 sub _build_system_prompt {
     my ($self) = @_;
     
