@@ -221,7 +221,7 @@ sub retrieveChunk {
     
     # Security check: Verify file exists in session's directory
     unless (-f $result_file) {
-        print STDERR "[WARN][ToolResultStore] Result not found: $toolCallId in session $session_id\n";
+        print STDERR "[WARN]ToolResultStore] Result not found: $toolCallId in session $session_id\n";
         die "Tool result not found: $toolCallId";
     }
     

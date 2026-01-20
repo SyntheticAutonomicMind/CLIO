@@ -13,6 +13,7 @@ use File::Path qw(make_path);
 use Cwd 'abs_path';
 use Encode qw(decode);
 use feature 'say';
+use File::Glob qw(:bsd_glob);
 
 =head1 NAME
 
@@ -628,26 +629,23 @@ sub file_search {
     eval {
         my @matches;
         
-        # Convert glob pattern to regex
-        my $regex = $pattern;
-        $regex =~ s/\*\*/DOUBLESTAR/g;
-        $regex =~ s/\*/[^\/]*/g;
-        $regex =~ s/DOUBLESTAR/.*/g;
-        $regex =~ s/\?/./g;
+        # Use File::Glob to expand glob patterns safely
+        # GLOB_BRACE allows {a,b} syntax, GLOB_NOCHECK returns pattern if no matches
+        my @files = bsd_glob("$directory/$pattern", GLOB_BRACE);
         
-        use File::Find;
-        find(sub {
-            my $name = $File::Find::name;
-            $name =~ s{^\./}{};  # Remove leading ./
+        foreach my $path (@files) {
+            next unless -e $path;  # Skip non-existent entries
             
-            if ($name =~ /$regex/) {
-                push @matches, {
-                    path => $name,
-                    type => -d $_ ? 'directory' : 'file',
-                    size => -s $_,
-                };
-            }
-        }, $directory);
+            # Remove directory prefix for cleaner paths
+            my $rel_path = $path;
+            $rel_path =~ s{^\Q$directory\E/?}{};
+            
+            push @matches, {
+                path => $rel_path,
+                type => -d $path ? 'directory' : 'file',
+                size => -s $path,
+            };
+        }
         
         print STDERR "[DEBUG][FileOp] Found " . scalar(@matches) . " matches\n" if $self->{debug};
         
@@ -676,15 +674,18 @@ sub grep_search {
     my $query = $params->{query};
     my $pattern = $params->{pattern} || '**/*';
     my $is_regex = $params->{is_regex} || 0;
+    my $max_results = $params->{max_results} || 50;  # Prevent runaway searches
     
     return $self->error_result("Missing 'query' parameter") unless $query;
     
-    print STDERR "[DEBUG][FileOp] Grep search: query=$query, pattern=$pattern, regex=$is_regex\n" 
+    print STDERR "[DEBUG][FileOp] Grep search: query=$query, pattern=$pattern, regex=$is_regex, max_results=$max_results\n" 
         if $self->{debug};
     
     my $result;
     eval {
         my @matches;
+        my $files_searched = 0;
+        my $search_truncated = 0;
         
         # First, find files matching pattern
         my $file_result = $self->file_search({ pattern => $pattern }, $context);
@@ -695,11 +696,19 @@ sub grep_search {
         
         my @files = grep { $_->{type} eq 'file' } @{$file_result->{output}};
         
+        # Limit files searched to prevent slowdown with large codebases
+        my $max_files_to_search = 100;
+        if (scalar(@files) > $max_files_to_search) {
+            $search_truncated = 1;
+            @files = @files[0..$max_files_to_search-1];
+        }
+        
         # Search each file
         my $search_regex = $is_regex ? qr/$query/i : qr/\Q$query\E/i;
         
         foreach my $file (@files) {
             my $path = $file->{path};
+            $files_searched++;
             
             # Skip binary files
             next unless -T $path;
@@ -707,7 +716,7 @@ sub grep_search {
             # Open in raw mode and let Perl handle encoding gracefully
             my $fh;
             unless (open $fh, '<', $path) {
-                print STDERR "[WARN][FileOp] Cannot open $path: $!\n" if $self->{debug};
+                print STDERR "[WARN]FileOp] Cannot open $path: $!\n" if $self->{debug};
                 next;
             }
             
@@ -722,17 +731,25 @@ sub grep_search {
                         line => $line_num,
                         content => $line,
                     };
+                    
+                    # Stop if we hit result limit
+                    if (scalar(@matches) >= $max_results) {
+                        close $fh;
+                        last;
+                    }
                 }
             }
             
             close $fh;
+            last if scalar(@matches) >= $max_results;
         }
         
-        print STDERR "[DEBUG][FileOp] Found " . scalar(@matches) . " matches across " . 
-                     scalar(@files) . " files\n" if $self->{debug};
+        print STDERR "[DEBUG][FileOp] Found " . scalar(@matches) . " matches (limited to $max_results) across " . 
+                     $files_searched . " files searched\n" if $self->{debug};
         
-        my $match_summary = scalar(@matches) . " matches in " . scalar(@files) . " files";
-        my $action_desc = "searching for '$query' in $pattern ($match_summary)";
+        my $match_summary = scalar(@matches) . " matches in " . $files_searched . " files";
+        my $truncated_note = $search_truncated ? " (search limited to first 100 files)" : "";
+        my $action_desc = "searching for '$query' in $pattern ($match_summary)$truncated_note";
         
         $result = $self->success_result(
             \@matches,
@@ -741,7 +758,8 @@ sub grep_search {
             pattern => $pattern,
             is_regex => $is_regex,
             match_count => scalar(@matches),
-            files_searched => scalar(@files),
+            files_searched => $files_searched,
+            truncated => $search_truncated || (scalar(@matches) >= $max_results),
         );
     };
     
@@ -865,7 +883,7 @@ sub read_tool_result {
     # Enforce maximum chunk size (32KB like SAM)
     my $max_chunk_size = 32_768;
     if ($length > $max_chunk_size) {
-        print STDERR "[WARN][FileOp] Requested length $length exceeds max $max_chunk_size, capping\n";
+        print STDERR "[WARN]FileOp] Requested length $length exceeds max $max_chunk_size, capping\n";
         $length = $max_chunk_size;
     }
     

@@ -66,7 +66,7 @@ sub new {
             $api_key = $auth->get_copilot_token();  # Returns GitHub token if Copilot token unavailable
         };
         if ($@) {
-            print STDERR "[WARN][GitHubCopilotModelsAPI] Failed to get GitHub token: $@\n";
+            print STDERR "[WARN]GitHubCopilotModelsAPI] Failed to get GitHub token: $@\n";
         }
     }
     
@@ -95,7 +95,7 @@ sub fetch_models {
     
     # Check if we have an API key
     unless ($self->{api_key}) {
-        print STDERR "[WARN][GitHubCopilotModelsAPI] No API key available, cannot fetch models\n";
+        print STDERR "[WARN]GitHubCopilotModelsAPI] No API key available, cannot fetch models\n";
         return undef;
     }
     
@@ -179,7 +179,7 @@ sub get_model_billing {
             } else {
                 # Model exists but API doesn't provide billing info
                 # This shouldn't happen with correct headers, but handle gracefully
-                print STDERR "[WARN][GitHubCopilotModelsAPI] Model $model_id has no billing data in API response\n"
+                print STDERR "[WARN]GitHubCopilotModelsAPI] Model $model_id has no billing data in API response\n"
                     if should_log('WARNING');
                 
                 return {is_premium => 0, multiplier => 0};  # Default to free if unknown
@@ -188,7 +188,7 @@ sub get_model_billing {
     }
     
     # Model not found in API response
-    print STDERR "[WARN][GitHubCopilotModelsAPI] Model $model_id not found in API response\n"
+    print STDERR "[WARN]GitHubCopilotModelsAPI] Model $model_id not found in API response\n"
         if should_log('WARNING');
     
     return {is_premium => 0, multiplier => 0};  # Default to free if unknown
@@ -323,13 +323,13 @@ sub _save_cache {
     my $cache_dir = dirname($self->{cache_file});
     unless (-d $cache_dir) {
         mkdir $cache_dir or do {
-            print STDERR "[WARN][GitHubCopilotModelsAPI] Cannot create cache directory: $!\n";
+            print STDERR "[WARN]GitHubCopilotModelsAPI] Cannot create cache directory: $!\n";
             return;
         };
     }
     
     open my $fh, '>', $self->{cache_file} or do {
-        print STDERR "[WARN][GitHubCopilotModelsAPI] Cannot save cache: $!\n";
+        print STDERR "[WARN]GitHubCopilotModelsAPI] Cannot save cache: $!\n";
         return;
     };
     

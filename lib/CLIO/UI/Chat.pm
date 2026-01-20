@@ -480,7 +480,14 @@ sub get_input {
         # Display simple prompt for non-interactive mode
         print $self->colorize(": ", 'PROMPT');
         my $input = <STDIN>;
-        chomp $input if defined $input;
+        
+        # Handle EOF (end of piped input)
+        if (!defined $input) {
+            print "\n";
+            return '/exit';
+        }
+        
+        chomp $input;
         return $input;
     }
     
@@ -1628,7 +1635,7 @@ sub handle_login_command {
     if ($copilot_token) {
         print "  ", $self->colorize("✓", 'PROMPT'), " Copilot token obtained\n\n";
     } else {
-        print "  ", $self->colorize("○", 'DIM'), " Copilot token unavailable (will use GitHub token directly)\n\n";
+        print "  ", $self->colorize("[ ]", 'DIM'), " Copilot token unavailable (will use GitHub token directly)\n\n";
     }
     
     # Save tokens
@@ -1927,7 +1934,7 @@ sub handle_todo_command {
         # View current todo list
         my $result = $todo_tool->execute(
             { operation => 'read' },
-            { session => $self->{session} }
+            { session => $self->{session}, ui => $self }
         );
         
         if ($result->{success}) {
@@ -1949,7 +1956,7 @@ sub handle_todo_command {
         # Get existing todos to determine next ID
         my $read_result = $todo_tool->execute(
             { operation => 'read' },
-            { session => $self->{session} }
+            { session => $self->{session}, ui => $self }
         );
         
         my @new_todo = ({
@@ -1960,7 +1967,7 @@ sub handle_todo_command {
         
         my $result = $todo_tool->execute(
             { operation => 'add', newTodos => \@new_todo },
-            { session => $self->{session} }
+            { session => $self->{session}, ui => $self }
         );
         
         if ($result->{success}) {
@@ -1981,7 +1988,7 @@ sub handle_todo_command {
         
         my $result = $todo_tool->execute(
             { operation => 'update', todoUpdates => [{ id => int($todo_id), status => 'completed' }] },
-            { session => $self->{session} }
+            { session => $self->{session}, ui => $self }
         );
         
         if ($result->{success}) {
@@ -1994,7 +2001,7 @@ sub handle_todo_command {
         # Clear all completed todos
         my $read_result = $todo_tool->execute(
             { operation => 'read' },
-            { session => $self->{session} }
+            { session => $self->{session}, ui => $self }
         );
         
         if ($read_result->{success} && $read_result->{todos}) {
@@ -2002,7 +2009,7 @@ sub handle_todo_command {
             
             my $result = $todo_tool->execute(
                 { operation => 'write', todoList => \@incomplete },
-                { session => $self->{session} }
+                { session => $self->{session}, ui => $self }
             );
             
             if ($result->{success}) {

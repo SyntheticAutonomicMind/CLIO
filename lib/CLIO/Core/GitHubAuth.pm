@@ -190,7 +190,7 @@ sub poll_for_token {
             }
             elsif ($error eq 'slow_down') {
                 # Polling too fast, slow down
-                print STDERR "[WARN][GitHubAuth] Polling too fast, slowing down\n" if should_log('WARNING');
+                print STDERR "[WARN]GitHubAuth] Polling too fast, slowing down\n" if should_log('WARNING');
                 sleep($interval + 5);
                 next;
             }
@@ -348,7 +348,7 @@ sub load_tokens {
     };
     
     if ($@) {
-        print STDERR "[WARN][GitHubAuth] Failed to load tokens: $@\n" if should_log('WARNING');
+        print STDERR "[WARN]GitHubAuth] Failed to load tokens: $@\n" if should_log('WARNING');
         return undef;
     }
     
@@ -393,7 +393,7 @@ sub get_copilot_token {
             };
             
             if ($@) {
-                print STDERR "[WARN][GitHubAuth] Token refresh failed: $@, using GitHub token\n" if should_log('WARNING');
+                print STDERR "[WARN]GitHubAuth] Token refresh failed: $@, using GitHub token\n" if should_log('WARNING');
                 return $tokens->{github_token};
             }
         }
