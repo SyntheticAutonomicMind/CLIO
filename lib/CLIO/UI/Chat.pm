@@ -7,6 +7,7 @@ use CLIO::Util::TextSanitizer qw(sanitize_text);
 use CLIO::UI::Markdown;
 use CLIO::UI::ANSI;
 use CLIO::UI::Theme;
+use CLIO::UI::ProgressSpinner;
 use utf8;
 use open ':std', ':encoding(UTF-8)';
 binmode(STDOUT, ':encoding(UTF-8)');
@@ -174,6 +175,13 @@ sub run {
             # Refresh terminal size before output (handle resize)
             $self->refresh_terminal_size();
             
+            # Show progress indicator while waiting for AI response
+            my $spinner = CLIO::UI::ProgressSpinner->new(
+                frames => ['.', 'o', 'O', 'o', '.'],
+                delay => 150000,  # 150ms between frames
+            );
+            $spinner->start();
+            
             # Reset pagination state before streaming
             $self->{line_count} = 0;
             $self->{stop_streaming} = 0;
@@ -198,6 +206,11 @@ sub run {
                 my ($chunk, $metrics) = @_;
                 
                 print STDERR "[DEBUG][Chat] Received chunk: " . substr($chunk, 0, 50) . "...\n" if $self->{debug};
+                
+                # Stop progress spinner on first chunk (AI is now responding)
+                if (!$first_chunk_received) {
+                    $spinner->stop();
+                }
                 
                 # Display role label on first chunk
                 if (!$first_chunk_received) {
@@ -302,6 +315,9 @@ sub run {
                 ui => $self  # Pass UI object for user_collaboration tool
             });
             print STDERR "[DEBUG][Chat] process_user_request returned, success=" . ($result->{success} ? "yes" : "no") . "\n" if $self->{debug};
+            
+            # Stop spinner in case it's still running (e.g., error before first chunk)
+            $spinner->stop();
             
             # DEBUG: Check buffer states before flush
             if ($self->{debug}) {

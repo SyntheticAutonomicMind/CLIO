@@ -59,7 +59,7 @@ sub new {
     my $self = {
         api_manager => $args{api_manager},
         session => $args{session},
-        max_iterations => $args{max_iterations} || 100,  # Increased from 10 to support complex coding tasks
+        max_iterations => $args{max_iterations} || 500,  # Increased from 10 to support complex coding tasks
         debug => $args{debug} || 0,
     };
     
