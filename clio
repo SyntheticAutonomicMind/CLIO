@@ -1,8 +1,11 @@
 #!/usr/bin/env perl
 BEGIN {
     $|=1;
-    use FindBin;
-    use lib "$FindBin::Bin/lib";
+    use FindBin qw($RealBin);
+    
+    # Use $RealBin which automatically resolves symlinks
+    # This ensures lib path is correct even when clio is invoked via symlink
+    use lib "$RealBin/lib";
 }
 
 use strict;
