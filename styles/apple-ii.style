@@ -1,0 +1,43 @@
+# CLIO Style: apple-ii
+# Apple II color palette - bright green and white on black
+# The iconic colors of early Apple computers and their crisp green displays
+
+name=apple-ii
+
+# User interaction colors - Apple II green
+user_prompt=@BRIGHT_GREEN@
+user_text=@GREEN@
+
+# Agent/Assistant colors - bright white (Apple II text mode)
+agent_label=@BRIGHT_WHITE@@BOLD@
+agent_text=@WHITE@
+
+# System messages
+system_message=@BRIGHT_GREEN@@BOLD@
+error_message=@BRIGHT_RED@
+
+# UI elements - green and white (classic Apple II)
+banner=@BRIGHT_GREEN@@BOLD@
+app_title=@BRIGHT_GREEN@
+app_subtitle=@GREEN@
+data=@BRIGHT_WHITE@
+dim=@GREEN@
+theme_header=@BRIGHT_WHITE@@BOLD@
+prompt_indicator=@BRIGHT_GREEN@
+
+# Markdown element colors - green/white palette
+markdown_bold=@BOLD@@BRIGHT_WHITE@
+markdown_italic=@DIM@@GREEN@
+markdown_code=@BRIGHT_GREEN@@BOLD@
+markdown_link_text=@BRIGHT_WHITE@@UNDERLINE@
+markdown_link_url=@WHITE@
+markdown_header1=@BOLD@@BRIGHT_WHITE@
+markdown_header2=@BOLD@@BRIGHT_GREEN@
+markdown_header3=@BOLD@@GREEN@
+markdown_list_bullet=@BRIGHT_GREEN@
+markdown_quote=@DIM@@GREEN@
+markdown_code_block=@BRIGHT_GREEN@
+
+# Table colors
+table_border=@GREEN@
+table_header=@BOLD@@BRIGHT_WHITE@

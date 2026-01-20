@@ -1,0 +1,43 @@
+# CLIO Style: retro-rainbow
+# Vibrant multi-color palette inspired by PhotonBBS and classic BBS ANSI art
+# Maximum color, maximum fun - like the best ANSI art from the BBS era
+
+name=retro-rainbow
+
+# User interaction colors - bright magenta for that pop
+user_prompt=@BRIGHT_MAGENTA@
+user_text=@BRIGHT_CYAN@
+
+# Agent/Assistant colors - bright yellow for visibility
+agent_label=@BRIGHT_YELLOW@
+agent_text=@BRIGHT_WHITE@
+
+# System messages - full spectrum
+system_message=@BRIGHT_BLUE@
+error_message=@BRIGHT_RED@
+
+# UI elements - mix of vibrant colors
+banner=@BRIGHT_CYAN@@BOLD@
+app_title=@BRIGHT_MAGENTA@
+app_subtitle=@BRIGHT_CYAN@
+data=@BRIGHT_WHITE@
+dim=@CYAN@
+theme_header=@BRIGHT_YELLOW@@BOLD@
+prompt_indicator=@BRIGHT_MAGENTA@
+
+# Markdown element colors - full rainbow
+markdown_bold=@BOLD@@BRIGHT_WHITE@
+markdown_italic=@BRIGHT_CYAN@
+markdown_code=@BRIGHT_YELLOW@@BOLD@
+markdown_link_text=@BRIGHT_BLUE@@UNDERLINE@
+markdown_link_url=@BLUE@
+markdown_header1=@BOLD@@BRIGHT_MAGENTA@
+markdown_header2=@BOLD@@BRIGHT_CYAN@
+markdown_header3=@BOLD@@BRIGHT_GREEN@
+markdown_list_bullet=@BRIGHT_YELLOW@
+markdown_quote=@CYAN@
+markdown_code_block=@BRIGHT_YELLOW@
+
+# Table colors
+table_border=@BRIGHT_CYAN@
+table_header=@BOLD@@BRIGHT_MAGENTA@

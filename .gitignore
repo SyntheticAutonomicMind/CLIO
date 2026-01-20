@@ -1,0 +1,29 @@
+# User data
+sessions/
+url_cache/
+.clio/logs/
+.clio/sessions/
+
+# Editor files
+*.swp
+*.bak
+*~
+.*.sw?
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test files
+test*.txt
+test*.pl
+test*.sh
+scratch/
+
+# Test suite is INCLUDED (in tests/ directory)
+# Do NOT ignore tests/ - it contains the official test suite
+
+# Logs
+*.log
+debug.log
+output.log

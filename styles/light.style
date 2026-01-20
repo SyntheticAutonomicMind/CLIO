@@ -1,0 +1,43 @@
+# CLIO Style: light
+# Color scheme for light backgrounds
+# Uses darker colors for visibility on light terminals
+
+name=light
+
+# User interaction colors - dark green on light bg
+user_prompt=@GREEN@
+user_text=@BLUE@
+
+# Agent/Assistant colors - dark blue
+agent_label=@BLUE@
+agent_text=@BLACK@
+
+# System messages - dark magenta
+system_message=@MAGENTA@
+error_message=@RED@
+
+# UI elements - darker colors
+banner=@CYAN@@BOLD@
+app_title=@BLUE@@BOLD@
+app_subtitle=@DIM@@BLACK@
+data=@BLACK@
+dim=@DIM@
+theme_header=@CYAN@@BOLD@
+prompt_indicator=@GREEN@@BOLD@
+
+# Markdown element colors - darker for light bg
+markdown_bold=@BOLD@@BLACK@
+markdown_italic=@DIM@
+markdown_code=@BLUE@
+markdown_link_text=@BLUE@@UNDERLINE@
+markdown_link_url=@CYAN@
+markdown_header1=@BOLD@@CYAN@
+markdown_header2=@BOLD@@BLUE@
+markdown_header3=@BOLD@@BLACK@
+markdown_list_bullet=@GREEN@
+markdown_quote=@CYAN@
+markdown_code_block=@BLUE@
+
+# Table colors
+table_border=@BLACK@
+table_header=@BOLD@@CYAN@

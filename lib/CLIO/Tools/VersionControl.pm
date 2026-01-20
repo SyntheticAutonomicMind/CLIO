@@ -1,0 +1,545 @@
+package CLIO::Tools::VersionControl;
+
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: Copyright (c) 2025 Andrew Wyatt (Fewtarius)
+
+use strict;
+use warnings;
+use parent 'CLIO::Tools::Tool';
+use Cwd 'getcwd';
+use JSON::PP qw(decode_json encode_json);
+use feature 'say';
+
+=head1 NAME
+
+CLIO::Tools::VersionControl - Git version control operations tool
+
+=head1 DESCRIPTION
+
+Provides 10 git operations for repository management, history, and collaboration.
+
+Operations:
+  status, log, diff, branch, commit, push, pull, blame, stash, tag
+
+=cut
+
+sub new {
+    my ($class, %opts) = @_;
+    
+    return $class->SUPER::new(
+        name => 'version_control',
+        description => q{Git version control operations for repository management.
+
+=== QUERY (3 operations) ===
+-  status - Repository status and changes
+-  log - Git commit history
+-  diff - Show differences between commits/branches
+
+=== BRANCH (2 operations) ===  
+-  branch - Branch operations (list, create, switch, delete)
+-  commit - Create commits
+
+=== REMOTE (2 operations) ===
+-  push - Push changes to remote
+-  pull - Pull changes from remote
+
+=== HISTORY (3 operations) ===
+-  blame - Show file annotation/blame
+-  stash - Stash operations (save, list, apply, drop)
+-  tag - Tag operations (list, create, delete)
+},
+        supported_operations => [qw(
+            status log diff branch commit push pull blame stash tag
+        )],
+        %opts,
+    );
+}
+
+sub route_operation {
+    my ($self, $operation, $params, $context) = @_;
+    
+    # Verify git repository
+    my $repo_path = $params->{repository_path} || '.';
+    unless ($self->_is_git_repo($repo_path)) {
+        return $self->error_result("Not a Git repository: $repo_path");
+    }
+    
+    if ($operation eq 'status') {
+        return $self->status($params, $context);
+    } elsif ($operation eq 'log') {
+        return $self->log($params, $context);
+    } elsif ($operation eq 'diff') {
+        return $self->diff($params, $context);
+    } elsif ($operation eq 'branch') {
+        return $self->branch($params, $context);
+    } elsif ($operation eq 'commit') {
+        return $self->commit($params, $context);
+    } elsif ($operation eq 'push') {
+        return $self->push($params, $context);
+    } elsif ($operation eq 'pull') {
+        return $self->pull($params, $context);
+    } elsif ($operation eq 'blame') {
+        return $self->blame($params, $context);
+    } elsif ($operation eq 'stash') {
+        return $self->stash($params, $context);
+    } elsif ($operation eq 'tag') {
+        return $self->tag($params, $context);
+    }
+    
+    return $self->error_result("Operation not implemented: $operation");
+}
+
+sub status {
+    my ($self, $params, $context) = @_;
+    
+    my $repo_path = $params->{repository_path} || '.';
+    my $result;
+    
+    eval {
+        my $original_cwd = getcwd();
+        chdir $repo_path if $repo_path ne '.';
+        
+        my $status = `git status --porcelain -b 2>&1`;
+        my $branch = `git branch --show-current 2>&1`;
+        chomp($branch);
+        
+        chdir $original_cwd if $repo_path ne '.';
+        
+        my @files;
+        foreach my $line (split /\n/, $status) {
+            next if $line =~ /^##/;  # Skip branch line
+            if ($line =~ /^(.{2})\s+(.+)$/) {
+                my ($status_code, $file) = ($1, $2);
+                push @files, {
+                    status => $status_code,
+                    file => $file,
+                };
+            }
+        }
+        
+        my $file_summary = scalar(@files) > 0 ? scalar(@files) . " changes" : "clean";
+        my $action_desc = "checking status of $repo_path ($branch: $file_summary)";
+        
+        $result = $self->success_result(
+            {
+                branch => $branch,
+                files => \@files,
+                clean => scalar(@files) == 0,
+            },
+            action_description => $action_desc,
+            repository_path => $repo_path,
+        );
+    };
+    
+    if ($@) {
+        return $self->error_result("Git status failed: $@");
+    }
+    
+    return $result;
+}
+
+sub log {
+    my ($self, $params, $context) = @_;
+    
+    my $repo_path = $params->{repository_path} || '.';
+    my $limit = $params->{limit} || 10;
+    my $result;
+    
+    eval {
+        my $original_cwd = getcwd();
+        chdir $repo_path if $repo_path ne '.';
+        
+        my $log_output = `git log --pretty=format:'%H|%an|%ae|%ad|%s' --date=iso -n $limit 2>&1`;
+        
+        chdir $original_cwd if $repo_path ne '.';
+        
+        my @commits;
+        foreach my $line (split /\n/, $log_output) {
+            my ($hash, $author, $email, $date, $subject) = split /\|/, $line, 5;
+            push @commits, {
+                hash => $hash,
+                author => $author,
+                email => $email,
+                date => $date,
+                subject => $subject,
+            };
+        }
+        
+        my $action_desc = "viewing git log of $repo_path (" . scalar(@commits) . " commits)";
+        
+        $result = $self->success_result(
+            \@commits,
+            action_description => $action_desc,
+            repository_path => $repo_path,
+            count => scalar(@commits),
+        );
+    };
+    
+    if ($@) {
+        return $self->error_result("Git log failed: $@");
+    }
+    
+    return $result;
+}
+
+sub diff {
+    my ($self, $params, $context) = @_;
+    
+    my $repo_path = $params->{repository_path} || '.';
+    my $ref1 = $params->{ref1} || 'HEAD';
+    my $ref2 = $params->{ref2} || '';
+    my $file = $params->{file} || '';
+    my $result;
+    
+    eval {
+        my $original_cwd = getcwd();
+        chdir $repo_path if $repo_path ne '.';
+        
+        my $cmd = "git diff $ref1";
+        $cmd .= " $ref2" if $ref2;
+        $cmd .= " -- $file" if $file;
+        $cmd .= " 2>&1";
+        
+        my $diff_output = `$cmd`;
+        
+        chdir $original_cwd if $repo_path ne '.';
+        
+        my $target = $file ? "file $file" : "repository";
+        my $comparison = $ref2 ? "$ref1..$ref2" : "$ref1 vs working tree";
+        my $action_desc = "comparing $comparison in $target";
+        
+        $result = $self->success_result(
+            $diff_output,
+            action_description => $action_desc,
+            repository_path => $repo_path,
+            ref1 => $ref1,
+            ref2 => $ref2 || 'working tree',
+        );
+    };
+    
+    if ($@) {
+        return $self->error_result("Git diff failed: $@");
+    }
+    
+    return $result;
+}
+
+sub branch {
+    my ($self, $params, $context) = @_;
+    
+    my $repo_path = $params->{repository_path} || '.';
+    my $action = $params->{action} || 'list';  # list, create, delete, switch
+    my $name = $params->{name} || '';
+    my $result;
+    
+    eval {
+        my $original_cwd = getcwd();
+        chdir $repo_path if $repo_path ne '.';
+        
+        my $output;
+        if ($action eq 'list') {
+            $output = `git branch -a 2>&1`;
+        } elsif ($action eq 'create' && $name) {
+            $output = `git branch $name 2>&1`;
+        } elsif ($action eq 'delete' && $name) {
+            $output = `git branch -d $name 2>&1`;
+        } elsif ($action eq 'switch' && $name) {
+            $output = `git checkout $name 2>&1`;
+        } else {
+            die "Invalid branch action or missing name";
+        }
+        
+        chdir $original_cwd if $repo_path ne '.';
+        
+        my $action_desc = $action eq 'list' 
+            ? "listing branches"
+            : "$action branch" . ($name ? " '$name'" : "");
+        
+        $result = $self->success_result(
+            $output,
+            action_description => $action_desc,
+            action => $action,
+            branch_name => $name,
+        );
+    };
+    
+    if ($@) {
+        return $self->error_result("Git branch failed: $@");
+    }
+    
+    return $result;
+}
+
+sub commit {
+    my ($self, $params, $context) = @_;
+    
+    my $repo_path = $params->{repository_path} || '.';
+    my $message = $params->{message};
+    my $result;
+    
+    return $self->error_result("Missing 'message' parameter") unless $message;
+    
+    eval {
+        my $original_cwd = getcwd();
+        chdir $repo_path if $repo_path ne '.';
+        
+        my $output = `git commit -m "$message" 2>&1`;
+        
+        chdir $original_cwd if $repo_path ne '.';
+        
+        my $action_desc = "committing changes";
+        
+        $result = $self->success_result(
+            $output,
+            action_description => $action_desc,
+            message => $message,
+        );
+    };
+    
+    if ($@) {
+        return $self->error_result("Git commit failed: $@");
+    }
+    
+    return $result;
+}
+
+sub push {
+    my ($self, $params, $context) = @_;
+    
+    my $repo_path = $params->{repository_path} || '.';
+    my $remote = $params->{remote} || 'origin';
+    my $branch = $params->{branch} || '';
+    my $result;
+    
+    eval {
+        my $original_cwd = getcwd();
+        chdir $repo_path if $repo_path ne '.';
+        
+        my $cmd = "git push $remote";
+        $cmd .= " $branch" if $branch;
+        $cmd .= " 2>&1";
+        
+        my $output = `$cmd`;
+        
+        chdir $original_cwd if $repo_path ne '.';
+        
+        my $target = $branch ? "$remote/$branch" : $remote;
+        my $action_desc = "pushing to $target";
+        
+        $result = $self->success_result(
+            $output,
+            action_description => $action_desc,
+            remote => $remote,
+            branch => $branch || 'current',
+        );
+    };
+    
+    if ($@) {
+        return $self->error_result("Git push failed: $@");
+    }
+    
+    return $result;
+}
+
+sub pull {
+    my ($self, $params, $context) = @_;
+    
+    my $repo_path = $params->{repository_path} || '.';
+    my $remote = $params->{remote} || 'origin';
+    my $branch = $params->{branch} || '';
+    my $result;
+    
+    eval {
+        my $original_cwd = getcwd();
+        chdir $repo_path if $repo_path ne '.';
+        
+        my $cmd = "git pull $remote";
+        $cmd .= " $branch" if $branch;
+        $cmd .= " 2>&1";
+        
+        my $output = `$cmd`;
+        
+        chdir $original_cwd if $repo_path ne '.';
+        
+        my $target = $branch ? "$remote/$branch" : $remote;
+        my $action_desc = "pulling from $target";
+        
+        $result = $self->success_result(
+            $output,
+            action_description => $action_desc,
+            remote => $remote,
+            branch => $branch || 'current',
+        );
+    };
+    
+    if ($@) {
+        return $self->error_result("Git pull failed: $@");
+    }
+    
+    return $result;
+}
+
+sub blame {
+    my ($self, $params, $context) = @_;
+    
+    my $repo_path = $params->{repository_path} || '.';
+    my $file = $params->{file};
+    my $result;
+    
+    return $self->error_result("Missing 'file' parameter") unless $file;
+    
+    eval {
+        my $original_cwd = getcwd();
+        chdir $repo_path if $repo_path ne '.';
+        
+        my $output = `git blame $file 2>&1`;
+        
+        chdir $original_cwd if $repo_path ne '.';
+        
+        my $action_desc = "viewing blame for $file";
+        
+        $result = $self->success_result(
+            $output,
+            action_description => $action_desc,
+            file => $file,
+        );
+    };
+    
+    if ($@) {
+        return $self->error_result("Git blame failed: $@");
+    }
+    
+    return $result;
+}
+
+sub stash {
+    my ($self, $params, $context) = @_;
+    
+    my $repo_path = $params->{repository_path} || '.';
+    my $action = $params->{action} || 'list';  # save, list, apply, drop, clear
+    my $result;
+    
+    eval {
+        my $original_cwd = getcwd();
+        chdir $repo_path if $repo_path ne '.';
+        
+        my $output;
+        if ($action eq 'save') {
+            my $message = $params->{message} || 'stash';
+            $output = `git stash save "$message" 2>&1`;
+        } elsif ($action eq 'list') {
+            $output = `git stash list 2>&1`;
+        } elsif ($action eq 'apply') {
+            my $index = $params->{index} || 0;
+            $output = `git stash apply stash@{$index} 2>&1`;
+        } elsif ($action eq 'drop') {
+            my $index = $params->{index} || 0;
+            $output = `git stash drop stash@{$index} 2>&1`;
+        } elsif ($action eq 'clear') {
+            $output = `git stash clear 2>&1`;
+        } else {
+            die "Invalid stash action: $action";
+        }
+        
+        chdir $original_cwd if $repo_path ne '.';
+        
+        my $action_desc = $action eq 'save' 
+            ? "saving stash"
+            : $action eq 'list'
+            ? "listing stashes"
+            : "$action stash";
+        
+        $result = $self->success_result(
+            $output,
+            action_description => $action_desc,
+            action => $action,
+        );
+    };
+    
+    if ($@) {
+        return $self->error_result("Git stash failed: $@");
+    }
+    
+    return $result;
+}
+
+sub tag {
+    my ($self, $params, $context) = @_;
+    
+    my $repo_path = $params->{repository_path} || '.';
+    my $action = $params->{action} || 'list';  # list, create, delete
+    my $name = $params->{name} || '';
+    my $result;
+    
+    eval {
+        my $original_cwd = getcwd();
+        chdir $repo_path if $repo_path ne '.';
+        
+        my $output;
+        if ($action eq 'list') {
+            $output = `git tag 2>&1`;
+        } elsif ($action eq 'create' && $name) {
+            my $message = $params->{message} || '';
+            if ($message) {
+                $output = `git tag -a $name -m "$message" 2>&1`;
+            } else {
+                $output = `git tag $name 2>&1`;
+            }
+        } elsif ($action eq 'delete' && $name) {
+            $output = `git tag -d $name 2>&1`;
+        } else {
+            die "Invalid tag action or missing name";
+        }
+        
+        chdir $original_cwd if $repo_path ne '.';
+        
+        my $action_desc = $action eq 'list'
+            ? "listing tags"
+            : "$action tag" . ($name ? " '$name'" : "");
+        
+        $result = $self->success_result(
+            $output,
+            action_description => $action_desc,
+            action => $action,
+            tag_name => $name,
+        );
+    };
+    
+    if ($@) {
+        return $self->error_result("Git tag failed: $@");
+    }
+    
+    return $result;
+}
+
+sub _is_git_repo {
+    my ($self, $path) = @_;
+    
+    $path ||= '.';
+    
+    my $original_cwd = getcwd();
+    chdir $path if $path ne '.';
+    
+    my $is_repo = -d '.git' || `git rev-parse --git-dir 2>/dev/null`;
+    
+    chdir $original_cwd if $path ne '.';
+    
+    return $is_repo ? 1 : 0;
+}
+
+1;
+
+__END__
+
+=head1 MIGRATION FROM CLIO::Protocols::Git
+
+Replaces CLIO::Protocols::Git with cleaner operation-based API.
+
+Old: [GIT:action=status:params=<base64>]
+New: { "tool": "version_control", "operation": "status" }
+
+=head1 AUTHOR
+
+CLIO Project
+
+=cut

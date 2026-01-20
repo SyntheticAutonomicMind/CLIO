@@ -1,0 +1,96 @@
+package CLIO::Core::Logger;
+
+use strict;
+use warnings;
+use Exporter 'import';
+
+our @EXPORT_OK = qw(should_log LOG_LEVEL);
+
+=head1 NAME
+
+CLIO::Core::Logger - Global logging utility
+
+=head1 DESCRIPTION
+
+Provides global should_log() function that checks CLIO_DEBUG environment
+variable or falls back to INFO default.
+
+This allows modules without config access to still respect log level settings.
+
+=cut
+
+# Log level constants
+use constant LOG_LEVEL => {
+    ERROR => 0,
+    WARNING => 1,
+    INFO => 2,
+    DEBUG => 3,
+};
+
+=head2 should_log
+
+Check if a message at the given level should be logged
+
+Arguments:
+- $level: Log level (ERROR, WARNING, INFO, DEBUG)
+- $config (optional): Config object to check, otherwise uses ENV
+
+Returns: 1 if message should be shown, 0 otherwise
+
+=cut
+
+sub should_log {
+    my ($level, $config) = @_;
+    
+    # Normalize level to uppercase
+    $level = uc($level);
+    
+    # Get configured log level
+    my $config_level;
+    
+    if ($config && $config->can('get')) {
+        # Use config object if available
+        $config_level = uc($config->get('log_level') || 'WARNING');
+    } elsif ($ENV{CLIO_DEBUG}) {
+        # Use environment variable
+        # Handle CLIO_DEBUG=1 or --debug flag as equivalent to DEBUG level
+        my $debug_value = uc($ENV{CLIO_DEBUG});
+        if ($debug_value eq '1' || $debug_value eq 'TRUE' || $debug_value eq 'YES') {
+            $config_level = 'DEBUG';
+        } else {
+            $config_level = $debug_value;
+        }
+    } else {
+        # Default to WARNING (less verbose than INFO)
+        $config_level = 'WARNING';
+    }
+    
+    # Validate levels
+    return 0 unless exists LOG_LEVEL->{$level};
+    return 0 unless exists LOG_LEVEL->{$config_level};
+    
+    # Show if message level <= configured level
+    # (lower numbers = higher priority)
+    return LOG_LEVEL->{$level} <= LOG_LEVEL->{$config_level};
+}
+
+1;
+
+__END__
+
+=head1 USAGE
+
+    use CLIO::Core::Logger qw(should_log);
+    
+    # Simple usage (uses ENV or default)
+    print STDERR "[DEBUG][Module] Message\n" if should_log('DEBUG');
+    print STDERR "[ERROR][Module] Error\n" if should_log('ERROR');
+    
+    # With config object
+    print STDERR "[INFO][Module] Info\n" if should_log('INFO', $self->{config});
+
+=head1 AUTHOR
+
+Fewtarius
+
+=cut

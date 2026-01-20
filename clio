@@ -1,0 +1,421 @@
+#!/usr/bin/env perl
+BEGIN {
+    $|=1;
+    use FindBin;
+    use lib "$FindBin::Bin/lib";
+}
+
+use strict;
+use warnings;
+use File::Spec;
+use File::Basename;
+use File::Path qw(make_path);
+use CLIO::UI::Chat;
+use CLIO::Util::PathResolver;
+
+# Initialize path resolver early
+CLIO::Util::PathResolver::init();
+
+# Check for --help flag
+if (grep { $_ eq '--help' || $_ eq '-h' } @ARGV) {
+    print <<'HELP';
+CLIO - Command Line Intelligent Operator
+AI-Powered Development Assistant
+
+USAGE:
+    clio [OPTIONS]
+
+OPTIONS:
+    --new              Start a new session
+    --resume [ID]      Resume a session (most recent if no ID provided)
+    --debug            Enable debug output
+    --dir <path>       Set working directory for session
+    --input <text>     Process input and exit
+    --exit             Exit after processing (with --input)
+    --no-custom-instructions  Skip .clio/instructions.md
+    --help, -h         Display this help message
+
+EXAMPLES:
+    clio --new                    # Start new session
+    clio --resume                 # Resume most recent session
+    clio --resume <session_id>    # Resume specific session
+    clio --debug --new            # Start with debug logging
+    clio --dir /path/to/project   # Start in specific directory
+
+SESSIONS:
+    Sessions are stored in: .clio/sessions/
+    Each session has a unique UUID identifier
+    Use /switch command to list and switch between sessions
+
+SLASH COMMANDS:
+    Type /help in the application for available commands
+
+ENVIRONMENT:
+    CLIO_DEBUG=1    Enable debug output
+
+HELP
+    exit 0;
+}
+
+# Set debug level from environment or args
+my $debug = ($ENV{CLIO_DEBUG} || grep { $_ eq '--debug' } @ARGV) ? 1 : 0;
+
+# Set CLIO_LOG_LEVEL for should_log() to work across all modules
+if ($debug) {
+    $ENV{CLIO_LOG_LEVEL} = 'DEBUG';
+}
+
+my $input = '';
+my $session_id = '';
+my $mode = '';
+my $working_dir = '';
+my $session;
+
+# Validate and create required directories
+my $base_dir = $FindBin::Bin;
+my @required_dirs = (
+    File::Spec->catdir($base_dir, '.clio/sessions'),
+    File::Spec->catdir($base_dir, 'lib', 'CA'),
+    File::Spec->catdir($base_dir, 'lib', 'CA', 'UI'),
+    File::Spec->catdir($base_dir, 'lib', 'CA', 'Core'),
+);
+
+for my $dir (@required_dirs) {
+    unless (-d $dir) {
+        print STDERR "Creating directory: $dir\n" if $debug;
+        make_path($dir) or die "Failed to create directory $dir: $!";
+    }
+}
+
+# Load required modules
+use CLIO::Core::APIManager;
+use CLIO::Core::SimpleAIAgent;
+use CLIO::Core::Config;
+use CLIO::Session::Manager;
+use CLIO::Protocols::Manager;
+use CLIO::Core::CommandParser;
+
+# Register ALL protocol handlers including enhanced protocols
+CLIO::Protocols::Manager->register(name => 'FILE_OP', handler => 'CLIO::Protocols::FileOp');
+CLIO::Protocols::Manager->register(name => 'GIT', handler => 'CLIO::Protocols::Git');
+CLIO::Protocols::Manager->register(name => 'RAG', handler => 'CLIO::Protocols::RAG');
+CLIO::Protocols::Manager->register(name => 'MEMORY', handler => 'CLIO::Protocols::Memory');
+CLIO::Protocols::Manager->register(name => 'RECALL', handler => 'CLIO::Protocols::Recall');
+CLIO::Protocols::Manager->register(name => 'SEARCH', handler => 'CLIO::Protocols::Search');
+CLIO::Protocols::Manager->register(name => 'URL_FETCH', handler => 'CLIO::Protocols::UrlFetch');
+CLIO::Protocols::Manager->register(name => 'WEB_SEARCH', handler => 'CLIO::Protocols::WebSearch');
+CLIO::Protocols::Manager->register(name => 'CODE_ANALYSIS', handler => 'CLIO::Protocols::CodeAnalysis');
+CLIO::Protocols::Manager->register(name => 'VALIDATE', handler => 'CLIO::Protocols::Validate');
+CLIO::Protocols::Manager->register(name => 'PATTERN', handler => 'CLIO::Protocols::Pattern');
+CLIO::Protocols::Manager->register(name => 'REFACTOR', handler => 'CLIO::Protocols::Refactor');
+CLIO::Protocols::Manager->register(name => 'SECURITY', handler => 'CLIO::Protocols::Security');
+CLIO::Protocols::Manager->register(name => 'AUDIT', handler => 'CLIO::Protocols::Audit');
+
+# Initialize configuration system
+my $config = CLIO::Core::Config->new(debug => $debug);
+
+# Parse command line arguments
+my $should_exit = 0;
+my $skip_custom = 0;
+for (my $i = 0; $i < @ARGV; $i++) {
+    if ($ARGV[$i] eq '--input' && defined $ARGV[$i+1]) {
+        $input = $ARGV[$i+1];
+    }
+    if ($ARGV[$i] eq '--dir' && defined $ARGV[$i+1]) {
+        $working_dir = $ARGV[$i+1];
+    }
+    if ($ARGV[$i] eq '--new') {
+        $mode = 'new';
+    }
+    if ($ARGV[$i] eq '--resume') {
+        $mode = 'resume';
+        # If next arg is not another flag, treat as session id
+        if (defined $ARGV[$i+1] && $ARGV[$i+1] !~ /^--/) {
+            $session_id = $ARGV[$i+1];
+        }
+    }
+    if ($ARGV[$i] eq '--exit') {
+        $should_exit = 1;
+    }
+    if ($ARGV[$i] eq '--no-custom-instructions') {
+        $skip_custom = 1;
+    }
+}
+
+# Default to 'new' mode if not specified
+if (!$mode) {
+    print STDERR "[TRACE] No mode specified, defaulting to 'new'\n" if $debug || $ENV{CLIO_DEBUG};
+    $mode = 'new';
+}
+print STDERR "[TRACE] Mode before session creation: $mode\n" if $debug || $ENV{CLIO_DEBUG};
+
+# Create or load session
+if ($mode eq 'new') {
+    my $eval_err;
+    eval {
+        $session = CLIO::Session::Manager->create(
+            debug => $debug,
+            working_directory => $working_dir
+        );
+    };
+    $eval_err = $@;
+    if ($debug || $ENV{CLIO_DEBUG}) {
+        require Data::Dumper;
+        print STDERR "[DEBUG] Session object after create: " . Data::Dumper::Dumper($session);
+        print STDERR "[DEBUG] session_id after create: ", (defined $session ? $session->{session_id} // '[undef]' : '[no session]'), "\n";
+        print STDERR "[TRACE][EVAL] Error during create: $eval_err\n" if $eval_err;
+    }
+    $session_id = $session->{session_id} // ($session->{state} ? $session->{state}->{session_id} : undef) if $session;
+    print "[DEBUG] Created new session: $session_id\n" if ($debug || $ENV{CLIO_DEBUG}) && $session_id;
+    print STDERR "[TRACE] After new: session defined? ", (defined $session ? 'yes' : 'no'), "\n" if $debug || $ENV{CLIO_DEBUG};
+    
+    # Add system prompt to session history ONCE at session start (not on every request!)
+    if ($session) {
+        use CLIO::Core::PromptManager;
+        my $pm = CLIO::Core::PromptManager->new(debug => $debug, skip_custom => $skip_custom);
+        my $system_prompt = $pm->get_system_prompt();
+        $session->add_message('system', $system_prompt);
+        print STDERR "[DEBUG] Added system prompt to session history (" . length($system_prompt) . " chars)\n" if $debug || $ENV{CLIO_DEBUG};
+    }
+} elsif ($mode eq 'resume') {
+    my $eval_err;
+    if ($session_id) {
+        eval {
+            $session = CLIO::Session::Manager->load($session_id, debug => $debug);
+        };
+        $eval_err = $@;
+        print STDERR "[TRACE][EVAL] Error during load by id: $eval_err\n" if $debug || $ENV{CLIO_DEBUG};
+        print STDERR "[TRACE] After load by id: session defined? ", (defined $session ? 'yes' : 'no'), "\n" if $debug || $ENV{CLIO_DEBUG};
+        if (!$session) {
+            print "[ERROR] Failed to load session $session_id\n";
+        }
+    } else {
+        # Resume most recent session if no ID provided
+        my $sessions_dir = CLIO::Util::PathResolver::get_sessions_dir();
+        opendir(my $dh, $sessions_dir) or die "Cannot open sessions dir: $!";
+        my @files = sort { (stat("$sessions_dir/$b"))[9] <=> (stat("$sessions_dir/$a"))[9] } grep { /\.json$/ } readdir($dh);
+        closedir($dh);
+        if (@files) {
+            ($session_id = $files[0]) =~ s/\.json$//;
+            eval {
+                $session = CLIO::Session::Manager->load($session_id, debug => $debug);
+            };
+            $eval_err = $@;
+            print STDERR "[TRACE][EVAL] Error during load most recent: $eval_err\n" if $debug || $ENV{CLIO_DEBUG};
+            print STDERR "[TRACE] After load most recent: session defined? ", (defined $session ? 'yes' : 'no'), "\n" if $debug || $ENV{CLIO_DEBUG};
+            if (!$session) {
+                print "[ERROR] Failed to load most recent session $session_id\n";
+            }
+        }
+    }
+    # Always fallback to new session if loading failed
+    if (!$session) {
+        eval {
+            $session = CLIO::Session::Manager->create(debug => $debug);
+        };
+        $eval_err = $@;
+        $session_id = $session->{session_id} // ($session->{state} ? $session->{state}->{session_id} : undef) if $session;
+        print "[DEBUG] Created new session (fallback): $session_id\n" if ($debug || $ENV{CLIO_DEBUG}) && $session_id;
+        print STDERR "[TRACE][EVAL] Error during fallback create: $eval_err\n" if $debug || $ENV{CLIO_DEBUG};
+        print STDERR "[TRACE] After fallback create: session defined? ", (defined $session ? 'yes' : 'no'), "\n" if $debug || $ENV{CLIO_DEBUG};
+        
+        # Add system prompt to fallback session (same as regular new session)
+        if ($session) {
+            use CLIO::Core::PromptManager;
+            my $pm = CLIO::Core::PromptManager->new(debug => $debug, skip_custom => $skip_custom);
+            my $system_prompt = $pm->get_system_prompt();
+            $session->add_message('system', $system_prompt);
+            print STDERR "[DEBUG] Added system prompt to fallback session (" . length($system_prompt) . " chars)\n" if $debug || $ENV{CLIO_DEBUG};
+        }
+    } else {
+        $session_id = $session->{session_id} // ($session->{state} ? $session->{state}->{session_id} : undef);
+        print "[DEBUG] Resumed session: $session_id\n" if $debug || $ENV{CLIO_DEBUG};
+    }
+}
+
+print STDERR "[TRACE] Before session check: session defined? ", (defined $session ? 'yes' : 'no'), "\n" if $debug || $ENV{CLIO_DEBUG};
+if (!$session) {
+    print "[ERROR] Could not create or load a session. Exiting.\n";
+    exit 2;
+}
+print "[SESSION] Using session: $session_id\n" if $debug || $ENV{CLIO_DEBUG};
+
+# Initialize API manager and AI agent
+my $api = CLIO::Core::APIManager->new(
+    debug => $debug,
+    session => $session->state(),
+    config => $config
+);
+my $ai_agent = CLIO::Core::SimpleAIAgent->new(
+    debug => $debug,
+    session => $session,
+    api => $api
+);
+
+if ($debug || $ENV{CLIO_DEBUG}) {
+    my $cfg = $config->get_all();
+    print "[DEBUG] API base: " . ($cfg->{api_base} || '(not set)') . "\n";
+    print "[DEBUG] Model: " . ($cfg->{model} || '(not set)') . "\n";
+}
+
+# Handle command line input if provided
+if ($input) {
+    # Handle protocol commands first (unchanged)
+    if ($input =~ /^\[MEMORY:/) {
+        my $resp = CLIO::Protocols::Manager->handle($input, $session);
+        $session->save();
+        print "[DEBUG] Session saved to $session->{state}->{file}\n" if $debug || $ENV{CLIO_DEBUG};
+        require Data::Dumper;
+        print Data::Dumper::Dumper($resp);
+        exit 0;
+    }
+    
+    # Create command parser for stacked commands
+    my $parser = CLIO::Core::CommandParser->new(debug => $debug);
+    my $commands = $parser->parse_commands($input);
+    
+    if ($ENV{CLIO_DEBUG} || $debug) {
+        print "[DEBUG] Processing " . scalar(@$commands) . " commands\n";
+    }
+    
+    # Process each command in sequence
+    for my $i (0 .. $#{$commands}) {
+        my $command = $commands->[$i];
+        
+        if ($ENV{CLIO_DEBUG} || $debug) {
+            print "[DEBUG] Processing command " . ($i + 1) . ": '$command'\n";
+        }
+        
+        # Handle slash commands locally (don't send to AI)
+        if ($command =~ /^\//) {
+            print STDERR "[DEBUG] Detected slash command: $command\n" if $debug;
+            
+            # Extract command and args
+            my $cmd = $command;
+            $cmd =~ s/^\///;  # Remove leading slash
+            my ($cmd_name) = split /\s+/, $cmd;
+            $cmd_name = lc($cmd_name);
+            
+            # Handle common slash commands
+            if ($cmd_name eq 'help' || $cmd_name eq 'h' || $cmd_name eq '?') {
+                print "[SYSTEM] CLIO Slash Commands:\n";
+                print "  /help, /h, /?              Display help\n";
+                print "  /exit, /quit, /q           Exit CLIO\n";
+                print "  /clear, /cls               Clear screen\n";
+                print "  /debug                     Toggle debug mode\n";
+                print "  /session                   Show session ID\n";
+                print "  /config                    Show configuration\n";
+                print "  /api                       Show API status\n";
+                print "\n";
+                print "For full command list, use interactive mode (./clio)\n";
+                next;  # Skip to next command
+            }
+            elsif ($cmd_name eq 'exit' || $cmd_name eq 'quit' || $cmd_name eq 'q') {
+                print "[SYSTEM] Exiting...\n";
+                last;  # Exit command loop
+            }
+            elsif ($cmd_name eq 'debug') {
+                $debug = !$debug;
+                $ENV{CLIO_LOG_LEVEL} = $debug ? 'DEBUG' : 'INFO';
+                print "[SYSTEM] Debug mode: " . ($debug ? "ON" : "OFF") . "\n";
+                next;
+            }
+            elsif ($cmd_name eq 'session') {
+                print "[SYSTEM] Current session: " . ($session->{session_id} || 'unknown') . "\n";
+                next;
+            }
+            else {
+                print "[SYSTEM] Unknown slash command: $command\n";
+                print "[SYSTEM] Type /help for available commands\n";
+                print "[SYSTEM] Note: Some commands only work in interactive mode\n";
+                next;
+            }
+        }
+        
+        # Check if this is a recall query
+        if ($parser->is_recall_query($command)) {
+            # Handle recall query directly from memory
+            my $stm = $session->{stm} // $session->{state}->{stm};
+            my $recall_result = $parser->extract_recall_context($command, $stm);
+            
+            if ($recall_result && $recall_result->{content}) {
+                my $response = "You said: \"$recall_result->{content}\"";
+                print "[RESPONSE] $response\n";
+                
+                # Add to session history
+                $session->add_message('user', $command);
+                $session->add_message('assistant', $response);
+            } else {
+                my $response = "I couldn't find what you're referring to in our conversation.";
+                print "[RESPONSE] $response\n";
+                
+                # Add to session history
+                $session->add_message('user', $command);
+                $session->add_message('assistant', $response);
+            }
+        } else {
+            # Regular command - use enhanced AI agent
+            my $result = $ai_agent->process_user_request($command, {
+                current_file => $session->{state}->{current_file},
+                working_directory => $session->{state}->{working_directory},
+                conversation_history => $session->{state}->{history}
+            });
+            
+            if ($result->{success}) {
+                my $response = $result->{final_response};
+                # Remove [conversation]...[/conversation] tags if present
+                $response =~ s/^\[conversation\]//;
+                $response =~ s/\[\/conversation\]$//;
+                $response =~ s/^\s+|\s+$//g;
+                
+                $session->add_message('assistant', $response);
+                
+                # Render markdown for --input mode
+                use CLIO::UI::Markdown;
+                use CLIO::UI::ANSI;
+                my $md = CLIO::UI::Markdown->new(debug => $debug);
+                my $ansi = CLIO::UI::ANSI->new(enabled => 1, debug => $debug);
+                
+                # Render markdown (adds @-codes), then parse @-codes to ANSI
+                my $rendered_response = $md->render($response);
+                $rendered_response = $ansi->parse($rendered_response);
+                
+                # Set UTF-8 output and print (no encode_utf8 needed with binmode)
+                binmode(STDOUT, ':encoding(UTF-8)');
+                print "[RESPONSE] $rendered_response\n";
+                
+                # Show protocol usage if debug mode
+                if ($debug && @{$result->{protocols_used}}) {
+                    print "[DEBUG] Protocols used: " . join(", ", @{$result->{protocols_used}}) . "\n";
+                }
+            } else {
+                my $error_msg = "[ERROR] " . join("; ", @{$result->{errors}});
+                $session->add_message('system', $error_msg);
+                print "$error_msg\n";
+            }
+        }
+    }
+    
+    # Save session after processing all commands
+    $session->save();
+    
+    # Exit if --exit flag was provided
+    if ($should_exit) {
+        exit 0;
+    }
+}
+
+# If --exit is present, exit immediately after session setup (unless --input was handled above)
+if ($should_exit && !$input) {
+    exit 0;
+}
+
+# Otherwise, launch the clean chat UI
+my $ui = CLIO::UI::Chat->new(
+    session => $session,
+    ai_agent => $ai_agent,
+    config => $config,
+    debug => $debug
+);
+$ui->run();
+exit 0;

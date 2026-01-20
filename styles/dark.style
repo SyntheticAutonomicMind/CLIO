@@ -1,0 +1,43 @@
+# CLIO Style: dark
+# Subdued color scheme for dark backgrounds
+# Softer colors, less intense than default
+
+name=dark
+
+# User interaction colors - muted green
+user_prompt=@GREEN@
+user_text=@YELLOW@
+
+# Agent/Assistant colors - softer blue
+agent_label=@BLUE@
+agent_text=@WHITE@
+
+# System messages
+system_message=@MAGENTA@
+error_message=@RED@
+
+# UI elements - subdued
+banner=@CYAN@
+app_title=@BLUE@
+app_subtitle=@DIM@@WHITE@
+data=@WHITE@
+dim=@DIM@
+theme_header=@CYAN@
+prompt_indicator=@GREEN@
+
+# Markdown element colors - less intense
+markdown_bold=@BOLD@
+markdown_italic=@DIM@
+markdown_code=@YELLOW@
+markdown_link_text=@BLUE@@UNDERLINE@
+markdown_link_url=@DIM@@BLUE@
+markdown_header1=@BOLD@@CYAN@
+markdown_header2=@CYAN@
+markdown_header3=@WHITE@
+markdown_list_bullet=@GREEN@
+markdown_quote=@DIM@@CYAN@
+markdown_code_block=@YELLOW@
+
+# Table colors
+table_border=@WHITE@
+table_header=@BOLD@@CYAN@

@@ -1,0 +1,147 @@
+name: Release CLIO
+
+on:
+  push:
+    tags:
+      - '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (e.g., 20260119.1)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  test-and-release:
+    name: Test and Release
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Set up Perl
+        uses: shogo82148/actions-setup-perl@v1
+        with:
+          perl-version: '5.38'
+      
+      - name: Extract version from tag
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION=${GITHUB_REF#refs/tags/}
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
+      
+      - name: Install dependencies
+        run: |
+          # Install core Perl modules (we don't use CPAN modules)
+          echo "Using Perl core modules only"
+      
+      - name: Run syntax checks
+        run: |
+          echo "Running syntax checks on all Perl modules..."
+          FAILED=0
+          
+          find lib -name "*.pm" -print0 | while IFS= read -r -d '' file; do
+            echo "Checking: $file"
+            if ! perl -I./lib -c "$file" 2>&1; then
+              FAILED=1
+            fi
+          done
+          
+          echo "Checking main script..."
+          if ! perl -I./lib -c clio 2>&1; then
+            FAILED=1
+          fi
+          
+          if [ $FAILED -eq 1 ]; then
+            echo "❌ Syntax checks failed"
+            exit 1
+          fi
+          
+          echo "✅ All syntax checks passed"
+          
+      # Note: Skipping test suite - tests require API keys not available in CI
+      
+      - name: Create distribution packages
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+          PACKAGE_NAME="clio-${VERSION}"
+          
+          echo "Creating release package: ${PACKAGE_NAME}"
+          
+          # Create temporary directory for packaging
+          mkdir -p "/tmp/${PACKAGE_NAME}"
+          
+          # Copy files (exclude development artifacts)
+          rsync -av \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='ai-assisted' \
+            --exclude='sessions' \
+            --exclude='url_cache' \
+            --exclude='memory' \
+            --exclude='test/results' \
+            --exclude='*.bak' \
+            --exclude='*.swp' \
+            --exclude='.DS_Store' \
+            . "/tmp/${PACKAGE_NAME}/"
+          
+          # Create tar.gz
+          echo "Creating tar.gz archive..."
+          cd /tmp
+          tar czf "${PACKAGE_NAME}.tar.gz" "${PACKAGE_NAME}"
+          
+          # Create zip
+          echo "Creating zip archive..."
+          zip -r "${PACKAGE_NAME}.zip" "${PACKAGE_NAME}"
+          
+          # Move to workspace
+          mv "${PACKAGE_NAME}.tar.gz" "${GITHUB_WORKSPACE}/"
+          mv "${PACKAGE_NAME}.zip" "${GITHUB_WORKSPACE}/"
+          
+          # Verify
+          ls -lh "${GITHUB_WORKSPACE}/${PACKAGE_NAME}".*
+          echo "✅ Distribution packages created"
+      
+      - name: Generate changelog
+        id: changelog
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+          
+          # Get commits since last tag
+          LAST_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          
+          if [ -n "$LAST_TAG" ]; then
+            echo "## Changes since ${LAST_TAG}" > CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            git log --pretty=format:"- %s (%h)" ${LAST_TAG}..HEAD >> CHANGELOG.md
+          else
+            echo "## Initial Release" > CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            echo "First official release of CLIO (Command Line Intelligence Orchestrator)" >> CHANGELOG.md
+          fi
+          
+          cat CHANGELOG.md
+      
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.VERSION }}
+          name: CLIO ${{ steps.version.outputs.VERSION }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            clio-${{ steps.version.outputs.VERSION }}.tar.gz
+            clio-${{ steps.version.outputs.VERSION }}.zip
+          body_path: CHANGELOG.md

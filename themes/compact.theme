@@ -1,0 +1,34 @@
+# CLIO Theme: compact
+# Minimal output format - less visual noise
+
+name=compact
+
+# Prompts - shorter prefixes
+user_prompt_format={style.user_prompt}> @RESET@
+agent_prefix={style.agent_label}AI: @RESET@
+system_prefix={style.system_message}SYS: @RESET@
+error_prefix={style.error_message}ERR: @RESET@
+
+# Banner - condensed
+banner_line1={style.app_title}CLIO@RESET@ {style.dim}v1.0@RESET@
+banner_line2={style.dim}Session: {style.data}{var.session_id}@RESET@
+banner_line3={style.dim}Model: {style.data}{var.model}@RESET@
+banner_line4={style.dim}Type ? for help@RESET@
+
+# Help system - minimal
+help_header={style.data}{var.title}@RESET@
+help_section={style.dim}{var.section}@RESET@
+help_command={style.prompt_indicator}{var.command}@RESET@
+
+# Status indicators - minimal
+thinking_indicator={style.dim}...@RESET@
+
+# Navigation - brief
+nav_next={style.prompt_indicator}N@RESET@
+nav_previous={style.prompt_indicator}P@RESET@
+nav_quit={style.prompt_indicator}Q@RESET@
+pagination_info={style.dim}{var.info}@RESET@
+
+# Messages - no prefixes, just color differentiation
+user_message_prefix={style.user_text}@RESET@
+agent_message_prefix={style.agent_text}@RESET@
