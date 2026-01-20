@@ -821,6 +821,9 @@ sub handle_command {
     elsif ($cmd eq 'clear' || $cmd eq 'cls') {
         $self->repaint_screen();
     }
+    elsif ($cmd eq 'shell' || $cmd eq 'sh') {
+        $self->handle_shell_command();
+    }
     elsif ($cmd eq 'debug') {
         $self->{debug} = !$self->{debug};
         $self->display_system_message("Debug mode: " . ($self->{debug} ? "ON" : "OFF"));
@@ -963,6 +966,7 @@ sub display_help {
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/help, /h, /?', 'PROMPT'), 'Display this help');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/exit, /quit, /q', 'PROMPT'), 'Exit the chat');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/clear, /cls', 'PROMPT'), 'Clear the screen');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/shell, /sh', 'PROMPT'), 'Launch shell (exit to return)');
     push @help_lines, "";
     
     push @help_lines, $self->colorize("TODO MANAGEMENT", 'DATA');
@@ -1812,6 +1816,37 @@ sub handle_multiline_command {
     } else {
         $self->display_error_message($result->{error});
     }
+}
+
+=head2 handle_shell_command
+
+Launch an interactive shell, giving user full terminal control.
+User can exit the shell to return to CLIO.
+
+=cut
+
+sub handle_shell_command {
+    my ($self) = @_;
+    
+    # Get user's shell (or default to /bin/bash)
+    my $shell = $ENV{SHELL} || '/bin/bash';
+    
+    # Display message before launching
+    print "\n";
+    $self->display_system_message("Launching shell: $shell");
+    $self->display_system_message("Type 'exit' or press Ctrl-D to return to CLIO");
+    print "\n";
+    
+    # Launch shell with full TTY control
+    # system() gives the shell complete control of the terminal
+    system($shell);
+    
+    # Display message after returning
+    print "\n";
+    $self->display_system_message("Returned to CLIO");
+    print "\n";
+    
+    return 1;  # Continue chat
 }
 
 =head2 handle_performance_command
