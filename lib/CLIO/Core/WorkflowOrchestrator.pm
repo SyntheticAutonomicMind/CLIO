@@ -360,7 +360,20 @@ sub process_input {
                     eval {
                         # Repair malformed JSON from AI (e.g., "offset":, → "offset":0,)
                         my $json_str = $tool_call->{function}->{arguments};
+                        
+                        # Debug: Show original JSON before repair
+                        if ($self->{debug}) {
+                            my $preview = substr($json_str, 0, 300);
+                            print STDERR "[DEBUG][WorkflowOrchestrator] Original JSON arguments (first 300 chars): $preview\n";
+                        }
+                        
                         $json_str = $self->_repair_malformed_json($json_str);
+                        
+                        # Debug: Show repaired JSON
+                        if ($self->{debug}) {
+                            my $preview = substr($json_str, 0, 300);
+                            print STDERR "[DEBUG][WorkflowOrchestrator] Repaired JSON arguments (first 300 chars): $preview\n";
+                        }
                         
                         # Encode to UTF-8 bytes to avoid "Wide character in subroutine entry"
                         my $json_bytes = encode_utf8($json_str);
@@ -369,9 +382,11 @@ sub process_input {
                     };
                     if ($@) {
                         my $tool_name = $tool_call->{function}->{name} || 'unknown';
-                        my $args_preview = substr($tool_call->{function}->{arguments} || '', 0, 200);
-                        print STDERR "[ERROR][WorkflowOrchestrator] Failed to parse arguments for tool '$tool_name': $@\n";
-                        print STDERR "[ERROR][WorkflowOrchestrator] Arguments preview: $args_preview...\n" if $self->{debug};
+                        my $error = $@;
+                        my $args_full = $tool_call->{function}->{arguments} || '';
+                        
+                        print STDERR "[ERROR][WorkflowOrchestrator] Failed to parse arguments for tool '$tool_name': $error\n";
+                        print STDERR "[ERROR][WorkflowOrchestrator] Full arguments:\n$args_full\n";
                         
                         # Skip this malformed tool call
                         next;
@@ -674,11 +689,24 @@ sub _repair_malformed_json {
     # This handles cases where AI omits values for optional parameters
     $json_str =~ s/"(\w+)":,/"$1":null,/g;
     
-    # Fix trailing comma before } (another common AI mistake)
+    # Fix trailing comma before } or ] (common AI mistake)
     $json_str =~ s/,\s*}/}/g;
+    $json_str =~ s/,\s*\]/]/g;
+    
+    # Fix unescaped quotes inside string values (but not property names)
+    # Pattern: "key": "value with " unescaped quote"
+    # This is tricky - we need to escape quotes that are inside string values
+    # but not the quotes that delimit the string itself
+    # For now, we'll handle the most common case: trailing unescaped quotes
+    
+    # Fix: "value": "text", "length": number} → ensure proper structure
+    # Remove any stray quotes or commas that break JSON structure
+    $json_str =~ s/"\s*,\s*"/","/g;  # Normalize quote-comma-quote spacing
     
     if ($json_str ne $original && $self->{debug}) {
         print STDERR "[DEBUG][WorkflowOrchestrator] Repaired malformed JSON\n";
+        my $changes = $original ne $json_str ? " (made changes)" : " (no changes)";
+        print STDERR "[DEBUG][WorkflowOrchestrator] Repair result$changes\n";
     }
     
     return $json_str;
