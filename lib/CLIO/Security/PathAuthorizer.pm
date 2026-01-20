@@ -322,7 +322,7 @@ sub setAutoApprove {
     
     if ($enabled) {
         $self->{auto_approve_conversations}->{$conversation_id} = 1;
-        print STDERR "[WARN][PathAuthorizer] Auto-approve ENABLED - all operations authorized without user permission: conversation=$conversation_id\n";
+        print STDERR "[WARN]PathAuthorizer] Auto-approve ENABLED - all operations authorized without user permission: conversation=$conversation_id\n";
     } else {
         delete $self->{auto_approve_conversations}->{$conversation_id};
         print STDERR "[DEBUG][PathAuthorizer] Auto-approve disabled: conversation=$conversation_id\n" if should_log('DEBUG');

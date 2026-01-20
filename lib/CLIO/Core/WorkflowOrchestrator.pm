@@ -425,7 +425,7 @@ sub process_input {
                 } else {
                     # Unknown tool - treat as parallel (will fail safely)
                     push @parallel_tools, $tool_call;
-                    print STDERR "[WARN][WorkflowOrchestrator] Unknown tool $tool_name, treating as PARALLEL\n";
+                    print STDERR "[WARN]WorkflowOrchestrator] Unknown tool $tool_name, treating as PARALLEL\n";
                 }
             }
             
@@ -892,7 +892,7 @@ sub _inject_context_files {
     
     for my $file (@context_files) {
         unless (-f $file) {
-            print STDERR "[WARN][WorkflowOrchestrator] Context file not found: $file\n";
+            print STDERR "[WARN]WorkflowOrchestrator] Context file not found: $file\n";
             next;
         }
         

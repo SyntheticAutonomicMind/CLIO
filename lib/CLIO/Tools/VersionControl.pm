@@ -283,7 +283,11 @@ sub commit {
         my $original_cwd = getcwd();
         chdir $repo_path if $repo_path ne '.';
         
-        my $output = `git commit -m "$message" 2>&1`;
+        # Properly escape message for shell - use single quotes and escape embedded single quotes
+        my $escaped_message = $message;
+        $escaped_message =~ s/'/'\\''/g;  # Replace ' with '\''
+        
+        my $output = `git commit -m '$escaped_message' 2>&1`;
         
         chdir $original_cwd if $repo_path ne '.';
         
@@ -525,6 +529,65 @@ sub _is_git_repo {
     chdir $original_cwd if $path ne '.';
     
     return $is_repo ? 1 : 0;
+}
+
+=head2 get_additional_parameters
+
+Define parameters specific to version_control tool.
+
+Returns: Hashref of parameter definitions
+
+=cut
+
+sub get_additional_parameters {
+    my ($self) = @_;
+    
+    return {
+        repository_path => {
+            type => "string",
+            description => "Path to git repository (default: '.')",
+        },
+        message => {
+            type => "string",
+            description => "Commit message (required for commit operation)",
+        },
+        ref1 => {
+            type => "string",
+            description => "First ref for diff (default: 'HEAD')",
+        },
+        ref2 => {
+            type => "string",
+            description => "Second ref for diff (optional)",
+        },
+        file => {
+            type => "string",
+            description => "File path for diff or blame",
+        },
+        action => {
+            type => "string",
+            description => "Action for branch/stash/tag operations (list, create, delete, switch, save, apply, drop, clear)",
+        },
+        name => {
+            type => "string",
+            description => "Branch, tag, or stash name",
+        },
+        remote => {
+            type => "string",
+            description => "Remote name (default: 'origin')",
+        },
+        branch => {
+            type => "string",
+            description => "Branch name for push/pull",
+        },
+        limit => {
+            type => "integer",
+            description => "Limit for log entries (default: 10)",
+        },
+        index => {
+            type => "integer",
+            description => "Stash index for apply/drop",
+        },
+    };
 }
 
 1;

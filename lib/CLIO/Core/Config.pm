@@ -110,7 +110,7 @@ sub load {
         };
         
         if ($@) {
-            print STDERR "[WARN][Config] Failed to load config file: $@\n";
+            print STDERR "[WARN]Config] Failed to load config file: $@\n";
         }
     } else {
         print STDERR "[DEBUG][Config] No config file found at $self->{config_file}\n" if should_log('DEBUG');
@@ -132,7 +132,7 @@ sub load {
                 print STDERR "[DEBUG][Config] Using model from provider '$config{provider}': $config{model}\n" if should_log('DEBUG');
             }
         } else {
-            print STDERR "[WARN][Config] Unknown provider '$config{provider}', using defaults\n" if should_log('WARNING');
+            print STDERR "[WARN]Config] Unknown provider '$config{provider}', using defaults\n" if should_log('WARNING');
         }
     } else {
         # No provider set - use openai defaults

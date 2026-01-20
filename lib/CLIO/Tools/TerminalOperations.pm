@@ -33,6 +33,30 @@ Operations:
     );
 }
 
+=head2 get_tool_definition
+
+Override to mark command parameter as required for exec/execute operations.
+
+Returns: Hashref with complete tool definition
+
+=cut
+
+sub get_tool_definition {
+    my ($self) = @_;
+    
+    my $def = $self->SUPER::get_tool_definition();
+    
+    # Mark command as required for exec and execute operations
+    $def->{parameters}{required} = ["operation"];
+    
+    # Add conditional requirement: command is required for exec/execute
+    $def->{parameters}{description} = 
+        "For exec/execute: 'command' parameter is required. " .
+        "For validate: 'command' parameter is required.";
+    
+    return $def;
+}
+
 sub route_operation {
     my ($self, $operation, $params, $context) = @_;
     
@@ -55,7 +79,14 @@ sub execute_command {
     
     my $command = $params->{command};
     my $timeout = $params->{timeout} || 30;
-    my $working_dir = $params->{working_directory} || '.';
+    
+    # Get working directory from params first, then from session context, then default to '.'
+    my $working_dir = $params->{working_directory};
+    if (!$working_dir && $context && $context->{session} && $context->{session}->{state}) {
+        $working_dir = $context->{session}->{state}->{working_directory};
+    }
+    $working_dir ||= '.';
+    
     my $result;
     
     unless (defined $command && length($command) > 0) {
@@ -114,11 +145,24 @@ sub validate_command {
     
     return $self->error_result("Missing 'command' parameter") unless $command;
     
-    # Check for dangerous patterns
-    my @dangerous = ('rm -rf', 'sudo rm', 'shutdown', 'reboot', 'halt', 'dd if=', 'mkfs', 'format');
+    # Extract the actual command being executed (before pipes, redirects, or &&)
+    # This excludes arguments and data like git commit messages
+    my $executable = $command;
+    
+    # For git commands, only check the git subcommand, not arguments
+    if ($command =~ /^\s*(?:git\s+(\w+)|(.+?))\s/) {
+        my $git_cmd = $1;
+        if ($git_cmd) {
+            # For git, just check that it's git - don't check commit message content
+            $executable = "git $git_cmd";
+        }
+    }
+    
+    # Check for dangerous patterns only in the actual executable part
+    my @dangerous = ('rm -rf', 'sudo rm', 'shutdown', 'reboot', 'halt', 'dd if=', 'mkfs');
     
     foreach my $pattern (@dangerous) {
-        if ($command =~ /\Q$pattern\E/i) {
+        if ($executable =~ /\Q$pattern\E/i) {
             return $self->error_result("Dangerous command pattern detected: $pattern");
         }
     }
@@ -138,6 +182,33 @@ sub validate_command {
         command => $command,
         safe => 1,
     );
+}
+
+=head2 get_additional_parameters
+
+Define parameters specific to terminal_operations.
+
+Returns: Hashref of parameter definitions
+
+=cut
+
+sub get_additional_parameters {
+    my ($self) = @_;
+    
+    return {
+        command => {
+            type => "string",
+            description => "Shell command to execute",
+        },
+        timeout => {
+            type => "integer",
+            description => "Timeout in seconds (default: 30)",
+        },
+        working_directory => {
+            type => "string",
+            description => "Working directory for command execution (default: '.')",
+        },
+    };
 }
 
 1;

@@ -27,8 +27,53 @@ sub new {
         debug => $opts{debug} || 0,
         session => $opts{session},
         api => $opts{api},
+        ui => $opts{ui} || undef,  # UI reference for user_collaboration
     };
-    return bless $self, $class;
+    
+    bless $self, $class;
+    
+    # Initialize orchestrator immediately so it's available for /todo and other commands
+    # even before the first user request
+    eval {
+        require CLIO::Core::WorkflowOrchestrator;
+        $self->{orchestrator} = CLIO::Core::WorkflowOrchestrator->new(
+            debug => $self->{debug},
+            api_manager => $self->{api},
+            session => $self->{session},
+            ui => $self->{ui},
+        );
+        print STDERR "[DEBUG][SimpleAIAgent] Orchestrator initialized in constructor\n" if should_log('DEBUG');
+    };
+    if ($@) {
+        print STDERR "[ERROR][SimpleAIAgent] Failed to initialize orchestrator: $@\n";
+    }
+    
+    return $self;
+}
+
+=head2 set_ui
+
+Set the UI object after construction (for collaboration support).
+This is called after Chat UI is created so orchestrator can access it.
+
+Arguments:
+- $ui: The Chat UI object
+
+=cut
+
+sub set_ui {
+    my ($self, $ui) = @_;
+    
+    return unless $ui;
+    
+    $self->{ui} = $ui;
+    
+    # Update orchestrator with new UI
+    if ($self->{orchestrator}) {
+        $self->{orchestrator}->{ui} = $ui;
+        $self->{orchestrator}->{tool_executor}->{ui} = $ui if $self->{orchestrator}->{tool_executor};
+        print STDERR "[DEBUG][SimpleAIAgent] Updated orchestrator and tool_executor with UI\n" if should_log('DEBUG');
+    }
 }
 
 =head2 process_user_request
@@ -117,18 +162,28 @@ sub process_user_request {
         }
     };
     if ($@) {
-        print STDERR "[WARN][SimpleAIAgent] Hashtag parsing failed: $@\n";
+        print STDERR "[WARN]SimpleAIAgent] Hashtag parsing failed: $@\n";
         # Continue with original input if hashtag parsing fails
     }
     
     eval {
-        require CLIO::Core::WorkflowOrchestrator;
-        my $orchestrator = CLIO::Core::WorkflowOrchestrator->new(
-            debug => $self->{debug},
-            api_manager => $self->{api},
-            session => $self->{session},
-            ui => $context->{ui}  # Forward UI for user_collaboration
-        );
+        # Orchestrator is now initialized in constructor, just make sure it exists
+        unless ($self->{orchestrator}) {
+            require CLIO::Core::WorkflowOrchestrator;
+            $self->{orchestrator} = CLIO::Core::WorkflowOrchestrator->new(
+                debug => $self->{debug},
+                api_manager => $self->{api},
+                session => $self->{session},
+                ui => $context->{ui}  # Forward UI for user_collaboration
+            );
+        }
+        
+        # Update UI reference if provided in context (for dynamic chat updates)
+        if ($context->{ui} && $self->{orchestrator}) {
+            $self->{orchestrator}->{ui} = $context->{ui};
+        }
+        
+        my $orchestrator = $self->{orchestrator};
         
         # Prepare conversation history
         my @messages = ();

@@ -78,9 +78,6 @@ my $session;
 my $base_dir = $FindBin::Bin;
 my @required_dirs = (
     File::Spec->catdir($base_dir, '.clio/sessions'),
-    File::Spec->catdir($base_dir, 'lib', 'CA'),
-    File::Spec->catdir($base_dir, 'lib', 'CA', 'UI'),
-    File::Spec->catdir($base_dir, 'lib', 'CA', 'Core'),
 );
 
 for my $dir (@required_dirs) {
@@ -143,6 +140,17 @@ for (my $i = 0; $i < @ARGV; $i++) {
     if ($ARGV[$i] eq '--no-custom-instructions') {
         $skip_custom = 1;
     }
+}
+
+# If no --input flag was provided but STDIN is piped (not a TTY), read from STDIN
+if (!$input && !-t STDIN) {
+    my $piped_input = '';
+    while (my $line = <STDIN>) {
+        $piped_input .= $line;
+    }
+    $input = $piped_input;
+    chomp $input;
+    print STDERR "[DEBUG] Read " . length($input) . " bytes from piped STDIN\n" if $debug;
 }
 
 # Default to 'new' mode if not specified
@@ -420,5 +428,9 @@ my $ui = CLIO::UI::Chat->new(
     config => $config,
     debug => $debug
 );
+
+# Set UI on ai_agent so orchestrator can access it for collaboration
+$ai_agent->set_ui($ui) if $ai_agent;
+
 $ui->run();
 exit 0;

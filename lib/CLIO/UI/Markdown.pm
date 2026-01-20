@@ -4,6 +4,7 @@ use strict;
 use warnings;
 use utf8;
 use open ':std', ':encoding(UTF-8)';
+use CLIO::Core::Logger qw(should_log);
 
 =head1 NAME
 
@@ -287,10 +288,6 @@ Process inline formatting like bold, italic, code, links
 sub process_inline_formatting {
     my ($self, $text) = @_;
     
-    # Debug: Track if bold was detected and replaced
-    my $original = $text;
-    my $has_bold = ($text =~ /\*\*([^\*]+)\*\*/);
-    
     # Code blocks inline (backticks)
     my $code_color = $self->color('markdown_code');
     # Use ${var} syntax to prevent @-code array interpretation in replacement
@@ -298,12 +295,6 @@ sub process_inline_formatting {
     
     # Bold (**text** or __text__)
     my $bold_color = $self->color('markdown_bold');
-    
-    # Debug: Check if we have a bold color
-    if ($has_bold && !$bold_color && should_log('WARNING')) {
-        print STDERR "[WARN][Markdown] Bold detected but bold_color is empty! theme_mgr defined: " . 
-                     (defined $self->{theme_mgr} ? "yes" : "no") . "\n";
-    }
     
     $text =~ s/\*\*([^\*]+)\*\*/${bold_color}$1\@RESET\@/g;
     $text =~ s/__([^_]+)__/${bold_color}$1\@RESET\@/g;

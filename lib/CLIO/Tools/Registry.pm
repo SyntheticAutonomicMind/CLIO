@@ -76,7 +76,7 @@ sub register_tool {
     
     # Check for duplicate
     if (exists $self->{tools}{$name}) {
-        print STDERR "[WARN][Registry] Tool '$name' already registered, replacing\n";
+        print STDERR "[WARN]Registry] Tool '$name' already registered, replacing\n";
     }
     
     $self->{tools}{$name} = $tool;
@@ -108,7 +108,7 @@ sub get_tool {
     my $tool = $self->{tools}{$name};
     
     unless ($tool) {
-        print STDERR "[WARN][Registry] Tool not found: $name\n" if $self->{debug};
+        print STDERR "[WARN]Registry] Tool not found: $name\n" if $self->{debug};
     }
     
     return $tool;
@@ -228,7 +228,7 @@ sub unregister_tool {
     my ($self, $name) = @_;
     
     unless (exists $self->{tools}{$name}) {
-        print STDERR "[WARN][Registry] Cannot unregister unknown tool: $name\n" if $self->{debug};
+        print STDERR "[WARN]Registry] Cannot unregister unknown tool: $name\n" if $self->{debug};
         return 0;
     }
     

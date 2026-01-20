@@ -2,6 +2,9 @@ package CLIO::Tools::TodoList;
 
 use strict;
 use warnings;
+use utf8;
+binmode(STDOUT, ':encoding(UTF-8)');
+binmode(STDERR, ':encoding(UTF-8)');
 use CLIO::Core::Logger qw(should_log);
 use feature 'say';
 use parent 'CLIO::Tools::Tool';
@@ -315,6 +318,7 @@ sub handle_read {
     my $store = CLIO::Session::TodoStore->new(
         session_id => $session_id,
         debug => $self->{debug},
+        sessions_dir => '.clio/sessions',
     );
     
     my $todos = $store->read();
@@ -337,7 +341,7 @@ sub handle_read {
     $output .= "STATUS SUMMARY:\n";
     $output .= "  ✅ Completed: " . scalar(@completed) . "\n";
     $output .= "  🔄 In Progress: " . scalar(@in_progress) . "\n";
-    $output .= "  ○ Not Started: " . scalar(@not_started) . "\n";
+    $output .= "  [ ] Not Started: " . scalar(@not_started) . "\n";
     $output .= "  ⚠️ Blocked: " . scalar(@blocked) . "\n" if @blocked;
     $output .= "\n";
     
@@ -355,7 +359,7 @@ sub handle_read {
         $output .= "NOT STARTED:\n";
         foreach my $todo (@not_started) {
             my $priority = $todo->{priority} ? " [$todo->{priority}]" : "";
-            $output .= "  ○ #$todo->{id}: $todo->{title}$priority\n";
+            $output .= "  [ ] #$todo->{id}: $todo->{title}$priority\n";
         }
         $output .= "\n";
     }
@@ -400,6 +404,7 @@ sub handle_write {
     my $store = CLIO::Session::TodoStore->new(
         session_id => $session_id,
         debug => $self->{debug},
+        sessions_dir => '.clio/sessions',
     );
     
     # Get existing stats for comparison
@@ -426,7 +431,7 @@ sub handle_write {
     $output .= "NEW STATE:\n";
     $output .= "  ✅ Completed: " . scalar(@completed) . "\n";
     $output .= "  🔄 In Progress: " . scalar(@in_progress) . "\n";
-    $output .= "  ○ Not Started: " . scalar(@not_started) . "\n\n";
+    $output .= "  [ ] Not Started: " . scalar(@not_started) . "\n\n";
     
     if (@in_progress) {
         $output .= "Now working on: " . join(", ", map { $_->{title} } @in_progress) . "\n";
@@ -460,6 +465,7 @@ sub handle_update {
     my $store = CLIO::Session::TodoStore->new(
         session_id => $session_id,
         debug => $self->{debug},
+        sessions_dir => '.clio/sessions',
     );
     
     my ($success, $result) = $store->update($updates);
@@ -495,7 +501,7 @@ sub handle_update {
     $output .= "CURRENT STATE:\n";
     $output .= "  ✅ Completed: " . scalar(@completed) . "\n";
     $output .= "  🔄 In Progress: " . scalar(@in_progress) . "\n";
-    $output .= "  ○ Not Started: " . scalar(@not_started) . "\n";
+    $output .= "  [ ] Not Started: " . scalar(@not_started) . "\n";
     
     if (scalar(@completed) == scalar(@$todos) && @$todos > 0) {
         $output .= "\n🎉 All tasks completed!\n";
@@ -523,6 +529,7 @@ sub handle_add {
     my $store = CLIO::Session::TodoStore->new(
         session_id => $session_id,
         debug => $self->{debug},
+        sessions_dir => '.clio/sessions',
     );
     
     my ($success, $error) = $store->add($new_todos);
@@ -537,7 +544,7 @@ sub handle_add {
     $output .= "NEW TODOS:\n";
     foreach my $todo (@$new_todos) {
         my $priority = $todo->{priority} ? " [$todo->{priority}]" : "";
-        $output .= "  ○ #$todo->{id}: $todo->{title}$priority\n";
+        $output .= "  [ ] #$todo->{id}: $todo->{title}$priority\n";
     }
     
     my $action_desc = "adding $count new todos";

@@ -223,7 +223,7 @@ sub resolve {
             $result = $self->resolve_terminal_selection();
         }
         else {
-            print STDERR "[WARN][HashtagParser] Unknown hashtag type: $tag->{type}\n";
+            print STDERR "[WARN]HashtagParser] Unknown hashtag type: $tag->{type}\n";
             next;
         }
         
@@ -231,7 +231,7 @@ sub resolve {
             # Check byte size limits first (fast check)
             my $size = $result->{size} || 0;
             if ($size > $self->{max_file_size}) {
-                print STDERR "[WARN][HashtagParser] Content too large: $size bytes (max $self->{max_file_size})\n";
+                print STDERR "[WARN]HashtagParser] Content too large: $size bytes (max $self->{max_file_size})\n";
                 $result->{error} = "Content exceeds size limit ($size bytes)";
                 $result->{content} = "[Content too large to include]";
                 push @context, $result;
@@ -239,7 +239,7 @@ sub resolve {
             }
             
             if ($total_size + $size > $self->{max_total_size}) {
-                print STDERR "[WARN][HashtagParser] Total context too large: would be " . ($total_size + $size) . " bytes\n";
+                print STDERR "[WARN]HashtagParser] Total context too large: would be " . ($total_size + $size) . " bytes\n";
                 $result->{error} = "Would exceed total context limit";
                 $result->{content} = "[Skipped due to context limit]";
                 push @context, $result;
@@ -255,7 +255,7 @@ sub resolve {
             
             # Check if this single item exceeds per-file token limit
             if ($tokens > $self->{max_tokens_per_file}) {
-                print STDERR "[WARN][HashtagParser] Content exceeds per-file token limit: $tokens > $self->{max_tokens_per_file}\n";
+                print STDERR "[WARN]HashtagParser] Content exceeds per-file token limit: $tokens > $self->{max_tokens_per_file}\n";
                 # Truncate the content
                 $result = $self->truncate_content($result, $self->{max_tokens_per_file});
                 $tokens = $result->{estimated_tokens};
@@ -266,12 +266,12 @@ sub resolve {
                 my $remaining = $self->{max_total_tokens} - $self->{total_tokens_used};
                 
                 if ($remaining > 1000) {  # If we have at least 1K tokens left, include truncated version
-                    print STDERR "[WARN][HashtagParser] Would exceed total token budget, truncating to fit ($remaining tokens remaining)\n";
+                    print STDERR "[WARN]HashtagParser] Would exceed total token budget, truncating to fit ($remaining tokens remaining)\n";
                     $result = $self->truncate_content($result, $remaining);
                     $tokens = $result->{estimated_tokens};
                 } else {
                     # Not enough budget left - skip this item entirely
-                    print STDERR "[WARN][HashtagParser] Insufficient token budget remaining: $remaining tokens\n";
+                    print STDERR "[WARN]HashtagParser] Insufficient token budget remaining: $remaining tokens\n";
                     $result->{error} = "Skipped - insufficient token budget";
                     $result->{content} = "[Skipped due to token budget]";
                     $result->{estimated_tokens} = 0;
@@ -417,7 +417,7 @@ sub resolve_file {
     
     # Check if file exists and is readable
     unless (-f $path && -r $path) {
-        print STDERR "[WARN][HashtagParser] File not found or not readable: $path\n";
+        print STDERR "[WARN]HashtagParser] File not found or not readable: $path\n";
         return {
             type => 'file',
             path => $path,
@@ -492,7 +492,7 @@ sub resolve_folder {
     }
     
     unless (-d $path && -r $path) {
-        print STDERR "[WARN][HashtagParser] Folder not found or not readable: $path\n";
+        print STDERR "[WARN]HashtagParser] Folder not found or not readable: $path\n";
         return {
             type => 'folder',
             path => $path,
@@ -611,7 +611,7 @@ sub resolve_codebase {
         }
     };
     if ($@) {
-        print STDERR "[WARN][HashtagParser] Failed to get repo structure: $@\n";
+        print STDERR "[WARN]HashtagParser] Failed to get repo structure: $@\n";
         $content .= "[Unable to generate structure - RepoMap protocol error]\n\n";
     }
     

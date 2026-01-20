@@ -57,7 +57,7 @@ sub new {
             verify_SSL => $ssl_opts->{verify_hostname} || $ssl_opts->{verify_SSL} || 1,
         );
     } elsif (!$HAS_CURL) {
-        warn "[WARN][HTTP] Neither IO::Socket::SSL nor curl available - HTTPS will not work!\n";
+        warn "[WARN]HTTP] Neither IO::Socket::SSL nor curl available - HTTPS will not work!\n";
         # Still create HTTP::Tiny for HTTP-only requests
         $self->{http} = HTTP::Tiny->new(
             timeout => $timeout,

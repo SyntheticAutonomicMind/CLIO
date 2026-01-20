@@ -35,19 +35,6 @@ Terminal Output
 
 ## System Components
 
-### 0. Top-Level Utilities
-**Files:** `lib/CLIO/`
-
-| Component | File | Purpose |
-|-----------|------|---------|
-| Codebase Analyzer | `CodebaseAnalyzer.pm` | Analyze entire codebase structure |
-| Files | `Files.pm` | File utilities |
-| Model Manager | `ModelManager.pm` | Manage AI models |
-| NL Prompt Processor | `NLPromptProcessor.pm` | Natural language prompt processing |
-| Operations | `Operations.pm` | General operations |
-| Providers | `Providers.pm` | AI provider definitions |
-| Utils | `Utils.pm` | General utilities |
-
 ### 1. User Interface Layer
 **Files:** `lib/CLIO/UI/`
 
@@ -80,7 +67,6 @@ Terminal Output
 | Prompt Manager | `PromptManager.pm` | System prompts + custom instructions |
 | Instructions Reader | `InstructionsReader.pm` | Reads `.clio/instructions.md` |
 | Protocol Integration | `ProtocolIntegration.pm` | Integrate protocol handlers |
-| Natural Language | `NaturalLanguage.pm` | Natural language processing |
 | Config | `Config.pm` | API keys, provider selection |
 | ReadLine | `ReadLine.pm` | Command history & editing |
 | Command Parser | `CommandParser.pm` | Parse user commands |
@@ -434,14 +420,7 @@ clio --new           # First run
 
 ```
 lib/CLIO/
-├── Top-Level Utilities
-│   ├── CodebaseAnalyzer.pm  # Codebase analysis
-│   ├── Files.pm             # File utilities
-│   ├── ModelManager.pm       # AI model management
-│   ├── NLPromptProcessor.pm  # Natural language prompts
-│   ├── Operations.pm         # General operations
-│   ├── Providers.pm          # AI provider definitions
-│   └── Utils.pm              # General utilities
+├── Providers.pm             # AI provider registry (SAM, GitHub Copilot, etc.)
 ├── UI/                      # Terminal interface
 │   ├── Chat.pm              # Main interactive loop
 │   ├── Markdown.pm          # Markdown to ANSI
@@ -458,7 +437,6 @@ lib/CLIO/
 │   ├── ToolExecutor.pm      # Tool invocation
 │   ├── ToolCallExtractor.pm # Extract tool calls
 │   ├── ProtocolIntegration.pm # Protocol integration
-│   ├── NaturalLanguage.pm   # NL processing
 │   ├── Config.pm            # Configuration
 │   ├── ReadLine.pm          # Command history
 │   ├── CommandParser.pm     # Command parsing

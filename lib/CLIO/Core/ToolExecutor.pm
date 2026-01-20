@@ -76,6 +76,15 @@ sub new {
         print STDERR "[DEBUG][ToolExecutor] Initialized ToolLogger\n" if should_log('DEBUG');
     }
     
+    # Debug: Log if UI is available
+    if (should_log('DEBUG')) {
+        if ($self->{ui}) {
+            print STDERR "[DEBUG][ToolExecutor] UI available for tools\n";
+        } else {
+            print STDERR "[DEBUG][ToolExecutor] WARNING: UI is undefined - tools won't have collaboration access\n";
+        }
+    }
+    
     print STDERR "[DEBUG][ToolExecutor] Initialized with ToolResultStore\n" if should_log('DEBUG');
     
     return $self;
@@ -177,6 +186,14 @@ sub execute_tool {
     }
     
     # Execute tool with operation from arguments
+    if (should_log('DEBUG') && $tool_name eq 'user_collaboration') {
+        if ($self->{ui}) {
+            print STDERR "[DEBUG][ToolExecutor] Executing user_collaboration with UI available\n";
+        } else {
+            print STDERR "[DEBUG][ToolExecutor] ERROR: Executing user_collaboration but UI is undefined!\n";
+        }
+    }
+    
     my $result = $tool->execute($arguments, {
         session => $self->{session},
         tool_call_id => $tool_call_id,

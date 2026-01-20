@@ -43,7 +43,7 @@ BEGIN {
         if ($ca_file) {
             $ENV{PERL_LWP_SSL_CA_FILE} = $ca_file;
         } else {
-            warn "[WARN] No CA bundle found in common locations. HTTPS requests may fail.\n";
+            warn "[WARN]No CA bundle found in common locations. HTTPS requests may fail.\n";
         }
     }
 }
@@ -110,7 +110,7 @@ sub validate_configuration {
             my $key_display = substr($api_key, 0, 8) . '...' . substr($api_key, -4);
             print "✓ API Key: $key_display\n";
         } else {
-            print "○ API Key: NOT SET (required unless using GitHub auth)\n";
+            print "[ ] API Key: NOT SET (required unless using GitHub auth)\n";
         }
     } else {
         print "✗ Config object not available\n";
@@ -196,7 +196,7 @@ sub _get_api_key {
         };
         
         if ($@) {
-            print STDERR "[WARN][APIManager] Failed to get GitHub token: $@\n" if should_log('WARNING');
+            print STDERR "[WARN]APIManager] Failed to get GitHub token: $@\n" if should_log('WARNING');
             return '';
         }
         
@@ -206,7 +206,7 @@ sub _get_api_key {
         }
         
         # GitHub Copilot provider requires GitHub authentication
-        print STDERR "[WARN][APIManager] GitHub Copilot not authenticated\n" if should_log('WARNING');
+        print STDERR "[WARN]APIManager] GitHub Copilot not authenticated\n" if should_log('WARNING');
         return '';
     }
     
@@ -220,7 +220,7 @@ sub _get_api_key {
     }
     
     # No API key available
-    print STDERR "[WARN][APIManager] No API key available (not set in config)\n" if should_log('WARNING');
+    print STDERR "[WARN]APIManager] No API key available (not set in config)\n" if should_log('WARNING');
     return '';
 }
 
@@ -238,7 +238,7 @@ sub get_current_model {
     }
     
     # Fallback (should never happen if config is properly initialized)
-    print STDERR "[WARN][APIManager] No model in config, using default\n" if should_log('WARNING');
+    print STDERR "[WARN]APIManager] No model in config, using default\n" if should_log('WARNING');
     return 'gpt-4';
 }
 
@@ -256,7 +256,7 @@ sub get_current_provider {
     }
     
     # Fallback
-    print STDERR "[WARN][APIManager] No provider in config, using default\n" if should_log('WARNING');
+    print STDERR "[WARN]APIManager] No provider in config, using default\n" if should_log('WARNING');
     return 'openai';
 }
 
@@ -1392,7 +1392,7 @@ sub send_request_streaming {
                     # Parse JSON chunk
                     my $data = eval { decode_json($data_json) };
                     if ($@) {
-                        print STDERR "[WARN][APIManager] Failed to parse SSE chunk: $@\n" if $self->{debug};
+                        print STDERR "[WARN]APIManager] Failed to parse SSE chunk: $@\n" if $self->{debug};
                         next;
                     }
                     
