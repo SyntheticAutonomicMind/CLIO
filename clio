@@ -13,6 +13,7 @@ use warnings;
 use File::Spec;
 use File::Basename;
 use File::Path qw(make_path);
+use JSON::PP;
 use CLIO::UI::Chat;
 use CLIO::Util::PathResolver;
 
@@ -202,20 +203,46 @@ if ($mode eq 'new') {
         }
     } else {
         # Resume most recent session if no ID provided
+        # Sort by creation timestamp (created_at), not file mtime, to ensure correct session is selected
         my $sessions_dir = CLIO::Util::PathResolver::get_sessions_dir();
         opendir(my $dh, $sessions_dir) or die "Cannot open sessions dir: $!";
-        my @files = sort { (stat("$sessions_dir/$b"))[9] <=> (stat("$sessions_dir/$a"))[9] } grep { /\.json$/ } readdir($dh);
+        my @json_files = grep { /\.json$/ } readdir($dh);
         closedir($dh);
-        if (@files) {
-            ($session_id = $files[0]) =~ s/\.json$//;
-            eval {
-                $session = CLIO::Session::Manager->load($session_id, debug => $debug);
-            };
-            $eval_err = $@;
-            print STDERR "[TRACE][EVAL] Error during load most recent: $eval_err\n" if $debug;
-            print STDERR "[TRACE] After load most recent: session defined? ", (defined $session ? 'yes' : 'no'), "\n" if $debug;
-            if (!$session) {
-                print "[ERROR] Failed to load most recent session $session_id\n";
+        
+        if (@json_files) {
+            # Load all sessions and sort by created_at timestamp
+            my @sessions_with_timestamps = ();
+            foreach my $json_file (@json_files) {
+                my $sid = $json_file;
+                $sid =~ s/\.json$//;
+                eval {
+                    if (open my $fh, '<', "$sessions_dir/$json_file") {
+                        local $/; 
+                        my $json_str = <$fh>; 
+                        close $fh;
+                        my $data = eval { JSON::PP::decode_json($json_str) };
+                        if ($data && ref $data eq 'HASH') {
+                            my $created_at = $data->{created_at} // 0;
+                            push @sessions_with_timestamps, { id => $sid, created_at => $created_at };
+                        }
+                    }
+                };
+            }
+            
+            # Sort by creation timestamp in descending order (most recent first)
+            @sessions_with_timestamps = sort { $b->{created_at} <=> $a->{created_at} } @sessions_with_timestamps;
+            
+            if (@sessions_with_timestamps) {
+                $session_id = $sessions_with_timestamps[0]->{id};
+                eval {
+                    $session = CLIO::Session::Manager->load($session_id, debug => $debug);
+                };
+                $eval_err = $@;
+                print STDERR "[TRACE][EVAL] Error during load most recent: $eval_err\n" if $debug;
+                print STDERR "[TRACE] After load most recent: session defined? ", (defined $session ? 'yes' : 'no'), "\n" if $debug;
+                if (!$session) {
+                    print "[ERROR] Failed to load most recent session $session_id\n";
+                }
             }
         }
     }

@@ -1287,9 +1287,11 @@ sub send_request_streaming {
         print STDERR "\r[INFO][APIManager] Retry limit cleared. Sending request...\n";
     }
     
-    # Extract on_chunk callback
+    # Extract on_chunk and on_tool_call callbacks
     my $on_chunk = $opts{on_chunk};
+    my $on_tool_call = $opts{on_tool_call};
     delete $opts{on_chunk};  # Remove from opts before building payload
+    delete $opts{on_tool_call};  # Remove from opts before building payload
     
     # Get endpoint-specific configuration
     my $ep = $self->_prepare_endpoint_config(%opts);
@@ -1482,7 +1484,8 @@ sub send_request_streaming {
                                     function => {
                                         name => '',
                                         arguments => '',
-                                    }
+                                    },
+                                    _name_complete => 0,  # Track if we've shown this tool name yet
                                 };
                             }
                             
@@ -1490,6 +1493,17 @@ sub send_request_streaming {
                             if ($tc_delta->{function}) {
                                 if ($tc_delta->{function}{name}) {
                                     $tool_calls_accumulator->{$index}{function}{name} .= $tc_delta->{function}{name};
+                                    
+                                    # If name just became complete and we haven't shown it yet, call tool name callback
+                                    if (!$tool_calls_accumulator->{$index}{_name_complete} && 
+                                        $tool_calls_accumulator->{$index}{function}{name} =~ /\w/) {
+                                        $tool_calls_accumulator->{$index}{_name_complete} = 1;
+                                        
+                                        # Call on_tool_call callback if provided
+                                        if ($on_tool_call) {
+                                            $on_tool_call->($tool_calls_accumulator->{$index}{function}{name});
+                                        }
+                                    }
                                 }
                                 if ($tc_delta->{function}{arguments}) {
                                     $tool_calls_accumulator->{$index}{function}{arguments} .= $tc_delta->{function}{arguments};

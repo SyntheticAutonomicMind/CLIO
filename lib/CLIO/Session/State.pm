@@ -33,6 +33,8 @@ sub new {
         working_directory => $args{working_directory} || getcwd(),
         # GitHub Copilot session continuation
         _stateful_markers => [],
+        # Session creation timestamp (for proper resume ordering)
+        created_at => $args{created_at} // time(),
         # Billing tracking fields
         billing    => {
             total_prompt_tokens => 0,
@@ -76,6 +78,7 @@ sub save {
         ltm     => $self->{ltm}->{store},
         yarn    => $self->{yarn}->{threads},
         working_directory => $self->{working_directory},
+        created_at => $self->{created_at},  # Preserve session creation timestamp
         lastGitHubCopilotResponseId => $self->{lastGitHubCopilotResponseId},
         _stateful_markers => $self->{_stateful_markers} || [],  # GitHub Copilot session continuation
         billing => $self->{billing},  # Save billing data
@@ -114,12 +117,15 @@ sub load {
         yarn       => $yarn,
         working_directory => $data->{working_directory} || getcwd(),
         lastGitHubCopilotResponseId => $data->{lastGitHubCopilotResponseId},
+        # Load session creation timestamp (for proper resume ordering)
+        created_at => $data->{created_at} // time(),
         # Load billing data or initialize if not present
         billing    => $data->{billing} || {
             total_prompt_tokens => 0,
             total_completion_tokens => 0,
             total_tokens => 0,
             total_requests => 0,
+            total_premium_requests => 0,  # GitHub Copilot premium requests charged
             model => undef,
             multiplier => 0,
             requests => [],
