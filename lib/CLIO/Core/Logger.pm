@@ -12,8 +12,8 @@ CLIO::Core::Logger - Global logging utility
 
 =head1 DESCRIPTION
 
-Provides global should_log() function that checks CLIO_DEBUG environment
-variable or falls back to INFO default.
+Provides global should_log() function that checks CLIO_LOG_LEVEL environment
+variable (which is set automatically by the --debug flag) or falls back to WARNING default.
 
 This allows modules without config access to still respect log level settings.
 
@@ -51,15 +51,10 @@ sub should_log {
     if ($config && $config->can('get')) {
         # Use config object if available
         $config_level = uc($config->get('log_level') || 'WARNING');
-    } elsif ($ENV{CLIO_DEBUG}) {
-        # Use environment variable
-        # Handle CLIO_DEBUG=1 or --debug flag as equivalent to DEBUG level
-        my $debug_value = uc($ENV{CLIO_DEBUG});
-        if ($debug_value eq '1' || $debug_value eq 'TRUE' || $debug_value eq 'YES') {
-            $config_level = 'DEBUG';
-        } else {
-            $config_level = $debug_value;
-        }
+    } elsif ($ENV{CLIO_LOG_LEVEL}) {
+        # Use environment variable set by --debug flag
+        # Should be 'DEBUG', 'INFO', 'WARNING', or 'ERROR'
+        $config_level = uc($ENV{CLIO_LOG_LEVEL});
     } else {
         # Default to WARNING (less verbose than INFO)
         $config_level = 'WARNING';
@@ -88,6 +83,11 @@ __END__
     
     # With config object
     print STDERR "[INFO][Module] Info\n" if should_log('INFO', $self->{config});
+
+=head1 ENVIRONMENT
+
+CLIO_LOG_LEVEL - Set to DEBUG, INFO, WARNING, or ERROR
+                 (automatically set to 'DEBUG' when --debug flag is used)
 
 =head1 AUTHOR
 

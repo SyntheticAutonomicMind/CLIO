@@ -175,14 +175,11 @@ CLIO is configured **interactively** using slash commands:
 **Optional: Environment variables** (advanced users)
 
 ```bash
-# Debug Output
-export CLIO_DEBUG=1
-
 # Session Directory
 export CLIO_SESSION_DIR="$HOME/.clio/sessions"
 ```
 
-**Note:** API keys and provider selection are configured with `/api` commands, not environment variables.
+**Note:** API keys and provider selection are configured with `/api` commands, not environment variables. Use `clio --debug` for debug output.
 
 For advanced configuration options, see [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
 

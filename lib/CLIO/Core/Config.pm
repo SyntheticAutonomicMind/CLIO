@@ -143,16 +143,8 @@ sub load {
         }
     }
     
-    # Override log level from environment variable (transient, not saved)
-    if ($ENV{CLIO_DEBUG}) {
-        my $level = uc($ENV{CLIO_DEBUG});
-        if (exists LOG_LEVEL->{$level}) {
-            $config{log_level} = $level;
-            print STDERR "[DEBUG][Config] Using log level from CLIO_DEBUG: $level\n" if should_log('DEBUG');
-        } else {
-            print STDERR "[WARNING][Config] Invalid CLIO_DEBUG: $ENV{CLIO_DEBUG}\n" if should_log('WARNING');
-        }
-    }
+    # Note: Log level is now controlled by CLIO_LOG_LEVEL environment variable
+    # which is set by the --debug flag in the main clio script
     
     $self->{config} = \%config;
     

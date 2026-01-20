@@ -131,12 +131,13 @@ Use `/api` commands interactively:
 **Optional Environment Variables**
 
 ```bash
-# Enable debug output
-export CLIO_DEBUG=1
-
 # Set custom session directory
 export CLIO_SESSION_DIR="$HOME/.clio/sessions"
 ```
+
+**Debug Output**
+
+Use the `--debug` flag to enable debug output: `clio --debug --new`
 
 **Note:** API keys and providers are configured with `/api` commands, not environment variables.
 
@@ -880,17 +881,19 @@ CLIO is designed to be configured **interactively** using slash commands:
 /config save session            # Save to current session only
 ```
 
-### Environment Variables (Advanced)
+### Debug Output (Advanced)
 
-For advanced users, some settings can be controlled via environment variables:
+For advanced users, debug output can be enabled:
 
 ```bash
-# Enable debug output
-export CLIO_DEBUG=1
+# Enable debug output via command-line flag
+clio --debug --new
 
-# Set log level (DEBUG, INFO, WARN, ERROR)
-export CLIO_LOG_LEVEL="DEBUG"
+# Or with any clio command
+clio --debug --resume
 ```
+
+**Note:** The `--debug` flag sets `CLIO_LOG_LEVEL=DEBUG` internally.
 
 **Session Configuration:**
 

@@ -159,7 +159,7 @@ Terminal Output
 | Performance Monitor | `Core/PerformanceMonitor.pm` | Track timing | ⚠️ Partial |
 
 **How it works:**
-- Debug mode: `CLIO_DEBUG=1` or `clio --debug`
+- Debug mode: `clio --debug`
 - Output goes to STDERR with `[DEBUG]`, `[ERROR]`, `[TRACE]` prefixes
 - Tool operations logged via ToolLogger
 
