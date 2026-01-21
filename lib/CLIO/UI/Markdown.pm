@@ -197,6 +197,45 @@ sub render_inline {
     return $self->process_inline_formatting($line);
 }
 
+=head2 _visual_length
+
+Calculate the visual length of a string, stripping ANSI codes and accounting
+for markdown that will be rendered. Used for table column width calculations.
+
+=cut
+
+sub _visual_length {
+    my ($self, $text) = @_;
+    
+    # First, strip markdown formatting to get the actual text
+    my $clean = $text;
+    
+    # Remove bold markdown (**text** -> text, __text__ -> text)
+    $clean =~ s/\*\*([^\*]+)\*\*/$1/g;
+    $clean =~ s/__([^_]+)__/$1/g;
+    
+    # Remove italic markdown (*text* -> text, _text_ -> text)
+    $clean =~ s/(?<!\*)\*([^\*]+)\*(?!\*)/$1/g;
+    $clean =~ s/(^|[\s\(])_([^_]+)_(?=[\s\)\.\,\!\?\:\;]|$)/$1$2/g;
+    
+    # Remove inline code (`text` -> text)
+    $clean =~ s/`([^`]+)`/$1/g;
+    
+    # Remove links [text](url) -> text
+    $clean =~ s/\[([^\]]+)\]\([^\)]+\)/$1/g;
+    
+    # Remove images ![alt](url) -> alt
+    $clean =~ s/!\[([^\]]*)\]\([^\)]+\)/$1/g;
+    
+    # Now strip any ANSI escape codes
+    $clean =~ s/\e\[[0-9;]*m//g;
+    
+    # Also strip @-codes that might be in the text (like @RESET@)
+    $clean =~ s/@[A-Z_]+@//g;
+    
+    return length($clean);
+}
+
 =head2 render_table
 
 Render a markdown table with borders and formatting
@@ -225,9 +264,9 @@ sub render_table {
         # Trim whitespace from cells
         @cells = map { s/^\s+|\s+$//gr } @cells;
         
-        # Track column widths
+        # Track column widths (use visual length to account for markdown)
         for my $i (0 .. $#cells) {
-            my $len = length($cells[$i]);
+            my $len = $self->_visual_length($cells[$i]);
             $col_widths[$i] = $len if !defined $col_widths[$i] || $len > $col_widths[$i];
         }
         
@@ -253,13 +292,17 @@ sub render_table {
             my $cell = $row->{cells}[$j];
             my $width = $col_widths[$j];
             
-            # Apply formatting
+            # Calculate visual length for padding (before adding ANSI codes)
+            my $visual_len = $self->_visual_length($cell);
+            
+            # Apply formatting (this adds ANSI codes)
             my $formatted = $row->{is_header} ? 
                 $self->color('table_header') . $cell . '@RESET@' :
                 $self->process_inline_formatting($cell);
             
-            # Pad cell
-            my $padding = $width - length($cell);
+            # Pad cell based on visual length, not formatted string length
+            my $padding = $width - $visual_len;
+            $padding = 0 if $padding < 0;  # Safety check
             $line .= " " . $formatted . (" " x $padding) . " " . $self->color('table_border') . "│" . '@RESET@';
         }
         
