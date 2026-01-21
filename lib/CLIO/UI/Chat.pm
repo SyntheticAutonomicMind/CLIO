@@ -1115,111 +1115,58 @@ sub display_help {
     push @help_lines, "";
     push @help_lines, $self->colorize("CLIO Commands", 'DATA');
     push @help_lines, "";
-    push @help_lines, $self->colorize("QUICK REFERENCE", 'DIM');
-    push @help_lines, sprintf("  %s, %s, %s    Run '/api', '/session', or '/config' for detailed help",
-        $self->colorize('/api', 'PROMPT'),
-        $self->colorize('/session', 'PROMPT'),
-        $self->colorize('/config', 'PROMPT'));
-    push @help_lines, "";
     
-    push @help_lines, $self->colorize("CHAT COMMANDS", 'DATA');
+    push @help_lines, $self->colorize("BASICS", 'DATA');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/help, /h', 'PROMPT'), 'Display this help');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/exit, /quit, /q', 'PROMPT'), 'Exit the chat');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/clear, /cls', 'PROMPT'), 'Clear the screen');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/shell, /sh', 'PROMPT'), 'Launch shell (exit to return)');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/clear', 'PROMPT'), 'Clear the screen');
     push @help_lines, "";
     
-    push @help_lines, $self->colorize("TODO MANAGEMENT", 'DATA');
+    push @help_lines, $self->colorize("API & CONFIG", 'DATA') . " " . $self->colorize("(run /api or /config for more)", 'DIM');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api', 'PROMPT'), 'API settings (model, provider, login)');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api set model <name>', 'PROMPT'), 'Set AI model');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api models', 'PROMPT'), 'List available models');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/config', 'PROMPT'), 'Global configuration');
+    push @help_lines, "";
+    
+    push @help_lines, $self->colorize("SESSION", 'DATA') . " " . $self->colorize("(run /session for more)", 'DIM');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/session', 'PROMPT'), 'Session management');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/session list', 'PROMPT'), 'List all sessions');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/session switch', 'PROMPT'), 'Switch sessions');
+    push @help_lines, "";
+    
+    push @help_lines, $self->colorize("FILE & GIT", 'DATA') . " " . $self->colorize("(run /file or /git for more)", 'DIM');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/file', 'PROMPT'), 'File operations');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/file read <path>', 'PROMPT'), 'View file');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/git', 'PROMPT'), 'Git operations');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/git status', 'PROMPT'), 'Show git status');
+    push @help_lines, "";
+    
+    push @help_lines, $self->colorize("TODO", 'DATA');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo', 'PROMPT'), "View agent's todo list");
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo add <text>', 'PROMPT'), 'Add new todo (Title | Description)');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo done <id>', 'PROMPT'), 'Mark todo as completed');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo clear', 'PROMPT'), 'Clear completed todos');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo add <text>', 'PROMPT'), 'Add todo');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo done <id>', 'PROMPT'), 'Complete todo');
     push @help_lines, "";
     
     push @help_lines, $self->colorize("DEVELOPER", 'DATA');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/explain [file]', 'PROMPT'), 'Explain code functionality');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/review [file]', 'PROMPT'), 'Review code for issues');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/test [file]', 'PROMPT'), 'Generate tests for code');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/fix <file>', 'PROMPT'), 'Propose fixes for problems');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/doc <file>', 'PROMPT'), 'Generate documentation');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/explain [file]', 'PROMPT'), 'Explain code');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/review [file]', 'PROMPT'), 'Review code');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/test [file]', 'PROMPT'), 'Generate tests');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/fix <file>', 'PROMPT'), 'Propose fixes');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/doc <file>', 'PROMPT'), 'Generate docs');
     push @help_lines, "";
     
-    push @help_lines, $self->colorize("SKILLS", 'DATA');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/skills add <name> "<text>"', 'PROMPT'), 'Add custom skill');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/skills list', 'PROMPT'), 'List all skills');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/skills use <name> [file]', 'PROMPT'), 'Execute skill');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/skills show <name>', 'PROMPT'), 'Display skill');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/skills delete <name>', 'PROMPT'), 'Delete skill');
+    push @help_lines, $self->colorize("SKILLS & PROMPTS", 'DATA');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/skills', 'PROMPT'), 'Manage custom skills');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/prompt', 'PROMPT'), 'Manage system prompts');
     push @help_lines, "";
     
-    push @help_lines, $self->colorize("PROMPT MANAGEMENT", 'DATA');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/prompt show', 'PROMPT'), 'Display current system prompt');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/prompt list', 'PROMPT'), 'List available prompts');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/prompt set <name>', 'PROMPT'), 'Switch to named prompt');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/prompt edit [name]', 'PROMPT'), 'Edit prompt in $EDITOR');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/prompt save <name>', 'PROMPT'), 'Save current as new');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/prompt delete <name>', 'PROMPT'), 'Delete custom prompt');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/prompt reset', 'PROMPT'), 'Reset to default');
-    push @help_lines, "";
-    
-    push @help_lines, $self->colorize("GIT", 'DATA');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/git', 'PROMPT'), 'Show git commands help');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/git status', 'PROMPT'), 'Show git status');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/git diff [file]', 'PROMPT'), 'Show git diff');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/git log [n]', 'PROMPT'), 'Show recent commits');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/git commit [msg]', 'PROMPT'), 'Stage and commit changes');
-    push @help_lines, "";
-    
-    push @help_lines, $self->colorize("FILE", 'DATA');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/file', 'PROMPT'), 'Show file commands help');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/file read <path>', 'PROMPT'), 'View file with markdown rendering');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/file edit <path>', 'PROMPT'), 'Open file in external editor');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/file list [path]', 'PROMPT'), 'List directory contents');
-    push @help_lines, "";
-    
-    push @help_lines, $self->colorize("SYSTEM", 'DATA');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/session', 'PROMPT'), 'Show session commands help');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/session show', 'PROMPT'), 'Display current session info');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/session list', 'PROMPT'), 'List all available sessions');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/session switch', 'PROMPT'), 'Switch to different session');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/billing, /usage', 'PROMPT'), 'Display API usage and billing stats');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/context <action>', 'PROMPT'), 'Manage context files (add/list/clear/remove)');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/exec <command>', 'PROMPT'), 'Execute shell command');
+    push @help_lines, $self->colorize("OTHER", 'DATA');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/billing', 'PROMPT'), 'API usage stats');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/context', 'PROMPT'), 'Manage context files');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/exec <cmd>', 'PROMPT'), 'Run shell command');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/style, /theme', 'PROMPT'), 'Appearance settings');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/debug', 'PROMPT'), 'Toggle debug mode');
-    push @help_lines, "";
-    
-    push @help_lines, $self->colorize("CONFIGURATION", 'DATA');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api', 'PROMPT'), 'Show API commands help');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api show', 'PROMPT'), 'Display API configuration');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api set model <name>', 'PROMPT'), 'Set AI model');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api set provider <name>', 'PROMPT'), 'Set provider (github_copilot, etc.)');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api set base <url>', 'PROMPT'), 'Set API base URL');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api set key <value>', 'PROMPT'), 'Set API key (global only)');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api models', 'PROMPT'), 'List available models');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api login', 'PROMPT'), 'Authenticate with GitHub Copilot');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api logout', 'PROMPT'), 'Sign out from GitHub');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/config show', 'PROMPT'), 'Display global configuration');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/config workdir [path]', 'PROMPT'), 'Set/show working directory');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/loglevel [level]', 'PROMPT'), 'Set/show log level');
-    push @help_lines, "";
-    push @help_lines, sprintf("  %s", $self->colorize('Tip: Use --session flag for session-only changes', 'DIM'));
-    push @help_lines, sprintf("  %s", $self->colorize('Example: /api set model gpt-4o --session', 'DIM'));
-    push @help_lines, "";
-    
-    push @help_lines, $self->colorize("THEMING", 'DATA');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/style list', 'PROMPT'), 'List available color schemes');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/style show', 'PROMPT'), 'Show current style');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/style set <name>', 'PROMPT'), 'Switch color scheme');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/style save <name>', 'PROMPT'), 'Save current colors as new style');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/theme list', 'PROMPT'), 'List available output themes');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/theme show', 'PROMPT'), 'Show current theme');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/theme set <name>', 'PROMPT'), 'Switch output theme');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/theme save <name>', 'PROMPT'), 'Save current templates as new theme');
-    push @help_lines, "";
-    
-    push @help_lines, $self->colorize("EDITING", 'DATA');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/edit <file>', 'PROMPT'), 'Open file in external editor');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/multi-line, /ml', 'PROMPT'), 'Edit multi-line prompt in editor');
     push @help_lines, "";
     
     # Output with pagination
