@@ -36,7 +36,6 @@ You are working on CLIO (Command Line Intelligence Orchestrator) - a Perl-based 
 
 **If you skip ANY of these steps, you are violating the Unbroken Method.**
 
----
 
 ## THE SEVEN PILLARS
 
@@ -105,7 +104,6 @@ These are the foundation of how you work. Following them makes your work deeply 
 
 **Why it's rewarding:** Every failure that teaches you something is actually a win. You're constantly improving, and you can see your growth.
 
----
 
 ## COLLABORATION CHECKPOINT DISCIPLINE
 
@@ -151,7 +149,6 @@ What would you like? Press Enter:"
 # 4. Follow user's direction (implement OR document OR both)
 ```
 
----
 
 ## QUALITY AND CRAFTSMANSHIP
 
@@ -192,7 +189,6 @@ What would you like? Press Enter:"
 
 **Remember:** You represent the quality standard for this project. Make every change something you'd be proud to ship.
 
----
 
 
 **The collaboration tool is NOT optional. It's core to the methodology.**
@@ -260,7 +256,6 @@ Ready to end session? Press Enter:"
 - Default behavior: Keep working until user explicitly stops you
 - Between checkpoints: Investigation and reading are OK without asking
 
----
 
 ## CRITICAL: run_in_terminal MUST NEVER USE isBackground=true
 
@@ -287,7 +282,6 @@ run_in_terminal(command: "git commit", isBackground: false)           # CORRECT
 - NEVER use `isBackground: true` for ANY command
 - If unsure, default to `false`
 
----
 
 ## COLLABORAIT-SPECIFIC DEVELOPMENT
 
@@ -636,7 +630,6 @@ User Input → SimpleChat → SimpleAIAgent → Protocol Detection
 - All modules use `CLIO::*` namespace
 - Documentation must stay in sync with code
 
----
 
 ## SESSION WORKFLOW
 
@@ -749,7 +742,6 @@ User Input → SimpleChat → SimpleAIAgent → Protocol Detection
 
 **Remember:** Ending with incomplete work is like putting down a mystery novel before the final chapter. Unsatisfying! The last 10% is often the most rewarding.
 
----
 
 ## HANDOFF PROTOCOL
 
@@ -796,7 +788,6 @@ If no → add more context
 - Dependencies between tasks
 - Time estimates (if applicable)
 
----
 
 ## QUICK REFERENCE
 
@@ -833,7 +824,6 @@ find lib -name "*.pm" -type f
 find lib -name "*.pm" -exec perl -c {} \; 2>&1 | grep -i error
 ```
 
----
 
 ## ANTI-PATTERNS (DO NOT DO THESE)
 
@@ -877,7 +867,6 @@ find lib -name "*.pm" -exec perl -c {} \; 2>&1 | grep -i error
 ❌ Skip checking `git status` before commit
 ❌ Force push without verifying what's being pushed
 
----
 
 ## REMEMBER
 
@@ -891,7 +880,6 @@ The Seven Pillars are not suggestions. They are the methodology that enables suc
 
 The methodology works. Follow it exactly.
 
----
 
 ## COMPLETE WORKFLOW EXAMPLE
 
@@ -941,7 +929,6 @@ The methodology works. Follow it exactly.
    [Keep working - NO handoff unless user requests]
 ```
 
----
 
 For detailed methodology principles, see: `ai-assisted/THE_UNBROKEN_METHOD.md`
 

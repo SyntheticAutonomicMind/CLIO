@@ -4,7 +4,6 @@
 **Language:** Perl 5.32+  
 **Architecture:** Tool-calling AI assistant with terminal UI  
 
----
 
 ## CRITICAL: READ FIRST BEFORE ANY WORK
 
@@ -38,7 +37,6 @@ This project follows **The Unbroken Method** for human-AI collaboration. This is
 **[FAIL]** Create documentation/implementations alone  
 **[OK]** Investigate freely, but checkpoint before committing changes
 
----
 
 ## Quick Start for NEW DEVELOPERS
 
@@ -73,7 +71,6 @@ This project follows **The Unbroken Method** for human-AI collaboration. This is
 5. Commit with clear message (handoff)
 ```
 
----
 
 ## Key Directories & Files
 
@@ -101,7 +98,6 @@ This project follows **The Unbroken Method** for human-AI collaboration. This is
 | `docs/` | User/dev documentation | [OK] Good |
 | `tests/` | Unit & integration tests | [WARN] 30% coverage |
 
----
 
 ## Architecture Overview
 
@@ -129,7 +125,6 @@ Markdown Rendering (Markdown.pm)
 Terminal Output (with color/theme)
 ```
 
----
 
 ## Code Standards: MANDATORY
 
@@ -185,7 +180,6 @@ perl -I./lib -c lib/CLIO/Path/To/Module.pm
 find lib -name "*.pm" -exec perl -I./lib -c {} \;
 ```
 
----
 
 ## Testing Requirements
 
@@ -214,7 +208,6 @@ If you add a tool or change a protocol:
 2. Run it: `perl -I./lib tests/unit/test_your_feature.pl`
 3. Include it in commit
 
----
 
 ## Commit Workflow
 
@@ -248,7 +241,6 @@ Testing: Verified malformed input doesn't crash loop"
 - [ ] No `TODO`/`FIXME` comments (finish the work!)
 - [ ] Test coverage for new code
 
----
 
 ## Anti-Patterns: NEVER DO THESE
 
@@ -263,7 +255,6 @@ Testing: Verified malformed input doesn't crash loop"
 | Bare `die` in tool execution | Crashes AI loop | Use error handlers |
 | Giant modules (>100 lines) | Hard to maintain | Split into focused modules |
 
----
 
 ## Development Tools & Commands
 
@@ -310,7 +301,6 @@ git commit -F /tmp/msg.txt
 git log --oneline lib/CLIO/Core/MyModule.pm | head -10
 ```
 
----
 
 ## Module System
 
@@ -355,7 +345,6 @@ sub execute {
 # 5. Commit with clear message
 ```
 
----
 
 ## Session Handoff Procedures (MANDATORY)
 
@@ -579,12 +568,10 @@ Priority | Task | Estimated Time | Status | Blocker
 - `lib/CLIO/Similar/Module.pm` - Similar pattern here
 - Patterns: `git grep "pattern_to_search" lib/`
 
----
 
 ### Task 2: [Medium Priority Task]
 [Same structure as Task 1]
 
----
 
 ### Task 3: [Lower Priority Task]
 [Same structure as Task 1]
@@ -736,7 +723,6 @@ git status
 - Handoff directories provide HIGH-LEVEL context for humans
 - Session files provide LOW-LEVEL state for the AI system
 
----
 
 ## Documentation
 
@@ -775,7 +761,6 @@ git add -A  # Now git will ignore it
 git commit -m "fix(feature): description"
 ```
 
----
 
 ## Quality Standards
 
@@ -798,7 +783,6 @@ Before submitting code:
 - API calls: Implement exponential backoff retry
 - UI rendering: Buffer markdown before output
 
----
 
 ## Remember
 

@@ -2,7 +2,7 @@
 
 **Complete reference for all CLIO tool operations**
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Overview
 
@@ -16,7 +16,7 @@ CLIO provides comprehensive tooling across multiple categories. Every tool opera
 5. [Todo Lists](#todo-list-operations) - 4 operations (CRUD)
 6. [Web](#web-operations) - 1 operation
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## File Operations
 
@@ -45,7 +45,7 @@ SYSTEM: [file_operations] - reading ./src/main.c (247 lines)
 - Permission denied
 - Invalid line range
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ### write_file / create_file
 
@@ -71,7 +71,7 @@ SYSTEM: [file_operations] - writing ./test.txt (13 bytes)
 - Invalid path
 - Disk full
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ### list_dir
 
@@ -91,7 +91,7 @@ YOU: List the files in lib/CLIO/
 SYSTEM: [file_operations] - listing ./lib/CLIO/ (5 files, 4 directories)
 ```
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ### file_search
 
@@ -112,7 +112,7 @@ YOU: Find all Perl modules in the project
 SYSTEM: [file_operations] - searching ./ for pattern "**/*.pm" (42 files)
 ```
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ### grep_search
 
@@ -134,7 +134,7 @@ YOU: Search for all TODO comments in lib/
 SYSTEM: [file_operations] - searching ./lib for pattern "TODO" (18 files)
 ```
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ### semantic_search
 
@@ -155,7 +155,7 @@ YOU: Find functions that handle authentication
 SYSTEM: [file_operations] - semantic search in ./ for "authentication"
 ```
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ### replace_string
 
@@ -177,7 +177,7 @@ YOU: In config.yaml, replace port 8080 with 9000
 SYSTEM: [file_operations] - replacing string in ./config.yaml (1 replacement)
 ```
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ### delete_file
 
@@ -197,7 +197,7 @@ YOU: Delete the temp/ directory
 SYSTEM: [file_operations] - deleting ./temp/
 ```
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ### Other File Operations
 
@@ -208,7 +208,7 @@ SYSTEM: [file_operations] - deleting ./temp/
 **list_code_usages** - Find symbol references  
 **read_tool_result** - Read previous tool output  
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Version Control
 
@@ -229,7 +229,7 @@ YOU: What's the current git status?
 SYSTEM: [git] - executing git status in ./
 ```
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ### git_diff
 
@@ -251,7 +251,7 @@ YOU: Show me what changed in the last commit
 SYSTEM: [git] - executing git diff HEAD~1..HEAD in ./
 ```
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ### git_commit
 
@@ -273,7 +273,7 @@ SYSTEM: [git] - staging all changes
 SYSTEM: [git] - committing with message "Fix authentication bug"
 ```
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ### Other Git Operations
 
@@ -285,7 +285,7 @@ SYSTEM: [git] - committing with message "Fix authentication bug"
 **git_merge** - Merge branches  
 **git_reset** - Reset changes  
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Terminal Operations
 
@@ -310,7 +310,7 @@ SYSTEM: [terminal] - executing: find lib -name "*.pm" -exec wc -l {} + | tail -1
 
 **Security Note:** Use with caution. Validates input but user is responsible for command safety.
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ### get_terminal_output
 
@@ -321,7 +321,7 @@ SYSTEM: [terminal] - executing: find lib -name "*.pm" -exec wc -l {} + | tail -1
 
 **Returns:** Stored command output
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Memory Operations
 
@@ -345,7 +345,7 @@ YOU: Remember that our API endpoint is https://api.example.com
 SYSTEM: [memory] - storing memory: api_endpoint
 ```
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ### retrieve
 
@@ -358,7 +358,7 @@ SYSTEM: [memory] - storing memory: api_endpoint
 
 **Action Description:** `retrieving memory: {key}`
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ### search
 
@@ -378,14 +378,14 @@ YOU: Find all information about database configuration
 SYSTEM: [memory] - searching memories for "database configuration"
 ```
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ### Other Memory Operations
 
 **list_memories** - List all stored memories  
 **delete** - Delete a memory by key  
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Todo List Operations
 
@@ -401,7 +401,7 @@ SYSTEM: [memory] - searching memories for "database configuration"
 **Returns:** Current todo list  
 **Action Description:** `reading todo list`
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 **Write Operation:**
 
@@ -432,7 +432,7 @@ YOU: Create a todo list for this refactoring:
 SYSTEM: [todo_operations] - writing todo list (4 items)
 ```
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 **Update Operation:**
 
@@ -449,7 +449,7 @@ SYSTEM: [todo_operations] - writing todo list (4 items)
 
 **Action Description:** `updating todo items ({count} updates)`
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 **Add Operation:**
 
@@ -458,7 +458,7 @@ SYSTEM: [todo_operations] - writing todo list (4 items)
 
 **Action Description:** `adding {count} todos to list`
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Web Operations
 
@@ -483,7 +483,7 @@ SYSTEM: [web] - fetching https://docs.example.com/api
 
 **Note:** Respects robots.txt and rate limiting.
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Tool Result Storage
 
@@ -500,7 +500,7 @@ All tool operations store their results for AI context. Results can be retrieved
 }
 ```
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Error Handling
 
@@ -522,7 +522,7 @@ All tools return structured error responses:
 - `timeout` - Operation timed out
 - `external_error` - External command/API failed
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Adding Custom Tools
 
@@ -535,7 +535,7 @@ See [DEVELOPER_GUIDE.md](../DEVELOPER_GUIDE.md#adding-new-tools) for instruction
 4. Return structured results
 5. Register in Registry
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 **For more information:**
 - [ARCHITECTURE.md](ARCHITECTURE.md) - System design

@@ -2,7 +2,7 @@
 
 **An AI code assistant for people who live in the terminal. Portable, privacy-first, and designed for real work.**
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Why I Built CLIO
 
@@ -12,7 +12,7 @@ Starting with version 20260119.1, CLIO has been building itself. All of my devel
 
 CLIO is part of the [Synthetic Autonomic Mind (SAM)](https://github.com/SyntheticAutonomicMind) organization, which is dedicated to building user-first, privacy-respecting AI tools. If you value transparency, portability, and the power of the command line, CLIO is for you.
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## What Makes CLIO Different
 
@@ -23,7 +23,7 @@ CLIO is part of the [Synthetic Autonomic Mind (SAM)](https://github.com/Syntheti
 - **Persistent Sessions:** Pick up exactly where you left off, with full conversation and tool history.
 - **Scriptable & Extensible:** Designed for users who prefer Vim to VSCode, tmux to tabs, and scripts to clicks. CLIO fits into your workflow, not the other way around.
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Who is CLIO For?
 
@@ -32,7 +32,7 @@ CLIO is part of the [Synthetic Autonomic Mind (SAM)](https://github.com/Syntheti
 - Users who want a professional, readable terminal UI (with real markdown rendering)
 - People who prefer tools that work everywhere, without external dependencies
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Core Features
 
@@ -48,7 +48,7 @@ CLIO is part of the [Synthetic Autonomic Mind (SAM)](https://github.com/Syntheti
 - **Beautiful Terminal UI:** Professional markdown rendering with syntax highlighting, color-coded system messages, and streaming responses
 - **Multiple AI Backend Support:** GitHub Copilot (default), OpenAI, DeepSeek, llama.cpp, SAM, and more
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Quick Start
 
@@ -103,7 +103,7 @@ See [docs/USER_GUIDE.md](docs/USER_GUIDE.md) for full provider configuration det
 ./clio --debug
 ```
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Example Usage
 
@@ -126,7 +126,7 @@ CLIO: I can see you have several files here:
 ...
 ```
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Session Management
 
@@ -152,7 +152,7 @@ Sessions include:
 - Memory context
 - Timestamps
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Configuration
 
@@ -185,7 +185,7 @@ export CLIO_SESSION_DIR="$HOME/.clio/sessions"
 
 For advanced configuration options, see [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Custom Instructions
 
@@ -224,7 +224,7 @@ The same CLIO installation adapts its behavior to match each project's needs!
 
 For complete documentation and examples, see [docs/CUSTOM_INSTRUCTIONS.md](docs/CUSTOM_INSTRUCTIONS.md).
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Requirements
 
@@ -233,7 +233,7 @@ For complete documentation and examples, see [docs/CUSTOM_INSTRUCTIONS.md](docs/
 - **Git:** Required for version control operations
 - **Terminal:** Any ANSI-compatible terminal emulator
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Documentation
 
@@ -245,7 +245,7 @@ For complete documentation and examples, see [docs/CUSTOM_INSTRUCTIONS.md](docs/
 - **[Developer Guide](docs/DEVELOPER_GUIDE.md):** Extending CLIO and contributing
 - **[Technical Specs](docs-internal/):** Detailed specifications (protocols, UI, memory, etc.)
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Design Philosophy
 
@@ -256,7 +256,7 @@ For complete documentation and examples, see [docs/CUSTOM_INSTRUCTIONS.md](docs/
 - **Tool-Powered:** The AI doesn't hallucinate file contents or command output, it uses real tools to interact with your system.
 - **Privacy-Conscious:** Your code and conversations stay on your machine. API calls only send the context necessary for the current request.
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Architecture
 
@@ -286,7 +286,7 @@ User Input -> SimpleChat UI -> SimpleAIAgent -> Tool Selection
 
 See [docs/SPECS/ARCHITECTURE.md](docs/SPECS/ARCHITECTURE.md) for detailed system design.
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Contributing
 
@@ -297,7 +297,7 @@ Contributions are welcome! Please see [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_G
 - Testing guidelines
 - Code standards
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## License
 
@@ -305,7 +305,7 @@ CLIO is licensed under the GNU General Public License v3..
 
 See [LICENSE](LICENSE) for full license text.
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Support
 

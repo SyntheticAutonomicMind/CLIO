@@ -2,7 +2,7 @@
 
 **Complete guide to using CLIO (Command Line Intelligence Orchestrator)**
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Table of Contents
 
@@ -18,7 +18,7 @@
 10. [Troubleshooting](#troubleshooting)
 11. [FAQ](#faq)
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Introduction
 
@@ -50,7 +50,7 @@ CLIO is a terminal-based AI code assistant that brings powerful AI capabilities 
 - **Task Management**: Create and manage todo lists
 - **Memory**: Store and recall information across sessions
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Installation
 
@@ -148,7 +148,7 @@ Use the `--debug` flag to enable debug output: `clio --debug --new`
 3. Generate an API token
 4. Copy and set as `GITHUB_COPILOT_TOKEN`
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Getting Started
 
@@ -255,7 +255,7 @@ clio --resume sess_20260118_143052
 
 Your entire conversation history, including all tool operations and responses, will be restored exactly as you left it.
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Core Concepts
 
@@ -347,7 +347,7 @@ sub hello {
 **Tables:**
 ```
 | Column 1 | Column 2 |
-|----------|----------|
+|━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━-|━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━-|
 | Data 1   | Data 2   |
 ```
 
@@ -387,7 +387,7 @@ CLIO: I found 3 memories related to database configuration:
 3. Connection pool size: 20 (stored 2026-01-16)
 ```
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Available Tools
 
@@ -573,7 +573,7 @@ YOU: Fetch the documentation from https://docs.example.com/api
 YOU: Summarize the content of https://blog.example.com/article
 ```
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Usage Examples
 
@@ -837,7 +837,7 @@ uvicorn main:app --reload
 Want me to create a complete example FastAPI application for you?
 ```
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Configuration
 
@@ -950,7 +950,7 @@ ui:
 
 **Note:** Environment variables take precedence over config file settings.
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Customization
 
@@ -970,7 +970,7 @@ ui:
 **Built-in Styles:**
 
 | Style | Description |
-|-------|-------------|
+|━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━-|━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━-|
 | `default` | Bright colors on dark background |
 | `photon` | Retro BBS-inspired (cyan/magenta/green) |
 | `dark` | Subdued colors for dark terminals |
@@ -1045,7 +1045,7 @@ See [`styles/README.md`](../styles/README.md) for complete style file format and
 **Built-in Themes:**
 
 | Theme | Description |
-|-------|-------------|
+|━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━-|━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━-|
 | `default` | Standard output with all elements visible |
 | `compact` | Minimal output, fewer labels |
 | `verbose` | Detailed output with extra context |
@@ -1083,7 +1083,7 @@ Themes use placeholders:
 
 See [`themes/README.md`](../themes/README.md) for complete theme file format and available placeholders.
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Tips & Best Practices
 
@@ -1273,7 +1273,7 @@ clio --resume
 # Reattach: tmux attach -t clio
 ```
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Troubleshooting
 
@@ -1463,7 +1463,7 @@ git status
 git init
 ```
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## FAQ
 
@@ -1577,7 +1577,7 @@ unset GITHUB_COPILOT_TOKEN
 
 CLIO automatically detects which provider to use based on available credentials.
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Next Steps
 
@@ -1593,6 +1593,6 @@ CLIO automatically detects which provider to use based on available credentials.
 **Contribute:**
 See [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md) for contribution guidelines.
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 **Happy coding with CLIO!**
