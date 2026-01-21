@@ -1142,10 +1142,10 @@ sub display_help {
     my @help_lines = ();
     
     push @help_lines, "";
-    push @help_lines, $self->colorize("━ CLIO Commands ━" . ("━" x 43), 'DATA');
+    push @help_lines, $self->colorize("━ CLIO Commands ━" . ("━" x 44), 'DATA');
     push @help_lines, "";
     
-    push @help_lines, $self->colorize("━ BASICS ━" . ("━" x 51), 'DATA');
+    push @help_lines, $self->colorize("━ BASICS ━" . ("━" x 52), 'DATA');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/help, /h', 'PROMPT'), 'Display this help');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/exit, /quit, /q', 'PROMPT'), 'Exit the chat');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/clear', 'PROMPT'), 'Clear the screen');
@@ -1158,7 +1158,7 @@ sub display_help {
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/config', 'PROMPT'), 'Global configuration');
     push @help_lines, "";
     
-    push @help_lines, $self->colorize("━ SESSION ━" . ("━" x 50), 'DATA');
+    push @help_lines, $self->colorize("━ SESSION ━" . ("━" x 51), 'DATA');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/session', 'PROMPT'), 'Session management');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/session list', 'PROMPT'), 'List all sessions');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/session switch', 'PROMPT'), 'Switch sessions');
@@ -1171,7 +1171,7 @@ sub display_help {
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/git status', 'PROMPT'), 'Show git status');
     push @help_lines, "";
     
-    push @help_lines, $self->colorize("━ TODO ━" . ("━" x 53), 'DATA');
+    push @help_lines, $self->colorize("━ TODO ━" . ("━" x 54), 'DATA');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo', 'PROMPT'), "View agent's todo list");
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo add <text>', 'PROMPT'), 'Add todo');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo done <id>', 'PROMPT'), 'Complete todo');
@@ -1185,12 +1185,12 @@ sub display_help {
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/doc <file>', 'PROMPT'), 'Generate docs');
     push @help_lines, "";
     
-    push @help_lines, $self->colorize("━ SKILLS & PROMPTS ━" . ("━" x 41), 'DATA');
+    push @help_lines, $self->colorize("━ SKILLS & PROMPTS ━" . ("━" x 42), 'DATA');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/skills', 'PROMPT'), 'Manage custom skills');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/prompt', 'PROMPT'), 'Manage system prompts');
     push @help_lines, "";
     
-    push @help_lines, $self->colorize("━ OTHER ━" . ("━" x 52), 'DATA');
+    push @help_lines, $self->colorize("━ OTHER ━" . ("━" x 53), 'DATA');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/billing', 'PROMPT'), 'API usage stats');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/context', 'PROMPT'), 'Manage context files');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/exec <cmd>', 'PROMPT'), 'Run shell command');
@@ -4246,35 +4246,72 @@ sub _list_sessions {
     # Sort by modification time (most recent first)
     @session_info = sort { $b->{mtime} <=> $a->{mtime} } @session_info;
     
-    # Display
-    print "\n";
-    print $self->colorize("AVAILABLE SESSIONS", 'DATA'), "\n";
-    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n\n";
+    # Pagination setup
+    my $per_page = 20;
+    my $total_sessions = scalar(@session_info);
+    my $total_pages = int(($total_sessions + $per_page - 1) / $per_page);
+    my $page = 1;  # Start at first page
     
-    my $current_session_id = $self->{session} ? $self->{session}->{session_id} : '';
-    
-    # Show only last 20 sessions to avoid overwhelming display
-    my $shown = 0;
-    my $max_show = 20;
-    
-    for my $sess (@session_info) {
-        last if $shown >= $max_show;
-        
-        my $marker = $sess->{is_current} ? $self->colorize(' (current)', 'DATA') : '';
-        my $date = $sess->{mtime} ? scalar(localtime($sess->{mtime})) : 'unknown';
-        
-        printf "  %s%s\n", $sess->{id}, $marker;
-        printf "    Last modified: %s\n", $date;
+    # Display with pagination
+    while (1) {
         print "\n";
-        $shown++;
+        print $self->colorize("━ AVAILABLE SESSIONS ━" . ("━" x 40), 'DATA'), "\n\n";
+        
+        my $start_idx = ($page - 1) * $per_page;
+        my $end_idx = $start_idx + $per_page - 1;
+        $end_idx = $total_sessions - 1 if $end_idx >= $total_sessions;
+        
+        # Display sessions for this page
+        for my $i ($start_idx..$end_idx) {
+            my $sess = $session_info[$i];
+            my $marker = $sess->{is_current} ? $self->colorize(' (current)', 'DATA') : '';
+            my $date = $sess->{mtime} ? scalar(localtime($sess->{mtime})) : 'unknown';
+            
+            printf "  %s%s\n", $sess->{id}, $marker;
+            printf "    Last modified: %s\n", $date;
+            print "\n";
+        }
+        
+        # Show pagination info
+        print $self->colorize("━ PAGE $page/$total_pages ━" . ("━" x (62 - length("━ PAGE $page/$total_pages ━"))), 'DIM'), "\n";
+        
+        # Show pagination controls if needed
+        if ($total_pages > 1) {
+            print "\n";
+            if ($page > 1) {
+                print $self->colorize("  [N]ext  [P]rev", 'PROMPT');
+            } else {
+                print $self->colorize("  [N]ext", 'PROMPT');
+            }
+            if ($page < $total_pages) {
+                print "  (or [P]rev)" unless $page == 1;
+                print "  [Q]uit\n";
+            } else {
+                print "  [Q]uit\n";
+            }
+            
+            print "\nPage action (N/P/Q): ";
+            my $response = <STDIN>;
+            chomp $response if defined $response;
+            $response = uc($response || '');
+            
+            if ($response eq 'N' && $page < $total_pages) {
+                $page++;
+                next;
+            } elsif ($response eq 'P' && $page > 1) {
+                $page--;
+                next;
+            } elsif ($response eq 'Q') {
+                last;
+            }
+            # Invalid response, loop again
+        } else {
+            last;
+        }
     }
     
-    if (scalar(@session_info) > $max_show) {
-        my $hidden = scalar(@session_info) - $max_show;
-        $self->display_system_message("... and $hidden more sessions");
-    }
-    
-    $self->display_system_message("Total: " . scalar(@session_info) . " sessions");
+    print "\n";
+    $self->display_system_message("Total: " . $total_sessions . " sessions");
     $self->display_system_message("Use '/session switch <id>' to switch or '--resume <id>' on startup");
 }
 
@@ -5434,7 +5471,7 @@ sub handle_style_command {
         my @styles = $self->{theme_mgr}->list_styles();
         my $current = $self->{theme_mgr}->get_current_style();
         
-        print $self->colorize("AVAILABLE STYLES", 'DATA'), "\n\n";
+        print $self->colorize("━ AVAILABLE STYLES ━" . ("━" x 41), 'DATA'), "\n\n";
         for my $style (@styles) {
             my $marker = ($style eq $current) ? ' (current)' : '';
             printf "  %-20s%s\n", $style, $self->colorize($marker, 'PROMPT');
@@ -5444,7 +5481,7 @@ sub handle_style_command {
     }
     elsif ($action eq 'show') {
         my $current = $self->{theme_mgr}->get_current_style();
-        print $self->colorize("CURRENT STYLE", 'DATA'), "\n\n";
+        print $self->colorize("━ CURRENT STYLE ━" . ("━" x 47), 'DATA'), "\n\n";
         print "  ", $self->colorize($current, 'USER'), "\n\n";
     }
     elsif ($action eq 'set') {
@@ -5502,7 +5539,7 @@ sub handle_theme_command {
         my @themes = $self->{theme_mgr}->list_themes();
         my $current = $self->{theme_mgr}->get_current_theme();
         
-        print $self->colorize("AVAILABLE THEMES", 'DATA'), "\n\n";
+        print $self->colorize("━ AVAILABLE THEMES ━" . ("━" x 41), 'DATA'), "\n\n";
         for my $theme (@themes) {
             my $marker = ($theme eq $current) ? ' (current)' : '';
             printf "  %-20s%s\n", $theme, $self->colorize($marker, 'PROMPT');
@@ -5512,7 +5549,7 @@ sub handle_theme_command {
     }
     elsif ($action eq 'show') {
         my $current = $self->{theme_mgr}->get_current_theme();
-        print $self->colorize("CURRENT THEME", 'DATA'), "\n\n";
+        print $self->colorize("━ CURRENT THEME ━" . ("━" x 47), 'DATA'), "\n\n";
         print "  ", $self->colorize($current, 'USER'), "\n\n";
     }
     elsif ($action eq 'set') {
