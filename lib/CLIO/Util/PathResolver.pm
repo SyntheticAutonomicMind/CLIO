@@ -69,50 +69,23 @@ sub init {
         return;
     }
     
-    # Priority 4: Try installed mode - use ~/.clio
+    # Priority 4: Installed mode - use ~/.clio
     my $home_dir = $ENV{HOME} || $ENV{USERPROFILE};
     if (!$home_dir) {
-        # No home directory - fall back to script directory (iOS/sandboxed environment)
-        $BASE_DIR = $script_dir;
-        $CONFIG_DIR = File::Spec->catdir($script_dir, '.clio');
-        
-        # Try to create config directory
-        if (!-d $CONFIG_DIR) {
-            eval { make_path($CONFIG_DIR); };
-            if ($@ || !-d $CONFIG_DIR) {
-                warn "[WARN] Cannot create config directory $CONFIG_DIR - running in stateless mode\n";
-            }
-        }
-        return;
+        die "[ERROR] Cannot determine home directory (HOME/USERPROFILE not set)\n";
     }
     
-    my $home_config = File::Spec->catdir($home_dir, '.clio');
+    $CONFIG_DIR = File::Spec->catdir($home_dir, '.clio');
     
-    # Try to create home directory config
-    if (!-d $home_config) {
-        eval { make_path($home_config); };
+    # Create config directory if it doesn't exist
+    if (!-d $CONFIG_DIR) {
+        make_path($CONFIG_DIR) or die "[ERROR] Cannot create config directory $CONFIG_DIR: $!\n";
+        print STDERR "[INFO] Created config directory: $CONFIG_DIR\n";
     }
     
-    # Check if home config directory is usable
-    if (-d $home_config && -w $home_config) {
-        # Standard installed mode
-        $CONFIG_DIR = $home_config;
-        $BASE_DIR = $script_dir;
-    } else {
-        # Fall back to script directory (iOS/sandboxed environment)
-        $BASE_DIR = $script_dir;
-        $CONFIG_DIR = File::Spec->catdir($script_dir, '.clio');
-        
-        # Try to create config directory
-        if (!-d $CONFIG_DIR) {
-            eval { make_path($CONFIG_DIR); };
-            if ($@ || !-d $CONFIG_DIR) {
-                warn "[WARN] Cannot create config directory - sessions and config may not persist\n";
-                # Last resort: use current directory
-                $CONFIG_DIR = File::Spec->curdir();
-            }
-        }
-    }
+    # In installed mode, BASE_DIR is still the script location (for lib/ access)
+    # but CONFIG_DIR is ~/.clio (for data storage)
+    $BASE_DIR = $script_dir;
 }
 
 =head2 get_base_dir
