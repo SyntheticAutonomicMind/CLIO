@@ -30,20 +30,20 @@ sub new {
         name => 'version_control',
         description => q{Git version control operations for repository management.
 
-=== QUERY (3 operations) ===
+━━━━━━━━━━━━━━━━━━━━━ QUERY (3 operations) ━━━━━━━━━━━━━━━━━━━━━
 -  status - Repository status and changes
 -  log - Git commit history
 -  diff - Show differences between commits/branches
 
-=== BRANCH (2 operations) ===  
+━━━━━━━━━━━━━━━━━━━━━ BRANCH (2 operations) ━━━━━━━━━━━━━━━━━━━━━
 -  branch - Branch operations (list, create, switch, delete)
 -  commit - Create commits
 
-=== REMOTE (2 operations) ===
+━━━━━━━━━━━━━━━━━━━━━ REMOTE (2 operations) ━━━━━━━━━━━━━━━━━━━━━
 -  push - Push changes to remote
 -  pull - Pull changes from remote
 
-=== HISTORY (3 operations) ===
+━━━━━━━━━━━━━━━━━━━━━ HISTORY (3 operations) ━━━━━━━━━━━━━━━━━━━━━
 -  blame - Show file annotation/blame
 -  stash - Stash operations (save, list, apply, drop)
 -  tag - Tag operations (list, create, delete)

@@ -878,9 +878,9 @@ sub display_paginated_list {
     # If not interactive (pipe mode) or list is small, just display all items
     if (!$is_interactive || $total <= $page_size) {
         print "\n";
-        print "=" x 80, "\n";
+        print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
         print $self->colorize($title, 'DATA'), "\n";
-        print "=" x 80, "\n";
+        print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
         print "\n";
         
         for my $i (0 .. $total - 1) {
@@ -889,7 +889,7 @@ sub display_paginated_list {
         }
         
         print "\n";
-        print "-" x 80, "\n";
+        print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
         print $self->colorize("Total: $total items", 'DIM'), "\n";
         print "\n";
         return;
@@ -907,9 +907,9 @@ sub display_paginated_list {
         # Clear screen and display page
         print "\e[2J\e[H";  # Clear screen + home cursor
         print "\n";
-        print "=" x 80, "\n";
+        print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
         print $self->colorize($title, 'DATA'), "\n";
-        print "=" x 80, "\n";
+        print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
         print "\n";
         
         # Display items for this page
@@ -919,7 +919,7 @@ sub display_paginated_list {
         }
         
         print "\n";
-        print "-" x 80, "\n";
+        print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
         
         # Navigation info
         my $showing = sprintf("Showing %d-%d of %d (Page %d/%d)", 
@@ -1322,7 +1322,7 @@ sub _display_api_help {
     
     print "\n";
     print $self->colorize("API COMMANDS", 'DATA'), "\n";
-    print $self->colorize("=" x 50, 'DIM'), "\n\n";
+    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n\n";
     
     print $self->colorize("  /api show", 'PROMPT'), "                    Display current API configuration\n";
     print $self->colorize("  /api set model <name>", 'PROMPT'), "        Set AI model\n";
@@ -1335,11 +1335,11 @@ sub _display_api_help {
     
     print "\n";
     print $self->colorize("FLAGS", 'DATA'), "\n";
-    print $self->colorize("-" x 50, 'DIM'), "\n";
+    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n";
     print "  --session    Save setting to this session only (not global)\n";
     print "\n";
     print $self->colorize("EXAMPLES", 'DATA'), "\n";
-    print $self->colorize("-" x 50, 'DIM'), "\n";
+    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n";
     print "  /api set model claude-sonnet-4          # Global + session\n";
     print "  /api set model gpt-4o --session         # This session only\n";
     print "  /api set provider github_copilot        # Switch provider\n";
@@ -1381,7 +1381,7 @@ sub _display_api_config {
     
     print "\n";
     print $self->colorize("API CONFIGURATION", 'DATA'), "\n";
-    print $self->colorize("=" x 50, 'DIM'), "\n\n";
+    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n\n";
     printf "  %-12s %s\n", "Provider:", $provider || '[not set]';
     printf "  %-12s %s\n", "API Key:", $auth_status;
     printf "  %-12s %s\n", "API Base:", $base || '[default]';
@@ -1395,7 +1395,7 @@ sub _display_api_config {
         if (%$api_config) {
             print "\n";
             print $self->colorize("SESSION OVERRIDES", 'DATA'), "\n";
-            print $self->colorize("-" x 30, 'DIM'), "\n";
+            print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n";
             for my $key (sort keys %$api_config) {
                 printf "  %-12s %s\n", "$key:", $api_config->{$key};
             }
@@ -1582,7 +1582,7 @@ sub handle_loglevel_command {
     unless ($level) {
         my $current = $self->{config}->get('loglevel') || $self->{config}->get('log_level') || 'WARNING';
         print "\n", $self->colorize("CURRENT LOG LEVEL", 'DATA'), "\n";
-        print $self->colorize("=" x 50, 'DIM'), "\n\n";
+        print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n\n";
         print "  $current\n\n";
         return;
     }
@@ -1610,7 +1610,7 @@ sub show_global_config {
     my ($self) = @_;
     
     print "\n", $self->colorize("GLOBAL CONFIGURATION", 'DATA'), "\n";
-    print $self->colorize("=" x 70, 'DIM'), "\n\n";
+    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n\n";
     
     # API Settings
     print $self->colorize("API Settings:", 'SYSTEM'), "\n";
@@ -1718,7 +1718,7 @@ sub show_session_config {
     my $state = $self->{session}->state();
     
     print "\n", $self->colorize("SESSION CONFIGURATION", 'DATA'), "\n";
-    print $self->colorize("=" x 70, 'DIM'), "\n\n";
+    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n\n";
     
     print $self->colorize("Session Info:", 'SYSTEM'), "\n";
     printf "  Session ID:   %s\n", $state->{session_id};
@@ -1869,7 +1869,7 @@ sub _display_config_help {
     
     print "\n";
     print $self->colorize("CONFIG COMMANDS", 'DATA'), "\n";
-    print $self->colorize("=" x 50, 'DIM'), "\n\n";
+    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n\n";
     
     print $self->colorize("  /config show", 'PROMPT'), "              Display global configuration\n";
     print $self->colorize("  /config set <key> <val>", 'PROMPT'), "   Set a configuration value\n";
@@ -1880,7 +1880,7 @@ sub _display_config_help {
     
     print "\n";
     print $self->colorize("SETTABLE KEYS", 'DATA'), "\n";
-    print $self->colorize("-" x 50, 'DIM'), "\n";
+    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n";
     print "  style, theme, working_directory\n";
     print "\n";
     print $self->colorize("NOTE", 'DATA'), ": For API settings, use ", $self->colorize("/api set", 'PROMPT'), "\n";
@@ -1954,9 +1954,9 @@ sub handle_login_command {
     }
     
     print "\n";
-    print "=" x 80, "\n";
+    print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
     print $self->colorize("GITHUB COPILOT AUTHENTICATION", 'DATA'), "\n";
-    print "=" x 80, "\n";
+    print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
     print "\n";
     
     # Start device flow
@@ -2042,9 +2042,9 @@ sub handle_login_command {
     print "  ", $self->colorize("✓", 'PROMPT'), " Tokens saved to ~/.clio/github_tokens.json\n\n";
     
     # Success!
-    print "=" x 80, "\n";
+    print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
     print $self->colorize("SUCCESS!", 'PROMPT'), "\n";
-    print "=" x 80, "\n";
+    print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
     print "\n";
     
     if ($copilot_token) {
@@ -2172,7 +2172,7 @@ sub _display_file_help {
     
     print "\n";
     print $self->colorize("FILE COMMANDS", 'DATA'), "\n";
-    print $self->colorize("=" x 50, 'DIM'), "\n\n";
+    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n\n";
     
     print $self->colorize("  /file read <path>", 'PROMPT'), "       Read and display file (markdown rendered)\n";
     print $self->colorize("  /file edit <path>", 'PROMPT'), "       Open file in external editor (\$EDITOR)\n";
@@ -2180,7 +2180,7 @@ sub _display_file_help {
     
     print "\n";
     print $self->colorize("EXAMPLES", 'DATA'), "\n";
-    print $self->colorize("-" x 50, 'DIM'), "\n";
+    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n";
     print "  /file read README.md                 # View a file\n";
     print "  /file edit lib/CLIO/UI/Chat.pm       # Edit a file\n";
     print "  /file list lib/CLIO/                 # List directory\n";
@@ -2217,7 +2217,7 @@ sub _list_directory {
     
     print "\n";
     print $self->colorize("Directory: $path", 'DATA'), "\n";
-    print $self->colorize("-" x 50, 'DIM'), "\n\n";
+    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n\n";
     
     my @dirs;
     my @files;
@@ -2310,7 +2310,7 @@ sub _display_git_help {
     
     print "\n";
     print $self->colorize("GIT COMMANDS", 'DATA'), "\n";
-    print $self->colorize("=" x 50, 'DIM'), "\n\n";
+    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n\n";
     
     print $self->colorize("  /git status", 'PROMPT'), "             Show git status\n";
     print $self->colorize("  /git diff [file]", 'PROMPT'), "        Show git diff\n";
@@ -2319,7 +2319,7 @@ sub _display_git_help {
     
     print "\n";
     print $self->colorize("EXAMPLES", 'DATA'), "\n";
-    print $self->colorize("-" x 50, 'DIM'), "\n";
+    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n";
     print "  /git status                          # See changes\n";
     print "  /git diff lib/CLIO/UI/Chat.pm        # Diff specific file\n";
     print "  /git log 5                           # Last 5 commits\n";
@@ -2999,20 +2999,20 @@ sub _display_models_list {
     
     # Header
     push @lines, "";
-    push @lines, "=" x 80;
+    push @lines, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
     push @lines, $self->colorize("AVAILABLE MODELS", 'DATA') . " (" . $self->colorize($api_base, 'THEME') . ")";
-    push @lines, "=" x 80;
+    push @lines, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
     push @lines, "";
     
     # Column headers
     if ($has_billing) {
         my $header = sprintf("  %-64s %12s", "Model", "Rate");
         push @lines, $self->colorize($header, 'THEME');
-        push @lines, sprintf("  %-64s %12s", "-" x 64, "-" x 12);
+        push @lines, sprintf("  %-64s %12s", "━" x 64, "━" x 12);
     } else {
         my $header = sprintf("  %-70s", "Model");
         push @lines, $self->colorize($header, 'THEME');
-        push @lines, sprintf("  %-70s", "-" x 70);
+        push @lines, sprintf("  %-70s", "━" x 70);
     }
     
     # Free models section
@@ -3044,7 +3044,7 @@ sub _display_models_list {
     
     # Footer
     push @lines, "";
-    push @lines, "=" x 80;
+    push @lines, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
     push @lines, sprintf("Total: %d models available", scalar(@$models));
     
     # Footer notes
@@ -3300,9 +3300,9 @@ sub handle_context_command {
         my @files = @{$self->{session}{context_files}};
         
         print "\n";
-        print "=" x 80, "\n";
+        print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
         print $self->colorize("CONVERSATION MEMORY", 'DATA'), "\n";
-        print "=" x 80, "\n";
+        print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
         
         # Show conversation memory stats
         if ($self->{session} && $self->{session}{state}) {
@@ -3369,9 +3369,9 @@ sub handle_context_command {
             }
             
             print "\n";
-            print "=" x 80, "\n";
+            print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
             print $self->colorize("CONTEXT FILES", 'DATA'), "\n";
-            print "=" x 80, "\n";
+            print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
         }
         
         unless (@files) {
@@ -3402,7 +3402,7 @@ sub handle_context_command {
         }
         
         print "\n";
-        print "-" x 80, "\n";
+        print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
         printf "Total: %d files, ~%s\n",
             scalar(@files),
             $self->_format_tokens($total_tokens);
@@ -3674,9 +3674,9 @@ sub handle_status_command {
     }
     
     print "\n";
-    print "=" x 80, "\n";
+    print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
     print $self->colorize("GIT STATUS", 'DATA'), "\n";
-    print "=" x 80, "\n";
+    print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
     print "\n";
     print $output;
     print "\n";
@@ -3708,9 +3708,9 @@ sub handle_diff_command {
     }
     
     print "\n";
-    print "=" x 80, "\n";
+    print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
     print $self->colorize("GIT DIFF" . ($file ? " - $file" : ""), 'DATA'), "\n";
-    print "=" x 80, "\n";
+    print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
     print "\n";
     print $output;
     print "\n";
@@ -3742,9 +3742,9 @@ sub handle_gitlog_command {
     }
     
     print "\n";
-    print "=" x 80, "\n";
+    print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
     print $self->colorize("GIT LOG (last $count commits)", 'DATA'), "\n";
-    print "=" x 80, "\n";
+    print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
     print "\n";
     print $output;
     print "\n";
@@ -3804,9 +3804,9 @@ sub display_tool_log_recent {
     }
     
     print "\n";
-    print "=" x 80, "\n";
+    print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
     print $self->colorize("TOOL OPERATIONS (last $count)", 'DATA'), "\n";
-    print "=" x 80, "\n";
+    print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
     
     for my $entry (@$entries) {
         $self->_display_tool_log_entry($entry);
@@ -3830,9 +3830,9 @@ sub display_tool_log_filter {
     }
     
     print "\n";
-    print "=" x 80, "\n";
+    print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
     print $self->colorize("TOOL OPERATIONS - $tool_name (" . scalar(@$entries) . " found)", 'DATA'), "\n";
-    print "=" x 80, "\n";
+    print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
     
     # Show most recent first
     for my $entry (reverse @$entries) {
@@ -3857,9 +3857,9 @@ sub display_tool_log_search {
     }
     
     print "\n";
-    print "=" x 80, "\n";
+    print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
     print $self->colorize("TOOL OPERATIONS - search '$pattern' (" . scalar(@$entries) . " found)", 'DATA'), "\n";
-    print "=" x 80, "\n";
+    print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
     
     # Show most recent first
     for my $entry (reverse @$entries) {
@@ -3885,9 +3885,9 @@ sub display_tool_log_session {
     }
     
     print "\n";
-    print "=" x 80, "\n";
+    print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
     print $self->colorize("TOOL OPERATIONS - session $session_id (" . scalar(@$entries) . " ops)", 'DATA'), "\n";
-    print "=" x 80, "\n";
+    print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
     
     # Show most recent first
     for my $entry (reverse @$entries) {
@@ -4003,9 +4003,9 @@ sub handle_commit_command {
     }
     
     print "\n";
-    print "=" x 80, "\n";
+    print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
     print $self->colorize("GIT COMMIT", 'DATA'), "\n";
-    print "=" x 80, "\n";
+    print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
     print "\n";
     print $commit_output;
     print "\n";
@@ -4125,7 +4125,7 @@ sub _display_session_help {
     
     print "\n";
     print $self->colorize("SESSION COMMANDS", 'DATA'), "\n";
-    print $self->colorize("=" x 50, 'DIM'), "\n\n";
+    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n\n";
     
     print $self->colorize("  /session show", 'PROMPT'), "               Display current session info\n";
     print $self->colorize("  /session list", 'PROMPT'), "               List all available sessions\n";
@@ -4136,7 +4136,7 @@ sub _display_session_help {
     
     print "\n";
     print $self->colorize("EXAMPLES", 'DATA'), "\n";
-    print $self->colorize("-" x 50, 'DIM'), "\n";
+    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n";
     print "  /session show                        # See current session\n";
     print "  /session list                        # See all sessions\n";
     print "  /session switch abc123-def456        # Switch by ID\n";
@@ -4156,7 +4156,7 @@ sub _display_session_info {
     
     print "\n";
     print $self->colorize("SESSION INFORMATION", 'DATA'), "\n";
-    print $self->colorize("=" x 50, 'DIM'), "\n\n";
+    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n\n";
     
     printf "  %-15s %s\n", "Session ID:", $session_id;
     
@@ -4178,7 +4178,7 @@ sub _display_session_info {
     if ($state->{api_config} && %{$state->{api_config}}) {
         print "\n";
         print $self->colorize("SESSION API CONFIG", 'DATA'), "\n";
-        print $self->colorize("-" x 30, 'DIM'), "\n";
+        print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n";
         for my $key (sort keys %{$state->{api_config}}) {
             printf "  %-15s %s\n", "$key:", $state->{api_config}{$key};
         }
@@ -4188,7 +4188,7 @@ sub _display_session_info {
     if ($state->{billing}) {
         print "\n";
         print $self->colorize("SESSION USAGE", 'DATA'), "\n";
-        print $self->colorize("-" x 30, 'DIM'), "\n";
+        print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n";
         my $billing = $state->{billing};
         printf "  %-15s %d\n", "Requests:", $billing->{request_count} || 0;
         printf "  %-15s %d\n", "Input tokens:", $billing->{input_tokens} || 0;
@@ -4248,7 +4248,7 @@ sub _list_sessions {
     # Display
     print "\n";
     print $self->colorize("AVAILABLE SESSIONS", 'DATA'), "\n";
-    print $self->colorize("=" x 70, 'DIM'), "\n\n";
+    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n\n";
     
     my $current_session_id = $self->{session} ? $self->{session}->{session_id} : '';
     
@@ -4620,9 +4620,9 @@ sub handle_skills_command {
         my $skills = $sm->list_skills();
         
         print "\n";
-        print "=" x 80, "\n";
+        print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
         print "CUSTOM SKILLS\n";
-        print "=" x 80, "\n";
+        print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
         
         if (@{$skills->{custom}}) {
             for my $name (sort @{$skills->{custom}}) {
@@ -4635,7 +4635,7 @@ sub handle_skills_command {
         
         print "\n";
         print "BUILT-IN SKILLS (read-only)\n";
-        print "-" x 80, "\n";
+        print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
         
         for my $name (sort @{$skills->{builtin}}) {
             my $s = $sm->get_skill($name);
@@ -4685,13 +4685,13 @@ sub handle_skills_command {
         }
         
         print "\n";
-        print "=" x 80, "\n";
+        print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
         print "SKILL: $name\n";
-        print "=" x 80, "\n";
+        print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
         print "\n";
         print $skill->{prompt}, "\n";
         print "\n";
-        print "-" x 80, "\n";
+        print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
         print "Variables: ", join(", ", @{$skill->{variables}}), "\n";
         print "Type: $skill->{type}\n";
         if ($skill->{created}) {
@@ -4771,9 +4771,9 @@ sub handle_prompt_command {
         # Build header and footer
         my @header = (
             "",
-            "=" x 80,
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
             "ACTIVE SYSTEM PROMPT",
-            "=" x 80,
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
             ""
         );
         
@@ -4794,7 +4794,7 @@ sub handle_prompt_command {
         # Display footer
         my @footer = (
             "",
-            "-" x 80,
+            "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501",
             "Total: $total_lines lines",
             "Type: " . ($pm->{metadata}->{active_prompt} || 'default'),
             ""
@@ -4813,7 +4813,7 @@ sub handle_prompt_command {
         
         print "\n";
         print "SYSTEM PROMPTS\n";
-        print "=" x 80, "\n";
+        print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
         print "\n";
         print "BUILTIN (read-only):\n";
         for my $name (@{$prompts->{builtin}}) {
@@ -4998,7 +4998,7 @@ sub _build_skill_context {
                 push @context_contents, "File: $ctx_file\n\n$content";
             }
         }
-        $context->{context} = join("\n\n" . ("=" x 80) . "\n\n", @context_contents);
+        $context->{context} = join("\n\n" . ("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━") . "\n\n", @context_contents);
     }
     
     return $context;

@@ -135,7 +135,7 @@ sub format_recall_response {
     }
     
     my $response = "Recall Results: Found $count message(s) matching '$query'\n";
-    $response .= "=" x 60 . "\n\n";
+    $response .= "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" . "\n\n";
     
     my $msg_num = 1;
     for my $msg (@$results) {
@@ -152,9 +152,9 @@ sub format_recall_response {
         }
         
         $response .= "[$msg_num] $role at $timestamp\n";
-        $response .= "-" x 60 . "\n";
+        $response .= "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" . "\n";
         $response .= "$content\n";
-        $response .= "=" x 60 . "\n\n";
+        $response .= "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" . "\n\n";
         
         $msg_num++;
     }

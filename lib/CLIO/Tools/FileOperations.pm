@@ -64,7 +64,7 @@ AUTHORIZATION:
 -  Inside session directory: AUTO-APPROVED
 -  Outside session directory: Requires user confirmation (future feature)
 
-=== READ (5 operations) ===
+━━━━━━━━━━━━━━━━━━━━━━━ READ (5 operations) ━━━━━━━━━━━━━━━━━━━━━━━
 -  read_file - Read file content with optional line range
   Parameters: path (required), start_line (optional), end_line (optional)
   
@@ -80,7 +80,7 @@ AUTHORIZATION:
 -  get_errors - Get compilation/lint errors for file (Perl-specific)
   Parameters: path (required)
 
-=== SEARCH (4 operations) ===
+━━━━━━━━━━━━━━━━━━━━━ SEARCH (4 operations) ━━━━━━━━━━━━━━━━━━━━━
 -  file_search - Find files matching pattern
   Parameters: pattern (required), directory (optional, default: .)
   
@@ -95,7 +95,7 @@ AUTHORIZATION:
   When to use: Tool response contains [TOOL_RESULT_STORED] marker
   Purpose: Retrieve large results that exceed inline size limits (>8KB)
 
-=== WRITE (8 operations) ===
+━━━━━━━━━━━━━━━━━━━━━ WRITE (8 operations) ━━━━━━━━━━━━━━━━━━━━━
 -  create_file - Create new file with content
   Parameters: path (required), content (required)
   
