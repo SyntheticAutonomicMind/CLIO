@@ -1142,42 +1142,42 @@ sub display_help {
     my @help_lines = ();
     
     push @help_lines, "";
-    push @help_lines, $self->colorize("CLIO Commands", 'DATA');
+    push @help_lines, $self->colorize("━ CLIO Commands ━" . ("━" x 43), 'DATA');
     push @help_lines, "";
     
-    push @help_lines, $self->colorize("BASICS", 'DATA');
+    push @help_lines, $self->colorize("━ BASICS ━" . ("━" x 51), 'DATA');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/help, /h', 'PROMPT'), 'Display this help');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/exit, /quit, /q', 'PROMPT'), 'Exit the chat');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/clear', 'PROMPT'), 'Clear the screen');
     push @help_lines, "";
     
-    push @help_lines, $self->colorize("API & CONFIG", 'DATA') . " " . $self->colorize("(run /api or /config for more)", 'DIM');
+    push @help_lines, $self->colorize("━ API & CONFIG ━" . ("━" x 46), 'DATA');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/api', 'PROMPT'), 'API settings (model, provider, login)');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/api set model <name>', 'PROMPT'), 'Set AI model');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/api models', 'PROMPT'), 'List available models');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/config', 'PROMPT'), 'Global configuration');
     push @help_lines, "";
     
-    push @help_lines, $self->colorize("SESSION", 'DATA') . " " . $self->colorize("(run /session for more)", 'DIM');
+    push @help_lines, $self->colorize("━ SESSION ━" . ("━" x 50), 'DATA');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/session', 'PROMPT'), 'Session management');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/session list', 'PROMPT'), 'List all sessions');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/session switch', 'PROMPT'), 'Switch sessions');
     push @help_lines, "";
     
-    push @help_lines, $self->colorize("FILE & GIT", 'DATA') . " " . $self->colorize("(run /file or /git for more)", 'DIM');
+    push @help_lines, $self->colorize("━ FILE & GIT ━" . ("━" x 48), 'DATA');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/file', 'PROMPT'), 'File operations');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/file read <path>', 'PROMPT'), 'View file');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/git', 'PROMPT'), 'Git operations');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/git status', 'PROMPT'), 'Show git status');
     push @help_lines, "";
     
-    push @help_lines, $self->colorize("TODO", 'DATA');
+    push @help_lines, $self->colorize("━ TODO ━" . ("━" x 53), 'DATA');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo', 'PROMPT'), "View agent's todo list");
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo add <text>', 'PROMPT'), 'Add todo');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo done <id>', 'PROMPT'), 'Complete todo');
     push @help_lines, "";
     
-    push @help_lines, $self->colorize("DEVELOPER", 'DATA');
+    push @help_lines, $self->colorize("━ DEVELOPER ━" . ("━" x 49), 'DATA');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/explain [file]', 'PROMPT'), 'Explain code');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/review [file]', 'PROMPT'), 'Review code');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/test [file]', 'PROMPT'), 'Generate tests');
@@ -1185,12 +1185,12 @@ sub display_help {
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/doc <file>', 'PROMPT'), 'Generate docs');
     push @help_lines, "";
     
-    push @help_lines, $self->colorize("SKILLS & PROMPTS", 'DATA');
+    push @help_lines, $self->colorize("━ SKILLS & PROMPTS ━" . ("━" x 41), 'DATA');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/skills', 'PROMPT'), 'Manage custom skills');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/prompt', 'PROMPT'), 'Manage system prompts');
     push @help_lines, "";
     
-    push @help_lines, $self->colorize("OTHER", 'DATA');
+    push @help_lines, $self->colorize("━ OTHER ━" . ("━" x 52), 'DATA');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/billing', 'PROMPT'), 'API usage stats');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/context', 'PROMPT'), 'Manage context files');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/exec <cmd>', 'PROMPT'), 'Run shell command');
@@ -2692,10 +2692,11 @@ sub display_usage_summary {
         $quota_info = sprintf(" Status: %s/%s Used: %.1f%%", $used_fmt, $ent_display, $percent_used);
     }
     
-    # SAM-style output: "SERVER: Cost: 1x Status: 379/1,500 Used: 25.3%"
-    print $self->colorize("SERVER: ", 'SYSTEM');
+    # SAM-style output: "━ SERVER ━ Cost: 1x Status: 379/1,500 Used: 25.3% ━"
+    print $self->colorize("━ SERVER ━ ", 'SYSTEM');
     print $cost_str;
     print $quota_info;
+    print " " . $self->colorize("━", 'SYSTEM');
     print "\n";
 }
 
