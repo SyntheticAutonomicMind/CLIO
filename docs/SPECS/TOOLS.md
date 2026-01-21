@@ -35,7 +35,7 @@ CLIO provides comprehensive tooling across multiple categories. Every tool opera
 
 **Example:**
 ```
-You: Show me the contents of src/main.c
+YOU: Show me the contents of src/main.c
 
 SYSTEM: [file_operations] - reading ./src/main.c (247 lines)
 ```
@@ -61,7 +61,7 @@ SYSTEM: [file_operations] - reading ./src/main.c (247 lines)
 
 **Example:**
 ```
-You: Create a file called test.txt with content "Hello, world!"
+YOU: Create a file called test.txt with content "Hello, world!"
 
 SYSTEM: [file_operations] - writing ./test.txt (13 bytes)
 ```
@@ -86,7 +86,7 @@ SYSTEM: [file_operations] - writing ./test.txt (13 bytes)
 
 **Example:**
 ```
-You: List the files in lib/CLIO/
+YOU: List the files in lib/CLIO/
 
 SYSTEM: [file_operations] - listing ./lib/CLIO/ (5 files, 4 directories)
 ```
@@ -107,7 +107,7 @@ SYSTEM: [file_operations] - listing ./lib/CLIO/ (5 files, 4 directories)
 
 **Example:**
 ```
-You: Find all Perl modules in the project
+YOU: Find all Perl modules in the project
 
 SYSTEM: [file_operations] - searching ./ for pattern "**/*.pm" (42 files)
 ```
@@ -129,7 +129,7 @@ SYSTEM: [file_operations] - searching ./ for pattern "**/*.pm" (42 files)
 
 **Example:**
 ```
-You: Search for all TODO comments in lib/
+YOU: Search for all TODO comments in lib/
 
 SYSTEM: [file_operations] - searching ./lib for pattern "TODO" (18 files)
 ```
@@ -150,7 +150,7 @@ SYSTEM: [file_operations] - searching ./lib for pattern "TODO" (18 files)
 
 **Example:**
 ```
-You: Find functions that handle authentication
+YOU: Find functions that handle authentication
 
 SYSTEM: [file_operations] - semantic search in ./ for "authentication"
 ```
@@ -172,7 +172,7 @@ SYSTEM: [file_operations] - semantic search in ./ for "authentication"
 
 **Example:**
 ```
-You: In config.yaml, replace port 8080 with 9000
+YOU: In config.yaml, replace port 8080 with 9000
 
 SYSTEM: [file_operations] - replacing string in ./config.yaml (1 replacement)
 ```
@@ -192,7 +192,7 @@ SYSTEM: [file_operations] - replacing string in ./config.yaml (1 replacement)
 
 **Example:**
 ```
-You: Delete the temp/ directory
+YOU: Delete the temp/ directory
 
 SYSTEM: [file_operations] - deleting ./temp/
 ```
@@ -224,7 +224,7 @@ SYSTEM: [file_operations] - deleting ./temp/
 
 **Example:**
 ```
-You: What's the current git status?
+YOU: What's the current git status?
 
 SYSTEM: [git] - executing git status in ./
 ```
@@ -246,7 +246,7 @@ SYSTEM: [git] - executing git status in ./
 
 **Example:**
 ```
-You: Show me what changed in the last commit
+YOU: Show me what changed in the last commit
 
 SYSTEM: [git] - executing git diff HEAD~1..HEAD in ./
 ```
@@ -267,7 +267,7 @@ SYSTEM: [git] - executing git diff HEAD~1..HEAD in ./
 
 **Example:**
 ```
-You: Commit all changes with message "Fix authentication bug"
+YOU: Commit all changes with message "Fix authentication bug"
 
 SYSTEM: [git] - staging all changes
 SYSTEM: [git] - committing with message "Fix authentication bug"
@@ -303,7 +303,7 @@ SYSTEM: [git] - committing with message "Fix authentication bug"
 
 **Example:**
 ```
-You: Count the lines of code in all Perl files
+YOU: Count the lines of code in all Perl files
 
 SYSTEM: [terminal] - executing: find lib -name "*.pm" -exec wc -l {} + | tail -1
 ```
@@ -340,7 +340,7 @@ SYSTEM: [terminal] - executing: find lib -name "*.pm" -exec wc -l {} + | tail -1
 
 **Example:**
 ```
-You: Remember that our API endpoint is https://api.example.com
+YOU: Remember that our API endpoint is https://api.example.com
 
 SYSTEM: [memory] - storing memory: api_endpoint
 ```
@@ -373,7 +373,7 @@ SYSTEM: [memory] - storing memory: api_endpoint
 
 **Example:**
 ```
-You: Find all information about database configuration
+YOU: Find all information about database configuration
 
 SYSTEM: [memory] - searching memories for "database configuration"
 ```
@@ -423,7 +423,7 @@ SYSTEM: [memory] - searching memories for "database configuration"
 
 **Example:**
 ```
-You: Create a todo list for this refactoring:
+YOU: Create a todo list for this refactoring:
 1. Review current code
 2. Design new structure
 3. Implement changes
@@ -476,7 +476,7 @@ SYSTEM: [todo_operations] - writing todo list (4 items)
 
 **Example:**
 ```
-You: Fetch the documentation from https://docs.example.com/api
+YOU: Fetch the documentation from https://docs.example.com/api
 
 SYSTEM: [web] - fetching https://docs.example.com/api
 ```

@@ -390,7 +390,7 @@ perl -I lib -c lib/CLIO/Tools/MyNewTool.pm
 ./clio --new
 
 # In conversation:
-You: Use my_new_tool with operation1 and param1="test value"
+YOU: Use my_new_tool with operation1 and param1="test value"
 ```
 
 ### Tool Best Practices

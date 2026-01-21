@@ -503,7 +503,7 @@ sub get_builtin_theme {
     return {
         name => 'default',
         user_prompt_format => '{style.user_prompt}: @RESET@',
-        agent_prefix => '{style.agent_label}AGENT: @RESET@',
+        agent_prefix => '{style.agent_label}CLIO: @RESET@',
         system_prefix => '{style.system_message}SYSTEM: @RESET@',
         error_prefix => '{style.error_message}ERROR: @RESET@',
         banner_line1 => '{style.app_title}CLIO@RESET@ {style.app_subtitle}- Command Line Intelligence Orchestrator@RESET@',

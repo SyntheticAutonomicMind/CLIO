@@ -483,7 +483,7 @@ sub process_input {
                     if $self->{debug};
                 
                 # Handle first tool call: ensure proper line separation from agent content
-                # The streaming callback prints "AGENT: " immediately on first chunk
+                # The streaming callback prints "CLIO: " immediately on first chunk
                 if ($first_tool_call) {
                     my $content = $api_response->{content} // '';
                     print STDERR "[DEBUG][WorkflowOrchestrator] First tool call - checking content: '" . substr($content, 0, 100) . "'\n"
@@ -492,9 +492,9 @@ sub process_input {
                     # Only print newline if content is empty (tool-call-only response)
                     # When there's content, it already ends with newline from streaming flush
                     if (!$content || $content =~ /^\s*$/) {
-                        # Tool-call only response - need to clear the orphaned "AGENT: " prefix
+                        # Tool-call only response - need to clear the orphaned "CLIO: " prefix
                         # Move up one line and clear it, then print newline for clean start
-                        print "\e[1A\r\e[K";  # Clear orphaned AGENT: line
+                        print "\e[1A\r\e[K";  # Clear orphaned CLIO: line
                     }
                     # If content exists and ends with \n, we're already at a clean line start
                     # No extra newline needed
@@ -567,7 +567,7 @@ sub process_input {
                     if $self->{debug};
             }
             
-            # Reset UI streaming state so next iteration shows new AGENT: prefix
+            # Reset UI streaming state so next iteration shows new CLIO: prefix
             # This ensures proper message formatting after tool execution
             if ($self->{ui} && $self->{ui}->can('reset_streaming_state')) {
                 print STDERR "[DEBUG][WorkflowOrchestrator] Resetting UI streaming state for next iteration\n"
