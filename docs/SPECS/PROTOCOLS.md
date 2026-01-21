@@ -2,7 +2,7 @@
 
 **Protocol system for CLIO (future architecture)**
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Overview
 
@@ -16,7 +16,7 @@ Protocols are higher-level abstractions over tools, providing semantic grouping 
 - **Tool-based:** `file_operations(operation="read", path="file.txt")`
 - **Protocol-based:** `[FILE_OP:action=read:path=ZmlsZS50eHQ=]`
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Protocol Format
 
@@ -51,7 +51,7 @@ path=ZmlsZS50eHQ=  # "file.txt" encoded
 [RAG:action=index:path=Li9saWI=]
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Planned Protocols
 
@@ -74,7 +74,7 @@ path=ZmlsZS50eHQ=  # "file.txt" encoded
 - `pattern` - Search pattern (base64)
 - `recursive` - Boolean flag
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ### GIT Protocol
 
@@ -96,7 +96,7 @@ path=ZmlsZS50eHQ=  # "file.txt" encoded
 - `remote` - Remote name (base64)
 - `files` - File list (base64)
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ### RAG Protocol
 
@@ -114,7 +114,7 @@ path=ZmlsZS50eHQ=  # "file.txt" encoded
 - `language` - Programming language
 - `context_size` - Context window size
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ### MEMORY Protocol
 
@@ -132,7 +132,7 @@ path=ZmlsZS50eHQ=  # "file.txt" encoded
 - `query` - Search query (base64)
 - `metadata` - JSON metadata (base64)
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ### EXEC Protocol
 
@@ -149,7 +149,7 @@ path=ZmlsZS50eHQ=  # "file.txt" encoded
 - `timeout` - Timeout in seconds
 - `cwd` - Working directory (base64)
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ### WEB Protocol
 
@@ -166,7 +166,7 @@ path=ZmlsZS50eHQ=  # "file.txt" encoded
 - `headers` - Headers (base64 JSON)
 - `body` - Request body (base64)
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Protocol Architecture (Planned)
 
@@ -227,7 +227,7 @@ sub parse_params {
 1;
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Protocol Detection
 
@@ -247,7 +247,7 @@ Protocol Manager:
 5. Returns result
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Benefits of Protocol Layer
 
@@ -271,7 +271,7 @@ Protocol Manager:
 - Consistent interface
 - Easy to refactor tools
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Migration Path
 
@@ -290,7 +290,7 @@ Protocol Manager:
 - Tools as implementation detail
 - Advanced features (caching, composition, etc.)
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Current Implementation
 
@@ -310,7 +310,7 @@ CLIO uses **tool-based architecture exclusively**. The protocol layer is not yet
 - Protocol composition
 - Protocol caching
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Adding Custom Protocols (Future)
 
@@ -342,7 +342,7 @@ CLIO uses **tool-based architecture exclusively**. The protocol layer is not yet
    [MY_PROTOCOL:action=my_action:param=value]
    ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Related Documentation
 
@@ -350,6 +350,6 @@ CLIO uses **tool-based architecture exclusively**. The protocol layer is not yet
 - [TOOLS.md](TOOLS.md) - Current tool reference
 - [DEVELOPER_GUIDE.md](../DEVELOPER_GUIDE.md) - Extension guide
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 **Note:** Protocol layer is planned future architecture. Current CLIO uses tool-based approach which works excellently for all current use cases. Protocols will be added when advanced features require them.
