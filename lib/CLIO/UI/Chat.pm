@@ -1211,6 +1211,20 @@ sub handle_api_command {
     $action ||= 'show';
     $action = lc($action);
     
+    # Helper to save API config to session
+    my $save_api_config_to_session = sub {
+        if ($self->{session} && $self->{session}->state()) {
+            my $config = $self->{config}->get_all();
+            $self->{session}->state()->set_api_config({
+                provider => $config->{provider},
+                api_base => $config->{api_base},
+                model => $config->{model},
+            });
+            $self->{session}->save();
+            print STDERR "[DEBUG][Chat] Saved API config to session\n" if $self->{debug};
+        }
+    };
+    
     if ($action eq 'key') {
         my $key = $args[0];
         unless ($key) {
@@ -1252,6 +1266,9 @@ sub handle_api_command {
             $self->display_system_message("API base URL set to: $base (warning: failed to save)");
         }
         
+        # Save to session for per-session persistence
+        $save_api_config_to_session->();
+        
         # Re-initialize APIManager to pick up new api_base
         print STDERR "[DEBUG][Chat] Re-initializing APIManager after api_base change\n" if $self->{debug};
         require CLIO::Core::APIManager;
@@ -1276,6 +1293,9 @@ sub handle_api_command {
         } else {
             $self->display_system_message("Model set to: $model (warning: failed to save)");
         }
+        
+        # Save to session for per-session persistence
+        $save_api_config_to_session->();
         
         # Re-initialize APIManager to pick up new model
         print STDERR "[DEBUG][Chat] Re-initializing APIManager after model change\n" if $self->{debug};
@@ -1312,6 +1332,9 @@ sub handle_api_command {
                 $self->display_system_message("Use /config save to manually save if auto-save failed");
             }
             $self->display_system_message("(To override API base or model, use /api base or /api model)");
+            
+            # Save to session for per-session persistence
+            $save_api_config_to_session->();
             
             # CRITICAL FIX: Re-initialize APIManager with new provider settings
             # This ensures api_base, model, and api_key are refreshed from config
