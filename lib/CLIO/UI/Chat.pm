@@ -3505,7 +3505,7 @@ sub handle_switch_command {
         return;
     };
     
-    my @sessions = grep { /^sess_.*\.json$/ && -f "$sessions_dir/$_" } readdir($dh);
+    my @sessions = grep { /\.json$/ && -f "$sessions_dir/$_" } readdir($dh);
     closedir($dh);
     
     unless (@sessions) {
