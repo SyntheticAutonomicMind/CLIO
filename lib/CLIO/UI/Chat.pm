@@ -1445,8 +1445,8 @@ sub _display_api_providers {
     require CLIO::Providers;
     
     print "\n";
-    print $self->colorize("API PROVIDERS (Available)", 'DATA'), "\n";
-    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n\n";
+    print $self->colorize("API PROVIDERS", 'DATA'), "\n";
+    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n\n";
     
     # If specific provider requested, show details
     if ($provider_name) {
@@ -1454,37 +1454,69 @@ sub _display_api_providers {
         return;
     }
     
-    # Show all providers in compact format
+    # Get current provider for comparison
+    my $current_provider = $self->{config}->get('provider') if $self->{config};
+    
+    # Show all providers in organized table format
     my @providers = CLIO::Providers::list_providers();
+    
+    # Table header
+    print $self->colorize("PROVIDER", 'LABEL');
+    print "  ";
+    print $self->colorize("SETUP", 'LABEL');
+    print "  ";
+    print $self->colorize("AUTH", 'LABEL');
+    print "  ";
+    print $self->colorize("DEFAULT MODEL", 'LABEL');
+    print "\n";
+    print $self->colorize("─" x 90, 'DIM'), "\n";
     
     for my $prov_name (@providers) {
         my $prov = CLIO::Providers::get_provider($prov_name);
         next unless $prov;
         
         my $display_name = $prov->{name} || $prov_name;
-        my $auth = $self->_format_auth_requirement($prov->{requires_auth});
-        my $features = $self->_format_provider_features($prov);
+        my $is_current = ($current_provider && $prov_name eq $current_provider) ? 1 : 0;
         
-        print $self->colorize(sprintf("%-20s", $display_name), 'PROMPT');
-        print "  Auth: $auth";
-        print "  Model: " . ($prov->{model} || 'N/A');
-        print "  $features" if $features;
+        # Mark current provider
+        if ($is_current) {
+            print $self->colorize(" ", 'PROMPT');
+        } else {
+            print "  ";
+        }
+        
+        print $self->colorize(sprintf("%-18s", $display_name), 'PROMPT');
+        print "  ";
+        
+        # Setup complexity indicator
+        my $setup_text = $self->_get_setup_complexity($prov->{requires_auth});
+        print $setup_text;
+        print "  ";
+        
+        # Authentication type
+        my $auth = $self->_format_auth_requirement($prov->{requires_auth});
+        print sprintf("%-12s", $auth);
+        print "  ";
+        
+        # Model
+        print $prov->{model} || 'N/A';
         print "\n";
     }
     
     print "\n";
-    print $self->colorize("DETAILS", 'DATA'), "\n";
-    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n";
-    print "  /api providers <name>               Show detailed info for a provider\n";
-    print "  /api set provider <name>            Switch to this provider\n";
+    print $self->colorize("LEARN MORE", 'DATA'), "\n";
+    print $self->colorize("─" x 90, 'DIM'), "\n";
+    print "  /api providers <name>   - Show setup instructions for a specific provider\n";
     print "\n";
     print $self->colorize("EXAMPLES", 'DATA'), "\n";
-    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n";
-    print "  /api providers github_copilot       Show GitHub Copilot requirements\n";
-    print "  /api providers openai               Show OpenAI setup details\n";
-    print "  /api set provider sam               Use SAM (local) provider\n";
+    print $self->colorize("─" x 90, 'DIM'), "\n";
+    print "  /api providers github_copilot       - Setup GitHub Copilot\n";
+    print "  /api providers openai               - Setup OpenAI (requires API key)\n";
+    print "  /api providers sam                  - Use local SAM provider\n";
+    print "  /api set provider openai            - Switch to OpenAI\n";
     print "\n";
 }
+
 
 =head2 _show_provider_details
 
@@ -1508,45 +1540,64 @@ sub _show_provider_details {
     my $display_name = $prov->{name} || $provider_name;
     
     print "\n";
-    print $self->colorize("Provider Details: $display_name", 'DATA'), "\n";
-    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n\n";
+    print $self->colorize($display_name, 'DATA'), "\n";
+    print $self->colorize("─" x 90, 'DIM'), "\n\n";
     
-    # Display all provider attributes
-    printf "  %-20s %s\n", "Provider ID:", $provider_name;
-    printf "  %-20s %s\n", "API Base:", $prov->{api_base} || '[not specified]';
-    printf "  %-20s %s\n", "Default Model:", $prov->{model} || 'N/A';
+    # Basic information
+    print $self->colorize("OVERVIEW", 'LABEL'), "\n";
+    printf "  ID:          %s\n", $provider_name;
+    printf "  Model:       %s\n", $prov->{model} || 'N/A';
+    printf "  API Base:    %s\n", $prov->{api_base} || '[not specified]';
     
-    # Authentication details
+    # Authentication
     my $auth = $prov->{requires_auth} || 'none';
     my $auth_text = $self->_format_auth_requirement($auth);
-    printf "  %-20s %s\n", "Authentication:", $auth_text;
+    print "\n";
+    print $self->colorize("AUTHENTICATION", 'LABEL'), "\n";
+    printf "  Method:      %s\n", $auth_text;
     
-    # Add authentication-specific instructions
     if ($auth eq 'copilot') {
         print "\n";
-        print $self->colorize("  Copilot Setup", 'PROMPT'), "\n";
+        print $self->colorize("  Setup Steps", 'PROMPT'), "\n";
         print "    1. Run: /api login\n";
         print "    2. Follow the browser authentication flow\n";
         print "    3. Token will be stored securely\n";
     } elsif ($auth eq 'apikey') {
         print "\n";
-        print $self->colorize("  API Key Setup", 'PROMPT'), "\n";
-        print "    1. Obtain API key from provider website\n";
-        print "    2. Set with: /api set key <your-api-key>\n";
+        print $self->colorize("  Setup Steps", 'PROMPT'), "\n";
+        print "    1. Obtain API key from the provider website\n";
+        print "    2. Set it with: /api set key <your-api-key>\n";
         print "    3. Key is stored globally (not in session)\n";
+    } elsif ($auth eq 'none') {
+        print "\n";
+        print $self->colorize("  Status", 'SUCCESS'), "\n";
+        print "    Ready to use - no authentication needed\n";
     }
     
-    # Features
+    # Capabilities
     print "\n";
-    print $self->colorize("  Capabilities", 'PROMPT'), "\n";
-    printf "    %-18s %s\n", "Tools/Functions:", ($prov->{supports_tools} ? "✓ Supported" : "✗ Not supported");
-    printf "    %-18s %s\n", "Streaming:", ($prov->{supports_streaming} ? "✓ Supported" : "✗ Not supported");
+    print $self->colorize("CAPABILITIES", 'LABEL'), "\n";
+    my $tools_str = $prov->{supports_tools} ? "Yes" : "No";
+    my $stream_str = $prov->{supports_streaming} ? "Yes" : "No";
+    printf "  Functions:   %s (tool calling)\n", $tools_str;
+    printf "  Streaming:   %s\n", $stream_str;
     
+    # Quick start
     print "\n";
-    print $self->colorize("  Quick Start", 'PROMPT'), "\n";
-    print "    /api set provider $provider_name\n";
-    print "    /api set model <model-name>   # Optional, use default if unsure\n";
-    print "    /api show                     # Verify configuration\n";
+    print $self->colorize("QUICK START", 'LABEL'), "\n";
+    print "  1. Switch to this provider:\n";
+    print "     /api set provider $provider_name\n";
+    print "\n";
+    if ($auth eq 'apikey' || $auth eq 'copilot') {
+        print "  2. Authenticate (if not done already):\n";
+        print "     /api login\n";
+        print "\n";
+        print "  3. Verify setup:\n";
+        print "     /api show\n";
+    } else {
+        print "  2. Verify setup:\n";
+        print "     /api show\n";
+    }
     
     print "\n";
 }
@@ -1564,6 +1615,27 @@ sub _format_auth_requirement {
     return 'GitHub OAuth' if $auth_type eq 'copilot';
     return 'API Key' if $auth_type eq 'apikey';
     return $auth_type;  # Fallback to raw value
+}
+
+=head2 _get_setup_complexity
+
+Format setup complexity indicator for provider list
+
+Returns a colored label indicating how easy it is to set up the provider
+
+=cut
+
+sub _get_setup_complexity {
+    my ($self, $auth_type) = @_;
+    
+    if (!$auth_type || $auth_type eq 'none') {
+        return $self->colorize("Ready", 'SUCCESS');
+    } elsif ($auth_type eq 'copilot') {
+        return $self->colorize("Browser", 'WARNING');
+    } elsif ($auth_type eq 'apikey') {
+        return $self->colorize("Key Needed", 'WARNING');
+    }
+    return $self->colorize("Setup", 'DATA');
 }
 
 =head2 _format_provider_features
