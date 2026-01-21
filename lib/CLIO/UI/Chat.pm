@@ -1354,88 +1354,6 @@ sub handle_api_command {
             # Error message already printed by set_provider()
         }
     }
-    # Session-only API configuration (does NOT change global config)
-    elsif ($action eq 'session-model') {
-        my $model = $args[0];
-        unless ($model) {
-            $self->display_error_message("Usage: /api session-model <name>");
-            return;
-        }
-        
-        # Update config object (in memory only, don't save to global)
-        $self->{config}->set('model', $model, 0);  # 0 = don't mark as user-set
-        
-        # Save to session only
-        $save_api_config_to_session->();
-        
-        $self->display_system_message("Model set to: $model (session only, global unchanged)");
-        
-        # Re-initialize APIManager
-        require CLIO::Core::APIManager;
-        my $new_api = CLIO::Core::APIManager->new(
-            debug => $self->{debug},
-            session => $self->{session}->state(),
-            config => $self->{config}
-        );
-        $self->{ai_agent}->{api} = $new_api;
-    }
-    elsif ($action eq 'session-provider') {
-        my $provider = $args[0];
-        unless ($provider) {
-            $self->display_error_message("Usage: /api session-provider <name>");
-            require CLIO::Providers;
-            my @providers = CLIO::Providers::list_providers();
-            $self->display_system_message("Available providers: " . join(', ', @providers));
-            return;
-        }
-        
-        # Set provider in memory only (don't mark as user-set, so it won't save globally)
-        if ($self->{config}->set_provider($provider)) {
-            # DON'T save global config
-            
-            # Save to session only
-            $save_api_config_to_session->();
-            
-            my $config = $self->{config}->get_all();
-            $self->display_system_message("Switched to provider: $provider (session only)");
-            $self->display_system_message("  API Base: " . $config->{api_base});
-            $self->display_system_message("  Model: " . $config->{model});
-            $self->display_system_message("(Global config unchanged)");
-            
-            # Re-initialize APIManager
-            require CLIO::Core::APIManager;
-            my $new_api = CLIO::Core::APIManager->new(
-                debug => $self->{debug},
-                session => $self->{session}->state(),
-                config => $self->{config}
-            );
-            $self->{ai_agent}->{api} = $new_api;
-        }
-    }
-    elsif ($action eq 'session-base') {
-        my $base = $args[0];
-        unless ($base) {
-            $self->display_error_message("Usage: /api session-base <url>");
-            return;
-        }
-        
-        # Update config object (in memory only, don't save to global)
-        $self->{config}->set('api_base', $base, 0);  # 0 = don't mark as user-set
-        
-        # Save to session only
-        $save_api_config_to_session->();
-        
-        $self->display_system_message("API base URL set to: $base (session only, global unchanged)");
-        
-        # Re-initialize APIManager
-        require CLIO::Core::APIManager;
-        my $new_api = CLIO::Core::APIManager->new(
-            debug => $self->{debug},
-            session => $self->{session}->state(),
-            config => $self->{config}
-        );
-        $self->{ai_agent}->{api} = $new_api;
-    }
     elsif ($action eq 'show') {
         my $key = $self->{config}->get('api_key');
         my $base = $self->{config}->get('api_base');
@@ -1467,24 +1385,10 @@ sub handle_api_command {
         print $self->colorize("=" x 50, 'DIM'), "\n\n";
         printf "  API Key:  %s\n", $auth_status;
         printf "  API Base: %s\n\n", $base || '[default]';
-        
-        # Show session-specific overrides if any
-        if ($self->{session} && $self->{session}->state()) {
-            my $session_config = $self->{session}->state()->get_api_config();
-            if ($session_config && %$session_config) {
-                print $self->colorize("SESSION OVERRIDES", 'DATA'), "\n";
-                print $self->colorize("-" x 30, 'DIM'), "\n";
-                for my $key (sort keys %$session_config) {
-                    printf "  %s: %s\n", $key, $session_config->{$key};
-                }
-                print "\n";
-            }
-        }
     }
     else {
         $self->display_error_message("Unknown action: $action");
-        print "Usage: /api [key|base|model|provider|show]\n";
-        print "       /api [session-model|session-provider|session-base] <value>  (session only)\n";
+        print "Usage: /api [key <value>|base <url>|model <name>|provider <name>|show]\n";
     }
 }
 
