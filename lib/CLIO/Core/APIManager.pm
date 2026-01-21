@@ -26,7 +26,7 @@ use constant {
     DEFAULT_ENDPOINT => 'https://api.openai.com/v1',
 };
 
-# --- SSL CA bundle setup (before any LWP or HTTPS modules are loaded) ---
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 BEGIN {
     unless ($ENV{PERL_LWP_SSL_CA_FILE}) {
         my @ca_candidates = (

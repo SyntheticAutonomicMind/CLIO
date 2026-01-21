@@ -35,7 +35,7 @@ tests/
     └── performance_test.sh
 ```
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Detailed Inventory
 
@@ -113,7 +113,7 @@ tests/
   - Test large results (>1MB)
   - Test binary data if applicable
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ### 2. Unit Tests (Keep + Move/Refactor)
 
@@ -246,7 +246,7 @@ tests/
   - Test malformed hashtags
   - Test edge cases
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ### 3. End-to-End Tests (Keep + Move)
 
@@ -292,7 +292,7 @@ tests/
   - Test API error handling
   - Test rate limiting
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ### 4. Debug/Investigation Tests (Discard or Archive)
 
@@ -338,7 +338,7 @@ tests/
 - **Reasoning:** If editor feature doesn't exist in current CLIO, discard. If it does, keep.
 - **Action:** Verify if editor feature exists, if not discard
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ### 5. Shell Script Tests (Analyze individually)
 
@@ -371,7 +371,7 @@ tests/
 - **New Location:** `tests/integration/hashtag_integration_test.pl`
 - **Refactor Needed:** Convert from shell script to Perl test with proper framework
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ### 6. Text Files (Documentation, not tests)
 
@@ -414,7 +414,7 @@ tests/
 - **Decision:** ⚠️ ANALYZE → Extract test case
 - **Action:** Read file to determine if test case needed
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Missing Tests (Must Create)
 
@@ -440,7 +440,7 @@ tests/
 - `tests/e2e/cli_switches_test.sh` - Every CLI switch individually and in combinations
 - `tests/e2e/session_continuity_test.pl` - Create, save, resume, multi-turn (10+ turns)
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Action Items
 
@@ -470,7 +470,7 @@ tests/
 2. Create tests/TESTING_GUIDE.md
 3. Update main documentation with testing info
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Next Steps
 
@@ -486,6 +486,6 @@ tests/
 - Verify the fix works
 - Prevent regression
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 END OF INVENTORY

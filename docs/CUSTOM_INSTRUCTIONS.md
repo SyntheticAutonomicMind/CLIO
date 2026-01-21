@@ -12,7 +12,7 @@ When you start a CLIO session in a project directory, CLIO automatically:
 
 This way, the same CLIO installation can adapt its behavior to match your project's specific needs.
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Creating Custom Instructions
 
@@ -32,7 +32,7 @@ touch .clio/instructions.md
 
 Edit `.clio/instructions.md` with your project's custom instructions. Here are some common use cases:
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Examples
 
@@ -147,7 +147,7 @@ Keep it simple:
 When in doubt, follow the existing code patterns.
 ```
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## How CLIO Uses Your Instructions
 
@@ -184,7 +184,7 @@ To skip custom instructions (useful for testing or special cases):
 clio --no-custom-instructions --new
 ```
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Best Practices
 
@@ -203,7 +203,7 @@ clio --no-custom-instructions --new
 - **Assume CLIO remembers** - State important points even if obvious
 - **Lock instructions away** - Keep in version control, not .gitignore
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## What You Can Customize
 
@@ -242,7 +242,7 @@ clio --no-custom-instructions --new
 - Scope boundaries
 - Priority guidelines
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Troubleshooting
 
@@ -275,7 +275,7 @@ CLIO uses `.clio/instructions.md` (separate from VSCode's `.github/copilot-instr
 
 You can have both files with different instructions for each tool.
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Real-World Example: CLIO Project Itself
 
@@ -311,7 +311,7 @@ Follow The Unbroken Method (see ai-assisted/THE_UNBROKEN_METHOD.md):
 - All must pass before committing
 ```
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Integration With CLIO Features
 
@@ -360,7 +360,7 @@ Use memory_operations to:
 - Share knowledge with other agents
 ```
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Summary
 

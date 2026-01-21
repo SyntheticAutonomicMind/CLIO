@@ -2,13 +2,13 @@
 
 **System design and technical architecture for CLIO**
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Overview
 
 CLIO (Command Line Intelligence Orchestrator) is built on a modular Perl architecture that prioritizes extensibility, transparency, and user experience. This document describes the system components, data flows, and design decisions.
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Design Principles
 
@@ -66,7 +66,7 @@ Professional terminal UI with markdown rendering, syntax highlighting, and color
 - Theme system for color schemes
 - Real-time action descriptions
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## System Architecture
 
@@ -261,7 +261,7 @@ Create → Add Messages → Execute Tools → Save → [Resume] → Continue
 - Output templates
 - Style management
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Data Flow Diagrams
 
@@ -313,7 +313,7 @@ flowchart TD
     K --> L[Continue from Last Message]
 ```
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Tool Architecture
 
@@ -377,7 +377,7 @@ sub route_operation {
 **WebOperations** (`lib/CLIO/Tools/WebOperations.pm`)
 - fetch_webpage
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Security Considerations
 
@@ -409,7 +409,7 @@ Tokens stored in environment variables, never in code or sessions.
 $ENV{GITHUB_COPILOT_TOKEN}  # Not stored in session files
 ```
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Configuration System
 
@@ -439,7 +439,7 @@ logging:
 
 **Precedence:** Environment variables > Config file > Defaults
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Extension Points
 
@@ -461,7 +461,7 @@ logging:
 2. Add templates for output formats
 3. Switch via configuration
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Performance Considerations
 
@@ -490,7 +490,7 @@ while (my $chunk = read_stream()) {
 - Optional compression for large sessions
 - Periodic cleanup of old sessions
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Future Architecture Enhancements
 
@@ -502,7 +502,7 @@ while (my $chunk = read_stream()) {
 4. **Background Jobs** - Async tool execution
 5. **Multi-Session** - Work with multiple sessions simultaneously
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Appendix: Module Dependency Graph
 
@@ -538,7 +538,7 @@ flowchart TD
 **Core module count:** ~20 active modules  
 **Deprecated modules:** ~10 (in lib/CLIO/UI/deprecated/)
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 **For more information:**
 - [DEVELOPER_GUIDE.md](../DEVELOPER_GUIDE.md) - How to extend CLIO
