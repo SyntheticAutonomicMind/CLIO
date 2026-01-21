@@ -268,6 +268,14 @@ if ($mode eq 'new') {
     } else {
         $session_id = $session->{session_id} // ($session->{state} ? $session->{state}->{session_id} : undef);
         print "[DEBUG] Resumed session: $session_id\n" if $debug;
+        
+        # CRITICAL: Apply session's saved model to config
+        # This ensures resumed sessions use the model they were using, not the global default
+        my $session_state = $session->state();
+        if ($session_state && $session_state->{selected_model}) {
+            $config->set('model', $session_state->{selected_model}, 0);  # 0 = don't mark as user-set
+            print STDERR "[DEBUG] Applied session model to config: $session_state->{selected_model}\n" if $debug;
+        }
     }
 }
 
