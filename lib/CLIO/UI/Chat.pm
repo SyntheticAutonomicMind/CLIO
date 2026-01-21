@@ -962,8 +962,7 @@ sub handle_command {
         $self->display_system_message("Color mode: " . ($self->{use_color} ? "ON" : "OFF"));
     }
     elsif ($cmd eq 'session') {
-        my $session_id = $self->{session} ? $self->{session}->{session_id} : 'unknown';
-        $self->display_system_message("Current session: $session_id");
+        $self->handle_session_command(@args);
     }
     elsif ($cmd eq 'config') {
         $self->handle_config_command(@args);
@@ -1059,6 +1058,8 @@ sub handle_command {
         $self->handle_exec_command(@args);
     }
     elsif ($cmd eq 'switch') {
+        # Backward compatibility - redirect to /session switch
+        $self->display_system_message("Note: Use '/session switch' (new syntax)");
         $self->handle_switch_command(@args);
     }
     elsif ($cmd eq 'read' || $cmd eq 'view' || $cmd eq 'cat') {
@@ -1150,10 +1151,13 @@ sub display_help {
     push @help_lines, "";
     
     push @help_lines, $self->colorize("SYSTEM", 'DATA');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/session', 'PROMPT'), 'Show session commands help');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/session show', 'PROMPT'), 'Display current session info');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/session list', 'PROMPT'), 'List all available sessions');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/session switch', 'PROMPT'), 'Switch to different session');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/billing, /usage', 'PROMPT'), 'Display API usage and billing stats');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/context <action>', 'PROMPT'), 'Manage context files (add/list/clear/remove)');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/exec <command>', 'PROMPT'), 'Execute shell command');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/switch', 'PROMPT'), 'Switch to different session');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/debug', 'PROMPT'), 'Toggle debug mode');
     push @help_lines, "";
     
@@ -3743,6 +3747,265 @@ sub handle_exec_command {
     } else {
         print $self->colorize("Command exited with code $exit_code", 'ERROR'), "\n";
     }
+}
+
+=head2 handle_session_command
+
+Handle /session commands for session management.
+
+New noun-first pattern:
+  /session                - Show help for /session commands
+  /session show           - Display current session info
+  /session switch         - Interactive session picker
+  /session switch <id>    - Switch to specific session
+  /session list           - List all sessions
+  /session new            - Create new session
+  /session clear          - Clear current session history
+
+=cut
+
+sub handle_session_command {
+    my ($self, $action, @args) = @_;
+    
+    $action ||= '';
+    $action = lc($action);
+    
+    # /session (no args) - show help
+    if ($action eq '' || $action eq 'help') {
+        $self->_display_session_help();
+        return;
+    }
+    
+    # /session show - display current session info
+    if ($action eq 'show') {
+        $self->_display_session_info();
+        return;
+    }
+    
+    # /session list - list all sessions
+    if ($action eq 'list') {
+        $self->_list_sessions();
+        return;
+    }
+    
+    # /session switch [id] - switch sessions
+    if ($action eq 'switch') {
+        $self->handle_switch_command(@args);
+        return;
+    }
+    
+    # /session new - create new session (guidance)
+    if ($action eq 'new') {
+        $self->display_system_message("To create a new session, exit and run:");
+        $self->display_system_message("  ./clio --new");
+        return;
+    }
+    
+    # /session clear - clear history
+    if ($action eq 'clear') {
+        $self->_clear_session_history();
+        return;
+    }
+    
+    # Unknown action
+    $self->display_error_message("Unknown action: /session $action");
+    $self->_display_session_help();
+}
+
+=head2 _display_session_help
+
+Display help for /session commands
+
+=cut
+
+sub _display_session_help {
+    my ($self) = @_;
+    
+    print "\n";
+    print $self->colorize("SESSION COMMANDS", 'DATA'), "\n";
+    print $self->colorize("=" x 50, 'DIM'), "\n\n";
+    
+    print $self->colorize("  /session show", 'PROMPT'), "               Display current session info\n";
+    print $self->colorize("  /session list", 'PROMPT'), "               List all available sessions\n";
+    print $self->colorize("  /session switch", 'PROMPT'), "             Interactive session picker\n";
+    print $self->colorize("  /session switch <id>", 'PROMPT'), "        Switch to specific session\n";
+    print $self->colorize("  /session new", 'PROMPT'), "                Show how to create new session\n";
+    print $self->colorize("  /session clear", 'PROMPT'), "              Clear current session history\n";
+    
+    print "\n";
+    print $self->colorize("EXAMPLES", 'DATA'), "\n";
+    print $self->colorize("-" x 50, 'DIM'), "\n";
+    print "  /session show                        # See current session\n";
+    print "  /session list                        # See all sessions\n";
+    print "  /session switch abc123-def456        # Switch by ID\n";
+}
+
+=head2 _display_session_info
+
+Display current session information
+
+=cut
+
+sub _display_session_info {
+    my ($self) = @_;
+    
+    my $session_id = $self->{session} ? $self->{session}->{session_id} : 'unknown';
+    my $state = $self->{session} ? $self->{session}->state() : {};
+    
+    print "\n";
+    print $self->colorize("SESSION INFORMATION", 'DATA'), "\n";
+    print $self->colorize("=" x 50, 'DIM'), "\n\n";
+    
+    printf "  %-15s %s\n", "Session ID:", $session_id;
+    
+    # Working directory
+    my $workdir = $state->{working_directory} || '.';
+    printf "  %-15s %s\n", "Working Dir:", $workdir;
+    
+    # Created at
+    if ($state->{created_at}) {
+        my $created = localtime($state->{created_at});
+        printf "  %-15s %s\n", "Created:", $created;
+    }
+    
+    # History count
+    my $history_count = $state->{history} ? scalar(@{$state->{history}}) : 0;
+    printf "  %-15s %d messages\n", "History:", $history_count;
+    
+    # API config (session-specific)
+    if ($state->{api_config} && %{$state->{api_config}}) {
+        print "\n";
+        print $self->colorize("SESSION API CONFIG", 'DATA'), "\n";
+        print $self->colorize("-" x 30, 'DIM'), "\n";
+        for my $key (sort keys %{$state->{api_config}}) {
+            printf "  %-15s %s\n", "$key:", $state->{api_config}{$key};
+        }
+    }
+    
+    # Billing info
+    if ($state->{billing}) {
+        print "\n";
+        print $self->colorize("SESSION USAGE", 'DATA'), "\n";
+        print $self->colorize("-" x 30, 'DIM'), "\n";
+        my $billing = $state->{billing};
+        printf "  %-15s %d\n", "Requests:", $billing->{request_count} || 0;
+        printf "  %-15s %d\n", "Input tokens:", $billing->{input_tokens} || 0;
+        printf "  %-15s %d\n", "Output tokens:", $billing->{output_tokens} || 0;
+    }
+}
+
+=head2 _list_sessions
+
+List all available sessions
+
+=cut
+
+sub _list_sessions {
+    my ($self) = @_;
+    
+    my $sessions_dir = '.clio/sessions';
+    unless (-d $sessions_dir) {
+        $self->display_error_message("Sessions directory not found");
+        return;
+    }
+    
+    opendir(my $dh, $sessions_dir) or do {
+        $self->display_error_message("Cannot read sessions directory: $!");
+        return;
+    };
+    
+    my @sessions = grep { /\.json$/ && -f "$sessions_dir/$_" } readdir($dh);
+    closedir($dh);
+    
+    unless (@sessions) {
+        $self->display_system_message("No sessions found");
+        return;
+    }
+    
+    # Get session info
+    my @session_info;
+    for my $session_file (@sessions) {
+        my $id = $session_file;
+        $id =~ s/\.json$//;
+        
+        my $filepath = "$sessions_dir/$session_file";
+        my $mtime = (stat($filepath))[9] || 0;
+        my $size = (stat($filepath))[7] || 0;
+        
+        push @session_info, {
+            id => $id,
+            mtime => $mtime,
+            size => $size,
+            is_current => ($self->{session} && $self->{session}->{session_id} eq $id),
+        };
+    }
+    
+    # Sort by modification time (most recent first)
+    @session_info = sort { $b->{mtime} <=> $a->{mtime} } @session_info;
+    
+    # Display
+    print "\n";
+    print $self->colorize("AVAILABLE SESSIONS", 'DATA'), "\n";
+    print $self->colorize("=" x 70, 'DIM'), "\n\n";
+    
+    my $current_session_id = $self->{session} ? $self->{session}->{session_id} : '';
+    
+    # Show only last 20 sessions to avoid overwhelming display
+    my $shown = 0;
+    my $max_show = 20;
+    
+    for my $sess (@session_info) {
+        last if $shown >= $max_show;
+        
+        my $marker = $sess->{is_current} ? $self->colorize(' (current)', 'DATA') : '';
+        my $date = $sess->{mtime} ? scalar(localtime($sess->{mtime})) : 'unknown';
+        
+        printf "  %s%s\n", $sess->{id}, $marker;
+        printf "    Last modified: %s\n", $date;
+        print "\n";
+        $shown++;
+    }
+    
+    if (scalar(@session_info) > $max_show) {
+        my $hidden = scalar(@session_info) - $max_show;
+        $self->display_system_message("... and $hidden more sessions");
+    }
+    
+    $self->display_system_message("Total: " . scalar(@session_info) . " sessions");
+    $self->display_system_message("Use '/session switch <id>' to switch or '--resume <id>' on startup");
+}
+
+=head2 _clear_session_history
+
+Clear the current session's conversation history
+
+=cut
+
+sub _clear_session_history {
+    my ($self) = @_;
+    
+    unless ($self->{session}) {
+        $self->display_error_message("No active session");
+        return;
+    }
+    
+    # Confirm
+    print $self->colorize("Clear all conversation history for this session? [y/N]: ", 'PROMPT');
+    my $response = <STDIN>;
+    chomp $response if defined $response;
+    $response = lc($response || 'n');
+    
+    unless ($response eq 'y' || $response eq 'yes') {
+        $self->display_system_message("Cancelled");
+        return;
+    }
+    
+    # Clear history
+    my $state = $self->{session}->state();
+    $state->{history} = [];
+    $self->{session}->save();
+    
+    $self->display_system_message("Session history cleared");
 }
 
 =head2 handle_switch_command
