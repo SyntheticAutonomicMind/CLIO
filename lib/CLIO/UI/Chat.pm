@@ -1286,6 +1286,12 @@ sub handle_api_command {
         return;
     }
     
+    # /api providers - list available providers
+    if ($action eq 'providers') {
+        $self->_display_api_providers(@args);
+        return;
+    }
+    
     # /api login - GitHub Copilot authentication
     if ($action eq 'login') {
         $self->handle_login_command(@args);
@@ -1347,6 +1353,7 @@ sub _display_api_help {
     print $self->colorize("  /api set provider <name>", 'PROMPT'), "     Set provider (github_copilot, openai, etc.)\n";
     print $self->colorize("  /api set base <url>", 'PROMPT'), "          Set API base URL\n";
     print $self->colorize("  /api set key <value>", 'PROMPT'), "         Set API key (global only)\n";
+    print $self->colorize("  /api providers", 'PROMPT'), "               Show available providers and their details\n";
     print $self->colorize("  /api models", 'PROMPT'), "                  List available models\n";
     print $self->colorize("  /api login", 'PROMPT'), "                   Authenticate with GitHub Copilot\n";
     print $self->colorize("  /api logout", 'PROMPT'), "                  Sign out from GitHub\n";
@@ -1419,6 +1426,160 @@ sub _display_api_config {
             }
         }
     }
+}
+
+=head2 _display_api_providers
+
+Display available providers and their configurations.
+Supports optional provider name argument for detailed info.
+
+Usage:
+  /api providers           - Show all providers
+  /api providers openai   - Show details for openai
+
+=cut
+
+sub _display_api_providers {
+    my ($self, $provider_name) = @_;
+    
+    require CLIO::Providers;
+    
+    print "\n";
+    print $self->colorize("API PROVIDERS (Available)", 'DATA'), "\n";
+    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n\n";
+    
+    # If specific provider requested, show details
+    if ($provider_name) {
+        $self->_show_provider_details($provider_name);
+        return;
+    }
+    
+    # Show all providers in compact format
+    my @providers = CLIO::Providers::list_providers();
+    
+    for my $prov_name (@providers) {
+        my $prov = CLIO::Providers::get_provider($prov_name);
+        next unless $prov;
+        
+        my $display_name = $prov->{name} || $prov_name;
+        my $auth = $self->_format_auth_requirement($prov->{requires_auth});
+        my $features = $self->_format_provider_features($prov);
+        
+        print $self->colorize(sprintf("%-20s", $display_name), 'PROMPT');
+        print "  Auth: $auth";
+        print "  Model: " . ($prov->{model} || 'N/A');
+        print "  $features" if $features;
+        print "\n";
+    }
+    
+    print "\n";
+    print $self->colorize("DETAILS", 'DATA'), "\n";
+    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n";
+    print "  /api providers <name>               Show detailed info for a provider\n";
+    print "  /api set provider <name>            Switch to this provider\n";
+    print "\n";
+    print $self->colorize("EXAMPLES", 'DATA'), "\n";
+    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n";
+    print "  /api providers github_copilot       Show GitHub Copilot requirements\n";
+    print "  /api providers openai               Show OpenAI setup details\n";
+    print "  /api set provider sam               Use SAM (local) provider\n";
+    print "\n";
+}
+
+=head2 _show_provider_details
+
+Display detailed information about a specific provider
+
+=cut
+
+sub _show_provider_details {
+    my ($self, $provider_name) = @_;
+    
+    require CLIO::Providers;
+    
+    my $prov = CLIO::Providers::get_provider($provider_name);
+    
+    unless ($prov) {
+        $self->display_error_message("Provider not found: $provider_name");
+        print "Use '/api providers' to see available providers\n";
+        return;
+    }
+    
+    my $display_name = $prov->{name} || $provider_name;
+    
+    print "\n";
+    print $self->colorize("Provider Details: $display_name", 'DATA'), "\n";
+    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n\n";
+    
+    # Display all provider attributes
+    printf "  %-20s %s\n", "Provider ID:", $provider_name;
+    printf "  %-20s %s\n", "API Base:", $prov->{api_base} || '[not specified]';
+    printf "  %-20s %s\n", "Default Model:", $prov->{model} || 'N/A';
+    
+    # Authentication details
+    my $auth = $prov->{requires_auth} || 'none';
+    my $auth_text = $self->_format_auth_requirement($auth);
+    printf "  %-20s %s\n", "Authentication:", $auth_text;
+    
+    # Add authentication-specific instructions
+    if ($auth eq 'copilot') {
+        print "\n";
+        print $self->colorize("  Copilot Setup", 'PROMPT'), "\n";
+        print "    1. Run: /api login\n";
+        print "    2. Follow the browser authentication flow\n";
+        print "    3. Token will be stored securely\n";
+    } elsif ($auth eq 'apikey') {
+        print "\n";
+        print $self->colorize("  API Key Setup", 'PROMPT'), "\n";
+        print "    1. Obtain API key from provider website\n";
+        print "    2. Set with: /api set key <your-api-key>\n";
+        print "    3. Key is stored globally (not in session)\n";
+    }
+    
+    # Features
+    print "\n";
+    print $self->colorize("  Capabilities", 'PROMPT'), "\n";
+    printf "    %-18s %s\n", "Tools/Functions:", ($prov->{supports_tools} ? "✓ Supported" : "✗ Not supported");
+    printf "    %-18s %s\n", "Streaming:", ($prov->{supports_streaming} ? "✓ Supported" : "✗ Not supported");
+    
+    print "\n";
+    print $self->colorize("  Quick Start", 'PROMPT'), "\n";
+    print "    /api set provider $provider_name\n";
+    print "    /api set model <model-name>   # Optional, use default if unsure\n";
+    print "    /api show                     # Verify configuration\n";
+    
+    print "\n";
+}
+
+=head2 _format_auth_requirement
+
+Format authentication requirement as human-readable text
+
+=cut
+
+sub _format_auth_requirement {
+    my ($self, $auth_type) = @_;
+    
+    return 'None (local)' if !$auth_type || $auth_type eq 'none';
+    return 'GitHub OAuth' if $auth_type eq 'copilot';
+    return 'API Key' if $auth_type eq 'apikey';
+    return $auth_type;  # Fallback to raw value
+}
+
+=head2 _format_provider_features
+
+Format provider features for compact display
+
+=cut
+
+sub _format_provider_features {
+    my ($self, $prov) = @_;
+    
+    my @features;
+    push @features, 'Tools' if $prov->{supports_tools};
+    push @features, 'Stream' if $prov->{supports_streaming};
+    
+    return join(', ', @features) ? '[' . join(', ', @features) . ']' : '';
 }
 
 =head2 _handle_api_set
