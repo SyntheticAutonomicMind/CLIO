@@ -1097,6 +1097,12 @@ sub display_help {
     push @help_lines, "";
     push @help_lines, $self->colorize("CLIO Commands", 'DATA');
     push @help_lines, "";
+    push @help_lines, $self->colorize("QUICK REFERENCE", 'DIM');
+    push @help_lines, sprintf("  %s, %s, %s    Run '/api', '/session', or '/config' for detailed help",
+        $self->colorize('/api', 'PROMPT'),
+        $self->colorize('/session', 'PROMPT'),
+        $self->colorize('/config', 'PROMPT'));
+    push @help_lines, "";
     
     push @help_lines, $self->colorize("CHAT COMMANDS", 'DATA');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/help, /h, /?', 'PROMPT'), 'Display this help');
