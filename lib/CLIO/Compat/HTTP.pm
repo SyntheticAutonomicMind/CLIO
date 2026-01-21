@@ -278,7 +278,8 @@ sub request {
     
     # Handle HTTP::Request-like objects
     if (ref($req) && $req->can('method')) {
-        my $method = uc($req->method);  # HTTP::Tiny needs uppercase methods!
+        my $method = $req->method // 'GET';
+        $method = uc($method);  # HTTP::Tiny needs uppercase methods!
         my $uri = $req->uri->as_string;
         my $content = $req->content;
         
@@ -340,7 +341,7 @@ sub request {
     }
     
     # Handle simple method + URL
-    my $method = uc($req);  # Uppercase for HTTP::Tiny
+    my $method = uc($req // 'GET');  # Default to GET if method undefined
     my $uri = $url_or_callback;
     
     # Use curl for HTTPS if needed
@@ -451,6 +452,9 @@ Provides HTTP::Request-compatible interface for building requests.
 
 sub new {
     my ($class, $method, $url) = @_;
+    
+    # Default method to GET if undefined (avoid 'uninitialized' warning in uc())
+    $method //= 'GET';
     
     my $self = {
         method => uc($method),
