@@ -2,13 +2,13 @@
 
 **For technical documentation: module POD, inline comments, API docs, specifications**
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Purpose
 
 This guide defines documentation standards for CLIO developers. Well-documented code is maintainable code. Follow these standards to ensure consistency across the codebase.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Module Documentation (POD)
 
@@ -150,7 +150,7 @@ sub _build_headers {
 }
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Code Comments
 
@@ -239,7 +239,7 @@ if ($command =~ /^\[([A-Z_]+):(.+)\]$/) {
 }
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Inline Documentation Standards
 
@@ -312,7 +312,7 @@ my @messages = (
 );
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## API Documentation
 
@@ -420,7 +420,7 @@ CHANGES:
 =cut
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Specification Documents
 
@@ -434,7 +434,7 @@ Technical specifications in `docs-internal/` should follow this structure:
 **Status:** [Design | In Progress | Implemented | Deprecated]
 **Date:** YYYY-MM-DD
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Overview
 
@@ -572,7 +572,7 @@ classDiagram
 ```
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Debug Output Standards
 
@@ -622,7 +622,7 @@ if ($self->{debug}) {
 }
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Error Messages
 
@@ -670,7 +670,7 @@ print STDERR "[ERROR][Config] Failed to parse JSON: $json_error at line $.\n";
 print STDERR "[ERROR][Protocol] Invalid protocol format: expected [PROTO:key=val] got: $input\n";
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Git Commit Messages
 
@@ -740,7 +740,7 @@ Added interactive mode detection to skip pagination in pipes.
 ✅ Edge cases: Long model lists, terminal resize
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Code Review Checklist
 
@@ -773,7 +773,7 @@ Before submitting code for review:
 - [ ] Edge cases considered
 - [ ] Tested in both debug and normal mode
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Deprecation Process
 
@@ -822,7 +822,7 @@ sub old_method {
    - Update changelog
    - Announce in release notes
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Documentation Maintenance
 
@@ -849,7 +849,7 @@ Don't accumulate documentation debt:
 - Update docs IN THE SAME COMMIT as code changes
 - Don't merge PRs with missing/outdated docs
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Quick Reference
 
@@ -902,6 +902,6 @@ Example:
 # Reference issue/discussion if applicable: #123
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 **Remember:** Documentation is FOR your future self and your teammates. Write the docs you'd want to find when debugging at 2 AM.

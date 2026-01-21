@@ -307,7 +307,7 @@ sub display {
     my @lines;
     
     push @lines, "Current Configuration:";
-    push @lines, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
+    push @lines, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
     
     my $current_provider = $config->{provider} || 'openai';
     my $key = $config->{api_key};
@@ -353,7 +353,7 @@ sub display {
     # Available providers from Providers.pm
     push @lines, "";
     push @lines, "Available Providers:";
-    push @lines, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
+    push @lines, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
     
     for my $provider (list_providers()) {
         my $provider_config = get_provider($provider);
