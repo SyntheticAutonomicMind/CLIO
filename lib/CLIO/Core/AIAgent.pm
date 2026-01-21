@@ -5,7 +5,7 @@ use warnings;
 use JSON::PP qw(encode_json decode_json);
 use CLIO::Core::ProtocolIntegration;
 use CLIO::Core::TaskOrchestrator;
-use CLIO::Core::NaturalLanguage;
+use CLIO::NaturalLanguage::TaskProcessor;
 use CLIO::Core::Logger qw(should_log);
 
 =head1 NAME
@@ -44,7 +44,7 @@ sub new {
             session => $opts{session},
             protocol_manager => undef  # Will be set when available
         ),
-        natural_language_processor => CLIO::Core::NaturalLanguage->new(
+        natural_language_processor => CLIO::NaturalLanguage::TaskProcessor->new(
             debug => $opts{debug} || 0
         ),
         last_protocol_results => {},
@@ -388,13 +388,13 @@ sub _send_ai_request {
     
     # Add session history
     if ($self->{session}->{state}->{history}) {
-        print STDERR \"[DEBUG][AIAgent] Building messages from session history, count: \" . scalar(@{$self->{session}->{state}->{history}}) . \"\\n\" if $self->{debug};
+        print STDERR "[DEBUG][AIAgent] Building messages from session history, count: " . scalar(@{$self->{session}->{state}->{history}}) . "\n" if $self->{debug};
         foreach my $msg (@{$self->{session}->{state}->{history}}) {
-            print STDERR \"[DEBUG][AIAgent]   - role=$msg->{role}, content_length=\" . length($msg->{content}) . \"\\n\" if $self->{debug};
+            print STDERR "[DEBUG][AIAgent]   - role=$msg->{role}, content_length=" . length($msg->{content}) . "\n" if $self->{debug};
             push @messages, { role => $msg->{role}, content => $msg->{content} };
         }
     } else {
-        print STDERR \"[WARNING][AIAgent] No session history available!\\n\" if $self->{debug};
+        print STDERR "[WARNING][AIAgent] No session history available!\n" if $self->{debug};
     }
     
     # Add current request

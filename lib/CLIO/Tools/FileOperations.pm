@@ -704,7 +704,24 @@ sub grep_search {
         }
         
         # Search each file
-        my $search_regex = $is_regex ? qr/$query/i : qr/\Q$query\E/i;
+        # CRITICAL FIX: Compile regex safely with error handling
+        my $search_regex;
+        if ($is_regex) {
+            # User-provided regex - wrap in eval to catch invalid patterns
+            $search_regex = eval { qr/$query/i };
+            if ($@) {
+                my $err = $@;
+                $err =~ s/ at .* line \d+.*//;  # Clean up error message
+                $result = {
+                    success => 0,
+                    error => "Invalid regex pattern '$query': $err"
+                };
+                return;
+            }
+        } else {
+            # Literal search - always safe with \Q...\E
+            $search_regex = qr/\Q$query\E/i;
+        }
         
         foreach my $file (@files) {
             my $path = $file->{path};

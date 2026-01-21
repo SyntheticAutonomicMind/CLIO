@@ -15,6 +15,11 @@ binmode(STDERR, ':encoding(UTF-8)');
 use CLIO::Compat::Terminal qw(GetTerminalSize ReadMode ReadKey);  # Portable terminal control
 use File::Spec;
 
+# CRITICAL: Enable autoflush globally for STDOUT to prevent buffering issues
+# This ensures streaming output appears immediately
+$| = 1;
+STDOUT->autoflush(1) if STDOUT->can('autoflush');
+
 =head1 NAME
 
 CLIO::UI::Chat - Retro BBS-style chat interface
@@ -124,6 +129,50 @@ sub refresh_terminal_size {
     }
 }
 
+=head2 flush_output_buffer
+
+Flush any pending streaming output to ensure message ordering.
+Called by WorkflowOrchestrator before executing tools to prevent
+tool output from appearing before agent text.
+
+This is part of the handshake mechanism to fix message ordering issues
+where streaming content was being displayed after tool execution output.
+
+=cut
+
+sub flush_output_buffer {
+    my ($self) = @_;
+    
+    # Flush the streaming markdown buffer if it exists and has content
+    if ($self->{_streaming_markdown_buffer} && $self->{_streaming_markdown_buffer} =~ /\S/) {
+        my $output = $self->{_streaming_markdown_buffer};
+        if ($self->{enable_markdown}) {
+            $output = $self->render_markdown($self->{_streaming_markdown_buffer});
+        }
+        print $output;
+        $self->{_streaming_markdown_buffer} = '';
+    }
+    
+    # Flush the line buffer if it has content (partial line)
+    if ($self->{_streaming_line_buffer} && $self->{_streaming_line_buffer} =~ /\S/) {
+        my $output = $self->{_streaming_line_buffer};
+        if ($self->{enable_markdown}) {
+            $output = $self->render_markdown($self->{_streaming_line_buffer});
+        }
+        print $output;
+        $self->{_streaming_line_buffer} = '';
+    }
+    
+    # Force STDOUT flush
+    STDOUT->flush() if STDOUT->can('flush');
+    $| = 1;
+    
+    print STDERR "[DEBUG][Chat] Buffer flushed for tool execution handshake\n" 
+        if $self->{debug};
+    
+    return 1;
+}
+
 =head2 run
 
 Main chat loop - displays interface and processes user input
@@ -192,10 +241,11 @@ sub run {
             my $first_chunk_received = 0;
             my $accumulated_content = '';
             my $final_metrics = undef;
-            my $line_buffer = '';  # Buffer for extracting complete lines
             
             # Smart buffering for markdown rendering (Option D)
-            my $markdown_buffer = '';      # Accumulates lines for batch rendering
+            # Store buffers in $self so flush_output_buffer can access them
+            $self->{_streaming_line_buffer} = '';      # Buffer for extracting complete lines
+            $self->{_streaming_markdown_buffer} = '';  # Accumulates lines for batch rendering
             my $markdown_line_count = 0;   # Lines in current markdown buffer
             my $in_code_block = 0;         # Track if inside ```code block```
             my $in_table = 0;              # Track if inside table
@@ -216,17 +266,18 @@ sub run {
                 if (!$first_chunk_received) {
                     $first_chunk_received = 1;
                     print $self->colorize("AGENT: ", 'ASSISTANT');
+                    STDOUT->flush() if STDOUT->can('flush');  # Ensure AGENT: appears immediately
                     $self->{line_count}++;  # Count the AGENT: line
                 }
                 
-                # Add chunk to line buffer
-                $line_buffer .= $chunk;
+                # Add chunk to line buffer (using $self for access from flush_output_buffer)
+                $self->{_streaming_line_buffer} .= $chunk;
                 
                 # Process complete lines
-                while ($line_buffer =~ /\n/) {
-                    my $pos = index($line_buffer, "\n");
-                    my $line = substr($line_buffer, 0, $pos);
-                    $line_buffer = substr($line_buffer, $pos + 1);
+                while ($self->{_streaming_line_buffer} =~ /\n/) {
+                    my $pos = index($self->{_streaming_line_buffer}, "\n");
+                    my $line = substr($self->{_streaming_line_buffer}, 0, $pos);
+                    $self->{_streaming_line_buffer} = substr($self->{_streaming_line_buffer}, $pos + 1);
                     
                     # Update markdown context state
                     if ($line =~ /^```/) {
@@ -234,8 +285,8 @@ sub run {
                     }
                     $in_table = ($line =~ /^\|.*\|$/);
                     
-                    # Add line to markdown buffer
-                    $markdown_buffer .= $line . "\n";
+                    # Add line to markdown buffer (using $self)
+                    $self->{_streaming_markdown_buffer} .= $line . "\n";
                     $markdown_line_count++;
                     
                     # Determine if we should flush the buffer
@@ -254,24 +305,24 @@ sub run {
                     
                     if ($should_flush) {
                         # Render accumulated markdown buffer
-                        print STDERR "[DEBUG][Chat] Periodic flush of markdown_buffer (" . length($markdown_buffer) . " bytes, $markdown_line_count lines)\n" if $self->{debug};
-                        print STDERR "[DEBUG][Chat] Buffer ends with: " . substr($markdown_buffer, -80) . "\n" if $self->{debug};
-                        my $output = $markdown_buffer;
+                        print STDERR "[DEBUG][Chat] Periodic flush of markdown_buffer (" . length($self->{_streaming_markdown_buffer}) . " bytes, $markdown_line_count lines)\n" if $self->{debug};
+                        print STDERR "[DEBUG][Chat] Buffer ends with: " . substr($self->{_streaming_markdown_buffer}, -80) . "\n" if $self->{debug};
+                        my $output = $self->{_streaming_markdown_buffer};
                         if ($self->{enable_markdown}) {
-                            $output = $self->render_markdown($markdown_buffer);
+                            $output = $self->render_markdown($self->{_streaming_markdown_buffer});
                         }
                         
-                        # Print rendered output
+                        # Print rendered output and flush immediately
                         print $output;
-                        $| = 1;
+                        STDOUT->flush() if STDOUT->can('flush');
                         
                         # Buffer lines for page navigation (split back to lines)
-                        my @rendered_lines = split /\n/, $markdown_buffer;
+                        my @rendered_lines = split /\n/, $self->{_streaming_markdown_buffer};
                         push @{$self->{current_page}}, @rendered_lines;
                         $self->{line_count} += scalar(@rendered_lines);
                         
                         # Reset markdown buffer
-                        $markdown_buffer = '';
+                        $self->{_streaming_markdown_buffer} = '';
                         $markdown_line_count = 0;
                         $last_flush_time = $current_time;
                         
@@ -309,7 +360,7 @@ sub run {
                 $current_tool = $tool_name;
                 
                 # Display which tool is being used
-                print "\n" if $markdown_buffer && $markdown_buffer !~ /\n$/;  # Newline before tool if needed
+                print "\n" if $self->{_streaming_markdown_buffer} && $self->{_streaming_markdown_buffer} !~ /\n$/;  # Newline before tool if needed
                 print $self->colorize("[TOOL] ", 'COMMAND') . $self->colorize("$tool_name", 'DATA') . "\n";
                 $self->{line_count} += 2;
                 
@@ -340,36 +391,40 @@ sub run {
             
             # DEBUG: Check buffer states before flush
             if ($self->{debug}) {
-                print STDERR "[DEBUG][Chat] AFTER streaming - markdown_buffer length=" . length($markdown_buffer) . "\n";
-                print STDERR "[DEBUG][Chat] AFTER streaming - line_buffer length=" . length($line_buffer) . "\n";
+                print STDERR "[DEBUG][Chat] AFTER streaming - markdown_buffer length=" . length($self->{_streaming_markdown_buffer} // '') . "\n";
+                print STDERR "[DEBUG][Chat] AFTER streaming - line_buffer length=" . length($self->{_streaming_line_buffer} // '') . "\n";
                 print STDERR "[DEBUG][Chat] AFTER streaming - first_chunk_received=$first_chunk_received\n";
             }
             
             # CRITICAL FIX: Flush any remaining content in buffers after streaming completes
             
             # 1. Flush markdown buffer if it has content
-            if ($markdown_buffer && $markdown_buffer =~ /\S/) {
-                print STDERR "[DEBUG][Chat] Flushing markdown_buffer (" . length($markdown_buffer) . " bytes): " . 
-                             substr($markdown_buffer, -50) . "\n" if $self->{debug};
-                my $output = $markdown_buffer;
+            if ($self->{_streaming_markdown_buffer} && $self->{_streaming_markdown_buffer} =~ /\S/) {
+                print STDERR "[DEBUG][Chat] Flushing markdown_buffer (" . length($self->{_streaming_markdown_buffer}) . " bytes): " . 
+                             substr($self->{_streaming_markdown_buffer}, -50) . "\n" if $self->{debug};
+                my $output = $self->{_streaming_markdown_buffer};
                 if ($self->{enable_markdown}) {
-                    $output = $self->render_markdown($markdown_buffer);
+                    $output = $self->render_markdown($self->{_streaming_markdown_buffer});
                 }
                 print $output;
-                $| = 1;
+                STDOUT->flush() if STDOUT->can('flush');
             }
             
             # 2. Flush line buffer if it has content (incomplete final line)
-            if ($line_buffer && $line_buffer =~ /\S/) {
-                print STDERR "[DEBUG][Chat] Flushing line_buffer (" . length($line_buffer) . " bytes): " . 
-                             substr($line_buffer, -50) . "\n" if $self->{debug};
-                my $output = $line_buffer;
+            if ($self->{_streaming_line_buffer} && $self->{_streaming_line_buffer} =~ /\S/) {
+                print STDERR "[DEBUG][Chat] Flushing line_buffer (" . length($self->{_streaming_line_buffer}) . " bytes): " . 
+                             substr($self->{_streaming_line_buffer}, -50) . "\n" if $self->{debug};
+                my $output = $self->{_streaming_line_buffer};
                 if ($self->{enable_markdown}) {
-                    $output = $self->render_markdown($line_buffer);
+                    $output = $self->render_markdown($self->{_streaming_line_buffer});
                 }
                 print $output, "\n";
-                $| = 1;
+                STDOUT->flush() if STDOUT->can('flush');
             }
+            
+            # Clear streaming buffers after final flush
+            $self->{_streaming_markdown_buffer} = '';
+            $self->{_streaming_line_buffer} = '';
             
             # Reset line count after streaming completes
             $self->{line_count} = 0;

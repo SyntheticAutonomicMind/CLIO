@@ -61,6 +61,7 @@ sub new {
         session => $args{session},
         max_iterations => $args{max_iterations} || 500,  # Increased from 10 to support complex coding tasks
         debug => $args{debug} || 0,
+        ui => $args{ui},  # Store UI reference for buffer flushing
     };
     
     bless $self, $class;
@@ -459,6 +460,18 @@ sub process_input {
                 scalar(@serial_tools) . " serial, " .
                 scalar(@parallel_tools) . " parallel\n" if $self->{debug};
             
+            # CRITICAL FIX: Flush UI streaming buffer BEFORE executing any tools
+            # This ensures agent text appears BEFORE tool execution output
+            # Part of the handshake mechanism to fix message ordering (Bug 1 & 3)
+            if ($self->{ui} && $self->{ui}->can('flush_output_buffer')) {
+                print STDERR "[DEBUG][WorkflowOrchestrator] Flushing UI buffer before tool execution\n"
+                    if $self->{debug};
+                $self->{ui}->flush_output_buffer();
+            }
+            # Also flush STDOUT directly as a fallback
+            STDOUT->flush() if STDOUT->can('flush');
+            $| = 1;
+            
             # Track if this is the first tool call in the iteration
             my $first_tool_call = 1;
             
@@ -493,7 +506,7 @@ sub process_input {
                 print $COLORS{SYSTEM}, "SYSTEM: ", $COLORS{RESET};
                 print $COLORS{TOOL}, "[", $tool_name, "]", $COLORS{RESET};
                 print "\n";
-                $| = 1;  # Flush output immediately
+                STDOUT->flush() if STDOUT->can('flush');  # Ensure tool header appears immediately
                 
                 # Execute tool to get the result
                 my $tool_result = $self->_execute_tool($tool_call);
