@@ -62,6 +62,7 @@ sub new {
         max_iterations => $args{max_iterations} || 500,  # Increased from 10 to support complex coding tasks
         debug => $args{debug} || 0,
         ui => $args{ui},  # Store UI reference for buffer flushing
+        spinner => $args{spinner},  # Store spinner for interactive tools (user_collaboration)
     };
     
     bless $self, $class;
@@ -79,6 +80,7 @@ sub new {
         session => $args{session},
         tool_registry => $self->{tool_registry},
         ui => $args{ui},  # Forward UI for user_collaboration
+        spinner => $args{spinner},  # Forward spinner for interactive tools
         debug => $args{debug}
     );
     

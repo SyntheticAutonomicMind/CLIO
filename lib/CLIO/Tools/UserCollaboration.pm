@@ -156,6 +156,14 @@ sub request_input {
     print STDERR "[DEBUG][UserCollaboration] Requesting user input\n" if should_log('DEBUG');
     print STDERR "[DEBUG][UserCollaboration] Message: $message\n" if should_log('DEBUG');
     
+    # CRITICAL: Stop busy indicator before displaying collaboration prompt
+    # This is the only interactive tool that waits for user input, so spinner must stop
+    my $spinner = $context->{spinner};
+    if ($spinner && $spinner->can('stop')) {
+        print STDERR "[DEBUG][UserCollaboration] Stopping busy spinner before collaboration prompt\n" if should_log('DEBUG');
+        $spinner->stop();
+    }
+    
     # Get UI object from context
     my $ui = $context->{ui};
     unless ($ui && $ui->can('request_collaboration')) {
