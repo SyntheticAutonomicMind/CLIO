@@ -315,7 +315,20 @@ sub run {
                     if ($line =~ /^```/) {
                         $in_code_block = !$in_code_block;
                     }
-                    $in_table = ($line =~ /^\|.*\|$/);
+                    
+                    # Track table state more accurately:
+                    # - Start table when we see a | row
+                    # - End table when we see a non-| row (excluding blank lines)
+                    my $line_is_table_row = ($line =~ /^\|.*\|$/);
+                    my $line_is_blank = ($line =~ /^\s*$/);
+                    
+                    if ($line_is_table_row) {
+                        $in_table = 1;
+                    } elsif (!$line_is_blank && $in_table) {
+                        # Non-blank, non-table line ends the table
+                        $in_table = 0;
+                    }
+                    # Blank lines don't change table state (tables can have blank lines)
                     
                     # Add line to markdown buffer (using $self)
                     $self->{_streaming_markdown_buffer} .= $line . "\n";
@@ -325,14 +338,18 @@ sub run {
                     my $current_time = time();
                     my $buffer_size_threshold = 10;     # Flush every 10 lines
                     my $time_threshold = 0.5;            # Or every 500ms
+                    my $max_buffer_size = 50;            # Force flush at 50 lines even in table
                     
                     # Flush buffer when:
-                    # 1. Buffer has enough lines (size threshold)
-                    # 2. Timeout reached (prevents stalling)
-                    # Note: We DON'T flush on pattern complete - let patterns accumulate in buffer
+                    # 1. Buffer has enough lines (size threshold) AND not in code block or table
+                    # 2. Timeout reached AND not in code block or table
+                    # 3. Force flush if buffer is very large (prevents memory issues)
+                    # Note: We DON'T flush while inside code blocks or tables
+                    my $in_special_block = $in_code_block || $in_table;
                     my $should_flush = (
-                        $markdown_line_count >= $buffer_size_threshold ||  # Buffer full
-                        ($current_time - $last_flush_time >= $time_threshold)  # Timeout
+                        ($markdown_line_count >= $buffer_size_threshold && !$in_special_block) ||  # Normal flush
+                        ($current_time - $last_flush_time >= $time_threshold && !$in_special_block) ||  # Timeout flush
+                        ($markdown_line_count >= $max_buffer_size)  # Force flush to prevent memory issues
                     );
                     
                     if ($should_flush) {
@@ -5271,6 +5288,10 @@ sub render_markdown {
     
     # Parse @COLOR@ markers to actual ANSI escape sequences
     my $parsed = $self->{ansi}->parse($rendered);
+    
+    # Restore escaped @ symbols from inline code
+    # Markdown.pm escapes @ as \x00AT\x00 to prevent ANSI interpretation
+    $parsed =~ s/\x00AT\x00/\@/g;
     
     # DEBUG: Verify @-codes were converted
     if ($self->{debug} && $parsed =~ /\@[A-Z_]+\@/) {

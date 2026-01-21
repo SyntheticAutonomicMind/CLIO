@@ -239,8 +239,13 @@ sub _visual_length {
     $clean =~ s/(?<!\*)\*([^\*]+)\*(?!\*)/$1/g;
     $clean =~ s/(^|[\s\(])_([^_]+)_(?=[\s\)\.\,\!\?\:\;]|$)/$1$2/g;
     
-    # Remove inline code (`text` -> text)
-    $clean =~ s/`([^`]+)`/$1/g;
+    # Handle inline code specially: remove backticks but preserve @-codes as literal text
+    # Replace @-codes inside backticks with a placeholder before general @-code stripping
+    $clean =~ s{`([^`]+)`}{
+        my $code = $1;
+        $code =~ s/\@/\x01/g;  # Temporarily replace @ with \x01
+        $code
+    }ge;
     
     # Remove links [text](url) -> text
     $clean =~ s/\[([^\]]+)\]\([^\)]+\)/$1/g;
@@ -251,8 +256,11 @@ sub _visual_length {
     # Now strip any ANSI escape codes
     $clean =~ s/\e\[[0-9;]*m//g;
     
-    # Also strip @-codes that might be in the text (like @RESET@)
+    # Strip @-codes that are OUTSIDE code blocks (these are color markers)
     $clean =~ s/@[A-Z_]+@//g;
+    
+    # Restore @ symbols that were inside code blocks
+    $clean =~ s/\x01/\@/g;
     
     # Count visual width, accounting for common wide characters
     my $width = 0;
@@ -369,9 +377,15 @@ sub process_inline_formatting {
     my ($self, $text) = @_;
     
     # Code blocks inline (backticks)
+    # IMPORTANT: Content inside backticks should be literal - escape @-codes to prevent
+    # them from being interpreted as color codes by ANSI.pm
+    # We use \x00AT\x00 as a placeholder, which gets restored in Chat.pm after ANSI parsing
     my $code_color = $self->color('markdown_code');
-    # Use ${var} syntax to prevent @-code array interpretation in replacement
-    $text =~ s/`([^`]+)`/${code_color}$1\@RESET\@/g;
+    $text =~ s{`([^`]+)`}{
+        my $code_content = $1;
+        $code_content =~ s/\@/\x00AT\x00/g;
+        "${code_color}${code_content}\@RESET\@"
+    }ge;
     
     # Bold (**text** or __text__)
     my $bold_color = $self->color('markdown_bold');
