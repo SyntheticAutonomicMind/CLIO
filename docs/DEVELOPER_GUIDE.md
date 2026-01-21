@@ -847,6 +847,7 @@ my $count = 0;  # Track number of failed retries for exponential backoff
 1. **Read The Unbroken Method**: `cat ai-assisted/THE_UNBROKEN_METHOD.md`
 2. **Check existing issues**: Search for related work
 3. **Discuss major changes**: Open an issue first for large features
+4. **Consider using CLIO**: CLIO is developed using CLIO itself. Using CLIO for your contributions helps you understand the tool from a user's perspective and ensures your changes work well in practice.
 
 ### Development Workflow
 
