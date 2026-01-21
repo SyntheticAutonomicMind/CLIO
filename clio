@@ -271,10 +271,17 @@ if ($mode eq 'new') {
         
         # CRITICAL: Apply session's saved model to config
         # This ensures resumed sessions use the model they were using, not the global default
+        # Check both api_config{model} (from /api set) and selected_model (from API usage)
         my $session_state = $session->state();
-        if ($session_state && $session_state->{selected_model}) {
-            $config->set('model', $session_state->{selected_model}, 0);  # 0 = don't mark as user-set
-            print STDERR "[DEBUG] Applied session model to config: $session_state->{selected_model}\n" if $debug;
+        if ($session_state) {
+            # Priority: api_config{model} (explicit user setting) > selected_model (from API)
+            my $session_model = $session_state->{api_config}{model}
+                             // $session_state->{selected_model};
+            
+            if ($session_model) {
+                $config->set('model', $session_model, 0);  # 0 = don't mark as user-set
+                print STDERR "[DEBUG] Applied session model to config: $session_model\n" if $debug;
+            }
         }
     }
 }

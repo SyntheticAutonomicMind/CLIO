@@ -84,6 +84,7 @@ sub save {
         billing => $self->{billing},  # Save billing data
         context_files => $self->{context_files} || [],  # Save context files
         selected_model => $self->{selected_model},  # Save currently selected model
+        api_config => $self->{api_config} || {},  # Save API config (from /api set --session)
         style => $self->{style},  # Save current color style
         theme => $self->{theme},  # Save current output theme
     };
@@ -134,6 +135,8 @@ sub load {
         context_files => $data->{context_files} || [],
         # Load selected model or default to undef
         selected_model => $data->{selected_model},
+        # Load API config (from /api set --session)
+        api_config => $data->{api_config} || {},
         # Load theme settings
         style => $data->{style} || 'default',
         theme => $data->{theme} || 'default',
