@@ -482,27 +482,26 @@ sub process_input {
                 print STDERR "[DEBUG][WorkflowOrchestrator] Executing tool: $tool_name\n"
                     if $self->{debug};
                 
-                # Clear orphaned "AGENT: " prefix if this is the first tool call and no content was shown
+                # Handle first tool call: ensure proper line separation from agent content
                 # The streaming callback prints "AGENT: " immediately on first chunk, but if the response
-                # was tool calls only (no text content), we need to clean up that prefix
+                # was tool calls only (no text content), we need clean separation
                 if ($first_tool_call) {
                     my $content = $api_response->{content} // '';
                     print STDERR "[DEBUG][WorkflowOrchestrator] First tool call - checking content: '" . substr($content, 0, 100) . "'\n"
                         if $self->{debug};
                     
-                    if (!$content || $content =~ /^\s*$/) {
-                        # Move cursor to start of line and clear it
-                        # Use more aggressive clearing: move up one line (in case newline was printed), then clear
-                        print STDERR "[DEBUG][WorkflowOrchestrator] Content empty/whitespace - clearing AGENT: prefix\n"
-                            if $self->{debug};
-                        print "\e[1A\r\e[K";  # \e[1A = move up 1 line, \r = carriage return, \e[K = clear to end
-                    }
+                    # Always print a newline before SYSTEM output to ensure clean separation
+                    # This handles both cases:
+                    # 1. Content exists but may not end with newline
+                    # 2. Content is empty but "AGENT: " was printed
+                    print "\n";
+                    STDOUT->flush() if STDOUT->can('flush');
+                    
                     $first_tool_call = 0;
                 }
                 
                 # Show user-visible feedback BEFORE tool execution (for interactive tools like user_collaboration)
                 # NOTE: Update existing "(streaming...)" message to show execution started
-                print "\r\e[K";  # Clear the "(streaming...)" line
                 print $COLORS{SYSTEM}, "SYSTEM: ", $COLORS{RESET};
                 print $COLORS{TOOL}, "[", $tool_name, "]", $COLORS{RESET};
                 print "\n";
