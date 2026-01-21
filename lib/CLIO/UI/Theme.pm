@@ -2,10 +2,14 @@ package CLIO::UI::Theme;
 
 use strict;
 use warnings;
+use utf8;
 use FindBin;
 use File::Spec;
 use File::Basename;
 use CLIO::UI::ANSI;
+
+binmode(STDOUT, ':encoding(UTF-8)');
+binmode(STDERR, ':encoding(UTF-8)');
 
 =head1 NAME
 
@@ -176,7 +180,7 @@ sub load_style_file {
     
     return undef unless -f $path;
     
-    open(my $fh, '<', $path) or do {
+    open(my $fh, '<:encoding(UTF-8)', $path) or do {
         print STDERR "[ERROR][Theme] Cannot open style file $path: $!\n";
         return undef;
     };
@@ -212,7 +216,7 @@ sub load_theme_file {
     
     return undef unless -f $path;
     
-    open(my $fh, '<', $path) or do {
+    open(my $fh, '<:encoding(UTF-8)', $path) or do {
         print STDERR "[ERROR][Theme] Cannot open theme file $path: $!\n";
         return undef;
     };
@@ -250,6 +254,28 @@ sub get_color {
     return '' unless $style;
     
     return $style->{$key} || '';
+}
+
+=head2 get_spinner_frames
+
+Get spinner animation frames from current style, parsed from comma-separated string
+
+Returns an array reference of animation frames
+
+=cut
+
+sub get_spinner_frames {
+    my ($self) = @_;
+    
+    my $style = $self->{styles}->{$self->{current_style}} || $self->{styles}->{default};
+    return ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] unless $style;
+    
+    my $frames_str = $style->{spinner_frames} || '⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏';
+    
+    # Split comma-separated frames
+    my @frames = split(/,/, $frames_str);
+    
+    return \@frames;
 }
 
 =head2 get_template
@@ -393,7 +419,7 @@ sub save_style {
     
     my $path = File::Spec->catfile($dir, "$name.style");
     
-    open(my $fh, '>', $path) or do {
+    open(my $fh, '>:encoding(UTF-8)', $path) or do {
         print STDERR "[ERROR][Theme] Cannot write style file: $!\n";
         return 0;
     };
@@ -433,7 +459,7 @@ sub save_theme {
     
     my $path = File::Spec->catfile($dir, "$name.theme");
     
-    open(my $fh, '>', $path) or do {
+    open(my $fh, '>:encoding(UTF-8)', $path) or do {
         print STDERR "[ERROR][Theme] Cannot write theme file: $!\n";
         return 0;
     };

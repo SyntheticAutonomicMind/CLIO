@@ -2,7 +2,11 @@ package CLIO::UI::ProgressSpinner;
 
 use strict;
 use warnings;
+use utf8;
 use Time::HiRes qw(usleep);
+
+binmode(STDOUT, ':encoding(UTF-8)');
+binmode(STDERR, ':encoding(UTF-8)');
 
 =head1 NAME
 
@@ -30,7 +34,8 @@ sub new {
     my ($class, %args) = @_;
     
     my $self = {
-        frames => $args{frames} || ['.', 'o', 'O', 'o'],
+        # Default to braille pattern spinner (smooth, compatible animation)
+        frames => $args{frames} || ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'],
         delay => $args{delay} || 100000,  # 100ms default
         pid => undef,
         running => 0,
@@ -104,6 +109,9 @@ Animation loop running in child process.
 
 sub _run_animation {
     my ($self) = @_;
+    
+    # CRITICAL: Child process must set UTF-8 binmode for Unicode characters
+    binmode(STDOUT, ':encoding(UTF-8)');
     
     my $frame_index = 0;
     my $frames = $self->{frames};

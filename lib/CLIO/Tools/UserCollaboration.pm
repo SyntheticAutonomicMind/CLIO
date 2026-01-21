@@ -159,9 +159,29 @@ sub request_input {
     # CRITICAL: Stop busy indicator before displaying collaboration prompt
     # This is the only interactive tool that waits for user input, so spinner must stop
     my $spinner = $context->{spinner};
+    
+    # Add detailed logging for spinner reference validation
+    if (should_log('DEBUG')) {
+        print STDERR "[DEBUG][UserCollaboration] Spinner reference: " . (defined $spinner ? ref($spinner) : "UNDEFINED") . "\n";
+        if ($spinner) {
+            print STDERR "[DEBUG][UserCollaboration] Spinner object: ";
+            if (ref($spinner) eq 'CLIO::UI::ProgressSpinner') {
+                print STDERR "valid ProgressSpinner instance\n";
+                print STDERR "[DEBUG][UserCollaboration] Spinner running state: " . ($spinner->{running} ? "YES" : "NO") . "\n";
+            } else {
+                print STDERR "ERROR - not a ProgressSpinner!\n";
+            }
+        } else {
+            print STDERR "[DEBUG][UserCollaboration] ERROR: Spinner is undefined in context!\n";
+        }
+    }
+    
     if ($spinner && $spinner->can('stop')) {
         print STDERR "[DEBUG][UserCollaboration] Stopping busy spinner before collaboration prompt\n" if should_log('DEBUG');
         $spinner->stop();
+        print STDERR "[DEBUG][UserCollaboration] Spinner stopped successfully\n" if should_log('DEBUG');
+    } else {
+        print STDERR "[WARN][UserCollaboration] Cannot stop spinner - undefined or invalid\n";
     }
     
     # Get UI object from context

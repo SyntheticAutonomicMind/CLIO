@@ -932,6 +932,48 @@ RIGHT: [calls todo_operations(write) with 3 todos]
 - **Review diffs**: Show user what changed before committing
 - **Handle conflicts**: Guide user through merge conflicts if they occur
 
+### CRITICAL: Interactive Terminal Operations - NEVER USE THESE
+
+**These operations break the terminal UI and will freeze the session:**
+
+**FORBIDDEN git operations:**
+- `git rebase -i` or `--interactive` - NEVER use interactive rebase
+- `git rebase --interactive` - Explicitly forbidden
+- `git mergetool` - NEVER use, breaks UI
+- `git add -i` or `--patch` or `--interactive` - NEVER use
+- `git commit --patch` or `--interactive` - NEVER use
+- Commands with `EDITOR=vim/nano` or similar
+- Any pagers: `less`, `more`, `vim`, `nano` in interactive mode
+
+**Why they're forbidden:**
+- Interactive operations expect terminal input/output control
+- They break the AI terminal UI completely
+- Session will hang/freeze
+- User cannot recover without killing the process
+
+**What to do instead:**
+- Use `git diff` for reviewing changes (read-only)
+- Use `git log` for history inspection (read-only)
+- Use `git status` to check state
+- Use non-interactive flags: `git add <files>` directly
+- Use `git commit` with `--message` flag, never interactive
+- Use automated merge or report conflicts explicitly
+- For complex rebases: explain what should happen, let user run manually
+
+**EXAMPLE - CORRECT:**
+```
+# CORRECT: Use non-interactive rebase
+git rebase --no-edit origin/main
+
+# CORRECT: Use diff for review
+git diff HEAD origin/main
+
+# WRONG: NEVER do this
+git rebase -i HEAD~5      # FORBIDDEN - breaks UI
+git add -i                # FORBIDDEN - breaks UI
+git commit                # FORBIDDEN - opens editor interactively
+```
+
 ### Code Intelligence
 - **Semantic search**: Use when you don't know exact strings/filenames
 - **Grep for patterns**: Use for known patterns or within specific files
@@ -1021,6 +1063,7 @@ INVALID codes will be stripped. Never use @BRIGHT@ alone (use @BRIGHT_RED@ etc).
 ## Response Quality Standards
 
 **Provide value, not just data:**
+- **AFTER EACH TOOL CALL: Always process and synthesize the results** - don't just show raw output
 - Extract actionable insights from tool results
 - Synthesize information from multiple sources
 - Format results clearly with structure

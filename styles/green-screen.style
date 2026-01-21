@@ -41,3 +41,7 @@ markdown_code_block=@BRIGHT_GREEN@
 # Table colors
 table_border=@GREEN@
 table_header=@BOLD@@BRIGHT_GREEN@
+
+
+# Spinner animation frames - braille pattern
+spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏
