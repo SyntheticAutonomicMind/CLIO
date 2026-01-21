@@ -1740,7 +1740,15 @@ sub show_session_config {
 
 =head2 handle_config_command
 
-Handle /config commands (show and save only)
+Handle /config commands for global configuration.
+
+New noun-first pattern:
+  /config                 - Show help for /config commands
+  /config show            - Display global configuration
+  /config set <key> <val> - Set a config value
+  /config save            - Save current configuration
+  /config workdir [path]  - Get/set working directory
+  /config loglevel [level] - Get/set log level
 
 =cut
 
@@ -1752,93 +1760,171 @@ sub handle_config_command {
         return;
     }
     
-    my $action = $args[0] || 'show';
-    my $scope = $args[1] || 'global';
+    my $action = $args[0] || '';
+    my $arg1 = $args[1] || '';
+    my $arg2 = $args[2] || '';
     
     $action = lc($action);
-    $scope = lc($scope);
     
+    # /config (no args) - show help
+    if ($action eq '' || $action eq 'help') {
+        $self->_display_config_help();
+        return;
+    }
+    
+    # /config show - display global config
     if ($action eq 'show') {
-        if ($scope eq 'session') {
-            $self->show_session_config();
-        } else {
-            $self->show_global_config();
-        }
+        $self->show_global_config();
+        return;
     }
-    elsif ($action eq 'save') {
-        if ($scope eq 'session') {
-            # Save current settings to session state only
-            my $state = $self->{session}->state();
-            $state->{style} = $self->{theme_mgr}->get_current_style();
-            $state->{theme} = $self->{theme_mgr}->get_current_theme();
-            require Cwd;
-            $state->{working_directory} = Cwd::getcwd();
-            $self->{session}->save();
-            $self->display_system_message("Session configuration saved");
-        } else {
-            # Save to global config (existing behavior + style/theme)
-            my $current_style = $self->{theme_mgr}->get_current_style();
-            my $current_theme = $self->{theme_mgr}->get_current_theme();
-            
-            $self->{config}->set('style', $current_style);
-            $self->{config}->set('theme', $current_theme);
-            require Cwd;
-            $self->{config}->set('working_directory', Cwd::getcwd());
-            
-            if ($self->{config}->save()) {
-                $self->display_system_message("Global configuration saved successfully");
-                $self->display_system_message("Style: $current_style, Theme: $current_theme");
-            } else {
-                $self->display_error_message("Failed to save configuration");
-            }
-        }
+    
+    # /config set <key> <value> - set a config value
+    if ($action eq 'set') {
+        $self->_handle_config_set($arg1, $arg2);
+        return;
     }
-    elsif ($action eq 'load') {
+    
+    # /config save - save configuration
+    if ($action eq 'save') {
+        my $current_style = $self->{theme_mgr}->get_current_style();
+        my $current_theme = $self->{theme_mgr}->get_current_theme();
+        
+        $self->{config}->set('style', $current_style);
+        $self->{config}->set('theme', $current_theme);
+        require Cwd;
+        $self->{config}->set('working_directory', Cwd::getcwd());
+        
+        if ($self->{config}->save()) {
+            $self->display_system_message("Configuration saved successfully");
+        } else {
+            $self->display_error_message("Failed to save configuration");
+        }
+        return;
+    }
+    
+    # /config load - reload configuration
+    if ($action eq 'load') {
         $self->{config}->load();
         $self->display_system_message("Configuration reloaded");
+        return;
     }
-    elsif ($action eq 'workdir') {
-        # Set or show working directory
-        if ($scope && $scope ne 'global' && $scope ne 'session') {
-            # scope is actually the directory path
-            my $dir = $scope;
-            # Expand tilde
-            $dir =~ s/^~/$ENV{HOME}/;
+    
+    # /config workdir [path] - get/set working directory
+    if ($action eq 'workdir') {
+        if ($arg1) {
+            # Set working directory
+            my $dir = $arg1;
+            $dir =~ s/^~/$ENV{HOME}/;  # Expand tilde
             
-            # Validate directory exists
             unless (-d $dir) {
                 $self->display_error_message("Directory does not exist: $dir");
                 return;
             }
             
-            # Make absolute
             require Cwd;
             $dir = Cwd::abs_path($dir);
             
-            # Update session state
-            if ($self->{session} && $self->{session}->{state}) {
-                $self->{session}->{state}->{working_directory} = $dir;
-                $self->{session}->{state}->save();
+            if ($self->{session} && $self->{session}->state()) {
+                my $state = $self->{session}->state();
+                $state->{working_directory} = $dir;
+                $self->{session}->save();
                 $self->display_system_message("Working directory set to: $dir");
             } else {
                 $self->display_error_message("No active session");
             }
         } else {
-            # Show current working directory
-            if ($self->{session} && $self->{session}->{state}) {
-                require Cwd;
-                my $dir = $self->{session}->{state}->{working_directory} || Cwd::getcwd();
-                $self->display_system_message("Current working directory: $dir");
-            } else {
-                $self->display_error_message("No active session");
+            # Show working directory
+            require Cwd;
+            my $dir = '.';
+            if ($self->{session} && $self->{session}->state()) {
+                $dir = $self->{session}->state()->{working_directory} || Cwd::getcwd();
             }
+            $self->display_system_message("Working directory: $dir");
         }
+        return;
     }
-    else {
-        $self->display_error_message("Unknown config command: $action");
-        $self->display_system_message("Usage: /config [show|save|load|workdir] [session|<value>]");
-        $self->display_system_message("For API settings, use: /api [key|base|model|provider] <value>");
-        $self->display_system_message("Type /help to see all configuration commands");
+    
+    # /config loglevel [level] - get/set log level
+    if ($action eq 'loglevel') {
+        $self->handle_loglevel_command($arg1);
+        return;
+    }
+    
+    # Unknown action
+    $self->display_error_message("Unknown action: /config $action");
+    $self->_display_config_help();
+}
+
+=head2 _display_config_help
+
+Display help for /config commands
+
+=cut
+
+sub _display_config_help {
+    my ($self) = @_;
+    
+    print "\n";
+    print $self->colorize("CONFIG COMMANDS", 'DATA'), "\n";
+    print $self->colorize("=" x 50, 'DIM'), "\n\n";
+    
+    print $self->colorize("  /config show", 'PROMPT'), "              Display global configuration\n";
+    print $self->colorize("  /config set <key> <val>", 'PROMPT'), "   Set a configuration value\n";
+    print $self->colorize("  /config save", 'PROMPT'), "              Save current configuration\n";
+    print $self->colorize("  /config load", 'PROMPT'), "              Reload configuration from disk\n";
+    print $self->colorize("  /config workdir [path]", 'PROMPT'), "    Get/set working directory\n";
+    print $self->colorize("  /config loglevel [lvl]", 'PROMPT'), "    Get/set log level\n";
+    
+    print "\n";
+    print $self->colorize("SETTABLE KEYS", 'DATA'), "\n";
+    print $self->colorize("-" x 50, 'DIM'), "\n";
+    print "  style, theme, working_directory\n";
+    print "\n";
+    print $self->colorize("NOTE", 'DATA'), ": For API settings, use ", $self->colorize("/api set", 'PROMPT'), "\n";
+}
+
+=head2 _handle_config_set
+
+Handle /config set <key> <value>
+
+=cut
+
+sub _handle_config_set {
+    my ($self, $key, $value) = @_;
+    
+    $key = lc($key || '');
+    
+    unless ($key) {
+        $self->display_error_message("Usage: /config set <key> <value>");
+        print "Keys: style, theme, working_directory\n";
+        return;
+    }
+    
+    unless (defined $value && $value ne '') {
+        $self->display_error_message("Usage: /config set $key <value>");
+        return;
+    }
+    
+    # Validate allowed keys
+    my %allowed = (
+        style => 1,
+        theme => 1,
+        working_directory => 1,
+    );
+    
+    unless ($allowed{$key}) {
+        $self->display_error_message("Unknown config key: $key");
+        print "Allowed keys: " . join(', ', sort keys %allowed) . "\n";
+        return;
+    }
+    
+    # Set the value
+    $self->{config}->set($key, $value);
+    
+    if ($self->{config}->save()) {
+        $self->display_system_message("$key set to: $value (saved)");
+    } else {
+        $self->display_system_message("$key set to: $value (warning: failed to save)");
     }
 }
 
