@@ -384,6 +384,10 @@ sub process_inline_formatting {
     $text =~ s{`([^`]+)`}{
         my $code_content = $1;
         $code_content =~ s/\@/\x00AT\x00/g;
+        $code_content =~ s/\*/\x00STAR\x00/g;
+        $code_content =~ s/_/\x00UNDER\x00/g;
+        $code_content =~ s/\[/\x00LBRACK\x00/g;
+        $code_content =~ s/\]/\x00RBRACK\x00/g;
         "${code_color}${code_content}\@RESET\@"
     }ge;
     
@@ -408,6 +412,12 @@ sub process_inline_formatting {
     
     # Links [text](url) - show text with URL more prominently
     $text =~ s/\[([^\]]+)\]\(([^\)]+)\)/${link_text_color}$1\@RESET\@ → ${link_url_color}$2\@RESET\@/g;
+    
+    # Restore escaped characters from code blocks
+    $text =~ s/\x00STAR\x00/*/g;
+    $text =~ s/\x00UNDER\x00/_/g;
+    $text =~ s/\x00LBRACK\x00/[/g;
+    $text =~ s/\x00RBRACK\x00/]/g;
     
     return $text;
 }
