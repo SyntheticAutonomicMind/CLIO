@@ -15,7 +15,7 @@ banner_line2={style.banner}║  {style.app_title}CLIO@RESET@{style.banner} {styl
 banner_line3={style.banner}╚════════════════════════════════════════════╝@RESET@
 banner_line4=Session ID: {style.data}{var.session_id}@RESET@
 banner_line5=Connected to: {style.data}{var.model}@RESET@
-banner_line6={style.dim}Type /help or ? for available commands@RESET@
+banner_line6={style.dim}Type /help for available commands@RESET@
 banner_line7={style.dim}Type /quit or /exit to end session@RESET@
 
 # Help system - detailed
