@@ -443,7 +443,8 @@ sub run {
                 conversation_history => $conversation_history,
                 current_file => $self->{session}->{state}->{current_file},
                 working_directory => $self->{session}->{state}->{working_directory},
-                ui => $self  # Pass UI object for user_collaboration tool
+                ui => $self,  # Pass UI object for user_collaboration tool
+                spinner => $spinner  # Pass spinner for interactive tools to stop
             });
             print STDERR "[DEBUG][Chat] process_user_request returned, success=" . ($result->{success} ? "yes" : "no") . "\n" if $self->{debug};
             

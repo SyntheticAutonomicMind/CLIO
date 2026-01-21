@@ -174,13 +174,19 @@ sub process_user_request {
                 debug => $self->{debug},
                 api_manager => $self->{api},
                 session => $self->{session},
-                ui => $context->{ui}  # Forward UI for user_collaboration
+                ui => $context->{ui},  # Forward UI for user_collaboration
+                spinner => $context->{spinner}  # Forward spinner for interactive tools
             );
         }
         
         # Update UI reference if provided in context (for dynamic chat updates)
         if ($context->{ui} && $self->{orchestrator}) {
             $self->{orchestrator}->{ui} = $context->{ui};
+        }
+        
+        # Update spinner reference if provided in context
+        if ($context->{spinner} && $self->{orchestrator}) {
+            $self->{orchestrator}->{spinner} = $context->{spinner};
         }
         
         my $orchestrator = $self->{orchestrator};

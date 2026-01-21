@@ -62,6 +62,7 @@ sub new {
         session => $args{session},
         tool_registry => $args{tool_registry},
         ui => $args{ui},  # Store UI for tools
+        spinner => $args{spinner},  # Store spinner for interactive tools
         debug => $args{debug} || 0,
         storage => CLIO::Session::ToolResultStore->new(debug => $args{debug}),
     };
@@ -199,6 +200,7 @@ sub execute_tool {
         session => $self->{session},
         tool_call_id => $tool_call_id,
         ui => $self->{ui},  # Provide UI for user_collaboration
+        spinner => $self->{spinner},  # Provide spinner for interactive tools
     });
     
     my $execution_time_ms = int((time() - $start_time) * 1000);
