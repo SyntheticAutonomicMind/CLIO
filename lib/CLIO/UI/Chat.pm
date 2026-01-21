@@ -152,8 +152,7 @@ sub flush_output_buffer {
             $output = $self->render_markdown($self->{_streaming_markdown_buffer});
         }
         print $output;
-        # Ensure output ends with newline for clean separation before tool output
-        print "\n" unless $output =~ /\n$/;
+        # DO NOT add extra newline - content already has proper line endings from streaming
         $self->{_streaming_markdown_buffer} = '';
         $printed_content = 1;
     }
@@ -165,7 +164,7 @@ sub flush_output_buffer {
             $output = $self->render_markdown($self->{_streaming_line_buffer});
         }
         print $output;
-        # Ensure output ends with newline for clean separation before tool output
+        # Add newline only for partial lines (those that don't already have one)
         print "\n" unless $output =~ /\n$/;
         $self->{_streaming_line_buffer} = '';
         $printed_content = 1;
@@ -176,6 +175,29 @@ sub flush_output_buffer {
     $| = 1;
     
     print STDERR "[DEBUG][Chat] Buffer flushed for tool execution handshake (printed=$printed_content)\n" 
+        if $self->{debug};
+    
+    return 1;
+}
+
+=head2 reset_streaming_state
+
+Reset the streaming state to allow a new "AGENT: " prefix to be printed.
+Called by WorkflowOrchestrator after tool execution completes, before
+the next AI iteration starts streaming.
+
+This ensures that each new AI response chunk after tool execution
+gets a proper "AGENT: " prefix.
+
+=cut
+
+sub reset_streaming_state {
+    my ($self) = @_;
+    
+    # Mark that we need a new AGENT: prefix on next chunk
+    $self->{_need_agent_prefix} = 1;
+    
+    print STDERR "[DEBUG][Chat] Streaming state reset - next chunk will get AGENT: prefix\n" 
         if $self->{debug};
     
     return 1;
@@ -270,9 +292,11 @@ sub run {
                     $spinner->stop();
                 }
                 
-                # Display role label on first chunk
-                if (!$first_chunk_received) {
+                # Display role label on first chunk OR when _need_agent_prefix is set
+                # (reset after tool execution to show new AGENT: prefix for continuation)
+                if (!$first_chunk_received || $self->{_need_agent_prefix}) {
                     $first_chunk_received = 1;
+                    $self->{_need_agent_prefix} = 0;  # Clear the flag
                     print $self->colorize("AGENT: ", 'ASSISTANT');
                     STDOUT->flush() if STDOUT->can('flush');  # Ensure AGENT: appears immediately
                     $self->{line_count}++;  # Count the AGENT: line

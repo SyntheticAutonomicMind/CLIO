@@ -566,6 +566,14 @@ sub process_input {
                     if $self->{debug};
             }
             
+            # Reset UI streaming state so next iteration shows new AGENT: prefix
+            # This ensures proper message formatting after tool execution
+            if ($self->{ui} && $self->{ui}->can('reset_streaming_state')) {
+                print STDERR "[DEBUG][WorkflowOrchestrator] Resetting UI streaming state for next iteration\n"
+                    if $self->{debug};
+                $self->{ui}->reset_streaming_state();
+            }
+            
             # Loop back - AI will process tool results
             next;
         }
