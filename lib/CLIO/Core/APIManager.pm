@@ -531,11 +531,12 @@ sub _detect_api_type_and_url {
 =head2 validate_and_truncate_messages
 
 Validate message token count against model limits and truncate if necessary.
-Estimates tokens using character count / 4 (rough approximation).
+Estimates tokens using character count / 3 (conservative approximation for code/JSON).
 
 Arguments:
 - $messages: Arrayref of message objects
 - $model: Model name (optional, uses $self->{model} if not provided)
+- $tools: Arrayref of tool definitions (optional, to account for tool token usage)
 
 Returns:
 - Arrayref of messages (possibly truncated)
@@ -544,7 +545,7 @@ Returns:
 =cut
 
 sub validate_and_truncate_messages {
-    my ($self, $messages, $model) = @_;
+    my ($self, $messages, $model, $tools) = @_;
     
     $model ||= $self->get_current_model();
     
@@ -558,23 +559,46 @@ sub validate_and_truncate_messages {
     
     my $max_prompt = $caps->{max_prompt_tokens};
     
-    # Estimate current token count
+    # Account for tool definitions in token budget
+    # Each tool schema averages ~2500 tokens (conservative estimate)
+    my $tool_tokens = 0;
+    if ($tools && ref($tools) eq 'ARRAY' && @$tools) {
+        $tool_tokens = scalar(@$tools) * 2500;
+        print STDERR "[DEBUG][APIManager] Tool token budget: $tool_tokens tokens for " . scalar(@$tools) . " tools\n"
+            if $self->{debug};
+    }
+    
+    # Apply 10% safety margin to avoid edge cases
+    my $safety_margin = int($max_prompt * 0.10);
+    my $effective_limit = $max_prompt - $tool_tokens - $safety_margin;
+    
+    # Ensure effective limit is reasonable (at least 10k tokens for messages)
+    if ($effective_limit < 10000) {
+        warn "[WARNING][APIManager] Effective token limit very low ($effective_limit), adjusting to 10000\n";
+        $effective_limit = 10000;
+    }
+    
+    print STDERR "[DEBUG][APIManager] Token budget: max=$max_prompt, tools=$tool_tokens, safety=$safety_margin, effective=$effective_limit\n"
+        if $self->{debug};
+    
+    # Estimate current token count using conservative ratio
+    # Using /3 instead of /4 because code and JSON have higher token density
     my $estimated_tokens = 0;
     for my $msg (@$messages) {
         if ($msg->{content}) {
-            $estimated_tokens += int(length($msg->{content}) / 4);
+            $estimated_tokens += int(length($msg->{content}) / 3);
         }
     }
     
-    if ($estimated_tokens <= $max_prompt) {
+    if ($estimated_tokens <= $effective_limit) {
         # Within limits - return as-is
-        print STDERR "[DEBUG][APIManager] Token validation: $estimated_tokens / $max_prompt tokens (OK)\n"
+        print STDERR "[DEBUG][APIManager] Token validation: $estimated_tokens / $effective_limit tokens (OK)\n"
             if $self->{debug};
         return $messages;
     }
     
     # Exceeds limit - need to truncate
-    warn "[WARNING][APIManager] Message exceeds token limit: $estimated_tokens > $max_prompt tokens\n";
+    warn "[WARNING][APIManager] Message exceeds token limit: $estimated_tokens > $effective_limit tokens\n";
     warn "[WARNING][APIManager] Truncating oldest messages to fit within limit\n";
     
     # Strategy: Keep system message (if first), then truncate from oldest user messages
@@ -583,7 +607,7 @@ sub validate_and_truncate_messages {
     
     # Always keep system message if it's first
     if (@$messages && $messages->[0]{role} eq 'system') {
-        my $sys_tokens = int(length($messages->[0]{content}) / 4);
+        my $sys_tokens = int(length($messages->[0]{content}) / 3);
         push @truncated, $messages->[0];
         $current_tokens += $sys_tokens;
     }
@@ -593,9 +617,9 @@ sub validate_and_truncate_messages {
     shift @remaining if (@truncated);  # Remove system message if we added it
     
     for my $msg (reverse @remaining) {
-        my $msg_tokens = int(length($msg->{content} || '') / 4);
+        my $msg_tokens = int(length($msg->{content} || '') / 3);
         
-        if ($current_tokens + $msg_tokens <= $max_prompt) {
+        if ($current_tokens + $msg_tokens <= $effective_limit) {
             unshift @truncated, $msg;
             $current_tokens += $msg_tokens;
         } else {
@@ -606,11 +630,11 @@ sub validate_and_truncate_messages {
     
     my $final_tokens = 0;
     for my $msg (@truncated) {
-        $final_tokens += int(length($msg->{content} || '') / 4);
+        $final_tokens += int(length($msg->{content} || '') / 3);
     }
     
     warn "[WARNING][APIManager] Truncated from " . scalar(@$messages) . " to " . scalar(@truncated) . " messages\n";
-    warn "[WARNING][APIManager] Final token count: $final_tokens / $max_prompt\n";
+    warn "[WARNING][APIManager] Final token count: $final_tokens / $effective_limit\n";
     
     return \@truncated;
 }
@@ -961,8 +985,8 @@ sub send_request {
         return $self->_error("Missing API key. Please configure a provider with /api provider <name> or set key with /api key <value>");
     }
     
-    # Validate and truncate messages against model token limits
-    $messages = $self->validate_and_truncate_messages($messages, $model);
+    # Validate and truncate messages against model token limits (pass tools for accurate budget)
+    $messages = $self->validate_and_truncate_messages($messages, $model, $opts{tools});
     
     # Build request payload (non-streaming)
     my $payload = $self->_build_payload($messages, $model, $endpoint_config, %opts, stream => 0);
@@ -1312,8 +1336,8 @@ sub send_request_streaming {
         return { success => 0, error => "Missing API key. Please configure a provider with /api provider <name> or set key with /api key <value>" };
     }
     
-    # Validate and truncate messages against model token limits
-    $messages = $self->validate_and_truncate_messages($messages, $model);
+    # Validate and truncate messages against model token limits (pass tools for accurate budget)
+    $messages = $self->validate_and_truncate_messages($messages, $model, $opts{tools});
     
     # Build request payload (streaming enabled)
     my $payload = $self->_build_payload($messages, $model, $endpoint_config, %opts, stream => 1);
