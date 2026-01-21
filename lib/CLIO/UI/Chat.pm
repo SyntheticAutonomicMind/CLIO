@@ -182,22 +182,22 @@ sub flush_output_buffer {
 
 =head2 reset_streaming_state
 
-Reset the streaming state to allow a new "AGENT: " prefix to be printed.
+Reset the streaming state to allow a new "CLIO: " prefix to be printed.
 Called by WorkflowOrchestrator after tool execution completes, before
 the next AI iteration starts streaming.
 
 This ensures that each new AI response chunk after tool execution
-gets a proper "AGENT: " prefix.
+gets a proper "CLIO: " prefix.
 
 =cut
 
 sub reset_streaming_state {
     my ($self) = @_;
     
-    # Mark that we need a new AGENT: prefix on next chunk
+    # Mark that we need a new CLIO: prefix on next chunk
     $self->{_need_agent_prefix} = 1;
     
-    print STDERR "[DEBUG][Chat] Streaming state reset - next chunk will get AGENT: prefix\n" 
+    print STDERR "[DEBUG][Chat] Streaming state reset - next chunk will get CLIO: prefix\n" 
         if $self->{debug};
     
     return 1;
@@ -293,13 +293,13 @@ sub run {
                 }
                 
                 # Display role label on first chunk OR when _need_agent_prefix is set
-                # (reset after tool execution to show new AGENT: prefix for continuation)
+                # (reset after tool execution to show new CLIO: prefix for continuation)
                 if (!$first_chunk_received || $self->{_need_agent_prefix}) {
                     $first_chunk_received = 1;
                     $self->{_need_agent_prefix} = 0;  # Clear the flag
-                    print $self->colorize("AGENT: ", 'ASSISTANT');
-                    STDOUT->flush() if STDOUT->can('flush');  # Ensure AGENT: appears immediately
-                    $self->{line_count}++;  # Count the AGENT: line
+                    print $self->colorize("CLIO: ", 'ASSISTANT');
+                    STDOUT->flush() if STDOUT->can('flush');  # Ensure CLIO: appears immediately
+                    $self->{line_count}++;  # Count the CLIO: line
                 }
                 
                 # Add chunk to line buffer (using $self for access from flush_output_buffer)
@@ -663,7 +663,7 @@ sub display_user_message {
     }
     
     # Display with role label
-    print $self->colorize("You: ", 'USER'), $message, "\n";
+    print $self->colorize("YOU: ", 'USER'), $message, "\n";
 }
 
 =head2 display_assistant_message
@@ -688,7 +688,7 @@ sub display_assistant_message {
     }
     
     # Display with role label
-    print $self->colorize("AGENT: ", 'ASSISTANT'), $message, "\n";
+    print $self->colorize("CLIO: ", 'ASSISTANT'), $message, "\n";
 }
 
 =head2 display_system_message
@@ -742,7 +742,7 @@ sub request_collaboration {
     
     # Display the agent's message using full markdown rendering (includes @-code to ANSI conversion)
     my $rendered_message = $self->render_markdown($message);
-    print $self->colorize("AGENT: ", 'ASSISTANT'), $rendered_message, "\n";
+    print $self->colorize("CLIO: ", 'ASSISTANT'), $rendered_message, "\n";
     
     # Display context if provided
     if ($context && length($context) > 0) {
@@ -784,7 +784,7 @@ sub request_collaboration {
             print STDERR "[DEBUG][Chat] Slash command in collaboration: $response\n" if should_log('DEBUG');
             
             # Display user command
-            print $self->colorize("You: ", 'USER'), $response, "\n";
+            print $self->colorize("YOU: ", 'USER'), $response, "\n";
             
             # Process the command (but don't exit - return to collaboration prompt)
             my ($continue, $ai_prompt) = $self->handle_command($response);
@@ -801,12 +801,12 @@ sub request_collaboration {
             }
             
             # Otherwise, return to the collaboration prompt for more input
-            print $self->colorize("AGENT: ", 'ASSISTANT'), "(Command processed. What's your response?)\n";
+            print $self->colorize("CLIO: ", 'ASSISTANT'), "(Command processed. What's your response?)\n";
             next;
         }
         
         # Regular response - display and return
-        print $self->colorize("You: ", 'USER'), $response, "\n";
+        print $self->colorize("YOU: ", 'USER'), $response, "\n";
         return $response;
     }
 }
@@ -4449,10 +4449,10 @@ sub repaint_screen {
     # Replay buffer without adding to it again
     for my $msg (@{$self->{screen_buffer}}) {
         if ($msg->{type} eq 'user') {
-            print $self->colorize("You: ", 'USER'), $msg->{content}, "\n";
+            print $self->colorize("YOU: ", 'USER'), $msg->{content}, "\n";
         }
         elsif ($msg->{type} eq 'assistant') {
-            print $self->colorize("AGENT: ", 'ASSISTANT'), $msg->{content}, "\n";
+            print $self->colorize("CLIO: ", 'ASSISTANT'), $msg->{content}, "\n";
         }
         elsif ($msg->{type} eq 'system') {
             print $self->colorize("SYSTEM: ", 'SYSTEM'), $msg->{content}, "\n";
@@ -4650,7 +4650,7 @@ Display thinking indicator while AI processes
 sub show_thinking {
     my ($self) = @_;
     
-    print $self->colorize("AGENT: ", 'ASSISTANT');
+    print $self->colorize("CLIO: ", 'ASSISTANT');
     print $self->colorize("(thinking...)", 'DIM');
     $|= 1;  # Flush output
 }

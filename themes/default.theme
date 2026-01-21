@@ -5,7 +5,7 @@ name=default
 
 # Prompts
 user_prompt_format={style.user_prompt}: @RESET@
-agent_prefix={style.agent_label}AGENT: @RESET@
+agent_prefix={style.agent_label}CLIO: @RESET@
 system_prefix={style.system_message}SYSTEM: @RESET@
 error_prefix={style.error_message}ERROR: @RESET@
 
@@ -30,5 +30,5 @@ nav_quit={style.prompt_indicator}[Q]uit@RESET@
 pagination_info={style.dim}{var.info}@RESET@
 
 # Messages
-user_message_prefix={style.user_text}You: @RESET@
-agent_message_prefix={style.agent_label}AGENT: @RESET@
+user_message_prefix={style.user_text}YOU: @RESET@
+agent_message_prefix={style.agent_label}CLIO: @RESET@

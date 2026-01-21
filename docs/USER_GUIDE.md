@@ -169,13 +169,13 @@ You are connected to gpt-4o
 Press "?" for a list of commands.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-You: 
+YOU: 
 ```
 
 **Try a simple command:**
 
 ```
-You: Please list the files in this directory
+YOU: Please list the files in this directory
 
 SYSTEM: [file_operations] - listing ./ (15 files, 8 directories)
 
@@ -197,7 +197,7 @@ CLIO: I can see you have several files and directories here:
 **Ask CLIO to read a file:**
 
 ```
-You: Show me the contents of README.md
+YOU: Show me the contents of README.md
 
 SYSTEM: [file_operations] - Reading ./README.md (466 lines)
 
@@ -212,7 +212,7 @@ CLIO: Here's the README.md file:
 **Make a code change:**
 
 ```
-You: In lib/CLIO/Core/Main.pm, change the timeout from 30 to 60 seconds
+YOU: In lib/CLIO/Core/Main.pm, change the timeout from 30 to 60 seconds
 
 SYSTEM: [file_operations] - Reading lib/CLIO/Core/Main.pm
 SYSTEM: [file_operations] - Replacing string in lib/CLIO/Core/Main.pm
@@ -366,12 +366,12 @@ CLIO can **remember** information across sessions:
 
 **Store information:**
 ```
-You: Remember that our production API endpoint is https://api.example.com/v2
+YOU: Remember that our production API endpoint is https://api.example.com/v2
 ```
 
 **Recall later (even in a different session):**
 ```
-You: What's our production API endpoint?
+YOU: What's our production API endpoint?
 
 CLIO: Your production API endpoint is https://api.example.com/v2 
 (stored on 2026-01-18)
@@ -379,7 +379,7 @@ CLIO: Your production API endpoint is https://api.example.com/v2
 
 **Search memories:**
 ```
-You: What do I know about database configuration?
+YOU: What do I know about database configuration?
 
 CLIO: I found 3 memories related to database configuration:
 1. Database host: db.example.com (stored 2026-01-15)
@@ -395,182 +395,182 @@ CLIO: I found 3 memories related to database configuration:
 
 **read_file** - Read file contents
 ```
-You: Show me the contents of src/auth.pm
+YOU: Show me the contents of src/auth.pm
 ```
 
 **write_file** - Create or overwrite a file
 ```
-You: Create a new file called test.txt with the content "Hello, world!"
+YOU: Create a new file called test.txt with the content "Hello, world!"
 ```
 
 **create_file** - Create a new file with content
 ```
-You: Create a Python script that prints the Fibonacci sequence
+YOU: Create a Python script that prints the Fibonacci sequence
 ```
 
 **delete_file** - Delete a file or directory
 ```
-You: Delete the temp/ directory
+YOU: Delete the temp/ directory
 ```
 
 **rename_file / move_file** - Rename or move files
 ```
-You: Rename config.yaml to config.yaml.backup
+YOU: Rename config.yaml to config.yaml.backup
 ```
 
 **list_dir** - List directory contents
 ```
-You: What files are in the lib/ directory?
+YOU: What files are in the lib/ directory?
 ```
 
 **file_search** - Find files by name pattern
 ```
-You: Find all Perl modules in the project
+YOU: Find all Perl modules in the project
 ```
 
 **grep_search** - Search file contents for patterns
 ```
-You: Search for all TODO comments in the codebase
+YOU: Search for all TODO comments in the codebase
 ```
 
 **semantic_search** - Natural language code search
 ```
-You: Find functions that handle authentication
+YOU: Find functions that handle authentication
 ```
 
 **replace_string** - Find and replace in files
 ```
-You: In config.yaml, replace the port number 8080 with 9000
+YOU: In config.yaml, replace the port number 8080 with 9000
 ```
 
 **get_errors** - Get compilation or linting errors
 ```
-You: Check for syntax errors in all Perl modules
+YOU: Check for syntax errors in all Perl modules
 ```
 
 **get_file_info** - Get file metadata
 ```
-You: What's the size and modification date of README.md?
+YOU: What's the size and modification date of README.md?
 ```
 
 **file_exists** - Check if file exists
 ```
-You: Does config.yaml exist?
+YOU: Does config.yaml exist?
 ```
 
 ### Version Control (Git)
 
 **git_status** - Show working tree status
 ```
-You: What's the current git status?
+YOU: What's the current git status?
 ```
 
 **git_diff** - Show changes
 ```
-You: Show me what changed in the last commit
-You: What are my uncommitted changes?
+YOU: Show me what changed in the last commit
+YOU: What are my uncommitted changes?
 ```
 
 **git_log** - Show commit history
 ```
-You: Show me the last 10 commits
-You: Show commits from the last week
+YOU: Show me the last 10 commits
+YOU: Show commits from the last week
 ```
 
 **git_commit** - Create a commit
 ```
-You: Commit all changes with message "Fix authentication bug"
+YOU: Commit all changes with message "Fix authentication bug"
 ```
 
 **git_push** - Push changes to remote
 ```
-You: Push my commits to origin
+YOU: Push my commits to origin
 ```
 
 **git_pull** - Pull changes from remote
 ```
-You: Pull the latest changes from main branch
+YOU: Pull the latest changes from main branch
 ```
 
 **git_branch** - Branch operations
 ```
-You: Create a new branch called feature/new-login
-You: List all branches
+YOU: Create a new branch called feature/new-login
+YOU: List all branches
 ```
 
 **git_checkout** - Switch branches or restore files
 ```
-You: Switch to the main branch
-You: Restore the file config.yaml from the last commit
+YOU: Switch to the main branch
+YOU: Restore the file config.yaml from the last commit
 ```
 
 **git_merge** - Merge branches
 ```
-You: Merge the feature/new-login branch into main
+YOU: Merge the feature/new-login branch into main
 ```
 
 **git_reset** - Reset changes
 ```
-You: Undo the last commit but keep the changes
+YOU: Undo the last commit but keep the changes
 ```
 
 ### Terminal Operations
 
 **execute_command** - Run a shell command
 ```
-You: Run the test suite
-You: Count the lines of code in all Perl files
-You: Show me the current disk usage
+YOU: Run the test suite
+YOU: Count the lines of code in all Perl files
+YOU: Show me the current disk usage
 ```
 
 **get_terminal_output** - Get output from a previous command
 ```
-You: What was the output of the last command?
+YOU: What was the output of the last command?
 ```
 
 ### Memory Operations
 
 **store_memory** - Store information
 ```
-You: Remember that the database password is in /etc/secrets/db.conf
+YOU: Remember that the database password is in /etc/secrets/db.conf
 ```
 
 **retrieve_memory** - Recall specific information
 ```
-You: What did I store about the database password?
+YOU: What did I store about the database password?
 ```
 
 **search_memory** - Search stored memories
 ```
-You: Find all information about API endpoints
+YOU: Find all information about API endpoints
 ```
 
 **list_memories** - List all stored memories
 ```
-You: Show me everything you remember
+YOU: Show me everything you remember
 ```
 
 **delete_memory** - Forget stored information
 ```
-You: Forget the information about the old API endpoint
+YOU: Forget the information about the old API endpoint
 ```
 
 ### Todo List Operations
 
 **manage_todo_list** - Create and manage tasks
 ```
-You: Create a todo list for this refactoring project
-You: Mark task 3 as complete
-You: Show me all remaining tasks
-You: Add a new task to implement caching
+YOU: Create a todo list for this refactoring project
+YOU: Mark task 3 as complete
+YOU: Show me all remaining tasks
+YOU: Add a new task to implement caching
 ```
 
 ### Web Operations
 
 **fetch_webpage** - Fetch and analyze web content
 ```
-You: Fetch the documentation from https://docs.example.com/api
-You: Summarize the content of https://blog.example.com/article
+YOU: Fetch the documentation from https://docs.example.com/api
+YOU: Summarize the content of https://blog.example.com/article
 ```
 
 ---
@@ -582,7 +582,7 @@ You: Summarize the content of https://blog.example.com/article
 **Understanding a new codebase:**
 
 ```
-You: I'm new to this project. Can you give me an overview of the codebase structure?
+YOU: I'm new to this project. Can you give me an overview of the codebase structure?
 
 SYSTEM: [file_operations] - listing ./ (15 files, 8 directories)
 SYSTEM: [file_operations] - Reading ./README.md
@@ -618,7 +618,7 @@ Would you like me to explain any specific component in detail?
 **Improving error handling:**
 
 ```
-You: Find all database query functions and add try-catch error handling
+YOU: Find all database query functions and add try-catch error handling
 
 SYSTEM: [file_operations] - Searching for pattern "query|execute" in ./lib
 SYSTEM: [file_operations] - Reading lib/CLIO/Database/Connection.pm
@@ -666,7 +666,7 @@ All 8 functions now have:
 **Feature branch workflow:**
 
 ```
-You: Create a new feature branch, add logging to the APIManager, and commit the changes
+YOU: Create a new feature branch, add logging to the APIManager, and commit the changes
 
 SYSTEM: [git] - Creating branch feature/add-api-logging
 SYSTEM: [git] - Switching to feature/add-api-logging
@@ -707,7 +707,7 @@ The branch is ready for review or testing.
 **Creating comprehensive documentation:**
 
 ```
-You: Create API documentation for all public methods in lib/CLIO/Tools/FileOperations.pm
+YOU: Create API documentation for all public methods in lib/CLIO/Tools/FileOperations.pm
 
 SYSTEM: [file_operations] - Reading lib/CLIO/Tools/FileOperations.pm
 SYSTEM: [file_operations] - Creating docs/API/FileOperations.md
@@ -748,7 +748,7 @@ Would you like me to generate similar documentation for other modules?
 **Security audit:**
 
 ```
-You: Analyze the codebase for potential security issues: SQL injection, command injection, and insecure file operations
+YOU: Analyze the codebase for potential security issues: SQL injection, command injection, and insecure file operations
 
 SYSTEM: [file_operations] - Searching for SQL patterns
 SYSTEM: [file_operations] - Reading lib/CLIO/Database/*.pm (3 files)
@@ -793,7 +793,7 @@ Would you like me to implement these fixes?
 **Investigating a framework:**
 
 ```
-You: Fetch the FastAPI documentation and explain how to create a REST API endpoint
+YOU: Fetch the FastAPI documentation and explain how to create a REST API endpoint
 
 SYSTEM: [web] - Fetching https://fastapi.tiangolo.com/tutorial/first-steps/
 SYSTEM: [web] - Fetching https://fastapi.tiangolo.com/tutorial/path-params/
@@ -1138,7 +1138,7 @@ rm sessions/sess_2026011*.json  # Delete old sessions
 
 **Use Todo Lists:**
 ```
-You: Create a todo list for this refactoring project with these tasks:
+YOU: Create a todo list for this refactoring project with these tasks:
 1. Read and understand current authentication flow
 2. Design new JWT-based auth system
 3. Implement token generation and validation
@@ -1148,28 +1148,28 @@ You: Create a todo list for this refactoring project with these tasks:
 
 ...
 
-You: Mark task 1 as complete
+YOU: Mark task 1 as complete
 
 ...
 
-You: What's next on the list?
+YOU: What's next on the list?
 ```
 
 **Break Down Large Changes:**
 For complex refactoring, ask CLIO to show you the plan first:
 ```
-You: I want to refactor the database layer to use an ORM. Show me a plan for how to do this without breaking existing code.
+YOU: I want to refactor the database layer to use an ORM. Show me a plan for how to do this without breaking existing code.
 
 [CLIO provides plan]
 
-You: Good, let's implement step 1 first.
+YOU: Good, let's implement step 1 first.
 ```
 
 ### Code Review with CLIO
 
 **Before Committing:**
 ```
-You: Review my changes before I commit. Look for:
+YOU: Review my changes before I commit. Look for:
 - Potential bugs
 - Security issues
 - Code style violations
@@ -1200,7 +1200,7 @@ CLIO: I reviewed your changes. Here's what I found:
 
 **Trace Execution:**
 ```
-You: Help me debug why the authentication is failing. Trace the code execution from login endpoint to database query.
+YOU: Help me debug why the authentication is failing. Trace the code execution from login endpoint to database query.
 
 SYSTEM: [file_operations] - Reading lib/API/Auth.pm
 SYSTEM: [file_operations] - Reading lib/Database/Users.pm

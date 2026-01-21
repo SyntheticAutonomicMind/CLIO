@@ -452,7 +452,7 @@ __END__
     
     my $completer = CLIO::Core::TabCompletion->new();
     my $rl = CLIO::Core::ReadLine->new(
-        prompt => 'You: ',
+        prompt => 'YOU: ',
         completer => $completer,
         debug => 0
     );

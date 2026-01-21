@@ -106,7 +106,7 @@ See [docs/USER_GUIDE.md](docs/USER_GUIDE.md) for full provider configuration det
 ## Example Usage
 
 ```
-You: Please list the files in the current directory
+YOU: Please list the files in the current directory
 
 SYSTEM: [file_operations] - listing ./ (15 files, 8 directories)
 
