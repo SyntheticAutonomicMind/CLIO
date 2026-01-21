@@ -46,7 +46,7 @@ CLIO is part of the [Synthetic Autonomic Mind (SAM)](https://github.com/Syntheti
 - **Action Transparency:** See exactly what CLIO is doing in real-time, with clear, contextual descriptions for all tool operations
 - **Persistent Session Management:** Conversations saved automatically with full history; resume any session exactly where you left off
 - **Beautiful Terminal UI:** Professional markdown rendering with syntax highlighting, color-coded system messages, and streaming responses
-- **Multiple AI Backend Support:** GitHub Copilot (default), OpenAI, DeepSeek, llama.cpp, SAM, and more
+- **Multiple AI Backend Support:** GitHub Copilot (default), OpenAI, DeepSeek, OpenRouter, llama.cpp, SAM, and more
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
