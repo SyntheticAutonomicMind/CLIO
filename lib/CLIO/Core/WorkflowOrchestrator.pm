@@ -173,6 +173,7 @@ sub process_input {
     
     # Extract on_chunk callback if provided
     my $on_chunk = $opts{on_chunk};
+    my $on_tool_call_from_ui = $opts{on_tool_call};  # Tool call tracker from UI
     
     print STDERR "[DEBUG][WorkflowOrchestrator] Processing input: '$user_input'\n" 
         if $self->{debug};
@@ -242,14 +243,17 @@ sub process_input {
             my $tool_callback = sub {
                 my ($tool_name) = @_;
                 
-                # Clear any spinner or pending output
-                print "\r\e[K";  # Clear line
+                # Call UI callback if provided (Chat.pm tool display)
+                if ($on_tool_call_from_ui) {
+                    eval { $on_tool_call_from_ui->($tool_name); };
+                    if ($@) {
+                        print STDERR "[ERROR][WorkflowOrchestrator] Error in on_tool_call callback: $@\n";
+                    }
+                }
                 
-                # Show tool call immediately
-                print $COLORS{SYSTEM}, "SYSTEM: ", $COLORS{RESET};
-                print $COLORS{TOOL}, "[", $tool_name, "]", $COLORS{RESET};
-                print " (streaming...)\n";
-                $| = 1;
+                # Also show in orchestrator context
+                print STDERR "[DEBUG][WorkflowOrchestrator] Tool called: $tool_name\n"
+                    if $self->{debug};
             };
             
             $self->{api_manager}->send_request_streaming(

@@ -298,6 +298,24 @@ sub run {
                 $final_metrics = $metrics;
             };
             
+            # Track tool calls and display which tool is being executed
+            my $current_tool = '';
+            my $on_tool_call = sub {
+                my ($tool_name) = @_;
+                
+                return unless defined $tool_name;
+                return if $tool_name eq $current_tool;  # Skip if same tool
+                
+                $current_tool = $tool_name;
+                
+                # Display which tool is being used
+                print "\n" if $markdown_buffer && $markdown_buffer !~ /\n$/;  # Newline before tool if needed
+                print $self->colorize("[TOOL] ", 'COMMAND') . $self->colorize("$tool_name", 'DATA') . "\n";
+                $self->{line_count} += 2;
+                
+                print STDERR "[DEBUG][Chat] Tool called: $tool_name\n" if $self->{debug};
+            };
+            
             # Get conversation history from session
             my $conversation_history = [];
             if ($self->{session} && $self->{session}->can('get_conversation_history')) {
@@ -309,6 +327,7 @@ sub run {
             print STDERR "[DEBUG][Chat] Calling process_user_request...\n" if should_log('DEBUG');
             my $result = $self->{ai_agent}->process_user_request($input, {
                 on_chunk => $on_chunk,
+                on_tool_call => $on_tool_call,  # Track which tools are being called
                 conversation_history => $conversation_history,
                 current_file => $self->{session}->{state}->{current_file},
                 working_directory => $self->{session}->{state}->{working_directory},
