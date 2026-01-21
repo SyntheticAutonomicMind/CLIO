@@ -601,32 +601,119 @@ sub validate_and_truncate_messages {
     warn "[WARNING][APIManager] Message exceeds token limit: $estimated_tokens > $effective_limit tokens\n";
     warn "[WARNING][APIManager] Truncating oldest messages to fit within limit\n";
     
-    # Strategy: Keep system message (if first), then truncate from oldest user messages
-    my @truncated = ();
-    my $current_tokens = 0;
+    # CRITICAL: Group messages into "units" that must stay together
+    # A unit is either:
+    #   1. A single message without tool_calls/tool_call_id
+    #   2. An assistant message with tool_calls + all subsequent tool_result messages
+    # This prevents orphaned tool_results that break the API contract
     
-    # Always keep system message if it's first
-    if (@$messages && $messages->[0]{role} eq 'system') {
-        my $sys_tokens = int(length($messages->[0]{content}) / 3);
-        push @truncated, $messages->[0];
-        $current_tokens += $sys_tokens;
-    }
+    my @units = ();  # Each unit is { messages => [...], tokens => N }
+    my $current_unit = undef;
+    my %pending_tool_ids = ();  # Track tool_call IDs we're waiting for results
     
-    # Add messages from newest to oldest until we hit the limit
-    my @remaining = @$messages;
-    shift @remaining if (@truncated);  # Remove system message if we added it
-    
-    for my $msg (reverse @remaining) {
+    for my $msg (@$messages) {
         my $msg_tokens = int(length($msg->{content} || '') / 3);
         
-        if ($current_tokens + $msg_tokens <= $effective_limit) {
-            unshift @truncated, $msg;
-            $current_tokens += $msg_tokens;
+        # Check if this message has tool_calls (assistant requesting tool execution)
+        my $has_tool_calls = $msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY' && @{$msg->{tool_calls}};
+        
+        # Check if this is a tool result message
+        my $is_tool_result = $msg->{tool_call_id} || ($msg->{role} && $msg->{role} eq 'tool');
+        
+        if ($has_tool_calls) {
+            # Start a new unit with this assistant message
+            # First, flush any existing unit
+            if ($current_unit) {
+                push @units, $current_unit;
+            }
+            
+            # Create new unit
+            $current_unit = {
+                messages => [$msg],
+                tokens => $msg_tokens,
+            };
+            
+            # Track the tool_call IDs we're expecting results for
+            %pending_tool_ids = ();
+            for my $tc (@{$msg->{tool_calls}}) {
+                $pending_tool_ids{$tc->{id}} = 1 if $tc->{id};
+            }
+        }
+        elsif ($is_tool_result && $current_unit) {
+            # This is a tool result - add to current unit
+            push @{$current_unit->{messages}}, $msg;
+            $current_unit->{tokens} += $msg_tokens;
+            
+            # Remove from pending if we know the ID
+            if ($msg->{tool_call_id}) {
+                delete $pending_tool_ids{$msg->{tool_call_id}};
+            }
+            
+            # If no more pending tool results, close this unit
+            if (!keys %pending_tool_ids) {
+                push @units, $current_unit;
+                $current_unit = undef;
+            }
+        }
+        else {
+            # Regular message (user/assistant without tools)
+            # Flush any pending unit first
+            if ($current_unit) {
+                push @units, $current_unit;
+                $current_unit = undef;
+                %pending_tool_ids = ();
+            }
+            
+            # Add as its own unit
+            push @units, {
+                messages => [$msg],
+                tokens => $msg_tokens,
+            };
+        }
+    }
+    
+    # Flush any remaining unit
+    if ($current_unit) {
+        push @units, $current_unit;
+    }
+    
+    print STDERR "[DEBUG][APIManager] Grouped " . scalar(@$messages) . " messages into " . scalar(@units) . " units\n"
+        if $self->{debug};
+    
+    # Now truncate by units, keeping newest
+    # Strategy: Keep system message separate, then build rest from newest to oldest
+    my $system_msg = undef;
+    my $system_tokens = 0;
+    my $start_unit = 0;
+    
+    # Extract system message if first
+    if (@units && @{$units[0]{messages}} && $units[0]{messages}[0]{role} eq 'system') {
+        $system_msg = $units[0]{messages}[0];
+        $system_tokens = $units[0]{tokens};
+        $start_unit = 1;
+    }
+    
+    # Build conversation messages from newest to oldest
+    my @conversation = ();
+    my $current_tokens = $system_tokens;  # Account for system in budget
+    
+    my @remaining_units = @units[$start_unit .. $#units];
+    
+    for my $unit (reverse @remaining_units) {
+        if ($current_tokens + $unit->{tokens} <= $effective_limit) {
+            # Prepend this unit's messages (we're going newest to oldest)
+            unshift @conversation, @{$unit->{messages}};
+            $current_tokens += $unit->{tokens};
         } else {
             # Hit the limit - stop adding
             last;
         }
     }
+    
+    # Combine: system (if any) + conversation
+    my @truncated = ();
+    push @truncated, $system_msg if $system_msg;
+    push @truncated, @conversation;
     
     my $final_tokens = 0;
     for my $msg (@truncated) {
