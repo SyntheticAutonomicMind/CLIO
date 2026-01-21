@@ -268,6 +268,11 @@ sub run {
             $self->{current_page} = [];
             $self->{page_index} = 0;
             
+            # Track whether tools were called - disable pagination during tool workflows
+            # This prevents having to press space after every page of tool output
+            # Pagination only applies to "final" responses without tool calls
+            $self->{_tools_invoked_this_request} = 0;
+            
             my $first_chunk_received = 0;
             my $accumulated_content = '';
             my $final_metrics = undef;
@@ -375,8 +380,11 @@ sub run {
                         $markdown_line_count = 0;
                         $last_flush_time = $current_time;
                         
-                        # Check pagination
-                        if ($self->{line_count} >= $self->{terminal_height}) {
+                        # Check pagination - ONLY for non-tool-workflow responses
+                        # When tools are being called, let output scroll freely
+                        # This prevents having to press space during AI "work"
+                        if ($self->{line_count} >= $self->{terminal_height} && 
+                            !$self->{_tools_invoked_this_request}) {
                             # Pause for user to read (streaming mode)
                             my $response = $self->pause(1);  # 1 = streaming mode
                             if ($response eq 'Q') {
@@ -407,6 +415,10 @@ sub run {
                 return if $tool_name eq $current_tool;  # Skip if same tool
                 
                 $current_tool = $tool_name;
+                
+                # Mark that tools have been invoked - disables streaming pagination
+                # so user doesn't have to press space during AI "work"
+                $self->{_tools_invoked_this_request} = 1;
                 
                 # Display which tool is being used
                 print "\n" if $self->{_streaming_markdown_buffer} && $self->{_streaming_markdown_buffer} !~ /\n$/;  # Newline before tool if needed
