@@ -296,9 +296,9 @@ sub format_stats {
     return "No performance data available.\n" unless keys %$stats;
     
     my $output = "\n";
-    $output .= "=" x 80 . "\n";
+    $output .= "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" . "\n";
     $output .= "$label Performance Statistics\n";
-    $output .= "=" x 80 . "\n\n";
+    $output .= "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501" . "\n\n";
     
     for my $name (sort keys %$stats) {
         my $s = $stats->{$name};
