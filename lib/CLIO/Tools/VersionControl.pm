@@ -47,6 +47,13 @@ sub new {
 -  blame - Show file annotation/blame
 -  stash - Stash operations (save, list, apply, drop)
 -  tag - Tag operations (list, create, delete)
+
+[CRITICAL WARNING] ⚠️  NEVER USE INTERACTIVE OPERATIONS:
+-  git rebase -i / --interactive (BREAKS TERMINAL UI - FORBIDDEN)
+-  git mergetool (BREAKS TERMINAL UI - FORBIDDEN)
+-  git add -i / --patch / --interactive (BREAKS TERMINAL UI - FORBIDDEN)
+-  git commit --patch (BREAKS TERMINAL UI - FORBIDDEN)
+Use non-interactive flags or report what needs to be done instead.
 },
         supported_operations => [qw(
             status log diff branch commit push pull blame stash tag

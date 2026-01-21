@@ -59,6 +59,9 @@ sub new {
         pages => [],          # Buffer of pages for navigation
         current_page => [],   # Current page being built
         page_index => 0,      # Current page number for navigation
+        # Persistent spinner - shared across all requests
+        # CRITICAL: Keep spinner as persistent Chat property so tools can reliably access it
+        spinner => undef,     # Will be created on first use, reused across requests
     };
     
     bless $self, $class;
@@ -255,11 +258,25 @@ sub run {
             $self->refresh_terminal_size();
             
             # Show progress indicator while waiting for AI response
-            my $spinner = CLIO::UI::ProgressSpinner->new(
-                frames => ['.', 'o', 'O', 'o', '.'],
-                delay => 150000,  # 150ms between frames
-            );
-            $spinner->start();
+            # CRITICAL FIX: Use persistent spinner stored on Chat object
+            # This ensures tools can access the SAME spinner instance via context
+            # Previously, a new local spinner was created per request, causing reference issues
+            unless ($self->{spinner}) {
+                # Create persistent spinner on first use with frames from current style
+                my $spinner_frames = $self->{theme_mgr}->get_spinner_frames();
+                $self->{spinner} = CLIO::UI::ProgressSpinner->new(
+                    frames => $spinner_frames,
+                    delay => 100000,  # 100ms between frames for smooth block animation
+                );
+                print STDERR "[DEBUG][Chat] Created persistent spinner with " . scalar(@$spinner_frames) . " frames\n" if should_log('DEBUG');
+            }
+            
+            # Start the spinner (idempotent if already running)
+            $self->{spinner}->start();
+            print STDERR "[DEBUG][Chat] Started spinner, reference=" . ref($self->{spinner}) . "\n" if should_log('DEBUG');
+            
+            # Reference for use in closures below
+            my $spinner = $self->{spinner};
             
             # Reset pagination state before streaming
             $self->{line_count} = 0;
