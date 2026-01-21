@@ -341,9 +341,17 @@ sub render_table {
             my $visual_len = $self->_visual_length($cell);
             
             # Apply formatting (this adds ANSI codes)
-            my $formatted = $row->{is_header} ? 
-                $self->color('table_header') . $cell . '@RESET@' :
-                $self->process_inline_formatting($cell);
+            # IMPORTANT: Process inline formatting for BOTH headers and data cells
+            # Headers get additional styling (table_header color) on top
+            my $formatted;
+            if ($row->{is_header}) {
+                # First process inline formatting (bold, italic, code, links)
+                my $processed = $self->process_inline_formatting($cell);
+                # Then wrap with header color
+                $formatted = $self->color('table_header') . $processed . '@RESET@';
+            } else {
+                $formatted = $self->process_inline_formatting($cell);
+            }
             
             # Pad cell based on visual length, not formatted string length
             my $padding = $width - $visual_len;

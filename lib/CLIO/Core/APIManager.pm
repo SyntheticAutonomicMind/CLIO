@@ -607,9 +607,12 @@ sub validate_and_truncate_messages {
     #   2. An assistant message with tool_calls + all subsequent tool_result messages
     # This prevents orphaned tool_results that break the API contract
     
-    my @units = ();  # Each unit is { messages => [...], tokens => N }
+    my @units = ();  # Each unit is { messages => [...], tokens => N, tool_call_ids => {...} }
     my $current_unit = undef;
     my %pending_tool_ids = ();  # Track tool_call IDs we're waiting for results
+    
+    # Also track which unit contains which tool_call_id for orphan recovery
+    my %tool_call_id_to_unit_idx = ();
     
     for my $msg (@$messages) {
         my $msg_tokens = int(length($msg->{content} || '') / 3);
@@ -627,32 +630,78 @@ sub validate_and_truncate_messages {
                 push @units, $current_unit;
             }
             
-            # Create new unit
+            # Create new unit with tool_call tracking
             $current_unit = {
                 messages => [$msg],
                 tokens => $msg_tokens,
+                tool_call_ids => {},
             };
             
             # Track the tool_call IDs we're expecting results for
             %pending_tool_ids = ();
             for my $tc (@{$msg->{tool_calls}}) {
-                $pending_tool_ids{$tc->{id}} = 1 if $tc->{id};
+                if ($tc->{id}) {
+                    $pending_tool_ids{$tc->{id}} = 1;
+                    $current_unit->{tool_call_ids}{$tc->{id}} = 1;
+                    # Map this ID to the unit index (current unit will be at position @units)
+                    $tool_call_id_to_unit_idx{$tc->{id}} = scalar(@units);
+                }
             }
         }
-        elsif ($is_tool_result && $current_unit) {
-            # This is a tool result - add to current unit
-            push @{$current_unit->{messages}}, $msg;
-            $current_unit->{tokens} += $msg_tokens;
+        elsif ($is_tool_result) {
+            my $tool_id = $msg->{tool_call_id};
             
-            # Remove from pending if we know the ID
-            if ($msg->{tool_call_id}) {
-                delete $pending_tool_ids{$msg->{tool_call_id}};
+            if ($current_unit) {
+                # Active unit exists - add to it
+                push @{$current_unit->{messages}}, $msg;
+                $current_unit->{tokens} += $msg_tokens;
+                
+                # Remove from pending if we know the ID
+                if ($tool_id) {
+                    delete $pending_tool_ids{$tool_id};
+                }
+                
+                # If no more pending tool results, close this unit
+                if (!keys %pending_tool_ids) {
+                    push @units, $current_unit;
+                    $current_unit = undef;
+                }
             }
-            
-            # If no more pending tool results, close this unit
-            if (!keys %pending_tool_ids) {
-                push @units, $current_unit;
-                $current_unit = undef;
+            elsif ($tool_id && exists $tool_call_id_to_unit_idx{$tool_id}) {
+                # ORPHAN RECOVERY: No active unit, but we can find the matching tool_call
+                # This can happen if a regular message came between tool_call and tool_result
+                my $parent_unit_idx = $tool_call_id_to_unit_idx{$tool_id};
+                
+                if ($parent_unit_idx < scalar(@units)) {
+                    # Parent unit already closed - merge this result into it
+                    push @{$units[$parent_unit_idx]{messages}}, $msg;
+                    $units[$parent_unit_idx]{tokens} += $msg_tokens;
+                    
+                    print STDERR "[DEBUG][APIManager] Merged orphan tool_result back to unit $parent_unit_idx\n"
+                        if $self->{debug};
+                } else {
+                    # Shouldn't happen, but treat as standalone
+                    warn "[WARNING][APIManager] Tool result orphan recovery failed - treating as standalone\n";
+                    push @units, {
+                        messages => [$msg],
+                        tokens => $msg_tokens,
+                        tool_call_ids => {},
+                        is_orphan_tool_result => 1,
+                        orphan_tool_id => $tool_id,
+                    };
+                }
+            }
+            else {
+                # True orphan - no matching tool_call found anywhere
+                # This is a data corruption issue, but we should handle it gracefully
+                warn "[WARNING][APIManager] Found tool_result with no matching tool_call: $tool_id\n";
+                push @units, {
+                    messages => [$msg],
+                    tokens => $msg_tokens,
+                    tool_call_ids => {},
+                    is_orphan_tool_result => 1,
+                    orphan_tool_id => $tool_id,
+                };
             }
         }
         else {
@@ -668,6 +717,7 @@ sub validate_and_truncate_messages {
             push @units, {
                 messages => [$msg],
                 tokens => $msg_tokens,
+                tool_call_ids => {},
             };
         }
     }
@@ -694,26 +744,56 @@ sub validate_and_truncate_messages {
     }
     
     # Build conversation messages from newest to oldest
+    # CRITICAL: Also track which tool_call_ids we're including so we can skip orphans
     my @conversation = ();
     my $current_tokens = $system_tokens;  # Account for system in budget
+    my %included_tool_call_ids = ();
     
     my @remaining_units = @units[$start_unit .. $#units];
     
     for my $unit (reverse @remaining_units) {
+        # Skip orphan tool_result units - they would cause API errors
+        if ($unit->{is_orphan_tool_result}) {
+            warn "[WARNING][APIManager] Skipping orphan tool_result unit (tool_id: $unit->{orphan_tool_id})\n";
+            next;
+        }
+        
         if ($current_tokens + $unit->{tokens} <= $effective_limit) {
             # Prepend this unit's messages (we're going newest to oldest)
             unshift @conversation, @{$unit->{messages}};
             $current_tokens += $unit->{tokens};
+            
+            # Track which tool_call_ids are included
+            for my $id (keys %{$unit->{tool_call_ids} || {}}) {
+                $included_tool_call_ids{$id} = 1;
+            }
         } else {
             # Hit the limit - stop adding
             last;
         }
     }
     
-    # Combine: system (if any) + conversation
+    # POST-TRUNCATION VALIDATION: Check for orphaned tool_results in the conversation
+    # This catches cases where a tool_call unit was truncated but its results weren't
+    my @validated_conversation = ();
+    for my $msg (@conversation) {
+        my $is_tool_result = $msg->{tool_call_id} || ($msg->{role} && $msg->{role} eq 'tool');
+        
+        if ($is_tool_result && $msg->{tool_call_id}) {
+            # Check if corresponding tool_call is included
+            if (!$included_tool_call_ids{$msg->{tool_call_id}}) {
+                warn "[WARNING][APIManager] Dropping orphaned tool_result after truncation (tool_id: $msg->{tool_call_id})\n";
+                next;  # Skip this message
+            }
+        }
+        
+        push @validated_conversation, $msg;
+    }
+    
+    # Combine: system (if any) + validated conversation
     my @truncated = ();
     push @truncated, $system_msg if $system_msg;
-    push @truncated, @conversation;
+    push @truncated, @validated_conversation;
     
     my $final_tokens = 0;
     for my $msg (@truncated) {
