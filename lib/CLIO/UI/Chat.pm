@@ -143,6 +143,8 @@ where streaming content was being displayed after tool execution output.
 sub flush_output_buffer {
     my ($self) = @_;
     
+    my $printed_content = 0;
+    
     # Flush the streaming markdown buffer if it exists and has content
     if ($self->{_streaming_markdown_buffer} && $self->{_streaming_markdown_buffer} =~ /\S/) {
         my $output = $self->{_streaming_markdown_buffer};
@@ -150,7 +152,10 @@ sub flush_output_buffer {
             $output = $self->render_markdown($self->{_streaming_markdown_buffer});
         }
         print $output;
+        # Ensure output ends with newline for clean separation before tool output
+        print "\n" unless $output =~ /\n$/;
         $self->{_streaming_markdown_buffer} = '';
+        $printed_content = 1;
     }
     
     # Flush the line buffer if it has content (partial line)
@@ -160,14 +165,17 @@ sub flush_output_buffer {
             $output = $self->render_markdown($self->{_streaming_line_buffer});
         }
         print $output;
+        # Ensure output ends with newline for clean separation before tool output
+        print "\n" unless $output =~ /\n$/;
         $self->{_streaming_line_buffer} = '';
+        $printed_content = 1;
     }
     
     # Force STDOUT flush
     STDOUT->flush() if STDOUT->can('flush');
     $| = 1;
     
-    print STDERR "[DEBUG][Chat] Buffer flushed for tool execution handshake\n" 
+    print STDERR "[DEBUG][Chat] Buffer flushed for tool execution handshake (printed=$printed_content)\n" 
         if $self->{debug};
     
     return 1;
