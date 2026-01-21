@@ -1165,10 +1165,13 @@ sub display_help {
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/config show session', 'PROMPT'), 'Display session state');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/config save', 'PROMPT'), 'Save to global config (default)');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/config save session', 'PROMPT'), 'Save to session only');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api key <value>', 'PROMPT'), 'Set API key');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api base <url>', 'PROMPT'), 'Set API base URL');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api model <name>', 'PROMPT'), 'Set AI model');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api provider <name>', 'PROMPT'), 'Switch provider (sam, openai, etc.)');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api key <value>', 'PROMPT'), 'Set API key (global)');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api base <url>', 'PROMPT'), 'Set API base URL (global + session)');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api model <name>', 'PROMPT'), 'Set AI model (global + session)');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api provider <name>', 'PROMPT'), 'Switch provider (global + session)');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api session-model <name>', 'PROMPT'), 'Set AI model (session only)');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api session-provider <name>', 'PROMPT'), 'Switch provider (session only)');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api session-base <url>', 'PROMPT'), 'Set API base (session only)');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/api show', 'PROMPT'), 'Show API settings');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/loglevel [level]', 'PROMPT'), 'Set/show log level');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/config workdir [path]', 'PROMPT'), 'Set/show working directory');
