@@ -8,37 +8,9 @@ use JSON::PP qw(decode_json encode_json);
 # Check if SSL is available for HTTP::Tiny
 our $HAS_SSL;
 our $HAS_CURL;
-our $CURL_PATH;
 BEGIN {
     $HAS_SSL = eval { require IO::Socket::SSL; require Net::SSLeay; 1 };
-    
-    # Check multiple locations for curl (including iOS/a-Shell paths)
-    my @curl_paths = (
-        '/usr/bin/curl',
-        '/bin/curl',
-        '/usr/local/bin/curl',
-        '/opt/homebrew/bin/curl',       # macOS Homebrew
-        '/var/containers/Bundle/Application/*/a-Shell.app/curl',  # iOS a-Shell app
-        $ENV{HOME} . '/bin/curl',       # User bin
-    );
-    
-    for my $path (@curl_paths) {
-        if (-x $path) {
-            $HAS_CURL = 1;
-            $CURL_PATH = $path;
-            last;
-        }
-    }
-    
-    # Also check PATH
-    unless ($HAS_CURL) {
-        my $which_curl = `which curl 2>/dev/null`;
-        chomp $which_curl;
-        if ($which_curl && -x $which_curl) {
-            $HAS_CURL = 1;
-            $CURL_PATH = $which_curl;
-        }
-    }
+    $HAS_CURL = -x '/usr/bin/curl' || -x '/bin/curl' || -x '/usr/local/bin/curl';
 }
 
 =head1 NAME
@@ -200,9 +172,8 @@ sub _request_via_curl {
     use File::Temp qw(tempfile);
     use POSIX qw(:sys_wait_h);
     
-    # Build curl command - use found curl path or default to 'curl'
-    my $curl_cmd = $CURL_PATH || 'curl';
-    my @cmd = ($curl_cmd, '-s', '-i', '-X', $method);
+    # Build curl command
+    my @cmd = ('curl', '-s', '-i', '-X', $method);
     
     # Add timeout
     push @cmd, '--max-time', $self->{timeout} if $self->{timeout};

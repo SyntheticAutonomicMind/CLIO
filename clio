@@ -278,20 +278,6 @@ if (!$session) {
 }
 print "[SESSION] Using session: $session_id\n" if $debug;
 
-# Restore API configuration from session if it exists (takes precedence over global config)
-if ($mode eq 'resume' && $session->state()) {
-    my $api_config = $session->state()->get_api_config();
-    if ($api_config && %$api_config) {
-        print STDERR "[DEBUG] Restoring API config from session\n" if $debug;
-        for my $key (qw(provider api_base model)) {
-            if (defined $api_config->{$key}) {
-                $config->set($key, $api_config->{$key}, 0);  # Don't mark as user-set
-                print STDERR "[DEBUG] Restored $key = $api_config->{$key}\n" if $debug;
-            }
-        }
-    }
-}
-
 # Initialize API manager and AI agent
 my $api = CLIO::Core::APIManager->new(
     debug => $debug,
