@@ -981,9 +981,13 @@ sub handle_command {
         $self->handle_theme_command(@args);
     }
     elsif ($cmd eq 'login') {
+        # Backward compatibility - redirect to /api login
+        $self->display_system_message("Note: Use '/api login' (new syntax)");
         $self->handle_login_command(@args);
     }
     elsif ($cmd eq 'logout') {
+        # Backward compatibility - redirect to /api logout
+        $self->display_system_message("Note: Use '/api logout' (new syntax)");
         $self->handle_logout_command(@args);
     }
     elsif ($cmd eq 'edit') {
@@ -1002,6 +1006,8 @@ sub handle_command {
         $self->handle_billing_command(@args);
     }
     elsif ($cmd eq 'models') {
+        # Backward compatibility - redirect to /api models
+        $self->display_system_message("Note: Use '/api models' (new syntax)");
         $self->handle_models_command(@args);
     }
     elsif ($cmd eq 'context' || $cmd eq 'ctx') {
@@ -1145,7 +1151,6 @@ sub display_help {
     
     push @help_lines, $self->colorize("SYSTEM", 'DATA');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/billing, /usage', 'PROMPT'), 'Display API usage and billing stats');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/models', 'PROMPT'), 'List available models and capabilities');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/context <action>', 'PROMPT'), 'Manage context files (add/list/clear/remove)');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/exec <command>', 'PROMPT'), 'Execute shell command');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/switch', 'PROMPT'), 'Switch to different session');
@@ -1153,28 +1158,21 @@ sub display_help {
     push @help_lines, "";
     
     push @help_lines, $self->colorize("CONFIGURATION", 'DATA');
-    
-    # Only show GitHub auth commands when using github_copilot provider
-    my $current_provider = $self->{config} ? $self->{config}->get('provider') : '';
-    if ($current_provider && $current_provider eq 'github_copilot') {
-        push @help_lines, sprintf("  %-30s %s", $self->colorize('/login', 'PROMPT'), 'Authenticate with GitHub Copilot');
-        push @help_lines, sprintf("  %-30s %s", $self->colorize('/logout', 'PROMPT'), 'Sign out from GitHub');
-    }
-    
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api', 'PROMPT'), 'Show API commands help');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api show', 'PROMPT'), 'Display API configuration');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api set model <name>', 'PROMPT'), 'Set AI model');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api set provider <name>', 'PROMPT'), 'Set provider (github_copilot, etc.)');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api set base <url>', 'PROMPT'), 'Set API base URL');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api set key <value>', 'PROMPT'), 'Set API key (global only)');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api models', 'PROMPT'), 'List available models');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api login', 'PROMPT'), 'Authenticate with GitHub Copilot');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api logout', 'PROMPT'), 'Sign out from GitHub');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/config show', 'PROMPT'), 'Display global configuration');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/config show session', 'PROMPT'), 'Display session state');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/config save', 'PROMPT'), 'Save to global config (default)');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/config save session', 'PROMPT'), 'Save to session only');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api key <value>', 'PROMPT'), 'Set API key (global)');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api base <url>', 'PROMPT'), 'Set API base URL (global + session)');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api model <name>', 'PROMPT'), 'Set AI model (global + session)');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api provider <name>', 'PROMPT'), 'Switch provider (global + session)');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api session-model <name>', 'PROMPT'), 'Set AI model (session only)');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api session-provider <name>', 'PROMPT'), 'Switch provider (session only)');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api session-base <url>', 'PROMPT'), 'Set API base (session only)');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api show', 'PROMPT'), 'Show API settings');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/loglevel [level]', 'PROMPT'), 'Set/show log level');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/config workdir [path]', 'PROMPT'), 'Set/show working directory');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/loglevel [level]', 'PROMPT'), 'Set/show log level');
+    push @help_lines, "";
+    push @help_lines, sprintf("  %s", $self->colorize('Tip: Use --session flag for session-only changes', 'DIM'));
+    push @help_lines, sprintf("  %s", $self->colorize('Example: /api set model gpt-4o --session', 'DIM'));
     push @help_lines, "";
     
     push @help_lines, $self->colorize("THEMING", 'DATA');
@@ -1204,191 +1202,364 @@ sub display_help {
 
 =head2 handle_api_command
 
-Handle /api commands for API settings
+Handle /api commands for API configuration.
+
+New noun-first pattern:
+  /api                    - Show help for /api commands
+  /api show               - Display current API configuration
+  /api set model <name>   - Set model (global + session by default)
+  /api set model <name> --session  - Set model for this session only
+  /api set provider <name> - Set provider
+  /api set base <url>     - Set API base URL
+  /api set key <value>    - Set API key (global only)
+  /api models             - List available models
+  /api login              - Authenticate with GitHub Copilot
+  /api logout             - Sign out from GitHub
 
 =cut
 
 sub handle_api_command {
     my ($self, $action, @args) = @_;
     
-    $action ||= 'show';
+    $action ||= '';
     $action = lc($action);
     
-    if ($action eq 'key') {
-        my $key = $args[0];
-        unless ($key) {
-            $self->display_error_message("Usage: /api key <value>");
-            return;
+    # Parse --session flag from args
+    my $session_only = 0;
+    @args = grep {
+        if ($_ eq '--session') {
+            $session_only = 1;
+            0;  # Remove from args
+        } else {
+            1;  # Keep in args
         }
-        $self->{config}->set('api_key', $key);  # Marks as user-set
+    } @args;
+    
+    # /api (no args) - show help
+    if ($action eq '' || $action eq 'help') {
+        $self->_display_api_help();
+        return;
+    }
+    
+    # /api show - display current config
+    if ($action eq 'show') {
+        $self->_display_api_config();
+        return;
+    }
+    
+    # /api set <setting> <value> [--session]
+    if ($action eq 'set') {
+        my $setting = shift @args || '';
+        my $value = shift @args;
+        $self->_handle_api_set($setting, $value, $session_only);
+        return;
+    }
+    
+    # /api models - list available models
+    if ($action eq 'models') {
+        $self->handle_models_command(@args);
+        return;
+    }
+    
+    # /api login - GitHub Copilot authentication
+    if ($action eq 'login') {
+        $self->handle_login_command(@args);
+        return;
+    }
+    
+    # /api logout - sign out
+    if ($action eq 'logout') {
+        $self->handle_logout_command(@args);
+        return;
+    }
+    
+    # BACKWARD COMPATIBILITY: Support old syntax during transition
+    # /api key <value> -> /api set key <value>
+    if ($action eq 'key') {
+        $self->display_system_message("Note: Use '/api set key <value>' (new syntax)");
+        $self->_handle_api_set('key', $args[0], 0);
+        return;
+    }
+    # /api base <url> -> /api set base <url>
+    if ($action eq 'base') {
+        $self->display_system_message("Note: Use '/api set base <url>' (new syntax)");
+        $self->_handle_api_set('base', $args[0], $session_only);
+        return;
+    }
+    # /api model <name> -> /api set model <name>
+    if ($action eq 'model') {
+        $self->display_system_message("Note: Use '/api set model <name>' (new syntax)");
+        $self->_handle_api_set('model', $args[0], $session_only);
+        return;
+    }
+    # /api provider <name> -> /api set provider <name>
+    if ($action eq 'provider') {
+        $self->display_system_message("Note: Use '/api set provider <name>' (new syntax)");
+        $self->_handle_api_set('provider', $args[0], $session_only);
+        return;
+    }
+    
+    # Unknown action
+    $self->display_error_message("Unknown action: /api $action");
+    $self->_display_api_help();
+}
+
+=head2 _display_api_help
+
+Display help for /api commands
+
+=cut
+
+sub _display_api_help {
+    my ($self) = @_;
+    
+    print "\n";
+    print $self->colorize("API COMMANDS", 'DATA'), "\n";
+    print $self->colorize("=" x 50, 'DIM'), "\n\n";
+    
+    print $self->colorize("  /api show", 'PROMPT'), "                    Display current API configuration\n";
+    print $self->colorize("  /api set model <name>", 'PROMPT'), "        Set AI model\n";
+    print $self->colorize("  /api set provider <name>", 'PROMPT'), "     Set provider (github_copilot, openai, etc.)\n";
+    print $self->colorize("  /api set base <url>", 'PROMPT'), "          Set API base URL\n";
+    print $self->colorize("  /api set key <value>", 'PROMPT'), "         Set API key (global only)\n";
+    print $self->colorize("  /api models", 'PROMPT'), "                  List available models\n";
+    print $self->colorize("  /api login", 'PROMPT'), "                   Authenticate with GitHub Copilot\n";
+    print $self->colorize("  /api logout", 'PROMPT'), "                  Sign out from GitHub\n";
+    
+    print "\n";
+    print $self->colorize("FLAGS", 'DATA'), "\n";
+    print $self->colorize("-" x 50, 'DIM'), "\n";
+    print "  --session    Save setting to this session only (not global)\n";
+    print "\n";
+    print $self->colorize("EXAMPLES", 'DATA'), "\n";
+    print $self->colorize("-" x 50, 'DIM'), "\n";
+    print "  /api set model claude-sonnet-4          # Global + session\n";
+    print "  /api set model gpt-4o --session         # This session only\n";
+    print "  /api set provider github_copilot        # Switch provider\n";
+}
+
+=head2 _display_api_config
+
+Display current API configuration
+
+=cut
+
+sub _display_api_config {
+    my ($self) = @_;
+    
+    my $key = $self->{config}->get('api_key');
+    my $base = $self->{config}->get('api_base');
+    my $model = $self->{config}->get('model');
+    my $provider = $self->{config}->get('provider');
+    
+    # Determine authentication status
+    my $auth_status = '[NOT SET]';
+    if ($key && length($key) > 0) {
+        $auth_status = '[SET]';
+    } else {
+        # Check if using GitHub Copilot auth
+        if ($provider && $provider eq 'github_copilot') {
+            eval {
+                require CLIO::Core::GitHubAuth;
+                my $gh_auth = CLIO::Core::GitHubAuth->new(debug => 0);
+                my $token = $gh_auth->get_copilot_token();
+                if ($token) {
+                    $auth_status = '[TOKEN]';
+                } else {
+                    $auth_status = '[NO TOKEN - use /api login]';
+                }
+            };
+        }
+    }
+    
+    print "\n";
+    print $self->colorize("API CONFIGURATION", 'DATA'), "\n";
+    print $self->colorize("=" x 50, 'DIM'), "\n\n";
+    printf "  %-12s %s\n", "Provider:", $provider || '[not set]';
+    printf "  %-12s %s\n", "API Key:", $auth_status;
+    printf "  %-12s %s\n", "API Base:", $base || '[default]';
+    printf "  %-12s %s\n", "Model:", $model || '[default]';
+    
+    # Show session-specific overrides if any
+    if ($self->{session} && $self->{session}->state()) {
+        my $state = $self->{session}->state();
+        my $api_config = $state->{api_config} || {};
         
-        # Auto-save config (user expects settings to persist)
+        if (%$api_config) {
+            print "\n";
+            print $self->colorize("SESSION OVERRIDES", 'DATA'), "\n";
+            print $self->colorize("-" x 30, 'DIM'), "\n";
+            for my $key (sort keys %$api_config) {
+                printf "  %-12s %s\n", "$key:", $api_config->{$key};
+            }
+        }
+    }
+}
+
+=head2 _handle_api_set
+
+Handle /api set <setting> <value> [--session]
+
+=cut
+
+sub _handle_api_set {
+    my ($self, $setting, $value, $session_only) = @_;
+    
+    $setting = lc($setting || '');
+    
+    unless ($setting) {
+        $self->display_error_message("Usage: /api set <setting> <value>");
+        print "Settings: model, provider, base, key\n";
+        return;
+    }
+    
+    unless (defined $value && $value ne '') {
+        $self->display_error_message("Usage: /api set $setting <value>");
+        return;
+    }
+    
+    # Handle each setting type
+    if ($setting eq 'key') {
+        # API key is always global (secrets shouldn't be session-scoped)
+        if ($session_only) {
+            $self->display_system_message("Note: API key is always global (ignoring --session)");
+        }
+        
+        $self->{config}->set('api_key', $value);
+        
         if ($self->{config}->save()) {
             $self->display_system_message("API key set and saved");
         } else {
             $self->display_system_message("API key set (warning: failed to save)");
         }
         
-        # CRITICAL FIX: Re-initialize APIManager with new API key
-        # This ensures the key is picked up immediately without restart
-        print STDERR "[DEBUG][Chat] Re-initializing APIManager after api_key change\n" if $self->{debug};
-        require CLIO::Core::APIManager;
-        my $new_api = CLIO::Core::APIManager->new(
-            debug => $self->{debug},
-            session => $self->{session}->state(),
-            config => $self->{config}
-        );
-        $self->{ai_agent}->{api} = $new_api;
+        $self->_reinit_api_manager();
     }
-    elsif ($action eq 'base') {
-        my $base = $args[0];
-        unless ($base) {
-            $self->display_error_message("Usage: /api base <url>");
-            return;
-        }
-        $self->{config}->set('api_base', $base);  # Marks as user-set
-        
-        # Auto-save config (user expects settings to persist)
-        if ($self->{config}->save()) {
-            $self->display_system_message("API base URL set to: $base (saved)");
-        } else {
-            $self->display_system_message("API base URL set to: $base (warning: failed to save)");
-        }
-        
-        # Re-initialize APIManager to pick up new api_base
-        print STDERR "[DEBUG][Chat] Re-initializing APIManager after api_base change\n" if $self->{debug};
-        require CLIO::Core::APIManager;
-        my $new_api = CLIO::Core::APIManager->new(
-            debug => $self->{debug},
-            session => $self->{session}->state(),
-            config => $self->{config}
-        );
-        $self->{ai_agent}->{api} = $new_api;
+    elsif ($setting eq 'base') {
+        $self->_set_api_setting('api_base', $value, $session_only);
+        $self->display_system_message("API base set to: $value" . ($session_only ? " (session only)" : " (saved)"));
+        $self->_reinit_api_manager();
     }
-    elsif ($action eq 'model') {
-        my $model = $args[0];
-        unless ($model) {
-            $self->display_error_message("Usage: /api model <name>");
-            return;
-        }
-        $self->{config}->set('model', $model);  # Marks as user-set
-        
-        # Auto-save config (user expects settings to persist)
-        if ($self->{config}->save()) {
-            $self->display_system_message("Model set to: $model (saved)");
-        } else {
-            $self->display_system_message("Model set to: $model (warning: failed to save)");
-        }
-        
-        # Re-initialize APIManager to pick up new model
-        print STDERR "[DEBUG][Chat] Re-initializing APIManager after model change\n" if $self->{debug};
-        require CLIO::Core::APIManager;
-        my $new_api = CLIO::Core::APIManager->new(
-            debug => $self->{debug},
-            session => $self->{session}->state(),
-            config => $self->{config}
-        );
-        $self->{ai_agent}->{api} = $new_api;
+    elsif ($setting eq 'model') {
+        $self->_set_api_setting('model', $value, $session_only);
+        $self->display_system_message("Model set to: $value" . ($session_only ? " (session only)" : " (saved)"));
+        $self->_reinit_api_manager();
     }
-    elsif ($action eq 'provider') {
-        my $provider = $args[0];
-        unless ($provider) {
-            $self->display_error_message("Usage: /api provider <name>");
-            # Show available providers from Providers.pm
-            require CLIO::Providers;
-            my @providers = CLIO::Providers::list_providers();
-            $self->display_system_message("Available providers: " . join(', ', @providers));
-            return;
-        }
-        
-        # Try to set the provider (this uses Providers.pm internally)
-        if ($self->{config}->set_provider($provider)) {
-            my $config = $self->{config}->get_all();
-            
-            # Auto-save config (user expects settings to persist)
-            my $saved = $self->{config}->save();
-            
-            $self->display_system_message("Switched to provider: $provider" . ($saved ? " (saved)" : " (warning: failed to save)"));
-            $self->display_system_message("  API Base: " . $config->{api_base} . " (from provider)");
-            $self->display_system_message("  Model: " . $config->{model} . " (from provider)");
-            if (!$saved) {
-                $self->display_system_message("Use /config save to manually save if auto-save failed");
+    elsif ($setting eq 'provider') {
+        # Provider setting uses Config's set_provider for validation
+        if ($session_only) {
+            # Session-only: just update session state, don't touch global
+            if ($self->{session} && $self->{session}->state()) {
+                my $state = $self->{session}->state();
+                $state->{api_config} ||= {};
+                $state->{api_config}{provider} = $value;
+                $self->{session}->save();
+                $self->display_system_message("Provider set to: $value (session only)");
             }
-            $self->display_system_message("(To override API base or model, use /api base or /api model)");
-            
-            # CRITICAL FIX: Re-initialize APIManager with new provider settings
-            # This ensures api_base, model, and api_key are refreshed from config
-            print STDERR "[DEBUG][Chat] Re-initializing APIManager after provider change\n" if $self->{debug};
-            require CLIO::Core::APIManager;
-            my $new_api = CLIO::Core::APIManager->new(
-                debug => $self->{debug},
-                session => $self->{session}->state(),
-                config => $self->{config}
-            );
-            
-            # Update ai_agent's API reference
-            $self->{ai_agent}->{api} = $new_api;
-            print STDERR "[DEBUG][Chat] Updated ai_agent with new APIManager instance\n" if $self->{debug};
-            
-            # If switching to github_copilot, check if authenticated and offer to login
-            if ($provider eq 'github_copilot') {
-                require CLIO::Core::GitHubAuth;
-                my $gh_auth = CLIO::Core::GitHubAuth->new(debug => $self->{debug});
-                unless ($gh_auth->is_authenticated()) {
-                    print "\n";
-                    $self->display_system_message("GitHub Copilot requires authentication");
-                    print $self->colorize("  Would you like to login now? [Y/n]: ", 'PROMPT');
-                    my $response = <STDIN>;
-                    chomp $response if defined $response;
-                    $response = lc($response || 'y');
-                    
-                    if ($response eq 'y' || $response eq 'yes' || $response eq '') {
-                        # Trigger login flow
-                        $self->handle_login_command();
-                    } else {
-                        $self->display_system_message("You can login later with: /login");
-                    }
+        } else {
+            # Global: use Config's set_provider
+            if ($self->{config}->set_provider($value)) {
+                my $config = $self->{config}->get_all();
+                
+                if ($self->{config}->save()) {
+                    $self->display_system_message("Switched to provider: $value (saved)");
+                    $self->display_system_message("  API Base: " . $config->{api_base} . " (from provider)");
+                    $self->display_system_message("  Model: " . $config->{model} . " (from provider)");
+                } else {
+                    $self->display_system_message("Switched to provider: $value (warning: failed to save)");
+                }
+                
+                # Offer GitHub login if needed
+                if ($value eq 'github_copilot') {
+                    $self->_check_github_auth();
                 }
             }
-        } else {
-            # Error message already printed by set_provider()
         }
-    }
-    elsif ($action eq 'show') {
-        my $key = $self->{config}->get('api_key');
-        my $base = $self->{config}->get('api_base');
-        
-        # Determine authentication status
-        my $auth_status = '[NOT SET]';
-        if ($key && length($key) > 0) {
-            $auth_status = '[SET]';
-        } else {
-            # Check if using GitHub Copilot auth
-            my $provider = $self->{config}->get('provider');
-            
-            if ($provider && $provider eq 'github_copilot') {
-                eval {
-                    require CLIO::Core::GitHubAuth;
-                    my $gh_auth = CLIO::Core::GitHubAuth->new(debug => 0);
-                    # Check if we have a usable token
-                    my $token = $gh_auth->get_copilot_token();
-                    if ($token) {
-                        $auth_status = '[TOKEN]';
-                    } else {
-                        $auth_status = '[NO TOKEN - use /login]';
-                    }
-                };
-            }
-        }
-        
-        print "\n", $self->colorize("API CONFIGURATION", 'DATA'), "\n";
-        print $self->colorize("=" x 50, 'DIM'), "\n\n";
-        printf "  API Key:  %s\n", $auth_status;
-        printf "  API Base: %s\n\n", $base || '[default]';
+        $self->_reinit_api_manager();
     }
     else {
-        $self->display_error_message("Unknown action: $action");
-        print "Usage: /api [key <value>|base <url>|model <name>|provider <name>|show]\n";
+        $self->display_error_message("Unknown setting: $setting");
+        print "Valid settings: model, provider, base, key\n";
+    }
+}
+
+=head2 _set_api_setting
+
+Set an API setting, optionally session-only
+
+=cut
+
+sub _set_api_setting {
+    my ($self, $key, $value, $session_only) = @_;
+    
+    if ($session_only) {
+        # Session-only: just update session state
+        if ($self->{session} && $self->{session}->state()) {
+            my $state = $self->{session}->state();
+            $state->{api_config} ||= {};
+            $state->{api_config}{$key} = $value;
+            $self->{session}->save();
+        }
+    } else {
+        # Global + session: update config and save
+        $self->{config}->set($key, $value);
+        $self->{config}->save();
+        
+        # Also save to session for resume
+        if ($self->{session} && $self->{session}->state()) {
+            my $state = $self->{session}->state();
+            $state->{api_config} ||= {};
+            $state->{api_config}{$key} = $value;
+            $self->{session}->save();
+        }
+    }
+}
+
+=head2 _reinit_api_manager
+
+Reinitialize APIManager after config changes
+
+=cut
+
+sub _reinit_api_manager {
+    my ($self) = @_;
+    
+    print STDERR "[DEBUG][Chat] Re-initializing APIManager after config change\n" if $self->{debug};
+    
+    require CLIO::Core::APIManager;
+    my $new_api = CLIO::Core::APIManager->new(
+        debug => $self->{debug},
+        session => $self->{session}->state(),
+        config => $self->{config}
+    );
+    $self->{ai_agent}->{api} = $new_api;
+}
+
+=head2 _check_github_auth
+
+Check GitHub authentication and offer to login
+
+=cut
+
+sub _check_github_auth {
+    my ($self) = @_;
+    
+    require CLIO::Core::GitHubAuth;
+    my $gh_auth = CLIO::Core::GitHubAuth->new(debug => $self->{debug});
+    
+    unless ($gh_auth->is_authenticated()) {
+        print "\n";
+        $self->display_system_message("GitHub Copilot requires authentication");
+        print $self->colorize("  Would you like to login now? [Y/n]: ", 'PROMPT');
+        my $response = <STDIN>;
+        chomp $response if defined $response;
+        $response = lc($response || 'y');
+        
+        if ($response eq 'y' || $response eq 'yes' || $response eq '') {
+            $self->handle_login_command();
+        } else {
+            $self->display_system_message("You can login later with: /api login");
+        }
     }
 }
 
