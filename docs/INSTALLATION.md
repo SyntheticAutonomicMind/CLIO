@@ -2,7 +2,7 @@
 
 **Detailed installation instructions for CLIO (Command Line Intelligence Orchestrator)**
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Table of Contents
 
@@ -15,7 +15,7 @@
 7. [Troubleshooting](#troubleshooting)
 8. [Platform-Specific Notes](#platform-specific-notes)
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## System Requirements
 
@@ -96,7 +96,7 @@ You need **one of the following**:
 - No API key required
 - Integrated with CLIO
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Quick Installation
 
@@ -124,7 +124,7 @@ clio --new
 
 That's it! CLIO is now installed to `/opt/clio` with a symlink at `/usr/local/bin/clio`.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Installation Options
 
@@ -187,7 +187,7 @@ sudo ./install.sh --symlink /usr/bin/clio
 
 Creates symlink at `/usr/bin/clio` instead of `/usr/local/bin/clio`.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Configuration
 
@@ -322,7 +322,7 @@ Set the default working directory for file operations:
 : /config save
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Verification
 
@@ -389,7 +389,7 @@ echo $DEEPSEEK_API_KEY
 
 Should print your token/key (not empty).
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Uninstallation
 
@@ -431,7 +431,7 @@ rm -rf ~/.clio/config.yaml
 rm -rf ~/.clio/sessions
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Troubleshooting
 
@@ -596,7 +596,7 @@ export CLIO_SESSION_DIR="$HOME/.clio/sessions"
 mkdir -p $HOME/.clio/sessions
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Platform-Specific Notes
 
@@ -668,7 +668,7 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 source ~/.bashrc
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Next Steps
 
@@ -679,7 +679,7 @@ After installation:
 3. **Configure advanced settings**: Edit `~/.clio/config.yaml`
 4. **Join the community**: [GitHub Discussions](https://github.com/fewtarius/clio/discussions)
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Getting Help
 
