@@ -989,7 +989,12 @@ sub handle_command {
         $self->display_system_message("Note: Use '/api logout' (new syntax)");
         $self->handle_logout_command(@args);
     }
+    elsif ($cmd eq 'file') {
+        $self->handle_file_command(@args);
+    }
     elsif ($cmd eq 'edit') {
+        # Backward compatibility
+        $self->display_system_message("Note: Use '/file edit <path>' (new syntax)");
         $self->handle_edit_command(join(' ', @args));
     }
     elsif ($cmd eq 'multi-line' || $cmd eq 'multiline' || $cmd eq 'ml') {
@@ -1039,19 +1044,30 @@ sub handle_command {
         my $prompt = $self->handle_doc_command(@args);
         return (1, $prompt) if $prompt;  # Return prompt to be sent to AI
     }
+    elsif ($cmd eq 'git') {
+        $self->handle_git_command(@args);
+    }
     elsif ($cmd eq 'commit') {
+        # Backward compatibility
+        $self->display_system_message("Note: Use '/git commit' (new syntax)");
         $self->handle_commit_command(@args);
     }
     elsif ($cmd eq 'diff') {
+        # Backward compatibility
+        $self->display_system_message("Note: Use '/git diff' (new syntax)");
         $self->handle_diff_command(@args);
     }
     elsif ($cmd eq 'status' || $cmd eq 'st') {
+        # Backward compatibility
+        $self->display_system_message("Note: Use '/git status' (new syntax)");
         $self->handle_status_command(@args);
     }
     elsif ($cmd eq 'log') {
         $self->handle_log_command(@args);
     }
     elsif ($cmd eq 'gitlog' || $cmd eq 'gl') {
+        # Backward compatibility
+        $self->display_system_message("Note: Use '/git log' (new syntax)");
         $self->handle_gitlog_command(@args);
     }
     elsif ($cmd eq 'exec' || $cmd eq 'shell' || $cmd eq 'sh') {
@@ -1063,6 +1079,8 @@ sub handle_command {
         $self->handle_switch_command(@args);
     }
     elsif ($cmd eq 'read' || $cmd eq 'view' || $cmd eq 'cat') {
+        # Backward compatibility
+        $self->display_system_message("Note: Use '/file read <path>' (new syntax)");
         $self->handle_read_command(@args);
     }
     else {
@@ -1144,16 +1162,19 @@ sub display_help {
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/prompt reset', 'PROMPT'), 'Reset to default');
     push @help_lines, "";
     
-    push @help_lines, $self->colorize("GIT INTEGRATION", 'DATA');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/status, /st', 'PROMPT'), 'Show git status');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/diff [file]', 'PROMPT'), 'Show git diff');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/log [n]', 'PROMPT'), 'Show recent commits (default: 10)');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/commit [message]', 'PROMPT'), 'Stage and commit changes');
+    push @help_lines, $self->colorize("GIT", 'DATA');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/git', 'PROMPT'), 'Show git commands help');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/git status', 'PROMPT'), 'Show git status');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/git diff [file]', 'PROMPT'), 'Show git diff');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/git log [n]', 'PROMPT'), 'Show recent commits');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/git commit [msg]', 'PROMPT'), 'Stage and commit changes');
     push @help_lines, "";
     
-    push @help_lines, $self->colorize("FILE VIEWER", 'DATA');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/read <file>', 'PROMPT'), 'View file with markdown rendering');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/view <file>', 'PROMPT'), 'Alias for /read');
+    push @help_lines, $self->colorize("FILE", 'DATA');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/file', 'PROMPT'), 'Show file commands help');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/file read <path>', 'PROMPT'), 'View file with markdown rendering');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/file edit <path>', 'PROMPT'), 'Open file in external editor');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/file list [path]', 'PROMPT'), 'List directory contents');
     push @help_lines, "";
     
     push @help_lines, $self->colorize("SYSTEM", 'DATA');
@@ -2114,6 +2135,219 @@ sub clear_screen {
     
     # Clear screen using ANSI code
     print "\e[2J\e[H";  # Clear screen + home cursor
+}
+
+=head2 handle_file_command
+
+Handle /file commands for file operations.
+
+New noun-first pattern:
+  /file                   - Show help for /file commands
+  /file read <path>       - Read and display file (with markdown rendering)
+  /file edit <path>       - Open file in $EDITOR
+  /file list [path]       - List directory contents
+
+=cut
+
+sub handle_file_command {
+    my ($self, $action, @args) = @_;
+    
+    $action ||= '';
+    $action = lc($action);
+    
+    # /file (no args) - show help
+    if ($action eq '' || $action eq 'help') {
+        $self->_display_file_help();
+        return;
+    }
+    
+    # /file read <path> - read and display file
+    if ($action eq 'read' || $action eq 'view' || $action eq 'cat') {
+        $self->handle_read_command(@args);
+        return;
+    }
+    
+    # /file edit <path> - edit file
+    if ($action eq 'edit') {
+        $self->handle_edit_command(join(' ', @args));
+        return;
+    }
+    
+    # /file list [path] - list directory
+    if ($action eq 'list' || $action eq 'ls') {
+        my $path = join(' ', @args) || '.';
+        $self->_list_directory($path);
+        return;
+    }
+    
+    # Unknown action
+    $self->display_error_message("Unknown action: /file $action");
+    $self->_display_file_help();
+}
+
+=head2 _display_file_help
+
+Display help for /file commands
+
+=cut
+
+sub _display_file_help {
+    my ($self) = @_;
+    
+    print "\n";
+    print $self->colorize("FILE COMMANDS", 'DATA'), "\n";
+    print $self->colorize("=" x 50, 'DIM'), "\n\n";
+    
+    print $self->colorize("  /file read <path>", 'PROMPT'), "       Read and display file (markdown rendered)\n";
+    print $self->colorize("  /file edit <path>", 'PROMPT'), "       Open file in external editor (\$EDITOR)\n";
+    print $self->colorize("  /file list [path]", 'PROMPT'), "       List directory contents (default: .)\n";
+    
+    print "\n";
+    print $self->colorize("EXAMPLES", 'DATA'), "\n";
+    print $self->colorize("-" x 50, 'DIM'), "\n";
+    print "  /file read README.md                 # View a file\n";
+    print "  /file edit lib/CLIO/UI/Chat.pm       # Edit a file\n";
+    print "  /file list lib/CLIO/                 # List directory\n";
+}
+
+=head2 _list_directory
+
+List directory contents
+
+=cut
+
+sub _list_directory {
+    my ($self, $path) = @_;
+    
+    # Resolve path
+    unless (File::Spec->file_name_is_absolute($path)) {
+        my $working_dir = $self->{session} ? 
+            ($self->{session}->state()->{working_directory} || '.') : '.';
+        $path = File::Spec->catfile($working_dir, $path);
+    }
+    
+    unless (-d $path) {
+        $self->display_error_message("Not a directory: $path");
+        return;
+    }
+    
+    opendir(my $dh, $path) or do {
+        $self->display_error_message("Cannot read directory: $!");
+        return;
+    };
+    
+    my @entries = sort grep { !/^\.\.?$/ } readdir($dh);
+    closedir($dh);
+    
+    print "\n";
+    print $self->colorize("Directory: $path", 'DATA'), "\n";
+    print $self->colorize("-" x 50, 'DIM'), "\n\n";
+    
+    my @dirs;
+    my @files;
+    
+    for my $entry (@entries) {
+        my $full_path = File::Spec->catfile($path, $entry);
+        if (-d $full_path) {
+            push @dirs, $entry;
+        } else {
+            push @files, $entry;
+        }
+    }
+    
+    # Show directories first
+    for my $dir (@dirs) {
+        print "  ", $self->colorize("$dir/", 'USER'), "\n";
+    }
+    
+    # Then files
+    for my $file (@files) {
+        print "  $file\n";
+    }
+    
+    print "\n";
+    $self->display_system_message(scalar(@dirs) . " directories, " . scalar(@files) . " files");
+}
+
+=head2 handle_git_command
+
+Handle /git commands for git operations.
+
+New noun-first pattern:
+  /git                    - Show help for /git commands
+  /git status             - Show git status
+  /git diff [file]        - Show git diff
+  /git log [n]            - Show recent commits
+  /git commit [message]   - Stage and commit changes
+
+=cut
+
+sub handle_git_command {
+    my ($self, $action, @args) = @_;
+    
+    $action ||= '';
+    $action = lc($action);
+    
+    # /git (no args) - show help
+    if ($action eq '' || $action eq 'help') {
+        $self->_display_git_help();
+        return;
+    }
+    
+    # /git status
+    if ($action eq 'status' || $action eq 'st') {
+        $self->handle_status_command(@args);
+        return;
+    }
+    
+    # /git diff [file]
+    if ($action eq 'diff') {
+        $self->handle_diff_command(@args);
+        return;
+    }
+    
+    # /git log [n]
+    if ($action eq 'log') {
+        $self->handle_gitlog_command(@args);
+        return;
+    }
+    
+    # /git commit [message]
+    if ($action eq 'commit') {
+        $self->handle_commit_command(@args);
+        return;
+    }
+    
+    # Unknown action
+    $self->display_error_message("Unknown action: /git $action");
+    $self->_display_git_help();
+}
+
+=head2 _display_git_help
+
+Display help for /git commands
+
+=cut
+
+sub _display_git_help {
+    my ($self) = @_;
+    
+    print "\n";
+    print $self->colorize("GIT COMMANDS", 'DATA'), "\n";
+    print $self->colorize("=" x 50, 'DIM'), "\n\n";
+    
+    print $self->colorize("  /git status", 'PROMPT'), "             Show git status\n";
+    print $self->colorize("  /git diff [file]", 'PROMPT'), "        Show git diff\n";
+    print $self->colorize("  /git log [n]", 'PROMPT'), "            Show recent commits (default: 10)\n";
+    print $self->colorize("  /git commit [msg]", 'PROMPT'), "       Stage and commit changes\n";
+    
+    print "\n";
+    print $self->colorize("EXAMPLES", 'DATA'), "\n";
+    print $self->colorize("-" x 50, 'DIM'), "\n";
+    print "  /git status                          # See changes\n";
+    print "  /git diff lib/CLIO/UI/Chat.pm        # Diff specific file\n";
+    print "  /git log 5                           # Last 5 commits\n";
+    print "  /git commit \"fix: resolve bug\"       # Commit with message\n";
 }
 
 =head2 handle_edit_command
