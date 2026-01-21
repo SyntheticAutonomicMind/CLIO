@@ -103,20 +103,37 @@ sub render {
         }
         
         # Detect table rows (starts with |, contains |, ends with |)
-        if ($line =~ /^\|.+\|$/) {
+        # Also handle rows that might have trailing whitespace after |
+        my $trimmed_line = $line;
+        $trimmed_line =~ s/\s+$//;  # Remove trailing whitespace
+        
+        if ($trimmed_line =~ /^\|.+\|$/) {
             # Check if this looks like a separator row
-            if ($line =~ /^\|[\s\-:|]+\|$/) {
+            if ($trimmed_line =~ /^\|[\s\-:|]+\|$/) {
                 # Separator row - mark as table and continue collecting
                 $in_table = 1;
-                push @table_rows, $line;
+                push @table_rows, $trimmed_line;
                 next;
             } else {
                 # Data row - add to table
                 $in_table = 1;
-                push @table_rows, $line;
+                push @table_rows, $trimmed_line;
                 
                 # Check if next line is NOT a table row (end of table)
-                if ($i == $#lines || $lines[$i + 1] !~ /^\|.+\|$/) {
+                # Look ahead, skipping blank lines that might be in the middle of the table
+                my $next_idx = $i + 1;
+                while ($next_idx <= $#lines && $lines[$next_idx] =~ /^\s*$/) {
+                    $next_idx++;  # Skip blank lines
+                }
+                
+                my $next_is_table = 0;
+                if ($next_idx <= $#lines) {
+                    my $next_trimmed = $lines[$next_idx];
+                    $next_trimmed =~ s/\s+$//;
+                    $next_is_table = ($next_trimmed =~ /^\|.+\|$/);
+                }
+                
+                if (!$next_is_table) {
                     # End of table - render it
                     push @output, $self->render_table(@table_rows);
                     @table_rows = ();
@@ -126,10 +143,14 @@ sub render {
             }
         } else {
             # Not a table row - flush table if we were in one
-            if ($in_table) {
+            # But don't flush for blank lines - the table might continue
+            if ($in_table && $line !~ /^\s*$/) {
                 push @output, $self->render_table(@table_rows);
                 @table_rows = ();
                 $in_table = 0;
+            } elsif ($line =~ /^\s*$/ && $in_table) {
+                # Blank line inside table - skip it but don't end the table
+                next;
             }
         }
         
@@ -233,7 +254,23 @@ sub _visual_length {
     # Also strip @-codes that might be in the text (like @RESET@)
     $clean =~ s/@[A-Z_]+@//g;
     
-    return length($clean);
+    # Count visual width, accounting for common wide characters
+    my $width = 0;
+    for my $char (split //, $clean) {
+        my $ord = ord($char);
+        # Most emoji and CJK characters are double-width
+        # This is a simplified check - emoji range and CJK
+        if ($ord >= 0x1F300 && $ord <= 0x1FAFF ||  # Emoji
+            $ord >= 0x2600 && $ord <= 0x27BF ||    # Misc symbols
+            $ord >= 0x3000 && $ord <= 0x9FFF ||    # CJK
+            $ord >= 0xFF00 && $ord <= 0xFFEF) {    # Fullwidth
+            $width += 2;
+        } else {
+            $width += 1;
+        }
+    }
+    
+    return $width;
 }
 
 =head2 render_table
