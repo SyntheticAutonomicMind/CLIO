@@ -509,7 +509,7 @@ sub get_builtin_theme {
         banner_line1 => '{style.app_title}CLIO@RESET@ {style.app_subtitle}- Command Line Intelligence Orchestrator@RESET@',
         banner_line2 => 'Session ID: {style.data}{var.session_id}@RESET@',
         banner_line3 => 'You are connected to {style.data}{var.model}@RESET@',
-        banner_line4 => '{style.dim}Press "?" for a list of commands.@RESET@',
+        banner_line4 => '{style.dim}Type "/help" for a list of commands.@RESET@',
         help_header => '{style.data}{var.title}@RESET@',
         help_section => '{style.data}{var.section}@RESET@',
         help_command => '{style.prompt_indicator}{var.command}@RESET@',

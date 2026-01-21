@@ -944,7 +944,7 @@ sub handle_command {
     if ($cmd eq 'exit' || $cmd eq 'quit' || $cmd eq 'q') {
         return 0;  # Signal to exit
     }
-    elsif ($cmd eq 'help' || $cmd eq 'h' || $cmd eq '?') {
+    elsif ($cmd eq 'help' || $cmd eq 'h') {
         $self->display_help();
     }
     elsif ($cmd eq 'clear' || $cmd eq 'cls') {
@@ -1105,7 +1105,7 @@ sub display_help {
     push @help_lines, "";
     
     push @help_lines, $self->colorize("CHAT COMMANDS", 'DATA');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/help, /h, /?', 'PROMPT'), 'Display this help');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/help, /h', 'PROMPT'), 'Display this help');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/exit, /quit, /q', 'PROMPT'), 'Exit the chat');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/clear, /cls', 'PROMPT'), 'Clear the screen');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/shell, /sh', 'PROMPT'), 'Launch shell (exit to return)');
