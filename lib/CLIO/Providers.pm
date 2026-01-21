@@ -85,6 +85,15 @@ my %PROVIDERS = (
         supports_tools => 1,  # llama.cpp supports OpenAI-compatible function calling
         supports_streaming => 1,
     },
+    
+    openrouter => {
+        name => 'OpenRouter',
+        api_base => 'https://openrouter.ai/api/v1/chat/completions',
+        model => 'meta-llama/llama-3.1-405b-instruct:free',
+        requires_auth => 'apikey',
+        supports_tools => 1,
+        supports_streaming => 1,
+    },
 );
 
 =head2 get_provider

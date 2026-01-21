@@ -327,6 +327,13 @@ sub get_endpoint_config {
             temperature_range => [0.0, 2.0],
             supports_tools => 1
         },
+        'openrouter' => {
+            auth_header => 'Authorization',
+            auth_value => "Bearer $self->{api_key}",
+            path_suffix => '',  # Path already included in endpoint URL
+            temperature_range => [0.0, 2.0],
+            supports_tools => 1
+        },
         'ollama' => {
             auth_header => 'Authorization',
             auth_value => "Bearer $self->{api_key}",
@@ -491,6 +498,7 @@ sub _detect_api_type_and_url {
         'dashscope-cn'   => ['dashscope', 'https://dashscope.aliyuncs.com/compatible-mode/v1/models'],
         'dashscope-intl' => ['dashscope', 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models'],
         'sam'            => ['sam', 'http://localhost:8080/v1/models'],
+        'openrouter'     => ['openrouter', 'https://openrouter.ai/api/v1/models'],
     );
     
     # Check if it's a known logical name
@@ -503,6 +511,8 @@ sub _detect_api_type_and_url {
         return ('github-copilot', 'https://api.githubcopilot.com/models');
     } elsif ($api_base =~ m{openai\.com}i) {
         return ('openai', 'https://api.openai.com/v1/models');
+    } elsif ($api_base =~ m{openrouter\.ai}i) {
+        return ('openrouter', 'https://openrouter.ai/api/v1/models');
     } elsif ($api_base =~ m{localhost:8080}i || $api_base =~ m{127\.0\.0\.1:8080}i) {
         # SAM running locally
         return ('sam', 'http://localhost:8080/v1/models');
