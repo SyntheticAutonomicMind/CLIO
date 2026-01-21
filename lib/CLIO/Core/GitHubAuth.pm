@@ -3,6 +3,14 @@ package CLIO::Core::GitHubAuth;
 use strict;
 use warnings;
 use CLIO::Core::Logger qw(should_log);
+use CLIO::Compat::HTTP;
+use CLIO::Util::PathResolver;
+use HTTP::Request;
+use JSON::PP qw(encode_json decode_json);
+use File::Spec;
+use File::Path qw(make_path);
+use warnings;
+use CLIO::Core::Logger qw(should_log);
 use JSON::PP qw(encode_json decode_json);
 use CLIO::Compat::HTTP;
 use Time::HiRes qw(sleep time);
@@ -56,6 +64,9 @@ Flow:
 sub new {
     my ($class, %args) = @_;
     
+    # Use PathResolver to get config directory (works on iOS where ~/.clio isn't writable)
+    my $config_dir = CLIO::Util::PathResolver::get_config_dir();
+    
     my $self = {
         client_id => $args{client_id} || 'Ov23lix5mfpW4hHM7y9G',  # SAM's GitHub OAuth app
         debug => $args{debug} || 0,
@@ -64,15 +75,17 @@ sub new {
             timeout => 30,
         ),
         tokens_file => File::Spec->catfile(
-            $ENV{HOME}, '.clio', 'github_tokens.json'
+            $config_dir, 'github_tokens.json'
         ),
     };
     
     bless $self, $class;
     
-    # Ensure tokens directory exists
-    my $tokens_dir = File::Spec->catdir($ENV{HOME}, '.clio');
-    make_path($tokens_dir) unless -d $tokens_dir;
+    # Ensure tokens directory exists (PathResolver handles this, but be safe)
+    eval { make_path($config_dir) unless -d $config_dir; };
+    if ($@) {
+        print STDERR "[WARN]GitHubAuth] Cannot create config directory $config_dir: $@\n" if should_log('WARNING');
+    }
     
     return $self;
 }

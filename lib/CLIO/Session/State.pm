@@ -83,9 +83,11 @@ sub save {
         _stateful_markers => $self->{_stateful_markers} || [],  # GitHub Copilot session continuation
         billing => $self->{billing},  # Save billing data
         context_files => $self->{context_files} || [],  # Save context files
-        selected_model => $self->{selected_model},  # Save currently selected model
+        selected_model => $self->{selected_model},  # Save currently selected model (legacy)
         style => $self->{style},  # Save current color style
         theme => $self->{theme},  # Save current output theme
+        # API configuration (saved per-session)
+        api_config => $self->{api_config} || {},  # provider, api_base, model
     };
     use Data::Dumper;
     if ($ENV{CLIO_DEBUG} || $self->{debug}) {
@@ -132,13 +134,15 @@ sub load {
         },
         # Load context files or initialize if not present
         context_files => $data->{context_files} || [],
-        # Load selected model or default to undef
+        # Load selected model or default to undef (legacy - use api_config instead)
         selected_model => $data->{selected_model},
         # Load theme settings
         style => $data->{style} || 'default',
         theme => $data->{theme} || 'default',
         # Load stateful markers for GitHub Copilot session continuation
         _stateful_markers => $data->{_stateful_markers} || [],
+        # Load API configuration (provider, api_base, model)
+        api_config => $data->{api_config} || {},
         # Context management configuration
         max_tokens => $args{max_tokens} // 128000,
         summarize_threshold => $args{summarize_threshold} // 102400,
@@ -148,9 +152,11 @@ sub load {
     print STDERR "[DEBUG][State::load] returning self: $self\n" if $args{debug} || $ENV{CLIO_DEBUG};
     
     # Restore model to ENV if one was saved (so it persists across resume)
-    if ($self->{selected_model}) {
-        $ENV{OPENAI_MODEL} = $self->{selected_model};
-        print STDERR "[INFO][State::load] Restored model from session: $self->{selected_model}\n" if $args{debug} || $ENV{CLIO_DEBUG};
+    # Legacy: check selected_model first, then api_config
+    my $model_to_restore = $self->{api_config}{model} || $self->{selected_model};
+    if ($model_to_restore) {
+        $ENV{OPENAI_MODEL} = $model_to_restore;
+        print STDERR "[INFO][State::load] Restored model from session: $model_to_restore\n" if $args{debug} || $ENV{CLIO_DEBUG};
     }
     
     return $self;
@@ -160,6 +166,28 @@ sub load {
 sub stm  { $_[0]->{stm} }
 sub ltm  { $_[0]->{ltm} }
 sub yarn { $_[0]->{yarn} }
+
+# API configuration accessors
+sub get_api_config {
+    my ($self) = @_;
+    return $self->{api_config} || {};
+}
+
+sub set_api_config {
+    my ($self, $config) = @_;
+    $self->{api_config} = $config || {};
+    print STDERR "[DEBUG][State] Updated api_config: " . 
+        join(", ", map { "$_=$self->{api_config}{$_}" } keys %{$self->{api_config}}) . "\n"
+        if $self->{debug} || $ENV{CLIO_DEBUG};
+}
+
+sub update_api_config {
+    my ($self, $key, $value) = @_;
+    $self->{api_config} ||= {};
+    $self->{api_config}{$key} = $value;
+    print STDERR "[DEBUG][State] Updated api_config.$key = $value\n"
+        if $self->{debug} || $ENV{CLIO_DEBUG};
+}
 
 # Strip out conversation markup
 sub strip_conversation_tags {
