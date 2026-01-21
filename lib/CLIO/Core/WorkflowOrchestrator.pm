@@ -483,25 +483,26 @@ sub process_input {
                     if $self->{debug};
                 
                 # Handle first tool call: ensure proper line separation from agent content
-                # The streaming callback prints "AGENT: " immediately on first chunk, but if the response
-                # was tool calls only (no text content), we need clean separation
+                # The streaming callback prints "AGENT: " immediately on first chunk
                 if ($first_tool_call) {
                     my $content = $api_response->{content} // '';
                     print STDERR "[DEBUG][WorkflowOrchestrator] First tool call - checking content: '" . substr($content, 0, 100) . "'\n"
                         if $self->{debug};
                     
-                    # Always print a newline before SYSTEM output to ensure clean separation
-                    # This handles both cases:
-                    # 1. Content exists but may not end with newline
-                    # 2. Content is empty but "AGENT: " was printed
-                    print "\n";
-                    STDOUT->flush() if STDOUT->can('flush');
+                    # Only print newline if content is empty (tool-call-only response)
+                    # When there's content, it already ends with newline from streaming flush
+                    if (!$content || $content =~ /^\s*$/) {
+                        # Tool-call only response - need to clear the orphaned "AGENT: " prefix
+                        # Move up one line and clear it, then print newline for clean start
+                        print "\e[1A\r\e[K";  # Clear orphaned AGENT: line
+                    }
+                    # If content exists and ends with \n, we're already at a clean line start
+                    # No extra newline needed
                     
                     $first_tool_call = 0;
                 }
                 
                 # Show user-visible feedback BEFORE tool execution (for interactive tools like user_collaboration)
-                # NOTE: Update existing "(streaming...)" message to show execution started
                 print $COLORS{SYSTEM}, "SYSTEM: ", $COLORS{RESET};
                 print $COLORS{TOOL}, "[", $tool_name, "]", $COLORS{RESET};
                 print "\n";
