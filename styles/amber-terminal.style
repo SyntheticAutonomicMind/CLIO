@@ -16,6 +16,22 @@ agent_text=@YELLOW@
 system_message=@YELLOW@@BOLD@
 error_message=@BRIGHT_RED@
 
+# Status messages
+success_message=@BRIGHT_YELLOW@
+warning_message=@YELLOW@
+info_message=@BRIGHT_YELLOW@
+
+# Command output elements
+command_header=@BOLD@@BRIGHT_YELLOW@
+command_subheader=@BOLD@@YELLOW@
+command_label=@YELLOW@
+command_value=@BRIGHT_YELLOW@
+
+# Special elements
+highlight=@BRIGHT_YELLOW@
+muted=@DIM@@YELLOW@
+
+
 # UI elements - classic amber terminal warmth
 banner=@BRIGHT_YELLOW@@BOLD@
 app_title=@BRIGHT_YELLOW@

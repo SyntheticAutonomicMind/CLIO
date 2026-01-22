@@ -16,6 +16,22 @@ agent_text=@GREEN@
 system_message=@GREEN@@BOLD@
 error_message=@BRIGHT_RED@
 
+# Status messages
+success_message=@BRIGHT_GREEN@
+warning_message=@GREEN@
+info_message=@BRIGHT_GREEN@
+
+# Command output elements
+command_header=@BOLD@@BRIGHT_GREEN@
+command_subheader=@BOLD@@GREEN@
+command_label=@GREEN@
+command_value=@BRIGHT_GREEN@
+
+# Special elements
+highlight=@BRIGHT_GREEN@
+muted=@DIM@@GREEN@
+
+
 # UI elements - classic phosphor green
 banner=@BRIGHT_GREEN@@BOLD@
 app_title=@BRIGHT_GREEN@
