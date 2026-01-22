@@ -3688,19 +3688,28 @@ sub handle_update_command {
         print "Current version: " . $self->colorize($current, 'command_value') . "\n";
         
         # Check if cached update info exists
-        my $available_version = $updater->get_available_update();
+        my $cache_info = $updater->get_available_update();
         
-        if ($available_version) {
-            print "Latest version:  " . $self->colorize($available_version, 'success') . "\n";
-            print "\n";
-            $self->display_success_message("Update available!");
-            print "\n";
-            print "Run " . $self->colorize('/update install', 'command') . " to install\n";
-        } else {
+        if (!$cache_info->{cached}) {
+            # No cache exists - never checked
             print "\n";
             $self->display_info_message("No update information cached");
             print "\n";
             print "Run " . $self->colorize('/update check', 'command') . " to check for updates\n";
+        }
+        elsif ($cache_info->{up_to_date}) {
+            # Checked, and we're up-to-date
+            print "Latest version:  " . $self->colorize($cache_info->{version}, 'command_value') . "\n";
+            print "\n";
+            $self->display_success_message("You are running the latest version");
+        }
+        else {
+            # Update available
+            print "Latest version:  " . $self->colorize($cache_info->{version}, 'success') . "\n";
+            print "\n";
+            $self->display_success_message("Update available!");
+            print "\n";
+            print "Run " . $self->colorize('/update install', 'command') . " to install\n";
         }
         print "\n";
     }
