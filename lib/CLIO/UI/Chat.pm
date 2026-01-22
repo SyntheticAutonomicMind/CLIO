@@ -1460,16 +1460,21 @@ sub _display_api_providers {
     # Show all providers in organized table format
     my @providers = CLIO::Providers::list_providers();
     
+    # Calculate column width based on longest provider name
+    my $max_provider_length = 0;
+    for my $prov_name (@providers) {
+        my $prov = CLIO::Providers::get_provider($prov_name);
+        next unless $prov;
+        my $display_name = $prov->{name} || $prov_name;
+        $max_provider_length = length($display_name) if length($display_name) > $max_provider_length;
+    }
+    
     # Table header
     print $self->colorize("PROVIDER", 'LABEL');
-    print "  ";
-    print $self->colorize("SETUP", 'LABEL');
-    print "  ";
-    print $self->colorize("AUTH", 'LABEL');
-    print "  ";
+    print " " x ($max_provider_length - 8 + 4);  # Pad to align with data rows
     print $self->colorize("DEFAULT MODEL", 'LABEL');
     print "\n";
-    print $self->colorize("─" x 90, 'DIM'), "\n";
+    print $self->colorize("─" x 77, 'DIM'), "\n";
     
     for my $prov_name (@providers) {
         my $prov = CLIO::Providers::get_provider($prov_name);
@@ -1478,24 +1483,11 @@ sub _display_api_providers {
         my $display_name = $prov->{name} || $prov_name;
         my $is_current = ($current_provider && $prov_name eq $current_provider) ? 1 : 0;
         
-        # Mark current provider
-        if ($is_current) {
-            print $self->colorize(" ", 'PROMPT');
-        } else {
-            print "  ";
-        }
-        
-        print $self->colorize(sprintf("%-18s", $display_name), 'PROMPT');
+        # Indent all rows consistently (2 spaces)
         print "  ";
         
-        # Setup complexity indicator
-        my $setup_text = $self->_get_setup_complexity($prov->{requires_auth});
-        print $setup_text;
-        print "  ";
-        
-        # Authentication type
-        my $auth = $self->_format_auth_requirement($prov->{requires_auth});
-        print sprintf("%-12s", $auth);
+        # Provider name with padding to align model column
+        print $self->colorize(sprintf("%-" . $max_provider_length . "s", $display_name), 'PROMPT');
         print "  ";
         
         # Model
@@ -1505,14 +1497,12 @@ sub _display_api_providers {
     
     print "\n";
     print $self->colorize("LEARN MORE", 'DATA'), "\n";
-    print $self->colorize("─" x 90, 'DIM'), "\n";
+    print $self->colorize("─" x 77, 'DIM'), "\n";
     print "  /api providers <name>   - Show setup instructions for a specific provider\n";
     print "\n";
     print $self->colorize("EXAMPLES", 'DATA'), "\n";
-    print $self->colorize("─" x 90, 'DIM'), "\n";
-    print "  /api providers github_copilot       - Setup GitHub Copilot\n";
-    print "  /api providers openai               - Setup OpenAI (requires API key)\n";
-    print "  /api providers sam                  - Use local SAM provider\n";
+    print $self->colorize("─" x 77, 'DIM'), "\n";
+    print "  /api set provider github_copilot    - Setup GitHub Copilot\n";
     print "  /api set provider openai            - Switch to OpenAI\n";
     print "\n";
 }
