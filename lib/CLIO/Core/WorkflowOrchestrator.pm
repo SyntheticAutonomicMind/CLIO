@@ -685,6 +685,10 @@ sub _build_system_prompt {
     
     my $base_prompt = $pm->get_system_prompt();
     
+    # Add current date/time and context management note at the beginning
+    my $datetime_section = $self->_generate_datetime_section();
+    $base_prompt = $datetime_section . "\n\n" . $base_prompt;
+    
     # Dynamically add available tools section from tool registry
     my $tools_section = $self->_generate_tools_section();
     
@@ -786,6 +790,53 @@ Generate a dynamic "Long-Term Memory" section based on relevant patterns from LT
 
 Arguments:
 - $session: Session object containing LTM reference
+
+Returns:
+- Markdown text with relevant LTM patterns (empty string if no patterns)
+
+=cut
+
+sub _generate_datetime_section {
+    my ($self) = @_;
+    
+    # Get current date and time in multiple useful formats
+    my ($sec, $min, $hour, $mday, $mon, $year, $wday, $yday, $isdst) = localtime(time);
+    $year += 1900;
+    $mon += 1;
+    
+    my $datetime_iso = sprintf("%04d-%02d-%02d %02d:%02d:%02d", $year, $mon, $mday, $hour, $min, $sec);
+    my $date_short = sprintf("%04d-%02d-%02d", $year, $mon, $mday);
+    
+    my @day_names = qw(Sunday Monday Tuesday Wednesday Thursday Friday Saturday);
+    my @month_names = qw(January February March April May June July August September October November December);
+    my $day_name = $day_names[$wday];
+    my $month_name = $month_names[$mon - 1];
+    
+    # Build the section
+    my $section = "# Current Date & Time\n\n";
+    $section .= "**Current Date/Time:** $datetime_iso ($day_name, $month_name $mday, $year)\n\n";
+    $section .= "Use this timestamp for:\n";
+    $section .= "- Dating documents, commits, and artifacts\n";
+    $section .= "- Generating version tags (e.g., v$year.$mon.$mday)\n";
+    $section .= "- Log entries and audit trails\n";
+    $section .= "- Time-sensitive operations\n\n";
+    $section .= "**IMPORTANT - Context & Time Management:**\n\n";
+    $section .= "CLIO manages your context window and processing time automatically. You should NEVER:\n";
+    $section .= "- Worry about token budgets or context limits\n";
+    $section .= "- Apologize for length or complexity of responses\n";
+    $section .= "- Cut work short due to perceived time constraints\n";
+    $section .= "- Ask permission to continue due to token concerns\n\n";
+    $section .= "Focus entirely on delivering complete, high-quality work. CLIO handles all resource management.\n";
+    
+    return $section;
+}
+
+=head2 _generate_ltm_section
+
+Build a section of the prompt with relevant Long-Term Memory patterns.
+
+Arguments:
+- $session: Session object with LTM access
 
 Returns:
 - Markdown text with relevant LTM patterns (empty string if no patterns)
