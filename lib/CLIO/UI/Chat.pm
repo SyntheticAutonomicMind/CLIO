@@ -1220,6 +1220,9 @@ sub handle_command {
         $self->display_system_message("Note: Use '/file read <path>' (new syntax)");
         $self->handle_read_command(@args);
     }
+    elsif ($cmd eq 'memory' || $cmd eq 'mem' || $cmd eq 'ltm') {
+        $self->handle_memory_command(@args);
+    }
     else {
         $self->display_error_message("Unknown command: /$cmd (type /help for help)");
     }
@@ -3175,6 +3178,204 @@ sub handle_billing_command {
     print $self->colorize("Note: GitHub Copilot uses subscription-based billing.", 'SYSTEM'), "\n";
     print $self->colorize("      Multipliers indicate premium model usage relative to free models.", 'SYSTEM'), "\n";
     print "\n";
+}
+
+=head2 handle_memory_command
+
+Manage long-term memory (LTM) patterns for the project.
+
+Usage:
+  /memory [list|ls] [type]     - List all patterns (optionally filter by type)
+  /memory store <type> [data]  - Store a new pattern
+  /memory clear                - Clear all LTM patterns
+
+Types: discovery, solution, pattern, workflow, failure, rule
+
+=cut
+
+sub handle_memory_command {
+    my ($self, @args) = @_;
+    
+    unless ($self->{session}) {
+        $self->display_error_message("No active session");
+        return;
+    }
+    
+    # Get LTM from session
+    my $ltm = eval { $self->{session}->get_long_term_memory() };
+    if ($@ || !$ltm) {
+        $self->display_error_message("Long-term memory not available: $@");
+        return;
+    }
+    
+    # Parse subcommand
+    my $subcmd = @args ? lc($args[0]) : 'list';
+    
+    if ($subcmd eq 'list' || $subcmd eq 'ls' || $subcmd eq '') {
+        # List patterns (optionally filter by type)
+        my $filter_type = $args[1] ? lc($args[1]) : undef;
+        
+        # Gather all patterns
+        my @all_patterns;
+        
+        # Discoveries
+        my $discoveries = eval { $ltm->query_discoveries() } || [];
+        for my $item (@$discoveries) {
+            push @all_patterns, { type => 'discovery', data => $item };
+        }
+        
+        # Solutions
+        my $solutions = eval { $ltm->query_solutions() } || [];
+        for my $item (@$solutions) {
+            push @all_patterns, { type => 'solution', data => $item };
+        }
+        
+        # Patterns
+        my $patterns = eval { $ltm->query_patterns() } || [];
+        for my $item (@$patterns) {
+            push @all_patterns, { type => 'pattern', data => $item };
+        }
+        
+        # Workflows
+        my $workflows = eval { $ltm->query_workflows() } || [];
+        for my $item (@$workflows) {
+            push @all_patterns, { type => 'workflow', data => $item };
+        }
+        
+        # Failures
+        my $failures = eval { $ltm->query_failures() } || [];
+        for my $item (@$failures) {
+            push @all_patterns, { type => 'failure', data => $item };
+        }
+        
+        # Context rules
+        my $rules = eval { $ltm->query_context_rules() } || [];
+        for my $item (@$rules) {
+            push @all_patterns, { type => 'rule', data => $item };
+        }
+        
+        # Filter by type if specified
+        if ($filter_type) {
+            @all_patterns = grep { $_->{type} eq $filter_type } @all_patterns;
+        }
+        
+        # Display
+        print "\n";
+        print $self->colorize("═" x 70, 'DATA'), "\n";
+        print $self->colorize("LONG-TERM MEMORY PATTERNS", 'DATA'), "\n";
+        print $self->colorize("═" x 70, 'DATA'), "\n";
+        print "\n";
+        
+        if (@all_patterns == 0) {
+            print "No patterns stored yet.\n";
+            print "\n";
+            print "Use /memory store <type> to add patterns:\n";
+            print "  Types: discovery, solution, pattern, workflow, failure, rule\n";
+        } else {
+            printf "Total: %d pattern%s", scalar(@all_patterns), (@all_patterns == 1 ? '' : 's');
+            print " (filtered by: $filter_type)" if $filter_type;
+            print "\n\n";
+            
+            for my $entry (@all_patterns) {
+                my $type = uc($entry->{type});
+                my $data = $entry->{data};
+                
+                print $self->colorize("[$type] ", 'THEME');
+                print $self->colorize($data->{title} || 'Untitled', 'DATA'), "\n";
+                
+                if ($entry->{type} eq 'discovery') {
+                    print "  " . ($data->{content} || 'No content') . "\n";
+                    print $self->colorize("  Context: " . ($data->{context} || 'None'), 'SYSTEM'), "\n" if $data->{context};
+                }
+                elsif ($entry->{type} eq 'solution') {
+                    print "  Problem: " . ($data->{problem} || 'Not specified') . "\n";
+                    print "  Solution: " . ($data->{solution} || 'Not specified') . "\n";
+                }
+                elsif ($entry->{type} eq 'pattern') {
+                    print "  " . ($data->{pattern} || 'No pattern') . "\n";
+                    print $self->colorize("  Usage: " . ($data->{usage} || 'None'), 'SYSTEM'), "\n" if $data->{usage};
+                }
+                elsif ($entry->{type} eq 'workflow') {
+                    my $steps = $data->{steps} || [];
+                    if (ref($steps) eq 'ARRAY' && @$steps) {
+                        my $num = 1;
+                        for my $step (@$steps) {
+                            print "  $num. $step\n";
+                            $num++;
+                        }
+                    }
+                }
+                elsif ($entry->{type} eq 'failure') {
+                    print "  Mistake: " . ($data->{mistake} || 'Not specified') . "\n";
+                    print "  Lesson: " . ($data->{lesson} || 'Not specified') . "\n";
+                }
+                elsif ($entry->{type} eq 'rule') {
+                    print "  Condition: " . ($data->{condition} || 'Not specified') . "\n";
+                    print "  Action: " . ($data->{action} || 'Not specified') . "\n";
+                }
+                
+                print "\n";
+            }
+        }
+        
+        print $self->colorize("═" x 70, 'DATA'), "\n";
+        print "\n";
+        
+    } elsif ($subcmd eq 'store') {
+        # Store requires AI assistance - return prompt to be sent to AI
+        my $type = $args[1] || '';
+        my $data_text = join(' ', @args[2..$#args]);
+        
+        my $prompt = "Please store this in long-term memory:\n";
+        $prompt .= "Type: $type\n" if $type;
+        $prompt .= "Data: $data_text\n" if $data_text;
+        $prompt .= "\nUse the memory_operations tool to store this pattern.";
+        
+        $self->display_system_message("Requesting AI to store pattern in long-term memory...");
+        return (1, $prompt);  # Return prompt to be sent to AI
+        
+    } elsif ($subcmd eq 'clear') {
+        # Confirm before clearing
+        print "\n";
+        print $self->colorize("[WARN]️  This will clear ALL long-term memory patterns for this project!", 'WARN'), "\n";
+        print "Are you sure? (yes/no): ";
+        
+        my $response = <STDIN>;
+        chomp $response;
+        
+        if (lc($response) eq 'yes') {
+            # Clear all patterns
+            eval {
+                # Create new empty LTM
+                require CLIO::Memory::LongTerm;
+                my $new_ltm = CLIO::Memory::LongTerm->new(
+                    project_root => $ltm->{project_root},
+                    debug => $ltm->{debug}
+                );
+                
+                # Save (overwrites with empty patterns)
+                $new_ltm->save();
+                
+                # Update session reference
+                $self->{session}{ltm} = $new_ltm;
+            };
+            
+            if ($@) {
+                $self->display_error_message("Failed to clear LTM: $@");
+            } else {
+                $self->display_system_message("Long-term memory cleared successfully");
+            }
+        } else {
+            $self->display_system_message("Cancelled - no changes made");
+        }
+        
+    } else {
+        $self->display_error_message("Unknown subcommand: $subcmd");
+        print "Usage:\n";
+        print "  /memory [list|ls] [type]     - List patterns\n";
+        print "  /memory store <type> [data]  - Store pattern (requires AI)\n";
+        print "  /memory clear                - Clear all patterns\n";
+    }
 }
 
 =head2 handle_models_command
