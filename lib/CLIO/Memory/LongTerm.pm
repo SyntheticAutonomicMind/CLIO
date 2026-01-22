@@ -340,6 +340,140 @@ sub get_patterns_for_context {
     return $result;
 }
 
+=head2 query_discoveries
+
+Query discoveries with optional limit
+
+    my $discoveries = $ltm->query_discoveries(limit => 5);
+
+=cut
+
+sub query_discoveries {
+    my ($self, %args) = @_;
+    my $limit = $args{limit} || 0;
+    
+    my @items = @{$self->{patterns}{discoveries}};
+    
+    if ($limit > 0 && @items > $limit) {
+        @items = @items[0..$limit-1];
+    }
+    
+    return \@items;
+}
+
+=head2 query_solutions
+
+Query problem solutions with optional limit
+
+    my $solutions = $ltm->query_solutions(limit => 5);
+
+=cut
+
+sub query_solutions {
+    my ($self, %args) = @_;
+    my $limit = $args{limit} || 0;
+    
+    my @items = @{$self->{patterns}{problem_solutions}};
+    
+    if ($limit > 0 && @items > $limit) {
+        @items = @items[0..$limit-1];
+    }
+    
+    return \@items;
+}
+
+=head2 query_patterns
+
+Query code patterns with optional limit
+
+    my $patterns = $ltm->query_patterns(limit => 5);
+
+=cut
+
+sub query_patterns {
+    my ($self, %args) = @_;
+    my $limit = $args{limit} || 0;
+    
+    my @items = @{$self->{patterns}{code_patterns}};
+    
+    if ($limit > 0 && @items > $limit) {
+        @items = @items[0..$limit-1];
+    }
+    
+    return \@items;
+}
+
+=head2 query_workflows
+
+Query workflows with optional limit
+
+    my $workflows = $ltm->query_workflows(limit => 5);
+
+=cut
+
+sub query_workflows {
+    my ($self, %args) = @_;
+    my $limit = $args{limit} || 0;
+    
+    my @items = @{$self->{patterns}{workflows}};
+    
+    if ($limit > 0 && @items > $limit) {
+        @items = @items[0..$limit-1];
+    }
+    
+    return \@items;
+}
+
+=head2 query_failures
+
+Query failure patterns with optional limit
+
+    my $failures = $ltm->query_failures(limit => 5);
+
+=cut
+
+sub query_failures {
+    my ($self, %args) = @_;
+    my $limit = $args{limit} || 0;
+    
+    my @items = @{$self->{patterns}{failures}};
+    
+    if ($limit > 0 && @items > $limit) {
+        @items = @items[0..$limit-1];
+    }
+    
+    return \@items;
+}
+
+=head2 query_context_rules
+
+Query context rules with optional limit
+
+    my $rules = $ltm->query_context_rules(limit => 5);
+
+=cut
+
+sub query_context_rules {
+    my ($self, %args) = @_;
+    my $limit = $args{limit} || 0;
+    
+    my @items;
+    for my $ctx (keys %{$self->{patterns}{context_rules}}) {
+        for my $rule (@{$self->{patterns}{context_rules}{$ctx}}) {
+            push @items, {
+                context => $ctx,
+                %$rule
+            };
+        }
+    }
+    
+    if ($limit > 0 && @items > $limit) {
+        @items = @items[0..$limit-1];
+    }
+    
+    return \@items;
+}
+
 =head2 search_solutions
 
 Search for solutions to a given error pattern

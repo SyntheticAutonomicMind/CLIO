@@ -186,7 +186,7 @@ sub process_input {
     
     # CRITICAL: Build system prompt with dynamic tools FIRST
     # This must come before history to ensure tools are always available
-    my $system_prompt = $self->_build_system_prompt();
+    my $system_prompt = $self->_build_system_prompt($session);
     push @messages, {
         role => 'system',
         content => $system_prompt
@@ -674,7 +674,7 @@ Returns:
 
 =cut
 sub _build_system_prompt {
-    my ($self) = @_;
+    my ($self, $session) = @_;
     
     # Load from PromptManager (includes custom instructions)
     require CLIO::Core::PromptManager;
@@ -688,6 +688,12 @@ sub _build_system_prompt {
     # Dynamically add available tools section from tool registry
     my $tools_section = $self->_generate_tools_section();
     
+    # Build LTM context section if session is available
+    my $ltm_section = '';
+    if ($session) {
+        $ltm_section = $self->_generate_ltm_section($session);
+    }
+    
     # Insert tools section after "## Core Instructions" or append if not found
     if ($base_prompt =~ /## Core Instructions/) {
         # Insert after Core Instructions section
@@ -695,6 +701,13 @@ sub _build_system_prompt {
     } else {
         # Append to end
         $base_prompt .= "\n\n$tools_section";
+    }
+    
+    # Insert LTM section after tools section if available
+    if ($ltm_section) {
+        $base_prompt .= "\n\n$ltm_section";
+        print STDERR "[DEBUG][WorkflowOrchestrator] Added LTM context section to prompt\n"
+            if $self->{debug};
     }
     
     print STDERR "[DEBUG][WorkflowOrchestrator] Added dynamic tools section to prompt\n"
@@ -763,6 +776,125 @@ sub _generate_tools_section {
     $section .= "1. Omit optional param: `{\"operation\":\"read_tool_result\",\"length\":8192}`\n";
     $section .= "2. Include with value: `{\"operation\":\"read_tool_result\",\"offset\":0,\"length\":8192}`\n\n";
     $section .= "**Rule:** EVERY parameter key MUST have a value. No exceptions.\n";
+    
+    return $section;
+}
+
+=head2 _generate_ltm_section
+
+Generate a dynamic "Long-Term Memory" section based on relevant patterns from LTM.
+
+Arguments:
+- $session: Session object containing LTM reference
+
+Returns:
+- Markdown text with relevant LTM patterns (empty string if no patterns)
+
+=cut
+
+sub _generate_ltm_section {
+    my ($self, $session) = @_;
+    
+    return '' unless $session;
+    
+    # Get LTM from session
+    my $ltm = eval { $session->get_long_term_memory() };
+    if ($@ || !$ltm) {
+        print STDERR "[DEBUG][WorkflowOrchestrator] No LTM available: $@\n" if $self->{debug};
+        return '';
+    }
+    
+    # Query for relevant patterns (limited to 5 most relevant)
+    my $discoveries = eval { $ltm->query_discoveries(limit => 3) } || [];
+    my $solutions = eval { $ltm->query_solutions(limit => 3) } || [];
+    my $patterns = eval { $ltm->query_patterns(limit => 3) } || [];
+    my $workflows = eval { $ltm->query_workflows(limit => 2) } || [];
+    my $failures = eval { $ltm->query_failures(limit => 2) } || [];
+    
+    # If no patterns at all, return empty
+    my $total = @$discoveries + @$solutions + @$patterns + @$workflows + @$failures;
+    return '' if $total == 0;
+    
+    print STDERR "[DEBUG][WorkflowOrchestrator] Found $total LTM patterns to inject\n" if $self->{debug};
+    
+    # Build LTM section
+    my $section = "## Long-Term Memory Patterns\n\n";
+    $section .= "The following patterns have been learned from previous sessions in this project:\n\n";
+    
+    # Add discoveries
+    if (@$discoveries) {
+        $section .= "### Key Discoveries\n\n";
+        for my $item (@$discoveries) {
+            my $fact = $item->{fact} || 'Unknown';
+            my $confidence = $item->{confidence} || 0;
+            my $verified = $item->{verified} ? 'Verified' : 'Unverified';
+            
+            $section .= "- **$fact** (Confidence: " . sprintf("%.0f%%", $confidence * 100) . ", $verified)\n";
+        }
+        $section .= "\n";
+    }
+    
+    # Add problem solutions
+    if (@$solutions) {
+        $section .= "### Problem Solutions\n\n";
+        for my $item (@$solutions) {
+            my $error = $item->{error} || 'Unknown error';
+            my $solution = $item->{solution} || 'No solution';
+            my $solved_count = $item->{solved_count} || 0;
+            
+            $section .= "**Problem:** $error\n";
+            $section .= "**Solution:** $solution\n";
+            $section .= "_Applied successfully $solved_count time" . ($solved_count == 1 ? '' : 's') . "_\n\n";
+        }
+    }
+    
+    # Add code patterns
+    if (@$patterns) {
+        $section .= "### Code Patterns\n\n";
+        for my $item (@$patterns) {
+            my $pattern = $item->{pattern} || 'Unknown pattern';
+            my $confidence = $item->{confidence} || 0;
+            my $examples = $item->{examples} || [];
+            
+            $section .= "- **$pattern** (Confidence: " . sprintf("%.0f%%", $confidence * 100) . ")\n";
+            if (@$examples) {
+                $section .= "  Examples: " . join(", ", @$examples) . "\n";
+            }
+        }
+        $section .= "\n";
+    }
+    
+    # Add workflows
+    if (@$workflows) {
+        $section .= "### Successful Workflows\n\n";
+        for my $item (@$workflows) {
+            my $sequence = $item->{sequence} || [];
+            my $success_rate = $item->{success_rate} || 0;
+            my $count = $item->{count} || 0;
+            
+            if (@$sequence) {
+                $section .= "- " . join(" → ", @$sequence) . "\n";
+                $section .= "  _Success rate: " . sprintf("%.0f%%", $success_rate * 100) . " ($count attempts)_\n";
+            }
+        }
+        $section .= "\n";
+    }
+    
+    # Add failures (antipatterns)
+    if (@$failures) {
+        $section .= "### Known Failures (Avoid These)\n\n";
+        for my $item (@$failures) {
+            my $what_broke = $item->{what_broke} || 'Unknown failure';
+            my $impact = $item->{impact} || 'Unknown impact';
+            my $prevention = $item->{prevention} || 'No prevention documented';
+            
+            $section .= "**What broke:** $what_broke\n";
+            $section .= "**Impact:** $impact\n";
+            $section .= "**Prevention:** $prevention\n\n";
+        }
+    }
+    
+    $section .= "_These patterns are project-specific and should inform your approach to similar tasks._\n";
     
     return $section;
 }
