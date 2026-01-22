@@ -321,7 +321,7 @@ sub recall_sessions {
             # Read session file
             my $json;
             eval {
-                open my $fh, '<:utf8', $session_path or die "Cannot read: $!";
+                open my $fh, '<', $session_path or die "Cannot read: $!";
                 local $/;
                 $json = <$fh>;
                 close $fh;
