@@ -502,6 +502,19 @@ sub get_builtin_style {
         dim => '@DIM@',
         theme_header => '@BRIGHT_CYAN@',
         prompt_indicator => '@BRIGHT_GREEN@',
+        # Status messages
+        success_message => '@BRIGHT_GREEN@',
+        warning_message => '@BRIGHT_YELLOW@',
+        info_message => '@BRIGHT_CYAN@',
+        # Command output elements
+        command_header => '@BOLD@@BRIGHT_CYAN@',
+        command_subheader => '@BOLD@@CYAN@',
+        command_label => '@CYAN@',
+        command_value => '@BRIGHT_WHITE@',
+        # Special elements
+        highlight => '@BRIGHT_YELLOW@',
+        muted => '@DIM@@WHITE@',
+        # Markdown styling
         markdown_bold => '@BOLD@',
         markdown_italic => '@DIM@',
         markdown_code => '@BRIGHT_YELLOW@',
@@ -513,6 +526,7 @@ sub get_builtin_style {
         markdown_list_bullet => '@BRIGHT_GREEN@',
         markdown_quote => '@DIM@@CYAN@',
         markdown_code_block => '@YELLOW@',
+        # Table styling
         table_border => '@BRIGHT_WHITE@',
         table_header => '@BOLD@@CYAN@',
     };
