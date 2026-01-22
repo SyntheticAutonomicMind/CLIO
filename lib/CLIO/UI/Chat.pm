@@ -1288,6 +1288,13 @@ sub display_help {
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo done <id>', 'PROMPT'), 'Complete todo');
     push @help_lines, "";
     
+    push @help_lines, $self->colorize("━ MEMORY ━" . ("━" x 52), 'DATA');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory', 'PROMPT'), 'View long-term memory patterns');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory list [type]', 'PROMPT'), 'List all or filtered patterns');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory store <type>', 'PROMPT'), 'Store pattern (via AI)');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory clear', 'PROMPT'), 'Clear all patterns');
+    push @help_lines, "";
+    
     push @help_lines, $self->colorize("━ DEVELOPER ━" . ("━" x 49), 'DATA');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/explain [file]', 'PROMPT'), 'Explain code');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/review [file]', 'PROMPT'), 'Review code');
