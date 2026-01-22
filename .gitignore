@@ -6,7 +6,8 @@ sessions/
 url_cache/
 .clio/logs/
 .clio/sessions/
-memory/
+.clio/memory/
+.clio/*json
 
 # Editor files
 *.swp
