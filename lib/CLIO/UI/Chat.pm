@@ -59,6 +59,8 @@ sub new {
         pages => [],          # Buffer of pages for navigation
         current_page => [],   # Current page being built
         page_index => 0,      # Current page number for navigation
+        # Pagination control - OFF by default, enabled only for text responses
+        pagination_enabled => 0,  # Only enable for final agent text, not tool output
         # Persistent spinner - shared across all requests
         # CRITICAL: Keep spinner as persistent Chat property so tools can reliably access it
         spinner => undef,     # Will be created on first use, reused across requests
@@ -312,6 +314,11 @@ sub run {
                 # Stop progress spinner on first chunk (AI is now responding)
                 if (!$first_chunk_received) {
                     $spinner->stop();
+                    
+                    # Enable pagination for text responses (agent is speaking directly)
+                    # This will be left enabled unless/until tools are invoked
+                    $self->{pagination_enabled} = 1;
+                    print STDERR "[DEBUG][Chat] Pagination ENABLED for text response\n" if $self->{debug};
                 }
                 
                 # Display role label on first chunk OR when _need_agent_prefix is set
@@ -397,10 +404,11 @@ sub run {
                         $markdown_line_count = 0;
                         $last_flush_time = $current_time;
                         
-                        # Check pagination - ONLY for non-tool-workflow responses
-                        # When tools are being called, let output scroll freely
-                        # This prevents having to press space during AI "work"
+                        # Check pagination - ONLY when explicitly enabled for text responses
+                        # pagination_enabled is set to 1 for agent text responses (no tools)
+                        # and remains 0 during tool execution to let output scroll freely
                         if ($self->{line_count} >= $self->{terminal_height} && 
+                            $self->{pagination_enabled} &&
                             !$self->{_tools_invoked_this_request}) {
                             # Pause for user to read (streaming mode)
                             my $response = $self->pause(1);  # 1 = streaming mode
@@ -436,6 +444,10 @@ sub run {
                 # Mark that tools have been invoked - disables streaming pagination
                 # so user doesn't have to press space during AI "work"
                 $self->{_tools_invoked_this_request} = 1;
+                
+                # Disable pagination during tool execution
+                $self->{pagination_enabled} = 0;
+                print STDERR "[DEBUG][Chat] Pagination DISABLED for tool execution: $tool_name\n" if $self->{debug};
                 
                 # Display which tool is being used
                 print "\n" if $self->{_streaming_markdown_buffer} && $self->{_streaming_markdown_buffer} !~ /\n$/;  # Newline before tool if needed
@@ -564,6 +576,11 @@ sub run {
                     delete $state->{_premium_charge_message};  # Clear after displaying
                 }
             }
+            
+            # Disable pagination after response completes
+            # Will be re-enabled on first chunk of next text response
+            $self->{pagination_enabled} = 0;
+            print STDERR "[DEBUG][Chat] Pagination DISABLED after response complete\n" if $self->{debug};
         } else {
             $self->display_error_message("AI agent not initialized");
         }
@@ -787,15 +804,76 @@ sub request_collaboration {
     
     print STDERR "[DEBUG][Chat] request_collaboration called\n" if should_log('DEBUG');
     
+    # Enable pagination for collaboration responses
+    $self->{pagination_enabled} = 1;
+    $self->{line_count} = 0;  # Reset line count for pagination
+    print STDERR "[DEBUG][Chat] Pagination ENABLED for collaboration\n" if $self->{debug};
+    
     # Display the agent's message using full markdown rendering (includes @-code to ANSI conversion)
     my $rendered_message = $self->render_markdown($message);
-    print $self->colorize("CLIO: ", 'ASSISTANT'), $rendered_message, "\n";
+    
+    # Display with pagination support
+    my @lines = split /\n/, $rendered_message;
+    print $self->colorize("CLIO: ", 'ASSISTANT');
+    
+    # Print first line inline with prefix
+    if (@lines) {
+        print shift(@lines), "\n";
+        $self->{line_count}++;
+    }
+    
+    # Print remaining lines with pagination checks
+    for my $line (@lines) {
+        print $line, "\n";
+        $self->{line_count}++;
+        
+        # Check if we need to paginate
+        if ($self->{line_count} >= $self->{terminal_height} && 
+            $self->{pagination_enabled} && 
+            -t STDIN) {  # Only paginate if interactive
+            
+            my $response = $self->pause(0);  # 0 = non-streaming mode
+            if ($response eq 'Q') {
+                # User quit - stop displaying
+                last;
+            }
+            
+            # Reset for next page
+            $self->{line_count} = 0;
+        }
+    }
     
     # Display context if provided
     if ($context && length($context) > 0) {
         my $rendered_context = $self->render_markdown($context);
-        print $self->colorize("Context: ", 'SYSTEM'), "$rendered_context\n";
+        my @context_lines = split /\n/, $rendered_context;
+        
+        print $self->colorize("Context: ", 'SYSTEM');
+        if (@context_lines) {
+            print shift(@context_lines), "\n";
+            $self->{line_count}++;
+        }
+        
+        for my $line (@context_lines) {
+            print $line, "\n";
+            $self->{line_count}++;
+            
+            if ($self->{line_count} >= $self->{terminal_height} && 
+                $self->{pagination_enabled} && 
+                -t STDIN) {
+                
+                my $response = $self->pause(0);
+                if ($response eq 'Q') {
+                    last;
+                }
+                $self->{line_count} = 0;
+            }
+        }
     }
+    
+    # Disable pagination after displaying message (user will respond)
+    $self->{pagination_enabled} = 0;
+    print STDERR "[DEBUG][Chat] Pagination DISABLED after collaboration message\n" if $self->{debug};
     
     # Use the main readline instance (with shared history) if available,
     # otherwise create a new one for basic input
