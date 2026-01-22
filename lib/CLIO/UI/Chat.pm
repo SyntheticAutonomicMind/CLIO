@@ -3963,10 +3963,7 @@ sub handle_context_command {
     } elsif ($action eq 'list' || $action eq 'ls') {
         my @files = @{$self->{session}{context_files}};
         
-        print "\n";
-        print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
-        print $self->colorize("CONVERSATION MEMORY", 'DATA'), "\n";
-        print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
+        $self->display_command_header("CONVERSATION MEMORY");
         
         # Show conversation memory stats
         if ($self->{session} && $self->{session}{state}) {
