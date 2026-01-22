@@ -653,12 +653,17 @@ sub check_for_updates_async {
     
     if ($pid == 0) {
         # Child process - check for updates
+        # CRITICAL: Close stdin/stdout/stderr to avoid interfering with parent's terminal
+        # The child doesn't need terminal I/O and keeping these open can cause
+        # readline issues in the parent process (e.g., Ctrl-D hanging on first input)
+        close(STDIN);
+        close(STDOUT);
+        close(STDERR);
+        
         eval {
             $updater->check_for_updates();
         };
-        if ($@) {
-            print STDERR "[DEBUG][UpdateCheck] Failed: $@\n" if should_log('DEBUG');
-        }
+        # Can't print errors since STDERR is closed, just exit
         exit 0;  # Child exits
     }
     
