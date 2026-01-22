@@ -276,7 +276,11 @@ sub check_for_updates_async {
 Check if an update is available from cached check.
 
 Returns:
-- Version string if update available, or undef if up-to-date
+- Hashref with {cached, up_to_date, version, current_version}
+  * cached: 1 if cache exists, 0 if no cache
+  * up_to_date: 1 if up-to-date, 0 if update available, undef if no cache
+  * version: Latest version (if available), or current version if up-to-date
+  * current_version: Current installed version
 
 =cut
 
@@ -284,20 +288,49 @@ sub get_available_update {
     my ($self) = @_;
     
     my $cache_file = File::Spec->catfile($self->{cache_dir}, 'update_check_cache');
+    my $current = $self->get_current_version();
     
-    return undef unless -f $cache_file;
+    # No cache file exists
+    unless (-f $cache_file) {
+        return {
+            cached => 0,
+            up_to_date => undef,
+            version => undef,
+            current_version => $current,
+        };
+    }
     
-    open my $fh, '<', $cache_file or return undef;
+    # Read cache file
+    open my $fh, '<', $cache_file or return {
+        cached => 0,
+        up_to_date => undef,
+        version => undef,
+        current_version => $current,
+    };
     my $content = <$fh>;
     close $fh;
     
     chomp $content if $content;
     
-    return undef if !$content || $content eq 'up-to-date';
+    # Cache says up-to-date
+    if (!$content || $content eq 'up-to-date') {
+        return {
+            cached => 1,
+            up_to_date => 1,
+            version => $current,
+            current_version => $current,
+        };
+    }
     
-    # Return version if it's different from current
-    my $current = $self->get_current_version();
-    return ($content ne $current) ? $content : undef;
+    # Cache has a version - check if it's different from current
+    my $update_available = ($content ne $current) ? 1 : 0;
+    
+    return {
+        cached => 1,
+        up_to_date => $update_available ? 0 : 1,
+        version => $content,
+        current_version => $current,
+    };
 }
 
 =head2 detect_install_location
