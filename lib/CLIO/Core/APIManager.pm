@@ -596,8 +596,25 @@ sub validate_and_truncate_messages {
     # Using /3 instead of /4 because code and JSON have higher token density
     my $estimated_tokens = 0;
     for my $msg (@$messages) {
+        # Count content field
         if ($msg->{content}) {
             $estimated_tokens += int(length($msg->{content}) / 3);
+        }
+        
+        # Count tool_calls (assistant requesting tool execution)
+        if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
+            for my $tool_call (@{$msg->{tool_calls}}) {
+                # Serialize tool_call to JSON to get accurate size
+                my $tool_json = encode_json($tool_call);
+                $estimated_tokens += int(length($tool_json) / 3);
+            }
+        }
+        
+        # Count tool results (role=tool or has tool_call_id)
+        if ($msg->{role} && $msg->{role} eq 'tool') {
+            # Tool results can have large content payloads
+            # Already counted above in content, but add overhead for metadata
+            $estimated_tokens += 50;  # Metadata overhead (tool_call_id, role, etc)
         }
     }
     
