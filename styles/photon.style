@@ -16,6 +16,22 @@ agent_text=@BRIGHT_WHITE@
 system_message=@BRIGHT_MAGENTA@
 error_message=@BRIGHT_RED@
 
+# Status messages
+success_message=@BRIGHT_GREEN@
+warning_message=@BRIGHT_YELLOW@
+info_message=@BRIGHT_CYAN@
+
+# Command output elements
+command_header=@BOLD@@BRIGHT_CYAN@
+command_subheader=@BOLD@@CYAN@
+command_label=@CYAN@
+command_value=@BRIGHT_WHITE@
+
+# Special elements
+highlight=@BRIGHT_YELLOW@
+muted=@DIM@@WHITE@
+
+
 # UI elements - cyan headers, white data (classic BBS palette)
 banner=@BRIGHT_CYAN@@BOLD@
 app_title=@BRIGHT_BLUE@@BOLD@
