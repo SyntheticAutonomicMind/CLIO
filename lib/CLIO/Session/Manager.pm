@@ -134,6 +134,9 @@ sub ltm  { $_[0]->{ltm} }
 sub yarn { $_[0]->{yarn} }
 sub state { $_[0]->{state} }
 
+# Alias for consistency with Chat.pm
+sub get_long_term_memory { $_[0]->{ltm} }
+
 sub save {
     my ($self) = @_;
     $self->{state}->save();
