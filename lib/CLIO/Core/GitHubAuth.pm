@@ -3,10 +3,10 @@ package CLIO::Core::GitHubAuth;
 use strict;
 use warnings;
 use CLIO::Core::Logger qw(should_log);
+use CLIO::Util::ConfigPath qw(get_config_file get_config_dir);
 use JSON::PP qw(encode_json decode_json);
 use CLIO::Compat::HTTP;
 use Time::HiRes qw(sleep time);
-use File::Path qw(make_path);
 use File::Spec;
 
 =head1 NAME
@@ -63,16 +63,13 @@ sub new {
             agent => 'CLIO/2.0.0',
             timeout => 30,
         ),
-        tokens_file => File::Spec->catfile(
-            $ENV{HOME}, '.clio', 'github_tokens.json'
-        ),
+        tokens_file => get_config_file('github_tokens.json'),
     };
     
     bless $self, $class;
     
-    # Ensure tokens directory exists
-    my $tokens_dir = File::Spec->catdir($ENV{HOME}, '.clio');
-    make_path($tokens_dir) unless -d $tokens_dir;
+    # Ensure tokens directory exists (get_config_dir creates it automatically)
+    get_config_dir();
     
     return $self;
 }

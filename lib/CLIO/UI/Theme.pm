@@ -7,6 +7,7 @@ use FindBin;
 use File::Spec;
 use File::Basename;
 use CLIO::UI::ANSI;
+use CLIO::Util::ConfigPath qw(get_config_dir);
 
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
@@ -96,7 +97,7 @@ sub load_styles {
     
     my @style_dirs = (
         File::Spec->catdir($self->{base_dir}, 'styles'),
-        File::Spec->catdir($ENV{HOME}, '.config', 'clio', 'styles'),
+        File::Spec->catdir(get_config_dir('xdg'), 'styles'),
     );
     
     for my $dir (@style_dirs) {
@@ -138,7 +139,7 @@ sub load_themes {
     
     my @theme_dirs = (
         File::Spec->catdir($self->{base_dir}, 'themes'),
-        File::Spec->catdir($ENV{HOME}, '.config', 'clio', 'themes'),
+        File::Spec->catdir(get_config_dir('xdg'), 'themes'),
     );
     
     for my $dir (@theme_dirs) {
@@ -408,7 +409,7 @@ Save current style to a new file
 sub save_style {
     my ($self, $name) = @_;
     
-    my $dir = File::Spec->catdir($ENV{HOME}, '.config', 'clio', 'styles');
+    my $dir = File::Spec->catdir(get_config_dir('xdg'), 'styles');
     unless (-d $dir) {
         require File::Path;
         File::Path::make_path($dir) or do {
@@ -448,7 +449,7 @@ Save current theme to a new file
 sub save_theme {
     my ($self, $name) = @_;
     
-    my $dir = File::Spec->catdir($ENV{HOME}, '.config', 'clio', 'themes');
+    my $dir = File::Spec->catdir(get_config_dir('xdg'), 'themes');
     unless (-d $dir) {
         require File::Path;
         File::Path::make_path($dir) or do {

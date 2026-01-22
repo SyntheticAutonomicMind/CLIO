@@ -3,6 +3,7 @@ package CLIO::Core::PromptManager;
 use strict;
 use warnings;
 use CLIO::Core::Logger qw(should_log);
+use CLIO::Util::ConfigPath qw(get_config_file);
 use CLIO::Util::TextSanitizer qw(sanitize_text);
 use JSON::PP qw(encode_json decode_json);
 use File::Spec;
@@ -58,7 +59,7 @@ sub new {
     my ($class, %opts) = @_;
     
     my $prompts_dir = $opts{prompts_dir} || 
-        File::Spec->catfile($ENV{HOME}, '.clio', 'system-prompts');
+        get_config_file('system-prompts');
     
     my $self = {
         debug => $opts{debug} || 0,
