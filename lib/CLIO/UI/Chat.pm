@@ -852,7 +852,7 @@ sub display_error_message {
 
 =head2 display_success_message
 
-Display a success message with [OK] prefix
+Display a success message with prefix
 
 =cut
 
@@ -862,7 +862,7 @@ sub display_success_message {
     # Add to screen buffer
     $self->add_to_buffer('success', $message);
     
-    print $self->colorize("[OK] ", 'success_message'), $message, "\n";
+    print $self->colorize("", 'success_message'), $message, "\n";
 }
 
 =head2 display_warning_message
@@ -4202,11 +4202,11 @@ sub handle_context_command {
             # Determine status
             my $status;
             if ($active_tokens > $threshold) {
-                $status = $self->colorize("⚠️  TRIMMING ACTIVE (over 80%)", 'WARN');
+                $status = $self->colorize("TRIMMING ACTIVE (over 80%)", 'WARN');
             } elsif ($active_tokens > $threshold * 0.6) {
-                $status = $self->colorize("⚡ Approaching limit (60-80%)", 'THEME');
+                $status = $self->colorize("Approaching limit (60-80%)", 'THEME');
             } else {
-                $status = $self->colorize("✅ Healthy (below 60%)", 'SUCCESS');
+                $status = $self->colorize("Healthy (below 60%)", 'SUCCESS');
             }
             
             printf "\n%-24s %d messages (~%s)\n",
