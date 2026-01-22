@@ -407,7 +407,10 @@ sub run {
                         # Check pagination - ONLY when explicitly enabled for text responses
                         # pagination_enabled is set to 1 for agent text responses (no tools)
                         # and remains 0 during tool execution to let output scroll freely
-                        if ($self->{line_count} >= $self->{terminal_height} && 
+                        # CRITICAL: Pause BEFORE terminal_height to leave room for pause message
+                        # This prevents content from scrolling off screen before user can read
+                        my $pause_threshold = $self->{terminal_height} - 2;  # Leave 2 lines for pause prompt
+                        if ($self->{line_count} >= $pause_threshold && 
                             $self->{pagination_enabled} &&
                             !$self->{_tools_invoked_this_request}) {
                             # Pause for user to read (streaming mode)
@@ -833,7 +836,9 @@ sub request_collaboration {
         $self->{line_count}++;
         
         # Check if we need to paginate
-        if ($self->{line_count} >= $self->{terminal_height} && 
+        # CRITICAL: Pause BEFORE terminal_height to leave room for pause message
+        my $pause_threshold = $self->{terminal_height} - 2;  # Leave 2 lines for pause prompt
+        if ($self->{line_count} >= $pause_threshold && 
             $self->{pagination_enabled} && 
             -t STDIN) {  # Only paginate if interactive
             
@@ -863,7 +868,9 @@ sub request_collaboration {
             print $line, "\n";
             $self->{line_count}++;
             
-            if ($self->{line_count} >= $self->{terminal_height} && 
+            # CRITICAL: Pause BEFORE terminal_height to leave room for pause message
+            my $pause_threshold = $self->{terminal_height} - 2;  # Leave 2 lines for pause prompt
+            if ($self->{line_count} >= $pause_threshold && 
                 $self->{pagination_enabled} && 
                 -t STDIN) {
                 
