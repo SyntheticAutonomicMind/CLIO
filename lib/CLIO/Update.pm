@@ -163,7 +163,7 @@ sub get_latest_version {
 Check if an update is available (synchronous).
 
 Returns:
-- Hashref with update info if available, or undef if up-to-date or check failed
+- Hashref with {current_version, latest_version, update_available, error} fields
 
 =cut
 
@@ -171,17 +171,33 @@ sub check_for_updates {
     my ($self) = @_;
     
     my $current = $self->get_current_version();
-    my $latest = $self->get_latest_version();
+    my $latest_info = $self->get_latest_version();
     
-    return undef unless $latest && $latest->{version};
-    
-    # Compare versions
-    if ($self->_compare_versions($latest->{version}, $current) > 0) {
-        # Newer version available
-        return $latest;
+    # If we couldn't fetch latest version, return error
+    unless ($latest_info && $latest_info->{version}) {
+        return {
+            current_version => $current,
+            latest_version => 'unknown',
+            update_available => 0,
+            error => 'Failed to fetch latest version from GitHub'
+        };
     }
     
-    return undef;  # Up to date
+    my $latest = $latest_info->{version};
+    
+    # Compare versions
+    my $update_available = 0;
+    if ($self->_compare_versions($latest, $current) > 0) {
+        # Newer version available
+        $update_available = 1;
+    }
+    
+    return {
+        current_version => $current,
+        latest_version => $latest,
+        update_available => $update_available,
+        release_info => $latest_info,
+    };
 }
 
 =head2 check_for_updates_async
@@ -222,28 +238,28 @@ sub check_for_updates_async {
     
     if ($pid == 0) {
         # Child process - check for updates
-        my $update_info = $self->check_for_updates();
+        my $result = $self->check_for_updates();
+        
+        # Ensure cache dir exists
+        mkpath($self->{cache_dir}) unless -d $self->{cache_dir};
         
         # Write to cache
-        if ($update_info) {
-            my $cache_content = sprintf("%s\n", $update_info->{version});
-            
-            # Ensure cache dir exists
-            mkpath($self->{cache_dir}) unless -d $self->{cache_dir};
-            
-            # Write available version
+        my $cache_file = File::Spec->catfile($self->{cache_dir}, 'update_check_cache');
+        
+        if ($result && !$result->{error} && $result->{update_available}) {
+            # Update available - cache the version
             open my $fh, '>', $cache_file or exit 1;
-            print $fh $cache_content;
+            print $fh $result->{latest_version} . "\n";
             close $fh;
             
             # Also write detailed info
             my $info_file = File::Spec->catfile($self->{cache_dir}, 'update_info');
             open my $info_fh, '>', $info_file or exit 1;
             require JSON::PP;
-            print $info_fh JSON::PP->new->encode($update_info);
+            print $info_fh JSON::PP->new->encode($result->{release_info} || {});
             close $info_fh;
         } else {
-            # No update available - touch cache file to mark check complete
+            # No update available or error - touch cache file to mark check complete
             open my $fh, '>', $cache_file or exit 1;
             print $fh "up-to-date\n";
             close $fh;
