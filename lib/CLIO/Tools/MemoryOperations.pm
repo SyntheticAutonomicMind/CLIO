@@ -3,6 +3,7 @@ package CLIO::Tools::MemoryOperations;
 use strict;
 use warnings;
 use parent 'CLIO::Tools::Tool';
+use CLIO::Util::ConfigPath qw(get_config_dir);
 use JSON::PP qw(encode_json decode_json);
 use File::Spec;
 use feature 'say';
@@ -282,9 +283,9 @@ sub recall_sessions {
     
     my $result;
     eval {
-        # Find sessions directory
+        # Find sessions directory (use get_config_dir for platform-aware path)
         my $sessions_dir = '.clio/sessions';
-        $sessions_dir = File::Spec->catdir($ENV{HOME}, '.clio', 'sessions') 
+        $sessions_dir = File::Spec->catdir(get_config_dir(), 'sessions') 
             unless -d $sessions_dir;
         
         return $self->error_result("Sessions directory not found") unless -d $sessions_dir;
