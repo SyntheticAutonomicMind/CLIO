@@ -793,6 +793,130 @@ sub display_error_message {
     print $self->colorize("ERROR: ", 'ERROR'), $message, "\n";
 }
 
+=head2 display_success_message
+
+Display a success message with [OK] prefix
+
+=cut
+
+sub display_success_message {
+    my ($self, $message) = @_;
+    
+    # Add to screen buffer
+    $self->add_to_buffer('success', $message);
+    
+    print $self->colorize("[OK] ", 'success_message'), $message, "\n";
+}
+
+=head2 display_warning_message
+
+Display a warning message with [WARN] prefix
+
+=cut
+
+sub display_warning_message {
+    my ($self, $message) = @_;
+    
+    # Add to screen buffer
+    $self->add_to_buffer('warning', $message);
+    
+    print $self->colorize("[WARN] ", 'warning_message'), $message, "\n";
+}
+
+=head2 display_info_message
+
+Display an informational message with [INFO] prefix
+
+=cut
+
+sub display_info_message {
+    my ($self, $message) = @_;
+    
+    # Add to screen buffer
+    $self->add_to_buffer('info', $message);
+    
+    print $self->colorize("[INFO] ", 'info_message'), $message, "\n";
+}
+
+=head2 display_command_header
+
+Display a major command output header with double-line border
+
+Arguments:
+- $text: Header text
+- $width: Optional width (default: 70)
+
+=cut
+
+sub display_command_header {
+    my ($self, $text, $width) = @_;
+    $width ||= 70;
+    
+    print "\n";
+    print $self->colorize("═" x $width, 'command_header'), "\n";
+    print $self->colorize($text, 'command_header'), "\n";
+    print $self->colorize("═" x $width, 'command_header'), "\n";
+    print "\n";
+}
+
+=head2 display_section_header
+
+Display a section/subsection header with single-line border
+
+Arguments:
+- $text: Header text
+- $width: Optional width (default: 70)
+
+=cut
+
+sub display_section_header {
+    my ($self, $text, $width) = @_;
+    $width ||= 70;
+    
+    print $self->colorize($text, 'command_subheader'), "\n";
+    print $self->colorize("─" x $width, 'dim'), "\n";
+}
+
+=head2 display_key_value
+
+Display a key-value pair with consistent formatting
+
+Arguments:
+- $key: Label/key text
+- $value: Value text
+- $key_width: Optional key column width (default: 20)
+
+=cut
+
+sub display_key_value {
+    my ($self, $key, $value, $key_width) = @_;
+    $key_width ||= 20;
+    
+    printf "%-${key_width}s %s\n",
+        $self->colorize($key . ":", 'command_label'),
+        $self->colorize($value, 'command_value');
+}
+
+=head2 display_list_item
+
+Display a list item (bulleted or numbered)
+
+Arguments:
+- $item: Item text
+- $num: Optional number (if provided, creates numbered list)
+
+=cut
+
+sub display_list_item {
+    my ($self, $item, $num) = @_;
+    
+    if (defined $num) {
+        print $self->colorize("  $num. ", 'command_label'), $item, "\n";
+    } else {
+        print $self->colorize("  • ", 'command_label'), $item, "\n";
+    }
+}
+
 =head2 request_collaboration
 
 Request user input mid-execution for agent collaboration.
