@@ -1315,12 +1315,12 @@ sub send_request {
     if ($data->{id} && $self->{session}) {
         my $response_id = $data->{id};
         $self->{session}{lastGitHubCopilotResponseId} = $response_id;
-        print STDERR "[INFO][APIManager] ✅ Stored response_id (fallback mechanism): " . substr($response_id, 0, 30) . "...\n" if should_log('INFO');
+        print STDERR "[INFO][APIManager] ✓ Stored response_id (fallback mechanism): " . substr($response_id, 0, 30) . "...\n" if should_log('INFO');
         
         # Persist session immediately to maintain billing continuity
         if ($self->{session}->can('save')) {
             $self->{session}->save();
-            print STDERR "[INFO][APIManager] ✅ Session saved with response_id\n" if should_log('INFO');
+            print STDERR "[INFO][APIManager] ✓ Session saved with response_id\n" if should_log('INFO');
         } else {
             print STDERR "[ERROR][APIManager] Session object cannot save! Response ID will be lost!\n";
         }
@@ -1639,7 +1639,7 @@ sub send_request_streaming {
                     # This matches SAM's approach: statefulMarker = statefulMarker ?? id
                     if ($data->{id} && $self->{session}) {
                         $self->{session}{lastGitHubCopilotResponseId} = $data->{id};
-                        print STDERR "[INFO][APIManager] ✅ Stored response_id (streaming, fallback): " . 
+                        print STDERR "[INFO][APIManager] ✓ Stored response_id (streaming, fallback): " . 
                                      substr($data->{id}, 0, 30) . "...\n" if should_log('INFO');
                         
                         print STDERR "[DEBUG][APIManager] Session object type: " . ref($self->{session}) . "\n" if should_log('DEBUG');
@@ -1648,7 +1648,7 @@ sub send_request_streaming {
                         if ($self->{session}->can('save')) {
                             print STDERR "[DEBUG][APIManager] Calling session->save()...\n" if should_log('DEBUG');
                             $self->{session}->save();
-                            print STDERR "[INFO][APIManager] ✅ Session saved with response_id (streaming)\n" if should_log('INFO');
+                            print STDERR "[INFO][APIManager] ✓ Session saved with response_id (streaming)\n" if should_log('INFO');
                         } else {
                             print STDERR "[ERROR][APIManager] Session object cannot save! Response ID will be lost!\n";
                         }
@@ -2274,14 +2274,14 @@ sub _store_stateful_marker {
     # Keep only last 10 markers (prevent unbounded growth)
     splice(@{$self->{session}{_stateful_markers}}, 10);
     
-    print STDERR "[INFO][APIManager] ✅ Stored stateful_marker for model '$model': " . 
+    print STDERR "[INFO][APIManager] ✓ Stored stateful_marker for model '$model': " . 
                  substr($marker, 0, 30) . "... (total markers: " . 
                  scalar(@{$self->{session}{_stateful_markers}}) . ")\n" if should_log('INFO');
     
     # Persist session
     if ($self->{session}->can('save')) {
         $self->{session}->save();
-        print STDERR "[INFO][APIManager] ✅ Session saved with stateful_marker\n" if should_log('INFO');
+        print STDERR "[INFO][APIManager] ✓ Session saved with stateful_marker\n" if should_log('INFO');
     } else {
         print STDERR "[ERROR][APIManager] Session object cannot save! stateful_marker will be lost!\n";
     }
@@ -2325,7 +2325,7 @@ sub _get_stateful_marker_for_model {
     # Search for most recent marker matching this model
     for my $marker_obj (@{$self->{session}{_stateful_markers}}) {
         if ($marker_obj->{model} eq $model) {
-            print STDERR "[INFO][APIManager] ✅ Found stateful_marker for model '$model': " .
+            print STDERR "[INFO][APIManager] ✓ Found stateful_marker for model '$model': " .
                          substr($marker_obj->{marker}, 0, 30) . "...\n" if should_log('INFO');
             return $marker_obj->{marker};
         }
