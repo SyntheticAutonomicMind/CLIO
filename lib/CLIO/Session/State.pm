@@ -71,11 +71,21 @@ sub save {
     if ($ENV{CLIO_DEBUG} || $self->{debug}) {
         print "[STATE][FORCE] Entered save method for $self->{file}\n";
     }
+    
+    # Save project-level LTM to .clio/ltm.json (shared across all sessions)
+    if ($self->{ltm}) {
+        my $ltm_file = File::Spec->catfile($self->{working_directory}, '.clio', 'ltm.json');
+        eval { $self->{ltm}->save($ltm_file); };
+        if ($@) {
+            print STDERR "[WARN][State] Failed to save LTM: $@\n" if should_log('WARNING');
+        }
+    }
+    
     open my $fh, '>', $self->{file} or die "Cannot save session: $!";
     my $data = {
         history => $self->{history},
         stm     => $self->{stm}->{history},
-        ltm     => $self->{ltm}->{store},
+        # LTM is now saved separately to .clio/ltm.json (project-level, not session-level)
         yarn    => $self->{yarn}->{threads},
         working_directory => $self->{working_directory},
         created_at => $self->{created_at},  # Preserve session creation timestamp
@@ -105,8 +115,27 @@ sub load {
     my $data = eval { decode_json($json) };
     print STDERR "[DEBUG][State::load] loaded data: ", (defined $data ? 'ok' : 'undef'), "\n" if $args{debug} || $ENV{CLIO_DEBUG};
     return unless $data;
+    
+    # Determine working directory for loading project LTM
+    my $working_dir = $data->{working_directory} || getcwd();
+    
+    # Load project-level LTM from .clio/ltm.json (shared across all sessions)
+    my $ltm_file = File::Spec->catfile($working_dir, '.clio', 'ltm.json');
+    my $ltm = CLIO::Memory::LongTerm->load($ltm_file, debug => $args{debug});
+    
+    # Fallback: If old session has ltm->{store} data, migrate it
+    if (!-e $ltm_file && $data->{ltm} && ref($data->{ltm}) eq 'HASH') {
+        print STDERR "[INFO][State] Migrating legacy LTM data to new format\n" if $args{debug} || $ENV{CLIO_DEBUG};
+        $ltm = CLIO::Memory::LongTerm->new(debug => $args{debug});
+        # Convert old store format to discoveries
+        for my $key (keys %{$data->{ltm}}) {
+            $ltm->add_discovery("$key: $data->{ltm}{$key}", 0.5, 0);
+        }
+        # Save migrated data
+        eval { $ltm->save($ltm_file); };
+    }
+    
     my $stm  = CLIO::Memory::ShortTerm->new(history => $data->{stm} // [], debug => $args{debug});
-    my $ltm  = CLIO::Memory::LongTerm->new(store => $data->{ltm} // {}, debug => $args{debug});
     my $yarn = CLIO::Memory::YaRN->new(threads => $data->{yarn} // {}, debug => $args{debug});
     my $self = {
         session_id => $session_id,
@@ -116,7 +145,7 @@ sub load {
         stm        => $stm,
         ltm        => $ltm,
         yarn       => $yarn,
-        working_directory => $data->{working_directory} || getcwd(),
+        working_directory => $working_dir,
         lastGitHubCopilotResponseId => $data->{lastGitHubCopilotResponseId},
         # Load session creation timestamp (for proper resume ordering)
         created_at => $data->{created_at} // time(),

@@ -12,6 +12,7 @@ use CLIO::Memory::LongTerm;
 use CLIO::Memory::YaRN;
 use File::Spec;
 use File::Basename;
+use Cwd;
 use Digest::SHA qw(sha256_hex);
 use Time::HiRes qw(gettimeofday);
 
@@ -22,6 +23,10 @@ sub new {
         my $dbg = "[DEBUG][Manager::new] called with args: " . join(", ", map { "$_=$args{$_}" } keys %args) . "\n";
         print STDERR $dbg; print $dbg;
     }
+    
+    # Determine working directory for loading project LTM
+    my $working_dir = $args{working_directory} || Cwd::getcwd();
+    
     my $self = {
         session_id => $args{session_id} // _generate_id(),
         state      => undef,
@@ -31,8 +36,12 @@ sub new {
         yarn       => undef,
     };
     bless $self, $class;
+    
+    # Load project-level LTM from .clio/ltm.json (shared across all sessions in this project)
+    my $ltm_file = File::Spec->catfile($working_dir, '.clio', 'ltm.json');
+    my $ltm = CLIO::Memory::LongTerm->load($ltm_file, debug => $self->{debug});
+    
     my $stm  = CLIO::Memory::ShortTerm->new(debug => $self->{debug});
-    my $ltm  = CLIO::Memory::LongTerm->new(debug => $self->{debug});
     my $yarn = CLIO::Memory::YaRN->new(debug => $self->{debug});
     $self->{stm}  = $stm;
     $self->{ltm}  = $ltm;
@@ -40,7 +49,7 @@ sub new {
     $self->{state} = CLIO::Session::State->new(
         session_id => $self->{session_id},
         debug      => $self->{debug},
-        working_directory => $args{working_directory},
+        working_directory => $working_dir,
         stm        => $stm,
         ltm        => $ltm,
         yarn       => $yarn,
