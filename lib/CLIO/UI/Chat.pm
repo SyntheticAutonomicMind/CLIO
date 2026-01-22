@@ -632,11 +632,11 @@ sub check_for_updates_async {
     my $updater = CLIO::Update->new(debug => $self->{debug});
     
     # Check if we have cached update info
-    my $cached = $updater->get_cached_update_status();
+    my $available_version = $updater->get_available_update();
     
-    if ($cached && $cached->{update_available}) {
+    if ($available_version) {
         # Display update notification
-        $self->display_system_message("An update is available ($cached->{latest_version}). Run " . 
+        $self->display_system_message("An update is available ($available_version). Run " . 
             $self->colorize('/update install', 'command') . " to upgrade.");
     }
     
@@ -3688,10 +3688,10 @@ sub handle_update_command {
         print "Current version: " . $self->colorize($current, 'command_value') . "\n";
         
         # Check if cached update info exists
-        my $cached = $updater->get_cached_update_status();
+        my $available_version = $updater->get_available_update();
         
-        if ($cached && $cached->{update_available}) {
-            print "Latest version:  " . $self->colorize($cached->{latest_version}, 'success') . "\n";
+        if ($available_version) {
+            print "Latest version:  " . $self->colorize($available_version, 'success') . "\n";
             print "\n";
             $self->display_success_message("Update available!");
             print "\n";
