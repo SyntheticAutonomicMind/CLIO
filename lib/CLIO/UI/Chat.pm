@@ -220,6 +220,9 @@ sub run {
     # Display header
     $self->display_header();
     
+    # Background update check (non-blocking)
+    $self->check_for_updates_async();
+    
     # Main loop
     while (1) {
         # Get user input
@@ -606,6 +609,60 @@ sub run {
 Display the static retro BBS-style header (shown once at top)
 
 =cut
+
+=head2 check_for_updates_async
+
+Check for updates in background (non-blocking)
+
+=cut
+
+sub check_for_updates_async {
+    my ($self) = @_;
+    
+    # Load Update module
+    eval {
+        require CLIO::Update;
+    };
+    if ($@) {
+        # Silently fail if module not available
+        print STDERR "[DEBUG][Chat] Update module not available: $@\n" if should_log('DEBUG');
+        return;
+    }
+    
+    my $updater = CLIO::Update->new(debug => $self->{debug});
+    
+    # Check if we have cached update info
+    my $cached = $updater->get_cached_update_status();
+    
+    if ($cached && $cached->{update_available}) {
+        # Display update notification
+        $self->display_system_message("An update is available ($cached->{latest_version}). Run " . 
+            $self->colorize('/update install', 'command') . " to upgrade.");
+    }
+    
+    # Fork background process to check for updates
+    # Parent returns immediately, child checks and caches result
+    my $pid = fork();
+    
+    if (!defined $pid) {
+        # Fork failed - silently continue
+        print STDERR "[WARNING][Chat] Failed to fork update checker: $!\n" if should_log('WARNING');
+        return;
+    }
+    
+    if ($pid == 0) {
+        # Child process - check for updates
+        eval {
+            $updater->check_for_updates();
+        };
+        if ($@) {
+            print STDERR "[DEBUG][UpdateCheck] Failed: $@\n" if should_log('DEBUG');
+        }
+        exit 0;  # Child exits
+    }
+    
+    # Parent continues - don't wait for child
+}
 
 sub display_header {
     my ($self) = @_;
@@ -1347,6 +1404,9 @@ sub handle_command {
     elsif ($cmd eq 'memory' || $cmd eq 'mem' || $cmd eq 'ltm') {
         $self->handle_memory_command(@args);
     }
+    elsif ($cmd eq 'update') {
+        $self->handle_update_command(@args);
+    }
     else {
         $self->display_error_message("Unknown command: /$cmd (type /help for help)");
     }
@@ -1427,6 +1487,13 @@ sub display_help {
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory list [type]', 'prompt_indicator'), 'List all or filtered patterns');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory store <type>', 'prompt_indicator'), 'Store pattern (via AI)');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory clear', 'prompt_indicator'), 'Clear all patterns');
+    push @help_lines, "";
+    
+    push @help_lines, $self->colorize("UPDATES", 'command_subheader');
+    push @help_lines, $self->colorize("─" x 62, 'dim');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/update', 'prompt_indicator'), 'Show update status');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/update check', 'prompt_indicator'), 'Check for available updates');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/update install', 'prompt_indicator'), 'Install latest version');
     push @help_lines, "";
     
     push @help_lines, $self->colorize("DEVELOPER", 'command_subheader');
@@ -3506,6 +3573,145 @@ sub handle_memory_command {
         $self->display_list_item("/memory [list|ls] [type] - List patterns");
         $self->display_list_item("/memory store <type> [data] - Store pattern (requires AI)");
         $self->display_list_item("/memory clear - Clear all patterns");
+    }
+}
+
+=head2 handle_update_command
+
+Handle /update command for checking and installing updates
+
+=cut
+
+sub handle_update_command {
+    my ($self, @args) = @_;
+    
+    # Load Update module
+    eval {
+        require CLIO::Update;
+    };
+    if ($@) {
+        $self->display_error_message("Update module not available: $@");
+        return;
+    }
+    
+    my $updater = CLIO::Update->new(debug => $self->{debug});
+    
+    # Parse subcommand
+    my $subcmd = @args ? lc($args[0]) : 'status';
+    
+    if ($subcmd eq 'check') {
+        # Force update check
+        $self->display_command_header("UPDATE CHECK");
+        $self->display_info_message("Checking for updates...");
+        print "\n";
+        
+        my $result = $updater->check_for_updates();
+        
+        if ($result->{error}) {
+            $self->display_error_message("Update check failed: $result->{error}");
+            return;
+        }
+        
+        my $current = $result->{current_version} || 'unknown';
+        my $latest = $result->{latest_version} || 'unknown';
+        
+        print "Current version: " . $self->colorize($current, 'command_value') . "\n";
+        print "Latest version:  " . $self->colorize($latest, 'command_value') . "\n";
+        print "\n";
+        
+        if ($result->{update_available}) {
+            $self->display_success_message("Update available: $latest");
+            print "\n";
+            print "Run " . $self->colorize('/update install', 'command') . " to install\n";
+        } else {
+            $self->display_success_message("You are running the latest version");
+        }
+        print "\n";
+    }
+    elsif ($subcmd eq 'install') {
+        # Install latest version
+        $self->display_command_header("UPDATE INSTALLATION");
+        
+        # First check what's available
+        my $check_result = $updater->check_for_updates();
+        
+        if ($check_result->{error}) {
+            $self->display_error_message("Cannot check for updates: $check_result->{error}");
+            return;
+        }
+        
+        unless ($check_result->{update_available}) {
+            $self->display_info_message("You are already running the latest version ($check_result->{current_version})");
+            return;
+        }
+        
+        print "Current version: " . $self->colorize($check_result->{current_version}, 'muted') . "\n";
+        print "New version:     " . $self->colorize($check_result->{latest_version}, 'command_value') . "\n";
+        print "\n";
+        
+        # Confirm installation
+        print "Install update? [y/N]: ";
+        my $confirm = <STDIN>;
+        chomp $confirm if $confirm;
+        
+        unless ($confirm && $confirm =~ /^y/i) {
+            $self->display_info_message("Update cancelled");
+            return;
+        }
+        
+        print "\n";
+        $self->display_info_message("Installing update...");
+        print "\n";
+        
+        my $result = $updater->install_latest();
+        
+        if ($result->{success}) {
+            $self->display_success_message("Update installed successfully!");
+            print "\n";
+            $self->display_info_message("Please restart CLIO to use the new version");
+            print "\n";
+            print "Run: " . $self->colorize('./clio', 'command') . "\n";
+        } else {
+            $self->display_error_message("Update installation failed: " . ($result->{error} || 'Unknown error'));
+            print "\n";
+            if ($result->{rollback}) {
+                $self->display_info_message("Previous version restored (rollback successful)");
+            }
+        }
+        print "\n";
+    }
+    elsif ($subcmd eq 'status' || $subcmd eq '') {
+        # Show update status
+        $self->display_command_header("UPDATE STATUS");
+        
+        my $current = $updater->get_current_version();
+        print "Current version: " . $self->colorize($current, 'command_value') . "\n";
+        
+        # Check if cached update info exists
+        my $cached = $updater->get_cached_update_status();
+        
+        if ($cached && $cached->{update_available}) {
+            print "Latest version:  " . $self->colorize($cached->{latest_version}, 'success') . "\n";
+            print "\n";
+            $self->display_success_message("Update available!");
+            print "\n";
+            print "Run " . $self->colorize('/update install', 'command') . " to install\n";
+        } else {
+            print "\n";
+            $self->display_info_message("No update information cached");
+            print "\n";
+            print "Run " . $self->colorize('/update check', 'command') . " to check for updates\n";
+        }
+        print "\n";
+    }
+    else {
+        $self->display_error_message("Unknown subcommand: $subcmd");
+        print "\n";
+        print "Available commands:\n";
+        $self->display_list_item("/update status - Show current version and update status");
+        $self->display_list_item("/update check - Check for available updates");
+        $self->display_list_item("/update install - Install the latest version");
+        print "\n";
     }
 }
 
