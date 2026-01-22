@@ -1,4 +1,4 @@
-# CLIO Project Instructions - COMPREHENSIVE HANDOFF
+# CLIO Project Instructions
 
 **Project:** CLIO - Command Line Intelligence Orchestrator  
 **Language:** Perl 5.32+  
