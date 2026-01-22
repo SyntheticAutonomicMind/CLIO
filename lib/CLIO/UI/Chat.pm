@@ -1581,30 +1581,27 @@ Display help for /api commands
 sub _display_api_help {
     my ($self) = @_;
     
-    print "\n";
-    print $self->colorize("API COMMANDS", 'DATA'), "\n";
-    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n\n";
+    $self->display_command_header("API COMMANDS");
     
-    print $self->colorize("  /api show", 'PROMPT'), "                    Display current API configuration\n";
-    print $self->colorize("  /api set model <name>", 'PROMPT'), "        Set AI model\n";
-    print $self->colorize("  /api set provider <name>", 'PROMPT'), "     Set provider (github_copilot, openai, etc.)\n";
-    print $self->colorize("  /api set base <url>", 'PROMPT'), "          Set API base URL\n";
-    print $self->colorize("  /api set key <value>", 'PROMPT'), "         Set API key (global only)\n";
-    print $self->colorize("  /api providers", 'PROMPT'), "               Show available providers and their details\n";
-    print $self->colorize("  /api models", 'PROMPT'), "                  List available models\n";
-    print $self->colorize("  /api login", 'PROMPT'), "                   Authenticate with GitHub Copilot\n";
-    print $self->colorize("  /api logout", 'PROMPT'), "                  Sign out from GitHub\n";
+    $self->display_list_item("/api show - Display current API configuration");
+    $self->display_list_item("/api set model <name> - Set AI model");
+    $self->display_list_item("/api set provider <name> - Set provider (github_copilot, openai, etc.)");
+    $self->display_list_item("/api set base <url> - Set API base URL");
+    $self->display_list_item("/api set key <value> - Set API key (global only)");
+    $self->display_list_item("/api providers - Show available providers and their details");
+    $self->display_list_item("/api models - List available models");
+    $self->display_list_item("/api login - Authenticate with GitHub Copilot");
+    $self->display_list_item("/api logout - Sign out from GitHub");
     
     print "\n";
-    print $self->colorize("FLAGS", 'DATA'), "\n";
-    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n";
+    $self->display_section_header("FLAGS");
     print "  --session    Save setting to this session only (not global)\n";
     print "\n";
-    print $self->colorize("EXAMPLES", 'DATA'), "\n";
-    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n";
+    $self->display_section_header("EXAMPLES");
     print "  /api set model claude-sonnet-4          # Global + session\n";
     print "  /api set model gpt-4o --session         # This session only\n";
     print "  /api set provider github_copilot        # Switch provider\n";
+    print "\n";
 }
 
 =head2 _display_api_config
@@ -1641,13 +1638,12 @@ sub _display_api_config {
         }
     }
     
-    print "\n";
-    print $self->colorize("API CONFIGURATION", 'DATA'), "\n";
-    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n\n";
-    printf "  %-12s %s\n", "Provider:", $provider || '[not set]';
-    printf "  %-12s %s\n", "API Key:", $auth_status;
-    printf "  %-12s %s\n", "API Base:", $base || '[default]';
-    printf "  %-12s %s\n", "Model:", $model || '[default]';
+    $self->display_command_header("API CONFIGURATION");
+    
+    $self->display_key_value("Provider", $provider || '[not set]');
+    $self->display_key_value("API Key", $auth_status);
+    $self->display_key_value("API Base", $base || '[default]');
+    $self->display_key_value("Model", $model || '[default]');
     
     # Show session-specific overrides if any
     if ($self->{session} && $self->{session}->state()) {
@@ -1656,11 +1652,11 @@ sub _display_api_config {
         
         if (%$api_config) {
             print "\n";
-            print $self->colorize("SESSION OVERRIDES", 'DATA'), "\n";
-            print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n";
+            $self->display_section_header("SESSION OVERRIDES");
             for my $key (sort keys %$api_config) {
-                printf "  %-12s %s\n", "$key:", $api_config->{$key};
+                $self->display_key_value($key, $api_config->{$key});
             }
+            print "\n";
         }
     }
 }
@@ -2786,22 +2782,20 @@ Display help for /git commands
 sub _display_git_help {
     my ($self) = @_;
     
-    print "\n";
-    print $self->colorize("GIT COMMANDS", 'DATA'), "\n";
-    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n\n";
+    $self->display_command_header("GIT COMMANDS");
     
-    print $self->colorize("  /git status", 'PROMPT'), "             Show git status\n";
-    print $self->colorize("  /git diff [file]", 'PROMPT'), "        Show git diff\n";
-    print $self->colorize("  /git log [n]", 'PROMPT'), "            Show recent commits (default: 10)\n";
-    print $self->colorize("  /git commit [msg]", 'PROMPT'), "       Stage and commit changes\n";
+    $self->display_list_item("/git status - Show git status");
+    $self->display_list_item("/git diff [file] - Show git diff");
+    $self->display_list_item("/git log [n] - Show recent commits (default: 10)");
+    $self->display_list_item("/git commit [msg] - Stage and commit changes");
     
     print "\n";
-    print $self->colorize("EXAMPLES", 'DATA'), "\n";
-    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n";
+    $self->display_section_header("EXAMPLES");
     print "  /git status                          # See changes\n";
     print "  /git diff lib/CLIO/UI/Chat.pm        # Diff specific file\n";
     print "  /git log 5                           # Last 5 commits\n";
     print "  /git commit \"fix: resolve bug\"       # Commit with message\n";
+    print "\n";
 }
 
 =head2 handle_edit_command
@@ -4344,11 +4338,7 @@ sub handle_status_command {
         return;
     }
     
-    print "\n";
-    print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
-    print $self->colorize("GIT STATUS", 'DATA'), "\n";
-    print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
-    print "\n";
+    $self->display_command_header("GIT STATUS");
     print $output;
     print "\n";
 }
@@ -4380,9 +4370,8 @@ sub handle_diff_command {
     
     print "\n";
     print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
-    print $self->colorize("GIT DIFF" . ($file ? " - $file" : ""), 'DATA'), "\n";
-    print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
-    print "\n";
+    my $header = "GIT DIFF" . ($file ? " - $file" : "");
+    $self->display_command_header($header);
     print $output;
     print "\n";
 }
@@ -4412,11 +4401,7 @@ sub handle_gitlog_command {
         return;
     }
     
-    print "\n";
-    print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
-    print $self->colorize("GIT LOG (last $count commits)", 'DATA'), "\n";
-    print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
-    print "\n";
+    $self->display_command_header("GIT LOG (last $count commits)");
     print $output;
     print "\n";
 }
@@ -4673,15 +4658,11 @@ sub handle_commit_command {
         return;
     }
     
-    print "\n";
-    print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
-    print $self->colorize("GIT COMMIT", 'DATA'), "\n";
-    print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
-    print "\n";
+    $self->display_command_header("GIT COMMIT");
     print $commit_output;
     print "\n";
     
-    $self->display_system_message("Changes committed successfully");
+    $self->display_success_message("Changes committed successfully");
 }
 
 =head2 handle_exec_command
