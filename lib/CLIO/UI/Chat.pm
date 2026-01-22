@@ -1376,68 +1376,81 @@ sub display_help {
     # Build help text as array of lines for pagination
     my @help_lines = ();
     
+    # Header
     push @help_lines, "";
-    push @help_lines, $self->colorize("━ CLIO Commands ━" . ("━" x 44), 'DATA');
-    push @help_lines, "";
-    
-    push @help_lines, $self->colorize("━ BASICS ━" . ("━" x 52), 'DATA');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/help, /h', 'PROMPT'), 'Display this help');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/exit, /quit, /q', 'PROMPT'), 'Exit the chat');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/clear', 'PROMPT'), 'Clear the screen');
+    push @help_lines, $self->colorize("═" x 62, 'command_header');
+    push @help_lines, $self->colorize("CLIO COMMANDS", 'command_header');
+    push @help_lines, $self->colorize("═" x 62, 'command_header');
     push @help_lines, "";
     
-    push @help_lines, $self->colorize("━ API & CONFIG ━" . ("━" x 46), 'DATA');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api', 'PROMPT'), 'API settings (model, provider, login)');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api set model <name>', 'PROMPT'), 'Set AI model');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api models', 'PROMPT'), 'List available models');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/config', 'PROMPT'), 'Global configuration');
+    # Sections
+    push @help_lines, $self->colorize("BASICS", 'command_subheader');
+    push @help_lines, $self->colorize("─" x 62, 'dim');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/help, /h', 'prompt_indicator'), 'Display this help');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/exit, /quit, /q', 'prompt_indicator'), 'Exit the chat');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/clear', 'prompt_indicator'), 'Clear the screen');
     push @help_lines, "";
     
-    push @help_lines, $self->colorize("━ SESSION ━" . ("━" x 51), 'DATA');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/session', 'PROMPT'), 'Session management');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/session list', 'PROMPT'), 'List all sessions');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/session switch', 'PROMPT'), 'Switch sessions');
+    push @help_lines, $self->colorize("API & CONFIG", 'command_subheader');
+    push @help_lines, $self->colorize("─" x 62, 'dim');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api', 'prompt_indicator'), 'API settings (model, provider, login)');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api set model <name>', 'prompt_indicator'), 'Set AI model');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api models', 'prompt_indicator'), 'List available models');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/config', 'prompt_indicator'), 'Global configuration');
     push @help_lines, "";
     
-    push @help_lines, $self->colorize("━ FILE & GIT ━" . ("━" x 48), 'DATA');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/file', 'PROMPT'), 'File operations');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/file read <path>', 'PROMPT'), 'View file');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/git', 'PROMPT'), 'Git operations');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/git status', 'PROMPT'), 'Show git status');
+    push @help_lines, $self->colorize("SESSION", 'command_subheader');
+    push @help_lines, $self->colorize("─" x 62, 'dim');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/session', 'prompt_indicator'), 'Session management');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/session list', 'prompt_indicator'), 'List all sessions');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/session switch', 'prompt_indicator'), 'Switch sessions');
     push @help_lines, "";
     
-    push @help_lines, $self->colorize("━ TODO ━" . ("━" x 54), 'DATA');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo', 'PROMPT'), "View agent's todo list");
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo add <text>', 'PROMPT'), 'Add todo');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo done <id>', 'PROMPT'), 'Complete todo');
+    push @help_lines, $self->colorize("FILE & GIT", 'command_subheader');
+    push @help_lines, $self->colorize("─" x 62, 'dim');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/file', 'prompt_indicator'), 'File operations');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/file read <path>', 'prompt_indicator'), 'View file');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/git', 'prompt_indicator'), 'Git operations');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/git status', 'prompt_indicator'), 'Show git status');
     push @help_lines, "";
     
-    push @help_lines, $self->colorize("━ MEMORY ━" . ("━" x 52), 'DATA');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory', 'PROMPT'), 'View long-term memory patterns');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory list [type]', 'PROMPT'), 'List all or filtered patterns');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory store <type>', 'PROMPT'), 'Store pattern (via AI)');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory clear', 'PROMPT'), 'Clear all patterns');
+    push @help_lines, $self->colorize("TODO", 'command_subheader');
+    push @help_lines, $self->colorize("─" x 62, 'dim');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo', 'prompt_indicator'), "View agent's todo list");
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo add <text>', 'prompt_indicator'), 'Add todo');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo done <id>', 'prompt_indicator'), 'Complete todo');
     push @help_lines, "";
     
-    push @help_lines, $self->colorize("━ DEVELOPER ━" . ("━" x 49), 'DATA');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/explain [file]', 'PROMPT'), 'Explain code');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/review [file]', 'PROMPT'), 'Review code');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/test [file]', 'PROMPT'), 'Generate tests');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/fix <file>', 'PROMPT'), 'Propose fixes');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/doc <file>', 'PROMPT'), 'Generate docs');
+    push @help_lines, $self->colorize("MEMORY", 'command_subheader');
+    push @help_lines, $self->colorize("─" x 62, 'dim');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory', 'prompt_indicator'), 'View long-term memory patterns');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory list [type]', 'prompt_indicator'), 'List all or filtered patterns');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory store <type>', 'prompt_indicator'), 'Store pattern (via AI)');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory clear', 'prompt_indicator'), 'Clear all patterns');
     push @help_lines, "";
     
-    push @help_lines, $self->colorize("━ SKILLS & PROMPTS ━" . ("━" x 42), 'DATA');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/skills', 'PROMPT'), 'Manage custom skills');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/prompt', 'PROMPT'), 'Manage system prompts');
+    push @help_lines, $self->colorize("DEVELOPER", 'command_subheader');
+    push @help_lines, $self->colorize("─" x 62, 'dim');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/explain [file]', 'prompt_indicator'), 'Explain code');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/review [file]', 'prompt_indicator'), 'Review code');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/test [file]', 'prompt_indicator'), 'Generate tests');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/fix <file>', 'prompt_indicator'), 'Propose fixes');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/doc <file>', 'prompt_indicator'), 'Generate docs');
     push @help_lines, "";
     
-    push @help_lines, $self->colorize("━ OTHER ━" . ("━" x 53), 'DATA');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/billing', 'PROMPT'), 'API usage stats');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/context', 'PROMPT'), 'Manage context files');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/exec <cmd>', 'PROMPT'), 'Run shell command');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/style, /theme', 'PROMPT'), 'Appearance settings');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/debug', 'PROMPT'), 'Toggle debug mode');
+    push @help_lines, $self->colorize("SKILLS & PROMPTS", 'command_subheader');
+    push @help_lines, $self->colorize("─" x 62, 'dim');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/skills', 'prompt_indicator'), 'Manage custom skills');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/prompt', 'prompt_indicator'), 'Manage system prompts');
+    push @help_lines, "";
+    
+    push @help_lines, $self->colorize("OTHER", 'command_subheader');
+    push @help_lines, $self->colorize("─" x 62, 'dim');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/billing', 'prompt_indicator'), 'API usage stats');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/context', 'prompt_indicator'), 'Manage context files');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/exec <cmd>', 'prompt_indicator'), 'Run shell command');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/style, /theme', 'prompt_indicator'), 'Appearance settings');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/debug', 'prompt_indicator'), 'Toggle debug mode');
     push @help_lines, "";
     
     # Output with pagination
@@ -3391,17 +3404,14 @@ sub handle_memory_command {
         }
         
         # Display
-        print "\n";
-        print $self->colorize("═" x 70, 'DATA'), "\n";
-        print $self->colorize("LONG-TERM MEMORY PATTERNS", 'DATA'), "\n";
-        print $self->colorize("═" x 70, 'DATA'), "\n";
-        print "\n";
+        $self->display_command_header("LONG-TERM MEMORY PATTERNS");
         
         if (@all_patterns == 0) {
-            print "No patterns stored yet.\n";
+            $self->display_info_message("No patterns stored yet");
             print "\n";
             print "Use /memory store <type> to add patterns:\n";
-            print "  Types: discovery, solution, pattern, workflow, failure, rule\n";
+            $self->display_list_item("Types: discovery, solution, pattern, workflow, failure, rule");
+            print "\n";
         } else {
             printf "Total: %d pattern%s", scalar(@all_patterns), (@all_patterns == 1 ? '' : 's');
             print " (filtered by: $filter_type)" if $filter_type;
@@ -3411,12 +3421,12 @@ sub handle_memory_command {
                 my $type = uc($entry->{type});
                 my $data = $entry->{data};
                 
-                print $self->colorize("[$type] ", 'THEME');
-                print $self->colorize($data->{title} || 'Untitled', 'DATA'), "\n";
+                print $self->colorize("[$type] ", 'command_subheader');
+                print $self->colorize($data->{title} || 'Untitled', 'command_value'), "\n";
                 
                 if ($entry->{type} eq 'discovery') {
                     print "  " . ($data->{content} || 'No content') . "\n";
-                    print $self->colorize("  Context: " . ($data->{context} || 'None'), 'SYSTEM'), "\n" if $data->{context};
+                    print $self->colorize("  Context: " . ($data->{context} || 'None'), 'muted'), "\n" if $data->{context};
                 }
                 elsif ($entry->{type} eq 'solution') {
                     print "  Problem: " . ($data->{problem} || 'Not specified') . "\n";
@@ -3424,14 +3434,14 @@ sub handle_memory_command {
                 }
                 elsif ($entry->{type} eq 'pattern') {
                     print "  " . ($data->{pattern} || 'No pattern') . "\n";
-                    print $self->colorize("  Usage: " . ($data->{usage} || 'None'), 'SYSTEM'), "\n" if $data->{usage};
+                    print $self->colorize("  Usage: " . ($data->{usage} || 'None'), 'muted'), "\n" if $data->{usage};
                 }
                 elsif ($entry->{type} eq 'workflow') {
                     my $steps = $data->{steps} || [];
                     if (ref($steps) eq 'ARRAY' && @$steps) {
                         my $num = 1;
                         for my $step (@$steps) {
-                            print "  $num. $step\n";
+                            $self->display_list_item($step, $num);
                             $num++;
                         }
                     }
@@ -3449,9 +3459,6 @@ sub handle_memory_command {
             }
         }
         
-        print $self->colorize("═" x 70, 'DATA'), "\n";
-        print "\n";
-        
     } elsif ($subcmd eq 'store') {
         # Store requires AI assistance - return prompt to be sent to AI
         my $type = $args[1] || '';
@@ -3462,13 +3469,13 @@ sub handle_memory_command {
         $prompt .= "Data: $data_text\n" if $data_text;
         $prompt .= "\nUse the memory_operations tool to store this pattern.";
         
-        $self->display_system_message("Requesting AI to store pattern in long-term memory...");
+        $self->display_info_message("Requesting AI to store pattern in long-term memory...");
         return (1, $prompt);  # Return prompt to be sent to AI
         
     } elsif ($subcmd eq 'clear') {
         # Confirm before clearing
         print "\n";
-        print $self->colorize("[WARN]️  This will clear ALL long-term memory patterns for this project!", 'WARN'), "\n";
+        $self->display_warning_message("This will clear ALL long-term memory patterns for this project!");
         print "Are you sure? (yes/no): ";
         
         my $response = <STDIN>;
@@ -3494,18 +3501,18 @@ sub handle_memory_command {
             if ($@) {
                 $self->display_error_message("Failed to clear LTM: $@");
             } else {
-                $self->display_system_message("Long-term memory cleared successfully");
+                $self->display_success_message("Long-term memory cleared successfully");
             }
         } else {
-            $self->display_system_message("Cancelled - no changes made");
+            $self->display_info_message("Cancelled - no changes made");
         }
         
     } else {
         $self->display_error_message("Unknown subcommand: $subcmd");
         print "Usage:\n";
-        print "  /memory [list|ls] [type]     - List patterns\n";
-        print "  /memory store <type> [data]  - Store pattern (requires AI)\n";
-        print "  /memory clear                - Clear all patterns\n";
+        $self->display_list_item("/memory [list|ls] [type] - List patterns");
+        $self->display_list_item("/memory store <type> [data] - Store pattern (requires AI)");
+        $self->display_list_item("/memory clear - Clear all patterns");
     }
 }
 
@@ -4787,23 +4794,21 @@ Display help for /session commands
 sub _display_session_help {
     my ($self) = @_;
     
-    print "\n";
-    print $self->colorize("SESSION COMMANDS", 'DATA'), "\n";
-    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n\n";
+    $self->display_command_header("SESSION COMMANDS");
     
-    print $self->colorize("  /session show", 'PROMPT'), "               Display current session info\n";
-    print $self->colorize("  /session list", 'PROMPT'), "               List all available sessions\n";
-    print $self->colorize("  /session switch", 'PROMPT'), "             Interactive session picker\n";
-    print $self->colorize("  /session switch <id>", 'PROMPT'), "        Switch to specific session\n";
-    print $self->colorize("  /session new", 'PROMPT'), "                Show how to create new session\n";
-    print $self->colorize("  /session clear", 'PROMPT'), "              Clear current session history\n";
+    $self->display_list_item("/session show - Display current session info");
+    $self->display_list_item("/session list - List all available sessions");
+    $self->display_list_item("/session switch - Interactive session picker");
+    $self->display_list_item("/session switch <id> - Switch to specific session");
+    $self->display_list_item("/session new - Show how to create new session");
+    $self->display_list_item("/session clear - Clear current session history");
     
     print "\n";
-    print $self->colorize("EXAMPLES", 'DATA'), "\n";
-    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n";
+    $self->display_section_header("EXAMPLES");
     print "  /session show                        # See current session\n";
     print "  /session list                        # See all sessions\n";
     print "  /session switch abc123-def456        # Switch by ID\n";
+    print "\n";
 }
 
 =head2 _display_session_info
@@ -4818,46 +4823,44 @@ sub _display_session_info {
     my $session_id = $self->{session} ? $self->{session}->{session_id} : 'unknown';
     my $state = $self->{session} ? $self->{session}->state() : {};
     
-    print "\n";
-    print $self->colorize("SESSION INFORMATION", 'DATA'), "\n";
-    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n\n";
+    $self->display_command_header("SESSION INFORMATION");
     
-    printf "  %-15s %s\n", "Session ID:", $session_id;
+    $self->display_key_value("Session ID", $session_id);
     
     # Working directory
     my $workdir = $state->{working_directory} || '.';
-    printf "  %-15s %s\n", "Working Dir:", $workdir;
+    $self->display_key_value("Working Dir", $workdir);
     
     # Created at
     if ($state->{created_at}) {
         my $created = localtime($state->{created_at});
-        printf "  %-15s %s\n", "Created:", $created;
+        $self->display_key_value("Created", $created);
     }
     
     # History count
     my $history_count = $state->{history} ? scalar(@{$state->{history}}) : 0;
-    printf "  %-15s %d messages\n", "History:", $history_count;
+    $self->display_key_value("History", "$history_count messages");
     
     # API config (session-specific)
     if ($state->{api_config} && %{$state->{api_config}}) {
         print "\n";
-        print $self->colorize("SESSION API CONFIG", 'DATA'), "\n";
-        print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n";
+        $self->display_section_header("SESSION API CONFIG");
         for my $key (sort keys %{$state->{api_config}}) {
-            printf "  %-15s %s\n", "$key:", $state->{api_config}{$key};
+            $self->display_key_value($key, $state->{api_config}{$key});
         }
     }
     
     # Billing info
     if ($state->{billing}) {
         print "\n";
-        print $self->colorize("SESSION USAGE", 'DATA'), "\n";
-        print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n";
+        $self->display_section_header("SESSION USAGE");
         my $billing = $state->{billing};
-        printf "  %-15s %d\n", "Requests:", $billing->{request_count} || 0;
-        printf "  %-15s %d\n", "Input tokens:", $billing->{input_tokens} || 0;
-        printf "  %-15s %d\n", "Output tokens:", $billing->{output_tokens} || 0;
+        $self->display_key_value("Requests", $billing->{request_count} || 0);
+        $self->display_key_value("Input tokens", $billing->{input_tokens} || 0);
+        $self->display_key_value("Output tokens", $billing->{output_tokens} || 0);
     }
+    
+    print "\n";
 }
 
 =head2 _list_sessions
