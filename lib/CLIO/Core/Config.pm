@@ -3,6 +3,7 @@ package CLIO::Core::Config;
 use strict;
 use warnings;
 use CLIO::Core::Logger qw(should_log);
+use CLIO::Util::ConfigPath qw(get_config_dir);
 use CLIO::Providers qw(get_provider list_providers provider_exists);
 use JSON::PP qw(encode_json decode_json);
 use File::Path qw(make_path);
@@ -15,7 +16,7 @@ CLIO::Core::Config - Configuration management for CLIO
 =head1 DESCRIPTION
 
 Manages configuration for API settings, model selection, and provider selection.
-Config file location: ~/.clio/config.json
+Config file location: ~/.clio/config.json (or ~/Documents/.clio on iOS)
 
 Only user-explicitly-set values are saved to config file.
 Provider defaults come from CLIO::Providers and are applied dynamically.
@@ -46,7 +47,7 @@ sub new {
     
     my $self = {
         debug => $args{debug} || 0,
-        config_dir => $args{config_dir} || File::Spec->catdir($ENV{HOME}, '.clio'),
+        config_dir => $args{config_dir} || get_config_dir(),
         config_file => undef,  # Will be set in _get_config_path
         config => {},
         user_set => {},  # Track which values user explicitly configured

@@ -3,6 +3,7 @@ package CLIO::Core::SkillManager;
 use strict;
 use warnings;
 use CLIO::Core::Logger qw(should_log);
+use CLIO::Util::ConfigPath qw(get_config_file);
 use JSON::PP qw(encode_json decode_json);
 use File::Spec;
 use File::Path qw(make_path);
@@ -135,7 +136,7 @@ sub new {
     my $self = {
         debug => $opts{debug} || 0,
         user_skills_file => $opts{user_skills_file} || 
-            File::Spec->catfile($ENV{HOME}, '.clio', 'skills.json'),
+            get_config_file('skills.json'),
         project_skills_file => $opts{project_skills_file} ||
             File::Spec->catfile('.clio', 'skills.json'),
         session_skills_file => $opts{session_skills_file},

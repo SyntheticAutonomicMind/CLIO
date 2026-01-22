@@ -4,6 +4,7 @@ package CLIO::Core::APIManager;
 use strict;
 use warnings;
 use CLIO::Core::Logger qw(should_log);
+use CLIO::Util::ConfigPath qw(get_config_dir);
 use CLIO::Providers qw(get_provider list_providers);
 use POSIX ":sys_wait_h"; # For WNOHANG
 use Time::HiRes qw(time sleep);  # High resolution time and sleep
@@ -1890,8 +1891,8 @@ sub send_request_async {
     $self->{start_time} = time();
     $self->{input} = $input;
     
-    # Create message file
-    my $message_dir = "$ENV{HOME}/.clio/messages";
+    # Create message file (use ConfigPath for writable directory)
+    my $message_dir = File::Spec->catdir(get_config_dir(), 'messages');
     mkdir $message_dir unless -d $message_dir;
     
     my $message_file = "$message_dir/$$.msg";

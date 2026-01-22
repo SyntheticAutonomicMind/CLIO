@@ -3,6 +3,7 @@ package CLIO::Core::GitHubCopilotModelsAPI;
 use strict;
 use warnings;
 use CLIO::Core::Logger qw(should_log);
+use CLIO::Util::ConfigPath qw(get_config_dir get_config_file);
 use JSON::PP qw(encode_json decode_json);
 use CLIO::Compat::HTTP;
 use File::Spec;
@@ -54,8 +55,7 @@ API endpoint: GET https://api.githubcopilot.com/models
 sub new {
     my ($class, %args) = @_;
     
-    my $cache_dir = File::Spec->catdir($ENV{HOME}, '.clio');
-    my $cache_file = File::Spec->catfile($cache_dir, 'models_cache.json');
+    my $cache_file = get_config_file('models_cache.json');
     
     # If api_key not provided, try to get it from GitHubAuth
     my $api_key = $args{api_key};
