@@ -3328,7 +3328,7 @@ sub handle_billing_command {
             $mult_display =~ s/\.?0+x$/x/;  # Strip trailing zeros
         }
         
-        print $self->colorize("⚠️  Premium Model Usage:", 'LABEL'), "\n";
+        print $self->colorize("[WARN] Premium Model Usage:", 'LABEL'), "\n";
         printf "  This model has a %s billing multiplier.\n", 
             $self->colorize($mult_display, 'DATA');
         print "  Excessive use may impact your GitHub Copilot subscription.\n";
