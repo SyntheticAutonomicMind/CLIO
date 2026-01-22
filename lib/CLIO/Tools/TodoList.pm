@@ -105,12 +105,12 @@ STEP 5 - REPEAT:
 
 ANTI-PATTERNS (What NOT To Do):
 
-❌ NEVER say "I'll create a todo list..." without calling this tool
-❌ NEVER describe todos in text without creating them in the system
-❌ NEVER try to update todos that don't exist yet (create first!)
-❌ NEVER batch completions - mark each complete immediately after finishing
-❌ NEVER have multiple todos "in-progress" (max 1 at a time)
-❌ NEVER forget to call update - the system cannot infer status from your text
+✗ NEVER say "I'll create a todo list..." without calling this tool
+✗ NEVER describe todos in text without creating them in the system
+✗ NEVER try to update todos that don't exist yet (create first!)
+✗ NEVER batch completions - mark each complete immediately after finishing
+✗ NEVER have multiple todos "in-progress" (max 1 at a time)
+✗ NEVER forget to call update - the system cannot infer status from your text
 
 ═══════════════════════════════════════════════════════════════
 
@@ -339,7 +339,7 @@ sub handle_read {
     
     my $output = "Todo list: $total items\n\n";
     $output .= "STATUS SUMMARY:\n";
-    $output .= "  ✅ Completed: " . scalar(@completed) . "\n";
+    $output .= "  ✓ Completed: " . scalar(@completed) . "\n";
     $output .= "  🔄 In Progress: " . scalar(@in_progress) . "\n";
     $output .= "  [ ] Not Started: " . scalar(@not_started) . "\n";
     $output .= "  ⚠️ Blocked: " . scalar(@blocked) . "\n" if @blocked;
@@ -367,7 +367,7 @@ sub handle_read {
     if (@completed) {
         $output .= "COMPLETED:\n";
         foreach my $todo (@completed) {
-            $output .= "  ✅ #$todo->{id}: $todo->{title}\n";
+            $output .= "  ✓ #$todo->{id}: $todo->{title}\n";
         }
         $output .= "\n";
     }
@@ -429,7 +429,7 @@ sub handle_write {
     }
     
     $output .= "NEW STATE:\n";
-    $output .= "  ✅ Completed: " . scalar(@completed) . "\n";
+    $output .= "  ✓ Completed: " . scalar(@completed) . "\n";
     $output .= "  🔄 In Progress: " . scalar(@in_progress) . "\n";
     $output .= "  [ ] Not Started: " . scalar(@not_started) . "\n\n";
     
@@ -479,7 +479,7 @@ sub handle_update {
     if (@{$result->{applied}}) {
         $output .= "UPDATES APPLIED:\n";
         foreach my $update (@{$result->{applied}}) {
-            $output .= "  ✅ $update\n";
+            $output .= "  ✓ $update\n";
         }
         $output .= "\n";
     }
@@ -487,7 +487,7 @@ sub handle_update {
     if (@{$result->{failed}}) {
         $output .= "FAILED UPDATES:\n";
         foreach my $failure (@{$result->{failed}}) {
-            $output .= "  ❌ $failure\n";
+            $output .= "  ✗ $failure\n";
         }
         $output .= "\n";
     }
@@ -499,7 +499,7 @@ sub handle_update {
     my @not_started = grep { $_->{status} eq 'not-started' } @$todos;
     
     $output .= "CURRENT STATE:\n";
-    $output .= "  ✅ Completed: " . scalar(@completed) . "\n";
+    $output .= "  ✓ Completed: " . scalar(@completed) . "\n";
     $output .= "  🔄 In Progress: " . scalar(@in_progress) . "\n";
     $output .= "  [ ] Not Started: " . scalar(@not_started) . "\n";
     
