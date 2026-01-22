@@ -475,4 +475,10 @@ my $ui = CLIO::UI::Chat->new(
 $ai_agent->set_ui($ui) if $ai_agent;
 
 $ui->run();
+
+# CRITICAL: Save session after interactive mode completes
+# This ensures all conversation history, including errors, is persisted
+$session->save();
+print "[DEBUG] Session saved after interactive mode\n" if $debug;
+
 exit 0;

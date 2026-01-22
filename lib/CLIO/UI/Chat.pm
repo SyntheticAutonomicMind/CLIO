@@ -561,6 +561,11 @@ sub run {
                 # Store error in session for context
                 if ($self->{session}) {
                     $self->{session}->add_message('system', "Error: $error_msg");
+                    
+                    # CRITICAL: Save session immediately after error to prevent history loss
+                    # This ensures error context is available on next startup
+                    $self->{session}->save();
+                    print STDERR "[DEBUG][Chat] Session saved after error (preserving context)\n" if should_log('DEBUG');
                 }
             }
             
