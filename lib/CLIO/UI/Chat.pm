@@ -5866,29 +5866,44 @@ Render markdown text to ANSI if markdown is enabled
 sub render_markdown {
     my ($self, $text) = @_;
     
+    # Return original text if markdown disabled or text is undefined
     return $text unless $self->{enable_markdown};
-    my $rendered = $self->{markdown_renderer}->render($text);
+    return $text unless defined $text;
     
-    # DEBUG: Check if @-codes are in rendered text
-    if ($self->{debug} && $rendered =~ /\@[A-Z_]+\@/) {
-        print STDERR "[DEBUG][Chat] render_markdown: Found @-codes in rendered text\n";
-        print STDERR "[DEBUG][Chat] Sample: ", substr($rendered, 0, 100), "\n";
+    # Defensive: Wrap rendering in eval to prevent failures from bypassing formatting
+    my $rendered;
+    eval {
+        $rendered = $self->{markdown_renderer}->render($text);
+        
+        # DEBUG: Check if @-codes are in rendered text
+        if ($self->{debug} && defined $rendered && $rendered =~ /\@[A-Z_]+\@/) {
+            print STDERR "[DEBUG][Chat] render_markdown: Found @-codes in rendered text\n";
+            print STDERR "[DEBUG][Chat] Sample: ", substr($rendered, 0, 100), "\n";
+        }
+        
+        # Parse @COLOR@ markers to actual ANSI escape sequences
+        $rendered = $self->{ansi}->parse($rendered) if defined $rendered;
+        
+        # Restore escaped @ symbols from inline code
+        # Markdown.pm escapes @ as \x00AT\x00 to prevent ANSI interpretation
+        $rendered =~ s/\x00AT\x00/\@/g if defined $rendered;
+        
+        # DEBUG: Verify @-codes were converted
+        if ($self->{debug} && defined $rendered && $rendered =~ /\@[A-Z_]+\@/) {
+            print STDERR "[DEBUG][Chat] WARNING: @-codes still present after ANSI parse!\n";
+            print STDERR "[DEBUG][Chat] Sample: ", substr($rendered, 0, 100), "\n";
+        }
+    };
+    
+    # If rendering failed or returned undef/empty, fall back to original text
+    if ($@ || !defined $rendered || $rendered eq '') {
+        print STDERR "[ERROR][Chat] Markdown rendering failed: $@\n" if $@;
+        print STDERR "[WARN][Chat] Markdown render returned empty/undef, using raw text\n" 
+            if !$@ && (!defined $rendered || $rendered eq '');
+        return $text;  # Fallback to raw text rather than breaking output
     }
     
-    # Parse @COLOR@ markers to actual ANSI escape sequences
-    my $parsed = $self->{ansi}->parse($rendered);
-    
-    # Restore escaped @ symbols from inline code
-    # Markdown.pm escapes @ as \x00AT\x00 to prevent ANSI interpretation
-    $parsed =~ s/\x00AT\x00/\@/g;
-    
-    # DEBUG: Verify @-codes were converted
-    if ($self->{debug} && $parsed =~ /\@[A-Z_]+\@/) {
-        print STDERR "[DEBUG][Chat] WARNING: @-codes still present after ANSI parse!\n";
-        print STDERR "[DEBUG][Chat] Sample: ", substr($parsed, 0, 100), "\n";
-    }
-    
-    return $parsed;
+    return $rendered;
 }
 
 =head2 writeline
