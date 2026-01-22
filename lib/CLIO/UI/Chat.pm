@@ -2083,11 +2083,10 @@ Display global configuration in formatted view
 sub show_global_config {
     my ($self) = @_;
     
-    print "\n", $self->colorize("GLOBAL CONFIGURATION", 'DATA'), "\n";
-    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n\n";
+    $self->display_command_header("GLOBAL CONFIGURATION");
     
     # API Settings
-    print $self->colorize("API Settings:", 'SYSTEM'), "\n";
+    $self->display_section_header("API Settings");
     
     # Detect provider from api_base if not explicitly set
     my $provider = $self->{config}->get('provider');
@@ -2132,9 +2131,9 @@ sub show_global_config {
         }
     }
     
-    printf "  Provider:        %s\n", $provider;
-    printf "  Model:           %s\n", $model;
-    printf "  API Key:         %s\n", $auth_status;
+    $self->display_key_value("Provider", $provider, 18);
+    $self->display_key_value("Model", $model, 18);
+    $self->display_key_value("API Key", $auth_status, 18);
     
     # Resolve API base URL to show actual endpoint
     my $display_url = $api_base || '[default]';
@@ -2151,32 +2150,34 @@ sub show_global_config {
             $display_url = "$api_base → $display_url" if $display_url ne $models_url;
         }
     }
-    printf "  API Base URL:    %s\n", $display_url;
+    $self->display_key_value("API Base URL", $display_url, 18);
     
     # UI Settings
-    print "\n", $self->colorize("UI Settings:", 'SYSTEM'), "\n";
+    print "\n";
+    $self->display_section_header("UI Settings");
     my $style = $self->{config}->get('style') || 'default';
     my $theme = $self->{config}->get('theme') || 'default';
     my $loglevel = $self->{config}->get('loglevel') || $self->{config}->get('log_level') || 'WARNING';
     
-    printf "  Color Style:     %s\n", $style;
-    printf "  Output Theme:    %s\n", $theme;
-    printf "  Log Level:       %s\n", $loglevel;
+    $self->display_key_value("Color Style", $style, 18);
+    $self->display_key_value("Output Theme", $theme, 18);
+    $self->display_key_value("Log Level", $loglevel, 18);
     
     # Paths
-    print "\n", $self->colorize("Paths & Files:", 'SYSTEM'), "\n";
+    print "\n";
+    $self->display_section_header("Paths & Files");
     require Cwd;
     my $workdir = $self->{config}->get('working_directory') || Cwd::getcwd();
     my $config_file = $self->{config}->{config_file};
     
-    printf "  Working Dir:     %s\n", $workdir;
-    printf "  Config File:     %s\n", $config_file;
-    printf "  Sessions Dir:    %s\n", File::Spec->catdir('.', 'sessions');
-    printf "  Styles Dir:      %s\n", File::Spec->catdir('.', 'styles');
-    printf "  Themes Dir:      %s\n", File::Spec->catdir('.', 'themes');
+    $self->display_key_value("Working Dir", $workdir, 18);
+    $self->display_key_value("Config File", $config_file, 18);
+    $self->display_key_value("Sessions Dir", File::Spec->catdir('.', 'sessions'), 18);
+    $self->display_key_value("Styles Dir", File::Spec->catdir('.', 'styles'), 18);
+    $self->display_key_value("Themes Dir", File::Spec->catdir('.', 'themes'), 18);
     
     print "\n";
-    print $self->colorize("Use '/config save' to persist changes", 'DIM'), "\n";
+    $self->display_info_message("Use '/config save' to persist changes");
     print "\n";
 }
 
@@ -2341,23 +2342,21 @@ Display help for /config commands
 sub _display_config_help {
     my ($self) = @_;
     
-    print "\n";
-    print $self->colorize("CONFIG COMMANDS", 'DATA'), "\n";
-    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n\n";
+    $self->display_command_header("CONFIG COMMANDS");
     
-    print $self->colorize("  /config show", 'PROMPT'), "              Display global configuration\n";
-    print $self->colorize("  /config set <key> <val>", 'PROMPT'), "   Set a configuration value\n";
-    print $self->colorize("  /config save", 'PROMPT'), "              Save current configuration\n";
-    print $self->colorize("  /config load", 'PROMPT'), "              Reload configuration from disk\n";
-    print $self->colorize("  /config workdir [path]", 'PROMPT'), "    Get/set working directory\n";
-    print $self->colorize("  /config loglevel [lvl]", 'PROMPT'), "    Get/set log level\n";
+    $self->display_list_item("/config show - Display global configuration");
+    $self->display_list_item("/config set <key> <val> - Set a configuration value");
+    $self->display_list_item("/config save - Save current configuration");
+    $self->display_list_item("/config load - Reload configuration from disk");
+    $self->display_list_item("/config workdir [path] - Get/set working directory");
+    $self->display_list_item("/config loglevel [lvl] - Get/set log level");
     
     print "\n";
-    print $self->colorize("SETTABLE KEYS", 'DATA'), "\n";
-    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n";
+    $self->display_section_header("SETTABLE KEYS");
     print "  style, theme, working_directory\n";
     print "\n";
-    print $self->colorize("NOTE", 'DATA'), ": For API settings, use ", $self->colorize("/api set", 'PROMPT'), "\n";
+    $self->display_info_message("For API settings, use /api set");
+    print "\n";
 }
 
 =head2 _handle_config_set
