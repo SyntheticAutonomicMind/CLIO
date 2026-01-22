@@ -58,8 +58,8 @@ sub sanitize_text {
     # Map common emojis/unicode to text equivalents using proper Unicode code points
     # Use \x{XXXX} format for all Unicode characters
     my %emoji_map = (
-        "\x{2705}" => '[OK]',      # ✅ Check mark (heavy check mark)
-        "\x{274C}" => '[FAIL]',    # ❌ Cross mark
+        "\x{2705}" => '[OK]',      # ✓ Check mark (heavy check mark)
+        "\x{274C}" => '[FAIL]',    # ✗ Cross mark
         "\x{26A0}" => '[WARN]',    # ⚠️ Warning sign
         "\x{2139}" => '[INFO]',    # ℹ️ Information
         "\x{1F4DD}" => '[NOTE]',   # 📝 Memo
