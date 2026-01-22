@@ -632,11 +632,12 @@ sub check_for_updates_async {
     my $updater = CLIO::Update->new(debug => $self->{debug});
     
     # Check if we have cached update info
-    my $available_version = $updater->get_available_update();
+    my $update_info = $updater->get_available_update();
     
-    if ($available_version) {
+    if ($update_info && $update_info->{cached} && !$update_info->{up_to_date}) {
         # Display update notification
-        $self->display_system_message("An update is available ($available_version). Run " . 
+        my $version = $update_info->{version} || 'unknown';
+        $self->display_system_message("An update is available ($version). Run " . 
             $self->colorize('/update install', 'command') . " to upgrade.");
     }
     
