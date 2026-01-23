@@ -41,49 +41,45 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "Building version: $VERSION"
       
-      - name: Update version in source files
+      - name: Verify version consistency
         run: |
           VERSION=${{ steps.version.outputs.VERSION }}
-          echo "Updating version to: $VERSION"
+          echo "Checking if VERSION file matches tag: $VERSION"
           
-          # Update VERSION file
-          echo "$VERSION" > VERSION
+          # Read current VERSION file
+          CURRENT_VERSION=$(cat VERSION 2>/dev/null || echo "unknown")
           
-          # Update lib/CLIO.pm
-          perl -i -pe "s/^our \\\$VERSION = '[^']+';/our \\\$VERSION = '$VERSION';/" lib/CLIO.pm
-          perl -i -pe "s/^Version [0-9.]+/Version $VERSION/" lib/CLIO.pm
+          echo "Tag version: $VERSION"
+          echo "VERSION file: $CURRENT_VERSION"
           
-          # Verify updates
-          echo "VERSION file:"
-          cat VERSION
-          echo ""
-          echo "lib/CLIO.pm version:"
-          grep "our \$VERSION" lib/CLIO.pm
-          grep "^Version" lib/CLIO.pm
-          
-          echo "[OK] Version updated in source files"
-      
-      - name: Commit version updates back to repository
-        run: |
-          VERSION=${{ steps.version.outputs.VERSION }}
-          
-          # Configure git
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          
-          # Check if there are changes to commit
-          if git diff --quiet VERSION lib/CLIO.pm; then
-            echo "No version changes to commit"
-          else
-            # Commit the version updates
-            git add VERSION lib/CLIO.pm
-            git commit -m "chore(release): update version to ${VERSION}"
-            
-            # Push back to the repository
-            git push origin HEAD:main
-            
-            echo "[OK] Version updates committed to repository"
+          if [ "$CURRENT_VERSION" != "$VERSION" ]; then
+            echo "[ERROR] VERSION file does not match tag!"
+            echo "VERSION file should be updated BEFORE creating the tag."
+            echo ""
+            echo "To fix this:"
+            echo "  1. Delete this tag: git tag -d $VERSION && git push origin :refs/tags/$VERSION"
+            echo "  2. Update VERSION file: echo '$VERSION' > VERSION"
+            echo "  3. Commit: git add VERSION && git commit -m 'chore(release): update version to $VERSION'"
+            echo "  4. Create tag: git tag $VERSION"
+            echo "  5. Push: git push && git push --tags"
+            exit 1
           fi
+          
+          # Verify lib/CLIO.pm also has correct version
+          if ! grep -q "our \$VERSION = '$VERSION';" lib/CLIO.pm; then
+            echo "[WARN] lib/CLIO.pm version does not match - updating..."
+            perl -i -pe "s/^our \\\$VERSION = '[^']+';/our \\\$VERSION = '$VERSION';/" lib/CLIO.pm
+            perl -i -pe "s/^Version [0-9.]+/Version $VERSION/" lib/CLIO.pm
+            
+            # Commit this update
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add lib/CLIO.pm
+            git commit -m "chore(release): sync lib/CLIO.pm version to $VERSION"
+            git push origin HEAD:main
+          fi
+          
+          echo "[OK] Version consistency verified"
       
       - name: Install dependencies
         run: |
