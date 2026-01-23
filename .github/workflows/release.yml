@@ -63,6 +63,28 @@ jobs:
           
           echo "[OK] Version updated in source files"
       
+      - name: Commit version updates back to repository
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+          
+          # Configure git
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Check if there are changes to commit
+          if git diff --quiet VERSION lib/CLIO.pm; then
+            echo "No version changes to commit"
+          else
+            # Commit the version updates
+            git add VERSION lib/CLIO.pm
+            git commit -m "chore(release): update version to ${VERSION}"
+            
+            # Push back to the repository
+            git push origin HEAD:main
+            
+            echo "[OK] Version updates committed to repository"
+          fi
+      
       - name: Install dependencies
         run: |
           # Install core Perl modules (we don't use CPAN modules)
