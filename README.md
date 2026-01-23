@@ -50,6 +50,27 @@ CLIO is part of the [Synthetic Autonomic Mind (SAM)](https://github.com/Syntheti
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+## Screenshots
+
+Get a glimpse of CLIO's beautiful terminal interface in action:
+
+<table>
+  <tr>
+    <td width="50%">
+      <h3>Native Terminal Interface</h3>
+      <img src=".images/clio1.png"/>
+      <em>CLIO's clean, professional terminal UI with markdown rendering, color themes, and real-time streaming responses</em>
+    </td>
+    <td width="50%">
+      <h3>AI Conversation in Progress</h3>
+      <img src=".images/clio2.png"/>
+      <em>Claude Haiku responding to a greeting—see CLIO in action with real AI assistant integration</em>
+    </td>
+  </tr>
+</table>
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 ## Quick Start
 
 ### Installation
