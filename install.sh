@@ -115,6 +115,7 @@ mkdir -p "$INSTALL_DIR" || { echo "Failed to create $INSTALL_DIR"; exit 1; }
 # Copy files
 echo "Copying files..."
 cp clio "$INSTALL_DIR/" || exit 1
+cp VERSION "$INSTALL_DIR/" || exit 1
 cp -r lib "$INSTALL_DIR/" || exit 1
 cp -r styles "$INSTALL_DIR/" || exit 1
 cp -r themes "$INSTALL_DIR/" || exit 1
