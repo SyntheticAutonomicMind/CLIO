@@ -366,33 +366,60 @@ sub detect_install_location {
     $clio_path = `readlink -f "$clio_path" 2>/dev/null` || $clio_path;
     chomp $clio_path;
     
-    my $install_dir = dirname($clio_path);
+    # Get the directory containing the clio executable
+    my $bin_dir = dirname($clio_path);
+    
+    # The install directory is typically the parent of the bin directory
+    # CLIO installs to: $INSTALL_DIR/clio (executable)
+    #                  $INSTALL_DIR/lib/  (modules)
+    # So if we found /opt/clio/clio, install_dir is /opt/clio
+    # If we found /usr/local/bin/clio (symlink -> /opt/clio/clio), install_dir is /opt/clio
+    
+    my $install_dir = $bin_dir;
+    
+    # Check if this is actually the install directory (has lib/CLIO subdirectory)
+    if (-d "$bin_dir/lib/CLIO") {
+        # Good - this is the install directory
+        $install_dir = $bin_dir;
+    } else {
+        # Maybe clio is in a bin subdirectory?
+        # This shouldn't happen with CLIO's install.sh, but handle it anyway
+        print STDERR "[WARN][Update] Cannot find lib/CLIO in $bin_dir - may be development mode\n"
+            if $self->{debug};
+    }
+    
+    # Determine if this is a user install or system install
+    # User install: anywhere under $HOME
+    # System install: anywhere else (typically /opt, /usr, /srv, etc.)
+    my $type = 'system';  # Default to system
+    my $is_user_home = 0;
+    
+    if ($install_dir =~ m{^\Q$ENV{HOME}\E(/|$)}) {
+        $type = 'user';
+        $is_user_home = 1;
+    }
+    
+    # Check if the install directory is writable
     my $writable = -w $install_dir;
     
-    # Determine install type
-    my $type = 'user';
-    my $method = 'make';
+    # Determine if we need sudo
+    my $needs_sudo = (!$is_user_home && !$writable);
     
-    if ($install_dir =~ m{^/usr/local/bin|^/usr/bin|^/opt}) {
-        $type = 'system';
-        $method = 'sudo make install';
-    } elsif ($install_dir =~ m{$ENV{HOME}/perl5|$ENV{HOME}/\.local|$ENV{HOME}/bin}) {
-        $type = 'user';
-        $method = 'make install';  # No sudo needed
-    }
-    
-    # Check if cpanm is available
-    my $has_cpanm = `which cpanm 2>/dev/null`;
-    if ($? == 0 && $has_cpanm) {
-        $method = ($type eq 'system') ? 'sudo cpanm .' : 'cpanm .';
-    }
+    print STDERR "[DEBUG][Update] Detected install location:\n" if $self->{debug};
+    print STDERR "[DEBUG][Update]   Path: $clio_path\n" if $self->{debug};
+    print STDERR "[DEBUG][Update]   Install dir: $install_dir\n" if $self->{debug};
+    print STDERR "[DEBUG][Update]   Type: $type\n" if $self->{debug};
+    print STDERR "[DEBUG][Update]   User home: " . ($is_user_home ? 'yes' : 'no') . "\n" if $self->{debug};
+    print STDERR "[DEBUG][Update]   Writable: " . ($writable ? 'yes' : 'no') . "\n" if $self->{debug};
+    print STDERR "[DEBUG][Update]   Needs sudo: " . ($needs_sudo ? 'yes' : 'no') . "\n" if $self->{debug};
     
     return {
         path => $clio_path,
         install_dir => $install_dir,
         type => $type,
+        is_user_home => $is_user_home,
         writable => $writable,
-        method => $method,
+        needs_sudo => $needs_sudo,
     };
 }
 
@@ -508,35 +535,21 @@ sub install_from_directory {
         return 0;
     }
     
-    # Detect installation method
+    # Detect current installation location
     my $install_info = $self->detect_install_location();
     unless ($install_info) {
         print STDERR "[ERROR][Update] Cannot detect CLIO installation location\n";
         return 0;
     }
     
-    my $type = $install_info->{type};
     my $install_dir = $install_info->{install_dir};
+    my $is_user_home = $install_info->{is_user_home};
+    my $needs_sudo = $install_info->{needs_sudo};
     
-    # For CLIO executable in bin, we need to find the actual install directory
-    # (e.g., /usr/local/bin/clio -> /opt/clio or ~/.local/clio)
-    if ($install_dir =~ m{/bin$}) {
-        # Check if clio is a symlink pointing to the real install location
-        my $clio_path = $install_info->{path};
-        if (-l $clio_path) {
-            my $real_path = readlink($clio_path);
-            if ($real_path && -f $real_path) {
-                $install_dir = dirname($real_path);
-                print STDERR "[DEBUG][Update] Detected real install dir from symlink: $install_dir\n"
-                    if $self->{debug};
-            }
-        }
-    }
-    
-    print STDERR "[DEBUG][Update] Install type: $type\n"
-        if $self->{debug};
-    print STDERR "[DEBUG][Update] Install dir: $install_dir\n"
-        if $self->{debug};
+    print STDERR "[DEBUG][Update] Installing CLIO update:\n" if $self->{debug};
+    print STDERR "[DEBUG][Update]   Current install: $install_dir\n" if $self->{debug};
+    print STDERR "[DEBUG][Update]   User home install: " . ($is_user_home ? 'yes' : 'no') . "\n" if $self->{debug};
+    print STDERR "[DEBUG][Update]   Needs sudo: " . ($needs_sudo ? 'yes' : 'no') . "\n" if $self->{debug};
     
     # Change to source directory
     my $original_dir = `pwd`;
@@ -549,26 +562,31 @@ sub install_from_directory {
     
     my $success = 0;
     
-    # CLIO uses install.sh, not Makefile.PL
-    # Determine install command based on type
+    # Determine the correct install.sh command based on detected location
+    # install.sh behavior:
+    #   - ./install.sh --user          -> installs to ~/.local/clio
+    #   - ./install.sh /path/to/dir    -> installs to /path/to/dir
+    #   - ./install.sh                 -> installs to /opt/clio (default)
+    
     my $install_cmd;
     
-    if ($type eq 'user') {
-        # User installation - use --user flag (no sudo needed)
-        print STDERR "[DEBUG][Update] Installing to user directory with install.sh --user\n"
+    # Special case: if current install is ~/.local/clio, use --user flag
+    if ($install_dir eq "$ENV{HOME}/.local/clio") {
+        print STDERR "[DEBUG][Update] Using --user flag for ~/.local/clio install\n"
             if $self->{debug};
         $install_cmd = "bash install.sh --user";
-    } else {
-        # System installation - may need sudo
-        # Try to detect the install directory and pass it to install.sh
-        print STDERR "[DEBUG][Update] Installing to system directory: $install_dir\n"
-            if $self->{debug};
-        
-        # Check if we can write to install_dir without sudo
-        if (-w $install_dir) {
-            $install_cmd = "bash install.sh '$install_dir'";
-        } else {
+    }
+    # Otherwise, explicitly specify the target directory
+    else {
+        # Determine if we need sudo
+        if ($needs_sudo) {
+            print STDERR "[DEBUG][Update] System install to $install_dir (needs sudo)\n"
+                if $self->{debug};
             $install_cmd = "sudo bash install.sh '$install_dir'";
+        } else {
+            print STDERR "[DEBUG][Update] Installing to $install_dir (no sudo needed)\n"
+                if $self->{debug};
+            $install_cmd = "bash install.sh '$install_dir'";
         }
     }
     
@@ -580,6 +598,7 @@ sub install_from_directory {
     
     if (!$success) {
         print STDERR "[ERROR][Update] Installation command failed: $install_cmd\n";
+        print STDERR "[ERROR][Update] Exit code: " . ($result >> 8) . "\n";
     }
     
     chdir($original_dir);
