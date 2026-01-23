@@ -502,6 +502,12 @@ sub install_from_directory {
         return 0;
     }
     
+    # Verify install.sh exists
+    unless (-f "$source_dir/install.sh") {
+        print STDERR "[ERROR][Update] install.sh not found in source directory\n";
+        return 0;
+    }
+    
     # Detect installation method
     my $install_info = $self->detect_install_location();
     unless ($install_info) {
@@ -509,12 +515,27 @@ sub install_from_directory {
         return 0;
     }
     
-    my $method = $install_info->{method};
     my $type = $install_info->{type};
+    my $install_dir = $install_info->{install_dir};
     
-    print STDERR "[DEBUG][Update] Install method: $method\n"
-        if $self->{debug};
+    # For CLIO executable in bin, we need to find the actual install directory
+    # (e.g., /usr/local/bin/clio -> /opt/clio or ~/.local/clio)
+    if ($install_dir =~ m{/bin$}) {
+        # Check if clio is a symlink pointing to the real install location
+        my $clio_path = $install_info->{path};
+        if (-l $clio_path) {
+            my $real_path = readlink($clio_path);
+            if ($real_path && -f $real_path) {
+                $install_dir = dirname($real_path);
+                print STDERR "[DEBUG][Update] Detected real install dir from symlink: $install_dir\n"
+                    if $self->{debug};
+            }
+        }
+    }
+    
     print STDERR "[DEBUG][Update] Install type: $type\n"
+        if $self->{debug};
+    print STDERR "[DEBUG][Update] Install dir: $install_dir\n"
         if $self->{debug};
     
     # Change to source directory
@@ -528,40 +549,37 @@ sub install_from_directory {
     
     my $success = 0;
     
-    # Try installation based on detected method
-    if ($method =~ /cpanm/) {
-        # CPAN installation
-        print STDERR "[DEBUG][Update] Installing with: $method\n"
+    # CLIO uses install.sh, not Makefile.PL
+    # Determine install command based on type
+    my $install_cmd;
+    
+    if ($type eq 'user') {
+        # User installation - use --user flag (no sudo needed)
+        print STDERR "[DEBUG][Update] Installing to user directory with install.sh --user\n"
             if $self->{debug};
-        
-        my $result = system($method);
-        $success = ($result == 0);
-        
+        $install_cmd = "bash install.sh --user";
     } else {
-        # Traditional make install
-        print STDERR "[DEBUG][Update] Installing with make\n"
+        # System installation - may need sudo
+        # Try to detect the install directory and pass it to install.sh
+        print STDERR "[DEBUG][Update] Installing to system directory: $install_dir\n"
             if $self->{debug};
         
-        # Run Makefile.PL
-        my $makefile_result = system("perl", "Makefile.PL");
-        if ($makefile_result != 0) {
-            print STDERR "[ERROR][Update] perl Makefile.PL failed\n";
-            chdir($original_dir);
-            return 0;
+        # Check if we can write to install_dir without sudo
+        if (-w $install_dir) {
+            $install_cmd = "bash install.sh '$install_dir'";
+        } else {
+            $install_cmd = "sudo bash install.sh '$install_dir'";
         }
-        
-        # Run make
-        my $make_result = system("make");
-        if ($make_result != 0) {
-            print STDERR "[ERROR][Update] make failed\n";
-            chdir($original_dir);
-            return 0;
-        }
-        
-        # Run make install (with sudo if needed)
-        my $install_cmd = ($type eq 'system') ? 'sudo make install' : 'make install';
-        my $install_result = system($install_cmd);
-        $success = ($install_result == 0);
+    }
+    
+    print STDERR "[DEBUG][Update] Running: $install_cmd\n"
+        if $self->{debug};
+    
+    my $result = system($install_cmd);
+    $success = ($result == 0);
+    
+    if (!$success) {
+        print STDERR "[ERROR][Update] Installation command failed: $install_cmd\n";
     }
     
     chdir($original_dir);
