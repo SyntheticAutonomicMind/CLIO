@@ -73,20 +73,22 @@ Returns:
 sub get_current_version {
     my ($self) = @_;
     
-    # Priority 1: VERSION file in project root
-    if (-f 'VERSION') {
-        open my $fh, '<', 'VERSION' or return 'unknown';
-        my $version = <$fh>;
-        close $fh;
-        chomp $version if $version;
-        return $version if $version;
-    }
-    
-    # Priority 2: lib/CLIO.pm version
+    # Priority 1: lib/CLIO.pm version (always available when installed)
+    my $version;
     eval {
         require CLIO;
-        return $CLIO::VERSION if $CLIO::VERSION;
+        $version = $CLIO::VERSION;
     };
+    return $version if $version && $version ne 'unknown';
+    
+    # Priority 2: VERSION file in current directory (development mode)
+    if (-f 'VERSION') {
+        open my $fh, '<', 'VERSION' or return 'unknown';
+        my $file_version = <$fh>;
+        close $fh;
+        chomp $file_version if $file_version;
+        return $file_version if $file_version;
+    }
     
     # Priority 3: Git tag (if in repo)
     my $git_version = `git describe --tags --abbrev=0 2>/dev/null`;
