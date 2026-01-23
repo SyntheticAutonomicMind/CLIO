@@ -2087,6 +2087,14 @@ sub _reinit_api_manager {
         config => $self->{config}
     );
     $self->{ai_agent}->{api} = $new_api;
+    
+    # BUGFIX: Also update the orchestrator's api_manager reference
+    # The orchestrator holds its own reference to the APIManager, which becomes stale
+    # after config changes if we don't update it here.
+    if ($self->{ai_agent}->{orchestrator}) {
+        $self->{ai_agent}->{orchestrator}->{api_manager} = $new_api;
+        print STDERR "[DEBUG][Chat] Orchestrator's api_manager updated after config change\n" if $self->{debug};
+    }
 }
 
 =head2 _check_github_auth
@@ -2614,6 +2622,15 @@ sub handle_login_command {
         config => $self->{config}
     );
     $self->{ai_agent}->{api} = $new_api;
+    
+    # BUGFIX: Also update the orchestrator's api_manager reference
+    # The orchestrator holds its own reference to the APIManager, which becomes stale
+    # after login if we don't update it here.
+    if ($self->{ai_agent}->{orchestrator}) {
+        $self->{ai_agent}->{orchestrator}->{api_manager} = $new_api;
+        print STDERR "[DEBUG][Chat] Orchestrator's api_manager updated after /login\n" if $self->{debug};
+    }
+    
     print STDERR "[DEBUG][Chat] APIManager reloaded successfully\n" if $self->{debug};
 }
 
