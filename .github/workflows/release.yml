@@ -41,6 +41,28 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "Building version: $VERSION"
       
+      - name: Update version in source files
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+          echo "Updating version to: $VERSION"
+          
+          # Update VERSION file
+          echo "$VERSION" > VERSION
+          
+          # Update lib/CLIO.pm
+          perl -i -pe "s/^our \\\$VERSION = '[^']+';/our \\\$VERSION = '$VERSION';/" lib/CLIO.pm
+          perl -i -pe "s/^Version [0-9.]+/Version $VERSION/" lib/CLIO.pm
+          
+          # Verify updates
+          echo "VERSION file:"
+          cat VERSION
+          echo ""
+          echo "lib/CLIO.pm version:"
+          grep "our \$VERSION" lib/CLIO.pm
+          grep "^Version" lib/CLIO.pm
+          
+          echo "[OK] Version updated in source files"
+      
       - name: Install dependencies
         run: |
           # Install core Perl modules (we don't use CPAN modules)
