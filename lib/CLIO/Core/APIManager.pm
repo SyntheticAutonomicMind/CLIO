@@ -626,8 +626,10 @@ sub validate_and_truncate_messages {
     }
     
     # Exceeds limit - need to truncate
-    warn "[WARNING][APIManager] Message exceeds token limit: $estimated_tokens > $effective_limit tokens\n";
-    warn "[WARNING][APIManager] Truncating oldest messages to fit within limit\n";
+    if (should_log('DEBUG')) {
+        warn "[WARNING][APIManager] Message exceeds token limit: $estimated_tokens > $effective_limit tokens\n";
+        warn "[WARNING][APIManager] Truncating oldest messages to fit within limit\n";
+    }
     
     # CRITICAL: Group messages into "units" that must stay together
     # A unit is either:
@@ -828,8 +830,10 @@ sub validate_and_truncate_messages {
         $final_tokens += int(length($msg->{content} || '') / 3);
     }
     
-    warn "[WARNING][APIManager] Truncated from " . scalar(@$messages) . " to " . scalar(@truncated) . " messages\n";
-    warn "[WARNING][APIManager] Final token count: $final_tokens / $effective_limit\n";
+    if (should_log('DEBUG')) {
+        warn "[WARNING][APIManager] Truncated from " . scalar(@$messages) . " to " . scalar(@truncated) . " messages\n";
+        warn "[WARNING][APIManager] Final token count: $final_tokens / $effective_limit\n";
+    }
     
     return \@truncated;
 }
