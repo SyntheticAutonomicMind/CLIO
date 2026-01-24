@@ -166,12 +166,64 @@ Returns: Character read, or undef on timeout
 
 =cut
 
+=head2 _read_utf8_char
+
+Internal helper to read a complete UTF-8 character from STDIN.
+
+Reads the initial byte, detects if it's part of a multi-byte UTF-8 sequence,
+and reads additional bytes as needed. This allows pasting Unicode characters
+like Greek letters (α = 2 bytes), CJK characters (中 = 3 bytes), and emoji (= 4 bytes).
+
+UTF-8 encoding:
+  - 1-byte: 0x00-0x7F (ASCII)
+  - 2-byte: 0xC0-0xDF (e.g., α)
+  - 3-byte: 0xE0-0xEF (e.g., 中)
+  - 4-byte: 0xF0-0xF7 (e.g., emoji)
+
+Returns: Complete UTF-8 character(s), or undef on EOF
+
+=cut
+
+sub _read_utf8_char {
+    # Internal helper to read a complete UTF-8 character from STDIN
+    # Reads initial byte, then determines if multi-byte sequence and reads remaining bytes
+    
+    my $bytes = '';
+    my $read_char = read(STDIN, $bytes, 1);
+    
+    return undef unless $read_char;
+    
+    # Check if this is a multi-byte UTF-8 sequence
+    my $first_ord = ord($bytes);
+    my $num_bytes = 1;
+    
+    if ($first_ord >= 0xC0 && $first_ord < 0xE0) {
+        $num_bytes = 2;  # 2-byte sequence (e.g., α is 0xCE 0xB1)
+    } elsif ($first_ord >= 0xE0 && $first_ord < 0xF0) {
+        $num_bytes = 3;  # 3-byte sequence (e.g., 中 is 0xE4 0xB8 0xAD)
+    } elsif ($first_ord >= 0xF0 && $first_ord < 0xF8) {
+        $num_bytes = 4;  # 4-byte sequence (e.g., emoji)
+    }
+    
+    # Read remaining bytes for multi-byte sequences
+    for (2 .. $num_bytes) {
+        my $next_byte;
+        if (read(STDIN, $next_byte, 1)) {
+            $bytes .= $next_byte;
+        } else {
+            last;  # End of sequence if we can't read more
+        }
+    }
+    
+    return $bytes;
+}
+
 sub ReadKey {
     my ($timeout) = @_;
     $timeout = 0 unless defined $timeout;
     
-    # Remove utf8 layer for sysread compatibility
-    binmode(STDIN, ':bytes');
+    # Keep UTF-8 layer for proper multi-byte character handling
+    binmode(STDIN, ':utf8');
     
     # Check if terminal mode is already set (by ReadLine or other code)
     my $mode_was_set = _get_current_mode();
@@ -188,12 +240,12 @@ sub ReadKey {
         my $flags = fcntl(STDIN, F_GETFL, 0);
         fcntl(STDIN, F_SETFL, $flags | O_NONBLOCK);
         
-        sysread(STDIN, $char, 1);
+        $char = _read_utf8_char();
         
         fcntl(STDIN, F_SETFL, $flags);
     } elsif ($timeout == 0) {
         # Blocking read
-        sysread(STDIN, $char, 1);
+        $char = _read_utf8_char();
     } else {
         # Timed read using select
         use IO::Select;
@@ -201,7 +253,7 @@ sub ReadKey {
         $sel->add(\*STDIN);
         
         if ($sel->can_read($timeout)) {
-            sysread(STDIN, $char, 1);
+            $char = _read_utf8_char();
         }
     }
     
@@ -212,8 +264,22 @@ sub ReadKey {
 }
 
 # Ensure terminal is restored on exit
+# Only restore if we actually have a TTY and made changes
 END {
-    ReadMode(0);
+    # Skip restoration if:
+    # 1. Not connected to a TTY (e.g., during syntax check or piped input)
+    # 2. No changes were made to terminal mode
+    return unless -t STDIN && _get_current_mode() != 0;
+    
+    # Attempt restoration but don't hang if there's an issue
+    # Use alarm to timeout stty command
+    local $SIG{ALRM} = sub { die "stty timeout\n" };
+    eval {
+        alarm(1);  # 1 second timeout
+        ReadMode(0);
+        alarm(0);  # Cancel alarm
+    };
+    alarm(0);  # Ensure alarm is cancelled even if eval fails
 }
 
 1;
