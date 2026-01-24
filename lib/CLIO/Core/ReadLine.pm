@@ -170,10 +170,14 @@ sub readline {
             next;
         }
         
-        # Regular printable character
-        if ($ord >= 32 && $ord < 127) {
+        # Regular printable character (including multi-byte UTF-8)
+        # Allow any character not caught by special handlers above
+        # For multi-byte UTF-8 chars, $ord will be >= 128 (first byte of sequence)
+        # For single-byte ASCII, $ord will be >= 32
+        if ($ord >= 32 || ($ord >= 128)) {
+            # This is either ASCII printable or the start of a UTF-8 multi-byte sequence
             substr($input, $cursor_pos, 0, $char);
-            $cursor_pos++;
+            $cursor_pos += length($char);  # Increment by actual character length
             $self->redraw_line(\$input, \$cursor_pos, $prompt);
         }
     }
