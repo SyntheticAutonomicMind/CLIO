@@ -463,6 +463,19 @@ sub run {
                 print STDERR "[DEBUG][Chat] Tool called: $tool_name\n" if $self->{debug};
             };
             
+            # Display system messages (rate limits, server errors, etc.)
+            my $on_system_message = sub {
+                my ($message) = @_;
+                
+                return unless defined $message;
+                
+                # Display system message with proper styling
+                print $self->colorize("SYSTEM: ", 'SYSTEM') . $message . "\n";
+                $self->{line_count}++;
+                
+                print STDERR "[DEBUG][Chat] System message: $message\n" if $self->{debug};
+            };
+            
             # Get conversation history from session
             my $conversation_history = [];
             if ($self->{session} && $self->{session}->can('get_conversation_history')) {
@@ -475,6 +488,7 @@ sub run {
             my $result = $self->{ai_agent}->process_user_request($input, {
                 on_chunk => $on_chunk,
                 on_tool_call => $on_tool_call,  # Track which tools are being called
+                on_system_message => $on_system_message,  # Display system messages
                 conversation_history => $conversation_history,
                 current_file => $self->{session}->{state}->{current_file},
                 working_directory => $self->{session}->{state}->{working_directory},
