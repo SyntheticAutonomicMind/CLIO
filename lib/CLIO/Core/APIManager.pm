@@ -1084,22 +1084,14 @@ sub _handle_error_response {
         $error = $content->{error}{message} || $content->{error} || $error;
     }
     
-    # Log error details
-    print STDERR "[ERROR][APIManager] $error\n" if should_log('ERROR');
-    if ($is_streaming) {
-        print STDERR "[ERROR][APIManager] Response body: " . $resp->decoded_content . "\n" if should_log('ERROR');
-        print STDERR "[DEBUG][APIManager] Request was: " . substr($json, 0, 500) . "...\n" if should_log('DEBUG');
-    } elsif ($self->{debug}) {
-        warn "[ERROR] $error\n";
-    }
-    
-    # Determine if error is retryable
+    # Determine if error is retryable (check before logging so we can suppress prints for rate limits)
     my $retryable = 0;
     my $retry_after = undef;
     my $retry_info = '';
+    my $is_rate_limit = ($status == 429);
     
     # Handle rate limiting (429) - parse retry delay from error response
-    if ($status == 429) {
+    if ($is_rate_limit) {
         $retryable = 1;
         $retry_after = 60;  # Default fallback
         
@@ -1115,15 +1107,11 @@ sub _handle_error_response {
         
         $self->{rate_limit_until} = time() + $retry_after;
         
-        # Provide helpful error message
+        # Provide helpful error message (will be sent via system message callback)
         $retry_info = sprintf(
-            "Rate limit exceeded. Waiting %d seconds before retrying. "
-            . "This is normal and CLIO will automatically retry after the wait period."
-            . ($is_streaming ? "" : " Please review the API Terms of Service: https://docs.github.com/en/site-policy/github-terms/github-terms-of-service"),
+            "API rate limit exceeded. Retrying in %d seconds. This is normal behavior.",
             $retry_after
         );
-        
-        print STDERR "[INFO][APIManager] $retry_info\n" if should_log('INFO');
         $error = $retry_info;
     }
     # Handle transient server errors (502, 503) - these can be retried
@@ -1132,8 +1120,24 @@ sub _handle_error_response {
         $retry_after = 2;  # Start with 2 second delay for server errors
         
         $retry_info = "Server temporarily unavailable ($status). Will retry automatically.";
-        print STDERR "[INFO][APIManager] $retry_info\n" if should_log('INFO');
         $error = $retry_info;
+    }
+    
+    # Log error details (SUPPRESS for rate limits since WorkflowOrchestrator handles via system message)
+    if (!$is_rate_limit) {
+        print STDERR "[ERROR][APIManager] $error\n" if should_log('ERROR');
+        if ($is_streaming) {
+            print STDERR "[ERROR][APIManager] Response body: " . $resp->decoded_content . "\n" if should_log('ERROR');
+            print STDERR "[DEBUG][APIManager] Request was: " . substr($json, 0, 500) . "...\n" if should_log('DEBUG');
+        } elsif ($self->{debug}) {
+            warn "[ERROR] $error\n";
+        }
+    } else {
+        # For rate limits, only log at DEBUG level to avoid user-visible output
+        print STDERR "[DEBUG][APIManager] Rate limit (429) detected, will retry. Details: $error\n" if should_log('DEBUG');
+        if ($is_streaming && should_log('DEBUG')) {
+            print STDERR "[DEBUG][APIManager] Response body: " . $resp->decoded_content . "\n";
+        }
     }
     
     # Return appropriate format based on streaming vs non-streaming
