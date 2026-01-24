@@ -10,7 +10,15 @@ our $HAS_SSL;
 our $HAS_CURL;
 BEGIN {
     $HAS_SSL = eval { require IO::Socket::SSL; require Net::SSLeay; 1 };
+    
+    # Check for curl: first try filesystem paths (desktop), then 'which' command (iOS/a-Shell)
     $HAS_CURL = -x '/usr/bin/curl' || -x '/bin/curl' || -x '/usr/local/bin/curl';
+    
+    unless ($HAS_CURL) {
+        # iOS/a-Shell pattern: curl is an ios_system command, not a filesystem path
+        my $which_curl = `which curl 2>/dev/null`;
+        $HAS_CURL = ($which_curl && $which_curl =~ /curl/);
+    }
 }
 
 =head1 NAME
@@ -166,6 +174,41 @@ Returns: Hash ref compatible with HTTP::Tiny response format
 
 =cut
 
+=head2 _find_ca_bundle
+
+Find platform-appropriate CA certificate bundle for curl.
+
+Searches for CA certificates in standard Unix locations and iOS locations.
+Returns undef if no bundle is found.
+
+Returns: Path to CA bundle file, or undef
+
+=cut
+
+sub _find_ca_bundle {
+    my ($self) = @_;
+    
+    # Standard Unix/Linux/macOS paths
+    my @paths = (
+        '/etc/ssl/certs/ca-certificates.crt',     # Debian/Ubuntu
+        '/etc/pki/tls/certs/ca-bundle.crt',       # RHEL/CentOS
+        '/etc/ssl/cert.pem',                       # OpenBSD/macOS
+        '/usr/local/etc/openssl/cert.pem',        # macOS Homebrew
+        # iOS/a-Shell specific paths
+        "$ENV{HOME}/Documents/cacert.pem",         # User Documents
+        "$ENV{HOME}/../cacert.pem",                # a-Shell app bundle
+        '/tmp/cacert.pem',                         # Temporary location
+    );
+    
+    for my $path (@paths) {
+        if (-f $path && -r $path) {
+            return $path;
+        }
+    }
+    
+    return undef;
+}
+
 sub _request_via_curl {
     my ($self, $method, $uri, $headers, $content) = @_;
     
@@ -177,6 +220,12 @@ sub _request_via_curl {
     
     # Add timeout
     push @cmd, '--max-time', $self->{timeout} if $self->{timeout};
+    
+    # Add CA bundle for HTTPS (iOS/a-Shell compatibility)
+    my $ca_bundle = $self->_find_ca_bundle();
+    if ($ca_bundle) {
+        push @cmd, '--cacert', $ca_bundle;
+    }
     
     # Add headers
     for my $header (keys %$headers) {
