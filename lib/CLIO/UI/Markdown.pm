@@ -154,6 +154,19 @@ sub render {
             }
         }
         
+        # Check for display-level formulas ($$...$$) at the start of line
+        if ($line =~ /^\$\$\s*(.+?)\s*\$\$\s*$/) {
+            my $formula = $1;
+            # Flush any table before the formula
+            if ($in_table) {
+                push @output, $self->render_table(@table_rows);
+                @table_rows = ();
+                $in_table = 0;
+            }
+            push @output, $self->render_formula_block($formula);
+            next;
+        }
+        
         # Process inline markdown
         $line = $self->render_inline($line);
         
@@ -421,6 +434,16 @@ sub process_inline_formatting {
     # Links [text](url) - show text with URL more prominently
     $text =~ s/\[([^\]]+)\]\(([^\)]+)\)/${link_text_color}$1\@RESET\@ → ${link_url_color}$2\@RESET\@/g;
     
+    # Formulas - inline math (single $ should NOT match $$)
+    # Match $...$ but not $$...$$
+    # Process the formula content to convert symbols first, then apply color
+    my $formula_color = $self->color('markdown_formula');
+    $text =~ s/(?<!\$)\$([^\$]+)\$(?!\$)/{
+        my $formula = $1;
+        my $rendered = $self->render_formula_content($formula);
+        $formula_color . "\$" . $rendered . "\$" . '@RESET@'
+    }/ge;
+    
     # Restore escaped characters from code blocks
     $text =~ s/\x00STAR\x00/*/g;
     $text =~ s/\x00UNDER\x00/_/g;
@@ -447,6 +470,10 @@ sub strip_markdown {
     # Remove inline code
     $text =~ s/`([^`]+)`/$1/g;
     
+    # Remove formulas (keep the LaTeX for reference)
+    $text =~ s/\$\$([^\$]+)\$\$/$1/g;  # Display formulas
+    $text =~ s/(?<!\$)\$([^\$]+)\$(?!\$)/$1/g;  # Inline formulas
+    
     # Remove bold/italic
     $text =~ s/\*\*([^\*]+)\*\*/$1/g;
     $text =~ s/__([^_]+)__/$1/g;
@@ -469,6 +496,133 @@ sub strip_markdown {
     return $text;
 }
 
+=head2 render_formula_block
+
+Render a display-level (block) formula with special formatting
+
+=cut
+
+sub render_formula_block {
+    my ($self, $formula) = @_;
+    
+    return '' unless defined $formula;
+    
+    my $formula_color = $self->color('markdown_formula');
+    
+    # Strip whitespace
+    $formula =~ s/^\s+|\s+$//g;
+    
+    # Render formula content with Unicode conversions
+    my $rendered = $self->render_formula_content($formula);
+    
+    # Render with a box frame
+    return $formula_color . "┌─ Formula ─────────────────┐" . '@RESET@' . "\n" .
+           $formula_color . "│ " . '@RESET@' . $rendered . " " . $formula_color . "│" . '@RESET@' . "\n" .
+           $formula_color . "└────────────────────────────┘" . '@RESET@';
+}
+
+=head2 render_formula_content
+
+Render formula content with Unicode/ASCII representations for common symbols
+
+=cut
+
+sub render_formula_content {
+    my ($self, $formula) = @_;
+    
+    return '' unless defined $formula;
+    
+    my $result = $formula;
+    
+    # Convert common LaTeX symbols to Unicode
+    # Greek letters
+    $result =~ s/\\alpha/α/g;
+    $result =~ s/\\beta/β/g;
+    $result =~ s/\\gamma/γ/g;
+    $result =~ s/\\delta/δ/g;
+    $result =~ s/\\epsilon/ε/g;
+    $result =~ s/\\zeta/ζ/g;
+    $result =~ s/\\eta/η/g;
+    $result =~ s/\\theta/θ/g;
+    $result =~ s/\\iota/ι/g;
+    $result =~ s/\\kappa/κ/g;
+    $result =~ s/\\lambda/λ/g;
+    $result =~ s/\\mu/μ/g;
+    $result =~ s/\\nu/ν/g;
+    $result =~ s/\\xi/ξ/g;
+    $result =~ s/\\omicron/ο/g;
+    $result =~ s/\\pi/π/g;
+    $result =~ s/\\rho/ρ/g;
+    $result =~ s/\\sigma/σ/g;
+    $result =~ s/\\tau/τ/g;
+    $result =~ s/\\upsilon/υ/g;
+    $result =~ s/\\phi/φ/g;
+    $result =~ s/\\chi/χ/g;
+    $result =~ s/\\psi/ψ/g;
+    $result =~ s/\\omega/ω/g;
+    
+    # Capital Greek letters
+    $result =~ s/\\Gamma/Γ/g;
+    $result =~ s/\\Delta/Δ/g;
+    $result =~ s/\\Theta/Θ/g;
+    $result =~ s/\\Lambda/Λ/g;
+    $result =~ s/\\Xi/Ξ/g;
+    $result =~ s/\\Pi/Π/g;
+    $result =~ s/\\Sigma/Σ/g;
+    $result =~ s/\\Upsilon/Υ/g;
+    $result =~ s/\\Phi/Φ/g;
+    $result =~ s/\\Psi/Ψ/g;
+    $result =~ s/\\Omega/Ω/g;
+    
+    # Common mathematical operators and symbols
+    $result =~ s/\\sqrt/√/g;
+    $result =~ s/\\cbrt/∛/g;
+    $result =~ s/\\sum/∑/g;
+    $result =~ s/\\prod/∏/g;
+    $result =~ s/\\int/∫/g;
+    $result =~ s/\\oint/∮/g;
+    $result =~ s/\\infty/∞/g;
+    $result =~ s/\\pm/±/g;
+    $result =~ s/\\mp/∓/g;
+    $result =~ s/\\times/×/g;
+    $result =~ s/\\div/÷/g;
+    $result =~ s/\\leq/≤/g;
+    $result =~ s/\\geq/≥/g;
+    $result =~ s/\\neq/≠/g;
+    $result =~ s/\\approx/≈/g;
+    $result =~ s/\\equiv/≡/g;
+    $result =~ s/\\propto/∝/g;
+    $result =~ s/\\partial/∂/g;
+    $result =~ s/\\nabla/∇/g;
+    $result =~ s/\\forall/∀/g;
+    $result =~ s/\\exists/∃/g;
+    $result =~ s/\\in/∈/g;
+    $result =~ s/\\notin/∉/g;
+    $result =~ s/\\subset/⊂/g;
+    $result =~ s/\\supset/⊃/g;
+    $result =~ s/\\subseteq/⊆/g;
+    $result =~ s/\\supseteq/⊇/g;
+    $result =~ s/\\cup/∪/g;
+    $result =~ s/\\cap/∩/g;
+    $result =~ s/\\therefore/∴/g;
+    $result =~ s/\\because/∵/g;
+    $result =~ s/\\cdot/·/g;
+    $result =~ s/\\ldots|\\dots/…/g;
+    
+    # Power and subscript notation
+    $result =~ s/\^2/²/g;
+    $result =~ s/\^3/³/g;
+    $result =~ s/\^-1/⁻¹/g;
+    $result =~ s/\^n/ⁿ/g;
+    
+    # Special cases for common formulas
+    if ($result =~ /E\s*=\s*mc\s*\^2/) {
+        $result = "E = mc²";
+    }
+    
+    return $result;
+}
+
 1;
 
 __END__
@@ -489,6 +643,10 @@ __END__
 
 =item * B<Code Blocks>: ```language\ncode\n``` (formatted with language hint)
 
+=item * B<Inline Formulas>: $formula$ (LaTeX, rendered with Unicode symbols)
+
+=item * B<Display Formulas>: $$formula$$ (LaTeX block-level, with frame)
+
 =item * B<Links>: [text](url) (text underlined, URL dimmed)
 
 =item * B<Lists>: - item or * item or 1. item
@@ -496,6 +654,35 @@ __END__
 =item * B<Blockquotes>: > quote text
 
 =back
+
+=head2 Formula Support
+
+CLIO now supports both inline and display-level LaTeX formulas with Unicode rendering:
+
+=over 4
+
+=item * B<Inline Math>: Use `$formula$` for inline formulas (e.g., `$E = mc^2$`)
+
+=item * B<Display Math>: Use `$$formula$$` for block-level formulas (on their own line)
+
+=item * B<Symbol Conversion>: Common LaTeX symbols automatically convert to Unicode
+  - Greek letters: \alpha -> α, \pi -> π, etc.
+  - Math operators: \sqrt -> √, \sum -> ∑, \int -> ∫, etc.
+  - Relations: \leq -> ≤, \geq -> ≥, \neq -> ≠, etc.
+  - Superscripts: ^2 -> ², ^3 -> ³, etc.
+
+=item * B<Preserved Content>: Original LaTeX is preserved and highlighted, not removed
+
+=back
+
+=head2 Example Formulas
+
+    Inline: Einstein's equation is $E = mc^2$ showing energy-mass equivalence.
+    
+    Display:
+    $$\int_0^{\infty} e^{-x^2} dx = \frac{\sqrt{\pi}}{2}$$
+    
+    With Greek: The quadratic formula is $x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}$
 
 =head2 Theming
 
@@ -505,12 +692,9 @@ Colors and styles can be customized by passing a theme hash:
         theme => {
             header1 => "\e[1;36m",  # Bold cyan
             code    => "\e[93m",     # Bright yellow
+            formula => "\e[92m",     # Bright green
             ...
         }
     );
 
-=head1 AUTHOR
-
-Fewtarius
-
-=cut
+=back
