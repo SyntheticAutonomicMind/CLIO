@@ -1123,7 +1123,7 @@ sub _handle_error_response {
             $retry_after
         );
         
-        print STDERR "[INFO][APIManager] $retry_info\n";
+        print STDERR "[INFO][APIManager] $retry_info\n" if should_log('INFO');
         $error = $retry_info;
     }
     # Handle transient server errors (502, 503) - these can be retried
@@ -1132,7 +1132,7 @@ sub _handle_error_response {
         $retry_after = 2;  # Start with 2 second delay for server errors
         
         $retry_info = "Server temporarily unavailable ($status). Will retry automatically.";
-        print STDERR "[INFO][APIManager] $retry_info\n";
+        print STDERR "[INFO][APIManager] $retry_info\n" if should_log('INFO');
         $error = $retry_info;
     }
     

@@ -159,6 +159,7 @@ Arguments:
 - $session: Session object with conversation history
 - %opts: Optional parameters
   * on_chunk: Callback for streaming responses (receives content chunk and metrics)
+  * on_system_message: Callback for system messages like rate limits (receives message string)
 
 Returns:
 - Hashref with:
@@ -174,8 +175,9 @@ Returns:
 sub process_input {
     my ($self, $user_input, $session, %opts) = @_;
     
-    # Extract on_chunk callback if provided
+    # Extract callbacks
     my $on_chunk = $opts{on_chunk};
+    my $on_system_message = $opts{on_system_message};  # Callback for system messages
     my $on_tool_call_from_ui = $opts{on_tool_call};  # Tool call tracker from UI
     
     print STDERR "[DEBUG][WorkflowOrchestrator] Processing input: '$user_input'\n" 
@@ -289,7 +291,15 @@ sub process_input {
                 
                 # Determine error type for logging
                 my $error_type = $error =~ /rate limit/i ? "rate limit" : "server error";
-                print STDERR "[INFO][WorkflowOrchestrator] Retryable $error_type detected, retrying in ${retry_delay}s on next iteration\n";
+                my $system_msg = "Temporary $error_type detected. Retrying in ${retry_delay}s...";
+                
+                # Call system message callback if provided
+                if ($on_system_message) {
+                    eval { $on_system_message->($system_msg); };
+                    print STDERR "[ERROR][WorkflowOrchestrator] Error in on_system_message callback: $@\n" if $@;
+                } else {
+                    print STDERR "[INFO][WorkflowOrchestrator] Retryable $error_type detected, retrying in ${retry_delay}s on next iteration\n";
+                }
                 
                 # Wait before retrying
                 sleep($retry_delay);
