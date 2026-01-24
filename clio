@@ -474,6 +474,36 @@ my $ui = CLIO::UI::Chat->new(
 # Set UI on ai_agent so orchestrator can access it for collaboration
 $ai_agent->set_ui($ui) if $ai_agent;
 
+# Register signal handlers to save session on Ctrl+C or SIGTERM
+# This ensures context is preserved when user interrupts the program
+{
+    my $session_ref = \$session;  # Capture in closure
+    my $cleanup_done = 0;
+    
+    my $cleanup_handler = sub {
+        my ($sig) = @_;
+        return if $cleanup_done;  # Prevent multiple executions
+        $cleanup_done = 1;
+        
+        print STDERR "\n[INFO] Received signal $sig, saving session...\n" unless -t STDIN && !$ENV{CLIO_DEBUG};
+        
+        if ($$session_ref) {
+            eval {
+                $$session_ref->save();
+                print STDERR "[DEBUG] Session saved before exit\n" if $debug;
+            };
+            if ($@) {
+                print STDERR "[ERROR] Failed to save session: $@\n";
+            }
+        }
+        
+        exit 130;  # Standard exit code for SIGINT (128 + 2)
+    };
+    
+    $SIG{INT}  = $cleanup_handler;  # Ctrl+C
+    $SIG{TERM} = $cleanup_handler;  # SIGTERM
+}
+
 $ui->run();
 
 # CRITICAL: Save session after interactive mode completes
