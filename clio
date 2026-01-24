@@ -203,37 +203,31 @@ if ($mode eq 'new') {
         }
     } else {
         # Resume most recent session if no ID provided
-        # Sort by creation timestamp (created_at), not file mtime, to ensure correct session is selected
+        # Sort by file modification time (mtime), not creation timestamp, to ensure most recently used session is loaded
+        # When a session is resumed and exited gracefully, its mtime is updated, so mtime tracks actual usage
         my $sessions_dir = CLIO::Util::PathResolver::get_sessions_dir();
         opendir(my $dh, $sessions_dir) or die "Cannot open sessions dir: $!";
         my @json_files = grep { /\.json$/ } readdir($dh);
         closedir($dh);
         
         if (@json_files) {
-            # Load all sessions and sort by created_at timestamp
-            my @sessions_with_timestamps = ();
+            # Load all sessions and sort by file modification time (mtime)
+            my @sessions_with_mtime = ();
             foreach my $json_file (@json_files) {
                 my $sid = $json_file;
                 $sid =~ s/\.json$//;
-                eval {
-                    if (open my $fh, '<', "$sessions_dir/$json_file") {
-                        local $/; 
-                        my $json_str = <$fh>; 
-                        close $fh;
-                        my $data = eval { JSON::PP::decode_json($json_str) };
-                        if ($data && ref $data eq 'HASH') {
-                            my $created_at = $data->{created_at} // 0;
-                            push @sessions_with_timestamps, { id => $sid, created_at => $created_at };
-                        }
-                    }
-                };
+                my $file_path = "$sessions_dir/$json_file";
+                # Use file stat to get mtime (more reliable than stored timestamp)
+                my @stat = stat($file_path);
+                my $mtime = $stat[9] // 0;  # 9 is the mtime field
+                push @sessions_with_mtime, { id => $sid, mtime => $mtime, path => $file_path };
             }
             
-            # Sort by creation timestamp in descending order (most recent first)
-            @sessions_with_timestamps = sort { $b->{created_at} <=> $a->{created_at} } @sessions_with_timestamps;
+            # Sort by modification time in descending order (most recent first)
+            @sessions_with_mtime = sort { $b->{mtime} <=> $a->{mtime} } @sessions_with_mtime;
             
-            if (@sessions_with_timestamps) {
-                $session_id = $sessions_with_timestamps[0]->{id};
+            if (@sessions_with_mtime) {
+                $session_id = $sessions_with_mtime[0]->{id};
                 eval {
                     $session = CLIO::Session::Manager->load($session_id, debug => $debug);
                 };
