@@ -283,12 +283,20 @@ sub process_input {
         if (!$api_response || $api_response->{error}) {
             my $error = $api_response->{error} || "Unknown API error";
             
-            # Check if this is a rate limit error - if so, DON'T count as iteration and retry
-            if ($error =~ /rate limit/i) {
-                print STDERR "[INFO][WorkflowOrchestrator] Rate limit detected, will retry on next iteration\n";
+            # Check if this is a retryable error (rate limit or server error)
+            if ($api_response->{retryable}) {
+                my $retry_delay = $api_response->{retry_after} || 2;
+                
+                # Determine error type for logging
+                my $error_type = $error =~ /rate limit/i ? "rate limit" : "server error";
+                print STDERR "[INFO][WorkflowOrchestrator] Retryable $error_type detected, retrying in ${retry_delay}s on next iteration\n";
+                
+                # Wait before retrying
+                sleep($retry_delay);
+                
                 # Don't increment iteration counter - this failed attempt doesn't count
                 $iteration--;
-                # Continue to next iteration (which will trigger rate limit wait in APIManager)
+                # Continue to next iteration
                 next;
             }
             
