@@ -1084,14 +1084,15 @@ sub _handle_error_response {
         $error = $content->{error}{message} || $content->{error} || $error;
     }
     
-    # Determine if error is retryable (check before logging so we can suppress prints for rate limits)
+    # Determine if error is retryable (check before logging so we can suppress prints for retryable errors)
     my $retryable = 0;
     my $retry_after = undef;
     my $retry_info = '';
-    my $is_rate_limit = ($status == 429);
+    my $is_retryable_error = 0;
     
     # Handle rate limiting (429) - parse retry delay from error response
-    if ($is_rate_limit) {
+    if ($status == 429) {
+        $is_retryable_error = 1;
         $retryable = 1;
         $retry_after = 60;  # Default fallback
         
@@ -1107,36 +1108,43 @@ sub _handle_error_response {
         
         $self->{rate_limit_until} = time() + $retry_after;
         
-        # Provide helpful error message (will be sent via system message callback)
+        # Provide friendly error message (will be sent via system message callback)
         $retry_info = sprintf(
-            "API rate limit exceeded. Retrying in %d seconds. This is normal behavior.",
+            "API rate limit exceeded. Retrying in %d seconds.",
             $retry_after
         );
         $error = $retry_info;
     }
     # Handle transient server errors (502, 503) - these can be retried
     elsif ($status == 502 || $status == 503) {
+        $is_retryable_error = 1;
         $retryable = 1;
         $retry_after = 2;  # Start with 2 second delay for server errors
         
-        $retry_info = "Server temporarily unavailable ($status). Will retry automatically.";
+        # Provide friendly error message (will be sent via system message callback)
+        $retry_info = "Server temporarily unavailable ($status). Retrying...";
         $error = $retry_info;
     }
     
-    # Log error details (SUPPRESS for rate limits since WorkflowOrchestrator handles via system message)
-    if (!$is_rate_limit) {
+    # Log error details
+    # For retryable errors: Only log at DEBUG level (suppressed by default)
+    # This prevents user-visible noise; WorkflowOrchestrator will handle via system message callback
+    # For fatal errors: Always log at ERROR level so user knows what went wrong
+    if ($is_retryable_error) {
+        # DEBUG: Show friendly message + technical details for troubleshooting
+        print STDERR "[DEBUG][APIManager] Retryable error ($status): $error\n" if should_log('DEBUG');
+        if ($is_streaming && should_log('DEBUG')) {
+            print STDERR "[DEBUG][APIManager] Response body: " . $resp->decoded_content . "\n";
+            print STDERR "[DEBUG][APIManager] Request was: " . substr($json, 0, 500) . "...\n";
+        }
+    } else {
+        # ERROR: Log fatal errors with full details
         print STDERR "[ERROR][APIManager] $error\n" if should_log('ERROR');
         if ($is_streaming) {
             print STDERR "[ERROR][APIManager] Response body: " . $resp->decoded_content . "\n" if should_log('ERROR');
             print STDERR "[DEBUG][APIManager] Request was: " . substr($json, 0, 500) . "...\n" if should_log('DEBUG');
         } elsif ($self->{debug}) {
             warn "[ERROR] $error\n";
-        }
-    } else {
-        # For rate limits, only log at DEBUG level to avoid user-visible output
-        print STDERR "[DEBUG][APIManager] Rate limit (429) detected, will retry. Details: $error\n" if should_log('DEBUG');
-        if ($is_streaming && should_log('DEBUG')) {
-            print STDERR "[DEBUG][APIManager] Response body: " . $resp->decoded_content . "\n";
         }
     }
     
