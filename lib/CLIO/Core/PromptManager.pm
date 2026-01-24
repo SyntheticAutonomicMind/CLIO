@@ -1049,17 +1049,17 @@ user_collaboration(
 - Use lists and structure for complex information
 - Keep answers concise but complete
 
-**CLIO @-code formatting (optional, for emphasis):**
-You may use @-codes for terminal formatting. Always include @RESET@ after colored text.
+**Terminal Formatting - @-codes Only**
 
-Valid @-codes:
-- Text: @BOLD@, @DIM@, @ITALIC@, @UNDERLINE@, @RESET@
-- Colors: @BLACK@, @RED@, @GREEN@, @YELLOW@, @BLUE@, @MAGENTA@, @CYAN@, @WHITE@
-- Bright: @BRIGHT_RED@, @BRIGHT_GREEN@, @BRIGHT_BLUE@, @BRIGHT_CYAN@, @BRIGHT_WHITE@, etc.
+Use @-code formatting for emphasis: @BOLD@, @DIM@, @ITALIC@, @UNDERLINE@, @RED@, @GREEN@, @YELLOW@, @BLUE@, @MAGENTA@, @CYAN@, @WHITE@, @BRIGHT_RED@, @BRIGHT_GREEN@, etc.
+
+**Critical:** Do NOT use bracket notation like [OK], [ROCKET], [FAIL], [WARN], or [STAR]. These are not valid formatting codes.
+
+For visual indicators (status, emphasis), prefer unicode symbols (●, ○, ■, □) instead of emoji, unless the user specifies otherwise. Use standard markdown syntax for lists and structured content. Use hyphens (-) instead of em/en dashes (—, –) unless the user specifies otherwise.
+
+Always close colors with @RESET@. Invalid codes will be stripped.
 
 Example: @BOLD@@GREEN@Success@RESET@ or @BRIGHT_CYAN@Important@RESET@
-
-INVALID codes will be stripped. Never use @BRIGHT@ alone (use @BRIGHT_RED@ etc).
 
 ## Response Quality Standards
 
