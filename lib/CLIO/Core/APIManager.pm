@@ -1093,9 +1093,15 @@ sub _handle_error_response {
         warn "[ERROR] $error\n";
     }
     
+    # Determine if error is retryable
+    my $retryable = 0;
+    my $retry_after = undef;
+    my $retry_info = '';
+    
     # Handle rate limiting (429) - parse retry delay from error response
     if ($status == 429) {
-        my $retry_after = 60;  # Default fallback
+        $retryable = 1;
+        $retry_after = 60;  # Default fallback
         
         # Try to parse retry delay from error message (SAM pattern)
         # Message format: "Please retry in XX.XXs" or "retry in XX seconds"
@@ -1110,23 +1116,41 @@ sub _handle_error_response {
         $self->{rate_limit_until} = time() + $retry_after;
         
         # Provide helpful error message
-        my $retry_msg = sprintf(
+        $retry_info = sprintf(
             "Rate limit exceeded. Waiting %d seconds before retrying. "
             . "This is normal and CLIO will automatically retry after the wait period."
             . ($is_streaming ? "" : " Please review the API Terms of Service: https://docs.github.com/en/site-policy/github-terms/github-terms-of-service"),
             $retry_after
         );
         
-        print STDERR "[INFO][APIManager] $retry_msg\n";
-        $error = $retry_msg;
+        print STDERR "[INFO][APIManager] $retry_info\n";
+        $error = $retry_info;
+    }
+    # Handle transient server errors (502, 503) - these can be retried
+    elsif ($status == 502 || $status == 503) {
+        $retryable = 1;
+        $retry_after = 2;  # Start with 2 second delay for server errors
+        
+        $retry_info = "Server temporarily unavailable ($status). Will retry automatically.";
+        print STDERR "[INFO][APIManager] $retry_info\n";
+        $error = $retry_info;
     }
     
     # Return appropriate format based on streaming vs non-streaming
+    my $result;
     if ($is_streaming) {
-        return { success => 0, error => $error };
+        $result = { success => 0, error => $error };
     } else {
-        return $self->_error($error);
+        $result = $self->_error($error);
     }
+    
+    # Add retry information if applicable
+    if ($retryable) {
+        $result->{retryable} = 1;
+        $result->{retry_after} = $retry_after if $retry_after;
+    }
+    
+    return $result;
 }
 
 sub send_request {
