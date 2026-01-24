@@ -518,6 +518,7 @@ sub get_builtin_style {
         markdown_bold => '@BOLD@',
         markdown_italic => '@DIM@',
         markdown_code => '@BRIGHT_YELLOW@',
+        markdown_formula => '@BRIGHT_MAGENTA@',
         markdown_link_text => '@BRIGHT_BLUE@@UNDERLINE@',
         markdown_link_url => '@DIM@@BLUE@',
         markdown_header1 => '@BOLD@@BRIGHT_CYAN@',
