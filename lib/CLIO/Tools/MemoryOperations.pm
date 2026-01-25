@@ -34,8 +34,16 @@ Operations:
 -  recall_sessions - Search previous session history for relevant content
    Parameters: query (required), max_sessions (default: 10), max_results (default: 5)
    Returns: Matches with session_id, role, preview text
+
+Project-Level LTM Operations (Long-Term Memory):
+-  add_discovery - Store a fact/discovery to project LTM
+   Parameters: fact (required), confidence (optional, 0-1)
+-  add_solution - Store a problem-solution mapping
+   Parameters: error (required), solution (required), examples (optional)
+-  add_pattern - Store a code pattern
+   Parameters: pattern (required), confidence (optional, 0-1), examples (optional)
 },
-        supported_operations => [qw(store retrieve search list delete recall_sessions)],
+        supported_operations => [qw(store retrieve search list delete recall_sessions add_discovery add_solution add_pattern)],
         %opts,
     );
 }
@@ -55,6 +63,12 @@ sub route_operation {
         return $self->delete($params, $context);
     } elsif ($operation eq 'recall_sessions') {
         return $self->recall_sessions($params, $context);
+    } elsif ($operation eq 'add_discovery') {
+        return $self->add_discovery($params, $context);
+    } elsif ($operation eq 'add_solution') {
+        return $self->add_solution($params, $context);
+    } elsif ($operation eq 'add_pattern') {
+        return $self->add_pattern($params, $context);
     }
     
     return $self->error_result("Operation not implemented: $operation");
@@ -351,6 +365,155 @@ sub recall_sessions {
                 
                 # Check if query matches
                 if ($content =~ /\Q$query\E/i) {
+
+=head2 add_discovery
+
+Store a discovery to project-level LTM (Long-Term Memory)
+
+Parameters:
+  fact - The discovery text (required)
+  confidence - Confidence score 0.0-1.0 (optional, default 0.8)
+
+=cut
+
+sub add_discovery {
+    my ($self, $params, $context) = @_;
+    
+    my $fact = $params->{fact};
+    my $confidence = $params->{confidence} // 0.8;
+    
+    return $self->error_result("Missing 'fact' parameter") unless $fact;
+    return $self->error_result("Confidence must be between 0 and 1") if $confidence < 0 || $confidence > 1;
+    
+    my $result;
+    eval {
+        # Get LTM from session if available
+        my $ltm = $context->{ltm} || $context->{session}->{ltm} if ref($context) eq 'HASH';
+        return $self->error_result("LTM not available in context") unless $ltm;
+        
+        # Add discovery to LTM
+        $ltm->add_discovery($fact, $confidence, 1);  # verified=1 (user explicitly added)
+        
+        # Save LTM
+        my $working_dir = $context->{working_directory} // '.';
+        my $ltm_file = File::Spec->catfile($working_dir, '.clio', 'ltm.json');
+        $ltm->save($ltm_file);
+        
+        $result = $self->success_result(
+            "Discovery stored successfully",
+            action_description => "storing discovery to LTM",
+            fact => $fact,
+            confidence => $confidence,
+        );
+    };
+    
+    if ($@) {
+        return $self->error_result("Failed to add discovery: $@");
+    }
+    
+    return $result;
+}
+
+=head2 add_solution
+
+Store a problem-solution mapping to project-level LTM
+
+Parameters:
+  error - The error/problem description (required)
+  solution - The solution text (required)
+  examples - Array of file paths or contexts where this applies (optional)
+
+=cut
+
+sub add_solution {
+    my ($self, $params, $context) = @_;
+    
+    my $error = $params->{error};
+    my $solution = $params->{solution};
+    my $examples = $params->{examples} // [];
+    
+    return $self->error_result("Missing 'error' parameter") unless $error;
+    return $self->error_result("Missing 'solution' parameter") unless $solution;
+    
+    my $result;
+    eval {
+        # Get LTM from context
+        my $ltm = $context->{ltm} || $context->{session}->{ltm} if ref($context) eq 'HASH';
+        return $self->error_result("LTM not available in context") unless $ltm;
+        
+        # Add solution to LTM
+        $ltm->add_problem_solution($error, $solution, $examples);
+        
+        # Save LTM
+        my $working_dir = $context->{working_directory} // '.';
+        my $ltm_file = File::Spec->catfile($working_dir, '.clio', 'ltm.json');
+        $ltm->save($ltm_file);
+        
+        $result = $self->success_result(
+            "Solution stored successfully",
+            action_description => "storing problem-solution to LTM",
+            error => $error,
+            solution => $solution,
+        );
+    };
+    
+    if ($@) {
+        return $self->error_result("Failed to add solution: $@");
+    }
+    
+    return $result;
+}
+
+=head2 add_pattern
+
+Store a code pattern to project-level LTM
+
+Parameters:
+  pattern - The pattern description (required)
+  confidence - Confidence score 0.0-1.0 (optional, default 0.7)
+  examples - Array of file paths demonstrating this pattern (optional)
+
+=cut
+
+sub add_pattern {
+    my ($self, $params, $context) = @_;
+    
+    my $pattern = $params->{pattern};
+    my $confidence = $params->{confidence} // 0.7;
+    my $examples = $params->{examples} // [];
+    
+    return $self->error_result("Missing 'pattern' parameter") unless $pattern;
+    return $self->error_result("Confidence must be between 0 and 1") if $confidence < 0 || $confidence > 1;
+    
+    my $result;
+    eval {
+        # Get LTM from context
+        my $ltm = $context->{ltm} || $context->{session}->{ltm} if ref($context) eq 'HASH';
+        return $self->error_result("LTM not available in context") unless $ltm;
+        
+        # Add pattern to LTM
+        $ltm->add_code_pattern($pattern, $confidence, $examples);
+        
+        # Save LTM
+        my $working_dir = $context->{working_directory} // '.';
+        my $ltm_file = File::Spec->catfile($working_dir, '.clio', 'ltm.json');
+        $ltm->save($ltm_file);
+        
+        $result = $self->success_result(
+            "Pattern stored successfully",
+            action_description => "storing code pattern to LTM",
+            pattern => $pattern,
+            confidence => $confidence,
+        );
+    };
+    
+    if ($@) {
+        return $self->error_result("Failed to add pattern: $@");
+    }
+    
+    return $result;
+}
+
                     # Extract context around the match
                     my $match_pos = index(lc($content), lc($query));
                     my $start = $match_pos > 100 ? $match_pos - 100 : 0;
