@@ -190,12 +190,27 @@ sub ReadKey {
         my $flags = fcntl(STDIN, F_GETFL, 0);
         fcntl(STDIN, F_SETFL, $flags | O_NONBLOCK);
         
-        $bytes_read = sysread(STDIN, $char, 1);
+        # Retry on EINTR (interrupted by signal)
+        while (1) {
+            $bytes_read = sysread(STDIN, $char, 1);
+            last if defined $bytes_read;  # Success or real error
+            last if $! != EINTR;          # Real error (not EINTR)
+            # EINTR: retry immediately
+        }
         
         fcntl(STDIN, F_SETFL, $flags);
     } elsif ($timeout == 0) {
-        # Blocking read
-        $bytes_read = sysread(STDIN, $char, 1);
+        # Blocking read with EINTR retry
+        # CRITICAL: sysread() returns undef when interrupted by signal (EINTR).
+        # This is NORMAL - just retry the read. Do NOT sleep or bail out.
+        while (1) {
+            $bytes_read = sysread(STDIN, $char, 1);
+            last if defined $bytes_read;  # Success or real error (bytes_read could be 0 for EOF)
+            # If sysread returned undef, check if it was EINTR
+            use POSIX qw(:errno_h);
+            last if $! != EINTR;          # Real error (not EINTR)
+            # EINTR: retry immediately without sleeping
+        }
     } else {
         # Timed read using select
         use IO::Select;
@@ -203,7 +218,14 @@ sub ReadKey {
         $sel->add(\*STDIN);
         
         if ($sel->can_read($timeout)) {
-            $bytes_read = sysread(STDIN, $char, 1);
+            # Retry on EINTR
+            while (1) {
+                $bytes_read = sysread(STDIN, $char, 1);
+                last if defined $bytes_read;
+                use POSIX qw(:errno_h);
+                last if $! != EINTR;
+                # EINTR: retry
+            }
         }
     }
     
