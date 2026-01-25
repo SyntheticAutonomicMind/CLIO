@@ -91,9 +91,34 @@ AUTHORIZATION:
   Parameters: query (required), scope (optional)
 
 -  read_tool_result - Read persisted large tool results in chunks
-  Parameters: toolCallId (required), offset (optional, default: 0), length (optional, default: 8192)
-  When to use: Tool response contains [TOOL_RESULT_STORED] marker
-  Purpose: Retrieve large results that exceed inline size limits (>8KB)
+  
+  **When to Use**:
+  - Tool response contains [TOOL_RESULT_STORED] marker
+  - Tool response includes toolCallId and totalLength metadata
+  - You need to access large results from web_operations or other tools (>8KB)
+  
+  **How to Use Efficiently**:
+  - ALWAYS check if the first chunk contains a complete answer or summary
+  - If first chunk fully answers the user's question, respond immediately - DO NOT read more chunks
+  - Only continue reading additional chunks if:
+    * The summary/answer is incomplete or missing key details
+    * User explicitly requested the full/raw output
+    * You need specific information not in the first chunk
+  - Most results include complete summaries in first chunk - check before continuing
+  
+  **Chunked Retrieval**:
+  - Default chunk size: 8192 characters (8KB)
+  - Maximum chunk size: 32768 characters (32KB)
+  - Use offset + length for pagination
+  - Check hasMore in response to continue reading
+  
+  **Example Workflow**:
+  1. web_operations returns: "Preview: ... [TOOL_RESULT_STORED: toolCallId=abc123, totalLength=150000]"
+  2. Read first chunk: read_tool_result(toolCallId: "abc123", offset: 0, length: 8192)
+  3. Read next chunk: read_tool_result(toolCallId: "abc123", offset: 8192, length: 8192)
+  4. Continue until hasMore=false
+  
+  Parameters: toolCallId (required), offset (optional, default: 0), length (optional, default: 8192, max: 32768)
 
 ━━━━━━━━━━━━━━━━━━━━━ WRITE (8 operations) ━━━━━━━━━━━━━━━━━━━━━
 -  create_file - Create new file with content
