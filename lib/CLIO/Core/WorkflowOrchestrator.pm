@@ -384,6 +384,25 @@ sub process_input {
                 tool_calls => $api_response->{tool_calls}
             };
             
+            # CRITICAL: Save assistant message with tool_calls to session IMMEDIATELY
+            # This ensures that if user presses Ctrl-C during tool execution,
+            # the assistant's response (including tool_calls) is preserved in session history
+            if ($session && $session->can('add_message')) {
+                eval {
+                    $session->add_message(
+                        'assistant',
+                        $api_response->{content} // '',
+                        { tool_calls => $api_response->{tool_calls} }
+                    );
+                    $session->save();
+                    print STDERR "[DEBUG][WorkflowOrchestrator] Saved assistant message with tool_calls to session (preserving state before tool execution)\n"
+                        if should_log('DEBUG');
+                };
+                if ($@) {
+                    print STDERR "[WARN][WorkflowOrchestrator] Failed to save assistant message before tool execution: $@\n";
+                }
+            }
+            
             # Classify tools by execution requirements (SAM pattern + CLIO enhancements)
             # - BLOCKING: Must complete before workflow continues (interactive tools)
             # - SERIAL: Execute one-at-a-time but don't block workflow
@@ -588,6 +607,24 @@ sub process_input {
                     tool_call_id => $tool_call->{id},
                     content => $sanitized_content
                 };
+                
+                # CRITICAL: Save tool result to session immediately after adding to conversation
+                # This ensures that if user presses Ctrl-C before next iteration,
+                # the tool execution result is preserved in session history
+                if ($session && $session->can('add_message')) {
+                    eval {
+                        $session->add_message(
+                            'tool',
+                            $sanitized_content,
+                            { tool_call_id => $tool_call->{id} }
+                        );
+                        print STDERR "[DEBUG][WorkflowOrchestrator] Saved tool result to session (tool_call_id=" . $tool_call->{id} . ")\n"
+                            if should_log('DEBUG');
+                    };
+                    if ($@) {
+                        print STDERR "[WARN][WorkflowOrchestrator] Failed to save tool result: $@\n";
+                    }
+                }
                 
                 print STDERR "[DEBUG][WorkflowOrchestrator] Tool result added to conversation (sanitized)\n"
                     if $self->{debug};
