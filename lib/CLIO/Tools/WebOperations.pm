@@ -21,7 +21,13 @@ sub new {
 
 Operations:
 -  fetch_url - Fetch content from URL
--  search_web - Web search (requires API key)
+   Parameters: url (required), timeout (optional, default 30s)
+   Returns: Page content, status code, content-type
+   
+-  search_web - Web search using DuckDuckGo (no API key needed)
+   Parameters: query (required), max_results (optional, default 10), timeout (optional, default 30s)
+   Returns: Array of search results with title, url, snippet
+   Note: Uses DuckDuckGo HTML scraping for privacy-focused search
 },
         supported_operations => [qw(fetch_url search_web)],
         %opts,
@@ -84,11 +90,113 @@ sub search_web {
     my ($self, $params, $context) = @_;
     
     my $query = $params->{query};
+    my $max_results = $params->{max_results} || 10;
+    my $timeout = $params->{timeout} || 30;
     
     return $self->error_result("Missing 'query' parameter") unless $query;
     
-    # Placeholder - would need actual search API integration
-    return $self->error_result("Web search not implemented - requires API key configuration");
+    # Use DuckDuckGo HTML scraping (no API key required!)
+    # DuckDuckGo's HTML search is more reliable than their instant answer API for general queries
+    
+    my $result;
+    eval {
+        require URI::Escape;
+        my $encoded_query = URI::Escape::uri_escape($query);
+        my $url = "https://html.duckduckgo.com/html/?q=$encoded_query";
+        
+        my $ua = CLIO::Compat::HTTP->new(
+            timeout => $timeout,
+            agent => 'Mozilla/5.0 (compatible; CLIO/1.0; +https://github.com/cliogpt/clio)',
+        );
+        
+        my $response = $ua->get($url);
+        
+        unless ($response->is_success) {
+            return $self->error_result("HTTP error: " . $response->status_line);
+        }
+        
+        my $html = $response->decoded_content;
+        
+        # Parse DuckDuckGo HTML results
+        # DuckDuckGo HTML format: <div class="result">...</div>
+        my @results = ();
+        
+        # Extract result blocks
+        while ($html =~ m{<div class="result[^"]*"[^>]*>(.*?)</div>\s*</div>}gs) {
+            my $result_block = $1;
+            
+            last if @results >= $max_results;
+            
+            # Extract title from <a class="result__a">
+            my $title = '';
+            if ($result_block =~ m{<a[^>]*class="result__a"[^>]*>(.*?)</a>}s) {
+                $title = $1;
+                $title =~ s/<[^>]+>//g;  # Strip HTML tags
+                $title =~ s/&quot;/"/g;
+                $title =~ s/&amp;/&/g;
+                $title =~ s/&lt;/</g;
+                $title =~ s/&gt;/>/g;
+                $title =~ s/^\s+|\s+$//g;  # Trim whitespace
+            }
+            
+            # Extract URL from <a class="result__url">
+            my $link = '';
+            if ($result_block =~ m{<a[^>]*class="result__url"[^>]*href="([^"]+)"}s) {
+                $link = $1;
+                # DuckDuckGo uses redirect URLs, extract actual URL
+                if ($link =~ m{//duckduckgo\.com/l/\?uddg=([^&]+)}) {
+                    $link = URI::Escape::uri_unescape($1);
+                }
+            }
+            
+            # Extract snippet from <a class="result__snippet">
+            my $snippet = '';
+            if ($result_block =~ m{<a[^>]*class="result__snippet"[^>]*>(.*?)</a>}s) {
+                $snippet = $1;
+                $snippet =~ s/<[^>]+>//g;  # Strip HTML tags
+                $snippet =~ s/&quot;/"/g;
+                $snippet =~ s/&amp;/&/g;
+                $snippet =~ s/&lt;/</g;
+                $snippet =~ s/&gt;/>/g;
+                $snippet =~ s/^\s+|\s+$//g;
+            }
+            
+            # Only add if we have at least a title and URL
+            if ($title && $link) {
+                push @results, {
+                    title => $title,
+                    url => $link,
+                    snippet => $snippet,
+                };
+            }
+        }
+        
+        my $count = scalar(@results);
+        
+        if ($count == 0) {
+            return $self->success_result(
+                "No results found for '$query'",
+                action_description => "searching web for '$query' (0 results)",
+                results => [],
+                query => $query,
+                count => 0,
+            );
+        }
+        
+        $result = $self->success_result(
+            "Found $count results for '$query'",
+            action_description => "searching web for '$query' ($count results)",
+            results => \@results,
+            query => $query,
+            count => $count,
+        );
+    };
+    
+    if ($@) {
+        return $self->error_result("Web search failed: $@");
+    }
+    
+    return $result;
 }
 
 1;
