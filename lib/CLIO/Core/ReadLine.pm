@@ -45,6 +45,12 @@ Arguments:
 
 Returns: Line of input (chomped), or undef on EOF
 
+Signal Handling:
+- Ctrl-C (SIGINT): Raises actual SIGINT signal to allow session cleanup
+  handlers to run. This ensures session state is saved before exit.
+- Ctrl-D (EOF): Returns undef when pressed on empty line
+- EINTR: Automatically retries on signal interruption without busy-wait
+
 =cut
 
 sub readline {
@@ -124,6 +130,10 @@ sub readline {
         if ($ord == 3) {
             print "^C\n";
             ReadMode('restore');
+            # CRITICAL: Raise actual SIGINT so session cleanup handlers can run
+            # This allows the main signal handler to save session state
+            kill 'INT', $$;  # Send SIGINT to self
+            # If handler returns (shouldn't), return undef as fallback
             return undef;
         }
         
