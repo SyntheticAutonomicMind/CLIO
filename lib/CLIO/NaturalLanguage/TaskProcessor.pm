@@ -5,7 +5,6 @@ package CLIO::NaturalLanguage::TaskProcessor;
 use strict;
 use warnings;
 use JSON;
-use Data::Dumper;
 
 =head1 NAME
 
