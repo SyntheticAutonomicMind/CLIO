@@ -301,8 +301,14 @@ sub process_input {
                     print STDERR "[INFO][WorkflowOrchestrator] Retryable $error_type detected, retrying in ${retry_delay}s on next iteration\n";
                 }
                 
+                # CRITICAL: Enable signal delivery during retry wait
+                local $SIG{ALRM} = sub { alarm(1); };
+                alarm(1);
+                
                 # Wait before retrying
                 sleep($retry_delay);
+                
+                alarm(0);  # Disable alarm after retry completes
                 
                 # Don't increment iteration counter - this failed attempt doesn't count
                 $iteration--;

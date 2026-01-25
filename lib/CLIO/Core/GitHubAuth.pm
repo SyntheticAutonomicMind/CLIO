@@ -152,6 +152,15 @@ sub poll_for_token {
     
     print STDERR "[INFO][GitHubAuth] Polling for access token (15min timeout)...\n" if should_log('INFO');
     
+    # CRITICAL: Enable periodic signal delivery during polling
+    # GitHub auth can block for up to 15 minutes waiting for user
+    # Without ALRM, Ctrl-C won't save session state
+    my $alarm_handler = sub {
+        alarm($interval);  # Re-arm using same interval as polling
+    };
+    local $SIG{ALRM} = $alarm_handler;
+    alarm($interval);
+    
     while (time() < $timeout) {
         my $request = HTTP::Request->new(POST => $url);
         $request->header('Accept' => 'application/json');
@@ -194,16 +203,19 @@ sub poll_for_token {
             elsif ($error eq 'expired_token') {
                 # Device code expired
                 print STDERR "[ERROR][GitHubAuth] Device code expired\n";
+                alarm(0);  # Disable alarm before dying
                 die "Device code expired. Please try again.";
             }
             elsif ($error eq 'access_denied') {
                 # User denied authorization
                 print STDERR "[ERROR][GitHubAuth] User denied authorization\n";
+                alarm(0);  # Disable alarm before dying
                 die "Authorization denied by user";
             }
             else {
                 # Unknown error
                 print STDERR "[ERROR][GitHubAuth] Token poll error: $error\n";
+                alarm(0);  # Disable alarm before dying
                 die "Token poll error: $error";
             }
         }
@@ -211,6 +223,7 @@ sub poll_for_token {
         # Success! We have the access token
         if ($data->{access_token}) {
             print STDERR "[INFO][GitHubAuth] Access token obtained successfully\n" if should_log('INFO');
+            alarm(0);  # Disable alarm on success
             return $data->{access_token};
         }
         
@@ -219,6 +232,7 @@ sub poll_for_token {
     }
     
     # Timeout reached
+    alarm(0);  # Disable alarm before dying
     print STDERR "[ERROR][GitHubAuth] Authorization timed out after 15 minutes\n";
     die "Authorization timed out after 15 minutes. Please try again.";
 }
