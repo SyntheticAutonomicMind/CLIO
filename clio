@@ -481,12 +481,10 @@ $ai_agent->set_ui($ui) if $ai_agent;
         
         # CRITICAL: Force output to appear immediately
         local $| = 1;
-        print STDERR "\n[INFO] Received signal $sig, saving session...\n";
         
         if ($$session_ref) {
             eval {
                 $$session_ref->save();
-                print STDERR "[INFO] Session saved successfully before exit\n";
             };
             if ($@) {
                 print STDERR "[ERROR] Failed to save session: $@\n";
