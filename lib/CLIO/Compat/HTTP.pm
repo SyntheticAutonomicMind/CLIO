@@ -56,23 +56,25 @@ sub new {
         use_curl_for_https => !$HAS_SSL && $HAS_CURL,
     };
     
-    # Initialize HTTP::Tiny if we have SSL
+    # Initialize HTTP::Tiny
+    # We always need HTTP::Tiny for HTTP requests, even if we use curl for HTTPS
+    my %http_tiny_opts = (
+        timeout => $timeout,
+        agent => $agent,
+        default_headers => $default_headers,
+    );
+    
+    # Add SSL verification option only if SSL is available
     if ($HAS_SSL) {
-        $self->{http} = HTTP::Tiny->new(
-            timeout => $timeout,
-            agent => $agent,
-            default_headers => $default_headers,
-            verify_SSL => $ssl_opts->{verify_hostname} || $ssl_opts->{verify_SSL} || 1,
-        );
+        # Use defined-or with proper precedence
+        my $verify = defined($ssl_opts->{verify_SSL}) ? $ssl_opts->{verify_SSL} : 1;
+        $http_tiny_opts{verify_SSL} = $verify;
     } elsif (!$HAS_CURL) {
-        warn "[WARN]HTTP] Neither IO::Socket::SSL nor curl available - HTTPS will not work!\n";
-        # Still create HTTP::Tiny for HTTP-only requests
-        $self->{http} = HTTP::Tiny->new(
-            timeout => $timeout,
-            agent => $agent,
-            default_headers => $default_headers,
-        );
+        warn "[WARN][HTTP] Neither IO::Socket::SSL nor curl available - HTTPS will not work!\n";
     }
+    
+    # Always create HTTP::Tiny instance (needed for HTTP URLs even with curl for HTTPS)
+    $self->{http} = HTTP::Tiny->new(%http_tiny_opts);
     
     return bless $self, $class;
 }
