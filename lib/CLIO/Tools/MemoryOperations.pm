@@ -436,8 +436,10 @@ sub add_discovery {
         # Add discovery to LTM
         $ltm->add_discovery($fact, $confidence, 1);  # verified=1 (user explicitly added)
         
-        # Save LTM
-        my $working_dir = $context->{working_directory} // '.';
+        # Save LTM - get working_directory from session
+        my $working_dir = ($context->{session} && $context->{session}->can('working_directory')) 
+            ? $context->{session}->working_directory 
+            : '.';
         my $ltm_file = File::Spec->catfile($working_dir, '.clio', 'ltm.json');
         $ltm->save($ltm_file);
         
@@ -486,8 +488,10 @@ sub add_solution {
         # Add solution to LTM
         $ltm->add_problem_solution($error, $solution, $examples);
         
-        # Save LTM
-        my $working_dir = $context->{working_directory} // '.';
+        # Save LTM - get working_directory from session
+        my $working_dir = ($context->{session} && $context->{session}->can('working_directory')) 
+            ? $context->{session}->working_directory 
+            : '.';
         my $ltm_file = File::Spec->catfile($working_dir, '.clio', 'ltm.json');
         $ltm->save($ltm_file);
         
@@ -536,8 +540,10 @@ sub add_pattern {
         # Add pattern to LTM
         $ltm->add_code_pattern($pattern, $confidence, $examples);
         
-        # Save LTM
-        my $working_dir = $context->{working_directory} // '.';
+        # Save LTM - get working_directory from session
+        my $working_dir = ($context->{session} && $context->{session}->can('working_directory')) 
+            ? $context->{session}->working_directory 
+            : '.';
         my $ltm_file = File::Spec->catfile($working_dir, '.clio', 'ltm.json');
         $ltm->save($ltm_file);
         

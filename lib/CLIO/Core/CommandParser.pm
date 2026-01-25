@@ -97,19 +97,23 @@ sub is_recall_query {
 }
 
 # Extract recall context from a command using memory system
+# DEPRECATED: Use STM->get_last_user_message() or search_messages() directly instead
+# This method is kept for backward compatibility only
 sub extract_recall_context {
     my ($self, $command, $memory) = @_;
-    return undef unless $memory && $memory->can('search_context');
+    return undef unless $memory && $memory->can('get_last_user_message');
     
     if (should_log('DEBUG')) {
-        print STDERR "[CommandParser] extract_recall_context: command='$command'\n";
+        print STDERR "[CommandParser] extract_recall_context (DEPRECATED): command='$command'\n";
     }
     
-    my $result = $memory->search_context($command);
+    # For backward compatibility, just return the last user message
+    # The AI can handle recall queries better than pattern matching
+    my $result = $memory->get_last_user_message();
     
     if (should_log('DEBUG')) {
         if ($result) {
-            print STDERR "[CommandParser] Found recall context: role=$result->{role}, content=$result->{content}\n";
+            print STDERR "[CommandParser] Returning last user message for recall\n";
         } else {
             print STDERR "[CommandParser] No recall context found\n";
         }

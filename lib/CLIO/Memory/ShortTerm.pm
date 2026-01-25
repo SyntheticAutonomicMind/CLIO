@@ -1,3 +1,25 @@
+=head1 NAME
+
+CLIO::Memory::ShortTerm - Short-term conversation memory (sliding window)
+
+=head1 DESCRIPTION
+
+Maintains a sliding window of recent conversation history for context.
+This is the working memory used during a session.
+
+The full conversation is always available in session history.
+ShortTerm provides access to recent context for quick lookups.
+
+=head1 SYNOPSIS
+
+    my $stm = CLIO::Memory::ShortTerm->new(max_size => 20);
+    $stm->add_message('user', 'Hello');
+    $stm->add_message('assistant', 'Hi there!');
+    
+    my $context = $stm->get_context();  # Returns array of recent messages
+
+=cut
+
 package CLIO::Memory::ShortTerm;
 
 use strict;
@@ -38,143 +60,63 @@ sub get_context {
     return $self->{history};
 }
 
-# Natural language context search for recall queries
-sub search_context {
-    my ($self, $query) = @_;
-    return undef unless defined $query;
-    
-    if (should_log('DEBUG')) {
-        print STDERR "[STM] search_context: query='$query'\n";
-    }
-    
-    # Handle contextual "repeat it" - check if previous query was about a position
-    if ($query =~ /\b(repeat\s+it|repeat\s+that)\b/i) {
-        # Look for the most recent query that asked about a specific position
-        my @user_messages = grep { $_->{role} eq 'user' } @{$self->{history}};
-        for my $i (reverse 0 .. $#{user_messages}) {
-            my $msg = $user_messages[$i];
-            if ($msg->{content} =~ /\b(first|second|third|fourth|1st|2nd|3rd|4th)\s+thing/i ||
-                $msg->{content} =~ /what\s+(did|was)\s+(?:the\s+)?(first|second|third|fourth|1st|2nd|3rd|4th|last|final)\s+(?:thing\s+)?(?:that\s+)?I\s+(?:said|say)/i) {
-                # Found a positional query, extract the position and apply it
-                return $self->search_context($msg->{content});
-            }
-        }
-        # If no previous positional query found, default to last message
-        return $self->_get_user_message_by_position(-1);
-    }
-    
-    # Handle keyword-based searches (what did I say about X)
-    if ($query =~ /what\s+(?:did|was)\s+.*I\s+(?:said|say)\s+about\s+(.+)/i) {
-        my $keyword = lc($1);
-        $keyword =~ s/\?.*$//;  # Remove trailing question marks
-        $keyword =~ s/^\s+|\s+$//g;  # Trim whitespace
-        
-        if (should_log('DEBUG')) {
-            print STDERR "[STM] Searching for keyword: '$keyword'\n";
-        }
-        
-        my @user_messages = grep { $_->{role} eq 'user' } @{$self->{history}};
-        for my $msg (@user_messages) {
-            if (lc($msg->{content}) =~ /\Q$keyword\E/) {
-                if (should_log('DEBUG')) {
-                    print STDERR "[STM] Found matching message: $msg->{content}\n";
-                }
-                return $msg;
-            }
-        }
-        return undef;
-    }
-    
-    # Handle positional references (first, second, last, etc.)
-    if ($query =~ /\b(first|1st)\s+thing/i) {
-        return $self->_get_user_message_by_position(1);
-    }
-    elsif ($query =~ /\b(second|2nd)\s+thing/i) {
-        return $self->_get_user_message_by_position(2);
-    }
-    elsif ($query =~ /\b(third|3rd)\s+thing/i) {
-        return $self->_get_user_message_by_position(3);
-    }
-    elsif ($query =~ /\b(fourth|4th)\s+thing/i) {
-        return $self->_get_user_message_by_position(4);
-    }
-    elsif ($query =~ /\b(last|final)\s+thing/i) {
-        return $self->_get_user_message_by_position(-1);
-    }
-    elsif ($query =~ /\bprevious\s+thing/i) {
-        return $self->_get_user_message_by_position(-1);
-    }
-    
-    # Handle "what did I say" patterns with positions
-    if ($query =~ /what\s+(did|was)\s+(?:the\s+)?(.*?)\s+(?:thing\s+)?(?:that\s+)?I\s+(?:said|say)/i) {
-        my $position_desc = $2;
-        if ($position_desc =~ /first|1st/i) {
-            return $self->_get_user_message_by_position(1);
-        }
-        elsif ($position_desc =~ /second|2nd/i) {
-            return $self->_get_user_message_by_position(2);
-        }
-        elsif ($position_desc =~ /third|3rd/i) {
-            return $self->_get_user_message_by_position(3);
-        }
-        elsif ($position_desc =~ /fourth|4th/i) {
-            return $self->_get_user_message_by_position(4);
-        }
-        elsif ($position_desc =~ /last|final/i) {
-            return $self->_get_user_message_by_position(-1);
-        }
-    }
-    
-    # Handle "repeat" patterns
-    if ($query =~ /repeat\s+(?:the\s+)?(.*?)(?:\s+thing)?/i) {
-        my $what = $1;
-        if ($what =~ /first|1st/i) {
-            return $self->_get_user_message_by_position(1);
-        }
-        elsif ($what =~ /second|2nd/i) {
-            return $self->_get_user_message_by_position(2);
-        }
-        elsif ($what =~ /third|3rd/i) {
-            return $self->_get_user_message_by_position(3);
-        }
-        elsif ($what =~ /fourth|4th/i) {
-            return $self->_get_user_message_by_position(4);
-        }
-        elsif ($what =~ /last|final|that/i) {
-            return $self->_get_user_message_by_position(-1);
-        }
-    }
-    
-    # Default fallback - return last user message for simple "repeat" requests
-    if ($query =~ /\b(repeat|what.*said)\b/i) {
-        return $self->_get_user_message_by_position(-1);
-    }
-    
-    return undef;
-}
+=head2 get_recent_user_messages
 
-# Get user message by position (1-indexed for positive, -1 for last)
-sub _get_user_message_by_position {
-    my ($self, $position) = @_;
+Get N most recent user messages
+
+    my $recent = $stm->get_recent_user_messages(5);  # Last 5 user messages
+
+=cut
+
+sub get_recent_user_messages {
+    my ($self, $count) = @_;
+    $count //= 10;
     
-    # Get all user messages
     my @user_messages = grep { $_->{role} eq 'user' } @{$self->{history}};
     
-    if (should_log('DEBUG')) {
-        print STDERR "[STM] _get_user_message_by_position: position=$position, total_user_messages=" . scalar(@user_messages) . "\n";
+    # Return last N messages
+    my $start = @user_messages > $count ? @user_messages - $count : 0;
+    return [@user_messages[$start .. $#user_messages]];
+}
+
+=head2 search_messages
+
+Simple text search across message history
+
+    my $matches = $stm->search_messages('keyword');
+
+=cut
+
+sub search_messages {
+    my ($self, $query) = @_;
+    return [] unless defined $query && length($query);
+    
+    my @matches;
+    for my $msg (@{$self->{history}}) {
+        next unless $msg->{content};
+        if ($msg->{content} =~ /\Q$query\E/i) {
+            push @matches, $msg;
+        }
     }
     
+    return \@matches;
+}
+
+=head2 get_last_user_message
+
+Get the most recent user message
+
+    my $last = $stm->get_last_user_message();
+
+=cut
+
+sub get_last_user_message {
+    my ($self) = @_;
+    
+    my @user_messages = grep { $_->{role} eq 'user' } @{$self->{history}};
     return undef unless @user_messages;
     
-    if ($position > 0) {
-        # Positive index (1-based)
-        return $user_messages[$position - 1] if $position <= @user_messages;
-    } else {
-        # Negative index (-1 for last)
-        return $user_messages[$position];
-    }
-    
-    return undef;
+    return $user_messages[-1];
 }
 
 sub _prune {
@@ -202,3 +144,16 @@ sub load {
 }
 
 1;
+
+__END__
+
+=head1 AUTHOR
+
+CLIO Development Team
+
+=head1 LICENSE
+
+Same terms as Perl itself.
+
+=cut
+
