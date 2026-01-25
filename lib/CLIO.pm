@@ -6,7 +6,7 @@ package CLIO;
 use strict;
 use warnings;
 
-our $VERSION = '20260125.7';
+our $VERSION = '20260125.8';
 
 =head1 NAME
 
@@ -14,7 +14,7 @@ CLIO - Command Line Intelligence Orchestrator
 
 =head1 VERSION
 
-Version 20260125.7
+Version 20260125.8
 
 =head1 DESCRIPTION
 
