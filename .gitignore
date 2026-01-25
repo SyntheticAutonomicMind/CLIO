@@ -4,6 +4,8 @@ ai-assisted/202*
 # User data
 sessions/
 url_cache/
+
+# CLIO
 .clio/logs/
 .clio/sessions/
 .clio/memory/
@@ -20,13 +22,12 @@ url_cache/
 Thumbs.db
 
 # Test files
-test*.txt
-test*.pl
-test*.sh
-scratch/
+/test*.txt
+/test*.pl
+/test*.sh
 
-# Test suite is INCLUDED (in tests/ directory)
-# Do NOT ignore tests/ - it contains the official test suite
+# Transient data
+scratch/
 
 # Logs
 *.log
