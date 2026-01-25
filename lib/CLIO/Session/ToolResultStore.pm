@@ -101,7 +101,7 @@ $preview
 [TOOL_RESULT_STORED: toolCallId=$toolCallId, totalLength=$content_size, remaining=$remaining bytes]
 
 To read the full result, use:
-read_tool_result(toolCallId: "$toolCallId", offset: 0, length: 8192)
+file_operations(operation: "read_tool_result", toolCallId: "$toolCallId", offset: 0, length: 8192)
 END_MARKER
         
         print STDERR "[INFO][ToolResultStore] Persisted: toolCallId=$toolCallId, totalSize=$content_size bytes, preview=$PREVIEW_SIZE bytes, path=$metadata->{filePath}\n" if $self->{debug};
