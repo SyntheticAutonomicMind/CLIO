@@ -1204,11 +1204,17 @@ sub send_request {
         my $wait = int($self->{rate_limit_until} - time()) + 1;
         print STDERR "[INFO][APIManager] Rate limited. Waiting ${wait}s before retry...\n";
         
+        # CRITICAL: Enable periodic signal delivery during rate limit wait
+        # Allow Ctrl-C to interrupt wait and save session
+        local $SIG{ALRM} = sub { alarm(1); };
+        alarm(1);
+        
         # Show countdown for user feedback
         for (my $i = $wait; $i > 0; $i--) {
             print STDERR "\r[INFO][APIManager] Retrying in ${i}s..." unless $i % 5;  # Update every 5s
             sleep(1);
         }
+        alarm(0);  # Disable alarm after wait completes
         print STDERR "\r[INFO][APIManager] Retry limit cleared. Sending request...\n";
     }
     
@@ -1551,11 +1557,17 @@ sub send_request_streaming {
         my $wait = int($self->{rate_limit_until} - time()) + 1;
         print STDERR "[INFO][APIManager] Rate limited. Waiting ${wait}s before retry...\n";
         
+        # CRITICAL: Enable periodic signal delivery during rate limit wait
+        # Allow Ctrl-C to interrupt wait and save session
+        local $SIG{ALRM} = sub { alarm(1); };
+        alarm(1);
+        
         # Show countdown for user feedback
         for (my $i = $wait; $i > 0; $i--) {
             print STDERR "\r[INFO][APIManager] Retrying in ${i}s..." unless $i % 5;  # Update every 5s
             sleep(1);
         }
+        alarm(0);  # Disable alarm after wait completes
         print STDERR "\r[INFO][APIManager] Retry limit cleared. Sending request...\n";
     }
     

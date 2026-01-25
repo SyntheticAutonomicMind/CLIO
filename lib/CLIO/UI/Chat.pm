@@ -483,6 +483,21 @@ sub run {
                 print STDERR "[DEBUG][Chat] Loaded " . scalar(@$conversation_history) . " messages from session history\n" if $self->{debug};
             }
             
+            # CRITICAL FIX: Enable periodic signal delivery during streaming
+            # Without this, Ctrl-C during HTTP streaming won't save session because:
+            # - HTTP::Tiny blocks in socket read syscall
+            # - Perl signal handlers only run between Perl opcodes
+            # - ALRM interrupts the syscall, allowing signal handlers to run
+            # Trade-off: 1-second worst-case latency for Ctrl-C response
+            my $alarm_count = 0;
+            my $alarm_handler = sub {
+                $alarm_count++;
+                print STDERR "[DEBUG][Chat] ALRM #$alarm_count - syscall interrupted for signal delivery\n" if should_log('DEBUG');
+                alarm(1);  # Re-arm for next second
+            };
+            local $SIG{ALRM} = $alarm_handler;
+            alarm(1);  # Start periodic interruption
+            
             # Process request with streaming callback (match clio script pattern)
             print STDERR "[DEBUG][Chat] Calling process_user_request...\n" if should_log('DEBUG');
             my $result = $self->{ai_agent}->process_user_request($input, {
@@ -496,6 +511,10 @@ sub run {
                 spinner => $spinner  # Pass spinner for interactive tools to stop
             });
             print STDERR "[DEBUG][Chat] process_user_request returned, success=" . ($result->{success} ? "yes" : "no") . "\n" if $self->{debug};
+            
+            # CRITICAL: Disable periodic alarm after streaming completes
+            alarm(0);
+            print STDERR "[DEBUG][Chat] Disabled periodic ALRM after streaming ($alarm_count interrupts)\n" if should_log('DEBUG');
             
             # Stop spinner in case it's still running (e.g., error before first chunk)
             $spinner->stop();
