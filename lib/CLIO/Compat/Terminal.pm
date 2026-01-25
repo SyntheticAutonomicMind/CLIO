@@ -166,79 +166,12 @@ Returns: Character read, or undef on timeout
 
 =cut
 
-=head2 _read_utf8_char
-
-Internal helper to read a complete UTF-8 character from STDIN.
-
-Reads the initial byte, detects if it's part of a multi-byte UTF-8 sequence,
-and reads additional bytes as needed. This allows pasting Unicode characters
-like Greek letters (α = 2 bytes), CJK characters (中 = 3 bytes), and emoji (= 4 bytes).
-
-UTF-8 encoding:
-  - 1-byte: 0x00-0x7F (ASCII)
-  - 2-byte: 0xC0-0xDF (e.g., α)
-  - 3-byte: 0xE0-0xEF (e.g., 中)
-  - 4-byte: 0xF0-0xF7 (e.g., emoji)
-
-Returns: Complete UTF-8 character(s), or undef on EOF
-
-=cut
-
-sub _read_utf8_char {
-    # Internal helper to read a complete UTF-8 character from STDIN
-    # Reads initial byte, then determines if multi-byte sequence and reads remaining bytes
-    
-    # CRITICAL: Set :raw mode to get raw bytes
-    binmode(STDIN, ':raw');
-    
-    my $bytes = '';
-    my $read_char = read(STDIN, $bytes, 1);
-    
-    return undef unless $read_char;
-    
-    # Check if this is a multi-byte UTF-8 sequence
-    my $first_ord = ord($bytes);
-    my $num_bytes = 1;
-    
-    if ($first_ord >= 0xC0 && $first_ord < 0xE0) {
-        $num_bytes = 2;  # 2-byte sequence (e.g., α is 0xCE 0xB1)
-    } elsif ($first_ord >= 0xE0 && $first_ord < 0xF0) {
-        $num_bytes = 3;  # 3-byte sequence (e.g., 中 is 0xE4 0xB8 0xAD)
-    } elsif ($first_ord >= 0xF0 && $first_ord < 0xF8) {
-        $num_bytes = 4;  # 4-byte sequence (e.g., emoji)
-    }
-    
-    # Read remaining bytes for multi-byte sequences
-    for (2 .. $num_bytes) {
-        my $next_byte;
-        if (read(STDIN, $next_byte, 1)) {
-            $bytes .= $next_byte;
-        } else {
-            last;  # End of sequence if we can't read more
-        }
-    }
-    
-    # Decode the UTF-8 bytes to a proper character
-    # This is important: we read raw bytes but return a decoded character
-    if ($num_bytes > 1) {
-        # For multi-byte sequences, decode from UTF-8 bytes
-        eval {
-            require Encode;
-            Encode->import('FB_QUIET');
-            $bytes = Encode::decode('UTF-8', $bytes, Encode::FB_QUIET());
-        };
-        # If Encode fails, return the bytes as-is (shouldn't happen for valid UTF-8)
-    }
-    
-    return $bytes;
-}
-
 sub ReadKey {
     my ($timeout) = @_;
     $timeout = 0 unless defined $timeout;
     
-    # CRITICAL: Don't set binmode here - let _read_utf8_char handle it
-    # Setting binmode repeatedly interferes with escape sequence detection
+    # Use :bytes mode for raw byte reading (works with sysread)
+    binmode(STDIN, ':bytes');
     
     # Check if terminal mode is already set (by ReadLine or other code)
     my $mode_was_set = _get_current_mode();
@@ -247,6 +180,8 @@ sub ReadKey {
     ReadMode(1) if $mode_was_set == 0;
     
     my $char;
+    my $bytes_read;
+    
     if ($timeout == -1) {
         # Non-blocking read
         use POSIX qw(:errno_h);
@@ -255,12 +190,12 @@ sub ReadKey {
         my $flags = fcntl(STDIN, F_GETFL, 0);
         fcntl(STDIN, F_SETFL, $flags | O_NONBLOCK);
         
-        $char = _read_utf8_char();
+        $bytes_read = sysread(STDIN, $char, 1);
         
         fcntl(STDIN, F_SETFL, $flags);
     } elsif ($timeout == 0) {
-        # Blocking read - use helper for UTF-8
-        $char = _read_utf8_char();
+        # Blocking read
+        $bytes_read = sysread(STDIN, $char, 1);
     } else {
         # Timed read using select
         use IO::Select;
@@ -268,12 +203,44 @@ sub ReadKey {
         $sel->add(\*STDIN);
         
         if ($sel->can_read($timeout)) {
-            $char = _read_utf8_char();
+            $bytes_read = sysread(STDIN, $char, 1);
         }
     }
     
     # Only restore mode if we set it
     ReadMode(0) if $mode_was_set == 0;
+    
+    return undef unless $bytes_read;
+    
+    # Check if this is the start of a UTF-8 multi-byte sequence
+    my $ord = ord($char);
+    
+    # For UTF-8 sequences (high bit set, >= 0xC0), read additional bytes
+    if ($ord >= 0xC0) {
+        my $num_bytes = 1;
+        
+        if ($ord < 0xE0) {
+            $num_bytes = 2;  # 2-byte sequence
+        } elsif ($ord < 0xF0) {
+            $num_bytes = 3;  # 3-byte sequence
+        } elsif ($ord < 0xF8) {
+            $num_bytes = 4;  # 4-byte sequence
+        }
+        
+        # Read remaining bytes
+        for (2 .. $num_bytes) {
+            my $next_byte;
+            if (sysread(STDIN, $next_byte, 1)) {
+                $char .= $next_byte;
+            }
+        }
+        
+        # Decode UTF-8 bytes to character
+        eval {
+            require Encode;
+            $char = Encode::decode('UTF-8', $char, Encode::FB_QUIET());
+        };
+    }
     
     return $char;
 }
