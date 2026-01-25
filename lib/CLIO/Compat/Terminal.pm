@@ -188,6 +188,9 @@ sub _read_utf8_char {
     # Internal helper to read a complete UTF-8 character from STDIN
     # Reads initial byte, then determines if multi-byte sequence and reads remaining bytes
     
+    # CRITICAL: Set :raw mode to get raw bytes
+    binmode(STDIN, ':raw');
+    
     my $bytes = '';
     my $read_char = read(STDIN, $bytes, 1);
     
@@ -234,11 +237,8 @@ sub ReadKey {
     my ($timeout) = @_;
     $timeout = 0 unless defined $timeout;
     
-    # CRITICAL: Use :bytes mode for reading to handle both:
-    # 1. ANSI escape sequences (arrow keys: ESC [ A/B/C/D)
-    # 2. UTF-8 multi-byte characters (emoji, Greek, CJK)
-    # We'll manually decode UTF-8 when needed using _read_utf8_char
-    binmode(STDIN, ':raw');
+    # CRITICAL: Don't set binmode here - let _read_utf8_char handle it
+    # Setting binmode repeatedly interferes with escape sequence detection
     
     # Check if terminal mode is already set (by ReadLine or other code)
     my $mode_was_set = _get_current_mode();
@@ -255,37 +255,7 @@ sub ReadKey {
         my $flags = fcntl(STDIN, F_GETFL, 0);
         fcntl(STDIN, F_SETFL, $flags | O_NONBLOCK);
         
-        # For control characters and escape sequences, read raw bytes
-        my $read_byte = read(STDIN, $char, 1);
-        if ($read_byte && ord($char) >= 128) {
-            # High bit set - might be UTF-8 multi-byte sequence
-            # Put the byte back into the buffer concept (we'll re-read it)
-            # Actually, we can't put it back easily, so read the rest of the sequence
-            my $first_ord = ord($char);
-            my $num_bytes = 1;
-            
-            if ($first_ord >= 0xC0 && $first_ord < 0xE0) {
-                $num_bytes = 2;
-            } elsif ($first_ord >= 0xE0 && $first_ord < 0xF0) {
-                $num_bytes = 3;
-            } elsif ($first_ord >= 0xF0 && $first_ord < 0xF8) {
-                $num_bytes = 4;
-            }
-            
-            # Read remaining bytes
-            for (2 .. $num_bytes) {
-                my $next_byte;
-                read(STDIN, $next_byte, 1);
-                $char .= $next_byte if defined $next_byte;
-            }
-            
-            # Decode UTF-8
-            eval {
-                require Encode;
-                Encode->import('FB_QUIET');
-                $char = Encode::decode('UTF-8', $char, Encode::FB_QUIET());
-            };
-        }
+        $char = _read_utf8_char();
         
         fcntl(STDIN, F_SETFL, $flags);
     } elsif ($timeout == 0) {
