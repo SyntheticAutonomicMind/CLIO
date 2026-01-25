@@ -249,6 +249,16 @@ sub add_message {
         },
     };
     
+    # Add tool_calls if provided (for assistant messages with tool execution)
+    if ($opts && $opts->{tool_calls}) {
+        $message->{tool_calls} = $opts->{tool_calls};
+    }
+    
+    # Add tool_call_id if provided (for tool result messages)
+    if ($opts && $opts->{tool_call_id}) {
+        $message->{tool_call_id} = $opts->{tool_call_id};
+    }
+    
     # Add provider response ID if available (for assistant messages)
     if ($role eq 'assistant' && $self->{lastGitHubCopilotResponseId}) {
         $message->{metadata}{providerResponseId} = $self->{lastGitHubCopilotResponseId};
