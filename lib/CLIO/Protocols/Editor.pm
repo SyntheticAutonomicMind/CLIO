@@ -594,8 +594,8 @@ sub _detect_language {
     if ($file_path =~ /\.json$/) { return 'json' }
     
     # Detect by content
-    if ($content =~ /^#!/.*perl/m) { return 'perl' }
-    if ($content =~ /^#!/.*python/m) { return 'python' }
+    if ($content =~ m{^\#!.*perl}m) { return 'perl' }
+    if ($content =~ m{^\#!.*python}m) { return 'python' }
     if ($content =~ /package\s+\w+::\w+/) { return 'perl' }
     
     return 'text';
@@ -701,15 +701,6 @@ use warnings;
 {{description}}
 
 =cut
-
-sub new {
-    my ($class, %args) = @_;
-    my $self = bless {
-        %args
-    }, $class;
-    
-    return $self;
-}
 
 1;
 
