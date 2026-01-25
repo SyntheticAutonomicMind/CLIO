@@ -925,7 +925,7 @@ sub read_tool_result {
     # Enforce maximum chunk size (32KB like SAM)
     my $max_chunk_size = 32_768;
     if ($length > $max_chunk_size) {
-        print STDERR "[WARN]FileOp] Requested length $length exceeds max $max_chunk_size, capping\n";
+        print STDERR "[DEBUG][FileOp] Requested length $length exceeds max $max_chunk_size, capping to $max_chunk_size\n" if should_log('DEBUG');
         $length = $max_chunk_size;
     }
     
