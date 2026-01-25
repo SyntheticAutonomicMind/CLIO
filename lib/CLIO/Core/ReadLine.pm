@@ -70,8 +70,17 @@ sub readline {
     while (1) {
         my $char = ReadKey(0);  # Blocking read
         
-        # Handle undefined (should not happen in blocking mode)
-        next unless defined $char;
+        # Handle undefined - can happen if sysread fails or returns 0
+        unless (defined $char) {
+            # ReadKey failed - this can happen due to:
+            # 1. EINTR - interrupted by signal
+            # 2. EAGAIN/EWOULDBLOCK - would block (shouldn't happen but does)
+            # 3. EOF or real error
+            # To avoid 100% CPU busy loop, sleep briefly before retrying
+            use Time::HiRes qw(usleep);
+            usleep(10000);  # 10ms sleep to avoid spinning
+            next;
+        }
         
         my $ord = ord($char);
         
