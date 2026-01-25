@@ -830,6 +830,10 @@ sub _generate_datetime_section {
     my $day_name = $day_names[$wday];
     my $month_name = $month_names[$mon - 1];
     
+    # Get current working directory
+    use Cwd qw(getcwd);
+    my $cwd = getcwd();
+    
     # Build the section
     my $section = "# Current Date & Time\n\n";
     $section .= "**Current Date/Time:** $datetime_iso ($day_name, $month_name $mday, $year)\n\n";
@@ -838,6 +842,22 @@ sub _generate_datetime_section {
     $section .= "- Generating version tags (e.g., v$year.$mon.$mday)\n";
     $section .= "- Log entries and audit trails\n";
     $section .= "- Time-sensitive operations\n\n";
+    
+    # Add working directory information
+    $section .= "# Current Working Directory\n\n";
+    $section .= "**Working Directory:** `$cwd`\n\n";
+    $section .= "**CRITICAL PATH RULES:**\n";
+    $section .= "1. ALWAYS use relative paths or \$HOME instead of absolute paths\n";
+    $section .= "2. NEVER assume user's home directory name (don't use /Users/alice, /Users/andy, etc.)\n";
+    $section .= "3. BEFORE using 'cd', verify directory exists with 'test -d' or use pwd to check location\n";
+    $section .= "4. When working directory matters, ALWAYS run 'pwd' first to verify location\n";
+    $section .= "5. Use 'realpath' or 'readlink -f' to resolve symbolic links before cd\n\n";
+    $section .= "**Examples:**\n";
+    $section .= "- CORRECT: `cd ./subdir && make`\n";
+    $section .= "- CORRECT: `cd \$HOME/project && make`\n";
+    $section .= "- CORRECT: `pwd && make` (if already in right place)\n";
+    $section .= "- WRONG: `cd /Users/andy/project && make` (hallucinated path)\n\n";
+    
     $section .= "**IMPORTANT - Context & Time Management:**\n\n";
     $section .= "CLIO manages your context window and processing time automatically. You should NEVER:\n";
     $section .= "- Worry about token budgets or context limits\n";
@@ -997,14 +1017,19 @@ sub _load_conversation_history {
         $history = $session->get_conversation_history() || [];
     }
     
-    # Limit history to last 10 messages to avoid context overflow
-    if (@$history > 10) {
-        my $start_idx = @$history - 10;
-        $history = [@{$history}[$start_idx .. $#{$history}]];
-        
-        print STDERR "[DEBUG][WorkflowOrchestrator] Trimmed history to last 10 messages\n"
-            if $self->{debug};
-    }
+    # CRITICAL: Do NOT truncate history here!
+    # Session::State handles context management with YaRN and importance-based trimming.
+    # Arbitrarily limiting to N messages destroys context continuity and causes history loss.
+    # The session provides exactly what should be included based on token budgets and importance.
+    #
+    # Previous buggy code (REMOVED):
+    # if (@$history > 10) {
+    #     my $start_idx = @$history - 10;
+    #     $history = [@{$history}[$start_idx .. $#{$history}]];
+    # }
+    
+    print STDERR "[DEBUG][WorkflowOrchestrator] Loaded " . scalar(@$history) . " messages from session\n"
+        if $self->{debug};
     
     # Validate and filter messages
     # CRITICAL: Skip system messages from history - we always build fresh with dynamic tools

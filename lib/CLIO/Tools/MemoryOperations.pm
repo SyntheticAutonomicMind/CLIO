@@ -339,10 +339,9 @@ sub recall_sessions {
     
     my $result;
     eval {
-        # Find sessions directory (use get_config_dir for platform-aware path)
+        # Find sessions directory - ALWAYS use project-local .clio/sessions
+        # Sessions are project-scoped, not global
         my $sessions_dir = '.clio/sessions';
-        $sessions_dir = File::Spec->catdir(get_config_dir(), 'sessions') 
-            unless -d $sessions_dir;
         
         return $self->error_result("Sessions directory not found") unless -d $sessions_dir;
         
