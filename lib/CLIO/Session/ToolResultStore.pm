@@ -212,6 +212,13 @@ sub retrieveChunk {
     $offset //= 0;
     $length //= 8192;
     
+    # Enforce maximum chunk size (32KB) - matches SAM's design
+    my $max_chunk_size = 32_768;
+    if ($length > $max_chunk_size) {
+        print STDERR "[DEBUG][ToolResultStore] Requested length $length exceeds max $max_chunk_size, capping to $max_chunk_size\n" if should_log('DEBUG');
+        $length = $max_chunk_size;
+    }
+    
     # Build path
     my $session_dir = File::Spec->catdir($self->{sessions_dir}, $session_id);
     my $tool_results_dir = File::Spec->catdir($session_dir, 'tool_results');
