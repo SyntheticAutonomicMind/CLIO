@@ -479,17 +479,24 @@ $ai_agent->set_ui($ui) if $ai_agent;
         return if $cleanup_done;  # Prevent multiple executions
         $cleanup_done = 1;
         
-        print STDERR "\n[INFO] Received signal $sig, saving session...\n" unless -t STDIN && !$ENV{CLIO_DEBUG};
+        # CRITICAL: Force output to appear immediately
+        local $| = 1;
+        print STDERR "\n[INFO] Received signal $sig, saving session...\n";
         
         if ($$session_ref) {
             eval {
                 $$session_ref->save();
-                print STDERR "[DEBUG] Session saved before exit\n" if $debug;
+                print STDERR "[INFO] Session saved successfully before exit\n";
             };
             if ($@) {
                 print STDERR "[ERROR] Failed to save session: $@\n";
             }
+        } else {
+            print STDERR "[WARN] No session to save (session object is undefined)\n";
         }
+        
+        # Force STDERR flush
+        STDERR->flush();
         
         exit 130;  # Standard exit code for SIGINT (128 + 2)
     };
