@@ -23,25 +23,67 @@ sub new {
     
     return $class->SUPER::new(
         name => 'memory_operations',
-        description => q{Memory and knowledge base operations.
+        description => q{Memory and Long-Term Memory (LTM) operations.
 
-Operations:
--  store - Store information in memory
--  retrieve - Retrieve from memory by key
--  search - Semantic search in knowledge base
--  list - List all stored memories
--  delete - Delete memory entry
--  recall_sessions - Search previous session history for relevant content
-   Parameters: query (required), max_sessions (default: 10), max_results (default: 5)
-   Returns: Matches with session_id, role, preview text
+SESSION-LEVEL MEMORY (key-value pairs stored in .clio/memory/):
+-  store - Store information with key and content
+   Parameters: key (required), content (required)
+   Returns: {success, key, path}
+   
+-  retrieve - Get stored information by key
+   Parameters: key (required)
+   Returns: {success, content, timestamp}
+   
+-  search - Find memories by keyword search
+   Parameters: query (required)
+   Returns: {success, matches[], count}
+   
+-  list - List all stored memory keys
+   Returns: {success, memories[], count}
+   
+-  delete - Remove a stored memory by key
+   Parameters: key (required)
+   Returns: {success}
 
-Project-Level LTM Operations (Long-Term Memory):
--  add_discovery - Store a fact/discovery to project LTM
-   Parameters: fact (required), confidence (optional, 0-1)
--  add_solution - Store a problem-solution mapping
-   Parameters: error (required), solution (required), examples (optional)
--  add_pattern - Store a code pattern
-   Parameters: pattern (required), confidence (optional, 0-1), examples (optional)
+PROJECT-LEVEL LTM RECALL (searches all previous sessions):
+-  recall_sessions - Search all previous session history
+   Parameters: 
+     query (required) - Text to search for
+     max_sessions (optional, default 10) - How many recent sessions to search
+     max_results (optional, default 5) - Max matches to return
+   Returns: {success, matches[{session_id, role, message_index, preview}]}
+   Note: Searches newest sessions first, useful for remembering past work
+
+PROJECT-LEVEL LTM STORAGE (persists facts across all sessions):
+-  add_discovery - Store a discovered fact to project LTM
+   Parameters:
+     fact (required) - The discovery statement
+     confidence (optional, 0.0-1.0, default 0.8) - Confidence in discovery
+   Returns: {success}
+   Example: Discovering that a code pattern exists, important behavior found
+   
+-  add_solution - Store a problem-solution pair to project LTM
+   Parameters:
+     error (required) - The problem/error description
+     solution (required) - How to fix/solve it
+     examples (optional, array) - File paths where this applies
+   Returns: {success}
+   Example: "If you see X error, the solution is Y"
+   
+-  add_pattern - Store a code/workflow pattern to project LTM
+   Parameters:
+     pattern (required) - Description of the pattern
+     confidence (optional, 0.0-1.0, default 0.7) - Pattern reliability
+     examples (optional, array) - Files demonstrating this pattern
+   Returns: {success}
+   Example: "Always check for X before doing Y"
+
+HOW TO USE:
+1. Use store/retrieve for temporary per-project notes
+2. Use recall_sessions to remember what you learned in previous sessions
+3. Use add_discovery/add_solution/add_pattern for important facts to keep
+4. All LTM data persists in .clio/ltm.json and is automatically injected
+   into future sessions for context
 },
         supported_operations => [qw(store retrieve search list delete recall_sessions add_discovery add_solution add_pattern)],
         %opts,
