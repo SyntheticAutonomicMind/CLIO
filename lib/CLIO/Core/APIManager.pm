@@ -1125,6 +1125,19 @@ sub _handle_error_response {
         $retry_info = "Server temporarily unavailable ($status). Retrying...";
         $error = $retry_info;
     }
+    # Handle malformed tool call JSON (400) - the AI generated bad JSON, so retry to give it another chance
+    # This prevents wasting a premium request on a transient AI JSON generation error
+    elsif ($status == 400 && $error =~ /invalid.*json.*tool.*call|tool.*call.*invalid.*json/i) {
+        $is_retryable_error = 1;
+        $retryable = 1;
+        $retry_after = 1;  # Quick retry - no server cooldown needed
+        
+        # Provide friendly error message
+        $retry_info = "AI generated malformed tool call JSON. Retrying request...";
+        $error = $retry_info;
+        
+        print STDERR "[INFO][APIManager] Detected malformed tool JSON error - will retry\n" if should_log('INFO');
+    }
     
     # Log error details
     # For retryable errors: Only log at DEBUG level (suppressed by default)

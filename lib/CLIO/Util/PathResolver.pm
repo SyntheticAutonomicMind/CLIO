@@ -116,14 +116,19 @@ sub get_config_dir {
 
 Get the sessions directory path. Creates it if it doesn't exist.
 
-Returns: Absolute path to sessions directory
+**CRITICAL:** Sessions are PROJECT-SCOPED, not global.  
+Uses current working directory's .clio/sessions/, not ~/.clio/sessions/
+
+Returns: Absolute path to sessions directory (in current project)
 
 =cut
 
 sub get_sessions_dir {
-    init() unless defined $CONFIG_DIR;
+    # Use current working directory for project-local sessions
+    use Cwd qw(getcwd);
+    my $project_dir = getcwd();
     
-    my $sessions_dir = File::Spec->catdir($CONFIG_DIR, 'sessions');
+    my $sessions_dir = File::Spec->catdir($project_dir, '.clio', 'sessions');
     
     # Create if doesn't exist
     if (!-d $sessions_dir) {
