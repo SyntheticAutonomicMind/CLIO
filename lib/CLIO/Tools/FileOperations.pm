@@ -114,8 +114,8 @@ AUTHORIZATION:
   
   **Example Workflow**:
   1. web_operations returns: "Preview: ... [TOOL_RESULT_STORED: toolCallId=abc123, totalLength=150000]"
-  2. Read first chunk: read_tool_result(toolCallId: "abc123", offset: 0, length: 8192)
-  3. Read next chunk: read_tool_result(toolCallId: "abc123", offset: 8192, length: 8192)
+  2. Read first chunk: file_operations(operation: "read_tool_result", toolCallId: "abc123", offset: 0, length: 8192)
+  3. Read next chunk: file_operations(operation: "read_tool_result", toolCallId: "abc123", offset: 8192, length: 8192)
   4. Continue until hasMore=false
   
   Parameters: toolCallId (required), offset (optional, default: 0), length (optional, default: 8192, max: 32768)
@@ -971,7 +971,7 @@ sub read_tool_result {
                 "The tool result has $total characters total.\n" .
                 "Valid offset range: 0 to " . ($total - 1) . "\n\n" .
                 "Start reading from offset 0:\n" .
-                "read_tool_result(toolCallId: \"$toolCallId\", offset: 0, length: $length)"
+                "file_operations(operation: \"read_tool_result\", toolCallId: \"$toolCallId\", offset: 0, length: $length)"
             );
         } else {
             return $self->error_result("Failed to retrieve tool result: $error");
@@ -998,7 +998,7 @@ sub read_tool_result {
     if ($chunk->{hasMore}) {
         push @lines, "";
         push @lines, "To read next chunk:";
-        push @lines, "read_tool_result(toolCallId: \"$chunk->{toolCallId}\", offset: $chunk->{nextOffset}, length: $length)";
+        push @lines, "file_operations(operation: \"read_tool_result\", toolCallId: \"$chunk->{toolCallId}\", offset: $chunk->{nextOffset}, length: $length)";
     } else {
         push @lines, "";
         push @lines, "SUCCESS: All content retrieved (no more chunks)";
