@@ -28,6 +28,12 @@ Operations:
    Parameters: query (required), max_results (optional, default 10), timeout (optional, default 30s)
    Returns: Array of search results with title, url, snippet
    Note: Uses DuckDuckGo HTML scraping for privacy-focused search
+   
+IMPORTANT - Known Limitations:
+   DuckDuckGo may block requests from datacenter/cloud IP addresses.
+   Residential networks typically work better. If you encounter blocking errors,
+   consider using a search API (Bing API, Google Custom Search Engine) which
+   allow programmatic access with API keys.
 },
         supported_operations => [qw(fetch_url search_web)],
         %opts,
@@ -56,9 +62,11 @@ sub fetch_url {
     
     my $result;
     eval {
+        # Use browser-like user-agent for better compatibility
+        # Use 'links' text browser - widely compatible and not flagged as bot
         my $ua = CLIO::Compat::HTTP->new(
             timeout => $timeout,
-            agent => 'CLIO/1.0',
+            agent => 'Links (2.29; Linux x86_64; GNU C 11.2; text)',
         );
         
         my $response = $ua->get($url);
@@ -96,56 +104,77 @@ sub search_web {
     return $self->error_result("Missing 'query' parameter") unless $query;
     
     # Use DuckDuckGo HTML scraping (no API key required!)
-    # DuckDuckGo's HTML search is more reliable than their instant answer API for general queries
+    # Match SAM's approach: GET request with query parameters
     
     my $result;
     eval {
-        require URI::Escape;
-        my $encoded_query = URI::Escape::uri_escape($query);
+        my $encoded_query = _uri_escape($query);
+        # Use DuckDuckGo HTML endpoint (simpler to parse than main site)
+        # CRITICAL: Don't include &s=0 parameter - it triggers bot detection!
         my $url = "https://html.duckduckgo.com/html/?q=$encoded_query";
         
+        # Use browser-like user-agent to avoid CAPTCHA (matches SAM's approach)
+        # DuckDuckGo blocks obvious bots, so we pretend to be a real browser
+        # CRITICAL: Use 'links' text browser User-Agent - it works reliably!
+        # DuckDuckGo trusts links and doesn't require HTTP/2
         my $ua = CLIO::Compat::HTTP->new(
             timeout => $timeout,
-            agent => 'Mozilla/5.0 (compatible; CLIO/1.0; +https://github.com/cliogpt/clio)',
+            agent => 'Links (2.29; Linux x86_64; GNU C 11.2; text)',
         );
         
+        # Use GET request (not POST) - matches SAM
         my $response = $ua->get($url);
         
         unless ($response->is_success) {
-            return $self->error_result("HTTP error: " . $response->status_line);
+            die "HTTP error: " . $response->status_line;
         }
         
         my $html = $response->decoded_content;
+        
+        # Check for CAPTCHA or IP-based blocking
+        if ($html =~ /Unfortunately, bots use DuckDuckGo too/) {
+            die "DuckDuckGo CAPTCHA challenge detected. This usually happens when:\n" .
+                "  - Requests are coming from a datacenter/cloud IP address\n" .
+                "  - Too many requests from the same IP\n" .
+                "  - Network is flagged for bot activity\n" .
+                "Consider using a search API (Bing, Google Custom Search) for reliable programmatic access.";
+        }
+        
+        # Check for HTTP error responses in content (400, 403, etc.)
+        if ($html =~ /^<!DOCTYPE html>/ && length($html) < 500) {
+            die "DuckDuckGo returned an error page. This may indicate IP-based blocking. " .
+                "Residential networks typically have better success than datacenter/cloud IPs.";
+        }
         
         # Parse DuckDuckGo HTML results
         # DuckDuckGo HTML format: <div class="result">...</div>
         my @results = ();
         
-        # Extract result blocks
-        while ($html =~ m{<div class="result[^"]*"[^>]*>(.*?)</div>\s*</div>}gs) {
+        # Extract result blocks - DuckDuckGo uses "result results_links" class
+        while ($html =~ m{<div class="result results_links[^"]*"[^>]*>(.*?)</div>\s*</div>}gs) {
             my $result_block = $1;
             
             last if @results >= $max_results;
             
-            # Extract title from <a class="result__a">
+            # Extract title and URL from <a class="result__a">
             my $title = '';
-            if ($result_block =~ m{<a[^>]*class="result__a"[^>]*>(.*?)</a>}s) {
-                $title = $1;
+            my $link = '';
+            if ($result_block =~ m{<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>}s) {
+                $link = $1;
+                $title = $2;
                 $title =~ s/<[^>]+>//g;  # Strip HTML tags
                 $title =~ s/&quot;/"/g;
                 $title =~ s/&amp;/&/g;
                 $title =~ s/&lt;/</g;
                 $title =~ s/&gt;/>/g;
                 $title =~ s/^\s+|\s+$//g;  # Trim whitespace
-            }
-            
-            # Extract URL from <a class="result__url">
-            my $link = '';
-            if ($result_block =~ m{<a[^>]*class="result__url"[^>]*href="([^"]+)"}s) {
-                $link = $1;
+                
                 # DuckDuckGo uses redirect URLs, extract actual URL
                 if ($link =~ m{//duckduckgo\.com/l/\?uddg=([^&]+)}) {
-                    $link = URI::Escape::uri_unescape($1);
+                    $link = _uri_unescape($1);
+                } elsif ($link =~ m{^//}) {
+                    # Protocol-relative URL
+                    $link = 'https:' . $link;
                 }
             }
             
@@ -166,7 +195,7 @@ sub search_web {
                 push @results, {
                     title => $title,
                     url => $link,
-                    snippet => $snippet,
+                    snippet => $snippet || 'No description available',
                 };
             }
         }
@@ -174,22 +203,22 @@ sub search_web {
         my $count = scalar(@results);
         
         if ($count == 0) {
-            return $self->success_result(
+            $result = $self->success_result(
                 "No results found for '$query'",
                 action_description => "searching web for '$query' (0 results)",
                 results => [],
                 query => $query,
                 count => 0,
             );
+        } else {
+            $result = $self->success_result(
+                "Found $count results for '$query'",
+                action_description => "searching web for '$query' ($count results)",
+                results => \@results,
+                query => $query,
+                count => $count,
+            );
         }
-        
-        $result = $self->success_result(
-            "Found $count results for '$query'",
-            action_description => "searching web for '$query' ($count results)",
-            results => \@results,
-            query => $query,
-            count => $count,
-        );
     };
     
     if ($@) {
@@ -197,6 +226,30 @@ sub search_web {
     }
     
     return $result;
+}
+
+# Helper function: URI escape (percent encoding)
+# Implements RFC 3986 URI encoding without CPAN dependencies
+sub _uri_escape {
+    my ($str) = @_;
+    return '' unless defined $str;
+    
+    # Encode all bytes except unreserved characters (A-Za-z0-9-_.~)
+    $str =~ s/([^A-Za-z0-9\-_.~])/sprintf("%%%02X", ord($1))/ge;
+    
+    return $str;
+}
+
+# Helper function: URI unescape (percent decoding)
+# Decodes percent-encoded characters without CPAN dependencies
+sub _uri_unescape {
+    my ($str) = @_;
+    return '' unless defined $str;
+    
+    # Decode %XX sequences
+    $str =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/ge;
+    
+    return $str;
 }
 
 1;
