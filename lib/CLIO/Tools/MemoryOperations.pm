@@ -407,6 +407,43 @@ sub recall_sessions {
                 
                 # Check if query matches
                 if ($content =~ /\Q$query\E/i) {
+                    # Extract context around the match
+                    my $match_pos = index(lc($content), lc($query));
+                    my $start = $match_pos > 100 ? $match_pos - 100 : 0;
+                    my $context_text = substr($content, $start, 500);
+                    $context_text = "..." . $context_text if $start > 0;
+                    $context_text .= "..." if length($content) > $start + 500;
+                    
+                    push @matches, {
+                        session_id => $session_id,
+                        role => $role || 'unknown',
+                        message_index => $i,
+                        preview => $context_text,
+                        match_query => $query,
+                    };
+                }
+            }
+        }
+        
+        my $action_desc = "searched $sessions_searched sessions for '$query' (" . 
+                          scalar(@matches) . " matches)";
+        
+        $result = $self->success_result(
+            \@matches,
+            action_description => $action_desc,
+            query => $query,
+            sessions_searched => $sessions_searched,
+            total_sessions => scalar(@session_files),
+            matches_found => scalar(@matches),
+        );
+    };
+    
+    if ($@) {
+        return $self->error_result("Session recall failed: $@");
+    }
+    
+    return $result;
+}
 
 =head2 add_discovery
 
@@ -557,44 +594,6 @@ sub add_pattern {
     
     if ($@) {
         return $self->error_result("Failed to add pattern: $@");
-    }
-    
-    return $result;
-}
-
-                    # Extract context around the match
-                    my $match_pos = index(lc($content), lc($query));
-                    my $start = $match_pos > 100 ? $match_pos - 100 : 0;
-                    my $context_text = substr($content, $start, 500);
-                    $context_text = "..." . $context_text if $start > 0;
-                    $context_text .= "..." if length($content) > $start + 500;
-                    
-                    push @matches, {
-                        session_id => $session_id,
-                        role => $role || 'unknown',
-                        message_index => $i,
-                        preview => $context_text,
-                        match_query => $query,
-                    };
-                }
-            }
-        }
-        
-        my $action_desc = "searched $sessions_searched sessions for '$query' (" . 
-                          scalar(@matches) . " matches)";
-        
-        $result = $self->success_result(
-            \@matches,
-            action_description => $action_desc,
-            query => $query,
-            sessions_searched => $sessions_searched,
-            total_sessions => scalar(@session_files),
-            matches_found => scalar(@matches),
-        );
-    };
-    
-    if ($@) {
-        return $self->error_result("Session recall failed: $@");
     }
     
     return $result;
