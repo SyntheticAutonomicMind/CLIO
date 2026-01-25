@@ -849,8 +849,14 @@ sub display_assistant_message {
         print STDERR "[ERROR][Chat] No session object - cannot store message!\n" if should_log('ERROR');
     }
     
+    # CRITICAL FIX: Render markdown if enabled (was missing, causing raw markdown in multiline responses)
+    my $display_message = $message;
+    if ($self->{enable_markdown}) {
+        $display_message = $self->render_markdown($message);
+    }
+    
     # Display with role label
-    print $self->colorize("CLIO: ", 'ASSISTANT'), $message, "\n";
+    print $self->colorize("CLIO: ", 'ASSISTANT'), $display_message, "\n";
 }
 
 =head2 display_system_message
