@@ -70,15 +70,12 @@ sub readline {
     while (1) {
         my $char = ReadKey(0);  # Blocking read
         
-        # Handle undefined - can happen if sysread fails or returns 0
+        # Handle undefined - can happen if sysread is interrupted by signal
         unless (defined $char) {
-            # ReadKey failed - this can happen due to:
-            # 1. EINTR - interrupted by signal
-            # 2. EAGAIN/EWOULDBLOCK - would block (shouldn't happen but does)
-            # 3. EOF or real error
-            # To avoid 100% CPU busy loop, sleep briefly before retrying
-            use Time::HiRes qw(usleep);
-            usleep(10000);  # 10ms sleep to avoid spinning
+            # CRITICAL FIX: ReadKey can return undef when sysread() is interrupted
+            # by a signal (EINTR). This is NORMAL and should just retry immediately.
+            # DO NOT SLEEP - that creates a busy-wait loop burning 100% CPU!
+            # The blocking sysread will properly wait when not interrupted.
             next;
         }
         
