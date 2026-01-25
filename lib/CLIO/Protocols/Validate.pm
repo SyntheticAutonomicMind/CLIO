@@ -193,12 +193,12 @@ sub _detect_language {
     }
     
     # Content-based detection
-    return 'perl' if $content =~ /^#!/.*perl/m || $content =~ /package\s+\w+::\w+/;
-    return 'python' if $content =~ /^#!/.*python/m || $content =~ /import\s+\w+/m;
+    return 'perl' if $content =~ m{^\#!.*perl}m || $content =~ /package\s+\w+::\w+/;
+    return 'python' if $content =~ m{^\#!.*python}m || $content =~ /import\s+\w+/m;
     return 'javascript' if $content =~ /function\s+\w+/ || $content =~ /const\s+\w+\s*=/;
     return 'json' if $content =~ /^\s*\{.*\}\s*$/s && eval { decode_json($content); 1 };
     return 'yaml' if $content =~ /^---/m || $content =~ /^\w+:\s*$/m;
-    return 'bash' if $content =~ /^#!/bin\/bash/m || $content =~ /#!/bin\/sh/m;
+    return 'bash' if $content =~ m{^\#!/bin/bash}m || $content =~ m{#!/bin/sh}m;
     
     # Default to text for unknown content
     return 'text';
@@ -629,3 +629,8 @@ __END__
     },
     "timestamp": 1640995200
   }
+
+
+=cut
+
+1;
