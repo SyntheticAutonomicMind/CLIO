@@ -95,7 +95,7 @@ Returns: System prompt string
 =cut
 
 sub get_system_prompt {
-    my ($self) = @_;
+    my ($self, $session) = @_;
     
     # Get active prompt name from metadata (only if metadata was loaded)
     my $active = $self->{metadata}->{active_prompt} || 'default';
@@ -143,6 +143,16 @@ sub get_system_prompt {
         }
     } elsif ($self->{debug}) {
         print STDERR "[DEBUG][PromptManager] Skipping custom instructions (--no-custom-instructions flag)\n";
+    }
+    
+    # Inject LTM patterns if session is provided
+    if ($session) {
+        my $ltm_section = $self->_format_ltm_patterns($session);
+        if ($ltm_section) {
+            print STDERR "[DEBUG][PromptManager] Injecting LTM patterns\n"
+                if $self->{debug};
+            $prompt .= "\n\n" . $ltm_section;
+        }
     }
     
     return $prompt;
@@ -1099,6 +1109,88 @@ Your value is in:
 
 *Note: Custom project-specific instructions from .clio/instructions.md are automatically appended to this prompt when present.*
 END_PROMPT
+}
+
+=head2 _format_ltm_patterns
+
+Format LTM (Long-Term Memory) patterns for injection into system prompt.
+
+Arguments:
+- $session: Session object containing LTM
+
+Returns: Formatted LTM section or empty string if no patterns
+
+=cut
+
+sub _format_ltm_patterns {
+    my ($self, $session) = @_;
+    
+    return '' unless $session;
+    
+    # Get LTM from session
+    my $ltm = $session->can('ltm') ? $session->ltm() : undef;
+    return '' unless $ltm;
+    
+    my @sections;
+    
+    # Format discoveries
+    my $discoveries = $ltm->{patterns}{discoveries} || [];
+    if (@$discoveries) {
+        push @sections, "### Key Discoveries\n";
+        for my $d (sort { ($b->{confidence} // 0) <=> ($a->{confidence} // 0) } @$discoveries) {
+            my $verified = $d->{verified} ? ", Verified" : "";
+            push @sections, sprintf("- **%s** (Confidence: %d%%%s)\n", 
+                $d->{fact}, 
+                int($d->{confidence} * 100),
+                $verified
+            );
+        }
+        push @sections, "\n";
+    }
+    
+    # Format problem-solutions
+    my $solutions = $ltm->{patterns}{problem_solutions} || [];
+    if (@$solutions) {
+        push @sections, "### Problem Solutions\n";
+        for my $ps (sort { ($b->{solved_count} // 0) <=> ($a->{solved_count} // 0) } @$solutions) {
+            push @sections, sprintf("**Problem:** %s\n**Solution:** %s\n",
+                $ps->{error},
+                $ps->{solution}
+            );
+            if ($ps->{examples} && @{$ps->{examples}}) {
+                push @sections, sprintf("_Applied successfully %d time%s_\n",
+                    $ps->{solved_count},
+                    $ps->{solved_count} == 1 ? '' : 's'
+                );
+            }
+            push @sections, "\n";
+        }
+    }
+    
+    # Format code patterns
+    my $patterns = $ltm->{patterns}{code_patterns} || [];
+    if (@$patterns) {
+        push @sections, "### Code Patterns\n";
+        for my $cp (sort { ($b->{confidence} // 0) <=> ($a->{confidence} // 0) } @$patterns) {
+            push @sections, sprintf("- **%s** (Confidence: %d%%)\n",
+                $cp->{pattern},
+                int($cp->{confidence} * 100)
+            );
+            if ($cp->{examples} && @{$cp->{examples}}) {
+                push @sections, "  Examples: " . join(", ", @{$cp->{examples}}) . "\n";
+            }
+        }
+        push @sections, "\n";
+    }
+    
+    return '' unless @sections;
+    
+    my $output = "\n## Long-Term Memory Patterns\n\n";
+    $output .= "The following patterns have been learned from previous sessions in this project:\n\n";
+    $output .= join('', @sections);
+    $output .= "_These patterns are project-specific and should inform your approach to similar tasks._\n";
+    
+    return $output;
 }
 
 1;

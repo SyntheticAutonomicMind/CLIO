@@ -185,7 +185,7 @@ if ($mode eq 'new') {
     if ($session) {
         use CLIO::Core::PromptManager;
         my $pm = CLIO::Core::PromptManager->new(debug => $debug, skip_custom => $skip_custom);
-        my $system_prompt = $pm->get_system_prompt();
+        my $system_prompt = $pm->get_system_prompt($session);  # Pass session for LTM injection
         $session->add_message('system', $system_prompt);
         print STDERR "[DEBUG] Added system prompt to session history (" . length($system_prompt) . " chars)\n" if $debug;
     }
@@ -255,7 +255,7 @@ if ($mode eq 'new') {
         if ($session) {
             use CLIO::Core::PromptManager;
             my $pm = CLIO::Core::PromptManager->new(debug => $debug, skip_custom => $skip_custom);
-            my $system_prompt = $pm->get_system_prompt();
+            my $system_prompt = $pm->get_system_prompt($session);  # Pass session for LTM injection
             $session->add_message('system', $system_prompt);
             print STDERR "[DEBUG] Added system prompt to fallback session (" . length($system_prompt) . " chars)\n" if $debug;
         }

@@ -135,7 +135,35 @@ sub load {
         eval { $ltm->save($ltm_file); };
     }
     
-    my $stm  = CLIO::Memory::ShortTerm->new(history => $data->{stm} // [], debug => $args{debug});
+    # Load STM - with migration for corrupted data from old sessions
+    my $stm_data = $data->{stm} // [];
+    
+    # MIGRATION: Clean up corrupted STM entries where role is a hash instead of string
+    # Old bug caused: {role => {role => "user", content => "text"}, content => undef}
+    # Should be: {role => "user", content => "text"}
+    my @cleaned_stm;
+    for my $entry (@$stm_data) {
+        next unless ref($entry) eq 'HASH';
+        
+        my $role = $entry->{role};
+        my $content = $entry->{content};
+        
+        # Fix nested role structure
+        if (ref($role) eq 'HASH') {
+            $content = $role->{content} if defined $role->{content};
+            $role = $role->{role} if defined $role->{role};
+        }
+        
+        # Only add if we have valid data
+        if (defined $role && !ref($role)) {
+            push @cleaned_stm, {
+                role => $role,
+                content => $content // ''
+            };
+        }
+    }
+    
+    my $stm  = CLIO::Memory::ShortTerm->new(history => \@cleaned_stm, debug => $args{debug});
     my $yarn = CLIO::Memory::YaRN->new(threads => $data->{yarn} // {}, debug => $args{debug});
     my $self = {
         session_id => $session_id,
