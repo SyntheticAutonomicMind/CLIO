@@ -160,9 +160,10 @@ sub get_conversation_history {
 }
 
 sub add_message {
-    my ($self, $role, $content) = @_;
-    print STDERR "[DEBUG][Session::Manager] add_message called: role=$role, content_len=" . length($content) . "\n" if $self->{debug};
-    $self->{state}->add_message($role, $content);
+    my ($self, $role, $content, $opts) = @_;
+    print STDERR "[DEBUG][Session::Manager] add_message called: role=$role, content_len=" . length($content) . 
+        ", opts=" . (defined $opts ? "HASH" : "undef") . "\n" if $self->{debug};
+    $self->{state}->add_message($role, $content, $opts);
     $self->{stm}->add_message($role, $content); # Keep STM in sync with session history
     print STDERR "[DEBUG][Session::Manager] History count after add: " . scalar(@{$self->{state}->{history}}) . "\n" if $self->{debug};
 }
