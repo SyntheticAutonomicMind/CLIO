@@ -1374,8 +1374,8 @@ sub send_request {
         $self->_store_stateful_marker($data->{choices}[0]{message}{stateful_marker}, $model, $iteration);
     }
     
-    # DEPRECATED: Old response_id storage (kept temporarily for debugging)
-    # TODO: Remove this once stateful_marker is confirmed working
+    # FALLBACK: Store response_id for debugging and as fallback if stateful_marker is unavailable
+    # Note: stateful_marker is the preferred method (used above), this is legacy support
     if ($data->{id} && $self->{session}) {
         my $response_id = $data->{id};
         $self->{session}{lastGitHubCopilotResponseId} = $response_id;

@@ -5,6 +5,7 @@ package CLIO::Tools::Tool;
 
 use strict;
 use warnings;
+use Carp qw(croak confess);
 use CLIO::Core::Logger qw(should_log);
 use feature 'say';
 
@@ -51,9 +52,9 @@ sub new {
     my ($class, %opts) = @_;
     
     # Validate required fields
-    die "Subclass must define 'name'" unless $opts{name};
-    die "Subclass must define 'description'" unless $opts{description};
-    die "Subclass must define 'supported_operations'" unless $opts{supported_operations};
+    croak "Subclass must define 'name'" unless $opts{name};
+    croak "Subclass must define 'description'" unless $opts{description};
+    croak "Subclass must define 'supported_operations'" unless $opts{supported_operations};
     
     return bless {
         name => $opts{name},
@@ -137,7 +138,7 @@ Returns: Hashref with success, output/error, metadata
 
 sub route_operation {
     my ($self, $operation, $params, $context) = @_;
-    die "Subclass must implement route_operation()";
+    croak "Subclass must implement route_operation()";
 }
 
 =head2 operation_error
