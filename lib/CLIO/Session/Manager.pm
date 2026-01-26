@@ -7,6 +7,7 @@ use strict;
 use warnings;
 use CLIO::Core::Logger qw(should_log);
 use CLIO::Session::State;
+use CLIO::Session::Lock;
 use CLIO::Memory::ShortTerm;
 use CLIO::Memory::LongTerm;
 use CLIO::Memory::YaRN;
@@ -99,18 +100,44 @@ sub create {
 
 sub load {
     my ($class, $session_id, %args) = @_;
+    
+    # Try to acquire session lock
+    my $lock = CLIO::Session::Lock->acquire($session_id, force => 1);
+    
+    unless ($lock) {
+        # Session is locked by another process
+        my $lock_info = CLIO::Session::Lock->get_lock_info($session_id);
+        
+        if ($lock_info) {
+            die "[ERROR] Session '$session_id' is locked by another process\n" .
+                "  Process: $lock_info->{pid} on $lock_info->{hostname}\n" .
+                "  Since: " . scalar(localtime($lock_info->{timestamp})) . "\n" .
+                "  Use --force to override (not recommended)\n";
+        } else {
+            die "[ERROR] Session '$session_id' is locked by another process\n";
+        }
+    }
+    
     my $state = CLIO::Session::State->load($session_id, debug => $args{debug});
-    return unless $state;
+    
+    unless ($state) {
+        # Failed to load state, release lock
+        $lock->release();
+        return;
+    }
+    
     my $self = {
         session_id => $session_id,
         state      => $state,
         debug      => $args{debug} // 0,
+        lock       => $lock,  # Store lock object
         stm        => undef,
         ltm        => undef,
         yarn       => undef,
     };
     bless $self, $class;
-    # TODO: Load STM, LTM, YaRN from persistent storage if available
+    
+    # Load STM, LTM, YaRN from persistent storage
     my $stm  = $state->stm;
     my $ltm  = $state->ltm;
     my $yarn = $state->yarn;
@@ -141,6 +168,13 @@ sub save {
 
 sub cleanup {
     my ($self) = @_;
+    
+    # Release session lock if held
+    if ($self->{lock}) {
+        $self->{lock}->release();
+        delete $self->{lock};
+    }
+    
     $self->{state}->cleanup();
 }
 
