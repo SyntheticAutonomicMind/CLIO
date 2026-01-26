@@ -1599,6 +1599,9 @@ New noun-first pattern:
   /api set provider <name> - Set provider
   /api set base <url>     - Set API base URL
   /api set key <value>    - Set API key (global only)
+  /api set serpapi_key <value> - Set SerpAPI key for web search
+  /api set search_engine <google|bing|duckduckgo> - Set SerpAPI search engine
+  /api set search_provider <auto|serpapi|duckduckgo_direct> - Set search provider
   /api models             - List available models
   /api login              - Authenticate with GitHub Copilot
   /api logout             - Sign out from GitHub
@@ -1719,6 +1722,12 @@ sub _display_api_help {
     $self->display_list_item("/api logout - Sign out from GitHub");
     
     print "\n";
+    $self->display_section_header("WEB SEARCH CONFIGURATION");
+    $self->display_list_item("/api set serpapi_key <key> - Set SerpAPI key (serpapi.com)");
+    $self->display_list_item("/api set search_engine <name> - Set engine (google|bing|duckduckgo)");
+    $self->display_list_item("/api set search_provider <name> - Set provider (auto|serpapi|duckduckgo_direct)");
+    
+    print "\n";
     $self->display_section_header("FLAGS");
     print "  --session    Save setting to this session only (not global)\n";
     print "\n";
@@ -1726,6 +1735,7 @@ sub _display_api_help {
     print "  /api set model claude-sonnet-4          # Global + session\n";
     print "  /api set model gpt-4o --session         # This session only\n";
     print "  /api set provider github_copilot        # Switch provider\n";
+    print "  /api set serpapi_key YOUR_KEY           # Enable reliable web search\n";
     print "\n";
 }
 
@@ -2015,7 +2025,7 @@ sub _handle_api_set {
     
     unless ($setting) {
         $self->display_error_message("Usage: /api set <setting> <value>");
-        print "Settings: model, provider, base, key\n";
+        print "Settings: model, provider, base, key, serpapi_key, search_engine, search_provider\n";
         return;
     }
     
@@ -2040,6 +2050,57 @@ sub _handle_api_set {
         }
         
         $self->_reinit_api_manager();
+    }
+    elsif ($setting eq 'serpapi_key' || $setting eq 'serpapi') {
+        # SerpAPI key for web search (always global)
+        if ($session_only) {
+            $self->display_system_message("Note: API keys are always global (ignoring --session)");
+        }
+        
+        $self->{config}->set('serpapi_key', $value);
+        
+        if ($self->{config}->save()) {
+            my $display_key = substr($value, 0, 8) . '...' . substr($value, -4);
+            $self->display_system_message("SerpAPI key set: $display_key (saved)");
+            $self->display_system_message("Web search will now use SerpAPI for reliable results");
+        } else {
+            $self->display_system_message("SerpAPI key set (warning: failed to save)");
+        }
+    }
+    elsif ($setting eq 'search_engine') {
+        # SerpAPI engine selection
+        my @valid = qw(google bing duckduckgo);
+        unless (grep { $_ eq lc($value) } @valid) {
+            $self->display_error_message("Invalid search engine: $value");
+            $self->display_system_message("Valid engines: " . join(", ", @valid));
+            return;
+        }
+        
+        $self->{config}->set('search_engine', lc($value));
+        
+        if ($self->{config}->save()) {
+            $self->display_system_message("Search engine set to: $value (saved)");
+            $self->display_system_message("SerpAPI will now use $value for searches");
+        } else {
+            $self->display_system_message("Search engine set (warning: failed to save)");
+        }
+    }
+    elsif ($setting eq 'search_provider') {
+        # Web search provider preference
+        my @valid = qw(auto serpapi duckduckgo_direct);
+        unless (grep { $_ eq lc($value) } @valid) {
+            $self->display_error_message("Invalid search provider: $value");
+            $self->display_system_message("Valid providers: " . join(", ", @valid));
+            return;
+        }
+        
+        $self->{config}->set('search_provider', lc($value));
+        
+        if ($self->{config}->save()) {
+            $self->display_system_message("Search provider set to: $value (saved)");
+        } else {
+            $self->display_system_message("Search provider set (warning: failed to save)");
+        }
     }
     elsif ($setting eq 'base') {
         $self->_set_api_setting('api_base', $value, $session_only);
@@ -2085,7 +2146,7 @@ sub _handle_api_set {
     }
     else {
         $self->display_error_message("Unknown setting: $setting");
-        print "Valid settings: model, provider, base, key\n";
+        print "Valid settings: model, provider, base, key, serpapi_key, search_engine, search_provider\n";
     }
 }
 

@@ -4,11 +4,24 @@ use strict;
 use warnings;
 use parent 'CLIO::Tools::Tool';
 use CLIO::Compat::HTTP;
+use JSON::PP qw(encode_json decode_json);
 use feature 'say';
 
 =head1 NAME
 
 CLIO::Tools::WebOperations - Web fetching and search operations
+
+=head1 DESCRIPTION
+
+Provides web operations for fetching URLs and searching the web.
+
+Search providers:
+1. SerpAPI - Reliable multi-engine search (requires API key)
+   - Supports: google, bing, duckduckgo engines
+   - Configure with: /api set serpapi_key YOUR_KEY
+   - Select engine with: /api set search_engine google|bing|duckduckgo
+
+2. DuckDuckGo direct - Fallback, no API key needed but may be rate-limited
 
 =cut
 
@@ -24,16 +37,16 @@ Operations:
    Parameters: url (required), timeout (optional, default 30s)
    Returns: Page content, status code, content-type
    
--  search_web - Web search using DuckDuckGo (no API key needed)
+-  search_web - Web search using SerpAPI (configurable) or DuckDuckGo (fallback)
    Parameters: query (required), max_results (optional, default 10), timeout (optional, default 30s)
    Returns: Array of search results with title, url, snippet
-   Note: Uses DuckDuckGo HTML scraping for privacy-focused search
    
-IMPORTANT - Known Limitations:
-   DuckDuckGo may block requests from datacenter/cloud IP addresses.
-   Residential networks typically work better. If you encounter blocking errors,
-   consider using a search API (Bing API, Google Custom Search Engine) which
-   allow programmatic access with API keys.
+IMPORTANT - Configuration:
+   For reliable results, configure SerpAPI:
+   /api set serpapi_key YOUR_KEY     (get key at serpapi.com)
+   /api set search_engine google     (options: google, bing, duckduckgo)
+   
+   Without SerpAPI key, falls back to DuckDuckGo direct (may be rate-limited).
 },
         supported_operations => [qw(fetch_url search_web)],
         %opts,
@@ -63,10 +76,9 @@ sub fetch_url {
     my $result;
     eval {
         # Use browser-like user-agent for better compatibility
-        # Use 'links' text browser - widely compatible and not flagged as bot
         my $ua = CLIO::Compat::HTTP->new(
             timeout => $timeout,
-            agent => 'Links (2.29; Linux x86_64; GNU C 11.2; text)',
+            agent => 'Links (2.8; Linux 4.3.3-hardened-r4 x86_64; GNU C 4.9.3; fb)',
         );
         
         my $response = $ua->get($url);
@@ -103,26 +115,176 @@ sub search_web {
     
     return $self->error_result("Missing 'query' parameter") unless $query;
     
-    # Use DuckDuckGo HTML scraping (no API key required!)
-    # Match SAM's approach: GET request with query parameters
+    # Get config from context - check multiple locations
+    my $config;
+    if ($context && ref($context) eq 'HASH') {
+        if ($context->{config}) {
+            # Direct config reference (e.g., from ToolExecutor)
+            $config = $context->{config};
+            if (ref($config) && $config->can('get')) {
+                # Config object - use get method
+                $config = {
+                    serpapi_key => $config->get('serpapi_key') || '',
+                    search_engine => $config->get('search_engine') || 'google',
+                    search_provider => $config->get('search_provider') || 'auto',
+                };
+            }
+        } elsif ($context->{session} && ref($context->{session}) eq 'HASH') {
+            $config = $context->{session}{config} || {};
+        }
+    }
+    $config ||= {};
+    
+    # Allow environment variable as fallback
+    my $serpapi_key = $config->{serpapi_key} || $ENV{SERPAPI_KEY} || '';
+    my $search_engine = $config->{search_engine} || 'google';  # google, bing, duckduckgo
+    my $search_provider = $config->{search_provider} || 'auto';
+    
+    # Determine which provider to use
+    my $result;
+    my @errors;
+    
+    # Try SerpAPI first (if configured)
+    if ($search_provider eq 'serpapi' || ($search_provider eq 'auto' && $serpapi_key)) {
+        if ($serpapi_key) {
+            $result = $self->_search_serpapi($query, $max_results, $timeout, $serpapi_key, $search_engine);
+            return $result if $result && !$result->{error};
+            push @errors, "SerpAPI ($search_engine): " . ($result->{error} || 'unknown error');
+        } elsif ($search_provider eq 'serpapi') {
+            return $self->error_result("SerpAPI key not configured. Set with: /api set serpapi_key YOUR_KEY");
+        }
+    }
+    
+    # Fallback to DuckDuckGo direct (or explicit duckduckgo selection)
+    if ($search_provider eq 'duckduckgo_direct' || $search_provider eq 'auto') {
+        $result = $self->_search_duckduckgo_direct($query, $max_results, $timeout);
+        return $result if $result && !$result->{error};
+        push @errors, "DuckDuckGo Direct: " . ($result->{error} || 'unknown error');
+    }
+    
+    # All providers failed
+    my $error_msg = "All search providers failed:\n" . join("\n", @errors);
+    if (!$serpapi_key) {
+        $error_msg .= "\n\nTip: Configure SerpAPI for reliable results:\n" .
+                      "  /api set serpapi_key YOUR_KEY  (get key at serpapi.com)\n" .
+                      "  /api set search_engine google  (options: google, bing, duckduckgo)";
+    }
+    return $self->error_result($error_msg);
+}
+
+# SerpAPI search implementation - supports multiple engines
+sub _search_serpapi {
+    my ($self, $query, $max_results, $timeout, $api_key, $engine) = @_;
+    
+    $engine ||= 'google';
+    $engine = lc($engine);
+    
+    # Validate engine and get engine-specific parameters
+    my %engine_config = (
+        google => {
+            name => 'Google',
+            result_key => 'organic_results',
+            title_key => 'title',
+            link_key => 'link',
+            snippet_key => 'snippet',
+        },
+        bing => {
+            name => 'Bing',
+            result_key => 'organic_results',
+            title_key => 'title',
+            link_key => 'link',
+            snippet_key => 'snippet',
+        },
+        duckduckgo => {
+            name => 'DuckDuckGo',
+            result_key => 'organic_results',
+            title_key => 'title',
+            link_key => 'link',
+            snippet_key => 'snippet',
+        },
+    );
+    
+    unless ($engine_config{$engine}) {
+        return { error => "Unsupported search engine: $engine. Use: google, bing, duckduckgo" };
+    }
+    
+    my $config = $engine_config{$engine};
     
     my $result;
     eval {
         my $encoded_query = _uri_escape($query);
-        # Use DuckDuckGo HTML endpoint (simpler to parse than main site)
-        # CRITICAL: Don't include &s=0 parameter - it triggers bot detection!
-        my $url = "https://html.duckduckgo.com/html/?q=$encoded_query";
+        my $url = "https://serpapi.com/search?engine=$engine&q=$encoded_query&num=$max_results&api_key=$api_key";
         
-        # Use browser-like user-agent to avoid CAPTCHA (matches SAM's approach)
-        # DuckDuckGo blocks obvious bots, so we pretend to be a real browser
-        # CRITICAL: Use 'links' text browser User-Agent - it works reliably!
-        # DuckDuckGo trusts links and doesn't require HTTP/2
         my $ua = CLIO::Compat::HTTP->new(
             timeout => $timeout,
-            agent => 'Links (2.29; Linux x86_64; GNU C 11.2; text)',
+            agent => 'CLIO/1.0',
         );
         
-        # Use GET request (not POST) - matches SAM
+        my $response = $ua->get($url);
+        
+        unless ($response->is_success) {
+            die "HTTP error: " . $response->status_line;
+        }
+        
+        my $json = decode_json($response->decoded_content);
+        
+        # Check for API errors
+        if ($json->{error}) {
+            die "SerpAPI error: " . $json->{error};
+        }
+        
+        my @results = ();
+        my $organic = $json->{$config->{result_key}} || [];
+        
+        for my $item (@$organic) {
+            last if @results >= $max_results;
+            push @results, {
+                title => $item->{$config->{title_key}} || 'No title',
+                url => $item->{$config->{link_key}} || '',
+                snippet => $item->{$config->{snippet_key}} || 'No description available',
+            };
+        }
+        
+        my $count = scalar(@results);
+        my $provider_name = "SerpAPI ($config->{name})";
+        
+        # Format results as readable text for LLM consumption
+        my $formatted = _format_search_results_markdown(\@results, $query, $provider_name);
+        
+        $result = $self->success_result(
+            $formatted,  # Return formatted text as main output
+            action_description => "searching web for '$query' via $provider_name ($count results)",
+            results => \@results,  # Also include structured data
+            query => $query,
+            count => $count,
+            provider => 'serpapi',
+            engine => $config->{name},
+        );
+    };
+    
+    if ($@) {
+        return { error => $@ };
+    }
+    
+    return $result;
+}
+
+# DuckDuckGo HTML scraping implementation (fallback)
+sub _search_duckduckgo_direct {
+    my ($self, $query, $max_results, $timeout) = @_;
+    
+    my $result;
+    eval {
+        my $encoded_query = _uri_escape($query);
+        # Use DuckDuckGo HTML endpoint with chip-select=search parameter
+        my $url = "https://html.duckduckgo.com/html/?q=$encoded_query&chip-select=search";
+        
+        # Use exact 'links' browser User-Agent that DuckDuckGo trusts
+        my $ua = CLIO::Compat::HTTP->new(
+            timeout => $timeout,
+            agent => 'Links (2.8; Linux 4.3.3-hardened-r4 x86_64; GNU C 4.9.3; fb)',
+        );
+        
         my $response = $ua->get($url);
         
         unless ($response->is_success) {
@@ -131,58 +293,45 @@ sub search_web {
         
         my $html = $response->decoded_content;
         
-        # Check for CAPTCHA or IP-based blocking
-        if ($html =~ /Unfortunately, bots use DuckDuckGo too/) {
-            die "DuckDuckGo CAPTCHA challenge detected. This usually happens when:\n" .
-                "  - Requests are coming from a datacenter/cloud IP address\n" .
-                "  - Too many requests from the same IP\n" .
-                "  - Network is flagged for bot activity\n" .
-                "Consider using a search API (Bing, Google Custom Search) for reliable programmatic access.";
-        }
-        
-        # Check for HTTP error responses in content (400, 403, etc.)
-        if ($html =~ /^<!DOCTYPE html>/ && length($html) < 500) {
-            die "DuckDuckGo returned an error page. This may indicate IP-based blocking. " .
-                "Residential networks typically have better success than datacenter/cloud IPs.";
+        # Check for rate limiting / IP blocking
+        if ($html =~ /Unfortunately, bots use DuckDuckGo too/ || 
+            $html =~ /If this persists, please/ ||
+            (length($html) < 1000 && $html !~ /result/)) {
+            die "DuckDuckGo blocked the request (rate limit or IP block). " .
+                "Configure SerpAPI for reliable results: /api set serpapi_key YOUR_KEY";
         }
         
         # Parse DuckDuckGo HTML results
-        # DuckDuckGo HTML format: <div class="result">...</div>
         my @results = ();
         
-        # Extract result blocks - DuckDuckGo uses "result results_links" class
         while ($html =~ m{<div class="result results_links[^"]*"[^>]*>(.*?)</div>\s*</div>}gs) {
             my $result_block = $1;
-            
             last if @results >= $max_results;
             
-            # Extract title and URL from <a class="result__a">
             my $title = '';
             my $link = '';
             if ($result_block =~ m{<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>}s) {
                 $link = $1;
                 $title = $2;
-                $title =~ s/<[^>]+>//g;  # Strip HTML tags
+                $title =~ s/<[^>]+>//g;
                 $title =~ s/&quot;/"/g;
                 $title =~ s/&amp;/&/g;
                 $title =~ s/&lt;/</g;
                 $title =~ s/&gt;/>/g;
-                $title =~ s/^\s+|\s+$//g;  # Trim whitespace
+                $title =~ s/^\s+|\s+$//g;
                 
-                # DuckDuckGo uses redirect URLs, extract actual URL
+                # Extract actual URL from redirect
                 if ($link =~ m{//duckduckgo\.com/l/\?uddg=([^&]+)}) {
                     $link = _uri_unescape($1);
                 } elsif ($link =~ m{^//}) {
-                    # Protocol-relative URL
                     $link = 'https:' . $link;
                 }
             }
             
-            # Extract snippet from <a class="result__snippet">
             my $snippet = '';
             if ($result_block =~ m{<a[^>]*class="result__snippet"[^>]*>(.*?)</a>}s) {
                 $snippet = $1;
-                $snippet =~ s/<[^>]+>//g;  # Strip HTML tags
+                $snippet =~ s/<[^>]+>//g;
                 $snippet =~ s/&quot;/"/g;
                 $snippet =~ s/&amp;/&/g;
                 $snippet =~ s/&lt;/</g;
@@ -190,7 +339,6 @@ sub search_web {
                 $snippet =~ s/^\s+|\s+$//g;
             }
             
-            # Only add if we have at least a title and URL
             if ($title && $link) {
                 push @results, {
                     title => $title,
@@ -205,51 +353,94 @@ sub search_web {
         if ($count == 0) {
             $result = $self->success_result(
                 "No results found for '$query'",
-                action_description => "searching web for '$query' (0 results)",
+                action_description => "searching web for '$query' via DuckDuckGo Direct (0 results)",
                 results => [],
                 query => $query,
                 count => 0,
+                provider => 'duckduckgo_direct',
             );
         } else {
+            # Format results as readable text for LLM consumption
+            my $formatted = _format_search_results_markdown(\@results, $query, 'DuckDuckGo Direct');
+            
             $result = $self->success_result(
-                "Found $count results for '$query'",
-                action_description => "searching web for '$query' ($count results)",
-                results => \@results,
+                $formatted,  # Return formatted text as main output
+                action_description => "searching web for '$query' via DuckDuckGo Direct ($count results)",
+                results => \@results,  # Also include structured data
                 query => $query,
                 count => $count,
+                provider => 'duckduckgo_direct',
             );
         }
     };
     
     if ($@) {
-        return $self->error_result("Web search failed: $@");
+        return { error => $@ };
     }
     
     return $result;
 }
 
-# Helper function: URI escape (percent encoding)
-# Implements RFC 3986 URI encoding without CPAN dependencies
+# Format search results as Markdown for LLM consumption
+sub _format_search_results_markdown {
+    my ($results, $query, $provider) = @_;
+    
+    my $count = scalar(@$results);
+    my $markdown = "# Web Search Results for \"$query\"\n\n";
+    $markdown .= "**Provider:** $provider | **Results:** $count\n\n";
+    
+    for my $i (0 .. $#{$results}) {
+        my $r = $results->[$i];
+        my $num = $i + 1;
+        
+        $markdown .= "## $num. $r->{title}\n";
+        $markdown .= "**URL:** $r->{url}\n\n";
+        $markdown .= "$r->{snippet}\n\n";
+        $markdown .= "---\n\n";
+    }
+    
+    return $markdown;
+}
+
+# URI escape helper
 sub _uri_escape {
     my ($str) = @_;
-    return '' unless defined $str;
-    
-    # Encode all bytes except unreserved characters (A-Za-z0-9-_.~)
     $str =~ s/([^A-Za-z0-9\-_.~])/sprintf("%%%02X", ord($1))/ge;
-    
     return $str;
 }
 
-# Helper function: URI unescape (percent decoding)
-# Decodes percent-encoded characters without CPAN dependencies
+# URI unescape helper
 sub _uri_unescape {
     my ($str) = @_;
-    return '' unless defined $str;
-    
-    # Decode %XX sequences
     $str =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/ge;
-    
     return $str;
 }
 
 1;
+
+__END__
+
+=head1 CONFIGURATION
+
+Web search can be configured via CLIO commands:
+
+  /api set serpapi_key YOUR_SERPAPI_KEY
+  /api set search_engine google|bing|duckduckgo
+  /api set search_provider auto|serpapi|duckduckgo_direct
+
+Or via environment variables:
+
+  export SERPAPI_KEY=your_key
+
+Search provider priority (when search_provider=auto):
+1. SerpAPI (if key configured) - uses configured engine
+2. DuckDuckGo Direct (fallback, may be rate-limited)
+
+=head1 GETTING API KEYS
+
+SerpAPI: https://serpapi.com (100 free searches/month)
+  - Supports multiple engines: Google, Bing, DuckDuckGo
+  - Use: /api set serpapi_key YOUR_KEY
+  - Choose engine: /api set search_engine google
+
+=cut
