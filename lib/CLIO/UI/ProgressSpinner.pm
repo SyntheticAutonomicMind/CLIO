@@ -66,6 +66,13 @@ sub start {
     }
     
     if ($pid == 0) {
+        # Child process - CRITICAL: Clear inherited signal handlers
+        # Parent may have INT/TERM handlers that shouldn't run in child
+        # When parent kills child with TERM, we want clean exit, not parent's cleanup
+        $SIG{INT} = 'DEFAULT';
+        $SIG{TERM} = 'DEFAULT';
+        $SIG{ALRM} = 'DEFAULT';
+        
         # Child process - run animation loop
         $self->_run_animation();
         exit 0;
