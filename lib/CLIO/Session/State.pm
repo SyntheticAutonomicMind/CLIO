@@ -206,7 +206,7 @@ sub load {
     };
     bless $self, $class;
     
-    # CRITICAL: Validate and repair conversation history
+    # Validate and repair conversation history
     # Detect orphaned tool_calls (incomplete tool execution due to interruption)
     my $repaired = $self->_validate_and_repair_history();
     if ($repaired) {

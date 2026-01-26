@@ -78,7 +78,7 @@ sub readline {
         
         # Handle undefined - can happen if sysread is interrupted by signal
         unless (defined $char) {
-            # CRITICAL FIX: ReadKey can return undef when sysread() is interrupted
+            # ReadKey can return undef when sysread() is interrupted
             # by a signal (EINTR). This is NORMAL and should just retry immediately.
             # DO NOT SLEEP - that creates a busy-wait loop burning 100% CPU!
             # The blocking sysread will properly wait when not interrupted.
@@ -130,7 +130,7 @@ sub readline {
         if ($ord == 3) {
             print "^C\n";
             ReadMode('restore');
-            # CRITICAL: Raise actual SIGINT so session cleanup handlers can run
+            # Raise actual SIGINT so session cleanup handlers can run
             # This allows the main signal handler to save session state
             kill 'INT', $$;  # Send SIGINT to self
             # If handler returns (shouldn't), return undef as fallback
@@ -402,7 +402,7 @@ sub redraw_line {
     my $end_col = $prompt_len + length($$input_ref);
     my $end_row = $end_col > 0 ? int(($end_col - 1) / $term_width) : 0;
     
-    # CRITICAL: Before clearing, we need to move to the FIRST row (row 0)
+    # Before clearing, we need to move to the FIRST row (row 0)
     # Otherwise \e[J will only clear from current row downward, leaving old content above
     # First, figure out where we are NOW (cursor could be anywhere from previous operations)
     my $current_col = $prompt_len + $$cursor_pos_ref;

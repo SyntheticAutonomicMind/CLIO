@@ -116,7 +116,7 @@ sub fetch_models {
     $req->header('Editor-Version' => 'vscode/1.96');
     $req->header('Editor-Plugin-Version' => 'copilot-chat/0.22.4');
     $req->header('X-Request-Id' => $self->_generate_uuid());
-    $req->header('OpenAI-Intent' => 'model-access');  # CRITICAL: Required for billing metadata
+    $req->header('OpenAI-Intent' => 'model-access');  # Required for billing metadata
     $req->header('X-GitHub-Api-Version' => '2025-05-01');
     
     my $resp = $ua->request($req);
@@ -257,7 +257,7 @@ sub get_model_capabilities {
             if ($model->{capabilities} && $model->{capabilities}{limits}) {
                 my $limits = $model->{capabilities}{limits};
                 
-                # CRITICAL: Use max_prompt_tokens as the enforced limit
+                # Use max_prompt_tokens as the enforced limit
                 # Fallback to max_context_window_tokens if max_prompt_tokens unavailable
                 $caps->{max_prompt_tokens} = $limits->{max_prompt_tokens} || 
                                               $limits->{max_context_window_tokens} || 128000;

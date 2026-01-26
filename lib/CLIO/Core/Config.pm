@@ -264,7 +264,7 @@ sub set_provider {
     $self->{config}->{api_base} = $provider_config->{api_base};
     $self->{config}->{model} = $provider_config->{model};
     
-    # CRITICAL: Clear old API key when switching providers
+    # Clear old API key when switching providers
     # Each provider has its own authentication mechanism
     # (SAM uses api_key, GitHub Copilot uses OAuth tokens, etc.)
     # Keeping the old key causes authentication to fail
