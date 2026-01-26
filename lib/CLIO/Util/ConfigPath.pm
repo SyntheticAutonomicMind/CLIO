@@ -140,3 +140,5 @@ Detection: Checks if Documents/ exists and HOME is not writable.
 L<CLIO::Core::Config>, L<CLIO::Core::GitHubAuth>
 
 =cut
+
+1;

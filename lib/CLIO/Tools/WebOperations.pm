@@ -529,3 +529,5 @@ SerpAPI: https://serpapi.com (100 free searches/month)
   - Choose engine: /api set search_engine google
 
 =cut
+
+1;

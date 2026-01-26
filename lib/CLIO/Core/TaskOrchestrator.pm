@@ -5,6 +5,86 @@ use warnings;
 use JSON;
 use Time::HiRes qw(time);
 
+=head1 NAME
+
+CLIO::Core::TaskOrchestrator - MCP-compliant task orchestration engine
+
+=head1 SYNOPSIS
+
+  use CLIO::Core::TaskOrchestrator;
+  
+  my $orchestrator = CLIO::Core::TaskOrchestrator->new(
+      debug => 1,
+      protocol_manager => $protocol_mgr,
+      session => $session,
+      ai_agent => $agent,
+      max_parallel_protocols => 3,
+      task_timeout => 300
+  );
+  
+  # Analyze complex user task
+  my $analysis = $orchestrator->analyze_and_decompose_task(
+      "Create a new module and add tests",
+      $context
+  );
+  
+  # Execute protocol chain
+  my $result = $orchestrator->execute_protocol_chain(
+      $analysis->{execution_plan},
+      $context
+  );
+
+=head1 DESCRIPTION
+
+TaskOrchestrator is CLIO's intelligent task decomposition and protocol
+orchestration engine. It analyzes complex user requests and determines
+which protocols (Architect, Editor, Validate, etc.) should be invoked
+and in what order.
+
+Key responsibilities:
+- Parse complex tasks and identify required protocols
+- Create optimal protocol execution chains
+- Manage protocol dependencies and context flow
+- Handle parallel protocol execution
+- Track execution logs and performance metrics
+
+This is the "brain" that decides when to use #architect, #editor, #validate,
+and other specialized protocols based on user intent.
+
+=head1 METHODS
+
+=head2 new(%args)
+
+Create a new TaskOrchestrator instance.
+
+Arguments:
+- debug: Enable debug logging
+- protocol_manager: CLIO::Protocols::Manager instance
+- session: Session object
+- ai_agent: AI agent instance
+- max_parallel_protocols: Maximum concurrent protocols (default: 3)
+- task_timeout: Timeout in seconds (default: 300)
+
+=head2 analyze_and_decompose_task($user_input, $context)
+
+Analyze user input and decompose into executable protocol chain.
+
+Returns: HashRef with:
+- original_input: User's request
+- complexity_score: Calculated complexity metric
+- required_protocols: List of protocols needed
+- execution_plan: Ordered protocol chain
+- dependencies: Protocol dependency graph
+- context_requirements: Required context for execution
+
+=head2 execute_protocol_chain($protocol_chain, $context)
+
+Execute a chain of protocols in order, managing context flow and dependencies.
+
+Returns: Execution result with status and outputs
+
+=cut
+
 # MCP-Compliant Task Orchestration Engine
 # Handles complex multi-protocol task execution with proper context management
 
