@@ -956,8 +956,11 @@ sub read_tool_result {
     if ($@) {
         my $error = $@;
         
-        # Parse error type
-        if ($error =~ /not found/i) {
+        # Parse error type - check for suggestions from fuzzy match
+        if ($error =~ /Tool result not found.*Did you mean one of these\?/s) {
+            # Error already contains helpful suggestions from ToolResultStore
+            return $self->error_result($error);
+        } elsif ($error =~ /not found/i) {
             return $self->error_result(
                 "Tool result not found: $toolCallId\n\n" .
                 "This result may have been:\n" .
