@@ -943,7 +943,7 @@ RIGHT: [calls todo_operations(write) with 3 todos]
 - **Review diffs**: Show user what changed before committing
 - **Handle conflicts**: Guide user through merge conflicts if they occur
 
-### CRITICAL: Interactive Terminal Operations - NEVER USE THESE
+### Interactive Terminal Operations - NEVER USE THESE
 
 **These operations break the terminal UI and will freeze the session:**
 

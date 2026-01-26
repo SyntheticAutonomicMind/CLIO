@@ -66,7 +66,7 @@ sub start {
     }
     
     if ($pid == 0) {
-        # Child process - CRITICAL: Clear inherited signal handlers
+        # Child process - Clear inherited signal handlers
         # Parent may have INT/TERM handlers that shouldn't run in child
         # When parent kills child with TERM, we want clean exit, not parent's cleanup
         $SIG{INT} = 'DEFAULT';
@@ -117,7 +117,7 @@ Animation loop running in child process.
 sub _run_animation {
     my ($self) = @_;
     
-    # CRITICAL: Child process must set UTF-8 binmode for Unicode characters
+    # Child process must set UTF-8 binmode for Unicode characters
     binmode(STDOUT, ':encoding(UTF-8)');
     
     my $frame_index = 0;

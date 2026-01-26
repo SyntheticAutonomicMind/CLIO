@@ -188,7 +188,7 @@ sub process_user_request {
         # Update spinner reference if provided in context
         if ($context->{spinner} && $self->{orchestrator}) {
             $self->{orchestrator}->{spinner} = $context->{spinner};
-            # CRITICAL: Also update tool executor's spinner so tools can access it
+            # Also update tool executor's spinner so tools can access it
             $self->{orchestrator}->{tool_executor}->{spinner} = $context->{spinner} if $self->{orchestrator}->{tool_executor};
         }
         

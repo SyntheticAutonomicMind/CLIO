@@ -95,7 +95,7 @@ FAILURE: "Should I search the codebase?" (just do it, don't ask)
         supported_operations => [qw(request_input)],
         
         # Execution control - MUST block and be interactive
-        requires_blocking => 1,  # CRITICAL: Workflow MUST wait for user response
+        requires_blocking => 1,  # Workflow MUST wait for user response
         is_interactive => 1,     # Requires terminal I/O
         
         %opts,
@@ -156,7 +156,7 @@ sub request_input {
     print STDERR "[DEBUG][UserCollaboration] Requesting user input\n" if should_log('DEBUG');
     print STDERR "[DEBUG][UserCollaboration] Message: $message\n" if should_log('DEBUG');
     
-    # CRITICAL: Stop busy indicator before displaying collaboration prompt
+    # Stop busy indicator before displaying collaboration prompt
     # This is the only interactive tool that waits for user input, so spinner must stop
     my $spinner = $context->{spinner};
     

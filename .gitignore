@@ -29,6 +29,7 @@ Thumbs.db
 # Transient data
 scratch/
 reference/
+/*.txt
 
 # Logs
 *.log
