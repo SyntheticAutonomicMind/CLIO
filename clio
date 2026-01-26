@@ -36,6 +36,7 @@ OPTIONS:
     --dir <path>       Set working directory for session
     --input <text>     Process input and exit
     --exit             Exit after processing (with --input)
+    --model <name>     Use specific model (temporary, not persisted)
     --no-custom-instructions  Skip .clio/instructions.md
     --help, -h         Display this help message
 
@@ -45,6 +46,7 @@ EXAMPLES:
     clio --resume <session_id>    # Resume specific session
     clio --debug --new            # Start with debug logging
     clio --dir /path/to/project   # Start in specific directory
+    clio --model gpt-4.1 --new    # Start with specific model
 
 SESSIONS:
     Sessions are stored in: .clio/sessions/
@@ -118,6 +120,7 @@ my $config = CLIO::Core::Config->new(debug => $debug);
 # Parse command line arguments
 my $should_exit = 0;
 my $skip_custom = 0;
+my $model_override = undef;  # Temporary model override from --model flag
 for (my $i = 0; $i < @ARGV; $i++) {
     if ($ARGV[$i] eq '--input' && defined $ARGV[$i+1]) {
         $input = $ARGV[$i+1];
@@ -140,6 +143,9 @@ for (my $i = 0; $i < @ARGV; $i++) {
     }
     if ($ARGV[$i] eq '--no-custom-instructions') {
         $skip_custom = 1;
+    }
+    if ($ARGV[$i] eq '--model' && defined $ARGV[$i+1]) {
+        $model_override = $ARGV[$i+1];
     }
 }
 
@@ -286,6 +292,13 @@ if (!$session) {
     exit 2;
 }
 print "[SESSION] Using session: $session_id\n" if $debug;
+
+# Apply --model override if specified (temporary, not persisted to config file)
+if ($model_override) {
+    $config->set('model', $model_override, 0);  # 0 = don't mark as user-set (not persisted)
+    print STDERR "[DEBUG] Applied --model override: $model_override\n" if $debug;
+    print "[INFO] Using temporary model: $model_override\n";
+}
 
 # Initialize API manager and AI agent
 my $api = CLIO::Core::APIManager->new(
