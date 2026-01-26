@@ -205,6 +205,14 @@ sub load {
         compression_threshold => $args{compression_threshold} // 51200,
     };
     bless $self, $class;
+    
+    # CRITICAL: Validate and repair conversation history
+    # Detect orphaned tool_calls (incomplete tool execution due to interruption)
+    my $repaired = $self->_validate_and_repair_history();
+    if ($repaired) {
+        print STDERR "[WARNING][State::load] Session history was repaired (removed incomplete tool execution)\n";
+    }
+    
     print STDERR "[DEBUG][State::load] returning self: $self\n" if $args{debug} || $ENV{CLIO_DEBUG};
     
     # Restore model to ENV if one was saved (so it persists across resume)
@@ -220,6 +228,118 @@ sub load {
 sub stm  { $_[0]->{stm} }
 sub ltm  { $_[0]->{ltm} }
 sub yarn { $_[0]->{yarn} }
+
+=head2 _validate_and_repair_history
+
+Validate conversation history and repair orphaned tool_calls.
+
+When a session is interrupted (e.g., Ctrl-C) during tool execution, the history
+may contain assistant messages with tool_calls that don't have matching tool
+result messages. This causes API errors on resume.
+
+This method:
+1. Scans for all tool_call_ids from assistant messages with tool_calls
+2. Collects all tool_call_ids from tool result messages
+3. Identifies orphaned tool_calls (those without matching results)
+4. Removes the incomplete conversation exchange (user + assistant with orphans)
+
+Returns: 1 if repairs were made, 0 if history was clean
+
+=cut
+
+sub _validate_and_repair_history {
+    my ($self) = @_;
+    
+    return 0 unless $self->{history} && @{$self->{history}};
+    
+    my @history = @{$self->{history}};
+    my %tool_result_ids;  # Track all tool_call_ids that have results
+    my %orphan_indices;   # Track message indices that need to be removed
+    
+    # Pass 1: Collect all tool_call_ids that have matching tool results
+    for my $msg (@history) {
+        if ($msg->{role} && $msg->{role} eq 'tool' && $msg->{tool_call_id}) {
+            $tool_result_ids{$msg->{tool_call_id}} = 1;
+        }
+    }
+    
+    # Pass 2: Find assistant messages with tool_calls that lack complete results
+    for (my $i = 0; $i < @history; $i++) {
+        my $msg = $history[$i];
+        
+        # Check assistant messages with tool_calls
+        if ($msg->{role} && $msg->{role} eq 'assistant' && 
+            $msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
+            
+            # Check if ALL tool_calls have matching results
+            my @missing_ids;
+            for my $tc (@{$msg->{tool_calls}}) {
+                my $tc_id = $tc->{id};
+                next unless $tc_id;
+                
+                unless ($tool_result_ids{$tc_id}) {
+                    push @missing_ids, $tc_id;
+                }
+            }
+            
+            # If any tool_calls are missing results, mark this message for removal
+            if (@missing_ids) {
+                $orphan_indices{$i} = 1;
+                
+                print STDERR "[WARNING][State] Found orphaned tool_calls at index $i: " . 
+                             join(', ', @missing_ids) . "\n" if should_log('WARNING');
+                
+                # Also mark the preceding user message (if any) since they form a unit
+                if ($i > 0 && $history[$i-1]{role} && $history[$i-1]{role} eq 'user') {
+                    $orphan_indices{$i-1} = 1;
+                    print STDERR "[WARNING][State] Removing associated user message at index " . ($i-1) . "\n"
+                        if should_log('WARNING');
+                }
+                
+                # Also remove any partial tool results for THIS assistant's tool_calls
+                # (in case some completed but not all)
+                for my $tc (@{$msg->{tool_calls}}) {
+                    my $tc_id = $tc->{id};
+                    next unless $tc_id;
+                    
+                    # Find and mark any tool results for this tool_call_id
+                    for (my $j = $i + 1; $j < @history; $j++) {
+                        if ($history[$j]{role} && $history[$j]{role} eq 'tool' &&
+                            $history[$j]{tool_call_id} && 
+                            $history[$j]{tool_call_id} eq $tc_id) {
+                            $orphan_indices{$j} = 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    # If no orphans found, history is clean
+    return 0 unless keys %orphan_indices;
+    
+    # Pass 3: Rebuild history without orphaned messages
+    my @cleaned_history;
+    for (my $i = 0; $i < @history; $i++) {
+        unless ($orphan_indices{$i}) {
+            push @cleaned_history, $history[$i];
+        }
+    }
+    
+    my $removed_count = scalar(@history) - scalar(@cleaned_history);
+    $self->{history} = \@cleaned_history;
+    
+    print STDERR "[WARNING][State] Removed $removed_count messages with incomplete tool execution\n"
+        if should_log('WARNING');
+    
+    # Save the repaired session immediately to persist the fix
+    eval { $self->save(); };
+    if ($@) {
+        print STDERR "[ERROR][State] Failed to save repaired session: $@\n" if should_log('ERROR');
+    }
+    
+    return 1;  # Repairs were made
+}
 
 # Strip out conversation markup
 sub strip_conversation_tags {
