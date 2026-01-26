@@ -61,6 +61,7 @@ sub new {
     my $self = {
         session => $args{session},
         tool_registry => $args{tool_registry},
+        config => $args{config},  # Store config for API keys (web search, etc.)
         ui => $args{ui},  # Store UI for tools
         spinner => $args{spinner},  # Store spinner for interactive tools
         debug => $args{debug} || 0,
@@ -198,6 +199,7 @@ sub execute_tool {
     
     my $result = $tool->execute($arguments, {
         session => $self->{session},
+        config => $self->{config},  # Pass config for API keys (web search)
         tool_call_id => $tool_call_id,
         ui => $self->{ui},  # Provide UI for user_collaboration
         spinner => $self->{spinner},  # Provide spinner for interactive tools
