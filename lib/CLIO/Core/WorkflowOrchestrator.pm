@@ -574,6 +574,16 @@ sub process_input {
                 # Handle first tool call: ensure proper line separation from agent content
                 # The streaming callback prints "CLIO: " immediately on first chunk
                 if ($first_tool_call) {
+                    # CRITICAL: Stop spinner BEFORE any tool output
+                    # The spinner runs during AI API calls and must be stopped before
+                    # we print tool execution messages to prevent spinner characters
+                    # from appearing in the output (e.g., "⠹  -> action_description")
+                    if ($self->{spinner} && $self->{spinner}->can('stop')) {
+                        $self->{spinner}->stop();
+                        print STDERR "[DEBUG][WorkflowOrchestrator] Stopped spinner before tool output\n"
+                            if $self->{debug};
+                    }
+                    
                     my $content = $api_response->{content} // '';
                     print STDERR "[DEBUG][WorkflowOrchestrator] First tool call - checking content: '" . substr($content, 0, 100) . "'\n"
                         if $self->{debug};
