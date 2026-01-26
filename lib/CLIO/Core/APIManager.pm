@@ -1187,7 +1187,8 @@ sub send_request {
     if (defined $self->{last_request_time}) {
         my $now = Time::HiRes::time();  # High resolution time
         my $elapsed = $now - $self->{last_request_time};
-        my $min_delay = 0.5;  # 0.5 second minimum between requests (reduced from 2.5s)
+        # Use dynamic delay if set by rate limit headers, otherwise default to 0.5s
+        my $min_delay = $self->{_dynamic_min_delay} // 0.5;
         
         if ($elapsed < $min_delay) {
             my $wait = $min_delay - $elapsed;
@@ -1338,6 +1339,9 @@ sub send_request {
     if (!$resp->is_success) {
         return $self->_handle_error_response($resp, $json, 0);
     }
+    
+    # Process rate limit headers from ALL successful responses (proactive throttling)
+    $self->_process_rate_limit_headers($resp->headers);
     
     # Log raw response for debugging
     warn "[DEBUG] Raw response: " . $resp->decoded_content . "\n" if $self->{debug};
@@ -1539,7 +1543,8 @@ sub send_request_streaming {
     if (defined $self->{last_request_time}) {
         my $now = Time::HiRes::time();  # High resolution time
         my $elapsed = $now - $self->{last_request_time};
-        my $min_delay = 0.5;  # 0.5 second minimum between requests (reduced from 2.5s)
+        # Use dynamic delay if set by rate limit headers, otherwise default to 0.5s
+        my $min_delay = $self->{_dynamic_min_delay} // 0.5;
         
         if ($elapsed < $min_delay) {
             my $wait = $min_delay - $elapsed;
@@ -1891,10 +1896,16 @@ sub send_request_streaming {
         }
     }
     
-    # Process quota headers for billing tracking (GitHub Copilot)
+    # Process rate limit headers from ALL streaming responses (proactive throttling)
     # Use streaming_headers if available (captured during streaming), otherwise resp->headers
     my $headers_to_use = $streaming_headers || $resp->headers;
     
+    # Always process rate limit headers regardless of endpoint type
+    if ($headers_to_use) {
+        $self->_process_rate_limit_headers($headers_to_use);
+    }
+    
+    # Process quota headers for billing tracking (GitHub Copilot only)
     print STDERR "[DEBUG][APIManager] Checking quota header conditions: requires_copilot_headers=" . 
         ($endpoint_config->{requires_copilot_headers} ? 'yes' : 'no') . ", has_headers=" . 
         ($headers_to_use ? 'yes' : 'no') . "\n" if should_log('DEBUG');
@@ -2129,6 +2140,214 @@ sub _error {
     return { error => 1, message => $msg };
 }
 
+=head2 _process_rate_limit_headers
+
+Process rate limit headers from API response for adaptive throttling.
+
+Extracts rate limit information from standard HTTP headers:
+- X-RateLimit-Limit-Requests: Maximum requests per period
+- X-RateLimit-Remaining-Requests: Requests remaining in current period
+- X-RateLimit-Reset-Requests: Unix timestamp when quota resets
+- X-RateLimit-Limit-Tokens: Maximum tokens per period
+- X-RateLimit-Remaining-Tokens: Tokens remaining in current period
+- X-RateLimit-Reset-Tokens: Unix timestamp when token quota resets
+- Retry-After: Seconds to wait before retrying (typically on 429)
+
+Based on remaining quota, adjusts the dynamic delay between requests:
+- > 50% remaining: Use minimum delay (0.5s)
+- 20-50% remaining: Double the delay (1.0s)
+- 10-20% remaining: Triple the delay (1.5s)
+- < 10% remaining: Maximum delay (2.5s)
+
+This proactive approach prevents hitting rate limits by slowing down
+as we approach the limit, rather than only reacting after a 429 error.
+
+Arguments:
+- $headers: HTTP::Headers object from response
+
+=cut
+
+sub _process_rate_limit_headers {
+    my ($self, $headers) = @_;
+    
+    return unless $headers;
+    
+    # Extract rate limit headers using scan() to handle case variations
+    # Supports both standard X-RateLimit-* headers AND GitHub Copilot quota headers
+    my %rate_limit = ();
+    my $copilot_quota_header = undef;
+    
+    $headers->scan(sub {
+        my ($name, $value) = @_;
+        my $lc_name = lc($name);
+        
+        # Standard rate limit headers (OpenAI, Anthropic, etc.)
+        if ($lc_name eq 'x-ratelimit-limit-requests') {
+            $rate_limit{limit_requests} = $value;
+        }
+        elsif ($lc_name eq 'x-ratelimit-remaining-requests') {
+            $rate_limit{remaining_requests} = $value;
+        }
+        elsif ($lc_name eq 'x-ratelimit-reset-requests') {
+            $rate_limit{reset_requests} = $value;
+        }
+        elsif ($lc_name eq 'x-ratelimit-limit-tokens') {
+            $rate_limit{limit_tokens} = $value;
+        }
+        elsif ($lc_name eq 'x-ratelimit-remaining-tokens') {
+            $rate_limit{remaining_tokens} = $value;
+        }
+        elsif ($lc_name eq 'x-ratelimit-reset-tokens') {
+            $rate_limit{reset_tokens} = $value;
+        }
+        elsif ($lc_name eq 'retry-after') {
+            $rate_limit{retry_after} = $value;
+        }
+        # GitHub Copilot quota headers (extract for rate limiting)
+        elsif ($lc_name eq 'x-quota-snapshot-premium_interactions' || 
+               $lc_name eq 'x-quota-snapshot-premium_models') {
+            $copilot_quota_header = $value;
+        }
+    });
+    
+    # If we have GitHub Copilot quota header, extract rate limiting info from it
+    # Format: "ent=100&ov=0.0&ovPerm=true&rem=75.5&rst=2025-11-01T00:00:00Z"
+    if ($copilot_quota_header && !$rate_limit{limit_requests}) {
+        for my $pair (split /&/, $copilot_quota_header) {
+            my ($key, $value) = split /=/, $pair, 2;
+            next unless defined $value;
+            
+            # URL decode the value
+            $value =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/eg;
+            
+            if ($key eq 'ent') {
+                # Entitlement = limit (treat -1 as unlimited)
+                $rate_limit{limit_requests} = $value unless $value == -1;
+            }
+            elsif ($key eq 'rem') {
+                # rem is percentage remaining (0-100)
+                # Calculate remaining count from percentage
+                if (defined $rate_limit{limit_requests} && $rate_limit{limit_requests} > 0) {
+                    $rate_limit{remaining_requests} = int($rate_limit{limit_requests} * $value / 100);
+                }
+                # Also store the percentage directly for adaptive throttling
+                $rate_limit{_copilot_percent_remaining} = $value;
+            }
+            elsif ($key eq 'rst') {
+                # Reset time
+                $rate_limit{reset_requests} = $value;
+            }
+        }
+    }
+    
+    # If no rate limit headers found, nothing to process
+    return unless keys %rate_limit;
+    
+    # Store rate limit info in session for debugging/monitoring
+    $self->{_rate_limit_info} = \%rate_limit;
+    
+    # Log rate limit info if debugging
+    if (should_log('DEBUG')) {
+        print STDERR "[DEBUG][APIManager] Rate limit headers received:\n";
+        for my $key (sort keys %rate_limit) {
+            print STDERR "[DEBUG][APIManager]   $key: $rate_limit{$key}\n";
+        }
+    }
+    
+    # Calculate dynamic delay based on remaining requests/quota
+    # Check for GitHub Copilot percentage first (more accurate), then standard headers
+    my $percent_remaining;
+    
+    if (defined $rate_limit{_copilot_percent_remaining}) {
+        # GitHub Copilot provides percentage directly
+        $percent_remaining = $rate_limit{_copilot_percent_remaining};
+    }
+    elsif (defined $rate_limit{limit_requests} && defined $rate_limit{remaining_requests}) {
+        # Calculate percentage from standard headers
+        my $limit = $rate_limit{limit_requests};
+        my $remaining = $rate_limit{remaining_requests};
+        
+        if ($limit > 0) {
+            $percent_remaining = ($remaining / $limit) * 100;
+        }
+    }
+    
+    # Apply adaptive throttling if we have percentage remaining
+    if (defined $percent_remaining) {
+        # Adjust delay based on remaining percentage
+        # This proactively slows down before hitting rate limits
+        my $new_delay;
+        if ($percent_remaining > 50) {
+            # Plenty of quota - use minimum delay
+            $new_delay = 0.5;
+        }
+        elsif ($percent_remaining > 20) {
+            # Getting lower - double the delay
+            $new_delay = 1.0;
+        }
+        elsif ($percent_remaining > 10) {
+            # Running low - triple the delay
+            $new_delay = 1.5;
+        }
+        else {
+            # Critical - use maximum delay
+            $new_delay = 2.5;
+        }
+        
+        # Store dynamic delay (will be used in send_request/send_request_streaming)
+        my $old_delay = $self->{_dynamic_min_delay} // 0.5;
+        $self->{_dynamic_min_delay} = $new_delay;
+        
+        if ($new_delay != $old_delay) {
+            my $limit = $rate_limit{limit_requests} || 'N/A';
+            my $remaining = $rate_limit{remaining_requests} || 'N/A';
+            print STDERR sprintf(
+                "[INFO][APIManager] Quota: %.1f%% remaining. Adjusting delay: %.1fs -> %.1fs\n",
+                $percent_remaining, $old_delay, $new_delay
+            ) if should_log('INFO');
+        }
+    }
+    
+    # If we have a reset timestamp for requests, calculate time until reset
+    if ($rate_limit{reset_requests}) {
+        my $reset_time = $rate_limit{reset_requests};
+        my $now = time();
+        
+        # Handle both Unix timestamp and ISO 8601 format
+        if ($reset_time =~ /^\d+$/) {
+            # Already a Unix timestamp
+        }
+        elsif ($reset_time =~ /(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/) {
+            # ISO 8601 format - convert to Unix timestamp
+            eval {
+                require Time::Local;
+                $reset_time = Time::Local::timegm($6, $5, $4, $3, $2-1, $1);
+            };
+        }
+        
+        if ($reset_time =~ /^\d+$/ && $reset_time > $now) {
+            my $seconds_until_reset = $reset_time - $now;
+            $self->{_rate_limit_reset_in} = $seconds_until_reset;
+            
+            print STDERR "[DEBUG][APIManager] Rate limit resets in ${seconds_until_reset}s\n" 
+                if should_log('DEBUG');
+        }
+    }
+    
+    # Handle explicit Retry-After header (usually from 429 responses)
+    if ($rate_limit{retry_after}) {
+        my $retry_after = $rate_limit{retry_after};
+        
+        # Retry-After can be seconds or HTTP-date
+        if ($retry_after =~ /^\d+$/) {
+            # Already in seconds
+            $self->{rate_limit_until} = time() + $retry_after;
+            print STDERR "[INFO][APIManager] Retry-After header: waiting ${retry_after}s before next request\n"
+                if should_log('INFO');
+        }
+    }
+}
+
 =head2 _process_quota_headers
 
 Process GitHub Copilot quota headers from API response.
@@ -2159,6 +2378,10 @@ sub _process_quota_headers {
     my ($self, $headers, $response_id) = @_;
     
     return unless $self->{session};
+    
+    # NOTE: Rate limit headers are now processed separately in the main request methods
+    # (send_request and send_request_streaming) to ensure they're processed for ALL 
+    # endpoints, not just GitHub Copilot. This method focuses only on quota tracking.
     
     # WORKAROUND: header() accessor returns empty for quota headers in streaming callback,
     # but scan() DOES see them! So we extract quota values directly from scan() instead.
