@@ -46,15 +46,16 @@ sub should_log {
     $level = uc($level);
     
     # Get configured log level
+    # Priority: CLIO_LOG_LEVEL env var (set by --debug) > config > default
     my $config_level;
     
-    if ($config && $config->can('get')) {
-        # Use config object if available
-        $config_level = uc($config->get('log_level') || 'WARNING');
-    } elsif ($ENV{CLIO_LOG_LEVEL}) {
-        # Use environment variable set by --debug flag
-        # Should be 'DEBUG', 'INFO', 'WARNING', or 'ERROR'
+    if ($ENV{CLIO_LOG_LEVEL}) {
+        # Environment variable takes priority (set by --debug flag)
+        # This ensures --debug works even when config object is passed
         $config_level = uc($ENV{CLIO_LOG_LEVEL});
+    } elsif ($config && $config->can('get')) {
+        # Fall back to config object if no env var
+        $config_level = uc($config->get('log_level') || 'WARNING');
     } else {
         # Default to WARNING (less verbose than INFO)
         $config_level = 'WARNING';

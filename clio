@@ -64,12 +64,13 @@ HELP
 }
 
 # Set debug level from --debug flag
-my $debug = grep { $_ eq '--debug' } @ARGV ? 1 : 0;
-
-# Set CLIO_LOG_LEVEL for should_log() to work across all modules
-if ($debug) {
-    $ENV{CLIO_LOG_LEVEL} = 'DEBUG';
+# CRITICAL: Set in BEGIN block so should_log() works when modules load
+BEGIN {
+    if (grep { $_ eq '--debug' } @ARGV) {
+        $ENV{CLIO_LOG_LEVEL} = 'DEBUG';
+    }
 }
+my $debug = grep { $_ eq '--debug' } @ARGV ? 1 : 0;
 
 my $input = '';
 my $session_id = '';
