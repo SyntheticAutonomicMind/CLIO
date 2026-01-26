@@ -28,8 +28,10 @@ Thumbs.db
 
 # Transient data
 scratch/
+reference/
 
 # Logs
 *.log
 debug.log
 output.log
+
