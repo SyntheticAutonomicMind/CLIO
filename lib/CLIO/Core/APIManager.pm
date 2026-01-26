@@ -1187,8 +1187,9 @@ sub send_request {
     if (defined $self->{last_request_time}) {
         my $now = Time::HiRes::time();  # High resolution time
         my $elapsed = $now - $self->{last_request_time};
-        # Use dynamic delay if set by rate limit headers, otherwise default to 0.5s
-        my $min_delay = $self->{_dynamic_min_delay} // 0.5;
+        # Use dynamic delay if set by rate limit headers, otherwise default to 1.0s
+        # Base delay of 1.0s is more conservative to prevent rate limits during heavy use
+        my $min_delay = $self->{_dynamic_min_delay} // 1.0;
         
         if ($elapsed < $min_delay) {
             my $wait = $min_delay - $elapsed;
@@ -1543,8 +1544,9 @@ sub send_request_streaming {
     if (defined $self->{last_request_time}) {
         my $now = Time::HiRes::time();  # High resolution time
         my $elapsed = $now - $self->{last_request_time};
-        # Use dynamic delay if set by rate limit headers, otherwise default to 0.5s
-        my $min_delay = $self->{_dynamic_min_delay} // 0.5;
+        # Use dynamic delay if set by rate limit headers, otherwise default to 1.0s
+        # Base delay of 1.0s is more conservative to prevent rate limits during heavy use
+        my $min_delay = $self->{_dynamic_min_delay} // 1.0;
         
         if ($elapsed < $min_delay) {
             my $wait = $min_delay - $elapsed;
@@ -2276,18 +2278,19 @@ sub _process_rate_limit_headers {
     if (defined $percent_remaining) {
         # Adjust delay based on remaining percentage
         # This proactively slows down before hitting rate limits
+        # Base delay is 1.0s, scaling up to 2.5s when quota is critically low
         my $new_delay;
         if ($percent_remaining > 50) {
-            # Plenty of quota - use minimum delay
-            $new_delay = 0.5;
-        }
-        elsif ($percent_remaining > 20) {
-            # Getting lower - double the delay
+            # Plenty of quota - use base delay
             $new_delay = 1.0;
         }
-        elsif ($percent_remaining > 10) {
-            # Running low - triple the delay
+        elsif ($percent_remaining > 20) {
+            # Getting lower - increase delay by 50%
             $new_delay = 1.5;
+        }
+        elsif ($percent_remaining > 10) {
+            # Running low - double the delay
+            $new_delay = 2.0;
         }
         else {
             # Critical - use maximum delay
@@ -2295,7 +2298,7 @@ sub _process_rate_limit_headers {
         }
         
         # Store dynamic delay (will be used in send_request/send_request_streaming)
-        my $old_delay = $self->{_dynamic_min_delay} // 0.5;
+        my $old_delay = $self->{_dynamic_min_delay} // 1.0;
         $self->{_dynamic_min_delay} = $new_delay;
         
         if ($new_delay != $old_delay) {
