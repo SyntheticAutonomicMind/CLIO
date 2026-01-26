@@ -539,7 +539,14 @@ $ui->run();
 
 # CRITICAL: Save session after interactive mode completes
 # This ensures all conversation history, including errors, is persisted
+# Show save message for consistency with Ctrl+C exit
+if ($ui && $ui->can('display_system_message')) {
+    $ui->display_system_message("Saving session...");
+}
 $session->save();
+if ($ui && $ui->can('display_system_message')) {
+    $ui->display_system_message("Session saved.");
+}
 print "[DEBUG] Session saved after interactive mode\n" if $debug;
 
 exit 0;
