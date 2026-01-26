@@ -561,7 +561,7 @@ sub save {
         metadata => $self->{metadata},
     };
     
-    open my $fh, '>', $file or die "Cannot save LTM to $file: $!";
+    open my $fh, '>:encoding(UTF-8)', $file or die "Cannot save LTM to $file: $!";
     print $fh JSON::PP->new->pretty->canonical->encode($data);
     close $fh;
     
@@ -581,7 +581,7 @@ sub load {
     
     return $class->new(%args) unless -e $file;
     
-    open my $fh, '<', $file or do {
+    open my $fh, '<:encoding(UTF-8)', $file or do {
         print STDERR "[DEBUG][LTM] Cannot load from $file: $!\n" if should_log('DEBUG');
         return $class->new(%args);
     };
