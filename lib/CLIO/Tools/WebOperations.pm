@@ -84,15 +84,24 @@ sub fetch_url {
         my $response = $ua->get($url);
         
         if ($response->is_success) {
-            my $size = length($response->decoded_content);
-            my $action_desc = "fetching $url ($size bytes, " . $response->code . ")";
+            my $content = $response->decoded_content;
+            my $content_type = $response->header('content-type') || '';
+            my $raw_size = length($content);
+            
+            # Convert HTML to readable text if content is HTML
+            if ($content_type =~ /text\/html/i || $content =~ /^\s*<!DOCTYPE\s+html/i || $content =~ /<html/i) {
+                $content = $self->_html_to_text($content);
+            }
+            
+            my $final_size = length($content);
+            my $action_desc = "fetching $url ($raw_size bytes raw, $final_size bytes text, " . $response->code . ")";
             
             $result = $self->success_result(
-                $response->decoded_content,
+                $content,
                 action_description => $action_desc,
                 url => $url,
                 status => $response->code,
-                content_type => $response->header('content-type'),
+                content_type => $content_type,
             );
         } else {
             return $self->error_result("HTTP error: " . $response->status_line);
@@ -104,6 +113,82 @@ sub fetch_url {
     }
     
     return $result;
+}
+
+=head2 _html_to_text
+
+Convert HTML content to readable plain text.
+Strips scripts, styles, and HTML tags while preserving meaningful structure.
+
+=cut
+
+sub _html_to_text {
+    my ($self, $html) = @_;
+    
+    return '' unless defined $html && length($html);
+    
+    my $text = $html;
+    
+    # Remove script and style blocks with their content (including multiline)
+    $text =~ s/<script[^>]*>.*?<\/script>//gsi;
+    $text =~ s/<style[^>]*>.*?<\/style>//gsi;
+    
+    # Remove noscript blocks
+    $text =~ s/<noscript[^>]*>.*?<\/noscript>//gsi;
+    
+    # Remove head section (contains meta, links, etc.)
+    $text =~ s/<head[^>]*>.*?<\/head>//gsi;
+    
+    # Remove HTML comments
+    $text =~ s/<!--.*?-->//gs;
+    
+    # Add newlines before block elements for structure
+    $text =~ s/<\/(p|div|h[1-6]|li|tr|br|hr)[^>]*>/\n/gi;
+    $text =~ s/<(p|div|h[1-6]|li|tr|br|hr)[^>]*>/\n/gi;
+    
+    # Replace common list markers
+    $text =~ s/<li[^>]*>/\n• /gi;
+    
+    # Remove all remaining HTML tags
+    $text =~ s/<[^>]+>//g;
+    
+    # Decode common HTML entities
+    $text =~ s/&nbsp;/ /g;
+    $text =~ s/&amp;/&/g;
+    $text =~ s/&lt;/</g;
+    $text =~ s/&gt;/>/g;
+    $text =~ s/&quot;/"/g;
+    $text =~ s/&#39;/'/g;
+    $text =~ s/&apos;/'/g;
+    
+    # Decode hyphen entities (important for temperature ranges, dates, etc.)
+    $text =~ s/&#45;/-/g;
+    $text =~ s/&#x2D;/-/gi;
+    $text =~ s/&hyphen;/-/g;
+    $text =~ s/&#8209;/-/g;
+    $text =~ s/&#x2011;/-/gi;
+    $text =~ s/&ndash;/–/g;
+    $text =~ s/&#8211;/–/g;
+    $text =~ s/&mdash;/—/g;
+    $text =~ s/&#8212;/—/g;
+    
+    # Decode numeric HTML entities (&#NNN;)
+    $text =~ s/&#(\d+);/chr($1)/ge;
+    
+    # Decode hex HTML entities (&#xHH;)
+    $text =~ s/&#x([0-9a-fA-F]+);/chr(hex($1))/ge;
+    
+    # Normalize whitespace
+    $text =~ s/[ \t]+/ /g;          # Collapse horizontal whitespace
+    $text =~ s/\n[ \t]+/\n/g;       # Remove leading whitespace on lines
+    $text =~ s/[ \t]+\n/\n/g;       # Remove trailing whitespace on lines
+    $text =~ s/\n{3}/\n\n/g;       # Collapse multiple blank lines
+    
+    # Trim leading/trailing whitespace
+    $text =~ s/^\s+//;
+    $text =~ s/\s+$//;
+    
+    return $text;
 }
 
 sub search_web {
