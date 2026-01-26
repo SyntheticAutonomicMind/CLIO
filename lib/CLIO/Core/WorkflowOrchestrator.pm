@@ -261,6 +261,25 @@ sub process_input {
                     if $self->{debug};
             };
             
+            # DEBUG: Log messages being sent to API when debug mode is enabled
+            if ($self->{debug}) {
+                print STDERR "[DEBUG][WorkflowOrchestrator] Sending to API: " . scalar(@$alternated_messages) . " messages\n";
+                for my $i (0 .. $#{$alternated_messages}) {
+                    my $msg = $alternated_messages->[$i];
+                    print STDERR "[DEBUG][WorkflowOrchestrator]   API Message $i: role=" . $msg->{role};
+                    if ($msg->{tool_calls}) {
+                        print STDERR ", tool_calls=" . scalar(@{$msg->{tool_calls}});
+                        for my $tc (@{$msg->{tool_calls}}) {
+                            print STDERR ", tc_id=" . (defined $tc->{id} ? $tc->{id} : "**MISSING**");
+                        }
+                    }
+                    if ($msg->{role} eq 'tool') {
+                        print STDERR ", tool_call_id=" . (defined $msg->{tool_call_id} ? $msg->{tool_call_id} : "**MISSING**");
+                    }
+                    print STDERR "\n";
+                }
+            }
+            
             $self->{api_manager}->send_request_streaming(
                 undef,  # No direct input (using messages)
                 messages => $alternated_messages,  # Use alternation-enforced messages
@@ -1113,15 +1132,42 @@ sub _load_conversation_history {
     #     $history = [@{$history}[$start_idx .. $#{$history}]];
     # }
     
+    print STDERR "[DEBUG][WorkflowOrchestrator] Raw history from session has " . scalar(@$history) . " messages\n"
+        if $self->{debug};
+    
+    # DEBUG: Dump first assistant message (when debug enabled)
+    if ($self->{debug}) {
+        for my $i (0 .. $#{$history}) {
+            my $msg = $history->[$i];
+            if ($msg->{role} eq 'assistant') {
+                use Data::Dumper;
+                print STDERR "[DEBUG][WorkflowOrchestrator] First assistant message structure:\n";
+                print STDERR Dumper($msg);
+                last;
+            }
+        }
+    }
+    
     print STDERR "[DEBUG][WorkflowOrchestrator] Loaded " . scalar(@$history) . " messages from session\n"
         if $self->{debug};
     
     # Validate and filter messages
     # CRITICAL: Skip system messages from history - we always build fresh with dynamic tools
     my @valid_messages = ();
+    
+    print STDERR "[DEBUG][WorkflowOrchestrator] _load_conversation_history: Processing " . scalar(@$history) . " messages\n"
+        if $self->{debug};
+    
     for my $msg (@$history) {
         next unless $msg && ref($msg) eq 'HASH';
         next unless $msg->{role};
+        
+        if ($self->{debug}) {
+            my $has_tool_calls = exists $msg->{tool_calls} ? 'YES' : 'NO';
+            my $tc_count = $msg->{tool_calls} ? scalar(@{$msg->{tool_calls}}) : 0;
+            print STDERR "[DEBUG][WorkflowOrchestrator]   Message role=" . $msg->{role} . 
+                ", has_tool_calls=$has_tool_calls, count=$tc_count\n";
+        }
         
         # Skip system messages - we build fresh system prompt in process_input
         next if $msg->{role} eq 'system';
@@ -1137,46 +1183,41 @@ sub _load_conversation_history {
             next;
         }
         
-        # CRITICAL FIX: Validate tool_calls on session resume
-        # GitHub Copilot API requires every tool_call to have an 'id' field
-        # If malformed tool_calls exist in session history, API returns:
-        # "tool call must have a tool call ID" error
-        if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
-            # Validate each tool_call has required 'id' field
-            my @valid_tool_calls = grep { 
-                ref($_) eq 'HASH' && $_->{id} && $_->{function}
-            } @{$msg->{tool_calls}};
-            
-            # Only include tool_calls if ALL are valid
-            if (@valid_tool_calls == @{$msg->{tool_calls}} && @valid_tool_calls > 0) {
-                push @valid_messages, {
-                    role => $msg->{role},
-                    content => $msg->{content} || '',
-                    tool_calls => \@valid_tool_calls
-                };
-                
-                print STDERR "[DEBUG][WorkflowOrchestrator] Preserved " . scalar(@valid_tool_calls) . 
-                    " tool_calls for message\n" if $self->{debug};
-            } else {
-                # Strip malformed tool_calls, keep message content only
-                # This prevents "tool call must have a tool call ID" errors on resume
-                push @valid_messages, {
-                    role => $msg->{role},
-                    content => $msg->{content} || ''
-                };
-                
-                print STDERR "[WARN][WorkflowOrchestrator] Stripped malformed tool_calls from session history " .
-                    "(had " . scalar(@{$msg->{tool_calls}}) . ", valid " . scalar(@valid_tool_calls) . ")\n"
-                    if should_log('WARNING');
-            }
-        } else {
-            # Normal message without tool_calls (or invalid content - need to check)
-            # Skip messages without content unless they have tool_calls
-            next unless $msg->{content};
+        # CRITICAL: Preserve message structure for proper API correlation
+        # The API requires:
+        # 1. Assistant messages with tool_calls must be followed by tool messages
+        # 2. Each tool message's tool_call_id must match an id in the preceding tool_calls array
+        # 
+        # We MUST preserve tool_calls on assistant messages - they're needed for correlation.
+        # We also preserve tool_call_id on tool messages.
+        if ($msg->{role} eq 'tool') {
+            # Tool messages MUST preserve tool_call_id for the API
+            push @valid_messages, {
+                role => $msg->{role},
+                content => $msg->{content} || '',
+                tool_call_id => $msg->{tool_call_id}
+            };
+            print STDERR "[DEBUG][WorkflowOrchestrator]   Preserving tool message with tool_call_id=$msg->{tool_call_id}\n"
+                if $self->{debug};
+        } elsif ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
+            # Assistant message with tool_calls - KEEP the tool_calls for API correlation
+            print STDERR "[DEBUG][WorkflowOrchestrator]   Preserving assistant message with " . 
+                scalar(@{$msg->{tool_calls}}) . " tool_calls for API correlation\n"
+                if $self->{debug};
             
             push @valid_messages, {
                 role => $msg->{role},
-                content => $msg->{content}
+                content => $msg->{content} || '',
+                tool_calls => $msg->{tool_calls}
+            };
+        } else {
+            # Normal message without tool_calls
+            # Skip messages without content (but tool messages are OK even with empty content)
+            next unless $msg->{content} || $msg->{role} eq 'tool';
+            
+            push @valid_messages, {
+                role => $msg->{role},
+                content => $msg->{content} || ''
             };
         }
     }
