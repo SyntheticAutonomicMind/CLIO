@@ -229,6 +229,14 @@ sub retrieveChunk {
     # Security check: Verify file exists in session's directory
     unless (-f $result_file) {
         print STDERR "[WARN]ToolResultStore] Result not found: $toolCallId in session $session_id\n";
+        
+        # Try to find similar files and suggest them
+        my $suggestions = $self->findSimilarResults($toolCallId, $session_id);
+        if ($suggestions && @$suggestions) {
+            my $suggestion_text = join("\n", map { "  - $_" } @$suggestions);
+            die "Tool result not found: $toolCallId\n\nDid you mean one of these?\n$suggestion_text";
+        }
+        
         die "Tool result not found: $toolCallId";
     }
     
@@ -295,6 +303,105 @@ sub resultExists {
     my $result_file = File::Spec->catfile($tool_results_dir, "$toolCallId.txt");
     
     return -f $result_file;
+}
+
+=head2 findSimilarResults
+
+Find tool results with similar IDs (for fuzzy matching when AI hallucinates wrong ID).
+
+Arguments:
+- toolCallId: The (possibly incorrect) tool call identifier
+- session_id: Session to search in
+
+Returns: Arrayref of similar toolCallIds, or empty array if none found
+
+=cut
+
+sub findSimilarResults {
+    my ($self, $toolCallId, $session_id) = @_;
+    
+    my $session_dir = File::Spec->catdir($self->{sessions_dir}, $session_id);
+    my $tool_results_dir = File::Spec->catdir($session_dir, 'tool_results');
+    
+    return [] unless -d $tool_results_dir;
+    
+    # Get all result files
+    opendir(my $dh, $tool_results_dir) or return [];
+    my @files = grep { /^call_.*\.txt$/ } readdir($dh);
+    closedir($dh);
+    
+    # Extract tool call IDs (remove .txt extension)
+    my @all_ids = map { s/\.txt$//r } @files;
+    
+    return [] unless @all_ids;
+    
+    # Find similar IDs using simple string distance
+    my @similar;
+    for my $id (@all_ids) {
+        my $distance = _string_distance($toolCallId, $id);
+        my $max_len = length($toolCallId) > length($id) ? length($toolCallId) : length($id);
+        
+        # Consider it similar if edit distance is small relative to length
+        # Allow up to ~10% difference (1 char per 10)
+        my $threshold = int($max_len / 10) + 2;
+        
+        if ($distance <= $threshold) {
+            push @similar, $id;
+        }
+    }
+    
+    # Sort by similarity (smaller distance first)
+    @similar = sort { 
+        _string_distance($toolCallId, $a) <=> _string_distance($toolCallId, $b) 
+    } @similar;
+    
+    # Return top 3 most similar (or fewer if less available)
+    my $max = @similar < 3 ? @similar : 3;
+    return [ @similar[0..$max-1] ] if $max > 0;
+    return [];
+}
+
+# Simple Levenshtein distance implementation
+sub _string_distance {
+    my ($s1, $s2) = @_;
+    
+    my @s1 = split //, $s1;
+    my @s2 = split //, $s2;
+    
+    my $len1 = @s1;
+    my $len2 = @s2;
+    
+    # Create distance matrix
+    my @d;
+    for my $i (0 .. $len1) {
+        $d[$i][0] = $i;
+    }
+    for my $j (0 .. $len2) {
+        $d[0][$j] = $j;
+    }
+    
+    # Fill in the matrix
+    for my $i (1 .. $len1) {
+        for my $j (1 .. $len2) {
+            my $cost = ($s1[$i-1] eq $s2[$j-1]) ? 0 : 1;
+            
+            $d[$i][$j] = _min(
+                $d[$i-1][$j] + 1,      # deletion
+                $d[$i][$j-1] + 1,      # insertion
+                $d[$i-1][$j-1] + $cost # substitution
+            );
+        }
+    }
+    
+    return $d[$len1][$len2];
+}
+
+sub _min {
+    my $min = shift;
+    for (@_) {
+        $min = $_ if $_ < $min;
+    }
+    return $min;
 }
 
 =head2 deleteResult
