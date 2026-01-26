@@ -472,6 +472,7 @@ $ai_agent->set_ui($ui) if $ai_agent;
 # This ensures context is preserved when user interrupts the program
 {
     my $session_ref = \$session;  # Capture in closure
+    my $ui_ref = \$ui;            # Capture UI for styled output
     my $cleanup_done = 0;
     
     my $cleanup_handler = sub {
@@ -482,9 +483,24 @@ $ai_agent->set_ui($ui) if $ai_agent;
         # CRITICAL: Force output to appear immediately
         local $| = 1;
         
+        # Print newline to clear any partial input line
+        print "\n";
+        
+        # Use styled output if UI is available, otherwise plain text
+        if ($$ui_ref && $$ui_ref->can('display_system_message')) {
+            $$ui_ref->display_system_message("Saving session...");
+        } else {
+            print "SYSTEM: Saving session...\n";
+        }
+        
         if ($$session_ref) {
             eval {
                 $$session_ref->save();
+                if ($$ui_ref && $$ui_ref->can('display_system_message')) {
+                    $$ui_ref->display_system_message("Session saved.");
+                } else {
+                    print "SYSTEM: Session saved.\n";
+                }
             };
             if ($@) {
                 print STDERR "[ERROR] Failed to save session: $@\n";
@@ -495,8 +511,11 @@ $ai_agent->set_ui($ui) if $ai_agent;
         
         # Force STDERR flush
         STDERR->flush();
+        STDOUT->flush();
         
-        exit 130;  # Standard exit code for SIGINT (128 + 2)
+        # Exit with code 0 for clean user-initiated exit
+        # (130 = 128+2 is for signal termination, but user chose to exit cleanly)
+        exit 0;
     };
     
     $SIG{INT}  = $cleanup_handler;  # Ctrl+C
