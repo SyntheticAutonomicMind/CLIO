@@ -39,6 +39,7 @@ sub new {
             debug => $self->{debug},
             api_manager => $self->{api},
             session => $self->{session},
+            config => $self->{api}->{config},  # Pass config for web search API keys
             ui => $self->{ui},
         );
         print STDERR "[DEBUG][SimpleAIAgent] Orchestrator initialized in constructor\n" if should_log('DEBUG');
@@ -173,6 +174,7 @@ sub process_user_request {
                 debug => $self->{debug},
                 api_manager => $self->{api},
                 session => $self->{session},
+                config => $self->{api}->{config},  # Pass config for web search API keys
                 ui => $context->{ui},  # Forward UI for user_collaboration
                 spinner => $context->{spinner}  # Forward spinner for interactive tools
             );

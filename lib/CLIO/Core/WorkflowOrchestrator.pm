@@ -79,6 +79,7 @@ sub new {
     $self->{tool_executor} = CLIO::Core::ToolExecutor->new(
         session => $args{session},
         tool_registry => $self->{tool_registry},
+        config => $args{config},  # Forward config for web search API keys
         ui => $args{ui},  # Forward UI for user_collaboration
         spinner => $args{spinner},  # Forward spinner for interactive tools
         debug => $args{debug}

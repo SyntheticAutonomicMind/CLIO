@@ -40,6 +40,10 @@ use constant DEFAULT_CONFIG => {
     provider => 'github_copilot',  # Default provider
     editor => $ENV{EDITOR} || $ENV{VISUAL} || 'vim',  # Default editor
     log_level => 'INFO',  # Default log level: ERROR, WARNING, INFO, DEBUG
+    # Web search configuration (SerpAPI)
+    serpapi_key => '',  # SerpAPI key for reliable web search
+    search_engine => 'google',  # SerpAPI engine: google, bing, duckduckgo
+    search_provider => 'auto',  # auto | serpapi | duckduckgo_direct
 };
 
 sub new {
