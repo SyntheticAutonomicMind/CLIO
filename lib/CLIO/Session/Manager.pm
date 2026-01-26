@@ -20,8 +20,7 @@ sub new {
     my ($class, %args) = @_;
     if ($ENV{CLIO_DEBUG} || $args{debug}) {
         print STDERR "[TRACE] Entered Manager::new\n";
-        my $dbg = "[DEBUG][Manager::new] called with args: " . join(", ", map { "$_=$args{$_}" } keys %args) . "\n";
-        print STDERR $dbg; print $dbg;
+        print STDERR "[DEBUG][Manager::new] called with args: " . join(", ", map { "$_=$args{$_}" } keys %args) . "\n";
     }
     
     # Determine working directory for loading project LTM
@@ -55,9 +54,8 @@ sub new {
         yarn       => $yarn,
     );
     if ($ENV{CLIO_DEBUG} || $self->{debug}) {
-        print STDERR "[MANAGER] yarn object ref: $self->{yarn}\n"; print "[MANAGER] yarn object ref: $self->{yarn}\n";
-        print STDERR "[DEBUG][Manager::new] returning self: $self\n"; print "[DEBUG][Manager::new] returning self: $self\n";
-        print STDERR "[TRACE][Manager::new] About to return: ", (defined $self ? $self : '[undef]'), "\n"; print "[TRACE][Manager::new] About to return: ", (defined $self ? $self : '[undef]'), "\n";
+        print STDERR "[MANAGER] yarn object ref: $self->{yarn}\n";
+        print STDERR "[DEBUG][Manager::new] returning self: $self\n";
     }
     return $self;
 }
@@ -90,13 +88,11 @@ sub create {
     my ($class, %args) = @_;
     if ($ENV{CLIO_DEBUG} || $args{debug}) {
         print STDERR "[TRACE] Entered Manager::create\n";
-        my $dbg2 = "[DEBUG][Manager::create] called with args: " . join(", ", map { "$_=$args{$_}" } keys %args) . "\n";
-        print STDERR $dbg2; print $dbg2;
+        print STDERR "[DEBUG][Manager::create] called with args: " . join(", ", map { "$_=$args{$_}" } keys %args) . "\n";
     }
     my $obj = $class->new(%args);
     if ($ENV{CLIO_DEBUG} || $obj->{debug}) {
-        print STDERR "[DEBUG][Manager::create] returning: $obj\n"; print "[DEBUG][Manager::create] returning: $obj\n";
-        print STDERR "[TRACE][Manager::create] About to return: ", (defined $obj ? $obj : '[undef]'), "\n"; print "[TRACE][Manager::create] About to return: ", (defined $obj ? $obj : '[undef]'), "\n";
+        print STDERR "[DEBUG][Manager::create] returning: $obj\n";
     }
     return $obj;
 }
