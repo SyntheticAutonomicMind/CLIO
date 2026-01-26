@@ -1187,7 +1187,7 @@ sub send_request {
     if (defined $self->{last_request_time}) {
         my $now = Time::HiRes::time();  # High resolution time
         my $elapsed = $now - $self->{last_request_time};
-        my $min_delay = 2.5;  # 2.5 second minimum between requests
+        my $min_delay = 0.5;  # 0.5 second minimum between requests (reduced from 2.5s)
         
         if ($elapsed < $min_delay) {
             my $wait = $min_delay - $elapsed;
@@ -1539,7 +1539,7 @@ sub send_request_streaming {
     if (defined $self->{last_request_time}) {
         my $now = Time::HiRes::time();  # High resolution time
         my $elapsed = $now - $self->{last_request_time};
-        my $min_delay = 2.5;  # 2.5 second minimum between requests
+        my $min_delay = 0.5;  # 0.5 second minimum between requests (reduced from 2.5s)
         
         if ($elapsed < $min_delay) {
             my $wait = $min_delay - $elapsed;
