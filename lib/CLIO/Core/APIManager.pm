@@ -631,7 +631,7 @@ sub validate_and_truncate_messages {
         warn "[WARNING][APIManager] Truncating oldest messages to fit within limit\n";
     }
     
-    # CRITICAL: Group messages into "units" that must stay together
+    # Group messages into "units" that must stay together
     # A unit is either:
     #   1. A single message without tool_calls/tool_call_id
     #   2. An assistant message with tool_calls + all subsequent tool_result messages
@@ -774,7 +774,7 @@ sub validate_and_truncate_messages {
     }
     
     # Build conversation messages from newest to oldest
-    # CRITICAL: Also track which tool_call_ids we're including so we can skip orphans
+    # Also track which tool_call_ids we're including so we can skip orphans
     my @conversation = ();
     my $current_tokens = $system_tokens;  # Account for system in budget
     my %included_tool_call_ids = ();
@@ -912,7 +912,7 @@ sub _build_payload {
     }
     
     # Add previous_response_id for GitHub Copilot billing continuity
-    # CRITICAL: Use stateful_marker (not response 'id'!) for session continuation
+    # Use stateful_marker (not response 'id'!) for session continuation
     # This is the CORRECT implementation per VS Code Copilot Chat and SAM reference code
     # Using stateful_marker prevents duplicate premium charges for:
     #   - Continued conversations
@@ -956,7 +956,7 @@ sub _build_payload {
     # Adapt payload for specific endpoint
     $payload = $self->adapt_request_for_endpoint($payload, $endpoint_config);
     
-    # CRITICAL: Sanitize entire payload to remove problematic UTF-8 characters
+    # Sanitize entire payload to remove problematic UTF-8 characters
     $payload = _sanitize_payload_recursive($payload);
     
     # DEBUG: Log session continuity fields (CRITICAL for billing tracking)
@@ -1206,7 +1206,7 @@ sub send_request {
         my $wait = int($self->{rate_limit_until} - time()) + 1;
         print STDERR "[INFO][APIManager] Rate limited. Waiting ${wait}s before retry...\n";
         
-        # CRITICAL: Enable periodic signal delivery during rate limit wait
+        # Enable periodic signal delivery during rate limit wait
         # Allow Ctrl-C to interrupt wait and save session
         local $SIG{ALRM} = sub { alarm(1); };
         alarm(1);
@@ -1564,7 +1564,7 @@ sub send_request_streaming {
         my $wait = int($self->{rate_limit_until} - time()) + 1;
         print STDERR "[INFO][APIManager] Rate limited. Waiting ${wait}s before retry...\n";
         
-        # CRITICAL: Enable periodic signal delivery during rate limit wait
+        # Enable periodic signal delivery during rate limit wait
         # Allow Ctrl-C to interrupt wait and save session
         local $SIG{ALRM} = sub { alarm(1); };
         alarm(1);
@@ -1629,7 +1629,7 @@ sub send_request_streaming {
         print STDERR "[DEBUG][APIManager] ===== END REQUEST PAYLOAD =====\n";
     }
     
-    # CRITICAL: Clean up tool_calls before encoding
+    # Clean up tool_calls before encoding
     # Remove internal metadata fields (_name_complete, etc) that were added during streaming
     # GitHub Copilot API rejects requests with unknown fields in tool_calls
     for my $msg (@{$payload->{messages}}) {

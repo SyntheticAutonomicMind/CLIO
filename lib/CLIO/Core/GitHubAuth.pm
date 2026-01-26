@@ -152,7 +152,7 @@ sub poll_for_token {
     
     print STDERR "[INFO][GitHubAuth] Polling for access token (15min timeout)...\n" if should_log('INFO');
     
-    # CRITICAL: Enable periodic signal delivery during polling
+    # Enable periodic signal delivery during polling
     # GitHub auth can block for up to 15 minutes waiting for user
     # Without ALRM, Ctrl-C won't save session state
     my $alarm_handler = sub {

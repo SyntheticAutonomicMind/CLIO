@@ -116,7 +116,7 @@ sub get_config_dir {
 
 Get the sessions directory path. Creates it if it doesn't exist.
 
-**CRITICAL:** Sessions are PROJECT-SCOPED, not global.  
+**Important:** Sessions are PROJECT-SCOPED, not global.  
 Uses current working directory's .clio/sessions/, not ~/.clio/sessions/
 
 Returns: Absolute path to sessions directory (in current project)

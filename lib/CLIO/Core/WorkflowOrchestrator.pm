@@ -187,7 +187,7 @@ sub process_input {
     # Build initial messages array
     my @messages = ();
     
-    # CRITICAL: Build system prompt with dynamic tools FIRST
+    # Build system prompt with dynamic tools FIRST
     # This must come before history to ensure tools are always available
     my $system_prompt = $self->_build_system_prompt($session);
     push @messages, {
@@ -231,7 +231,7 @@ sub process_input {
         print STDERR "[DEBUG][WorkflowOrchestrator] Iteration $iteration/$self->{max_iterations}\n"
             if $self->{debug};
         
-        # CRITICAL: Enforce message alternation for Claude compatibility
+        # Enforce message alternation for Claude compatibility
         # Must be done before EVERY API call, as messages array is modified during tool calling
         my $alternated_messages = $self->_enforce_message_alternation(\@messages);
         
@@ -321,7 +321,7 @@ sub process_input {
                     print STDERR "[INFO][WorkflowOrchestrator] Retryable $error_type detected, retrying in ${retry_delay}s on next iteration\n";
                 }
                 
-                # CRITICAL: Enable signal delivery during retry wait
+                # Enable signal delivery during retry wait
                 local $SIG{ALRM} = sub { alarm(1); };
                 alarm(1);
                 
@@ -336,7 +336,7 @@ sub process_input {
                 next;
             }
             
-            # CRITICAL FIX: Non-retryable error
+            # Non-retryable error
             # Remove the last assistant message from @messages array if it exists
             # This prevents issues where a bad AI response keeps triggering the same error
             # The AI will see the error message and try a different approach
@@ -395,7 +395,7 @@ sub process_input {
             }
         }
         
-        # CRITICAL FIX: Extract text-based tool calls from content if no structured tool_calls
+        # Extract text-based tool calls from content if no structured tool_calls
         # This supports models that output tool calls as text instead of using OpenAI format
         if (!$api_response->{tool_calls} || !@{$api_response->{tool_calls}}) {
             require CLIO::Core::ToolCallExtractor;
@@ -428,7 +428,7 @@ sub process_input {
                 tool_calls => $api_response->{tool_calls}
             };
             
-            # CRITICAL: Save assistant message with tool_calls to session IMMEDIATELY
+            # Save assistant message with tool_calls to session IMMEDIATELY
             # This ensures that if user presses Ctrl-C during tool execution,
             # the assistant's response (including tool_calls) is preserved in session history
             if ($session && $session->can('add_message')) {
@@ -549,7 +549,7 @@ sub process_input {
                 scalar(@serial_tools) . " serial, " .
                 scalar(@parallel_tools) . " parallel\n" if $self->{debug};
             
-            # CRITICAL FIX: Flush UI streaming buffer BEFORE executing any tools
+            # Flush UI streaming buffer BEFORE executing any tools
             # This ensures agent text appears BEFORE tool execution output
             # Part of the handshake mechanism to fix message ordering (Bug 1 & 3)
             if ($self->{ui} && $self->{ui}->can('flush_output_buffer')) {
@@ -574,7 +574,7 @@ sub process_input {
                 # Handle first tool call: ensure proper line separation from agent content
                 # The streaming callback prints "CLIO: " immediately on first chunk
                 if ($first_tool_call) {
-                    # CRITICAL: Stop spinner BEFORE any tool output
+                    # Stop spinner BEFORE any tool output
                     # The spinner runs during AI API calls and must be stopped before
                     # we print tool execution messages to prevent spinner characters
                     # from appearing in the output (e.g., "⠹  -> action_description")
@@ -650,7 +650,7 @@ sub process_input {
                 # Sanitize tool result content to prevent JSON encoding issues (emojis, etc.)
                 my $sanitized_content = sanitize_text($ai_content);
                 
-                # CRITICAL: Content MUST be a string, not a number!
+                # Content MUST be a string, not a number!
                 # GitHub Copilot API requires content to be string type.
                 # If tool returns a number (e.g., file size, boolean), stringify it.
                 $sanitized_content = "$sanitized_content" if defined $sanitized_content;
@@ -662,7 +662,7 @@ sub process_input {
                     content => $sanitized_content
                 };
                 
-                # CRITICAL: Save tool result to session immediately after adding to conversation
+                # Save tool result to session immediately after adding to conversation
                 # This ensures that if user presses Ctrl-C before next iteration,
                 # the tool execution result is preserved in session history
                 if ($session && $session->can('add_message')) {
@@ -692,7 +692,7 @@ sub process_input {
                 $self->{ui}->reset_streaming_state();
             }
             
-            # CRITICAL: Save session after each iteration to prevent data loss
+            # Save session after each iteration to prevent data loss
             # This ensures tool execution history is preserved even if process crashes mid-workflow
             # Performance impact: ~2-5ms per iteration (negligible vs multi-second AI response times)
             # Benefits:
@@ -902,7 +902,7 @@ sub _generate_tools_section {
         $num++;
     }
     
-    $section .= "\n**CRITICAL:** You HAVE all $tool_count of these tools. ";
+    $section .= "\n**Important:** You HAVE all $tool_count of these tools. ";
     $section .= "Do NOT say you don't have a tool that's on this list!\n\n";
     
     # Add JSON formatting instruction with HIGH priority to prevent malformed JSON
@@ -1132,7 +1132,7 @@ sub _load_conversation_history {
         $history = $session->get_conversation_history() || [];
     }
     
-    # CRITICAL: Do NOT truncate history here!
+    # Do NOT truncate history here!
     # Session::State handles context management with YaRN and importance-based trimming.
     # Arbitrarily limiting to N messages destroys context continuity and causes history loss.
     # The session provides exactly what should be included based on token budgets and importance.
@@ -1163,7 +1163,7 @@ sub _load_conversation_history {
         if $self->{debug};
     
     # Validate and filter messages
-    # CRITICAL: Skip system messages from history - we always build fresh with dynamic tools
+    # Skip system messages from history - we always build fresh with dynamic tools
     my @valid_messages = ();
     
     print STDERR "[DEBUG][WorkflowOrchestrator] _load_conversation_history: Processing " . scalar(@$history) . " messages\n"
@@ -1183,7 +1183,7 @@ sub _load_conversation_history {
         # Skip system messages - we build fresh system prompt in process_input
         next if $msg->{role} eq 'system';
         
-        # CRITICAL FIX: Skip tool result messages without tool_call_id
+        # Skip tool result messages without tool_call_id
         # GitHub Copilot API REQUIRES tool_call_id for role=tool messages
         # If missing, API returns "tool call must have a tool call ID" error
         if ($msg->{role} eq 'tool' && !$msg->{tool_call_id}) {
@@ -1194,7 +1194,7 @@ sub _load_conversation_history {
             next;
         }
         
-        # CRITICAL: Preserve message structure for proper API correlation
+        # Preserve message structure for proper API correlation
         # The API requires:
         # 1. Assistant messages with tool_calls must be followed by tool messages
         # 2. Each tool message's tool_call_id must match an id in the preceding tool_calls array
@@ -1233,7 +1233,64 @@ sub _load_conversation_history {
         }
     }
     
-    return \@valid_messages;
+    # Validate that assistant messages with tool_calls have corresponding tool_results
+    # This prevents "tool_use ids were found without tool result blocks" API errors
+    # caused by orphaned tool calls in loaded history (Bug #1)
+    my @validated_messages = ();
+    my $idx = 0;
+    while ($idx < @valid_messages) {
+        my $msg = $valid_messages[$idx];
+        
+        if ($msg->{role} eq "assistant" && $msg->{tool_calls} && @{$msg->{tool_calls}}) {
+            # This assistant message has tool calls - verify results are present
+            my %expected_tool_ids = ();
+            for my $tc (@{$msg->{tool_calls}}) {
+                $expected_tool_ids{$tc->{id}} = 1 if $tc->{id};
+            }
+            
+            # Collect all immediately following tool messages
+            my %found_tool_ids = ();
+            my $next_idx = $idx + 1;
+            while ($next_idx < @valid_messages && $valid_messages[$next_idx]->{role} eq "tool") {
+                if ($valid_messages[$next_idx]->{tool_call_id}) {
+                    $found_tool_ids{$valid_messages[$next_idx]->{tool_call_id}} = 1;
+                }
+                $next_idx++;
+            }
+            
+            # Check if all expected tool results are present
+            my $missing_results = 0;
+            for my $id (keys %expected_tool_ids) {
+                unless ($found_tool_ids{$id}) {
+                    print STDERR "[WARN][WorkflowOrchestrator] Orphaned tool_call detected: $id (missing tool_result)\n"
+                        if should_log("WARN");
+                    $missing_results++;
+                }
+            }
+            
+            if ($missing_results > 0) {
+                # Remove tool_calls to prevent API error "tool_use ids were found without tool_result blocks"
+                print STDERR "[WARN][WorkflowOrchestrator] Removing tool_calls from loaded assistant message ($missing_results missing results)\n"
+                    if should_log("WARN");
+                
+                my $fixed_msg = {
+                    role => $msg->{role},
+                    content => $msg->{content}
+                };
+                push @validated_messages, $fixed_msg;
+            } else {
+                # All tool results present, keep as-is
+                push @validated_messages, $msg;
+            }
+        } else {
+            # Not an assistant message with tool_calls, keep as-is
+            push @validated_messages, $msg;
+        }
+        
+        $idx++;
+    }
+    
+    return \@validated_messages;
 }
 
 =head2 _inject_context_files
@@ -1375,7 +1432,7 @@ sub _enforce_message_alternation {
     for my $msg (@$messages) {
         my $role = $msg->{role};
         
-        # CRITICAL: Convert tool messages to user messages ONLY for providers that don't support role=tool
+        # Convert tool messages to user messages ONLY for providers that don't support role=tool
         # Claude doesn't support role=tool, but GitHub Copilot and OpenAI DO support it
         # Tool results must be role=tool for GitHub Copilot, or API returns 400 error
         if ($role eq 'tool' && !$provider_supports_tool_role) {
@@ -1395,7 +1452,7 @@ sub _enforce_message_alternation {
         }
         
         # Check if same role as previous (needs merging)
-        # CRITICAL: Do NOT merge tool messages - each has unique tool_call_id
+        # Do NOT merge tool messages - each has unique tool_call_id
         if (defined $last_role && $role eq $last_role && $role ne 'tool') {
             # Same role (and not tool) - accumulate content
             if ($msg->{content} && length($msg->{content}) > 0) {

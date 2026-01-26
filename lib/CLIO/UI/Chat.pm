@@ -15,7 +15,7 @@ binmode(STDERR, ':encoding(UTF-8)');
 use CLIO::Compat::Terminal qw(GetTerminalSize ReadMode ReadKey);  # Portable terminal control
 use File::Spec;
 
-# CRITICAL: Enable autoflush globally for STDOUT to prevent buffering issues
+# Enable autoflush globally for STDOUT to prevent buffering issues
 # This ensures streaming output appears immediately
 $| = 1;
 STDOUT->autoflush(1) if STDOUT->can('autoflush');
@@ -62,7 +62,7 @@ sub new {
         # Pagination control - OFF by default, enabled only for text responses
         pagination_enabled => 0,  # Only enable for final agent text, not tool output
         # Persistent spinner - shared across all requests
-        # CRITICAL: Keep spinner as persistent Chat property so tools can reliably access it
+        # Keep spinner as persistent Chat property so tools can reliably access it
         spinner => undef,     # Will be created on first use, reused across requests
     };
     
@@ -263,7 +263,7 @@ sub run {
             $self->refresh_terminal_size();
             
             # Show progress indicator while waiting for AI response
-            # CRITICAL FIX: Use persistent spinner stored on Chat object
+            # Use persistent spinner stored on Chat object
             # This ensures tools can access the SAME spinner instance via context
             # Previously, a new local spinner was created per request, causing reference issues
             unless ($self->{spinner}) {
@@ -410,7 +410,7 @@ sub run {
                         # Check pagination - ONLY when explicitly enabled for text responses
                         # pagination_enabled is set to 1 for agent text responses (no tools)
                         # and remains 0 during tool execution to let output scroll freely
-                        # CRITICAL: Pause BEFORE terminal_height to leave room for pause message
+                        # Pause BEFORE terminal_height to leave room for pause message
                         # This prevents content from scrolling off screen before user can read
                         my $pause_threshold = $self->{terminal_height} - 2;  # Leave 2 lines for pause prompt
                         if ($self->{line_count} >= $pause_threshold && 
@@ -483,7 +483,7 @@ sub run {
                 print STDERR "[DEBUG][Chat] Loaded " . scalar(@$conversation_history) . " messages from session history\n" if $self->{debug};
             }
             
-            # CRITICAL FIX: Enable periodic signal delivery during streaming
+            # Enable periodic signal delivery during streaming
             # Without this, Ctrl-C during HTTP streaming won't save session because:
             # - HTTP::Tiny blocks in socket read syscall
             # - Perl signal handlers only run between Perl opcodes
@@ -512,7 +512,7 @@ sub run {
             });
             print STDERR "[DEBUG][Chat] process_user_request returned, success=" . ($result->{success} ? "yes" : "no") . "\n" if $self->{debug};
             
-            # CRITICAL: Disable periodic alarm after streaming completes
+            # Disable periodic alarm after streaming completes
             alarm(0);
             print STDERR "[DEBUG][Chat] Disabled periodic ALRM after streaming ($alarm_count interrupts)\n" if should_log('DEBUG');
             
@@ -526,7 +526,7 @@ sub run {
                 print STDERR "[DEBUG][Chat] AFTER streaming - first_chunk_received=$first_chunk_received\n";
             }
             
-            # CRITICAL FIX: Flush any remaining content in buffers after streaming completes
+            # Flush any remaining content in buffers after streaming completes
             
             # 1. Flush markdown buffer if it has content
             if ($self->{_streaming_markdown_buffer} && $self->{_streaming_markdown_buffer} =~ /\S/) {
@@ -577,7 +577,7 @@ sub run {
             }
             
             # Store complete message in session history
-            # CRITICAL: Sanitize assistant responses before storing to prevent emoji encoding issues
+            # Sanitize assistant responses before storing to prevent emoji encoding issues
             if ($result && $result->{final_response}) {
                 print STDERR "[DEBUG][Chat] Storing final_response in session (length=" . length($result->{final_response}) . ")\n" if $self->{debug};
                 my $sanitized = sanitize_text($result->{final_response});
@@ -601,7 +601,7 @@ sub run {
                 if ($self->{session}) {
                     $self->{session}->add_message('system', "Error: $error_msg");
                     
-                    # CRITICAL: Save session immediately after error to prevent history loss
+                    # Save session immediately after error to prevent history loss
                     # This ensures error context is available on next startup
                     $self->{session}->save();
                     print STDERR "[DEBUG][Chat] Session saved after error (preserving context)\n" if should_log('DEBUG');
@@ -699,7 +699,7 @@ sub check_for_updates_async {
     
     if ($pid == 0) {
         # Child process - check for updates
-        # CRITICAL: Close stdin/stdout/stderr to avoid interfering with parent's terminal
+        # Close stdin/stdout/stderr to avoid interfering with parent's terminal
         # The child doesn't need terminal I/O and keeping these open can cause
         # readline issues in the parent process (e.g., Ctrl-D hanging on first input)
         close(STDIN);
@@ -868,7 +868,7 @@ sub display_assistant_message {
         print STDERR "[ERROR][Chat] No session object - cannot store message!\n" if should_log('ERROR');
     }
     
-    # CRITICAL FIX: Render markdown if enabled (was missing, causing raw markdown in multiline responses)
+    # Render markdown if enabled (was missing, causing raw markdown in multiline responses)
     my $display_message = $message;
     if ($self->{enable_markdown}) {
         $display_message = $self->render_markdown($message);
@@ -1075,7 +1075,7 @@ sub request_collaboration {
         $self->{line_count}++;
         
         # Check if we need to paginate
-        # CRITICAL: Pause BEFORE terminal_height to leave room for pause message
+        # Pause BEFORE terminal_height to leave room for pause message
         my $pause_threshold = $self->{terminal_height} - 2;  # Leave 2 lines for pause prompt
         if ($self->{line_count} >= $pause_threshold && 
             $self->{pagination_enabled} && 
@@ -1107,7 +1107,7 @@ sub request_collaboration {
             print $line, "\n";
             $self->{line_count}++;
             
-            # CRITICAL: Pause BEFORE terminal_height to leave room for pause message
+            # Pause BEFORE terminal_height to leave room for pause message
             my $pause_threshold = $self->{terminal_height} - 2;  # Leave 2 lines for pause prompt
             if ($self->{line_count} >= $pause_threshold && 
                 $self->{pagination_enabled} && 
@@ -2728,7 +2728,7 @@ sub handle_login_command {
     }
     print "\n";
     
-    # CRITICAL: Reload APIManager to pick up new tokens
+    # Reload APIManager to pick up new tokens
     print STDERR "[DEBUG][Chat] Reloading APIManager after /login to pick up new tokens\n" if $self->{debug};
     require CLIO::Core::APIManager;
     my $new_api = CLIO::Core::APIManager->new(

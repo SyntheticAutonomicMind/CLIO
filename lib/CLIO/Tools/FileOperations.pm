@@ -730,7 +730,7 @@ sub grep_search {
         }
         
         # Search each file
-        # CRITICAL FIX: Compile regex safely with error handling
+        # Compile regex safely with error handling
         my $search_regex;
         if ($is_regex) {
             # User-provided regex - wrap in eval to catch invalid patterns

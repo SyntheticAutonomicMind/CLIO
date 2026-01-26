@@ -201,7 +201,7 @@ sub ReadKey {
         fcntl(STDIN, F_SETFL, $flags);
     } elsif ($timeout == 0) {
         # Blocking read with EINTR retry
-        # CRITICAL: sysread() returns undef when interrupted by signal (EINTR).
+        # sysread() returns undef when interrupted by signal (EINTR).
         # This is NORMAL - just retry the read. Do NOT sleep or bail out.
         while (1) {
             $bytes_read = sysread(STDIN, $char, 1);
