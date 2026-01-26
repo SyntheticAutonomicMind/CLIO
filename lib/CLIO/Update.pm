@@ -160,6 +160,269 @@ sub get_latest_version {
     };
 }
 
+=head2 get_all_releases
+
+Fetch all available releases from GitHub.
+
+Arguments:
+- $per_page: Number of releases per page (default: 30)
+- $page: Page number (default: 1)
+
+Returns:
+- Arrayref of release hashrefs, each with {version, tag_name, tarball_url, published_at, release_name}
+- undef on failure
+
+=cut
+
+sub get_all_releases {
+    my ($self, %opts) = @_;
+    
+    my $per_page = $opts{per_page} || 30;
+    my $page = $opts{page} || 1;
+    
+    my $api_url = sprintf("%s/repos/%s/releases?per_page=%d&page=%d",
+        $self->{api_base},
+        $self->{github_repo},
+        $per_page,
+        $page
+    );
+    
+    print STDERR "[DEBUG][Update] Fetching releases from: $api_url\n"
+        if $self->{debug};
+    
+    # Use curl for HTTP request
+    my $response = `curl -s -m $self->{timeout} -H "Accept: application/vnd.github+json" "$api_url" 2>/dev/null`;
+    
+    if ($? != 0) {
+        print STDERR "[DEBUG][Update] curl failed with exit code: " . ($? >> 8) . "\n"
+            if $self->{debug};
+        return undef;
+    }
+    
+    # Parse JSON response
+    my $data;
+    eval {
+        $data = decode_json($response);
+    };
+    
+    if ($@ || !$data || ref($data) ne 'ARRAY') {
+        print STDERR "[DEBUG][Update] Failed to parse JSON response: $@\n"
+            if $self->{debug};
+        return undef;
+    }
+    
+    # Transform each release
+    my @releases;
+    for my $release (@$data) {
+        my $tag_name = $release->{tag_name} || '';
+        my $version = $tag_name;
+        $version =~ s/^v//;  # Remove leading 'v'
+        
+        push @releases, {
+            version => $version,
+            tag_name => $tag_name,
+            tarball_url => $release->{tarball_url} || '',
+            published_at => $release->{published_at} || '',
+            release_name => $release->{name} || $version,
+            prerelease => $release->{prerelease} ? 1 : 0,
+            draft => $release->{draft} ? 1 : 0,
+        };
+    }
+    
+    print STDERR "[DEBUG][Update] Found " . scalar(@releases) . " releases\n"
+        if $self->{debug};
+    
+    return \@releases;
+}
+
+=head2 get_release_by_version
+
+Fetch a specific release by version number.
+
+Arguments:
+- $version: Version to fetch (e.g., "20260125.8")
+
+Returns:
+- Release hashref with {version, tag_name, tarball_url, etc.} or undef
+
+=cut
+
+sub get_release_by_version {
+    my ($self, $version) = @_;
+    
+    return undef unless $version;
+    
+    # Try with 'v' prefix first (common convention), then without
+    my @tags_to_try = ("v$version", $version);
+    
+    for my $tag (@tags_to_try) {
+        my $api_url = sprintf("%s/repos/%s/releases/tags/%s",
+            $self->{api_base},
+            $self->{github_repo},
+            $tag
+        );
+        
+        print STDERR "[DEBUG][Update] Fetching release by tag: $tag\n"
+            if $self->{debug};
+        
+        my $response = `curl -s -m $self->{timeout} -H "Accept: application/vnd.github+json" "$api_url" 2>/dev/null`;
+        
+        next if $? != 0;
+        
+        my $data;
+        eval {
+            $data = decode_json($response);
+        };
+        
+        next if $@ || !$data || $data->{message};  # Skip if error or "not found" message
+        
+        my $tag_name = $data->{tag_name} || '';
+        my $ver = $tag_name;
+        $ver =~ s/^v//;
+        
+        return {
+            version => $ver,
+            tag_name => $tag_name,
+            tarball_url => $data->{tarball_url} || '',
+            published_at => $data->{published_at} || '',
+            release_name => $data->{name} || $ver,
+            release_notes => $data->{body} || '',
+            prerelease => $data->{prerelease} ? 1 : 0,
+        };
+    }
+    
+    print STDERR "[DEBUG][Update] Version $version not found\n"
+        if $self->{debug};
+    return undef;
+}
+
+=head2 download_version
+
+Download a specific version (not just latest).
+
+Arguments:
+- $version: Version to download (e.g., "20260125.8")
+
+Returns:
+- Path to downloaded and extracted directory, or undef on failure
+
+=cut
+
+sub download_version {
+    my ($self, $version) = @_;
+    
+    return undef unless $version;
+    
+    # Get release info for this version
+    my $release = $self->get_release_by_version($version);
+    unless ($release && $release->{tarball_url}) {
+        print STDERR "[ERROR][Update] Cannot find release for version: $version\n";
+        return undef;
+    }
+    
+    my $tarball_url = $release->{tarball_url};
+    
+    # Create download directory
+    my $download_dir = "/tmp/clio-update-$version";
+    if (-d $download_dir) {
+        print STDERR "[DEBUG][Update] Removing existing download dir: $download_dir\n"
+            if $self->{debug};
+        rmtree($download_dir);
+    }
+    
+    mkpath($download_dir) or do {
+        print STDERR "[ERROR][Update] Cannot create download dir: $!\n";
+        return undef;
+    };
+    
+    # Download tarball
+    my $tarball_path = "$download_dir/clio.tar.gz";
+    print STDERR "[DEBUG][Update] Downloading version $version from: $tarball_url\n"
+        if $self->{debug};
+    
+    my $curl_result = system("curl", "-sL", "-m", "30", "-o", $tarball_path, $tarball_url);
+    
+    if ($curl_result != 0) {
+        print STDERR "[ERROR][Update] Download failed\n";
+        rmtree($download_dir);
+        return undef;
+    }
+    
+    # Extract tarball
+    print STDERR "[DEBUG][Update] Extracting tarball\n"
+        if $self->{debug};
+    
+    my $extract_result = system("cd '$download_dir' && tar -xzf clio.tar.gz 2>/dev/null");
+    
+    if ($extract_result != 0) {
+        print STDERR "[ERROR][Update] Extraction failed\n";
+        rmtree($download_dir);
+        return undef;
+    }
+    
+    # Find extracted directory
+    opendir(my $dh, $download_dir) or return undef;
+    my @subdirs = grep { -d "$download_dir/$_" && $_ !~ /^\./ } readdir($dh);
+    closedir($dh);
+    
+    unless (@subdirs) {
+        print STDERR "[ERROR][Update] No extracted directory found\n";
+        rmtree($download_dir);
+        return undef;
+    }
+    
+    my $extracted_dir = File::Spec->catdir($download_dir, $subdirs[0]);
+    
+    # Verify it looks like CLIO
+    unless (-f "$extracted_dir/clio") {
+        print STDERR "[ERROR][Update] Downloaded directory doesn't look like CLIO (no ./clio executable)\n";
+        rmtree($download_dir);
+        return undef;
+    }
+    
+    print STDERR "[DEBUG][Update] Successfully downloaded version $version to: $extracted_dir\n"
+        if $self->{debug};
+    
+    return $extracted_dir;
+}
+
+=head2 install_version
+
+Install a specific version of CLIO.
+
+Arguments:
+- $version: Version to install
+
+Returns:
+- Hashref with {success, error, message}
+
+=cut
+
+sub install_version {
+    my ($self, $version) = @_;
+    
+    return { success => 0, error => 'Version required' } unless $version;
+    
+    # Download the version
+    my $source_dir = $self->download_version($version);
+    unless ($source_dir) {
+        return { success => 0, error => "Failed to download version $version" };
+    }
+    
+    # Install from directory
+    my $result = $self->install_from_directory($source_dir);
+    
+    # Clean up download directory
+    my $download_dir = dirname($source_dir);
+    rmtree($download_dir) if -d $download_dir;
+    
+    if ($result) {
+        return { success => 1, message => "Installed version $version" };
+    } else {
+        return { success => 0, error => "Installation failed for version $version" };
+    }
+}
+
 =head2 check_for_updates
 
 Check if an update is available (synchronous).

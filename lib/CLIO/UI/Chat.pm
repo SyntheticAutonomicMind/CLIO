@@ -1549,9 +1549,11 @@ sub display_help {
     
     push @help_lines, $self->colorize("UPDATES", 'command_subheader');
     push @help_lines, $self->colorize("─" x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/update', 'prompt_indicator'), 'Show update status');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/update', 'prompt_indicator'), 'Show update status and help');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/update check', 'prompt_indicator'), 'Check for available updates');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/update list', 'prompt_indicator'), 'List all available versions');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/update install', 'prompt_indicator'), 'Install latest version');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/update switch <ver>', 'prompt_indicator'), 'Switch to a specific version');
     push @help_lines, "";
     
     push @help_lines, $self->colorize("DEVELOPER", 'command_subheader');
@@ -3849,13 +3851,139 @@ sub handle_update_command {
         }
         print "\n";
     }
+    elsif ($subcmd eq 'list') {
+        # List all available versions
+        $self->display_command_header("AVAILABLE VERSIONS");
+        $self->display_info_message("Fetching releases from GitHub...");
+        print "\n";
+        
+        my $releases = $updater->get_all_releases();
+        
+        unless ($releases && @$releases) {
+            $self->display_error_message("Failed to fetch releases from GitHub");
+            return;
+        }
+        
+        my $current = $updater->get_current_version();
+        
+        print "Current version: " . $self->colorize($current, 'command_value') . "\n\n";
+        print "Available versions:\n\n";
+        
+        my $count = 0;
+        for my $release (@$releases) {
+            my $version = $release->{version};
+            my $name = $release->{release_name} || $version;
+            my $date = $release->{published_at} || '';
+            $date =~ s/T.*//;  # Strip time portion
+            
+            # Mark current version
+            my $marker = '';
+            my $version_color = 'command_value';
+            if ($version eq $current) {
+                $marker = ' (current)';
+                $version_color = 'success';
+            }
+            
+            # Mark prereleases
+            if ($release->{prerelease}) {
+                $marker .= ' [pre-release]';
+            }
+            
+            print "  " . $self->colorize($version, $version_color);
+            print $self->colorize($marker, 'muted') if $marker;
+            print "  " . $self->colorize($date, 'muted') if $date;
+            print "\n";
+            
+            $count++;
+            last if $count >= 20;  # Limit to 20 versions
+        }
+        
+        if (scalar(@$releases) > 20) {
+            print "\n  " . $self->colorize("... and " . (scalar(@$releases) - 20) . " more", 'muted') . "\n";
+        }
+        
+        print "\n";
+        print "Use " . $self->colorize('/update switch <version>', 'command') . " to switch to a specific version\n";
+        print "\n";
+    }
+    elsif ($subcmd eq 'switch') {
+        # Switch to a specific version
+        my $target_version = $args[1];
+        
+        unless ($target_version) {
+            $self->display_error_message("Version number required");
+            print "\n";
+            print "Usage: " . $self->colorize('/update switch <version>', 'command') . "\n";
+            print "Example: " . $self->colorize('/update switch 20260125.8', 'command') . "\n";
+            print "\n";
+            print "Use " . $self->colorize('/update list', 'command') . " to see available versions\n";
+            return;
+        }
+        
+        $self->display_command_header("VERSION SWITCH");
+        
+        # Verify version exists
+        $self->display_info_message("Verifying version $target_version...");
+        
+        my $release = $updater->get_release_by_version($target_version);
+        
+        unless ($release) {
+            print "\n";
+            $self->display_error_message("Version $target_version not found on GitHub");
+            print "\n";
+            print "Use " . $self->colorize('/update list', 'command') . " to see available versions\n";
+            return;
+        }
+        
+        my $current = $updater->get_current_version();
+        
+        print "\n";
+        print "Current version: " . $self->colorize($current, 'muted') . "\n";
+        print "Target version:  " . $self->colorize($target_version, 'command_value') . "\n";
+        
+        if ($release->{prerelease}) {
+            print $self->colorize("WARNING: This is a pre-release version", 'warning') . "\n";
+        }
+        
+        print "\n";
+        
+        # Confirm switch
+        print "Switch to version $target_version? [y/N]: ";
+        my $confirm = <STDIN>;
+        chomp $confirm if $confirm;
+        
+        unless ($confirm && $confirm =~ /^y/i) {
+            $self->display_info_message("Version switch cancelled");
+            return;
+        }
+        
+        print "\n";
+        $self->display_info_message("Downloading and installing version $target_version...");
+        print "\n";
+        
+        my $result = $updater->install_version($target_version);
+        
+        if ($result->{success}) {
+            $self->display_success_message("Switched to version $target_version!");
+            print "\n";
+            $self->display_info_message("Please restart CLIO to use the new version");
+            print "\n";
+            print "Run: " . $self->colorize('./clio', 'command') . "\n";
+        } else {
+            $self->display_error_message("Version switch failed: " . ($result->{error} || 'Unknown error'));
+        }
+        print "\n";
+    }
     else {
         $self->display_error_message("Unknown subcommand: $subcmd");
         print "\n";
         print "Available commands:\n";
+        $self->display_list_item("/update - Show current version and update help");
         $self->display_list_item("/update status - Show current version and update status");
         $self->display_list_item("/update check - Check for available updates");
+        $self->display_list_item("/update list - List all available versions");
         $self->display_list_item("/update install - Install the latest version");
+        $self->display_list_item("/update switch <version> - Switch to a specific version");
         print "\n";
     }
 }
