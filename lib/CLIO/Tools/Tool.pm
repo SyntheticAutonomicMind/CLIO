@@ -301,3 +301,5 @@ Major tools in SAM:
 - IMPLEMENTATION_PLAN_SAM_PATTERNS.md - Implementation roadmap
 
 =cut
+
+1;
