@@ -1622,6 +1622,30 @@ sub send_request_streaming {
         print STDERR "[DEBUG][APIManager] ===== END REQUEST PAYLOAD =====\n";
     }
     
+    # CRITICAL: Clean up tool_calls before encoding
+    # Remove internal metadata fields (_name_complete, etc) that were added during streaming
+    # GitHub Copilot API rejects requests with unknown fields in tool_calls
+    for my $msg (@{$payload->{messages}}) {
+        if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
+            for my $tc (@{$msg->{tool_calls}}) {
+                delete $tc->{_name_complete} if exists $tc->{_name_complete};
+            }
+        }
+    }
+    
+    # DEBUG: Dump messages with tool_calls AFTER cleanup (only when debug enabled)
+    if ($self->{debug}) {
+        print STDERR "[DEBUG][APIManager] POST-CLEANUP CHECK: Dumping messages with tool_calls:\n";
+        for my $i (0 .. $#{$payload->{messages}}) {
+            my $msg = $payload->{messages}[$i];
+            if ($msg->{tool_calls}) {
+                use Data::Dumper;
+                print STDERR "[DEBUG][APIManager]   Message $i has tool_calls:\n";
+                print STDERR Dumper($msg->{tool_calls});
+            }
+        }
+    }
+    
     my $json = encode_json($payload);
     
     # Create HTTP client
