@@ -316,16 +316,40 @@ sub process_input {
                 next;
             }
             
-            print STDERR "[ERROR][WorkflowOrchestrator] API error: $error\n";
+            # CRITICAL FIX: Non-retryable error
+            # Remove the last assistant message from @messages array if it exists
+            # This prevents issues where a bad AI response keeps triggering the same error
+            # The AI will see the error message and try a different approach
+            if (@messages && $messages[-1]->{role} eq 'assistant') {
+                my $removed_msg = pop @messages;
+                print STDERR "[WARN][WorkflowOrchestrator] Removed bad assistant message due to API error: $error\n"
+                    if should_log('WARNING');
+                
+                # Show what was removed for debugging
+                if ($self->{debug}) {
+                    my $content_preview = substr($removed_msg->{content} // '', 0, 100);
+                    print STDERR "[DEBUG][WorkflowOrchestrator] Removed message content: $content_preview...\n";
+                    if ($removed_msg->{tool_calls}) {
+                        print STDERR "[DEBUG][WorkflowOrchestrator] Removed message had " . 
+                            scalar(@{$removed_msg->{tool_calls}}) . " tool_calls\n";
+                    }
+                }
+            }
             
-            # Return error with final_response so Chat.pm can display it to user
-            return {
-                success => 0,
-                error => $error,
-                final_response => "ERROR: $error",
-                iterations => $iteration,
-                tool_calls_made => \@tool_calls_made
+            # Add error message to conversation so AI knows what went wrong
+            # Format it as a user message (to maintain alternation)
+            push @messages, {
+                role => 'user',
+                content => "SYSTEM ERROR: Your previous response triggered an API error and was removed.\n\n" .
+                           "Error details: $error\n\n" .
+                           "Please try a different approach. Avoid repeating the same action that caused this error."
             };
+            
+            print STDERR "[INFO][WorkflowOrchestrator] Added error message to conversation, continuing workflow\n"
+                if should_log('INFO');
+            
+            # Continue to next iteration - let AI try again with the error context
+            next;
         }
         
         # Record API usage for billing tracking
@@ -1097,15 +1121,64 @@ sub _load_conversation_history {
     my @valid_messages = ();
     for my $msg (@$history) {
         next unless $msg && ref($msg) eq 'HASH';
-        next unless $msg->{role} && $msg->{content};
+        next unless $msg->{role};
         
         # Skip system messages - we build fresh system prompt in process_input
         next if $msg->{role} eq 'system';
         
-        push @valid_messages, {
-            role => $msg->{role},
-            content => $msg->{content}
-        };
+        # CRITICAL FIX: Skip tool result messages without tool_call_id
+        # GitHub Copilot API REQUIRES tool_call_id for role=tool messages
+        # If missing, API returns "tool call must have a tool call ID" error
+        if ($msg->{role} eq 'tool' && !$msg->{tool_call_id}) {
+            if ($self->{debug}) {
+                print STDERR "[WARN][WorkflowOrchestrator] Skipping tool message without tool_call_id " .
+                    "(content: " . substr($msg->{content} // '', 0, 50) . "...)\n";
+            }
+            next;
+        }
+        
+        # CRITICAL FIX: Validate tool_calls on session resume
+        # GitHub Copilot API requires every tool_call to have an 'id' field
+        # If malformed tool_calls exist in session history, API returns:
+        # "tool call must have a tool call ID" error
+        if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
+            # Validate each tool_call has required 'id' field
+            my @valid_tool_calls = grep { 
+                ref($_) eq 'HASH' && $_->{id} && $_->{function}
+            } @{$msg->{tool_calls}};
+            
+            # Only include tool_calls if ALL are valid
+            if (@valid_tool_calls == @{$msg->{tool_calls}} && @valid_tool_calls > 0) {
+                push @valid_messages, {
+                    role => $msg->{role},
+                    content => $msg->{content} || '',
+                    tool_calls => \@valid_tool_calls
+                };
+                
+                print STDERR "[DEBUG][WorkflowOrchestrator] Preserved " . scalar(@valid_tool_calls) . 
+                    " tool_calls for message\n" if $self->{debug};
+            } else {
+                # Strip malformed tool_calls, keep message content only
+                # This prevents "tool call must have a tool call ID" errors on resume
+                push @valid_messages, {
+                    role => $msg->{role},
+                    content => $msg->{content} || ''
+                };
+                
+                print STDERR "[WARN][WorkflowOrchestrator] Stripped malformed tool_calls from session history " .
+                    "(had " . scalar(@{$msg->{tool_calls}}) . ", valid " . scalar(@valid_tool_calls) . ")\n"
+                    if should_log('WARNING');
+            }
+        } else {
+            # Normal message without tool_calls (or invalid content - need to check)
+            # Skip messages without content unless they have tool_calls
+            next unless $msg->{content};
+            
+            push @valid_messages, {
+                role => $msg->{role},
+                content => $msg->{content}
+            };
+        }
     }
     
     return \@valid_messages;

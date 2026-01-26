@@ -233,6 +233,15 @@ sub add_message {
     my ($self, $role, $content, $opts) = @_;
     $content = strip_conversation_tags($content);
     
+    # DEBUG: Log what we received
+    if ($ENV{CLIO_DEBUG} || $self->{debug}) {
+        print STDERR "[DEBUG][State::add_message] Called with role=$role, opts=" . 
+            (defined $opts ? (ref($opts) eq 'HASH' ? 
+                "HASH{" . join(', ', map {"$_=$opts->{$_}"} keys %$opts) . "}" : 
+                ref($opts)) : 
+            'undef') . "\n";
+    }
+    
     # Generate unique turn ID (SAM compatibility)
     my $turn_id = $self->_generate_turn_id();
     
@@ -252,11 +261,15 @@ sub add_message {
     # Add tool_calls if provided (for assistant messages with tool execution)
     if ($opts && $opts->{tool_calls}) {
         $message->{tool_calls} = $opts->{tool_calls};
+        print STDERR "[DEBUG][State::add_message] Added tool_calls to message\n" 
+            if $ENV{CLIO_DEBUG} || $self->{debug};
     }
     
     # Add tool_call_id if provided (for tool result messages)
     if ($opts && $opts->{tool_call_id}) {
         $message->{tool_call_id} = $opts->{tool_call_id};
+        print STDERR "[DEBUG][State::add_message] Added tool_call_id=$opts->{tool_call_id} to message\n" 
+            if $ENV{CLIO_DEBUG} || $self->{debug};
     }
     
     # Add provider response ID if available (for assistant messages)
@@ -266,6 +279,14 @@ sub add_message {
     
     # Calculate and tag with importance score
     $message->{_importance} = $self->calculate_message_importance($message);
+    
+    # DEBUG: Log final message structure
+    if (($ENV{CLIO_DEBUG} || $self->{debug}) && $role eq 'tool') {
+        print STDERR "[DEBUG][State::add_message] Final tool message structure: " .
+            "role=$message->{role}, " .
+            "has_tool_call_id=" . (exists $message->{tool_call_id} ? 'YES' : 'NO') . ", " .
+            "tool_call_id=" . ($message->{tool_call_id} // 'MISSING') . "\n";
+    }
     
     # Add to active conversation history
     push @{$self->{history}}, $message;

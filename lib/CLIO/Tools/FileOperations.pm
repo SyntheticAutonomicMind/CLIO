@@ -350,7 +350,8 @@ sub _get_path_authorizer {
 sub _check_write_authorization {
     my ($self, $path, $operation, $context) = @_;
     
-    my $session_id = $context->{session}->{id} || '';
+    # Note: session object uses 'session_id' not 'id'
+    my $session_id = $context->{session}->{session_id} || $context->{session}->{id} || '';
     my $working_dir = $self->{session_dir} || '';
     
     # If no session directory configured, allow (backwards compatibility)
@@ -930,7 +931,8 @@ sub read_tool_result {
     }
     
     # Get session ID from context
-    my $session_id = $context->{session}->{id};
+    # Note: session object uses 'session_id' not 'id'
+    my $session_id = $context->{session}->{session_id} || $context->{session}->{id};
     unless ($session_id) {
         return $self->error_result("No session ID in context. Cannot retrieve tool result.");
     }
