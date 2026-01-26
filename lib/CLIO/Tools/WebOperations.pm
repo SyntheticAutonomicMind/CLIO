@@ -2,6 +2,7 @@ package CLIO::Tools::WebOperations;
 
 use strict;
 use warnings;
+use Carp qw(croak confess);
 use parent 'CLIO::Tools::Tool';
 use CLIO::Compat::HTTP;
 use JSON::PP qw(encode_json decode_json);
@@ -308,14 +309,14 @@ sub _search_serpapi {
         my $response = $ua->get($url);
         
         unless ($response->is_success) {
-            die "HTTP error: " . $response->status_line;
+            croak "HTTP error: " . $response->status_line;
         }
         
         my $json = decode_json($response->decoded_content);
         
         # Check for API errors
         if ($json->{error}) {
-            die "SerpAPI error: " . $json->{error};
+            croak "SerpAPI error: " . $json->{error};
         }
         
         my @results = ();
@@ -373,7 +374,7 @@ sub _search_duckduckgo_direct {
         my $response = $ua->get($url);
         
         unless ($response->is_success) {
-            die "HTTP error: " . $response->status_line;
+            croak "HTTP error: " . $response->status_line;
         }
         
         my $html = $response->decoded_content;
@@ -382,7 +383,7 @@ sub _search_duckduckgo_direct {
         if ($html =~ /Unfortunately, bots use DuckDuckGo too/ || 
             $html =~ /If this persists, please/ ||
             (length($html) < 1000 && $html !~ /result/)) {
-            die "DuckDuckGo blocked the request (rate limit or IP block). " .
+            croak "DuckDuckGo blocked the request (rate limit or IP block). " .
                 "Configure SerpAPI for reliable results: /api set serpapi_key YOUR_KEY";
         }
         

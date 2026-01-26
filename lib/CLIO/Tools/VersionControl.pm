@@ -5,6 +5,7 @@ package CLIO::Tools::VersionControl;
 
 use strict;
 use warnings;
+use Carp qw(croak confess);
 use parent 'CLIO::Tools::Tool';
 use Cwd 'getcwd';
 use JSON::PP qw(decode_json encode_json);
@@ -253,7 +254,7 @@ sub branch {
         } elsif ($action eq 'switch' && $name) {
             $output = `git checkout $name 2>&1`;
         } else {
-            die "Invalid branch action or missing name";
+            croak "Invalid branch action or missing name";
         }
         
         chdir $original_cwd if $repo_path ne '.';
@@ -449,7 +450,7 @@ sub stash {
         } elsif ($action eq 'clear') {
             $output = `git stash clear 2>&1`;
         } else {
-            die "Invalid stash action: $action";
+            croak "Invalid stash action: $action";
         }
         
         chdir $original_cwd if $repo_path ne '.';
@@ -499,7 +500,7 @@ sub tag {
         } elsif ($action eq 'delete' && $name) {
             $output = `git tag -d $name 2>&1`;
         } else {
-            die "Invalid tag action or missing name";
+            croak "Invalid tag action or missing name";
         }
         
         chdir $original_cwd if $repo_path ne '.';

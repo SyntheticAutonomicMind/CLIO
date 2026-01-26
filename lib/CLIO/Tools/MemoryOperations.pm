@@ -2,6 +2,7 @@ package CLIO::Tools::MemoryOperations;
 
 use strict;
 use warnings;
+use Carp qw(croak confess);
 use parent 'CLIO::Tools::Tool';
 use CLIO::Util::ConfigPath qw(get_config_dir);
 use JSON::PP qw(encode_json decode_json);
@@ -131,7 +132,7 @@ sub store {
         mkdir $memory_dir unless -d $memory_dir;
         
         my $file_path = File::Spec->catfile($memory_dir, "$key.json");
-        open my $fh, '>:utf8', $file_path or die "Cannot write $file_path: $!";
+        open my $fh, '>:utf8', $file_path or croak "Cannot write $file_path: $!";
         
         my $data = {
             key => $key,
@@ -174,7 +175,7 @@ sub retrieve {
         
         return $self->error_result("Memory not found: $key") unless -f $file_path;
         
-        open my $fh, '<:utf8', $file_path or die "Cannot read $file_path: $!";
+        open my $fh, '<:utf8', $file_path or croak "Cannot read $file_path: $!";
         my $json = do { local $/; <$fh> };
         close $fh;
         
@@ -210,7 +211,7 @@ sub search {
         return $self->error_result("Memory directory not found") unless -d $memory_dir;
         
         my @matches;
-        opendir my $dh, $memory_dir or die "Cannot open $memory_dir: $!";
+        opendir my $dh, $memory_dir or croak "Cannot open $memory_dir: $!";
         while (my $file = readdir $dh) {
             next unless $file =~ /\.json$/;
             
@@ -260,7 +261,7 @@ sub list_memories {
         return $self->error_result("Memory directory not found") unless -d $memory_dir;
         
         my @memories;
-        opendir my $dh, $memory_dir or die "Cannot open $memory_dir: $!";
+        opendir my $dh, $memory_dir or croak "Cannot open $memory_dir: $!";
         while (my $file = readdir $dh) {
             next unless $file =~ /^(.+)\.json$/;
             push @memories, $1;
@@ -298,7 +299,7 @@ sub delete {
         
         return $self->error_result("Memory not found: $key") unless -f $file_path;
         
-        unlink $file_path or die "Cannot delete $file_path: $!";
+        unlink $file_path or croak "Cannot delete $file_path: $!";
         
         my $action_desc = "deleting memory '$key'";
         
@@ -346,7 +347,7 @@ sub recall_sessions {
         return $self->error_result("Sessions directory not found") unless -d $sessions_dir;
         
         # Get all session files sorted by modification time (newest first)
-        opendir my $dh, $sessions_dir or die "Cannot open $sessions_dir: $!";
+        opendir my $dh, $sessions_dir or croak "Cannot open $sessions_dir: $!";
         my @session_files = 
             map { $_->[0] }
             sort { $b->[1] <=> $a->[1] }  # Sort by mtime descending (newest first)
@@ -376,7 +377,7 @@ sub recall_sessions {
             # Read session file
             my $json;
             eval {
-                open my $fh, '<', $session_path or die "Cannot read: $!";
+                open my $fh, '<', $session_path or croak "Cannot read: $!";
                 local $/;
                 $json = <$fh>;
                 close $fh;
