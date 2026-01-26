@@ -17,6 +17,146 @@ use Cwd;
 use Digest::SHA qw(sha256_hex);
 use Time::HiRes qw(gettimeofday);
 
+=head1 NAME
+
+CLIO::Session::Manager - Session lifecycle management for CLIO
+
+=head1 SYNOPSIS
+
+  use CLIO::Session::Manager;
+  
+  # Create new session
+  my $session = CLIO::Session::Manager->create(
+      debug => 1,
+      working_directory => '/path/to/project'
+  );
+  
+  # Load existing session
+  my $session = CLIO::Session::Manager->load(
+      $session_id,
+      debug => 1
+  );
+  
+  # Access memory systems
+  my $stm = $session->stm;    # Short-term memory
+  my $ltm = $session->ltm;    # Long-term memory
+  my $yarn = $session->yarn;  # YaRN context manager
+  
+  # Manage conversation history
+  $session->add_message('user', 'Hello CLIO');
+  $session->add_message('assistant', 'Hello! How can I help?');
+  my $history = $session->get_conversation_history();
+  
+  # Save and cleanup
+  $session->save();
+  $session->cleanup();  # Releases locks
+
+=head1 DESCRIPTION
+
+Session::Manager orchestrates the complete session lifecycle for CLIO,
+including:
+
+- Session creation with unique UUIDs
+- Session loading and locking (prevents concurrent access)
+- Memory system initialization (STM, LTM, YaRN)
+- Conversation history management
+- Billing/usage tracking
+- Session persistence and cleanup
+
+Each session has:
+- Unique ID (UUID v4 format)
+- State object (history, config, metadata)
+- Three memory systems (STM, LTM, YaRN)
+- Lock file (prevents multi-process conflicts)
+- Working directory context
+
+=head1 METHODS
+
+=head2 new(%args)
+
+Create new session manager instance.
+
+Arguments:
+- session_id: UUID (auto-generated if not provided)
+- debug: Enable debug logging
+- working_directory: Project path (default: cwd)
+
+=head2 create(%args)
+
+Create new session (alias for new).
+
+=head2 load($session_id, %args)
+
+Load existing session from disk.
+
+Arguments:
+- session_id: Session UUID to load
+- debug: Enable debug logging
+
+Returns: Session::Manager instance or undef if load fails
+
+Throws: Dies if session is locked by another process
+
+=head2 save()
+
+Persist session state to disk.
+
+=head2 cleanup()
+
+Release session lock and cleanup resources.
+
+=head2 stm()
+
+Get short-term memory instance.
+
+Returns: CLIO::Memory::ShortTerm object
+
+=head2 ltm()
+
+Get long-term memory instance.
+
+Returns: CLIO::Memory::LongTerm object
+
+=head2 yarn()
+
+Get YaRN context manager instance.
+
+Returns: CLIO::Memory::YaRN object
+
+=head2 state()
+
+Get session state object.
+
+Returns: CLIO::Session::State object
+
+=head2 add_message($role, $content, $opts)
+
+Add message to conversation history and STM.
+
+Arguments:
+- role: 'user' or 'assistant'
+- content: Message text
+- opts: Optional metadata hash
+
+=head2 get_conversation_history()
+
+Get full conversation history.
+
+Returns: ArrayRef of message hashes
+
+=head2 record_api_usage($usage, $model, $provider)
+
+Record API usage for billing tracking.
+
+=head2 get_billing_summary()
+
+Get session billing summary.
+
+Returns: HashRef with usage statistics
+
+=cut
+
+
 sub new {
     my ($class, %args) = @_;
     if ($ENV{CLIO_DEBUG} || $args{debug}) {

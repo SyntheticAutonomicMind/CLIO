@@ -5,6 +5,76 @@ use warnings;
 use CLIO::Core::Logger qw(should_log);
 use Time::HiRes qw(time);
 
+=head1 NAME
+
+CLIO::Protocols::Handler - Base class for CLIO protocol handlers
+
+=head1 SYNOPSIS
+
+  package CLIO::Protocols::MyProtocol;
+  use base 'CLIO::Protocols::Handler';
+  
+  sub process_request {
+      my ($self, $input) = @_;
+      # Protocol-specific implementation
+      return { success => 1, data => $result };
+  }
+
+=head1 DESCRIPTION
+
+Handler is the abstract base class for all CLIO protocol implementations
+(Architect, Editor, Validate, RepoMap, TreeSit, etc.). It provides common
+functionality for:
+
+- Input validation (base64 encoding, required fields)
+- Request processing workflow
+- Response formatting with metadata
+- Error handling standardization
+
+All protocol handlers inherit from this class and override process_request()
+to implement their specific functionality.
+
+=head1 METHODS
+
+=head2 new(%args)
+
+Create a new protocol handler instance.
+
+Arguments:
+- debug: Enable debug logging (default: 0)
+
+=head2 validate_input($input)
+
+Validate protocol input structure and encoding.
+
+Required fields:
+- protocol: Protocol name
+- uuid: Request UUID
+- data/query/file/operation: Base64-encoded parameters
+
+Returns: Boolean (1 if valid, 0 if invalid)
+
+=head2 process_request($input)
+
+Process protocol request. Override this in subclasses.
+
+Returns: HashRef with 'success' and 'data' or 'error' fields
+
+=head2 format_response($result)
+
+Format response with metadata (timestamp, duration).
+
+Returns: HashRef with result + metadata
+
+=head2 handle_errors($error)
+
+Standardize error responses.
+
+Returns: HashRef with success => 0 and error message
+
+=cut
+
+
 sub new {
     my ($class, %args) = @_;
     print STDERR "[PROTO][DEBUG] Handler::new called for class $class\n" if should_log('DEBUG') || $args{debug};

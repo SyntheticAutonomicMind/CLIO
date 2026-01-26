@@ -149,3 +149,5 @@ This module provides a centralized sanitization function to prevent these issues
 4. **No dependencies**: Uses only Perl core features
 
 =cut
+
+1;

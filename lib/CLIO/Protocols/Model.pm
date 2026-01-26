@@ -694,3 +694,4 @@ __END__
     "confidence_score": 8.7,
     "alternatives": [...]
   }
+1;

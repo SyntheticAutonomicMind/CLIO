@@ -4,6 +4,70 @@ use strict;
 use warnings;
 use CLIO::Core::Logger qw(should_log);
 
+=head1 NAME
+
+CLIO::Core::CommandParser - Parse and analyze user commands for CLIO
+
+=head1 SYNOPSIS
+
+  use CLIO::Core::CommandParser;
+  
+  my $parser = CLIO::Core::CommandParser->new(debug => 0);
+  
+  # Parse stacked commands separated by semicolons
+  my $commands = $parser->parse_commands('read file.txt; list dir');
+  # Returns: ['read file.txt', 'list dir']
+  
+  # Check if command is a recall query
+  if ($parser->is_recall_query('what did I say last?')) {
+      # Handle recall logic
+  }
+
+=head1 DESCRIPTION
+
+CommandParser provides utility functions for parsing and analyzing user input
+in CLIO. It handles:
+
+- Stacked commands (semicolon-separated)
+- Quoted strings with escape sequences
+- Recall query detection (what did I say, repeat that, etc.)
+- Command trimming and normalization
+
+This module is used by the main Chat UI to preprocess user input before
+passing it to the AI workflow orchestrator.
+
+=head1 METHODS
+
+=head2 new(%args)
+
+Create a new CommandParser instance.
+
+Arguments:
+- debug: Enable debug logging (default: 0)
+
+=head2 parse_commands($input)
+
+Parse input string into array of individual commands separated by semicolons.
+Respects quoted strings and escape sequences.
+
+Returns: ArrayRef of command strings
+
+=head2 is_recall_query($command)
+
+Check if a command is asking to recall previous conversation context.
+Detects patterns like "what did I say", "repeat that", "the last thing", etc.
+
+Returns: Boolean
+
+=head2 extract_recall_context($command, $memory)
+
+DEPRECATED: Extract recall context from command using memory system.
+Use Memory::ShortTerm methods directly instead.
+
+Returns: Previous message content or undef
+
+=cut
+
 print STDERR "[TRACE] CLIO::Core::CommandParser loaded\n" if should_log('DEBUG');
 
 sub new {

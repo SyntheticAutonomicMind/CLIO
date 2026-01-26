@@ -698,3 +698,4 @@ Colors and styles can be customized by passing a theme hash:
     );
 
 =back
+1;
