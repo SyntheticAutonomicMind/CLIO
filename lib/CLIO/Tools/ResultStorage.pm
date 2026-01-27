@@ -2,6 +2,7 @@ package CLIO::Tools::ResultStorage;
 
 use strict;
 use warnings;
+use Carp qw(croak confess);
 use CLIO::Core::Logger qw(should_log);
 use feature 'say';
 use File::Path qw(make_path);
@@ -123,7 +124,7 @@ sub retrieve_chunk {
     my $file_path = $self->_get_result_path($session_id, $tool_call_id);
     
     unless (-f $file_path) {
-        die "Tool result not found: $tool_call_id in session $session_id\n";
+        croak "Tool result not found: $tool_call_id in session $session_id\n";
     }
     
     # Read file
@@ -135,7 +136,7 @@ sub retrieve_chunk {
     
     # Validate offset
     if ($offset < 0 || $offset >= $total_length) {
-        die "Invalid offset $offset for result (total length: $total_length)\n";
+        croak "Invalid offset $offset for result (total length: $total_length)\n";
     }
     
     # Extract chunk

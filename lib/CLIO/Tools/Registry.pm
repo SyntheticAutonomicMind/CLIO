@@ -5,6 +5,7 @@ package CLIO::Tools::Registry;
 
 use strict;
 use warnings;
+use Carp qw(croak confess);
 use CLIO::Core::Logger qw(should_log);
 use feature 'say';
 
@@ -70,7 +71,7 @@ Returns: 1 on success, dies on error
 sub register_tool {
     my ($self, $tool) = @_;
     
-    die "Tool must have a 'name' field" unless $tool->{name};
+    croak "Tool must have a 'name' field" unless $tool->{name};
     
     my $name = $tool->{name};
     
@@ -344,3 +345,5 @@ Benefits:
 - IMPLEMENTATION_PLAN_SAM_PATTERNS.md - Implementation roadmap
 
 =cut
+
+1;

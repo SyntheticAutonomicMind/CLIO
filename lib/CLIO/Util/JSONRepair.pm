@@ -143,3 +143,5 @@ led to a bug where "param": , (with whitespace) wasn't being fixed properly.
 See: Session restoration bug with malformed JSON from resumed sessions.
 
 =cut
+
+1;

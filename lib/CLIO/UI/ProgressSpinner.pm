@@ -158,3 +158,5 @@ Classic spinner:
     );
 
 =cut
+
+1;

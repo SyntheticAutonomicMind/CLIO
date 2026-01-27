@@ -5,6 +5,7 @@ package CLIO::Tools::FileOperations;
 
 use strict;
 use warnings;
+use Carp qw(croak confess);
 use CLIO::Core::Logger qw(should_log);
 use parent 'CLIO::Tools::Tool';
 use File::Spec;
@@ -393,7 +394,7 @@ sub read_file {
     my $result;
     eval {
         # Open in raw mode first, then try to decode UTF-8 gracefully
-        open my $fh, '<:raw', $path or die "Cannot open $path: $!";
+        open my $fh, '<:raw', $path or croak "Cannot open $path: $!";
         
         my @lines;
         if (defined $end_line) {
@@ -490,7 +491,7 @@ sub list_dir {
             }, $path);
         } else {
             # Non-recursive listing
-            opendir my $dh, $path or die "Cannot open directory $path: $!";
+            opendir my $dh, $path or croak "Cannot open directory $path: $!";
             while (my $entry = readdir $dh) {
                 next if $entry eq '.' || $entry eq '..';
                 my $full_path = File::Spec->catfile($path, $entry);
@@ -1057,11 +1058,11 @@ sub create_file {
         # Create parent directories if needed
         my $dir = dirname($path);
         unless (-d $dir) {
-            make_path($dir) or die "Cannot create directory $dir: $!";
+            make_path($dir) or croak "Cannot create directory $dir: $!";
         }
         
         # Write file
-        open my $fh, '>:utf8', $path or die "Cannot create $path: $!";
+        open my $fh, '>:utf8', $path or croak "Cannot create $path: $!";
         print $fh $content;
         close $fh;
         
@@ -1112,7 +1113,7 @@ sub write_file {
     
     my $result;
     eval {
-        open my $fh, '>:utf8', $path or die "Cannot write $path: $!";
+        open my $fh, '>:utf8', $path or croak "Cannot write $path: $!";
         print $fh $content;
         close $fh;
         
@@ -1163,7 +1164,7 @@ sub append_file {
     
     my $result;
     eval {
-        open my $fh, '>>:utf8', $path or die "Cannot append to $path: $!";
+        open my $fh, '>>:utf8', $path or croak "Cannot append to $path: $!";
         print $fh $content;
         close $fh;
         
@@ -1206,7 +1207,7 @@ sub replace_string {
     my $result;
     eval {
         # Read file
-        open my $fh, '<:utf8', $path or die "Cannot read $path: $!";
+        open my $fh, '<:utf8', $path or croak "Cannot read $path: $!";
         my $content = do { local $/; <$fh> };
         close $fh;
         
@@ -1223,7 +1224,7 @@ sub replace_string {
         $content =~ s/\Q$old_string\E/$new_string/g;
         
         # Write back
-        open $fh, '>:utf8', $path or die "Cannot write $path: $!";
+        open $fh, '>:utf8', $path or croak "Cannot write $path: $!";
         print $fh $content;
         close $fh;
         
@@ -1394,7 +1395,7 @@ sub insert_at_line {
     my $result;
     eval {
         # Read file
-        open my $fh, '<:utf8', $path or die "Cannot read $path: $!";
+        open my $fh, '<:utf8', $path or croak "Cannot read $path: $!";
         my @lines = <$fh>;
         close $fh;
         
@@ -1405,7 +1406,7 @@ sub insert_at_line {
         splice @lines, $line_number - 1, 0, $content;
         
         # Write back
-        open $fh, '>:utf8', $path or die "Cannot write $path: $!";
+        open $fh, '>:utf8', $path or croak "Cannot write $path: $!";
         print $fh @lines;
         close $fh;
         
@@ -1516,7 +1517,7 @@ sub rename_file {
         # Create parent directory for new path if needed
         my $dir = dirname($new_path);
         unless (-d $dir) {
-            make_path($dir) or die "Cannot create directory $dir: $!";
+            make_path($dir) or croak "Cannot create directory $dir: $!";
         }
         
         rename $old_path, $new_path or die "Cannot rename $old_path to $new_path: $!";
@@ -1623,3 +1624,5 @@ CLIO Project
 - ai-assisted/SAM_ANALYSIS.md - SAM pattern analysis
 
 =cut
+
+1;
