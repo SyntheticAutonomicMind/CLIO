@@ -847,21 +847,8 @@ Display a user message with role label (no timestamp)
 =cut
 
 sub display_user_message {
-    my ($self, $message) = @_;
-    
-    # Add to screen buffer
-    $self->add_to_buffer('user', $message);
-    
-    # Add to session history for AI context
-    if ($self->{session}) {
-        print STDERR "[DEBUG][Chat] Adding user message to session history\n" if should_log('DEBUG');
-        $self->{session}->add_message('user', $message);
-    } else {
-        print STDERR "[ERROR][Chat] No session object - cannot store message!\n" if should_log('ERROR');
-    }
-    
-    # Display with role label
-    print $self->colorize("YOU: ", 'USER'), $message, "\n";
+    my ($self, @args) = @_;
+    return $self->{display}->display_user_message(@args);
 }
 
 =head2 display_assistant_message
@@ -871,28 +858,8 @@ Display an assistant message with role label (no timestamp)
 =cut
 
 sub display_assistant_message {
-    my ($self, $message) = @_;
-    
-    # Add to screen buffer (display with original emojis)
-    $self->add_to_buffer('assistant', $message);
-    
-    # Add to session history for AI context (sanitized to prevent encoding issues)
-    if ($self->{session}) {
-        print STDERR "[DEBUG][Chat] Adding assistant message to session history\n" if should_log('DEBUG');
-        my $sanitized = sanitize_text($message);
-        $self->{session}->add_message('assistant', $sanitized);
-    } else {
-        print STDERR "[ERROR][Chat] No session object - cannot store message!\n" if should_log('ERROR');
-    }
-    
-    # Render markdown if enabled (was missing, causing raw markdown in multiline responses)
-    my $display_message = $message;
-    if ($self->{enable_markdown}) {
-        $display_message = $self->render_markdown($message);
-    }
-    
-    # Display with role label
-    print $self->colorize("CLIO: ", 'ASSISTANT'), $display_message, "\n";
+    my ($self, @args) = @_;
+    return $self->{display}->display_assistant_message(@args);
 }
 
 =head2 display_system_message
@@ -902,12 +869,8 @@ Display a system message
 =cut
 
 sub display_system_message {
-    my ($self, $message) = @_;
-    
-    # Add to screen buffer
-    $self->add_to_buffer('system', $message);
-    
-    print $self->colorize("SYSTEM: ", 'SYSTEM'), $message, "\n";
+    my ($self, @args) = @_;
+    return $self->{display}->display_system_message(@args);
 }
 
 =head2 display_error_message
@@ -917,12 +880,8 @@ Display an error message
 =cut
 
 sub display_error_message {
-    my ($self, $message) = @_;
-    
-    # Add to screen buffer
-    $self->add_to_buffer('error', $message);
-    
-    print $self->colorize("ERROR: ", 'ERROR'), $message, "\n";
+    my ($self, @args) = @_;
+    return $self->{display}->display_error_message(@args);
 }
 
 =head2 display_success_message
@@ -932,12 +891,8 @@ Display a success message with prefix
 =cut
 
 sub display_success_message {
-    my ($self, $message) = @_;
-    
-    # Add to screen buffer
-    $self->add_to_buffer('success', $message);
-    
-    print $self->colorize("", 'success_message'), $message, "\n";
+    my ($self, @args) = @_;
+    return $self->{display}->display_success_message(@args);
 }
 
 =head2 display_warning_message
@@ -947,12 +902,8 @@ Display a warning message with [WARN] prefix
 =cut
 
 sub display_warning_message {
-    my ($self, $message) = @_;
-    
-    # Add to screen buffer
-    $self->add_to_buffer('warning', $message);
-    
-    print $self->colorize("[WARN] ", 'warning_message'), $message, "\n";
+    my ($self, @args) = @_;
+    return $self->{display}->display_warning_message(@args);
 }
 
 =head2 display_info_message
@@ -962,12 +913,8 @@ Display an informational message with [INFO] prefix
 =cut
 
 sub display_info_message {
-    my ($self, $message) = @_;
-    
-    # Add to screen buffer
-    $self->add_to_buffer('info', $message);
-    
-    print $self->colorize("[INFO] ", 'info_message'), $message, "\n";
+    my ($self, @args) = @_;
+    return $self->{display}->display_info_message(@args);
 }
 
 =head2 display_command_header
@@ -981,14 +928,8 @@ Arguments:
 =cut
 
 sub display_command_header {
-    my ($self, $text, $width) = @_;
-    $width ||= 70;
-    
-    print "\n";
-    print $self->colorize("═" x $width, 'command_header'), "\n";
-    print $self->colorize($text, 'command_header'), "\n";
-    print $self->colorize("═" x $width, 'command_header'), "\n";
-    print "\n";
+    my ($self, @args) = @_;
+    return $self->{display}->display_command_header(@args);
 }
 
 =head2 display_section_header
@@ -1002,11 +943,8 @@ Arguments:
 =cut
 
 sub display_section_header {
-    my ($self, $text, $width) = @_;
-    $width ||= 70;
-    
-    print $self->colorize($text, 'command_subheader'), "\n";
-    print $self->colorize("─" x $width, 'dim'), "\n";
+    my ($self, @args) = @_;
+    return $self->{display}->display_section_header(@args);
 }
 
 =head2 display_key_value
@@ -1021,12 +959,8 @@ Arguments:
 =cut
 
 sub display_key_value {
-    my ($self, $key, $value, $key_width) = @_;
-    $key_width ||= 20;
-    
-    printf "%-${key_width}s %s\n",
-        $self->colorize($key . ":", 'command_label'),
-        $self->colorize($value, 'command_value');
+    my ($self, @args) = @_;
+    return $self->{display}->display_key_value(@args);
 }
 
 =head2 display_list_item
@@ -1040,13 +974,8 @@ Arguments:
 =cut
 
 sub display_list_item {
-    my ($self, $item, $num) = @_;
-    
-    if (defined $num) {
-        print $self->colorize("  $num. ", 'command_label'), $item, "\n";
-    } else {
-        print $self->colorize("  • ", 'command_label'), $item, "\n";
-    }
+    my ($self, @args) = @_;
+    return $self->{display}->display_list_item(@args);
 }
 
 =head2 request_collaboration
@@ -3168,70 +3097,8 @@ Display a brief usage summary after agent responses (similar to SAM format)
 =cut
 
 sub display_usage_summary {
-    my ($self) = @_;
-    
-    return unless $self->{session} && $self->{session}->{state};
-    
-    my $billing = $self->{session}->{state}->{billing};
-    return unless $billing;
-    
-    my $model = $billing->{model} || 'unknown';
-    my $multiplier = $billing->{multiplier} || 0;
-    
-    # Only display for premium models (multiplier > 0)
-    return if $multiplier == 0;
-    
-    # Only display if there was an ACTUAL charge in the last request (delta > 0)
-    my $delta = $self->{session}{_last_quota_delta} || 0;
-    return if $delta <= 0;
-    
-    # SAM style: Show the model's cost multiplier when there was a charge
-    # Cost: 1x/3x/10x for premium models
-    # For fractional multipliers (e.g., 0.33x), show with 2 decimal places
-    # Status: Always shows current quota usage
-    
-    # Format multiplier: integers as "Nx", decimals as "N.NNx"
-    my $cost_str;
-    if ($multiplier == int($multiplier)) {
-        # Integer multiplier: 1x, 3x, 10x
-        $cost_str = sprintf("Cost: %dx", $multiplier);
-    } else {
-        # Fractional multiplier: 0.33x, 0.5x, etc.
-        $cost_str = sprintf("Cost: %.2fx", $multiplier);
-        $cost_str =~ s/\.?0+x$/x/;  # Strip trailing zeros: "1.00x" -> "1x"
-    }
-    my $quota_info = '';
-    
-    # Get quota status if available (stored by APIManager in session{quota})
-    if ($self->{session}{quota}) {
-        my $quota = $self->{session}{quota};
-        my $used = $quota->{used} || 0;
-        my $entitlement = $quota->{entitlement} || 0;
-        my $percent_remaining = $quota->{percent_remaining} || 0;
-        my $percent_used = 100.0 - $percent_remaining;
-        
-        # Format quota status - SAM style: "Status: X/Y Used: Z%"
-        # For unlimited accounts, show ∞ for entitlement but still show used count
-        my $used_fmt = $used;
-        $used_fmt =~ s/(\d)(?=(\d{3})+$)/$1,/g;  # Add comma separators
-        
-        my $ent_display;
-        if ($entitlement == -1) {
-            $ent_display = "∞";
-        } else {
-            $ent_display = $entitlement;
-            $ent_display =~ s/(\d)(?=(\d{3})+$)/$1,/g;  # Add comma separators
-        }
-        
-        $quota_info = sprintf(" Status: %s/%s Used: %.1f%%", $used_fmt, $ent_display, $percent_used);
-    }
-    
-    # SAM-style output: "━ SERVER ━ Cost: 1x Status: 379/1,500 Used: 25.3% ━"
-    print $self->colorize("━ SERVER ━ ", 'SYSTEM');
-    print $cost_str;
-    print $quota_info;
-    print " " . $self->colorize("━", 'SYSTEM');
-    print "\n";
+    my ($self, @args) = @_;
+    return $self->{display}->display_usage_summary(@args);
 }
 
 =head2 handle_billing_command
@@ -6424,11 +6291,8 @@ Display thinking indicator while AI processes
 =cut
 
 sub show_thinking {
-    my ($self) = @_;
-    
-    print $self->colorize("CLIO: ", 'ASSISTANT');
-    print $self->colorize("(thinking...)", 'DIM');
-    $|= 1;  # Flush output
+    my ($self, @args) = @_;
+    return $self->{display}->show_thinking(@args);
 }
 
 =head2 clear_thinking
