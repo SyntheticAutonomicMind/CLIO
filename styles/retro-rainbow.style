@@ -1,76 +1,119 @@
 # CLIO Style: retro-rainbow
-# Vibrant organized spectrum - ANSI art energy
+# Retro Rainbow - Multi-Color Fun
 #
-# Cohesive Color Hierarchy (organized rainbow):
-# - Primary: Bright Cyan (main headers/focus)
-# - Secondary: Bright Magenta (supporting/code)
-# - Accent: Bright Yellow (actionable/highlights)
-# - Neutral: White (readable text)
-# - Muted: Dim Cyan (labels/less important)
+# Color Philosophy:
+# - Colorful like early terminals
+# - Each element different color
+# - Playful and vibrant
 #
-# Uses spectrum colors intentionally, not randomly
+# Based on Consolidated Style Schema v2.0
 
 name=retro-rainbow
 
-# ═══ Core message colors (organized spectrum) ═══
+# ═══════════════════════════════════════════════════════════════
+# CORE SEMANTIC HIERARCHY
+# ═══════════════════════════════════════════════════════════════
+
+primary=@BOLD@@BRIGHT_CYAN@
+secondary=@BRIGHT_MAGENTA@
+normal=@WHITE@
+muted=@DIM@@WHITE@
+subtle=@DIM@
+
+# ═══════════════════════════════════════════════════════════════
+# CONVERSATIONAL
+# ═══════════════════════════════════════════════════════════════
+
 user_prompt=@BRIGHT_YELLOW@
 user_text=@WHITE@
 agent_label=@BRIGHT_CYAN@
 agent_text=@WHITE@
 system_message=@BRIGHT_MAGENTA@
-error_message=@BRIGHT_RED@
-success_message=@BRIGHT_GREEN@
-warning_message=@BRIGHT_YELLOW@
-info_message=@BRIGHT_CYAN@
 
-# ═══ Banner (cyan primary, yellow accents) ═══
-app_title=@BOLD@@BRIGHT_CYAN@
-app_subtitle=@BRIGHT_MAGENTA@
-banner_label=@DIM@@CYAN@
-banner_value=@WHITE@
-banner_help=@DIM@@CYAN@
-banner_command=@BRIGHT_YELLOW@
-banner=@BRIGHT_CYAN@
+# ═══════════════════════════════════════════════════════════════
+# FEEDBACK MESSAGES
+# ═══════════════════════════════════════════════════════════════
 
-# ═══ Enhanced prompt (rainbow but hierarchical) ═══
-prompt_model=@BRIGHT_MAGENTA@
-prompt_directory=@BRIGHT_CYAN@
-prompt_git_branch=@DIM@@CYAN@
-prompt_indicator=@BRIGHT_YELLOW@
+error=@BRIGHT_RED@
+warning=@BRIGHT_YELLOW@
+success=@BRIGHT_MAGENTA@
+info=@DIM@@WHITE@
 
-# ═══ General UI ═══
-theme_header=@BRIGHT_CYAN@
-data=@WHITE@
-dim=@DIM@
-highlight=@BRIGHT_YELLOW@
-muted=@DIM@@CYAN@
+# ═══════════════════════════════════════════════════════════════
+# DATA DISPLAY
+# ═══════════════════════════════════════════════════════════════
 
-# ═══ Command output ═══
-command_header=@BOLD@@BRIGHT_CYAN@
-command_subheader=@BRIGHT_MAGENTA@
-command_label=@DIM@@CYAN@
-command_value=@WHITE@
+label=@DIM@@WHITE@
+value=@BRIGHT_MAGENTA@
 
-# ═══ Markdown (spectrum with purpose) ═══
+# ═══════════════════════════════════════════════════════════════
+# ACTIONABLE ELEMENTS
+# ═══════════════════════════════════════════════════════════════
+
+command=@BRIGHT_MAGENTA@
+link=@BRIGHT_MAGENTA@@@UNDERLINE@
+
+# ═══════════════════════════════════════════════════════════════
+# PROMPT
+# ═══════════════════════════════════════════════════════════════
+
+prompt_model=@WHITE@
+prompt_directory=@BRIGHT_MAGENTA@
+prompt_git_branch=@DIM@@WHITE@
+prompt_indicator=@BRIGHT_MAGENTA@
+
+# ═══════════════════════════════════════════════════════════════
+# MARKDOWN
+# ═══════════════════════════════════════════════════════════════
+
+markdown_h1=@BOLD@@BRIGHT_CYAN@
+markdown_h2=@BRIGHT_MAGENTA@
+markdown_h3=@WHITE@
 markdown_bold=@BOLD@
 markdown_italic=@DIM@
-markdown_code=@BRIGHT_MAGENTA@
-markdown_formula=@BRIGHT_CYAN@
-markdown_link_text=@BRIGHT_CYAN@@UNDERLINE@
-markdown_link_url=@DIM@@CYAN@
-markdown_header1=@BOLD@@BRIGHT_CYAN@
-markdown_header2=@BRIGHT_MAGENTA@
-markdown_header3=@BRIGHT_YELLOW@
-markdown_list_bullet=@BRIGHT_GREEN@
-markdown_quote=@DIM@@MAGENTA@
-markdown_code_block=@BRIGHT_MAGENTA@
+markdown_code=@DIM@@WHITE@
+markdown_code_block=@DIM@@WHITE@
+markdown_link=@BRIGHT_MAGENTA@@@UNDERLINE@
+markdown_quote=@DIM@@WHITE@
+markdown_list_bullet=@BRIGHT_MAGENTA@
 
-# Help command styling
-help_command=@BRIGHT_CYAN@
+# ═══════════════════════════════════════════════════════════════
+# TABLES
+# ═══════════════════════════════════════════════════════════════
 
-# ═══ Tables ═══
-table_border=@DIM@@CYAN@
 table_header=@BOLD@@BRIGHT_CYAN@
+table_border=@DIM@
 
-# ═══ Spinner ═══
+# ═══════════════════════════════════════════════════════════════
+# UI ELEMENTS
+# ═══════════════════════════════════════════════════════════════
+
 spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏
+
+# ═══════════════════════════════════════════════════════════════
+# DEPRECATED (Backward Compatibility)
+# ═══════════════════════════════════════════════════════════════
+
+app_title=@BOLD@@BRIGHT_CYAN@
+app_subtitle=@BRIGHT_MAGENTA@
+banner_label=@DIM@@WHITE@
+banner_value=@BRIGHT_MAGENTA@
+banner_help=@DIM@@WHITE@
+banner_command=@BRIGHT_MAGENTA@
+command_label=@DIM@@WHITE@
+command_value=@BRIGHT_MAGENTA@
+command_header=@BOLD@@BRIGHT_CYAN@
+command_subheader=@BRIGHT_MAGENTA@
+data=@BRIGHT_MAGENTA@
+dim=@DIM@
+highlight=@BRIGHT_MAGENTA@
+theme_header=@BRIGHT_MAGENTA@
+help_command=@BRIGHT_MAGENTA@
+markdown_formula=@BRIGHT_MAGENTA@
+markdown_link_text=@BRIGHT_MAGENTA@@@UNDERLINE@
+markdown_link_url=@DIM@@WHITE@
+error_message=@BRIGHT_RED@
+warning_message=@BRIGHT_YELLOW@
+success_message=@BRIGHT_MAGENTA@
+info_message=@DIM@@WHITE@
+banner=@BRIGHT_MAGENTA@

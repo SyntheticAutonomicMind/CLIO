@@ -1,74 +1,119 @@
 # CLIO Style: dos-blue
-# MS-DOS blue aesthetic - classic PC nostalgia
+# DOS Blue - MS-DOS Classic
 #
-# Cohesive Color Hierarchy:
-# - Primary: Bright Blue (main focus - DOS blue)
-# - Secondary: Blue (supporting - darker blue)
-# - Accent: Bright White (actionable - DOS highlight)
-# - Neutral: White (readable text)
-# - Muted: Dim White (less important)
+# Color Philosophy:
+# - Blue and white like MS-DOS
+# - Classic PC feel
+# - High contrast for clarity
+#
+# Based on Consolidated Style Schema v2.0
 
 name=dos-blue
 
-# ═══ Core message colors ═══
-user_prompt=@BRIGHT_WHITE@
+# ═══════════════════════════════════════════════════════════════
+# CORE SEMANTIC HIERARCHY
+# ═══════════════════════════════════════════════════════════════
+
+primary=@BOLD@@BRIGHT_WHITE@
+secondary=@BRIGHT_BLUE@
+normal=@WHITE@
+muted=@BLUE@
+subtle=@DIM@
+
+# ═══════════════════════════════════════════════════════════════
+# CONVERSATIONAL
+# ═══════════════════════════════════════════════════════════════
+
+user_prompt=@BRIGHT_BLUE@
 user_text=@WHITE@
 agent_label=@BRIGHT_BLUE@
 agent_text=@WHITE@
 system_message=@BLUE@
-error_message=@BRIGHT_RED@
-success_message=@BRIGHT_WHITE@
-warning_message=@BRIGHT_YELLOW@
-info_message=@BLUE@
 
-# ═══ Banner ═══
-app_title=@BOLD@@BRIGHT_BLUE@
-app_subtitle=@BLUE@
-banner_label=@DIM@@WHITE@
-banner_value=@WHITE@
-banner_help=@DIM@@WHITE@
-banner_command=@BRIGHT_WHITE@
-banner=@BRIGHT_BLUE@
+# ═══════════════════════════════════════════════════════════════
+# FEEDBACK MESSAGES
+# ═══════════════════════════════════════════════════════════════
 
-# ═══ Enhanced prompt ═══
-prompt_model=@BLUE@
+error=@BRIGHT_RED@
+warning=@BRIGHT_YELLOW@
+success=@BRIGHT_BLUE@
+info=@BLUE@
+
+# ═══════════════════════════════════════════════════════════════
+# DATA DISPLAY
+# ═══════════════════════════════════════════════════════════════
+
+label=@BLUE@
+value=@BRIGHT_BLUE@
+
+# ═══════════════════════════════════════════════════════════════
+# ACTIONABLE ELEMENTS
+# ═══════════════════════════════════════════════════════════════
+
+command=@BRIGHT_BLUE@
+link=@BRIGHT_BLUE@@@UNDERLINE@
+
+# ═══════════════════════════════════════════════════════════════
+# PROMPT
+# ═══════════════════════════════════════════════════════════════
+
+prompt_model=@WHITE@
 prompt_directory=@BRIGHT_BLUE@
-prompt_git_branch=@DIM@@BLUE@
-prompt_indicator=@BRIGHT_WHITE@
+prompt_git_branch=@BLUE@
+prompt_indicator=@BRIGHT_BLUE@
 
-# ═══ General UI ═══
-theme_header=@BRIGHT_BLUE@
-data=@WHITE@
-dim=@DIM@
-highlight=@BRIGHT_WHITE@
-muted=@DIM@@WHITE@
+# ═══════════════════════════════════════════════════════════════
+# MARKDOWN
+# ═══════════════════════════════════════════════════════════════
 
-# ═══ Command output ═══
-command_header=@BOLD@@BRIGHT_BLUE@
-command_subheader=@BLUE@
-command_label=@DIM@@WHITE@
-command_value=@WHITE@
-
-# ═══ Markdown ═══
+markdown_h1=@BOLD@@BRIGHT_WHITE@
+markdown_h2=@BRIGHT_BLUE@
+markdown_h3=@WHITE@
 markdown_bold=@BOLD@
 markdown_italic=@DIM@
 markdown_code=@BLUE@
-markdown_formula=@BRIGHT_BLUE@
-markdown_link_text=@BRIGHT_BLUE@@UNDERLINE@
-markdown_link_url=@DIM@@BLUE@
-markdown_header1=@BOLD@@BRIGHT_BLUE@
-markdown_header2=@BLUE@
-markdown_header3=@WHITE@
-markdown_list_bullet=@BRIGHT_WHITE@
-markdown_quote=@DIM@@BLUE@
 markdown_code_block=@BLUE@
+markdown_link=@BRIGHT_BLUE@@@UNDERLINE@
+markdown_quote=@BLUE@
+markdown_list_bullet=@BRIGHT_BLUE@
 
-# Help command styling
-help_command=@BRIGHT_BLUE@
+# ═══════════════════════════════════════════════════════════════
+# TABLES
+# ═══════════════════════════════════════════════════════════════
 
-# ═══ Tables ═══
-table_border=@DIM@@WHITE@
-table_header=@BOLD@@BRIGHT_BLUE@
+table_header=@BOLD@@BRIGHT_WHITE@
+table_border=@DIM@
 
-# ═══ Spinner ═══
+# ═══════════════════════════════════════════════════════════════
+# UI ELEMENTS
+# ═══════════════════════════════════════════════════════════════
+
 spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏
+
+# ═══════════════════════════════════════════════════════════════
+# DEPRECATED (Backward Compatibility)
+# ═══════════════════════════════════════════════════════════════
+
+app_title=@BOLD@@BRIGHT_WHITE@
+app_subtitle=@BRIGHT_BLUE@
+banner_label=@BLUE@
+banner_value=@BRIGHT_BLUE@
+banner_help=@BLUE@
+banner_command=@BRIGHT_BLUE@
+command_label=@BLUE@
+command_value=@BRIGHT_BLUE@
+command_header=@BOLD@@BRIGHT_WHITE@
+command_subheader=@BRIGHT_BLUE@
+data=@BRIGHT_BLUE@
+dim=@DIM@
+highlight=@BRIGHT_BLUE@
+theme_header=@BRIGHT_BLUE@
+help_command=@BRIGHT_BLUE@
+markdown_formula=@BRIGHT_BLUE@
+markdown_link_text=@BRIGHT_BLUE@@@UNDERLINE@
+markdown_link_url=@BLUE@
+error_message=@BRIGHT_RED@
+warning_message=@BRIGHT_YELLOW@
+success_message=@BRIGHT_BLUE@
+info_message=@BLUE@
+banner=@BRIGHT_BLUE@

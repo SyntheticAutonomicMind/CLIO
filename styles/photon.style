@@ -1,74 +1,119 @@
 # CLIO Style: photon
-# PhotonBBS retro - organized classic BBS colors
+# Photon - Retro Teal/Pink
 #
-# Cohesive Color Hierarchy (retro BBS organized):
-# - Primary: Bright Cyan (main focus - BBS cyan)
-# - Secondary: Cyan (supporting - menu cyan)
-# - Accent: Bright Magenta (actionable - BBS highlight)
-# - Neutral: White (readable text)
-# - Muted: Dim Cyan (less important)
+# Color Philosophy:
+# - Teal and magenta combo
+# - 80s synthwave aesthetic
+# - Vibrant retro-future
+#
+# Based on Consolidated Style Schema v2.0
 
 name=photon
 
-# ═══ Core message colors ═══
+# ═══════════════════════════════════════════════════════════════
+# CORE SEMANTIC HIERARCHY
+# ═══════════════════════════════════════════════════════════════
+
+primary=@BOLD@@BRIGHT_CYAN@
+secondary=@BRIGHT_MAGENTA@
+normal=@CYAN@
+muted=@MAGENTA@
+subtle=@DIM@
+
+# ═══════════════════════════════════════════════════════════════
+# CONVERSATIONAL
+# ═══════════════════════════════════════════════════════════════
+
 user_prompt=@BRIGHT_MAGENTA@
-user_text=@WHITE@
-agent_label=@BRIGHT_CYAN@
-agent_text=@WHITE@
-system_message=@CYAN@
-error_message=@BRIGHT_RED@
-success_message=@BRIGHT_GREEN@
-warning_message=@BRIGHT_YELLOW@
-info_message=@CYAN@
+user_text=@CYAN@
+agent_label=@BOLD@@BRIGHT_CYAN@
+agent_text=@CYAN@
+system_message=@MAGENTA@
 
-# ═══ Banner ═══
-app_title=@BOLD@@BRIGHT_CYAN@
-app_subtitle=@CYAN@
-banner_label=@DIM@@CYAN@
-banner_value=@WHITE@
-banner_help=@DIM@@CYAN@
-banner_command=@BRIGHT_MAGENTA@
-banner=@BRIGHT_CYAN@
+# ═══════════════════════════════════════════════════════════════
+# FEEDBACK MESSAGES
+# ═══════════════════════════════════════════════════════════════
 
-# ═══ Enhanced prompt ═══
+error=@BRIGHT_RED@
+warning=@BRIGHT_YELLOW@
+success=@BRIGHT_MAGENTA@
+info=@MAGENTA@
+
+# ═══════════════════════════════════════════════════════════════
+# DATA DISPLAY
+# ═══════════════════════════════════════════════════════════════
+
+label=@MAGENTA@
+value=@BRIGHT_MAGENTA@
+
+# ═══════════════════════════════════════════════════════════════
+# ACTIONABLE ELEMENTS
+# ═══════════════════════════════════════════════════════════════
+
+command=@BRIGHT_MAGENTA@
+link=@BRIGHT_MAGENTA@@@UNDERLINE@
+
+# ═══════════════════════════════════════════════════════════════
+# PROMPT
+# ═══════════════════════════════════════════════════════════════
+
 prompt_model=@CYAN@
-prompt_directory=@BRIGHT_CYAN@
-prompt_git_branch=@DIM@@CYAN@
+prompt_directory=@BRIGHT_MAGENTA@
+prompt_git_branch=@MAGENTA@
 prompt_indicator=@BRIGHT_MAGENTA@
 
-# ═══ General UI ═══
-theme_header=@BRIGHT_CYAN@
-data=@WHITE@
-dim=@DIM@
-highlight=@BRIGHT_MAGENTA@
-muted=@DIM@@CYAN@
+# ═══════════════════════════════════════════════════════════════
+# MARKDOWN
+# ═══════════════════════════════════════════════════════════════
 
-# ═══ Command output ═══
-command_header=@BOLD@@BRIGHT_CYAN@
-command_subheader=@CYAN@
-command_label=@DIM@@CYAN@
-command_value=@WHITE@
-
-# ═══ Markdown ═══
+markdown_h1=@BOLD@@BRIGHT_CYAN@
+markdown_h2=@BRIGHT_MAGENTA@
+markdown_h3=@CYAN@
 markdown_bold=@BOLD@
 markdown_italic=@DIM@
-markdown_code=@CYAN@
-markdown_formula=@BRIGHT_CYAN@
-markdown_link_text=@BRIGHT_CYAN@@UNDERLINE@
-markdown_link_url=@DIM@@CYAN@
-markdown_header1=@BOLD@@BRIGHT_CYAN@
-markdown_header2=@CYAN@
-markdown_header3=@WHITE@
+markdown_code=@MAGENTA@
+markdown_code_block=@MAGENTA@
+markdown_link=@BRIGHT_MAGENTA@@@UNDERLINE@
+markdown_quote=@MAGENTA@
 markdown_list_bullet=@BRIGHT_MAGENTA@
-markdown_quote=@DIM@@CYAN@
-markdown_code_block=@CYAN@
 
-# Help command styling
-help_command=@BRIGHT_CYAN@
+# ═══════════════════════════════════════════════════════════════
+# TABLES
+# ═══════════════════════════════════════════════════════════════
 
-# ═══ Tables ═══
-table_border=@DIM@@CYAN@
 table_header=@BOLD@@BRIGHT_CYAN@
+table_border=@DIM@
 
-# ═══ Spinner ═══
+# ═══════════════════════════════════════════════════════════════
+# UI ELEMENTS
+# ═══════════════════════════════════════════════════════════════
+
 spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏
+
+# ═══════════════════════════════════════════════════════════════
+# DEPRECATED (Backward Compatibility)
+# ═══════════════════════════════════════════════════════════════
+
+app_title=@BOLD@@BRIGHT_CYAN@
+app_subtitle=@BRIGHT_MAGENTA@
+banner_label=@MAGENTA@
+banner_value=@BRIGHT_MAGENTA@
+banner_help=@MAGENTA@
+banner_command=@BRIGHT_MAGENTA@
+command_label=@MAGENTA@
+command_value=@BRIGHT_MAGENTA@
+command_header=@BOLD@@BRIGHT_CYAN@
+command_subheader=@BRIGHT_MAGENTA@
+data=@BRIGHT_MAGENTA@
+dim=@DIM@
+highlight=@BRIGHT_MAGENTA@
+theme_header=@BRIGHT_MAGENTA@
+help_command=@BRIGHT_MAGENTA@
+markdown_formula=@BRIGHT_MAGENTA@
+markdown_link_text=@BRIGHT_MAGENTA@@@UNDERLINE@
+markdown_link_url=@MAGENTA@
+error_message=@BRIGHT_RED@
+warning_message=@BRIGHT_YELLOW@
+success_message=@BRIGHT_MAGENTA@
+info_message=@MAGENTA@
+banner=@BRIGHT_MAGENTA@
