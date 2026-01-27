@@ -223,9 +223,7 @@ sub display_command_header {
     my $chat = $self->{chat};
     
     print "\n";
-    print $chat->colorize("═" x $width, 'command_header'), "\n";
     print $chat->colorize($text, 'command_header'), "\n";
-    print $chat->colorize("═" x $width, 'command_header'), "\n";
     print "\n";
 }
 
@@ -242,7 +240,6 @@ sub display_section_header {
     my $chat = $self->{chat};
     
     print $chat->colorize($text, 'command_subheader'), "\n";
-    print $chat->colorize("─" x $width, 'dim'), "\n";
 }
 
 =head2 display_key_value($key, $value, $key_width)
