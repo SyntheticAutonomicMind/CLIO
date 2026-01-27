@@ -834,7 +834,12 @@ sub process_input {
             content => $final_content,
             iterations => $iteration,
             tool_calls_made => \@tool_calls_made,
-            elapsed_time => $elapsed_time
+            elapsed_time => $elapsed_time,
+            # Flag to indicate messages were already saved during workflow execution.
+            # This prevents Chat.pm from saving duplicates after the workflow completes.
+            # Tool-calling workflows save messages atomically (assistant + tool results together),
+            # so Chat.pm should NOT save another assistant message.
+            messages_saved_during_workflow => (@tool_calls_made > 0) ? 1 : 0
         };
         
         # NOTE: We previously tracked lastResponseHadTools here, but it's no longer needed.
@@ -1518,7 +1523,33 @@ sub _load_conversation_history {
         $idx++;
     }
     
-    return \@validated_messages;
+    # PASS 2: Check for orphaned tool_results (tool_results without matching tool_calls)
+    # This catches the reverse case: "unexpected tool_use_id found in tool_result blocks"
+    # First, collect all tool_call IDs from assistant messages
+    my %all_tool_call_ids = ();
+    for my $msg (@validated_messages) {
+        if ($msg->{role} && $msg->{role} eq 'assistant' && 
+            $msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
+            for my $tc (@{$msg->{tool_calls}}) {
+                $all_tool_call_ids{$tc->{id}} = 1 if $tc->{id};
+            }
+        }
+    }
+    
+    # Now filter out any tool messages whose tool_call_id doesn't exist
+    my @final_messages = ();
+    for my $msg (@validated_messages) {
+        if ($msg->{role} && $msg->{role} eq 'tool' && $msg->{tool_call_id}) {
+            unless ($all_tool_call_ids{$msg->{tool_call_id}}) {
+                print STDERR "[WARN][WorkflowOrchestrator] Removing orphaned tool_result: $msg->{tool_call_id} (no matching tool_call)\n"
+                    if should_log("WARN");
+                next;  # Skip this orphaned tool_result
+            }
+        }
+        push @final_messages, $msg;
+    }
+    
+    return \@final_messages;
 }
 
 =head2 _inject_context_files

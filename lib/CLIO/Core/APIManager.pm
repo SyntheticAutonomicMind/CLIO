@@ -652,10 +652,14 @@ sub validate_and_truncate_messages {
     }
     
     if ($estimated_tokens <= $effective_limit) {
-        # Within limits - return as-is
-        print STDERR "[DEBUG][APIManager] Token validation: $estimated_tokens / $effective_limit tokens (OK)\n"
+        # Within limits - still need to validate for orphaned tool_results
+        # This catches corruption where tool_results exist without matching tool_calls
+        print STDERR "[DEBUG][APIManager] Token validation: $estimated_tokens / $effective_limit tokens (OK, validating)\n"
             if $self->{debug};
-        return $messages;
+        
+        # Run bidirectional validation to catch orphaned tool_calls and tool_results
+        my $validated = $self->_validate_tool_message_pairs($messages);
+        return $validated;
     }
     
     # Exceeds limit - need to truncate
@@ -869,6 +873,119 @@ sub validate_and_truncate_messages {
     }
     
     return \@truncated;
+}
+
+=head2 _validate_tool_message_pairs
+
+Bidirectional validation of tool_calls and tool_results.
+
+Ensures:
+1. Every assistant message with tool_calls has matching tool_result messages
+2. Every tool_result message has a matching tool_call in a preceding assistant message
+
+This prevents API errors like:
+- "tool_use ids were found without tool result blocks" (orphaned tool_calls)
+- "unexpected tool_use_id found in tool_result blocks" (orphaned tool_results)
+
+Arguments:
+- $messages: Arrayref of message objects
+
+Returns:
+- Validated arrayref with orphaned messages removed
+
+=cut
+
+sub _validate_tool_message_pairs {
+    my ($self, $messages) = @_;
+    
+    return [] unless $messages && @$messages;
+    
+    # Pass 1: Collect all tool_call IDs from assistant messages
+    my %tool_call_ids = ();  # tool_call_id => message_index
+    for (my $i = 0; $i < @$messages; $i++) {
+        my $msg = $messages->[$i];
+        if ($msg->{role} && $msg->{role} eq 'assistant' && 
+            $msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
+            for my $tc (@{$msg->{tool_calls}}) {
+                $tool_call_ids{$tc->{id}} = $i if $tc->{id};
+            }
+        }
+    }
+    
+    # Pass 2: Collect all tool_result IDs
+    my %tool_result_ids = ();  # tool_call_id => message_index
+    for (my $i = 0; $i < @$messages; $i++) {
+        my $msg = $messages->[$i];
+        if ($msg->{role} && $msg->{role} eq 'tool' && $msg->{tool_call_id}) {
+            $tool_result_ids{$msg->{tool_call_id}} = $i;
+        }
+    }
+    
+    # Pass 3: Find orphaned tool_calls (tool_calls without matching results)
+    my %orphaned_tool_call_msg_indices = ();
+    for my $tc_id (keys %tool_call_ids) {
+        unless (exists $tool_result_ids{$tc_id}) {
+            my $msg_idx = $tool_call_ids{$tc_id};
+            $orphaned_tool_call_msg_indices{$msg_idx} = 1;
+            print STDERR "[WARNING][APIManager] Orphaned tool_call detected: $tc_id at message $msg_idx\n"
+                if should_log('WARNING');
+        }
+    }
+    
+    # Pass 4: Find orphaned tool_results (tool_results without matching tool_calls)
+    my %orphaned_tool_result_indices = ();
+    for my $tr_id (keys %tool_result_ids) {
+        unless (exists $tool_call_ids{$tr_id}) {
+            my $msg_idx = $tool_result_ids{$tr_id};
+            $orphaned_tool_result_indices{$msg_idx} = 1;
+            print STDERR "[WARNING][APIManager] Orphaned tool_result detected: $tr_id at message $msg_idx\n"
+                if should_log('WARNING');
+        }
+    }
+    
+    # If no orphans, return original
+    if (!keys %orphaned_tool_call_msg_indices && !keys %orphaned_tool_result_indices) {
+        print STDERR "[DEBUG][APIManager] Tool message validation: all pairs valid\n"
+            if $self->{debug};
+        return $messages;
+    }
+    
+    # Pass 5: Rebuild messages, handling orphans appropriately
+    my @validated = ();
+    for (my $i = 0; $i < @$messages; $i++) {
+        my $msg = $messages->[$i];
+        
+        # Skip orphaned tool_result messages entirely
+        if ($orphaned_tool_result_indices{$i}) {
+            print STDERR "[WARNING][APIManager] Removing orphaned tool_result at index $i\n"
+                if should_log('WARNING');
+            next;
+        }
+        
+        # For orphaned tool_call messages, remove the tool_calls but keep the message
+        if ($orphaned_tool_call_msg_indices{$i}) {
+            # Keep the assistant message but strip tool_calls
+            my $fixed_msg = {
+                role => $msg->{role},
+                content => $msg->{content} || ''
+            };
+            push @validated, $fixed_msg;
+            print STDERR "[WARNING][APIManager] Stripped tool_calls from assistant message at index $i\n"
+                if should_log('WARNING');
+            next;
+        }
+        
+        # Keep valid messages as-is
+        push @validated, $msg;
+    }
+    
+    my $removed = scalar(@$messages) - scalar(@validated);
+    if ($removed > 0) {
+        print STDERR "[INFO][APIManager] Removed/fixed $removed orphaned tool messages\n"
+            if should_log('INFO');
+    }
+    
+    return \@validated;
 }
 
 =head2 _learn_from_api_response
