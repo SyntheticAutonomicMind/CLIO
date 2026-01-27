@@ -1,18 +1,43 @@
 # CLIO Installation Guide
 
-## Quick Install
+## Quick Install (System-Wide)
 
 ```bash
 cd CLIO-dist
-./scripts/install.sh
+sudo ./install.sh
 ```
 
+This installs CLIO to `/opt/clio` and creates a symlink at `/usr/local/bin/clio`.
+
 The installer will:
-1. Check for Perl
-2. Create config directory (`~/.clio`)
-3. Set file permissions
-4. Create default configuration
-5. Test CLIO execution
+1. Copy CLIO executable, libraries, styles, and themes to `/opt/clio`
+2. Set proper file permissions
+3. Create a symlink to `/usr/local/bin/clio` for easy access
+
+## Quick Install (User Directory)
+
+```bash
+cd CLIO-dist
+./install.sh --user
+```
+
+This installs CLIO to `~/.local/clio` (no sudo required).
+
+## Installation Options
+
+```bash
+# Install to custom directory
+sudo ./install.sh /usr/local/clio
+
+# Install without creating symlink
+sudo ./install.sh --no-symlink
+
+# Create symlink at custom location
+sudo ./install.sh --symlink /usr/bin/clio
+
+# Show help
+./install.sh --help
+```
 
 ## Manual Installation
 

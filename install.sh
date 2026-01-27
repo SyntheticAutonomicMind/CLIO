@@ -127,6 +127,10 @@ echo "Setting permissions..."
 chmod 755 "$INSTALL_DIR/clio"
 find "$INSTALL_DIR/lib" -type f -name "*.pm" -exec chmod 644 {} \;
 find "$INSTALL_DIR/lib" -type d -exec chmod 755 {} \;
+find "$INSTALL_DIR/styles" -type f -name "*.style" -exec chmod 644 {} \;
+find "$INSTALL_DIR/styles" -type d -exec chmod 755 {} \;
+find "$INSTALL_DIR/themes" -type f -name "*.theme" -exec chmod 644 {} \;
+find "$INSTALL_DIR/themes" -type d -exec chmod 755 {} \;
 [ -f "$INSTALL_DIR/README.md" ] && chmod 644 "$INSTALL_DIR/README.md"
 
 # Create symlink
