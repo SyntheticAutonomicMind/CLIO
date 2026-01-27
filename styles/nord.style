@@ -1,0 +1,120 @@
+# CLIO Style: nord
+# Nord - Arctic, North-Bluish Color Palette
+#
+# Color Philosophy:
+# - Cool, bluish palette inspired by Arctic
+# - Muted colors for reduced eye strain
+# - Professional and modern
+# - Frost blues with aurora accents
+#
+# Based on Consolidated Style Schema v2.0
+
+name=nord
+
+# ═══════════════════════════════════════════════════════════════
+# CORE SEMANTIC HIERARCHY
+# ═══════════════════════════════════════════════════════════════
+
+primary=@BOLD@@BRIGHT_CYAN@
+secondary=@BRIGHT_BLUE@
+normal=@WHITE@
+muted=@CYAN@
+subtle=@DIM@
+
+# ═══════════════════════════════════════════════════════════════
+# CONVERSATIONAL
+# ═══════════════════════════════════════════════════════════════
+
+user_prompt=@BRIGHT_GREEN@
+user_text=@WHITE@
+agent_label=@BRIGHT_CYAN@
+agent_text=@WHITE@
+system_message=@CYAN@
+
+# ═══════════════════════════════════════════════════════════════
+# FEEDBACK MESSAGES
+# ═══════════════════════════════════════════════════════════════
+
+error=@BRIGHT_RED@
+warning=@YELLOW@
+success=@BRIGHT_GREEN@
+info=@BRIGHT_BLUE@
+
+# ═══════════════════════════════════════════════════════════════
+# DATA DISPLAY
+# ═══════════════════════════════════════════════════════════════
+
+label=@CYAN@
+value=@BRIGHT_CYAN@
+
+# ═══════════════════════════════════════════════════════════════
+# ACTIONABLE ELEMENTS
+# ═══════════════════════════════════════════════════════════════
+
+command=@BRIGHT_GREEN@
+link=@BRIGHT_CYAN@@UNDERLINE@
+
+# ═══════════════════════════════════════════════════════════════
+# PROMPT
+# ═══════════════════════════════════════════════════════════════
+
+prompt_model=@BRIGHT_BLUE@
+prompt_directory=@BRIGHT_CYAN@
+prompt_git_branch=@CYAN@
+prompt_indicator=@BRIGHT_GREEN@
+
+# ═══════════════════════════════════════════════════════════════
+# MARKDOWN
+# ═══════════════════════════════════════════════════════════════
+
+markdown_h1=@BOLD@@BRIGHT_CYAN@
+markdown_h2=@BRIGHT_BLUE@
+markdown_h3=@WHITE@
+markdown_bold=@BOLD@
+markdown_italic=@DIM@
+markdown_code=@BRIGHT_BLUE@
+markdown_code_block=@BRIGHT_BLUE@
+markdown_link=@BRIGHT_CYAN@@UNDERLINE@
+markdown_quote=@CYAN@
+markdown_list_bullet=@BRIGHT_GREEN@
+
+# ═══════════════════════════════════════════════════════════════
+# TABLES
+# ═══════════════════════════════════════════════════════════════
+
+table_header=@BOLD@@BRIGHT_CYAN@
+table_border=@DIM@
+
+# ═══════════════════════════════════════════════════════════════
+# UI ELEMENTS
+# ═══════════════════════════════════════════════════════════════
+
+spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏
+
+# ═══════════════════════════════════════════════════════════════
+# DEPRECATED (Backward Compatibility)
+# ═══════════════════════════════════════════════════════════════
+
+app_title=@BOLD@@BRIGHT_CYAN@
+app_subtitle=@BRIGHT_BLUE@
+banner_label=@CYAN@
+banner_value=@BRIGHT_CYAN@
+banner_help=@CYAN@
+banner_command=@BRIGHT_GREEN@
+command_label=@CYAN@
+command_value=@BRIGHT_CYAN@
+command_header=@BOLD@@BRIGHT_CYAN@
+command_subheader=@BRIGHT_BLUE@
+data=@BRIGHT_CYAN@
+dim=@DIM@
+highlight=@BRIGHT_CYAN@
+theme_header=@BRIGHT_BLUE@
+help_command=@BRIGHT_GREEN@
+markdown_formula=@BRIGHT_BLUE@
+markdown_link_text=@BRIGHT_CYAN@@UNDERLINE@
+markdown_link_url=@CYAN@
+error_message=@BRIGHT_RED@
+warning_message=@YELLOW@
+success_message=@BRIGHT_GREEN@
+info_message=@BRIGHT_BLUE@
+banner=@BRIGHT_CYAN@
