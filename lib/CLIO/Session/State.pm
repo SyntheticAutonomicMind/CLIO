@@ -259,16 +259,29 @@ sub _validate_and_repair_history {
     
     my @history = @{$self->{history}};
     my %tool_result_ids;  # Track all tool_call_ids that have results
+    my %tool_call_ids;    # Track all tool_call_ids from assistant messages
     my %orphan_indices;   # Track message indices that need to be removed
     
-    # Pass 1: Collect all tool_call_ids that have matching tool results
-    for my $msg (@history) {
-        if ($msg->{role} && $msg->{role} eq 'tool' && $msg->{tool_call_id}) {
-            $tool_result_ids{$msg->{tool_call_id}} = 1;
+    # Pass 1: Collect all tool_call_ids from assistant messages with tool_calls
+    for (my $i = 0; $i < @history; $i++) {
+        my $msg = $history[$i];
+        if ($msg->{role} && $msg->{role} eq 'assistant' && 
+            $msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
+            for my $tc (@{$msg->{tool_calls}}) {
+                $tool_call_ids{$tc->{id}} = $i if $tc->{id};
+            }
         }
     }
     
-    # Pass 2: Find assistant messages with tool_calls that lack complete results
+    # Pass 2: Collect all tool_call_ids that have matching tool results
+    for (my $i = 0; $i < @history; $i++) {
+        my $msg = $history[$i];
+        if ($msg->{role} && $msg->{role} eq 'tool' && $msg->{tool_call_id}) {
+            $tool_result_ids{$msg->{tool_call_id}} = $i;
+        }
+    }
+    
+    # Pass 3: Find assistant messages with tool_calls that lack complete results
     for (my $i = 0; $i < @history; $i++) {
         my $msg = $history[$i];
         
@@ -321,10 +334,23 @@ sub _validate_and_repair_history {
         }
     }
     
+    # Pass 4: Find orphaned tool_results (tool_results without matching tool_calls)
+    # This catches the reverse case: "unexpected tool_use_id found in tool_result blocks"
+    for (my $i = 0; $i < @history; $i++) {
+        my $msg = $history[$i];
+        if ($msg->{role} && $msg->{role} eq 'tool' && $msg->{tool_call_id}) {
+            unless (exists $tool_call_ids{$msg->{tool_call_id}}) {
+                $orphan_indices{$i} = 1;
+                print STDERR "[DEBUG][State] Found orphaned tool_result at index $i: " . 
+                             $msg->{tool_call_id} . " (no matching tool_call)\n" if $ENV{CLIO_DEBUG};
+            }
+        }
+    }
+    
     # If no orphans found, history is clean
     return 0 unless keys %orphan_indices;
     
-    # Pass 3: Rebuild history without orphaned messages
+    # Pass 5: Rebuild history without orphaned messages
     my @cleaned_history;
     for (my $i = 0; $i < @history; $i++) {
         unless ($orphan_indices{$i}) {

@@ -221,6 +221,8 @@ sub process_user_request {
             $result->{final_response} = $orchestrator_result->{content};
             $result->{protocols_used} = $orchestrator_result->{tool_calls_made} || [];
             $result->{success} = 1;
+            # Propagate flag to prevent Chat.pm from saving duplicate messages
+            $result->{messages_saved_during_workflow} = $orchestrator_result->{messages_saved_during_workflow};
             
             print STDERR "[DEBUG][SimpleAIAgent] Orchestrator returned content length: " . length($orchestrator_result->{content} || '') . "\n" if should_log('DEBUG');
             print STDERR "[DEBUG][SimpleAIAgent] Content: '" . ($orchestrator_result->{content} || 'UNDEF') . "'\n" if should_log('DEBUG');
