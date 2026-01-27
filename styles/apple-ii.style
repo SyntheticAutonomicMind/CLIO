@@ -40,6 +40,9 @@ data=@BRIGHT_WHITE@
 dim=@GREEN@
 theme_header=@BRIGHT_WHITE@@BOLD@
 prompt_indicator=@BRIGHT_GREEN@
+prompt_model=@BRIGHT_CYAN@
+prompt_directory=@BRIGHT_BLUE@
+prompt_git_branch=@BRIGHT_YELLOW@
 
 # Markdown element colors - green/white palette
 markdown_bold=@BOLD@@BRIGHT_WHITE@

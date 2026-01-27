@@ -40,6 +40,9 @@ data=@BRIGHT_WHITE@
 dim=@CYAN@
 theme_header=@BRIGHT_CYAN@@BOLD@
 prompt_indicator=@BRIGHT_GREEN@@BOLD@
+prompt_model=@BRIGHT_CYAN@
+prompt_directory=@BRIGHT_BLUE@
+prompt_git_branch=@BRIGHT_YELLOW@
 
 # Markdown element colors - punchy BBS style
 markdown_bold=@BOLD@@BRIGHT_WHITE@
