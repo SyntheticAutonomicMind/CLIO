@@ -1,74 +1,120 @@
 # CLIO Style: amber-terminal
-# Warm amber monochrome - vintage terminal glow
+# Vintage Amber CRT - Warm Nostalgia
 #
-# Cohesive Color Hierarchy:
-# - Primary: Bright Yellow (main focus - warm glow)
-# - Secondary: Yellow (supporting - amber tones)
-# - Accent: Bright Yellow (actionable - amber highlight)
-# - Neutral: White (readable text)
-# - Muted: Dim Yellow (less important - faded glow)
+# Color Philosophy:
+# - Monochrome amber (like old CRT monitors)
+# - Varying brightness for hierarchy
+# - Warm, nostalgic feel
+# - Eye-friendly amber glow
+#
+# Based on Consolidated Style Schema v2.0
 
 name=amber-terminal
 
-# ═══ Core message colors ═══
+# ═══════════════════════════════════════════════════════════════
+# CORE SEMANTIC HIERARCHY
+# ═══════════════════════════════════════════════════════════════
+
+primary=@BOLD@@BRIGHT_YELLOW@
+secondary=@BRIGHT_YELLOW@
+normal=@YELLOW@
+muted=@DIM@@YELLOW@
+subtle=@DIM@
+
+# ═══════════════════════════════════════════════════════════════
+# CONVERSATIONAL
+# ═══════════════════════════════════════════════════════════════
+
 user_prompt=@BRIGHT_YELLOW@
-user_text=@WHITE@
+user_text=@YELLOW@
 agent_label=@BRIGHT_YELLOW@
-agent_text=@WHITE@
-system_message=@YELLOW@
-error_message=@BRIGHT_RED@
-success_message=@BRIGHT_YELLOW@
-warning_message=@BRIGHT_YELLOW@
-info_message=@YELLOW@
+agent_text=@YELLOW@
+system_message=@DIM@@YELLOW@
 
-# ═══ Banner ═══
-app_title=@BOLD@@BRIGHT_YELLOW@
-app_subtitle=@YELLOW@
-banner_label=@DIM@@YELLOW@
-banner_value=@WHITE@
-banner_help=@DIM@@YELLOW@
-banner_command=@BRIGHT_YELLOW@
-banner=@BRIGHT_YELLOW@
+# ═══════════════════════════════════════════════════════════════
+# FEEDBACK MESSAGES
+# ═══════════════════════════════════════════════════════════════
 
-# ═══ Enhanced prompt ═══
+error=@BRIGHT_RED@
+warning=@BRIGHT_YELLOW@
+success=@BRIGHT_YELLOW@
+info=@YELLOW@
+
+# ═══════════════════════════════════════════════════════════════
+# DATA DISPLAY
+# ═══════════════════════════════════════════════════════════════
+
+label=@DIM@@YELLOW@
+value=@BRIGHT_YELLOW@
+
+# ═══════════════════════════════════════════════════════════════
+# ACTIONABLE ELEMENTS
+# ═══════════════════════════════════════════════════════════════
+
+command=@BRIGHT_YELLOW@
+link=@BRIGHT_YELLOW@@UNDERLINE@
+
+# ═══════════════════════════════════════════════════════════════
+# PROMPT
+# ═══════════════════════════════════════════════════════════════
+
 prompt_model=@YELLOW@
 prompt_directory=@BRIGHT_YELLOW@
 prompt_git_branch=@DIM@@YELLOW@
 prompt_indicator=@BRIGHT_YELLOW@
 
-# ═══ General UI ═══
-theme_header=@BRIGHT_YELLOW@
-data=@WHITE@
-dim=@DIM@
-highlight=@BRIGHT_YELLOW@
-muted=@DIM@@YELLOW@
+# ═══════════════════════════════════════════════════════════════
+# MARKDOWN
+# ═══════════════════════════════════════════════════════════════
 
-# ═══ Command output ═══
-command_header=@BOLD@@BRIGHT_YELLOW@
-command_subheader=@YELLOW@
-command_label=@DIM@@YELLOW@
-command_value=@WHITE@
-
-# ═══ Markdown ═══
+markdown_h1=@BOLD@@BRIGHT_YELLOW@
+markdown_h2=@BRIGHT_YELLOW@
+markdown_h3=@YELLOW@
 markdown_bold=@BOLD@
 markdown_italic=@DIM@
-markdown_code=@YELLOW@
+markdown_code=@DIM@@YELLOW@
+markdown_code_block=@DIM@@YELLOW@
+markdown_link=@BRIGHT_YELLOW@@UNDERLINE@
+markdown_quote=@DIM@@YELLOW@
+markdown_list_bullet=@BRIGHT_YELLOW@
+
+# ═══════════════════════════════════════════════════════════════
+# TABLES
+# ═══════════════════════════════════════════════════════════════
+
+table_header=@BOLD@@BRIGHT_YELLOW@
+table_border=@DIM@
+
+# ═══════════════════════════════════════════════════════════════
+# UI ELEMENTS
+# ═══════════════════════════════════════════════════════════════
+
+spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏
+
+# ═══════════════════════════════════════════════════════════════
+# DEPRECATED (Backward Compatibility)
+# ═══════════════════════════════════════════════════════════════
+
+app_title=@BOLD@@BRIGHT_YELLOW@
+app_subtitle=@BRIGHT_YELLOW@
+banner_label=@DIM@@YELLOW@
+banner_value=@BRIGHT_YELLOW@
+banner_help=@DIM@@YELLOW@
+banner_command=@BRIGHT_YELLOW@
+command_label=@DIM@@YELLOW@
+command_value=@BRIGHT_YELLOW@
+command_header=@BOLD@@BRIGHT_YELLOW@
+command_subheader=@BRIGHT_YELLOW@
+data=@BRIGHT_YELLOW@
+dim=@DIM@
+highlight=@BRIGHT_YELLOW@
+theme_header=@BRIGHT_YELLOW@
+help_command=@BRIGHT_YELLOW@
 markdown_formula=@BRIGHT_YELLOW@
 markdown_link_text=@BRIGHT_YELLOW@@UNDERLINE@
 markdown_link_url=@DIM@@YELLOW@
-markdown_header1=@BOLD@@BRIGHT_YELLOW@
-markdown_header2=@YELLOW@
-markdown_header3=@WHITE@
-markdown_list_bullet=@BRIGHT_YELLOW@
-markdown_quote=@DIM@@YELLOW@
-markdown_code_block=@YELLOW@
-
-# Help command styling
-help_command=@BRIGHT_YELLOW@
-
-# ═══ Tables ═══
-table_border=@DIM@@YELLOW@
-table_header=@BOLD@@BRIGHT_YELLOW@
-
-# ═══ Spinner ═══
-spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏
+error_message=@BRIGHT_RED@
+warning_message=@BRIGHT_YELLOW@
+success_message=@BRIGHT_YELLOW@
+info_message=@YELLOW@
+banner=@BRIGHT_YELLOW@

@@ -1,74 +1,120 @@
 # CLIO Style: slate
-# Professional slate - blues and greys for work
+# Professional Slate Gray - Corporate Clean
 #
-# Cohesive Color Hierarchy:
-# - Primary: Bright Blue (main focus - professional blue)
-# - Secondary: Blue (supporting - slate blue)
-# - Accent: Cyan (actionable - cool blue accent)
-# - Neutral: White (readable text)
-# - Muted: Dim White (less important)
+# Color Philosophy:
+# - Muted, professional palette
+# - Blues and grays for business use
+# - Not too colorful, not too boring
+# - Modern corporate aesthetic
+#
+# Based on Consolidated Style Schema v2.0
 
 name=slate
 
-# ═══ Core message colors ═══
-user_prompt=@CYAN@
+# ═══════════════════════════════════════════════════════════════
+# CORE SEMANTIC HIERARCHY
+# ═══════════════════════════════════════════════════════════════
+
+primary=@BOLD@@BRIGHT_BLUE@
+secondary=@BLUE@
+normal=@WHITE@
+muted=@DIM@@WHITE@
+subtle=@DIM@
+
+# ═══════════════════════════════════════════════════════════════
+# CONVERSATIONAL
+# ═══════════════════════════════════════════════════════════════
+
+user_prompt=@BRIGHT_CYAN@
 user_text=@WHITE@
 agent_label=@BRIGHT_BLUE@
 agent_text=@WHITE@
 system_message=@BLUE@
-error_message=@BRIGHT_RED@
-success_message=@CYAN@
-warning_message=@YELLOW@
-info_message=@BLUE@
 
-# ═══ Banner ═══
+# ═══════════════════════════════════════════════════════════════
+# FEEDBACK MESSAGES
+# ═══════════════════════════════════════════════════════════════
+
+error=@BRIGHT_RED@
+warning=@BRIGHT_YELLOW@
+success=@BRIGHT_GREEN@
+info=@BLUE@
+
+# ═══════════════════════════════════════════════════════════════
+# DATA DISPLAY
+# ═══════════════════════════════════════════════════════════════
+
+label=@DIM@@WHITE@
+value=@BRIGHT_WHITE@
+
+# ═══════════════════════════════════════════════════════════════
+# ACTIONABLE ELEMENTS
+# ═══════════════════════════════════════════════════════════════
+
+command=@BRIGHT_CYAN@
+link=@BRIGHT_BLUE@@UNDERLINE@
+
+# ═══════════════════════════════════════════════════════════════
+# PROMPT
+# ═══════════════════════════════════════════════════════════════
+
+prompt_model=@BLUE@
+prompt_directory=@BRIGHT_BLUE@
+prompt_git_branch=@DIM@@CYAN@
+prompt_indicator=@BRIGHT_CYAN@
+
+# ═══════════════════════════════════════════════════════════════
+# MARKDOWN
+# ═══════════════════════════════════════════════════════════════
+
+markdown_h1=@BOLD@@BRIGHT_BLUE@
+markdown_h2=@BLUE@
+markdown_h3=@WHITE@
+markdown_bold=@BOLD@
+markdown_italic=@DIM@
+markdown_code=@CYAN@
+markdown_code_block=@CYAN@
+markdown_link=@BRIGHT_BLUE@@UNDERLINE@
+markdown_quote=@DIM@@BLUE@
+markdown_list_bullet=@BRIGHT_CYAN@
+
+# ═══════════════════════════════════════════════════════════════
+# TABLES
+# ═══════════════════════════════════════════════════════════════
+
+table_header=@BOLD@@BRIGHT_BLUE@
+table_border=@DIM@
+
+# ═══════════════════════════════════════════════════════════════
+# UI ELEMENTS
+# ═══════════════════════════════════════════════════════════════
+
+spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏
+
+# ═══════════════════════════════════════════════════════════════
+# DEPRECATED (Backward Compatibility)
+# ═══════════════════════════════════════════════════════════════
+
 app_title=@BOLD@@BRIGHT_BLUE@
 app_subtitle=@BLUE@
 banner_label=@DIM@@WHITE@
-banner_value=@WHITE@
+banner_value=@BRIGHT_WHITE@
 banner_help=@DIM@@WHITE@
-banner_command=@CYAN@
-banner=@BRIGHT_BLUE@
-
-# ═══ Enhanced prompt ═══
-prompt_model=@BLUE@
-prompt_directory=@BRIGHT_BLUE@
-prompt_git_branch=@DIM@@BLUE@
-prompt_indicator=@CYAN@
-
-# ═══ General UI ═══
-theme_header=@BRIGHT_BLUE@
-data=@WHITE@
-dim=@DIM@
-highlight=@CYAN@
-muted=@DIM@@WHITE@
-
-# ═══ Command output ═══
+banner_command=@BRIGHT_CYAN@
+command_label=@DIM@@WHITE@
+command_value=@BRIGHT_WHITE@
 command_header=@BOLD@@BRIGHT_BLUE@
 command_subheader=@BLUE@
-command_label=@DIM@@WHITE@
-command_value=@WHITE@
-
-# ═══ Markdown ═══
-markdown_bold=@BOLD@
-markdown_italic=@DIM@
-markdown_code=@BLUE@
+data=@BRIGHT_WHITE@
+dim=@DIM@
+highlight=@BRIGHT_BLUE@
+theme_header=@BRIGHT_BLUE@
+help_command=@BRIGHT_CYAN@
 markdown_formula=@BRIGHT_BLUE@
 markdown_link_text=@BRIGHT_BLUE@@UNDERLINE@
 markdown_link_url=@DIM@@BLUE@
-markdown_header1=@BOLD@@BRIGHT_BLUE@
-markdown_header2=@BLUE@
-markdown_header3=@WHITE@
-markdown_list_bullet=@CYAN@
-markdown_quote=@DIM@@BLUE@
-markdown_code_block=@BLUE@
-
-# Help command styling
-help_command=@BRIGHT_BLUE@
-
-# ═══ Tables ═══
-table_border=@DIM@@WHITE@
-table_header=@BOLD@@BRIGHT_BLUE@
-
-# ═══ Spinner ═══
-spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏
+error_message=@BRIGHT_RED@
+warning_message=@BRIGHT_YELLOW@
+success_message=@BRIGHT_GREEN@
+info_message=@BLUE@
+banner=@BRIGHT_BLUE@

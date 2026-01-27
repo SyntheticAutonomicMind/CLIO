@@ -1,74 +1,120 @@
 # CLIO Style: light
-# Light background theme - dark text for visibility
+# Light Mode - Easy on the Eyes
 #
-# Cohesive Color Hierarchy (inverted for light backgrounds):
-# - Primary: Bold Blue (main focus - dark on light)
-# - Secondary: Blue (supporting - readable blue)
-# - Accent: Green (actionable - dark green)
-# - Neutral: Black (readable text - dark)
-# - Muted: Dim Black/Blue (less important)
+# Color Philosophy:
+# - Darker colors on light background
+# - Softer than dark mode
+# - Comfortable for extended reading
+# - Reduced eye strain
+#
+# Based on Consolidated Style Schema v2.0
 
 name=light
 
-# ═══ Core message colors ═══
+# ═══════════════════════════════════════════════════════════════
+# CORE SEMANTIC HIERARCHY
+# ═══════════════════════════════════════════════════════════════
+
+primary=@BOLD@@BLUE@
+secondary=@CYAN@
+normal=@BLACK@
+muted=@BLACK@
+subtle=@BLACK@
+
+# ═══════════════════════════════════════════════════════════════
+# CONVERSATIONAL
+# ═══════════════════════════════════════════════════════════════
+
 user_prompt=@GREEN@
 user_text=@BLACK@
-agent_label=@BOLD@@BLUE@
+agent_label=@BLUE@
 agent_text=@BLACK@
-system_message=@BLUE@
-error_message=@RED@
-success_message=@GREEN@
-warning_message=@YELLOW@
-info_message=@BLUE@
+system_message=@CYAN@
 
-# ═══ Banner ═══
-app_title=@BOLD@@BLUE@
-app_subtitle=@BLUE@
-banner_label=@DIM@@BLACK@
-banner_value=@BLACK@
-banner_help=@DIM@@BLACK@
-banner_command=@GREEN@
-banner=@BOLD@@BLUE@
+# ═══════════════════════════════════════════════════════════════
+# FEEDBACK MESSAGES
+# ═══════════════════════════════════════════════════════════════
 
-# ═══ Enhanced prompt ═══
-prompt_model=@BLUE@
-prompt_directory=@BOLD@@BLUE@
-prompt_git_branch=@DIM@@BLUE@
+error=@RED@
+warning=@YELLOW@
+success=@GREEN@
+info=@CYAN@
+
+# ═══════════════════════════════════════════════════════════════
+# DATA DISPLAY
+# ═══════════════════════════════════════════════════════════════
+
+label=@BLACK@
+value=@BOLD@@BLACK@
+
+# ═══════════════════════════════════════════════════════════════
+# ACTIONABLE ELEMENTS
+# ═══════════════════════════════════════════════════════════════
+
+command=@GREEN@
+link=@BLUE@@UNDERLINE@
+
+# ═══════════════════════════════════════════════════════════════
+# PROMPT
+# ═══════════════════════════════════════════════════════════════
+
+prompt_model=@CYAN@
+prompt_directory=@BLUE@
+prompt_git_branch=@GREEN@
 prompt_indicator=@GREEN@
 
-# ═══ General UI ═══
-theme_header=@BOLD@@BLUE@
-data=@BLACK@
-dim=@DIM@
-highlight=@BOLD@@BLUE@
-muted=@DIM@@BLACK@
+# ═══════════════════════════════════════════════════════════════
+# MARKDOWN
+# ═══════════════════════════════════════════════════════════════
 
-# ═══ Command output ═══
-command_header=@BOLD@@BLUE@
-command_subheader=@BLUE@
-command_label=@DIM@@BLACK@
-command_value=@BLACK@
-
-# ═══ Markdown ═══
+markdown_h1=@BOLD@@BLUE@
+markdown_h2=@CYAN@
+markdown_h3=@BLACK@
 markdown_bold=@BOLD@
-markdown_italic=@DIM@
-markdown_code=@BLUE@
-markdown_formula=@BOLD@@BLUE@
-markdown_link_text=@BOLD@@BLUE@@UNDERLINE@
-markdown_link_url=@DIM@@BLUE@
-markdown_header1=@BOLD@@BLUE@
-markdown_header2=@BLUE@
-markdown_header3=@BLACK@
+markdown_italic=@BLACK@
+markdown_code=@MAGENTA@
+markdown_code_block=@MAGENTA@
+markdown_link=@BLUE@@UNDERLINE@
+markdown_quote=@CYAN@
 markdown_list_bullet=@GREEN@
-markdown_quote=@DIM@@BLUE@
-markdown_code_block=@BLUE@
 
-# Help command styling
-help_command=@BOLD@@BLUE@
+# ═══════════════════════════════════════════════════════════════
+# TABLES
+# ═══════════════════════════════════════════════════════════════
 
-# ═══ Tables ═══
-table_border=@DIM@@BLACK@
 table_header=@BOLD@@BLUE@
+table_border=@BLACK@
 
-# ═══ Spinner ═══
+# ═══════════════════════════════════════════════════════════════
+# UI ELEMENTS
+# ═══════════════════════════════════════════════════════════════
+
 spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏
+
+# ═══════════════════════════════════════════════════════════════
+# DEPRECATED (Backward Compatibility)
+# ═══════════════════════════════════════════════════════════════
+
+app_title=@BOLD@@BLUE@
+app_subtitle=@CYAN@
+banner_label=@BLACK@
+banner_value=@BOLD@@BLACK@
+banner_help=@BLACK@
+banner_command=@GREEN@
+command_label=@BLACK@
+command_value=@BOLD@@BLACK@
+command_header=@BOLD@@BLUE@
+command_subheader=@CYAN@
+data=@BOLD@@BLACK@
+dim=@BLACK@
+highlight=@BLUE@
+theme_header=@BLUE@
+help_command=@GREEN@
+markdown_formula=@BLUE@
+markdown_link_text=@BLUE@@UNDERLINE@
+markdown_link_url=@CYAN@
+error_message=@RED@
+warning_message=@YELLOW@
+success_message=@GREEN@
+info_message=@CYAN@
+banner=@BLUE@
