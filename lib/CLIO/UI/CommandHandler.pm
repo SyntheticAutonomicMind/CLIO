@@ -1,0 +1,277 @@
+package CLIO::UI::CommandHandler;
+
+use strict;
+use warnings;
+use Carp qw(croak confess);
+use CLIO::Core::Logger qw(should_log);
+
+=head1 NAME
+
+CLIO::UI::CommandHandler - Slash command processing for CLIO chat interface
+
+=head1 SYNOPSIS
+
+  use CLIO::UI::CommandHandler;
+  
+  my $handler = CLIO::UI::CommandHandler->new(
+      chat => $chat_instance,
+      session => $session,
+      config => $config,
+      ai_agent => $ai_agent,
+      debug => 0
+  );
+  
+  # Handle a slash command
+  my $result = $handler->handle_command($command_string);
+
+=head1 DESCRIPTION
+
+CommandHandler extracts all slash command processing logic from Chat.pm.
+It handles 35+ commands including:
+
+- /help, /api, /config, /loglevel
+- /file, /git, /edit, /shell, /exec
+- /todo, /billing, /memory, /models
+- /session, /switch, /read, /skills
+- /style, /theme, /login, /logout
+- And many more...
+
+This separation improves maintainability by isolating command logic
+from core chat orchestration, display, and streaming.
+
+=head1 METHODS
+
+=head2 new(%args)
+
+Create a new CommandHandler instance.
+
+Arguments:
+- chat: Parent Chat instance (for display methods and command handlers)
+- session: Session object
+- config: Config object  
+- ai_agent: AI agent instance
+- debug: Enable debug logging
+
+=cut
+
+sub new {
+    my ($class, %args) = @_;
+    
+    my $self = {
+        chat => $args{chat} || croak "chat instance required",
+        session => $args{session},
+        config => $args{config},
+        ai_agent => $args{ai_agent},
+        debug => $args{debug} // 0,
+    };
+    
+    bless $self, $class;
+    return $self;
+}
+
+=head2 handle_command($command)
+
+Main command dispatcher. Routes slash commands to appropriate handlers.
+
+Phase 1 Implementation: Delegates to Chat.pm for actual command handling.
+This establishes the routing infrastructure for gradual extraction.
+
+Returns:
+- 0: Exit signal (quit/exit command)
+- 1: Continue (command handled)
+- (1, $prompt): Continue with AI prompt (for commands that generate prompts)
+
+=cut
+
+sub handle_command {
+    my ($self, $command) = @_;
+    
+    my $chat = $self->{chat};
+    
+    # Remove leading slash
+    $command =~ s/^\///;
+    
+    # Split into command and args
+    my ($cmd, @args) = split /\s+/, $command;
+    $cmd = lc($cmd);
+    
+    # Route to appropriate handler (currently delegating to Chat.pm)
+    if ($cmd eq 'exit' || $cmd eq 'quit' || $cmd eq 'q') {
+        return 0;  # Signal to exit
+    }
+    elsif ($cmd eq 'help' || $cmd eq 'h') {
+        $chat->display_help();
+    }
+    elsif ($cmd eq 'clear' || $cmd eq 'cls') {
+        $chat->repaint_screen();
+    }
+    elsif ($cmd eq 'shell' || $cmd eq 'sh') {
+        $chat->handle_shell_command();
+    }
+    elsif ($cmd eq 'debug') {
+        $chat->{debug} = !$chat->{debug};
+        $chat->display_system_message("Debug mode: " . ($chat->{debug} ? "ON" : "OFF"));
+    }
+    elsif ($cmd eq 'color') {
+        $chat->{use_color} = !$chat->{use_color};
+        $chat->display_system_message("Color mode: " . ($chat->{use_color} ? "ON" : "OFF"));
+    }
+    elsif ($cmd eq 'session') {
+        $chat->handle_session_command(@args);
+    }
+    elsif ($cmd eq 'config') {
+        $chat->handle_config_command(@args);
+    }
+    elsif ($cmd eq 'api') {
+        $chat->handle_api_command(@args);
+    }
+    elsif ($cmd eq 'loglevel') {
+        $chat->handle_loglevel_command(@args);
+    }
+    elsif ($cmd eq 'style') {
+        $chat->handle_style_command(@args);
+    }
+    elsif ($cmd eq 'theme') {
+        $chat->handle_theme_command(@args);
+    }
+    elsif ($cmd eq 'login') {
+        # Backward compatibility - redirect to /api login
+        $chat->display_system_message("Note: Use '/api login' (new syntax)");
+        $chat->handle_login_command(@args);
+    }
+    elsif ($cmd eq 'logout') {
+        # Backward compatibility - redirect to /api logout
+        $chat->display_system_message("Note: Use '/api logout' (new syntax)");
+        $chat->handle_logout_command(@args);
+    }
+    elsif ($cmd eq 'file') {
+        $chat->handle_file_command(@args);
+    }
+    elsif ($cmd eq 'edit') {
+        # Backward compatibility
+        $chat->display_system_message("Note: Use '/file edit <path>' (new syntax)");
+        $chat->handle_edit_command(join(' ', @args));
+    }
+    elsif ($cmd eq 'multi-line' || $cmd eq 'multiline' || $cmd eq 'ml') {
+        $chat->handle_multiline_command();
+    }
+    elsif ($cmd eq 'performance' || $cmd eq 'perf') {
+        $chat->handle_performance_command(@args);
+    }
+    elsif ($cmd eq 'todo') {
+        $chat->handle_todo_command(@args);
+    }
+    elsif ($cmd eq 'billing' || $cmd eq 'bill' || $cmd eq 'usage') {
+        $chat->handle_billing_command(@args);
+    }
+    elsif ($cmd eq 'models') {
+        # Backward compatibility - redirect to /api models
+        $chat->display_system_message("Note: Use '/api models' (new syntax)");
+        $chat->handle_models_command(@args);
+    }
+    elsif ($cmd eq 'context' || $cmd eq 'ctx') {
+        $chat->handle_context_command(@args);
+    }
+    elsif ($cmd eq 'skills' || $cmd eq 'skill') {
+        my $result = $chat->handle_skills_command(@args);
+        return $result if $result;  # May return (1, $prompt) for AI execution
+    }
+    elsif ($cmd eq 'prompt') {
+        $chat->handle_prompt_command(@args);
+    }
+    elsif ($cmd eq 'explain') {
+        my $prompt = $chat->handle_explain_command(@args);
+        return (1, $prompt) if $prompt;  # Return prompt to be sent to AI
+    }
+    elsif ($cmd eq 'review') {
+        my $prompt = $chat->handle_review_command(@args);
+        return (1, $prompt) if $prompt;  # Return prompt to be sent to AI
+    }
+    elsif ($cmd eq 'test') {
+        my $prompt = $chat->handle_test_command(@args);
+        return (1, $prompt) if $prompt;  # Return prompt to be sent to AI
+    }
+    elsif ($cmd eq 'fix') {
+        my $prompt = $chat->handle_fix_command(@args);
+        return (1, $prompt) if $prompt;  # Return prompt to be sent to AI
+    }
+    elsif ($cmd eq 'doc') {
+        my $prompt = $chat->handle_doc_command(@args);
+        return (1, $prompt) if $prompt;  # Return prompt to be sent to AI
+    }
+    elsif ($cmd eq 'git') {
+        $chat->handle_git_command(@args);
+    }
+    elsif ($cmd eq 'commit') {
+        # Backward compatibility
+        $chat->display_system_message("Note: Use '/git commit' (new syntax)");
+        $chat->handle_commit_command(@args);
+    }
+    elsif ($cmd eq 'diff') {
+        # Backward compatibility
+        $chat->display_system_message("Note: Use '/git diff' (new syntax)");
+        $chat->handle_diff_command(@args);
+    }
+    elsif ($cmd eq 'status' || $cmd eq 'st') {
+        # Backward compatibility
+        $chat->display_system_message("Note: Use '/git status' (new syntax)");
+        $chat->handle_status_command(@args);
+    }
+    elsif ($cmd eq 'log') {
+        $chat->handle_log_command(@args);
+    }
+    elsif ($cmd eq 'gitlog' || $cmd eq 'gl') {
+        # Backward compatibility
+        $chat->display_system_message("Note: Use '/git log' (new syntax)");
+        $chat->handle_gitlog_command(@args);
+    }
+    elsif ($cmd eq 'exec' || $cmd eq 'shell' || $cmd eq 'sh') {
+        $chat->handle_exec_command(@args);
+    }
+    elsif ($cmd eq 'switch') {
+        # Backward compatibility - redirect to /session switch
+        $chat->display_system_message("Note: Use '/session switch' (new syntax)");
+        $chat->handle_switch_command(@args);
+    }
+    elsif ($cmd eq 'read' || $cmd eq 'view' || $cmd eq 'cat') {
+        # Backward compatibility
+        $chat->display_system_message("Note: Use '/file read <path>' (new syntax)");
+        $chat->handle_read_command(@args);
+    }
+    elsif ($cmd eq 'memory' || $cmd eq 'mem' || $cmd eq 'ltm') {
+        $chat->handle_memory_command(@args);
+    }
+    elsif ($cmd eq 'update') {
+        $chat->handle_update_command(@args);
+    }
+    else {
+        $chat->display_error_message("Unknown command: /$cmd (type /help for help)");
+    }
+    
+    print "\n";
+    return 1;  # Continue
+}
+
+=head1 FUTURE COMMAND HANDLERS
+
+The following methods will be gradually extracted from Chat.pm to this module:
+
+- display_help
+- handle_api_command
+- handle_config_command
+- handle_file_command
+- handle_git_command
+- handle_todo_command
+- handle_billing_command
+- handle_memory_command
+- handle_models_command
+- handle_session_command
+- handle_skills_command
+- And 25+ more...
+
+Each extraction will be tested before proceeding to the next.
+
+=cut
+
+1;
+
