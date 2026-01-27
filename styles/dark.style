@@ -1,73 +1,71 @@
 # CLIO Style: dark
-# Subdued color scheme for dark backgrounds
-# Softer colors, less intense than default
+# Subdued modern blues - easy on the eyes
+#
+# Cohesive Color Hierarchy:
+# - Primary: Cyan (main focus - subdued, not bright)
+# - Secondary: Dim Cyan (supporting - very subtle)
+# - Accent: Green (actionable - muted green)
+# - Neutral: White (readable text)
+# - Muted: Dim White (less important)
 
 name=dark
 
-# User interaction colors - muted green
+# ═══ Core message colors ═══
 user_prompt=@GREEN@
-user_text=@YELLOW@
-
-# Agent/Assistant colors - softer blue
-agent_label=@BLUE@
+user_text=@WHITE@
+agent_label=@CYAN@
 agent_text=@WHITE@
-
-# System messages
-system_message=@MAGENTA@
-error_message=@RED@
-
-# Status messages
+system_message=@DIM@@CYAN@
+error_message=@BRIGHT_RED@
 success_message=@GREEN@
 warning_message=@YELLOW@
 info_message=@CYAN@
 
-# Command output elements
-command_header=@BOLD@@CYAN@
-command_subheader=@BOLD@@BLUE@
-command_label=@BLUE@
-command_value=@WHITE@
-
-# Special elements
-highlight=@YELLOW@
-muted=@DIM@@WHITE@
-
-
-# UI elements - subdued
-banner=@CYAN@
-app_title=@BLUE@
-app_subtitle=@DIM@@WHITE@
-data=@WHITE@
-dim=@DIM@
-theme_header=@CYAN@
-prompt_indicator=@GREEN@
-prompt_model=@BRIGHT_CYAN@
-prompt_directory=@BRIGHT_BLUE@
-prompt_git_branch=@BRIGHT_YELLOW@
-# Banner components
-app_title=@BOLD@@BRIGHT_CYAN@
+# ═══ Banner ═══
+app_title=@BOLD@@CYAN@
 app_subtitle=@DIM@@CYAN@
 banner_label=@DIM@@WHITE@
-banner_value=@BRIGHT_WHITE@
+banner_value=@WHITE@
 banner_help=@DIM@@WHITE@
-banner_command=@BRIGHT_GREEN@
+banner_command=@GREEN@
+banner=@CYAN@
 
-# Markdown element colors - less intense
+# ═══ Enhanced prompt ═══
+prompt_model=@DIM@@CYAN@
+prompt_directory=@CYAN@
+prompt_git_branch=@DIM@@CYAN@
+prompt_indicator=@GREEN@
+
+# ═══ General UI ═══
+theme_header=@CYAN@
+data=@WHITE@
+dim=@DIM@
+highlight=@CYAN@
+muted=@DIM@@WHITE@
+
+# ═══ Command output ═══
+command_header=@BOLD@@CYAN@
+command_subheader=@DIM@@CYAN@
+command_label=@DIM@@WHITE@
+command_value=@WHITE@
+
+# ═══ Markdown ═══
 markdown_bold=@BOLD@
 markdown_italic=@DIM@
-markdown_code=@YELLOW@
-markdown_link_text=@BLUE@@UNDERLINE@
-markdown_link_url=@DIM@@BLUE@
+markdown_code=@DIM@@CYAN@
+markdown_formula=@CYAN@
+markdown_link_text=@CYAN@@UNDERLINE@
+markdown_link_url=@DIM@@CYAN@
 markdown_header1=@BOLD@@CYAN@
-markdown_header2=@CYAN@
+markdown_header2=@DIM@@CYAN@
 markdown_header3=@WHITE@
 markdown_list_bullet=@GREEN@
 markdown_quote=@DIM@@CYAN@
-markdown_code_block=@YELLOW@
+markdown_code_block=@DIM@@CYAN@
 
-# Table colors
-table_border=@WHITE@
+# ═══ Tables ═══
+table_border=@DIM@@WHITE@
 table_header=@BOLD@@CYAN@
 
-
-# Spinner animation frames - braille pattern
+# ═══ Spinner ═══
 spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏

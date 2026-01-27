@@ -1,73 +1,71 @@
 # CLIO Style: apple-ii
-# Apple II color palette - bright green and white on black
-# The iconic colors of early Apple computers and their crisp green displays
+# Classic Apple II green - the iconic green glow
+#
+# Cohesive Color Hierarchy:
+# - Primary: Bright Green (main focus - Apple glow)
+# - Secondary: Green (supporting - medium glow)
+# - Accent: Bright Green (actionable - bright glow)
+# - Neutral: White (readable text)
+# - Muted: Dim Green (less important - faded glow)
 
 name=apple-ii
 
-# User interaction colors - Apple II green
+# ═══ Core message colors ═══
 user_prompt=@BRIGHT_GREEN@
-user_text=@GREEN@
-
-# Agent/Assistant colors - bright white (Apple II text mode)
-agent_label=@BRIGHT_WHITE@@BOLD@
+user_text=@WHITE@
+agent_label=@BRIGHT_GREEN@
 agent_text=@WHITE@
-
-# System messages
-system_message=@BRIGHT_GREEN@@BOLD@
+system_message=@GREEN@
 error_message=@BRIGHT_RED@
-
-# Status messages
 success_message=@BRIGHT_GREEN@
-warning_message=@BRIGHT_WHITE@
+warning_message=@BRIGHT_YELLOW@
 info_message=@GREEN@
 
-# Command output elements
-command_header=@BOLD@@BRIGHT_GREEN@
-command_subheader=@BOLD@@GREEN@
-command_label=@GREEN@
-command_value=@BRIGHT_WHITE@
+# ═══ Banner ═══
+app_title=@BOLD@@BRIGHT_GREEN@
+app_subtitle=@GREEN@
+banner_label=@DIM@@GREEN@
+banner_value=@WHITE@
+banner_help=@DIM@@GREEN@
+banner_command=@BRIGHT_GREEN@
+banner=@BRIGHT_GREEN@
 
-# Special elements
-highlight=@BRIGHT_WHITE@
+# ═══ Enhanced prompt ═══
+prompt_model=@GREEN@
+prompt_directory=@BRIGHT_GREEN@
+prompt_git_branch=@DIM@@GREEN@
+prompt_indicator=@BRIGHT_GREEN@
+
+# ═══ General UI ═══
+theme_header=@BRIGHT_GREEN@
+data=@WHITE@
+dim=@DIM@
+highlight=@BRIGHT_GREEN@
 muted=@DIM@@GREEN@
 
+# ═══ Command output ═══
+command_header=@BOLD@@BRIGHT_GREEN@
+command_subheader=@GREEN@
+command_label=@DIM@@GREEN@
+command_value=@WHITE@
 
-# UI elements - green and white (classic Apple II)
-banner=@BRIGHT_GREEN@@BOLD@
-app_title=@BRIGHT_GREEN@
-app_subtitle=@GREEN@
-data=@BRIGHT_WHITE@
-dim=@GREEN@
-theme_header=@BRIGHT_WHITE@@BOLD@
-prompt_indicator=@BRIGHT_GREEN@
-prompt_model=@BRIGHT_CYAN@
-prompt_directory=@BRIGHT_BLUE@
-prompt_git_branch=@BRIGHT_YELLOW@
-# Banner components
-app_title=@BOLD@@BRIGHT_CYAN@
-app_subtitle=@DIM@@CYAN@
-banner_label=@DIM@@WHITE@
-banner_value=@BRIGHT_WHITE@
-banner_help=@DIM@@WHITE@
-banner_command=@BRIGHT_GREEN@
-
-# Markdown element colors - green/white palette
-markdown_bold=@BOLD@@BRIGHT_WHITE@
-markdown_italic=@DIM@@GREEN@
-markdown_code=@BRIGHT_GREEN@@BOLD@
-markdown_link_text=@BRIGHT_WHITE@@UNDERLINE@
-markdown_link_url=@WHITE@
-markdown_header1=@BOLD@@BRIGHT_WHITE@
-markdown_header2=@BOLD@@BRIGHT_GREEN@
-markdown_header3=@BOLD@@GREEN@
+# ═══ Markdown ═══
+markdown_bold=@BOLD@
+markdown_italic=@DIM@
+markdown_code=@GREEN@
+markdown_formula=@BRIGHT_GREEN@
+markdown_link_text=@BRIGHT_GREEN@@UNDERLINE@
+markdown_link_url=@DIM@@GREEN@
+markdown_header1=@BOLD@@BRIGHT_GREEN@
+markdown_header2=@GREEN@
+markdown_header3=@WHITE@
 markdown_list_bullet=@BRIGHT_GREEN@
 markdown_quote=@DIM@@GREEN@
-markdown_code_block=@BRIGHT_GREEN@
+markdown_code_block=@GREEN@
 
-# Table colors
-table_border=@GREEN@
-table_header=@BOLD@@BRIGHT_WHITE@
+# ═══ Tables ═══
+table_border=@DIM@@GREEN@
+table_header=@BOLD@@BRIGHT_GREEN@
 
-
-# Spinner animation frames - braille pattern
+# ═══ Spinner ═══
 spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏
