@@ -482,6 +482,17 @@ my $ui = CLIO::UI::Chat->new(
 # Set UI on ai_agent so orchestrator can access it for collaboration
 $ai_agent->set_ui($ui) if $ai_agent;
 
+# Display repair notification if session history was cleaned up on resume
+# This provides user-friendly feedback instead of raw debug warnings
+if ($session && $session->can('state') && $session->state()) {
+    my $state = $session->state();
+    if ($state->can('repair_notification') && $state->repair_notification()) {
+        my $message = $state->repair_notification();
+        # Display as styled system message
+        $ui->display_system_message($message);
+    }
+}
+
 # Register signal handlers to save session on Ctrl+C or SIGTERM
 # This ensures context is preserved when user interrupts the program
 {

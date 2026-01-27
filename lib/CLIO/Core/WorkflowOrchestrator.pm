@@ -12,6 +12,7 @@ use JSON::PP qw(encode_json decode_json);
 use Encode qw(encode_utf8);  # For handling Unicode in JSON
 use Time::HiRes qw(time);
 use Digest::MD5 qw(md5_hex);
+use CLIO::Compat::Terminal qw(ReadKey ReadMode);  # For interrupt detection
 
 # ANSI color codes for terminal output (matching Chat.pm color scheme)
 my %COLORS = (
@@ -203,9 +204,28 @@ sub process_input {
     
     # Load conversation history from session (excluding any system messages from history)
     my $history = $self->_load_conversation_history($session);
+    
+    # Apply aggressive pre-flight trimming before adding history to messages
+    # This prevents token limit errors on the first API call
+    # Uses model's actual context window for dynamic threshold calculation
+    if ($history && @$history) {
+        # Get model capabilities to determine context window
+        my $model_caps = {};
+        if ($self->{api_manager}) {
+            $model_caps = $self->{api_manager}->get_model_capabilities() || {};
+        }
+        
+        $history = $self->_trim_conversation_for_api(
+            $history, 
+            $system_prompt,
+            model_context_window => $model_caps->{max_context_window_tokens} // 128000,
+            max_response_tokens => $model_caps->{max_output_tokens} // 16000,
+        );
+    }
+    
     if ($history && @$history) {
         push @messages, @$history;
-        print STDERR "[DEBUG][WorkflowOrchestrator] Loaded " . scalar(@$history) . " messages from history\n"
+        print STDERR "[DEBUG][WorkflowOrchestrator] Loaded " . scalar(@$history) . " messages from history (after pre-flight trim)\n"
             if $self->{debug};
     }
     
@@ -232,6 +252,13 @@ sub process_input {
         
         print STDERR "[DEBUG][WorkflowOrchestrator] Iteration $iteration/$self->{max_iterations}\n"
             if $self->{debug};
+        
+        # Check for user interrupt (ESC key press)
+        if ($self->_check_for_user_interrupt($session)) {
+            $self->_handle_interrupt($session, \@messages);
+            # Don't count this iteration - interrupt handling is free
+            $iteration--;
+        }
         
         # Enforce message alternation for Claude compatibility
         # Must be done before EVERY API call, as messages array is modified during tool calling
@@ -372,17 +399,43 @@ sub process_input {
                 }
             }
             
-            # Add error message to conversation so AI knows what went wrong
-            # Format it as a user message (to maintain alternation)
-            push @messages, {
-                role => 'user',
-                content => "SYSTEM ERROR: Your previous response triggered an API error and was removed.\n\n" .
-                           "Error details: $error\n\n" .
-                           "Please try a different approach. Avoid repeating the same action that caused this error."
-            };
+            # Check if error is token limit related
+            my $is_token_limit_error = ($error =~ /token|exceed|limit|length/i);
             
-            print STDERR "[INFO][WorkflowOrchestrator] Added error message to conversation, continuing workflow\n"
-                if should_log('INFO');
+            # Only add error message if it's not a token limit error
+            # Token limit errors need more aggressive context trimming, not error messages
+            # (error messages just make the problem worse)
+            if (!$is_token_limit_error) {
+                # Add error message to conversation so AI knows what went wrong
+                # Format it as a user message (to maintain alternation)
+                push @messages, {
+                    role => 'user',
+                    content => "SYSTEM ERROR: Your previous response triggered an API error and was removed.\n\n" .
+                               "Error details: $error\n\n" .
+                               "Please try a different approach. Avoid repeating the same action that caused this error."
+                };
+                
+                print STDERR "[INFO][WorkflowOrchestrator] Added error message to conversation, continuing workflow\n"
+                    if should_log('INFO');
+            } else {
+                # Token limit error - trim messages instead of adding error
+                print STDERR "[WARN][WorkflowOrchestrator] Token limit error detected. Aggressively trimming conversation...\n"
+                    if should_log('WARNING');
+                
+                # Force aggressive trim - keep only last 5 messages
+                my @kept_messages = grep { $_->{role} eq 'system' || $_->{role} eq 'user' } @messages;
+                my @last_user_messages = grep { $_->{role} eq 'user' } @messages;
+                
+                if (@last_user_messages > 5) {
+                    # Remove user messages beyond the last 5
+                    my $remove_count = @last_user_messages - 5;
+                    for (my $i = 0; $i < $remove_count; $i++) {
+                        @messages = grep { $_ != $last_user_messages[$i] } @messages;
+                    }
+                    print STDERR "[DEBUG][WorkflowOrchestrator] Removed " . $remove_count . " older user messages\n"
+                        if $self->{debug};
+                }
+            }
             
             # Continue to next iteration - let AI try again with the error context
             next;
@@ -435,6 +488,8 @@ sub process_input {
         }
         
         # Check if AI requested tool calls (structured or text-based)
+        my $assistant_msg_pending = undef;  # Will be set if we need delayed save
+        
         if ($api_response->{tool_calls} && @{$api_response->{tool_calls}}) {
             print STDERR "[DEBUG][WorkflowOrchestrator] Processing " . 
                 scalar(@{$api_response->{tool_calls}}) . " tool calls\n"
@@ -447,24 +502,33 @@ sub process_input {
                 tool_calls => $api_response->{tool_calls}
             };
             
-            # Save assistant message with tool_calls to session IMMEDIATELY
-            # This ensures that if user presses Ctrl-C during tool execution,
-            # the assistant's response (including tool_calls) is preserved in session history
-            if ($session && $session->can('add_message')) {
-                eval {
-                    $session->add_message(
-                        'assistant',
-                        $api_response->{content} // '',
-                        { tool_calls => $api_response->{tool_calls} }
-                    );
-                    $session->save();
-                    print STDERR "[DEBUG][WorkflowOrchestrator] Saved assistant message with tool_calls to session (preserving state before tool execution)\n"
-                        if should_log('DEBUG');
-                };
-                if ($@) {
-                    print STDERR "[WARN][WorkflowOrchestrator] Failed to save assistant message before tool execution: $@\n";
-                }
-            }
+            # DELAYED SAVE: Do NOT save assistant message with tool_calls yet.
+            # 
+            # REASONING (prevents orphaned tool_calls on interrupt):
+            # If we save the assistant message now, but tool execution is interrupted (Ctrl-C),
+            # the tool results never get saved, leaving orphaned tool_calls in history.
+            # On resume, these orphans cause API errors.
+            #
+            # SOLUTION: Delay saving the assistant message until AFTER the first tool
+            # result is saved. This ensures assistant message + tool results are saved
+            # together as an atomic unit, avoiding orphans entirely.
+            #
+            # If user interrupts during tool execution:
+            # - Assistant message + tool_calls NOT yet saved
+            # - History naturally ends at previous turn (clean state)
+            # - No orphans, no cleanup needed on resume
+            #
+            # The flag below is used in tool result saving (see ~line 780) to ensure
+            # the assistant message is saved when the first tool result completes.
+            
+            $assistant_msg_pending = {
+                role => 'assistant',
+                content => $api_response->{content} // '',
+                tool_calls => $api_response->{tool_calls}
+            };
+            
+            print STDERR "[DEBUG][WorkflowOrchestrator] Delaying save of assistant message with tool_calls until first tool result completes\n"
+                if should_log('DEBUG');
             
             # Classify tools by execution requirements (SAM pattern + CLIO enhancements)
             # - BLOCKING: Must complete before workflow continues (interactive tools)
@@ -684,8 +748,25 @@ sub process_input {
                 # Save tool result to session immediately after adding to conversation
                 # This ensures that if user presses Ctrl-C before next iteration,
                 # the tool execution result is preserved in session history
+                #
+                # ATOMIC SAVING: On first tool result, also save the assistant message with tool_calls.
+                # This ensures they're saved together, preventing orphaned tool_calls on interrupt.
                 if ($session && $session->can('add_message')) {
                     eval {
+                        # Save the assistant message with tool_calls on FIRST tool result
+                        # This makes the assistant + tool results atomic (all or nothing)
+                        if ($assistant_msg_pending) {
+                            $session->add_message(
+                                'assistant',
+                                $assistant_msg_pending->{content},
+                                { tool_calls => $assistant_msg_pending->{tool_calls} }
+                            );
+                            print STDERR "[DEBUG][WorkflowOrchestrator] Saved assistant message with tool_calls to session (on first tool result)\n"
+                                if should_log('DEBUG');
+                            $assistant_msg_pending = undef;  # Mark as saved
+                        }
+                        
+                        # Now save the tool result
                         $session->add_message(
                             'tool',
                             $sanitized_content,
@@ -1122,6 +1203,134 @@ sub _generate_ltm_section {
     return $section;
 }
 
+=head2 _trim_conversation_for_api
+
+Aggressively trim conversation history to fit within API token budget.
+
+Called BEFORE first API call to prevent token limit errors on initial request.
+Uses dynamic thresholds based on model's actual context window.
+
+Strategy:
+1. Keep all system messages (always at start)
+2. Keep last N recent messages (preserve recent context)
+3. Keep high-importance messages from middle
+4. Remove low-importance messages to stay under safe limit
+
+Arguments:
+- $history: Arrayref of message objects from session
+- $system_prompt: The system prompt text (to estimate its token cost)
+- $opts{model_context_window}: Model's max context in tokens (default: 128000)
+- $opts{max_response_tokens}: Model's max response in tokens (default: 16000)
+
+Returns:
+- Trimmed history (or original if already small)
+
+=cut
+
+sub _trim_conversation_for_api {
+    my ($self, $history, $system_prompt, %opts) = @_;
+    
+    return $history unless $history && @$history;
+    
+    use CLIO::Memory::TokenEstimator;
+    
+    # Get model capabilities from options or use defaults
+    my $model_context = $opts{model_context_window} // 128000;
+    my $max_response = $opts{max_response_tokens} // 16000;
+    
+    # Calculate dynamic safe threshold based on model's context window
+    # Use percentages for model-agnostic calculation:
+    # - Start trimming at 58% of max context (leaves 42% safety margin)
+    # - This accounts for max response (typically 12-16% of context)
+    # - And provides buffer for system prompt + estimation errors
+    my $safe_threshold_percent = 0.58;  # 58% of model's max context
+    my $safe_threshold = int($model_context * $safe_threshold_percent);
+    
+    # Estimate current size
+    my $system_tokens = CLIO::Memory::TokenEstimator::estimate_tokens($system_prompt);
+    my $history_tokens = CLIO::Memory::TokenEstimator::estimate_messages_tokens($history);
+    my $current_total = $system_tokens + $history_tokens + 500;  # +500 for padding/estimation error
+    
+    if ($current_total <= $safe_threshold) {
+        if ($self->{debug}) {
+            print STDERR "[DEBUG][WorkflowOrchestrator::_trim_conversation_for_api] History OK: $history_tokens tokens (total: $current_total of $safe_threshold safe limit, model context: $model_context)\n";
+        }
+        return $history;  # No trimming needed
+    }
+    
+    if ($self->{debug}) {
+        print STDERR "[WARN][WorkflowOrchestrator::_trim_conversation_for_api] History exceeds safe limit: $current_total tokens (safe: $safe_threshold of $model_context total). Trimming...\n";
+        print STDERR "[DEBUG]  Model context window: $model_context tokens\n";
+        print STDERR "[DEBUG]  Max response: $max_response tokens\n";
+        print STDERR "[DEBUG]  Safe trim threshold: " . int($safe_threshold_percent * 100) . "% = $safe_threshold tokens\n";
+        print STDERR "[DEBUG]  System prompt: $system_tokens tokens\n";
+        print STDERR "[DEBUG]  History: $history_tokens tokens\n";
+        print STDERR "[DEBUG]  Messages in history: " . scalar(@$history) . "\n";
+    }
+    
+    my @messages = @$history;
+    my @trimmed = ();
+    
+    # Strategy: Keep recent messages, trim older ones
+    # Recent messages are more important for context continuity
+    # Calculate target based on available space (current safe threshold - system prompt)
+    my $target_tokens = int(($safe_threshold - $system_tokens) * 0.9);  # 90% of remaining space
+    my $keep_recent = 10;      # Always keep at least last 10 messages
+    my $current_count = scalar(@messages);
+    
+    # If we have more messages than we want to keep
+    if ($current_count > $keep_recent) {
+        # Calculate how many messages to keep from the beginning
+        # Keep older messages by importance, remove lower-importance older messages
+        my @recent = @messages[-$keep_recent .. -1];  # Last N messages
+        my @older = @messages[0 .. $current_count - $keep_recent - 1];  # Everything else
+        
+        # Sort older messages by importance (highest first)
+        my @sorted_older = sort {
+            ($b->{_importance} // 0) <=> ($a->{_importance} // 0)
+        } @older;
+        
+        # Keep recent and some older high-importance messages
+        @trimmed = @recent;
+        
+        # Estimate tokens in recent messages
+        my $trimmed_tokens = CLIO::Memory::TokenEstimator::estimate_messages_tokens(\@recent);
+        
+        # Add older important messages until we reach target or run out
+        for my $msg (@sorted_older) {
+            my $msg_tokens = CLIO::Memory::TokenEstimator::estimate_tokens($msg->{content} // '');
+            if ($trimmed_tokens + $msg_tokens <= $target_tokens) {
+                push @trimmed, $msg;
+                $trimmed_tokens += $msg_tokens;
+            }
+        }
+        
+        # Maintain chronological order for trimmed messages
+        @trimmed = sort { 
+            my $idx_a = 0;
+            my $idx_b = 0;
+            for my $i (0 .. $#messages) {
+                $idx_a = $i if $messages[$i] == $a;
+                $idx_b = $i if $messages[$i] == $b;
+            }
+            $idx_a <=> $idx_b
+        } @trimmed;
+        
+        my $final_tokens = CLIO::Memory::TokenEstimator::estimate_messages_tokens(\@trimmed);
+        if ($self->{debug}) {
+            print STDERR "[DEBUG][WorkflowOrchestrator::_trim_conversation_for_api] Trimmed: " . 
+                         scalar(@messages) . " -> " . scalar(@trimmed) . " messages\n";
+            print STDERR "[DEBUG]  Token reduction: $history_tokens -> $final_tokens tokens\n";
+            print STDERR "[DEBUG]  Final total with system: " . ($system_tokens + $final_tokens) . " of $safe_threshold safe limit\n";
+        }
+        
+        return \@trimmed;
+    }
+    
+    # If we have few messages, return as-is (shouldn't happen at this point)
+    return $history;
+}
+
 =head2 _load_conversation_history
 
 Load conversation history from session object.
@@ -1540,6 +1749,142 @@ sub _enforce_message_alternation {
         if should_log('DEBUG');
     
     return \@alternating;
+}
+
+
+=head2 _check_for_user_interrupt
+
+Check for ESC key press (user interrupt) non-blocking.
+
+Arguments:
+- $session: Session object (to check and set interrupt flag)
+
+Returns:
+- 1 if interrupt detected (ESC key pressed)
+- 0 if no interrupt
+
+=cut
+
+sub _check_for_user_interrupt {
+    my ($self, $session) = @_;
+    
+    # Only check if we have a TTY
+    return 0 unless -t STDIN;
+    
+    # Skip if already interrupted (prevent duplicate handling)
+    if ($session && $session->state() && $session->state()->{user_interrupted}) {
+        return 0;
+    }
+    
+    # Non-blocking keyboard check
+    my $key;
+    eval {
+        # Set cbreak mode (no echo, immediate input)
+        ReadMode(1);
+        
+        # Non-blocking read (-1 = return immediately if no input)
+        $key = ReadKey(-1);
+        
+        # Restore normal mode
+        ReadMode(0);
+    };
+    
+    # Ensure terminal mode restored even on error
+    ReadMode(0);
+    
+    if ($@) {
+        print STDERR "[WARN][WorkflowOrchestrator] Error checking for interrupt: $@\n"
+            if should_log('WARNING');
+        return 0;
+    }
+    
+    # Check for ESC key (character code 27 = 0x1b)
+    if (defined $key && ord($key) == 27) {
+        print STDERR "[INFO][WorkflowOrchestrator] User interrupt detected (ESC key pressed)\n"
+            if should_log('INFO');
+        
+        # Set interrupt flag in session
+        if ($session && $session->state()) {
+            $session->state()->{user_interrupted} = 1;
+            
+            eval {
+                $session->save();
+            };
+            
+            if ($@) {
+                print STDERR "[WARN][WorkflowOrchestrator] Failed to save interrupt flag to session: $@\n"
+                    if should_log('WARNING');
+            }
+        }
+        
+        return 1;  # Interrupt detected
+    }
+    
+    return 0;  # No interrupt
+}
+
+=head2 _handle_interrupt
+
+Handle user interrupt by injecting message into conversation.
+
+Uses role=user (not role=system) to maintain message alternation.
+Follows existing error message pattern from line 393-401.
+
+Arguments:
+- $session: Session object
+- $messages_ref: Reference to messages array
+
+Returns: Nothing (modifies messages array in place)
+
+=cut
+
+sub _handle_interrupt {
+    my ($self, $session, $messages_ref) = @_;
+    
+    print STDERR "[INFO][WorkflowOrchestrator] Handling user interrupt\n"
+        if should_log('INFO');
+    
+    # Clear interrupt flag (it's been handled)
+    if ($session && $session->state()) {
+        $session->state()->{user_interrupted} = 0;
+    }
+    
+    # Add interrupt message to conversation
+    # Use role=user (not role=system) to maintain alternation
+    # This follows the existing error message pattern (line 393-401)
+    my $interrupt_message = {
+        role => 'user',
+        content => 
+            "━━━ USER INTERRUPT ━━━\n\n" .
+            "You pressed ESC to get the agent's attention.\n\n" .
+            "AGENT: Stop your current work immediately and use the user_collaboration tool to ask what I need.\n\n" .
+            "Example:\n" .
+            "user_collaboration(operation: 'request_input', message: 'You pressed ESC - what do you need?')\n\n" .
+            "The full conversation context has been preserved. I may want to:\n" .
+            "- Give you new instructions\n" .
+            "- Ask about your progress\n" .
+            "- Change the approach\n" .
+            "- Provide additional information\n\n" .
+            "Please use user_collaboration to find out."
+    };
+    
+    push @$messages_ref, $interrupt_message;
+    
+    # Save interrupt message to session
+    if ($session) {
+        eval {
+            $session->add_message('user', $interrupt_message->{content});
+            $session->save();
+        };
+        
+        if ($@) {
+            print STDERR "[WARN][WorkflowOrchestrator] Failed to save interrupt message to session: $@\n"
+                if should_log('WARNING');
+        }
+    }
+    
+    print STDERR "[INFO][WorkflowOrchestrator] Interrupt message added to conversation\n"
+        if should_log('INFO');
 }
 
 1;
