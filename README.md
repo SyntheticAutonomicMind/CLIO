@@ -61,7 +61,7 @@ Get a glimpse of CLIO's beautiful terminal interface in action:
       <img src=".images/clio1.png"/>
     </td>
     <td width="50%">
-      <h3>Claude Haiku Saying Hello</h3>
+      <h3>Claude Haiku describing CLIO</h3>
       <img src=".images/clio2.png"/>
     </td>
   </tr>
