@@ -820,9 +820,12 @@ sub _build_prompt {
     my @parts;
     
     # 1. Model name in brackets
-    my $model = $self->{ai_agent}->{api_manager}->get_current_model() || 'unknown';
-    # Abbreviate long model names
-    $model =~ s/-20\d{6}$//;  # Remove date suffix (e.g., -20250219)
+    my $model = 'unknown';
+    if ($self->{ai_agent} && $self->{ai_agent}->{api_manager}) {
+        $model = $self->{ai_agent}->{api_manager}->get_current_model() || 'unknown';
+        # Abbreviate long model names
+        $model =~ s/-20\d{6}$//;  # Remove date suffix (e.g., -20250219)
+    }
     push @parts, $self->colorize("[$model]", 'prompt_model');
     
     # 2. Directory name (basename only)
