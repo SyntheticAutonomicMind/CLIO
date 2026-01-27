@@ -14,10 +14,11 @@ use Time::HiRes qw(time);
 use Digest::MD5 qw(md5_hex);
 use CLIO::Compat::Terminal qw(ReadKey ReadMode);  # For interrupt detection
 
-# ANSI color codes for terminal output (matching Chat.pm color scheme)
+# ANSI color codes for terminal output - FALLBACK only when UI is unavailable
+# The preferred approach is using $self->{ui}->colorize() which respects theme settings
 my %COLORS = (
     RESET     => "\e[0m",
-    SYSTEM    => "\e[1;35m",  # Bright Magenta - System messages
+    SYSTEM    => "\e[36m",    # Cyan - System messages (fallback matches Theme.pm system_message)
     TOOL      => "\e[1;36m",  # Bright Cyan - Tool names
     DETAIL    => "\e[2;37m",  # Dim White - Action details
 );
@@ -685,8 +686,15 @@ sub process_input {
                 }
                 
                 # Show user-visible feedback BEFORE tool execution (for interactive tools like user_collaboration)
-                print $COLORS{SYSTEM}, "SYSTEM: ", $COLORS{RESET};
-                print $COLORS{TOOL}, "[", $tool_name, "]", $COLORS{RESET};
+                # Use themed output via UI when available, fallback to hardcoded ANSI codes
+                if ($self->{ui} && $self->{ui}->can('colorize')) {
+                    print $self->{ui}->colorize("SYSTEM: ", 'SYSTEM');
+                    print $self->{ui}->colorize("[$tool_name]", 'DATA');  # DATA color for tool info
+                } else {
+                    # Fallback when UI is not available
+                    print $COLORS{SYSTEM}, "SYSTEM: ", $COLORS{RESET};
+                    print $COLORS{TOOL}, "[", $tool_name, "]", $COLORS{RESET};
+                }
                 print "\n";
                 STDOUT->flush() if STDOUT->can('flush');  # Ensure tool header appears immediately
                 
@@ -713,7 +721,11 @@ sub process_input {
                 
                 # Display action detail if provided (as indented follow-up to SYSTEM message)
                 if ($action_detail) {
-                    print $COLORS{DETAIL}, "  → ", $action_detail, $COLORS{RESET}, "\n";
+                    if ($self->{ui} && $self->{ui}->can('colorize')) {
+                        print $self->{ui}->colorize("  → $action_detail", 'DIM'), "\n";
+                    } else {
+                        print $COLORS{DETAIL}, "  → ", $action_detail, $COLORS{RESET}, "\n";
+                    }
                     $| = 1;
                 }
                 
