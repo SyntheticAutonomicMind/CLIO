@@ -821,8 +821,8 @@ sub _build_prompt {
     
     # 1. Model name in brackets
     my $model = 'unknown';
-    if ($self->{ai_agent} && $self->{ai_agent}->{api_manager}) {
-        $model = $self->{ai_agent}->{api_manager}->get_current_model() || 'unknown';
+    if ($self->{ai_agent} && $self->{ai_agent}->{api}) {
+        $model = $self->{ai_agent}->{api}->get_current_model() || 'unknown';
         # Abbreviate long model names
         $model =~ s/-20\d{6}$//;  # Remove date suffix (e.g., -20250219)
     }
