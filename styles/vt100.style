@@ -63,6 +63,9 @@ markdown_list_bullet=@BRIGHT_WHITE@
 markdown_quote=@DIM@@GREEN@
 markdown_code_block=@GREEN@
 
+# Help command styling
+help_command=@BRIGHT_GREEN@
+
 # ═══ Tables ═══
 table_border=@DIM@@GREEN@
 table_header=@BOLD@@BRIGHT_GREEN@
