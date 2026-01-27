@@ -1,0 +1,120 @@
+# CLIO Style: cyberpunk
+# Cyberpunk - Neon Dystopia
+#
+# Color Philosophy:
+# - Dark cyberpunk aesthetic
+# - Electric neon greens and magentas
+# - High-tech, low-life vibes
+# - Matrix meets Blade Runner
+#
+# Based on Consolidated Style Schema v2.0
+
+name=cyberpunk
+
+# ═══════════════════════════════════════════════════════════════
+# CORE SEMANTIC HIERARCHY
+# ═══════════════════════════════════════════════════════════════
+
+primary=@BOLD@@BRIGHT_GREEN@
+secondary=@BRIGHT_MAGENTA@
+normal=@GREEN@
+muted=@DIM@@GREEN@
+subtle=@DIM@
+
+# ═══════════════════════════════════════════════════════════════
+# CONVERSATIONAL
+# ═══════════════════════════════════════════════════════════════
+
+user_prompt=@BRIGHT_MAGENTA@
+user_text=@WHITE@
+agent_label=@BRIGHT_GREEN@
+agent_text=@WHITE@
+system_message=@CYAN@
+
+# ═══════════════════════════════════════════════════════════════
+# FEEDBACK MESSAGES
+# ═══════════════════════════════════════════════════════════════
+
+error=@BRIGHT_RED@
+warning=@BRIGHT_YELLOW@
+success=@BRIGHT_GREEN@
+info=@BRIGHT_CYAN@
+
+# ═══════════════════════════════════════════════════════════════
+# DATA DISPLAY
+# ═══════════════════════════════════════════════════════════════
+
+label=@DIM@@GREEN@
+value=@BRIGHT_GREEN@
+
+# ═══════════════════════════════════════════════════════════════
+# ACTIONABLE ELEMENTS
+# ═══════════════════════════════════════════════════════════════
+
+command=@BRIGHT_MAGENTA@
+link=@BRIGHT_CYAN@@UNDERLINE@
+
+# ═══════════════════════════════════════════════════════════════
+# PROMPT
+# ═══════════════════════════════════════════════════════════════
+
+prompt_model=@CYAN@
+prompt_directory=@BRIGHT_GREEN@
+prompt_git_branch=@BRIGHT_MAGENTA@
+prompt_indicator=@BRIGHT_MAGENTA@
+
+# ═══════════════════════════════════════════════════════════════
+# MARKDOWN
+# ═══════════════════════════════════════════════════════════════
+
+markdown_h1=@BOLD@@BRIGHT_GREEN@
+markdown_h2=@BRIGHT_MAGENTA@
+markdown_h3=@WHITE@
+markdown_bold=@BOLD@
+markdown_italic=@DIM@
+markdown_code=@BRIGHT_CYAN@
+markdown_code_block=@BRIGHT_CYAN@
+markdown_link=@BRIGHT_CYAN@@UNDERLINE@
+markdown_quote=@DIM@@GREEN@
+markdown_list_bullet=@BRIGHT_MAGENTA@
+
+# ═══════════════════════════════════════════════════════════════
+# TABLES
+# ═══════════════════════════════════════════════════════════════
+
+table_header=@BOLD@@BRIGHT_GREEN@
+table_border=@DIM@
+
+# ═══════════════════════════════════════════════════════════════
+# UI ELEMENTS
+# ═══════════════════════════════════════════════════════════════
+
+spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏
+
+# ═══════════════════════════════════════════════════════════════
+# DEPRECATED (Backward Compatibility)
+# ═══════════════════════════════════════════════════════════════
+
+app_title=@BOLD@@BRIGHT_GREEN@
+app_subtitle=@BRIGHT_MAGENTA@
+banner_label=@DIM@@GREEN@
+banner_value=@BRIGHT_GREEN@
+banner_help=@DIM@@GREEN@
+banner_command=@BRIGHT_MAGENTA@
+command_label=@DIM@@GREEN@
+command_value=@BRIGHT_GREEN@
+command_header=@BOLD@@BRIGHT_GREEN@
+command_subheader=@BRIGHT_MAGENTA@
+data=@BRIGHT_GREEN@
+dim=@DIM@
+highlight=@BRIGHT_GREEN@
+theme_header=@BRIGHT_MAGENTA@
+help_command=@BRIGHT_MAGENTA@
+markdown_formula=@BRIGHT_MAGENTA@
+markdown_link_text=@BRIGHT_CYAN@@UNDERLINE@
+markdown_link_url=@DIM@@GREEN@
+error_message=@BRIGHT_RED@
+warning_message=@BRIGHT_YELLOW@
+success_message=@BRIGHT_GREEN@
+info_message=@BRIGHT_CYAN@
+banner=@BRIGHT_GREEN@

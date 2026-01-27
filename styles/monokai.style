@@ -1,0 +1,120 @@
+# CLIO Style: monokai
+# Monokai - Warm, Vibrant Dark Theme
+#
+# Color Philosophy:
+# - Wimer Hazenberg's iconic scheme
+# - Warm background with vibrant accents
+# - Pink, green, orange, yellow highlights
+# - Perfect for long coding sessions
+#
+# Based on Consolidated Style Schema v2.0
+
+name=monokai
+
+# ═══════════════════════════════════════════════════════════════
+# CORE SEMANTIC HIERARCHY
+# ═══════════════════════════════════════════════════════════════
+
+primary=@BOLD@@BRIGHT_MAGENTA@
+secondary=@BRIGHT_GREEN@
+normal=@WHITE@
+muted=@DIM@@WHITE@
+subtle=@DIM@
+
+# ═══════════════════════════════════════════════════════════════
+# CONVERSATIONAL
+# ═══════════════════════════════════════════════════════════════
+
+user_prompt=@BRIGHT_YELLOW@
+user_text=@WHITE@
+agent_label=@BRIGHT_MAGENTA@
+agent_text=@WHITE@
+system_message=@CYAN@
+
+# ═══════════════════════════════════════════════════════════════
+# FEEDBACK MESSAGES
+# ═══════════════════════════════════════════════════════════════
+
+error=@BRIGHT_RED@
+warning=@BRIGHT_YELLOW@
+success=@BRIGHT_GREEN@
+info=@CYAN@
+
+# ═══════════════════════════════════════════════════════════════
+# DATA DISPLAY
+# ═══════════════════════════════════════════════════════════════
+
+label=@DIM@@WHITE@
+value=@BRIGHT_GREEN@
+
+# ═══════════════════════════════════════════════════════════════
+# ACTIONABLE ELEMENTS
+# ═══════════════════════════════════════════════════════════════
+
+command=@BRIGHT_YELLOW@
+link=@BRIGHT_CYAN@@UNDERLINE@
+
+# ═══════════════════════════════════════════════════════════════
+# PROMPT
+# ═══════════════════════════════════════════════════════════════
+
+prompt_model=@CYAN@
+prompt_directory=@BRIGHT_GREEN@
+prompt_git_branch=@BRIGHT_MAGENTA@
+prompt_indicator=@BRIGHT_YELLOW@
+
+# ═══════════════════════════════════════════════════════════════
+# MARKDOWN
+# ═══════════════════════════════════════════════════════════════
+
+markdown_h1=@BOLD@@BRIGHT_MAGENTA@
+markdown_h2=@BRIGHT_GREEN@
+markdown_h3=@WHITE@
+markdown_bold=@BOLD@
+markdown_italic=@DIM@
+markdown_code=@BRIGHT_YELLOW@
+markdown_code_block=@BRIGHT_YELLOW@
+markdown_link=@BRIGHT_CYAN@@UNDERLINE@
+markdown_quote=@DIM@@WHITE@
+markdown_list_bullet=@BRIGHT_YELLOW@
+
+# ═══════════════════════════════════════════════════════════════
+# TABLES
+# ═══════════════════════════════════════════════════════════════
+
+table_header=@BOLD@@BRIGHT_MAGENTA@
+table_border=@DIM@
+
+# ═══════════════════════════════════════════════════════════════
+# UI ELEMENTS
+# ═══════════════════════════════════════════════════════════════
+
+spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏
+
+# ═══════════════════════════════════════════════════════════════
+# DEPRECATED (Backward Compatibility)
+# ═══════════════════════════════════════════════════════════════
+
+app_title=@BOLD@@BRIGHT_MAGENTA@
+app_subtitle=@BRIGHT_GREEN@
+banner_label=@DIM@@WHITE@
+banner_value=@BRIGHT_GREEN@
+banner_help=@DIM@@WHITE@
+banner_command=@BRIGHT_YELLOW@
+command_label=@DIM@@WHITE@
+command_value=@BRIGHT_GREEN@
+command_header=@BOLD@@BRIGHT_MAGENTA@
+command_subheader=@BRIGHT_GREEN@
+data=@BRIGHT_GREEN@
+dim=@DIM@
+highlight=@BRIGHT_GREEN@
+theme_header=@BRIGHT_GREEN@
+help_command=@BRIGHT_YELLOW@
+markdown_formula=@BRIGHT_GREEN@
+markdown_link_text=@BRIGHT_CYAN@@UNDERLINE@
+markdown_link_url=@DIM@@WHITE@
+error_message=@BRIGHT_RED@
+warning_message=@BRIGHT_YELLOW@
+success_message=@BRIGHT_GREEN@
+info_message=@CYAN@
+banner=@BRIGHT_GREEN@

@@ -1,0 +1,120 @@
+# CLIO Style: solarized-light
+# Solarized Light - Precision Colors for Machines and People
+#
+# Color Philosophy:
+# - Light variant of Ethan Schoonover's scheme
+# - Base3 background with base00 foreground
+# - Softer, easier on eyes in bright environments
+# - Same accent palette as dark version
+#
+# Based on Consolidated Style Schema v2.0
+
+name=solarized-light
+
+# ═══════════════════════════════════════════════════════════════
+# CORE SEMANTIC HIERARCHY
+# ═══════════════════════════════════════════════════════════════
+
+primary=@BOLD@@BLUE@
+secondary=@CYAN@
+normal=@BLACK@
+muted=@DIM@@BLUE@
+subtle=@DIM@
+
+# ═══════════════════════════════════════════════════════════════
+# CONVERSATIONAL
+# ═══════════════════════════════════════════════════════════════
+
+user_prompt=@GREEN@
+user_text=@BLACK@
+agent_label=@BLUE@
+agent_text=@BLACK@
+system_message=@CYAN@
+
+# ═══════════════════════════════════════════════════════════════
+# FEEDBACK MESSAGES
+# ═══════════════════════════════════════════════════════════════
+
+error=@RED@
+warning=@YELLOW@
+success=@GREEN@
+info=@CYAN@
+
+# ═══════════════════════════════════════════════════════════════
+# DATA DISPLAY
+# ═══════════════════════════════════════════════════════════════
+
+label=@DIM@@BLUE@
+value=@BLUE@
+
+# ═══════════════════════════════════════════════════════════════
+# ACTIONABLE ELEMENTS
+# ═══════════════════════════════════════════════════════════════
+
+command=@GREEN@
+link=@BLUE@@UNDERLINE@
+
+# ═══════════════════════════════════════════════════════════════
+# PROMPT
+# ═══════════════════════════════════════════════════════════════
+
+prompt_model=@CYAN@
+prompt_directory=@BLUE@
+prompt_git_branch=@DIM@@CYAN@
+prompt_indicator=@GREEN@
+
+# ═══════════════════════════════════════════════════════════════
+# MARKDOWN
+# ═══════════════════════════════════════════════════════════════
+
+markdown_h1=@BOLD@@BLUE@
+markdown_h2=@CYAN@
+markdown_h3=@BLACK@
+markdown_bold=@BOLD@
+markdown_italic=@DIM@
+markdown_code=@MAGENTA@
+markdown_code_block=@MAGENTA@
+markdown_link=@BLUE@@UNDERLINE@
+markdown_quote=@DIM@@CYAN@
+markdown_list_bullet=@GREEN@
+
+# ═══════════════════════════════════════════════════════════════
+# TABLES
+# ═══════════════════════════════════════════════════════════════
+
+table_header=@BOLD@@BLUE@
+table_border=@DIM@
+
+# ═══════════════════════════════════════════════════════════════
+# UI ELEMENTS
+# ═══════════════════════════════════════════════════════════════
+
+spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏
+
+# ═══════════════════════════════════════════════════════════════
+# DEPRECATED (Backward Compatibility)
+# ═══════════════════════════════════════════════════════════════
+
+app_title=@BOLD@@BLUE@
+app_subtitle=@CYAN@
+banner_label=@DIM@@BLUE@
+banner_value=@BLUE@
+banner_help=@DIM@@BLUE@
+banner_command=@GREEN@
+command_label=@DIM@@BLUE@
+command_value=@BLUE@
+command_header=@BOLD@@BLUE@
+command_subheader=@CYAN@
+data=@BLUE@
+dim=@DIM@
+highlight=@BLUE@
+theme_header=@CYAN@
+help_command=@GREEN@
+markdown_formula=@CYAN@
+markdown_link_text=@BLUE@@UNDERLINE@
+markdown_link_url=@DIM@@CYAN@
+error_message=@RED@
+warning_message=@YELLOW@
+success_message=@GREEN@
+info_message=@CYAN@
+banner=@CYAN@

@@ -1,0 +1,120 @@
+# CLIO Style: synthwave
+# Synthwave - Retro Future Neon
+#
+# Color Philosophy:
+# - 80s synthwave aesthetic
+# - Hot pink and electric cyan
+# - Neon glow vibes
+# - Outrun/vaporwave inspired
+#
+# Based on Consolidated Style Schema v2.0
+
+name=synthwave
+
+# ═══════════════════════════════════════════════════════════════
+# CORE SEMANTIC HIERARCHY
+# ═══════════════════════════════════════════════════════════════
+
+primary=@BOLD@@BRIGHT_MAGENTA@
+secondary=@BRIGHT_CYAN@
+normal=@MAGENTA@
+muted=@CYAN@
+subtle=@DIM@
+
+# ═══════════════════════════════════════════════════════════════
+# CONVERSATIONAL
+# ═══════════════════════════════════════════════════════════════
+
+user_prompt=@BRIGHT_MAGENTA@
+user_text=@WHITE@
+agent_label=@BRIGHT_CYAN@
+agent_text=@WHITE@
+system_message=@MAGENTA@
+
+# ═══════════════════════════════════════════════════════════════
+# FEEDBACK MESSAGES
+# ═══════════════════════════════════════════════════════════════
+
+error=@BRIGHT_RED@
+warning=@BRIGHT_YELLOW@
+success=@BRIGHT_GREEN@
+info=@BRIGHT_CYAN@
+
+# ═══════════════════════════════════════════════════════════════
+# DATA DISPLAY
+# ═══════════════════════════════════════════════════════════════
+
+label=@CYAN@
+value=@BRIGHT_MAGENTA@
+
+# ═══════════════════════════════════════════════════════════════
+# ACTIONABLE ELEMENTS
+# ═══════════════════════════════════════════════════════════════
+
+command=@BRIGHT_MAGENTA@
+link=@BRIGHT_CYAN@@UNDERLINE@
+
+# ═══════════════════════════════════════════════════════════════
+# PROMPT
+# ═══════════════════════════════════════════════════════════════
+
+prompt_model=@MAGENTA@
+prompt_directory=@BRIGHT_CYAN@
+prompt_git_branch=@CYAN@
+prompt_indicator=@BRIGHT_MAGENTA@
+
+# ═══════════════════════════════════════════════════════════════
+# MARKDOWN
+# ═══════════════════════════════════════════════════════════════
+
+markdown_h1=@BOLD@@BRIGHT_MAGENTA@
+markdown_h2=@BRIGHT_CYAN@
+markdown_h3=@WHITE@
+markdown_bold=@BOLD@
+markdown_italic=@DIM@
+markdown_code=@BRIGHT_YELLOW@
+markdown_code_block=@BRIGHT_YELLOW@
+markdown_link=@BRIGHT_CYAN@@UNDERLINE@
+markdown_quote=@CYAN@
+markdown_list_bullet=@BRIGHT_MAGENTA@
+
+# ═══════════════════════════════════════════════════════════════
+# TABLES
+# ═══════════════════════════════════════════════════════════════
+
+table_header=@BOLD@@BRIGHT_MAGENTA@
+table_border=@DIM@
+
+# ═══════════════════════════════════════════════════════════════
+# UI ELEMENTS
+# ═══════════════════════════════════════════════════════════════
+
+spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏
+
+# ═══════════════════════════════════════════════════════════════
+# DEPRECATED (Backward Compatibility)
+# ═══════════════════════════════════════════════════════════════
+
+app_title=@BOLD@@BRIGHT_MAGENTA@
+app_subtitle=@BRIGHT_CYAN@
+banner_label=@CYAN@
+banner_value=@BRIGHT_MAGENTA@
+banner_help=@CYAN@
+banner_command=@BRIGHT_MAGENTA@
+command_label=@CYAN@
+command_value=@BRIGHT_MAGENTA@
+command_header=@BOLD@@BRIGHT_MAGENTA@
+command_subheader=@BRIGHT_CYAN@
+data=@BRIGHT_MAGENTA@
+dim=@DIM@
+highlight=@BRIGHT_MAGENTA@
+theme_header=@BRIGHT_CYAN@
+help_command=@BRIGHT_MAGENTA@
+markdown_formula=@BRIGHT_CYAN@
+markdown_link_text=@BRIGHT_CYAN@@UNDERLINE@
+markdown_link_url=@CYAN@
+error_message=@BRIGHT_RED@
+warning_message=@BRIGHT_YELLOW@
+success_message=@BRIGHT_GREEN@
+info_message=@BRIGHT_CYAN@
+banner=@BRIGHT_MAGENTA@

@@ -1,0 +1,120 @@
+# CLIO Style: matrix
+# Matrix - Green Code Rain
+#
+# Color Philosophy:
+# - Inspired by The Matrix
+# - Green on black aesthetic
+# - Digital rain vibes
+# - Hacker terminal feel
+#
+# Based on Consolidated Style Schema v2.0
+
+name=matrix
+
+# ═══════════════════════════════════════════════════════════════
+# CORE SEMANTIC HIERARCHY
+# ═══════════════════════════════════════════════════════════════
+
+primary=@BOLD@@BRIGHT_GREEN@
+secondary=@BRIGHT_GREEN@
+normal=@GREEN@
+muted=@DIM@@GREEN@
+subtle=@DIM@
+
+# ═══════════════════════════════════════════════════════════════
+# CONVERSATIONAL
+# ═══════════════════════════════════════════════════════════════
+
+user_prompt=@BRIGHT_GREEN@
+user_text=@GREEN@
+agent_label=@BRIGHT_GREEN@
+agent_text=@GREEN@
+system_message=@DIM@@GREEN@
+
+# ═══════════════════════════════════════════════════════════════
+# FEEDBACK MESSAGES
+# ═══════════════════════════════════════════════════════════════
+
+error=@BRIGHT_RED@
+warning=@BRIGHT_YELLOW@
+success=@BRIGHT_GREEN@
+info=@GREEN@
+
+# ═══════════════════════════════════════════════════════════════
+# DATA DISPLAY
+# ═══════════════════════════════════════════════════════════════
+
+label=@DIM@@GREEN@
+value=@BRIGHT_GREEN@
+
+# ═══════════════════════════════════════════════════════════════
+# ACTIONABLE ELEMENTS
+# ═══════════════════════════════════════════════════════════════
+
+command=@BRIGHT_GREEN@
+link=@BRIGHT_GREEN@@UNDERLINE@
+
+# ═══════════════════════════════════════════════════════════════
+# PROMPT
+# ═══════════════════════════════════════════════════════════════
+
+prompt_model=@GREEN@
+prompt_directory=@BRIGHT_GREEN@
+prompt_git_branch=@DIM@@GREEN@
+prompt_indicator=@BRIGHT_GREEN@
+
+# ═══════════════════════════════════════════════════════════════
+# MARKDOWN
+# ═══════════════════════════════════════════════════════════════
+
+markdown_h1=@BOLD@@BRIGHT_GREEN@
+markdown_h2=@BRIGHT_GREEN@
+markdown_h3=@GREEN@
+markdown_bold=@BOLD@
+markdown_italic=@DIM@
+markdown_code=@DIM@@GREEN@
+markdown_code_block=@DIM@@GREEN@
+markdown_link=@BRIGHT_GREEN@@UNDERLINE@
+markdown_quote=@DIM@@GREEN@
+markdown_list_bullet=@BRIGHT_GREEN@
+
+# ═══════════════════════════════════════════════════════════════
+# TABLES
+# ═══════════════════════════════════════════════════════════════
+
+table_header=@BOLD@@BRIGHT_GREEN@
+table_border=@DIM@
+
+# ═══════════════════════════════════════════════════════════════
+# UI ELEMENTS
+# ═══════════════════════════════════════════════════════════════
+
+spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏
+
+# ═══════════════════════════════════════════════════════════════
+# DEPRECATED (Backward Compatibility)
+# ═══════════════════════════════════════════════════════════════
+
+app_title=@BOLD@@BRIGHT_GREEN@
+app_subtitle=@BRIGHT_GREEN@
+banner_label=@DIM@@GREEN@
+banner_value=@BRIGHT_GREEN@
+banner_help=@DIM@@GREEN@
+banner_command=@BRIGHT_GREEN@
+command_label=@DIM@@GREEN@
+command_value=@BRIGHT_GREEN@
+command_header=@BOLD@@BRIGHT_GREEN@
+command_subheader=@BRIGHT_GREEN@
+data=@BRIGHT_GREEN@
+dim=@DIM@
+highlight=@BRIGHT_GREEN@
+theme_header=@BRIGHT_GREEN@
+help_command=@BRIGHT_GREEN@
+markdown_formula=@BRIGHT_GREEN@
+markdown_link_text=@BRIGHT_GREEN@@UNDERLINE@
+markdown_link_url=@DIM@@GREEN@
+error_message=@BRIGHT_RED@
+warning_message=@BRIGHT_YELLOW@
+success_message=@BRIGHT_GREEN@
+info_message=@GREEN@
+banner=@BRIGHT_GREEN@
