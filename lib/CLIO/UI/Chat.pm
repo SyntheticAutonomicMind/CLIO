@@ -8,8 +8,9 @@ use CLIO::UI::Markdown;
 use CLIO::UI::ANSI;
 use CLIO::UI::Theme;
 use CLIO::UI::ProgressSpinner;
-use utf8;
 use CLIO::UI::CommandHandler;
+use CLIO::UI::Display;
+use utf8;
 use open ':std', ':encoding(UTF-8)';
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
@@ -110,6 +111,12 @@ sub new {
         session => $self->{session},
         config => $self->{config},
         ai_agent => $self->{ai_agent},
+        debug => $self->{debug},
+    );
+    
+    # Initialize Display for message formatting
+    $self->{display} = CLIO::UI::Display->new(
+        chat => $self,
         debug => $self->{debug},
     );
     
