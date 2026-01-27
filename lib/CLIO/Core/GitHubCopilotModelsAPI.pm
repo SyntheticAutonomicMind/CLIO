@@ -413,3 +413,4 @@ sub _generate_uuid {
     return $uuid;
 }
 
+1;

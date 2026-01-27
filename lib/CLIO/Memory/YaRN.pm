@@ -221,3 +221,5 @@ CLIO Development Team
 Same terms as Perl itself.
 
 =cut
+
+1;

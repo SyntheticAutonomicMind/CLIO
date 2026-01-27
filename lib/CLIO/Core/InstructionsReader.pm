@@ -163,3 +163,4 @@ Future enhancements:
 - Support personal skill folders (.clio/skills)
 - Cache instructions per session (don't re-read every message)
 - Validate instructions syntax
+1;

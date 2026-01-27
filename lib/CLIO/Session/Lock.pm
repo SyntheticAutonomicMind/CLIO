@@ -306,3 +306,5 @@ Uses flock() for advisory locking. Works across processes on the same machine.
 Not suitable for distributed/network filesystems (NFS, etc).
 
 =cut
+
+1;

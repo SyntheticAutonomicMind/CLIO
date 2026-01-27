@@ -170,3 +170,4 @@ Same terms as Perl itself.
 
 =cut
 
+1;
