@@ -792,6 +792,65 @@ sub display_header {
     print "\n";
 }
 
+=head2 _build_prompt
+
+Build the enhanced prompt with model, directory, and git branch.
+
+Format: [model-name] directory-name (git-branch): 
+
+Components:
+- Model name in brackets (themed)
+- Current directory basename (themed)
+- Git branch in parentheses if in repo (themed)
+- Colon prompt indicator (themed based on input mode)
+
+Arguments:
+- $mode: Optional mode ('normal' or 'collaboration'), defaults to 'normal'
+         - 'normal': Uses 'prompt_indicator' color (user's theme)
+         - 'collaboration': Uses 'COLLAB_PROMPT' color (bright cyan/blue)
+
+Returns: Formatted prompt string with theme colors
+
+=cut
+
+sub _build_prompt {
+    my ($self, $mode) = @_;
+    $mode ||= 'normal';  # Default to normal mode
+    
+    my @parts;
+    
+    # 1. Model name in brackets
+    my $model = $self->{ai_agent}->{api_manager}->get_current_model() || 'unknown';
+    # Abbreviate long model names
+    $model =~ s/-20\d{6}$//;  # Remove date suffix (e.g., -20250219)
+    push @parts, $self->colorize("[$model]", 'prompt_model');
+    
+    # 2. Directory name (basename only)
+    use File::Basename;
+    use Cwd 'getcwd';
+    my $cwd = getcwd();
+    my $dir_name = basename($cwd);
+    push @parts, $self->colorize($dir_name, 'prompt_directory');
+    
+    # 3. Git branch (if in git repo)
+    my $branch = `git branch --show-current 2>/dev/null`;
+    chomp $branch if $branch;
+    if ($branch && length($branch) > 0) {
+        push @parts, $self->colorize("($branch)", 'prompt_git_branch');
+    }
+    
+    # 4. Prompt indicator (colon) - color depends on mode
+    my $indicator_color = $mode eq 'collaboration' ? 'COLLAB_PROMPT' : 'prompt_indicator';
+    push @parts, $self->colorize(":", $indicator_color);
+    
+    # Join with spaces (except before colon)
+    my $prompt_text = join(' ', @parts[0..$#parts-1]);  # All but last
+    $prompt_text .= $parts[-1];  # Add colon without space
+    $prompt_text .= ' ';  # Add space after colon for input
+    
+    return $prompt_text;
+}
+
 sub get_input {
     my ($self) = @_;
     
@@ -813,7 +872,7 @@ sub get_input {
     
     # Interactive mode with our custom readline and tab completion
     if ($self->{readline}) {
-        my $prompt = $self->colorize(": ", 'PROMPT');
+        my $prompt = $self->_build_prompt();
         my $input = $self->{readline}->readline($prompt);
         
         # Handle Ctrl-D (EOF)
@@ -827,7 +886,8 @@ sub get_input {
     }
     
     # Fallback to basic input if readline not available
-    print $self->colorize(": ", 'PROMPT');
+    my $prompt = $self->_build_prompt();
+    print $prompt;
     my $input = <STDIN>;
     
     # Handle Ctrl-D (EOF)
@@ -1083,8 +1143,8 @@ sub request_collaboration {
         );
     }
     
-    # Define the collaboration prompt
-    my $collab_prompt = $self->colorize(": ", 'COLLAB_PROMPT');
+    # Define the collaboration prompt (enhanced format with blue indicator)
+    my $collab_prompt = $self->_build_prompt('collaboration');
     
     # Loop to handle multiple inputs (slash commands return to prompt)
     while (1) {
