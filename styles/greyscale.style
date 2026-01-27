@@ -1,0 +1,76 @@
+# CLIO Style: greyscale
+# Modern Grayscale - Sophisticated, Professional
+#
+# Color Philosophy:
+# - Primary: Bright White (main focus elements)
+# - Secondary: White (supporting elements)
+# - Accent: Bright White (actionable items)
+# - Neutral: White/Dim White (readable text)
+# - Muted: Dim (very subtle)
+#
+# Creates elegant, distraction-free interface with perfect readability
+
+name=greyscale
+
+# ═══ Core message colors (elegant grayscale) ═══
+user_prompt=@BRIGHT_WHITE@
+user_text=@WHITE@
+agent_label=@BRIGHT_WHITE@
+agent_text=@WHITE@
+system_message=@DIM@@WHITE@
+error_message=@BRIGHT_RED@
+success_message=@BRIGHT_WHITE@
+warning_message=@BRIGHT_YELLOW@
+info_message=@DIM@@WHITE@
+
+# ═══ Banner (clean, modern) ═══
+app_title=@BOLD@@BRIGHT_WHITE@
+app_subtitle=@DIM@@WHITE@
+banner_label=@DIM@
+banner_value=@BRIGHT_WHITE@
+banner_help=@DIM@
+banner_command=@BRIGHT_WHITE@
+banner=@BRIGHT_WHITE@
+
+# ═══ Enhanced prompt (sophisticated grayscale) ═══
+prompt_model=@DIM@@WHITE@
+prompt_directory=@BRIGHT_WHITE@
+prompt_git_branch=@DIM@
+prompt_indicator=@BRIGHT_WHITE@
+
+# ═══ General UI ═══
+theme_header=@BRIGHT_WHITE@
+data=@WHITE@
+dim=@DIM@
+highlight=@BRIGHT_WHITE@
+muted=@DIM@
+
+# ═══ Command output ═══
+command_header=@BOLD@@BRIGHT_WHITE@
+command_subheader=@WHITE@
+command_label=@DIM@
+command_value=@BRIGHT_WHITE@
+
+# ═══ Markdown (grayscale elegance) ═══
+markdown_bold=@BOLD@
+markdown_italic=@DIM@
+markdown_code=@DIM@@WHITE@
+markdown_formula=@BRIGHT_WHITE@
+markdown_link_text=@BRIGHT_WHITE@@UNDERLINE@
+markdown_link_url=@DIM@
+markdown_header1=@BOLD@@BRIGHT_WHITE@
+markdown_header2=@WHITE@
+markdown_header3=@DIM@@WHITE@
+markdown_list_bullet=@BRIGHT_WHITE@
+markdown_quote=@DIM@
+markdown_code_block=@DIM@@WHITE@
+
+# Help command styling
+help_command=@BRIGHT_WHITE@
+
+# ═══ Tables ═══
+table_border=@DIM@
+table_header=@BOLD@@BRIGHT_WHITE@
+
+# ═══ Spinner ═══
+spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏
