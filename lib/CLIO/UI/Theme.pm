@@ -502,6 +502,10 @@ sub get_builtin_style {
         dim => '@DIM@',
         theme_header => '@BRIGHT_CYAN@',
         prompt_indicator => '@BRIGHT_GREEN@',
+        # Enhanced prompt components
+        prompt_model => '@BRIGHT_CYAN@',
+        prompt_directory => '@BRIGHT_BLUE@',
+        prompt_git_branch => '@BRIGHT_YELLOW@',
         # Status messages
         success_message => '@BRIGHT_GREEN@',
         warning_message => '@BRIGHT_YELLOW@',
