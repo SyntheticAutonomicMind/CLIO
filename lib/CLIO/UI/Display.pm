@@ -4,6 +4,7 @@ use strict;
 use warnings;
 use Carp qw(croak confess);
 use CLIO::Core::Logger qw(should_log);
+use CLIO::Util::TextSanitizer qw(sanitize_text);
 
 =head1 NAME
 
@@ -14,10 +15,7 @@ CLIO::UI::Display - Message display and formatting for CLIO
   use CLIO::UI::Display;
   
   my $display = CLIO::UI::Display->new(
-      theme_mgr => $theme_mgr,
-      markdown_renderer => $markdown_renderer,
-      ansi => $ansi,
-      terminal_width => 80,
+      chat => $chat_instance,
       debug => 0
   );
   
@@ -41,7 +39,8 @@ Responsibilities:
 - Section formatting (headers, key-value pairs, list items)
 - Special displays (usage summaries, thinking indicators)
 
-Uses theme manager for colors and markdown renderer for rich text.
+Phase 1: Delegates back to Chat for colorize, render_markdown, add_to_buffer.
+Future: Will be fully independent with own implementations.
 
 =head1 METHODS
 
@@ -50,10 +49,7 @@ Uses theme manager for colors and markdown renderer for rich text.
 Create a new Display instance.
 
 Arguments:
-- theme_mgr: Theme manager instance
-- markdown_renderer: Markdown renderer instance
-- ansi: ANSI color handler
-- terminal_width: Terminal width in columns
+- chat: Parent Chat instance (for colorize, render_markdown, etc.)
 - debug: Enable debug logging
 
 =cut
@@ -62,10 +58,7 @@ sub new {
     my ($class, %args) = @_;
     
     my $self = {
-        theme_mgr => $args{theme_mgr} || croak "theme_mgr required",
-        markdown_renderer => $args{markdown_renderer} || croak "markdown_renderer required",
-        ansi => $args{ansi} || croak "ansi required",
-        terminal_width => $args{terminal_width} || 80,
+        chat => $args{chat} || croak "chat instance required",
         debug => $args{debug} // 0,
     };
     
@@ -77,57 +70,296 @@ sub new {
 
 Display a user message with appropriate styling.
 
+=cut
+
+sub display_user_message {
+    my ($self, $message) = @_;
+    
+    my $chat = $self->{chat};
+    
+    # Add to screen buffer
+    $chat->add_to_buffer('user', $message);
+    
+    # Add to session history for AI context
+    if ($chat->{session}) {
+        print STDERR "[DEBUG][Chat] Adding user message to session history\n" if should_log('DEBUG');
+        $chat->{session}->add_message('user', $message);
+    } else {
+        print STDERR "[ERROR][Chat] No session object - cannot store message!\n" if should_log('ERROR');
+    }
+    
+    # Display with role label
+    print $chat->colorize("YOU: ", 'USER'), $message, "\n";
+}
+
 =head2 display_assistant_message($message)
 
 Display an assistant message with appropriate styling.
+
+=cut
+
+sub display_assistant_message {
+    my ($self, $message) = @_;
+    
+    my $chat = $self->{chat};
+    
+    # Add to screen buffer (display with original emojis)
+    $chat->add_to_buffer('assistant', $message);
+    
+    # Add to session history for AI context (sanitized to prevent encoding issues)
+    if ($chat->{session}) {
+        print STDERR "[DEBUG][Chat] Adding assistant message to session history\n" if should_log('DEBUG');
+        my $sanitized = sanitize_text($message);
+        $chat->{session}->add_message('assistant', $sanitized);
+    } else {
+        print STDERR "[ERROR][Chat] No session object - cannot store message!\n" if should_log('ERROR');
+    }
+    
+    # Render markdown if enabled
+    my $display_message = $message;
+    if ($chat->{enable_markdown}) {
+        $display_message = $chat->render_markdown($message);
+    }
+    
+    # Display with role label
+    print $chat->colorize("CLIO: ", 'ASSISTANT'), $display_message, "\n";
+}
 
 =head2 display_system_message($message)
 
 Display a system message.
 
+=cut
+
+sub display_system_message {
+    my ($self, $message) = @_;
+    
+    my $chat = $self->{chat};
+    
+    # Add to screen buffer
+    $chat->add_to_buffer('system', $message);
+    
+    print $chat->colorize("SYSTEM: ", 'SYSTEM'), $message, "\n";
+}
+
 =head2 display_error_message($message)
 
 Display an error message.
+
+=cut
+
+sub display_error_message {
+    my ($self, $message) = @_;
+    
+    my $chat = $self->{chat};
+    
+    # Add to screen buffer
+    $chat->add_to_buffer('error', $message);
+    
+    print $chat->colorize("ERROR: ", 'ERROR'), $message, "\n";
+}
 
 =head2 display_success_message($message)
 
 Display a success message.
 
+=cut
+
+sub display_success_message {
+    my ($self, $message) = @_;
+    
+    my $chat = $self->{chat};
+    
+    # Add to screen buffer
+    $chat->add_to_buffer('success', $message);
+    
+    print $chat->colorize("", 'success_message'), $message, "\n";
+}
+
 =head2 display_warning_message($message)
 
 Display a warning message.
+
+=cut
+
+sub display_warning_message {
+    my ($self, $message) = @_;
+    
+    my $chat = $self->{chat};
+    
+    # Add to screen buffer
+    $chat->add_to_buffer('warning', $message);
+    
+    print $chat->colorize("[WARN] ", 'warning_message'), $message, "\n";
+}
 
 =head2 display_info_message($message)
 
 Display an informational message.
 
-=head2 display_header($text)
+=cut
 
-Display a section header.
+sub display_info_message {
+    my ($self, $message) = @_;
+    
+    my $chat = $self->{chat};
+    
+    # Add to screen buffer
+    $chat->add_to_buffer('info', $message);
+    
+    print $chat->colorize("[INFO] ", 'info_message'), $message, "\n";
+}
 
-=head2 display_command_header($command)
+=head2 display_command_header($text, $width)
 
-Display a command header.
+Display a command header with formatting.
 
-=head2 display_section_header($title)
+=cut
+
+sub display_command_header {
+    my ($self, $text, $width) = @_;
+    $width ||= 70;
+    
+    my $chat = $self->{chat};
+    
+    print "\n";
+    print $chat->colorize("═" x $width, 'command_header'), "\n";
+    print $chat->colorize($text, 'command_header'), "\n";
+    print $chat->colorize("═" x $width, 'command_header'), "\n";
+    print "\n";
+}
+
+=head2 display_section_header($text, $width)
 
 Display a section header with formatting.
 
-=head2 display_key_value($key, $value)
+=cut
+
+sub display_section_header {
+    my ($self, $text, $width) = @_;
+    $width ||= 70;
+    
+    my $chat = $self->{chat};
+    
+    print $chat->colorize($text, 'command_subheader'), "\n";
+    print $chat->colorize("─" x $width, 'dim'), "\n";
+}
+
+=head2 display_key_value($key, $value, $key_width)
 
 Display a key-value pair.
 
-=head2 display_list_item($item)
+=cut
+
+sub display_key_value {
+    my ($self, $key, $value, $key_width) = @_;
+    $key_width ||= 20;
+    
+    my $chat = $self->{chat};
+    
+    printf "%-${key_width}s %s\n",
+        $chat->colorize($key . ":", 'command_label'),
+        $chat->colorize($value, 'command_value');
+}
+
+=head2 display_list_item($item, $num)
 
 Display a list item.
 
-=head2 display_usage_summary($summary)
+=cut
+
+sub display_list_item {
+    my ($self, $item, $num) = @_;
+    
+    my $chat = $self->{chat};
+    
+    if (defined $num) {
+        print $chat->colorize("  $num. ", 'command_label'), $item, "\n";
+    } else {
+        print $chat->colorize("  • ", 'command_label'), $item, "\n";
+    }
+}
+
+=head2 display_usage_summary()
 
 Display API usage summary.
+
+=cut
+
+sub display_usage_summary {
+    my ($self) = @_;
+    
+    my $chat = $self->{chat};
+    
+    return unless $chat->{session} && $chat->{session}->{state};
+    
+    my $billing = $chat->{session}->{state}->{billing};
+    return unless $billing;
+    
+    my $model = $billing->{model} || 'unknown';
+    my $multiplier = $billing->{multiplier} || 0;
+    
+    # Only display for premium models (multiplier > 0)
+    return if $multiplier == 0;
+    
+    # Only display if there was an ACTUAL charge in the last request (delta > 0)
+    my $delta = $chat->{session}{_last_quota_delta} || 0;
+    return if $delta <= 0;
+    
+    # Format multiplier
+    my $cost_str;
+    if ($multiplier == int($multiplier)) {
+        $cost_str = sprintf("Cost: %dx", $multiplier);
+    } else {
+        $cost_str = sprintf("Cost: %.2fx", $multiplier);
+        $cost_str =~ s/\.?0+x$/x/;
+    }
+    my $quota_info = '';
+    
+    # Get quota status if available
+    if ($chat->{session}{quota}) {
+        my $quota = $chat->{session}{quota};
+        my $used = $quota->{used} || 0;
+        my $entitlement = $quota->{entitlement} || 0;
+        my $percent_remaining = $quota->{percent_remaining} || 0;
+        my $percent_used = 100.0 - $percent_remaining;
+        
+        my $used_fmt = $used;
+        $used_fmt =~ s/(\d)(?=(\d{3})+$)/$1,/g;
+        
+        my $ent_display;
+        if ($entitlement == -1) {
+            $ent_display = "∞";
+        } else {
+            $ent_display = $entitlement;
+            $ent_display =~ s/(\d)(?=(\d{3})+$)/$1,/g;
+        }
+        
+        $quota_info = sprintf(" Status: %s/%s Used: %.1f%%", $used_fmt, $ent_display, $percent_used);
+    }
+    
+    print $chat->colorize("━ SERVER ━ ", 'SYSTEM');
+    print $cost_str;
+    print $quota_info;
+    print " " . $chat->colorize("━", 'SYSTEM');
+    print "\n";
+}
 
 =head2 show_thinking()
 
 Show thinking indicator.
+
+=cut
+
+sub show_thinking {
+    my ($self) = @_;
+    
+    my $chat = $self->{chat};
+    
+    print $chat->colorize("CLIO: ", 'ASSISTANT');
+    print $chat->colorize("(thinking...)", 'DIM');
+    $| = 1;
+}
 
 =head2 clear_thinking()
 
@@ -135,6 +367,14 @@ Clear thinking indicator.
 
 =cut
 
-# Methods will be extracted from Chat.pm during refactoring
+sub clear_thinking {
+    my ($self) = @_;
+    
+    my $chat = $self->{chat};
+    
+    # Clear line and move cursor back
+    print "\e[2K\e[" . $chat->{terminal_width} . "D";
+}
 
 1;
+
