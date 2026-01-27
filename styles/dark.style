@@ -1,74 +1,120 @@
 # CLIO Style: dark
-# Subdued modern blues - easy on the eyes
+# Dark Mode - Low Light Comfort
 #
-# Cohesive Color Hierarchy:
-# - Primary: Cyan (main focus - subdued, not bright)
-# - Secondary: Dim Cyan (supporting - very subtle)
-# - Accent: Green (actionable - muted green)
-# - Neutral: White (readable text)
-# - Muted: Dim White (less important)
+# Color Philosophy:
+# - Softer colors for reduced eye strain
+# - No bright whites
+# - Comfortable for night use
+# - Balanced contrast
+#
+# Based on Consolidated Style Schema v2.0
 
 name=dark
 
-# ═══ Core message colors ═══
+# ═══════════════════════════════════════════════════════════════
+# CORE SEMANTIC HIERARCHY
+# ═══════════════════════════════════════════════════════════════
+
+primary=@BOLD@@CYAN@
+secondary=@CYAN@
+normal=@WHITE@
+muted=@DIM@@WHITE@
+subtle=@DIM@
+
+# ═══════════════════════════════════════════════════════════════
+# CONVERSATIONAL
+# ═══════════════════════════════════════════════════════════════
+
 user_prompt=@GREEN@
 user_text=@WHITE@
 agent_label=@CYAN@
 agent_text=@WHITE@
-system_message=@DIM@@CYAN@
-error_message=@BRIGHT_RED@
-success_message=@GREEN@
-warning_message=@YELLOW@
-info_message=@CYAN@
+system_message=@MAGENTA@
 
-# ═══ Banner ═══
-app_title=@BOLD@@CYAN@
-app_subtitle=@DIM@@CYAN@
-banner_label=@DIM@@WHITE@
-banner_value=@WHITE@
-banner_help=@DIM@@WHITE@
-banner_command=@GREEN@
-banner=@CYAN@
+# ═══════════════════════════════════════════════════════════════
+# FEEDBACK MESSAGES
+# ═══════════════════════════════════════════════════════════════
 
-# ═══ Enhanced prompt ═══
-prompt_model=@DIM@@CYAN@
+error=@RED@
+warning=@YELLOW@
+success=@GREEN@
+info=@CYAN@
+
+# ═══════════════════════════════════════════════════════════════
+# DATA DISPLAY
+# ═══════════════════════════════════════════════════════════════
+
+label=@DIM@@WHITE@
+value=@WHITE@
+
+# ═══════════════════════════════════════════════════════════════
+# ACTIONABLE ELEMENTS
+# ═══════════════════════════════════════════════════════════════
+
+command=@GREEN@
+link=@CYAN@@UNDERLINE@
+
+# ═══════════════════════════════════════════════════════════════
+# PROMPT
+# ═══════════════════════════════════════════════════════════════
+
+prompt_model=@MAGENTA@
 prompt_directory=@CYAN@
 prompt_git_branch=@DIM@@CYAN@
 prompt_indicator=@GREEN@
 
-# ═══ General UI ═══
-theme_header=@CYAN@
+# ═══════════════════════════════════════════════════════════════
+# MARKDOWN
+# ═══════════════════════════════════════════════════════════════
+
+markdown_h1=@BOLD@@CYAN@
+markdown_h2=@CYAN@
+markdown_h3=@WHITE@
+markdown_bold=@BOLD@
+markdown_italic=@DIM@
+markdown_code=@YELLOW@
+markdown_code_block=@YELLOW@
+markdown_link=@CYAN@@UNDERLINE@
+markdown_quote=@DIM@@CYAN@
+markdown_list_bullet=@GREEN@
+
+# ═══════════════════════════════════════════════════════════════
+# TABLES
+# ═══════════════════════════════════════════════════════════════
+
+table_header=@BOLD@@CYAN@
+table_border=@DIM@
+
+# ═══════════════════════════════════════════════════════════════
+# UI ELEMENTS
+# ═══════════════════════════════════════════════════════════════
+
+spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏
+
+# ═══════════════════════════════════════════════════════════════
+# DEPRECATED (Backward Compatibility)
+# ═══════════════════════════════════════════════════════════════
+
+app_title=@BOLD@@CYAN@
+app_subtitle=@CYAN@
+banner_label=@DIM@@WHITE@
+banner_value=@WHITE@
+banner_help=@DIM@@WHITE@
+banner_command=@GREEN@
+command_label=@DIM@@WHITE@
+command_value=@WHITE@
+command_header=@BOLD@@CYAN@
+command_subheader=@CYAN@
 data=@WHITE@
 dim=@DIM@
 highlight=@CYAN@
-muted=@DIM@@WHITE@
-
-# ═══ Command output ═══
-command_header=@BOLD@@CYAN@
-command_subheader=@DIM@@CYAN@
-command_label=@DIM@@WHITE@
-command_value=@WHITE@
-
-# ═══ Markdown ═══
-markdown_bold=@BOLD@
-markdown_italic=@DIM@
-markdown_code=@DIM@@CYAN@
+theme_header=@CYAN@
+help_command=@GREEN@
 markdown_formula=@CYAN@
 markdown_link_text=@CYAN@@UNDERLINE@
 markdown_link_url=@DIM@@CYAN@
-markdown_header1=@BOLD@@CYAN@
-markdown_header2=@DIM@@CYAN@
-markdown_header3=@WHITE@
-markdown_list_bullet=@GREEN@
-markdown_quote=@DIM@@CYAN@
-markdown_code_block=@DIM@@CYAN@
-
-# Help command styling
-help_command=@CYAN@
-
-# ═══ Tables ═══
-table_border=@DIM@@WHITE@
-table_header=@BOLD@@CYAN@
-
-# ═══ Spinner ═══
-spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏
+error_message=@RED@
+warning_message=@YELLOW@
+success_message=@GREEN@
+info_message=@CYAN@
+banner=@CYAN@

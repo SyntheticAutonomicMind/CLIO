@@ -2,75 +2,119 @@
 # Modern Grayscale - Sophisticated, Professional
 #
 # Color Philosophy:
-# - Primary: Bright White (main focus elements)
-# - Secondary: White (supporting elements)
-# - Accent: Bright White (actionable items)
-# - Neutral: White/Dim White (readable text)
-# - Muted: Dim (very subtle)
+# - Monochromatic elegance
+# - Visual hierarchy through brightness/boldness
+# - No colors - only shades of white/gray
+# - Distraction-free, maximum readability
 #
-# Creates elegant, distraction-free interface with perfect readability
+# Based on Consolidated Style Schema v2.0
 
 name=greyscale
 
-# ═══ Core message colors (elegant grayscale) ═══
+# ═══════════════════════════════════════════════════════════════
+# CORE SEMANTIC HIERARCHY
+# ═══════════════════════════════════════════════════════════════
+
+primary=@BOLD@@BRIGHT_WHITE@
+secondary=@WHITE@
+normal=@WHITE@
+muted=@DIM@@WHITE@
+subtle=@DIM@
+
+# ═══════════════════════════════════════════════════════════════
+# CONVERSATIONAL
+# ═══════════════════════════════════════════════════════════════
+
 user_prompt=@BRIGHT_WHITE@
 user_text=@WHITE@
 agent_label=@BRIGHT_WHITE@
 agent_text=@WHITE@
 system_message=@DIM@@WHITE@
-error_message=@BRIGHT_RED@
-success_message=@BRIGHT_WHITE@
-warning_message=@BRIGHT_YELLOW@
-info_message=@DIM@@WHITE@
 
-# ═══ Banner (clean, modern) ═══
-app_title=@BOLD@@BRIGHT_WHITE@
-app_subtitle=@DIM@@WHITE@
-banner_label=@DIM@
-banner_value=@BRIGHT_WHITE@
-banner_help=@DIM@
-banner_command=@BRIGHT_WHITE@
-banner=@BRIGHT_WHITE@
+# ═══════════════════════════════════════════════════════════════
+# FEEDBACK MESSAGES
+# ═══════════════════════════════════════════════════════════════
 
-# ═══ Enhanced prompt (sophisticated grayscale) ═══
+error=@BRIGHT_RED@
+warning=@BRIGHT_YELLOW@
+success=@BRIGHT_WHITE@
+info=@DIM@@WHITE@
+
+# ═══════════════════════════════════════════════════════════════
+# DATA DISPLAY
+# ═══════════════════════════════════════════════════════════════
+
+label=@DIM@@WHITE@
+value=@BRIGHT_WHITE@
+
+# ═══════════════════════════════════════════════════════════════
+# ACTIONABLE ELEMENTS
+# ═══════════════════════════════════════════════════════════════
+
+command=@BRIGHT_WHITE@
+link=@BRIGHT_WHITE@@UNDERLINE@
+
+# ═══════════════════════════════════════════════════════════════
+# PROMPT
+# ═══════════════════════════════════════════════════════════════
+
 prompt_model=@DIM@@WHITE@
 prompt_directory=@BRIGHT_WHITE@
 prompt_git_branch=@DIM@
 prompt_indicator=@BRIGHT_WHITE@
 
-# ═══ General UI ═══
-theme_header=@BRIGHT_WHITE@
-data=@WHITE@
-dim=@DIM@
-highlight=@BRIGHT_WHITE@
-muted=@DIM@
+# ═══════════════════════════════════════════════════════════════
+# MARKDOWN
+# ═══════════════════════════════════════════════════════════════
 
-# ═══ Command output ═══
-command_header=@BOLD@@BRIGHT_WHITE@
-command_subheader=@WHITE@
-command_label=@DIM@
-command_value=@BRIGHT_WHITE@
-
-# ═══ Markdown (grayscale elegance) ═══
+markdown_h1=@BOLD@@BRIGHT_WHITE@
+markdown_h2=@WHITE@
+markdown_h3=@DIM@@WHITE@
 markdown_bold=@BOLD@
 markdown_italic=@DIM@
 markdown_code=@DIM@@WHITE@
+markdown_code_block=@DIM@@WHITE@
+markdown_link=@BRIGHT_WHITE@@UNDERLINE@
+markdown_quote=@DIM@
+markdown_list_bullet=@BRIGHT_WHITE@
+
+# ═══════════════════════════════════════════════════════════════
+# TABLES
+# ═══════════════════════════════════════════════════════════════
+
+table_header=@BOLD@@BRIGHT_WHITE@
+table_border=@DIM@
+
+# ═══════════════════════════════════════════════════════════════
+# UI ELEMENTS
+# ═══════════════════════════════════════════════════════════════
+
+spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏
+
+# ═══════════════════════════════════════════════════════════════
+# DEPRECATED (Backward Compatibility)
+# ═══════════════════════════════════════════════════════════════
+
+app_title=@BOLD@@BRIGHT_WHITE@
+app_subtitle=@WHITE@
+banner_label=@DIM@@WHITE@
+banner_value=@BRIGHT_WHITE@
+banner_help=@DIM@@WHITE@
+banner_command=@BRIGHT_WHITE@
+command_label=@DIM@@WHITE@
+command_value=@BRIGHT_WHITE@
+command_header=@BOLD@@BRIGHT_WHITE@
+command_subheader=@WHITE@
+data=@BRIGHT_WHITE@
+dim=@DIM@
+highlight=@BRIGHT_WHITE@
+theme_header=@BRIGHT_WHITE@
+help_command=@BRIGHT_WHITE@
 markdown_formula=@BRIGHT_WHITE@
 markdown_link_text=@BRIGHT_WHITE@@UNDERLINE@
 markdown_link_url=@DIM@
-markdown_header1=@BOLD@@BRIGHT_WHITE@
-markdown_header2=@WHITE@
-markdown_header3=@DIM@@WHITE@
-markdown_list_bullet=@BRIGHT_WHITE@
-markdown_quote=@DIM@
-markdown_code_block=@DIM@@WHITE@
-
-# Help command styling
-help_command=@BRIGHT_WHITE@
-
-# ═══ Tables ═══
-table_border=@DIM@
-table_header=@BOLD@@BRIGHT_WHITE@
-
-# ═══ Spinner ═══
-spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏
+error_message=@BRIGHT_RED@
+warning_message=@BRIGHT_YELLOW@
+success_message=@BRIGHT_WHITE@
+info_message=@DIM@@WHITE@
+banner=@BRIGHT_WHITE@

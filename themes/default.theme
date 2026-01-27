@@ -11,9 +11,9 @@ error_prefix={style.error_message}ERROR: @RESET@
 
 # Banner (displayed at session start)
 banner_line1={style.app_title}CLIO@RESET@ {style.app_subtitle}- Command Line Intelligence Orchestrator@RESET@
-banner_line2=Session ID: {style.data}{var.session_id}@RESET@
-banner_line3=You are connected to {style.data}{var.model}@RESET@
-banner_line4={style.dim}Type "/help" for a list of commands.@RESET@
+banner_line2={style.banner_label}Session ID: {style.data}{var.session_id}@RESET@
+banner_line3={style.banner_label}You are connected to {style.data}{var.model}@RESET@
+banner_line4={style.banner_label}Type "{style.data}/help{style.banner_label}" for a list of commands.@RESET@
 
 # Help system
 help_header={style.data}{var.title}@RESET@

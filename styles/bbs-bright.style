@@ -1,74 +1,119 @@
 # CLIO Style: bbs-bright
-# BBS bright cyan - bulletin board nostalgia
+# BBS Bright - Cyan Nostalgia
 #
-# Cohesive Color Hierarchy:
-# - Primary: Bright Cyan (main focus - BBS headers)
-# - Secondary: Cyan (supporting - BBS menus)
-# - Accent: Bright Cyan (actionable - BBS prompts)
-# - Neutral: Bright White (readable text - clean BBS text)
-# - Muted: Dim Cyan (less important - faded cyan)
+# Color Philosophy:
+# - Bright cyan like old BBS systems
+# - High contrast for readability
+# - Retro bulletin board feel
+#
+# Based on Consolidated Style Schema v2.0
 
 name=bbs-bright
 
-# ═══ Core message colors ═══
+# ═══════════════════════════════════════════════════════════════
+# CORE SEMANTIC HIERARCHY
+# ═══════════════════════════════════════════════════════════════
+
+primary=@BOLD@@BRIGHT_CYAN@
+secondary=@BRIGHT_CYAN@
+normal=@CYAN@
+muted=@DIM@@CYAN@
+subtle=@DIM@
+
+# ═══════════════════════════════════════════════════════════════
+# CONVERSATIONAL
+# ═══════════════════════════════════════════════════════════════
+
 user_prompt=@BRIGHT_CYAN@
-user_text=@BRIGHT_WHITE@
+user_text=@CYAN@
 agent_label=@BRIGHT_CYAN@
-agent_text=@BRIGHT_WHITE@
-system_message=@CYAN@
-error_message=@BRIGHT_RED@
-success_message=@BRIGHT_GREEN@
-warning_message=@BRIGHT_YELLOW@
-info_message=@CYAN@
+agent_text=@CYAN@
+system_message=@DIM@@CYAN@
 
-# ═══ Banner ═══
-app_title=@BOLD@@BRIGHT_CYAN@
-app_subtitle=@CYAN@
-banner_label=@DIM@@CYAN@
-banner_value=@BRIGHT_WHITE@
-banner_help=@DIM@@CYAN@
-banner_command=@BRIGHT_CYAN@
-banner=@BRIGHT_CYAN@
+# ═══════════════════════════════════════════════════════════════
+# FEEDBACK MESSAGES
+# ═══════════════════════════════════════════════════════════════
 
-# ═══ Enhanced prompt ═══
+error=@BRIGHT_RED@
+warning=@BRIGHT_YELLOW@
+success=@BRIGHT_CYAN@
+info=@DIM@@CYAN@
+
+# ═══════════════════════════════════════════════════════════════
+# DATA DISPLAY
+# ═══════════════════════════════════════════════════════════════
+
+label=@DIM@@CYAN@
+value=@BRIGHT_CYAN@
+
+# ═══════════════════════════════════════════════════════════════
+# ACTIONABLE ELEMENTS
+# ═══════════════════════════════════════════════════════════════
+
+command=@BRIGHT_CYAN@
+link=@BRIGHT_CYAN@@@UNDERLINE@
+
+# ═══════════════════════════════════════════════════════════════
+# PROMPT
+# ═══════════════════════════════════════════════════════════════
+
 prompt_model=@CYAN@
 prompt_directory=@BRIGHT_CYAN@
 prompt_git_branch=@DIM@@CYAN@
 prompt_indicator=@BRIGHT_CYAN@
 
-# ═══ General UI ═══
-theme_header=@BRIGHT_CYAN@
-data=@BRIGHT_WHITE@
-dim=@DIM@
-highlight=@BRIGHT_CYAN@
-muted=@DIM@@CYAN@
+# ═══════════════════════════════════════════════════════════════
+# MARKDOWN
+# ═══════════════════════════════════════════════════════════════
 
-# ═══ Command output ═══
-command_header=@BOLD@@BRIGHT_CYAN@
-command_subheader=@CYAN@
-command_label=@DIM@@CYAN@
-command_value=@BRIGHT_WHITE@
-
-# ═══ Markdown ═══
+markdown_h1=@BOLD@@BRIGHT_CYAN@
+markdown_h2=@BRIGHT_CYAN@
+markdown_h3=@CYAN@
 markdown_bold=@BOLD@
 markdown_italic=@DIM@
-markdown_code=@CYAN@
-markdown_formula=@BRIGHT_CYAN@
-markdown_link_text=@BRIGHT_CYAN@@UNDERLINE@
-markdown_link_url=@DIM@@CYAN@
-markdown_header1=@BOLD@@BRIGHT_CYAN@
-markdown_header2=@CYAN@
-markdown_header3=@BRIGHT_WHITE@
-markdown_list_bullet=@BRIGHT_GREEN@
+markdown_code=@DIM@@CYAN@
+markdown_code_block=@DIM@@CYAN@
+markdown_link=@BRIGHT_CYAN@@@UNDERLINE@
 markdown_quote=@DIM@@CYAN@
-markdown_code_block=@CYAN@
+markdown_list_bullet=@BRIGHT_CYAN@
 
-# Help command styling
-help_command=@BRIGHT_CYAN@
+# ═══════════════════════════════════════════════════════════════
+# TABLES
+# ═══════════════════════════════════════════════════════════════
 
-# ═══ Tables ═══
-table_border=@DIM@@CYAN@
 table_header=@BOLD@@BRIGHT_CYAN@
+table_border=@DIM@
 
-# ═══ Spinner ═══
+# ═══════════════════════════════════════════════════════════════
+# UI ELEMENTS
+# ═══════════════════════════════════════════════════════════════
+
 spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏
+
+# ═══════════════════════════════════════════════════════════════
+# DEPRECATED (Backward Compatibility)
+# ═══════════════════════════════════════════════════════════════
+
+app_title=@BOLD@@BRIGHT_CYAN@
+app_subtitle=@BRIGHT_CYAN@
+banner_label=@DIM@@CYAN@
+banner_value=@BRIGHT_CYAN@
+banner_help=@DIM@@CYAN@
+banner_command=@BRIGHT_CYAN@
+command_label=@DIM@@CYAN@
+command_value=@BRIGHT_CYAN@
+command_header=@BOLD@@BRIGHT_CYAN@
+command_subheader=@BRIGHT_CYAN@
+data=@BRIGHT_CYAN@
+dim=@DIM@
+highlight=@BRIGHT_CYAN@
+theme_header=@BRIGHT_CYAN@
+help_command=@BRIGHT_CYAN@
+markdown_formula=@BRIGHT_CYAN@
+markdown_link_text=@BRIGHT_CYAN@@@UNDERLINE@
+markdown_link_url=@DIM@@CYAN@
+error_message=@BRIGHT_RED@
+warning_message=@BRIGHT_YELLOW@
+success_message=@BRIGHT_CYAN@
+info_message=@DIM@@CYAN@
+banner=@BRIGHT_CYAN@
