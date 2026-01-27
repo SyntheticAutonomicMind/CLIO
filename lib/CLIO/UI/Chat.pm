@@ -1354,80 +1354,80 @@ sub display_help {
     # Sections
     push @help_lines, $self->colorize("BASICS", 'command_subheader');
     push @help_lines, $self->colorize("─" x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/help, /h', 'prompt_indicator'), 'Display this help');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/exit, /quit, /q', 'prompt_indicator'), 'Exit the chat');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/clear', 'prompt_indicator'), 'Clear the screen');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/help, /h', 'help_command'), 'Display this help');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/exit, /quit, /q', 'help_command'), 'Exit the chat');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/clear', 'help_command'), 'Clear the screen');
     push @help_lines, "";
     
     push @help_lines, $self->colorize("API & CONFIG", 'command_subheader');
     push @help_lines, $self->colorize("─" x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api', 'prompt_indicator'), 'API settings (model, provider, login)');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api set model <name>', 'prompt_indicator'), 'Set AI model');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api models', 'prompt_indicator'), 'List available models');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/config', 'prompt_indicator'), 'Global configuration');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api', 'help_command'), 'API settings (model, provider, login)');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api set model <name>', 'help_command'), 'Set AI model');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api models', 'help_command'), 'List available models');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/config', 'help_command'), 'Global configuration');
     push @help_lines, "";
     
     push @help_lines, $self->colorize("SESSION", 'command_subheader');
     push @help_lines, $self->colorize("─" x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/session', 'prompt_indicator'), 'Session management');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/session list', 'prompt_indicator'), 'List all sessions');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/session switch', 'prompt_indicator'), 'Switch sessions');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/session', 'help_command'), 'Session management');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/session list', 'help_command'), 'List all sessions');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/session switch', 'help_command'), 'Switch sessions');
     push @help_lines, "";
     
     push @help_lines, $self->colorize("FILE & GIT", 'command_subheader');
     push @help_lines, $self->colorize("─" x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/file', 'prompt_indicator'), 'File operations');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/file read <path>', 'prompt_indicator'), 'View file');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/git', 'prompt_indicator'), 'Git operations');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/git status', 'prompt_indicator'), 'Show git status');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/file', 'help_command'), 'File operations');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/file read <path>', 'help_command'), 'View file');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/git', 'help_command'), 'Git operations');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/git status', 'help_command'), 'Show git status');
     push @help_lines, "";
     
     push @help_lines, $self->colorize("TODO", 'command_subheader');
     push @help_lines, $self->colorize("─" x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo', 'prompt_indicator'), "View agent's todo list");
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo add <text>', 'prompt_indicator'), 'Add todo');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo done <id>', 'prompt_indicator'), 'Complete todo');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo', 'help_command'), "View agent's todo list");
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo add <text>', 'help_command'), 'Add todo');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo done <id>', 'help_command'), 'Complete todo');
     push @help_lines, "";
     
     push @help_lines, $self->colorize("MEMORY", 'command_subheader');
     push @help_lines, $self->colorize("─" x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory', 'prompt_indicator'), 'View long-term memory patterns');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory list [type]', 'prompt_indicator'), 'List all or filtered patterns');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory store <type>', 'prompt_indicator'), 'Store pattern (via AI)');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory clear', 'prompt_indicator'), 'Clear all patterns');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory', 'help_command'), 'View long-term memory patterns');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory list [type]', 'help_command'), 'List all or filtered patterns');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory store <type>', 'help_command'), 'Store pattern (via AI)');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory clear', 'help_command'), 'Clear all patterns');
     push @help_lines, "";
     
     push @help_lines, $self->colorize("UPDATES", 'command_subheader');
     push @help_lines, $self->colorize("─" x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/update', 'prompt_indicator'), 'Show update status and help');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/update check', 'prompt_indicator'), 'Check for available updates');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/update list', 'prompt_indicator'), 'List all available versions');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/update install', 'prompt_indicator'), 'Install latest version');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/update switch <ver>', 'prompt_indicator'), 'Switch to a specific version');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/update', 'help_command'), 'Show update status and help');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/update check', 'help_command'), 'Check for available updates');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/update list', 'help_command'), 'List all available versions');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/update install', 'help_command'), 'Install latest version');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/update switch <ver>', 'help_command'), 'Switch to a specific version');
     push @help_lines, "";
     
     push @help_lines, $self->colorize("DEVELOPER", 'command_subheader');
     push @help_lines, $self->colorize("─" x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/explain [file]', 'prompt_indicator'), 'Explain code');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/review [file]', 'prompt_indicator'), 'Review code');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/test [file]', 'prompt_indicator'), 'Generate tests');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/fix <file>', 'prompt_indicator'), 'Propose fixes');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/doc <file>', 'prompt_indicator'), 'Generate docs');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/explain [file]', 'help_command'), 'Explain code');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/review [file]', 'help_command'), 'Review code');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/test [file]', 'help_command'), 'Generate tests');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/fix <file>', 'help_command'), 'Propose fixes');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/doc <file>', 'help_command'), 'Generate docs');
     push @help_lines, "";
     
     push @help_lines, $self->colorize("SKILLS & PROMPTS", 'command_subheader');
     push @help_lines, $self->colorize("─" x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/skills', 'prompt_indicator'), 'Manage custom skills');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/prompt', 'prompt_indicator'), 'Manage system prompts');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/skills', 'help_command'), 'Manage custom skills');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/prompt', 'help_command'), 'Manage system prompts');
     push @help_lines, "";
     
     push @help_lines, $self->colorize("OTHER", 'command_subheader');
     push @help_lines, $self->colorize("─" x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/billing', 'prompt_indicator'), 'API usage stats');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/context', 'prompt_indicator'), 'Manage context files');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/exec <cmd>', 'prompt_indicator'), 'Run shell command');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/style, /theme', 'prompt_indicator'), 'Appearance settings');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/debug', 'prompt_indicator'), 'Toggle debug mode');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/billing', 'help_command'), 'API usage stats');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/context', 'help_command'), 'Manage context files');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/exec <cmd>', 'help_command'), 'Run shell command');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/style, /theme', 'help_command'), 'Appearance settings');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/debug', 'help_command'), 'Toggle debug mode');
     push @help_lines, "";
     
     # Output with pagination

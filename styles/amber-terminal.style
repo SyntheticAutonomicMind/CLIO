@@ -63,6 +63,9 @@ markdown_list_bullet=@BRIGHT_YELLOW@
 markdown_quote=@DIM@@YELLOW@
 markdown_code_block=@YELLOW@
 
+# Help command styling
+help_command=@BRIGHT_YELLOW@
+
 # ═══ Tables ═══
 table_border=@DIM@@YELLOW@
 table_header=@BOLD@@BRIGHT_YELLOW@
