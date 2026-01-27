@@ -163,6 +163,10 @@ sub new {
         rate_limit_until => 0,  # Rate limiting support
         session          => $args{session},  # Session for statefulMarker
         performance_monitor => CLIO::Core::PerformanceMonitor->new(debug => $args{debug} // 0),
+        
+        # Token estimation with adaptive learning
+        learned_token_ratio => 2.5,  # Start with 2.5, learn from API responses
+        
         %args,
     };
     bless $self, $class;
@@ -412,7 +416,10 @@ sub get_model_capabilities {
     my ($api_type, $models_url) = $self->_detect_api_type_and_url($api_base);
     
     unless ($models_url) {
-        warn "[DEBUG][APIManager] Unable to determine models endpoint for: $api_base\n" if $self->{debug};
+        if (should_log('WARNING')) {
+            print STDERR "[WARNING][APIManager] Unable to determine models endpoint for: $api_base\n";
+            print STDERR "[WARNING][APIManager] This will use fallback token limits instead of actual model capabilities\n";
+        }
         return undef;
     }
     
@@ -426,13 +433,20 @@ sub get_model_capabilities {
     my $resp = $ua->get($models_url, headers => \%headers);
     
     unless ($resp->is_success) {
-        warn "[DEBUG][APIManager] Failed to fetch models: " . $resp->code . " " . $resp->message . "\n" if $self->{debug};
+        if (should_log('WARNING')) {
+            print STDERR "[WARNING][APIManager] Failed to fetch models from $models_url\n";
+            print STDERR "[WARNING][APIManager] HTTP " . $resp->code . ": " . $resp->message . "\n";
+            print STDERR "[WARNING][APIManager] Will use fallback token limits\n";
+        }
         return undef;
     }
     
     my $data = eval { JSON::PP::decode_json($resp->decoded_content) };
     if ($@) {
-        warn "[DEBUG][APIManager] Failed to parse models response: $@\n" if $self->{debug};
+        if (should_log('WARNING')) {
+            print STDERR "[WARNING][APIManager] Failed to parse models response from $models_url\n";
+            print STDERR "[WARNING][APIManager] JSON error: $@\n";
+        }
         return undef;
     }
     
@@ -479,7 +493,11 @@ sub get_model_capabilities {
         }
     }
     
-    warn "[DEBUG][APIManager] Model $model not found in API response\n" if $self->{debug};
+    if (should_log('WARNING')) {
+        print STDERR "[WARNING][APIManager] Model $model not found in /models API response\n";
+        print STDERR "[WARNING][APIManager] Available models: " . join(", ", map { $_->{id} || '?' } @$models) . "\n";
+        print STDERR "[WARNING][APIManager] Will use fallback token limits\n";
+    }
     return undef;
 }
 
@@ -570,12 +588,15 @@ sub validate_and_truncate_messages {
     if ($caps && $caps->{max_prompt_tokens}) {
         $max_prompt = $caps->{max_prompt_tokens};
     } else {
-        # Fallback to conservative default when capabilities unavailable
-        # Most modern models support at least 64k tokens (Claude, GPT-4, etc.)
-        # Using 64k instead of 128k to be conservative when model is unknown
-        $max_prompt = 64000;
-        print STDERR "[WARNING][APIManager] Model capabilities unavailable, using fallback token limit: $max_prompt\n"
-            if should_log('WARNING');
+        # Fallback when capabilities unavailable
+        # Modern models (GPT-4, Claude, etc.) typically have 128K+ context
+        $max_prompt = 128000;
+        
+        if (should_log('WARNING')) {
+            print STDERR "[WARNING][APIManager] Model capabilities unavailable for $model\n";
+            print STDERR "[WARNING][APIManager] Using fallback token limit: $max_prompt\n";
+            print STDERR "[WARNING][APIManager] This may indicate an issue fetching /models endpoint\n";
+        }
     }
     
     # Account for tool definitions in token budget
@@ -605,13 +626,12 @@ sub validate_and_truncate_messages {
     print STDERR "[DEBUG][APIManager] Token budget: max=$max_prompt, tools=$tool_tokens, estimation_margin=$estimation_margin, response_buffer=$response_buffer, effective=$effective_limit\n"
         if $self->{debug};
     
-    # Estimate current token count using conservative ratio
-    # Using /2.5 instead of /3 for more conservative estimation (code/JSON have high token density)
+    # Use learned token ratio for estimation (starts at 2.5, adapts from API feedback)
     my $estimated_tokens = 0;
     for my $msg (@$messages) {
-        # Count content field
+        # Count content field using learned ratio
         if ($msg->{content}) {
-            $estimated_tokens += int(length($msg->{content}) / 2.5);
+            $estimated_tokens += int(length($msg->{content}) / $self->{learned_token_ratio});
         }
         
         # Count tool_calls (assistant requesting tool execution)
@@ -619,7 +639,7 @@ sub validate_and_truncate_messages {
             for my $tool_call (@{$msg->{tool_calls}}) {
                 # Serialize tool_call to JSON to get accurate size
                 my $tool_json = encode_json($tool_call);
-                $estimated_tokens += int(length($tool_json) / 2.5);
+                $estimated_tokens += int(length($tool_json) / $self->{learned_token_ratio});
             }
         }
         
@@ -775,13 +795,13 @@ sub validate_and_truncate_messages {
     
     # Now truncate by units, keeping newest
     # Strategy: Keep system message separate, then build rest from newest to oldest
-    my $system_msg = undef;
+    my $truncation_system_msg = undef;
     my $system_tokens = 0;
     my $start_unit = 0;
     
     # Extract system message if first
     if (@units && @{$units[0]{messages}} && $units[0]{messages}[0]{role} eq 'system') {
-        $system_msg = $units[0]{messages}[0];
+        $truncation_system_msg = $units[0]{messages}[0];
         $system_tokens = $units[0]{tokens};
         $start_unit = 1;
     }
@@ -835,7 +855,7 @@ sub validate_and_truncate_messages {
     
     # Combine: system (if any) + validated conversation
     my @truncated = ();
-    push @truncated, $system_msg if $system_msg;
+    push @truncated, $truncation_system_msg if $truncation_system_msg;
     push @truncated, @validated_conversation;
     
     my $final_tokens = 0;
@@ -849,6 +869,68 @@ sub validate_and_truncate_messages {
     }
     
     return \@truncated;
+}
+
+=head2 _learn_from_api_response
+
+Learn from actual API token usage to improve future estimations.
+Part of Strategy #5 for comprehensive token management.
+
+This method compares our estimated token count with the actual count
+returned by the API, then adjusts the learned_token_ratio to be more
+accurate over time.
+
+Arguments:
+- $usage: Hash ref with prompt_tokens and completion_tokens from API
+- $messages: Array ref of messages that were sent
+
+=cut
+
+sub _learn_from_api_response {
+    my ($self, $usage, $messages) = @_;
+    
+    return unless $usage && $messages;
+    return unless $usage->{prompt_tokens};
+    
+    my $actual_tokens = $usage->{prompt_tokens};
+    
+    # Calculate total character count of messages
+    my $total_chars = 0;
+    for my $msg (@$messages) {
+        $total_chars += length($msg->{content} || '');
+        
+        # Include tool_calls size
+        if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
+            for my $tc (@{$msg->{tool_calls}}) {
+                my $json = encode_json($tc);
+                $total_chars += length($json);
+            }
+        }
+    }
+    
+    return if $total_chars == 0;  # Avoid division by zero
+    
+    # Calculate actual char/token ratio from this response
+    my $actual_ratio = $total_chars / $actual_tokens;
+    
+    # Weighted average: 80% old ratio + 20% new observation
+    # This smooths out variance while still adapting to patterns
+    my $old_ratio = $self->{learned_token_ratio};
+    my $new_ratio = ($old_ratio * 0.8) + ($actual_ratio * 0.2);
+    
+    # Clamp ratio to reasonable bounds (1.5 to 4.0)
+    # Prevents outliers from skewing too far
+    $new_ratio = 1.5 if $new_ratio < 1.5;
+    $new_ratio = 4.0 if $new_ratio > 4.0;
+    
+    if ($self->{debug}) {
+        printf STDERR "[DEBUG][APIManager] Token learning: actual=%d, chars=%d, ratio=%.2f, old_learned=%.2f, new_learned=%.2f\n",
+            $actual_tokens, $total_chars, $actual_ratio, $old_ratio, $new_ratio;
+    }
+    
+    $self->{learned_token_ratio} = $new_ratio;
+    
+    return $new_ratio;
 }
 
 # Helper: Prepare endpoint configuration and model
@@ -1482,6 +1564,9 @@ sub send_request {
         if ($data->{usage}) {
             $tokens_in = $data->{usage}{prompt_tokens} || 0;
             $tokens_out = $data->{usage}{completion_tokens} || 0;
+            
+            # Strategy #5: Learn from actual API response to improve estimation
+            $self->_learn_from_api_response($data->{usage}, $messages);
         }
         
         # Record successful request performance

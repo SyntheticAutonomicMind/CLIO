@@ -224,6 +224,8 @@ sub process_input {
     my $iteration = 0;
     my @tool_calls_made = ();
     my $start_time = time();
+    my $retry_count = 0;  # Track retries per iteration (prevents infinite loops)
+    my $max_retries = 3;  # Maximum retries before giving up
     
     while ($iteration < $self->{max_iterations}) {
         $iteration++;
@@ -307,18 +309,31 @@ sub process_input {
             
             # Check if this is a retryable error (rate limit or server error)
             if ($api_response->{retryable}) {
+                $retry_count++;
+                
+                # Check if we've exceeded max retries for this iteration
+                if ($retry_count > $max_retries) {
+                    print STDERR "[ERROR][WorkflowOrchestrator] Maximum retries ($max_retries) exceeded for this iteration\n";
+                    return {
+                        success => 0,
+                        error => "Maximum retries exceeded: $error",
+                        iterations => $iteration,
+                        tool_calls_made => \@tool_calls_made
+                    };
+                }
+                
                 my $retry_delay = $api_response->{retry_after} || 2;
                 
                 # Determine error type for logging
                 my $error_type = $error =~ /rate limit/i ? "rate limit" : "server error";
-                my $system_msg = "Temporary $error_type detected. Retrying in ${retry_delay}s...";
+                my $system_msg = "Temporary $error_type detected. Retrying in ${retry_delay}s... (attempt $retry_count/$max_retries)";
                 
                 # Call system message callback if provided
                 if ($on_system_message) {
                     eval { $on_system_message->($system_msg); };
                     print STDERR "[ERROR][WorkflowOrchestrator] Error in on_system_message callback: $@\n" if $@;
                 } else {
-                    print STDERR "[INFO][WorkflowOrchestrator] Retryable $error_type detected, retrying in ${retry_delay}s on next iteration\n";
+                    print STDERR "[INFO][WorkflowOrchestrator] Retryable $error_type detected, retrying in ${retry_delay}s on next iteration (attempt $retry_count/$max_retries)\n";
                 }
                 
                 # Enable signal delivery during retry wait
@@ -336,7 +351,8 @@ sub process_input {
                 next;
             }
             
-            # Non-retryable error
+            # Non-retryable error - reset retry counter for next iteration
+            $retry_count = 0;
             # Remove the last assistant message from @messages array if it exists
             # This prevents issues where a bad AI response keeps triggering the same error
             # The AI will see the error message and try a different approach
@@ -371,6 +387,9 @@ sub process_input {
             # Continue to next iteration - let AI try again with the error context
             next;
         }
+        
+        # API call succeeded - reset retry counter
+        $retry_count = 0;
         
         # Record API usage for billing tracking
         if ($api_response->{usage} && $session) {
