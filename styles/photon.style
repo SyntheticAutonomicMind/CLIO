@@ -1,73 +1,71 @@
 # CLIO Style: photon
-# PhotonBBS-inspired retro color scheme
-# Classic BBS bright colors for that authentic 80s/90s feel
+# PhotonBBS retro - organized classic BBS colors
+#
+# Cohesive Color Hierarchy (retro BBS organized):
+# - Primary: Bright Cyan (main focus - BBS cyan)
+# - Secondary: Cyan (supporting - menu cyan)
+# - Accent: Bright Magenta (actionable - BBS highlight)
+# - Neutral: White (readable text)
+# - Muted: Dim Cyan (less important)
 
 name=photon
 
-# User interaction colors - bright green for classic BBS prompt feel
-user_prompt=@BRIGHT_GREEN@
-user_text=@BRIGHT_CYAN@
-
-# Agent/Assistant colors - bright yellow stands out like BBS messages
-agent_label=@BRIGHT_YELLOW@
-agent_text=@BRIGHT_WHITE@
-
-# System messages - bright magenta for system/admin messages
-system_message=@BRIGHT_MAGENTA@
+# ═══ Core message colors ═══
+user_prompt=@BRIGHT_MAGENTA@
+user_text=@WHITE@
+agent_label=@BRIGHT_CYAN@
+agent_text=@WHITE@
+system_message=@CYAN@
 error_message=@BRIGHT_RED@
-
-# Status messages
 success_message=@BRIGHT_GREEN@
 warning_message=@BRIGHT_YELLOW@
-info_message=@BRIGHT_CYAN@
+info_message=@CYAN@
 
-# Command output elements
-command_header=@BOLD@@BRIGHT_CYAN@
-command_subheader=@BOLD@@CYAN@
-command_label=@CYAN@
-command_value=@BRIGHT_WHITE@
-
-# Special elements
-highlight=@BRIGHT_YELLOW@
-muted=@DIM@@WHITE@
-
-
-# UI elements - cyan headers, white data (classic BBS palette)
-banner=@BRIGHT_CYAN@@BOLD@
-app_title=@BRIGHT_BLUE@@BOLD@
-app_subtitle=@DIM@@CYAN@
-data=@BRIGHT_WHITE@
-dim=@CYAN@
-theme_header=@BRIGHT_CYAN@@BOLD@
-prompt_indicator=@BRIGHT_GREEN@@BOLD@
-prompt_model=@BRIGHT_CYAN@
-prompt_directory=@BRIGHT_BLUE@
-prompt_git_branch=@BRIGHT_YELLOW@
-# Banner components
+# ═══ Banner ═══
 app_title=@BOLD@@BRIGHT_CYAN@
-app_subtitle=@DIM@@CYAN@
-banner_label=@DIM@@WHITE@
-banner_value=@BRIGHT_WHITE@
-banner_help=@DIM@@WHITE@
-banner_command=@BRIGHT_GREEN@
+app_subtitle=@CYAN@
+banner_label=@DIM@@CYAN@
+banner_value=@WHITE@
+banner_help=@DIM@@CYAN@
+banner_command=@BRIGHT_MAGENTA@
+banner=@BRIGHT_CYAN@
 
-# Markdown element colors - punchy BBS style
-markdown_bold=@BOLD@@BRIGHT_WHITE@
-markdown_italic=@BRIGHT_CYAN@
-markdown_code=@BRIGHT_YELLOW@@BOLD@
-markdown_link_text=@BRIGHT_BLUE@@UNDERLINE@
-markdown_link_url=@BLUE@
-markdown_header1=@BOLD@@BRIGHT_YELLOW@
-markdown_header2=@BOLD@@BRIGHT_CYAN@
-markdown_header3=@BOLD@@BRIGHT_GREEN@
-markdown_list_bullet=@BRIGHT_GREEN@@BOLD@
-markdown_quote=@CYAN@
-markdown_code_block=@BRIGHT_YELLOW@
+# ═══ Enhanced prompt ═══
+prompt_model=@CYAN@
+prompt_directory=@BRIGHT_CYAN@
+prompt_git_branch=@DIM@@CYAN@
+prompt_indicator=@BRIGHT_MAGENTA@
 
-# Table colors - bold and bright
-table_border=@BRIGHT_WHITE@@BOLD@
-table_header=@BOLD@@BRIGHT_YELLOW@
+# ═══ General UI ═══
+theme_header=@BRIGHT_CYAN@
+data=@WHITE@
+dim=@DIM@
+highlight=@BRIGHT_MAGENTA@
+muted=@DIM@@CYAN@
 
+# ═══ Command output ═══
+command_header=@BOLD@@BRIGHT_CYAN@
+command_subheader=@CYAN@
+command_label=@DIM@@CYAN@
+command_value=@WHITE@
 
-# Spinner animation frames - braille pattern
+# ═══ Markdown ═══
+markdown_bold=@BOLD@
+markdown_italic=@DIM@
+markdown_code=@CYAN@
+markdown_formula=@BRIGHT_CYAN@
+markdown_link_text=@BRIGHT_CYAN@@UNDERLINE@
+markdown_link_url=@DIM@@CYAN@
+markdown_header1=@BOLD@@BRIGHT_CYAN@
+markdown_header2=@CYAN@
+markdown_header3=@WHITE@
+markdown_list_bullet=@BRIGHT_MAGENTA@
+markdown_quote=@DIM@@CYAN@
+markdown_code_block=@CYAN@
+
+# ═══ Tables ═══
+table_border=@DIM@@CYAN@
+table_header=@BOLD@@BRIGHT_CYAN@
+
+# ═══ Spinner ═══
 spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏

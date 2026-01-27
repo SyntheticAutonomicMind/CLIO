@@ -1,73 +1,71 @@
 # CLIO Style: vt100
-# DEC VT100 terminal - the legendary terminal that defined modern terminals
-# Clean, professional green/white on black - the Unix sysadmin classic
+# DEC VT100 classic - Unix sysadmin standard
+#
+# Cohesive Color Hierarchy:
+# - Primary: Bright Green (main focus - VT100 green)
+# - Secondary: Green (supporting - classic green)
+# - Accent: Bright White (actionable - VT100 highlight)
+# - Neutral: White (readable text)
+# - Muted: Dim Green (less important)
 
 name=vt100
 
-# User interaction colors - professional green
-user_prompt=@GREEN@
+# ═══ Core message colors ═══
+user_prompt=@BRIGHT_WHITE@
 user_text=@WHITE@
-
-# Agent/Assistant colors - bright output
 agent_label=@BRIGHT_GREEN@
 agent_text=@WHITE@
-
-# System messages - reserved colors
-system_message=@BRIGHT_WHITE@@BOLD@
+system_message=@GREEN@
 error_message=@BRIGHT_RED@
-
-# Status messages
-success_message=@BRIGHT_GREEN@
+success_message=@BRIGHT_WHITE@
 warning_message=@BRIGHT_YELLOW@
-info_message=@BRIGHT_CYAN@
+info_message=@GREEN@
 
-# Command output elements
-command_header=@BOLD@@BRIGHT_GREEN@
-command_subheader=@BOLD@@GREEN@
-command_label=@GREEN@
-command_value=@BRIGHT_WHITE@
-
-# Special elements
-highlight=@BRIGHT_YELLOW@
-muted=@DIM@@GREEN@
-
-
-# UI elements - minimal, professional
-banner=@BRIGHT_GREEN@
-app_title=@BRIGHT_GREEN@
+# ═══ Banner ═══
+app_title=@BOLD@@BRIGHT_GREEN@
 app_subtitle=@GREEN@
+banner_label=@DIM@@GREEN@
+banner_value=@WHITE@
+banner_help=@DIM@@GREEN@
+banner_command=@BRIGHT_WHITE@
+banner=@BRIGHT_GREEN@
+
+# ═══ Enhanced prompt ═══
+prompt_model=@GREEN@
+prompt_directory=@BRIGHT_GREEN@
+prompt_git_branch=@DIM@@GREEN@
+prompt_indicator=@BRIGHT_WHITE@
+
+# ═══ General UI ═══
+theme_header=@BRIGHT_GREEN@
 data=@WHITE@
 dim=@DIM@
-theme_header=@BRIGHT_WHITE@
-prompt_indicator=@GREEN@
-prompt_model=@BRIGHT_CYAN@
-prompt_directory=@BRIGHT_BLUE@
-prompt_git_branch=@BRIGHT_YELLOW@
-# Banner components
-app_title=@BOLD@@BRIGHT_CYAN@
-app_subtitle=@DIM@@CYAN@
-banner_label=@DIM@@WHITE@
-banner_value=@BRIGHT_WHITE@
-banner_help=@DIM@@WHITE@
-banner_command=@BRIGHT_GREEN@
+highlight=@BRIGHT_WHITE@
+muted=@DIM@@GREEN@
 
-# Markdown element colors - VT100 minimalism
-markdown_bold=@BOLD@@WHITE@
-markdown_italic=@DIM@@WHITE@
-markdown_code=@BRIGHT_GREEN@
-markdown_link_text=@BRIGHT_WHITE@@UNDERLINE@
-markdown_link_url=@WHITE@
+# ═══ Command output ═══
+command_header=@BOLD@@BRIGHT_GREEN@
+command_subheader=@GREEN@
+command_label=@DIM@@GREEN@
+command_value=@WHITE@
+
+# ═══ Markdown ═══
+markdown_bold=@BOLD@
+markdown_italic=@DIM@
+markdown_code=@GREEN@
+markdown_formula=@BRIGHT_GREEN@
+markdown_link_text=@BRIGHT_GREEN@@UNDERLINE@
+markdown_link_url=@DIM@@GREEN@
 markdown_header1=@BOLD@@BRIGHT_GREEN@
-markdown_header2=@BOLD@@GREEN@
-markdown_header3=@BOLD@@WHITE@
-markdown_list_bullet=@GREEN@
+markdown_header2=@GREEN@
+markdown_header3=@WHITE@
+markdown_list_bullet=@BRIGHT_WHITE@
 markdown_quote=@DIM@@GREEN@
-markdown_code_block=@BRIGHT_GREEN@
+markdown_code_block=@GREEN@
 
-# Table colors
-table_border=@WHITE@
+# ═══ Tables ═══
+table_border=@DIM@@GREEN@
 table_header=@BOLD@@BRIGHT_GREEN@
 
-
-# Spinner animation frames - braille pattern
+# ═══ Spinner ═══
 spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏

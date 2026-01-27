@@ -1,73 +1,73 @@
 # CLIO Style: retro-rainbow
-# Vibrant multi-color palette inspired by PhotonBBS and classic BBS ANSI art
-# Maximum color, maximum fun - like the best ANSI art from the BBS era
+# Vibrant organized spectrum - ANSI art energy
+#
+# Cohesive Color Hierarchy (organized rainbow):
+# - Primary: Bright Cyan (main headers/focus)
+# - Secondary: Bright Magenta (supporting/code)
+# - Accent: Bright Yellow (actionable/highlights)
+# - Neutral: White (readable text)
+# - Muted: Dim Cyan (labels/less important)
+#
+# Uses spectrum colors intentionally, not randomly
 
 name=retro-rainbow
 
-# User interaction colors - bright magenta for that pop
-user_prompt=@BRIGHT_MAGENTA@
-user_text=@BRIGHT_CYAN@
-
-# Agent/Assistant colors - bright yellow for visibility
-agent_label=@BRIGHT_YELLOW@
-agent_text=@BRIGHT_WHITE@
-
-# System messages - full spectrum
-system_message=@BRIGHT_BLUE@
+# ═══ Core message colors (organized spectrum) ═══
+user_prompt=@BRIGHT_YELLOW@
+user_text=@WHITE@
+agent_label=@BRIGHT_CYAN@
+agent_text=@WHITE@
+system_message=@BRIGHT_MAGENTA@
 error_message=@BRIGHT_RED@
-
-# Status messages
 success_message=@BRIGHT_GREEN@
 warning_message=@BRIGHT_YELLOW@
 info_message=@BRIGHT_CYAN@
 
-# Command output elements
-command_header=@BOLD@@BRIGHT_MAGENTA@
-command_subheader=@BOLD@@MAGENTA@
-command_label=@CYAN@
-command_value=@BRIGHT_WHITE@
-
-# Special elements
-highlight=@BRIGHT_YELLOW@
-muted=@DIM@@WHITE@
-
-
-# UI elements - mix of vibrant colors
-banner=@BRIGHT_CYAN@@BOLD@
-app_title=@BRIGHT_MAGENTA@
-app_subtitle=@BRIGHT_CYAN@
-data=@BRIGHT_WHITE@
-dim=@CYAN@
-theme_header=@BRIGHT_YELLOW@@BOLD@
-prompt_indicator=@BRIGHT_MAGENTA@
-prompt_model=@BRIGHT_CYAN@
-prompt_directory=@BRIGHT_BLUE@
-prompt_git_branch=@BRIGHT_YELLOW@
-# Banner components
+# ═══ Banner (cyan primary, yellow accents) ═══
 app_title=@BOLD@@BRIGHT_CYAN@
-app_subtitle=@DIM@@CYAN@
-banner_label=@DIM@@WHITE@
-banner_value=@BRIGHT_WHITE@
-banner_help=@DIM@@WHITE@
-banner_command=@BRIGHT_GREEN@
+app_subtitle=@BRIGHT_MAGENTA@
+banner_label=@DIM@@CYAN@
+banner_value=@WHITE@
+banner_help=@DIM@@CYAN@
+banner_command=@BRIGHT_YELLOW@
+banner=@BRIGHT_CYAN@
 
-# Markdown element colors - full rainbow
-markdown_bold=@BOLD@@BRIGHT_WHITE@
-markdown_italic=@BRIGHT_CYAN@
-markdown_code=@BRIGHT_YELLOW@@BOLD@
-markdown_link_text=@BRIGHT_BLUE@@UNDERLINE@
-markdown_link_url=@BLUE@
-markdown_header1=@BOLD@@BRIGHT_MAGENTA@
-markdown_header2=@BOLD@@BRIGHT_CYAN@
-markdown_header3=@BOLD@@BRIGHT_GREEN@
-markdown_list_bullet=@BRIGHT_YELLOW@
-markdown_quote=@CYAN@
-markdown_code_block=@BRIGHT_YELLOW@
+# ═══ Enhanced prompt (rainbow but hierarchical) ═══
+prompt_model=@BRIGHT_MAGENTA@
+prompt_directory=@BRIGHT_CYAN@
+prompt_git_branch=@DIM@@CYAN@
+prompt_indicator=@BRIGHT_YELLOW@
 
-# Table colors
-table_border=@BRIGHT_CYAN@
-table_header=@BOLD@@BRIGHT_MAGENTA@
+# ═══ General UI ═══
+theme_header=@BRIGHT_CYAN@
+data=@WHITE@
+dim=@DIM@
+highlight=@BRIGHT_YELLOW@
+muted=@DIM@@CYAN@
 
+# ═══ Command output ═══
+command_header=@BOLD@@BRIGHT_CYAN@
+command_subheader=@BRIGHT_MAGENTA@
+command_label=@DIM@@CYAN@
+command_value=@WHITE@
 
-# Spinner animation frames - braille pattern
+# ═══ Markdown (spectrum with purpose) ═══
+markdown_bold=@BOLD@
+markdown_italic=@DIM@
+markdown_code=@BRIGHT_MAGENTA@
+markdown_formula=@BRIGHT_CYAN@
+markdown_link_text=@BRIGHT_CYAN@@UNDERLINE@
+markdown_link_url=@DIM@@CYAN@
+markdown_header1=@BOLD@@BRIGHT_CYAN@
+markdown_header2=@BRIGHT_MAGENTA@
+markdown_header3=@BRIGHT_YELLOW@
+markdown_list_bullet=@BRIGHT_GREEN@
+markdown_quote=@DIM@@MAGENTA@
+markdown_code_block=@BRIGHT_MAGENTA@
+
+# ═══ Tables ═══
+table_border=@DIM@@CYAN@
+table_header=@BOLD@@BRIGHT_CYAN@
+
+# ═══ Spinner ═══
 spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏
