@@ -491,45 +491,75 @@ sub get_builtin_style {
     
     return {
         name => 'default',
-        user_prompt => '@BRIGHT_GREEN@',
-        user_text => '@BRIGHT_YELLOW@',
-        agent_label => '@BRIGHT_BLUE@',
-        agent_text => '@WHITE@',
-        system_message => '@BRIGHT_MAGENTA@',
-        error_message => '@BRIGHT_RED@',
-        banner => '@BRIGHT_CYAN@',
-        data => '@BRIGHT_WHITE@',
-        dim => '@DIM@',
-        theme_header => '@BRIGHT_CYAN@',
-        prompt_indicator => '@BRIGHT_GREEN@',
-        # Status messages
-        success_message => '@BRIGHT_GREEN@',
-        warning_message => '@BRIGHT_YELLOW@',
-        info_message => '@BRIGHT_CYAN@',
+        # ═══════════════════════════════════════════════════════════════
+        # Modern Blues & Grays Theme - Cohesive, Professional
+        # ═══════════════════════════════════════════════════════════════
+        # Primary: Bright Cyan (main focus elements)
+        # Secondary: Cyan (supporting elements)
+        # Accent: Bright Green (actionable items)
+        # Neutral: White/Bright White (readable text)
+        # Muted: Dim White (labels, less important)
+        # ═══════════════════════════════════════════════════════════════
+        
+        # Core message colors (conversational flow)
+        user_prompt => '@BRIGHT_GREEN@',       # Accent - ready for input
+        user_text => '@WHITE@',                # Neutral - readable
+        agent_label => '@BRIGHT_CYAN@',        # Primary - AI speaking
+        agent_text => '@WHITE@',               # Neutral - content
+        system_message => '@CYAN@',            # Secondary - system info
+        error_message => '@BRIGHT_RED@',       # Special - needs attention
+        success_message => '@BRIGHT_GREEN@',   # Accent - positive feedback
+        warning_message => '@BRIGHT_YELLOW@',  # Special - caution
+        info_message => '@CYAN@',              # Secondary - informational
+        
+        # Banner (startup display)
+        app_title => '@BOLD@@BRIGHT_CYAN@',    # Primary - main title
+        app_subtitle => '@CYAN@',              # Secondary - subtitle
+        banner_label => '@DIM@@WHITE@',        # Muted - labels
+        banner_value => '@WHITE@',             # Neutral - values
+        banner_help => '@DIM@@WHITE@',         # Muted - help text
+        banner_command => '@BRIGHT_GREEN@',    # Accent - actionable
+        banner => '@BRIGHT_CYAN@',             # Legacy support
+        
+        # Enhanced prompt (cohesive blues + green accent)
+        prompt_model => '@CYAN@',              # Secondary - model info
+        prompt_directory => '@BRIGHT_CYAN@',   # Primary - current location
+        prompt_git_branch => '@DIM@@CYAN@',    # Muted - branch info
+        prompt_indicator => '@BRIGHT_GREEN@',  # Accent - ready state
+        
+        # General UI elements
+        theme_header => '@BRIGHT_CYAN@',       # Primary - headers
+        data => '@WHITE@',                     # Neutral - data display
+        dim => '@DIM@',                        # Muted - less important
+        highlight => '@BRIGHT_CYAN@',          # Primary - highlighted items
+        muted => '@DIM@@WHITE@',               # Muted - de-emphasized
+        
         # Command output elements
-        command_header => '@BOLD@@BRIGHT_CYAN@',
-        command_subheader => '@BOLD@@CYAN@',
-        command_label => '@CYAN@',
-        command_value => '@BRIGHT_WHITE@',
-        # Special elements
-        highlight => '@BRIGHT_YELLOW@',
-        muted => '@DIM@@WHITE@',
-        # Markdown styling
+        command_header => '@BOLD@@BRIGHT_CYAN@',  # Primary - command headers
+        command_subheader => '@CYAN@',            # Secondary - subheaders
+        command_label => '@DIM@@WHITE@',          # Muted - labels
+        command_value => '@WHITE@',               # Neutral - values
+        
+        # Markdown styling (cohesive with theme)
         markdown_bold => '@BOLD@',
         markdown_italic => '@DIM@',
-        markdown_code => '@BRIGHT_YELLOW@',
-        markdown_formula => '@BRIGHT_MAGENTA@',
-        markdown_link_text => '@BRIGHT_BLUE@@UNDERLINE@',
-        markdown_link_url => '@DIM@@BLUE@',
-        markdown_header1 => '@BOLD@@BRIGHT_CYAN@',
-        markdown_header2 => '@BOLD@@CYAN@',
-        markdown_header3 => '@BOLD@@WHITE@',
-        markdown_list_bullet => '@BRIGHT_GREEN@',
-        markdown_quote => '@DIM@@CYAN@',
-        markdown_code_block => '@YELLOW@',
+        markdown_code => '@CYAN@',                # Secondary - inline code
+        markdown_formula => '@BRIGHT_CYAN@',      # Primary - formulas
+        markdown_link_text => '@BRIGHT_CYAN@@UNDERLINE@',  # Primary - clickable
+        markdown_link_url => '@DIM@@CYAN@',       # Muted - URLs
+        markdown_header1 => '@BOLD@@BRIGHT_CYAN@', # Primary - main headers
+        markdown_header2 => '@CYAN@',             # Secondary - subheaders
+        markdown_header3 => '@WHITE@',            # Neutral - minor headers
+        markdown_list_bullet => '@BRIGHT_GREEN@', # Accent - bullets
+        markdown_quote => '@DIM@@CYAN@',          # Muted - quotes
+        markdown_code_block => '@CYAN@',          # Secondary - code blocks
+        
+        # Help command styling
+        help_command => '@BRIGHT_CYAN@',       # Commands in /help output (matches theme)
+        
         # Table styling
-        table_border => '@BRIGHT_WHITE@',
-        table_header => '@BOLD@@CYAN@',
+        table_border => '@DIM@@WHITE@',        # Muted - borders
+        table_header => '@BOLD@@BRIGHT_CYAN@', # Primary - headers
     };
 }
 
@@ -549,9 +579,9 @@ sub get_builtin_theme {
         system_prefix => '{style.system_message}SYSTEM: @RESET@',
         error_prefix => '{style.error_message}ERROR: @RESET@',
         banner_line1 => '{style.app_title}CLIO@RESET@ {style.app_subtitle}- Command Line Intelligence Orchestrator@RESET@',
-        banner_line2 => 'Session ID: {style.data}{var.session_id}@RESET@',
-        banner_line3 => 'You are connected to {style.data}{var.model}@RESET@',
-        banner_line4 => '{style.dim}Type "/help" for a list of commands.@RESET@',
+        banner_line2 => '{style.banner_label}Session ID:@RESET@ {style.banner_value}{var.session_id}@RESET@',
+        banner_line3 => '{style.banner_label}You are connected to@RESET@ {style.banner_value}{var.model}@RESET@',
+        banner_line4 => '{style.banner_help}Type @RESET@{style.banner_command}"/help"@RESET@ {style.banner_help}for a list of commands.@RESET@',
         help_header => '{style.data}{var.title}@RESET@',
         help_section => '{style.data}{var.section}@RESET@',
         help_command => '{style.prompt_indicator}{var.command}@RESET@',

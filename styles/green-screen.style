@@ -1,63 +1,74 @@
 # CLIO Style: green-screen
-# Classic green phosphor monochrome terminal
-# The iconic green glow of early computer terminals and mainframe systems
+# Monochrome green phosphor - pure terminal classic
+#
+# Cohesive Color Hierarchy:
+# - Primary: Bright Green (main focus - phosphor glow)
+# - Secondary: Green (supporting - medium glow)
+# - Accent: Bright Green (actionable - bright glow)
+# - Neutral: Green (readable text - all green!)
+# - Muted: Dim Green (less important - faded glow)
 
 name=green-screen
 
-# User interaction colors - bright green for input
+# ═══ Core message colors (all greens!) ═══
 user_prompt=@BRIGHT_GREEN@
 user_text=@GREEN@
-
-# Agent/Assistant colors - green spectrum
-agent_label=@BRIGHT_GREEN@@BOLD@
+agent_label=@BRIGHT_GREEN@
 agent_text=@GREEN@
-
-# System messages - using green with bold for emphasis
-system_message=@GREEN@@BOLD@
-error_message=@BRIGHT_RED@
-
-# Status messages
+system_message=@GREEN@
+error_message=@BRIGHT_GREEN@
 success_message=@BRIGHT_GREEN@
-warning_message=@GREEN@
-info_message=@BRIGHT_GREEN@
+warning_message=@BRIGHT_GREEN@
+info_message=@GREEN@
 
-# Command output elements
-command_header=@BOLD@@BRIGHT_GREEN@
-command_subheader=@BOLD@@GREEN@
-command_label=@GREEN@
-command_value=@BRIGHT_GREEN@
+# ═══ Banner ═══
+app_title=@BOLD@@BRIGHT_GREEN@
+app_subtitle=@GREEN@
+banner_label=@DIM@@GREEN@
+banner_value=@BRIGHT_GREEN@
+banner_help=@DIM@@GREEN@
+banner_command=@BRIGHT_GREEN@
+banner=@BRIGHT_GREEN@
 
-# Special elements
+# ═══ Enhanced prompt ═══
+prompt_model=@GREEN@
+prompt_directory=@BRIGHT_GREEN@
+prompt_git_branch=@DIM@@GREEN@
+prompt_indicator=@BRIGHT_GREEN@
+
+# ═══ General UI ═══
+theme_header=@BRIGHT_GREEN@
+data=@GREEN@
+dim=@DIM@@GREEN@
 highlight=@BRIGHT_GREEN@
 muted=@DIM@@GREEN@
 
+# ═══ Command output ═══
+command_header=@BOLD@@BRIGHT_GREEN@
+command_subheader=@GREEN@
+command_label=@DIM@@GREEN@
+command_value=@GREEN@
 
-# UI elements - classic phosphor green
-banner=@BRIGHT_GREEN@@BOLD@
-app_title=@BRIGHT_GREEN@
-app_subtitle=@GREEN@
-data=@BRIGHT_GREEN@
-dim=@GREEN@
-theme_header=@BRIGHT_GREEN@@BOLD@
-prompt_indicator=@BRIGHT_GREEN@
-
-# Markdown element colors - green monochrome with intensity variations
-markdown_bold=@BOLD@@BRIGHT_GREEN@
-markdown_italic=@DIM@@GREEN@
-markdown_code=@BRIGHT_GREEN@@BOLD@
-markdown_link_text=@GREEN@@UNDERLINE@
+# ═══ Markdown ═══
+markdown_bold=@BOLD@
+markdown_italic=@DIM@
+markdown_code=@GREEN@
+markdown_formula=@BRIGHT_GREEN@
+markdown_link_text=@BRIGHT_GREEN@@UNDERLINE@
 markdown_link_url=@DIM@@GREEN@
 markdown_header1=@BOLD@@BRIGHT_GREEN@
-markdown_header2=@BRIGHT_GREEN@
-markdown_header3=@GREEN@
+markdown_header2=@GREEN@
+markdown_header3=@DIM@@GREEN@
 markdown_list_bullet=@BRIGHT_GREEN@
 markdown_quote=@DIM@@GREEN@
-markdown_code_block=@BRIGHT_GREEN@
+markdown_code_block=@GREEN@
 
-# Table colors
-table_border=@GREEN@
+# Help command styling
+help_command=@BRIGHT_GREEN@
+
+# ═══ Tables ═══
+table_border=@DIM@@GREEN@
 table_header=@BOLD@@BRIGHT_GREEN@
 
-
-# Spinner animation frames - braille pattern
+# ═══ Spinner ═══
 spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏

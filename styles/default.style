@@ -1,60 +1,76 @@
 # CLIO Style: default
-# Default color scheme - bright colors on dark background
+# Modern Blues & Grays Theme - Cohesive, Professional
+#
+# Color Philosophy:
+# - Primary: Bright Cyan (main focus elements)
+# - Secondary: Cyan (supporting elements)
+# - Accent: Bright Green (actionable items)
+# - Neutral: White (readable text)
+# - Muted: Dim White (labels, less important)
+#
+# Creates visual flow instead of color chaos
 
 name=default
 
-# User interaction colors
+# ═══ Core message colors (conversational flow) ═══
 user_prompt=@BRIGHT_GREEN@
-user_text=@BRIGHT_YELLOW@
-
-# Agent/Assistant colors
-agent_label=@BRIGHT_BLUE@
+user_text=@WHITE@
+agent_label=@BRIGHT_CYAN@
 agent_text=@WHITE@
-
-# System messages
-system_message=@BRIGHT_MAGENTA@
+system_message=@CYAN@
 error_message=@BRIGHT_RED@
-
-# Status messages
 success_message=@BRIGHT_GREEN@
 warning_message=@BRIGHT_YELLOW@
-info_message=@BRIGHT_CYAN@
+info_message=@CYAN@
 
-# Command output elements
-command_header=@BOLD@@BRIGHT_CYAN@
-command_subheader=@BOLD@@CYAN@
-command_label=@CYAN@
-command_value=@BRIGHT_WHITE@
-
-# Special elements
-highlight=@BRIGHT_YELLOW@
-muted=@DIM@@WHITE@
-
-# UI elements
+# ═══ Banner (startup display) ═══
+app_title=@BOLD@@BRIGHT_CYAN@
+app_subtitle=@CYAN@
+banner_label=@DIM@@WHITE@
+banner_value=@WHITE@
+banner_help=@DIM@@WHITE@
+banner_command=@BRIGHT_GREEN@
 banner=@BRIGHT_CYAN@
-app_title=@BRIGHT_GREEN@
-app_subtitle=@GREEN@
-data=@BRIGHT_WHITE@
-dim=@DIM@
-theme_header=@BRIGHT_CYAN@
+
+# ═══ Enhanced prompt (cohesive blues + green accent) ═══
+prompt_model=@CYAN@
+prompt_directory=@BRIGHT_CYAN@
+prompt_git_branch=@DIM@@CYAN@
 prompt_indicator=@BRIGHT_GREEN@
 
-# Markdown element colors
+# ═══ General UI elements ═══
+theme_header=@BRIGHT_CYAN@
+data=@WHITE@
+dim=@DIM@
+highlight=@BRIGHT_CYAN@
+muted=@DIM@@WHITE@
+
+# ═══ Command output elements ═══
+command_header=@BOLD@@BRIGHT_CYAN@
+command_subheader=@CYAN@
+command_label=@DIM@@WHITE@
+command_value=@WHITE@
+
+# ═══ Markdown styling (cohesive with theme) ═══
 markdown_bold=@BOLD@
 markdown_italic=@DIM@
-markdown_code=@BRIGHT_YELLOW@
-markdown_link_text=@BRIGHT_BLUE@@UNDERLINE@
-markdown_link_url=@DIM@@BLUE@
+markdown_code=@CYAN@
+markdown_formula=@BRIGHT_CYAN@
+markdown_link_text=@BRIGHT_CYAN@@UNDERLINE@
+markdown_link_url=@DIM@@CYAN@
 markdown_header1=@BOLD@@BRIGHT_CYAN@
-markdown_header2=@BOLD@@CYAN@
-markdown_header3=@BOLD@@WHITE@
+markdown_header2=@CYAN@
+markdown_header3=@WHITE@
 markdown_list_bullet=@BRIGHT_GREEN@
 markdown_quote=@DIM@@CYAN@
-markdown_code_block=@YELLOW@
+markdown_code_block=@CYAN@
 
-# Table colors
-table_border=@BRIGHT_WHITE@
-table_header=@BOLD@@CYAN@
+# Help command styling
+help_command=@BRIGHT_CYAN@
 
-# Spinner animation frames - braille pattern
+# ═══ Table styling ═══
+table_border=@DIM@@WHITE@
+table_header=@BOLD@@BRIGHT_CYAN@
+
+# ═══ Spinner animation frames - braille pattern ═══
 spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏

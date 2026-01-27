@@ -8,6 +8,8 @@ use CLIO::UI::Markdown;
 use CLIO::UI::ANSI;
 use CLIO::UI::Theme;
 use CLIO::UI::ProgressSpinner;
+use CLIO::UI::CommandHandler;
+use CLIO::UI::Display;
 use utf8;
 use open ':std', ':encoding(UTF-8)';
 binmode(STDOUT, ':encoding(UTF-8)');
@@ -103,6 +105,21 @@ sub new {
     }
     
     # Setup tab completion if running interactively
+    # Initialize CommandHandler for slash command processing
+    $self->{command_handler} = CLIO::UI::CommandHandler->new(
+        chat => $self,
+        session => $self->{session},
+        config => $self->{config},
+        ai_agent => $self->{ai_agent},
+        debug => $self->{debug},
+    );
+    
+    # Initialize Display for message formatting
+    $self->{display} = CLIO::UI::Display->new(
+        chat => $self,
+        debug => $self->{debug},
+    );
+    
     if (-t STDIN) {
         $self->setup_tab_completion();
     }
@@ -775,6 +792,68 @@ sub display_header {
     print "\n";
 }
 
+=head2 _build_prompt
+
+Build the enhanced prompt with model, directory, and git branch.
+
+Format: [model-name] directory-name (git-branch): 
+
+Components:
+- Model name in brackets (themed)
+- Current directory basename (themed)
+- Git branch in parentheses if in repo (themed)
+- Colon prompt indicator (themed based on input mode)
+
+Arguments:
+- $mode: Optional mode ('normal' or 'collaboration'), defaults to 'normal'
+         - 'normal': Uses 'prompt_indicator' color (user's theme)
+         - 'collaboration': Uses 'COLLAB_PROMPT' color (bright cyan/blue)
+
+Returns: Formatted prompt string with theme colors
+
+=cut
+
+sub _build_prompt {
+    my ($self, $mode) = @_;
+    $mode ||= 'normal';  # Default to normal mode
+    
+    my @parts;
+    
+    # 1. Model name in brackets
+    my $model = 'unknown';
+    if ($self->{ai_agent} && $self->{ai_agent}->{api}) {
+        $model = $self->{ai_agent}->{api}->get_current_model() || 'unknown';
+        # Abbreviate long model names
+        $model =~ s/-20\d{6}$//;  # Remove date suffix (e.g., -20250219)
+    }
+    push @parts, $self->colorize("[$model]", 'prompt_model');
+    
+    # 2. Directory name (basename only)
+    use File::Basename;
+    use Cwd 'getcwd';
+    my $cwd = getcwd();
+    my $dir_name = basename($cwd);
+    push @parts, $self->colorize($dir_name, 'prompt_directory');
+    
+    # 3. Git branch (if in git repo)
+    my $branch = `git branch --show-current 2>/dev/null`;
+    chomp $branch if $branch;
+    if ($branch && length($branch) > 0) {
+        push @parts, $self->colorize("($branch)", 'prompt_git_branch');
+    }
+    
+    # 4. Prompt indicator (colon) - color depends on mode
+    my $indicator_color = $mode eq 'collaboration' ? 'COLLAB_PROMPT' : 'prompt_indicator';
+    push @parts, $self->colorize(":", $indicator_color);
+    
+    # Join with spaces (except before colon)
+    my $prompt_text = join(' ', @parts[0..$#parts-1]);  # All but last
+    $prompt_text .= $parts[-1];  # Add colon without space
+    $prompt_text .= ' ';  # Add space after colon for input
+    
+    return $prompt_text;
+}
+
 sub get_input {
     my ($self) = @_;
     
@@ -796,7 +875,7 @@ sub get_input {
     
     # Interactive mode with our custom readline and tab completion
     if ($self->{readline}) {
-        my $prompt = $self->colorize(": ", 'PROMPT');
+        my $prompt = $self->_build_prompt();
         my $input = $self->{readline}->readline($prompt);
         
         # Handle Ctrl-D (EOF)
@@ -810,7 +889,8 @@ sub get_input {
     }
     
     # Fallback to basic input if readline not available
-    print $self->colorize(": ", 'PROMPT');
+    my $prompt = $self->_build_prompt();
+    print $prompt;
     my $input = <STDIN>;
     
     # Handle Ctrl-D (EOF)
@@ -830,21 +910,8 @@ Display a user message with role label (no timestamp)
 =cut
 
 sub display_user_message {
-    my ($self, $message) = @_;
-    
-    # Add to screen buffer
-    $self->add_to_buffer('user', $message);
-    
-    # Add to session history for AI context
-    if ($self->{session}) {
-        print STDERR "[DEBUG][Chat] Adding user message to session history\n" if should_log('DEBUG');
-        $self->{session}->add_message('user', $message);
-    } else {
-        print STDERR "[ERROR][Chat] No session object - cannot store message!\n" if should_log('ERROR');
-    }
-    
-    # Display with role label
-    print $self->colorize("YOU: ", 'USER'), $message, "\n";
+    my ($self, @args) = @_;
+    return $self->{display}->display_user_message(@args);
 }
 
 =head2 display_assistant_message
@@ -854,28 +921,8 @@ Display an assistant message with role label (no timestamp)
 =cut
 
 sub display_assistant_message {
-    my ($self, $message) = @_;
-    
-    # Add to screen buffer (display with original emojis)
-    $self->add_to_buffer('assistant', $message);
-    
-    # Add to session history for AI context (sanitized to prevent encoding issues)
-    if ($self->{session}) {
-        print STDERR "[DEBUG][Chat] Adding assistant message to session history\n" if should_log('DEBUG');
-        my $sanitized = sanitize_text($message);
-        $self->{session}->add_message('assistant', $sanitized);
-    } else {
-        print STDERR "[ERROR][Chat] No session object - cannot store message!\n" if should_log('ERROR');
-    }
-    
-    # Render markdown if enabled (was missing, causing raw markdown in multiline responses)
-    my $display_message = $message;
-    if ($self->{enable_markdown}) {
-        $display_message = $self->render_markdown($message);
-    }
-    
-    # Display with role label
-    print $self->colorize("CLIO: ", 'ASSISTANT'), $display_message, "\n";
+    my ($self, @args) = @_;
+    return $self->{display}->display_assistant_message(@args);
 }
 
 =head2 display_system_message
@@ -885,12 +932,8 @@ Display a system message
 =cut
 
 sub display_system_message {
-    my ($self, $message) = @_;
-    
-    # Add to screen buffer
-    $self->add_to_buffer('system', $message);
-    
-    print $self->colorize("SYSTEM: ", 'SYSTEM'), $message, "\n";
+    my ($self, @args) = @_;
+    return $self->{display}->display_system_message(@args);
 }
 
 =head2 display_error_message
@@ -900,12 +943,8 @@ Display an error message
 =cut
 
 sub display_error_message {
-    my ($self, $message) = @_;
-    
-    # Add to screen buffer
-    $self->add_to_buffer('error', $message);
-    
-    print $self->colorize("ERROR: ", 'ERROR'), $message, "\n";
+    my ($self, @args) = @_;
+    return $self->{display}->display_error_message(@args);
 }
 
 =head2 display_success_message
@@ -915,12 +954,8 @@ Display a success message with prefix
 =cut
 
 sub display_success_message {
-    my ($self, $message) = @_;
-    
-    # Add to screen buffer
-    $self->add_to_buffer('success', $message);
-    
-    print $self->colorize("", 'success_message'), $message, "\n";
+    my ($self, @args) = @_;
+    return $self->{display}->display_success_message(@args);
 }
 
 =head2 display_warning_message
@@ -930,12 +965,8 @@ Display a warning message with [WARN] prefix
 =cut
 
 sub display_warning_message {
-    my ($self, $message) = @_;
-    
-    # Add to screen buffer
-    $self->add_to_buffer('warning', $message);
-    
-    print $self->colorize("[WARN] ", 'warning_message'), $message, "\n";
+    my ($self, @args) = @_;
+    return $self->{display}->display_warning_message(@args);
 }
 
 =head2 display_info_message
@@ -945,12 +976,8 @@ Display an informational message with [INFO] prefix
 =cut
 
 sub display_info_message {
-    my ($self, $message) = @_;
-    
-    # Add to screen buffer
-    $self->add_to_buffer('info', $message);
-    
-    print $self->colorize("[INFO] ", 'info_message'), $message, "\n";
+    my ($self, @args) = @_;
+    return $self->{display}->display_info_message(@args);
 }
 
 =head2 display_command_header
@@ -964,14 +991,8 @@ Arguments:
 =cut
 
 sub display_command_header {
-    my ($self, $text, $width) = @_;
-    $width ||= 70;
-    
-    print "\n";
-    print $self->colorize("═" x $width, 'command_header'), "\n";
-    print $self->colorize($text, 'command_header'), "\n";
-    print $self->colorize("═" x $width, 'command_header'), "\n";
-    print "\n";
+    my ($self, @args) = @_;
+    return $self->{display}->display_command_header(@args);
 }
 
 =head2 display_section_header
@@ -985,11 +1006,8 @@ Arguments:
 =cut
 
 sub display_section_header {
-    my ($self, $text, $width) = @_;
-    $width ||= 70;
-    
-    print $self->colorize($text, 'command_subheader'), "\n";
-    print $self->colorize("─" x $width, 'dim'), "\n";
+    my ($self, @args) = @_;
+    return $self->{display}->display_section_header(@args);
 }
 
 =head2 display_key_value
@@ -1004,12 +1022,8 @@ Arguments:
 =cut
 
 sub display_key_value {
-    my ($self, $key, $value, $key_width) = @_;
-    $key_width ||= 20;
-    
-    printf "%-${key_width}s %s\n",
-        $self->colorize($key . ":", 'command_label'),
-        $self->colorize($value, 'command_value');
+    my ($self, @args) = @_;
+    return $self->{display}->display_key_value(@args);
 }
 
 =head2 display_list_item
@@ -1023,13 +1037,8 @@ Arguments:
 =cut
 
 sub display_list_item {
-    my ($self, $item, $num) = @_;
-    
-    if (defined $num) {
-        print $self->colorize("  $num. ", 'command_label'), $item, "\n";
-    } else {
-        print $self->colorize("  • ", 'command_label'), $item, "\n";
-    }
+    my ($self, @args) = @_;
+    return $self->{display}->display_list_item(@args);
 }
 
 =head2 request_collaboration
@@ -1137,8 +1146,8 @@ sub request_collaboration {
         );
     }
     
-    # Define the collaboration prompt
-    my $collab_prompt = $self->colorize(": ", 'COLLAB_PROMPT');
+    # Define the collaboration prompt (enhanced format with blue indicator)
+    my $collab_prompt = $self->_build_prompt('collaboration');
     
     # Loop to handle multiple inputs (slash commands return to prompt)
     while (1) {
@@ -1310,167 +1319,8 @@ Process slash commands. Returns 0 to exit, 1 to continue
 sub handle_command {
     my ($self, $command) = @_;
     
-    # Remove leading slash
-    $command =~ s/^\///;
-    
-    # Split into command and args
-    my ($cmd, @args) = split /\s+/, $command;
-    $cmd = lc($cmd);
-    
-    if ($cmd eq 'exit' || $cmd eq 'quit' || $cmd eq 'q') {
-        return 0;  # Signal to exit
-    }
-    elsif ($cmd eq 'help' || $cmd eq 'h') {
-        $self->display_help();
-    }
-    elsif ($cmd eq 'clear' || $cmd eq 'cls') {
-        $self->repaint_screen();
-    }
-    elsif ($cmd eq 'shell' || $cmd eq 'sh') {
-        $self->handle_shell_command();
-    }
-    elsif ($cmd eq 'debug') {
-        $self->{debug} = !$self->{debug};
-        $self->display_system_message("Debug mode: " . ($self->{debug} ? "ON" : "OFF"));
-    }
-    elsif ($cmd eq 'color') {
-        $self->{use_color} = !$self->{use_color};
-        $self->display_system_message("Color mode: " . ($self->{use_color} ? "ON" : "OFF"));
-    }
-    elsif ($cmd eq 'session') {
-        $self->handle_session_command(@args);
-    }
-    elsif ($cmd eq 'config') {
-        $self->handle_config_command(@args);
-    }
-    elsif ($cmd eq 'api') {
-        $self->handle_api_command(@args);
-    }
-    elsif ($cmd eq 'loglevel') {
-        $self->handle_loglevel_command(@args);
-    }
-    elsif ($cmd eq 'style') {
-        $self->handle_style_command(@args);
-    }
-    elsif ($cmd eq 'theme') {
-        $self->handle_theme_command(@args);
-    }
-    elsif ($cmd eq 'login') {
-        # Backward compatibility - redirect to /api login
-        $self->display_system_message("Note: Use '/api login' (new syntax)");
-        $self->handle_login_command(@args);
-    }
-    elsif ($cmd eq 'logout') {
-        # Backward compatibility - redirect to /api logout
-        $self->display_system_message("Note: Use '/api logout' (new syntax)");
-        $self->handle_logout_command(@args);
-    }
-    elsif ($cmd eq 'file') {
-        $self->handle_file_command(@args);
-    }
-    elsif ($cmd eq 'edit') {
-        # Backward compatibility
-        $self->display_system_message("Note: Use '/file edit <path>' (new syntax)");
-        $self->handle_edit_command(join(' ', @args));
-    }
-    elsif ($cmd eq 'multi-line' || $cmd eq 'multiline' || $cmd eq 'ml') {
-        $self->handle_multiline_command();
-    }
-    elsif ($cmd eq 'performance' || $cmd eq 'perf') {
-        $self->handle_performance_command(@args);
-    }
-    elsif ($cmd eq 'todo') {
-        $self->handle_todo_command(@args);
-    }
-    elsif ($cmd eq 'billing' || $cmd eq 'bill' || $cmd eq 'usage') {
-        $self->handle_billing_command(@args);
-    }
-    elsif ($cmd eq 'models') {
-        # Backward compatibility - redirect to /api models
-        $self->display_system_message("Note: Use '/api models' (new syntax)");
-        $self->handle_models_command(@args);
-    }
-    elsif ($cmd eq 'context' || $cmd eq 'ctx') {
-        $self->handle_context_command(@args);
-    }
-    elsif ($cmd eq 'skills' || $cmd eq 'skill') {
-        my $result = $self->handle_skills_command(@args);
-        return $result if $result;  # May return (1, $prompt) for AI execution
-    }
-    elsif ($cmd eq 'prompt') {
-        $self->handle_prompt_command(@args);
-    }
-    elsif ($cmd eq 'explain') {
-        my $prompt = $self->handle_explain_command(@args);
-        return (1, $prompt) if $prompt;  # Return prompt to be sent to AI
-    }
-    elsif ($cmd eq 'review') {
-        my $prompt = $self->handle_review_command(@args);
-        return (1, $prompt) if $prompt;  # Return prompt to be sent to AI
-    }
-    elsif ($cmd eq 'test') {
-        my $prompt = $self->handle_test_command(@args);
-        return (1, $prompt) if $prompt;  # Return prompt to be sent to AI
-    }
-    elsif ($cmd eq 'fix') {
-        my $prompt = $self->handle_fix_command(@args);
-        return (1, $prompt) if $prompt;  # Return prompt to be sent to AI
-    }
-    elsif ($cmd eq 'doc') {
-        my $prompt = $self->handle_doc_command(@args);
-        return (1, $prompt) if $prompt;  # Return prompt to be sent to AI
-    }
-    elsif ($cmd eq 'git') {
-        $self->handle_git_command(@args);
-    }
-    elsif ($cmd eq 'commit') {
-        # Backward compatibility
-        $self->display_system_message("Note: Use '/git commit' (new syntax)");
-        $self->handle_commit_command(@args);
-    }
-    elsif ($cmd eq 'diff') {
-        # Backward compatibility
-        $self->display_system_message("Note: Use '/git diff' (new syntax)");
-        $self->handle_diff_command(@args);
-    }
-    elsif ($cmd eq 'status' || $cmd eq 'st') {
-        # Backward compatibility
-        $self->display_system_message("Note: Use '/git status' (new syntax)");
-        $self->handle_status_command(@args);
-    }
-    elsif ($cmd eq 'log') {
-        $self->handle_log_command(@args);
-    }
-    elsif ($cmd eq 'gitlog' || $cmd eq 'gl') {
-        # Backward compatibility
-        $self->display_system_message("Note: Use '/git log' (new syntax)");
-        $self->handle_gitlog_command(@args);
-    }
-    elsif ($cmd eq 'exec' || $cmd eq 'shell' || $cmd eq 'sh') {
-        $self->handle_exec_command(@args);
-    }
-    elsif ($cmd eq 'switch') {
-        # Backward compatibility - redirect to /session switch
-        $self->display_system_message("Note: Use '/session switch' (new syntax)");
-        $self->handle_switch_command(@args);
-    }
-    elsif ($cmd eq 'read' || $cmd eq 'view' || $cmd eq 'cat') {
-        # Backward compatibility
-        $self->display_system_message("Note: Use '/file read <path>' (new syntax)");
-        $self->handle_read_command(@args);
-    }
-    elsif ($cmd eq 'memory' || $cmd eq 'mem' || $cmd eq 'ltm') {
-        $self->handle_memory_command(@args);
-    }
-    elsif ($cmd eq 'update') {
-        $self->handle_update_command(@args);
-    }
-    else {
-        $self->display_error_message("Unknown command: /$cmd (type /help for help)");
-    }
-    
-    print "\n";
-    return 1;  # Continue
+    # Delegate to CommandHandler for routing
+    return $self->{command_handler}->handle_command($command);
 }
 
 =head2 display_help
@@ -1504,80 +1354,80 @@ sub display_help {
     # Sections
     push @help_lines, $self->colorize("BASICS", 'command_subheader');
     push @help_lines, $self->colorize("─" x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/help, /h', 'prompt_indicator'), 'Display this help');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/exit, /quit, /q', 'prompt_indicator'), 'Exit the chat');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/clear', 'prompt_indicator'), 'Clear the screen');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/help, /h', 'help_command'), 'Display this help');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/exit, /quit, /q', 'help_command'), 'Exit the chat');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/clear', 'help_command'), 'Clear the screen');
     push @help_lines, "";
     
     push @help_lines, $self->colorize("API & CONFIG", 'command_subheader');
     push @help_lines, $self->colorize("─" x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api', 'prompt_indicator'), 'API settings (model, provider, login)');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api set model <name>', 'prompt_indicator'), 'Set AI model');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api models', 'prompt_indicator'), 'List available models');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/config', 'prompt_indicator'), 'Global configuration');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api', 'help_command'), 'API settings (model, provider, login)');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api set model <name>', 'help_command'), 'Set AI model');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api models', 'help_command'), 'List available models');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/config', 'help_command'), 'Global configuration');
     push @help_lines, "";
     
     push @help_lines, $self->colorize("SESSION", 'command_subheader');
     push @help_lines, $self->colorize("─" x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/session', 'prompt_indicator'), 'Session management');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/session list', 'prompt_indicator'), 'List all sessions');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/session switch', 'prompt_indicator'), 'Switch sessions');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/session', 'help_command'), 'Session management');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/session list', 'help_command'), 'List all sessions');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/session switch', 'help_command'), 'Switch sessions');
     push @help_lines, "";
     
     push @help_lines, $self->colorize("FILE & GIT", 'command_subheader');
     push @help_lines, $self->colorize("─" x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/file', 'prompt_indicator'), 'File operations');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/file read <path>', 'prompt_indicator'), 'View file');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/git', 'prompt_indicator'), 'Git operations');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/git status', 'prompt_indicator'), 'Show git status');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/file', 'help_command'), 'File operations');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/file read <path>', 'help_command'), 'View file');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/git', 'help_command'), 'Git operations');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/git status', 'help_command'), 'Show git status');
     push @help_lines, "";
     
     push @help_lines, $self->colorize("TODO", 'command_subheader');
     push @help_lines, $self->colorize("─" x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo', 'prompt_indicator'), "View agent's todo list");
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo add <text>', 'prompt_indicator'), 'Add todo');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo done <id>', 'prompt_indicator'), 'Complete todo');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo', 'help_command'), "View agent's todo list");
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo add <text>', 'help_command'), 'Add todo');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo done <id>', 'help_command'), 'Complete todo');
     push @help_lines, "";
     
     push @help_lines, $self->colorize("MEMORY", 'command_subheader');
     push @help_lines, $self->colorize("─" x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory', 'prompt_indicator'), 'View long-term memory patterns');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory list [type]', 'prompt_indicator'), 'List all or filtered patterns');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory store <type>', 'prompt_indicator'), 'Store pattern (via AI)');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory clear', 'prompt_indicator'), 'Clear all patterns');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory', 'help_command'), 'View long-term memory patterns');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory list [type]', 'help_command'), 'List all or filtered patterns');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory store <type>', 'help_command'), 'Store pattern (via AI)');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory clear', 'help_command'), 'Clear all patterns');
     push @help_lines, "";
     
     push @help_lines, $self->colorize("UPDATES", 'command_subheader');
     push @help_lines, $self->colorize("─" x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/update', 'prompt_indicator'), 'Show update status and help');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/update check', 'prompt_indicator'), 'Check for available updates');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/update list', 'prompt_indicator'), 'List all available versions');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/update install', 'prompt_indicator'), 'Install latest version');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/update switch <ver>', 'prompt_indicator'), 'Switch to a specific version');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/update', 'help_command'), 'Show update status and help');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/update check', 'help_command'), 'Check for available updates');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/update list', 'help_command'), 'List all available versions');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/update install', 'help_command'), 'Install latest version');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/update switch <ver>', 'help_command'), 'Switch to a specific version');
     push @help_lines, "";
     
     push @help_lines, $self->colorize("DEVELOPER", 'command_subheader');
     push @help_lines, $self->colorize("─" x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/explain [file]', 'prompt_indicator'), 'Explain code');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/review [file]', 'prompt_indicator'), 'Review code');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/test [file]', 'prompt_indicator'), 'Generate tests');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/fix <file>', 'prompt_indicator'), 'Propose fixes');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/doc <file>', 'prompt_indicator'), 'Generate docs');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/explain [file]', 'help_command'), 'Explain code');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/review [file]', 'help_command'), 'Review code');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/test [file]', 'help_command'), 'Generate tests');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/fix <file>', 'help_command'), 'Propose fixes');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/doc <file>', 'help_command'), 'Generate docs');
     push @help_lines, "";
     
     push @help_lines, $self->colorize("SKILLS & PROMPTS", 'command_subheader');
     push @help_lines, $self->colorize("─" x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/skills', 'prompt_indicator'), 'Manage custom skills');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/prompt', 'prompt_indicator'), 'Manage system prompts');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/skills', 'help_command'), 'Manage custom skills');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/prompt', 'help_command'), 'Manage system prompts');
     push @help_lines, "";
     
     push @help_lines, $self->colorize("OTHER", 'command_subheader');
     push @help_lines, $self->colorize("─" x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/billing', 'prompt_indicator'), 'API usage stats');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/context', 'prompt_indicator'), 'Manage context files');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/exec <cmd>', 'prompt_indicator'), 'Run shell command');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/style, /theme', 'prompt_indicator'), 'Appearance settings');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/debug', 'prompt_indicator'), 'Toggle debug mode');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/billing', 'help_command'), 'API usage stats');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/context', 'help_command'), 'Manage context files');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/exec <cmd>', 'help_command'), 'Run shell command');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/style, /theme', 'help_command'), 'Appearance settings');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/debug', 'help_command'), 'Toggle debug mode');
     push @help_lines, "";
     
     # Output with pagination
@@ -2541,15 +2391,25 @@ sub _display_config_help {
     $self->display_command_header("CONFIG COMMANDS");
     
     $self->display_list_item("/config show - Display global configuration");
-    $self->display_list_item("/config set <key> <val> - Set a configuration value");
-    $self->display_list_item("/config save - Save current configuration");
+    $self->display_list_item("/config set <key> <value> - Set a configuration value");
+    $self->display_list_item("/config save - Save current configuration to disk");
     $self->display_list_item("/config load - Reload configuration from disk");
-    $self->display_list_item("/config workdir [path] - Get/set working directory");
-    $self->display_list_item("/config loglevel [lvl] - Get/set log level");
+    $self->display_list_item("/config workdir [path] - Get or set working directory");
+    $self->display_list_item("/config loglevel [level] - Get or set log level");
     
     print "\n";
     $self->display_section_header("SETTABLE KEYS");
-    print "  style, theme, working_directory\n";
+    print "  style              UI color scheme (default, dark, light, amber-terminal, etc.)\n";
+    print "  theme              Banner and template theme\n";
+    print "  workdir            Current working directory path\n";
+    
+    print "\n";
+    $self->display_section_header("EXAMPLES");
+    print "  /config set style dark                  # Switch to dark color scheme\n";
+    print "  /config set theme photon                # Use photon theme\n";
+    print "  /config set workdir ~/projects          # Change working directory\n";
+    print "  /config workdir                         # Show current working directory\n";
+    
     print "\n";
     $self->display_info_message("For API settings, use /api set");
     print "\n";
@@ -3310,70 +3170,8 @@ Display a brief usage summary after agent responses (similar to SAM format)
 =cut
 
 sub display_usage_summary {
-    my ($self) = @_;
-    
-    return unless $self->{session} && $self->{session}->{state};
-    
-    my $billing = $self->{session}->{state}->{billing};
-    return unless $billing;
-    
-    my $model = $billing->{model} || 'unknown';
-    my $multiplier = $billing->{multiplier} || 0;
-    
-    # Only display for premium models (multiplier > 0)
-    return if $multiplier == 0;
-    
-    # Only display if there was an ACTUAL charge in the last request (delta > 0)
-    my $delta = $self->{session}{_last_quota_delta} || 0;
-    return if $delta <= 0;
-    
-    # SAM style: Show the model's cost multiplier when there was a charge
-    # Cost: 1x/3x/10x for premium models
-    # For fractional multipliers (e.g., 0.33x), show with 2 decimal places
-    # Status: Always shows current quota usage
-    
-    # Format multiplier: integers as "Nx", decimals as "N.NNx"
-    my $cost_str;
-    if ($multiplier == int($multiplier)) {
-        # Integer multiplier: 1x, 3x, 10x
-        $cost_str = sprintf("Cost: %dx", $multiplier);
-    } else {
-        # Fractional multiplier: 0.33x, 0.5x, etc.
-        $cost_str = sprintf("Cost: %.2fx", $multiplier);
-        $cost_str =~ s/\.?0+x$/x/;  # Strip trailing zeros: "1.00x" -> "1x"
-    }
-    my $quota_info = '';
-    
-    # Get quota status if available (stored by APIManager in session{quota})
-    if ($self->{session}{quota}) {
-        my $quota = $self->{session}{quota};
-        my $used = $quota->{used} || 0;
-        my $entitlement = $quota->{entitlement} || 0;
-        my $percent_remaining = $quota->{percent_remaining} || 0;
-        my $percent_used = 100.0 - $percent_remaining;
-        
-        # Format quota status - SAM style: "Status: X/Y Used: Z%"
-        # For unlimited accounts, show ∞ for entitlement but still show used count
-        my $used_fmt = $used;
-        $used_fmt =~ s/(\d)(?=(\d{3})+$)/$1,/g;  # Add comma separators
-        
-        my $ent_display;
-        if ($entitlement == -1) {
-            $ent_display = "∞";
-        } else {
-            $ent_display = $entitlement;
-            $ent_display =~ s/(\d)(?=(\d{3})+$)/$1,/g;  # Add comma separators
-        }
-        
-        $quota_info = sprintf(" Status: %s/%s Used: %.1f%%", $used_fmt, $ent_display, $percent_used);
-    }
-    
-    # SAM-style output: "━ SERVER ━ Cost: 1x Status: 379/1,500 Used: 25.3% ━"
-    print $self->colorize("━ SERVER ━ ", 'SYSTEM');
-    print $cost_str;
-    print $quota_info;
-    print " " . $self->colorize("━", 'SYSTEM');
-    print "\n";
+    my ($self, @args) = @_;
+    return $self->{display}->display_usage_summary(@args);
 }
 
 =head2 handle_billing_command
@@ -6566,11 +6364,8 @@ Display thinking indicator while AI processes
 =cut
 
 sub show_thinking {
-    my ($self) = @_;
-    
-    print $self->colorize("CLIO: ", 'ASSISTANT');
-    print $self->colorize("(thinking...)", 'DIM');
-    $|= 1;  # Flush output
+    my ($self, @args) = @_;
+    return $self->{display}->show_thinking(@args);
 }
 
 =head2 clear_thinking

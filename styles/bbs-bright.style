@@ -1,63 +1,74 @@
 # CLIO Style: bbs-bright
-# Classic BBS bright cyan - the iconic bulletin board system header color
-# Reminiscent of 80s/90s BBS systems with bright cyan menus and headers
+# BBS bright cyan - bulletin board nostalgia
+#
+# Cohesive Color Hierarchy:
+# - Primary: Bright Cyan (main focus - BBS headers)
+# - Secondary: Cyan (supporting - BBS menus)
+# - Accent: Bright Cyan (actionable - BBS prompts)
+# - Neutral: Bright White (readable text - clean BBS text)
+# - Muted: Dim Cyan (less important - faded cyan)
 
 name=bbs-bright
 
-# User interaction colors - bright cyan for that BBS menu feel
-user_prompt=@BRIGHT_GREEN@
+# ═══ Core message colors ═══
+user_prompt=@BRIGHT_CYAN@
 user_text=@BRIGHT_WHITE@
-
-# Agent/Assistant colors - bright yellow for responses (classic BBS message color)
-agent_label=@BRIGHT_YELLOW@
-agent_text=@WHITE@
-
-# System messages
-system_message=@BRIGHT_MAGENTA@
+agent_label=@BRIGHT_CYAN@
+agent_text=@BRIGHT_WHITE@
+system_message=@CYAN@
 error_message=@BRIGHT_RED@
-
-# Status messages
 success_message=@BRIGHT_GREEN@
 warning_message=@BRIGHT_YELLOW@
-info_message=@BRIGHT_CYAN@
+info_message=@CYAN@
 
-# Command output elements
-command_header=@BOLD@@BRIGHT_MAGENTA@
-command_subheader=@BOLD@@MAGENTA@
-command_label=@CYAN@
+# ═══ Banner ═══
+app_title=@BOLD@@BRIGHT_CYAN@
+app_subtitle=@CYAN@
+banner_label=@DIM@@CYAN@
+banner_value=@BRIGHT_WHITE@
+banner_help=@DIM@@CYAN@
+banner_command=@BRIGHT_CYAN@
+banner=@BRIGHT_CYAN@
+
+# ═══ Enhanced prompt ═══
+prompt_model=@CYAN@
+prompt_directory=@BRIGHT_CYAN@
+prompt_git_branch=@DIM@@CYAN@
+prompt_indicator=@BRIGHT_CYAN@
+
+# ═══ General UI ═══
+theme_header=@BRIGHT_CYAN@
+data=@BRIGHT_WHITE@
+dim=@DIM@
+highlight=@BRIGHT_CYAN@
+muted=@DIM@@CYAN@
+
+# ═══ Command output ═══
+command_header=@BOLD@@BRIGHT_CYAN@
+command_subheader=@CYAN@
+command_label=@DIM@@CYAN@
 command_value=@BRIGHT_WHITE@
 
-# Special elements
-highlight=@BRIGHT_YELLOW@
-muted=@DIM@@WHITE@
-
-
-# UI elements - bright cyan headers (THE classic BBS color)
-banner=@BRIGHT_CYAN@@BOLD@
-app_title=@BRIGHT_CYAN@
-app_subtitle=@CYAN@
-data=@BRIGHT_WHITE@
-dim=@CYAN@
-theme_header=@BRIGHT_CYAN@@BOLD@
-prompt_indicator=@BRIGHT_GREEN@
-
-# Markdown element colors - punchy BBS style
-markdown_bold=@BOLD@@BRIGHT_WHITE@
-markdown_italic=@BRIGHT_CYAN@
-markdown_code=@BRIGHT_YELLOW@
-markdown_link_text=@BRIGHT_BLUE@@UNDERLINE@
-markdown_link_url=@BLUE@
+# ═══ Markdown ═══
+markdown_bold=@BOLD@
+markdown_italic=@DIM@
+markdown_code=@CYAN@
+markdown_formula=@BRIGHT_CYAN@
+markdown_link_text=@BRIGHT_CYAN@@UNDERLINE@
+markdown_link_url=@DIM@@CYAN@
 markdown_header1=@BOLD@@BRIGHT_CYAN@
-markdown_header2=@BOLD@@CYAN@
-markdown_header3=@BOLD@@WHITE@
-markdown_list_bullet=@BRIGHT_GREEN@@BOLD@
-markdown_quote=@CYAN@
-markdown_code_block=@BRIGHT_YELLOW@
+markdown_header2=@CYAN@
+markdown_header3=@BRIGHT_WHITE@
+markdown_list_bullet=@BRIGHT_GREEN@
+markdown_quote=@DIM@@CYAN@
+markdown_code_block=@CYAN@
 
-# Table colors
-table_border=@BRIGHT_CYAN@
+# Help command styling
+help_command=@BRIGHT_CYAN@
+
+# ═══ Tables ═══
+table_border=@DIM@@CYAN@
 table_header=@BOLD@@BRIGHT_CYAN@
 
-
-# Spinner animation frames - braille pattern
+# ═══ Spinner ═══
 spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏
