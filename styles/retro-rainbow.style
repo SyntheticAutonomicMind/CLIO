@@ -40,6 +40,9 @@ data=@BRIGHT_WHITE@
 dim=@CYAN@
 theme_header=@BRIGHT_YELLOW@@BOLD@
 prompt_indicator=@BRIGHT_MAGENTA@
+prompt_model=@BRIGHT_CYAN@
+prompt_directory=@BRIGHT_BLUE@
+prompt_git_branch=@BRIGHT_YELLOW@
 
 # Markdown element colors - full rainbow
 markdown_bold=@BOLD@@BRIGHT_WHITE@

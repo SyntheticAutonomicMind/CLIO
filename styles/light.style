@@ -40,6 +40,9 @@ data=@BLACK@
 dim=@DIM@
 theme_header=@CYAN@@BOLD@
 prompt_indicator=@GREEN@@BOLD@
+prompt_model=@BRIGHT_CYAN@
+prompt_directory=@BRIGHT_BLUE@
+prompt_git_branch=@BRIGHT_YELLOW@
 
 # Markdown element colors - darker for light bg
 markdown_bold=@BOLD@@BLACK@

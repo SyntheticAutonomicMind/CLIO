@@ -40,6 +40,9 @@ data=@WHITE@
 dim=@DIM@
 theme_header=@BRIGHT_WHITE@
 prompt_indicator=@GREEN@
+prompt_model=@BRIGHT_CYAN@
+prompt_directory=@BRIGHT_BLUE@
+prompt_git_branch=@BRIGHT_YELLOW@
 
 # Markdown element colors - VT100 minimalism
 markdown_bold=@BOLD@@WHITE@
