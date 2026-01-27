@@ -40,6 +40,9 @@ data=@BRIGHT_WHITE@
 dim=@BLUE@
 theme_header=@BRIGHT_CYAN@@BOLD@
 prompt_indicator=@BRIGHT_WHITE@
+prompt_model=@BRIGHT_CYAN@
+prompt_directory=@BRIGHT_BLUE@
+prompt_git_branch=@BRIGHT_YELLOW@
 
 # Markdown element colors - DOS color scheme
 markdown_bold=@BOLD@@BRIGHT_WHITE@

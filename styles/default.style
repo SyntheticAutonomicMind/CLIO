@@ -38,6 +38,9 @@ data=@BRIGHT_WHITE@
 dim=@DIM@
 theme_header=@BRIGHT_CYAN@
 prompt_indicator=@BRIGHT_GREEN@
+prompt_model=@BRIGHT_CYAN@
+prompt_directory=@BRIGHT_BLUE@
+prompt_git_branch=@BRIGHT_YELLOW@
 
 # Markdown element colors
 markdown_bold=@BOLD@
