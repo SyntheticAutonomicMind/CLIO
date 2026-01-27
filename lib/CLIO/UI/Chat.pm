@@ -606,7 +606,14 @@ sub run {
             
             # Store complete message in session history
             # Sanitize assistant responses before storing to prevent emoji encoding issues
-            if ($result && $result->{final_response}) {
+            # BUT only if messages weren't already saved during the workflow execution.
+            # Tool-calling workflows save messages atomically (assistant + tool results together),
+            # so we should NOT save another assistant message here to avoid duplicates.
+            if ($result && $result->{messages_saved_during_workflow}) {
+                print STDERR "[DEBUG][Chat] Skipping session save - messages already saved during workflow\n" if $self->{debug};
+                # Still add to buffer for display (content was streamed, not saved)
+                $self->add_to_buffer('assistant', $result->{final_response} // '') if $result->{final_response};
+            } elsif ($result && $result->{final_response}) {
                 print STDERR "[DEBUG][Chat] Storing final_response in session (length=" . length($result->{final_response}) . ")\n" if $self->{debug};
                 my $sanitized = sanitize_text($result->{final_response});
                 $self->{session}->add_message('assistant', $sanitized);
