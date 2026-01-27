@@ -1,0 +1,120 @@
+# CLIO Style: dracula
+# Dracula - Dark Theme with Vibrant Colors
+#
+# Color Philosophy:
+# - Dark purple/pink theme
+# - High contrast vibrant colors
+# - Purple background aesthetic
+# - Energetic and modern
+#
+# Based on Consolidated Style Schema v2.0
+
+name=dracula
+
+# ═══════════════════════════════════════════════════════════════
+# CORE SEMANTIC HIERARCHY
+# ═══════════════════════════════════════════════════════════════
+
+primary=@BOLD@@BRIGHT_MAGENTA@
+secondary=@BRIGHT_CYAN@
+normal=@WHITE@
+muted=@MAGENTA@
+subtle=@DIM@
+
+# ═══════════════════════════════════════════════════════════════
+# CONVERSATIONAL
+# ═══════════════════════════════════════════════════════════════
+
+user_prompt=@BRIGHT_GREEN@
+user_text=@WHITE@
+agent_label=@BRIGHT_MAGENTA@
+agent_text=@WHITE@
+system_message=@CYAN@
+
+# ═══════════════════════════════════════════════════════════════
+# FEEDBACK MESSAGES
+# ═══════════════════════════════════════════════════════════════
+
+error=@BRIGHT_RED@
+warning=@BRIGHT_YELLOW@
+success=@BRIGHT_GREEN@
+info=@BRIGHT_CYAN@
+
+# ═══════════════════════════════════════════════════════════════
+# DATA DISPLAY
+# ═══════════════════════════════════════════════════════════════
+
+label=@MAGENTA@
+value=@BRIGHT_MAGENTA@
+
+# ═══════════════════════════════════════════════════════════════
+# ACTIONABLE ELEMENTS
+# ═══════════════════════════════════════════════════════════════
+
+command=@BRIGHT_GREEN@
+link=@BRIGHT_CYAN@@UNDERLINE@
+
+# ═══════════════════════════════════════════════════════════════
+# PROMPT
+# ═══════════════════════════════════════════════════════════════
+
+prompt_model=@BRIGHT_CYAN@
+prompt_directory=@BRIGHT_MAGENTA@
+prompt_git_branch=@MAGENTA@
+prompt_indicator=@BRIGHT_GREEN@
+
+# ═══════════════════════════════════════════════════════════════
+# MARKDOWN
+# ═══════════════════════════════════════════════════════════════
+
+markdown_h1=@BOLD@@BRIGHT_MAGENTA@
+markdown_h2=@BRIGHT_CYAN@
+markdown_h3=@WHITE@
+markdown_bold=@BOLD@
+markdown_italic=@DIM@
+markdown_code=@BRIGHT_YELLOW@
+markdown_code_block=@BRIGHT_YELLOW@
+markdown_link=@BRIGHT_CYAN@@UNDERLINE@
+markdown_quote=@MAGENTA@
+markdown_list_bullet=@BRIGHT_GREEN@
+
+# ═══════════════════════════════════════════════════════════════
+# TABLES
+# ═══════════════════════════════════════════════════════════════
+
+table_header=@BOLD@@BRIGHT_MAGENTA@
+table_border=@DIM@
+
+# ═══════════════════════════════════════════════════════════════
+# UI ELEMENTS
+# ═══════════════════════════════════════════════════════════════
+
+spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏
+
+# ═══════════════════════════════════════════════════════════════
+# DEPRECATED (Backward Compatibility)
+# ═══════════════════════════════════════════════════════════════
+
+app_title=@BOLD@@BRIGHT_MAGENTA@
+app_subtitle=@BRIGHT_CYAN@
+banner_label=@MAGENTA@
+banner_value=@BRIGHT_MAGENTA@
+banner_help=@MAGENTA@
+banner_command=@BRIGHT_GREEN@
+command_label=@MAGENTA@
+command_value=@BRIGHT_MAGENTA@
+command_header=@BOLD@@BRIGHT_MAGENTA@
+command_subheader=@BRIGHT_CYAN@
+data=@BRIGHT_MAGENTA@
+dim=@DIM@
+highlight=@BRIGHT_MAGENTA@
+theme_header=@BRIGHT_CYAN@
+help_command=@BRIGHT_GREEN@
+markdown_formula=@BRIGHT_CYAN@
+markdown_link_text=@BRIGHT_CYAN@@UNDERLINE@
+markdown_link_url=@MAGENTA@
+error_message=@BRIGHT_RED@
+warning_message=@BRIGHT_YELLOW@
+success_message=@BRIGHT_GREEN@
+info_message=@BRIGHT_CYAN@
+banner=@BRIGHT_MAGENTA@

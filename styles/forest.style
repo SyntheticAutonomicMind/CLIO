@@ -1,0 +1,120 @@
+# CLIO Style: forest
+# Forest - Natural Greens
+#
+# Color Philosophy:
+# - Forest greens and earth tones
+# - Natural, organic feel
+# - Calming woodland aesthetic
+# - Easy on the eyes
+#
+# Based on Consolidated Style Schema v2.0
+
+name=forest
+
+# ═══════════════════════════════════════════════════════════════
+# CORE SEMANTIC HIERARCHY
+# ═══════════════════════════════════════════════════════════════
+
+primary=@BOLD@@BRIGHT_GREEN@
+secondary=@GREEN@
+normal=@WHITE@
+muted=@DIM@@GREEN@
+subtle=@DIM@
+
+# ═══════════════════════════════════════════════════════════════
+# CONVERSATIONAL
+# ═══════════════════════════════════════════════════════════════
+
+user_prompt=@BRIGHT_YELLOW@
+user_text=@WHITE@
+agent_label=@BRIGHT_GREEN@
+agent_text=@WHITE@
+system_message=@GREEN@
+
+# ═══════════════════════════════════════════════════════════════
+# FEEDBACK MESSAGES
+# ═══════════════════════════════════════════════════════════════
+
+error=@BRIGHT_RED@
+warning=@YELLOW@
+success=@BRIGHT_GREEN@
+info=@CYAN@
+
+# ═══════════════════════════════════════════════════════════════
+# DATA DISPLAY
+# ═══════════════════════════════════════════════════════════════
+
+label=@DIM@@GREEN@
+value=@BRIGHT_GREEN@
+
+# ═══════════════════════════════════════════════════════════════
+# ACTIONABLE ELEMENTS
+# ═══════════════════════════════════════════════════════════════
+
+command=@BRIGHT_YELLOW@
+link=@BRIGHT_GREEN@@UNDERLINE@
+
+# ═══════════════════════════════════════════════════════════════
+# PROMPT
+# ═══════════════════════════════════════════════════════════════
+
+prompt_model=@GREEN@
+prompt_directory=@BRIGHT_GREEN@
+prompt_git_branch=@DIM@@GREEN@
+prompt_indicator=@BRIGHT_YELLOW@
+
+# ═══════════════════════════════════════════════════════════════
+# MARKDOWN
+# ═══════════════════════════════════════════════════════════════
+
+markdown_h1=@BOLD@@BRIGHT_GREEN@
+markdown_h2=@GREEN@
+markdown_h3=@WHITE@
+markdown_bold=@BOLD@
+markdown_italic=@DIM@
+markdown_code=@CYAN@
+markdown_code_block=@CYAN@
+markdown_link=@BRIGHT_GREEN@@UNDERLINE@
+markdown_quote=@DIM@@GREEN@
+markdown_list_bullet=@BRIGHT_YELLOW@
+
+# ═══════════════════════════════════════════════════════════════
+# TABLES
+# ═══════════════════════════════════════════════════════════════
+
+table_header=@BOLD@@BRIGHT_GREEN@
+table_border=@DIM@
+
+# ═══════════════════════════════════════════════════════════════
+# UI ELEMENTS
+# ═══════════════════════════════════════════════════════════════
+
+spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏
+
+# ═══════════════════════════════════════════════════════════════
+# DEPRECATED (Backward Compatibility)
+# ═══════════════════════════════════════════════════════════════
+
+app_title=@BOLD@@BRIGHT_GREEN@
+app_subtitle=@GREEN@
+banner_label=@DIM@@GREEN@
+banner_value=@BRIGHT_GREEN@
+banner_help=@DIM@@GREEN@
+banner_command=@BRIGHT_YELLOW@
+command_label=@DIM@@GREEN@
+command_value=@BRIGHT_GREEN@
+command_header=@BOLD@@BRIGHT_GREEN@
+command_subheader=@GREEN@
+data=@BRIGHT_GREEN@
+dim=@DIM@
+highlight=@BRIGHT_GREEN@
+theme_header=@GREEN@
+help_command=@BRIGHT_YELLOW@
+markdown_formula=@GREEN@
+markdown_link_text=@BRIGHT_GREEN@@UNDERLINE@
+markdown_link_url=@DIM@@GREEN@
+error_message=@BRIGHT_RED@
+warning_message=@YELLOW@
+success_message=@BRIGHT_GREEN@
+info_message=@CYAN@
+banner=@BRIGHT_GREEN@
