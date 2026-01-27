@@ -1,63 +1,74 @@
 # CLIO Style: slate
-# Professional blue/grey retro terminal aesthetic
-# Inspired by Terminal Tavern (PhotonBBS) - blues and greys for extended readability
+# Professional slate - blues and greys for work
+#
+# Cohesive Color Hierarchy:
+# - Primary: Bright Blue (main focus - professional blue)
+# - Secondary: Blue (supporting - slate blue)
+# - Accent: Cyan (actionable - cool blue accent)
+# - Neutral: White (readable text)
+# - Muted: Dim White (less important)
 
 name=slate
 
-# User interaction colors - bright blue command line feel
-user_prompt=@BRIGHT_BLUE@
-user_text=@BRIGHT_CYAN@
-
-# Agent/Assistant colors - professional and readable
-agent_label=@CYAN@@BOLD@
+# ═══ Core message colors ═══
+user_prompt=@CYAN@
+user_text=@WHITE@
+agent_label=@BRIGHT_BLUE@
 agent_text=@WHITE@
-
-# System messages - grey (unobtrusive) and red (errors)
-system_message=@BRIGHT_BLACK@
+system_message=@BLUE@
 error_message=@BRIGHT_RED@
-
-# Status messages
-success_message=@GREEN@
+success_message=@CYAN@
 warning_message=@YELLOW@
-info_message=@CYAN@
+info_message=@BLUE@
 
-# Command output elements
-command_header=@BOLD@@CYAN@
-command_subheader=@BOLD@@BLUE@
-command_label=@BLUE@
-command_value=@WHITE@
+# ═══ Banner ═══
+app_title=@BOLD@@BRIGHT_BLUE@
+app_subtitle=@BLUE@
+banner_label=@DIM@@WHITE@
+banner_value=@WHITE@
+banner_help=@DIM@@WHITE@
+banner_command=@CYAN@
+banner=@BRIGHT_BLUE@
 
-# Special elements
-highlight=@YELLOW@
+# ═══ Enhanced prompt ═══
+prompt_model=@BLUE@
+prompt_directory=@BRIGHT_BLUE@
+prompt_git_branch=@DIM@@BLUE@
+prompt_indicator=@CYAN@
+
+# ═══ General UI ═══
+theme_header=@BRIGHT_BLUE@
+data=@WHITE@
+dim=@DIM@
+highlight=@CYAN@
 muted=@DIM@@WHITE@
 
+# ═══ Command output ═══
+command_header=@BOLD@@BRIGHT_BLUE@
+command_subheader=@BLUE@
+command_label=@DIM@@WHITE@
+command_value=@WHITE@
 
-# UI elements - crisp whites and subtle blues
-banner=@BRIGHT_WHITE@@BOLD@
-app_title=@BRIGHT_BLUE@@BOLD@
-app_subtitle=@DIM@@WHITE@
-data=@BRIGHT_WHITE@
-dim=@BLUE@
-theme_header=@BRIGHT_BLUE@@BOLD@
-prompt_indicator=@BRIGHT_BLUE@@BOLD@
-
-# Markdown element colors - blue/grey/white hierarchy
-markdown_bold=@BOLD@@WHITE@
-markdown_italic=@DIM@@CYAN@
-markdown_code=@BRIGHT_CYAN@
-markdown_link_text=@BLUE@@UNDERLINE@
+# ═══ Markdown ═══
+markdown_bold=@BOLD@
+markdown_italic=@DIM@
+markdown_code=@BLUE@
+markdown_formula=@BRIGHT_BLUE@
+markdown_link_text=@BRIGHT_BLUE@@UNDERLINE@
 markdown_link_url=@DIM@@BLUE@
 markdown_header1=@BOLD@@BRIGHT_BLUE@
-markdown_header2=@BOLD@@CYAN@
-markdown_header3=@BOLD@@WHITE@
-markdown_list_bullet=@BRIGHT_BLUE@
-markdown_quote=@DIM@@CYAN@
-markdown_code_block=@CYAN@
+markdown_header2=@BLUE@
+markdown_header3=@WHITE@
+markdown_list_bullet=@CYAN@
+markdown_quote=@DIM@@BLUE@
+markdown_code_block=@BLUE@
 
-# Table colors - clean blue and white
-table_border=@BLUE@
+# Help command styling
+help_command=@BRIGHT_BLUE@
+
+# ═══ Tables ═══
+table_border=@DIM@@WHITE@
 table_header=@BOLD@@BRIGHT_BLUE@
 
-
-# Spinner animation frames - braille pattern
+# ═══ Spinner ═══
 spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏

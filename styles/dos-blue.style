@@ -1,63 +1,74 @@
 # CLIO Style: dos-blue
-# Classic MS-DOS blue background aesthetic (emulated with blue text on black)
-# The iconic blue and white color scheme of DOS text mode
+# MS-DOS blue aesthetic - classic PC nostalgia
+#
+# Cohesive Color Hierarchy:
+# - Primary: Bright Blue (main focus - DOS blue)
+# - Secondary: Blue (supporting - darker blue)
+# - Accent: Bright White (actionable - DOS highlight)
+# - Neutral: White (readable text)
+# - Muted: Dim White (less important)
 
 name=dos-blue
 
-# User interaction colors - bright white on blue
+# ═══ Core message colors ═══
 user_prompt=@BRIGHT_WHITE@
 user_text=@WHITE@
-
-# Agent/Assistant colors - bright cyan (DOS highlight color)
-agent_label=@BRIGHT_CYAN@
+agent_label=@BRIGHT_BLUE@
 agent_text=@WHITE@
-
-# System messages
-system_message=@BRIGHT_YELLOW@
+system_message=@BLUE@
 error_message=@BRIGHT_RED@
-
-# Status messages
-success_message=@BRIGHT_GREEN@
+success_message=@BRIGHT_WHITE@
 warning_message=@BRIGHT_YELLOW@
-info_message=@BRIGHT_CYAN@
+info_message=@BLUE@
 
-# Command output elements
-command_header=@BOLD@@BRIGHT_WHITE@
-command_subheader=@BOLD@@WHITE@
-command_label=@CYAN@
-command_value=@BRIGHT_WHITE@
-
-# Special elements
-highlight=@BRIGHT_YELLOW@
-muted=@DIM@@WHITE@
-
-
-# UI elements - DOS blue/white/cyan palette
-banner=@BRIGHT_BLUE@@BOLD@
-app_title=@BRIGHT_BLUE@
+# ═══ Banner ═══
+app_title=@BOLD@@BRIGHT_BLUE@
 app_subtitle=@BLUE@
-data=@BRIGHT_WHITE@
-dim=@BLUE@
-theme_header=@BRIGHT_CYAN@@BOLD@
+banner_label=@DIM@@WHITE@
+banner_value=@WHITE@
+banner_help=@DIM@@WHITE@
+banner_command=@BRIGHT_WHITE@
+banner=@BRIGHT_BLUE@
+
+# ═══ Enhanced prompt ═══
+prompt_model=@BLUE@
+prompt_directory=@BRIGHT_BLUE@
+prompt_git_branch=@DIM@@BLUE@
 prompt_indicator=@BRIGHT_WHITE@
 
-# Markdown element colors - DOS color scheme
-markdown_bold=@BOLD@@BRIGHT_WHITE@
-markdown_italic=@CYAN@
-markdown_code=@BRIGHT_CYAN@
-markdown_link_text=@BRIGHT_CYAN@@UNDERLINE@
-markdown_link_url=@CYAN@
-markdown_header1=@BOLD@@BRIGHT_CYAN@
-markdown_header2=@BOLD@@BRIGHT_WHITE@
-markdown_header3=@BOLD@@WHITE@
-markdown_list_bullet=@BRIGHT_CYAN@
-markdown_quote=@BLUE@
-markdown_code_block=@BRIGHT_CYAN@
+# ═══ General UI ═══
+theme_header=@BRIGHT_BLUE@
+data=@WHITE@
+dim=@DIM@
+highlight=@BRIGHT_WHITE@
+muted=@DIM@@WHITE@
 
-# Table colors
-table_border=@BRIGHT_WHITE@
-table_header=@BOLD@@BRIGHT_CYAN@
+# ═══ Command output ═══
+command_header=@BOLD@@BRIGHT_BLUE@
+command_subheader=@BLUE@
+command_label=@DIM@@WHITE@
+command_value=@WHITE@
 
+# ═══ Markdown ═══
+markdown_bold=@BOLD@
+markdown_italic=@DIM@
+markdown_code=@BLUE@
+markdown_formula=@BRIGHT_BLUE@
+markdown_link_text=@BRIGHT_BLUE@@UNDERLINE@
+markdown_link_url=@DIM@@BLUE@
+markdown_header1=@BOLD@@BRIGHT_BLUE@
+markdown_header2=@BLUE@
+markdown_header3=@WHITE@
+markdown_list_bullet=@BRIGHT_WHITE@
+markdown_quote=@DIM@@BLUE@
+markdown_code_block=@BLUE@
 
-# Spinner animation frames - braille pattern
+# Help command styling
+help_command=@BRIGHT_BLUE@
+
+# ═══ Tables ═══
+table_border=@DIM@@WHITE@
+table_header=@BOLD@@BRIGHT_BLUE@
+
+# ═══ Spinner ═══
 spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏

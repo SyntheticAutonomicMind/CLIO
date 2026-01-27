@@ -1,63 +1,74 @@
 # CLIO Style: commodore-64
-# Commodore 64 color palette - the most iconic 8-bit computer
-# Blue background with light blue text (represented as blue/cyan on black terminal)
+# C64 blues - the most iconic 8-bit computer
+#
+# Cohesive Color Hierarchy:
+# - Primary: Bright Blue (main focus - C64 blue)
+# - Secondary: Blue/Cyan (supporting - light blue tones)
+# - Accent: Bright Cyan (actionable - C64 highlight)
+# - Neutral: White (readable text)
+# - Muted: Dim Blue (less important - faded blue)
 
 name=commodore-64
 
-# User interaction colors - light blue (Commodore's signature color)
+# ═══ Core message colors ═══
 user_prompt=@BRIGHT_CYAN@
-user_text=@CYAN@
-
-# Agent/Assistant colors - light blue and white (classic C64)
-agent_label=@BRIGHT_CYAN@@BOLD@
+user_text=@WHITE@
+agent_label=@BRIGHT_BLUE@
 agent_text=@WHITE@
-
-# System messages - using C64 palette
-system_message=@BRIGHT_BLUE@
+system_message=@BLUE@
 error_message=@BRIGHT_RED@
-
-# Status messages
-success_message=@BRIGHT_GREEN@
+success_message=@BRIGHT_CYAN@
 warning_message=@BRIGHT_YELLOW@
-info_message=@BRIGHT_CYAN@
+info_message=@CYAN@
 
-# Command output elements
-command_header=@BOLD@@BRIGHT_BLUE@
-command_subheader=@BOLD@@BLUE@
-command_label=@CYAN@
-command_value=@BRIGHT_WHITE@
-
-# Special elements
-highlight=@BRIGHT_YELLOW@
-muted=@DIM@@BLUE@
-
-
-# UI elements - Commodore blue
-banner=@BRIGHT_BLUE@@BOLD@
-app_title=@BRIGHT_CYAN@
+# ═══ Banner ═══
+app_title=@BOLD@@BRIGHT_BLUE@
 app_subtitle=@CYAN@
-data=@BRIGHT_WHITE@
-dim=@BLUE@
-theme_header=@BRIGHT_CYAN@@BOLD@
+banner_label=@DIM@@BLUE@
+banner_value=@WHITE@
+banner_help=@DIM@@BLUE@
+banner_command=@BRIGHT_CYAN@
+banner=@BRIGHT_BLUE@
+
+# ═══ Enhanced prompt ═══
+prompt_model=@CYAN@
+prompt_directory=@BRIGHT_BLUE@
+prompt_git_branch=@DIM@@BLUE@
 prompt_indicator=@BRIGHT_CYAN@
 
-# Markdown element colors - C64 palette (blue, cyan, white)
-markdown_bold=@BOLD@@BRIGHT_WHITE@
-markdown_italic=@CYAN@
-markdown_code=@BRIGHT_CYAN@@BOLD@
-markdown_link_text=@BRIGHT_CYAN@@UNDERLINE@
-markdown_link_url=@CYAN@
-markdown_header1=@BOLD@@BRIGHT_CYAN@
-markdown_header2=@BOLD@@CYAN@
-markdown_header3=@BOLD@@WHITE@
+# ═══ General UI ═══
+theme_header=@BRIGHT_BLUE@
+data=@WHITE@
+dim=@DIM@
+highlight=@BRIGHT_CYAN@
+muted=@DIM@@BLUE@
+
+# ═══ Command output ═══
+command_header=@BOLD@@BRIGHT_BLUE@
+command_subheader=@CYAN@
+command_label=@DIM@@BLUE@
+command_value=@WHITE@
+
+# ═══ Markdown ═══
+markdown_bold=@BOLD@
+markdown_italic=@DIM@
+markdown_code=@CYAN@
+markdown_formula=@BRIGHT_CYAN@
+markdown_link_text=@BRIGHT_BLUE@@UNDERLINE@
+markdown_link_url=@DIM@@BLUE@
+markdown_header1=@BOLD@@BRIGHT_BLUE@
+markdown_header2=@CYAN@
+markdown_header3=@WHITE@
 markdown_list_bullet=@BRIGHT_CYAN@
-markdown_quote=@BLUE@
-markdown_code_block=@BRIGHT_CYAN@
+markdown_quote=@DIM@@CYAN@
+markdown_code_block=@CYAN@
 
-# Table colors
-table_border=@CYAN@
-table_header=@BOLD@@BRIGHT_CYAN@
+# Help command styling
+help_command=@BRIGHT_CYAN@
 
+# ═══ Tables ═══
+table_border=@DIM@@BLUE@
+table_header=@BOLD@@BRIGHT_BLUE@
 
-# Spinner animation frames - braille pattern
+# ═══ Spinner ═══
 spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏
