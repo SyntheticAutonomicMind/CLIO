@@ -554,6 +554,9 @@ sub get_builtin_style {
         markdown_quote => '@DIM@@CYAN@',          # Muted - quotes
         markdown_code_block => '@CYAN@',          # Secondary - code blocks
         
+        # Help command styling
+        help_command => '@BRIGHT_CYAN@',       # Commands in /help output (matches theme)
+        
         # Table styling
         table_border => '@DIM@@WHITE@',        # Muted - borders
         table_header => '@BOLD@@BRIGHT_CYAN@', # Primary - headers
