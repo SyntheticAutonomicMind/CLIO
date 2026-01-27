@@ -1125,6 +1125,19 @@ sub _handle_error_response {
         $retry_info = "Server temporarily unavailable ($status). Retrying...";
         $error = $retry_info;
     }
+    # Handle token limit exceeded (400) - NOT retryable
+    # Token limit errors cannot be fixed by retrying; context must be reduced first
+    # Error patterns: "model_max_prompt_tokens_exceeded", "context_length_exceeded", "prompt token count exceeds"
+    elsif ($status == 400 && $error =~ /model_max_prompt_tokens_exceeded|context_length_exceeded|prompt token count.*exceeds/i) {
+        $is_retryable_error = 0;
+        $retryable = 0;
+        
+        # Provide clear error message explaining the issue
+        $error = "Token limit exceeded: The conversation history is too long for the model's context window. " .
+                 "Please start a new session or use a model with a larger context window.";
+        
+        print STDERR "[ERROR][APIManager] Token limit exceeded - NOT retryable\n" if should_log('ERROR');
+    }
     # Handle malformed tool call JSON (400) - the AI generated bad JSON, so retry to give it another chance
     # This prevents wasting a premium request on a transient AI JSON generation error
     elsif ($status == 400 && $error =~ /invalid.*json.*tool.*call|tool.*call.*invalid.*json/i) {
