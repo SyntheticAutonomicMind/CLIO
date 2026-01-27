@@ -2391,15 +2391,25 @@ sub _display_config_help {
     $self->display_command_header("CONFIG COMMANDS");
     
     $self->display_list_item("/config show - Display global configuration");
-    $self->display_list_item("/config set <key> <val> - Set a configuration value");
-    $self->display_list_item("/config save - Save current configuration");
+    $self->display_list_item("/config set <key> <value> - Set a configuration value");
+    $self->display_list_item("/config save - Save current configuration to disk");
     $self->display_list_item("/config load - Reload configuration from disk");
-    $self->display_list_item("/config workdir [path] - Get/set working directory");
-    $self->display_list_item("/config loglevel [lvl] - Get/set log level");
+    $self->display_list_item("/config workdir [path] - Get or set working directory");
+    $self->display_list_item("/config loglevel [level] - Get or set log level");
     
     print "\n";
     $self->display_section_header("SETTABLE KEYS");
-    print "  style, theme, working_directory\n";
+    print "  style              UI color scheme (default, dark, light, amber-terminal, etc.)\n";
+    print "  theme              Banner and template theme\n";
+    print "  workdir            Current working directory path\n";
+    
+    print "\n";
+    $self->display_section_header("EXAMPLES");
+    print "  /config set style dark                  # Switch to dark color scheme\n";
+    print "  /config set theme photon                # Use photon theme\n";
+    print "  /config set workdir ~/projects          # Change working directory\n";
+    print "  /config workdir                         # Show current working directory\n";
+    
     print "\n";
     $self->display_info_message("For API settings, use /api set");
     print "\n";
