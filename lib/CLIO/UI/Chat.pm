@@ -9,6 +9,7 @@ use CLIO::UI::ANSI;
 use CLIO::UI::Theme;
 use CLIO::UI::ProgressSpinner;
 use utf8;
+use CLIO::UI::CommandHandler;
 use open ':std', ':encoding(UTF-8)';
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
@@ -103,6 +104,15 @@ sub new {
     }
     
     # Setup tab completion if running interactively
+    # Initialize CommandHandler for slash command processing
+    $self->{command_handler} = CLIO::UI::CommandHandler->new(
+        chat => $self,
+        session => $self->{session},
+        config => $self->{config},
+        ai_agent => $self->{ai_agent},
+        debug => $self->{debug},
+    );
+    
     if (-t STDIN) {
         $self->setup_tab_completion();
     }
@@ -1310,167 +1320,8 @@ Process slash commands. Returns 0 to exit, 1 to continue
 sub handle_command {
     my ($self, $command) = @_;
     
-    # Remove leading slash
-    $command =~ s/^\///;
-    
-    # Split into command and args
-    my ($cmd, @args) = split /\s+/, $command;
-    $cmd = lc($cmd);
-    
-    if ($cmd eq 'exit' || $cmd eq 'quit' || $cmd eq 'q') {
-        return 0;  # Signal to exit
-    }
-    elsif ($cmd eq 'help' || $cmd eq 'h') {
-        $self->display_help();
-    }
-    elsif ($cmd eq 'clear' || $cmd eq 'cls') {
-        $self->repaint_screen();
-    }
-    elsif ($cmd eq 'shell' || $cmd eq 'sh') {
-        $self->handle_shell_command();
-    }
-    elsif ($cmd eq 'debug') {
-        $self->{debug} = !$self->{debug};
-        $self->display_system_message("Debug mode: " . ($self->{debug} ? "ON" : "OFF"));
-    }
-    elsif ($cmd eq 'color') {
-        $self->{use_color} = !$self->{use_color};
-        $self->display_system_message("Color mode: " . ($self->{use_color} ? "ON" : "OFF"));
-    }
-    elsif ($cmd eq 'session') {
-        $self->handle_session_command(@args);
-    }
-    elsif ($cmd eq 'config') {
-        $self->handle_config_command(@args);
-    }
-    elsif ($cmd eq 'api') {
-        $self->handle_api_command(@args);
-    }
-    elsif ($cmd eq 'loglevel') {
-        $self->handle_loglevel_command(@args);
-    }
-    elsif ($cmd eq 'style') {
-        $self->handle_style_command(@args);
-    }
-    elsif ($cmd eq 'theme') {
-        $self->handle_theme_command(@args);
-    }
-    elsif ($cmd eq 'login') {
-        # Backward compatibility - redirect to /api login
-        $self->display_system_message("Note: Use '/api login' (new syntax)");
-        $self->handle_login_command(@args);
-    }
-    elsif ($cmd eq 'logout') {
-        # Backward compatibility - redirect to /api logout
-        $self->display_system_message("Note: Use '/api logout' (new syntax)");
-        $self->handle_logout_command(@args);
-    }
-    elsif ($cmd eq 'file') {
-        $self->handle_file_command(@args);
-    }
-    elsif ($cmd eq 'edit') {
-        # Backward compatibility
-        $self->display_system_message("Note: Use '/file edit <path>' (new syntax)");
-        $self->handle_edit_command(join(' ', @args));
-    }
-    elsif ($cmd eq 'multi-line' || $cmd eq 'multiline' || $cmd eq 'ml') {
-        $self->handle_multiline_command();
-    }
-    elsif ($cmd eq 'performance' || $cmd eq 'perf') {
-        $self->handle_performance_command(@args);
-    }
-    elsif ($cmd eq 'todo') {
-        $self->handle_todo_command(@args);
-    }
-    elsif ($cmd eq 'billing' || $cmd eq 'bill' || $cmd eq 'usage') {
-        $self->handle_billing_command(@args);
-    }
-    elsif ($cmd eq 'models') {
-        # Backward compatibility - redirect to /api models
-        $self->display_system_message("Note: Use '/api models' (new syntax)");
-        $self->handle_models_command(@args);
-    }
-    elsif ($cmd eq 'context' || $cmd eq 'ctx') {
-        $self->handle_context_command(@args);
-    }
-    elsif ($cmd eq 'skills' || $cmd eq 'skill') {
-        my $result = $self->handle_skills_command(@args);
-        return $result if $result;  # May return (1, $prompt) for AI execution
-    }
-    elsif ($cmd eq 'prompt') {
-        $self->handle_prompt_command(@args);
-    }
-    elsif ($cmd eq 'explain') {
-        my $prompt = $self->handle_explain_command(@args);
-        return (1, $prompt) if $prompt;  # Return prompt to be sent to AI
-    }
-    elsif ($cmd eq 'review') {
-        my $prompt = $self->handle_review_command(@args);
-        return (1, $prompt) if $prompt;  # Return prompt to be sent to AI
-    }
-    elsif ($cmd eq 'test') {
-        my $prompt = $self->handle_test_command(@args);
-        return (1, $prompt) if $prompt;  # Return prompt to be sent to AI
-    }
-    elsif ($cmd eq 'fix') {
-        my $prompt = $self->handle_fix_command(@args);
-        return (1, $prompt) if $prompt;  # Return prompt to be sent to AI
-    }
-    elsif ($cmd eq 'doc') {
-        my $prompt = $self->handle_doc_command(@args);
-        return (1, $prompt) if $prompt;  # Return prompt to be sent to AI
-    }
-    elsif ($cmd eq 'git') {
-        $self->handle_git_command(@args);
-    }
-    elsif ($cmd eq 'commit') {
-        # Backward compatibility
-        $self->display_system_message("Note: Use '/git commit' (new syntax)");
-        $self->handle_commit_command(@args);
-    }
-    elsif ($cmd eq 'diff') {
-        # Backward compatibility
-        $self->display_system_message("Note: Use '/git diff' (new syntax)");
-        $self->handle_diff_command(@args);
-    }
-    elsif ($cmd eq 'status' || $cmd eq 'st') {
-        # Backward compatibility
-        $self->display_system_message("Note: Use '/git status' (new syntax)");
-        $self->handle_status_command(@args);
-    }
-    elsif ($cmd eq 'log') {
-        $self->handle_log_command(@args);
-    }
-    elsif ($cmd eq 'gitlog' || $cmd eq 'gl') {
-        # Backward compatibility
-        $self->display_system_message("Note: Use '/git log' (new syntax)");
-        $self->handle_gitlog_command(@args);
-    }
-    elsif ($cmd eq 'exec' || $cmd eq 'shell' || $cmd eq 'sh') {
-        $self->handle_exec_command(@args);
-    }
-    elsif ($cmd eq 'switch') {
-        # Backward compatibility - redirect to /session switch
-        $self->display_system_message("Note: Use '/session switch' (new syntax)");
-        $self->handle_switch_command(@args);
-    }
-    elsif ($cmd eq 'read' || $cmd eq 'view' || $cmd eq 'cat') {
-        # Backward compatibility
-        $self->display_system_message("Note: Use '/file read <path>' (new syntax)");
-        $self->handle_read_command(@args);
-    }
-    elsif ($cmd eq 'memory' || $cmd eq 'mem' || $cmd eq 'ltm') {
-        $self->handle_memory_command(@args);
-    }
-    elsif ($cmd eq 'update') {
-        $self->handle_update_command(@args);
-    }
-    else {
-        $self->display_error_message("Unknown command: /$cmd (type /help for help)");
-    }
-    
-    print "\n";
-    return 1;  # Continue
+    # Delegate to CommandHandler for routing
+    return $self->{command_handler}->handle_command($command);
 }
 
 =head2 display_help
