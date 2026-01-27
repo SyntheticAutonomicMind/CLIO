@@ -2,6 +2,10 @@ package CLIO::UI::Display;
 
 use strict;
 use warnings;
+use utf8;
+binmode(STDOUT, ':encoding(UTF-8)');
+binmode(STDERR, ':encoding(UTF-8)');
+
 use Carp qw(croak confess);
 use CLIO::Core::Logger qw(should_log);
 use CLIO::Util::TextSanitizer qw(sanitize_text);
