@@ -99,36 +99,69 @@ sub execute_command {
         return $validation;
     }
     
+    # Determine if passthrough mode should be used
+    my $config = $context->{config};
+    my $use_passthrough = $self->_should_use_passthrough($command, $params, $config);
+    
     eval {
         my $original_cwd = getcwd();
         chdir $working_dir if $working_dir ne '.';
-        
-        # Execute with timeout
-        my $output;
-        local $SIG{ALRM} = sub { die "Command timeout after ${timeout}s\n" };
-        alarm($timeout);
-        
-        $output = `$command 2>&1`;
-        my $exit_code = $? >> 8;
-        
-        alarm(0);
-        
-        chdir $original_cwd if $working_dir ne '.';
         
         # Truncate command for display if very long
         my $display_cmd = length($command) > 60 
             ? substr($command, 0, 57) . "..."
             : $command;
-        my $status = $exit_code == 0 ? "success" : "exit code $exit_code";
-        my $action_desc = "running '$display_cmd' ($status)";
         
-        $result = $self->success_result(
-            $output,
-            action_description => $action_desc,
-            exit_code => $exit_code,
-            command => $command,
-            timeout => $timeout,
-        );
+        if ($use_passthrough) {
+            # Passthrough mode: Execute with direct TTY access
+            # User can interact (editor, GPG prompts, etc.)
+            # Agent only gets exit code, not output
+            
+            local $SIG{ALRM} = sub { die "Command timeout after ${timeout}s\n" };
+            alarm($timeout);
+            
+            my $exit_code = system($command);
+            $exit_code = $exit_code >> 8;
+            
+            alarm(0);
+            
+            chdir $original_cwd if $working_dir ne '.';
+            
+            my $status = $exit_code == 0 ? "success" : "exit code $exit_code";
+            my $action_desc = "running '$display_cmd' with direct terminal access ($status)";
+            
+            $result = $self->success_result(
+                "Command executed with direct terminal access. User saw output/prompts directly.\nExit code: $exit_code",
+                action_description => $action_desc,
+                exit_code => $exit_code,
+                command => $command,
+                timeout => $timeout,
+                passthrough => 1,
+            );
+        } else {
+            # Capture mode: Execute and capture output for agent
+            
+            local $SIG{ALRM} = sub { die "Command timeout after ${timeout}s\n" };
+            alarm($timeout);
+            
+            my $output = `$command 2>&1`;
+            my $exit_code = $? >> 8;
+            
+            alarm(0);
+            
+            chdir $original_cwd if $working_dir ne '.';
+            
+            my $status = $exit_code == 0 ? "success" : "exit code $exit_code";
+            my $action_desc = "running '$display_cmd' ($status)";
+            
+            $result = $self->success_result(
+                $output,
+                action_description => $action_desc,
+                exit_code => $exit_code,
+                command => $command,
+                timeout => $timeout,
+            );
+        }
     };
     
     if ($@) {
@@ -208,7 +241,89 @@ sub get_additional_parameters {
             type => "string",
             description => "Working directory for command execution (default: '.')",
         },
+        passthrough => {
+            type => "boolean",
+            description => "Force passthrough mode (direct terminal access, no output capture). Overrides config settings.",
+        },
     };
+}
+
+=head2 _should_use_passthrough
+
+Determine if passthrough mode should be used for a command.
+
+Checks (in priority order):
+1. Per-command passthrough parameter override
+2. Global terminal_passthrough config setting
+3. Auto-detection (if terminal_autodetect enabled)
+
+Arguments:
+- $command: Command string to execute
+- $params: Parameters hash (may contain passthrough override)
+- $config: Config object
+
+Returns: Boolean (1 = use passthrough, 0 = use capture)
+
+=cut
+
+sub _should_use_passthrough {
+    my ($self, $command, $params, $config) = @_;
+    
+    # 1. Per-command override (highest priority)
+    if (defined $params->{passthrough}) {
+        return $params->{passthrough} ? 1 : 0;
+    }
+    
+    # 2. Global passthrough setting
+    if ($config && $config->get('terminal_passthrough')) {
+        return 1;
+    }
+    
+    # 3. Auto-detection (if enabled)
+    if ($config && $config->get('terminal_autodetect')) {
+        return $self->_is_interactive_command($command);
+    }
+    
+    # Default: capture mode
+    return 0;
+}
+
+=head2 _is_interactive_command
+
+Detect if a command is likely to be interactive (needs TTY access).
+
+Arguments:
+- $command: Command string to analyze
+
+Returns: Boolean (1 = interactive, 0 = non-interactive)
+
+=cut
+
+sub _is_interactive_command {
+    my ($self, $command) = @_;
+    
+    # Known interactive editors and pagers
+    return 1 if $command =~ /\b(vim|vi|nvim|nano|emacs|less|more|man)\b/;
+    
+    # Git commit without message flag (will open editor)
+    return 1 if $command =~ /git\s+commit(?!\s+.*(?:-m|--message))/;
+    
+    # Git commands with GPG signing (needs passphrase prompt)
+    return 1 if $command =~ /git\s+.*(?:--gpg-sign|-S)\b/;
+    
+    # GPG operations (likely need passphrase)
+    return 1 if $command =~ /\bgpg\b/;
+    
+    # Interactive shells (if command is just a shell invocation)
+    return 1 if $command =~ /^\s*(bash|sh|zsh|fish|tcsh|csh)\s*$/;
+    
+    # SSH connections (interactive by default)
+    return 1 if $command =~ /^\s*ssh\s+/;
+    
+    # Interactive python/ruby/node REPLs (no script argument)
+    return 1 if $command =~ /^\s*(python|ruby|irb|node)\s*$/;
+    
+    return 0;
 }
 
 1;

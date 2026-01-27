@@ -285,17 +285,25 @@ sub run {
             # Previously, a new local spinner was created per request, causing reference issues
             unless ($self->{spinner}) {
                 # Create persistent spinner on first use with frames from current style
+                # Use inline mode so spinner animates after text we print
                 my $spinner_frames = $self->{theme_mgr}->get_spinner_frames();
                 $self->{spinner} = CLIO::UI::ProgressSpinner->new(
                     frames => $spinner_frames,
                     delay => 100000,  # 100ms between frames for smooth block animation
+                    inline => 1,      # Inline mode: don't clear entire line, just the spinner
                 );
-                print STDERR "[DEBUG][Chat] Created persistent spinner with " . scalar(@$spinner_frames) . " frames\n" if should_log('DEBUG');
+                print STDERR "[DEBUG][Chat] Created persistent spinner in inline mode\n" if should_log('DEBUG');
             }
             
-            # Start the spinner (idempotent if already running)
+            # Print "CLIO: " prefix before starting spinner
+            # Spinner will animate inline after this text
+            print $self->colorize("CLIO: ", 'ASSISTANT');
+            STDOUT->flush() if STDOUT->can('flush');
+            $self->{line_count}++;
+            
+            # Start the inline spinner (animates after the prefix we just printed)
             $self->{spinner}->start();
-            print STDERR "[DEBUG][Chat] Started spinner, reference=" . ref($self->{spinner}) . "\n" if should_log('DEBUG');
+            print STDERR "[DEBUG][Chat] Started inline spinner after CLIO: prefix\n" if should_log('DEBUG');
             
             # Reference for use in closures below
             my $spinner = $self->{spinner};
@@ -332,19 +340,22 @@ sub run {
                 print STDERR "[DEBUG][Chat] Received chunk: " . substr($chunk, 0, 50) . "...\n" if $self->{debug};
                 
                 # Stop progress spinner on first chunk (AI is now responding)
+                # Spinner animates inline after "CLIO: " prefix which was already printed
+                # Just stop the spinner to remove it, the prefix stays
                 if (!$first_chunk_received) {
-                    $spinner->stop();
+                    $spinner->stop();  # Removes spinner, leaves "CLIO: " prefix intact
                     
                     # Enable pagination for text responses (agent is speaking directly)
                     # This will be left enabled unless/until tools are invoked
                     $self->{pagination_enabled} = 1;
                     print STDERR "[DEBUG][Chat] Pagination ENABLED for text response\n" if $self->{debug};
+                    print STDERR "[DEBUG][Chat] First chunk received, spinner removed (CLIO: prefix remains)\n" if $self->{debug};
+                    $first_chunk_received = 1;
                 }
                 
-                # Display role label on first chunk OR when _need_agent_prefix is set
-                # (reset after tool execution to show new CLIO: prefix for continuation)
-                if (!$first_chunk_received || $self->{_need_agent_prefix}) {
-                    $first_chunk_received = 1;
+                # Display role label only when _need_agent_prefix is set
+                # (this happens after tool execution when we need a new CLIO: prefix for continuation)
+                if ($self->{_need_agent_prefix}) {
                     $self->{_need_agent_prefix} = 0;  # Clear the flag
                     print $self->colorize("CLIO: ", 'ASSISTANT');
                     STDOUT->flush() if STDOUT->can('flush');  # Ensure CLIO: appears immediately
@@ -2399,19 +2410,36 @@ sub _display_config_help {
     
     print "\n";
     $self->display_section_header("SETTABLE KEYS");
-    print "  style              UI color scheme (default, dark, light, amber-terminal, etc.)\n";
-    print "  theme              Banner and template theme\n";
-    print "  workdir            Current working directory path\n";
+    print "  style                    UI color scheme (default, dark, light, amber-terminal, etc.)\n";
+    print "  theme                    Banner and template theme\n";
+    print "  workdir                  Current working directory path\n";
+    print "  terminal_passthrough     Force direct terminal access for all commands (true/false)\n";
+    print "  terminal_autodetect      Auto-detect interactive commands for passthrough (true/false)\n";
     
     print "\n";
     $self->display_section_header("EXAMPLES");
-    print "  /config set style dark                  # Switch to dark color scheme\n";
-    print "  /config set theme photon                # Use photon theme\n";
-    print "  /config set workdir ~/projects          # Change working directory\n";
-    print "  /config workdir                         # Show current working directory\n";
+    print "  /config set style dark                      # Switch to dark color scheme\n";
+    print "  /config set theme photon                    # Use photon theme\n";
+    print "  /config set workdir ~/projects              # Change working directory\n";
+    print "  /config set terminal_passthrough true       # Enable passthrough for all commands\n";
+    print "  /config set terminal_autodetect false       # Disable interactive command detection\n";
+    print "  /config workdir                             # Show current working directory\n";
     
     print "\n";
     $self->display_info_message("For API settings, use /api set");
+    print "\n";
+    
+    print "\n";
+    $self->display_section_header("TERMINAL SETTINGS");
+    print "  terminal_passthrough: When enabled, commands execute with direct terminal access.\n";
+    print "    - User can interact (editor, GPG prompts, etc.)\n";
+    print "    - Agent sees exit codes but no output\n";
+    print "    - Default: false (use auto-detection instead)\n";
+    print "\n";
+    print "  terminal_autodetect: When enabled, interactive commands are detected automatically.\n";
+    print "    - Detects: git commit (no -m), vim, nano, GPG, ssh, etc.\n";
+    print "    - Uses passthrough only for detected commands\n";
+    print "    - Default: true (smart detection enabled)\n";
     print "\n";
 }
 
@@ -2428,7 +2456,7 @@ sub _handle_config_set {
     
     unless ($key) {
         $self->display_error_message("Usage: /config set <key> <value>");
-        print "Keys: style, theme, working_directory\n";
+        print "Keys: style, theme, working_directory, terminal_passthrough, terminal_autodetect\n";
         return;
     }
     
@@ -2442,12 +2470,45 @@ sub _handle_config_set {
         style => 1,
         theme => 1,
         working_directory => 1,
+        terminal_passthrough => 1,
+        terminal_autodetect => 1,
     );
     
     unless ($allowed{$key}) {
         $self->display_error_message("Unknown config key: $key");
         print "Allowed keys: " . join(', ', sort keys %allowed) . "\n";
         return;
+    }
+    
+    # Handle boolean values for terminal settings
+    if ($key =~ /^terminal_/) {
+        # Normalize boolean values
+        if ($value =~ /^(true|1|yes|on)$/i) {
+            $value = 1;
+        } elsif ($value =~ /^(false|0|no|off)$/i) {
+            $value = 0;
+        } else {
+            $self->display_error_message("Invalid boolean value for $key: $value");
+            print "Use: true/false, 1/0, yes/no, on/off\n";
+            return;
+        }
+        
+        # Provide helpful feedback about what this setting does
+        if ($key eq 'terminal_passthrough') {
+            if ($value) {
+                $self->display_info_message("Passthrough mode: All commands will execute with direct terminal access");
+                $self->display_info_message("Agent will see exit codes but not command output");
+            } else {
+                $self->display_info_message("Passthrough mode disabled: Output will be captured for agent");
+                $self->display_info_message("Auto-detection (terminal_autodetect) may still enable passthrough for interactive commands");
+            }
+        } elsif ($key eq 'terminal_autodetect') {
+            if ($value) {
+                $self->display_info_message("Auto-detect enabled: Interactive commands (git commit, vim, GPG) will use passthrough automatically");
+            } else {
+                $self->display_info_message("Auto-detect disabled: All commands will capture output unless terminal_passthrough is enabled");
+            }
+        }
     }
     
     # Set the value
