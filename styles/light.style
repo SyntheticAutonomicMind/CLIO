@@ -43,6 +43,13 @@ prompt_indicator=@GREEN@@BOLD@
 prompt_model=@BRIGHT_CYAN@
 prompt_directory=@BRIGHT_BLUE@
 prompt_git_branch=@BRIGHT_YELLOW@
+# Banner components
+app_title=@BOLD@@BRIGHT_CYAN@
+app_subtitle=@DIM@@CYAN@
+banner_label=@DIM@@WHITE@
+banner_value=@BRIGHT_WHITE@
+banner_help=@DIM@@WHITE@
+banner_command=@BRIGHT_GREEN@
 
 # Markdown element colors - darker for light bg
 markdown_bold=@BOLD@@BLACK@
