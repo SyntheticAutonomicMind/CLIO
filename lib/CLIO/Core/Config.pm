@@ -44,6 +44,9 @@ use constant DEFAULT_CONFIG => {
     serpapi_key => '',  # SerpAPI key for reliable web search
     search_engine => 'google',  # SerpAPI engine: google, bing, duckduckgo
     search_provider => 'auto',  # auto | serpapi | duckduckgo_direct
+    # Terminal operations configuration
+    terminal_passthrough => 0,  # Force passthrough mode for all commands (default: off, use auto-detect)
+    terminal_autodetect => 1,   # Auto-detect interactive commands and use passthrough (default: on)
 };
 
 sub new {
