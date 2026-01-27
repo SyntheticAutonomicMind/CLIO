@@ -210,7 +210,9 @@ sub load {
     # Detect orphaned tool_calls (incomplete tool execution due to interruption)
     my $repaired = $self->_validate_and_repair_history();
     if ($repaired) {
-        print STDERR "[WARNING][State::load] Session history was repaired (removed incomplete tool execution)\n";
+        # Store repair message to be displayed to user as styled system message
+        # (instead of raw debug warnings)
+        $self->{repair_notification} = $repaired;
     }
     
     print STDERR "[DEBUG][State::load] returning self: $self\n" if $args{debug} || $ENV{CLIO_DEBUG};
@@ -228,6 +230,9 @@ sub load {
 sub stm  { $_[0]->{stm} }
 sub ltm  { $_[0]->{ltm} }
 sub yarn { $_[0]->{yarn} }
+
+# Get repair notification if session history was repaired on load
+sub repair_notification { $_[0]->{repair_notification} }
 
 =head2 _validate_and_repair_history
 
@@ -286,14 +291,15 @@ sub _validate_and_repair_history {
             if (@missing_ids) {
                 $orphan_indices{$i} = 1;
                 
-                print STDERR "[WARNING][State] Found orphaned tool_calls at index $i: " . 
-                             join(', ', @missing_ids) . "\n" if should_log('WARNING');
+                # Log to debug only (not to user - suppressing raw [WARNING] messages)
+                print STDERR "[DEBUG][State] Found orphaned tool_calls at index $i: " . 
+                             join(', ', @missing_ids) . "\n" if $ENV{CLIO_DEBUG};
                 
                 # Also mark the preceding user message (if any) since they form a unit
                 if ($i > 0 && $history[$i-1]{role} && $history[$i-1]{role} eq 'user') {
                     $orphan_indices{$i-1} = 1;
-                    print STDERR "[WARNING][State] Removing associated user message at index " . ($i-1) . "\n"
-                        if should_log('WARNING');
+                    print STDERR "[DEBUG][State] Removing associated user message at index " . ($i-1) . "\n"
+                        if $ENV{CLIO_DEBUG};
                 }
                 
                 # Also remove any partial tool results for THIS assistant's tool_calls
@@ -329,8 +335,9 @@ sub _validate_and_repair_history {
     my $removed_count = scalar(@history) - scalar(@cleaned_history);
     $self->{history} = \@cleaned_history;
     
-    print STDERR "[WARNING][State] Removed $removed_count messages with incomplete tool execution\n"
-        if should_log('WARNING');
+    # Log to debug only (not to user - suppressing raw [WARNING] messages)
+    print STDERR "[DEBUG][State] Removed $removed_count messages with incomplete tool execution\n"
+        if $ENV{CLIO_DEBUG};
     
     # Save the repaired session immediately to persist the fix
     eval { $self->save(); };
@@ -338,7 +345,10 @@ sub _validate_and_repair_history {
         print STDERR "[ERROR][State] Failed to save repaired session: $@\n" if should_log('ERROR');
     }
     
-    return 1;  # Repairs were made
+    # Return user-friendly message instead of just 1 (now this message will be displayed)
+    return "Session restored. Ready to continue." if $removed_count >= 1;
+    
+    return 0;  # No repairs were made
 }
 
 # Strip out conversation markup
@@ -416,11 +426,19 @@ sub add_message {
     $self->{yarn}->create_thread($thread_id) unless $self->{yarn}->get_thread($thread_id);
     $self->{yarn}->add_to_thread($thread_id, $message);
     
-    # Check if context trimming needed
+    # Aggressively trim context to stay within safe token budget
+    # Use percentage-based threshold for model-agnostic operation
     my $current_size = $self->get_conversation_size();
-    if ($current_size > $self->{summarize_threshold}) {
+    
+    # Dynamic threshold based on max_tokens (model context window):
+    # Trim at 58% of max context to provide 42% safety margin
+    # This accounts for max response (typically 12-16% of context) and other overhead
+    my $max_tokens = $self->{max_tokens} // 128000;  # Default to 128k if not set
+    my $trim_threshold = int($max_tokens * 0.58);
+    
+    if ($current_size > $trim_threshold) {
         if ($ENV{CLIO_DEBUG} || $self->{debug}) {
-            print STDERR "[STATE] Context size ($current_size tokens) exceeds threshold ($self->{summarize_threshold}), trimming...\n";
+            print STDERR "[STATE] Context size ($current_size tokens) exceeds safe threshold ($trim_threshold of $max_tokens max), trimming...\n";
         }
         $self->trim_context();
     }
@@ -534,22 +552,34 @@ sub trim_context {
     my @messages = @{$self->{history}};
     return unless @messages > 15;  # Don't trim very short conversations
     
+    # Aggressive trimming strategy:
+    # Keep system messages + last 10 messages + some high-importance from middle
+    # This targets ~25-30k tokens for conversation (accounting for system prompt ~10-12k)
+    
     # Separate message types
     my @system = grep { $_->{role} eq 'system' } @messages;
-    my @recent = @messages[-20 .. -1];  # Keep last 20 messages
     
-    # Get middle messages to analyze
-    my $recent_start = @messages - 20;
-    my @middle = @messages[scalar(@system) .. $recent_start - 1];
+    # Keep last 10 messages (most recent context)
+    # This is the core of what agent needs for continuity
+    my $keep_recent = 10;
+    my @recent = @messages >= $keep_recent ? @messages[-$keep_recent .. -1] : @messages;
     
-    # Sort by importance, keep top 50%
-    my @sorted = sort { ($b->{_importance} // 0) <=> ($a->{_importance} // 0) } @middle;
-    my $keep_count = int(@sorted * 0.5);
-    my @important = @sorted[0 .. $keep_count - 1];
+    # Get messages before the recent set for importance filtering
+    my $start_idx = @messages - $keep_recent;
+    my @middle = @messages[scalar(@system) .. $start_idx - 1];
+    
+    # From middle messages, keep only the most important (top 30%)
+    # This provides context for earlier parts of conversation
+    my @sorted_middle = sort { 
+        ($b->{_importance} // 0) <=> ($a->{_importance} // 0) 
+    } @middle;
+    
+    my $keep_important_count = int(@sorted_middle * 0.3);  # Reduced from 0.5 to 0.3
+    my @important = @sorted_middle[0 .. $keep_important_count - 1];
     
     # Restore chronological order for important messages
-    my %important_ids = map { $_ => 1 } @important;
-    @important = grep { $important_ids{$_} } @middle;
+    my %important_indices = map { $_ => 1 } @important;
+    @important = grep { $important_indices{$_} } @middle;
     
     # Reconstruct trimmed history
     my @trimmed = (@system, @important, @recent);
@@ -558,8 +588,11 @@ sub trim_context {
     my $before = scalar(@messages);
     my $after = scalar(@trimmed);
     if ($ENV{CLIO_DEBUG} || $self->{debug}) {
-        print STDERR "[STATE] Trimmed context: $before -> $after messages (" . 
-                     int(($after / $before) * 100) . "% retained)\n";
+        use CLIO::Memory::TokenEstimator;
+        my $before_tokens = CLIO::Memory::TokenEstimator::estimate_messages_tokens(\@messages);
+        my $after_tokens = CLIO::Memory::TokenEstimator::estimate_messages_tokens(\@trimmed);
+        print STDERR "[STATE] Aggressive trim: $before -> $after messages ($before_tokens -> $after_tokens tokens, " . 
+                     int(($after_tokens / $before_tokens) * 100) . "% retained)\n";
     }
     
     # Update history (trimmed messages already in YaRN from add_message)
