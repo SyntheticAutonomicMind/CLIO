@@ -3,7 +3,7 @@ package CLIO::UI::Theme;
 use strict;
 use warnings;
 use utf8;
-use FindBin;
+use FindBin qw($RealBin);
 use File::Spec;
 use File::Basename;
 use CLIO::UI::ANSI;
@@ -61,8 +61,8 @@ sub new {
         styles => {},
         themes => {},
         
-        # Base directories
-        base_dir => $opts{base_dir} || $FindBin::Bin,
+        # Base directories - use $RealBin to resolve symlinks
+        base_dir => $opts{base_dir} || $RealBin,
     };
     
     bless $self, $class;
