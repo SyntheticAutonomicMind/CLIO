@@ -289,13 +289,18 @@ sub handle_tab {
 
 Handle escape sequences (arrow keys, etc.)
 
+Supported sequences:
+- ESC [ A/B/C/D - Arrow keys (up/down/right/left)
+- ESC [ 1;5C/D - Ctrl+Right/Left (line start/end)
+- ESC [ 1;2C/D - Shift+Right/Left (word-by-word movement)
+
 =cut
 
 sub handle_escape_sequence {
     my ($self, $seq, $input_ref, $cursor_pos_ref, $prompt) = @_;
     
     # Arrow keys: ESC [ A/B/C/D
-    if ($seq =~ /^\e\[([ABCD])/) {
+    if ($seq =~ /^\e\[([ABCD])$/) {
         my $dir = $1;
         
         if ($dir eq 'A') {
@@ -305,19 +310,116 @@ sub handle_escape_sequence {
             # Down arrow - next history
             $self->history_next($input_ref, $cursor_pos_ref, $prompt);
         } elsif ($dir eq 'C') {
-            # Right arrow
+            # Right arrow - move one character right
             if ($$cursor_pos_ref < length($$input_ref)) {
                 $$cursor_pos_ref++;
                 $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
             }
         } elsif ($dir eq 'D') {
-            # Left arrow
+            # Left arrow - move one character left
             if ($$cursor_pos_ref > 0) {
                 $$cursor_pos_ref--;
                 $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
             }
         }
+        return;
     }
+    
+    # Modified arrow keys: ESC [ 1;5C/D (Ctrl), ESC [ 1;2C/D (Shift)
+    if ($seq =~ /^\e\[1;([25])([CD])/) {
+        my ($modifier, $dir) = ($1, $2);
+        
+        if ($modifier == 5) {
+            # Ctrl modifier
+            if ($dir eq 'C') {
+                # Ctrl+Right - move to end of line
+                $$cursor_pos_ref = length($$input_ref);
+                $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
+            } elsif ($dir eq 'D') {
+                # Ctrl+Left - move to beginning of line
+                $$cursor_pos_ref = 0;
+                $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
+            }
+        } elsif ($modifier == 2) {
+            # Shift modifier
+            if ($dir eq 'C') {
+                # Shift+Right - move word forward
+                $self->move_word_forward($input_ref, $cursor_pos_ref, $prompt);
+            } elsif ($dir eq 'D') {
+                # Shift+Left - move word backward
+                $self->move_word_backward($input_ref, $cursor_pos_ref, $prompt);
+            }
+        }
+        return;
+    }
+}
+
+=head2 move_word_forward
+
+Move cursor forward by one word (Shift+Right arrow)
+
+A word is defined as a sequence of non-whitespace characters or whitespace.
+
+=cut
+
+sub move_word_forward {
+    my ($self, $input_ref, $cursor_pos_ref, $prompt) = @_;
+    
+    my $len = length($$input_ref);
+    my $pos = $$cursor_pos_ref;
+    
+    return if $pos >= $len;  # Already at end
+    
+    my $text = $$input_ref;
+    
+    # If we're on whitespace, skip all whitespace
+    if (substr($text, $pos, 1) =~ /\s/) {
+        while ($pos < $len && substr($text, $pos, 1) =~ /\s/) {
+            $pos++;
+        }
+    }
+    
+    # Now skip non-whitespace characters
+    while ($pos < $len && substr($text, $pos, 1) !~ /\s/) {
+        $pos++;
+    }
+    
+    $$cursor_pos_ref = $pos;
+    $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
+}
+
+=head2 move_word_backward
+
+Move cursor backward by one word (Shift+Left arrow)
+
+A word is defined as a sequence of non-whitespace characters or whitespace.
+
+=cut
+
+sub move_word_backward {
+    my ($self, $input_ref, $cursor_pos_ref, $prompt) = @_;
+    
+    my $pos = $$cursor_pos_ref;
+    
+    return if $pos <= 0;  # Already at beginning
+    
+    my $text = $$input_ref;
+    $pos--;  # Move back one position first
+    
+    # If we're on whitespace, skip all whitespace backward
+    if (substr($text, $pos, 1) =~ /\s/) {
+        while ($pos > 0 && substr($text, $pos, 1) =~ /\s/) {
+            $pos--;
+        }
+    }
+    
+    # Now skip non-whitespace characters backward
+    while ($pos > 0 && substr($text, $pos - 1, 1) !~ /\s/) {
+        $pos--;
+    }
+    
+    $$cursor_pos_ref = $pos;
+    $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
 }
 
 =head2 history_prev
