@@ -17,7 +17,7 @@ from active context due to token limits.
 
 This enables:
 - Full conversation history retention
-- Thread-based recall (future: semantic search)
+- Thread-based recall (searchable via LTM/grep)
 - Context preservation across session resumption
 
 =head1 SYNOPSIS
@@ -205,12 +205,22 @@ sub load {
 
 __END__
 
-=head1 FUTURE ENHANCEMENTS
+=head1 DESIGN NOTES
 
-- Semantic search within threads using embeddings
-- Thread summarization for long conversations
-- Cross-thread pattern detection
-- Importance-based thread pruning
+**Why no summarization?**
+
+Thread summarization was considered but not implemented because:
+1. Summarization inherently loses information
+2. CLIO already has better alternatives:
+   - LTM patterns/discoveries persist important learnings
+   - `recall_sessions` searches previous session content
+   - Full thread history is preserved on disk in session files
+   - Smart context trimming keeps recent messages available
+
+**Better alternatives:**
+- Smart re-injection of relevant older messages when context is trimmed
+- Thread keyword search via existing grep/search tools
+- LTM for cross-session pattern memory
 
 =head1 AUTHOR
 
