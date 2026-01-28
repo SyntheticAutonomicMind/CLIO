@@ -651,9 +651,10 @@ sub run {
                     print STDERR "[DEBUG][Chat] Session saved after successful response (preserving work-in-progress)\n" if should_log('DEBUG');
                 }
                 
-                # FIX #2: Auto-capture discoveries to LTM for session persistence
-                # Parse response for key findings and automatically store them
-                $self->capture_to_ltm($result, $input) if $result && $result->{final_response};
+                # HYBRID LTM APPROACH: AutoCapture disabled. Agents store discoveries
+                # explicitly via memory_operations tool when important facts are learned.
+                # This ensures clean LTM with no heuristic noise or truncation.
+                # See: memory_operations(operation: "add_discovery") or related methods
             }
             
             # Display usage summary after response
@@ -6727,139 +6728,8 @@ sub colorize {
     return $text unless $color;
     
     return $self->{ansi}->parse($color . $text . '@RESET@');
-
-
-=head2 capture_to_ltm
-
-Auto-capture discoveries from agent response to Long-Term Memory (FIX #2).
-
-This enables automatic knowledge persistence across sessions by extracting
-key findings from agent responses without requiring explicit user action.
-
-Arguments:
-- $result: Result hash from agent response (contains final_response)
-- $input: Original user input/question
-
-=cut
-
-sub capture_to_ltm {
-    my ($self, $result, $input) = @_;
-    
-    return unless $self->{session};
-    my $ltm = eval { $self->{session}->get_long_term_memory() };
-    return unless $ltm;
-    
-    my $response = $result->{final_response} || '';
-    return unless $response && length($response) > 50;  # Skip trivial responses
-    
-    # Load AutoCapture module
-    eval {
-        require CLIO::Memory::AutoCapture;
-        my $capturer = CLIO::Memory::AutoCapture->new(debug => $self->{debug});
-        
-        # Only capture if response likely has valuable patterns
-        if ($capturer->should_capture($response)) {
-            # Build context for capture
-            my $context = {
-                problem => $input,
-                tools_used => $result->{tools_used} // [],
-                working_directory => $self->{session}->{state}->{working_directory} // '',
-            };
-            
-            # Process response and auto-store discoveries
-            $capturer->process_response(
-                response => $response,
-                ltm => $ltm,
-                context => $context
-            );
-            
-            # Save LTM after capturing
-            my $ltm_file = File::Spec->catfile(
-                $self->{session}->{state}->{working_directory} // '.',
-                '.clio',
-                'ltm.json'
-            );
-            eval { $ltm->save($ltm_file) };
-            
-            if (should_log('DEBUG')) {
-                print STDERR "[DEBUG][Chat] Auto-captured LTM patterns from response\n";
-            }
-        }
-    };
-    
-    if ($@ && should_log('DEBUG')) {
-        print STDERR "[DEBUG][Chat] LTM auto-capture failed: $@\n";
-    }
-}
 }
 
-1;
-
-__END__
-
-
-=head2 capture_to_ltm
-
-Auto-capture discoveries from agent response to Long-Term Memory (FIX #2).
-
-This enables automatic knowledge persistence across sessions by extracting
-key findings from agent responses without requiring explicit user action.
-
-Arguments:
-- $result: Result hash from agent response (contains final_response)
-- $input: Original user input/question
-
-=cut
-
-sub capture_to_ltm {
-    my ($self, $result, $input) = @_;
-    
-    return unless $self->{session};
-    my $ltm = eval { $self->{session}->get_long_term_memory() };
-    return unless $ltm;
-    
-    my $response = $result->{final_response} || '';
-    return unless $response && length($response) > 50;  # Skip trivial responses
-    
-    # Load AutoCapture module
-    eval {
-        require CLIO::Memory::AutoCapture;
-        my $capturer = CLIO::Memory::AutoCapture->new(debug => $self->{debug});
-        
-        # Only capture if response likely has valuable patterns
-        if ($capturer->should_capture($response)) {
-            # Build context for capture
-            my $context = {
-                problem => $input,
-                tools_used => $result->{tools_used} // [],
-                working_directory => $self->{session}->{state}->{working_directory} // '',
-            };
-            
-            # Process response and auto-store discoveries
-            $capturer->process_response(
-                response => $response,
-                ltm => $ltm,
-                context => $context
-            );
-            
-            # Save LTM after capturing
-            my $ltm_file = File::Spec->catfile(
-                $self->{session}->{state}->{working_directory} // '.',
-                '.clio',
-                'ltm.json'
-            );
-            eval { $ltm->save($ltm_file) };
-            
-            if (should_log('DEBUG')) {
-                print STDERR "[DEBUG][Chat] Auto-captured LTM patterns from response\n";
-            }
-        }
-    };
-    
-    if ($@ && should_log('DEBUG')) {
-        print STDERR "[DEBUG][Chat] LTM auto-capture failed: $@\n";
-    }
-}
 
 =head1 AUTHOR
 
