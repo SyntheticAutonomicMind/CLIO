@@ -358,11 +358,12 @@ sub handle_escape_sequence {
     
     # Modified arrow keys - standard xterm format: ESC [ 1 ; MOD C/D
     # Modifiers: 2=Shift, 3=Alt, 4=Shift+Alt, 5=Ctrl, 6=Ctrl+Shift, 7=Ctrl+Alt, 8=Ctrl+Shift+Alt
+    # NOTE: Terminal.app sends modifier 3 for Ctrl, not the standard modifier 5
     if ($seq =~ /^\e\[1;([2-8])([CD])/) {
         my ($modifier, $dir) = ($1, $2);
         
-        if ($modifier == 5) {
-            # Ctrl modifier
+        if ($modifier == 5 || $modifier == 3) {
+            # Ctrl modifier (5=standard xterm, 3=Terminal.app)
             if ($dir eq 'C') {
                 # Ctrl+Right - move to end of line
                 $$cursor_pos_ref = length($$input_ref);
