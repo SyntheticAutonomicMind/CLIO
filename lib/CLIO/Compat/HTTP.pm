@@ -4,6 +4,7 @@ use strict;
 use warnings;
 use HTTP::Tiny;
 use JSON::PP qw(decode_json encode_json);
+use CLIO::Core::Logger qw(should_log);
 
 # Check if SSL is available for HTTP::Tiny
 our $HAS_SSL;
@@ -70,7 +71,9 @@ sub new {
         my $verify = defined($ssl_opts->{verify_SSL}) ? $ssl_opts->{verify_SSL} : 1;
         $http_tiny_opts{verify_SSL} = $verify;
     } elsif (!$HAS_CURL) {
-        warn "[WARN][HTTP] Neither IO::Socket::SSL nor curl available - HTTPS will not work!\n";
+        # Only warn if neither SSL nor curl is available - this is a real problem
+        print STDERR "[WARN][HTTP] Neither IO::Socket::SSL nor curl available - HTTPS will not work!\n"
+            if should_log('WARNING');
     }
     
     # Always create HTTP::Tiny instance (needed for HTTP URLs even with curl for HTTPS)
