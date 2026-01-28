@@ -356,6 +356,126 @@ sub process_input {
                 my $error_type = $error =~ /rate limit/i ? "rate limit" : "server error";
                 my $system_msg = "Temporary $error_type detected. Retrying in ${retry_delay}s... (attempt $retry_count/$max_retries)";
                 
+                # Special handling for malformed tool JSON errors
+                # Add guidance message ONLY on first retry (avoid accumulating multiple guidance messages)
+                if ($api_response->{error_type} && $api_response->{error_type} eq 'malformed_tool_json' && $retry_count == 1) {
+                    # CRITICAL: Remove the bad assistant message that triggered this error
+                    # The malformed tool call is IN the assistant's response, so we must remove it
+                    # Otherwise the AI sees its own failed attempt and repeats the same mistake
+                    if (@messages && $messages[-1]->{role} eq 'assistant') {
+                        my $removed_msg = pop @messages;
+                        print STDERR "[INFO][WorkflowOrchestrator] Removed malformed assistant message from history\n"
+                            if should_log('INFO');
+                    }
+                    
+                    my $guidance_msg = {
+                        role => 'system',
+                        content => 'CRITICAL ERROR: Your previous tool call had invalid JSON parameters. ' .
+                                   'Common issues: missing parameter values (e.g., "offset":, instead of "offset":0), ' .
+                                   'unescaped quotes, trailing commas. Please retry the tool call with properly formatted JSON. ' .
+                                   'ALL parameters must have valid values - no empty/missing values permitted.'
+                    };
+                    push @messages, $guidance_msg;
+                    
+                    $error_type = "malformed tool JSON";
+                    $system_msg = "AI generated invalid JSON parameters. Removed bad message, adding guidance and retrying... (attempt $retry_count/$max_retries)";
+                    
+                    print STDERR "[INFO][WorkflowOrchestrator] Added JSON formatting guidance to conversation\n"
+                        if should_log('INFO');
+                }
+                elsif ($api_response->{error_type} && $api_response->{error_type} eq 'malformed_tool_json' && $retry_count > 1) {
+                    # After first retry with guidance failed, limit to max 1 more attempt
+                    # If AI can't fix JSON after seeing guidance, continuing to retry is wasteful
+                    $error_type = "persistent malformed tool JSON";
+                    $system_msg = "AI still generating invalid JSON after guidance. Final retry attempt... (attempt $retry_count/$max_retries)";
+                    
+                    # Reduce max_retries for this specific error to avoid waste
+                    if ($retry_count > 2) {
+                        print STDERR "[ERROR][WorkflowOrchestrator] Malformed JSON persists after guidance - giving up\n";
+                        return {
+                            success => 0,
+                            error => "AI repeatedly generated malformed tool call JSON. The current conversation context may be causing this issue. Try rephrasing your request or starting a new session.",
+                            tool_calls_made => \@tool_calls_made
+                        };
+                    }
+                }
+                # Special handling for token limit exceeded errors
+                elsif ($api_response->{error_type} && $api_response->{error_type} eq 'token_limit_exceeded') {
+                    # Trim conversation history to fit within model's context window
+                    # Remove oldest messages while keeping system prompt and recent context
+                    
+                    my $system_prompt = undef;
+                    my @non_system = ();
+                    
+                    # Separate system prompt from other messages
+                    for my $msg (@messages) {
+                        if ($msg->{role} eq 'system' && !$system_prompt) {
+                            $system_prompt = $msg;
+                        } else {
+                            push @non_system, $msg;
+                        }
+                    }
+                    
+                    my $original_count = scalar(@non_system);
+                    
+                    if ($retry_count == 1) {
+                        # First retry: Keep last 50% of messages
+                        my $keep_count = int($original_count / 2);
+                        $keep_count = 10 if $keep_count < 10 && $original_count >= 10;  # Keep at least 10
+                        @non_system = @non_system[-$keep_count..-1] if $keep_count > 0;
+                    } elsif ($retry_count == 2) {
+                        # Second retry: Keep last 25% of messages
+                        my $keep_count = int($original_count / 4);
+                        $keep_count = 5 if $keep_count < 5 && $original_count >= 5;  # Keep at least 5
+                        @non_system = @non_system[-$keep_count..-1] if $keep_count > 0;
+                    } else {
+                        # Third retry: Keep only last 3 messages (minimal context)
+                        @non_system = @non_system[-3..-1] if scalar(@non_system) > 3;
+                    }
+                    
+                    my $trimmed_count = $original_count - scalar(@non_system);
+                    
+                    # Rebuild messages array
+                    @messages = ();
+                    push @messages, $system_prompt if $system_prompt;
+                    push @messages, @non_system;
+                    
+                    $error_type = "token limit exceeded";
+                    $system_msg = "Token limit exceeded. Trimmed $trimmed_count messages from conversation history and retrying... (attempt $retry_count/$max_retries)";
+                    
+                    print STDERR "[INFO][WorkflowOrchestrator] Trimmed $trimmed_count messages due to token limit (kept " . scalar(@non_system) . " messages)\n"
+                        if should_log('INFO');
+                    
+                    # If we've trimmed to minimal context and still failing, give up
+                    if ($retry_count > 2 && scalar(@non_system) <= 3) {
+                        print STDERR "[ERROR][WorkflowOrchestrator] Token limit persists even with minimal context - giving up\n";
+                        return {
+                            success => 0,
+                            error => "Token limit exceeded even with minimal conversation history. The request may be too large for this model. Try using a model with a larger context window.",
+                            tool_calls_made => \@tool_calls_made
+                        };
+                    }
+                }
+                # Special handling for server errors (502, 503) - exponential backoff
+                elsif ($api_response->{error_type} && $api_response->{error_type} eq 'server_error') {
+                    # Apply exponential backoff: 2s, 4s, 8s, 16s...
+                    my $backoff_multiplier = 2 ** ($retry_count - 1);
+                    $retry_delay = $retry_delay * $backoff_multiplier;
+                    
+                    $error_type = "server error";
+                    $system_msg = "Server temporarily unavailable. Retrying in ${retry_delay}s with exponential backoff... (attempt $retry_count/$max_retries)";
+                    
+                    print STDERR "[INFO][WorkflowOrchestrator] Applying exponential backoff for server error: ${retry_delay}s delay\n"
+                        if should_log('INFO');
+                }
+                # Special handling for rate limit errors
+                elsif ($api_response->{error_type} && $api_response->{error_type} eq 'rate_limit') {
+                    # Rate limit already has appropriate retry_after from APIManager
+                    # Just update the error_type for logging
+                    $error_type = "rate limit";
+                    # system_msg already set above
+                }
+                
                 # Call system message callback if provided
                 if ($on_system_message) {
                     eval { $on_system_message->($system_msg); };
