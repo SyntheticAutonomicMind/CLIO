@@ -750,6 +750,10 @@ sub run {
             # Will be re-enabled on first chunk of next text response
             $self->{pagination_enabled} = 0;
             print STDERR "[DEBUG][Chat] Pagination DISABLED after response complete\n" if $self->{debug};
+            
+            # Ensure spinner is stopped before returning to input prompt
+            # This prevents spinner from still running when waiting for user input
+            $self->hide_busy_indicator();
         } else {
             $self->display_error_message("AI agent not initialized");
         }
