@@ -567,8 +567,11 @@ sub get_conversation_size {
 =head2 trim_context
 
 Intelligently trim context when approaching token limits.
-Preserves: system messages, recent messages (last 20), high-importance messages.
+Preserves: system messages, recent messages (last 10), high-importance messages.
 Moves trimmed messages to YaRN for later recall.
+
+Also injects a notification message to inform the agent about what was trimmed
+and how to recover the context.
 
 =cut
 
@@ -607,11 +610,27 @@ sub trim_context {
     my %important_indices = map { $_ => 1 } @important;
     @important = grep { $important_indices{$_} } @middle;
     
-    # Reconstruct trimmed history
-    my @trimmed = (@system, @important, @recent);
+    # Calculate trimming statistics
+    my $before = scalar(@messages);
+    my $dropped_count = $before - scalar(@system) - scalar(@important) - scalar(@recent);
+    
+    # Create trim notification message to inject
+    # This informs the agent that context was trimmed and how to recover
+    my $trim_notice = {
+        role => 'system',
+        content => "[CONTEXT TRIM: $dropped_count messages archived]\n" .
+                   "Token limit approached. Older messages moved to YaRN archive.\n" .
+                   "Recent $keep_recent messages preserved. To recover archived context:\n" .
+                   "  memory_operations(operation: 'recall_sessions', query: '...')\n" .
+                   "All work preserved in session history file.",
+        _importance => 0.5,  # Medium importance - should be retained in next trim
+    };
+    
+    # Reconstruct trimmed history with notification
+    # Insert notification after system messages but before important/recent
+    my @trimmed = (@system, $trim_notice, @important, @recent);
     
     # Log trimming
-    my $before = scalar(@messages);
     my $after = scalar(@trimmed);
     if ($ENV{CLIO_DEBUG} || $self->{debug}) {
         use CLIO::Memory::TokenEstimator;
@@ -619,6 +638,7 @@ sub trim_context {
         my $after_tokens = CLIO::Memory::TokenEstimator::estimate_messages_tokens(\@trimmed);
         print STDERR "[STATE] Aggressive trim: $before -> $after messages ($before_tokens -> $after_tokens tokens, " . 
                      int(($after_tokens / $before_tokens) * 100) . "% retained)\n";
+        print STDERR "[STATE] Trim notification injected - agent notified of archived context\n";
     }
     
     # Update history (trimmed messages already in YaRN from add_message)

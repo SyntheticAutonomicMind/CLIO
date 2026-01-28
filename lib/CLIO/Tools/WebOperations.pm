@@ -213,6 +213,7 @@ sub search_web {
                     serpapi_key => $config->get('serpapi_key') || '',
                     search_engine => $config->get('search_engine') || 'google',
                     search_provider => $config->get('search_provider') || 'auto',
+                    check_local_first => $config->get('check_local_first') || 0,
                 };
             }
         } elsif ($context->{session} && ref($context->{session}) eq 'HASH') {
@@ -220,6 +221,13 @@ sub search_web {
         }
     }
     $config ||= {};
+    
+    # Check local history first (optional - enabled via config)
+    # This searches previous sessions for related content before going to web
+    my $local_note = '';
+    if ($config->{check_local_first}) {
+        $local_note = $self->_check_local_history($query, $context);
+    }
     
     # Allow environment variable as fallback
     my $serpapi_key = $config->{serpapi_key} || $ENV{SERPAPI_KEY} || '';
@@ -234,7 +242,11 @@ sub search_web {
     if ($search_provider eq 'serpapi' || ($search_provider eq 'auto' && $serpapi_key)) {
         if ($serpapi_key) {
             $result = $self->_search_serpapi($query, $max_results, $timeout, $serpapi_key, $search_engine);
-            return $result if $result && !$result->{error};
+            if ($result && !$result->{error}) {
+                # Prepend local history note if found
+                $result = $self->_prepend_local_note($result, $local_note);
+                return $result;
+            }
             push @errors, "SerpAPI ($search_engine): " . ($result->{error} || 'unknown error');
         } elsif ($search_provider eq 'serpapi') {
             return $self->error_result("SerpAPI key not configured. Set with: /api set serpapi_key YOUR_KEY");
@@ -244,7 +256,11 @@ sub search_web {
     # Fallback to DuckDuckGo direct (or explicit duckduckgo selection)
     if ($search_provider eq 'duckduckgo_direct' || $search_provider eq 'auto') {
         $result = $self->_search_duckduckgo_direct($query, $max_results, $timeout);
-        return $result if $result && !$result->{error};
+        if ($result && !$result->{error}) {
+            # Prepend local history note if found
+            $result = $self->_prepend_local_note($result, $local_note);
+            return $result;
+        }
         push @errors, "DuckDuckGo Direct: " . ($result->{error} || 'unknown error');
     }
     
@@ -256,6 +272,91 @@ sub search_web {
                       "  /api set search_engine google  (options: google, bing, duckduckgo)";
     }
     return $self->error_result($error_msg);
+}
+
+=head2 _check_local_history
+
+Check project history for related content before searching web.
+
+This is an optional feature that helps avoid redundant web searches
+when the answer might already exist in previous sessions.
+
+Arguments:
+- $query: Search query
+- $context: Execution context with session info
+
+Returns: String with local matches note, or empty string
+
+=cut
+
+sub _check_local_history {
+    my ($self, $query, $context) = @_;
+    
+    return '' unless $context && $context->{session};
+    
+    # Try to search previous sessions
+    my $sessions_dir = '.clio/sessions';
+    return '' unless -d $sessions_dir;
+    
+    # Quick grep through recent session files
+    my @matches;
+    opendir my $dh, $sessions_dir or return '';
+    my @files = 
+        map { $_->[0] }
+        sort { $b->[1] <=> $a->[1] }
+        map { 
+            my $path = File::Spec->catfile($sessions_dir, $_);
+            [$path, (stat($path))[9] || 0]
+        }
+        grep { /\.json$/ && -f File::Spec->catfile($sessions_dir, $_) }
+        readdir($dh);
+    closedir $dh;
+    
+    # Search only last 3 sessions
+    @files = @files[0..2] if @files > 3;
+    
+    for my $file (@files) {
+        last if @matches >= 2;
+        
+        eval {
+            open my $fh, '<', $file or die;
+            local $/;
+            my $content = <$fh>;
+            close $fh;
+            
+            # Simple substring match
+            if ($content =~ /\Q$query\E/i) {
+                my $session_id = $file;
+                $session_id =~ s/.*[\/\\]//;
+                $session_id =~ s/\.json$//;
+                push @matches, $session_id;
+            }
+        };
+    }
+    
+    return '' unless @matches;
+    
+    return "[LOCAL HISTORY NOTE: Query '$query' may have been discussed in previous sessions: " .
+           join(", ", @matches) . ". Use memory_operations(recall_sessions) for details.]\n\n";
+}
+
+=head2 _prepend_local_note
+
+Prepend local history note to search results.
+
+=cut
+
+sub _prepend_local_note {
+    my ($self, $result, $local_note) = @_;
+    
+    return $result unless $local_note;
+    
+    # Add note to the result summary
+    if ($result->{result}) {
+        $result->{result} = $local_note . $result->{result};
+    }
+    
+    return $result;
 }
 
 # SerpAPI search implementation - supports multiple engines
