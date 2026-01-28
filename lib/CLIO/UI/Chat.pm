@@ -1392,6 +1392,20 @@ sub display_help {
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/help, /h', 'help_command'), 'Display this help');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/exit, /quit, /q', 'help_command'), 'Exit the chat');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/clear', 'help_command'), 'Clear the screen');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/init', 'help_command'), 'Initialize CLIO for this project');
+    push @help_lines, "";
+    
+    push @help_lines, $self->colorize("KEYBOARD SHORTCUTS", 'command_subheader');
+    push @help_lines, $self->colorize("─" x 62, 'dim');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('Left/Right', 'help_command'), 'Move cursor by character');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('Shift+Left/Right', 'help_command'), 'Move cursor by word');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('Ctrl+A / Home', 'help_command'), 'Move to start of line');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('Ctrl+E / End', 'help_command'), 'Move to end of line');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('Up/Down', 'help_command'), 'Navigate command history');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('Tab', 'help_command'), 'Auto-complete commands/paths');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('Escape', 'help_command'), 'Interrupt the agent');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('Ctrl+C', 'help_command'), 'Cancel input or interrupt');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('Ctrl+D', 'help_command'), 'Exit (on empty line)');
     push @help_lines, "";
     
     push @help_lines, $self->colorize("API & CONFIG", 'command_subheader');
@@ -6139,6 +6153,99 @@ sub _build_skill_context {
     }
     
     return $context;
+}
+
+=head2 handle_init_command
+
+Initialize CLIO for a project - analyzes codebase, fetches CLIO methodology docs,
+generates custom project instructions, and sets up git properly.
+
+This runs as an AI task so the user can see all the work being done.
+
+=cut
+
+sub handle_init_command {
+    my ($self, @args) = @_;
+    
+    # Check if already initialized
+    my $cwd = Cwd::getcwd() || $ENV{PWD} || '.';
+    my $clio_dir = "$cwd/.clio";
+    my $instructions_file = "$clio_dir/instructions.md";
+    
+    if (-f $instructions_file) {
+        $self->display_system_message("Project already initialized!");
+        $self->display_system_message("Found existing instructions at: .clio/instructions.md");
+        print "\n";
+        $self->display_system_message("To re-initialize, first remove the existing file:");
+        $self->display_system_message("  rm .clio/instructions.md");
+        print "\n";
+        return;
+    }
+    
+    # Build comprehensive prompt for the AI to do the initialization work
+    my $prompt = <<'INIT_PROMPT';
+I need you to initialize CLIO for this project. This is a comprehensive setup task that involves analyzing the codebase and creating custom project instructions.
+
+## Your Tasks:
+
+### 1. Fetch CLIO's Core Methodology
+First, fetch these two reference documents:
+- CLIO's instructions template: https://raw.githubusercontent.com/SyntheticAutonomicMind/CLIO/main/.clio/instructions.md
+- The Unbroken Method: https://raw.githubusercontent.com/SyntheticAutonomicMind/CLIO/main/ai-assisted/THE_UNBROKEN_METHOD.md
+
+Read and understand both documents - they define the methodology you should follow.
+
+### 2. Analyze This Codebase
+Do a thorough analysis of this project:
+- What programming language(s) is it?
+- What is the project structure?
+- What frameworks/libraries does it use?
+- What is the apparent purpose of this project?
+- Are there existing tests? CI/CD configs? Documentation?
+- What code style patterns are used?
+- Is there a build system or package manager?
+
+### 3. Create Custom Project Instructions
+Create a `.clio/instructions.md` file tailored specifically for THIS project. The instructions should:
+
+- Be based on The Unbroken Method principles (continuous context, complete ownership, investigation first, etc.)
+- Include project-specific coding standards discovered from the codebase
+- Document the tech stack and architecture
+- Include project-specific testing commands
+- Include common workflows for this project type
+- Add project-specific anti-patterns to avoid
+- Include handoff documentation requirements
+
+**IMPORTANT**: This project is NOT CLIO and is NOT part of Synthetic Autonomic Mind. The instructions must be tailored to the user's independent project, using CLIO's methodology as a template but customized for their specific needs.
+
+### 4. Set Up .gitignore
+Ensure `.gitignore` includes these CLIO-specific entries (add them if not present):
+```
+# CLIO
+.clio/logs/
+.clio/sessions/
+.clio/memory/
+.clio/*.json
+```
+
+### 5. Initialize or Update Git
+- If this is NOT a git repository yet, initialize it with `git init`, add all files, and make an initial commit
+- If this IS already a git repository, just add the new .clio/ directory and .gitignore changes, then commit
+
+### 6. Report What You Did
+After completing all tasks, provide a summary of:
+- The project analysis findings
+- The instructions you created
+- The git operations performed
+
+Begin now - use your tools to complete all these tasks.
+INIT_PROMPT
+
+    $self->display_system_message("Starting project initialization...");
+    $self->display_system_message("CLIO will analyze your codebase and create custom instructions.");
+    print "\n";
+    
+    return $prompt;
 }
 
 =head2 handle_fix_command
