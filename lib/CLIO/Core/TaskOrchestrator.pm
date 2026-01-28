@@ -4,6 +4,7 @@ use strict;
 use warnings;
 use JSON;
 use Time::HiRes qw(time);
+use CLIO::Core::Logger qw(should_log);
 
 =head1 NAME
 
@@ -132,8 +133,9 @@ sub analyze_and_decompose_task {
     # Calculate dependencies between protocols
     $task_analysis->{dependencies} = $self->_calculate_protocol_dependencies($protocol_chain);
     
-    print STDERR "[ORCHESTRATOR] Task analysis complete: " . 
-                 scalar(@{$task_analysis->{execution_plan}}) . " protocols identified\n" if $self->{debug};
+    print STDERR "[DEBUG][TaskOrchestrator] Task analysis complete: " . 
+                 scalar(@{$task_analysis->{execution_plan}}) . " protocols identified\n" 
+        if should_log('DEBUG');
     
     return $task_analysis;
 }
@@ -209,8 +211,9 @@ sub execute_complex_task {
     # Log execution for analysis
     push @{$self->{execution_log}}, $execution_result;
     
-    print STDERR "[ORCHESTRATOR] Task execution complete: $execution_result->{status} " . 
-                 "(Duration: " . sprintf("%.2f", $execution_result->{total_duration}) . "s)\n" if $self->{debug};
+    print STDERR "[DEBUG][TaskOrchestrator] Task execution complete: $execution_result->{status} " . 
+                 "(Duration: " . sprintf("%.2f", $execution_result->{total_duration}) . "s)\n" 
+        if should_log('DEBUG');
     
     return $execution_result;
 }
@@ -480,8 +483,9 @@ sub _execute_protocol_step {
     
     $result->{execution_time} = time() - $start_time;
     
-    print STDERR "[ORCHESTRATOR] Protocol $protocol completed in " . 
-                 sprintf("%.3f", $result->{execution_time}) . "s\n" if $self->{debug};
+    print STDERR "[DEBUG][TaskOrchestrator] Protocol $protocol completed in " . 
+                 sprintf("%.3f", $result->{execution_time}) . "s\n" 
+        if should_log('DEBUG');
     
     return $result;
 }
