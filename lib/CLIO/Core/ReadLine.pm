@@ -148,11 +148,34 @@ sub readline {
             next;
         }
         
-        # Escape sequence (arrow keys, etc.)
+        # Escape sequence (arrow keys, function keys, etc.)
         if ($ord == 27) {
-            # ReadKey(0.1) may return undef if no character within timeout
-            # Guard against undef to avoid "Use of uninitialized value" warnings
-            my $seq = $char . (ReadKey(0.1) // '') . (ReadKey(0.1) // '');
+            # Read escape sequence - can be variable length:
+            # - Simple: ESC [ A (3 bytes total)
+            # - Modified arrows: ESC [ 1 ; 5 C (6 bytes total) - Ctrl+Arrow
+            # - Modified arrows: ESC [ 1 ; 2 C (6 bytes total) - Shift+Arrow
+            # - Function keys and other: ESC [ ... ~ (variable)
+            
+            # Start building the sequence
+            my $seq = $char;  # Start with ESC
+            
+            # Read additional bytes with a reasonable timeout
+            # Different terminals send sequences at different speeds
+            # Use a timeout of 200ms which is long enough for all modifier sequences
+            # but short enough to not feel like a hang if there's no sequence
+            for my $i (1..5) {
+                my $next = ReadKey(0.2);  # 200ms timeout between bytes
+                last unless defined $next;
+                $seq .= $next;
+                
+                # Stop if we've completed the sequence (ends with letter or ~)
+                if ($next =~ /[A-Za-z~]/) {
+                    last;
+                }
+            }
+            
+            print STDERR "[DEBUG][ReadLine] Raw escape sequence bytes: " . join(' ', map { sprintf('0x%02X', ord($_)) } split //, $seq) . "\n" if should_log('DEBUG');
+            
             $self->handle_escape_sequence($seq, \$input, \$cursor_pos, $prompt);
             next;
         }
@@ -287,17 +310,25 @@ sub handle_tab {
 
 =head2 handle_escape_sequence
 
-Handle escape sequences (arrow keys, etc.)
+Handle escape sequences (arrow keys, function keys, etc.)
 
 Supported sequences:
-- ESC [ A/B/C/D - Arrow keys (up/down/right/left)
-- ESC [ 1;5C/D - Ctrl+Right/Left (line start/end)
-- ESC [ 1;2C/D - Shift+Right/Left (word-by-word movement)
+- ESC [ A/B/C/D - Arrow keys (up/down/right/left)  
+- ESC [ 1;5C/D - Ctrl+Right/Left (standard xterm)
+- ESC [ 1;2C/D - Shift+Right/Left (standard xterm)
+- ESC [ 1;6C/D - Ctrl+Shift+Right/Left
+- ESC [ 5C/D - Ctrl+Right/Left (alternative)
+- ESC [ 6C/D - Shift+Right/Left (alternative)
+- ESC b/f - Option+Left/Right (macOS Terminal.app)
+
+Terminal.app can send different sequences depending on settings, so we handle multiple formats.
 
 =cut
 
 sub handle_escape_sequence {
     my ($self, $seq, $input_ref, $cursor_pos_ref, $prompt) = @_;
+    
+    print STDERR "[DEBUG][ReadLine] Escape sequence: " . join(' ', map { sprintf('%02X', ord($_)) } split //, $seq) . " = '$seq'\n" if should_log('DEBUG');
     
     # Arrow keys: ESC [ A/B/C/D
     if ($seq =~ /^\e\[([ABCD])$/) {
@@ -325,8 +356,9 @@ sub handle_escape_sequence {
         return;
     }
     
-    # Modified arrow keys: ESC [ 1;5C/D (Ctrl), ESC [ 1;2C/D (Shift)
-    if ($seq =~ /^\e\[1;([25])([CD])/) {
+    # Modified arrow keys - standard xterm format: ESC [ 1 ; MOD C/D
+    # Modifiers: 2=Shift, 3=Alt, 4=Shift+Alt, 5=Ctrl, 6=Ctrl+Shift, 7=Ctrl+Alt, 8=Ctrl+Shift+Alt
+    if ($seq =~ /^\e\[1;([2-8])([CD])/) {
         my ($modifier, $dir) = ($1, $2);
         
         if ($modifier == 5) {
@@ -350,6 +382,46 @@ sub handle_escape_sequence {
                 $self->move_word_backward($input_ref, $cursor_pos_ref, $prompt);
             }
         }
+        return;
+    }
+    
+    # Alternative format (some terminals): ESC [ MOD C/D (without the "1;")
+    if ($seq =~ /^\e\[([5-6])([CD])/) {
+        my ($modifier, $dir) = ($1, $2);
+        
+        if ($modifier == 5) {
+            # Ctrl modifier
+            if ($dir eq 'C') {
+                # Ctrl+Right - move to end of line
+                $$cursor_pos_ref = length($$input_ref);
+                $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
+            } elsif ($dir eq 'D') {
+                # Ctrl+Left - move to beginning of line
+                $$cursor_pos_ref = 0;
+                $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
+            }
+        } elsif ($modifier == 6) {
+            # Shift modifier (alternative format)
+            if ($dir eq 'C') {
+                # Shift+Right - move word forward
+                $self->move_word_forward($input_ref, $cursor_pos_ref, $prompt);
+            } elsif ($dir eq 'D') {
+                # Shift+Left - move word backward
+                $self->move_word_backward($input_ref, $cursor_pos_ref, $prompt);
+            }
+        }
+        return;
+    }
+    
+    # macOS Terminal.app specific: Option+Left = ESC b, Option+Right = ESC f
+    if ($seq =~ /^\eb/) {
+        # Option+Left - move word backward
+        $self->move_word_backward($input_ref, $cursor_pos_ref, $prompt);
+        return;
+    }
+    if ($seq =~ /^\ef/) {
+        # Option+Right - move word forward
+        $self->move_word_forward($input_ref, $cursor_pos_ref, $prompt);
         return;
     }
 }
