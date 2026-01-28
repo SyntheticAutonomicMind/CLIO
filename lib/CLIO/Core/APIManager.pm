@@ -797,10 +797,15 @@ sub validate_and_truncate_messages {
     print STDERR "[DEBUG][APIManager] Grouped " . scalar(@$messages) . " messages into " . scalar(@units) . " units\n"
         if $self->{debug};
     
-    # Now truncate by units, keeping newest
-    # Strategy: Keep system message separate, then build rest from newest to oldest
+    # STRATEGY: Build conversation preserving critical messages
+    # 1. Keep system message (always first)
+    # 2. Keep FIRST user message (original task request - critical for context)
+    # 3. Fill remaining budget with NEWEST messages
+    
     my $truncation_system_msg = undef;
+    my $first_user_unit = undef;
     my $system_tokens = 0;
+    my $first_user_tokens = 0;
     my $start_unit = 0;
     
     # Extract system message if first
@@ -810,10 +815,32 @@ sub validate_and_truncate_messages {
         $start_unit = 1;
     }
     
-    # Build conversation messages from newest to oldest
+    # Extract FIRST user message unit (critical for preserving original task context)
+    # The first user message has _importance = 10.0 and MUST be preserved
+    # Without it, models (especially GPT) lose track of what they were asked to do
+    for my $i ($start_unit .. $#units) {
+        my $unit = $units[$i];
+        next unless $unit && $unit->{messages} && @{$unit->{messages}};
+        
+        my $first_msg = $unit->{messages}[0];
+        if ($first_msg->{role} && $first_msg->{role} eq 'user') {
+            # Check if this is the critical first user message (importance = 10.0)
+            if (($first_msg->{_importance} // 0) >= 10.0) {
+                $first_user_unit = $unit;
+                $first_user_tokens = $unit->{tokens};
+                $start_unit = $i + 1;  # Skip past this unit in remaining processing
+                print STDERR "[DEBUG][APIManager] Preserving first user message (importance=" . 
+                    ($first_msg->{_importance} // 0) . ", tokens=$first_user_tokens)\n"
+                    if $self->{debug};
+            }
+            last;  # Only looking for FIRST user message
+        }
+    }
+    
+    # Build conversation messages from newest to oldest (for remaining messages)
     # Also track which tool_call_ids we're including so we can skip orphans
     my @conversation = ();
-    my $current_tokens = $system_tokens;  # Account for system in budget
+    my $current_tokens = $system_tokens + $first_user_tokens;  # Account for preserved in budget
     my %included_tool_call_ids = ();
     
     my @remaining_units = @units[$start_unit .. $#units];
@@ -857,9 +884,12 @@ sub validate_and_truncate_messages {
         push @validated_conversation, $msg;
     }
     
-    # Combine: system (if any) + validated conversation
+    # Combine: system (if any) + first user message + validated conversation
     my @truncated = ();
     push @truncated, $truncation_system_msg if $truncation_system_msg;
+    if ($first_user_unit) {
+        push @truncated, @{$first_user_unit->{messages}};
+    }
     push @truncated, @validated_conversation;
     
     my $final_tokens = 0;
@@ -870,6 +900,8 @@ sub validate_and_truncate_messages {
     if (should_log('DEBUG')) {
         warn "[WARNING][APIManager] Truncated from " . scalar(@$messages) . " to " . scalar(@truncated) . " messages\n";
         warn "[WARNING][APIManager] Final token count: $final_tokens / $effective_limit\n";
+        warn "[WARNING][APIManager] Preserved: system=" . ($truncation_system_msg ? 'YES' : 'NO') . 
+             ", first_user=" . ($first_user_unit ? 'YES' : 'NO') . "\n";
     }
     
     return \@truncated;
