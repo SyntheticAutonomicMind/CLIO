@@ -5345,6 +5345,8 @@ Switch to a different session
 sub handle_switch_command {
     my ($self, @args) = @_;
     
+    require CLIO::Session::Manager;
+    
     # List available sessions
     my $sessions_dir = '.clio/sessions';
     unless (-d $sessions_dir) {
@@ -5357,26 +5359,154 @@ sub handle_switch_command {
         return;
     };
     
-    my @sessions = grep { /\.json$/ && -f "$sessions_dir/$_" } readdir($dh);
+    my @session_files = grep { /\.json$/ && -f "$sessions_dir/$_" } readdir($dh);
     closedir($dh);
     
-    unless (@sessions) {
-        $self->display_system_message("No other sessions available");
+    unless (@session_files) {
+        $self->display_system_message("No sessions available");
         return;
     }
     
-    # Display sessions
-    print "\n";
-    $self->display_system_message("Available sessions:");
-    for my $i (0..$#sessions) {
-        my $session_file = $sessions[$i];
-        $session_file =~ s/\.json$//;
-        my $current = ($self->{session} && $self->{session}->{session_id} eq $session_file) ? " (current)" : "";
-        printf "  %d) %s%s\n", $i + 1, $session_file, $current;
+    # Extract session IDs and get info
+    my @sessions = map { 
+        my $id = $_;
+        $id =~ s/\.json$//;
+        my $file = "$sessions_dir/$_";
+        my $mtime = (stat($file))[9];
+        { id => $id, file => $file, mtime => $mtime }
+    } @session_files;
+    
+    # Sort by most recent first
+    @sessions = sort { $b->{mtime} <=> $a->{mtime} } @sessions;
+    
+    my $target_session_id;
+    
+    # If session ID provided as argument, use it
+    if (@args && $args[0]) {
+        $target_session_id = $args[0];
+        
+        # Check if it's a number (selecting from list)
+        if ($target_session_id =~ /^\d+$/) {
+            my $idx = $target_session_id - 1;
+            if ($idx >= 0 && $idx < @sessions) {
+                $target_session_id = $sessions[$idx]{id};
+            } else {
+                $self->display_error_message("Invalid session number: $args[0] (valid: 1-" . scalar(@sessions) . ")");
+                return;
+            }
+        }
+        
+        # Verify session exists
+        my ($found) = grep { $_->{id} eq $target_session_id } @sessions;
+        unless ($found) {
+            $self->display_error_message("Session not found: $target_session_id");
+            return;
+        }
+    } else {
+        # Display sessions and ask for choice
+        print "\n";
+        $self->display_command_header("AVAILABLE SESSIONS");
+        
+        my $current_id = $self->{session} ? $self->{session}->{session_id} : '';
+        
+        for my $i (0..$#sessions) {
+            my $s = $sessions[$i];
+            my $current = ($s->{id} eq $current_id) ? ' @BOLD@(current)@RESET@' : "";
+            my $time = _format_relative_time($s->{mtime});
+            printf "  %d) %s %s%s\n", 
+                $i + 1, 
+                substr($s->{id}, 0, 20) . "...",
+                $self->colorize("[$time]", 'dim'),
+                $self->{ansi}->parse($current);
+        }
+        
+        print "\n";
+        $self->display_system_message("Enter session number or ID to switch:");
+        $self->display_system_message("  /session switch 1");
+        $self->display_system_message("  /session switch abc123-def456...");
+        return;
     }
     
-    $self->display_system_message("Session switching not yet fully implemented");
-    $self->display_system_message("Use --resume <session_id> to switch sessions");
+    # Don't switch to current session
+    if ($self->{session} && $self->{session}->{session_id} eq $target_session_id) {
+        $self->display_system_message("Already in session: $target_session_id");
+        return;
+    }
+    
+    # Perform the switch
+    $self->display_system_message("Switching to session: $target_session_id...");
+    
+    # 1. Save current session
+    if ($self->{session}) {
+        $self->display_system_message("  Saving current session...");
+        $self->{session}->save();
+        
+        # Release lock if possible
+        if ($self->{session}->{lock} && $self->{session}->{lock}->can('release')) {
+            $self->{session}->{lock}->release();
+        }
+    }
+    
+    # 2. Load new session
+    my $new_session = eval {
+        CLIO::Session::Manager->load($target_session_id, debug => $self->{debug});
+    };
+    
+    if ($@ || !$new_session) {
+        my $err = $@ || "Unknown error";
+        $self->display_error_message("Failed to load session: $err");
+        
+        # Re-acquire lock on original session
+        if ($self->{session}) {
+            $self->display_system_message("Staying in current session");
+        }
+        return;
+    }
+    
+    # 3. Update Chat's session reference
+    $self->{session} = $new_session;
+    
+    # 4. Reload theme/style from new session
+    my $state = $new_session->state();
+    if ($state->{style} && $self->{theme_manager}) {
+        $self->{theme_manager}->set_style($state->{style});
+    }
+    if ($state->{theme} && $self->{theme_manager}) {
+        $self->{theme_manager}->set_theme($state->{theme});
+    }
+    
+    # 5. Success
+    print "\n";
+    $self->display_success_message("Switched to session: $target_session_id");
+    
+    # Show session info
+    my $history_count = $state->{history} ? scalar(@{$state->{history}}) : 0;
+    $self->display_system_message("  Messages in history: $history_count");
+    $self->display_system_message("  Working directory: " . ($state->{working_directory} || '.'));
+}
+
+# Helper to format relative time
+sub _format_relative_time {
+    my ($timestamp) = @_;
+    
+    my $now = time();
+    my $diff = $now - $timestamp;
+    
+    if ($diff < 60) {
+        return "just now";
+    } elsif ($diff < 3600) {
+        my $mins = int($diff / 60);
+        return "$mins min ago";
+    } elsif ($diff < 86400) {
+        my $hours = int($diff / 3600);
+        return "$hours hr ago";
+    } elsif ($diff < 604800) {
+        my $days = int($diff / 86400);
+        return "$days day" . ($days > 1 ? "s" : "") . " ago";
+    } else {
+        my @t = localtime($timestamp);
+        return sprintf("%04d-%02d-%02d", $t[5]+1900, $t[4]+1, $t[3]);
+    }
 }
 
 =head2 handle_read_command
