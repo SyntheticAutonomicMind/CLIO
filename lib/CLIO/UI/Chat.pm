@@ -396,10 +396,18 @@ sub run {
                 # Also check _prepare_for_next_iteration flag set by WorkflowOrchestrator
                 # after tool execution - this ensures spinner stops even on continuation chunks
                 if (!$first_chunk_received || $self->{_prepare_for_next_iteration}) {
-                    $spinner->stop();  # Removes spinner, leaves "CLIO: " prefix intact
+                    $spinner->stop();  # Removes spinner
                     
-                    # Clear the flag if it was set
-                    $self->{_prepare_for_next_iteration} = 0 if $self->{_prepare_for_next_iteration};
+                    # If this is a continuation after tool execution, clear the entire line
+                    # to remove the "CLIO: " prefix that was printed before the spinner
+                    if ($self->{_prepare_for_next_iteration}) {
+                        print "\r\e[K";  # Carriage return + clear entire line
+                        # Now print fresh "CLIO: " prefix
+                        print $self->colorize("CLIO: ", 'ASSISTANT');
+                        STDOUT->flush() if STDOUT->can('flush');
+                        $self->{_prepare_for_next_iteration} = 0;  # Clear the flag
+                    }
+                    # Otherwise just leave the "CLIO: " prefix intact from initial prompt
                     
                     # Enable pagination for text responses (agent is speaking directly)
                     # This will be left enabled unless/until tools are invoked
@@ -414,11 +422,11 @@ sub run {
                 
                 # Display role label only when _need_agent_prefix is set
                 # (this happens after tool execution when we need a new CLIO: prefix for continuation)
+                # NOTE: This should no longer be needed since we handle it above with _prepare_for_next_iteration
                 if ($self->{_need_agent_prefix}) {
                     $self->{_need_agent_prefix} = 0;  # Clear the flag
-                    print $self->colorize("CLIO: ", 'ASSISTANT');
-                    STDOUT->flush() if STDOUT->can('flush');  # Ensure CLIO: appears immediately
-                    $self->{line_count}++;  # Count the CLIO: line
+                    # Don't print prefix here - it's already handled above
+                    print STDERR "[DEBUG][Chat] _need_agent_prefix was set but prefix already printed\n" if $self->{debug};
                 }
                 
                 # Add chunk to line buffer (using $self for access from flush_output_buffer)
