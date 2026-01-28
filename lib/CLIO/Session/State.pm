@@ -434,7 +434,9 @@ sub add_message {
     }
     
     # Calculate and tag with importance score
-    $message->{_importance} = $self->calculate_message_importance($message);
+    # Pass the message index so first user message gets special treatment
+    my $message_index = scalar(@{$self->{history}});
+    $message->{_importance} = $self->calculate_message_importance($message, $message_index);
     
     # DEBUG: Log final message structure
     if (($ENV{CLIO_DEBUG} || $self->{debug}) && $role eq 'tool') {
@@ -489,8 +491,9 @@ Calculate importance score for a message.
 Higher scores mean message is more important to preserve.
 
 Factors:
+- First user message: ALWAYS highest priority (10.0) - this is the original task
 - Role: user (1.5x), assistant with tool_calls (2.0x)
-- Recency: exponential decay (older = less important)
+- Recency: exponential decay (older = less important) - except first user
 - Keywords: error/bug/fix/critical (1.3x)
 - Length: log scaling (longer = more detail)
 
@@ -499,7 +502,15 @@ Returns: Importance score (0.0 - 10.0)
 =cut
 
 sub calculate_message_importance {
-    my ($self, $message) = @_;
+    my ($self, $message, $message_index) = @_;
+    
+    # The FIRST user message (message index 1, after system) is the original task request
+    # It MUST be preserved above all other messages to prevent context loss
+    # Without this, GPT-style models lose track of what they were asked to do
+    if (defined $message_index && $message_index == 1 && 
+        $message->{role} && $message->{role} eq 'user') {
+        return 10.0;  # Maximum importance - never truncate
+    }
     
     my $score = 1.0;
     
