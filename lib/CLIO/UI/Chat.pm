@@ -1279,6 +1279,9 @@ sub display_paginated_list {
     # Put terminal in raw mode for single-key input
     ReadMode('cbreak');
     
+    # Switch to alternate screen buffer for clean pagination
+    print "\e[?1049h";  # Enter alternate screen buffer
+    
     while (1) {
         # Calculate page bounds
         my $start = $current_page * $page_size;
@@ -1333,6 +1336,9 @@ sub display_paginated_list {
     
     # Restore terminal mode
     ReadMode('restore');
+    
+    # Exit alternate screen buffer (restores original screen)
+    print "\e[?1049l";
 }
 
 =head2 handle_command
@@ -5615,6 +5621,9 @@ sub display_paginated_content {
     
     # Put terminal in raw mode for single-key input
     eval { ReadMode('cbreak') };
+    # Switch to alternate screen buffer for clean pagination
+    # This prevents content from showing up in scrollback
+    print "\e[?1049h";  # Enter alternate screen buffer
     
     while (1) {
         # Calculate page bounds
@@ -5691,9 +5700,8 @@ sub display_paginated_content {
     # Restore terminal mode
     eval { ReadMode('restore') };
     
-    # Clear screen and return to normal view
-    print "\e[2J\e[H";
-    $self->repaint_screen();
+    # Exit alternate screen buffer and return to normal view
+    print "\e[?1049l";  # Exit alternate screen buffer (restores original screen)
 }
 
 =head2 handle_skills_command
