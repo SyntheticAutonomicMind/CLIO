@@ -1231,11 +1231,15 @@ Returns: Nothing
 sub display_paginated_list {
     my ($self, $title, $items, $formatter) = @_;
     
+    # Refresh terminal size before pagination (handle resize)
+    $self->refresh_terminal_size();
+    
     # Default formatter: just print the item
     $formatter ||= sub { return $_[0] };
     
-    # Use dynamic page size based on terminal height (or 15 if can't detect)
-    my $page_size = $self->{term_height} ? $self->{term_height} - 10 : 15;
+    # Use dynamic page size based on terminal height (leave room for header/footer)
+    my $page_size = ($self->{terminal_height} || 24) - 8;
+    $page_size = 10 if $page_size < 10;  # Minimum page size
     
     my $total = scalar @$items;
     my $total_pages = int(($total + $page_size - 1) / $page_size);
@@ -5234,73 +5238,28 @@ sub _list_sessions {
     # Sort by modification time (most recent first)
     @session_info = sort { $b->{mtime} <=> $a->{mtime} } @session_info;
     
-    # Pagination setup
-    my $per_page = 20;
-    my $total_sessions = scalar(@session_info);
-    my $total_pages = int(($total_sessions + $per_page - 1) / $per_page);
-    my $page = 1;  # Start at first page
-    
-    # Display with pagination
-    while (1) {
-        print "\n";
-        print $self->colorize("━ AVAILABLE SESSIONS ━" . ("━" x 40), 'DATA'), "\n\n";
+    # Create formatted items for paginated display
+    my @items;
+    for my $i (0 .. $#session_info) {
+        my $sess = $session_info[$i];
+        my $marker = $sess->{is_current} ? ' (current)' : '';
+        my $time = _format_relative_time($sess->{mtime});
         
-        my $start_idx = ($page - 1) * $per_page;
-        my $end_idx = $start_idx + $per_page - 1;
-        $end_idx = $total_sessions - 1 if $end_idx >= $total_sessions;
-        
-        # Display sessions for this page
-        for my $i ($start_idx..$end_idx) {
-            my $sess = $session_info[$i];
-            my $marker = $sess->{is_current} ? $self->colorize(' (current)', 'DATA') : '';
-            my $date = $sess->{mtime} ? scalar(localtime($sess->{mtime})) : 'unknown';
-            
-            printf "  %s%s\n", $sess->{id}, $marker;
-            printf "    Last modified: %s\n", $date;
-            print "\n";
-        }
-        
-        # Show pagination info
-        print $self->colorize("━ PAGE $page/$total_pages ━" . ("━" x (62 - length("━ PAGE $page/$total_pages ━"))), 'DIM'), "\n";
-        
-        # Show pagination controls if needed
-        if ($total_pages > 1) {
-            print "\n";
-            if ($page > 1) {
-                print $self->colorize("  [N]ext  [P]rev", 'PROMPT');
-            } else {
-                print $self->colorize("  [N]ext", 'PROMPT');
-            }
-            if ($page < $total_pages) {
-                print "  (or [P]rev)" unless $page == 1;
-                print "  [Q]uit\n";
-            } else {
-                print "  [Q]uit\n";
-            }
-            
-            print "\nPage action (N/P/Q): ";
-            my $response = <STDIN>;
-            chomp $response if defined $response;
-            $response = uc($response || '');
-            
-            if ($response eq 'N' && $page < $total_pages) {
-                $page++;
-                next;
-            } elsif ($response eq 'P' && $page > 1) {
-                $page--;
-                next;
-            } elsif ($response eq 'Q') {
-                last;
-            }
-            # Invalid response, loop again
-        } else {
-            last;
-        }
+        # Format: "  1) abc123-def456-... [5 min ago] (current)"
+        push @items, sprintf("%3d) %s [%s]%s", 
+            $i + 1, $sess->{id}, $time, $marker);
     }
     
+    # Use standard pagination
+    my $formatter = sub {
+        my ($item, $idx) = @_;
+        return $item;  # Already formatted
+    };
+    
+    $self->display_paginated_list("AVAILABLE SESSIONS", \@items, $formatter);
+    
     print "\n";
-    $self->display_system_message("Total: " . $total_sessions . " sessions");
-    $self->display_system_message("Use '/session switch <id>' to switch or '--resume <id>' on startup");
+    $self->display_system_message("Use '/session switch <number>' or '/session switch <id>' to switch");
 }
 
 =head2 _clear_session_history
