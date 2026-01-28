@@ -761,9 +761,6 @@ sub run {
         print "\n";
     }
     
-    # Prompt for session learnings before exit (optional memory capture)
-    $self->_prompt_session_learnings();
-    
     # Display goodbye
     print "\n";
     $self->display_system_message("Goodbye!");
