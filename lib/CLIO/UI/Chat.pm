@@ -4283,7 +4283,8 @@ sub handle_context_command {
         
         # Resolve relative paths
         unless ($file =~ m{^/}) {
-            $file = "$ENV{PWD}/$file";
+            my $cwd = Cwd::getcwd() || $ENV{PWD} || '.';
+            $file = "$cwd/$file";
         }
         
         unless (-f $file) {
@@ -4512,7 +4513,8 @@ sub handle_explain_command {
     if ($file) {
         # Resolve relative path
         unless ($file =~ m{^/}) {
-            $file = "$ENV{PWD}/$file";
+            my $cwd = Cwd::getcwd() || $ENV{PWD} || '.';
+            $file = "$cwd/$file";
         }
         
         unless (-f $file) {
@@ -4566,7 +4568,8 @@ sub handle_review_command {
     if ($file) {
         # Resolve relative path
         unless ($file =~ m{^/}) {
-            $file = "$ENV{PWD}/$file";
+            my $cwd = Cwd::getcwd() || $ENV{PWD} || '.';
+            $file = "$cwd/$file";
         }
         
         unless (-f $file) {
@@ -4624,7 +4627,8 @@ sub handle_test_command {
     if ($file) {
         # Resolve relative path
         unless ($file =~ m{^/}) {
-            $file = "$ENV{PWD}/$file";
+            my $cwd = Cwd::getcwd() || $ENV{PWD} || '.';
+            $file = "$cwd/$file";
         }
         
         unless (-f $file) {

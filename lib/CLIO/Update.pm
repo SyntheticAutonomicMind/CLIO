@@ -497,7 +497,10 @@ sub check_for_updates_async {
     my $pid = fork();
     
     if (!defined $pid) {
-        print STDERR "[WARN][Update] Failed to fork for background update check\n";
+        # Fork failures during background update check are not critical
+        # Only log in debug mode to avoid alarming users
+        print STDERR "[DEBUG][Update] Failed to fork for background update check\n" 
+            if should_log('DEBUG');
         return;
     }
     

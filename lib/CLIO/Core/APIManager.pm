@@ -44,7 +44,10 @@ BEGIN {
         if ($ca_file) {
             $ENV{PERL_LWP_SSL_CA_FILE} = $ca_file;
         } else {
-            warn "[WARN]No CA bundle found in common locations. HTTPS requests may fail.\n";
+            # Only warn if explicitly debugging - this is a system configuration issue
+            # most users won't see this anyway since CA bundles are usually available
+            print STDERR "[WARN][APIManager] No CA bundle found in common locations. HTTPS requests may fail.\n"
+                if $ENV{CLIO_DEBUG};
         }
     }
 }
