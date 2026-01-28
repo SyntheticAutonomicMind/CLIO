@@ -1336,12 +1336,14 @@ sub _handle_error_response {
     my $retry_after = undef;
     my $retry_info = '';
     my $is_retryable_error = 0;
+    my $error_type = undef; # For specialized retry handling
     
     # Handle rate limiting (429) - parse retry delay from error response
     if ($status == 429) {
         $is_retryable_error = 1;
         $retryable = 1;
         $retry_after = 60;  # Default fallback
+        $error_type = 'rate_limit';  # Flag for specialized handling if needed
         
         # Try to parse retry delay from error message (SAM pattern)
         # Message format: "Please retry in XX.XXs" or "retry in XX seconds"
@@ -1362,28 +1364,31 @@ sub _handle_error_response {
         );
         $error = $retry_info;
     }
-    # Handle transient server errors (502, 503) - these can be retried
+    # Handle transient server errors (502, 503) - these can be retried with exponential backoff
     elsif ($status == 502 || $status == 503) {
         $is_retryable_error = 1;
         $retryable = 1;
         $retry_after = 2;  # Start with 2 second delay for server errors
+        $error_type = 'server_error';  # Flag for WorkflowOrchestrator to apply exponential backoff
         
         # Provide friendly error message (will be sent via system message callback)
         $retry_info = "Server temporarily unavailable ($status). Retrying...";
         $error = $retry_info;
     }
-    # Handle token limit exceeded (400) - NOT retryable
-    # Token limit errors cannot be fixed by retrying; context must be reduced first
+    # Handle token limit exceeded (400) - MAKE RETRYABLE with intelligent trimming
+    # Token limit errors CAN be fixed by trimming conversation history and retrying
     # Error patterns: "model_max_prompt_tokens_exceeded", "context_length_exceeded", "prompt token count exceeds"
     elsif ($status == 400 && $error =~ /model_max_prompt_tokens_exceeded|context_length_exceeded|prompt token count.*exceeds/i) {
-        $is_retryable_error = 0;
-        $retryable = 0;
+        $is_retryable_error = 1;
+        $retryable = 1;
+        $retry_after = 0;  # Instant retry after trimming
+        $error_type = 'token_limit_exceeded';  # Flag for WorkflowOrchestrator to trim conversation
         
         # Provide clear error message explaining the issue
         $error = "Token limit exceeded: The conversation history is too long for the model's context window. " .
-                 "Please start a new session or use a model with a larger context window.";
+                 "Will attempt to trim conversation history and retry.";
         
-        print STDERR "[ERROR][APIManager] Token limit exceeded - NOT retryable\n" if should_log('ERROR');
+        print STDERR "[INFO][APIManager] Token limit exceeded - will retry after trimming\n" if should_log('INFO');
     }
     # Handle malformed tool call JSON (400) - the AI generated bad JSON, so retry to give it another chance
     # This prevents wasting a premium request on a transient AI JSON generation error
@@ -1391,6 +1396,7 @@ sub _handle_error_response {
         $is_retryable_error = 1;
         $retryable = 1;
         $retry_after = 1;  # Quick retry - no server cooldown needed
+        $error_type = 'malformed_tool_json';  # Flag for WorkflowOrchestrator to add guidance
         
         # Provide friendly error message
         $retry_info = "AI generated malformed tool call JSON. Retrying request...";
@@ -1433,6 +1439,7 @@ sub _handle_error_response {
     if ($retryable) {
         $result->{retryable} = 1;
         $result->{retry_after} = $retry_after if $retry_after;
+        $result->{error_type} = $error_type if $error_type;  # Pass error type for specialized handling
     }
     
     return $result;
