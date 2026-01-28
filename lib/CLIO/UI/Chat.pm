@@ -681,6 +681,9 @@ sub run {
         print "\n";
     }
     
+    # Prompt for session learnings before exit (optional memory capture)
+    $self->_prompt_session_learnings();
+    
     # Display goodbye
     print "\n";
     $self->display_system_message("Goodbye!");
@@ -6687,6 +6690,74 @@ sub handle_theme_command {
             $self->display_error_message("Failed to save theme");
         }
     }
+}
+
+=head2 _prompt_session_learnings
+
+Prompt user for session learnings before exit.
+
+This is an optional memory capture that asks the user what important
+discoveries or patterns were learned during the session. Responses
+are stored as discoveries in LTM.
+
+=cut
+
+sub _prompt_session_learnings {
+    my ($self) = @_;
+    
+    # Only prompt if we have a session with LTM
+    return unless $self->{session};
+    return unless $self->{session}->can('ltm');
+    my $ltm = $self->{session}->ltm();
+    return unless $ltm;
+    
+    # Check if there's been meaningful work (more than just hello/goodbye)
+    my $history = $self->{session}->get_conversation_history();
+    return unless $history && @$history > 4;  # Skip if very short session
+    
+    # Display learning prompt
+    print "\n";
+    $self->display_system_message("Session ending. Any important discoveries to remember?");
+    print $self->colorize("(Press Enter to skip, or type learnings)\n", 'DIM');
+    print $self->colorize(": ", 'PROMPT');
+    
+    # Get user input (simple readline, not going through AI)
+    my $response = <STDIN>;
+    chomp $response if defined $response;
+    
+    # Skip if empty
+    return unless $response && $response =~ /\S/;
+    
+    # Store as discovery in LTM
+    # Parse simple format: treat each sentence/line as a separate discovery
+    my @learnings;
+    
+    # Split by newlines or periods followed by space
+    my @parts = split /(?:\n|\.)\s*/, $response;
+    
+    for my $part (@parts) {
+        $part =~ s/^\s+|\s+$//g;  # Trim whitespace
+        next unless $part && length($part) > 5;  # Skip very short fragments
+        push @learnings, $part;
+    }
+    
+    return unless @learnings;
+    
+    # Store each learning as a discovery
+    for my $learning (@learnings) {
+        eval {
+            $ltm->add_discovery($learning, 0.85, 1);  # confidence=0.85, verified=1
+        };
+        print STDERR "[DEBUG][Chat] Stored learning: $learning\n" if $self->{debug};
+    }
+    
+    # Save LTM
+    eval {
+        my $ltm_file = File::Spec->catfile($self->{session}->{state}->{working_directory}, '.clio', 'ltm.json');
+        $ltm->save($ltm_file);
+    };
+    
+    $self->display_system_message("Stored " . scalar(@learnings) . " learning(s) in long-term memory.");
 }
 
 =head2 colorize
