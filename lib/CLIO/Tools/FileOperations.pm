@@ -63,7 +63,7 @@ sub new {
 
 AUTHORIZATION:
 -  Inside session directory: AUTO-APPROVED
--  Outside session directory: Requires user confirmation (future feature)
+-  Outside session directory: Currently allowed (authorization system planned)
 
 ━━━━━━━━━━━━━━━━━━━━━━━ READ (5 operations) ━━━━━━━━━━━━━━━━━━━━━━━
 -  read_file - Read file content with optional line range
@@ -88,8 +88,9 @@ AUTHORIZATION:
 -  grep_search - Search file contents with regex
   Parameters: query (required), pattern (optional), is_regex (optional)
   
--  semantic_search - AI-powered code search (placeholder for future)
+-  semantic_search - Keyword-based relevance search across codebase
   Parameters: query (required), scope (optional)
+  Note: Extracts keywords from query, searches with grep, ranks files by relevance
 
 -  read_tool_result - Read persisted large tool results in chunks
   
