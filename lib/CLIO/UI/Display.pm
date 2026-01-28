@@ -81,10 +81,10 @@ sub display_user_message {
     
     my $chat = $self->{chat};
     
-    # Add to screen buffer
+    # Add to screen buffer (original text for buffer)
     $chat->add_to_buffer('user', $message);
     
-    # Add to session history for AI context
+    # Add to session history for AI context (original, not rendered)
     if ($chat->{session}) {
         print STDERR "[DEBUG][Chat] Adding user message to session history\n" if should_log('DEBUG');
         $chat->{session}->add_message('user', $message);
@@ -92,8 +92,14 @@ sub display_user_message {
         print STDERR "[ERROR][Chat] No session object - cannot store message!\n" if should_log('ERROR');
     }
     
+    # Render markdown for display only (not for AI)
+    my $display_message = $message;
+    if ($chat->{enable_markdown}) {
+        $display_message = $chat->render_markdown($message);
+    }
+    
     # Display with role label
-    print $chat->colorize("YOU: ", 'USER'), $message, "\n";
+    print $chat->colorize("YOU: ", 'USER'), $display_message, "\n";
 }
 
 =head2 display_assistant_message($message)
