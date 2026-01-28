@@ -229,7 +229,9 @@ sub retrieveChunk {
     # Security check: Verify file exists in session's directory
     # If not found, try fuzzy matching to handle AI hallucination of tool call IDs
     unless (-f $result_file) {
-        print STDERR "[WARN][ToolResultStore] Result not found: $toolCallId in session $session_id\n";
+        # Only log the "not found" warning in debug mode - if we auto-correct, user doesn't need to know
+        print STDERR "[DEBUG][ToolResultStore] Result not found: $toolCallId in session $session_id (trying fuzzy match)\n" 
+            if should_log('DEBUG');
         
         # Try to find similar files (handles AI hallucination of IDs)
         my $suggestions = $self->findSimilarResults($toolCallId, $session_id);
@@ -238,7 +240,9 @@ sub retrieveChunk {
         # This handles common AI hallucination where 1-2 characters are wrong
         if ($suggestions && @$suggestions == 1) {
             my $corrected_id = $suggestions->[0];
-            print STDERR "[INFO][ToolResultStore] Auto-corrected toolCallId: $toolCallId -> $corrected_id\n";
+            # Only log auto-correction in debug mode - silent recovery is the goal
+            print STDERR "[DEBUG][ToolResultStore] Auto-corrected toolCallId: $toolCallId -> $corrected_id\n"
+                if should_log('DEBUG');
             $toolCallId = $corrected_id;
             $result_file = File::Spec->catfile($tool_results_dir, "$toolCallId.txt");
         }
