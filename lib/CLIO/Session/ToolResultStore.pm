@@ -227,17 +227,30 @@ sub retrieveChunk {
     print STDERR "[DEBUG][ToolResultStore] Retrieving chunk: toolCallId=$toolCallId, offset=$offset, length=$length\n" if should_log('DEBUG');
     
     # Security check: Verify file exists in session's directory
+    # If not found, try fuzzy matching to handle AI hallucination of tool call IDs
     unless (-f $result_file) {
-        print STDERR "[WARN]ToolResultStore] Result not found: $toolCallId in session $session_id\n";
+        print STDERR "[WARN][ToolResultStore] Result not found: $toolCallId in session $session_id\n";
         
-        # Try to find similar files and suggest them
+        # Try to find similar files (handles AI hallucination of IDs)
         my $suggestions = $self->findSimilarResults($toolCallId, $session_id);
-        if ($suggestions && @$suggestions) {
-            my $suggestion_text = join("\n", map { "  - $_" } @$suggestions);
-            die "Tool result not found: $toolCallId\n\nDid you mean one of these?\n$suggestion_text";
-        }
         
-        die "Tool result not found: $toolCallId";
+        # If exactly ONE close match exists, auto-correct to it
+        # This handles common AI hallucination where 1-2 characters are wrong
+        if ($suggestions && @$suggestions == 1) {
+            my $corrected_id = $suggestions->[0];
+            print STDERR "[INFO][ToolResultStore] Auto-corrected toolCallId: $toolCallId -> $corrected_id\n";
+            $toolCallId = $corrected_id;
+            $result_file = File::Spec->catfile($tool_results_dir, "$toolCallId.txt");
+        }
+        # If multiple close matches, show suggestions and let AI pick
+        elsif ($suggestions && @$suggestions > 1) {
+            my $suggestion_text = join("\n", map { "  - $_" } @$suggestions);
+            die "Tool result not found: $toolCallId\n\nMultiple similar results found. Did you mean one of these?\n$suggestion_text";
+        }
+        # No matches at all
+        else {
+            die "Tool result not found: $toolCallId";
+        }
     }
     
     # Read file content
