@@ -225,6 +225,57 @@ sub reset_streaming_state {
     return 1;
 }
 
+=head2 show_busy_indicator
+
+Show the busy spinner to indicate system is processing.
+Called when CLIO is busy (tool execution, API processing, etc.)
+
+This ensures users always see visual feedback when the system is working.
+
+=cut
+
+sub show_busy_indicator {
+    my ($self) = @_;
+    
+    # Ensure spinner is initialized
+    unless ($self->{spinner}) {
+        my $spinner_frames = $self->{theme_mgr}->get_spinner_frames();
+        $self->{spinner} = CLIO::UI::ProgressSpinner->new(
+            frames => $spinner_frames,
+            delay => 100000,
+            inline => 1,
+        );
+        print STDERR "[DEBUG][Chat] Created spinner in show_busy_indicator\n" if should_log('DEBUG');
+    }
+    
+    # Only start if not already running
+    if (!$self->{spinner}->{running}) {
+        $self->{spinner}->start();
+        print STDERR "[DEBUG][Chat] Busy indicator started\n" if should_log('DEBUG');
+    }
+    
+    return 1;
+}
+
+=head2 hide_busy_indicator
+
+Hide the busy spinner when system is no longer processing.
+Called when outputting data or waiting for user input.
+
+=cut
+
+sub hide_busy_indicator {
+    my ($self) = @_;
+    
+    # Stop spinner if it exists and is running
+    if ($self->{spinner} && $self->{spinner}->{running}) {
+        $self->{spinner}->stop();
+        print STDERR "[DEBUG][Chat] Busy indicator stopped\n" if should_log('DEBUG');
+    }
+    
+    return 1;
+}
+
 =head2 run
 
 Main chat loop - displays interface and processes user input
@@ -342,13 +393,21 @@ sub run {
                 # Stop progress spinner on first chunk (AI is now responding)
                 # Spinner animates inline after "CLIO: " prefix which was already printed
                 # Just stop the spinner to remove it, the prefix stays
-                if (!$first_chunk_received) {
+                # Also check _prepare_for_next_iteration flag set by WorkflowOrchestrator
+                # after tool execution - this ensures spinner stops even on continuation chunks
+                if (!$first_chunk_received || $self->{_prepare_for_next_iteration}) {
                     $spinner->stop();  # Removes spinner, leaves "CLIO: " prefix intact
+                    
+                    # Clear the flag if it was set
+                    $self->{_prepare_for_next_iteration} = 0 if $self->{_prepare_for_next_iteration};
                     
                     # Enable pagination for text responses (agent is speaking directly)
                     # This will be left enabled unless/until tools are invoked
-                    $self->{pagination_enabled} = 1;
-                    print STDERR "[DEBUG][Chat] Pagination ENABLED for text response\n" if $self->{debug};
+                    if (!$first_chunk_received) {
+                        $self->{pagination_enabled} = 1;
+                        print STDERR "[DEBUG][Chat] Pagination ENABLED for text response\n" if $self->{debug};
+                    }
+                    
                     print STDERR "[DEBUG][Chat] First chunk received, spinner removed (CLIO: prefix remains)\n" if $self->{debug};
                     $first_chunk_received = 1;
                 }
@@ -497,8 +556,17 @@ sub run {
                 
                 return unless defined $message;
                 
+                # Hide busy indicator before displaying system message
+                # This clears the spinner, leaving "CLIO: " on the line
+                $self->hide_busy_indicator() if $self->can('hide_busy_indicator');
+                
+                # Clear the "CLIO: " prefix that was printed before the spinner
+                # This ensures system messages start on a clean line
+                print "\r\e[K";  # Carriage return + clear entire line
+                
                 # Display system message with proper styling
                 print $self->colorize("SYSTEM: ", 'SYSTEM') . $message . "\n";
+                STDOUT->flush() if STDOUT->can('flush');
                 $self->{line_count}++;
                 
                 print STDERR "[DEBUG][Chat] System message: $message\n" if $self->{debug};
