@@ -924,6 +924,29 @@ sub process_input {
                 $self->{ui}->reset_streaming_state();
             }
             
+            # Show busy indicator before next API call
+            # After tool execution completes, we're about to send results back to AI
+            # and wait for the next response. Show spinner during this processing.
+            # The _prepare_for_next_iteration flag tells Chat.pm to stop the spinner
+            # on the next chunk even if first_chunk_received was already set.
+            if ($self->{ui}) {
+                # Print "CLIO: " prefix before showing spinner
+                if ($self->{ui}->can('colorize')) {
+                    print $self->{ui}->colorize("CLIO: ", 'ASSISTANT');
+                    STDOUT->flush() if STDOUT->can('flush');
+                }
+                
+                # Set flag so on_chunk callback knows to stop spinner on next chunk
+                $self->{ui}->{_prepare_for_next_iteration} = 1;
+                
+                # Show the busy indicator
+                if ($self->{ui}->can('show_busy_indicator')) {
+                    $self->{ui}->show_busy_indicator();
+                    print STDERR "[DEBUG][WorkflowOrchestrator] Showing busy indicator before next API iteration\n"
+                        if $self->{debug};
+                }
+            }
+            
             # Save session after each iteration to prevent data loss
             # This ensures tool execution history is preserved even if process crashes mid-workflow
             # Performance impact: ~2-5ms per iteration (negligible vs multi-second AI response times)
