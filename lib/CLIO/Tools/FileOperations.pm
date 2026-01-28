@@ -656,22 +656,77 @@ sub file_search {
     eval {
         my @matches;
         
-        # Use File::Glob to expand glob patterns safely
-        # GLOB_BRACE allows {a,b} syntax, GLOB_NOCHECK returns pattern if no matches
-        my @files = bsd_glob("$directory/$pattern", GLOB_BRACE);
-        
-        foreach my $path (@files) {
-            next unless -e $path;  # Skip non-existent entries
+        # Check if pattern contains ** for recursive matching
+        # bsd_glob doesn't support ** properly - it treats it as single *
+        if ($pattern =~ /\*\*/) {
+            # Use File::Find for recursive glob patterns
+            require File::Find;
             
-            # Remove directory prefix for cleaner paths
-            my $rel_path = $path;
-            $rel_path =~ s{^\Q$directory\E/?}{};
+            # Convert glob pattern to regex
+            # **/ matches any directory depth, * matches any file/dir name
+            my $regex_pattern = $pattern;
             
-            push @matches, {
-                path => $rel_path,
-                type => -d $path ? 'directory' : 'file',
-                size => -s $path,
-            };
+            # Escape regex special chars first (except *, ?, {})
+            $regex_pattern =~ s{([.+^\$\[\]\\|()])}{\\$1}g;
+            
+            # Use markers for ** patterns first to avoid partial replacement by *
+            $regex_pattern =~ s{\*\*/}{\x00DOUBLESTAR_SLASH\x00}g;  # **/ -> marker
+            $regex_pattern =~ s{\*\*}{\x01DOUBLESTAR\x01}g;          # ** alone -> marker
+            
+            # Now convert single * and ?
+            $regex_pattern =~ s{\*}{[^/]*}g;        # * -> [^/]* (match within dir)
+            $regex_pattern =~ s{\?}{[^/]}g;         # ? -> single char
+            
+            # Now replace markers with regex
+            $regex_pattern =~ s{\x00DOUBLESTAR_SLASH\x00}{(?:.*/)?}g;  # **/ -> optional any path
+            $regex_pattern =~ s{\x01DOUBLESTAR\x01}{.*}g;              # ** -> any chars
+            
+            # Handle brace expansion {a,b} -> (?:a|b)
+            while ($regex_pattern =~ /\{([^}]+)\}/) {
+                my $inside = $1;
+                $inside =~ s/,/|/g;
+                $regex_pattern =~ s/\{[^}]+\}/(?:$inside)/;
+            }
+            
+            $regex_pattern = "^$regex_pattern\$";   # Anchor the pattern
+            
+            print STDERR "[DEBUG][FileOp] Recursive search, regex: $regex_pattern\n" if should_log('DEBUG');
+            
+            File::Find::find(sub {
+                return unless -f $_;  # Only match files
+                
+                # Get path relative to search directory
+                my $rel_path = $File::Find::name;
+                $rel_path =~ s{^\Q$directory\E/?}{};
+                
+                return unless $rel_path;  # Skip the root directory itself
+                
+                if ($rel_path =~ /$regex_pattern/) {
+                    push @matches, {
+                        path => $rel_path,
+                        type => 'file',
+                        size => -s $File::Find::name,
+                    };
+                }
+            }, $directory);
+        } else {
+            # Use File::Glob for non-recursive patterns (faster)
+            # GLOB_BRACE allows {a,b} syntax, GLOB_NOCHECK returns pattern if no matches
+            my @files = bsd_glob("$directory/$pattern", GLOB_BRACE);
+            
+            foreach my $path (@files) {
+                next unless -e $path;  # Skip non-existent entries
+                
+                # Remove directory prefix for cleaner paths
+                my $rel_path = $path;
+                $rel_path =~ s{^\Q$directory\E/?}{};
+                
+                push @matches, {
+                    path => $rel_path,
+                    type => -d $path ? 'directory' : 'file',
+                    size => -s $path,
+                };
+            }
         }
         
         print STDERR "[DEBUG][FileOp] Found " . scalar(@matches) . " matches\n" if $self->{debug};
