@@ -344,12 +344,12 @@ __END__
   my $text = "@BOLD@@CYAN@CLIO@RESET@ - @DIM@Command Line Intelligence Orchestrator@RESET@";
   print $ansi->parse($text), "\n";
 
-=head1 FUTURE ENHANCEMENTS
+=head1 RELATED MODULES
 
-- Theme system (/config theme <name>)
-- Custom @-code definitions
-- Color palettes
-- Terminal capability detection
+CLIO::UI::Theme provides higher-level theming:
+- Multiple style files (24+ color schemes in styles/)
+- Multiple theme files (layout templates in themes/)
+- Use /style command to switch: /style dracula, /style matrix, etc.
 
 =head1 AUTHOR
 

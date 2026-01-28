@@ -25,8 +25,9 @@ their designated workspace but must ask permission for operations outside that s
 
 **Grant Types:**
 - One-time: Authorization consumed after first use (default)
-- Session: Valid for entire session
-- Permanent: Persists across sessions (future feature)
+- Session: Valid for entire session (one_time_use => 0)
+
+**Note:** Permanent grants (persisting across sessions) are planned but not yet implemented.
 
 =cut
 
