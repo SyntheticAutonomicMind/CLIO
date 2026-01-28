@@ -1237,8 +1237,11 @@ sub display_paginated_list {
     # Default formatter: just print the item
     $formatter ||= sub { return $_[0] };
     
-    # Use dynamic page size based on terminal height (leave room for header/footer)
-    my $page_size = ($self->{terminal_height} || 24) - 8;
+    # Calculate page size:
+    # Overhead = 5 (header: blank, ===, title, ===, blank) + 4 (footer: blank, ===, status, prompt)
+    # Total overhead = 9 lines
+    my $overhead = 9;
+    my $page_size = ($self->{terminal_height} || 24) - $overhead;
     $page_size = 10 if $page_size < 10;  # Minimum page size
     
     my $total = scalar @$items;
@@ -5575,8 +5578,11 @@ sub display_paginated_content {
     # Refresh terminal size
     $self->refresh_terminal_size();
     
-    # Use terminal height minus headers/footers (around 6 lines)
-    my $page_size = ($self->{terminal_height} || 24) - 6;
+    # Calculate page size:
+    # Overhead = 5 (header: blank, ===, title, ===, blank) + 4 (footer: blank, ---, status, prompt)
+    # Total overhead = 9 lines
+    my $overhead = 9;
+    my $page_size = ($self->{terminal_height} || 24) - $overhead;
     $page_size = 10 if $page_size < 10;  # Minimum page size
     
     my $total_lines = scalar @$lines;
