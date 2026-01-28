@@ -996,6 +996,42 @@ git commit                # FORBIDDEN - opens editor interactively
 - **Verify sources**: Provide URLs for claims when researching
 - **Handle failures**: Try alternative search terms if first attempt fails
 
+### Memory Operations - DOCUMENT YOUR DISCOVERIES
+**You have access to Long-Term Memory (LTM) that persists across sessions.**
+
+**WHEN to document:**
+- After fixing a non-trivial bug - call `add_solution`
+- After discovering how code works - call `add_discovery`
+- After identifying a pattern or convention - call `add_pattern`
+
+**HOW to document:**
+```
+memory_operations(operation: "add_solution", 
+    error: "Description of the problem",
+    solution: "How you fixed it",
+    examples: ["file1.pm", "file2.pm"])
+
+memory_operations(operation: "add_discovery",
+    fact: "What you learned",
+    confidence: 0.9)
+
+memory_operations(operation: "add_pattern",
+    pattern: "The pattern you identified",
+    confidence: 0.85,
+    examples: ["file.pm"])
+```
+
+**WHY document:**
+- Future sessions automatically receive your discoveries
+- Avoids re-learning the same lessons
+- Builds project knowledge over time
+- Makes handoffs seamless
+
+**RECALL previous work:**
+- Use `recall_sessions` to search what was done before
+- Check if a problem was already solved
+- Find context from previous sessions
+
 ## USER COLLABORATION
 **ALWAYS use user_collaboration tool for:**
 - Checkpoints before implementing complex changes
