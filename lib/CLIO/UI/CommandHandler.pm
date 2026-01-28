@@ -244,6 +244,10 @@ sub handle_command {
     elsif ($cmd eq 'update') {
         $chat->handle_update_command(@args);
     }
+    elsif ($cmd eq 'init') {
+        my $prompt = $chat->handle_init_command(@args);
+        return (1, $prompt) if $prompt;  # Return prompt to be sent to AI
+    }
     else {
         $chat->display_error_message("Unknown command: /$cmd (type /help for help)");
     }
