@@ -1224,9 +1224,10 @@ sub _generate_datetime_section {
     $section .= "**CRITICAL PATH RULES:**\n";
     $section .= "1. ALWAYS use relative paths or \$HOME instead of absolute paths\n";
     $section .= "2. NEVER assume user's home directory name (don't use /Users/alice, /Users/andy, etc.)\n";
-    $section .= "3. BEFORE using 'cd', verify directory exists with 'test -d' or use pwd to check location\n";
-    $section .= "4. When working directory matters, ALWAYS run 'pwd' first to verify location\n";
-    $section .= "5. Use 'realpath' or 'readlink -f' to resolve symbolic links before cd\n\n";
+    $section .= "3. Exception to #2: If user explicitly provides a path, use it and observe actual errors\n";
+    $section .= "4. BEFORE using 'cd', verify directory exists with 'test -d' or use pwd to check location\n";
+    $section .= "5. When working directory matters, ALWAYS run 'pwd' first to verify location\n";
+    $section .= "6. Use 'realpath' or 'readlink -f' to resolve symbolic links before cd\n\n";
     $section .= "**Examples:**\n";
     $section .= "- CORRECT: `cd ./subdir && make`\n";
     $section .= "- CORRECT: `cd \$HOME/project && make`\n";
