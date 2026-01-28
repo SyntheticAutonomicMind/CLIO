@@ -526,26 +526,37 @@ Every action is transparent and immediate—no hidden work, no waiting.
 
 CLIO uses a modular Perl-based architecture:
 
-```
-User Input -> Chat UI -> AIAgent -> Tool Selection
-                                       v
-                                 Tool Executor
-                                       v
-                  ┌────────────────────┼────────────────────┐
-                  v                    v                    v
-           File Operations      Version Control     Terminal Operations
-                  v                    v                    v
-            Memory System           Todo Lists          Web Operations
-                  v                    v                    v
-                  └────────────────────┴────────────────────┘
-                                       v
-                                  API Manager
-                                       v
-           GitHub Copilot / OpenAI / DeepSeek / llama.cpp / SAM
-                                       v
-                                Response Processing
-                                       v
-                        Markdown Renderer -> User
+```mermaid
+graph TD
+    A["User Input"] --> B["Chat UI"]
+    B --> C["AI Agent"]
+    C --> D["Tool Selection"]
+    D --> E["Tool Executor"]
+    E --> F["File Operations"]
+    E --> G["Version Control"]
+    E --> H["Terminal Operations"]
+    E --> I["Memory System"]
+    E --> J["Todo Lists"]
+    E --> K["Web Operations"]
+    
+    F --> L["API Manager"]
+    G --> L
+    H --> L
+    I --> L
+    J --> L
+    K --> L
+    
+    L --> M["GitHub Copilot / OpenAI / DeepSeek / llama.cpp / SAM"]
+    M --> N["Response Processing"]
+    N --> O["Markdown Renderer"]
+    O --> P["User Output"]
+    
+    style A fill:#e1f5ff
+    style B fill:#fff3e0
+    style C fill:#f3e5f5
+    style E fill:#e8f5e9
+    style M fill:#fce4ec
+    style P fill:#e1f5ff
 ```
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed system design.
