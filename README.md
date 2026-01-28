@@ -6,7 +6,7 @@
 
 ## Why I Built CLIO
 
-I built CLIO for myself. As someone who prefers working in the terminal, I wanted an AI assistant that felt native to my workflow. One that respected my privacy, worked anywhere Perl runs, and gave me full control over my code and tools. I couldn’t find anything that met those needs, so I created CLIO.
+I built CLIO for myself. As someone who prefers working in the terminal, I wanted an AI assistant that felt native to my workflow. One that respected my privacy, worked anywhere Perl runs, and gave me full control over my code and tools. I couldn't find anything that met those needs, so I created CLIO.
 
 Starting with version 20260119.1, CLIO has been building itself. All of my development is now done through pair programming with AI agents using CLIO.
 
@@ -18,7 +18,7 @@ CLIO is part of the [Synthetic Autonomic Mind (SAM)](https://github.com/Syntheti
 
 - **Terminal-First Experience:** CLIO runs entirely in your terminal, with professional markdown rendering, color themes, and streaming output. No browser, no GUI overlays, just a clean, native interface.
 - **Portable & Minimal:** No CPAN, npm, or pip dependencies, just Perl core modules. Install and run CLIO on any modern macOS or Linux system in minutes.
-- **Tool-Powered, Not Simulated:** All file, git, and terminal operations are performed using real system tools. Every action is described in real time, so you always know what’s happening.
+- **Tool-Powered, Not Simulated:** All file, git, and terminal operations are performed using real system tools. Every action is described in real time, so you always know what's happening.
 - **Privacy & Control:** Your code and conversations stay on your machine. Only the minimum context needed for AI is sent to providers, and all sessions and memories are stored locally.
 - **Persistent Sessions:** Pick up exactly where you left off, with full conversation and tool history.
 - **Scriptable & Extensible:** Designed for users who prefer Vim to VSCode, tmux to tabs, and scripts to clicks. CLIO fits into your workflow, not the other way around.
@@ -88,11 +88,11 @@ For detailed installation options and troubleshooting, see [docs/INSTALLATION.md
 
 **GitHub Copilot** (Default - Recommended)
 
-No configuration needed! Just start CLIO and run `/login`:
+No configuration needed! Just start CLIO and run `/api login`:
 
 ```bash
 ./clio
-: /login
+: /api login
 # Follow the browser prompts to authorize
 ```
 
@@ -102,8 +102,9 @@ Use `/api` commands within CLIO:
 
 ```bash
 ./clio
-: /api provider openai
-: /api key YOUR_OPENAI_API_KEY
+: /api set provider openai
+: /api set key YOUR_OPENAI_API_KEY
+: /api set model gpt-4o
 : /config save
 ```
 
@@ -147,6 +148,143 @@ CLIO: I can see you have several files here:
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+## Interactive Features & Usability
+
+CLIO is designed for productive terminal interaction with powerful shortcuts and controls:
+
+### Keyboard Controls
+
+**During Responses:**
+- **`Space` / `Any Key`**: Continue to next page when response is longer than your terminal height
+- **`q` / `Q`**: Quit pagination and return to prompt
+- **`^` / `v` (Up/Down Arrows)**: Navigate between pages (non-streaming mode only)
+- **`Ctrl+D`** or **`Ctrl+C`**: Exit CLIO
+
+**In Text Input:**
+- **`←` / `→` (Left/Right Arrows)**: Move cursor one character
+- **`Option+←` / `Option+→` (Alt+Left/Right)**: Jump forward/backward by word
+- **`Home` / `End`**: Move to beginning/end of line
+- **`Ctrl+A` / `Ctrl+E`**: Move to start/end of line (emacs mode)
+- **`Tab`**: Auto-complete commands and file paths
+- **`Escape`**: Cancel multi-line input or interrupt workflow (returns to prompt while staying in session)
+
+### Input Modes
+
+**Single-Line Input (Default)**
+```
+: Your question here...
+```
+
+**Multi-Line Input** - Open your editor for complex prompts:
+```
+: /multiline
+# or
+: /ml
+# (Opens $EDITOR for full prompt composition)
+```
+
+### Smart Pagination
+
+CLIO automatically handles long responses intelligently:
+
+- **During AI Thinking**: No pagination interruption (you see tool operations flow freely)
+- **During Final Response**: Automatic pause at screen height (type any key to continue)
+- **Stream Mode**: Quick confirmation pauses (press any key to keep reading)
+- **Page Navigation**: Use arrow keys to scroll back through pages (non-streaming)
+
+This means you can stay focused—no constant "press space" prompts during tool work, but clean pagination when the AI is talking to you.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## Slash Commands Reference
+
+CLIO provides 35+ powerful slash commands organized by category. Type `/help` in any session to see the full list, or reference below:
+
+### Basics
+| Command | Purpose |
+|---------|---------|
+| `/help`, `/h` | Display command help |
+| `/exit`, `/quit`, `/q` | Exit CLIO |
+| `/clear` | Clear screen |
+
+### API & Configuration
+| Command | Purpose |
+|---------|---------|
+| `/api` | Show API settings help |
+| `/api set provider <name>` | Change AI provider |
+| `/api set model <name>` | Set AI model |
+| `/api set key <value>` | Set API key |
+| `/api models` | List available models |
+| `/api login` | Authenticate with GitHub Copilot |
+| `/api logout` | Sign out from GitHub |
+| `/config save` | Save configuration to file |
+| `/config show` | Display current configuration |
+
+### Session Management
+| Command | Purpose |
+|---------|---------|
+| `/session list` | List all saved sessions |
+| `/session switch <id>` | Resume a specific session |
+
+### File & Git Operations
+| Command | Purpose |
+|---------|---------|
+| `/file read <path>` | View file contents |
+| `/file write <path>` | Create/overwrite file |
+| `/file edit <path>` | Edit file in $EDITOR |
+| `/git status` | Show git status |
+| `/git diff` | Show git differences |
+| `/git log` | Show commit history |
+| `/git commit` | Create git commit |
+
+### Task Management
+| Command | Purpose |
+|---------|---------|
+| `/todo` | View agent's current todo list |
+| `/todo add <text>` | Add new todo |
+| `/todo done <id>` | Mark todo as complete |
+
+### Memory & Learning
+| Command | Purpose |
+|---------|---------|
+| `/memory` | View long-term memory patterns |
+| `/memory list [type]` | List discoveries, solutions, patterns |
+| `/memory store <type>` | Store new pattern (via AI) |
+| `/memory clear` | Clear all patterns |
+
+### Developer Tools
+| Command | Purpose |
+|---------|---------|
+| `/explain [file]` | Explain code |
+| `/review [file]` | Review code quality |
+| `/test [file]` | Generate tests |
+| `/fix <file>` | Propose bug fixes |
+| `/doc <file>` | Generate documentation |
+
+### Skills & Customization
+| Command | Purpose |
+|---------|---------|
+| `/skills` | Manage custom skills |
+| `/prompt` | Manage system prompts |
+| `/style` | Change interface style |
+| `/theme` | Change color theme |
+
+### Execution & Utilities
+| Command | Purpose |
+|---------|---------|
+| `/exec <cmd>` | Run shell command directly |
+| `/shell` | Drop to shell subshell |
+| `/billing` | Show API usage statistics |
+| `/context` | Manage context files |
+| `/debug` | Toggle debug output |
+| `/multiline`, `/ml` | Open editor for multi-line input |
+| `/update check` | Check for CLIO updates |
+| `/loglevel` | Set logging verbosity |
+
+**Tip:** Use `/help` inside CLIO to see an interactive, paginated command reference with descriptions.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 ## Session Management
 
 CLIO automatically saves all conversations:
@@ -162,7 +300,10 @@ CLIO automatically saves all conversations:
 ./clio --resume sess_20260118_143052
 
 # List all sessions
-ls sessions/
+ls ~/.clio/sessions/
+
+# Start with debug output
+./clio --debug --new
 ```
 
 Sessions include:
@@ -170,6 +311,9 @@ Sessions include:
 - Tool operations performed
 - Memory context
 - Timestamps
+- Model and provider information
+
+**Never lose context**—resume any session months later and pick up exactly where you left off.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -179,18 +323,17 @@ CLIO is configured **interactively** using slash commands:
 
 ```bash
 # GitHub Copilot (default) - just login
-: /login
+: /api login
 
-# Other providers - use /api commands
-: /api provider openai
-: /api key YOUR_API_KEY
-: /api model gpt-4o
+# Other providers - use /api set commands
+: /api set provider openai
+: /api set key YOUR_API_KEY
+: /api set model gpt-4o
 : /config save
 
 # View current configuration
 : /config show
-: /api provider
-: /api model
+: /api
 ```
 
 **Optional: Environment variables** (advanced users)
@@ -198,6 +341,9 @@ CLIO is configured **interactively** using slash commands:
 ```bash
 # Session Directory
 export CLIO_SESSION_DIR="$HOME/.clio/sessions"
+
+# Custom library path (if installed to non-standard location)
+export PERL5LIB="/path/to/lib:$PERL5LIB"
 ```
 
 **Note:** API keys and provider selection are configured with `/api` commands, not environment variables. Use `clio --debug` for debug output.
@@ -245,24 +391,123 @@ For complete documentation and examples, see [docs/CUSTOM_INSTRUCTIONS.md](docs/
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+## Real-World Workflows
+
+Here are common patterns for using CLIO effectively:
+
+### Code Review & Fix Workflow
+
+```
+YOU: Please review lib/CLIO/Core/Main.pm
+
+[CLIO reviews file, identifies issues]
+
+YOU: /fix lib/CLIO/Core/Main.pm
+
+[CLIO proposes fixes, explains changes]
+
+YOU: Looks good, make the changes
+
+[CLIO modifies file with real file_operations]
+
+YOU: /git status
+
+[Shows file changes]
+
+YOU: Let's commit these
+
+[CLIO commits with proper message]
+```
+
+### Multi-File Refactoring
+
+```
+YOU: /multiline
+# [Opens editor]
+# Refactor lib/CLIO/Tools/*.pm to use consistent error handling
+# Make all error messages go through CLIO::Core::Logger
+# Update tests in tests/unit/ to verify error handling
+
+[CLIO analyzes all files, creates plan, executes changes]
+
+YOU: Show me the diff
+
+[CLIO shows all changes with context]
+
+YOU: Perfect, let's test
+
+[CLIO runs tests, reports results]
+```
+
+### Interactive Todo Management
+
+```
+YOU: /todo
+[Shows current todos]
+
+YOU: /todo add "Refactor Session.pm for performance"
+[Added]
+
+YOU: Let me work on that...
+[Provides detailed plan and implements]
+
+YOU: /todo done 5
+[Marks todo 5 complete]
+
+YOU: What's left?
+[CLIO shows remaining todos from context]
+```
+
+### Research & Documentation
+
+```
+YOU: /context add https://example.com/api/docs
+
+[CLIO fetches and stores API documentation]
+
+YOU: Generate docs for our API wrapper module
+
+[CLIO uses stored context to write docs]
+
+YOU: /file write docs/API.md
+
+[Writes documentation with real file operations]
+```
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 ## Requirements
 
 - **Operating System:** macOS 10.14+ or Linux (any modern distribution)
 - **Perl:** Version 5.20 or higher (core modules only, no CPAN dependencies)
 - **Git:** Required for version control operations
 - **Terminal:** Any ANSI-compatible terminal emulator
+- **Editor:** Optional, for `/multiline` input (defaults to `$EDITOR` env var, then vim)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-## Documentation
+## Streaming & Real-Time Feedback
 
-- **[User Guide](docs/USER_GUIDE.md):** Complete usage guide with examples
-- **[Architecture](docs/ARCHITECTURE.md):** System design and component overview
-- **[Custom Instructions](docs/CUSTOM_INSTRUCTIONS.md):** Per-project AI behavior and standards enforcement
-- **[Feature Completeness](docs/FEATURE_COMPLETENESS.md):** Status of all features (what's done, what's partial, what's planned)
-- **[Installation Guide](docs/INSTALLATION.md):** Setup and installation instructions
-- **[Developer Guide](docs/DEVELOPER_GUIDE.md):** Extending CLIO and contributing
-- **[Technical Specs](docs-internal/):** Detailed specifications (protocols, UI, memory, etc.)
+CLIO provides real-time streaming responses with smart behavior:
+
+**AI Responses Stream Immediately:**
+- You see text appearing as it's generated
+- Markdown rendering applies live
+- Code blocks appear with syntax highlighting
+
+**Tool Operations Show Live:**
+```
+SYSTEM: [file_operations] - Reading ./lib/Main.pm (245 lines)
+SYSTEM: [git] - Executing git status in ./
+SYSTEM: [terminal] - Running: perl -I./lib -c lib/Main.pm
+```
+
+Every action is transparent and immediate—no hidden work, no waiting.
+
+**Pagination Is Smart:**
+- During tool execution: Free-flowing (no interruptions)
+- During final response: Automatic pause at screen height
+- Navigation: Use arrow keys to review earlier pages
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -282,28 +527,40 @@ For complete documentation and examples, see [docs/CUSTOM_INSTRUCTIONS.md](docs/
 CLIO uses a modular Perl-based architecture:
 
 ```
-User Input -> SimpleChat UI -> SimpleAIAgent -> Tool Selection
-                                                   v
-                                             Tool Executor
-                                                   v
-                          ┌────────────────────────┼──────────────────────┐
-                          v                        v                      v
-                   File Operations         Version Control      Terminal Operations
-                          v                        v                      v
-                    Memory System            Todo Lists            Web Operations
-                          v                        v                      v
-                          └────────────────────────┴──────────────────────┘
-                                                   v
-                                            API Manager
-                                                   v
-                       GitHub Copilot / OpenAI / DeepSeek / llama.cpp / SAM
-                                                   v
-                                            Response Processing
-                                                   v
-                                        Markdown Renderer -> User
+User Input -> Chat UI -> AIAgent -> Tool Selection
+                                       v
+                                 Tool Executor
+                                       v
+                  ┌────────────────────┼────────────────────┐
+                  v                    v                    v
+           File Operations      Version Control     Terminal Operations
+                  v                    v                    v
+            Memory System           Todo Lists          Web Operations
+                  v                    v                    v
+                  └────────────────────┴────────────────────┘
+                                       v
+                                  API Manager
+                                       v
+           GitHub Copilot / OpenAI / DeepSeek / llama.cpp / SAM
+                                       v
+                                Response Processing
+                                       v
+                        Markdown Renderer -> User
 ```
 
-See [docs/SPECS/ARCHITECTURE.md](docs/SPECS/ARCHITECTURE.md) for detailed system design.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed system design.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## Documentation
+
+- **[User Guide](docs/USER_GUIDE.md):** Complete usage guide with examples
+- **[Architecture](docs/ARCHITECTURE.md):** System design and component overview
+- **[Custom Instructions](docs/CUSTOM_INSTRUCTIONS.md):** Per-project AI behavior and standards enforcement
+- **[Feature Completeness](docs/FEATURE_COMPLETENESS.md):** Status of all features (what's done, what's partial, what's planned)
+- **[Installation Guide](docs/INSTALLATION.md):** Setup and installation instructions
+- **[Developer Guide](docs/DEVELOPER_GUIDE.md):** Extending CLIO and contributing
+- **[Technical Specs](docs-internal/):** Detailed specifications (protocols, UI, memory, etc.)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -320,7 +577,7 @@ Contributions are welcome! Please see [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_G
 
 ## License
 
-CLIO is licensed under the GNU General Public License v3..
+CLIO is licensed under the GNU General Public License v3.
 
 See [LICENSE](LICENSE) for full license text.
 
