@@ -29,12 +29,16 @@ This project follows **The Unbroken Method** for human-AI collaboration. This is
 
 | Checkpoint | When | Purpose |
 |-----------|------|---------|
-| Session Start | First message of NEW session only | Confirm context & plan |
+| Session Start | Always | Evaluate request, develop plan, confirm with user |
 | After Investigation | Before implementation | Share findings, get approval |
 | After Implementation | Before commit | Show results, get OK |
 | Session End | When work complete | Summary & handoff |
 
-**Important:** "Session Start" checkpoint applies only to the FIRST user message in a new session. Do NOT request session context on every message - that would break conversation flow.
+**Session Start Checkpoint Format:**
+- CORRECT: "Based on your request to [X], here's my plan: 1) [step], 2) [step], 3) [step]. Proceed?"
+- WRONG: "What would you like me to do?" or "Please confirm the context..."
+
+The user has already provided their request. Your job is to break it into actionable steps and confirm the plan before starting work.
 
 **[FAIL]** Create documentation/implementations alone  
 **[OK]** Investigate freely, but checkpoint before committing changes
