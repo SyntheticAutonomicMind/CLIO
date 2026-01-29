@@ -870,6 +870,7 @@ sub validate_and_truncate_messages {
     my @conversation = ();
     my $current_tokens = $system_tokens + $first_user_tokens;  # Account for preserved in budget
     my %included_tool_call_ids = ();
+    my @dropped_units = ();  # Track units that don't fit in budget for compression
     
     my @remaining_units = @units[$start_unit .. $#units];
     
@@ -890,8 +891,46 @@ sub validate_and_truncate_messages {
                 $included_tool_call_ids{$id} = 1;
             }
         } else {
-            # Hit the limit - stop adding
-            last;
+            # Hit the limit - collect dropped units for compression
+            push @dropped_units, $unit;
+        }
+    }
+    
+    # Compress dropped units if any exist
+    my $compressed_summary = undef;
+    if (@dropped_units > 0) {
+        # Extract messages from dropped units for compression
+        my @dropped_messages = ();
+        for my $unit (@dropped_units) {
+            push @dropped_messages, @{$unit->{messages}};
+        }
+        
+        print STDERR "[DEBUG][APIManager] Compressing " . scalar(@dropped_messages) . " dropped messages\n"
+            if $self->{debug};
+        
+        # Use YaRN to compress the dropped messages
+        eval {
+            require CLIO::Memory::YaRN;
+            my $yarn = CLIO::Memory::YaRN->new(debug => $self->{debug});
+            
+            # Extract original task from first_user_unit if available
+            my $original_task = '';
+            if ($first_user_unit && @{$first_user_unit->{messages}}) {
+                $original_task = $first_user_unit->{messages}[0]{content} || '';
+            }
+            
+            $compressed_summary = $yarn->compress_messages(\@dropped_messages,
+                original_task => $original_task
+            );
+            
+            print STDERR "[DEBUG][APIManager] Compression successful: " . 
+                scalar(@dropped_messages) . " messages compressed to " . 
+                ($compressed_summary->{_metadata}{compressed_tokens} || 0) . " tokens\n"
+                if $self->{debug};
+        };
+        if ($@) {
+            print STDERR "[WARN][APIManager] Compression failed: $@\n" if should_log('WARNING');
+            $compressed_summary = undef;
         }
     }
     
@@ -912,9 +951,10 @@ sub validate_and_truncate_messages {
         push @validated_conversation, $msg;
     }
     
-    # Combine: system (if any) + first user message + validated conversation
+    # Combine: system (if any) + compressed summary (if any) + first user message + validated conversation
     my @truncated = ();
     push @truncated, $truncation_system_msg if $truncation_system_msg;
+    push @truncated, $compressed_summary if $compressed_summary;
     if ($first_user_unit) {
         push @truncated, @{$first_user_unit->{messages}};
     }
@@ -926,10 +966,21 @@ sub validate_and_truncate_messages {
     }
     
     if (should_log('DEBUG')) {
-        warn "[WARNING][APIManager] Truncated from " . scalar(@$messages) . " to " . scalar(@truncated) . " messages\n";
+        my $compression_info = "";
+        if ($compressed_summary && $compressed_summary->{_metadata}) {
+            my $meta = $compressed_summary->{_metadata};
+            $compression_info = sprintf(" (compressed %d messages: %d -> %d tokens, %.1f%% reduction)",
+                $meta->{compressed_count},
+                $meta->{original_tokens},
+                $meta->{compressed_tokens},
+                100 * (1 - $meta->{compression_ratio})
+            );
+        }
+        warn "[WARNING][APIManager] Truncated from " . scalar(@$messages) . " to " . scalar(@truncated) . " messages$compression_info\n";
         warn "[WARNING][APIManager] Final token count: $final_tokens / $effective_limit\n";
         warn "[WARNING][APIManager] Preserved: system=" . ($truncation_system_msg ? 'YES' : 'NO') . 
-             ", first_user=" . ($first_user_unit ? 'YES' : 'NO') . "\n";
+             ", first_user=" . ($first_user_unit ? 'YES' : 'NO') . 
+             ", compressed=" . ($compressed_summary ? 'YES' : 'NO') . "\n";
     }
     
     return \@truncated;
