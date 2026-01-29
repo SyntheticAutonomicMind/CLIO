@@ -213,7 +213,9 @@ sub process_user_request {
         my $orchestrator_result = $orchestrator->process_input(
             $processed_input,  # Use processed input with hashtag context
             $self->{session},
-            on_chunk => $on_chunk  # Pass through streaming callback
+            on_chunk => $on_chunk,  # Pass through streaming callback
+            on_system_message => $context->{on_system_message},  # Pass through system message callback for rate limits
+            on_tool_call => $context->{on_tool_call}  # Pass through tool call tracker
         );
         
         if ($orchestrator_result && $orchestrator_result->{success}) {
