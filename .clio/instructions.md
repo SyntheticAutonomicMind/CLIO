@@ -260,6 +260,7 @@ Testing: Verified malformed input doesn't crash loop"
 | Commit without testing | Breaks builds | Test before committing |
 | Bare `die` in tool execution | Crashes AI loop | Use error handlers |
 | Giant modules (>100 lines) | Hard to maintain | Split into focused modules |
+| Add UI clutter like `[TOOL]` displays | Noise without value | Tools are background - don't announce them |
 
 
 ## Development Tools & Commands
