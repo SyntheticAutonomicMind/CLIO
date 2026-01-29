@@ -577,7 +577,186 @@ YOU: Summarize the content of https://blog.example.com/article
 
 ## Usage Examples
 
-### Example 1: Code Exploration
+### Example 1: Project Design & Setup
+
+**Starting a new project with `/design`:**
+
+```
+YOU: /design
+
+CLIO: Let's design your application together. Tell me about your project 
+      idea - what problem are you trying to solve?
+
+YOU: I want to build a markdown-based personal wiki that runs in the terminal
+
+CLIO: A terminal-based markdown wiki - interesting! Let's explore the 
+      architecture...
+      
+      First, let's understand the requirements:
+      - Will this be single-user or multi-user?
+      - Do you need search functionality?
+      - Should it support linking between pages?
+      - Any special markdown extensions needed?
+
+YOU: Single user, yes to search and linking. I'd like to support task lists.
+
+CLIO: Perfect. For a terminal markdown wiki with those features, I'm thinking:
+      
+      **Architecture Pattern:** File-based storage with indexed search
+      - Pro: Simple, version-controllable with git
+      - Con: Search requires indexing
+      
+      Have you considered using a database instead? Or are you committed 
+      to plain files?
+
+YOU: Plain files for sure - I want git integration
+
+CLIO: Smart choice. That gives you version history for free. Here's what I'm 
+      thinking for the stack:
+      
+      **Technology:**
+      - Perl 5.32+ (matches your terminal preferences)
+      - Text::Markdown::Discount (fast markdown parsing)
+      - Search::Elasticsearch or Lucy for full-text search
+      - Git integration via Git::Repository
+      
+      **Architecture:**
+      ```
+      wiki/
+      ├── pages/           # Markdown files
+      ├── .index/          # Search index
+      └── .git/            # Version history
+      ```
+      
+      **Components:**
+      - Page Manager: CRUD for markdown files
+      - Link Parser: Extract [[WikiLinks]]
+      - Search Engine: Index and query
+      - Git Handler: Auto-commit on save
+      - Terminal UI: Browse, edit, search
+      
+      What do you think? Any concerns with this approach?
+
+YOU: Looks good, but I'm worried about search performance with lots of pages
+
+CLIO: Valid concern. Let me suggest two options:
+      
+      **Option 1: Lucy (lightweight, pure Perl)**
+      - Pro: No external dependencies, fast enough for <10k pages
+      - Con: Slower than Elasticsearch for large wikis
+      
+      **Option 2: ripgrep + fzf (external tools)**
+      - Pro: Blazing fast, no index needed
+      - Con: External dependencies, less structured queries
+      
+      For a personal wiki, ripgrep might be perfect. Thoughts?
+
+YOU: Let's go with ripgrep for simplicity
+
+CLIO: Perfect! I'll document that decision. Creating your PRD now...
+
+SYSTEM: [file_operations] - Writing .clio/PRD.md
+
+CLIO: I've created a comprehensive PRD at `.clio/PRD.md` with:
+      
+      **Project: TermWiki**
+      - Purpose: Terminal-based personal wiki with git version control
+      - Architecture: File-based storage + ripgrep search
+      - Stack: Perl, Text::Markdown::Discount, ripgrep, Git
+      - Components: 5 main modules documented
+      - MVP Features: Create/edit/delete pages, wiki links, search, git auto-commit
+      - Phase 2: Tag system, templates, export to HTML
+      
+      Would you like to initialize the project? (Type '/init')
+
+YOU: /init
+
+SYSTEM: [web_operations] - Fetching CLIO methodology docs
+SYSTEM: [file_operations] - Reading .clio/PRD.md
+SYSTEM: [file_operations] - Writing .clio/instructions.md
+
+CLIO: Project initialized! I've created custom instructions that include:
+      
+      **From Your PRD:**
+      - Project purpose and architecture
+      - Technology stack (Perl + ripgrep)
+      - Testing strategy (unit + integration tests)
+      - Development workflow (TDD with git auto-commit)
+      
+      **CLIO Methodology:**
+      - The Unbroken Method principles
+      - Collaboration checkpoints
+      - Code quality standards
+      
+      Ready to start building! Try: "Create the Page Manager module"
+```
+
+**Later, updating the design:**
+
+```
+YOU: /design
+
+SYSTEM: [file_operations] - Reading .clio/PRD.md
+
+CLIO: I found your TermWiki PRD (last updated 5 days ago).
+      
+      **Current Design:**
+      - Markdown wiki with file-based storage
+      - ripgrep search
+      - Git version control
+      - 5 MVP features defined
+      
+      What's changed? New requirements? Technical insights? Scope adjustments?
+
+YOU: I want to add a web interface for viewing (not editing)
+
+CLIO: Interesting - a read-only web view. This changes the architecture 
+      significantly. Let's think through the implications...
+      
+      **Two Approaches:**
+      
+      1. **Static Site Generation**
+         - Generate HTML from markdown on save
+         - Serve with any web server
+         - Pro: Simple, fast, no runtime
+         - Con: Manual publish step
+         
+      2. **Live Web Server**
+         - Perl web server (Mojolicious/Dancer)
+         - Renders markdown on-the-fly
+         - Pro: Always current, dynamic search
+         - Con: Needs to run continuously
+         
+      For a personal wiki, I'd lean toward static generation. Thoughts?
+
+YOU: Static generation sounds perfect
+
+CLIO: Great! Updating your PRD...
+      
+      **Changes:**
+      - Added Phase 2 feature: HTML export & static site generation
+      - New component: SiteBuilder module
+      - Updated dependencies: Template::Toolkit for HTML templates
+      - New milestone: Web viewer (after MVP)
+      
+      Your architecture has evolved - consider running '/init --force' to 
+      update project instructions with this new component.
+
+YOU: /init --force
+
+SYSTEM: [file_operations] - Backing up .clio/instructions.md
+SYSTEM: [file_operations] - Reading .clio/PRD.md
+SYSTEM: [file_operations] - Writing .clio/instructions.md
+
+CLIO: Instructions updated! Now includes:
+      - SiteBuilder module architecture
+      - HTML generation workflow
+      - Static site deployment strategy
+      
+      Ready to implement the web export feature.
+```
+
+### Example 2: Code Exploration
 
 **Understanding a new codebase:**
 
@@ -613,7 +792,7 @@ This is CLIO, a Perl-based AI code assistant. The structure is:
 Would you like me to explain any specific component in detail?
 ```
 
-### Example 2: Refactoring Code
+### Example 3: Refactoring Code
 
 **Improving error handling:**
 
