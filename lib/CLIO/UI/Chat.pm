@@ -6339,12 +6339,59 @@ sub handle_design_command {
     
     # Check if PRD already exists
     if (-f $prd_path) {
-        # Phase 2: Review mode (not yet implemented)
+        # Phase 2: Review mode
+        my $prompt = <<'REVIEW_PROMPT';
+I need you to help the user review and update their existing PRD.
+
+## Your Tasks:
+
+### 1. Load and Summarize
+- Read `.clio/PRD.md` using file_operations
+- Extract and show a brief summary highlighting:
+  - Project name and version (from header)
+  - Purpose (Section 1.1)
+  - Key must-have features (Section 3.1)
+  - Technology stack (Section 4.1)
+  - Last updated date (from header)
+
+### 2. Ask User What to Update
+Present options:
+1) Review and update specific sections (I'll ask which ones)
+2) Add new features to must-haves/should-haves
+3) Update architecture or tech stack
+4) Update timeline and milestones
+5) Mark features as completed
+6) Done (no changes)
+
+### 3. Apply Updates
+Based on user's choice:
+- For option 1: Ask which section numbers to update, then help edit them
+- For option 2: Ask for new features and add them to appropriate section
+- For option 3: Help update Section 4
+- For option 4: Help update Section 10
+- For option 5: Check off completed items in Section 3
+
+### 4. Save Changes
+After any edits:
+- Write the updated content back to `.clio/PRD.md`
+- Add entry to "Appendices > C. Change Log" section with today's date and brief description
+- Show confirmation message
+- If architecture changed significantly, suggest: "Architecture has changed - consider running '/init' to update project instructions"
+
+## Important Notes:
+- Be conversational and helpful
+- Show the current content before asking for updates
+- Save changes incrementally (after each section edit)
+- The PRD is a living document - updates are expected
+
+Begin by loading and summarizing the current PRD.
+REVIEW_PROMPT
+        
         $self->display_system_message("Found existing PRD at $prd_path");
-        $self->display_system_message("Review mode will be implemented in Phase 2.");
-        $self->display_system_message("For now, remove the existing PRD to create a new one:");
-        $self->display_system_message("  rm .clio/PRD.md");
-        return;
+        $self->display_system_message("Starting PRD review mode...");
+        print "\n";
+        
+        return $prompt;
     }
     
     # Create new PRD - return prompt for AI to execute
