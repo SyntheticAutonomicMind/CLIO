@@ -2060,6 +2060,20 @@ sub _enforce_message_alternation {
         push @alternating, $flushed;
     }
     
+    
+    # If provider doesn't support role=tool, we converted tool messages to user messages above.
+    # Now we must strip tool_calls from assistant messages, since there are no matching
+    # role=tool messages anymore (they became user messages).
+    # This prevents "orphaned tool_call" validation errors in APIManager.
+    if (!$provider_supports_tool_role) {
+        for my $msg (@alternating) {
+            if ($msg->{role} eq 'assistant' && $msg->{tool_calls}) {
+                delete $msg->{tool_calls};
+                print STDERR "[DEBUG][WorkflowOrchestrator] Stripped tool_calls from assistant message (provider doesn't support role=tool)\n"
+                    if should_log('DEBUG');
+            }
+        }
+    }
     print STDERR "[DEBUG][WorkflowOrchestrator] Alternation complete: " . 
         scalar(@$messages) . " → " . scalar(@alternating) . " messages\n"
         if should_log('DEBUG');
