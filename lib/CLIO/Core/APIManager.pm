@@ -645,10 +645,12 @@ sub validate_and_truncate_messages {
     
     my $effective_limit = $max_prompt - $tool_tokens - $safety_margin;
     
-    # Ensure effective limit is reasonable (at least 10k tokens for messages)
-    if ($effective_limit < 10000) {
-        warn "[WARNING][APIManager] Effective token limit very low ($effective_limit), adjusting to 10000\n";
-        $effective_limit = 10000;
+    # No longer warn about low effective limit - compression handles it automatically
+    # Compression will activate when messages exceed budget, freeing up tokens dynamically
+    # Only enforce absolute minimum to prevent degenerate cases
+    if ($effective_limit < 1000) {
+        # Absolute floor - even with compression, we need some working space
+        $effective_limit = 1000;
     }
     
     print STDERR "[DEBUG][APIManager] Token budget: max=$max_prompt, tools=$tool_tokens, estimation_margin=$estimation_margin, response_buffer=$response_buffer, effective=$effective_limit\n"
