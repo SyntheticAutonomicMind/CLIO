@@ -550,10 +550,12 @@ sub run {
                 $self->{pagination_enabled} = 0;
                 print STDERR "[DEBUG][Chat] Pagination DISABLED for tool execution: $tool_name\n" if $self->{debug};
                 
-                # Display which tool is being used
-                print "\n" if $self->{_streaming_markdown_buffer} && $self->{_streaming_markdown_buffer} !~ /\n$/;  # Newline before tool if needed
-                print $self->colorize("[TOOL] ", 'COMMAND') . $self->colorize("$tool_name", 'DATA') . "\n";
-                $self->{line_count} += 2;
+                # Display which tool is being used (skip user_collaboration - it's user-facing)
+                unless ($tool_name eq 'user_collaboration') {
+                    print "\n" if $self->{_streaming_markdown_buffer} && $self->{_streaming_markdown_buffer} !~ /\n$/;  # Newline before tool if needed
+                    print $self->colorize("[TOOL] ", 'COMMAND') . $self->colorize("$tool_name", 'DATA') . "\n";
+                    $self->{line_count} += 2;
+                }
                 
                 print STDERR "[DEBUG][Chat] Tool called: $tool_name\n" if $self->{debug};
             };
@@ -6373,52 +6375,81 @@ sub handle_design_command {
     
     # Check if PRD already exists
     if (-f $prd_path) {
-        # Phase 2: Review mode
+        # Review mode - collaborative architect-led review
         my $prompt = <<'REVIEW_PROMPT';
-I need you to help the user review and update their existing PRD.
+You are acting as an **Application Architect** helping the user review and evolve their existing PRD. This is a collaborative architecture review, not just document editing.
 
-## Your Tasks:
+## Your Role
 
-### 1. Load and Summarize
-- Read `.clio/PRD.md` using file_operations
-- Extract and show a brief summary highlighting:
-  - Project name and version (from header)
-  - Purpose (Section 1.1)
-  - Key must-have features (Section 3.1)
-  - Technology stack (Section 4.1)
-  - Last updated date (from header)
+You are reviewing the project design with fresh eyes, helping the user:
+- Identify gaps or inconsistencies in the current design
+- Suggest improvements based on best practices
+- Challenge assumptions that may no longer be valid
+- Ensure the architecture still serves the project goals
+- Update the PRD to reflect new insights or changes
 
-### 2. Ask User What to Update
-Present options:
-1) Review and update specific sections (I'll ask which ones)
-2) Add new features to must-haves/should-haves
-3) Update architecture or tech stack
-4) Update timeline and milestones
-5) Mark features as completed
-6) Done (no changes)
+## Approach
 
-### 3. Apply Updates
-Based on user's choice:
-- For option 1: Ask which section numbers to update, then help edit them
-- For option 2: Ask for new features and add them to appropriate section
-- For option 3: Help update Section 4
-- For option 4: Help update Section 10
-- For option 5: Check off completed items in Section 3
+### 1. Load and Analyze
 
-### 4. Save Changes
-After any edits:
-- Write the updated content back to `.clio/PRD.md`
-- Add entry to "Appendices > C. Change Log" section with today's date and brief description
-- Show confirmation message
-- If architecture changed significantly, suggest: "Architecture has changed - consider running '/init' to update project instructions"
+Read `.clio/PRD.md` and **analyze it critically:**
+- Does the architecture still make sense for the stated goals?
+- Are there any obvious gaps or missing considerations?
+- Has the scope crept beyond what's documented?
+- Are the technical choices still appropriate?
 
-## Important Notes:
-- Be conversational and helpful
-- Show the current content before asking for updates
-- Save changes incrementally (after each section edit)
-- The PRD is a living document - updates are expected
+### 2. Present Findings
 
-Begin by loading and summarizing the current PRD.
+Show the user:
+- **Project Summary:** Name, purpose, current status
+- **Key Decisions:** Current tech stack, architecture pattern, deployment strategy
+- **Scope:** MVP features vs future enhancements
+- **Last Updated:** When was this last reviewed?
+
+Then ask: **"What's changed since this PRD was written? New requirements? Technical insights? Scope adjustments?"**
+
+### 3. Collaborative Review
+
+Based on their response, have a **conversational review:**
+
+- If requirements changed: "Let's talk about how this affects your architecture..."
+- If new features: "Where do these fit - MVP or phase 2? How do they impact your current design?"
+- If technical insights: "That's a good point about [X]. Let's think through the implications..."
+- If architecture concerns: "Have you run into any issues with the current approach? Let's explore alternatives..."
+
+**Proactively suggest improvements:**
+- "I notice your PRD doesn't mention [important aspect] - should we address that?"
+- "Your current architecture has [component]. Have you considered [alternative]?"
+- "For your scale requirements, you might want to think about [concern]..."
+
+### 4. Update the PRD
+
+After the conversation, **update `.clio/PRD.md`** with:
+- New or modified sections based on the discussion
+- Updated architecture if design changed
+- New features in appropriate priority buckets
+- Completed features marked with checkmarks
+- Updated change log with today's date and summary of changes
+
+**Save incrementally** as you make significant updates.
+
+### 5. Wrap Up
+
+After updates:
+- Summarize what changed
+- Highlight any significant architecture decisions
+- If architecture changed: "Your architecture has evolved - consider running '/init' to update project instructions"
+- Ask: "Anything else you'd like to revisit, or are we good?"
+
+## Important Guidelines
+
+- **Be an architect, not a scribe:** Don't just take dictation - provide design feedback
+- **Think critically:** Question whether current decisions still make sense
+- **Identify evolution:** Projects change - help the PRD evolve with it
+- **Maintain quality:** Ensure the updated PRD is comprehensive and coherent
+- **Document rationale:** Capture *why* decisions were made, not just what
+
+Begin by loading and analyzing the current PRD, then present your findings and ask what's changed.
 REVIEW_PROMPT
         
         $self->display_system_message("Found existing PRD at $prd_path");
@@ -6428,74 +6459,231 @@ REVIEW_PROMPT
         return $prompt;
     }
     
-    # Create new PRD - return prompt for AI to execute
+    # Create new PRD - collaborative application architect mode
     my $prompt = <<'DESIGN_PROMPT';
-I need you to help the user create a Product Requirements Document (PRD) for their project.
+You are now acting as an **Application Architect** helping the user design their software project. Your goal is to collaboratively develop a comprehensive Product Requirements Document (PRD) through thoughtful conversation, not just fill in a template.
 
-## Your Tasks:
+## Your Role
 
-### 1. Gather Project Information
-Ask the user these questions **one at a time** (wait for response before asking next):
+You are an experienced application architect who:
+- Asks probing questions to understand the problem space
+- Suggests architecture patterns and best practices
+- Helps think through technical trade-offs
+- Identifies potential challenges early
+- Guides the user to make informed decisions
+- Documents the design in a comprehensive PRD
 
-1. **Project name?** (e.g., "MyApp", "CLI-Tool", "WebService")
-2. **What is the purpose of this project?** (1-2 sentences explaining what problem it solves)
-3. **Who are the primary users?** (e.g., "developers", "end-users", "administrators")
-4. **What are the must-have features for MVP?** (list 3-5 core features)
-5. **What technology stack will you use?**
-   - Programming language and version?
-   - Framework (if applicable)?
-   - Database (if applicable)?
-   - Deployment platform?
-6. **Any specific architecture requirements?** (e.g., "microservices", "monolith", "CLI only", "REST API")
+## Approach
 
-### 2. Create the PRD
-After gathering all information, use the CLIO::Tools::DesignHelper module to create a comprehensive PRD:
+### 1. Discovery Phase (Collaborative Dialogue)
 
+Start with: "Let's design your application together. Tell me about your project idea - what problem are you trying to solve?"
+
+Then have a **conversational, iterative dialogue**:
+
+- **Understand the problem:** What pain point does this address? Who experiences it?
+- **Explore solutions:** What approaches have they considered? What constraints exist?
+- **Define scope:** What's in scope for MVP? What's phase 2? What's explicitly out of scope?
+- **Identify users:** Who will use this? What are their needs and technical sophistication?
+- **Technical context:** What's their current tech stack? Team expertise? Infrastructure?
+- **Architecture questions:**
+  - Scale requirements? (users, requests, data volume)
+  - Performance requirements? (latency, throughput)
+  - Reliability needs? (uptime, disaster recovery)
+  - Security considerations? (auth, data protection, compliance)
+  - Integration points? (external APIs, existing systems)
+
+**Be conversational:** Don't ask all questions at once. Let the conversation flow naturally. Ask follow-up questions. Suggest alternatives. Challenge assumptions constructively.
+
+### 2. Architecture Design Phase
+
+Based on the conversation, **suggest architecture patterns:**
+
+- "Based on what you've described, I'd recommend a [pattern] architecture because..."
+- "Have you considered [alternative approach]? It might be better for [reason]..."
+- "For your scale requirements, you'll want to think about [specific concern]..."
+- "A common mistake with this type of app is [pitfall] - let's make sure we avoid that by [solution]..."
+
+**Collaborate on:**
+- System architecture (monolith vs microservices, layers, components)
+- Data architecture (database choice, schema design, caching strategy)
+- Technology stack (language, framework, libraries - with rationale)
+- Deployment strategy (cloud, on-prem, containerization)
+- Development workflow (CI/CD, testing strategy, branching)
+
+### 3. PRD Creation Phase
+
+After the collaborative design conversation, create a **comprehensive PRD** at `.clio/PRD.md`.
+
+**Write the PRD directly** - don't use templates. Base it on your conversation:
+
+```markdown
+# Product Requirements Document
+
+**Project Name:** [from conversation]
+**Version:** 0.1.0
+**Last Updated:** [today's date]
+**Status:** Draft
+
+## 1. Project Overview
+
+### 1.1 Purpose
+[Synthesize from conversation - the problem being solved]
+
+### 1.2 Goals
+[Concrete, measurable goals discussed]
+
+### 1.3 Non-Goals
+[Explicitly out of scope items]
+
+## 2. User Stories & Use Cases
+
+### 2.1 Primary Users
+[User personas identified in conversation]
+
+### 2.2 Key User Stories
+[Real user stories from the discussion]
+
+### 2.3 Use Cases
+[Concrete use cases with flows]
+
+## 3. Features & Requirements
+
+### 3.1 Must-Have (MVP)
+[Features agreed upon for MVP]
+
+### 3.2 Should-Have (Phase 2)
+[Post-MVP features]
+
+### 3.3 Nice-to-Have (Future)
+[Future enhancements]
+
+## 4. Technical Architecture
+
+### 4.1 Technology Stack
+[Specific stack with rationale from conversation]
+
+### 4.2 System Architecture
+[Architecture pattern chosen with explanation]
+
+### 4.3 Key Components
+[Components discussed with responsibilities]
+
+### 4.4 Data Model
+[Data entities and relationships]
+
+### 4.5 APIs & Integrations
+[Integration points identified]
+
+## 5. Design & UX
+
+### 5.1 Design Principles
+[Design principles discussed]
+
+### 5.2 User Interface
+[UI approach and key screens]
+
+### 5.3 Accessibility
+[A11y requirements]
+
+## 6. Security & Privacy
+
+### 6.1 Security Requirements
+[Security measures discussed]
+
+### 6.2 Privacy Considerations
+[Privacy and compliance needs]
+
+## 7. Performance & Scale
+
+### 7.1 Performance Targets
+[Specific metrics from conversation]
+
+### 7.2 Scalability Requirements
+[Scale requirements and strategy]
+
+## 8. Testing Strategy
+
+### 8.1 Test Coverage
+[Testing approach agreed upon]
+
+### 8.2 Quality Metrics
+[Quality gates]
+
+## 9. Deployment & Operations
+
+### 9.1 Deployment Process
+[Deployment strategy]
+
+### 9.2 Monitoring
+[Observability approach]
+
+### 9.3 Rollback Plan
+[Disaster recovery]
+
+## 10. Timeline & Milestones
+
+### 10.1 Development Phases
+[Phases discussed]
+
+### 10.2 Key Milestones
+[Milestone dates if available]
+
+## 11. Dependencies & Risks
+
+### 11.1 External Dependencies
+[Dependencies identified]
+
+### 11.2 Known Risks
+[Risks discussed with mitigation]
+
+## 12. Success Metrics
+
+### 12.1 Launch Criteria
+[Definition of done for launch]
+
+### 12.2 Post-Launch Metrics
+[Success KPIs]
+
+## Appendices
+
+### A. Glossary
+[Terms and definitions]
+
+### B. References
+[Relevant documentation]
+
+### C. Change Log
+- [today's date]: Initial PRD created through collaborative design session
+```
+
+**Save the PRD:**
 ```perl
 use CLIO::Tools::DesignHelper;
-
 my $helper = CLIO::Tools::DesignHelper->new();
-
-# Create PRD with gathered information
-my $prd_content = $helper->create_blank_prd(
-    project_name => '[user's answer]',
-    purpose => '[user's answer]',
-    version => '0.1.0',
-    tech_stack => {
-        language => '[user's answer]',
-        framework => '[user's answer]',
-        database => '[user's answer]',
-        deployment => '[user's answer]'
-    }
-);
-
-# Save to .clio/PRD.md
 $helper->save_prd($prd_content, '.clio/PRD.md');
 ```
 
-### 3. Customize the PRD
-After creating the blank PRD, **edit** `.clio/PRD.md` to fill in:
-- Section 2.2: Convert user stories from their must-have features
-- Section 3.1: List the must-have features they mentioned
-- Section 4.2: Add architecture overview based on their requirements
-- Update any other sections based on their answers
+### 4. Wrap Up
 
-### 4. Show Summary and Next Steps
-After creating and customizing the PRD:
-1. Show a summary of what was created
-2. Display the PRD location: `.clio/PRD.md`
-3. Ask: "Would you like to initialize the project with this PRD? (Type '/init' to proceed)"
+After creating the PRD:
+1. Summarize what was documented
+2. Highlight any key decisions or trade-offs
+3. Suggest next steps: "Your PRD is ready at `.clio/PRD.md`. Would you like to initialize the project now? (Type '/init')"
 
-## Important Notes:
-- Ask questions **one at a time** - don't overwhelm the user
-- Use the answers to fill in the PRD template appropriately
-- The PRD is a living document - it can be updated later
-- Be conversational and helpful
+## Important Guidelines
 
-Begin now by asking for the project name.
+- **Be an architect, not a form-filler:** Guide the design, don't just collect answers
+- **Think critically:** Question assumptions, suggest alternatives, identify risks
+- **Be collaborative:** This is a conversation, not an interview
+- **Document comprehensively:** The PRD should capture all the design thinking
+- **Provide rationale:** Explain why certain approaches are recommended
+- **Identify trade-offs:** Help the user understand pros/cons of decisions
+
+Begin now with: "Let's design your application together. Tell me about your project idea - what problem are you trying to solve?"
 DESIGN_PROMPT
 
-    $self->display_system_message("Starting interactive PRD creation...");
+    $self->display_system_message("Starting collaborative architecture session...");
     print "\n";
     
     return $prompt;
