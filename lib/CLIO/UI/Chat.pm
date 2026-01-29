@@ -6260,9 +6260,40 @@ sub handle_init_command {
         return;
     }
     
+    # Check for PRD
+    my $prd_path = "$clio_dir/PRD.md";
+    my $has_prd = -f $prd_path;
+    
     # Build comprehensive prompt for the AI to do the initialization work
     my $prompt = <<'INIT_PROMPT';
 I need you to initialize CLIO for this project. This is a comprehensive setup task that involves analyzing the codebase and creating custom project instructions.
+INIT_PROMPT
+
+    # Add PRD-specific instructions if PRD exists
+    if ($has_prd) {
+        $prompt .= <<'PRD_SECTION';
+
+**IMPORTANT: This project has a PRD at `.clio/PRD.md`**
+
+When creating `.clio/instructions.md`, you MUST:
+1. Read `.clio/PRD.md` first using file_operations
+2. Extract key information:
+   - Project name, purpose, goals (Section 1)
+   - Technology stack (Section 4.1)
+   - Architecture overview (Section 4.2-4.3)
+   - Testing strategy (Section 8)
+   - Development phases (Section 10)
+3. Incorporate this information into the instructions:
+   - Add "**Based on PRD:** `.clio/PRD.md` (version X)" near the top
+   - Use PRD's project overview as context in project description
+   - Use PRD's tech stack details for code standards section
+   - Use PRD's testing strategy for testing commands/workflow
+   - Reference PRD's architecture in development workflow section
+
+PRD_SECTION
+    }
+    
+    $prompt .= <<'INIT_REST';
 
 ## Your Tasks:
 
@@ -6317,9 +6348,12 @@ After completing all tasks, provide a summary of:
 - The git operations performed
 
 Begin now - use your tools to complete all these tasks.
-INIT_PROMPT
+INIT_REST
 
     $self->display_system_message("Starting project initialization...");
+    if ($has_prd) {
+        $self->display_system_message("Found PRD - will incorporate into instructions.");
+    }
     $self->display_system_message("CLIO will analyze your codebase and create custom instructions.");
     print "\n";
     
