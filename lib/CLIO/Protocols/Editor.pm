@@ -6,7 +6,6 @@ use base 'CLIO::Protocols::Handler';
 use MIME::Base64;
 use JSON::PP;
 use File::Temp qw(tempfile);
-use Text::Diff;
 
 =head1 NAME
 

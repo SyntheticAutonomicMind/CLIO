@@ -133,9 +133,10 @@ sub stop {
     
     # Clear based on mode
     if ($self->{inline}) {
-        # Inline mode: just backspace to remove the spinner character
-        # The maximum frame width is 1 character (Unicode braille/emoji), so one backspace is enough
-        print "\b ";  # Backspace then space to clear the character
+        # Inline mode: fully erase the spinner character and reposition cursor
+        # Use \b \b sequence: backspace over spinner, overwrite with space, backspace to position
+        # This ensures the spinner is completely removed regardless of race conditions
+        print "\b \b";
     } else {
         # Standalone mode: clear entire line and move cursor to start
         print "\r\e[K";
@@ -162,14 +163,20 @@ sub _run_animation {
     my $frames = $self->{frames};
     my $delay = $self->{delay};
     my $inline = $self->{inline};
+    my $first_frame = 1;  # Track first frame to avoid spurious backspace
     
     while (1) {
         my $frame = $frames->[$frame_index];
         
         if ($inline) {
-            # Inline mode: backspace to remove previous frame, print new one
-            # Each frame is expected to be 1 character (Unicode char counts as 1)
-            print "\b$frame";
+            # Inline mode: print frame, backspacing first to clear previous frame
+            # On first frame, don't backspace - there's nothing to erase yet
+            if ($first_frame) {
+                print $frame;
+                $first_frame = 0;
+            } else {
+                print "\b$frame";
+            }
         } else {
             # Standalone mode: carriage return to start of line + frame
             print "\r$frame";

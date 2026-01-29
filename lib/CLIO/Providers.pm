@@ -46,6 +46,7 @@ my %PROVIDERS = (
         requires_auth => 'apikey',
         supports_tools => 1,
         supports_streaming => 1,
+        max_context_tokens => 32000,  # Local models typically have smaller context
     },
     
     github_copilot => {
@@ -84,6 +85,17 @@ my %PROVIDERS = (
         requires_auth => 'none',
         supports_tools => 1,  # llama.cpp supports OpenAI-compatible function calling
         supports_streaming => 1,
+        max_context_tokens => 32000,  # Local models typically have smaller context
+    },
+    
+    lmstudio => {
+        name => 'LM Studio',
+        api_base => 'http://localhost:1234/v1/chat/completions',
+        model => 'local-model',
+        requires_auth => 'none',
+        supports_tools => 1,  # LM Studio supports OpenAI-compatible function calling
+        supports_streaming => 1,
+        max_context_tokens => 32000,  # Local models typically have smaller context
     },
     
     openrouter => {
