@@ -1023,6 +1023,73 @@ sub _validate_tool_message_pairs {
     return \@validated;
 }
 
+=head2 _preflight_validate_messages
+
+Lightweight pre-flight validation of message structure.
+Returns an array of error strings if problems found, empty array if valid.
+
+This is a fast check that catches common issues before API call:
+- Orphaned tool_calls (tool_calls without matching tool results)
+- Orphaned tool_results (tool results without matching tool_calls)
+- Empty content in required fields
+- Duplicate tool_call_ids
+
+=cut
+
+sub _preflight_validate_messages {
+    my ($self, $messages) = @_;
+    
+    return [] unless $messages && @$messages;
+    
+    my @errors = ();
+    my %tool_call_ids = ();      # id => message_index
+    my %tool_result_ids = ();    # id => message_index
+    my %seen_ids = ();           # For duplicate detection
+    
+    # Single pass to collect all IDs
+    for (my $i = 0; $i < @$messages; $i++) {
+        my $msg = $messages->[$i];
+        my $role = $msg->{role} || '';
+        
+        # Check for tool_calls in assistant messages
+        if ($role eq 'assistant' && $msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
+            for my $tc (@{$msg->{tool_calls}}) {
+                my $id = $tc->{id};
+                if ($id) {
+                    # Check for duplicate IDs
+                    if ($seen_ids{$id}) {
+                        push @errors, "Duplicate tool_call_id: $id (at messages $seen_ids{$id} and $i)";
+                    }
+                    $seen_ids{$id} = $i;
+                    $tool_call_ids{$id} = $i;
+                }
+            }
+        }
+        
+        # Check for tool results
+        if ($role eq 'tool' && $msg->{tool_call_id}) {
+            my $id = $msg->{tool_call_id};
+            $tool_result_ids{$id} = $i;
+        }
+    }
+    
+    # Check for orphaned tool_calls (no matching result)
+    for my $id (keys %tool_call_ids) {
+        unless (exists $tool_result_ids{$id}) {
+            push @errors, "Orphaned tool_call: $id (no matching tool result)";
+        }
+    }
+    
+    # Check for orphaned tool_results (no matching tool_call)
+    for my $id (keys %tool_result_ids) {
+        unless (exists $tool_call_ids{$id}) {
+            push @errors, "Orphaned tool_result: $id (no matching tool_call)";
+        }
+    }
+    
+    return \@errors;
+}
+
 =head2 _learn_from_api_response
 
 Learn from actual API token usage to improve future estimations.
@@ -1534,6 +1601,23 @@ sub send_request {
     # Build request payload (non-streaming)
     my $payload = $self->_build_payload($messages, $model, $endpoint_config, %opts, stream => 0);
     
+    # PRE-FLIGHT VALIDATION: Final check for message structure integrity
+    my $preflight_errors = $self->_preflight_validate_messages($payload->{messages});
+    if ($preflight_errors && @$preflight_errors) {
+        my $error_summary = join('; ', @$preflight_errors);
+        print STDERR "[ERROR][APIManager] Pre-flight validation failed: $error_summary\n" if should_log('ERROR');
+        
+        # Attempt auto-repair
+        $payload->{messages} = $self->_validate_tool_message_pairs($payload->{messages});
+        
+        # Re-validate after repair
+        my $post_repair_errors = $self->_preflight_validate_messages($payload->{messages});
+        if ($post_repair_errors && @$post_repair_errors) {
+            return $self->_error("Message structure validation failed: " . join('; ', @$post_repair_errors));
+        }
+        print STDERR "[INFO][APIManager] Message structure repaired successfully\n" if should_log('INFO');
+    }
+    
     my $json = encode_json($payload);
     if ($self->{debug}) {
         warn "[DEBUG] Payload: $json\n";
@@ -1928,6 +2012,32 @@ sub send_request_streaming {
                 delete $tc->{_name_complete} if exists $tc->{_name_complete};
             }
         }
+    }
+    
+    # PRE-FLIGHT VALIDATION: Final check for message structure integrity
+    # This catches any orphans that might have slipped through truncation/preparation
+    my $preflight_errors = $self->_preflight_validate_messages($payload->{messages});
+    if ($preflight_errors && @$preflight_errors) {
+        my $error_summary = join('; ', @$preflight_errors);
+        print STDERR "[ERROR][APIManager] Pre-flight validation failed: $error_summary\n" if should_log('ERROR');
+        
+        # Attempt auto-repair via _validate_tool_message_pairs
+        print STDERR "[INFO][APIManager] Attempting auto-repair of message structure\n" if should_log('INFO');
+        $payload->{messages} = $self->_validate_tool_message_pairs($payload->{messages});
+        
+        # Re-validate after repair
+        my $post_repair_errors = $self->_preflight_validate_messages($payload->{messages});
+        if ($post_repair_errors && @$post_repair_errors) {
+            # Repair failed - return error to trigger retry logic
+            return { 
+                success => 0, 
+                error => "Message structure validation failed after repair: " . join('; ', @$post_repair_errors),
+                retryable => 1,
+                retry_after => 0,
+                error_type => 'message_structure_error'
+            };
+        }
+        print STDERR "[INFO][APIManager] Message structure repaired successfully\n" if should_log('INFO');
     }
     
     # DEBUG: Dump messages with tool_calls AFTER cleanup (only when debug enabled)

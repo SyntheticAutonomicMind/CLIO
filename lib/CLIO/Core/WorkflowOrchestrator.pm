@@ -248,6 +248,11 @@ sub process_input {
     my $retry_count = 0;  # Track retries per iteration (prevents infinite loops)
     my $max_retries = 3;  # Maximum retries before giving up
     
+    # Session-level error budget: Limit total errors across all iterations
+    # This prevents cascading failures from consuming the entire session
+    my $session_error_count = $session->{_error_count} // 0;
+    my $max_session_errors = 10;  # Hard limit per request processing
+    
     while ($iteration < $self->{max_iterations}) {
         $iteration++;
         
@@ -334,6 +339,21 @@ sub process_input {
         # Check for API errors
         if (!$api_response || $api_response->{error}) {
             my $error = $api_response->{error} || "Unknown API error";
+            
+            # Track session-level errors for budget enforcement
+            $session_error_count++;
+            $session->{_error_count} = $session_error_count;
+            
+            # Check if we've exceeded session error budget
+            if ($session_error_count > $max_session_errors) {
+                print STDERR "[ERROR][WorkflowOrchestrator] Session error budget exhausted ($session_error_count errors). Stopping to prevent cascading failures.\n";
+                return {
+                    success => 0,
+                    error => "Session error limit reached ($max_session_errors errors). Please start a new request or session. Last error: $error",
+                    iterations => $iteration,
+                    tool_calls_made => \@tool_calls_made
+                };
+            }
             
             # Check if this is a retryable error (rate limit or server error)
             if ($api_response->{retryable}) {
@@ -515,6 +535,33 @@ sub process_input {
                     $error_type = "rate limit";
                     # system_msg already set above
                 }
+                # Special handling for message structure errors (auto-repair attempted but failed)
+                elsif ($api_response->{error_type} && $api_response->{error_type} eq 'message_structure_error') {
+                    # Message structure was corrupted and couldn't be repaired
+                    # Try to recover by rebuilding from session history
+                    $error_type = "message structure error";
+                    $system_msg = "Message structure error detected. Rebuilding from session history... (attempt $retry_count/$max_retries)";
+                    
+                    # Reload conversation history from session to get clean state
+                    if ($session && $session->can('get_conversation_history')) {
+                        my $fresh_history = $session->get_conversation_history() || [];
+                        
+                        # Rebuild messages: system prompt + fresh history + current user message
+                        my $system_msg_content = $messages[0]->{role} eq 'system' ? $messages[0] : undef;
+                        my $current_user_msg = $messages[-1]->{role} eq 'user' ? $messages[-1] : undef;
+                        
+                        @messages = ();
+                        push @messages, $system_msg_content if $system_msg_content;
+                        push @messages, @$fresh_history;
+                        push @messages, $current_user_msg if $current_user_msg && 
+                            (!@$fresh_history || $fresh_history->[-1]->{content} ne $current_user_msg->{content});
+                        
+                        print STDERR "[INFO][WorkflowOrchestrator] Rebuilt messages from session history (" . 
+                            scalar(@messages) . " messages)\n" if should_log('INFO');
+                    }
+                    
+                    $retry_delay = 0;  # Instant retry after rebuild
+                }
                 
                 # Call system message callback if provided
                 if ($on_system_message) {
@@ -602,8 +649,10 @@ sub process_input {
             next;
         }
         
-        # API call succeeded - reset retry counter
+        # API call succeeded - reset retry counter and clear session error count
         $retry_count = 0;
+        $session_error_count = 0;  # Reset on success to allow future errors
+        delete $session->{_error_count} if $session;
         
         # Record API usage for billing tracking
         if ($api_response->{usage} && $session) {
