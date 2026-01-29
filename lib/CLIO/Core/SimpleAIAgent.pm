@@ -194,6 +194,21 @@ sub process_user_request {
         
         my $orchestrator = $self->{orchestrator};
         
+        # Update orchestrator's spinner and UI references before processing
+        # This ensures interactive tools (like user_collaboration) have access to current spinner
+        if ($context->{spinner}) {
+            $orchestrator->{spinner} = $context->{spinner};
+            if ($orchestrator->{tool_executor}) {
+                $orchestrator->{tool_executor}->{spinner} = $context->{spinner};
+            }
+        }
+        if ($context->{ui}) {
+            $orchestrator->{ui} = $context->{ui};
+            if ($orchestrator->{tool_executor}) {
+                $orchestrator->{tool_executor}->{ui} = $context->{ui};
+            }
+        }
+        
         # Prepare conversation history
         my @messages = ();
         if ($context->{conversation_history} && ref($context->{conversation_history}) eq 'ARRAY') {
