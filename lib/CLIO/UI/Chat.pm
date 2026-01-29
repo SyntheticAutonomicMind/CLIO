@@ -6245,14 +6245,27 @@ sub handle_init_command {
     my $clio_dir = "$cwd/.clio";
     my $instructions_file = "$clio_dir/instructions.md";
     
-    if (-f $instructions_file) {
+    # Check for --force flag
+    my $force = grep { $_ eq '--force' || $_ eq '-f' } @args;
+    
+    if (-f $instructions_file && !$force) {
         $self->display_system_message("Project already initialized!");
         $self->display_system_message("Found existing instructions at: .clio/instructions.md");
         print "\n";
-        $self->display_system_message("To re-initialize, first remove the existing file:");
-        $self->display_system_message("  rm .clio/instructions.md");
+        $self->display_system_message("To re-initialize, use:");
+        $self->display_system_message("  /init --force");
         print "\n";
         return;
+    }
+    
+    # If force flag and instructions exist, back them up
+    if ($force && -f $instructions_file) {
+        my $timestamp = time();
+        my $backup_file = "$instructions_file.backup.$timestamp";
+        rename($instructions_file, $backup_file);
+        $self->display_system_message("Backed up existing instructions to:");
+        $self->display_system_message("  .clio/instructions.md.backup.$timestamp");
+        print "\n";
     }
     
     # Check for PRD
