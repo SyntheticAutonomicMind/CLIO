@@ -465,14 +465,24 @@ sub get_model_capabilities {
                 $limits = $model_info->{capabilities}{limits};
             }
             
+            # Determine fallback limits based on API type
+            my $fallback_context;
+            if ($api_type =~ /^(sam|lmstudio|llama\.cpp)$/i) {
+                # Local models: smaller context to avoid OOM
+                $fallback_context = 32000;
+            } else {
+                # Cloud models: modern LLMs typically have 128k+
+                $fallback_context = 128000;
+            }
+            
             # Build normalized capabilities hash
-            # Priority: root-level fields (SAM/OpenAI), then capabilities.limits (GitHub Copilot), then defaults
+            # Priority: root-level fields (SAM/OpenAI), then capabilities.limits (GitHub Copilot), then provider-specific defaults
             my $capabilities = {
                 max_prompt_tokens => $model_info->{max_request_tokens} ||
                                      $limits->{max_prompt_tokens} ||
                                      $limits->{max_context_window_tokens} ||
                                      $model_info->{context_window} ||
-                                     128000,  # Default fallback
+                                     $fallback_context,
                 max_output_tokens => $model_info->{max_completion_tokens} ||
                                      $limits->{max_output_tokens} ||
                                      $limits->{max_completion_tokens} ||
@@ -480,7 +490,7 @@ sub get_model_capabilities {
                 max_context_window_tokens => $model_info->{context_window} ||
                                               $limits->{max_context_window_tokens} ||
                                               $limits->{context_window} ||
-                                              128000,
+                                              $fallback_context,
             };
             
             # Cache the result
@@ -520,6 +530,7 @@ sub _detect_api_type_and_url {
         'dashscope-cn'   => ['dashscope', 'https://dashscope.aliyuncs.com/compatible-mode/v1/models'],
         'dashscope-intl' => ['dashscope', 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models'],
         'sam'            => ['sam', 'http://localhost:8080/v1/models'],
+        'lmstudio'       => ['lmstudio', 'http://localhost:1234/v1/models'],
         'openrouter'     => ['openrouter', 'https://openrouter.ai/api/v1/models'],
     );
     
@@ -535,8 +546,11 @@ sub _detect_api_type_and_url {
         return ('openai', 'https://api.openai.com/v1/models');
     } elsif ($api_base =~ m{openrouter\.ai}i) {
         return ('openrouter', 'https://openrouter.ai/api/v1/models');
+    } elsif ($api_base =~ m{localhost:1234}i || $api_base =~ m{127\.0\.0\.1:1234}i) {
+        # LM Studio running locally
+        return ('lmstudio', 'http://localhost:1234/v1/models');
     } elsif ($api_base =~ m{localhost:8080}i || $api_base =~ m{127\.0\.0\.1:8080}i) {
-        # SAM running locally
+        # SAM or llama.cpp running locally
         return ('sam', 'http://localhost:8080/v1/models');
     } elsif ($api_base =~ m{dashscope.*\.aliyuncs\.com}i) {
         my $base_url = $api_base;
@@ -591,9 +605,20 @@ sub validate_and_truncate_messages {
     if ($caps && $caps->{max_prompt_tokens}) {
         $max_prompt = $caps->{max_prompt_tokens};
     } else {
-        # Fallback when capabilities unavailable
-        # Modern models (GPT-4, Claude, etc.) typically have 128K+ context
-        $max_prompt = 128000;
+        # Fallback when capabilities unavailable - use provider-specific or global defaults
+        my $provider = $self->{config}->get('provider') || '';
+        my $api_base = $self->{api_base} || '';
+        
+        # Local model providers should use smaller context windows
+        if ($provider =~ /^(sam|llama\.cpp|lmstudio)$/i || 
+            $api_base =~ m{localhost:[0-9]+}i ||
+            $api_base =~ m{127\.0\.0\.1:[0-9]+}i) {
+            # Local models: Use 32k context to avoid OOM and slow inference
+            $max_prompt = 32000;
+        } else {
+            # Remote/cloud models: Use 128k for modern models (GPT-4, Claude, etc.)
+            $max_prompt = 128000;
+        }
         
         if (should_log('WARNING')) {
             print STDERR "[WARNING][APIManager] Model capabilities unavailable for $model\n";

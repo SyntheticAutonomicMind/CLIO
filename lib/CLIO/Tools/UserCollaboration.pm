@@ -158,21 +158,23 @@ sub request_input {
     
     # Stop busy indicator before displaying collaboration prompt
     # This is the only interactive tool that waits for user input, so spinner must stop
-    my $spinner = $context->{spinner};
+    # Get spinner from UI instead of directly from context (context.spinner is not reliably set)
+    my $ui = $context->{ui};
+    my $spinner = $ui ? $ui->{spinner} : undef;
     
     # Add detailed logging for spinner reference validation
     if (should_log('DEBUG')) {
-        print STDERR "[DEBUG][UserCollaboration] Spinner reference: " . (defined $spinner ? ref($spinner) : "UNDEFINED") . "\n";
+        print STDERR "[DEBUG][UserCollaboration] UI reference: " . (defined $ui ? "DEFINED" : "UNDEFINED") . "\n";
+        print STDERR "[DEBUG][UserCollaboration] Spinner reference from UI: " . (defined $spinner ? ref($spinner) : "UNDEFINED") . "\n";
         if ($spinner) {
-            print STDERR "[DEBUG][UserCollaboration] Spinner object: ";
             if (ref($spinner) eq 'CLIO::UI::ProgressSpinner') {
-                print STDERR "valid ProgressSpinner instance\n";
+                print STDERR "[DEBUG][UserCollaboration] Spinner object: valid ProgressSpinner instance\n";
                 print STDERR "[DEBUG][UserCollaboration] Spinner running state: " . ($spinner->{running} ? "YES" : "NO") . "\n";
             } else {
-                print STDERR "ERROR - not a ProgressSpinner!\n";
+                print STDERR "[DEBUG][UserCollaboration] ERROR - not a ProgressSpinner!\n";
             }
         } else {
-            print STDERR "[DEBUG][UserCollaboration] ERROR: Spinner is undefined in context!\n";
+            print STDERR "[DEBUG][UserCollaboration] Spinner is undefined (may not have been started yet)\n";
         }
     }
     
@@ -180,12 +182,11 @@ sub request_input {
         print STDERR "[DEBUG][UserCollaboration] Stopping busy spinner before collaboration prompt\n" if should_log('DEBUG');
         $spinner->stop();
         print STDERR "[DEBUG][UserCollaboration] Spinner stopped successfully\n" if should_log('DEBUG');
-    } else {
-        print STDERR "[WARN][UserCollaboration] Cannot stop spinner - undefined or invalid\n";
+    } elsif (should_log('DEBUG')) {
+        print STDERR "[DEBUG][UserCollaboration] Spinner not available or not running - skipping stop\n";
     }
     
     # Get UI object from context
-    my $ui = $context->{ui};
     unless ($ui && $ui->can('request_collaboration')) {
         return {
             success => 0,
