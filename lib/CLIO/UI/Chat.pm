@@ -4424,8 +4424,18 @@ sub handle_context_command {
             # Calculate stats
             my $active_messages = scalar(@$history);
             my $active_tokens = $state->get_conversation_size();
-            my $max_tokens = $state->{max_tokens} || 128000;
-            my $threshold = $state->{summarize_threshold} || 102400;
+            
+            # Get actual model max_tokens from APIManager (not hardcoded fallback)
+            my $max_tokens = 128000;  # Default fallback
+            if ($self->{api_manager}) {
+                my $model = $self->{api_manager}->get_current_model();
+                my $caps = $self->{api_manager}->get_model_capabilities($model);
+                if ($caps && $caps->{max_prompt_tokens}) {
+                    $max_tokens = $caps->{max_prompt_tokens};
+                }
+            }
+            
+            my $threshold = $state->{summarize_threshold} || int($max_tokens * 0.8);
             my $usage_pct = sprintf("%.1f%%", ($active_tokens / $max_tokens) * 100);
             
             # Get YaRN stats
