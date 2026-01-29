@@ -2,7 +2,7 @@
 
 **Complete guide to extending and contributing to CLIO**
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------
 
 ## Table of Contents
 
@@ -17,7 +17,7 @@
 9. [Code Standards](#code-standards)
 10. [Contribution Workflow](#contribution-workflow)
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------
 
 ## Introduction
 
@@ -44,7 +44,7 @@ CLIO follows these principles:
 4. **Session Persistence**: State survives across restarts
 5. **Professional UX**: Terminal UI should be polished and usable
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------
 
 ## Architecture Overview
 
@@ -130,7 +130,7 @@ AI Request → Tool Registry → Route to Tool → Execute Operation
                                             Back to AI Agent
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------
 
 ## Code Organization
 
@@ -188,7 +188,7 @@ clio/
 - Scripts: `lowercase_underscore.sh`
 - Documentation: `UPPERCASE.md` or `CamelCase.md`
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------
 
 ## Development Setup
 
@@ -246,7 +246,7 @@ prove -I lib t/
 ./clio --new
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------
 
 ## Adding New Tools
 
@@ -451,7 +451,7 @@ return $self->operation_success($result_data, "Custom success message");
 return $self->operation_error("Error message explaining what went wrong");
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------
 
 ## Adding New Protocols
 
@@ -521,7 +521,7 @@ sub handle_query {
 
 **Note:** Current CLIO architecture focuses on tools rather than protocols. Protocol support may be added in future versions.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------
 
 ## Adding New AI Providers
 
@@ -620,7 +620,7 @@ sub new {
 }
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------
 
 ## Testing
 
@@ -701,7 +701,7 @@ is($loaded->id(), $session->id(), 'Session ID preserved');
 done_testing();
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------
 
 ## Code Standards
 
@@ -838,7 +838,7 @@ my $count = 0;  # Initialize count to zero
 my $count = 0;  # Track number of failed retries for exponential backoff
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------
 
 ## Contribution Workflow
 
@@ -933,7 +933,7 @@ Then open a Pull Request on GitHub.
 - Add tests if missing
 - Update documentation
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------
 
 ## Resources
 
@@ -951,7 +951,7 @@ Then open a Pull Request on GitHub.
 - [GitHub Issues](https://github.com/fewtarius/clio/issues)
 - [GitHub Discussions](https://github.com/fewtarius/clio/discussions)
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------
 
 ## Next Steps
 
