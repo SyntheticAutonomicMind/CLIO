@@ -214,68 +214,40 @@ Terminal Output
 
 ### Typical Interaction
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│ 1. User Input (Chat.pm)                                         │
-│    User: "Please read config.py and explain what it does"       │
-└─────────────────────────────────────────────────────────────────┘
-                            ↓
-┌─────────────────────────────────────────────────────────────────┐
-│ 2. AI Processing (APIManager → AI Provider)                     │
-│    - Load system prompt (PromptManager)                          │
-│    - Inject custom instructions (.clio/instructions.md)         │
-│    - Send to GitHub Copilot/OpenAI/etc.                         │
-│    - Get response with tool calls                               │
-└─────────────────────────────────────────────────────────────────┘
-                            ↓
-┌─────────────────────────────────────────────────────────────────┐
-│ 3. Tool Selection (ToolCallExtractor)                           │
-│    - AI might request: "FILE_OPERATION: read config.py"        │
-│    - Parse and validate tool call                               │
-└─────────────────────────────────────────────────────────────────┘
-                            ↓
-┌─────────────────────────────────────────────────────────────────┐
-│ 4. Tool Execution (ToolExecutor)                                │
-│    - Invoke FileOperations.pm:read('config.py')                 │
-│    - Tool performs operation on real filesystem                 │
-│    - Return results                                             │
-└─────────────────────────────────────────────────────────────────┘
-                            ↓
-┌─────────────────────────────────────────────────────────────────┐
-│ 5. Response Processing                                          │
-│    - Build response with tool results                           │
-│    - Stream back to AI for analysis/explanation                 │
-│    - Or display results to user                                 │
-└─────────────────────────────────────────────────────────────────┘
-                            ↓
-┌─────────────────────────────────────────────────────────────────┐
-│ 6. Display (Markdown.pm + Theme.pm)                             │
-│    - Convert markdown formatting to ANSI                        │
-│    - Apply theme colors                                         │
-│    - Stream to terminal                                         │
-└─────────────────────────────────────────────────────────────────┘
-                            ↓
-                   ┌─────────────────┐
-                   │ User sees response
-                   └─────────────────┘
+```mermaid
+graph TD
+    A["1. User Input (Chat.pm)<br/>User: 'Please read config.py and explain what it does'"] --> B
+    B["2. AI Processing (APIManager -> AI Provider)<br/>- Load system prompt (PromptManager)<br/>- Inject custom instructions (.clio/instructions.md)<br/>- Send to GitHub Copilot/OpenAI/etc.<br/>- Get response with tool calls"] --> C
+    C["3. Tool Selection (ToolCallExtractor)<br/>- AI might request: 'FILE_OPERATION: read config.py'<br/>- Parse and validate tool call"] --> D
+    D["4. Tool Execution (ToolExecutor)<br/>- Invoke FileOperations.pm:read('config.py')<br/>- Tool performs operation on real filesystem<br/>- Return results"] --> E
+    E["5. Response Processing<br/>- Build response with tool results<br/>- Stream back to AI for analysis/explanation<br/>- Or display results to user"] --> F
+    F["6. Display (Markdown.pm + Theme.pm)<br/>- Convert markdown formatting to ANSI<br/>- Apply theme colors<br/>- Stream to terminal"] --> G
+    G[User sees response]
+    
+    style A fill:#e1f5ff
+    style B fill:#fff3e0
+    style C fill:#f3e5f5
+    style D fill:#e8f5e9
+    style E fill:#fce4ec
+    style F fill:#e1bee7
+    style G fill:#c8e6c9
 ```
 
 ### Session Persistence
 
-```
-User Action
-    ↓
-Add to Session.State.conversation
-    ↓
-Save sessions/UUID.json
-    ↓
-User resumes later
-    ↓
-Load sessions/UUID.json
-    ↓
-Conversation history restored
-    ↓
-Continue from where left off
+```mermaid
+graph TD
+    A[User Action] --> B[Add to Session.State.conversation]
+    B --> C[Save sessions/UUID.json]
+    C --> D[User resumes later]
+    D --> E[Load sessions/UUID.json]
+    E --> F[Conversation history restored]
+    F --> G[Continue from where left off]
+    
+    style A fill:#e1f5ff
+    style C fill:#fff3e0
+    style E fill:#e8f5e9
+    style G fill:#c8e6c9
 ```
 
 ---------------------------------------------------
@@ -420,87 +392,87 @@ clio --new           # First run
 
 ```
 lib/CLIO/
-├── Providers.pm             # AI provider registry (SAM, GitHub Copilot, etc.)
-├── UI/                      # Terminal interface
-│   ├── Chat.pm              # Main interactive loop
-│   ├── Markdown.pm          # Markdown to ANSI
-│   ├── ANSI.pm              # Color codes
-│   └── Theme.pm             # Color themes
-├── Core/                    # Core AI functionality
-│   ├── APIManager.pm        # AI provider integration
-│   ├── SimpleAIAgent.pm     # AI request/response
-│   ├── AIAgent.pm           # Advanced AI agent
-│   ├── PromptManager.pm     # System prompts
-│   ├── InstructionsReader.pm # Custom instructions
-│   ├── WorkflowOrchestrator.pm # Multi-step workflows
-│   ├── TaskOrchestrator.pm  # Task orchestration
-│   ├── ToolExecutor.pm      # Tool invocation
-│   ├── ToolCallExtractor.pm # Extract tool calls
-│   ├── ProtocolIntegration.pm # Protocol integration
-│   ├── Config.pm            # Configuration
-│   ├── ReadLine.pm          # Command history
-│   ├── CommandParser.pm     # Command parsing
-│   ├── Editor.pm            # Core editing
-│   ├── HashtagParser.pm     # Hashtag commands
-│   ├── TabCompletion.pm     # Tab completion
-│   ├── SkillManager.pm      # AI skills
-│   ├── GitHubAuth.pm        # OAuth
-│   ├── GitHubCopilotModelsAPI.pm # Copilot models
-│   ├── PerformanceMonitor.pm # Performance tracking
-│   └── Logger.pm            # Logging
-├── Tools/                   # Tool implementations
-│   ├── Tool.pm              # Base class
-│   ├── Registry.pm          # Tool registry
-│   ├── ResultStorage.pm     # Result caching
-│   ├── FileOperations.pm    # File I/O
-│   ├── VersionControl.pm    # Git
-│   ├── TerminalOperations.pm # Shell execution
-│   ├── MemoryOperations.pm  # Memory operations
-│   ├── TodoList.pm          # Todo tracking
-│   ├── CodeIntelligence.pm  # Code analysis
-│   ├── UserCollaboration.pm # User checkpoints
-│   └── WebOperations.pm     # Web operations
-├── Session/                 # Session management
-│   ├── Manager.pm           # Session CRUD
-│   ├── State.pm             # Conversation state
-│   ├── TodoStore.pm         # Todo persistence
-│   └── ToolResultStore.pm   # Result caching
-├── Memory/                  # Memory systems
-│   ├── ShortTerm.pm         # Session context
-│   ├── LongTerm.pm          # Persistent storage
-│   ├── YaRN.pm              # Conversation threading
-│   └── TokenEstimator.pm    # Token counting
-├── Code/                    # Code analysis
-│   ├── TreeSitter.pm        # AST parsing
-│   ├── Symbols.pm           # Symbol extraction
-│   └── Relations.pm         # Symbol relationships
-├── Protocols/               # Protocol handlers
-│   ├── Manager.pm           # Protocol registry
-│   ├── Handler.pm           # Base class
-│   ├── Architect.pm         # Design protocol
-│   ├── Editor.pm            # Code editing protocol
-│   ├── Validate.pm          # Validation protocol
-│   ├── TreeSit.pm           # Tree-sitter protocol
-│   ├── RepoMap.pm           # Repository mapping
-│   ├── Recall.pm            # Memory recall
-│   └── Model.pm             # Model management
-├── Security/                # Security & auth
-│   ├── Auth.pm              # OAuth
-│   ├── Authz.pm             # Authorization
-│   ├── PathAuthorizer.pm    # File access control
-│   └── Manager.pm           # Security manager
-├── Logging/                 # Logging system
-│   └── ToolLogger.pm        # Tool operation logging
-├── Test/                    # Testing framework
-│   └── Framework.pm         # Test utilities
-├── Util/                    # Utility modules
-│   ├── PathResolver.pm      # Path resolution
-│   ├── TextSanitizer.pm     # Text sanitization
-│   └── ... (other utilities)
-├── NaturalLanguage/         # NL processing
-│   └── ... (NL modules)
-└── Compat/                  # Compatibility layer
-    └── ... (compatibility modules)
+  Providers.pm             # AI provider registry (SAM, GitHub Copilot, etc.)
+  UI/                      # Terminal interface
+      Chat.pm              # Main interactive loop
+      Markdown.pm          # Markdown to ANSI
+      ANSI.pm              # Color codes
+      Theme.pm             # Color themes
+  Core/                    # Core AI functionality
+      APIManager.pm        # AI provider integration
+      SimpleAIAgent.pm     # AI request/response
+      AIAgent.pm           # Advanced AI agent
+      PromptManager.pm     # System prompts
+      InstructionsReader.pm # Custom instructions
+      WorkflowOrchestrator.pm # Multi-step workflows
+      TaskOrchestrator.pm  # Task orchestration
+      ToolExecutor.pm      # Tool invocation
+      ToolCallExtractor.pm # Extract tool calls
+      ProtocolIntegration.pm # Protocol integration
+      Config.pm            # Configuration
+      ReadLine.pm          # Command history
+      CommandParser.pm     # Command parsing
+      Editor.pm            # Core editing
+      HashtagParser.pm     # Hashtag commands
+      TabCompletion.pm     # Tab completion
+      SkillManager.pm      # AI skills
+      GitHubAuth.pm        # OAuth
+      GitHubCopilotModelsAPI.pm # Copilot models
+      PerformanceMonitor.pm # Performance tracking
+      Logger.pm            # Logging
+  Tools/                   # Tool implementations
+      Tool.pm              # Base class
+      Registry.pm          # Tool registry
+      ResultStorage.pm     # Result caching
+      FileOperations.pm    # File I/O
+      VersionControl.pm    # Git
+      TerminalOperations.pm # Shell execution
+      MemoryOperations.pm  # Memory operations
+      TodoList.pm          # Todo tracking
+      CodeIntelligence.pm  # Code analysis
+      UserCollaboration.pm # User checkpoints
+      WebOperations.pm     # Web operations
+  Session/                 # Session management
+      Manager.pm           # Session CRUD
+      State.pm             # Conversation state
+      TodoStore.pm         # Todo persistence
+      ToolResultStore.pm   # Result caching
+  Memory/                  # Memory systems
+      ShortTerm.pm         # Session context
+      LongTerm.pm          # Persistent storage
+      YaRN.pm              # Conversation threading
+      TokenEstimator.pm    # Token counting
+  Code/                    # Code analysis
+      TreeSitter.pm        # AST parsing
+      Symbols.pm           # Symbol extraction
+      Relations.pm         # Symbol relationships
+  Protocols/               # Protocol handlers
+      Manager.pm           # Protocol registry
+      Handler.pm           # Base class
+      Architect.pm         # Design protocol
+      Editor.pm            # Code editing protocol
+      Validate.pm          # Validation protocol
+      TreeSit.pm           # Tree-sitter protocol
+      RepoMap.pm           # Repository mapping
+      Recall.pm            # Memory recall
+      Model.pm             # Model management
+  Security/                # Security & auth
+      Auth.pm              # OAuth
+      Authz.pm             # Authorization
+      PathAuthorizer.pm    # File access control
+      Manager.pm           # Security manager
+  Logging/                 # Logging system
+      ToolLogger.pm        # Tool operation logging
+  Test/                    # Testing framework
+      Framework.pm         # Test utilities
+  Util/                    # Utility modules
+      PathResolver.pm      # Path resolution
+      TextSanitizer.pm     # Text sanitization
+      ... (other utilities)
+  NaturalLanguage/         # NL processing
+      ... (NL modules)
+  Compat/                  # Compatibility layer
+      ... (compatibility modules)
 ```
 
 ---------------------------------------------------
@@ -540,13 +512,13 @@ CLIO follows a **layered architecture** with clear separation of concerns:
 
 ```
 ┌─────────────────────────────────┐
-│   User Interface Layer       │  (UI/)
+    User Interface Layer       │  (UI/)
 ├─────────────────────────────────┤
-│   AI & Workflow Layer        │  (Core/)
+    AI & Workflow Layer        │  (Core/)
 ├─────────────────────────────────┤
-│   Tool Execution Layer       │  (Tools/)
+    Tool Execution Layer       │  (Tools/)
 ├─────────────────────────────────┤
-│   Storage & Persistence      │  (Session/, Memory/)
+    Storage & Persistence      │  (Session/, Memory/)
 └─────────────────────────────────┘
 ```
 

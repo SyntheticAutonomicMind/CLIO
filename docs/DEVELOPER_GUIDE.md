@@ -138,41 +138,41 @@ AI Request → Tool Registry → Route to Tool → Execute Operation
 
 ```
 clio/
-├── clio                      # Main executable
-├── install.sh / uninstall.sh # Installation scripts
-├── lib/CLIO/                 # Core library
-│   ├── Core/                 # Core components
-│   │   ├── SimpleAIAgent.pm  # AI agent
-│   │   ├── APIManager.pm     # API abstraction
-│   │   └── Logger.pm         # Logging utilities
-│   ├── Tools/                # Tool implementations
-│   │   ├── Tool.pm           # Base tool class
-│   │   ├── Registry.pm       # Tool registry
-│   │   ├── FileOperations.pm # File tools
-│   │   ├── VersionControl.pm # Git tools
-│   │   ├── TerminalOperations.pm
-│   │   ├── MemoryOperations.pm
-│   │   ├── TodoList.pm
-│   │   └── WebOperations.pm
-│   ├── UI/                   # User interface
-│   │   ├── Chat.pm           # Chat interface (deprecated)
-│   │   ├── SimpleChat.pm     # Current chat (deprecated)
-│   │   ├── Markdown.pm       # Markdown renderer
-│   │   ├── ANSI.pm           # ANSI codes
-│   │   └── Theme.pm          # Theming system
-│   └── Session/              # Session management
-│       ├── Manager.pm        # Session manager
-│       └── TodoStore.pm      # Todo persistence
-├── docs/                     # User documentation
-│   ├── USER_GUIDE.md
-│   ├── INSTALLATION.md
-│   └── SPECS/
-│       ├── ARCHITECTURE.md
-│       ├── TOOLS.md
-│       └── PROTOCOLS.md
-├── docs-internal/            # Development specs
-├── sessions/                 # Saved sessions
-└── scripts/                  # Utility scripts
+  clio                      # Main executable
+  install.sh / uninstall.sh # Installation scripts
+  lib/CLIO/                 # Core library
+      Core/                 # Core components
+          SimpleAIAgent.pm  # AI agent
+          APIManager.pm     # API abstraction
+          Logger.pm         # Logging utilities
+      Tools/                # Tool implementations
+          Tool.pm           # Base tool class
+          Registry.pm       # Tool registry
+          FileOperations.pm # File tools
+          VersionControl.pm # Git tools
+          TerminalOperations.pm
+          MemoryOperations.pm
+          TodoList.pm
+          WebOperations.pm
+      UI/                   # User interface
+          Chat.pm           # Chat interface (deprecated)
+          SimpleChat.pm     # Current chat (deprecated)
+          Markdown.pm       # Markdown renderer
+          ANSI.pm           # ANSI codes
+          Theme.pm          # Theming system
+      Session/              # Session management
+          Manager.pm        # Session manager
+          TodoStore.pm      # Todo persistence
+  docs/                     # User documentation
+      USER_GUIDE.md
+      INSTALLATION.md
+      SPECS/
+          ARCHITECTURE.md
+          TOOLS.md
+          PROTOCOLS.md
+  docs-internal/            # Development specs
+  sessions/                 # Saved sessions
+  scripts/                  # Utility scripts
 ```
 
 ### Module Naming Conventions
