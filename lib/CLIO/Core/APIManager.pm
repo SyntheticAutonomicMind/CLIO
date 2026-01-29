@@ -628,11 +628,25 @@ sub validate_and_truncate_messages {
     }
     
     # Account for tool definitions in token budget
-    # Each tool schema averages ~2500 tokens (conservative estimate)
+    # Calculate actual token usage instead of using fixed estimate
     my $tool_tokens = 0;
     if ($tools && ref($tools) eq 'ARRAY' && @$tools) {
-        $tool_tokens = scalar(@$tools) * 2500;
-        print STDERR "[DEBUG][APIManager] Tool token budget: $tool_tokens tokens for " . scalar(@$tools) . " tools\n"
+        # Calculate actual token count by measuring the JSON representation
+        for my $tool (@$tools) {
+            # Encode tool schema to JSON and measure
+            my $tool_json = eval { JSON::PP::encode_json($tool) };
+            if ($tool_json) {
+                # Approximate tokens: characters / 2.5 (conservative estimate for JSON/code)
+                my $chars = length($tool_json);
+                my $tokens = int($chars / 2.5);
+                $tool_tokens += $tokens;
+            } else {
+                # Fallback if encoding fails: conservative estimate per tool
+                $tool_tokens += 600;  # Typical tool schema size
+            }
+        }
+        print STDERR "[DEBUG][APIManager] Tool token budget: $tool_tokens tokens for " . scalar(@$tools) . " tools " .
+            "(" . int($tool_tokens / @$tools) . " avg per tool)\n"
             if $self->{debug};
     }
     
