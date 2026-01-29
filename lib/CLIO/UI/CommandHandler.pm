@@ -248,6 +248,10 @@ sub handle_command {
         my $prompt = $chat->handle_init_command(@args);
         return (1, $prompt) if $prompt;  # Return prompt to be sent to AI
     }
+    elsif ($cmd eq 'design') {
+        my $prompt = $chat->handle_design_command(@args);
+        return (1, $prompt) if $prompt;  # Return prompt to be sent to AI
+    }
     else {
         $chat->display_error_message("Unknown command: /$cmd (type /help for help)");
     }

@@ -1539,6 +1539,7 @@ sub display_help {
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/test [file]', 'help_command'), 'Generate tests');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/fix <file>', 'help_command'), 'Propose fixes');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/doc <file>', 'help_command'), 'Generate docs');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/design', 'help_command'), 'Create/update project PRD');
     push @help_lines, "";
     
     push @help_lines, $self->colorize("SKILLS & PROMPTS", 'command_subheader');
@@ -6320,6 +6321,100 @@ INIT_PROMPT
 
     $self->display_system_message("Starting project initialization...");
     $self->display_system_message("CLIO will analyze your codebase and create custom instructions.");
+    print "\n";
+    
+    return $prompt;
+}
+
+=head2 handle_design_command
+
+Create or review Product Requirements Document (PRD)
+
+=cut
+
+sub handle_design_command {
+    my ($self, @args) = @_;
+    
+    my $prd_path = '.clio/PRD.md';
+    
+    # Check if PRD already exists
+    if (-f $prd_path) {
+        # Phase 2: Review mode (not yet implemented)
+        $self->display_system_message("Found existing PRD at $prd_path");
+        $self->display_system_message("Review mode will be implemented in Phase 2.");
+        $self->display_system_message("For now, remove the existing PRD to create a new one:");
+        $self->display_system_message("  rm .clio/PRD.md");
+        return;
+    }
+    
+    # Create new PRD - return prompt for AI to execute
+    my $prompt = <<'DESIGN_PROMPT';
+I need you to help the user create a Product Requirements Document (PRD) for their project.
+
+## Your Tasks:
+
+### 1. Gather Project Information
+Ask the user these questions **one at a time** (wait for response before asking next):
+
+1. **Project name?** (e.g., "MyApp", "CLI-Tool", "WebService")
+2. **What is the purpose of this project?** (1-2 sentences explaining what problem it solves)
+3. **Who are the primary users?** (e.g., "developers", "end-users", "administrators")
+4. **What are the must-have features for MVP?** (list 3-5 core features)
+5. **What technology stack will you use?**
+   - Programming language and version?
+   - Framework (if applicable)?
+   - Database (if applicable)?
+   - Deployment platform?
+6. **Any specific architecture requirements?** (e.g., "microservices", "monolith", "CLI only", "REST API")
+
+### 2. Create the PRD
+After gathering all information, use the CLIO::Tools::DesignHelper module to create a comprehensive PRD:
+
+```perl
+use CLIO::Tools::DesignHelper;
+
+my $helper = CLIO::Tools::DesignHelper->new();
+
+# Create PRD with gathered information
+my $prd_content = $helper->create_blank_prd(
+    project_name => '[user's answer]',
+    purpose => '[user's answer]',
+    version => '0.1.0',
+    tech_stack => {
+        language => '[user's answer]',
+        framework => '[user's answer]',
+        database => '[user's answer]',
+        deployment => '[user's answer]'
+    }
+);
+
+# Save to .clio/PRD.md
+$helper->save_prd($prd_content, '.clio/PRD.md');
+```
+
+### 3. Customize the PRD
+After creating the blank PRD, **edit** `.clio/PRD.md` to fill in:
+- Section 2.2: Convert user stories from their must-have features
+- Section 3.1: List the must-have features they mentioned
+- Section 4.2: Add architecture overview based on their requirements
+- Update any other sections based on their answers
+
+### 4. Show Summary and Next Steps
+After creating and customizing the PRD:
+1. Show a summary of what was created
+2. Display the PRD location: `.clio/PRD.md`
+3. Ask: "Would you like to initialize the project with this PRD? (Type '/init' to proceed)"
+
+## Important Notes:
+- Ask questions **one at a time** - don't overwhelm the user
+- Use the answers to fill in the PRD template appropriately
+- The PRD is a living document - it can be updated later
+- Be conversational and helpful
+
+Begin now by asking for the project name.
+DESIGN_PROMPT
+
+    $self->display_system_message("Starting interactive PRD creation...");
     print "\n";
     
     return $prompt;
