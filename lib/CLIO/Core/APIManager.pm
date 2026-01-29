@@ -1398,11 +1398,25 @@ sub _handle_error_response {
         $retry_after = 1;  # Quick retry - no server cooldown needed
         $error_type = 'malformed_tool_json';  # Flag for WorkflowOrchestrator to add guidance
         
+        # Try to extract the tool name from the error message or response body
+        my $failed_tool = undef;
+        my $response_body = $resp->decoded_content;
+        
+        # Try to parse the error response to get tool name
+        # Common patterns: "tool_use" blocks, "name": "tool_name", etc.
+        if ($response_body =~ /"name":\s*"([^"]+)"/ || $response_body =~ /tool[_\s]name['":\s]+([a-zA-Z_]+)/) {
+            $failed_tool = $1;
+            print STDERR "[DEBUG][APIManager] Extracted failed tool name: $failed_tool\n" if should_log('DEBUG');
+        }
+        
         # Provide friendly error message
         $retry_info = "AI generated malformed tool call JSON. Retrying request...";
         $error = $retry_info;
         
         print STDERR "[INFO][APIManager] Detected malformed tool JSON error - will retry\n" if should_log('INFO');
+        
+        # Store failed tool name for WorkflowOrchestrator
+        $self->{last_failed_tool} = $failed_tool;
     }
     
     # Log error details
@@ -1440,6 +1454,12 @@ sub _handle_error_response {
         $result->{retryable} = 1;
         $result->{retry_after} = $retry_after if $retry_after;
         $result->{error_type} = $error_type if $error_type;  # Pass error type for specialized handling
+        
+        # Include failed tool name if we detected it (for malformed_tool_json errors)
+        if ($self->{last_failed_tool}) {
+            $result->{failed_tool} = $self->{last_failed_tool};
+            delete $self->{last_failed_tool};  # Clear after use
+        }
     }
     
     return $result;
