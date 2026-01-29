@@ -550,13 +550,6 @@ sub run {
                 $self->{pagination_enabled} = 0;
                 print STDERR "[DEBUG][Chat] Pagination DISABLED for tool execution: $tool_name\n" if $self->{debug};
                 
-                # Display which tool is being used (skip user_collaboration - it's user-facing)
-                unless ($tool_name eq 'user_collaboration') {
-                    print "\n" if $self->{_streaming_markdown_buffer} && $self->{_streaming_markdown_buffer} !~ /\n$/;  # Newline before tool if needed
-                    print $self->colorize("[TOOL] ", 'COMMAND') . $self->colorize("$tool_name", 'DATA') . "\n";
-                    $self->{line_count} += 2;
-                }
-                
                 print STDERR "[DEBUG][Chat] Tool called: $tool_name\n" if $self->{debug};
             };
             
