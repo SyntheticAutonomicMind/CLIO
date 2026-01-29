@@ -742,7 +742,47 @@ sub process_input {
                         print STDERR "[ERROR][WorkflowOrchestrator] Failed to parse arguments for tool '$tool_name': $error\n";
                         print STDERR "[ERROR][WorkflowOrchestrator] Full arguments:\n$args_full\n";
                         
-                        # Skip this malformed tool call
+                        # Instead of skipping (which creates orphaned tool_use), create an error tool_result
+                        # This keeps tool_use/tool_result pairs intact and prevents infinite loops
+                        my $error_message = "JSON parsing failed for tool '$tool_name': $error\nArguments received:\n$args_full";
+                        
+                        # Add error result to conversation immediately
+                        push @messages, {
+                            role => 'tool',
+                            tool_call_id => $tool_call->{id},
+                            content => $error_message
+                        };
+                        
+                        # Save error result to session
+                        if ($session && $session->can('add_message')) {
+                            eval {
+                                # Save the assistant message with tool_calls on FIRST tool result (even if error)
+                                if ($assistant_msg_pending) {
+                                    $session->add_message(
+                                        'assistant',
+                                        $assistant_msg_pending->{content},
+                                        { tool_calls => $assistant_msg_pending->{tool_calls} }
+                                    );
+                                    print STDERR "[DEBUG][WorkflowOrchestrator] Saved assistant message with tool_calls to session (on error result)\n"
+                                        if should_log('DEBUG');
+                                    $assistant_msg_pending = undef;
+                                }
+                                
+                                # Save the error result
+                                $session->add_message(
+                                    'tool',
+                                    $error_message,
+                                    { tool_call_id => $tool_call->{id} }
+                                );
+                                print STDERR "[DEBUG][WorkflowOrchestrator] Saved error tool result to session\n"
+                                    if should_log('DEBUG');
+                            };
+                            if ($@) {
+                                print STDERR "[ERROR][WorkflowOrchestrator] Failed to save error result to session: $@\n";
+                            }
+                        }
+                        
+                        # Skip to next tool call (error has been recorded, no execution needed)
                         next;
                     }
                 }
