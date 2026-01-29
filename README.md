@@ -207,6 +207,13 @@ CLIO provides 35+ powerful slash commands organized by category. Type `/help` in
 | `/exit`, `/quit`, `/q` | Exit CLIO |
 | `/clear` | Clear screen |
 
+### Project Setup
+| Command | Purpose |
+|---------|---------|
+| `/design` | Collaborative PRD development with AI architect |
+| `/init` | Initialize project with custom instructions |
+| `/init --force` | Re-initialize project (updates instructions from PRD) |
+
 ### API & Configuration
 | Command | Purpose |
 |---------|---------|
@@ -232,10 +239,15 @@ CLIO provides 35+ powerful slash commands organized by category. Type `/help` in
 | `/file read <path>` | View file contents |
 | `/file write <path>` | Create/overwrite file |
 | `/file edit <path>` | Edit file in $EDITOR |
+| `/read <path>` | View file (shorthand) |
+| `/edit <path>` | Edit file (shorthand) |
 | `/git status` | Show git status |
 | `/git diff` | Show git differences |
 | `/git log` | Show commit history |
 | `/git commit` | Create git commit |
+| `/status` | Show git status (shorthand) |
+| `/diff` | Show git diff (shorthand) |
+| `/commit` | Create commit (shorthand) |
 
 ### Task Management
 | Command | Purpose |
@@ -275,11 +287,12 @@ CLIO provides 35+ powerful slash commands organized by category. Type `/help` in
 | `/exec <cmd>` | Run shell command directly |
 | `/shell` | Drop to shell subshell |
 | `/billing` | Show API usage statistics |
+| `/performance` | Show performance metrics |
 | `/context` | Manage context files |
 | `/debug` | Toggle debug output |
+| `/loglevel <level>` | Set logging verbosity (error/warn/info/debug) |
 | `/multiline`, `/ml` | Open editor for multi-line input |
 | `/update check` | Check for CLIO updates |
-| `/loglevel` | Set logging verbosity |
 
 **Tip:** Use `/help` inside CLIO to see an interactive, paginated command reference with descriptions.
 
@@ -394,6 +407,74 @@ For complete documentation and examples, see [docs/CUSTOM_INSTRUCTIONS.md](docs/
 ## Real-World Workflows
 
 Here are common patterns for using CLIO effectively:
+
+### Project Design & Setup Workflow
+
+```
+YOU: /design
+
+CLIO: Let's design your application together. Tell me about your 
+      project idea - what problem are you trying to solve?
+
+YOU: I want to build a task management CLI tool
+
+CLIO: Interesting! A CLI task manager. Let's explore this...
+      - Who's the primary user? Developers? General users?
+      - What's missing from existing tools like todo.txt or taskwarrior?
+      - Do you need sync across devices, or local-only?
+
+[Collaborative architecture conversation via user_collaboration]
+[CLIO suggests patterns, explores trade-offs, designs architecture]
+
+CLIO: Based on our discussion, I've created a comprehensive PRD at 
+      .clio/PRD.md with:
+      - SQLite for local storage
+      - Simple CLI with subcommands
+      - Tag-based organization
+      - Priority levels and due dates
+      
+      Would you like to initialize the project? (Type '/init')
+
+YOU: /init
+
+[CLIO reads PRD, fetches methodology docs, analyzes codebase]
+[Creates .clio/instructions.md with project-specific guidance]
+
+CLIO: Project initialized! Your custom instructions include:
+      - Code standards for Perl CLI tools
+      - Testing strategy from your PRD
+      - Architecture patterns we discussed
+      
+      Ready to start coding?
+```
+
+Later, when the PRD needs updates:
+
+```
+YOU: /design
+
+CLIO: I found your existing PRD (last updated 3 days ago).
+      [Shows summary of current design]
+      
+      What's changed? New requirements? Technical insights?
+
+YOU: We need to add a web API for mobile app integration
+
+CLIO: That's a significant architecture change. Let's think through...
+      - RESTful API with the same SQLite backend?
+      - Authentication needed?
+      - Real-time sync or polling?
+      
+[Collaborative review, updates PRD with new architecture]
+
+CLIO: PRD updated with API architecture. Your design has evolved 
+      significantly - consider running '/init --force' to update 
+      project instructions.
+
+YOU: /init --force
+
+[Backs up old instructions, regenerates from updated PRD]
+```
 
 ### Code Review & Fix Workflow
 
