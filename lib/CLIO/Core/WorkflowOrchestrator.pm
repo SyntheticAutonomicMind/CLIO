@@ -357,46 +357,86 @@ sub process_input {
                 my $system_msg = "Temporary $error_type detected. Retrying in ${retry_delay}s... (attempt $retry_count/$max_retries)";
                 
                 # Special handling for malformed tool JSON errors
-                # Add guidance message ONLY on first retry (avoid accumulating multiple guidance messages)
-                if ($api_response->{error_type} && $api_response->{error_type} eq 'malformed_tool_json' && $retry_count == 1) {
-                    # CRITICAL: Remove the bad assistant message that triggered this error
-                    # The malformed tool call is IN the assistant's response, so we must remove it
-                    # Otherwise the AI sees its own failed attempt and repeats the same mistake
-                    if (@messages && $messages[-1]->{role} eq 'assistant') {
-                        my $removed_msg = pop @messages;
-                        print STDERR "[INFO][WorkflowOrchestrator] Removed malformed assistant message from history\n"
+                # ONE RETRY ONLY: Remove bad message, add guidance with tool schema, let AI fix it
+                if ($api_response->{error_type} && $api_response->{error_type} eq 'malformed_tool_json') {
+                    if ($retry_count == 1) {
+                        # First attempt: Remove bad message and provide detailed guidance
+                        
+                        # Remove the malformed assistant message from history
+                        if (@messages && $messages[-1]->{role} eq 'assistant') {
+                            my $removed_msg = pop @messages;
+                            print STDERR "[INFO][WorkflowOrchestrator] Removed malformed assistant message from history\n"
+                                if should_log('INFO');
+                        }
+                        
+                        # Extract the tool name from error if available to provide specific schema
+                        my $failed_tool_name = $api_response->{failed_tool} || 'unknown';
+                        my $tool_schema = '';
+                        
+                        # Get the specific tool's schema to help AI understand the correct format
+                        if ($failed_tool_name ne 'unknown') {
+                            my $tool_def = $self->{tool_registry}->get_tool($failed_tool_name);
+                            if ($tool_def) {
+                                # Extract just the parameters section for clarity
+                                my $params = $tool_def->{function}{parameters};
+                                if ($params) {
+                                    require JSON::PP;
+                                    $tool_schema = "\n\nCorrect schema for $failed_tool_name:\n" . 
+                                                   JSON::PP->new->pretty->encode($params);
+                                }
+                            }
+                        }
+                        
+                        my $guidance_msg = {
+                            role => 'system',
+                            content => "ERROR: Your previous tool call had invalid JSON parameters.\n\n" .
+                                       "Common issues:\n" .
+                                       "- Missing parameter values (e.g., \"offset\":, instead of \"offset\":0)\n" .
+                                       "- Unescaped quotes in strings\n" .
+                                       "- Trailing commas\n" .
+                                       "- Missing required parameters\n\n" .
+                                       "ALL parameters must have valid values - no empty/missing values permitted.\n" .
+                                       "$tool_schema\n" .
+                                       "Please retry the operation with correct JSON, or try a different approach if the tool call isn't critical."
+                        };
+                        push @messages, $guidance_msg;
+                        
+                        $error_type = "malformed tool JSON";
+                        $system_msg = "AI generated invalid JSON parameters. Removed bad message, adding guidance and retrying... (attempt $retry_count/$max_retries)";
+                        
+                        print STDERR "[INFO][WorkflowOrchestrator] Added JSON formatting guidance for tool: $failed_tool_name\n"
                             if should_log('INFO');
                     }
-                    
-                    my $guidance_msg = {
-                        role => 'system',
-                        content => 'CRITICAL ERROR: Your previous tool call had invalid JSON parameters. ' .
-                                   'Common issues: missing parameter values (e.g., "offset":, instead of "offset":0), ' .
-                                   'unescaped quotes, trailing commas. Please retry the tool call with properly formatted JSON. ' .
-                                   'ALL parameters must have valid values - no empty/missing values permitted.'
-                    };
-                    push @messages, $guidance_msg;
-                    
-                    $error_type = "malformed tool JSON";
-                    $system_msg = "AI generated invalid JSON parameters. Removed bad message, adding guidance and retrying... (attempt $retry_count/$max_retries)";
-                    
-                    print STDERR "[INFO][WorkflowOrchestrator] Added JSON formatting guidance to conversation\n"
-                        if should_log('INFO');
-                }
-                elsif ($api_response->{error_type} && $api_response->{error_type} eq 'malformed_tool_json' && $retry_count > 1) {
-                    # After first retry with guidance failed, limit to max 1 more attempt
-                    # If AI can't fix JSON after seeing guidance, continuing to retry is wasteful
-                    $error_type = "persistent malformed tool JSON";
-                    $system_msg = "AI still generating invalid JSON after guidance. Final retry attempt... (attempt $retry_count/$max_retries)";
-                    
-                    # Reduce max_retries for this specific error to avoid waste
-                    if ($retry_count > 2) {
-                        print STDERR "[ERROR][WorkflowOrchestrator] Malformed JSON persists after guidance - giving up\n";
-                        return {
-                            success => 0,
-                            error => "AI repeatedly generated malformed tool call JSON. The current conversation context may be causing this issue. Try rephrasing your request or starting a new session.",
-                            tool_calls_made => \@tool_calls_made
+                    else {
+                        # Second attempt failed: DON'T give up - let agent continue with error context
+                        # Remove the failed assistant message again
+                        if (@messages && $messages[-1]->{role} eq 'assistant') {
+                            pop @messages;
+                            print STDERR "[INFO][WorkflowOrchestrator] Removed second malformed assistant message\n"
+                                if should_log('INFO');
+                        }
+                        
+                        # Add a recovery message that preserves context
+                        my $recovery_msg = {
+                            role => 'system',
+                            content => "TOOL CALL FAILED: The previous tool call still had invalid JSON after correction attempt. " .
+                                       "The tool call has been removed from history. You can:\n" .
+                                       "1. Try a different approach to accomplish the same goal\n" .
+                                       "2. Continue with other work\n" .
+                                       "3. Ask the user for clarification if needed\n\n" .
+                                       "Your conversation context is preserved - continue your work."
                         };
+                        push @messages, $recovery_msg;
+                        
+                        # Reset retry count and continue the workflow loop
+                        # The agent can recover and try something else
+                        $retry_count = 0;
+                        
+                        print STDERR "[WARN][WorkflowOrchestrator] Malformed JSON persisted - agent informed, continuing workflow\n";
+                        
+                        # Don't return error - let the loop continue so AI can recover
+                        # Skip the sleep and retry, just continue to next iteration
+                        next;  # Skip sleep/retry, go to next iteration
                     }
                 }
                 # Special handling for token limit exceeded errors
