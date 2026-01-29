@@ -51,12 +51,12 @@ CLIO follows these principles:
 ### High-Level Design
 
 ```mermaid
-flowchart TD
-    UI[User Interface<br/>SimpleChat, Markdown, ANSI]
-    Agent[Core AI Agent<br/>SimpleAIAgent, APIManager]
-    Registry[Tool Registry<br/>Tool Executor]
-    Session[Session Manager<br/>Persistence]
-    Tools[Tools Layer<br/>FileOps | VersionControl | Terminal | Memory | etc.]
+graph TD
+    UI["User Interface<br/>Chat, Markdown, ANSI"]
+    Agent["Core AI Agent<br/>WorkflowOrchestrator, APIManager"]
+    Registry["Tool Registry<br/>Tool Executor"]
+    Session["Session Manager<br/>Persistence"]
+    Tools["Tools Layer<br/>FileOps | VersionControl | Terminal | Memory | etc."]
     
     UI --> Agent
     Agent --> Registry
@@ -64,9 +64,9 @@ flowchart TD
     Registry --> Tools
     
     style UI fill:#e1f5ff
-    style Agent fill:#fff4e1
+    style Agent fill:#fff3e0
     style Registry fill:#e8f5e9
-    style Session fill:#e8f5e9
+    style Session fill:#fce4ec
     style Tools fill:#f3e5f5
 ```
 

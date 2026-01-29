@@ -505,6 +505,13 @@ if ($session && $session->can('state') && $session->state()) {
         return if $cleanup_done;  # Prevent multiple executions
         $cleanup_done = 1;
         
+        # CRITICAL: Restore terminal mode FIRST before any output
+        # Otherwise output may be corrupted or doubled
+        eval {
+            require CLIO::Compat::Terminal;
+            CLIO::Compat::Terminal::ReadMode('restore');
+        };
+        
         # CRITICAL: Force output to appear immediately
         local $| = 1;
         
@@ -539,7 +546,6 @@ if ($session && $session->can('state') && $session->state()) {
         STDOUT->flush();
         
         # Exit with code 0 for clean user-initiated exit
-        # (130 = 128+2 is for signal termination, but user chose to exit cleanly)
         exit 0;
     };
     
@@ -547,9 +553,26 @@ if ($session && $session->can('state') && $session->state()) {
     $SIG{TERM} = $cleanup_handler;  # SIGTERM
 }
 
+# END block: Final safety net to restore terminal on ANY exit
+# This catches unhandled exceptions, die calls, and other unexpected exits
+END {
+    eval {
+        require CLIO::Compat::Terminal;
+        CLIO::Compat::Terminal::ReadMode('restore');
+    };
+    # Silently ignore errors - we're exiting anyway
+}
+
 $ui->run();
 
-# CRITICAL: Save session after interactive mode completes
+# CRITICAL: Restore terminal mode before final session save
+# This ensures terminal is in normal mode even if run() exited abnormally
+eval {
+    require CLIO::Compat::Terminal;
+    CLIO::Compat::Terminal::ReadMode('restore');
+};
+
+# Save session after interactive mode completes
 # This ensures all conversation history, including errors, is persisted
 # Show save message for consistency with Ctrl+C exit
 if ($ui && $ui->can('display_system_message')) {
