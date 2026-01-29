@@ -2,13 +2,13 @@
 
 **For user-facing documentation: USER_GUIDE.md, INSTALLATION.md, README.md, tutorials**
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------
 
 ## Purpose
 
 This guide defines writing standards for CLIO's user-facing documentation. Consistent style, tone, and formatting make documentation easier to read, understand, and maintain.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------
 
 ## Tone & Voice
 
@@ -42,7 +42,7 @@ This guide defines writing standards for CLIO's user-facing documentation. Consi
 
 ✅ **Do:** "Configure your API key before starting."
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------
 
 ## Formatting Standards
 
@@ -130,7 +130,7 @@ Use tables for structured comparison or reference data:
 
 ```markdown
 | Command | Description | Example |
-|━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━|━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━-|━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━|
+|---------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `/models` | List available models | `/models` |
 | `/config show` | Display configuration | `/config show` |
 | `/help` | Show help | `/help tools` |
@@ -139,7 +139,7 @@ Use tables for structured comparison or reference data:
 **Guidelines:**
 - Always include header row with separators
 - Left-align text columns
-- Right-align number columns (use `:━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━:` or `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━:`)
+- Right-align number columns (use `:---------------------------------------------------:` or `---------------------------------------------------:`)
 - Keep tables readable in source (align columns)
 
 ### Admonitions
@@ -180,7 +180,7 @@ Learn more about [Markdown](https://www.markdownguide.org/).
 - Link to official sources when available
 - Check links periodically for rot
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------
 
 ## Content Structure
 
@@ -193,7 +193,7 @@ Every document should begin with a brief overview explaining what it covers:
 
 **Complete guide to using CLIO (Command Line Intelligence Orchestrator)**
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------
 
 CLIO is a terminal-based AI code assistant that integrates directly with your
 filesystem, version control, and command-line workflow.
@@ -251,14 +251,14 @@ API Configuration:
 ```
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------
 
 ## Terminology
 
 ### Use Consistent Terms
 
 | Use This | Not This |
-|━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━-|━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━-|
+|----------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------|
 | API key | api key, API-key, api_key |
 | API provider | provider, api provider, API Provider |
 | command | slash command, command line |
@@ -281,7 +281,7 @@ When introducing technical terms, define them:
 
 ✅ **Do:** "When you configure the provider, CLIO will use the provider's default model."
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------
 
 ## Command Documentation
 
@@ -324,7 +324,7 @@ Indicate placeholders clearly:
 - Use `[optional]` for optional arguments
 - Use `...` for variable number of arguments
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------
 
 ## Examples Best Practices
 
@@ -393,7 +393,7 @@ You should see detailed logs:
 ```
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------
 
 ## Error Messages & Troubleshooting
 
@@ -427,7 +427,7 @@ Create a troubleshooting section with common errors:
 **Solution:** [Step-by-step fix]
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------
 
 ## File Paths & Locations
 
@@ -453,7 +453,7 @@ When showing project files:
 
 ✅ **Do:** `lib/module.pm`
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------
 
 ## Version-Specific Documentation
 
@@ -480,7 +480,7 @@ When showing project files:
 3. Verify your configuration: `./clio --config show`
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------
 
 ## Screenshots & Visual Aids
 
@@ -506,7 +506,7 @@ Always include alt text for accessibility:
 ![CLIO configuration screen showing provider selection](/docs/images/config-provider.png)
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------
 
 ## Maintenance
 
@@ -535,7 +535,7 @@ Include last updated date at the top of major documents:
 **Last Updated:** January 18, 2026
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------
 
 ## Checklist
 
@@ -554,7 +554,7 @@ Before publishing documentation, verify:
 - [ ] Troubleshooting section (if applicable)
 - [ ] Platform-specific notes (if applicable)
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------
 
 ## Quick Reference
 
@@ -579,12 +579,12 @@ Code block
 [Link text](URL)
 
 | Table | Header |
-|━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━-|━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━--|
+|-------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------|
 | Cell  | Cell   |
 
 > **Note:** Important information
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------
 
 **Remember:** Good documentation is clear, concise, and user-focused. When in doubt, ask: "Would this help someone new to CLIO?"
