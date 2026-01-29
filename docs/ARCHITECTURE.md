@@ -18,11 +18,11 @@ Terminal UI (Chat.pm)
 AI Agent (SimpleAIAgent.pm)
    ↓
 Tool Selection & Execution
-   ├── File Operations (FileOperations.pm)
-   ├── Git (VersionControl.pm)
-   ├── Terminal (TerminalOperations.pm)
-   ├── Memory (MemoryOperations.pm)
-   └── Other tools...
+     - File Operations (FileOperations.pm)
+     - Git (VersionControl.pm)
+     - Terminal (TerminalOperations.pm)
+     - Memory (MemoryOperations.pm)
+     - Other tools...
    ↓
 Response Processing
    ↓
@@ -509,19 +509,20 @@ lib/CLIO/
 ## Summary
 
 CLIO follows a **layered architecture** with clear separation of concerns:
-
+```mermaid
+graph TB
+    A["User Interface Layer<br/>(UI/)"]
+    B["AI & Workflow Layer<br/>(Core/)"]
+    C["Tool Execution Layer<br/>(Tools/)"]
+    D["Storage & Persistence<br/>(Session/, Memory/)"]
+    
+    A --> B --> C --> D
+    
+    style A fill:#e1f5ff
+    style B fill:#fff3e0
+    style C fill:#e8f5e9
+    style D fill:#fce4ec
 ```
-┌─────────────────────────────────┐
-    User Interface Layer       │  (UI/)
-├─────────────────────────────────┤
-    AI & Workflow Layer        │  (Core/)
-├─────────────────────────────────┤
-    Tool Execution Layer       │  (Tools/)
-├─────────────────────────────────┤
-    Storage & Persistence      │  (Session/, Memory/)
-└─────────────────────────────────┘
-```
-
 **Key Architectural Features:**
 - **Plugin-based tool system** - Tools register dynamically
 - **Protocol-driven AI interaction** - Structured AI communication
