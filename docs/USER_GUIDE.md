@@ -623,9 +623,9 @@ CLIO: Smart choice. That gives you version history for free. Here's what I'm
       **Architecture:**
       ```
       wiki/
-      ├── pages/           # Markdown files
-      ├── .index/          # Search index
-      └── .git/            # Version history
+        pages/           # Markdown files
+        .index/          # Search index
+        .git/            # Version history
       ```
       
       **Components:**
