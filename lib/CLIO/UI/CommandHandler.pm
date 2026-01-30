@@ -14,6 +14,7 @@ use CLIO::UI::Commands::System;
 use CLIO::UI::Commands::Todo;
 use CLIO::UI::Commands::Billing;
 use CLIO::UI::Commands::Memory;
+use CLIO::UI::Commands::Log;
 
 =head1 NAME
 
@@ -139,6 +140,12 @@ sub new {
     );
     
     $self->{memory_cmd} = CLIO::UI::Commands::Memory->new(
+        chat => $self->{chat},
+        session => $self->{session},
+        debug => $self->{debug},
+    );
+    
+    $self->{log_cmd} = CLIO::UI::Commands::Log->new(
         chat => $self->{chat},
         session => $self->{session},
         debug => $self->{debug},
@@ -312,7 +319,8 @@ sub handle_command {
         $self->{git_cmd}->handle_status_command(@args);
     }
     elsif ($cmd eq 'log') {
-        $chat->handle_log_command(@args);
+        # Use extracted Log command module
+        $self->{log_cmd}->handle_log_command(@args);
     }
     elsif ($cmd eq 'gitlog' || $cmd eq 'gl') {
         # Backward compatibility
