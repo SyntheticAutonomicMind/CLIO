@@ -11,6 +11,8 @@ use CLIO::UI::Commands::File;
 use CLIO::UI::Commands::Session;
 use CLIO::UI::Commands::AI;
 use CLIO::UI::Commands::System;
+use CLIO::UI::Commands::Todo;
+use CLIO::UI::Commands::Billing;
 
 =head1 NAME
 
@@ -122,6 +124,19 @@ sub new {
         debug => $self->{debug},
     );
     
+    $self->{todo_cmd} = CLIO::UI::Commands::Todo->new(
+        chat => $self->{chat},
+        session => $self->{session},
+        ai_agent => $self->{ai_agent},
+        debug => $self->{debug},
+    );
+    
+    $self->{billing_cmd} = CLIO::UI::Commands::Billing->new(
+        chat => $self->{chat},
+        session => $self->{session},
+        debug => $self->{debug},
+    );
+    
     return $self;
 }
 
@@ -223,10 +238,12 @@ sub handle_command {
         $self->{system_cmd}->handle_performance_command(@args);
     }
     elsif ($cmd eq 'todo') {
-        $chat->handle_todo_command(@args);
+        # Use extracted Todo command module
+        $self->{todo_cmd}->handle_todo_command(@args);
     }
     elsif ($cmd eq 'billing' || $cmd eq 'bill' || $cmd eq 'usage') {
-        $chat->handle_billing_command(@args);
+        # Use extracted Billing command module
+        $self->{billing_cmd}->handle_billing_command(@args);
     }
     elsif ($cmd eq 'models') {
         # Backward compatibility - redirect to /api models
