@@ -15,6 +15,7 @@ use CLIO::UI::Commands::Todo;
 use CLIO::UI::Commands::Billing;
 use CLIO::UI::Commands::Memory;
 use CLIO::UI::Commands::Log;
+use CLIO::UI::Commands::Context;
 
 =head1 NAME
 
@@ -151,6 +152,13 @@ sub new {
         debug => $self->{debug},
     );
     
+    $self->{context_cmd} = CLIO::UI::Commands::Context->new(
+        chat => $self->{chat},
+        session => $self->{session},
+        api_manager => $self->{ai_agent} ? $self->{ai_agent}{api} : undef,
+        debug => $self->{debug},
+    );
+    
     return $self;
 }
 
@@ -265,7 +273,8 @@ sub handle_command {
         $self->{api_cmd}->handle_models_command(@args);
     }
     elsif ($cmd eq 'context' || $cmd eq 'ctx') {
-        $chat->handle_context_command(@args);
+        # Use extracted Context command module
+        $self->{context_cmd}->handle_context_command(@args);
     }
     elsif ($cmd eq 'skills' || $cmd eq 'skill') {
         my $result = $chat->handle_skills_command(@args);
