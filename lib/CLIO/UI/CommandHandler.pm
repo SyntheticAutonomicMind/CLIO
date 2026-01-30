@@ -4,6 +4,7 @@ use strict;
 use warnings;
 use Carp qw(croak confess);
 use CLIO::Core::Logger qw(should_log);
+use CLIO::UI::Commands::API;
 
 =head1 NAME
 
@@ -66,15 +67,22 @@ sub new {
     };
     
     bless $self, $class;
+    
+    # Initialize command modules
+    $self->{api_cmd} = CLIO::UI::Commands::API->new(
+        chat => $self->{chat},
+        config => $self->{config},
+        session => $self->{session},
+        ai_agent => $self->{ai_agent},
+        debug => $self->{debug},
+    );
+    
     return $self;
 }
 
 =head2 handle_command($command)
 
 Main command dispatcher. Routes slash commands to appropriate handlers.
-
-Phase 1 Implementation: Delegates to Chat.pm for actual command handling.
-This establishes the routing infrastructure for gradual extraction.
 
 Returns:
 - 0: Exit signal (quit/exit command)
@@ -95,7 +103,7 @@ sub handle_command {
     my ($cmd, @args) = split /\s+/, $command;
     $cmd = lc($cmd);
     
-    # Route to appropriate handler (currently delegating to Chat.pm)
+    # Route to appropriate handler
     if ($cmd eq 'exit' || $cmd eq 'quit' || $cmd eq 'q') {
         return 0;  # Signal to exit
     }
@@ -123,7 +131,8 @@ sub handle_command {
         $chat->handle_config_command(@args);
     }
     elsif ($cmd eq 'api') {
-        $chat->handle_api_command(@args);
+        # Use extracted API command module
+        $self->{api_cmd}->handle_api_command(@args);
     }
     elsif ($cmd eq 'loglevel') {
         $chat->handle_loglevel_command(@args);
@@ -137,12 +146,12 @@ sub handle_command {
     elsif ($cmd eq 'login') {
         # Backward compatibility - redirect to /api login
         $chat->display_system_message("Note: Use '/api login' (new syntax)");
-        $chat->handle_login_command(@args);
+        $self->{api_cmd}->handle_login_command(@args);
     }
     elsif ($cmd eq 'logout') {
         # Backward compatibility - redirect to /api logout
         $chat->display_system_message("Note: Use '/api logout' (new syntax)");
-        $chat->handle_logout_command(@args);
+        $self->{api_cmd}->handle_logout_command(@args);
     }
     elsif ($cmd eq 'file') {
         $chat->handle_file_command(@args);
@@ -167,7 +176,7 @@ sub handle_command {
     elsif ($cmd eq 'models') {
         # Backward compatibility - redirect to /api models
         $chat->display_system_message("Note: Use '/api models' (new syntax)");
-        $chat->handle_models_command(@args);
+        $self->{api_cmd}->handle_models_command(@args);
     }
     elsif ($cmd eq 'context' || $cmd eq 'ctx') {
         $chat->handle_context_command(@args);
