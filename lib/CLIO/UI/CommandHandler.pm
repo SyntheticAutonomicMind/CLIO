@@ -7,6 +7,7 @@ use CLIO::Core::Logger qw(should_log);
 use CLIO::UI::Commands::API;
 use CLIO::UI::Commands::Config;
 use CLIO::UI::Commands::Git;
+use CLIO::UI::Commands::File;
 
 =head1 NAME
 
@@ -92,6 +93,13 @@ sub new {
         debug => $self->{debug},
     );
     
+    $self->{file_cmd} = CLIO::UI::Commands::File->new(
+        chat => $self->{chat},
+        session => $self->{session},
+        config => $self->{config},
+        debug => $self->{debug},
+    );
+    
     return $self;
 }
 
@@ -173,12 +181,13 @@ sub handle_command {
         $self->{api_cmd}->handle_logout_command(@args);
     }
     elsif ($cmd eq 'file') {
-        $chat->handle_file_command(@args);
+        # Use extracted File command module
+        $self->{file_cmd}->handle_file_command(@args);
     }
     elsif ($cmd eq 'edit') {
         # Backward compatibility
         $chat->display_system_message("Note: Use '/file edit <path>' (new syntax)");
-        $chat->handle_edit_command(join(' ', @args));
+        $self->{file_cmd}->handle_edit_command(join(' ', @args));
     }
     elsif ($cmd eq 'multi-line' || $cmd eq 'multiline' || $cmd eq 'ml') {
         $chat->handle_multiline_command();
@@ -265,7 +274,7 @@ sub handle_command {
     elsif ($cmd eq 'read' || $cmd eq 'view' || $cmd eq 'cat') {
         # Backward compatibility
         $chat->display_system_message("Note: Use '/file read <path>' (new syntax)");
-        $chat->handle_read_command(@args);
+        $self->{file_cmd}->handle_read_command(@args);
     }
     elsif ($cmd eq 'memory' || $cmd eq 'mem' || $cmd eq 'ltm') {
         $chat->handle_memory_command(@args);
