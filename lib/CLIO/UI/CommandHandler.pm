@@ -9,6 +9,7 @@ use CLIO::UI::Commands::Config;
 use CLIO::UI::Commands::Git;
 use CLIO::UI::Commands::File;
 use CLIO::UI::Commands::Session;
+use CLIO::UI::Commands::AI;
 
 =head1 NAME
 
@@ -102,6 +103,12 @@ sub new {
     );
     
     $self->{session_cmd} = CLIO::UI::Commands::Session->new(
+        chat => $self->{chat},
+        session => $self->{session},
+        debug => $self->{debug},
+    );
+    
+    $self->{ai_cmd} = CLIO::UI::Commands::AI->new(
         chat => $self->{chat},
         session => $self->{session},
         debug => $self->{debug},
@@ -225,24 +232,29 @@ sub handle_command {
         $chat->handle_prompt_command(@args);
     }
     elsif ($cmd eq 'explain') {
-        my $prompt = $chat->handle_explain_command(@args);
-        return (1, $prompt) if $prompt;  # Return prompt to be sent to AI
+        # Use extracted AI command module
+        my $prompt = $self->{ai_cmd}->handle_explain_command(@args);
+        return (1, $prompt) if $prompt;
     }
     elsif ($cmd eq 'review') {
-        my $prompt = $chat->handle_review_command(@args);
-        return (1, $prompt) if $prompt;  # Return prompt to be sent to AI
+        # Use extracted AI command module
+        my $prompt = $self->{ai_cmd}->handle_review_command(@args);
+        return (1, $prompt) if $prompt;
     }
     elsif ($cmd eq 'test') {
-        my $prompt = $chat->handle_test_command(@args);
-        return (1, $prompt) if $prompt;  # Return prompt to be sent to AI
+        # Use extracted AI command module
+        my $prompt = $self->{ai_cmd}->handle_test_command(@args);
+        return (1, $prompt) if $prompt;
     }
     elsif ($cmd eq 'fix') {
-        my $prompt = $chat->handle_fix_command(@args);
-        return (1, $prompt) if $prompt;  # Return prompt to be sent to AI
+        # Use extracted AI command module
+        my $prompt = $self->{ai_cmd}->handle_fix_command(@args);
+        return (1, $prompt) if $prompt;
     }
     elsif ($cmd eq 'doc') {
-        my $prompt = $chat->handle_doc_command(@args);
-        return (1, $prompt) if $prompt;  # Return prompt to be sent to AI
+        # Use extracted AI command module
+        my $prompt = $self->{ai_cmd}->handle_doc_command(@args);
+        return (1, $prompt) if $prompt;
     }
     elsif ($cmd eq 'git') {
         # Use extracted Git command module
