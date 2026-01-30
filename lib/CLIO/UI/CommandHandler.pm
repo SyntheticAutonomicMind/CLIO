@@ -17,6 +17,7 @@ use CLIO::UI::Commands::Memory;
 use CLIO::UI::Commands::Log;
 use CLIO::UI::Commands::Context;
 use CLIO::UI::Commands::Update;
+use CLIO::UI::Commands::Skills;
 
 =head1 NAME
 
@@ -165,6 +166,12 @@ sub new {
         debug => $self->{debug},
     );
     
+    $self->{skills_cmd} = CLIO::UI::Commands::Skills->new(
+        chat => $self->{chat},
+        session => $self->{session},
+        debug => $self->{debug},
+    );
+    
     return $self;
 }
 
@@ -283,7 +290,8 @@ sub handle_command {
         $self->{context_cmd}->handle_context_command(@args);
     }
     elsif ($cmd eq 'skills' || $cmd eq 'skill') {
-        my $result = $chat->handle_skills_command(@args);
+        # Use extracted Skills command module
+        my $result = $self->{skills_cmd}->handle_skills_command(@args);
         return $result if $result;  # May return (1, $prompt) for AI execution
     }
     elsif ($cmd eq 'prompt') {
