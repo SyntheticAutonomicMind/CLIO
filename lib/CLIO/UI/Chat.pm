@@ -951,6 +951,13 @@ sub _build_prompt {
 sub get_input {
     my ($self) = @_;
     
+    # CRITICAL: Stop spinner before ANY input operation
+    # The spinner MUST be stopped before readline/input to prevent interference with typing
+    if ($self->{spinner} && $self->{spinner}->{running}) {
+        $self->{spinner}->stop();
+        print STDERR "[DEBUG][Chat] Spinner stopped at get_input entry\n" if should_log('DEBUG');
+    }
+    
     # Check if running in --input mode (non-interactive)
     if (!-t STDIN) {
         # Display simple prompt for non-interactive mode
@@ -1153,6 +1160,13 @@ sub request_collaboration {
     my ($self, $message, $context) = @_;
     
     print STDERR "[DEBUG][Chat] request_collaboration called\n" if should_log('DEBUG');
+    
+    # CRITICAL: Stop spinner before displaying collaboration prompt
+    # The spinner MUST be stopped and MUST NOT restart until user response is complete
+    if ($self->{spinner} && $self->{spinner}->{running}) {
+        $self->{spinner}->stop();
+        print STDERR "[DEBUG][Chat] Spinner stopped at request_collaboration entry\n" if should_log('DEBUG');
+    }
     
     # Enable pagination for collaboration responses
     $self->{pagination_enabled} = 1;
