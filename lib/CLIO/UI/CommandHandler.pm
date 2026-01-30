@@ -13,6 +13,7 @@ use CLIO::UI::Commands::AI;
 use CLIO::UI::Commands::System;
 use CLIO::UI::Commands::Todo;
 use CLIO::UI::Commands::Billing;
+use CLIO::UI::Commands::Memory;
 
 =head1 NAME
 
@@ -132,6 +133,12 @@ sub new {
     );
     
     $self->{billing_cmd} = CLIO::UI::Commands::Billing->new(
+        chat => $self->{chat},
+        session => $self->{session},
+        debug => $self->{debug},
+    );
+    
+    $self->{memory_cmd} = CLIO::UI::Commands::Memory->new(
         chat => $self->{chat},
         session => $self->{session},
         debug => $self->{debug},
@@ -327,7 +334,9 @@ sub handle_command {
         $self->{file_cmd}->handle_read_command(@args);
     }
     elsif ($cmd eq 'memory' || $cmd eq 'mem' || $cmd eq 'ltm') {
-        $chat->handle_memory_command(@args);
+        # Use extracted Memory command module
+        my $result = $self->{memory_cmd}->handle_memory_command(@args);
+        return $result if $result;  # Returns (1, $prompt) for store command
     }
     elsif ($cmd eq 'update') {
         $chat->handle_update_command(@args);
