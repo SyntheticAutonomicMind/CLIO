@@ -5,6 +5,7 @@ use warnings;
 use Carp qw(croak confess);
 use CLIO::Core::Logger qw(should_log);
 use CLIO::UI::Commands::API;
+use CLIO::UI::Commands::Config;
 
 =head1 NAME
 
@@ -77,6 +78,13 @@ sub new {
         debug => $self->{debug},
     );
     
+    $self->{config_cmd} = CLIO::UI::Commands::Config->new(
+        chat => $self->{chat},
+        config => $self->{config},
+        session => $self->{session},
+        debug => $self->{debug},
+    );
+    
     return $self;
 }
 
@@ -128,20 +136,24 @@ sub handle_command {
         $chat->handle_session_command(@args);
     }
     elsif ($cmd eq 'config') {
-        $chat->handle_config_command(@args);
+        # Use extracted Config command module
+        $self->{config_cmd}->handle_config_command(@args);
     }
     elsif ($cmd eq 'api') {
         # Use extracted API command module
         $self->{api_cmd}->handle_api_command(@args);
     }
     elsif ($cmd eq 'loglevel') {
-        $chat->handle_loglevel_command(@args);
+        # Use extracted Config command module
+        $self->{config_cmd}->handle_loglevel_command(@args);
     }
     elsif ($cmd eq 'style') {
-        $chat->handle_style_command(@args);
+        # Use extracted Config command module
+        $self->{config_cmd}->handle_style_command(@args);
     }
     elsif ($cmd eq 'theme') {
-        $chat->handle_theme_command(@args);
+        # Use extracted Config command module
+        $self->{config_cmd}->handle_theme_command(@args);
     }
     elsif ($cmd eq 'login') {
         # Backward compatibility - redirect to /api login
