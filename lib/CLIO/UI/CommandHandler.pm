@@ -8,6 +8,7 @@ use CLIO::UI::Commands::API;
 use CLIO::UI::Commands::Config;
 use CLIO::UI::Commands::Git;
 use CLIO::UI::Commands::File;
+use CLIO::UI::Commands::Session;
 
 =head1 NAME
 
@@ -100,6 +101,12 @@ sub new {
         debug => $self->{debug},
     );
     
+    $self->{session_cmd} = CLIO::UI::Commands::Session->new(
+        chat => $self->{chat},
+        session => $self->{session},
+        debug => $self->{debug},
+    );
+    
     return $self;
 }
 
@@ -148,7 +155,8 @@ sub handle_command {
         $chat->display_system_message("Color mode: " . ($chat->{use_color} ? "ON" : "OFF"));
     }
     elsif ($cmd eq 'session') {
-        $chat->handle_session_command(@args);
+        # Use extracted Session command module
+        $self->{session_cmd}->handle_session_command(@args);
     }
     elsif ($cmd eq 'config') {
         # Use extracted Config command module
@@ -269,7 +277,7 @@ sub handle_command {
     elsif ($cmd eq 'switch') {
         # Backward compatibility - redirect to /session switch
         $chat->display_system_message("Note: Use '/session switch' (new syntax)");
-        $chat->handle_switch_command(@args);
+        $self->{session_cmd}->handle_switch_command(@args);
     }
     elsif ($cmd eq 'read' || $cmd eq 'view' || $cmd eq 'cat') {
         # Backward compatibility
