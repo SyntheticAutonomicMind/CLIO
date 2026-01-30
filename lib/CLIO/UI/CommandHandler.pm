@@ -19,6 +19,7 @@ use CLIO::UI::Commands::Context;
 use CLIO::UI::Commands::Update;
 use CLIO::UI::Commands::Skills;
 use CLIO::UI::Commands::Prompt;
+use CLIO::UI::Commands::Project;
 
 =head1 NAME
 
@@ -174,6 +175,11 @@ sub new {
     );
     
     $self->{prompt_cmd} = CLIO::UI::Commands::Prompt->new(
+        chat => $self->{chat},
+        debug => $self->{debug},
+    );
+    
+    $self->{project_cmd} = CLIO::UI::Commands::Project->new(
         chat => $self->{chat},
         debug => $self->{debug},
     );
@@ -381,11 +387,13 @@ sub handle_command {
         $self->{update_cmd}->handle_update_command(@args);
     }
     elsif ($cmd eq 'init') {
-        my $prompt = $chat->handle_init_command(@args);
+        # Use extracted Project command module
+        my $prompt = $self->{project_cmd}->handle_init_command(@args);
         return (1, $prompt) if $prompt;  # Return prompt to be sent to AI
     }
     elsif ($cmd eq 'design') {
-        my $prompt = $chat->handle_design_command(@args);
+        # Use extracted Project command module
+        my $prompt = $self->{project_cmd}->handle_design_command(@args);
         return (1, $prompt) if $prompt;  # Return prompt to be sent to AI
     }
     else {
