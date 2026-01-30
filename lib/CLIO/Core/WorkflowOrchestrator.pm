@@ -5,7 +5,7 @@ use warnings;
 use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_error log_warning);
 use CLIO::Util::TextSanitizer qw(sanitize_text);
 use CLIO::Util::JSONRepair qw(repair_malformed_json);
 use JSON::PP qw(encode_json decode_json);
@@ -270,6 +270,24 @@ sub process_input {
         # Must be done before EVERY API call, as messages array is modified during tool calling
         my $alternated_messages = $self->_enforce_message_alternation(\@messages);
         
+        # Show busy indicator before API call if this is a continuation after tool execution
+        # On first iteration, the spinner is already shown by Chat.pm before calling orchestrate()
+        # On subsequent iterations (after tools), show "CLIO: " prefix + spinner here
+        if ($iteration > 1 && $self->{ui}) {
+            # Print "CLIO: " prefix before showing spinner
+            if ($self->{ui}->can('colorize')) {
+                print $self->{ui}->colorize("CLIO: ", 'ASSISTANT');
+                STDOUT->flush() if STDOUT->can('flush');
+            }
+            
+            # Show the busy indicator
+            if ($self->{ui}->can('show_busy_indicator')) {
+                $self->{ui}->show_busy_indicator();
+                print STDERR "[DEBUG][WorkflowOrchestrator] Showing busy indicator before API iteration $iteration\n"
+                    if $self->{debug};
+            }
+        }
+        
         # Send to AI with tools (ALWAYS use streaming for proper quota headers from GitHub Copilot)
         my $api_response = eval {
             # Use streaming mode always (GitHub Copilot requires stream:true for real quota data)
@@ -346,7 +364,7 @@ sub process_input {
             
             # Check if we've exceeded session error budget
             if ($session_error_count > $max_session_errors) {
-                print STDERR "[ERROR][WorkflowOrchestrator] Session error budget exhausted ($session_error_count errors). Stopping to prevent cascading failures.\n";
+                log_error('WorkflowOrchestrator', "Session error budget exhausted ($session_error_count errors). Stopping to prevent cascading failures.");
                 return {
                     success => 0,
                     error => "Session error limit reached ($max_session_errors errors). Please start a new request or session. Last error: $error",
@@ -361,7 +379,7 @@ sub process_input {
                 
                 # Check if we've exceeded max retries for this iteration
                 if ($retry_count > $max_retries) {
-                    print STDERR "[ERROR][WorkflowOrchestrator] Maximum retries ($max_retries) exceeded for this iteration\n";
+                    log_error('WorkflowOrchestrator', "Maximum retries ($max_retries) exceeded for this iteration");
                     return {
                         success => 0,
                         error => "Maximum retries exceeded: $error",
@@ -788,8 +806,8 @@ sub process_input {
                         my $error = $@;
                         my $args_full = $tool_call->{function}->{arguments} || '';
                         
-                        print STDERR "[ERROR][WorkflowOrchestrator] Failed to parse arguments for tool '$tool_name': $error\n";
-                        print STDERR "[ERROR][WorkflowOrchestrator] Full arguments:\n$args_full\n";
+                        log_error('WorkflowOrchestrator', "Failed to parse arguments for tool '$tool_name': $error");
+                        log_error('WorkflowOrchestrator', "Full arguments:\n$args_full");
                         
                         # Instead of skipping (which creates orphaned tool_use), create an error tool_result
                         # This keeps tool_use/tool_result pairs intact and prevents infinite loops
@@ -1053,27 +1071,15 @@ sub process_input {
                 $self->{ui}->reset_streaming_state();
             }
             
-            # Show busy indicator before next API call
-            # After tool execution completes, we're about to send results back to AI
-            # and wait for the next response. Show spinner during this processing.
-            # The _prepare_for_next_iteration flag tells Chat.pm to stop the spinner
-            # on the next chunk even if first_chunk_received was already set.
+            # DO NOT show spinner here - it will be shown at the top of the loop
+            # before the next API call. Showing it here causes it to appear while
+            # user is typing their response to user_collaboration tool.
+            # Instead, set a flag to indicate we need the "CLIO: " prefix on next iteration.
             if ($self->{ui}) {
-                # Print "CLIO: " prefix before showing spinner
-                if ($self->{ui}->can('colorize')) {
-                    print $self->{ui}->colorize("CLIO: ", 'ASSISTANT');
-                    STDOUT->flush() if STDOUT->can('flush');
-                }
-                
                 # Set flag so on_chunk callback knows to stop spinner on next chunk
                 $self->{ui}->{_prepare_for_next_iteration} = 1;
-                
-                # Show the busy indicator
-                if ($self->{ui}->can('show_busy_indicator')) {
-                    $self->{ui}->show_busy_indicator();
-                    print STDERR "[DEBUG][WorkflowOrchestrator] Showing busy indicator before next API iteration\n"
-                        if $self->{debug};
-                }
+                print STDERR "[DEBUG][WorkflowOrchestrator] Set _prepare_for_next_iteration flag for next API call\n"
+                    if $self->{debug};
             }
             
             # Save session after each iteration to prevent data loss
@@ -1780,8 +1786,7 @@ sub _load_conversation_history {
             my $missing_results = 0;
             for my $id (keys %expected_tool_ids) {
                 unless ($found_tool_ids{$id}) {
-                    print STDERR "[WARN][WorkflowOrchestrator] Orphaned tool_call detected: $id (missing tool_result)\n"
-                        if should_log("WARN");
+                    log_warning('WorkflowOrchestrator', "Orphaned tool_call detected: $id (missing tool_result)");
                     $missing_results++;
                 }
             }
