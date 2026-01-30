@@ -10,6 +10,7 @@ use CLIO::UI::Commands::Git;
 use CLIO::UI::Commands::File;
 use CLIO::UI::Commands::Session;
 use CLIO::UI::Commands::AI;
+use CLIO::UI::Commands::System;
 
 =head1 NAME
 
@@ -114,6 +115,13 @@ sub new {
         debug => $self->{debug},
     );
     
+    $self->{system_cmd} = CLIO::UI::Commands::System->new(
+        chat => $self->{chat},
+        session => $self->{session},
+        config => $self->{config},
+        debug => $self->{debug},
+    );
+    
     return $self;
 }
 
@@ -151,7 +159,8 @@ sub handle_command {
         $chat->repaint_screen();
     }
     elsif ($cmd eq 'shell' || $cmd eq 'sh') {
-        $chat->handle_shell_command();
+        # Use extracted System command module
+        $self->{system_cmd}->handle_shell_command();
     }
     elsif ($cmd eq 'debug') {
         $chat->{debug} = !$chat->{debug};
@@ -205,10 +214,13 @@ sub handle_command {
         $self->{file_cmd}->handle_edit_command(join(' ', @args));
     }
     elsif ($cmd eq 'multi-line' || $cmd eq 'multiline' || $cmd eq 'ml') {
-        $chat->handle_multiline_command();
+        # Use extracted System command module
+        my $content = $self->{system_cmd}->handle_multiline_command();
+        return (1, $content) if $content;  # Return content as AI prompt
     }
     elsif ($cmd eq 'performance' || $cmd eq 'perf') {
-        $chat->handle_performance_command(@args);
+        # Use extracted System command module
+        $self->{system_cmd}->handle_performance_command(@args);
     }
     elsif ($cmd eq 'todo') {
         $chat->handle_todo_command(@args);
@@ -284,7 +296,8 @@ sub handle_command {
         $self->{git_cmd}->handle_gitlog_command(@args);
     }
     elsif ($cmd eq 'exec' || $cmd eq 'shell' || $cmd eq 'sh') {
-        $chat->handle_exec_command(@args);
+        # Use extracted System command module
+        $self->{system_cmd}->handle_exec_command(@args);
     }
     elsif ($cmd eq 'switch') {
         # Backward compatibility - redirect to /session switch
