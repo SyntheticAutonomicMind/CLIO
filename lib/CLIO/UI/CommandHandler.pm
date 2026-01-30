@@ -16,6 +16,7 @@ use CLIO::UI::Commands::Billing;
 use CLIO::UI::Commands::Memory;
 use CLIO::UI::Commands::Log;
 use CLIO::UI::Commands::Context;
+use CLIO::UI::Commands::Update;
 
 =head1 NAME
 
@@ -156,6 +157,11 @@ sub new {
         chat => $self->{chat},
         session => $self->{session},
         api_manager => $self->{ai_agent} ? $self->{ai_agent}{api} : undef,
+        debug => $self->{debug},
+    );
+    
+    $self->{update_cmd} = CLIO::UI::Commands::Update->new(
+        chat => $self->{chat},
         debug => $self->{debug},
     );
     
@@ -356,7 +362,8 @@ sub handle_command {
         return $result if $result;  # Returns (1, $prompt) for store command
     }
     elsif ($cmd eq 'update') {
-        $chat->handle_update_command(@args);
+        # Use extracted Update command module
+        $self->{update_cmd}->handle_update_command(@args);
     }
     elsif ($cmd eq 'init') {
         my $prompt = $chat->handle_init_command(@args);
