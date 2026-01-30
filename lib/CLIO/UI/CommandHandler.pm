@@ -18,6 +18,7 @@ use CLIO::UI::Commands::Log;
 use CLIO::UI::Commands::Context;
 use CLIO::UI::Commands::Update;
 use CLIO::UI::Commands::Skills;
+use CLIO::UI::Commands::Prompt;
 
 =head1 NAME
 
@@ -172,6 +173,11 @@ sub new {
         debug => $self->{debug},
     );
     
+    $self->{prompt_cmd} = CLIO::UI::Commands::Prompt->new(
+        chat => $self->{chat},
+        debug => $self->{debug},
+    );
+    
     return $self;
 }
 
@@ -295,7 +301,8 @@ sub handle_command {
         return $result if $result;  # May return (1, $prompt) for AI execution
     }
     elsif ($cmd eq 'prompt') {
-        $chat->handle_prompt_command(@args);
+        # Use extracted Prompt command module
+        $self->{prompt_cmd}->handle_prompt_command(@args);
     }
     elsif ($cmd eq 'explain') {
         # Use extracted AI command module
