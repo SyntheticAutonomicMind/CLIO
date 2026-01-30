@@ -6,6 +6,7 @@ use Carp qw(croak confess);
 use CLIO::Core::Logger qw(should_log);
 use CLIO::UI::Commands::API;
 use CLIO::UI::Commands::Config;
+use CLIO::UI::Commands::Git;
 
 =head1 NAME
 
@@ -81,6 +82,12 @@ sub new {
     $self->{config_cmd} = CLIO::UI::Commands::Config->new(
         chat => $self->{chat},
         config => $self->{config},
+        session => $self->{session},
+        debug => $self->{debug},
+    );
+    
+    $self->{git_cmd} = CLIO::UI::Commands::Git->new(
+        chat => $self->{chat},
         session => $self->{session},
         debug => $self->{debug},
     );
@@ -221,22 +228,23 @@ sub handle_command {
         return (1, $prompt) if $prompt;  # Return prompt to be sent to AI
     }
     elsif ($cmd eq 'git') {
-        $chat->handle_git_command(@args);
+        # Use extracted Git command module
+        $self->{git_cmd}->handle_git_command(@args);
     }
     elsif ($cmd eq 'commit') {
         # Backward compatibility
         $chat->display_system_message("Note: Use '/git commit' (new syntax)");
-        $chat->handle_commit_command(@args);
+        $self->{git_cmd}->handle_commit_command(@args);
     }
     elsif ($cmd eq 'diff') {
         # Backward compatibility
         $chat->display_system_message("Note: Use '/git diff' (new syntax)");
-        $chat->handle_diff_command(@args);
+        $self->{git_cmd}->handle_diff_command(@args);
     }
     elsif ($cmd eq 'status' || $cmd eq 'st') {
         # Backward compatibility
         $chat->display_system_message("Note: Use '/git status' (new syntax)");
-        $chat->handle_status_command(@args);
+        $self->{git_cmd}->handle_status_command(@args);
     }
     elsif ($cmd eq 'log') {
         $chat->handle_log_command(@args);
@@ -244,7 +252,7 @@ sub handle_command {
     elsif ($cmd eq 'gitlog' || $cmd eq 'gl') {
         # Backward compatibility
         $chat->display_system_message("Note: Use '/git log' (new syntax)");
-        $chat->handle_gitlog_command(@args);
+        $self->{git_cmd}->handle_gitlog_command(@args);
     }
     elsif ($cmd eq 'exec' || $cmd eq 'shell' || $cmd eq 'sh') {
         $chat->handle_exec_command(@args);
