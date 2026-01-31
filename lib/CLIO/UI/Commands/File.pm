@@ -60,6 +60,10 @@ sub new {
 # Delegate display methods to chat
 sub display_system_message { shift->{chat}->display_system_message(@_) }
 sub display_error_message { shift->{chat}->display_error_message(@_) }
+sub display_command_header { shift->{chat}->display_command_header(@_) }
+sub display_section_header { shift->{chat}->display_section_header(@_) }
+sub display_command_row { shift->{chat}->display_command_row(@_) }
+sub display_tip { shift->{chat}->display_tip(@_) }
 sub writeline { shift->{chat}->writeline(@_) }
 sub colorize { shift->{chat}->colorize(@_) }
 sub display_paginated_content { shift->{chat}->display_paginated_content(@_) }
@@ -108,33 +112,31 @@ sub handle_file_command {
 
 =head2 _display_file_help
 
-Display help for /file commands
+Display help for /file commands using unified style.
 
 =cut
 
 sub _display_file_help {
     my ($self) = @_;
     
-    $self->writeline("", markdown => 0);
-    $self->writeline($self->colorize("FILE COMMANDS", 'DATA'), markdown => 0);
-    $self->writeline($self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), markdown => 0);
+    $self->display_command_header("FILE");
+    
+    $self->display_section_header("COMMANDS");
+    $self->display_command_row("/file read <path>", "Read and display file (markdown rendered)", 25);
+    $self->display_command_row("/file edit <path>", "Open file in external editor (\$EDITOR)", 25);
+    $self->display_command_row("/file list [path]", "List directory contents (default: .)", 25);
     $self->writeline("", markdown => 0);
     
-    $self->writeline($self->colorize("  /file read <path>", 'PROMPT') . "       Read and display file (markdown rendered)", markdown => 0);
-    $self->writeline($self->colorize("  /file edit <path>", 'PROMPT') . "       Open file in external editor (\$EDITOR)", markdown => 0);
-    $self->writeline($self->colorize("  /file list [path]", 'PROMPT') . "       List directory contents (default: .)", markdown => 0);
-    
+    $self->display_section_header("EXAMPLES");
+    $self->display_command_row("/file read README.md", "View a file", 30);
+    $self->display_command_row("/file edit lib/CLIO.pm", "Edit a file", 30);
+    $self->display_command_row("/file list lib/", "List directory", 30);
     $self->writeline("", markdown => 0);
-    $self->writeline($self->colorize("EXAMPLES", 'DATA'), markdown => 0);
-    $self->writeline($self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), markdown => 0);
-    $self->writeline("  /file read README.md                 # View a file", markdown => 0);
-    $self->writeline("  /file edit lib/CLIO/UI/Chat.pm       # Edit a file", markdown => 0);
-    $self->writeline("  /file list lib/CLIO/                 # List directory", markdown => 0);
 }
 
 =head2 _list_directory
 
-List directory contents
+List directory contents with unified style.
 
 =cut
 
@@ -161,10 +163,7 @@ sub _list_directory {
     my @entries = sort grep { !/^\.\.?$/ } readdir($dh);
     closedir($dh);
     
-    $self->writeline("", markdown => 0);
-    $self->writeline($self->colorize("Directory: $path", 'DATA'), markdown => 0);
-    $self->writeline($self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), markdown => 0);
-    $self->writeline("", markdown => 0);
+    $self->display_command_header("DIRECTORY: $path");
     
     my @dirs;
     my @files;
@@ -179,17 +178,29 @@ sub _list_directory {
     }
     
     # Show directories first
-    for my $dir (@dirs) {
-        $self->writeline("  " . $self->colorize("$dir/", 'USER'), markdown => 0);
+    if (@dirs) {
+        $self->display_section_header("DIRECTORIES");
+        for my $dir (@dirs) {
+            $self->writeline("  " . $self->colorize("$dir/", 'USER'), markdown => 0);
+        }
+        $self->writeline("", markdown => 0);
     }
     
     # Then files
-    for my $file (@files) {
-        $self->writeline("  $file", markdown => 0);
+    if (@files) {
+        $self->display_section_header("FILES");
+        for my $file (@files) {
+            $self->writeline("  $file", markdown => 0);
+        }
+        $self->writeline("", markdown => 0);
     }
     
+    # Summary
+    my $summary = $self->colorize("Total: ", 'LABEL') .
+                  $self->colorize(scalar(@dirs), 'DATA') . " directories, " .
+                  $self->colorize(scalar(@files), 'DATA') . " files";
+    $self->writeline($summary, markdown => 0);
     $self->writeline("", markdown => 0);
-    $self->display_system_message(scalar(@dirs) . " directories, " . scalar(@files) . " files");
 }
 
 =head2 handle_read_command

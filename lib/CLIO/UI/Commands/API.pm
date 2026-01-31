@@ -64,6 +64,7 @@ sub new {
 sub display_command_header { shift->{chat}->display_command_header(@_) }
 sub display_section_header { shift->{chat}->display_section_header(@_) }
 sub display_key_value { shift->{chat}->display_key_value(@_) }
+sub display_command_row { shift->{chat}->display_command_row(@_) }
 sub display_list_item { shift->{chat}->display_list_item(@_) }
 sub display_system_message { shift->{chat}->display_system_message(@_) }
 sub display_error_message { shift->{chat}->display_error_message(@_) }
@@ -167,40 +168,40 @@ sub handle_api_command {
 
 =head2 _display_api_help
 
-Display help for /api commands
+Display help for /api commands using unified style.
 
 =cut
 
 sub _display_api_help {
     my ($self) = @_;
     
-    $self->display_command_header("API COMMANDS");
+    $self->display_command_header("API");
     
-    $self->display_list_item("/api show - Display current API configuration");
-    $self->display_list_item("/api set model <name> - Set AI model");
-    $self->display_list_item("/api set provider <name> - Set provider (github_copilot, openai, etc.)");
-    $self->display_list_item("/api set base <url> - Set API base URL");
-    $self->display_list_item("/api set key <value> - Set API key (global only)");
-    $self->display_list_item("/api providers - Show available providers and their details");
-    $self->display_list_item("/api models - List available models");
-    $self->display_list_item("/api login - Authenticate with GitHub Copilot");
-    $self->display_list_item("/api logout - Sign out from GitHub");
-    
+    $self->display_section_header("COMMANDS");
+    $self->display_command_row("/api show", "Display current API configuration", 35);
+    $self->display_command_row("/api set model <name>", "Set AI model", 35);
+    $self->display_command_row("/api set provider <name>", "Set provider (github_copilot, openai)", 35);
+    $self->display_command_row("/api set base <url>", "Set API base URL", 35);
+    $self->display_command_row("/api set key <value>", "Set API key (global only)", 35);
+    $self->display_command_row("/api providers", "Show available providers", 35);
+    $self->display_command_row("/api models", "List available models", 35);
+    $self->display_command_row("/api login", "Authenticate with GitHub Copilot", 35);
+    $self->display_command_row("/api logout", "Sign out from GitHub", 35);
     $self->writeline("", markdown => 0);
-    $self->display_section_header("WEB SEARCH CONFIGURATION");
-    $self->display_list_item("/api set serpapi_key <key> - Set SerpAPI key (serpapi.com)");
-    $self->display_list_item("/api set search_engine <name> - Set engine (google|bing|duckduckgo)");
-    $self->display_list_item("/api set search_provider <name> - Set provider (auto|serpapi|duckduckgo_direct)");
     
+    $self->display_section_header("WEB SEARCH");
+    $self->display_command_row("/api set serpapi_key <key>", "Set SerpAPI key", 35);
+    $self->display_command_row("/api set search_engine <name>", "Set engine (google|bing|duckduckgo)", 35);
     $self->writeline("", markdown => 0);
+    
     $self->display_section_header("FLAGS");
-    $self->writeline("  --session    Save setting to this session only (not global)", markdown => 0);
+    $self->display_command_row("--session", "Save setting to this session only", 35);
     $self->writeline("", markdown => 0);
+    
     $self->display_section_header("EXAMPLES");
-    $self->writeline("  /api set model claude-sonnet-4          # Global + session", markdown => 0);
-    $self->writeline("  /api set model gpt-4o --session         # This session only", markdown => 0);
-    $self->writeline("  /api set provider github_copilot        # Switch provider", markdown => 0);
-    $self->writeline("  /api set serpapi_key YOUR_KEY           # Enable reliable web search", markdown => 0);
+    $self->display_command_row("/api set model claude-sonnet-4", "Global + session", 35);
+    $self->display_command_row("/api set model gpt-4o --session", "This session only", 35);
+    $self->display_command_row("/api set provider github_copilot", "Switch provider", 35);
     $self->writeline("", markdown => 0);
 }
 
@@ -630,12 +631,12 @@ sub _check_github_auth {
     unless ($gh_auth->is_authenticated()) {
         $self->writeline("", markdown => 0);
         $self->display_system_message("GitHub Copilot requires authentication");
-        print $self->colorize("  Would you like to login now? [Y/n]: ", 'PROMPT');
+        print $self->{chat}{theme_mgr}->get_input_prompt("Login now?", "no") . " ";
         my $response = <STDIN>;
         chomp $response if defined $response;
         $response = lc($response || 'y');
         
-        if ($response eq 'y' || $response eq 'yes' || $response eq '') {
+        if ($response =~ /^y(es)?$/i || $response eq '') {
             $self->handle_login_command();
         } else {
             $self->display_system_message("You can login later with: /api login");

@@ -119,126 +119,160 @@ sub handle_memory_command {
 
 =head2 _list_patterns($ltm, $filter_type)
 
-List all LTM patterns, optionally filtered by type.
+List all LTM patterns with proper formatting and pagination.
 
 =cut
 
 sub _list_patterns {
     my ($self, $ltm, $filter_type) = @_;
     
-    # Gather all patterns
-    my @all_patterns;
-    
-    # Discoveries
-    my $discoveries = eval { $ltm->query_discoveries() } || [];
-    for my $item (@$discoveries) {
-        push @all_patterns, { type => 'discovery', data => $item };
-    }
-    
-    # Solutions
-    my $solutions = eval { $ltm->query_solutions() } || [];
-    for my $item (@$solutions) {
-        push @all_patterns, { type => 'solution', data => $item };
-    }
-    
-    # Patterns
-    my $patterns = eval { $ltm->query_patterns() } || [];
-    for my $item (@$patterns) {
-        push @all_patterns, { type => 'pattern', data => $item };
-    }
-    
-    # Workflows
-    my $workflows = eval { $ltm->query_workflows() } || [];
-    for my $item (@$workflows) {
-        push @all_patterns, { type => 'workflow', data => $item };
-    }
-    
-    # Failures
-    my $failures = eval { $ltm->query_failures() } || [];
-    for my $item (@$failures) {
-        push @all_patterns, { type => 'failure', data => $item };
-    }
-    
-    # Context rules
-    my $rules = eval { $ltm->query_context_rules() } || [];
-    for my $item (@$rules) {
-        push @all_patterns, { type => 'rule', data => $item };
-    }
+    # Gather all patterns by type
+    my %by_type = (
+        discovery => eval { $ltm->query_discoveries() } || [],
+        solution  => eval { $ltm->query_solutions() } || [],
+        pattern   => eval { $ltm->query_patterns() } || [],
+        workflow  => eval { $ltm->query_workflows() } || [],
+        failure   => eval { $ltm->query_failures() } || [],
+        rule      => eval { $ltm->query_context_rules() } || [],
+    );
     
     # Filter by type if specified
     if ($filter_type) {
-        @all_patterns = grep { $_->{type} eq $filter_type } @all_patterns;
+        my %filtered;
+        $filtered{$filter_type} = $by_type{$filter_type} if exists $by_type{$filter_type};
+        %by_type = %filtered;
     }
     
-    # Display
-    $self->display_command_header("LONG-TERM MEMORY PATTERNS");
+    # Count total items
+    my $total = 0;
+    for my $type (keys %by_type) {
+        $total += scalar(@{$by_type{$type}});
+    }
     
-    if (@all_patterns == 0) {
-        $self->display_info_message("No patterns stored yet");
+    $self->display_command_header("LONG-TERM MEMORY");
+    
+    if ($total == 0) {
+        $self->display_info_message("No patterns stored");
         $self->writeline("", markdown => 0);
-        $self->writeline("Use /memory store <type> to add patterns:", markdown => 0);
+        $self->writeline("Use " . $self->colorize("/memory store <type>", 'help_command') . " to add patterns:", markdown => 0);
         $self->display_list_item("Types: discovery, solution, pattern, workflow, failure, rule");
         $self->writeline("", markdown => 0);
-    } else {
-        my $total_str = sprintf("Total: %d pattern%s", scalar(@all_patterns), (@all_patterns == 1 ? '' : 's'));
-        $total_str .= " (filtered by: $filter_type)" if $filter_type;
-        $self->writeline($total_str, markdown => 0);
-        $self->writeline("", markdown => 0);
+        return;
+    }
+    
+    # Build summary line
+    my @counts;
+    for my $type (qw(discovery solution pattern workflow failure rule)) {
+        my $count = scalar(@{$by_type{$type} || []});
+        push @counts, "$count $type" . ($count == 1 ? '' : 's') if $count > 0;
+    }
+    
+    $self->writeline($self->colorize("Total: ", 'LABEL') . $self->colorize($total, 'DATA') . " entries (" . join(", ", @counts) . ")", markdown => 0);
+    $self->writeline("", markdown => 0);
+    
+    # Display each type as a section
+    my %type_labels = (
+        discovery => 'DISCOVERIES',
+        solution  => 'SOLUTIONS',
+        pattern   => 'PATTERNS',
+        workflow  => 'WORKFLOWS',
+        failure   => 'FAILURES',
+        rule      => 'CONTEXT RULES',
+    );
+    
+    for my $type (qw(discovery solution pattern workflow failure rule)) {
+        my $items = $by_type{$type} || [];
+        next unless @$items;
         
-        for my $entry (@all_patterns) {
-            $self->_display_pattern($entry);
+        $self->{chat}->display_section_header($type_labels{$type});
+        
+        for my $i (0 .. $#$items) {
+            my $item = $items->[$i];
+            $self->_display_pattern_compact($type, $item, $i + 1);
         }
+        
+        $self->writeline("", markdown => 0);
     }
 }
 
-=head2 _display_pattern($entry)
+=head2 _display_pattern_compact($type, $data, $index)
 
-Display a single pattern entry.
+Display a single pattern entry in compact format.
 
 =cut
 
-sub _display_pattern {
-    my ($self, $entry) = @_;
+sub _display_pattern_compact {
+    my ($self, $type, $data, $index) = @_;
     
-    my $type = uc($entry->{type});
-    my $data = $entry->{data};
+    # Format index
+    my $idx = $self->colorize(sprintf("%2d)", $index), 'DIM');
     
-    my $header = $self->colorize("[$type] ", 'command_subheader') .
-                 $self->colorize($data->{title} || 'Untitled', 'command_value');
-    $self->writeline($header, markdown => 0);
-    
-    if ($entry->{type} eq 'discovery') {
-        $self->writeline("  " . ($data->{content} || 'No content'), markdown => 0);
-        $self->writeline($self->colorize("  Context: " . ($data->{context} || 'None'), 'muted'), markdown => 0) if $data->{context};
+    if ($type eq 'discovery') {
+        # Discovery: show the fact, truncated
+        my $fact = $data->{fact} || $data->{content} || '(no content)';
+        $fact =~ s/\n.*//s;  # First line only
+        $fact = substr($fact, 0, 70) . '...' if length($fact) > 70;
+        
+        my $confidence = $data->{confidence} ? sprintf(" [%.0f%%]", $data->{confidence} * 100) : "";
+        $self->writeline("$idx " . $self->colorize($fact, 'command_value') . $self->colorize($confidence, 'DIM'), markdown => 0);
     }
-    elsif ($entry->{type} eq 'solution') {
-        $self->writeline("  Problem: " . ($data->{problem} || 'Not specified'), markdown => 0);
-        $self->writeline("  Solution: " . ($data->{solution} || 'Not specified'), markdown => 0);
+    elsif ($type eq 'solution') {
+        # Solution: show problem/solution pair
+        my $problem = $data->{error} || $data->{problem} || '(no problem specified)';
+        $problem =~ s/\n.*//s;
+        $problem = substr($problem, 0, 60) . '...' if length($problem) > 60;
+        
+        my $solution = $data->{solution} || '(no solution)';
+        $solution =~ s/\n.*//s;
+        $solution = substr($solution, 0, 50) . '...' if length($solution) > 50;
+        
+        $self->writeline("$idx " . $self->colorize("Problem: ", 'LABEL') . $problem, markdown => 0);
+        $self->writeline("    " . $self->colorize("Fix: ", 'SUCCESS') . $solution, markdown => 0);
     }
-    elsif ($entry->{type} eq 'pattern') {
-        $self->writeline("  " . ($data->{pattern} || 'No pattern'), markdown => 0);
-        $self->writeline($self->colorize("  Usage: " . ($data->{usage} || 'None'), 'muted'), markdown => 0) if $data->{usage};
+    elsif ($type eq 'pattern') {
+        # Pattern: show the pattern description
+        my $pattern = $data->{pattern} || '(no pattern)';
+        $pattern =~ s/\n.*//s;
+        $pattern = substr($pattern, 0, 70) . '...' if length($pattern) > 70;
+        
+        my $confidence = $data->{confidence} ? sprintf(" [%.0f%%]", $data->{confidence} * 100) : "";
+        $self->writeline("$idx " . $self->colorize($pattern, 'command_value') . $self->colorize($confidence, 'DIM'), markdown => 0);
     }
-    elsif ($entry->{type} eq 'workflow') {
+    elsif ($type eq 'workflow') {
+        # Workflow: show title and step count
+        my $title = $data->{title} || $data->{name} || '(untitled workflow)';
         my $steps = $data->{steps} || [];
-        if (ref($steps) eq 'ARRAY' && @$steps) {
-            my $num = 1;
-            for my $step (@$steps) {
-                $self->display_list_item($step, $num);
-                $num++;
-            }
-        }
+        my $step_count = ref($steps) eq 'ARRAY' ? scalar(@$steps) : 0;
+        
+        $self->writeline("$idx " . $self->colorize($title, 'command_value') . 
+                         $self->colorize(" ($step_count steps)", 'DIM'), markdown => 0);
     }
-    elsif ($entry->{type} eq 'failure') {
-        $self->writeline("  Mistake: " . ($data->{mistake} || 'Not specified'), markdown => 0);
-        $self->writeline("  Lesson: " . ($data->{lesson} || 'Not specified'), markdown => 0);
+    elsif ($type eq 'failure') {
+        # Failure: show mistake and lesson
+        my $mistake = $data->{mistake} || '(no mistake)';
+        $mistake =~ s/\n.*//s;
+        $mistake = substr($mistake, 0, 50) . '...' if length($mistake) > 50;
+        
+        my $lesson = $data->{lesson} || '(no lesson)';
+        $lesson =~ s/\n.*//s;
+        $lesson = substr($lesson, 0, 50) . '...' if length($lesson) > 50;
+        
+        $self->writeline("$idx " . $self->colorize("Mistake: ", 'ERROR') . $mistake, markdown => 0);
+        $self->writeline("    " . $self->colorize("Lesson: ", 'SUCCESS') . $lesson, markdown => 0);
     }
-    elsif ($entry->{type} eq 'rule') {
-        $self->writeline("  Condition: " . ($data->{condition} || 'Not specified'), markdown => 0);
-        $self->writeline("  Action: " . ($data->{action} || 'Not specified'), markdown => 0);
+    elsif ($type eq 'rule') {
+        # Rule: show condition and action
+        my $condition = $data->{condition} || '(no condition)';
+        $condition =~ s/\n.*//s;
+        $condition = substr($condition, 0, 50) . '...' if length($condition) > 50;
+        
+        my $action = $data->{action} || '(no action)';
+        $action =~ s/\n.*//s;
+        $action = substr($action, 0, 50) . '...' if length($action) > 50;
+        
+        $self->writeline("$idx " . $self->colorize("When: ", 'LABEL') . $condition, markdown => 0);
+        $self->writeline("    " . $self->colorize("Then: ", 'SUCCESS') . $action, markdown => 0);
     }
-    
-    $self->writeline("", markdown => 0);
 }
 
 =head2 _store_pattern(@args)
@@ -273,12 +307,13 @@ sub _clear_patterns {
     
     $self->writeline("", markdown => 0);
     $self->display_warning_message("This will clear ALL long-term memory patterns for this project!");
-    print "Are you sure? (yes/no): ";
+    print $self->{chat}{theme_mgr}->get_input_prompt("Type 'yes' to confirm clear", "cancel") . "\n";
+    print "> ";
     
     my $response = <STDIN>;
-    chomp $response;
+    chomp $response if defined $response;
     
-    if (lc($response) eq 'yes') {
+    if ($response && $response =~ /^y(es)?$/i) {
         eval {
             require CLIO::Memory::LongTerm;
             my $new_ltm = CLIO::Memory::LongTerm->new(
