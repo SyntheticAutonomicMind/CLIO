@@ -1310,9 +1310,6 @@ sub request_collaboration {
         if ($response =~ /^\//) {
             print STDERR "[DEBUG][Chat] Slash command in collaboration: $response\n" if should_log('DEBUG');
             
-            # Display user command
-            print $self->colorize("YOU: ", 'USER'), $response, "\n";
-            
             # Process the command (but don't exit - return to collaboration prompt)
             my ($continue, $ai_prompt) = $self->handle_command($response);
             
@@ -1322,12 +1319,15 @@ sub request_collaboration {
                 return undef;
             }
             
-            # If command generated an AI prompt, return it as the collaboration response
+            # If command generated an AI prompt (e.g., /multi-line), display and return it
             if ($ai_prompt) {
+                # Display the actual content, not the command
+                print $self->colorize("YOU: ", 'USER'), $ai_prompt, "\n";
                 return $ai_prompt;
             }
             
-            # Otherwise, return to the collaboration prompt for more input
+            # Otherwise, display the command and return to the collaboration prompt
+            print $self->colorize("YOU: ", 'USER'), $response, "\n";
             print $self->colorize("CLIO: ", 'ASSISTANT'), "(Command processed. What's your response?)\n";
             next;
         }
