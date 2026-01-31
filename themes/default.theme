@@ -34,9 +34,9 @@ pagination_hint_streaming={style.dim}[ {style.prompt_indicator}Q{style.dim} quit
 pagination_hint_full={style.dim}[ {style.prompt_indicator}^/v{style.dim} pages - {style.prompt_indicator}Q{style.dim} quit - any key more ]@RESET@
 pagination_prompt={style.dim}==={style.data}[ {var.current}/{var.total} ]{style.dim}===@RESET@ {var.nav_hint}{style.prompt_indicator}Q{style.dim} {style.prompt_indicator}>{style.dim}@RESET@ 
 
-# Input prompts (standardized)
-input_prompt={style.dim}({var.prompt})@RESET@
-input_prompt_with_default={style.dim}({var.prompt}, or {style.prompt_indicator}Enter{style.dim} to {var.default_action})@RESET@
+# Input prompts (standardized BBS style)
+input_prompt={style.dim}===[ {var.prompt} ]===@RESET@ 
+input_prompt_with_default={style.dim}===[ {var.prompt} · {style.prompt_indicator}Enter{style.dim} to {var.default_action} ]===@RESET@ 
 
 # Messages
 user_message_prefix={style.user_text}YOU: @RESET@

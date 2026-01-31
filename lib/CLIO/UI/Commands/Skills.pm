@@ -59,6 +59,8 @@ sub new {
 # Delegate display methods to chat
 sub display_system_message { shift->{chat}->display_system_message(@_) }
 sub display_error_message { shift->{chat}->display_error_message(@_) }
+sub display_info_message { shift->{chat}->display_info_message(@_) }
+sub display_success_message { shift->{chat}->display_success_message(@_) }
 sub writeline { shift->{chat}->writeline(@_) }
 sub display_command_header { shift->{chat}->display_command_header(@_) }
 sub display_section_header { shift->{chat}->display_section_header(@_) }
@@ -112,6 +114,12 @@ sub handle_skills_command {
     elsif ($action eq 'delete' || $action eq 'rm') {
         $self->_delete_skill($sm, @args);
     }
+    elsif ($action eq 'search') {
+        $self->_search_skills(@args);
+    }
+    elsif ($action eq 'install') {
+        $self->_install_skill($sm, @args);
+    }
     elsif ($action eq 'help') {
         $self->_show_help();
     }
@@ -136,10 +144,15 @@ sub _show_help {
     
     $self->display_section_header("COMMANDS");
     $self->{chat}->display_command_row("/skills", "List all skills", 35);
-    $self->{chat}->display_command_row("/skills add <name> \"<text>\"", "Add custom skill", 35);
     $self->{chat}->display_command_row("/skills use <name> [file]", "Execute skill", 35);
     $self->{chat}->display_command_row("/skills show <name>", "Display skill details", 35);
+    $self->{chat}->display_command_row("/skills add <name> \"<text>\"", "Add custom skill", 35);
     $self->{chat}->display_command_row("/skills delete <name>", "Delete custom skill", 35);
+    $self->writeline("", markdown => 0);
+    
+    $self->display_section_header("CATALOG");
+    $self->{chat}->display_command_row("/skills search [query]", "Search skills catalog", 35);
+    $self->{chat}->display_command_row("/skills install <name>", "Install skill from catalog", 35);
     $self->writeline("", markdown => 0);
 }
 
@@ -227,6 +240,11 @@ sub _list_skills {
     $self->{chat}->display_command_row("/skills show <name>", "Display skill details", 35);
     $self->{chat}->display_command_row("/skills add <name> \"<text>\"", "Add custom skill", 35);
     $self->{chat}->display_command_row("/skills delete <name>", "Delete custom skill", 35);
+    $self->writeline("", markdown => 0);
+    
+    $self->display_section_header("CATALOG");
+    $self->{chat}->display_command_row("/skills search [query]", "Search skills catalog", 35);
+    $self->{chat}->display_command_row("/skills install <name>", "Install skill from catalog", 35);
     $self->writeline("", markdown => 0);
 }
 
@@ -383,6 +401,209 @@ sub _delete_skill {
         $self->display_system_message("Deleted skill '$name'");
     } else {
         $self->display_error_message($result->{error});
+    }
+}
+
+=head2 _search_skills(@args)
+
+Search for skills in the remote skills repository.
+
+=cut
+
+# Skills repository URL
+our $SKILLS_REPO_API = 'https://api.github.com/repos/SyntheticAutonomicMind/clio-skills/contents/skills/.curated';
+our $SKILLS_REPO_RAW = 'https://raw.githubusercontent.com/SyntheticAutonomicMind/clio-skills/main/skills/.curated';
+
+sub _search_skills {
+    my ($self, @args) = @_;
+    
+    my $query = join(' ', @args);
+    
+    $self->display_command_header("SKILLS CATALOG");
+    $self->writeline("Fetching skills from catalog...", markdown => 0);
+    $self->writeline("", markdown => 0);
+    
+    # Fetch skills list from GitHub API
+    require CLIO::Compat::HTTP;
+    my $ua = CLIO::Compat::HTTP->new(timeout => 30);
+    
+    my $resp = $ua->get($SKILLS_REPO_API, headers => {
+        'Accept' => 'application/vnd.github.v3+json',
+        'User-Agent' => 'CLIO/1.0'
+    });
+    
+    unless ($resp->is_success) {
+        $self->display_error_message("Failed to fetch skills catalog: " . $resp->status_line);
+        return;
+    }
+    
+    require JSON::PP;
+    my $skills = eval { JSON::PP::decode_json($resp->decoded_content) };
+    if ($@) {
+        $self->display_error_message("Failed to parse skills catalog: $@");
+        return;
+    }
+    
+    # Filter to directories only (skill folders)
+    my @skill_dirs = grep { $_->{type} eq 'dir' } @$skills;
+    
+    # Fetch SKILL.md for each to get descriptions
+    my @available_skills;
+    for my $skill (@skill_dirs) {
+        my $skill_name = $skill->{name};
+        my $skill_url = "$SKILLS_REPO_RAW/$skill_name/SKILL.md";
+        
+        my $skill_resp = $ua->get($skill_url, headers => { 'User-Agent' => 'CLIO/1.0' });
+        next unless $skill_resp->is_success;
+        
+        my $content = $skill_resp->decoded_content;
+        
+        # Parse frontmatter
+        my ($description) = $content =~ /description:\s*["']?([^"'\n]+)/;
+        $description ||= '(no description)';
+        
+        # Filter by query if provided
+        if ($query) {
+            my $lc_query = lc($query);
+            next unless lc($skill_name) =~ /\Q$lc_query\E/ || 
+                        lc($description) =~ /\Q$lc_query\E/;
+        }
+        
+        push @available_skills, {
+            name => $skill_name,
+            description => $description,
+        };
+    }
+    
+    if (@available_skills == 0) {
+        if ($query) {
+            $self->display_info_message("No skills found matching '$query'");
+        } else {
+            $self->display_info_message("No skills found in catalog");
+        }
+        return;
+    }
+    
+    $self->display_section_header("AVAILABLE SKILLS");
+    for my $skill (@available_skills) {
+        $self->display_key_value($skill->{name}, $skill->{description}, 20);
+    }
+    
+    print "\n";
+    my $count = scalar(@available_skills);
+    $self->writeline($self->colorize("Total: ", 'LABEL') . $self->colorize($count, 'DATA') . " skills", markdown => 0);
+    
+    $self->display_section_header("USAGE");
+    $self->{chat}->display_command_row("/skills install <name>", "Install a skill", 30);
+    $self->writeline("", markdown => 0);
+}
+
+=head2 _install_skill($sm, @args)
+
+Install a skill from the remote skills repository.
+
+=cut
+
+sub _install_skill {
+    my ($self, $sm, @args) = @_;
+    
+    my $name = shift @args;
+    
+    unless ($name) {
+        $self->display_error_message("Usage: /skills install <name>");
+        $self->writeline("", markdown => 0);
+        $self->writeline("Use /skills search to see available skills", markdown => 0);
+        return;
+    }
+    
+    # Check if already installed
+    my $existing = $sm->get_skill($name);
+    if ($existing && $existing->{type} eq 'custom') {
+        $self->display_error_message("Skill '$name' is already installed");
+        return;
+    }
+    
+    $self->display_command_header("INSTALLING SKILL");
+    $self->writeline("Fetching skill '$name'...", markdown => 0);
+    
+    # Fetch SKILL.md from repository
+    my $skill_url = "$SKILLS_REPO_RAW/$name/SKILL.md";
+    
+    require CLIO::Compat::HTTP;
+    my $ua = CLIO::Compat::HTTP->new(timeout => 30);
+    
+    my $resp = $ua->get($skill_url, headers => { 'User-Agent' => 'CLIO/1.0' });
+    
+    unless ($resp->is_success) {
+        if ($resp->code == 404) {
+            $self->display_error_message("Skill '$name' not found in catalog");
+            $self->writeline("Use /skills search to see available skills", markdown => 0);
+        } else {
+            $self->display_error_message("Failed to fetch skill: " . $resp->status_line);
+        }
+        return;
+    }
+    
+    my $content = $resp->decoded_content;
+    
+    # Ensure content is properly decoded as UTF-8
+    require Encode;
+    $content = Encode::decode('UTF-8', $content) unless utf8::is_utf8($content);
+    
+    # Parse frontmatter
+    my ($description) = $content =~ /description:\s*["']?([^"'\n]+)/;
+    $description ||= "Skill from catalog";
+    
+    # Show skill info
+    $self->writeline("", markdown => 0);
+    $self->display_section_header("SKILL INFO");
+    $self->display_key_value("Name", $name, 15);
+    $self->display_key_value("Description", $description, 15);
+    my @lines = split /\n/, $content;
+    $self->display_key_value("Lines", scalar(@lines), 15);
+    
+    # Ask if user wants to preview full content
+    print "\n";
+    print $self->{chat}{theme_mgr}->get_input_prompt("View full content? (y/N)") . " ";
+    my $view_full = <STDIN>;
+    chomp $view_full if defined $view_full;
+    
+    if ($view_full && $view_full =~ /^y(es)?$/i) {
+        # Display full content with markdown rendering and pagination
+        $self->writeline("", markdown => 0);
+        $self->display_section_header("FULL CONTENT");
+        $self->writeline("", markdown => 0);
+        
+        # Enable pagination for full content
+        $self->{chat}->{pagination_enabled} = 1;
+        $self->{chat}->{line_count} = 0;
+        
+        # Render the content as markdown (writeline with markdown => 1)
+        last unless $self->writeline($content, markdown => 1);
+        
+        # Disable pagination
+        $self->{chat}->{pagination_enabled} = 0;
+        $self->writeline("", markdown => 0);
+    }
+    
+    # Confirm installation
+    print $self->{chat}{theme_mgr}->get_input_prompt("Install '$name'? (y/N)") . " ";
+    my $confirm = <STDIN>;
+    chomp $confirm if defined $confirm;
+    
+    unless ($confirm && $confirm =~ /^y(es)?$/i) {
+        $self->display_system_message("Installation cancelled");
+        return;
+    }
+    
+    # Install by adding to custom skills
+    my $result = $sm->add_skill($name, $content, description => $description);
+    
+    if ($result->{success}) {
+        $self->display_success_message("Skill '$name' installed successfully!");
+        $self->writeline("Use: /skills use $name", markdown => 0);
+    } else {
+        $self->display_error_message("Failed to install skill: " . $result->{error});
     }
 }
 
