@@ -46,10 +46,12 @@ sub new {
     
     my $self = {
         chat => $args{chat} || croak "chat instance required",
-        session => $args{session},
-        config => $args{config},
         debug => $args{debug} // 0,
     };
+    
+    # Assign object references separately (hash literal assignment bug workaround)
+    $self->{session} = $args{session};
+    $self->{config} = $args{config};
     
     bless $self, $class;
     return $self;
@@ -58,6 +60,7 @@ sub new {
 # Delegate display methods to chat
 sub display_system_message { shift->{chat}->display_system_message(@_) }
 sub display_error_message { shift->{chat}->display_error_message(@_) }
+sub writeline { shift->{chat}->writeline(@_) }
 sub colorize { shift->{chat}->colorize(@_) }
 sub display_paginated_content { shift->{chat}->display_paginated_content(@_) }
 
@@ -112,20 +115,21 @@ Display help for /file commands
 sub _display_file_help {
     my ($self) = @_;
     
-    print "\n";
-    print $self->colorize("FILE COMMANDS", 'DATA'), "\n";
-    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n\n";
+    $self->writeline("", markdown => 0);
+    $self->writeline($self->colorize("FILE COMMANDS", 'DATA'), markdown => 0);
+    $self->writeline($self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), markdown => 0);
+    $self->writeline("", markdown => 0);
     
-    print $self->colorize("  /file read <path>", 'PROMPT'), "       Read and display file (markdown rendered)\n";
-    print $self->colorize("  /file edit <path>", 'PROMPT'), "       Open file in external editor (\$EDITOR)\n";
-    print $self->colorize("  /file list [path]", 'PROMPT'), "       List directory contents (default: .)\n";
+    $self->writeline($self->colorize("  /file read <path>", 'PROMPT') . "       Read and display file (markdown rendered)", markdown => 0);
+    $self->writeline($self->colorize("  /file edit <path>", 'PROMPT') . "       Open file in external editor (\$EDITOR)", markdown => 0);
+    $self->writeline($self->colorize("  /file list [path]", 'PROMPT') . "       List directory contents (default: .)", markdown => 0);
     
-    print "\n";
-    print $self->colorize("EXAMPLES", 'DATA'), "\n";
-    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n";
-    print "  /file read README.md                 # View a file\n";
-    print "  /file edit lib/CLIO/UI/Chat.pm       # Edit a file\n";
-    print "  /file list lib/CLIO/                 # List directory\n";
+    $self->writeline("", markdown => 0);
+    $self->writeline($self->colorize("EXAMPLES", 'DATA'), markdown => 0);
+    $self->writeline($self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), markdown => 0);
+    $self->writeline("  /file read README.md                 # View a file", markdown => 0);
+    $self->writeline("  /file edit lib/CLIO/UI/Chat.pm       # Edit a file", markdown => 0);
+    $self->writeline("  /file list lib/CLIO/                 # List directory", markdown => 0);
 }
 
 =head2 _list_directory
@@ -157,9 +161,10 @@ sub _list_directory {
     my @entries = sort grep { !/^\.\.?$/ } readdir($dh);
     closedir($dh);
     
-    print "\n";
-    print $self->colorize("Directory: $path", 'DATA'), "\n";
-    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n\n";
+    $self->writeline("", markdown => 0);
+    $self->writeline($self->colorize("Directory: $path", 'DATA'), markdown => 0);
+    $self->writeline($self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), markdown => 0);
+    $self->writeline("", markdown => 0);
     
     my @dirs;
     my @files;
@@ -175,15 +180,15 @@ sub _list_directory {
     
     # Show directories first
     for my $dir (@dirs) {
-        print "  ", $self->colorize("$dir/", 'USER'), "\n";
+        $self->writeline("  " . $self->colorize("$dir/", 'USER'), markdown => 0);
     }
     
     # Then files
     for my $file (@files) {
-        print "  $file\n";
+        $self->writeline("  $file", markdown => 0);
     }
     
-    print "\n";
+    $self->writeline("", markdown => 0);
     $self->display_system_message(scalar(@dirs) . " directories, " . scalar(@files) . " files");
 }
 

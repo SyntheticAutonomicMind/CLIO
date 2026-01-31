@@ -47,10 +47,12 @@ sub new {
     
     my $self = {
         chat => $args{chat} || croak "chat instance required",
-        session => $args{session},
-        api_manager => $args{api_manager},
         debug => $args{debug} // 0,
     };
+    
+    # Assign object references separately (hash literal assignment bug workaround)
+    $self->{session} = $args{session};
+    $self->{api_manager} = $args{api_manager};
     
     bless $self, $class;
     return $self;
@@ -60,6 +62,7 @@ sub new {
 sub display_command_header { shift->{chat}->display_command_header(@_) }
 sub display_system_message { shift->{chat}->display_system_message(@_) }
 sub display_error_message { shift->{chat}->display_error_message(@_) }
+sub writeline { shift->{chat}->writeline(@_) }
 sub colorize { shift->{chat}->colorize(@_) }
 
 =head2 handle_context_command(@args)
@@ -92,12 +95,12 @@ sub handle_context_command {
     }
     else {
         $self->display_error_message("Unknown action: $action");
-        print "\n";
-        print "Usage:\n";
-        print "  /context add <file>      - Add file to context\n";
-        print "  /context list            - List all context files\n";
-        print "  /context remove <file|#> - Remove file from context\n";
-        print "  /context clear           - Clear all context files\n";
+        $self->writeline("", markdown => 0);
+        $self->writeline("Usage:", markdown => 0);
+        $self->writeline("  /context add <file>      - Add file to context", markdown => 0);
+        $self->writeline("  /context list            - List all context files", markdown => 0);
+        $self->writeline("  /context remove <file|#> - Remove file from context", markdown => 0);
+        $self->writeline("  /context clear           - Clear all context files", markdown => 0);
     }
 }
 
@@ -177,12 +180,13 @@ sub _list_context_files {
     }
     
     unless (@files) {
-        print "\nNo files in context\n";
-        print "\n";
+        $self->writeline("", markdown => 0);
+        $self->writeline("No files in context", markdown => 0);
+        $self->writeline("", markdown => 0);
         return;
     }
     
-    print "\n";
+    $self->writeline("", markdown => 0);
     
     my $total_tokens = 0;
     for my $i (0 .. $#files) {
@@ -203,12 +207,12 @@ sub _list_context_files {
             $self->colorize($self->_format_tokens($tokens), 'THEME');
     }
     
-    print "\n";
-    print "-" x 55, "\n";
+    $self->writeline("", markdown => 0);
+    $self->writeline("-" x 55, markdown => 0);
     printf "Total: %d files, ~%s\n",
         scalar(@files),
         $self->_format_tokens($total_tokens);
-    print "\n";
+    $self->writeline("", markdown => 0);
 }
 
 =head2 _display_memory_stats()
@@ -284,18 +288,18 @@ sub _display_memory_stats {
         $self->_format_tokens($max_tokens),
         $usage_pct;
     
-    printf "%-24s %s\n", "Status:", $status;
+    $self->writeline(sprintf("%-24s %s", "Status:", $status), markdown => 0);
     
     if ($archived_messages > 0) {
-        print "\n";
-        print $self->colorize("YaRN Recall Available", 'DATA'), 
-              " - Use [RECALL:query=<search>] to search archived history\n";
+        $self->writeline("", markdown => 0);
+        $self->writeline($self->colorize("YaRN Recall Available", 'DATA') . 
+              " - Use [RECALL:query=<search>] to search archived history", markdown => 0);
     }
     
-    print "\n";
-    print "-" x 55, "\n";
-    print $self->colorize("CONTEXT FILES", 'DATA'), "\n";
-    print "-" x 55, "\n";
+    $self->writeline("", markdown => 0);
+    $self->writeline("-" x 55, markdown => 0);
+    $self->writeline($self->colorize("CONTEXT FILES", 'DATA'), markdown => 0);
+    $self->writeline("-" x 55, markdown => 0);
 }
 
 =head2 _clear_context_files()

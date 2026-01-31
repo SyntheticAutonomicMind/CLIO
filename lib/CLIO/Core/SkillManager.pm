@@ -113,6 +113,175 @@ Include:
         variables => ['code'],
         type => 'builtin',
         readonly => 1
+    },
+    design => {
+        name => 'design',
+        description => 'Create a Product Requirements Document (PRD)',
+        prompt => <<'DESIGN_PROMPT',
+You are acting as an **Application Architect** guiding the user through creating a Product Requirements Document (PRD).
+
+## CRITICAL: Use user_collaboration Tool
+
+**ALL questions and interactions MUST use the user_collaboration tool.**
+
+## Your Role
+
+Help the user define and document their project:
+- Understand their vision and goals
+- Make technical architecture decisions together
+- Document requirements clearly
+- Create a comprehensive PRD
+
+## Approach
+
+Use user_collaboration to gather information through conversational questions:
+
+1. **Vision:** "What problem does this project solve? Who is it for?"
+2. **Features:** "What are the core features? What's MVP vs. future?"
+3. **Technical:** "Any constraints? Preferred technologies? Deployment target?"
+4. **Architecture:** Based on their answers, propose architecture options
+5. **Details:** Dive into specific sections as needed
+
+## Output
+
+After gathering sufficient information, create `.clio/PRD.md` with:
+- Project Overview
+- Goals & Requirements
+- Technical Architecture
+- Feature Specifications
+- Development Phases
+- Testing Strategy
+
+Begin by asking about their project vision.
+DESIGN_PROMPT
+        variables => [],
+        type => 'builtin',
+        readonly => 1
+    },
+    'design-review' => {
+        name => 'design-review',
+        description => 'Review existing PRD and suggest improvements',
+        prompt => <<'REVIEW_PROMPT',
+You are acting as an **Application Architect** reviewing the user's existing PRD through the **user_collaboration protocol**.
+
+## CRITICAL: Use user_collaboration Tool
+
+**ALL questions and interactions MUST use the user_collaboration tool.** Do NOT ask questions in your regular responses.
+
+## Your Role
+
+You are reviewing the project design with fresh eyes, helping the user:
+- Identify gaps or inconsistencies
+- Suggest improvements based on best practices
+- Challenge assumptions that may no longer be valid
+- Ensure the architecture still serves the project goals
+- Update the PRD to reflect new insights
+
+## Approach
+
+### 1. Load and Analyze
+Read `.clio/PRD.md` using file_operations and analyze it critically.
+
+### 2. Present Findings
+Use user_collaboration to show the user your analysis and ask: "What's changed since this PRD was written?"
+
+### 3. Collaborative Review
+Based on their response, use user_collaboration for conversational review.
+
+### 4. Document Changes
+If any updates are needed, update `.clio/PRD.md` with the changes and create a changelog entry.
+
+Begin by reading the existing PRD.
+REVIEW_PROMPT
+        variables => [],
+        type => 'builtin',
+        readonly => 1
+    },
+    init => {
+        name => 'init',
+        description => 'Initialize CLIO for a project',
+        prompt => <<'INIT_PROMPT',
+I need you to initialize CLIO for this project. This is a comprehensive setup task that involves analyzing the codebase and creating custom project instructions.
+
+## Your Tasks:
+
+### 1. Fetch CLIO's Core Methodology
+Fetch these reference documents:
+- CLIO's instructions template: https://raw.githubusercontent.com/SyntheticAutonomicMind/CLIO/main/.clio/instructions.md
+- The Unbroken Method: https://raw.githubusercontent.com/SyntheticAutonomicMind/CLIO/main/ai-assisted/THE_UNBROKEN_METHOD.md
+
+### 2. Analyze This Codebase
+Do a thorough analysis of this project:
+- Programming language(s), frameworks, libraries
+- Project structure and architecture
+- Existing tests, CI/CD, documentation
+- Code style patterns and conventions
+
+### 3. Create Custom Project Instructions
+Create a `.clio/instructions.md` file tailored for THIS project, based on The Unbroken Method principles but customized for the specific needs.
+
+### 4. Set Up .gitignore
+Ensure `.gitignore` includes CLIO-specific entries.
+
+### 5. Initialize or Update Git
+Initialize git if needed, or add/commit the .clio/ directory.
+
+### 6. Report What You Did
+Provide a summary of the project analysis and setup completed.
+
+Begin now - use your tools to complete all these tasks.
+INIT_PROMPT
+        variables => [],
+        type => 'builtin',
+        readonly => 1
+    },
+    'init-with-prd' => {
+        name => 'init-with-prd',
+        description => 'Initialize CLIO for a project that has an existing PRD',
+        prompt => <<'INIT_PRD_PROMPT',
+I need you to initialize CLIO for this project. This is a comprehensive setup task that involves analyzing the codebase and creating custom project instructions.
+
+**IMPORTANT: This project has a PRD at `.clio/PRD.md`**
+
+When creating `.clio/instructions.md`, you MUST:
+1. Read `.clio/PRD.md` first using file_operations
+2. Extract key information from the PRD
+3. Incorporate this information into the instructions
+
+## Your Tasks:
+
+### 1. Fetch CLIO's Core Methodology
+Fetch these reference documents:
+- CLIO's instructions template: https://raw.githubusercontent.com/SyntheticAutonomicMind/CLIO/main/.clio/instructions.md
+- The Unbroken Method: https://raw.githubusercontent.com/SyntheticAutonomicMind/CLIO/main/ai-assisted/THE_UNBROKEN_METHOD.md
+
+### 2. Read the PRD
+Read `.clio/PRD.md` to understand the project goals and architecture.
+
+### 3. Analyze This Codebase
+Do a thorough analysis of this project:
+- Programming language(s), frameworks, libraries
+- Project structure and architecture
+- Existing tests, CI/CD, documentation
+- Code style patterns and conventions
+
+### 4. Create Custom Project Instructions
+Create a `.clio/instructions.md` file tailored for THIS project, incorporating both the PRD and The Unbroken Method principles.
+
+### 5. Set Up .gitignore
+Ensure `.gitignore` includes CLIO-specific entries.
+
+### 6. Initialize or Update Git
+Initialize git if needed, or add/commit the .clio/ directory.
+
+### 7. Report What You Did
+Provide a summary of the project analysis and setup completed.
+
+Begin now - use your tools to complete all these tasks.
+INIT_PRD_PROMPT
+        variables => [],
+        type => 'builtin',
+        readonly => 1
     }
 );
 

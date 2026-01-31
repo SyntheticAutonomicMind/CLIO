@@ -48,11 +48,13 @@ sub new {
     
     my $self = {
         chat => $args{chat} || croak "chat instance required",
-        config => $args{config},
-        session => $args{session},
-        ai_agent => $args{ai_agent},
         debug => $args{debug} // 0,
     };
+    
+    # Assign object references separately (hash literal assignment bug workaround)
+    $self->{config} = $args{config};
+    $self->{session} = $args{session};
+    $self->{ai_agent} = $args{ai_agent};
     
     bless $self, $class;
     return $self;
@@ -184,22 +186,22 @@ sub _display_api_help {
     $self->display_list_item("/api login - Authenticate with GitHub Copilot");
     $self->display_list_item("/api logout - Sign out from GitHub");
     
-    print "\n";
+    $self->writeline("", markdown => 0);
     $self->display_section_header("WEB SEARCH CONFIGURATION");
     $self->display_list_item("/api set serpapi_key <key> - Set SerpAPI key (serpapi.com)");
     $self->display_list_item("/api set search_engine <name> - Set engine (google|bing|duckduckgo)");
     $self->display_list_item("/api set search_provider <name> - Set provider (auto|serpapi|duckduckgo_direct)");
     
-    print "\n";
+    $self->writeline("", markdown => 0);
     $self->display_section_header("FLAGS");
-    print "  --session    Save setting to this session only (not global)\n";
-    print "\n";
+    $self->writeline("  --session    Save setting to this session only (not global)", markdown => 0);
+    $self->writeline("", markdown => 0);
     $self->display_section_header("EXAMPLES");
-    print "  /api set model claude-sonnet-4          # Global + session\n";
-    print "  /api set model gpt-4o --session         # This session only\n";
-    print "  /api set provider github_copilot        # Switch provider\n";
-    print "  /api set serpapi_key YOUR_KEY           # Enable reliable web search\n";
-    print "\n";
+    $self->writeline("  /api set model claude-sonnet-4          # Global + session", markdown => 0);
+    $self->writeline("  /api set model gpt-4o --session         # This session only", markdown => 0);
+    $self->writeline("  /api set provider github_copilot        # Switch provider", markdown => 0);
+    $self->writeline("  /api set serpapi_key YOUR_KEY           # Enable reliable web search", markdown => 0);
+    $self->writeline("", markdown => 0);
 }
 
 =head2 _display_api_config
@@ -249,12 +251,12 @@ sub _display_api_config {
         my $api_config = $state->{api_config} || {};
         
         if (%$api_config) {
-            print "\n";
+            $self->writeline("", markdown => 0);
             $self->display_section_header("SESSION OVERRIDES");
             for my $key (sort keys %$api_config) {
                 $self->display_key_value($key, $api_config->{$key});
             }
-            print "\n";
+            $self->writeline("", markdown => 0);
         }
     }
 }
@@ -270,9 +272,10 @@ sub _display_api_providers {
     
     require CLIO::Providers;
     
-    print "\n";
-    print $self->colorize("API PROVIDERS", 'DATA'), "\n";
-    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n\n";
+    $self->writeline("", markdown => 0);
+    $self->writeline($self->colorize("API PROVIDERS", 'DATA'), markdown => 0);
+    $self->writeline($self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), markdown => 0);
+    $self->writeline("", markdown => 0);
     
     # If specific provider requested, show details
     if ($provider_name) {
@@ -296,35 +299,35 @@ sub _display_api_providers {
     }
     
     # Table header
-    print $self->colorize("PROVIDER", 'LABEL');
-    print " " x ($max_provider_length - 8 + 4);
-    print $self->colorize("DEFAULT MODEL", 'LABEL');
-    print "\n";
-    print $self->colorize("─" x 77, 'DIM'), "\n";
+    my $header = $self->colorize("PROVIDER", 'LABEL') . 
+                 " " x ($max_provider_length - 8 + 4) .
+                 $self->colorize("DEFAULT MODEL", 'LABEL');
+    $self->writeline($header, markdown => 0);
+    $self->writeline($self->colorize("─" x 77, 'DIM'), markdown => 0);
     
     for my $prov_name (@providers) {
         my $prov = CLIO::Providers::get_provider($prov_name);
         next unless $prov;
         
         my $display_name = $prov->{name} || $prov_name;
+        my $model = $prov->{model} || 'N/A';
         
-        print "  ";
-        print $self->colorize(sprintf("%-" . $max_provider_length . "s", $display_name), 'PROMPT');
-        print "  ";
-        print $prov->{model} || 'N/A';
-        print "\n";
+        my $line = "  " . 
+                   $self->colorize(sprintf("%-" . $max_provider_length . "s", $display_name), 'PROMPT') .
+                   "  " . $model;
+        $self->writeline($line, markdown => 0);
     }
     
-    print "\n";
-    print $self->colorize("LEARN MORE", 'DATA'), "\n";
-    print $self->colorize("─" x 77, 'DIM'), "\n";
-    print "  /api providers <name>   - Show setup instructions for a specific provider\n";
-    print "\n";
-    print $self->colorize("EXAMPLES", 'DATA'), "\n";
-    print $self->colorize("─" x 77, 'DIM'), "\n";
-    print "  /api set provider github_copilot    - Setup GitHub Copilot\n";
-    print "  /api set provider openai            - Switch to OpenAI\n";
-    print "\n";
+    $self->writeline("", markdown => 0);
+    $self->writeline($self->colorize("LEARN MORE", 'DATA'), markdown => 0);
+    $self->writeline($self->colorize("─" x 77, 'DIM'), markdown => 0);
+    $self->writeline("  /api providers <name>   - Show setup instructions for a specific provider", markdown => 0);
+    $self->writeline("", markdown => 0);
+    $self->writeline($self->colorize("EXAMPLES", 'DATA'), markdown => 0);
+    $self->writeline($self->colorize("─" x 77, 'DIM'), markdown => 0);
+    $self->writeline("  /api set provider github_copilot    - Setup GitHub Copilot", markdown => 0);
+    $self->writeline("  /api set provider openai            - Switch to OpenAI", markdown => 0);
+    $self->writeline("", markdown => 0);
 }
 
 =head2 _show_provider_details
@@ -342,73 +345,74 @@ sub _show_provider_details {
     
     unless ($prov) {
         $self->display_error_message("Provider not found: $provider_name");
-        print "Use '/api providers' to see available providers\n";
+        $self->writeline("Use '/api providers' to see available providers", markdown => 0);
         return;
     }
     
     my $display_name = $prov->{name} || $provider_name;
     
-    print "\n";
-    print $self->colorize($display_name, 'DATA'), "\n";
-    print $self->colorize("─" x 90, 'DIM'), "\n\n";
+    $self->writeline("", markdown => 0);
+    $self->writeline($self->colorize($display_name, 'DATA'), markdown => 0);
+    $self->writeline($self->colorize("─" x 90, 'DIM'), markdown => 0);
+    $self->writeline("", markdown => 0);
     
     # Basic information
-    print $self->colorize("OVERVIEW", 'LABEL'), "\n";
-    printf "  ID:          %s\n", $provider_name;
-    printf "  Model:       %s\n", $prov->{model} || 'N/A';
-    printf "  API Base:    %s\n", $prov->{api_base} || '[not specified]';
+    $self->writeline($self->colorize("OVERVIEW", 'LABEL'), markdown => 0);
+    $self->writeline(sprintf("  ID:          %s", $provider_name), markdown => 0);
+    $self->writeline(sprintf("  Model:       %s", $prov->{model} || 'N/A'), markdown => 0);
+    $self->writeline(sprintf("  API Base:    %s", $prov->{api_base} || '[not specified]'), markdown => 0);
     
     # Authentication
     my $auth = $prov->{requires_auth} || 'none';
     my $auth_text = $self->_format_auth_requirement($auth);
-    print "\n";
-    print $self->colorize("AUTHENTICATION", 'LABEL'), "\n";
-    printf "  Method:      %s\n", $auth_text;
+    $self->writeline("", markdown => 0);
+    $self->writeline($self->colorize("AUTHENTICATION", 'LABEL'), markdown => 0);
+    $self->writeline(sprintf("  Method:      %s", $auth_text), markdown => 0);
     
     if ($auth eq 'copilot') {
-        print "\n";
-        print $self->colorize("  Setup Steps", 'PROMPT'), "\n";
-        print "    1. Run: /api login\n";
-        print "    2. Follow the browser authentication flow\n";
-        print "    3. Token will be stored securely\n";
+        $self->writeline("", markdown => 0);
+        $self->writeline($self->colorize("  Setup Steps", 'PROMPT'), markdown => 0);
+        $self->writeline("    1. Run: /api login", markdown => 0);
+        $self->writeline("    2. Follow the browser authentication flow", markdown => 0);
+        $self->writeline("    3. Token will be stored securely", markdown => 0);
     } elsif ($auth eq 'apikey') {
-        print "\n";
-        print $self->colorize("  Setup Steps", 'PROMPT'), "\n";
-        print "    1. Obtain API key from the provider website\n";
-        print "    2. Set it with: /api set key <your-api-key>\n";
-        print "    3. Key is stored globally (not in session)\n";
+        $self->writeline("", markdown => 0);
+        $self->writeline($self->colorize("  Setup Steps", 'PROMPT'), markdown => 0);
+        $self->writeline("    1. Obtain API key from the provider website", markdown => 0);
+        $self->writeline("    2. Set it with: /api set key <your-api-key>", markdown => 0);
+        $self->writeline("    3. Key is stored globally (not in session)", markdown => 0);
     } elsif ($auth eq 'none') {
-        print "\n";
-        print $self->colorize("  Status", 'SUCCESS'), "\n";
-        print "    Ready to use - no authentication needed\n";
+        $self->writeline("", markdown => 0);
+        $self->writeline($self->colorize("  Status", 'SUCCESS'), markdown => 0);
+        $self->writeline("    Ready to use - no authentication needed", markdown => 0);
     }
     
     # Capabilities
-    print "\n";
-    print $self->colorize("CAPABILITIES", 'LABEL'), "\n";
+    $self->writeline("", markdown => 0);
+    $self->writeline($self->colorize("CAPABILITIES", 'LABEL'), markdown => 0);
     my $tools_str = $prov->{supports_tools} ? "Yes" : "No";
     my $stream_str = $prov->{supports_streaming} ? "Yes" : "No";
-    printf "  Functions:   %s (tool calling)\n", $tools_str;
-    printf "  Streaming:   %s\n", $stream_str;
+    $self->writeline(sprintf("  Functions:   %s (tool calling)", $tools_str), markdown => 0);
+    $self->writeline(sprintf("  Streaming:   %s", $stream_str), markdown => 0);
     
     # Quick start
-    print "\n";
-    print $self->colorize("QUICK START", 'LABEL'), "\n";
-    print "  1. Switch to this provider:\n";
-    print "     /api set provider $provider_name\n";
-    print "\n";
+    $self->writeline("", markdown => 0);
+    $self->writeline($self->colorize("QUICK START", 'LABEL'), markdown => 0);
+    $self->writeline("  1. Switch to this provider:", markdown => 0);
+    $self->writeline("     /api set provider $provider_name", markdown => 0);
+    $self->writeline("", markdown => 0);
     if ($auth eq 'apikey' || $auth eq 'copilot') {
-        print "  2. Authenticate (if not done already):\n";
-        print "     /api login\n";
-        print "\n";
-        print "  3. Verify setup:\n";
-        print "     /api show\n";
+        $self->writeline("  2. Authenticate (if not done already):", markdown => 0);
+        $self->writeline("     /api login", markdown => 0);
+        $self->writeline("", markdown => 0);
+        $self->writeline("  3. Verify setup:", markdown => 0);
+        $self->writeline("     /api show", markdown => 0);
     } else {
-        print "  2. Verify setup:\n";
-        print "     /api show\n";
+        $self->writeline("  2. Verify setup:", markdown => 0);
+        $self->writeline("     /api show", markdown => 0);
     }
     
-    print "\n";
+    $self->writeline("", markdown => 0);
 }
 
 =head2 _format_auth_requirement
@@ -439,7 +443,7 @@ sub _handle_api_set {
     
     unless ($setting) {
         $self->display_error_message("Usage: /api set <setting> <value>");
-        print "Settings: model, provider, base, key, serpapi_key, search_engine, search_provider\n";
+        $self->writeline("Settings: model, provider, base, key, serpapi_key, search_engine, search_provider", markdown => 0);
         return;
     }
     
@@ -553,7 +557,7 @@ sub _handle_api_set {
     }
     else {
         $self->display_error_message("Unknown setting: $setting");
-        print "Valid settings: model, provider, base, key, serpapi_key, search_engine, search_provider\n";
+        $self->writeline("Valid settings: model, provider, base, key, serpapi_key, search_engine, search_provider", markdown => 0);
     }
 }
 
@@ -624,7 +628,7 @@ sub _check_github_auth {
     my $gh_auth = CLIO::Core::GitHubAuth->new(debug => $self->{debug});
     
     unless ($gh_auth->is_authenticated()) {
-        print "\n";
+        $self->writeline("", markdown => 0);
         $self->display_system_message("GitHub Copilot requires authentication");
         print $self->colorize("  Would you like to login now? [Y/n]: ", 'PROMPT');
         my $response = <STDIN>;
@@ -660,14 +664,14 @@ sub handle_login_command {
         return;
     }
     
-    print "\n";
-    print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
-    print $self->colorize("GITHUB COPILOT AUTHENTICATION", 'DATA'), "\n";
-    print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
-    print "\n";
+    $self->writeline("", markdown => 0);
+    $self->writeline("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", markdown => 0);
+    $self->writeline($self->colorize("GITHUB COPILOT AUTHENTICATION", 'DATA'), markdown => 0);
+    $self->writeline("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", markdown => 0);
+    $self->writeline("", markdown => 0);
     
     # Start device flow
-    print $self->colorize("Step 1:", 'PROMPT'), " Requesting device code from GitHub...\n";
+    $self->writeline($self->colorize("Step 1:", 'PROMPT') . " Requesting device code from GitHub...", markdown => 0);
     
     my $device_data;
     eval {
@@ -680,19 +684,20 @@ sub handle_login_command {
     }
     
     # Display verification instructions
-    print "\n";
-    print $self->colorize("Step 2:", 'PROMPT'), " Authorize in your browser\n\n";
-    print "  1. Visit: ", $self->colorize($device_data->{verification_uri}, 'USER'), "\n";
-    print "  2. Enter code: ", $self->colorize($device_data->{user_code}, 'DATA'), "\n";
-    print "\n";
+    $self->writeline("", markdown => 0);
+    $self->writeline($self->colorize("Step 2:", 'PROMPT') . " Authorize in your browser", markdown => 0);
+    $self->writeline("", markdown => 0);
+    $self->writeline("  1. Visit: " . $self->colorize($device_data->{verification_uri}, 'USER'), markdown => 0);
+    $self->writeline("  2. Enter code: " . $self->colorize($device_data->{user_code}, 'DATA'), markdown => 0);
+    $self->writeline("", markdown => 0);
+    # Progress indicator - needs immediate output
     print "  Waiting for authorization";
     
     # Poll for token with visual feedback
     my $github_token;
     
-    print "\n  ";
-    print $self->colorize("Waiting for authorization...", 'DIM');
-    print " (this may take a few minutes)\n  ";
+    # Progress message - needs immediate output without newline handling
+    print "\n  " . $self->colorize("Waiting for authorization...", 'DIM') . " (this may take a few minutes)\n  ";
     
     eval {
         $github_token = $auth->poll_for_token(
@@ -702,21 +707,22 @@ sub handle_login_command {
     };
     
     if ($@) {
-        print "\n";
+        $self->writeline("", markdown => 0);
         $self->display_error_message("Authentication failed: $@");
         return;
     }
     
     unless ($github_token) {
-        print "\n";
+        $self->writeline("", markdown => 0);
         $self->display_error_message("Authentication timed out");
         return;
     }
     
-    print $self->colorize("", 'PROMPT'), " Authorized!\n\n";
+    $self->writeline($self->colorize("✓", 'PROMPT') . " Authorized!", markdown => 0);
+    $self->writeline("", markdown => 0);
     
     # Exchange for Copilot token
-    print $self->colorize("Step 3:", 'PROMPT'), " Exchanging for Copilot token...\n";
+    $self->writeline($self->colorize("Step 3:", 'PROMPT') . " Exchanging for Copilot token...", markdown => 0);
     
     my $copilot_token;
     eval {
@@ -729,13 +735,14 @@ sub handle_login_command {
     }
     
     if ($copilot_token) {
-        print "  ", $self->colorize("", 'PROMPT'), " Copilot token obtained\n\n";
+        $self->writeline("  " . $self->colorize("✓", 'PROMPT') . " Copilot token obtained", markdown => 0);
     } else {
-        print "  ", $self->colorize("[ ]", 'DIM'), " Copilot token unavailable (will use GitHub token directly)\n\n";
+        $self->writeline("  " . $self->colorize("[ ]", 'DIM') . " Copilot token unavailable (will use GitHub token directly)", markdown => 0);
     }
+    $self->writeline("", markdown => 0);
     
     # Save tokens
-    print $self->colorize("Step 4:", 'PROMPT'), " Saving tokens...\n";
+    $self->writeline($self->colorize("Step 4:", 'PROMPT') . " Saving tokens...", markdown => 0);
     
     eval {
         $auth->save_tokens($github_token, $copilot_token);
@@ -746,13 +753,14 @@ sub handle_login_command {
         return;
     }
     
-    print "  ", $self->colorize("", 'PROMPT'), " Tokens saved to ~/.clio/github_tokens.json\n\n";
+    $self->writeline("  " . $self->colorize("✓", 'PROMPT') . " Tokens saved to ~/.clio/github_tokens.json", markdown => 0);
+    $self->writeline("", markdown => 0);
     
     # Success!
-    print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
-    print $self->colorize("SUCCESS!", 'PROMPT'), "\n";
-    print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
-    print "\n";
+    $self->writeline("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", markdown => 0);
+    $self->writeline($self->colorize("SUCCESS!", 'PROMPT'), markdown => 0);
+    $self->writeline("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", markdown => 0);
+    $self->writeline("", markdown => 0);
     
     if ($copilot_token) {
         my $username = $copilot_token->{username} || 'unknown';
@@ -764,7 +772,7 @@ sub handle_login_command {
         $self->display_system_message("Authenticated with GitHub token");
         $self->display_system_message("Using GitHub token directly (Copilot endpoint unavailable)");
     }
-    print "\n";
+    $self->writeline("", markdown => 0);
     
     # Reload APIManager
     $self->_reinit_api_manager();

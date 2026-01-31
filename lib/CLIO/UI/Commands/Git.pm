@@ -45,9 +45,11 @@ sub new {
     
     my $self = {
         chat => $args{chat} || croak "chat instance required",
-        session => $args{session},
         debug => $args{debug} // 0,
     };
+    
+    # Assign object references separately (hash literal assignment bug workaround)
+    $self->{session} = $args{session};
     
     bless $self, $class;
     return $self;
@@ -59,6 +61,7 @@ sub display_section_header { shift->{chat}->display_section_header(@_) }
 sub display_list_item { shift->{chat}->display_list_item(@_) }
 sub display_system_message { shift->{chat}->display_system_message(@_) }
 sub display_error_message { shift->{chat}->display_error_message(@_) }
+sub writeline { shift->{chat}->writeline(@_) }
 sub display_success_message { shift->{chat}->display_success_message(@_) }
 sub colorize { shift->{chat}->colorize(@_) }
 
@@ -125,13 +128,13 @@ sub _display_git_help {
     $self->display_list_item("/git log [n] - Show recent commits (default: 10)");
     $self->display_list_item("/git commit [msg] - Stage and commit changes");
     
-    print "\n";
+    $self->writeline("", markdown => 0);
     $self->display_section_header("EXAMPLES");
-    print "  /git status                          # See changes\n";
-    print "  /git diff lib/CLIO/UI/Chat.pm        # Diff specific file\n";
-    print "  /git log 5                           # Last 5 commits\n";
-    print "  /git commit \"fix: resolve bug\"       # Commit with message\n";
-    print "\n";
+    $self->writeline("  /git status                          # See changes", markdown => 0);
+    $self->writeline("  /git diff lib/CLIO/UI/Chat.pm        # Diff specific file", markdown => 0);
+    $self->writeline("  /git log 5                           # Last 5 commits", markdown => 0);
+    $self->writeline("  /git commit \"fix: resolve bug\"       # Commit with message", markdown => 0);
+    $self->writeline("", markdown => 0);
 }
 
 =head2 handle_status_command
@@ -152,8 +155,10 @@ sub handle_status_command {
     }
     
     $self->display_command_header("GIT STATUS");
-    print $output;
-    print "\n";
+    for my $line (split /\n/, $output) {
+        $self->writeline($line, markdown => 0);
+    }
+    $self->writeline("", markdown => 0);
 }
 
 =head2 handle_diff_command
@@ -181,12 +186,14 @@ sub handle_diff_command {
         return;
     }
     
-    print "\n";
-    print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
+    $self->writeline("", markdown => 0);
+    $self->writeline("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", markdown => 0);
     my $header = "GIT DIFF" . ($file ? " - $file" : "");
     $self->display_command_header($header);
-    print $output;
-    print "\n";
+    for my $line (split /\n/, $output) {
+        $self->writeline($line, markdown => 0);
+    }
+    $self->writeline("", markdown => 0);
 }
 
 =head2 handle_gitlog_command
@@ -215,8 +222,10 @@ sub handle_gitlog_command {
     }
     
     $self->display_command_header("GIT LOG (last $count commits)");
-    print $output;
-    print "\n";
+    for my $line (split /\n/, $output) {
+        $self->writeline($line, markdown => 0);
+    }
+    $self->writeline("", markdown => 0);
 }
 
 =head2 handle_commit_command
@@ -246,7 +255,8 @@ sub handle_commit_command {
     
     # If no message provided, prompt for one
     unless ($message) {
-        print "\n";
+        $self->writeline("", markdown => 0);
+        # Interactive prompt - needs immediate output
         print $self->colorize("Enter commit message (empty to cancel):", 'PROMPT'), "\n";
         print "> ";
         $message = <STDIN>;
@@ -278,8 +288,10 @@ sub handle_commit_command {
     }
     
     $self->display_command_header("GIT COMMIT");
-    print $commit_output;
-    print "\n";
+    for my $line (split /\n/, $commit_output) {
+        $self->writeline($line, markdown => 0);
+    }
+    $self->writeline("", markdown => 0);
     
     $self->display_success_message("Changes committed successfully");
 }

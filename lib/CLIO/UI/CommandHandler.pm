@@ -75,11 +75,13 @@ sub new {
     
     my $self = {
         chat => $args{chat} || croak "chat instance required",
-        session => $args{session},
-        config => $args{config},
-        ai_agent => $args{ai_agent},
         debug => $args{debug} // 0,
     };
+    
+    # Assign object references separately (hash literal assignment bug workaround)
+    $self->{config} = $args{config};
+    $self->{session} = $args{session};
+    $self->{ai_agent} = $args{ai_agent};
     
     bless $self, $class;
     
