@@ -232,6 +232,7 @@ CLIO provides 35+ powerful slash commands organized by category. Type `/help` in
 |---------|---------|
 | `/session list` | List all saved sessions |
 | `/session switch <id>` | Resume a specific session |
+| `/session trim [days]` | Remove sessions older than N days (default: 30) |
 
 ### File & Git Operations
 | Command | Purpose |
@@ -262,6 +263,8 @@ CLIO provides 35+ powerful slash commands organized by category. Type `/help` in
 | `/memory` | View long-term memory patterns |
 | `/memory list [type]` | List discoveries, solutions, patterns |
 | `/memory store <type>` | Store new pattern (via AI) |
+| `/memory stats` | Show LTM statistics |
+| `/memory prune [days]` | Remove old/low-confidence entries |
 | `/memory clear` | Clear all patterns |
 
 ### Developer Tools

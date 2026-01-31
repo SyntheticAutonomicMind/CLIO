@@ -1978,7 +1978,7 @@ sub repaint_screen {
 
 =head2 pause
 
-Display pagination prompt and wait for keypress (PhotonBBS pattern)
+Display pagination prompt and wait for keypress (BBS-style prompt)
 
 =cut
 
@@ -1989,11 +1989,31 @@ sub pause {
     # Refresh terminal size before pagination (handle resize)
     $self->refresh_terminal_size();
     
-    # In streaming mode, don't try to navigate (content still arriving)
+    # Track if this is the first pagination prompt in the session
+    # Show a hint the first time to help users learn the controls
+    my $show_hint = !$self->{_pagination_hint_shown};
+    
+    my $total_pages = scalar(@{$self->{pages}}) || 1;
+    my $current = ($self->{page_index} || 0) + 1;
+    
+    # In streaming mode, simplified prompt (can't navigate)
     if ($streaming) {
-        my $prompt = "(Q)uit or press any key to continue: ";
-        print "\n";  # Ensure prompt is on its own line
-        print $self->colorize($prompt, 'THEME');
+        # Show hint on first pagination
+        if ($show_hint) {
+            print $self->colorize("═══", 'DIM');
+            print $self->colorize("[ Tip: Q quit · any key more ]", 'DATA');
+            print $self->colorize("═══", 'DIM');
+            print "\n";
+            $self->{_pagination_hint_shown} = 1;
+        }
+        
+        # Compact streaming prompt
+        my $prompt = $self->colorize("═══", 'DIM') .
+                     $self->colorize("[ $current ]", 'DATA') .
+                     $self->colorize("═══", 'DIM') .
+                     " " . $self->colorize("Q", 'USER') . " " .
+                     $self->colorize("▸", 'SUCCESS') . " ";
+        print $prompt;
         
         ReadMode('cbreak');
         my $key = ReadKey(0);
@@ -2006,15 +2026,27 @@ sub pause {
     }
     
     # Non-streaming mode: full arrow navigation
-    my $total_pages = scalar(@{$self->{pages}});
-    my $current = $self->{page_index} + 1;
-    
     while (1) {
-        # Display pause prompt with page info
-        my $prompt = $total_pages > 0 
-            ? "(Q)uit, ↑/↓ navigate, or press key [Page $current of $total_pages]: "
-            : "(Q)uit, (C)ontinue, or press any key: ";
-        print $self->colorize($prompt, 'THEME');
+        # Show hint on first pagination
+        if ($show_hint) {
+            print $self->colorize("═══", 'DIM');
+            print $self->colorize("[ Tip: ^/v pages · Q quit · any key more ]", 'DATA');
+            print $self->colorize("═══", 'DIM');
+            print "\n";
+            $self->{_pagination_hint_shown} = 1;
+            $show_hint = 0;  # Don't show again in this loop
+        }
+        
+        # Build BBS-style prompt
+        my $page_info = $self->colorize("[ $current/$total_pages ]", 'DATA');
+        my $nav_hint = ($total_pages > 1) ? $self->colorize("^v", 'USER') . " " : "";
+        my $quit_hint = $self->colorize("Q", 'USER');
+        my $ready = $self->colorize("▸", 'SUCCESS');
+        
+        my $prompt = $self->colorize("═══", 'DIM') . $page_info . 
+                     $self->colorize("═══", 'DIM') . " " . 
+                     $nav_hint . $quit_hint . " " . $ready . " ";
+        print $prompt;
         
         # Wait for keypress
         ReadMode('cbreak');
@@ -2032,15 +2064,18 @@ sub pause {
             if ($seq eq '[A' && $self->{page_index} > 0) {
                 # Up arrow - go to previous page
                 $self->{page_index}--;
+                $current = $self->{page_index} + 1;
                 $self->redraw_page();
                 next;  # Stay in pause loop
             }
             elsif ($seq eq '[B' && $self->{page_index} < $total_pages - 1) {
                 # Down arrow - go to next page
                 $self->{page_index}++;
+                $current = $self->{page_index} + 1;
                 $self->redraw_page();
                 next;  # Stay in pause loop
             }
+            # Unrecognized escape sequence - continue output
         }
         
         # Regular key handling - restore normal mode first
@@ -2105,51 +2140,134 @@ sub render_markdown {
 
 =head2 writeline
 
-Write a line with pagination support (with optional markdown rendering)
+Write a line with pagination support and automatic markdown rendering.
+
+This is the STANDARD output method for all CLIO output. All print statements
+in Commands modules should be migrated to use writeline for consistent
+pagination and markdown rendering.
+
+Arguments:
+- $text: Text to output (required)
+- %opts: Optional hash with:
+  - newline => 0|1 (default: 1) - append newline
+  - markdown => 0|1 (default: 1) - render markdown
+  - raw => 0|1 (default: 0) - skip all processing, direct print
+
+Returns: 1 to continue, 0 if user quit (pressed Q)
 
 =cut
 
 sub writeline {
-    my ($self, $text, $newline, $use_markdown) = @_;
-    $newline = 1 unless defined $newline;
-    $use_markdown = 0 unless defined $use_markdown;
+    my ($self, $text, %opts) = @_;
     
-    # Render markdown if requested and enabled
-    if ($use_markdown && $self->{enable_markdown}) {
-        $text = $self->{markdown_renderer}->render($text);
+    # Handle legacy positional args for backwards compatibility
+    # Old signature: writeline($text, $newline, $use_markdown)
+    if (!%opts && defined $_[2]) {
+        # Legacy call with positional args
+        $opts{newline} = $_[2];
+        $opts{markdown} = $_[3] if defined $_[3];
     }
     
-    print $text;
-    print "\n" if $newline;
+    # Defaults: newline on, markdown on
+    my $newline = exists $opts{newline} ? $opts{newline} : 1;
+    my $use_markdown = exists $opts{markdown} ? $opts{markdown} : 1;
+    my $raw = $opts{raw} || 0;
+    
+    # Check if pagination should be active
+    # Pagination is controlled by pagination_enabled flag OR force_paginate option
+    # This prevents pagination during tool execution while allowing it for user-facing output
+    my $should_paginate = $opts{force_paginate} || $self->{pagination_enabled};
+    
+    # Handle undef text gracefully
+    $text //= '';
+    
+    # Raw mode: direct print, no processing
+    if ($raw) {
+        print $text;
+        print "\n" if $newline;
+        return 1;
+    }
+    
+    # Render markdown if enabled (default: yes)
+    if ($use_markdown && $self->{enable_markdown} && length($text) > 0) {
+        $text = $self->render_markdown($text);
+    }
     
     # Skip pagination if not interactive (pipe mode, redirected, etc.)
     my $is_interactive = -t STDIN;
     
-    if ($newline && $is_interactive) {
-        # Buffer line for page navigation
-        push @{$self->{current_page}}, $text;
-        $self->{line_count}++;
+    # Split rendered text into actual lines (markdown can produce multiple lines)
+    # This ensures pagination counts VISUAL lines, not input lines
+    my @lines = split /\n/, $text, -1;  # -1 preserves trailing empty strings
+    
+    # If text doesn't end with newline and caller wants one, the last "line" gets a newline
+    # If text had multiple newlines, we print all those lines
+    my $last_idx = $#lines;
+    
+    for my $i (0 .. $last_idx) {
+        my $line = $lines[$i];
+        my $is_last = ($i == $last_idx);
+        my $print_newline = $is_last ? $newline : 1;  # All but last get newline, last gets caller's choice
         
-        if ($self->{line_count} >= $self->{terminal_height}) {
-            # Save current page to buffer
-            push @{$self->{pages}}, [@{$self->{current_page}}];
-            $self->{page_index} = scalar(@{$self->{pages}}) - 1;
+        # Check pagination BEFORE printing to prevent scrolling past content
+        # Only paginate when: interactive, pagination enabled, and outputting a line
+        if ($print_newline && $is_interactive && $should_paginate) {
+            my $pause_threshold = $self->{terminal_height} - 2;
             
-            my $response = $self->pause();
-            
-            if ($response eq 'Q') {
+            if ($self->{line_count} >= $pause_threshold) {
+                # Save current page to buffer before pausing
+                push @{$self->{pages}}, [@{$self->{current_page}}];
+                $self->{page_index} = scalar(@{$self->{pages}}) - 1;
+                
+                my $response = $self->pause();
+                
+                if ($response eq 'Q') {
+                    $self->{line_count} = 0;
+                    $self->{current_page} = [];
+                    return 0;  # Signal to stop output
+                }
+                
+                # Reset for next page
                 $self->{line_count} = 0;
                 $self->{current_page} = [];
-                return 0;  # Signal to stop output
             }
-            
-            # Reset for next page
-            $self->{line_count} = 0;
-            $self->{current_page} = [];
+        }
+        
+        # Now print the line
+        print $line;
+        print "\n" if $print_newline;
+        
+        # Track the line for page navigation (only when pagination active)
+        if ($print_newline && $is_interactive && $should_paginate) {
+            push @{$self->{current_page}}, $line;
+            $self->{line_count}++;
         }
     }
     
     return 1;  # Continue
+}
+
+=head2 writeln
+
+Alias for writeline with simpler signature. Outputs text with newline,
+auto-renders markdown, and supports pagination.
+
+=cut
+
+sub writeln {
+    my ($self, $text, %opts) = @_;
+    return $self->writeline($text, %opts);
+}
+
+=head2 blank
+
+Output a blank line with pagination tracking.
+
+=cut
+
+sub blank {
+    my ($self) = @_;
+    return $self->writeline('', markdown => 0);
 }
 
 =head2 redraw_page

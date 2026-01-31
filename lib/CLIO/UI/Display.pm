@@ -98,8 +98,9 @@ sub display_user_message {
         $display_message = $chat->render_markdown($message);
     }
     
-    # Display with role label
-    print $chat->colorize("YOU: ", 'USER'), $display_message, "\n";
+    # Display with role label using writeline (markdown already rendered above)
+    my $line = $chat->colorize("YOU: ", 'USER') . $display_message;
+    $chat->writeline($line, markdown => 0);
 }
 
 =head2 display_assistant_message($message)
@@ -131,8 +132,9 @@ sub display_assistant_message {
         $display_message = $chat->render_markdown($message);
     }
     
-    # Display with role label
-    print $chat->colorize("CLIO: ", 'ASSISTANT'), $display_message, "\n";
+    # Display with role label using writeline (markdown already rendered above)
+    my $line = $chat->colorize("CLIO: ", 'ASSISTANT') . $display_message;
+    $chat->writeline($line, markdown => 0);
 }
 
 =head2 display_system_message($message)
@@ -149,7 +151,8 @@ sub display_system_message {
     # Add to screen buffer
     $chat->add_to_buffer('system', $message);
     
-    print $chat->colorize("SYSTEM: ", 'SYSTEM'), $message, "\n";
+    my $line = $chat->colorize("SYSTEM: ", 'SYSTEM') . $message;
+    $chat->writeline($line, markdown => 0);
 }
 
 =head2 display_error_message($message)
@@ -166,7 +169,8 @@ sub display_error_message {
     # Add to screen buffer
     $chat->add_to_buffer('error', $message);
     
-    print $chat->colorize("ERROR: ", 'ERROR'), $message, "\n";
+    my $line = $chat->colorize("ERROR: ", 'ERROR') . $message;
+    $chat->writeline($line, markdown => 0);
 }
 
 =head2 display_success_message($message)
@@ -183,7 +187,8 @@ sub display_success_message {
     # Add to screen buffer
     $chat->add_to_buffer('success', $message);
     
-    print $chat->colorize("", 'success_message'), $message, "\n";
+    my $line = $chat->colorize("", 'success_message') . $message;
+    $chat->writeline($line, markdown => 0);
 }
 
 =head2 display_warning_message($message)
@@ -200,7 +205,8 @@ sub display_warning_message {
     # Add to screen buffer
     $chat->add_to_buffer('warning', $message);
     
-    print $chat->colorize("[WARN] ", 'warning_message'), $message, "\n";
+    my $line = $chat->colorize("[WARN] ", 'warning_message') . $message;
+    $chat->writeline($line, markdown => 0);
 }
 
 =head2 display_info_message($message)
@@ -217,7 +223,8 @@ sub display_info_message {
     # Add to screen buffer
     $chat->add_to_buffer('info', $message);
     
-    print $chat->colorize("[INFO] ", 'info_message'), $message, "\n";
+    my $line = $chat->colorize("[INFO] ", 'info_message') . $message;
+    $chat->writeline($line, markdown => 0);
 }
 
 =head2 display_command_header($text, $width)
@@ -232,9 +239,9 @@ sub display_command_header {
     
     my $chat = $self->{chat};
     
-    print "\n";
-    print $chat->colorize($text, 'command_header'), "\n";
-    print "\n";
+    $chat->writeline('', markdown => 0);
+    $chat->writeline($chat->colorize($text, 'command_header'), markdown => 0);
+    $chat->writeline('', markdown => 0);
 }
 
 =head2 display_section_header($text, $width)
@@ -249,7 +256,7 @@ sub display_section_header {
     
     my $chat = $self->{chat};
     
-    print $chat->colorize($text, 'command_subheader'), "\n";
+    $chat->writeline($chat->colorize($text, 'command_subheader'), markdown => 0);
 }
 
 =head2 display_key_value($key, $value, $key_width)
@@ -264,9 +271,10 @@ sub display_key_value {
     
     my $chat = $self->{chat};
     
-    printf "%-${key_width}s %s\n",
+    my $line = sprintf("%-${key_width}s %s",
         $chat->colorize($key . ":", 'command_label'),
-        $chat->colorize($value, 'command_value');
+        $chat->colorize($value, 'command_value'));
+    $chat->writeline($line, markdown => 0);
 }
 
 =head2 display_list_item($item, $num)
@@ -280,11 +288,13 @@ sub display_list_item {
     
     my $chat = $self->{chat};
     
+    my $line;
     if (defined $num) {
-        print $chat->colorize("  $num. ", 'command_label'), $item, "\n";
+        $line = $chat->colorize("  $num. ", 'command_label') . $item;
     } else {
-        print $chat->colorize("  • ", 'command_label'), $item, "\n";
+        $line = $chat->colorize("  • ", 'command_label') . $item;
     }
+    $chat->writeline($line, markdown => 0);
 }
 
 =head2 display_usage_summary()

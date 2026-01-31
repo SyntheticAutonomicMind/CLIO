@@ -636,4 +636,149 @@ sub list_patterns {
     return \@facts;
 }
 
+=head2 prune
+
+Prune old, low-confidence, or duplicate entries to keep LTM manageable.
+
+Arguments:
+- max_discoveries: Max number of discoveries to keep (default: 50)
+- max_solutions: Max number of problem-solutions to keep (default: 50)
+- max_patterns: Max number of code patterns to keep (default: 30)
+- max_workflows: Max number of workflows to keep (default: 20)
+- max_failures: Max number of failures to keep (default: 30)
+- min_confidence: Remove entries below this confidence (default: 0.3)
+- max_age_days: Remove entries older than this (default: 90)
+
+Returns: Hash with counts of entries removed per category
+
+    my $removed = $ltm->prune(max_discoveries => 30, min_confidence => 0.5);
+    print "Removed $removed->{discoveries} discoveries\n";
+
+=cut
+
+sub prune {
+    my ($self, %args) = @_;
+    
+    my $max_discoveries = $args{max_discoveries} // 50;
+    my $max_solutions = $args{max_solutions} // 50;
+    my $max_patterns = $args{max_patterns} // 30;
+    my $max_workflows = $args{max_workflows} // 20;
+    my $max_failures = $args{max_failures} // 30;
+    my $min_confidence = $args{min_confidence} // 0.3;
+    my $max_age_days = $args{max_age_days} // 90;
+    
+    my $cutoff_time = time() - ($max_age_days * 86400);
+    my %removed = (
+        discoveries => 0,
+        solutions => 0,
+        patterns => 0,
+        workflows => 0,
+        failures => 0,
+    );
+    
+    # Helper to filter array by age and confidence
+    my $filter_and_limit = sub {
+        my ($array, $limit, $has_confidence) = @_;
+        my @original = @$array;
+        my @filtered;
+        
+        for my $item (@original) {
+            my $timestamp = $item->{timestamp} || $item->{updated} || 0;
+            my $confidence = $item->{confidence} // 1.0;
+            
+            # Keep if: recent enough AND (no confidence field OR confidence above threshold)
+            if ($timestamp >= $cutoff_time) {
+                if (!$has_confidence || $confidence >= $min_confidence) {
+                    push @filtered, $item;
+                }
+            }
+        }
+        
+        # Sort by timestamp (newest first) and limit
+        @filtered = sort { 
+            ($b->{timestamp} || $b->{updated} || 0) <=> 
+            ($a->{timestamp} || $a->{updated} || 0) 
+        } @filtered;
+        
+        if (@filtered > $limit) {
+            @filtered = @filtered[0..$limit-1];
+        }
+        
+        return (\@filtered, scalar(@original) - scalar(@filtered));
+    };
+    
+    # Prune discoveries
+    my ($new_discoveries, $removed_discoveries) = $filter_and_limit->(
+        $self->{patterns}{discoveries}, $max_discoveries, 1
+    );
+    $self->{patterns}{discoveries} = $new_discoveries;
+    $removed{discoveries} = $removed_discoveries;
+    
+    # Prune problem_solutions
+    my ($new_solutions, $removed_solutions) = $filter_and_limit->(
+        $self->{patterns}{problem_solutions}, $max_solutions, 0
+    );
+    $self->{patterns}{problem_solutions} = $new_solutions;
+    $removed{solutions} = $removed_solutions;
+    
+    # Prune code_patterns
+    my ($new_patterns, $removed_patterns) = $filter_and_limit->(
+        $self->{patterns}{code_patterns}, $max_patterns, 1
+    );
+    $self->{patterns}{code_patterns} = $new_patterns;
+    $removed{patterns} = $removed_patterns;
+    
+    # Prune workflows
+    my ($new_workflows, $removed_workflows) = $filter_and_limit->(
+        $self->{patterns}{workflows}, $max_workflows, 0
+    );
+    $self->{patterns}{workflows} = $new_workflows;
+    $removed{workflows} = $removed_workflows;
+    
+    # Prune failures
+    my ($new_failures, $removed_failures) = $filter_and_limit->(
+        $self->{patterns}{failures}, $max_failures, 0
+    );
+    $self->{patterns}{failures} = $new_failures;
+    $removed{failures} = $removed_failures;
+    
+    # Update metadata
+    $self->{metadata}{last_updated} = time();
+    $self->{metadata}{last_pruned} = time();
+    
+    my $total = $removed{discoveries} + $removed{solutions} + $removed{patterns} + 
+                $removed{workflows} + $removed{failures};
+    
+    print STDERR "[DEBUG][LTM] Pruned $total entries\n" if should_log('DEBUG') && $total > 0;
+    
+    return \%removed;
+}
+
+=head2 get_stats
+
+Get statistics about the LTM database
+
+Returns: Hash with counts and metadata
+
+    my $stats = $ltm->get_stats();
+    print "Discoveries: $stats->{discoveries}\n";
+
+=cut
+
+sub get_stats {
+    my ($self) = @_;
+    
+    return {
+        discoveries => scalar(@{$self->{patterns}{discoveries}}),
+        solutions => scalar(@{$self->{patterns}{problem_solutions}}),
+        patterns => scalar(@{$self->{patterns}{code_patterns}}),
+        workflows => scalar(@{$self->{patterns}{workflows}}),
+        failures => scalar(@{$self->{patterns}{failures}}),
+        context_rules => scalar(keys %{$self->{patterns}{context_rules}}),
+        created => $self->{metadata}{created},
+        last_updated => $self->{metadata}{last_updated},
+        last_pruned => $self->{metadata}{last_pruned},
+    };
+}
+
 1;

@@ -2,7 +2,8 @@
 
 use strict;
 use warnings;
-use lib 'lib';
+use FindBin;
+use lib "$FindBin::Bin/../../lib";
 use CLIO::Session::TodoStore;
 use File::Temp qw(tempdir);
 use File::Path qw(remove_tree);

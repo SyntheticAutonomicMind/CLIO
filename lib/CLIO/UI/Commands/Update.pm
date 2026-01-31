@@ -57,6 +57,7 @@ sub display_command_header { shift->{chat}->display_command_header(@_) }
 sub display_info_message { shift->{chat}->display_info_message(@_) }
 sub display_success_message { shift->{chat}->display_success_message(@_) }
 sub display_error_message { shift->{chat}->display_error_message(@_) }
+sub writeline { shift->{chat}->writeline(@_) }
 sub display_list_item { shift->{chat}->display_list_item(@_) }
 sub colorize { shift->{chat}->colorize(@_) }
 
@@ -111,15 +112,15 @@ sub handle_update_command {
     }
     else {
         $self->display_error_message("Unknown subcommand: $subcmd");
-        print "\n";
-        print "Available commands:\n";
+        $self->writeline("", markdown => 0);
+        $self->writeline("Available commands:", markdown => 0);
         $self->display_list_item("/update - Show current version and update help");
         $self->display_list_item("/update status - Show current version and update status");
         $self->display_list_item("/update check - Check for available updates");
         $self->display_list_item("/update list - List all available versions");
         $self->display_list_item("/update install - Install the latest version");
         $self->display_list_item("/update switch <version> - Switch to a specific version");
-        print "\n";
+        $self->writeline("", markdown => 0);
     }
 }
 
@@ -134,7 +135,7 @@ sub _check_updates {
     
     $self->display_command_header("UPDATE CHECK");
     $self->display_info_message("Checking for updates...");
-    print "\n";
+    $self->writeline("", markdown => 0);
     
     my $result = $updater->check_for_updates();
     
@@ -146,18 +147,18 @@ sub _check_updates {
     my $current = $result->{current_version} || 'unknown';
     my $latest = $result->{latest_version} || 'unknown';
     
-    print "Current version: " . $self->colorize($current, 'command_value') . "\n";
-    print "Latest version:  " . $self->colorize($latest, 'command_value') . "\n";
-    print "\n";
+    $self->writeline("Current version: " . $self->colorize($current, 'command_value'), markdown => 0);
+    $self->writeline("Latest version:  " . $self->colorize($latest, 'command_value'), markdown => 0);
+    $self->writeline("", markdown => 0);
     
     if ($result->{update_available}) {
         $self->display_success_message("Update available: $latest");
-        print "\n";
-        print "Run " . $self->colorize('/update install', 'command') . " to install\n";
+        $self->writeline("", markdown => 0);
+        $self->writeline("Run " . $self->colorize('/update install', 'command') . " to install", markdown => 0);
     } else {
         $self->display_success_message("You are running the latest version");
     }
-    print "\n";
+    $self->writeline("", markdown => 0);
 }
 
 =head2 _install_update($updater)
@@ -183,9 +184,9 @@ sub _install_update {
         return;
     }
     
-    print "Current version: " . $self->colorize($check_result->{current_version}, 'muted') . "\n";
-    print "New version:     " . $self->colorize($check_result->{latest_version}, 'command_value') . "\n";
-    print "\n";
+    $self->writeline("Current version: " . $self->colorize($check_result->{current_version}, 'muted'), markdown => 0);
+    $self->writeline("New version:     " . $self->colorize($check_result->{latest_version}, 'command_value'), markdown => 0);
+    $self->writeline("", markdown => 0);
     
     print "Install update? [y/N]: ";
     my $confirm = <STDIN>;
@@ -196,26 +197,26 @@ sub _install_update {
         return;
     }
     
-    print "\n";
+    $self->writeline("", markdown => 0);
     $self->display_info_message("Installing update...");
-    print "\n";
+    $self->writeline("", markdown => 0);
     
     my $result = $updater->install_latest();
     
     if ($result->{success}) {
         $self->display_success_message("Update installed successfully!");
-        print "\n";
+        $self->writeline("", markdown => 0);
         $self->display_info_message("Please restart CLIO to use the new version");
-        print "\n";
-        print "Run: " . $self->colorize('./clio', 'command') . "\n";
+        $self->writeline("", markdown => 0);
+        $self->writeline("Run: " . $self->colorize('./clio', 'command'), markdown => 0);
     } else {
         $self->display_error_message("Update installation failed: " . ($result->{error} || 'Unknown error'));
-        print "\n";
+        $self->writeline("", markdown => 0);
         if ($result->{rollback}) {
             $self->display_info_message("Previous version restored (rollback successful)");
         }
     }
-    print "\n";
+    $self->writeline("", markdown => 0);
 }
 
 =head2 _show_status($updater)
@@ -230,29 +231,29 @@ sub _show_status {
     $self->display_command_header("UPDATE STATUS");
     
     my $current = $updater->get_current_version();
-    print "Current version: " . $self->colorize($current, 'command_value') . "\n";
+    $self->writeline("Current version: " . $self->colorize($current, 'command_value'), markdown => 0);
     
     my $cache_info = $updater->get_available_update();
     
     if (!$cache_info->{cached}) {
-        print "\n";
+        $self->writeline("", markdown => 0);
         $self->display_info_message("No update information cached");
-        print "\n";
-        print "Run " . $self->colorize('/update check', 'command') . " to check for updates\n";
+        $self->writeline("", markdown => 0);
+        $self->writeline("Run " . $self->colorize('/update check', 'command') . " to check for updates", markdown => 0);
     }
     elsif ($cache_info->{up_to_date}) {
-        print "Latest version:  " . $self->colorize($cache_info->{version}, 'command_value') . "\n";
-        print "\n";
+        $self->writeline("Latest version:  " . $self->colorize($cache_info->{version}, 'command_value'), markdown => 0);
+        $self->writeline("", markdown => 0);
         $self->display_success_message("You are running the latest version");
     }
     else {
-        print "Latest version:  " . $self->colorize($cache_info->{version}, 'success') . "\n";
-        print "\n";
+        $self->writeline("Latest version:  " . $self->colorize($cache_info->{version}, 'success'), markdown => 0);
+        $self->writeline("", markdown => 0);
         $self->display_success_message("Update available!");
-        print "\n";
-        print "Run " . $self->colorize('/update install', 'command') . " to install\n";
+        $self->writeline("", markdown => 0);
+        $self->writeline("Run " . $self->colorize('/update install', 'command') . " to install", markdown => 0);
     }
-    print "\n";
+    $self->writeline("", markdown => 0);
 }
 
 =head2 _list_versions($updater)
@@ -266,7 +267,7 @@ sub _list_versions {
     
     $self->display_command_header("AVAILABLE VERSIONS");
     $self->display_info_message("Fetching releases from GitHub...");
-    print "\n";
+    $self->writeline("", markdown => 0);
     
     my $releases = $updater->get_all_releases();
     
@@ -277,8 +278,10 @@ sub _list_versions {
     
     my $current = $updater->get_current_version();
     
-    print "Current version: " . $self->colorize($current, 'command_value') . "\n\n";
-    print "Available versions:\n\n";
+    $self->writeline("Current version: " . $self->colorize($current, 'command_value'), markdown => 0);
+    $self->writeline("", markdown => 0);
+    $self->writeline("Available versions:", markdown => 0);
+    $self->writeline("", markdown => 0);
     
     my $count = 0;
     for my $release (@$releases) {
@@ -297,22 +300,23 @@ sub _list_versions {
             $marker .= ' [pre-release]';
         }
         
-        print "  " . $self->colorize($version, $version_color);
-        print $self->colorize($marker, 'muted') if $marker;
-        print "  " . $self->colorize($date, 'muted') if $date;
-        print "\n";
+        my $line = "  " . $self->colorize($version, $version_color);
+        $line .= $self->colorize($marker, 'muted') if $marker;
+        $line .= "  " . $self->colorize($date, 'muted') if $date;
+        $self->writeline($line, markdown => 0);
         
         $count++;
         last if $count >= 20;
     }
     
     if (scalar(@$releases) > 20) {
-        print "\n  " . $self->colorize("... and " . (scalar(@$releases) - 20) . " more", 'muted') . "\n";
+        $self->writeline("", markdown => 0);
+        $self->writeline("  " . $self->colorize("... and " . (scalar(@$releases) - 20) . " more", 'muted'), markdown => 0);
     }
     
-    print "\n";
-    print "Use " . $self->colorize('/update switch <version>', 'command') . " to switch to a specific version\n";
-    print "\n";
+    $self->writeline("", markdown => 0);
+    $self->writeline("Use " . $self->colorize('/update switch <version>', 'command') . " to switch to a specific version", markdown => 0);
+    $self->writeline("", markdown => 0);
 }
 
 =head2 _switch_version($updater, $target_version)
@@ -326,11 +330,11 @@ sub _switch_version {
     
     unless ($target_version) {
         $self->display_error_message("Version number required");
-        print "\n";
-        print "Usage: " . $self->colorize('/update switch <version>', 'command') . "\n";
-        print "Example: " . $self->colorize('/update switch 20260125.8', 'command') . "\n";
-        print "\n";
-        print "Use " . $self->colorize('/update list', 'command') . " to see available versions\n";
+        $self->writeline("", markdown => 0);
+        $self->writeline("Usage: " . $self->colorize('/update switch <version>', 'command'), markdown => 0);
+        $self->writeline("Example: " . $self->colorize('/update switch 20260125.8', 'command'), markdown => 0);
+        $self->writeline("", markdown => 0);
+        $self->writeline("Use " . $self->colorize('/update list', 'command') . " to see available versions", markdown => 0);
         return;
     }
     
@@ -340,20 +344,21 @@ sub _switch_version {
     my $release = $updater->get_release_by_version($target_version);
     
     unless ($release) {
-        print "\n";
+        $self->writeline("", markdown => 0);
         $self->display_error_message("Version $target_version not found on GitHub");
-        print "\n";
-        print "Use " . $self->colorize('/update list', 'command') . " to see available versions\n";
+        $self->writeline("", markdown => 0);
+        $self->writeline("Use " . $self->colorize('/update list', 'command') . " to see available versions", markdown => 0);
         return;
     }
     
     my $current = $updater->get_current_version();
     
-    print "\n";
-    print "Current version: " . $self->colorize($current, 'muted') . "\n";
-    print "Target version:  " . $self->colorize($target_version, 'command_value') . "\n";
-    print "\n";
+    $self->writeline("", markdown => 0);
+    $self->writeline("Current version: " . $self->colorize($current, 'muted'), markdown => 0);
+    $self->writeline("Target version:  " . $self->colorize($target_version, 'command_value'), markdown => 0);
+    $self->writeline("", markdown => 0);
     
+    # Interactive prompt - needs immediate output
     print "Switch to version $target_version? [y/N]: ";
     my $confirm = <STDIN>;
     chomp $confirm if $confirm;
@@ -363,21 +368,21 @@ sub _switch_version {
         return;
     }
     
-    print "\n";
+    $self->writeline("", markdown => 0);
     $self->display_info_message("Switching to version $target_version...");
-    print "\n";
+    $self->writeline("", markdown => 0);
     
     my $result = $updater->switch_to_version($target_version);
     
     if ($result->{success}) {
         $self->display_success_message("Switched to version $target_version!");
-        print "\n";
+        $self->writeline("", markdown => 0);
         $self->display_info_message("Please restart CLIO to use the new version");
-        print "\n";
+        $self->writeline("", markdown => 0);
     } else {
         $self->display_error_message("Switch failed: " . ($result->{error} || 'Unknown error'));
     }
-    print "\n";
+    $self->writeline("", markdown => 0);
 }
 
 1;

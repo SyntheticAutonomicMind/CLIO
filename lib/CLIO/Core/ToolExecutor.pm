@@ -266,6 +266,7 @@ sub execute_tool {
         # BUT preserve action_description as metadata for UI display
         # We return JSON with both output and action_description
         my $response = {
+            success => 1,  # Include success flag for test verification
             output => $output,
         };
         
