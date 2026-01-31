@@ -1146,6 +1146,36 @@ sub display_list_item {
     return $self->{display}->display_list_item(@args);
 }
 
+=head2 display_command_row
+
+Display a command with description (for help output)
+
+Arguments:
+- $command: Command string (e.g., "/cmd <args>")
+- $description: Description text
+- $cmd_width: Optional command column width (default: 25)
+
+=cut
+
+sub display_command_row {
+    my ($self, @args) = @_;
+    return $self->{display}->display_command_row(@args);
+}
+
+=head2 display_tip
+
+Display a tip/hint line with muted styling
+
+Arguments:
+- $text: Tip text
+
+=cut
+
+sub display_tip {
+    my ($self, @args) = @_;
+    return $self->{display}->display_tip(@args);
+}
+
 =head2 request_collaboration
 
 Request user input mid-execution for agent collaboration.
@@ -1310,8 +1340,8 @@ sub request_collaboration {
 
 =head2 display_paginated_list
 
-Display a list with pagination (15 items per page).
-User can navigate with [N]ext, [P]revious, [Q]uit.
+Display a list with BBS-style pagination.
+Uses unified pagination prompt: arrows to navigate, Q to quit, any key for more.
 
 Arguments:
 - $title: Title to display
@@ -1340,6 +1370,7 @@ sub display_paginated_list {
     
     my $total = scalar @$items;
     my $total_pages = int(($total + $page_size - 1) / $page_size);
+    $total_pages = 1 if $total_pages < 1;
     my $current_page = 0;
     
     if ($total == 0) {
@@ -1370,11 +1401,11 @@ sub display_paginated_list {
         return;
     }
     
-    # Put terminal in raw mode for single-key input
-    ReadMode('cbreak');
-    
     # Switch to alternate screen buffer for clean pagination
     print "\e[?1049h";  # Enter alternate screen buffer
+    
+    # Track if hint has been shown
+    my $show_hint = !$self->{_pagination_hint_shown};
     
     while (1) {
         # Calculate page bounds
@@ -1400,35 +1431,62 @@ sub display_paginated_list {
         print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
         
         # Navigation info
-        my $showing = sprintf("Showing %d-%d of %d (Page %d/%d)", 
-            $start + 1, $end + 1, $total, $current_page + 1, $total_pages);
+        my $showing = sprintf("Showing %d-%d of %d", $start + 1, $end + 1, $total);
         print $self->colorize($showing, 'DIM'), "\n";
         
-        # Navigation prompt
-        my @nav_options;
-        push @nav_options, $self->colorize("[N]ext", 'PROMPT') if $current_page < $total_pages - 1;
-        push @nav_options, $self->colorize("[P]revious", 'PROMPT') if $current_page > 0;
-        push @nav_options, $self->colorize("[Q]uit", 'PROMPT');
+        # Show hint on first pagination (unified BBS-style)
+        if ($show_hint) {
+            print $self->{theme_mgr}->get_pagination_hint(0) . "\n";  # full hint with arrows
+            $self->{_pagination_hint_shown} = 1;
+            $show_hint = 0;
+        }
         
-        print join(" | ", @nav_options), ": ";
+        # BBS-style pagination prompt (unified with pause())
+        my $current = $current_page + 1;
+        my $prompt = $self->{theme_mgr}->get_pagination_prompt($current, $total_pages, ($total_pages > 1));
+        print $prompt;
         
         # Get user input (single key)
+        ReadMode('cbreak');
         my $key = ReadKey(0);
-        print "\n";
         
-        # Handle navigation
-        if ($key =~ /^[nN]$/ && $current_page < $total_pages - 1) {
-            $current_page++;
+        # Handle arrow keys (escape sequences)
+        if ($key eq "\e") {
+            my $seq = ReadKey(0) . ReadKey(0);
+            ReadMode('normal');
+            
+            # Clear prompt line
+            print "\e[2K\e[" . $self->{terminal_width} . "D";
+            
+            if ($seq eq '[A' && $current_page > 0) {
+                # Up arrow - previous page
+                $current_page--;
+                next;
+            }
+            elsif ($seq eq '[B' && $current_page < $total_pages - 1) {
+                # Down arrow - next page
+                $current_page++;
+                next;
+            }
+            # Other escape sequences - treat as continue
+        } else {
+            ReadMode('normal');
         }
-        elsif ($key =~ /^[pP]$/ && $current_page > 0) {
-            $current_page--;
-        }
-        elsif ($key =~ /^[qQ]$/) {
+        
+        # Handle Q to quit
+        if ($key && $key =~ /^[qQ]$/) {
             last;
+        }
+        
+        # Any other key - advance to next page or exit if at end
+        if ($current_page < $total_pages - 1) {
+            $current_page++;
+        } else {
+            last;  # At last page, any key exits
         }
     }
     
-    # Restore terminal mode
+    # Ensure terminal mode is restored
     ReadMode('restore');
     
     # Exit alternate screen buffer (restores original screen)
@@ -1460,11 +1518,12 @@ sub display_help {
     # Refresh terminal size before pagination (handle resize)
     $self->refresh_terminal_size();
     
-    # Reset pagination state
+    # Reset pagination state and ENABLE pagination for help output
     $self->{line_count} = 0;
     $self->{pages} = [];
     $self->{current_page} = [];
     $self->{page_index} = 0;
+    $self->{pagination_enabled} = 1;  # Enable pagination for help
     
     # Build help text as array of lines for pagination
     my @help_lines = ();
@@ -1572,11 +1631,12 @@ sub display_help {
     
     # Output with pagination
     for my $line (@help_lines) {
-        last unless $self->writeline($line);
+        last unless $self->writeline($line, markdown => 0);
     }
     
-    # Reset line count after display
+    # Reset pagination state after display
     $self->{line_count} = 0;
+    $self->{pagination_enabled} = 0;
 }
 
 
@@ -1748,8 +1808,8 @@ sub display_usage_summary {
 
 =head2 display_paginated_content
 
-Display content with full pagination (line by line).
-User can navigate with [N]ext page, [P]revious page, [Q]uit.
+Display content with BBS-style full pagination.
+Uses unified pagination prompt: arrows to navigate, Q to quit, any key for more.
 
 Arguments:
 - $title: Title to display at top
@@ -1801,11 +1861,11 @@ sub display_paginated_content {
         return;
     }
     
-    # Put terminal in raw mode for single-key input
-    eval { ReadMode('cbreak') };
     # Switch to alternate screen buffer for clean pagination
-    # This prevents content from showing up in scrollback
     print "\e[?1049h";  # Enter alternate screen buffer
+    
+    # Track if hint has been shown
+    my $show_hint = !$self->{_pagination_hint_shown};
     
     while (1) {
         # Calculate page bounds
@@ -1833,54 +1893,68 @@ sub display_paginated_content {
         print $self->colorize("─" x 80, 'DIM'), "\n";
         
         # Status line
-        my $status = sprintf("Lines %d-%d of %d (Page %d/%d)", 
-            $start + 1, $end + 1, $total_lines, $current_page + 1, $total_pages);
+        my $status = sprintf("Lines %d-%d of %d", $start + 1, $end + 1, $total_lines);
+        $status .= " | $filepath" if $filepath;
         print $self->colorize($status, 'DIM'), "\n";
         
-        # Navigation prompt
-        my @nav_options;
-        push @nav_options, $self->colorize("[N]ext", 'PROMPT') if $current_page < $total_pages - 1;
-        push @nav_options, $self->colorize("[P]revious", 'PROMPT') if $current_page > 0;
-        push @nav_options, $self->colorize("[Q]uit", 'PROMPT');
-        push @nav_options, $self->colorize("[G]o to line", 'PROMPT');
+        # Show hint on first pagination (unified BBS-style)
+        if ($show_hint) {
+            print $self->{theme_mgr}->get_pagination_hint(0) . "\n";  # full hint with arrows
+            $self->{_pagination_hint_shown} = 1;
+            $show_hint = 0;
+        }
         
-        print join(" | ", @nav_options), ": ";
+        # BBS-style pagination prompt (unified with pause())
+        my $current = $current_page + 1;
+        my $prompt = $self->{theme_mgr}->get_pagination_prompt($current, $total_pages, ($total_pages > 1));
+        print $prompt;
         
         # Get user input (single key)
+        ReadMode('cbreak');
         my $key = ReadKey(0);
         
-        # Handle navigation
-        if ($key =~ /^[nN ]$/ && $current_page < $total_pages - 1) {
-            $current_page++;
+        # Handle arrow keys (escape sequences)
+        if ($key eq "\e") {
+            my $seq = ReadKey(0) . ReadKey(0);
+            ReadMode('normal');
+            
+            # Clear prompt line
+            print "\e[2K\e[" . $self->{terminal_width} . "D";
+            
+            if ($seq eq '[A' && $current_page > 0) {
+                # Up arrow - previous page
+                $current_page--;
+                next;
+            }
+            elsif ($seq eq '[B' && $current_page < $total_pages - 1) {
+                # Down arrow - next page
+                $current_page++;
+                next;
+            }
+            # Escape key (no sequence) - quit
+            if ($seq !~ /^\[/) {
+                last;
+            }
+            # Other sequences - treat as continue
+        } else {
+            ReadMode('normal');
         }
-        elsif ($key =~ /^[pPbB]$/ && $current_page > 0) {
-            $current_page--;
-        }
-        elsif ($key =~ /^[qQ]$/ || ord($key) == 27) {  # q or Escape
+        
+        # Handle Q to quit
+        if ($key && $key =~ /^[qQ]$/) {
             last;
         }
-        elsif ($key =~ /^[gG]$/) {
-            # Go to specific line
-            print "\n";
-            ReadMode('restore');
-            print "Go to line (1-$total_lines): ";
-            my $line_num = <STDIN>;
-            chomp $line_num if defined $line_num;
-            if ($line_num && $line_num =~ /^\d+$/ && $line_num >= 1 && $line_num <= $total_lines) {
-                $current_page = int(($line_num - 1) / $page_size);
-            }
-            ReadMode('cbreak');
-        }
-        elsif ($key =~ /^[<]$/ || ord($key) == 2) {  # Home or Ctrl+B
-            $current_page = 0;
-        }
-        elsif ($key =~ /^[>]$/ || ord($key) == 6) {  # End or Ctrl+F
-            $current_page = $total_pages - 1;
+        
+        # Any other key - advance to next page or exit if at end
+        if ($current_page < $total_pages - 1) {
+            $current_page++;
+        } else {
+            last;  # At last page, any key exits
         }
     }
     
-    # Restore terminal mode
-    eval { ReadMode('restore') };
+    # Ensure terminal mode is restored
+    ReadMode('restore');
     
     # Exit alternate screen buffer and return to normal view
     print "\e[?1049l";  # Exit alternate screen buffer (restores original screen)
@@ -1996,6 +2070,7 @@ sub pause {
     # Track if this is the first pagination prompt in the session
     # Show a hint the first time to help users learn the controls
     my $show_hint = !$self->{_pagination_hint_shown};
+    my $hint_was_shown = 0;  # Track if we showed hint this time (for cleanup)
     
     my $total_pages = scalar(@{$self->{pages}}) || 1;
     my $current = ($self->{page_index} || 0) + 1;
@@ -2004,26 +2079,27 @@ sub pause {
     if ($streaming) {
         # Show hint on first pagination
         if ($show_hint) {
-            print $self->colorize("═══", 'DIM');
-            print $self->colorize("[ Tip: Q quit · any key more ]", 'DATA');
-            print $self->colorize("═══", 'DIM');
-            print "\n";
+            print $self->{theme_mgr}->get_pagination_hint(1) . "\n";  # streaming=true
             $self->{_pagination_hint_shown} = 1;
+            $hint_was_shown = 1;
         }
         
         # Compact streaming prompt
-        my $prompt = $self->colorize("═══", 'DIM') .
-                     $self->colorize("[ $current ]", 'DATA') .
-                     $self->colorize("═══", 'DIM') .
-                     " " . $self->colorize("Q", 'USER') . " " .
-                     $self->colorize("▸", 'SUCCESS') . " ";
+        my $prompt = $self->{theme_mgr}->get_pagination_prompt($current, 1, 0);
         print $prompt;
         
         ReadMode('cbreak');
         my $key = ReadKey(0);
         ReadMode('normal');
         
-        print "\e[2K\e[" . $self->{terminal_width} . "D";  # Clear prompt line
+        # Clear prompt line (and hint line if it was shown)
+        if ($hint_was_shown) {
+            print "\e[2K";  # Clear prompt line
+            print "\e[1A\e[2K";  # Move up and clear hint line
+            print "\e[" . $self->{terminal_width} . "D";  # Move to start
+        } else {
+            print "\e[2K\e[" . $self->{terminal_width} . "D";  # Clear prompt line only
+        }
         
         $key = uc($key) if $key;
         return $key || 'C';
@@ -2033,23 +2109,14 @@ sub pause {
     while (1) {
         # Show hint on first pagination
         if ($show_hint) {
-            print $self->colorize("═══", 'DIM');
-            print $self->colorize("[ Tip: ^/v pages · Q quit · any key more ]", 'DATA');
-            print $self->colorize("═══", 'DIM');
-            print "\n";
+            print $self->{theme_mgr}->get_pagination_hint(0) . "\n";  # streaming=false
             $self->{_pagination_hint_shown} = 1;
+            $hint_was_shown = 1;
             $show_hint = 0;  # Don't show again in this loop
         }
         
-        # Build BBS-style prompt
-        my $page_info = $self->colorize("[ $current/$total_pages ]", 'DATA');
-        my $nav_hint = ($total_pages > 1) ? $self->colorize("^v", 'USER') . " " : "";
-        my $quit_hint = $self->colorize("Q", 'USER');
-        my $ready = $self->colorize("▸", 'SUCCESS');
-        
-        my $prompt = $self->colorize("═══", 'DIM') . $page_info . 
-                     $self->colorize("═══", 'DIM') . " " . 
-                     $nav_hint . $quit_hint . " " . $ready . " ";
+        # Build pagination prompt using theme
+        my $prompt = $self->{theme_mgr}->get_pagination_prompt($current, $total_pages, ($total_pages > 1));
         print $prompt;
         
         # Wait for keypress
@@ -2085,8 +2152,14 @@ sub pause {
         # Regular key handling - restore normal mode first
         ReadMode('normal');
         
-        # Clear prompt line
-        print "\e[2K\e[" . $self->{terminal_width} . "D";
+        # Clear prompt line (and hint line if it was shown)
+        if ($hint_was_shown) {
+            print "\e[2K";  # Clear prompt line
+            print "\e[1A\e[2K";  # Move up and clear hint line
+            print "\e[" . $self->{terminal_width} . "D";  # Move to start
+        } else {
+            print "\e[2K\e[" . $self->{terminal_width} . "D";  # Clear prompt line only
+        }
         
         $key = uc($key) if $key;
         return $key || 'C';
@@ -2352,7 +2425,7 @@ sub _prompt_session_learnings {
     # Display learning prompt
     print "\n";
     $self->display_system_message("Session ending. Any important discoveries to remember?");
-    print $self->colorize("(Press Enter to skip, or type learnings)\n", 'DIM');
+    print $self->{theme_mgr}->get_input_prompt("Type learnings", "skip") . "\n";
     print $self->colorize(": ", 'PROMPT');
     
     # Get user input (simple readline, not going through AI)

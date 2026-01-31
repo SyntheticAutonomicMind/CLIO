@@ -400,6 +400,81 @@ sub get_current_theme {
     return $self->{current_theme};
 }
 
+=head2 get_pagination_hint
+
+Get the pagination hint text for first-time display.
+
+Args:
+    streaming (bool) - If true, return simpler streaming hint
+
+Returns: Rendered pagination hint string
+
+=cut
+
+sub get_pagination_hint {
+    my ($self, $streaming) = @_;
+    
+    my $template_key = $streaming ? 'pagination_hint_streaming' : 'pagination_hint_full';
+    return $self->render($template_key, {});
+}
+
+=head2 get_pagination_prompt
+
+Get the pagination navigation prompt.
+
+Args:
+    current (int) - Current page number (1-indexed)
+    total (int) - Total number of pages
+    show_nav (bool) - Whether to show navigation hint (for multi-page)
+
+Returns: Rendered pagination prompt string
+
+=cut
+
+sub get_pagination_prompt {
+    my ($self, $current, $total, $show_nav) = @_;
+    
+    my $nav_hint = '';
+    if ($show_nav && $total > 1) {
+        $nav_hint = $self->render('nav_hint', {}) || $self->get_color('command') . '^v' . $self->{ansi}->parse('@RESET@') . ' ';
+    }
+    
+    return $self->render('pagination_prompt', {
+        current => $current,
+        total => $total,
+        nav_hint => $nav_hint,
+    });
+}
+
+=head2 get_input_prompt
+
+Get a standardized input prompt.
+
+Args:
+    prompt (string) - The prompt text
+    default_action (string, optional) - What Enter does (e.g., "skip")
+
+Returns: Rendered input prompt string
+
+=cut
+
+sub get_input_prompt {
+    my ($self, $prompt, $default_action) = @_;
+    
+    if ($default_action) {
+        return $self->render('input_prompt_with_default', {
+            prompt => $prompt,
+            default_action => $default_action,
+        });
+    } else {
+        return $self->render('input_prompt', {
+            prompt => $prompt,
+        });
+    }
+}
+
+
+
 =head2 save_style
 
 Save current style to a new file
@@ -590,6 +665,15 @@ sub get_builtin_theme {
         nav_previous => '{style.command}[P]revious@RESET@',
         nav_quit => '{style.command}[Q]uit@RESET@',
         pagination_info => '{style.muted}{var.info}@RESET@',
+        
+        # Pagination prompts (standardized)
+        pagination_hint_streaming => '{style.muted}[ {style.command}Q{style.muted} quit · any key more ]@RESET@',
+        pagination_hint_full => '{style.muted}[ {style.command}^/v{style.muted} pages · {style.command}Q{style.muted} quit · any key more ]@RESET@',
+        pagination_prompt => '{style.muted}═══{style.data}[ {var.current}/{var.total} ]{style.muted}═══@RESET@ {var.nav_hint}{style.command}Q{style.muted} {style.success}▸@RESET@ ',
+        
+        # Input prompts (standardized)
+        input_prompt => '{style.muted}({var.prompt})@RESET@',
+        input_prompt_with_default => '{style.muted}({var.prompt}, or {style.command}Enter{style.muted} to {var.default_action})@RESET@',
     };
 }
 

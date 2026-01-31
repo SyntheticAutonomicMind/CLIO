@@ -54,6 +54,8 @@ sub new {
 
 # Delegate display methods to chat
 sub display_command_header { shift->{chat}->display_command_header(@_) }
+sub display_section_header { shift->{chat}->display_section_header(@_) }
+sub display_command_row { shift->{chat}->display_command_row(@_) }
 sub display_info_message { shift->{chat}->display_info_message(@_) }
 sub display_success_message { shift->{chat}->display_success_message(@_) }
 sub display_error_message { shift->{chat}->display_error_message(@_) }
@@ -111,15 +113,15 @@ sub handle_update_command {
         $self->_switch_version($updater, $args[1]);
     }
     else {
-        $self->display_error_message("Unknown subcommand: $subcmd");
-        $self->writeline("", markdown => 0);
-        $self->writeline("Available commands:", markdown => 0);
-        $self->display_list_item("/update - Show current version and update help");
-        $self->display_list_item("/update status - Show current version and update status");
-        $self->display_list_item("/update check - Check for available updates");
-        $self->display_list_item("/update list - List all available versions");
-        $self->display_list_item("/update install - Install the latest version");
-        $self->display_list_item("/update switch <version> - Switch to a specific version");
+        $self->display_command_header("UPDATE");
+        
+        $self->display_section_header("COMMANDS");
+        $self->display_command_row("/update", "Show version and help", 30);
+        $self->display_command_row("/update status", "Show version status", 30);
+        $self->display_command_row("/update check", "Check for updates", 30);
+        $self->display_command_row("/update list", "List all versions", 30);
+        $self->display_command_row("/update install", "Install latest version", 30);
+        $self->display_command_row("/update switch <ver>", "Switch to specific version", 30);
         $self->writeline("", markdown => 0);
     }
 }
@@ -188,11 +190,11 @@ sub _install_update {
     $self->writeline("New version:     " . $self->colorize($check_result->{latest_version}, 'command_value'), markdown => 0);
     $self->writeline("", markdown => 0);
     
-    print "Install update? [y/N]: ";
+    print $self->{chat}{theme_mgr}->get_input_prompt("Install update?", "cancel") . " ";
     my $confirm = <STDIN>;
     chomp $confirm if $confirm;
     
-    unless ($confirm && $confirm =~ /^y/i) {
+    unless ($confirm && $confirm =~ /^y(es)?$/i) {
         $self->display_info_message("Update cancelled");
         return;
     }
@@ -358,12 +360,12 @@ sub _switch_version {
     $self->writeline("Target version:  " . $self->colorize($target_version, 'command_value'), markdown => 0);
     $self->writeline("", markdown => 0);
     
-    # Interactive prompt - needs immediate output
-    print "Switch to version $target_version? [y/N]: ";
+    # Interactive prompt
+    print $self->{chat}{theme_mgr}->get_input_prompt("Switch to version $target_version?", "cancel") . " ";
     my $confirm = <STDIN>;
     chomp $confirm if $confirm;
     
-    unless ($confirm && $confirm =~ /^y/i) {
+    unless ($confirm && $confirm =~ /^y(es)?$/i) {
         $self->display_info_message("Switch cancelled");
         return;
     }
