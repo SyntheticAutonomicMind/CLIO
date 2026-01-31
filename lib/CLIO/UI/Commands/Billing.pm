@@ -40,9 +40,11 @@ sub new {
     
     my $self = {
         chat => $args{chat} || croak "chat instance required",
-        session => $args{session},
         debug => $args{debug} // 0,
     };
+    
+    # Assign object references separately (hash literal assignment bug workaround)
+    $self->{session} = $args{session};
     
     bless $self, $class;
     return $self;
@@ -51,6 +53,7 @@ sub new {
 # Delegate display methods to chat
 sub display_system_message { shift->{chat}->display_system_message(@_) }
 sub display_error_message { shift->{chat}->display_error_message(@_) }
+sub writeline { shift->{chat}->writeline(@_) }
 sub colorize { shift->{chat}->colorize(@_) }
 
 =head2 handle_billing_command(@args)
@@ -74,11 +77,11 @@ sub handle_billing_command {
     
     my $billing = $self->{session}->get_billing_summary();
     
-    print "\n";
-    print $self->colorize("=" x 70, 'DATA'), "\n";
-    print $self->colorize("GITHUB COPILOT BILLING", 'DATA'), "\n";
-    print $self->colorize("=" x 70, 'DATA'), "\n";
-    print "\n";
+    $self->writeline("", markdown => 0);
+    $self->writeline($self->colorize("=" x 70, 'DATA'), markdown => 0);
+    $self->writeline($self->colorize("GITHUB COPILOT BILLING", 'DATA'), markdown => 0);
+    $self->writeline($self->colorize("=" x 70, 'DATA'), markdown => 0);
+    $self->writeline("", markdown => 0);
     
     # Get model and multiplier from session
     my $model = $self->{session}{state}{billing}{model} || 'unknown';
@@ -88,16 +91,16 @@ sub handle_billing_command {
     my $multiplier_str = $self->_format_multiplier($multiplier);
     
     # Session summary
-    print $self->colorize("Session Summary:", 'LABEL'), "\n";
-    printf "  %-25s %s\n", "Model:", $self->colorize($model, 'DATA');
-    printf "  %-25s %s\n", "Billing Rate:", $self->colorize($multiplier_str, 'DATA');
+    $self->writeline($self->colorize("Session Summary:", 'LABEL'), markdown => 0);
+    $self->writeline(sprintf("  %-25s %s", "Model:", $self->colorize($model, 'DATA')), markdown => 0);
+    $self->writeline(sprintf("  %-25s %s", "Billing Rate:", $self->colorize($multiplier_str, 'DATA')), markdown => 0);
     
     # Show actual API requests vs premium requests charged
     my $total_api_requests = $billing->{total_requests} || 0;
     my $total_premium_charged = $billing->{total_premium_requests} || 0;
     
-    printf "  %-25s %s\n", "API Requests (Total):", $self->colorize($total_api_requests, 'DATA');
-    printf "  %-25s %s\n", "Premium Requests Charged:", $self->colorize($total_premium_charged, 'DATA');
+    $self->writeline(sprintf("  %-25s %s", "API Requests (Total):", $self->colorize($total_api_requests, 'DATA')), markdown => 0);
+    $self->writeline(sprintf("  %-25s %s", "Premium Requests Charged:", $self->colorize($total_premium_charged, 'DATA')), markdown => 0);
     
     # Show quota allotment if available
     if ($self->{session}{quota}) {
@@ -106,17 +109,17 @@ sub handle_billing_command {
         my $used = $quota->{used} || 0;
         
         if ($entitlement > 0) {
-            printf "  %-25s %s of %s\n", 
+            $self->writeline(sprintf("  %-25s %s of %s", 
                 "Premium Quota Status:", 
                 $self->colorize("$used used", 'DATA'),
-                $self->colorize("$entitlement total", 'DATA');
+                $self->colorize("$entitlement total", 'DATA')), markdown => 0);
         }
     }
     
-    printf "  %-25s %s\n", "Total Tokens:", $self->colorize($billing->{total_tokens}, 'DATA');
-    printf "  %-25s %s tokens\n", "  - Prompt:", $billing->{total_prompt_tokens};
-    printf "  %-25s %s tokens\n", "  - Completion:", $billing->{total_completion_tokens};
-    print "\n";
+    $self->writeline(sprintf("  %-25s %s", "Total Tokens:", $self->colorize($billing->{total_tokens}, 'DATA')), markdown => 0);
+    $self->writeline(sprintf("  %-25s %s tokens", "  - Prompt:", $billing->{total_prompt_tokens}), markdown => 0);
+    $self->writeline(sprintf("  %-25s %s tokens", "  - Completion:", $billing->{total_completion_tokens}), markdown => 0);
+    $self->writeline("", markdown => 0);
     
     # Premium usage warning if applicable
     $self->_display_premium_warning($multiplier);
@@ -124,11 +127,11 @@ sub handle_billing_command {
     # Recent requests with multipliers
     $self->_display_recent_requests($billing);
     
-    print $self->colorize("=" x 70, 'DATA'), "\n";
-    print "\n";
-    print $self->colorize("Note: GitHub Copilot uses subscription-based billing.", 'SYSTEM'), "\n";
-    print $self->colorize("      Multipliers indicate premium model usage relative to free models.", 'SYSTEM'), "\n";
-    print "\n";
+    $self->writeline($self->colorize("=" x 70, 'DATA'), markdown => 0);
+    $self->writeline("", markdown => 0);
+    $self->writeline($self->colorize("Note: GitHub Copilot uses subscription-based billing.", 'SYSTEM'), markdown => 0);
+    $self->writeline($self->colorize("      Multipliers indicate premium model usage relative to free models.", 'SYSTEM'), markdown => 0);
+    $self->writeline("", markdown => 0);
 }
 
 =head2 _format_multiplier($multiplier)
@@ -170,11 +173,11 @@ sub _display_premium_warning {
         $mult_display =~ s/\.?0+x$/x/;
     }
     
-    print $self->colorize("[WARN] Premium Model Usage:", 'LABEL'), "\n";
-    printf "  This model has a %s billing multiplier.\n", 
-        $self->colorize($mult_display, 'DATA');
-    print "  Excessive use may impact your GitHub Copilot subscription.\n";
-    print "\n";
+    $self->writeline($self->colorize("[WARN] Premium Model Usage:", 'LABEL'), markdown => 0);
+    $self->writeline(sprintf("  This model has a %s billing multiplier.", 
+        $self->colorize($mult_display, 'DATA')), markdown => 0);
+    $self->writeline("  Excessive use may impact your GitHub Copilot subscription.", markdown => 0);
+    $self->writeline("", markdown => 0);
 }
 
 =head2 _display_recent_requests($billing)
@@ -193,9 +196,9 @@ sub _display_recent_requests {
     
     return unless @recent;
     
-    print $self->colorize("Recent Requests:", 'LABEL'), "\n";
-    print $self->colorize(sprintf("  %-5s %-25s %-12s %-12s", 
-        "#", "Model", "Tokens", "Rate"), 'LABEL'), "\n";
+    $self->writeline($self->colorize("Recent Requests:", 'LABEL'), markdown => 0);
+    $self->writeline($self->colorize(sprintf("  %-5s %-25s %-12s %-12s", 
+        "#", "Model", "Tokens", "Rate"), 'LABEL'), markdown => 0);
     
     my $count = 1;
     for my $req (@recent) {
@@ -221,7 +224,7 @@ sub _display_recent_requests {
             $rate_str;
         $count++;
     }
-    print "\n";
+    $self->writeline("", markdown => 0);
 }
 
 1;

@@ -46,9 +46,11 @@ sub new {
     
     my $self = {
         chat => $args{chat} || croak "chat instance required",
-        session => $args{session},
         debug => $args{debug} // 0,
     };
+    
+    # Assign object references separately (hash literal assignment bug workaround)
+    $self->{session} = $args{session};
     
     bless $self, $class;
     return $self;
@@ -57,6 +59,13 @@ sub new {
 # Delegate display methods to chat
 sub display_system_message { shift->{chat}->display_system_message(@_) }
 sub display_error_message { shift->{chat}->display_error_message(@_) }
+sub writeline { shift->{chat}->writeline(@_) }
+sub display_command_header { shift->{chat}->display_command_header(@_) }
+sub display_section_header { shift->{chat}->display_section_header(@_) }
+sub display_key_value { shift->{chat}->display_key_value(@_) }
+sub display_list_item { shift->{chat}->display_list_item(@_) }
+sub colorize { shift->{chat}->colorize(@_) }
+sub render_markdown { shift->{chat}->render_markdown(@_) }
 
 =head2 _get_skill_manager()
 
@@ -103,18 +112,36 @@ sub handle_skills_command {
     elsif ($action eq 'delete' || $action eq 'rm') {
         $self->_delete_skill($sm, @args);
     }
+    elsif ($action eq 'help') {
+        $self->_show_help();
+    }
     else {
         $self->display_error_message("Unknown action: $action");
-        print "\n";
-        print "Usage:\n";
-        print "  /skills add <name> \"<text>\"  - Add custom skill\n";
-        print "  /skills list                  - List all skills\n";
-        print "  /skills use <name> [file]     - Execute skill\n";
-        print "  /skills show <name>           - Display skill\n";
-        print "  /skills delete <name>         - Delete skill\n";
+        $self->_show_help();
     }
     
     return;
+}
+
+=head2 _show_help()
+
+Display skills command help.
+
+=cut
+
+sub _show_help {
+    my ($self) = @_;
+    
+    $self->display_command_header("SKILLS HELP");
+    
+    $self->display_section_header("COMMANDS");
+    $self->display_key_value("/skills", "List all skills", 30);
+    $self->display_key_value("/skills list", "List all skills", 30);
+    $self->display_key_value("/skills add <name> \"<text>\"", "Add custom skill", 30);
+    $self->display_key_value("/skills use <name> [file]", "Execute skill", 30);
+    $self->display_key_value("/skills show <name>", "Display skill details", 30);
+    $self->display_key_value("/skills delete <name>", "Delete custom skill", 30);
+    $self->writeline("", markdown => 0);
 }
 
 =head2 _add_skill($sm, @args)
@@ -149,7 +176,7 @@ sub _add_skill {
 
 =head2 _list_skills($sm)
 
-List all available skills.
+List all available skills with modern formatting.
 
 =cut
 
@@ -158,34 +185,43 @@ sub _list_skills {
     
     my $skills = $sm->list_skills();
     
-    print "\n";
-    print "-" x 55, "\n";
-    print "CUSTOM SKILLS\n";
-    print "-" x 55, "\n";
+    $self->display_command_header("SKILLS");
+    
+    # Custom skills section
+    $self->display_section_header("CUSTOM SKILLS");
     
     if (@{$skills->{custom}}) {
         for my $name (sort @{$skills->{custom}}) {
             my $s = $sm->get_skill($name);
-            printf "  %-20s %s\n", $name, $s->{description};
+            my $desc = $s->{description} || '(no description)';
+            $self->display_key_value($name, $desc, 25);
         }
     } else {
-        print "  (none)\n";
+        $self->writeline("  " . $self->colorize("(none)", 'DIM'), markdown => 0);
     }
+    $self->writeline("", markdown => 0);
     
-    print "\n";
-    print "BUILT-IN SKILLS (read-only)\n";
-    print "-" x 55, "\n";
+    # Built-in skills section
+    $self->display_section_header("BUILT-IN SKILLS");
     
     for my $name (sort @{$skills->{builtin}}) {
         my $s = $sm->get_skill($name);
-        printf "  %-20s %s\n", $name, $s->{description};
+        my $desc = $s->{description} || '(no description)';
+        $self->display_key_value($name, $desc, 25);
     }
+    $self->writeline("", markdown => 0);
     
-    print "\n";
-    printf "Total: %d custom, %d built-in\n", 
-        scalar(@{$skills->{custom}}),
-        scalar(@{$skills->{builtin}});
-    print "\n";
+    # Summary
+    my $custom_count = scalar(@{$skills->{custom}});
+    my $builtin_count = scalar(@{$skills->{builtin}});
+    my $total = $custom_count + $builtin_count;
+    
+    my $summary = $self->colorize("Total: ", 'LABEL') .
+                  $self->colorize("$custom_count", 'DATA') . " custom, " .
+                  $self->colorize("$builtin_count", 'DATA') . " built-in" .
+                  " (" . $self->colorize("$total", 'SUCCESS') . " total)";
+    $self->writeline($summary, markdown => 0);
+    $self->writeline("", markdown => 0);
 }
 
 =head2 _use_skill($sm, @args)
@@ -254,7 +290,7 @@ sub _build_skill_context {
 
 =head2 _show_skill($sm, @args)
 
-Display skill details.
+Display skill details with modern formatting.
 
 =cut
 
@@ -274,23 +310,39 @@ sub _show_skill {
         return;
     }
     
-    print "\n";
-    print "-" x 55, "\n";
-    print "SKILL: $name\n";
-    print "-" x 55, "\n";
-    print "\n";
-    print $skill->{prompt}, "\n";
-    print "\n";
-    print "-" x 55, "\n";
-    print "Variables: ", join(", ", @{$skill->{variables}}), "\n";
-    print "Type: $skill->{type}\n";
+    $self->display_command_header("SKILL: " . uc($name));
+    
+    # Metadata section
+    $self->display_section_header("DETAILS");
+    $self->display_key_value("Name", $name);
+    $self->display_key_value("Type", $skill->{type} || 'custom');
+    $self->display_key_value("Description", $skill->{description} || '(none)');
+    
+    if ($skill->{variables} && @{$skill->{variables}}) {
+        $self->display_key_value("Variables", join(", ", @{$skill->{variables}}));
+    }
+    
     if ($skill->{created}) {
-        print "Created: ", scalar(localtime($skill->{created})), "\n";
+        $self->display_key_value("Created", scalar(localtime($skill->{created})));
     }
     if ($skill->{modified}) {
-        print "Modified: ", scalar(localtime($skill->{modified})), "\n";
+        $self->display_key_value("Modified", scalar(localtime($skill->{modified})));
     }
-    print "\n";
+    $self->writeline("", markdown => 0);
+    
+    # Prompt section
+    $self->display_section_header("PROMPT TEMPLATE");
+    $self->writeline("", markdown => 0);
+    
+    # Render through markdown pipeline for proper formatting
+    my $rendered = $self->render_markdown($skill->{prompt});
+    if (defined $rendered) {
+        for my $line (split /\n/, $rendered) {
+            $self->writeline($line, markdown => 0);  # Already rendered
+        }
+    }
+    
+    $self->writeline("", markdown => 0);
 }
 
 =head2 _delete_skill($sm, @args)

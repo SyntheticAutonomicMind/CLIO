@@ -805,7 +805,9 @@ sub validate_and_truncate_messages {
             else {
                 # True orphan - no matching tool_call found anywhere
                 # This is a data corruption issue, but we should handle it gracefully
-                warn "[WARNING][APIManager] Found tool_result with no matching tool_call: $tool_id\n";
+                # Log at debug level since this is expected during truncation
+                print STDERR "[DEBUG][APIManager] Found tool_result with no matching tool_call: $tool_id (from truncation)\n"
+                    if $self->{debug};
                 push @units, {
                     messages => [$msg],
                     tokens => $msg_tokens,
@@ -892,8 +894,10 @@ sub validate_and_truncate_messages {
     
     for my $unit (reverse @remaining_units) {
         # Skip orphan tool_result units - they would cause API errors
+        # This is expected after truncation, so only log at debug level
         if ($unit->{is_orphan_tool_result}) {
-            warn "[WARNING][APIManager] Skipping orphan tool_result unit (tool_id: $unit->{orphan_tool_id})\n";
+            print STDERR "[DEBUG][APIManager] Skipping orphan tool_result unit (tool_id: $unit->{orphan_tool_id})\n"
+                if $self->{debug};
             next;
         }
         

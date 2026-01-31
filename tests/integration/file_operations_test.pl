@@ -2,7 +2,8 @@
 
 use strict;
 use warnings;
-use lib 'lib';
+use FindBin;
+use lib "$FindBin::Bin/../../lib";
 use CLIO::Tools::FileOperations;
 use File::Temp qw(tempdir);
 use File::Spec;
@@ -211,7 +212,7 @@ run_test(
 run_test(
     "file_search - Find files by pattern",
     'file_search',
-    { operation => 'file_search', pattern => '*.txt', directory => $test_dir },
+    { operation => 'file_search', pattern => '**/*.txt', directory => $test_dir },
     1,
     sub {
         my $matches = $_[0]->{output};

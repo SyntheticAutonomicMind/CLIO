@@ -5,6 +5,7 @@ use strict;
 use warnings;
 use utf8;
 use FindBin qw($RealBin);
+use lib "$RealBin/../../lib";
 use lib "$RealBin/../lib";
 
 use CLIO::Session::Manager;

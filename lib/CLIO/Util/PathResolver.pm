@@ -77,9 +77,9 @@ sub init {
     
     $CONFIG_DIR = File::Spec->catdir($home_dir, '.clio');
     
-    # Create config directory if it doesn't exist
+    # Create config directory if it doesn't exist with secure permissions
     if (!-d $CONFIG_DIR) {
-        make_path($CONFIG_DIR) or die "[ERROR] Cannot create config directory $CONFIG_DIR: $!\n";
+        make_path($CONFIG_DIR, { mode => 0700 }) or die "[ERROR] Cannot create config directory $CONFIG_DIR: $!\n";
         print STDERR "[INFO] Created config directory: $CONFIG_DIR\n";
     }
     
@@ -130,9 +130,9 @@ sub get_sessions_dir {
     
     my $sessions_dir = File::Spec->catdir($project_dir, '.clio', 'sessions');
     
-    # Create if doesn't exist
+    # Create if doesn't exist with secure permissions (0700 = owner only)
     if (!-d $sessions_dir) {
-        make_path($sessions_dir) or die "[ERROR] Cannot create sessions directory: $!\n";
+        make_path($sessions_dir, { mode => 0700 }) or die "[ERROR] Cannot create sessions directory: $!\n";
     }
     
     return $sessions_dir;
@@ -186,7 +186,7 @@ sub get_cache_dir {
     my $cache_dir = File::Spec->catdir($CONFIG_DIR, 'cache');
     
     if (!-d $cache_dir) {
-        make_path($cache_dir);
+        make_path($cache_dir, { mode => 0700 });
     }
     
     return $cache_dir;

@@ -65,6 +65,8 @@ sub new {
         debug => $args{debug} || 0,
         ui => $args{ui},  # Store UI reference for buffer flushing
         spinner => $args{spinner},  # Store spinner for interactive tools (user_collaboration)
+        skip_custom => $args{skip_custom} || 0,  # Skip custom instructions (--no-custom-instructions)
+        skip_ltm => $args{skip_ltm} || 0,        # Skip LTM injection (--no-ltm)
     };
     
     bless $self, $class;
@@ -89,6 +91,11 @@ sub new {
     
     print STDERR "[DEBUG][WorkflowOrchestrator] Initialized with max_iterations=$self->{max_iterations}\n" 
         if $self->{debug};
+    
+    if ($self->{skip_custom} || $self->{skip_ltm}) {
+        print STDERR "[DEBUG][WorkflowOrchestrator] Incognito flags: skip_custom=$self->{skip_custom}, skip_ltm=$self->{skip_ltm}\n"
+            if $self->{debug};
+    }
     
     return $self;
 }
@@ -1204,9 +1211,17 @@ Returns:
 sub _build_system_prompt {
     my ($self, $session) = @_;
     
-    # Load from PromptManager (includes custom instructions)
+    # Load from PromptManager (includes custom instructions unless skip_custom)
     require CLIO::Core::PromptManager;
-    my $pm = CLIO::Core::PromptManager->new(debug => $self->{debug});
+    my $pm = CLIO::Core::PromptManager->new(
+        debug => $self->{debug},
+        skip_custom => $self->{skip_custom},
+    );
+    
+    if ($self->{skip_custom}) {
+        print STDERR "[DEBUG][WorkflowOrchestrator] Skipping custom instructions (--no-custom-instructions or --incognito)\n"
+            if $self->{debug};
+    }
     
     print STDERR "[DEBUG][WorkflowOrchestrator] Loading system prompt from PromptManager\n"
         if $self->{debug};
@@ -1220,10 +1235,13 @@ sub _build_system_prompt {
     # Dynamically add available tools section from tool registry
     my $tools_section = $self->_generate_tools_section();
     
-    # Build LTM context section if session is available
+    # Build LTM context section if session is available AND not skipping LTM
     my $ltm_section = '';
-    if ($session) {
+    if ($session && !$self->{skip_ltm}) {
         $ltm_section = $self->_generate_ltm_section($session);
+    } elsif ($self->{skip_ltm}) {
+        print STDERR "[DEBUG][WorkflowOrchestrator] Skipping LTM injection (--no-ltm or --incognito)\n"
+            if $self->{debug};
     }
     
     # Insert tools section after "## Core Instructions" or append if not found

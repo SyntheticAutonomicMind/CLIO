@@ -48,10 +48,12 @@ sub new {
     
     my $self = {
         chat => $args{chat} || croak "chat instance required",
-        config => $args{config},
-        session => $args{session},
         debug => $args{debug} // 0,
     };
+    
+    # Assign object references separately (hash literal assignment bug workaround)
+    $self->{config} = $args{config};
+    $self->{session} = $args{session};
     
     bless $self, $class;
     return $self;
@@ -64,6 +66,7 @@ sub display_key_value { shift->{chat}->display_key_value(@_) }
 sub display_list_item { shift->{chat}->display_list_item(@_) }
 sub display_system_message { shift->{chat}->display_system_message(@_) }
 sub display_error_message { shift->{chat}->display_error_message(@_) }
+sub writeline { shift->{chat}->writeline(@_) }
 sub display_info_message { shift->{chat}->display_info_message(@_) }
 sub colorize { shift->{chat}->colorize(@_) }
 
@@ -195,39 +198,39 @@ sub _display_config_help {
     $self->display_list_item("/config workdir [path] - Get or set working directory");
     $self->display_list_item("/config loglevel [level] - Get or set log level");
     
-    print "\n";
+    $self->writeline("", markdown => 0);
     $self->display_section_header("SETTABLE KEYS");
-    print "  style                    UI color scheme (default, dark, light, amber-terminal, etc.)\n";
-    print "  theme                    Banner and template theme\n";
-    print "  workdir                  Current working directory path\n";
-    print "  terminal_passthrough     Force direct terminal access for all commands (true/false)\n";
-    print "  terminal_autodetect      Auto-detect interactive commands for passthrough (true/false)\n";
+    $self->writeline("  style                    UI color scheme (default, dark, light, amber-terminal, etc.)", markdown => 0);
+    $self->writeline("  theme                    Banner and template theme", markdown => 0);
+    $self->writeline("  workdir                  Current working directory path", markdown => 0);
+    $self->writeline("  terminal_passthrough     Force direct terminal access for all commands (true/false)", markdown => 0);
+    $self->writeline("  terminal_autodetect      Auto-detect interactive commands for passthrough (true/false)", markdown => 0);
     
-    print "\n";
+    $self->writeline("", markdown => 0);
     $self->display_section_header("EXAMPLES");
-    print "  /config set style dark                      # Switch to dark color scheme\n";
-    print "  /config set theme photon                    # Use photon theme\n";
-    print "  /config set workdir ~/projects              # Change working directory\n";
-    print "  /config set terminal_passthrough true       # Enable passthrough for all commands\n";
-    print "  /config set terminal_autodetect false       # Disable interactive command detection\n";
-    print "  /config workdir                             # Show current working directory\n";
+    $self->writeline("  /config set style dark                      # Switch to dark color scheme", markdown => 0);
+    $self->writeline("  /config set theme photon                    # Use photon theme", markdown => 0);
+    $self->writeline("  /config set workdir ~/projects              # Change working directory", markdown => 0);
+    $self->writeline("  /config set terminal_passthrough true       # Enable passthrough for all commands", markdown => 0);
+    $self->writeline("  /config set terminal_autodetect false       # Disable interactive command detection", markdown => 0);
+    $self->writeline("  /config workdir                             # Show current working directory", markdown => 0);
     
-    print "\n";
+    $self->writeline("", markdown => 0);
     $self->display_info_message("For API settings, use /api set");
-    print "\n";
+    $self->writeline("", markdown => 0);
     
-    print "\n";
+    $self->writeline("", markdown => 0);
     $self->display_section_header("TERMINAL SETTINGS");
-    print "  terminal_passthrough: When enabled, commands execute with direct terminal access.\n";
-    print "    - User can interact (editor, GPG prompts, etc.)\n";
-    print "    - Agent sees exit codes but no output\n";
-    print "    - Default: false (use auto-detection instead)\n";
-    print "\n";
-    print "  terminal_autodetect: When enabled, interactive commands are detected automatically.\n";
-    print "    - Detects: git commit (no -m), vim, nano, GPG, ssh, etc.\n";
-    print "    - Uses passthrough only for detected commands\n";
-    print "    - Default: true (smart detection enabled)\n";
-    print "\n";
+    $self->writeline("  terminal_passthrough: When enabled, commands execute with direct terminal access.", markdown => 0);
+    $self->writeline("    - User can interact (editor, GPG prompts, etc.)", markdown => 0);
+    $self->writeline("    - Agent sees exit codes but no output", markdown => 0);
+    $self->writeline("    - Default: false (use auto-detection instead)", markdown => 0);
+    $self->writeline("", markdown => 0);
+    $self->writeline("  terminal_autodetect: When enabled, interactive commands are detected automatically.", markdown => 0);
+    $self->writeline("    - Detects: git commit (no -m), vim, nano, GPG, ssh, etc.", markdown => 0);
+    $self->writeline("    - Uses passthrough only for detected commands", markdown => 0);
+    $self->writeline("    - Default: true (smart detection enabled)", markdown => 0);
+    $self->writeline("", markdown => 0);
 }
 
 =head2 _handle_config_set
@@ -243,7 +246,7 @@ sub _handle_config_set {
     
     unless ($key) {
         $self->display_error_message("Usage: /config set <key> <value>");
-        print "Keys: style, theme, working_directory, terminal_passthrough, terminal_autodetect\n";
+        $self->writeline("Keys: style, theme, working_directory, terminal_passthrough, terminal_autodetect", markdown => 0);
         return;
     }
     
@@ -263,7 +266,7 @@ sub _handle_config_set {
     
     unless ($allowed{$key}) {
         $self->display_error_message("Unknown config key: $key");
-        print "Allowed keys: " . join(', ', sort keys %allowed) . "\n";
+        $self->writeline("Allowed keys: " . join(', ', sort keys %allowed), markdown => 0);
         return;
     }
     
@@ -275,7 +278,7 @@ sub _handle_config_set {
             $value = 0;
         } else {
             $self->display_error_message("Invalid boolean value for $key: $value");
-            print "Use: true/false, 1/0, yes/no, on/off\n";
+            $self->writeline("Use: true/false, 1/0, yes/no, on/off", markdown => 0);
             return;
         }
         
@@ -393,7 +396,7 @@ sub show_global_config {
     $self->display_key_value("API Base URL", $display_url, 18);
     
     # UI Settings
-    print "\n";
+    $self->writeline("", markdown => 0);
     $self->display_section_header("UI Settings");
     my $style = $self->{config}->get('style') || 'default';
     my $theme = $self->{config}->get('theme') || 'default';
@@ -404,7 +407,7 @@ sub show_global_config {
     $self->display_key_value("Log Level", $loglevel, 18);
     
     # Paths
-    print "\n";
+    $self->writeline("", markdown => 0);
     $self->display_section_header("Paths & Files");
     require Cwd;
     my $workdir = $self->{config}->get('working_directory') || Cwd::getcwd();
@@ -416,9 +419,9 @@ sub show_global_config {
     $self->display_key_value("Styles Dir", File::Spec->catdir('.', 'styles'), 18);
     $self->display_key_value("Themes Dir", File::Spec->catdir('.', 'themes'), 18);
     
-    print "\n";
+    $self->writeline("", markdown => 0);
     $self->display_info_message("Use '/config save' to persist changes");
-    print "\n";
+    $self->writeline("", markdown => 0);
 }
 
 =head2 show_session_config
@@ -432,26 +435,30 @@ sub show_session_config {
     
     my $state = $self->{session}->state();
     
-    print "\n", $self->colorize("SESSION CONFIGURATION", 'DATA'), "\n";
-    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n\n";
+    $self->writeline("", markdown => 0);
+    $self->writeline($self->colorize("SESSION CONFIGURATION", 'DATA'), markdown => 0);
+    $self->writeline($self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), markdown => 0);
+    $self->writeline("", markdown => 0);
     
-    print $self->colorize("Session Info:", 'SYSTEM'), "\n";
-    printf "  Session ID:   %s\n", $state->{session_id};
-    printf "  Messages:     %d\n", scalar(@{$state->{history} || []});
+    $self->writeline($self->colorize("Session Info:", 'SYSTEM'), markdown => 0);
+    $self->writeline(sprintf("  Session ID:   %s", $state->{session_id}), markdown => 0);
+    $self->writeline(sprintf("  Messages:     %d", scalar(@{$state->{history} || []})), markdown => 0);
     require Cwd;
-    printf "  Working Dir:  %s\n", $state->{working_directory} || Cwd::getcwd();
+    $self->writeline(sprintf("  Working Dir:  %s", $state->{working_directory} || Cwd::getcwd()), markdown => 0);
     
-    print "\n", $self->colorize("UI Settings:", 'SYSTEM'), "\n";
+    $self->writeline("", markdown => 0);
+    $self->writeline($self->colorize("UI Settings:", 'SYSTEM'), markdown => 0);
     my $session_style = $state->{style} || $self->{config}->get('style') || 'default';
     my $session_theme = $state->{theme} || $self->{config}->get('theme') || 'default';
-    printf "  Style:        %s%s\n", $session_style, ($state->{style} ? '' : ' (from global)');
-    printf "  Theme:        %s%s\n", $session_theme, ($state->{theme} ? '' : ' (from global)');
+    $self->writeline(sprintf("  Style:        %s%s", $session_style, ($state->{style} ? '' : ' (from global)')), markdown => 0);
+    $self->writeline(sprintf("  Theme:        %s%s", $session_theme, ($state->{theme} ? '' : ' (from global)')), markdown => 0);
     
-    print "\n", $self->colorize("Model:", 'SYSTEM'), "\n";
+    $self->writeline("", markdown => 0);
+    $self->writeline($self->colorize("Model:", 'SYSTEM'), markdown => 0);
     my $session_model = $state->{selected_model} || $self->{config}->get('model') || 'gpt-4';
-    printf "  Selected:     %s%s\n", $session_model, ($state->{selected_model} ? '' : ' (from global)');
+    $self->writeline(sprintf("  Selected:     %s%s", $session_model, ($state->{selected_model} ? '' : ' (from global)')), markdown => 0);
     
-    print "\n";
+    $self->writeline("", markdown => 0);
 }
 
 =head2 handle_loglevel_command
@@ -465,9 +472,12 @@ sub handle_loglevel_command {
     
     unless ($level) {
         my $current = $self->{config}->get('loglevel') || $self->{config}->get('log_level') || 'WARNING';
-        print "\n", $self->colorize("CURRENT LOG LEVEL", 'DATA'), "\n";
-        print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n\n";
-        print "  $current\n\n";
+        $self->writeline("", markdown => 0);
+        $self->writeline($self->colorize("CURRENT LOG LEVEL", 'DATA'), markdown => 0);
+        $self->writeline($self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), markdown => 0);
+        $self->writeline("", markdown => 0);
+        $self->writeline("  $current", markdown => 0);
+        $self->writeline("", markdown => 0);
         return;
     }
     
@@ -475,7 +485,7 @@ sub handle_loglevel_command {
     
     unless ($valid{uc($level)}) {
         $self->display_error_message("Invalid log level: $level");
-        print "Valid levels: DEBUG, INFO, WARNING, ERROR, CRITICAL\n";
+        $self->writeline("Valid levels: DEBUG, INFO, WARNING, ERROR, CRITICAL", markdown => 0);
         return;
     }
     
@@ -508,18 +518,21 @@ sub handle_style_command {
         my @styles = $theme_mgr->list_styles();
         my $current = $theme_mgr->get_current_style();
         
-        print $self->colorize("━ AVAILABLE STYLES ━" . ("━" x 41), 'DATA'), "\n\n";
+        $self->writeline($self->colorize("━ AVAILABLE STYLES ━" . ("━" x 41), 'DATA'), markdown => 0);
+        $self->writeline("", markdown => 0);
         for my $style (@styles) {
             my $marker = ($style eq $current) ? ' (current)' : '';
-            printf "  %-20s%s\n", $style, $self->colorize($marker, 'PROMPT');
+            $self->writeline(sprintf("  %-20s%s", $style, $self->colorize($marker, 'PROMPT')), markdown => 0);
         }
-        print "\n";
-        print "Use ", $self->colorize("/style set <name>", 'PROMPT'), " to switch styles\n";
+        $self->writeline("", markdown => 0);
+        $self->writeline("Use " . $self->colorize("/style set <name>", 'PROMPT') . " to switch styles", markdown => 0);
     }
     elsif ($action eq 'show') {
         my $current = $theme_mgr->get_current_style();
-        print $self->colorize("━ CURRENT STYLE ━" . ("━" x 47), 'DATA'), "\n\n";
-        print "  ", $self->colorize($current, 'USER'), "\n\n";
+        $self->writeline($self->colorize("━ CURRENT STYLE ━" . ("━" x 47), 'DATA'), markdown => 0);
+        $self->writeline("", markdown => 0);
+        $self->writeline("  " . $self->colorize($current, 'USER'), markdown => 0);
+        $self->writeline("", markdown => 0);
     }
     elsif ($action eq 'set') {
         my $name = $args[0];
@@ -576,18 +589,21 @@ sub handle_theme_command {
         my @themes = $theme_mgr->list_themes();
         my $current = $theme_mgr->get_current_theme();
         
-        print $self->colorize("━ AVAILABLE THEMES ━" . ("━" x 41), 'DATA'), "\n\n";
+        $self->writeline($self->colorize("━ AVAILABLE THEMES ━" . ("━" x 41), 'DATA'), markdown => 0);
+        $self->writeline("", markdown => 0);
         for my $theme (@themes) {
             my $marker = ($theme eq $current) ? ' (current)' : '';
-            printf "  %-20s%s\n", $theme, $self->colorize($marker, 'PROMPT');
+            $self->writeline(sprintf("  %-20s%s", $theme, $self->colorize($marker, 'PROMPT')), markdown => 0);
         }
-        print "\n";
-        print "Use ", $self->colorize("/theme set <name>", 'PROMPT'), " to switch themes\n";
+        $self->writeline("", markdown => 0);
+        $self->writeline("Use " . $self->colorize("/theme set <name>", 'PROMPT') . " to switch themes", markdown => 0);
     }
     elsif ($action eq 'show') {
         my $current = $theme_mgr->get_current_theme();
-        print $self->colorize("━ CURRENT THEME ━" . ("━" x 47), 'DATA'), "\n\n";
-        print "  ", $self->colorize($current, 'USER'), "\n\n";
+        $self->writeline($self->colorize("━ CURRENT THEME ━" . ("━" x 47), 'DATA'), markdown => 0);
+        $self->writeline("", markdown => 0);
+        $self->writeline("  " . $self->colorize($current, 'USER'), markdown => 0);
+        $self->writeline("", markdown => 0);
     }
     elsif ($action eq 'set') {
         my $name = $args[0];

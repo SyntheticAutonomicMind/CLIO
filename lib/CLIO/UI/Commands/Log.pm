@@ -46,10 +46,12 @@ sub new {
     
     my $self = {
         chat => $args{chat} || croak "chat instance required",
-        session => $args{session},
         debug => $args{debug} // 0,
         tool_logger => undef,
     };
+    
+    # Assign object references separately (hash literal assignment bug workaround)
+    $self->{session} = $args{session};
     
     bless $self, $class;
     return $self;
@@ -58,6 +60,7 @@ sub new {
 # Delegate display methods to chat
 sub display_system_message { shift->{chat}->display_system_message(@_) }
 sub colorize { shift->{chat}->colorize(@_) }
+sub writeline { shift->{chat}->writeline(@_) }
 
 =head2 _get_tool_logger()
 
@@ -130,10 +133,10 @@ sub display_tool_log_recent {
         return;
     }
     
-    print "\n";
-    print "-" x 55, "\n";
-    print $self->colorize("TOOL OPERATIONS (last $count)", 'DATA'), "\n";
-    print "-" x 55, "\n";
+    $self->writeline("", markdown => 0);
+    $self->writeline("-" x 55, markdown => 0);
+    $self->writeline($self->colorize("TOOL OPERATIONS (last $count)", 'DATA'), markdown => 0);
+    $self->writeline("-" x 55, markdown => 0);
     
     for my $entry (@$entries) {
         $self->_display_tool_log_entry($entry);
@@ -157,10 +160,10 @@ sub display_tool_log_filter {
         return;
     }
     
-    print "\n";
-    print "-" x 55, "\n";
-    print $self->colorize("TOOL OPERATIONS - $tool_name (" . scalar(@$entries) . " found)", 'DATA'), "\n";
-    print "-" x 55, "\n";
+    $self->writeline("", markdown => 0);
+    $self->writeline("-" x 55, markdown => 0);
+    $self->writeline($self->colorize("TOOL OPERATIONS - $tool_name (" . scalar(@$entries) . " found)", 'DATA'), markdown => 0);
+    $self->writeline("-" x 55, markdown => 0);
     
     for my $entry (reverse @$entries) {
         $self->_display_tool_log_entry($entry);
@@ -184,10 +187,10 @@ sub display_tool_log_search {
         return;
     }
     
-    print "\n";
-    print "-" x 55, "\n";
-    print $self->colorize("TOOL OPERATIONS - search '$pattern' (" . scalar(@$entries) . " found)", 'DATA'), "\n";
-    print "-" x 55, "\n";
+    $self->writeline("", markdown => 0);
+    $self->writeline("-" x 55, markdown => 0);
+    $self->writeline($self->colorize("TOOL OPERATIONS - search '$pattern' (" . scalar(@$entries) . " found)", 'DATA'), markdown => 0);
+    $self->writeline("-" x 55, markdown => 0);
     
     for my $entry (reverse @$entries) {
         $self->_display_tool_log_entry($entry);
@@ -212,10 +215,10 @@ sub display_tool_log_session {
         return;
     }
     
-    print "\n";
-    print "-" x 55, "\n";
-    print $self->colorize("TOOL OPERATIONS - session $session_id (" . scalar(@$entries) . " ops)", 'DATA'), "\n";
-    print "-" x 55, "\n";
+    $self->writeline("", markdown => 0);
+    $self->writeline("-" x 55, markdown => 0);
+    $self->writeline($self->colorize("TOOL OPERATIONS - session $session_id (" . scalar(@$entries) . " ops)", 'DATA'), markdown => 0);
+    $self->writeline("-" x 55, markdown => 0);
     
     for my $entry (reverse @$entries) {
         $self->_display_tool_log_entry($entry);
@@ -231,23 +234,23 @@ Display a single tool log entry.
 sub _display_tool_log_entry {
     my ($self, $entry) = @_;
     
-    print "\n";
+    $self->writeline("", markdown => 0);
     
     # Header line with timestamp and tool
     my $status_icon = $entry->{success} ? 'OK' : 'FAIL';
     my $status_color = $entry->{success} ? 'SUCCESS' : 'ERROR';
     
-    print $self->colorize("[$entry->{timestamp}] ", 'DIM');
-    print $self->colorize("$status_icon ", $status_color);
-    print $self->colorize("$entry->{tool_name}", 'TOOL');
+    my $header = $self->colorize("[$entry->{timestamp}] ", 'DIM') .
+                 $self->colorize("$status_icon ", $status_color) .
+                 $self->colorize("$entry->{tool_name}", 'TOOL');
     if ($entry->{operation}) {
-        print $self->colorize("/$entry->{operation}", 'PROMPT');
+        $header .= $self->colorize("/$entry->{operation}", 'PROMPT');
     }
-    print "\n";
+    $self->writeline($header, markdown => 0);
     
     # Action description
     if ($entry->{action_description}) {
-        print "  ", $self->colorize($entry->{action_description}, 'DATA'), "\n";
+        $self->writeline("  " . $self->colorize($entry->{action_description}, 'DATA'), markdown => 0);
     }
     
     # Parameters (compact JSON)
@@ -257,17 +260,17 @@ sub _display_tool_log_entry {
         if (length($params_json) > 100) {
             $params_json = substr($params_json, 0, 97) . "...";
         }
-        print "  ", $self->colorize("Params: ", 'DIM'), $params_json, "\n";
+        $self->writeline("  " . $self->colorize("Params: ", 'DIM') . $params_json, markdown => 0);
     }
     
     # Execution time
     if ($entry->{execution_time_ms}) {
-        print "  ", $self->colorize("Time: ", 'DIM'), "$entry->{execution_time_ms}ms\n";
+        $self->writeline("  " . $self->colorize("Time: ", 'DIM') . "$entry->{execution_time_ms}ms", markdown => 0);
     }
     
     # Error message if failed
     if (!$entry->{success} && $entry->{error}) {
-        print "  ", $self->colorize("Error: ", 'ERROR'), $entry->{error}, "\n";
+        $self->writeline("  " . $self->colorize("Error: ", 'ERROR') . $entry->{error}, markdown => 0);
     }
 }
 

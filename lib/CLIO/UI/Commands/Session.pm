@@ -45,12 +45,78 @@ sub new {
     
     my $self = {
         chat => $args{chat} || croak "chat instance required",
-        session => $args{session},
         debug => $args{debug} // 0,
     };
     
+    # Assign object references separately (hash literal assignment bug workaround)
+    $self->{session} = $args{session};
+    
     bless $self, $class;
     return $self;
+}
+
+=head2 auto_prune_sessions($config, $current_session_id)
+
+Class method to automatically prune old sessions on startup.
+Called from Chat.pm during initialization if auto-prune is enabled.
+
+Arguments:
+- $config - Config object with session_auto_prune and session_prune_days settings
+- $current_session_id - Current session ID to protect from deletion
+
+Returns: Number of sessions deleted (or 0 if disabled/nothing to delete)
+
+=cut
+
+sub auto_prune_sessions {
+    my ($class, $config, $current_session_id) = @_;
+    
+    return 0 unless $config;
+    
+    # Check if auto-prune is enabled
+    my $enabled = $config->get('session_auto_prune');
+    return 0 unless $enabled;
+    
+    my $days = $config->get('session_prune_days') || 30;
+    
+    my $sessions_dir = '.clio/sessions';
+    return 0 unless -d $sessions_dir;
+    
+    opendir(my $dh, $sessions_dir) or return 0;
+    my @files = readdir($dh);
+    closedir($dh);
+    
+    my $cutoff = time() - ($days * 86400);
+    my $deleted = 0;
+    
+    for my $file (@files) {
+        next unless $file =~ /^(.+)\.json$/;
+        my $session_id = $1;
+        
+        # Never delete current session
+        next if $current_session_id && $session_id eq $current_session_id;
+        
+        my $filepath = "$sessions_dir/$file";
+        my $mtime = (stat($filepath))[9] || 0;
+        
+        if ($mtime < $cutoff) {
+            if (unlink($filepath)) {
+                $deleted++;
+                # Also remove lock file if exists
+                my $lock_file = "$sessions_dir/$session_id.lock";
+                unlink($lock_file) if -f $lock_file;
+                
+                print STDERR "[DEBUG][Session] Auto-pruned old session: $session_id\n" 
+                    if should_log('DEBUG');
+            }
+        }
+    }
+    
+    if ($deleted > 0 && should_log('INFO')) {
+        print STDERR "[INFO][Session] Auto-pruned $deleted old sessions (older than $days days)\n";
+    }
+    
+    return $deleted;
 }
 
 # Delegate display methods to chat
@@ -60,6 +126,7 @@ sub display_key_value { shift->{chat}->display_key_value(@_) }
 sub display_list_item { shift->{chat}->display_list_item(@_) }
 sub display_system_message { shift->{chat}->display_system_message(@_) }
 sub display_error_message { shift->{chat}->display_error_message(@_) }
+sub writeline { shift->{chat}->writeline(@_) }
 sub display_success_message { shift->{chat}->display_success_message(@_) }
 sub display_paginated_list { shift->{chat}->display_paginated_list(@_) }
 sub colorize { shift->{chat}->colorize(@_) }
@@ -113,6 +180,12 @@ sub handle_session_command {
         return;
     }
     
+    # /session trim [days] - prune old sessions
+    if ($action eq 'trim' || $action eq 'prune') {
+        $self->_trim_sessions(@args);
+        return;
+    }
+    
     # Unknown action
     $self->display_error_message("Unknown action: /session $action");
     $self->_display_session_help();
@@ -135,13 +208,14 @@ sub _display_session_help {
     $self->display_list_item("/session switch <id> - Switch to specific session");
     $self->display_list_item("/session new - Show how to create new session");
     $self->display_list_item("/session clear - Clear current session history");
+    $self->display_list_item("/session trim [days] - Remove sessions older than N days (default: 30)");
     
-    print "\n";
+    $self->writeline("", markdown => 0);
     $self->display_section_header("EXAMPLES");
-    print "  /session show                        # See current session\n";
-    print "  /session list                        # See all sessions\n";
-    print "  /session switch abc123-def456        # Switch by ID\n";
-    print "\n";
+    $self->writeline("  /session show                        # See current session", markdown => 0);
+    $self->writeline("  /session list                        # See all sessions", markdown => 0);
+    $self->writeline("  /session switch abc123-def456        # Switch by ID", markdown => 0);
+    $self->writeline("", markdown => 0);
 }
 
 =head2 _display_session_info
@@ -176,7 +250,7 @@ sub _display_session_info {
     
     # API config (session-specific)
     if ($state->{api_config} && %{$state->{api_config}}) {
-        print "\n";
+        $self->writeline("", markdown => 0);
         $self->display_section_header("SESSION API CONFIG");
         for my $key (sort keys %{$state->{api_config}}) {
             $self->display_key_value($key, $state->{api_config}{$key});
@@ -185,7 +259,7 @@ sub _display_session_info {
     
     # Billing info
     if ($state->{billing}) {
-        print "\n";
+        $self->writeline("", markdown => 0);
         $self->display_section_header("SESSION USAGE");
         my $billing = $state->{billing};
         $self->display_key_value("Requests", $billing->{request_count} || 0);
@@ -193,7 +267,7 @@ sub _display_session_info {
         $self->display_key_value("Output tokens", $billing->{output_tokens} || 0);
     }
     
-    print "\n";
+    $self->writeline("", markdown => 0);
 }
 
 =head2 _list_sessions
@@ -264,7 +338,7 @@ sub _list_sessions {
     
     $self->display_paginated_list("AVAILABLE SESSIONS", \@items, $formatter);
     
-    print "\n";
+    $self->writeline("", markdown => 0);
     $self->display_system_message("Use '/session switch <number>' or '/session switch <id>' to switch");
 }
 
@@ -299,6 +373,169 @@ sub _clear_session_history {
     $self->{session}->save();
     
     $self->display_system_message("Session history cleared");
+}
+
+=head2 _trim_sessions($days)
+
+Remove sessions older than the specified number of days.
+
+Arguments:
+- $days - Number of days (default: 30)
+
+=cut
+
+sub _trim_sessions {
+    my ($self, $days_arg) = @_;
+    
+    # Parse days argument (default: 30)
+    my $days = 30;
+    if (defined $days_arg && $days_arg =~ /^\d+$/) {
+        $days = int($days_arg);
+    } elsif (defined $days_arg && $days_arg ne '') {
+        $self->display_error_message("Invalid days argument: $days_arg (must be a number)");
+        return;
+    }
+    
+    my $sessions_dir = '.clio/sessions';
+    unless (-d $sessions_dir) {
+        $self->display_error_message("Sessions directory not found");
+        return;
+    }
+    
+    opendir(my $dh, $sessions_dir) or do {
+        $self->display_error_message("Cannot read sessions directory: $!");
+        return;
+    };
+    
+    my @all_files = readdir($dh);
+    closedir($dh);
+    
+    # Get current session ID to protect it
+    my $current_id = $self->{session} ? $self->{session}->{session_id} : '';
+    
+    # Find sessions to delete
+    my $cutoff = time() - ($days * 86400);
+    my @to_delete;
+    my @protected;
+    my $total_bytes = 0;
+    
+    for my $file (@all_files) {
+        next unless $file =~ /^(.+)\.json$/;
+        my $session_id = $1;
+        
+        my $filepath = "$sessions_dir/$file";
+        my $mtime = (stat($filepath))[9] || 0;
+        my $size = (stat($filepath))[7] || 0;
+        
+        # Skip current session
+        if ($session_id eq $current_id) {
+            push @protected, { id => $session_id, reason => 'current session' };
+            next;
+        }
+        
+        # Check age
+        if ($mtime < $cutoff) {
+            push @to_delete, {
+                id => $session_id,
+                file => $filepath,
+                lock_file => "$sessions_dir/$session_id.lock",
+                mtime => $mtime,
+                size => $size,
+            };
+            $total_bytes += $size;
+        }
+    }
+    
+    if (!@to_delete) {
+        $self->display_system_message("No sessions older than $days days found.");
+        if (@protected) {
+            $self->display_system_message("  (1 protected: current session)");
+        }
+        return;
+    }
+    
+    # Show what will be deleted
+    $self->display_command_header("SESSION CLEANUP");
+    $self->display_key_value("Sessions to remove", scalar(@to_delete));
+    $self->display_key_value("Space to reclaim", _format_bytes($total_bytes));
+    $self->display_key_value("Age threshold", "$days days");
+    
+    $self->writeline("", markdown => 0);
+    $self->display_section_header("SESSIONS TO DELETE");
+    
+    for my $sess (sort { $a->{mtime} <=> $b->{mtime} } @to_delete) {
+        my $age = _format_relative_time($sess->{mtime});
+        my $size = _format_bytes($sess->{size});
+        printf "  %s [%s, %s]\n", 
+            substr($sess->{id}, 0, 36) . "...",
+            $age, $size;
+    }
+    
+    # Confirm
+    $self->writeline("", markdown => 0);
+    print $self->colorize("Delete these sessions? [y/N]: ", 'PROMPT');
+    my $response = <STDIN>;
+    chomp $response if defined $response;
+    $response = lc($response || 'n');
+    
+    unless ($response eq 'y' || $response eq 'yes') {
+        $self->display_system_message("Cancelled");
+        return;
+    }
+    
+    # Delete sessions
+    my $deleted = 0;
+    my $failed = 0;
+    my $bytes_freed = 0;
+    
+    for my $sess (@to_delete) {
+        my $ok = 1;
+        
+        # Delete JSON file
+        if (-f $sess->{file}) {
+            if (unlink($sess->{file})) {
+                $bytes_freed += $sess->{size};
+            } else {
+                print STDERR "[WARN] Failed to delete $sess->{file}: $!\n" if should_log('WARNING');
+                $ok = 0;
+            }
+        }
+        
+        # Delete lock file if exists
+        if (-f $sess->{lock_file}) {
+            unlink($sess->{lock_file});  # Best effort
+        }
+        
+        if ($ok) {
+            $deleted++;
+        } else {
+            $failed++;
+        }
+    }
+    
+    $self->writeline("", markdown => 0);
+    $self->display_success_message("Deleted $deleted sessions (" . _format_bytes($bytes_freed) . " freed)");
+    
+    if ($failed > 0) {
+        $self->display_error_message("Failed to delete $failed sessions (check permissions)");
+    }
+}
+
+# Helper to format bytes in human-readable form
+sub _format_bytes {
+    my ($bytes) = @_;
+    
+    return "0 B" unless $bytes;
+    
+    if ($bytes < 1024) {
+        return "$bytes B";
+    } elsif ($bytes < 1024 * 1024) {
+        return sprintf("%.1f KB", $bytes / 1024);
+    } elsif ($bytes < 1024 * 1024 * 1024) {
+        return sprintf("%.1f MB", $bytes / (1024 * 1024));
+    } else {
+        return sprintf("%.2f GB", $bytes / (1024 * 1024 * 1024));
+    }
 }
 
 =head2 handle_switch_command
@@ -369,7 +606,7 @@ sub handle_switch_command {
         }
     } else {
         # Display sessions and ask for choice
-        print "\n";
+        $self->writeline("", markdown => 0);
         $self->display_command_header("AVAILABLE SESSIONS");
         
         my $current_id = $self->{session} ? $self->{session}->{session_id} : '';
@@ -386,7 +623,7 @@ sub handle_switch_command {
                 $chat->{ansi}->parse($current);
         }
         
-        print "\n";
+        $self->writeline("", markdown => 0);
         $self->display_system_message("Enter session number or ID to switch:");
         $self->display_system_message("  /session switch 1");
         $self->display_system_message("  /session switch abc123-def456...");
@@ -444,7 +681,7 @@ sub handle_switch_command {
     }
     
     # 5. Success
-    print "\n";
+    $self->writeline("", markdown => 0);
     $self->display_success_message("Switched to session: $target_session_id");
     
     # Show session info

@@ -79,6 +79,22 @@ PROJECT-LEVEL LTM STORAGE (persists facts across all sessions):
    Returns: {success}
    Example: "Always check for X before doing Y"
 
+LTM MAINTENANCE (agents can self-groom their memory):
+-  prune_ltm - Remove old, low-confidence, or excess LTM entries
+   Parameters:
+     max_age_days (optional, default 90) - Remove entries older than this
+     min_confidence (optional, default 0.3) - Remove entries below this confidence
+     max_discoveries (optional, default 50) - Max discoveries to keep
+     max_solutions (optional, default 50) - Max solutions to keep
+     max_patterns (optional, default 30) - Max patterns to keep
+   Returns: {success, removed, remaining}
+   Use when: LTM seems cluttered or you want to clean up old/low-quality entries
+   
+-  ltm_stats - Get statistics about the current LTM database
+   Parameters: none
+   Returns: {success, stats{discoveries, solutions, patterns, ...}}
+   Use when: Checking LTM size before adding more entries
+
 HOW TO USE:
 1. Use store/retrieve for temporary per-project notes
 2. Use recall_sessions to remember what you learned in previous sessions
@@ -86,7 +102,7 @@ HOW TO USE:
 4. All LTM data persists in .clio/ltm.json and is automatically injected
    into future sessions for context
 },
-        supported_operations => [qw(store retrieve search list delete recall_sessions add_discovery add_solution add_pattern)],
+        supported_operations => [qw(store retrieve search list delete recall_sessions add_discovery add_solution add_pattern prune_ltm ltm_stats)],
         %opts,
     );
 }
@@ -112,6 +128,10 @@ sub route_operation {
         return $self->add_solution($params, $context);
     } elsif ($operation eq 'add_pattern') {
         return $self->add_pattern($params, $context);
+    } elsif ($operation eq 'prune_ltm') {
+        return $self->prune_ltm($params, $context);
+    } elsif ($operation eq 'ltm_stats') {
+        return $self->ltm_stats($params, $context);
     }
     
     return $self->error_result("Operation not implemented: $operation");
@@ -594,6 +614,110 @@ sub add_pattern {
     
     if ($@) {
         return $self->error_result("Failed to add pattern: $@");
+    }
+    
+    return $result;
+}
+
+=head2 prune_ltm
+
+Prune old, low-confidence, or excess LTM entries to prevent unbounded growth.
+
+Parameters:
+  max_age_days - Remove entries older than this (optional, default 90)
+  min_confidence - Remove entries below this confidence (optional, default 0.3)
+  max_discoveries - Max discoveries to keep (optional, default 50)
+  max_solutions - Max solutions to keep (optional, default 50)
+  max_patterns - Max patterns to keep (optional, default 30)
+
+=cut
+
+sub prune_ltm {
+    my ($self, $params, $context) = @_;
+    
+    my $max_age_days = $params->{max_age_days} // 90;
+    my $min_confidence = $params->{min_confidence} // 0.3;
+    my $max_discoveries = $params->{max_discoveries} // 50;
+    my $max_solutions = $params->{max_solutions} // 50;
+    my $max_patterns = $params->{max_patterns} // 30;
+    
+    my $result;
+    eval {
+        # Get LTM from context
+        my $ltm = $context->{ltm} || $context->{session}->{ltm} if ref($context) eq 'HASH';
+        return $self->error_result("LTM not available in context") unless $ltm;
+        
+        # Prune LTM
+        my $removed = $ltm->prune(
+            max_age_days => $max_age_days,
+            min_confidence => $min_confidence,
+            max_discoveries => $max_discoveries,
+            max_solutions => $max_solutions,
+            max_patterns => $max_patterns,
+        );
+        
+        my $total_removed = $removed->{discoveries} + $removed->{solutions} + 
+                            $removed->{patterns} + $removed->{workflows} + $removed->{failures};
+        
+        # Save LTM
+        my $working_dir = ($context->{session} && $context->{session}->can('working_directory')) 
+            ? $context->{session}->working_directory 
+            : '.';
+        my $ltm_file = File::Spec->catfile($working_dir, '.clio', 'ltm.json');
+        $ltm->save($ltm_file);
+        
+        my $stats = $ltm->get_stats();
+        
+        $result = $self->success_result(
+            "Pruned $total_removed entries from LTM",
+            action_description => "pruning LTM (removed $total_removed entries)",
+            removed => $removed,
+            remaining => {
+                discoveries => $stats->{discoveries},
+                solutions => $stats->{solutions},
+                patterns => $stats->{patterns},
+            },
+        );
+    };
+    
+    if ($@) {
+        return $self->error_result("Failed to prune LTM: $@");
+    }
+    
+    return $result;
+}
+
+=head2 ltm_stats
+
+Get statistics about the current LTM database.
+
+Returns counts and metadata about stored patterns.
+
+=cut
+
+sub ltm_stats {
+    my ($self, $params, $context) = @_;
+    
+    my $result;
+    eval {
+        # Get LTM from context
+        my $ltm = $context->{ltm} || $context->{session}->{ltm} if ref($context) eq 'HASH';
+        return $self->error_result("LTM not available in context") unless $ltm;
+        
+        my $stats = $ltm->get_stats();
+        
+        my $total = $stats->{discoveries} + $stats->{solutions} + $stats->{patterns} + 
+                    $stats->{workflows} + $stats->{failures};
+        
+        $result = $self->success_result(
+            encode_json($stats),
+            action_description => "retrieved LTM stats ($total total entries)",
+            stats => $stats,
+        );
+    };
+    
+    if ($@) {
+        return $self->error_result("Failed to get LTM stats: $@");
     }
     
     return $result;

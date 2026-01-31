@@ -47,6 +47,9 @@ use constant DEFAULT_CONFIG => {
     # Terminal operations configuration
     terminal_passthrough => 0,  # Force passthrough mode for all commands (default: off, use auto-detect)
     terminal_autodetect => 1,   # Auto-detect interactive commands and use passthrough (default: on)
+    # Session auto-pruning configuration
+    session_auto_prune => 0,    # Enable automatic session pruning on startup (default: off)
+    session_prune_days => 30,   # Delete sessions older than this many days (default: 30)
 };
 
 sub new {

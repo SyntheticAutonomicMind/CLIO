@@ -47,10 +47,12 @@ sub new {
     
     my $self = {
         chat => $args{chat} || croak "chat instance required",
-        session => $args{session},
-        config => $args{config},
         debug => $args{debug} // 0,
     };
+    
+    # Assign object references separately (hash literal assignment bug workaround)
+    $self->{session} = $args{session};
+    $self->{config} = $args{config};
     
     bless $self, $class;
     return $self;
@@ -61,6 +63,7 @@ sub display_command_header { shift->{chat}->display_command_header(@_) }
 sub display_key_value { shift->{chat}->display_key_value(@_) }
 sub display_system_message { shift->{chat}->display_system_message(@_) }
 sub display_error_message { shift->{chat}->display_error_message(@_) }
+sub writeline { shift->{chat}->writeline(@_) }
 sub colorize { shift->{chat}->colorize(@_) }
 
 =head2 handle_shell_command()
@@ -74,11 +77,11 @@ sub handle_shell_command {
     
     $self->display_system_message("Launching interactive shell...");
     $self->display_system_message("Type 'exit' to return to CLIO");
-    print "\n";
+    $self->writeline("", markdown => 0);
     
     system($ENV{SHELL} || '/bin/bash');
     
-    print "\n";
+    $self->writeline("", markdown => 0);
     $self->display_system_message("Returned to CLIO");
 }
 
@@ -99,13 +102,16 @@ sub handle_exec_command {
     my $command = join(' ', @args);
     
     $self->display_system_message("Executing: $command");
-    print "\n";
+    $self->writeline("", markdown => 0);
     
     my $output = `$command 2>&1`;
     my $exit_code = $? >> 8;
     
-    print $output;
-    print "\n";
+    # Output each line through writeline for pagination support
+    for my $line (split /\n/, $output) {
+        $self->writeline($line, markdown => 0);
+    }
+    $self->writeline("", markdown => 0);
     
     if ($exit_code != 0) {
         $self->display_error_message("Command exited with code: $exit_code");
@@ -146,7 +152,7 @@ sub handle_performance_command {
         $self->display_system_message("No session metrics available");
     }
     
-    print "\n";
+    $self->writeline("", markdown => 0);
 }
 
 =head2 handle_multiline_command()
@@ -174,9 +180,9 @@ sub handle_multiline_command {
     
     $self->display_system_message("Opening editor for multi-line input...");
     $self->display_system_message("Save and close to submit, leave empty to cancel.");
-    print "\n";
+    $self->writeline("", markdown => 0);
     
-    my $result = $editor->get_multiline_input();
+    my $result = $editor->edit_multiline();
     
     if ($result->{success} && $result->{content} && length($result->{content}) > 0) {
         return $result->{content};  # Return content to be processed as input

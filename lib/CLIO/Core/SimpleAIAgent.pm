@@ -27,6 +27,8 @@ sub new {
         session => $opts{session},
         api => $opts{api},
         ui => $opts{ui} || undef,  # UI reference for user_collaboration
+        skip_custom => $opts{skip_custom} || 0,  # Skip custom instructions
+        skip_ltm => $opts{skip_ltm} || 0,        # Skip LTM injection
     };
     
     bless $self, $class;
@@ -41,6 +43,8 @@ sub new {
             session => $self->{session},
             config => $self->{api}->{config},  # Pass config for web search API keys
             ui => $self->{ui},
+            skip_custom => $self->{skip_custom},
+            skip_ltm => $self->{skip_ltm},
         );
         print STDERR "[DEBUG][SimpleAIAgent] Orchestrator initialized in constructor\n" if should_log('DEBUG');
     };
@@ -176,7 +180,9 @@ sub process_user_request {
                 session => $self->{session},
                 config => $self->{api}->{config},  # Pass config for web search API keys
                 ui => $context->{ui},  # Forward UI for user_collaboration
-                spinner => $context->{spinner}  # Forward spinner for interactive tools
+                spinner => $context->{spinner},  # Forward spinner for interactive tools
+                skip_custom => $self->{skip_custom},
+                skip_ltm => $self->{skip_ltm},
             );
         }
         

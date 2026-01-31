@@ -29,7 +29,8 @@ CLIO::UI::Commands::Prompt - System prompt management commands for CLIO
 =head1 DESCRIPTION
 
 Handles system prompt management commands including:
-- /prompt show - Display current system prompt
+- /prompt - Show overview and help
+- /prompt show - Display current system prompt (rendered)
 - /prompt list - List available prompts
 - /prompt set <name> - Switch to named prompt
 - /prompt edit <name> - Edit prompt in $EDITOR
@@ -56,9 +57,14 @@ sub new {
 # Delegate display methods to chat
 sub display_system_message { shift->{chat}->display_system_message(@_) }
 sub display_error_message { shift->{chat}->display_error_message(@_) }
+sub display_command_header { shift->{chat}->display_command_header(@_) }
+sub display_section_header { shift->{chat}->display_section_header(@_) }
+sub display_key_value { shift->{chat}->display_key_value(@_) }
+sub display_list_item { shift->{chat}->display_list_item(@_) }
 sub colorize { shift->{chat}->colorize(@_) }
 sub writeline { shift->{chat}->writeline(@_) }
 sub refresh_terminal_size { shift->{chat}->refresh_terminal_size() }
+sub render_markdown { shift->{chat}->render_markdown(@_) }
 
 =head2 _get_prompt_manager()
 
@@ -83,9 +89,13 @@ sub handle_prompt_command {
     my ($self, @args) = @_;
     
     my $pm = $self->_get_prompt_manager();
-    my $action = shift @args || 'show';
+    my $action = shift @args;
     
-    if ($action eq 'show') {
+    # Default action (no args) shows overview with help
+    if (!defined $action || $action eq '' || $action eq 'help') {
+        $self->_show_overview($pm);
+    }
+    elsif ($action eq 'show') {
         $self->_show_prompt($pm);
     }
     elsif ($action eq 'list' || $action eq 'ls') {
@@ -114,9 +124,73 @@ sub handle_prompt_command {
     return;
 }
 
+=head2 _show_overview($pm)
+
+Display prompt overview with current status and available commands.
+
+=cut
+
+sub _show_overview {
+    my ($self, $pm) = @_;
+    
+    my $prompts = $pm->list_prompts();
+    my $active = $pm->{metadata}->{active_prompt} || 'default';
+    my $custom_count = scalar(@{$prompts->{custom}});
+    my $builtin_count = scalar(@{$prompts->{builtin}});
+    
+    $self->display_command_header("SYSTEM PROMPT MANAGER");
+    
+    # Current status
+    $self->display_section_header("CURRENT STATUS");
+    $self->display_key_value("Active Prompt", $active, 20);
+    $self->display_key_value("Available", "$builtin_count built-in, $custom_count custom", 20);
+    $self->writeline("", markdown => 0);
+    
+    # Quick actions
+    $self->display_section_header("COMMANDS");
+    $self->display_key_value("/prompt show", "Display current system prompt", 25);
+    $self->display_key_value("/prompt list", "List all available prompts", 25);
+    $self->display_key_value("/prompt set <name>", "Switch to named prompt", 25);
+    $self->display_key_value("/prompt edit <name>", "Edit prompt in \$EDITOR", 25);
+    $self->display_key_value("/prompt save <name>", "Save current as new", 25);
+    $self->display_key_value("/prompt delete <name>", "Delete custom prompt", 25);
+    $self->display_key_value("/prompt reset", "Reset to default", 25);
+    $self->writeline("", markdown => 0);
+    
+    # Tips
+    $self->display_section_header("TIPS");
+    $self->writeline("  " . $self->colorize("*", 'PROMPT') . " System prompts define AI behavior and personality", markdown => 0);
+    $self->writeline("  " . $self->colorize("*", 'PROMPT') . " Custom instructions in " . $self->colorize(".clio/instructions.md", 'DATA') . " are auto-appended", markdown => 0);
+    $self->writeline("  " . $self->colorize("*", 'PROMPT') . " Use " . $self->colorize("/prompt show", 'USER') . " to see the full active prompt", markdown => 0);
+    $self->writeline("", markdown => 0);
+}
+
+=head2 _show_help()
+
+Display help for prompt commands.
+
+=cut
+
+sub _show_help {
+    my ($self) = @_;
+    
+    $self->display_command_header("PROMPT HELP");
+    
+    $self->display_section_header("COMMANDS");
+    $self->display_key_value("/prompt", "Show overview and help", 25);
+    $self->display_key_value("/prompt show", "Display current system prompt", 25);
+    $self->display_key_value("/prompt list", "List available prompts", 25);
+    $self->display_key_value("/prompt set <name>", "Switch to named prompt", 25);
+    $self->display_key_value("/prompt edit <name>", "Edit prompt in \$EDITOR", 25);
+    $self->display_key_value("/prompt save <name>", "Save current as new", 25);
+    $self->display_key_value("/prompt delete <name>", "Delete custom prompt", 25);
+    $self->display_key_value("/prompt reset", "Reset to default", 25);
+    $self->writeline("", markdown => 0);
+}
+
 =head2 _show_prompt($pm)
 
-Display the current system prompt with pagination.
+Display the current system prompt with markdown rendering and pagination.
 
 =cut
 
@@ -124,52 +198,45 @@ sub _show_prompt {
     my ($self, $pm) = @_;
     
     my $prompt = $pm->get_system_prompt();
+    my $active = $pm->{metadata}->{active_prompt} || 'default';
+    my $lines = () = $prompt =~ /\n/g;
+    $lines++; # Count last line without newline
     
     $self->refresh_terminal_size();
     
-    # Reset pagination state on chat
+    # Enable pagination for this command output
+    $self->{chat}{pagination_enabled} = 1;
     $self->{chat}{line_count} = 0;
     $self->{chat}{pages} = [];
     $self->{chat}{current_page} = [];
     $self->{chat}{page_index} = 0;
     
-    my @header = (
-        "",
-        "-" x 55,
-        "ACTIVE SYSTEM PROMPT",
-        "-" x 55,
-        ""
-    );
+    $self->display_command_header("ACTIVE SYSTEM PROMPT: " . uc($active));
     
-    my @lines = split /\n/, $prompt;
-    my $total_lines = scalar @lines;
+    $self->display_section_header("METADATA");
+    $self->display_key_value("Name", $active);
+    $self->display_key_value("Lines", $lines);
+    $self->display_key_value("Size", length($prompt) . " bytes");
+    $self->writeline("", markdown => 0);  # Track blank line for pagination
     
-    for my $line (@header) {
-        last unless $self->writeline($line);
+    $self->display_section_header("CONTENT");
+    $self->writeline("", markdown => 0);
+    
+    # Split into lines and use writeline for pagination with auto-markdown
+    my @content_lines = split /\n/, $prompt;
+    for my $line (@content_lines) {
+        my $continue = $self->writeline($line);  # markdown => 1 by default
+        last unless $continue;  # User pressed 'q' to quit
     }
     
-    for my $line (@lines) {
-        last unless $self->writeline($line);
-    }
-    
-    my @footer = (
-        "",
-        "-" x 55,
-        "Total: $total_lines lines",
-        "Type: " . ($pm->{metadata}->{active_prompt} || 'default'),
-        ""
-    );
-    
-    for my $line (@footer) {
-        last unless $self->writeline($line);
-    }
-    
+    # Disable pagination after command completes
+    $self->{chat}{pagination_enabled} = 0;
     $self->{chat}{line_count} = 0;
 }
 
 =head2 _list_prompts($pm)
 
-List all available prompts.
+List all available prompts with modern formatting.
 
 =cut
 
@@ -179,32 +246,40 @@ sub _list_prompts {
     my $prompts = $pm->list_prompts();
     my $active = $pm->{metadata}->{active_prompt} || 'default';
     
-    print "\n";
-    print "SYSTEM PROMPTS\n";
-    print "-" x 55, "\n";
-    print "\n";
-    print "BUILTIN (read-only):\n";
-    for my $name (@{$prompts->{builtin}}) {
-        my $marker = ($name eq $active) ? " (ACTIVE)" : "";
-        printf "  %-20s%s\n", $name, $self->colorize($marker, 'PROMPT');
-    }
+    $self->display_command_header("SYSTEM PROMPTS");
     
+    # Built-in prompts
+    $self->display_section_header("BUILT-IN");
+    for my $name (@{$prompts->{builtin}}) {
+        my $marker = ($name eq $active) ? " " . $self->colorize("(ACTIVE)", 'SUCCESS') : "";
+        $self->display_key_value($name, "Built-in prompt$marker", 20);
+    }
+    $self->writeline("", markdown => 0);
+    
+    # Custom prompts
+    $self->display_section_header("CUSTOM");
     if (@{$prompts->{custom}}) {
-        print "\nCUSTOM:\n";
         for my $name (@{$prompts->{custom}}) {
-            my $marker = ($name eq $active) ? " (ACTIVE)" : "";
-            printf "  %-20s%s\n", $name, $self->colorize($marker, 'PROMPT');
+            my $marker = ($name eq $active) ? " " . $self->colorize("(ACTIVE)", 'SUCCESS') : "";
+            $self->display_key_value($name, "Custom prompt$marker", 20);
         }
     } else {
-        print "\nNo custom prompts yet.\n";
-        print "Use " . $self->colorize('/prompt edit <name>', 'PROMPT') . " to create one.\n";
+        $self->writeline("  " . $self->colorize("(none)", 'DIM'), markdown => 0);
+        $self->writeline("  Use " . $self->colorize("/prompt edit <name>", 'USER') . " to create a custom prompt.", markdown => 0);
     }
+    $self->writeline("", markdown => 0);
     
-    print "\n";
-    printf "Total: %d builtin, %d custom\n", 
-        scalar @{$prompts->{builtin}}, 
-        scalar @{$prompts->{custom}};
-    print "\n";
+    # Summary
+    my $custom_count = scalar(@{$prompts->{custom}});
+    my $builtin_count = scalar(@{$prompts->{builtin}});
+    my $total = $custom_count + $builtin_count;
+    
+    my $summary = $self->colorize("Total: ", 'LABEL');
+    $summary .= $self->colorize("$builtin_count", 'DATA') . " built-in, ";
+    $summary .= $self->colorize("$custom_count", 'DATA') . " custom";
+    $summary .= " (" . $self->colorize("$total", 'SUCCESS') . " total)";
+    $self->writeline($summary, markdown => 0);
+    $self->writeline("", markdown => 0);
 }
 
 =head2 _set_prompt($pm, @args)
@@ -219,6 +294,7 @@ sub _set_prompt {
     my $name = shift @args;
     unless ($name) {
         $self->display_error_message("Usage: /prompt set <name>");
+        $self->display_system_message("Use " . $self->colorize("/prompt list", 'USER') . " to see available prompts.");
         return;
     }
     
@@ -269,7 +345,7 @@ sub _edit_prompt {
     if ($result->{success}) {
         if ($result->{modified}) {
             $self->display_system_message("System prompt '$name' saved.");
-            $self->display_system_message("Use " . $self->colorize("/prompt set $name", 'PROMPT') . " to activate.");
+            $self->display_system_message("Use " . $self->colorize("/prompt set $name", 'USER') . " to activate.");
         } else {
             $self->display_system_message("No changes made to '$name'.");
         }
@@ -298,7 +374,7 @@ sub _save_prompt {
     my $result = $pm->save_prompt($name, $current);
     if ($result->{success}) {
         $self->display_system_message("Saved current system prompt as '$name'");
-        $self->display_system_message("Use " . $self->colorize("/prompt set $name", 'PROMPT') . " to activate later.");
+        $self->display_system_message("Use " . $self->colorize("/prompt set $name", 'USER') . " to activate later.");
     } else {
         $self->display_error_message($result->{error});
     }
@@ -334,26 +410,6 @@ sub _delete_prompt {
     } else {
         $self->display_error_message($result->{error});
     }
-}
-
-=head2 _show_help()
-
-Display help for prompt commands.
-
-=cut
-
-sub _show_help {
-    my ($self) = @_;
-    
-    print "\n";
-    print "Usage:\n";
-    print "  /prompt show              - Display current system prompt\n";
-    print "  /prompt list              - List available prompts\n";
-    print "  /prompt set <name>        - Switch to named prompt\n";
-    print "  /prompt edit <name>       - Edit prompt in \$EDITOR\n";
-    print "  /prompt save <name>       - Save current as new\n";
-    print "  /prompt delete <name>     - Delete custom prompt\n";
-    print "  /prompt reset             - Reset to default\n";
 }
 
 1;

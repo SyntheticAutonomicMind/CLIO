@@ -46,10 +46,12 @@ sub new {
     
     my $self = {
         chat => $args{chat} || croak "chat instance required",
-        session => $args{session},
-        ai_agent => $args{ai_agent},
         debug => $args{debug} // 0,
     };
+    
+    # Assign object references separately (hash literal assignment bug workaround)
+    $self->{session} = $args{session};
+    $self->{ai_agent} = $args{ai_agent};
     
     bless $self, $class;
     return $self;
@@ -58,6 +60,7 @@ sub new {
 # Delegate display methods to chat
 sub display_system_message { shift->{chat}->display_system_message(@_) }
 sub display_error_message { shift->{chat}->display_error_message(@_) }
+sub writeline { shift->{chat}->writeline(@_) }
 
 =head2 handle_todo_command(@args)
 
@@ -122,7 +125,9 @@ sub _view_todos {
     );
     
     if ($result->{success}) {
-        print $result->{output}, "\n";
+        for my $line (split /\n/, $result->{output}) {
+            $self->writeline($line, markdown => 0);
+        }
     } else {
         $self->display_error_message($result->{error});
     }
@@ -158,7 +163,9 @@ sub _add_todo {
     
     if ($result->{success}) {
         $self->display_system_message("Todo added successfully");
-        print $result->{output}, "\n";
+        for my $line (split /\n/, $result->{output}) {
+            $self->writeline($line, markdown => 0);
+        }
     } else {
         $self->display_error_message($result->{error});
     }

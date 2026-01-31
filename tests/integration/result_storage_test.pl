@@ -4,7 +4,8 @@ use strict;
 use warnings;
 use feature 'say';
 use FindBin;
-use lib "$FindBin::Bin/lib";
+use lib "$FindBin::Bin/../../lib";
+use lib "$FindBin::Bin/../lib";
 
 use CLIO::Session::ToolResultStore;
 use File::Path qw(remove_tree);

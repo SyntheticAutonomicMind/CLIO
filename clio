@@ -38,6 +38,8 @@ OPTIONS:
     --exit             Exit after processing (with --input)
     --model <name>     Use specific model (temporary, not persisted)
     --no-custom-instructions  Skip .clio/instructions.md
+    --no-ltm           Skip long-term memory pattern injection
+    --incognito        Skip both custom instructions AND LTM (fresh audit mode)
     --help, -h         Display this help message
 
 EXAMPLES:
@@ -47,6 +49,7 @@ EXAMPLES:
     clio --debug --new            # Start with debug logging
     clio --dir /path/to/project   # Start in specific directory
     clio --model gpt-4.1 --new    # Start with specific model
+    clio --incognito --new        # Fresh audit without project knowledge
 
 SESSIONS:
     Sessions are stored in: .clio/sessions/
@@ -121,6 +124,7 @@ my $config = CLIO::Core::Config->new(debug => $debug);
 # Parse command line arguments
 my $should_exit = 0;
 my $skip_custom = 0;
+my $skip_ltm = 0;
 my $model_override = undef;  # Temporary model override from --model flag
 for (my $i = 0; $i < @ARGV; $i++) {
     if ($ARGV[$i] eq '--input' && defined $ARGV[$i+1]) {
@@ -144,6 +148,14 @@ for (my $i = 0; $i < @ARGV; $i++) {
     }
     if ($ARGV[$i] eq '--no-custom-instructions') {
         $skip_custom = 1;
+    }
+    if ($ARGV[$i] eq '--no-ltm') {
+        $skip_ltm = 1;
+    }
+    if ($ARGV[$i] eq '--incognito') {
+        # Incognito mode enables both skip flags
+        $skip_custom = 1;
+        $skip_ltm = 1;
     }
     if ($ARGV[$i] eq '--model' && defined $ARGV[$i+1]) {
         $model_override = $ARGV[$i+1];
@@ -310,13 +322,18 @@ my $api = CLIO::Core::APIManager->new(
 my $ai_agent = CLIO::Core::SimpleAIAgent->new(
     debug => $debug,
     session => $session,
-    api => $api
+    api => $api,
+    skip_custom => $skip_custom,
+    skip_ltm => $skip_ltm,
 );
 
 if ($debug) {
     my $cfg = $config->get_all();
     print "[DEBUG] API base: " . ($cfg->{api_base} || '(not set)') . "\n";
     print "[DEBUG] Model: " . ($cfg->{model} || '(not set)') . "\n";
+    if ($skip_custom || $skip_ltm) {
+        print "[DEBUG] Incognito mode: skip_custom=$skip_custom, skip_ltm=$skip_ltm\n";
+    }
 }
 
 # Handle command line input if provided
