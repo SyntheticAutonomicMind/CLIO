@@ -11,6 +11,7 @@ use Time::HiRes qw(time sleep);  # High resolution time and sleep
 use JSON::PP;
 use CLIO::Compat::HTTP;
 BEGIN { require CLIO::Compat::HTTP; CLIO::Compat::HTTP->import(); }
+use Scalar::Util qw(blessed);
 use CLIO::Core::PerformanceMonitor;
 use CLIO::Util::TextSanitizer qw(sanitize_text);
 
@@ -179,6 +180,33 @@ sub new {
     $self->{api_key} = $self->_get_api_key();
     
     return $self;
+}
+
+=head2 set_session($session)
+
+Set or change the session object for billing continuity tracking.
+
+Arguments:
+- $session: Session object (must support session_id accessor)
+
+=cut
+
+sub set_session {
+    my ($self, $session) = @_;
+    
+    $self->{session} = $session;
+    
+    # Clear the "warned once" flag so we log the first session association
+    delete $self->{_warned_no_session_streaming};
+    
+    if ($self->{debug}) {
+        my $sid = $session && $session->can('session_id') 
+            ? $session->session_id 
+            : (ref($session) eq 'HASH' ? $session->{session_id} : 'unknown');
+        print STDERR "[DEBUG][APIManager] Session set: $sid\n";
+    }
+    
+    return 1;
 }
 
 =head2 _get_api_key
@@ -1849,7 +1877,7 @@ sub send_request {
         print STDERR "[INFO][APIManager] ✓ Stored response_id (fallback mechanism): " . substr($response_id, 0, 30) . "...\n" if should_log('INFO');
         
         # Persist session immediately to maintain billing continuity
-        if ($self->{session}->can('save')) {
+        if (ref($self->{session}) && blessed($self->{session}) && $self->{session}->can('save')) {
             $self->{session}->save();
             print STDERR "[INFO][APIManager] ✓ Session saved with response_id\n" if should_log('INFO');
         } else {
@@ -2237,7 +2265,7 @@ sub send_request_streaming {
                         print STDERR "[DEBUG][APIManager] Session object type: " . ref($self->{session}) . "\n" if should_log('DEBUG');
                         
                         # Persist session immediately to maintain billing continuity
-                        if ($self->{session}->can('save')) {
+                        if (ref($self->{session}) && blessed($self->{session}) && $self->{session}->can('save')) {
                             print STDERR "[DEBUG][APIManager] Calling session->save()...\n" if should_log('DEBUG');
                             $self->{session}->save();
                             print STDERR "[INFO][APIManager] ✓ Session saved with response_id (streaming)\n" if should_log('INFO');
@@ -2389,7 +2417,7 @@ sub send_request_streaming {
     
     # Persist session if we got a response_id
     if ($self->{session} && $self->{session}{lastGitHubCopilotResponseId}) {
-        if ($self->{session}->can('save')) {
+        if (ref($self->{session}) && blessed($self->{session}) && $self->{session}->can('save')) {
             $self->{session}->save();
         }
     }
@@ -3012,8 +3040,8 @@ sub _process_quota_headers {
         }
     }
     
-    # Persist session to save quota tracking
-    if ($self->{session}->can('save')) {
+    # Persist session to save quota tracking (if session is an object with save method)
+    if ($self->{session} && ref($self->{session}) && blessed($self->{session}) && $self->{session}->can('save')) {
         $self->{session}->save();
     }
     
@@ -3090,7 +3118,7 @@ sub _store_stateful_marker {
                  scalar(@{$self->{session}{_stateful_markers}}) . ")\n" if should_log('INFO');
     
     # Persist session
-    if ($self->{session}->can('save')) {
+    if (ref($self->{session}) && blessed($self->{session}) && $self->{session}->can('save')) {
         $self->{session}->save();
         print STDERR "[INFO][APIManager] ✓ Session saved with stateful_marker\n" if should_log('INFO');
     } else {
