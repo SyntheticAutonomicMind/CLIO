@@ -50,9 +50,11 @@ sub new {
     
     my $self = {
         chat => $args{chat} || croak "chat instance required",
-        session => $args{session},
         debug => $args{debug} // 0,
     };
+    
+    # Assign object references separately (hash literal assignment bug workaround)
+    $self->{session} = $args{session};
     
     bless $self, $class;
     return $self;
@@ -61,6 +63,7 @@ sub new {
 # Delegate display methods to chat
 sub display_system_message { shift->{chat}->display_system_message(@_) }
 sub display_error_message { shift->{chat}->display_error_message(@_) }
+sub writeline { shift->{chat}->writeline(@_) }
 
 =head2 handle_explain_command(@args)
 
@@ -104,7 +107,7 @@ sub handle_explain_command {
         
         # Display info message
         $self->display_system_message("Explaining code from: $file");
-        print "\n";
+        $self->writeline("", markdown => 0);
         
         return $prompt;
     } else {
@@ -161,7 +164,7 @@ sub handle_review_command {
         
         # Display info message
         $self->display_system_message("Reviewing code from: $file");
-        print "\n";
+        $self->writeline("", markdown => 0);
         
         return $prompt;
     } else {
@@ -232,7 +235,7 @@ sub handle_test_command {
         
         # Display info message
         $self->display_system_message("Generating tests for: $file");
-        print "\n";
+        $self->writeline("", markdown => 0);
         
         return $prompt;
     } else {

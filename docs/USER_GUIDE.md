@@ -555,6 +555,13 @@ YOU: Show me everything you remember
 YOU: Forget the information about the old API endpoint
 ```
 
+**Long-Term Memory (LTM) Management:**
+```
+/memory stats    # Show LTM statistics (entry counts, timestamps)
+/memory prune    # Remove old/low-confidence entries (default 90 days)
+/memory prune 30 # Remove entries older than 30 days
+```
+
 ### Todo List Operations
 
 **manage_todo_list** - Create and manage tasks

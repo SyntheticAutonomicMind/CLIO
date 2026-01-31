@@ -21,8 +21,9 @@ This test suite would have caught the rate limit bug the user encountered.
 
 use strict;
 use warnings;
-use lib 'lib';
-use lib 'tests/lib';
+use FindBin;
+use lib "$FindBin::Bin/../../lib";
+use lib "$FindBin::Bin/../lib";
 use TestHelpers qw(assert_true assert_equals assert_contains);
 use CLIO::Core::APIManager;
 use CLIO::Core::Config;

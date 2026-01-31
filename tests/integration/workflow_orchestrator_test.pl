@@ -1,102 +1,170 @@
 #!/usr/bin/env perl
 
+=head1 NAME
+
+workflow_orchestrator_test.pl - Test WorkflowOrchestrator components with mock
+
+=head1 DESCRIPTION
+
+Tests the WorkflowOrchestrator-related components without requiring real API keys.
+Uses MockAPI for testing API interactions.
+
+=cut
+
 use strict;
 use warnings;
 use FindBin;
-use lib "$FindBin::Bin/lib";  # Correct path to lib directory
+use lib "$FindBin::Bin/../../lib";
+use lib "$FindBin::Bin/../lib";
+use Test::More;
+use File::Temp qw(tempdir);
+use JSON::PP qw(encode_json decode_json);
 
-# Test script for tool calling implementation
-# Task 5: Direct testing of WorkflowOrchestrator
+# Setup test environment
+my $test_dir = tempdir(CLEANUP => 1);
+chdir $test_dir;
+mkdir '.clio';
+mkdir '.clio/sessions';
 
-print "=" x 80 . "\n";
-print "CLIO Tool Calling Test\n";
-print "=" x 80 . "\n\n";
+print "=" x 60 . "\n";
+print "WorkflowOrchestrator Component Test\n";
+print "=" x 60 . "\n\n";
 
-# Check environment
-unless ($ENV{OPENAI_API_KEY}) {
-    die "ERROR: OPENAI_API_KEY not set. Please set it before running this test.\n";
-}
+# Test 1: Basic module loading
+use_ok('CLIO::Core::WorkflowOrchestrator');
+use_ok('CLIO::Test::MockAPI');
+use_ok('CLIO::Session::Manager');
+use_ok('CLIO::Core::ToolExecutor');
+use_ok('CLIO::Tools::Registry');
+use_ok('CLIO::Tools::FileOperations');
 
-print "Configuration:\n";
-print "  API Base: " . ($ENV{OPENAI_API_BASE} || 'openai') . "\n";
-print "  Model: " . ($ENV{OPENAI_MODEL} || 'qwen3-coder-max') . "\n";
-print "  Debug: " . ($ENV{CLIO_LOG_LEVEL} ? 'ON' : 'OFF') . "\n";
-print "\n";
-
-# Initialize components
-print "Initializing components...\n";
-
-# Register protocol handlers (normally done in clio main script)
-require CLIO::Protocols::Manager;
-CLIO::Protocols::Manager->register(name => 'FILE_OP', handler => 'CLIO::Protocols::FileOp');
-CLIO::Protocols::Manager->register(name => 'GIT', handler => 'CLIO::Protocols::Git');
-CLIO::Protocols::Manager->register(name => 'URL_FETCH', handler => 'CLIO::Protocols::UrlFetch');
-print "  ✓ Protocol handlers registered\n";
-
-require CLIO::Core::APIManager;
-my $api_manager = CLIO::Core::APIManager->new(
-    debug => $ENV{CLIO_LOG_LEVEL} ? 1 : 0
+# Test 2: Create components
+my $mock_api = CLIO::Test::MockAPI->new(
+    model => 'mock-gpt-4',
+    debug => 0,
 );
-print "  ✓ APIManager initialized\n";
+ok($mock_api, "MockAPI created");
 
-require CLIO::Core::WorkflowOrchestrator;
-my $orchestrator = CLIO::Core::WorkflowOrchestrator->new(
-    api_manager => $api_manager,
-    session => undef,  # No session for this test
-    debug => $ENV{CLIO_LOG_LEVEL} ? 1 : 0
+my $session = CLIO::Session::Manager->create(
+    working_directory => $test_dir,
+    debug => 0
 );
-print "  ✓ WorkflowOrchestrator initialized\n";
-print "\n";
+ok($session, "Session created");
 
-# Test 1: URL Fetch (user requested this)
-print "=" x 80 . "\n";
-print "Test 1: Fetch today's headlines from Google News\n";
-print "=" x 80 . "\n";
-print "User request: Can you fetch today's headlines from https://news.google.com?\n\n";
+# Test 3: Create registry and register file operations
+my $registry = CLIO::Tools::Registry->new(debug => 0);
+ok($registry, "Registry created");
 
-my $result1 = $orchestrator->process_input(
-    "Can you fetch today's headlines from https://news.google.com?",
-    undef
+my $file_ops = CLIO::Tools::FileOperations->new();
+ok($file_ops, "FileOperations tool created");
+
+$registry->register_tool($file_ops);
+ok($registry->get_tool('file_operations'), "FileOperations registered in registry");
+
+# Test 4: Create ToolExecutor with registry
+my $executor = CLIO::Core::ToolExecutor->new(
+    session => $session,
+    tool_registry => $registry,
+    debug => 0,
 );
+ok($executor, "ToolExecutor created");
 
-print "Result:\n";
-print "  Success: " . ($result1->{success} ? "YES" : "NO") . "\n";
-print "  Iterations: " . ($result1->{iterations} || 0) . "\n";
-print "  Tool calls: " . ($result1->{tool_calls_made} ? scalar(@{$result1->{tool_calls_made}}) : 0) . "\n";
-print "\n";
-
-if ($result1->{success}) {
-    print "AI Response:\n";
-    print "-" x 80 . "\n";
-    print $result1->{content} . "\n";
-    print "-" x 80 . "\n";
-} else {
-    print "ERROR: " . ($result1->{error} || "Unknown error") . "\n";
-}
-
-print "\n";
-
-# Show tool calls that were made
-if ($result1->{tool_calls_made} && @{$result1->{tool_calls_made}}) {
-    print "Tools Used:\n";
-    for my $tc (@{$result1->{tool_calls_made}}) {
-        print "  - $tc->{name}\n";
-        my $args = eval { require JSON::PP; JSON::PP::decode_json($tc->{arguments}) };
-        if ($args && ref($args) eq 'HASH') {
-            for my $k (keys %$args) {
-                my $v = $args->{$k};
-                if (length($v) > 60) {
-                    $v = substr($v, 0, 60) . "...";
-                }
-                print "    $k: $v\n";
-            }
-        }
+# Test 5: Execute a file_operations tool (proper format)
+my $tool_call = {
+    function => {
+        name => 'file_operations',
+        arguments => encode_json({
+            operation => 'create_file',
+            path => 'test.txt',
+            content => 'Hello, World!'
+        })
     }
-    print "\n";
-}
+};
 
-print "=" x 80 . "\n";
+my $tool_result = $executor->execute_tool($tool_call, 'call_001');
+ok($tool_result, "Tool execution returned result");
+
+# Parse the result (it's JSON)
+my $result_data = eval { decode_json($tool_result) };
+ok($result_data, "Result is valid JSON");
+ok($result_data->{success}, "Tool execution succeeded: " . ($result_data->{message} || ''));
+ok(-f 'test.txt', "File was created");
+
+# Test 6: Read back the file
+my $read_call = {
+    function => {
+        name => 'file_operations',
+        arguments => encode_json({
+            operation => 'read_file',
+            path => 'test.txt'
+        })
+    }
+};
+
+my $read_result = $executor->execute_tool($read_call, 'call_002');
+my $read_data = eval { decode_json($read_result) };
+ok($read_data, "Read result is valid JSON");
+ok($read_data->{success}, "File read succeeded");
+like($read_data->{output}, qr/Hello, World!/, "File content matches (in output field)");
+
+# Test 7: MockAPI response simulation - tool call
+$mock_api->set_response({
+    tool_calls => [{
+        id => 'call_abc123',
+        type => 'function',
+        function => {
+            name => 'file_operations',
+            arguments => '{"operation": "read_file", "path": "test.txt"}'
+        }
+    }]
+});
+
+my $api_result = $mock_api->chat_completion(
+    messages => [{ role => 'user', content => 'Read test.txt' }]
+);
+ok($api_result->{choices}[0]{message}{tool_calls}, "MockAPI returns tool calls");
+is($api_result->{choices}[0]{finish_reason}, 'tool_calls', "Finish reason is tool_calls");
+
+# Test 8: MockAPI response simulation - final answer
+$mock_api->set_response({
+    content => 'The file test.txt contains: Hello, World!'
+});
+
+my $final_result = $mock_api->chat_completion(
+    messages => [
+        { role => 'user', content => 'Read test.txt' },
+        { role => 'assistant', tool_calls => $api_result->{choices}[0]{message}{tool_calls} },
+        { role => 'tool', tool_call_id => 'call_abc123', content => 'Hello, World!' },
+    ]
+);
+like($final_result->{choices}[0]{message}{content}, qr/Hello, World!/, "Final response contains file content");
+
+# Test 9: Error handling in MockAPI
+$mock_api->set_error("Simulated API failure");
+eval {
+    $mock_api->chat_completion(messages => [{ role => 'user', content => 'test' }]);
+};
+like($@, qr/Simulated API failure/, "Error properly propagated");
+
+# Test 10: Request tracking
+$mock_api->clear_error();
+$mock_api->clear_requests();
+$mock_api->set_response({ content => "response 1" });
+$mock_api->chat_completion(messages => [{ role => 'user', content => 'message 1' }]);
+$mock_api->set_response({ content => "response 2" });
+$mock_api->chat_completion(messages => [{ role => 'user', content => 'message 2' }]);
+
+my @requests = $mock_api->get_requests();
+is(scalar(@requests), 2, "Two requests tracked");
+is($requests[0]->{messages}[0]{content}, 'message 1', "First request content correct");
+is($requests[1]->{messages}[0]{content}, 'message 2', "Second request content correct");
+
+# Cleanup
+chdir '/';
+
+print "\n";
+print "=" x 60 . "\n";
 print "Test Complete\n";
-print "=" x 80 . "\n";
+print "=" x 60 . "\n";
 
-1;
+done_testing();
