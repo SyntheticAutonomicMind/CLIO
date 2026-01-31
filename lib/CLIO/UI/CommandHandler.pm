@@ -305,8 +305,9 @@ sub handle_command {
     }
     elsif ($cmd eq 'skills' || $cmd eq 'skill') {
         # Use extracted Skills command module
-        my $result = $self->{skills_cmd}->handle_skills_command(@args);
-        return $result if $result;  # May return (1, $prompt) for AI execution
+        # Must capture list return value: (1, $prompt) for AI execution
+        my @result = $self->{skills_cmd}->handle_skills_command(@args);
+        return @result if @result > 1;  # Return (1, $prompt) if prompt was returned
     }
     elsif ($cmd eq 'prompt') {
         # Use extracted Prompt command module
