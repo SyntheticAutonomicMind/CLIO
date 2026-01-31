@@ -63,7 +63,9 @@ sub new {
 sub display_command_header { shift->{chat}->display_command_header(@_) }
 sub display_section_header { shift->{chat}->display_section_header(@_) }
 sub display_key_value { shift->{chat}->display_key_value(@_) }
+sub display_command_row { shift->{chat}->display_command_row(@_) }
 sub display_list_item { shift->{chat}->display_list_item(@_) }
+sub display_tip { shift->{chat}->display_tip(@_) }
 sub display_system_message { shift->{chat}->display_system_message(@_) }
 sub display_error_message { shift->{chat}->display_error_message(@_) }
 sub writeline { shift->{chat}->writeline(@_) }
@@ -182,54 +184,41 @@ sub handle_config_command {
 
 =head2 _display_config_help
 
-Display help for /config commands
+Display help for /config commands using unified style.
 
 =cut
 
 sub _display_config_help {
     my ($self) = @_;
     
-    $self->display_command_header("CONFIG COMMANDS");
+    $self->display_command_header("CONFIG");
     
-    $self->display_list_item("/config show - Display global configuration");
-    $self->display_list_item("/config set <key> <value> - Set a configuration value");
-    $self->display_list_item("/config save - Save current configuration to disk");
-    $self->display_list_item("/config load - Reload configuration from disk");
-    $self->display_list_item("/config workdir [path] - Get or set working directory");
-    $self->display_list_item("/config loglevel [level] - Get or set log level");
-    
+    $self->display_section_header("COMMANDS");
+    $self->display_command_row("/config show", "Display global configuration", 35);
+    $self->display_command_row("/config set <key> <value>", "Set a configuration value", 35);
+    $self->display_command_row("/config save", "Save current configuration", 35);
+    $self->display_command_row("/config load", "Reload from disk", 35);
+    $self->display_command_row("/config workdir [path]", "Get or set working directory", 35);
+    $self->display_command_row("/config loglevel [level]", "Get or set log level", 35);
     $self->writeline("", markdown => 0);
+    
     $self->display_section_header("SETTABLE KEYS");
-    $self->writeline("  style                    UI color scheme (default, dark, light, amber-terminal, etc.)", markdown => 0);
-    $self->writeline("  theme                    Banner and template theme", markdown => 0);
-    $self->writeline("  workdir                  Current working directory path", markdown => 0);
-    $self->writeline("  terminal_passthrough     Force direct terminal access for all commands (true/false)", markdown => 0);
-    $self->writeline("  terminal_autodetect      Auto-detect interactive commands for passthrough (true/false)", markdown => 0);
-    
+    $self->display_key_value("style", "UI color scheme", 25);
+    $self->display_key_value("theme", "Banner and template theme", 25);
+    $self->display_key_value("workdir", "Working directory path", 25);
+    $self->display_key_value("terminal_passthrough", "Force direct terminal access", 25);
+    $self->display_key_value("terminal_autodetect", "Auto-detect interactive commands", 25);
     $self->writeline("", markdown => 0);
+    
     $self->display_section_header("EXAMPLES");
-    $self->writeline("  /config set style dark                      # Switch to dark color scheme", markdown => 0);
-    $self->writeline("  /config set theme photon                    # Use photon theme", markdown => 0);
-    $self->writeline("  /config set workdir ~/projects              # Change working directory", markdown => 0);
-    $self->writeline("  /config set terminal_passthrough true       # Enable passthrough for all commands", markdown => 0);
-    $self->writeline("  /config set terminal_autodetect false       # Disable interactive command detection", markdown => 0);
-    $self->writeline("  /config workdir                             # Show current working directory", markdown => 0);
-    
-    $self->writeline("", markdown => 0);
-    $self->display_info_message("For API settings, use /api set");
+    $self->display_command_row("/config set style dark", "Switch to dark color scheme", 35);
+    $self->display_command_row("/config set theme photon", "Use photon theme", 35);
+    $self->display_command_row("/config workdir ~/projects", "Change working directory", 35);
     $self->writeline("", markdown => 0);
     
-    $self->writeline("", markdown => 0);
-    $self->display_section_header("TERMINAL SETTINGS");
-    $self->writeline("  terminal_passthrough: When enabled, commands execute with direct terminal access.", markdown => 0);
-    $self->writeline("    - User can interact (editor, GPG prompts, etc.)", markdown => 0);
-    $self->writeline("    - Agent sees exit codes but no output", markdown => 0);
-    $self->writeline("    - Default: false (use auto-detection instead)", markdown => 0);
-    $self->writeline("", markdown => 0);
-    $self->writeline("  terminal_autodetect: When enabled, interactive commands are detected automatically.", markdown => 0);
-    $self->writeline("    - Detects: git commit (no -m), vim, nano, GPG, ssh, etc.", markdown => 0);
-    $self->writeline("    - Uses passthrough only for detected commands", markdown => 0);
-    $self->writeline("    - Default: true (smart detection enabled)", markdown => 0);
+    $self->display_section_header("TIPS");
+    $self->display_tip("For API settings, use /api set");
+    $self->display_tip("terminal_autodetect detects vim, nano, GPG, ssh, etc.");
     $self->writeline("", markdown => 0);
 }
 

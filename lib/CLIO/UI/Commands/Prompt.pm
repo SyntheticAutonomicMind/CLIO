@@ -126,7 +126,7 @@ sub handle_prompt_command {
 
 =head2 _show_overview($pm)
 
-Display prompt overview with current status and available commands.
+Display prompt overview with current status and available commands using unified style.
 
 =cut
 
@@ -138,53 +138,53 @@ sub _show_overview {
     my $custom_count = scalar(@{$prompts->{custom}});
     my $builtin_count = scalar(@{$prompts->{builtin}});
     
-    $self->display_command_header("SYSTEM PROMPT MANAGER");
+    $self->display_command_header("PROMPT");
     
     # Current status
-    $self->display_section_header("CURRENT STATUS");
+    $self->display_section_header("STATUS");
     $self->display_key_value("Active Prompt", $active, 20);
     $self->display_key_value("Available", "$builtin_count built-in, $custom_count custom", 20);
     $self->writeline("", markdown => 0);
     
-    # Quick actions
+    # Commands
     $self->display_section_header("COMMANDS");
-    $self->display_key_value("/prompt show", "Display current system prompt", 25);
-    $self->display_key_value("/prompt list", "List all available prompts", 25);
-    $self->display_key_value("/prompt set <name>", "Switch to named prompt", 25);
-    $self->display_key_value("/prompt edit <name>", "Edit prompt in \$EDITOR", 25);
-    $self->display_key_value("/prompt save <name>", "Save current as new", 25);
-    $self->display_key_value("/prompt delete <name>", "Delete custom prompt", 25);
-    $self->display_key_value("/prompt reset", "Reset to default", 25);
+    $self->{chat}->display_command_row("/prompt show", "Display current system prompt", 30);
+    $self->{chat}->display_command_row("/prompt list", "List all available prompts", 30);
+    $self->{chat}->display_command_row("/prompt set <name>", "Switch to named prompt", 30);
+    $self->{chat}->display_command_row("/prompt edit <name>", "Edit prompt in \$EDITOR", 30);
+    $self->{chat}->display_command_row("/prompt save <name>", "Save current as new", 30);
+    $self->{chat}->display_command_row("/prompt delete <name>", "Delete custom prompt", 30);
+    $self->{chat}->display_command_row("/prompt reset", "Reset to default", 30);
     $self->writeline("", markdown => 0);
     
     # Tips
     $self->display_section_header("TIPS");
-    $self->writeline("  " . $self->colorize("*", 'PROMPT') . " System prompts define AI behavior and personality", markdown => 0);
-    $self->writeline("  " . $self->colorize("*", 'PROMPT') . " Custom instructions in " . $self->colorize(".clio/instructions.md", 'DATA') . " are auto-appended", markdown => 0);
-    $self->writeline("  " . $self->colorize("*", 'PROMPT') . " Use " . $self->colorize("/prompt show", 'USER') . " to see the full active prompt", markdown => 0);
+    $self->{chat}->display_tip("System prompts define AI behavior and personality");
+    $self->{chat}->display_tip("Custom instructions in .clio/instructions.md are auto-appended");
+    $self->{chat}->display_tip("Use /prompt show to see the full active prompt");
     $self->writeline("", markdown => 0);
 }
 
 =head2 _show_help()
 
-Display help for prompt commands.
+Display help for prompt commands using unified style.
 
 =cut
 
 sub _show_help {
     my ($self) = @_;
     
-    $self->display_command_header("PROMPT HELP");
+    $self->display_command_header("PROMPT");
     
     $self->display_section_header("COMMANDS");
-    $self->display_key_value("/prompt", "Show overview and help", 25);
-    $self->display_key_value("/prompt show", "Display current system prompt", 25);
-    $self->display_key_value("/prompt list", "List available prompts", 25);
-    $self->display_key_value("/prompt set <name>", "Switch to named prompt", 25);
-    $self->display_key_value("/prompt edit <name>", "Edit prompt in \$EDITOR", 25);
-    $self->display_key_value("/prompt save <name>", "Save current as new", 25);
-    $self->display_key_value("/prompt delete <name>", "Delete custom prompt", 25);
-    $self->display_key_value("/prompt reset", "Reset to default", 25);
+    $self->{chat}->display_command_row("/prompt", "Show overview and help", 30);
+    $self->{chat}->display_command_row("/prompt show", "Display current system prompt", 30);
+    $self->{chat}->display_command_row("/prompt list", "List available prompts", 30);
+    $self->{chat}->display_command_row("/prompt set <name>", "Switch to named prompt", 30);
+    $self->{chat}->display_command_row("/prompt edit <name>", "Edit prompt in \$EDITOR", 30);
+    $self->{chat}->display_command_row("/prompt save <name>", "Save current as new", 30);
+    $self->{chat}->display_command_row("/prompt delete <name>", "Delete custom prompt", 30);
+    $self->{chat}->display_command_row("/prompt reset", "Reset to default", 30);
     $self->writeline("", markdown => 0);
 }
 
@@ -395,11 +395,12 @@ sub _delete_prompt {
         return;
     }
     
-    print "Are you sure you want to delete prompt '$name'? (yes/no): ";
+    print $self->{chat}{theme_mgr}->get_input_prompt("Delete prompt '$name'? Type 'yes' to confirm", "cancel") . "\n";
+    print "> ";
     my $confirm = <STDIN>;
-    chomp($confirm);
+    chomp $confirm if defined $confirm;
     
-    unless ($confirm =~ /^y(es)?$/i) {
+    unless ($confirm && $confirm =~ /^y(es)?$/i) {
         $self->display_system_message("Deletion cancelled.");
         return;
     }

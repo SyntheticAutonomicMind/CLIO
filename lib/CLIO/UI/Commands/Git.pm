@@ -58,6 +58,7 @@ sub new {
 # Delegate display methods to chat
 sub display_command_header { shift->{chat}->display_command_header(@_) }
 sub display_section_header { shift->{chat}->display_section_header(@_) }
+sub display_command_row { shift->{chat}->display_command_row(@_) }
 sub display_list_item { shift->{chat}->display_list_item(@_) }
 sub display_system_message { shift->{chat}->display_system_message(@_) }
 sub display_error_message { shift->{chat}->display_error_message(@_) }
@@ -114,26 +115,27 @@ sub handle_git_command {
 
 =head2 _display_git_help
 
-Display help for /git commands
+Display help for /git commands using unified style.
 
 =cut
 
 sub _display_git_help {
     my ($self) = @_;
     
-    $self->display_command_header("GIT COMMANDS");
+    $self->display_command_header("GIT");
     
-    $self->display_list_item("/git status - Show git status");
-    $self->display_list_item("/git diff [file] - Show git diff");
-    $self->display_list_item("/git log [n] - Show recent commits (default: 10)");
-    $self->display_list_item("/git commit [msg] - Stage and commit changes");
-    
+    $self->display_section_header("COMMANDS");
+    $self->display_command_row("/git status", "Show git status", 25);
+    $self->display_command_row("/git diff [file]", "Show git diff", 25);
+    $self->display_command_row("/git log [n]", "Show recent commits (default: 10)", 25);
+    $self->display_command_row("/git commit [msg]", "Stage and commit changes", 25);
     $self->writeline("", markdown => 0);
+    
     $self->display_section_header("EXAMPLES");
-    $self->writeline("  /git status                          # See changes", markdown => 0);
-    $self->writeline("  /git diff lib/CLIO/UI/Chat.pm        # Diff specific file", markdown => 0);
-    $self->writeline("  /git log 5                           # Last 5 commits", markdown => 0);
-    $self->writeline("  /git commit \"fix: resolve bug\"       # Commit with message", markdown => 0);
+    $self->display_command_row("/git status", "See changes", 30);
+    $self->display_command_row("/git diff lib/CLIO.pm", "Diff specific file", 30);
+    $self->display_command_row("/git log 5", "Last 5 commits", 30);
+    $self->display_command_row("/git commit \"fix: bug\"", "Commit with message", 30);
     $self->writeline("", markdown => 0);
 }
 
@@ -256,8 +258,8 @@ sub handle_commit_command {
     # If no message provided, prompt for one
     unless ($message) {
         $self->writeline("", markdown => 0);
-        # Interactive prompt - needs immediate output
-        print $self->colorize("Enter commit message (empty to cancel):", 'PROMPT'), "\n";
+        # Interactive prompt - use standardized input prompt
+        print $self->{chat}{theme_mgr}->get_input_prompt("Enter commit message", "cancel") . "\n";
         print "> ";
         $message = <STDIN>;
         chomp $message if defined $message;

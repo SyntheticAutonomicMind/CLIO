@@ -123,6 +123,7 @@ sub auto_prune_sessions {
 sub display_command_header { shift->{chat}->display_command_header(@_) }
 sub display_section_header { shift->{chat}->display_section_header(@_) }
 sub display_key_value { shift->{chat}->display_key_value(@_) }
+sub display_command_row { shift->{chat}->display_command_row(@_) }
 sub display_list_item { shift->{chat}->display_list_item(@_) }
 sub display_system_message { shift->{chat}->display_system_message(@_) }
 sub display_error_message { shift->{chat}->display_error_message(@_) }
@@ -193,28 +194,29 @@ sub handle_session_command {
 
 =head2 _display_session_help
 
-Display help for /session commands
+Display help for /session commands using unified style.
 
 =cut
 
 sub _display_session_help {
     my ($self) = @_;
     
-    $self->display_command_header("SESSION COMMANDS");
+    $self->display_command_header("SESSION");
     
-    $self->display_list_item("/session show - Display current session info");
-    $self->display_list_item("/session list - List all available sessions");
-    $self->display_list_item("/session switch - Interactive session picker");
-    $self->display_list_item("/session switch <id> - Switch to specific session");
-    $self->display_list_item("/session new - Show how to create new session");
-    $self->display_list_item("/session clear - Clear current session history");
-    $self->display_list_item("/session trim [days] - Remove sessions older than N days (default: 30)");
-    
+    $self->display_section_header("COMMANDS");
+    $self->display_command_row("/session show", "Display current session info", 30);
+    $self->display_command_row("/session list", "List all available sessions", 30);
+    $self->display_command_row("/session switch", "Interactive session picker", 30);
+    $self->display_command_row("/session switch <id>", "Switch to specific session", 30);
+    $self->display_command_row("/session new", "Show how to create new session", 30);
+    $self->display_command_row("/session clear", "Clear current session history", 30);
+    $self->display_command_row("/session trim [days]", "Remove old sessions (default: 30)", 30);
     $self->writeline("", markdown => 0);
+    
     $self->display_section_header("EXAMPLES");
-    $self->writeline("  /session show                        # See current session", markdown => 0);
-    $self->writeline("  /session list                        # See all sessions", markdown => 0);
-    $self->writeline("  /session switch abc123-def456        # Switch by ID", markdown => 0);
+    $self->display_command_row("/session show", "See current session", 35);
+    $self->display_command_row("/session list", "See all sessions", 35);
+    $self->display_command_row("/session switch abc123", "Switch by ID", 35);
     $self->writeline("", markdown => 0);
 }
 
@@ -357,12 +359,11 @@ sub _clear_session_history {
     }
     
     # Confirm
-    print $self->colorize("Clear all conversation history for this session? [y/N]: ", 'PROMPT');
+    print $self->{chat}{theme_mgr}->get_input_prompt("Clear all conversation history?", "cancel") . " ";
     my $response = <STDIN>;
     chomp $response if defined $response;
-    $response = lc($response || 'n');
     
-    unless ($response eq 'y' || $response eq 'yes') {
+    unless ($response && $response =~ /^y(es)?$/i) {
         $self->display_system_message("Cancelled");
         return;
     }
@@ -473,12 +474,11 @@ sub _trim_sessions {
     
     # Confirm
     $self->writeline("", markdown => 0);
-    print $self->colorize("Delete these sessions? [y/N]: ", 'PROMPT');
+    print $self->{chat}{theme_mgr}->get_input_prompt("Delete these sessions?", "cancel") . " ";
     my $response = <STDIN>;
     chomp $response if defined $response;
-    $response = lc($response || 'n');
     
-    unless ($response eq 'y' || $response eq 'yes') {
+    unless ($response && $response =~ /^y(es)?$/i) {
         $self->display_system_message("Cancelled");
         return;
     }

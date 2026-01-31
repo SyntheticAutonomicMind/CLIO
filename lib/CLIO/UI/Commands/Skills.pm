@@ -125,22 +125,21 @@ sub handle_skills_command {
 
 =head2 _show_help()
 
-Display skills command help.
+Display skills command help using unified style.
 
 =cut
 
 sub _show_help {
     my ($self) = @_;
     
-    $self->display_command_header("SKILLS HELP");
+    $self->display_command_header("SKILLS");
     
     $self->display_section_header("COMMANDS");
-    $self->display_key_value("/skills", "List all skills", 30);
-    $self->display_key_value("/skills list", "List all skills", 30);
-    $self->display_key_value("/skills add <name> \"<text>\"", "Add custom skill", 30);
-    $self->display_key_value("/skills use <name> [file]", "Execute skill", 30);
-    $self->display_key_value("/skills show <name>", "Display skill details", 30);
-    $self->display_key_value("/skills delete <name>", "Delete custom skill", 30);
+    $self->{chat}->display_command_row("/skills", "List all skills", 35);
+    $self->{chat}->display_command_row("/skills add <name> \"<text>\"", "Add custom skill", 35);
+    $self->{chat}->display_command_row("/skills use <name> [file]", "Execute skill", 35);
+    $self->{chat}->display_command_row("/skills show <name>", "Display skill details", 35);
+    $self->{chat}->display_command_row("/skills delete <name>", "Delete custom skill", 35);
     $self->writeline("", markdown => 0);
 }
 
@@ -194,7 +193,7 @@ sub _list_skills {
         for my $name (sort @{$skills->{custom}}) {
             my $s = $sm->get_skill($name);
             my $desc = $s->{description} || '(no description)';
-            $self->display_key_value($name, $desc, 25);
+            $self->display_key_value($name, $desc, 16);
         }
     } else {
         $self->writeline("  " . $self->colorize("(none)", 'DIM'), markdown => 0);
@@ -207,11 +206,11 @@ sub _list_skills {
     for my $name (sort @{$skills->{builtin}}) {
         my $s = $sm->get_skill($name);
         my $desc = $s->{description} || '(no description)';
-        $self->display_key_value($name, $desc, 25);
+        $self->display_key_value($name, $desc, 16);
     }
-    $self->writeline("", markdown => 0);
     
-    # Summary
+    # Summary (with blank line before for separation)
+    print "\n";
     my $custom_count = scalar(@{$skills->{custom}});
     my $builtin_count = scalar(@{$skills->{builtin}});
     my $total = $custom_count + $builtin_count;
@@ -221,6 +220,13 @@ sub _list_skills {
                   $self->colorize("$builtin_count", 'DATA') . " built-in" .
                   " (" . $self->colorize("$total", 'SUCCESS') . " total)";
     $self->writeline($summary, markdown => 0);
+    
+    # Management commands
+    $self->display_section_header("COMMANDS");
+    $self->{chat}->display_command_row("/skills use <name> [file]", "Execute skill", 35);
+    $self->{chat}->display_command_row("/skills show <name>", "Display skill details", 35);
+    $self->{chat}->display_command_row("/skills add <name> \"<text>\"", "Add custom skill", 35);
+    $self->{chat}->display_command_row("/skills delete <name>", "Delete custom skill", 35);
     $self->writeline("", markdown => 0);
 }
 
@@ -361,11 +367,12 @@ sub _delete_skill {
         return;
     }
     
-    print "Are you sure you want to delete skill '$name'? (yes/no): ";
+    print $self->{chat}{theme_mgr}->get_input_prompt("Delete skill '$name'? Type 'yes' to confirm", "cancel") . "\n";
+    print "> ";
     my $confirm = <STDIN>;
-    chomp $confirm;
+    chomp $confirm if defined $confirm;
     
-    unless ($confirm eq 'yes') {
+    unless ($confirm && $confirm =~ /^y(es)?$/i) {
         $self->display_system_message("Deletion cancelled");
         return;
     }
