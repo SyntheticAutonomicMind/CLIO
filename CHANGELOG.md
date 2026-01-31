@@ -27,6 +27,68 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Changed
 - Disabled test for unimplemented AutoCapture feature (test_ltm_autocapture.pl.disabled)
 
+## [20260131.3] - 2026-01-31
+
+### Added
+- Skills catalog system with `/skills search` and `/skills install` commands
+- Unified BBS-style pagination across all commands (^/v navigation, Q to quit)
+- Consistent command output formatting with section headers and tables
+
+### Fixed
+- `/skills exec` command execution issues
+- `/multiline` display rendering bugs
+- Unnecessary SYSTEM messages in multiline mode
+
+## [20260131.2] - 2026-01-31
+
+### Added
+- Skills catalog with remote skill discovery and installation
+
+## [20260131.1] - 2026-01-31
+
+### Added
+- Unified command output style across all slash commands
+- BBS-style pagination with keyboard navigation (arrow keys, Q to quit)
+- First-time pagination hint: "Tip: ^/v pages · Q quit · any key more"
+- Subsequent pagination prompts: "[1/5] ^v Q ▸"
+
+### Changed
+- All paginated displays now use Theme.pm methods for consistency
+- `pause()`, `display_paginated_list()`, and `display_paginated_content()` unified
+
+## [20260130.1] - 2026-01-30
+
+### Added
+- Session improvements with better state management
+- UI modernization with consistent command patterns
+
+### Removed
+- Agent Client Protocol (ACP) - JSON-RPC over stdio (removed for simplification)
+
+### Fixed
+- Multiline command no longer shows unnecessary SYSTEM messages
+
+### Changed
+- Major UI refactoring: extracted all commands from Chat.pm into dedicated modules
+  - `CLIO::UI::Commands::API` - API configuration commands
+  - `CLIO::UI::Commands::Config` - Configuration management
+  - `CLIO::UI::Commands::Git` - Git operations
+  - `CLIO::UI::Commands::File` - File operations
+  - `CLIO::UI::Commands::Session` - Session management
+  - `CLIO::UI::Commands::AI` - AI model configuration
+  - `CLIO::UI::Commands::System` - System commands (exec, clear, exit)
+  - `CLIO::UI::Commands::Memory` - Memory operations
+  - `CLIO::UI::Commands::Todo` - Todo list management
+  - `CLIO::UI::Commands::Billing` - Usage tracking
+  - `CLIO::UI::Commands::Log` - Session logging
+  - `CLIO::UI::Commands::Context` - Context management
+  - `CLIO::UI::Commands::Update` - CLIO updates
+  - `CLIO::UI::Commands::Skills` - Skills system
+  - `CLIO::UI::Commands::Prompt` - Prompt customization
+  - `CLIO::UI::Commands::Project` - Project initialization (/init, /design)
+- Chat.pm reduced from 158KB to more maintainable size
+- Dead code removal across command modules
+
 ## [20260129.6] - 2026-01-29
 
 ### Added
