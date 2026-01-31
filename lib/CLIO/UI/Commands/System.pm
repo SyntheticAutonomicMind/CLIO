@@ -178,10 +178,6 @@ sub handle_multiline_command {
         return;
     }
     
-    $self->display_system_message("Opening editor for multi-line input...");
-    $self->display_system_message("Save and close to submit, leave empty to cancel.");
-    $self->writeline("", markdown => 0);
-    
     my $result = $editor->edit_multiline();
     
     if ($result->{success} && $result->{content} && length($result->{content}) > 0) {
