@@ -311,6 +311,7 @@ sub run {
             
             # If command returned a prompt, use it as the next user input
             if ($ai_prompt) {
+                print STDERR "[DEBUG][Chat] Command returned ai_prompt, length=" . length($ai_prompt) . "\n" if should_log('DEBUG');
                 $input = $ai_prompt;
                 # Fall through to AI processing below
             } else {
@@ -319,7 +320,10 @@ sub run {
         }
         
         # Display user message (if not already from a command)
+        # Note: After multiline command, $input contains the content, not the /command
+        print STDERR "[DEBUG][Chat] Before display check: input starts with /? " . ($input =~ /^\// ? "YES" : "NO") . "\n" if should_log('DEBUG');
         unless ($input =~ /^\//) {
+            print STDERR "[DEBUG][Chat] Calling display_user_message with input length=" . length($input) . "\n" if should_log('DEBUG');
             $self->display_user_message($input);
         }
         
