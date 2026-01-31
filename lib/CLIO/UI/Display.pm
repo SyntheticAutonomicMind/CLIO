@@ -229,39 +229,68 @@ sub display_info_message {
 
 =head2 display_command_header($text, $width)
 
-Display a command header with formatting.
+Display a command header with double-line border (═══).
+This is the main header for any / command output.
+
+Standard format:
+  ═══════════════════════════════════════════════════════════════
+  COMMAND TITLE
+  ═══════════════════════════════════════════════════════════════
 
 =cut
 
 sub display_command_header {
     my ($self, $text, $width) = @_;
-    $width ||= 70;
+    $width ||= 62;
     
     my $chat = $self->{chat};
     
+    my $border = "═" x $width;
+    
     $chat->writeline('', markdown => 0);
+    $chat->writeline($chat->colorize($border, 'command_header'), markdown => 0);
     $chat->writeline($chat->colorize($text, 'command_header'), markdown => 0);
+    $chat->writeline($chat->colorize($border, 'command_header'), markdown => 0);
     $chat->writeline('', markdown => 0);
 }
 
 =head2 display_section_header($text, $width)
 
-Display a section header with formatting.
+Display a section header with single-line underline (───).
+Used for subsections within a command output.
+
+Standard format:
+  
+  SECTION TITLE
+  ─────────────────────────────────────────────────────────────────
+
+(blank line before header for visual separation)
 
 =cut
 
 sub display_section_header {
     my ($self, $text, $width) = @_;
-    $width ||= 70;
+    $width ||= 62;
     
     my $chat = $self->{chat};
     
+    my $underline = "─" x $width;
+    
+    # Blank line before section for visual separation from previous content
+    # Use direct print to guarantee blank line output
+    print "\n";
     $chat->writeline($chat->colorize($text, 'command_subheader'), markdown => 0);
+    $chat->writeline($chat->colorize($underline, 'dim'), markdown => 0);
 }
 
 =head2 display_key_value($key, $value, $key_width)
 
-Display a key-value pair.
+Display a key-value pair with consistent formatting.
+
+Standard format:
+  Key:                Value
+  ^^^^^^^^^^^^^^^^^^^^
+  (key_width chars)
 
 =cut
 
@@ -271,15 +300,45 @@ sub display_key_value {
     
     my $chat = $self->{chat};
     
-    my $line = sprintf("%-${key_width}s %s",
-        $chat->colorize($key . ":", 'command_label'),
-        $chat->colorize($value, 'command_value'));
+    # Pad the key before adding color codes (ANSI codes mess up sprintf width)
+    my $padded_key = sprintf("%-${key_width}s", $key . ":");
+    
+    my $line = $chat->colorize($padded_key, 'command_label') . " " .
+               $chat->colorize($value, 'command_value');
+    $chat->writeline($line, markdown => 0);
+}
+
+=head2 display_command_row($command, $description, $cmd_width)
+
+Display a command with its description (for help output).
+
+Standard format:
+  /command <args>        Description text here
+  ^^^^^^^^^^^^^^^^^^^
+  (cmd_width chars)
+
+=cut
+
+sub display_command_row {
+    my ($self, $command, $description, $cmd_width) = @_;
+    $cmd_width ||= 25;
+    
+    my $chat = $self->{chat};
+    
+    # Pad the command before adding color codes (ANSI codes mess up sprintf width)
+    my $padded_cmd = sprintf("%-${cmd_width}s", $command);
+    
+    my $line = "  " . $chat->colorize($padded_cmd, 'help_command') . " " . $description;
     $chat->writeline($line, markdown => 0);
 }
 
 =head2 display_list_item($item, $num)
 
-Display a list item.
+Display a list item (bulleted or numbered).
+
+Standard format:
+  • Item text (if no number)
+  1. Item text (if number provided)
 
 =cut
 
@@ -294,6 +353,24 @@ sub display_list_item {
     } else {
         $line = $chat->colorize("  • ", 'command_label') . $item;
     }
+    $chat->writeline($line, markdown => 0);
+}
+
+=head2 display_tip($text)
+
+Display a tip/hint line with consistent styling.
+
+Standard format:
+  • Tip text here
+
+=cut
+
+sub display_tip {
+    my ($self, $text) = @_;
+    
+    my $chat = $self->{chat};
+    
+    my $line = "  " . $chat->colorize("•", 'muted') . " " . $chat->colorize($text, 'muted');
     $chat->writeline($line, markdown => 0);
 }
 

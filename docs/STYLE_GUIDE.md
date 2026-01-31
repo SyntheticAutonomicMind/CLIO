@@ -569,3 +569,11 @@ Want to share your theme?
 ---
 
 *Style System v2.0 - Semantic, Flexible, Beautiful*
+
+
+---
+
+## Related Documentation
+
+- [Command Output Guide](COMMAND_OUTPUT_GUIDE.md) - Standards for `/command` help text formatting
+- [Style Quick Reference](STYLE_QUICKREF.md) - Condensed style creation guide

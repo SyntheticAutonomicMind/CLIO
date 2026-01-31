@@ -32,6 +32,15 @@ nav_previous={style.prompt_indicator}[P] Previous Page@RESET@
 nav_quit={style.prompt_indicator}[Q] Quit/Return@RESET@
 pagination_info={style.dim}Page info: {var.info}@RESET@
 
+# Pagination prompts (standardized - verbose style)
+pagination_hint_streaming={style.dim}[ Press {style.prompt_indicator}Q{style.dim} to quit - any key for more ]@RESET@
+pagination_hint_full={style.dim}[ {style.prompt_indicator}^/v{style.dim} navigate pages - {style.prompt_indicator}Q{style.dim} quit - any key more ]@RESET@
+pagination_prompt={style.dim}══════{style.data}[ Page {var.current} of {var.total} ]{style.dim}══════@RESET@ {var.nav_hint}{style.prompt_indicator}Q{style.dim} {style.prompt_indicator}>{style.dim}@RESET@ 
+
+# Input prompts (standardized - verbose style)
+input_prompt={style.dim}[{var.prompt}]@RESET@
+input_prompt_with_default={style.dim}[{var.prompt}] (Press {style.prompt_indicator}Enter{style.dim} to {var.default_action})@RESET@
+
 # Messages - labeled
 user_message_prefix={style.user_text}[You said]: @RESET@
 agent_message_prefix={style.agent_label}[Agent responds]: @RESET@
