@@ -279,7 +279,10 @@ CLIO provides 35+ powerful slash commands organized by category. Type `/help` in
 ### Skills & Customization
 | Command | Purpose |
 |---------|---------|
-| `/skills` | Manage custom skills |
+| `/skills` | List all skills (built-in and custom) |
+| `/skills search` | Browse skills catalog |
+| `/skills install <name>` | Install skill from catalog |
+| `/skills use <name>` | Execute a skill |
 | `/prompt` | Manage system prompts |
 | `/style` | Change interface style |
 | `/theme` | Change color theme |

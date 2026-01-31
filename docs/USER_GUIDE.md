@@ -14,9 +14,10 @@
 6. [Usage Examples](#usage-examples)
 7. [Configuration](#configuration)
 8. [Customization](#customization)
-9. [Tips & Best Practices](#tips--best-practices)
-10. [Troubleshooting](#troubleshooting)
-11. [FAQ](#faq)
+9. [Skills](#skills)
+10. [Tips & Best Practices](#tips--best-practices)
+11. [Troubleshooting](#troubleshooting)
+12. [FAQ](#faq)
 
 ---------------------------------------------------
 
@@ -1268,6 +1269,93 @@ Themes use placeholders:
 - `{var.key}` - Replaced with runtime values (session_id, model, etc.)
 
 See [`themes/README.md`](../themes/README.md) for complete theme file format and available placeholders.
+
+---------------------------------------------------
+
+## Skills
+
+Skills are specialized prompt templates that give CLIO expertise in specific tasks. They provide structured instructions for common workflows like code review, testing, and documentation.
+
+### Viewing Available Skills
+
+```bash
+: /skills                    # List all skills (built-in and custom)
+: /skills show <name>        # Display skill details
+```
+
+**Built-in Skills:**
+| Skill | Description |
+|-------|-------------|
+| `explain` | Explain selected code |
+| `review` | Review code for issues |
+| `test` | Generate comprehensive tests |
+| `fix` | Propose fixes for problems |
+| `doc` | Generate documentation |
+| `design` | Create a Product Requirements Document (PRD) |
+| `init` | Initialize CLIO for a project |
+
+### Using Skills
+
+```bash
+: /skills use explain lib/MyModule.pm     # Explain code in a file
+: /skills use review src/auth.py          # Review code for issues
+: /skills use test controllers/user.rb    # Generate tests
+```
+
+### Skills Catalog
+
+CLIO includes a curated skills catalog you can browse and install:
+
+```bash
+: /skills search              # Browse all available skills
+: /skills search perl         # Search for specific skills
+: /skills install <name>      # Install a skill
+```
+
+**Installing Skills:**
+1. Run `/skills search` to see available skills
+2. Run `/skills install <name>` to preview and install
+3. Review the skill content before confirming installation
+4. Use with `/skills use <name>`
+
+### Custom Skills
+
+Create your own skills:
+
+```bash
+: /skills add my-skill "Review code for ${lang} best practices: ${code}"
+```
+
+
+
+### System Prompts
+
+System prompts define CLIO's base behavior and personality. You can customize them per project.
+
+**Viewing Prompts:**
+```bash
+: /prompt                    # Show prompt status
+: /prompt show               # Display full active prompt
+: /prompt list               # List all available prompts
+```
+
+**Switching Prompts:**
+```bash
+: /prompt set <name>         # Switch to named prompt
+: /prompt reset              # Reset to default
+```
+
+**Custom Prompts:**
+```bash
+: /prompt edit <name>        # Edit in $EDITOR
+: /prompt save <name>        # Save current as new
+: /prompt delete <name>      # Delete custom prompt
+```
+
+**Per-Project Instructions:**
+Create `.clio/instructions.md` in your project root. This content is automatically appended to the system prompt when working in that directory.
+
+Variables in `${brackets}` are replaced when the skill is executed.
 
 ---------------------------------------------------
 

@@ -1,7 +1,7 @@
 # CLIO Command Output Styling Standards
 
-**Version:** 1.0  
-**Last Updated:** 2025-01-22  
+**Version:** 2.0  
+**Last Updated:** 2026-01-31  
 **Audience:** Developers adding or modifying slash commands
 
 ## Purpose
@@ -394,3 +394,77 @@ Never hardcode ANSI escape sequences in command output code.
 
 **Document Version History:**
 - 1.0 (2025-01-22): Initial standards document
+
+
+---
+
+## Input Prompts and Pagination (v2.0)
+
+### BBS-Style Input Prompts
+
+All confirmation and input prompts use a consistent BBS-style format:
+
+```perl
+print $self->{chat}{theme_mgr}->get_input_prompt("Delete file? (y/N)") . " ";
+my $response = <STDIN>;
+chomp $response if defined $response;
+unless ($response && $response =~ /^y(es)?$/i) {
+    $self->display_system_message("Cancelled");
+    return;
+}
+```
+
+**Output:**
+```
+===[ Delete file? (y/N) ]=== 
+```
+
+### Pagination Prompts
+
+Paginated output uses BBS-style navigation:
+
+**First-time hint:**
+```
+===[ Tip: ^/v pages · Q quit · any key more ]===
+```
+
+**Navigation prompt:**
+```
+===[ 1/5 ]=== ^v Q > 
+```
+
+**Controls:**
+- Up/Down arrows navigate pages
+- Q quits immediately  
+- Any other key advances
+
+### Theme Templates
+
+These prompts are defined in theme files:
+```
+input_prompt={style.dim}===[ {var.prompt} ]===@RESET@
+pagination_prompt={style.dim}==={style.data}[ {var.current}/{var.total} ]{style.dim}===@RESET@ {var.nav_hint}Q >
+```
+
+---
+
+## UTF-8 Content Handling
+
+When displaying content from external sources (GitHub, APIs):
+
+```perl
+require Encode;
+$content = Encode::decode('UTF-8', $content) unless utf8::is_utf8($content);
+```
+
+This ensures box-drawing characters (├──) and Unicode display correctly.
+
+---
+
+## Width Standards
+
+- Default separator width: **62 characters** (fits 80-column with padding)
+- Key-value label width: 15-25 characters depending on content
+- Command description width: 25-35 characters
+
+---

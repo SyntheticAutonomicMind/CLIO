@@ -38,8 +38,8 @@ pagination_hint_full={style.dim}[ {style.prompt_indicator}^/v{style.dim} navigat
 pagination_prompt={style.dim}══════{style.data}[ Page {var.current} of {var.total} ]{style.dim}══════@RESET@ {var.nav_hint}{style.prompt_indicator}Q{style.dim} {style.prompt_indicator}>{style.dim}@RESET@ 
 
 # Input prompts (standardized - verbose style)
-input_prompt={style.dim}[{var.prompt}]@RESET@
-input_prompt_with_default={style.dim}[{var.prompt}] (Press {style.prompt_indicator}Enter{style.dim} to {var.default_action})@RESET@
+input_prompt={style.dim}===[ {var.prompt} ]===@RESET@ 
+input_prompt_with_default={style.dim}===[ {var.prompt} · {style.prompt_indicator}Enter{style.dim} to {var.default_action} ]===@RESET@ 
 
 # Messages - labeled
 user_message_prefix={style.user_text}[You said]: @RESET@
