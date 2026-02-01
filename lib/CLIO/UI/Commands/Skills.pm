@@ -564,7 +564,7 @@ sub _install_skill {
     
     # Ask if user wants to preview full content
     print "\n";
-    print $self->{chat}{theme_mgr}->get_input_prompt("View full content? (y/N)") . " ";
+    print $self->{chat}{theme_mgr}->get_input_prompt("View full content", "no") . " ";
     my $view_full = <STDIN>;
     chomp $view_full if defined $view_full;
     
@@ -587,7 +587,7 @@ sub _install_skill {
     }
     
     # Confirm installation
-    print $self->{chat}{theme_mgr}->get_input_prompt("Install '$name'? (y/N)") . " ";
+    print $self->{chat}{theme_mgr}->get_input_prompt("Install '$name'", "no") . " ";
     my $confirm = <STDIN>;
     chomp $confirm if defined $confirm;
     
