@@ -1326,8 +1326,9 @@ sub request_collaboration {
                 return $ai_prompt;
             }
             
-            # Otherwise, display the command and return to the collaboration prompt
-            print $self->colorize("YOU: ", 'USER'), $response, "\n";
+            # Otherwise, command was handled silently - don't display it, just return to prompt
+            # Commands like /context, /git diff process and output their own results
+            # No need to show "YOU: /command" in the chat
             print $self->colorize("CLIO: ", 'ASSISTANT'), "(Command processed. What's your response?)\n";
             next;
         }
