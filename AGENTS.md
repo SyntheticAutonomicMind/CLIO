@@ -18,28 +18,32 @@
 ## Project Structure
 
 ### Core Files
-| File | Purpose | Size |
-|------|---------|------|
-| `clio` | Main executable (tool calling loop) | 17 KB |
-| `lib/CLIO/Core/WorkflowOrchestrator.pm` | AI tool orchestration | 45 KB |
-| `lib/CLIO/Core/ToolExecutor.pm` | Tool invocation routing | 23 KB |
-| `lib/CLIO/Core/APIManager.pm` | AI provider integration | 83 KB |
-| `lib/CLIO/UI/Chat.pm` | Terminal interface | 158 KB |
-| `lib/CLIO/Tools/FileOperations.pm` | File system operations | 52 KB |
-| `lib/CLIO/Session/Manager.pm` | Session persistence | 6 KB |
+
+Some key files to understand the architecture:
+- `clio` - Main executable (tool calling loop)
+- `lib/CLIO/Core/WorkflowOrchestrator.pm` - AI tool orchestration
+- `lib/CLIO/Core/ToolExecutor.pm` - Tool invocation routing
+- `lib/CLIO/Core/APIManager.pm` - AI provider integration
+- `lib/CLIO/UI/Chat.pm` - Terminal interface
+- `lib/CLIO/Tools/FileOperations.pm` - File system operations
+- `lib/CLIO/Session/Manager.pm` - Session persistence
+
+Run `ls -lh lib/CLIO/*/*.pm` to see current file sizes.
 
 ### Directories
-| Path | Purpose | Status |
-|------|---------|--------|
-| `lib/CLIO/Core/` | System core (APIs, workflow, config) | Complete |
-| `lib/CLIO/Tools/` | AI-callable tools (17 operations) | Complete |
-| `lib/CLIO/UI/` | Terminal UI (Chat, Markdown, Theme) | Needs refactor |
-| `lib/CLIO/Session/` | Session management | Complete |
-| `lib/CLIO/Memory/` | Context/memory system | Incomplete |
-| `lib/CLIO/Protocols/` | Complex workflows | Needs audit |
-| `lib/CLIO/Security/` | Auth/authz | Complete |
-| `docs/` | User/dev documentation | Good |
-| `tests/` | Unit & integration tests | 30% coverage |
+| Path | Purpose |
+|------|---------|
+| `lib/CLIO/Core/` | System core (APIs, workflow, config) |
+| `lib/CLIO/Tools/` | AI-callable tools |
+| `lib/CLIO/UI/` | Terminal UI (Chat, Markdown, Theme) |
+| `lib/CLIO/Session/` | Session management |
+| `lib/CLIO/Memory/` | Context/memory system |
+| `lib/CLIO/Protocols/` | Complex workflows |
+| `lib/CLIO/Security/` | Auth/authz |
+| `docs/` | User/dev documentation |
+| `tests/` | Unit & integration tests |
+
+**Note:** For current project status, always investigate the actual codebase rather than relying on descriptions. Status is always changing. Use: `git log --oneline -20`, `find lib -name "*.pm" | wc -l`, and read the code to understand the real state.
 
 ## Architecture
 
