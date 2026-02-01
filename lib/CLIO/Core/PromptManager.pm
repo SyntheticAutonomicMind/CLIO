@@ -131,7 +131,8 @@ sub get_system_prompt {
     if (!$self->{skip_custom}) {
         my $custom = $self->_load_custom_instructions();
         if ($custom) {
-            print STDERR "[DEBUG][PromptManager] Appending custom instructions\n"
+            print STDERR "[DEBUG][PromptManager] Appending custom instructions (" 
+                . length($custom) . " bytes)\n"
                 if $self->{debug};
             
             # Sanitize UTF-8 emojis to prevent JSON encoding issues
@@ -140,6 +141,9 @@ sub get_system_prompt {
             $prompt .= "\n\n<customInstructions>\n";
             $prompt .= $custom;
             $prompt .= "\n</customInstructions>\n";
+        } else {
+            print STDERR "[DEBUG][PromptManager] No custom instructions found (no .clio/instructions.md or AGENTS.md)\n"
+                if $self->{debug};
         }
     } elsif ($self->{debug}) {
         print STDERR "[DEBUG][PromptManager] Skipping custom instructions (--no-custom-instructions flag)\n";

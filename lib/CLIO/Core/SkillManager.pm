@@ -206,9 +206,10 @@ I need you to initialize CLIO for this project. This is a comprehensive setup ta
 ## Your Tasks:
 
 ### 1. Fetch CLIO's Core Methodology
-Fetch these reference documents:
-- CLIO's instructions template: https://raw.githubusercontent.com/SyntheticAutonomicMind/CLIO/main/.clio/instructions.md
-- The Unbroken Method: https://raw.githubusercontent.com/SyntheticAutonomicMind/CLIO/main/ai-assisted/THE_UNBROKEN_METHOD.md
+Fetch this reference document:
+- CLIO's universal methodology template: https://raw.githubusercontent.com/SyntheticAutonomicMind/CLIO/main/.clio/instructions.md
+
+This template contains The Unbroken Method and collaboration checkpoint discipline that works for ANY project.
 
 ### 2. Analyze This Codebase
 Do a thorough analysis of this project:
@@ -216,15 +217,51 @@ Do a thorough analysis of this project:
 - Project structure and architecture
 - Existing tests, CI/CD, documentation
 - Code style patterns and conventions
+- Build and test commands
+- Common development workflows
 
-### 3. Create Custom Project Instructions
-Create a `.clio/instructions.md` file tailored for THIS project, based on The Unbroken Method principles but customized for the specific needs.
+### 3. Create Project Instructions
+
+**Create TWO files:**
+
+**A) `.clio/instructions.md`** - Use the fetched template as-is OR customize if this project needs CLIO-specific methodology adjustments. This file defines HOW CLIO operates as an agent.
+
+**B) `AGENTS.md`** - Create project-specific context in AGENTS.md format:
+```markdown
+# AGENTS.md
+
+## Setup Commands
+
+- Install: [command]
+- Build: [command]
+- Test: [command]
+
+## Code Style
+
+- [Language-specific style guide]
+- [Formatting rules]
+- [Naming conventions]
+
+## Testing Instructions
+
+- [How to run tests]
+- [Coverage requirements]
+- [CI/CD info]
+
+## Project Structure
+
+- [Key directories]
+- [Important files]
+- [Architecture notes]
+```
+
+This file provides domain knowledge that works with ALL AI coding tools (Cursor, Aider, Jules, GitHub Copilot, etc.).
 
 ### 4. Set Up .gitignore
 Ensure `.gitignore` includes CLIO-specific entries.
 
 ### 5. Initialize or Update Git
-Initialize git if needed, or add/commit the .clio/ directory.
+Initialize git if needed, or add/commit the .clio/ directory and AGENTS.md.
 
 ### 6. Report What You Did
 Provide a summary of the project analysis and setup completed.
@@ -243,17 +280,13 @@ I need you to initialize CLIO for this project. This is a comprehensive setup ta
 
 **IMPORTANT: This project has a PRD at `.clio/PRD.md`**
 
-When creating `.clio/instructions.md`, you MUST:
-1. Read `.clio/PRD.md` first using file_operations
-2. Extract key information from the PRD
-3. Incorporate this information into the instructions
-
 ## Your Tasks:
 
 ### 1. Fetch CLIO's Core Methodology
-Fetch these reference documents:
-- CLIO's instructions template: https://raw.githubusercontent.com/SyntheticAutonomicMind/CLIO/main/.clio/instructions.md
-- The Unbroken Method: https://raw.githubusercontent.com/SyntheticAutonomicMind/CLIO/main/ai-assisted/THE_UNBROKEN_METHOD.md
+Fetch this reference document:
+- CLIO's universal methodology template: https://raw.githubusercontent.com/SyntheticAutonomicMind/CLIO/main/.clio/instructions.md
+
+This template contains The Unbroken Method and collaboration checkpoint discipline that works for ANY project.
 
 ### 2. Read the PRD
 Read `.clio/PRD.md` to understand the project goals and architecture.
@@ -264,15 +297,59 @@ Do a thorough analysis of this project:
 - Project structure and architecture
 - Existing tests, CI/CD, documentation
 - Code style patterns and conventions
+- Build and test commands
+- Common development workflows
 
-### 4. Create Custom Project Instructions
-Create a `.clio/instructions.md` file tailored for THIS project, incorporating both the PRD and The Unbroken Method principles.
+### 4. Create Project Instructions
+
+**Create TWO files:**
+
+**A) `.clio/instructions.md`** - Use the fetched template as-is OR customize if this project needs CLIO-specific methodology adjustments. Incorporate relevant info from the PRD if it affects how CLIO should operate.
+
+**B) `AGENTS.md`** - Create project-specific context in AGENTS.md format, incorporating information from the PRD:
+```markdown
+# AGENTS.md
+
+## Project Overview
+
+[Brief description from PRD]
+
+## Setup Commands
+
+- Install: [command]
+- Build: [command]
+- Test: [command]
+
+## Code Style
+
+- [Language-specific style guide]
+- [Formatting rules]
+- [Naming conventions]
+
+## Architecture
+
+[Key architecture decisions from PRD]
+
+## Testing Instructions
+
+- [How to run tests]
+- [Coverage requirements]
+- [CI/CD info]
+
+## Project Structure
+
+- [Key directories]
+- [Important files]
+- [Architecture notes]
+```
+
+This file provides domain knowledge that works with ALL AI coding tools.
 
 ### 5. Set Up .gitignore
 Ensure `.gitignore` includes CLIO-specific entries.
 
 ### 6. Initialize or Update Git
-Initialize git if needed, or add/commit the .clio/ directory.
+Initialize git if needed, or add/commit the .clio/ directory and AGENTS.md.
 
 ### 7. Report What You Did
 Provide a summary of the project analysis and setup completed.

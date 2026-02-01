@@ -2,35 +2,159 @@
 
 ## Overview
 
-CLIO supports **project-specific custom instructions** via `.clio/instructions.md`. This enables you to customize CLIO's behavior, coding standards, methodologies, and tool usage for each project.
+CLIO supports **project-specific custom instructions** via two complementary sources:
 
-When you start a CLIO session in a project directory, CLIO automatically:
-1. Looks for `.clio/instructions.md` in your project
-2. Reads the instructions if the file exists
-3. **Injects them into the system prompt** before sending requests to the AI
-4. Uses those instructions to guide all tool operations and code suggestions
+1. **`.clio/instructions.md`** - CLIO-specific operational behavior
+2. **`AGENTS.md`** - Project-level context (open standard)
+
+When you start a CLIO session, CLIO automatically:
+1. Searches for `.clio/instructions.md` in your project
+2. Searches for `AGENTS.md` in your project (walks up directory tree for monorepo support)
+3. Merges both sources (if found)
+4. **Injects them into the system prompt** before sending requests to the AI
+5. Uses those instructions to guide all tool operations and code suggestions
 
 This way, the same CLIO installation can adapt its behavior to match your project's specific needs.
 
 ---------------------------------------------------
 
+## Two Instruction Sources
+
+### AGENTS.md (Project Context)
+
+**AGENTS.md** is an open standard supported by 60k+ projects and 20+ AI coding tools (Cursor, Aider, Jules, Copilot, etc.).
+
+**Use AGENTS.md for:**
+- Build and test commands
+- Code style and conventions
+- Project architecture and structure
+- Domain knowledge
+- General project guidance
+
+**Location:** `AGENTS.md` at project root (or in subdirectories for monorepos)
+
+**Example AGENTS.md:**
+```markdown
+# AGENTS.md
+
+## Setup Commands
+
+- Install deps: `npm install`
+- Start dev: `npm run dev`
+- Run tests: `npm test`
+
+## Code Style
+
+- TypeScript strict mode
+- Single quotes, no semicolons
+- Use functional patterns where possible
+
+## Testing Instructions
+
+- Run full test suite before committing
+- Aim for 80%+ coverage on new code
+```
+
+**Monorepo Support:** CLIO walks up the directory tree to find the closest `AGENTS.md`. This allows different packages in a monorepo to have package-specific instructions.
+
+### .clio/instructions.md (CLIO-Specific Behavior)
+
+**`.clio/instructions.md`** is CLIO-specific and defines how CLIO operates as an agent.
+
+**Use .clio/instructions.md for:**
+- The Unbroken Method or other CLIO methodologies
+- CLIO collaboration checkpoint discipline
+- CLIO tool usage preferences
+- Session handoff procedures
+- CLIO-specific workflows
+
+**Location:** `.clio/instructions.md` in your project
+
+**Example .clio/instructions.md:**
+```markdown
+# CLIO Project Instructions
+
+## Methodology
+
+This project follows The Unbroken Method:
+- Use collaboration checkpoints before implementation
+- Complete ownership (no "out of scope")
+- Investigation first, then implementation
+
+## CLIO Tool Usage
+
+- Always read files before editing them
+- Use todo_operations for multi-step work
+- Test with `./clio --debug --input "test" --exit` before committing
+```
+
+### How Both Sources Are Merged
+
+When both files exist, CLIO merges them in this order:
+
+1. **`.clio/instructions.md`** (CLIO operational identity - how CLIO works)
+2. **`AGENTS.md`** (Project domain knowledge - what CLIO is working on)
+
+This ensures CLIO's foundational behavior is established before adding project-specific context.
+
+---------------------------------------------------
+
 ## Creating Custom Instructions
 
-### 1. Create the `.clio` Directory
+### Option 1: Use AGENTS.md Only (Recommended for Most Projects)
+
+If you want instructions that work across multiple AI tools:
+
+```bash
+# Create AGENTS.md at project root
+cat > AGENTS.md << 'EOF'
+# AGENTS.md
+
+## Setup Commands
+
+- Install: `pip install -r requirements.txt`
+- Test: `pytest tests/`
+
+## Code Style
+
+- Python 3.10+
+- Follow PEP 8
+- Use type hints
+EOF
+```
+
+### Option 2: Use Both (Recommended for CLIO Power Users)
+
+If you want both universal instructions AND CLIO-specific behavior:
+
+```bash
+# 1. Create AGENTS.md for universal guidance
+cat > AGENTS.md << 'EOF'
+# AGENTS.md
+
+## Project Overview
+...
+EOF
+
+# 2. Create .clio/instructions.md for CLIO-specific behavior
+mkdir -p .clio
+cat > .clio/instructions.md << 'EOF'
+# CLIO Instructions
+
+## Methodology
+This project uses The Unbroken Method...
+EOF
+```
+
+### Option 3: Use .clio/instructions.md Only
+
+If you only use CLIO (not other AI tools):
 
 ```bash
 mkdir -p .clio
-```
-
-### 2. Create `instructions.md`
-
-```bash
 touch .clio/instructions.md
+# Edit with your preferred editor
 ```
-
-### 3. Write Your Instructions
-
-Edit `.clio/instructions.md` with your project's custom instructions. Here are some common use cases:
 
 ---------------------------------------------------
 
