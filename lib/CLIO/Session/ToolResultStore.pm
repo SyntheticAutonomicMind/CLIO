@@ -28,6 +28,23 @@ markers that the AI can use to retrieve the full content via read_tool_result.
 
 **Storage Location**: sessions/<session_id>/tool_results/<toolCallId>.txt
 
+=head2 LINE WRAPPING (BUGFIX)
+
+Lines exceeding 1000 characters are automatically wrapped at word boundaries during
+persistence. This prevents ultra-long lines from causing AI context/tokenization issues.
+
+**Why**: Very long lines (>2000 chars) can cause AI models to generate malformed JSON
+in subsequent responses, leading to cascading failures. This was observed in session
+2683331c-091c-45f3-b196-77d57231be2d where a 3,803-character package list caused
+11 consecutive JSON errors and session termination.
+
+**Implementation**: Lines >1000 chars are split at word boundaries (spaces preferred).
+If no spaces exist, hard-breaks at 1000 chars. This preserves content while ensuring
+digestibility.
+
+**Impact**: Minimal - only affects extremely long lines (rare in normal output).
+Total content size remains unchanged, only newlines are added.
+
 =cut
 
 # Storage thresholds (matches SAM)
@@ -83,6 +100,9 @@ sub processToolResult {
         return $content;
     }
     
+    # Analyze content for potential issues BEFORE persisting
+    my $warnings = _analyze_content_issues($content);
+    
     # Persist the full content to disk
     my $marker;
     eval {
@@ -93,8 +113,14 @@ sub processToolResult {
         
         my $remaining = $content_size - $PREVIEW_SIZE;
         
+        # Build marker with optional warnings
+        my $warning_text = '';
+        if (@$warnings) {
+            $warning_text = "\n[CONTENT WARNINGS]\n" . join("\n", map { "- $_" } @$warnings) . "\n";
+        }
+        
         $marker = <<END_MARKER;
-[TOOL_RESULT_PREVIEW: First $PREVIEW_SIZE bytes shown]
+[TOOL_RESULT_PREVIEW: First $PREVIEW_SIZE bytes shown]$warning_text
 
 $preview
 
@@ -123,6 +149,51 @@ END_FALLBACK
     }
     
     return $marker;
+}
+
+=head2 _analyze_content_issues (private)
+
+Analyze content for characteristics that might cause AI issues.
+
+Detects:
+- Ultra-long lines (>2000 chars) that can confuse AI models
+- Content with very few newlines (potential formatting issues)
+- Other anomalies
+
+Arguments:
+- content: Text to analyze
+
+Returns: Arrayref of warning strings (empty if no issues)
+
+=cut
+
+sub _analyze_content_issues {
+    my ($content) = @_;
+    
+    my @warnings;
+    
+    return \@warnings unless defined $content && length($content) > 0;
+    
+    # Check for ultra-long lines before wrapping
+    my @lines = split /\n/, $content, -1;
+    my $max_line_length = 0;
+    for my $line (@lines) {
+        my $len = length($line);
+        $max_line_length = $len if $len > $max_line_length;
+    }
+    
+    if ($max_line_length > 2000) {
+        push @warnings, "Contains lines up to $max_line_length characters (will be wrapped at 1000 chars for readability)";
+    }
+    
+    # Check for very few newlines (might be binary or unformatted)
+    my $newline_count = ($content =~ tr/\n/\n/);
+    my $content_size = length($content);
+    if ($content_size > 10000 && $newline_count < 10) {
+        push @warnings, "Large content with few line breaks (may be binary or unformatted data)";
+    }
+    
+    return \@warnings;
 }
 
 =head2 persistResult
@@ -160,10 +231,15 @@ sub persistResult {
         die "Failed to create tool_results directory: $error";
     }
     
-    # Write content to file
+    # BUGFIX: Wrap ultra-long lines to prevent AI context/JSON errors
+    # Lines >1000 chars can confuse AI models and cause malformed JSON responses
+    # See: session 2683331c-091c-45f3-b196-77d57231be2d failure with 3803-char line
+    my $wrapped_content = _wrap_long_lines($content, 1000);
+    
+    # Write content to file (using wrapped version)
     eval {
         open my $fh, '>:utf8', $result_file or die "Failed to open $result_file: $!";
-        print $fh $content;
+        print $fh $wrapped_content;
         close $fh;
     };
     if ($@) {
@@ -172,7 +248,7 @@ sub persistResult {
         die "Failed to write tool result file: $error";
     }
     
-    my $total_length = length($content);
+    my $total_length = length($wrapped_content);
     my $created = time();
     
     return {
@@ -182,6 +258,66 @@ sub persistResult {
         totalLength => $total_length,
         created => $created,
     };
+}
+
+=head2 _wrap_long_lines (private)
+
+Wrap lines exceeding a maximum length at word boundaries.
+
+Ultra-long lines (>1000 chars) can cause AI models to generate malformed JSON
+in subsequent responses. This wraps such lines at natural word boundaries.
+
+Arguments:
+- content: Text content to wrap
+- max_length: Maximum line length (default: 1000)
+
+Returns: Content with long lines wrapped
+
+=cut
+
+sub _wrap_long_lines {
+    my ($content, $max_length) = @_;
+    
+    $max_length //= 1000;
+    
+    return $content unless defined $content;
+    
+    my @input_lines = split /\n/, $content, -1;  # -1 preserves trailing empty lines
+    my @output_lines;
+    
+    for my $line (@input_lines) {
+        if (length($line) <= $max_length) {
+            # Line is fine as-is
+            push @output_lines, $line;
+        } else {
+            # Line is too long - wrap it at word boundaries
+            my $remaining = $line;
+            
+            while (length($remaining) > $max_length) {
+                # Try to find a space near the max_length boundary
+                my $chunk = substr($remaining, 0, $max_length);
+                
+                # Look for last space in the chunk
+                if ($chunk =~ /^(.+)\s+(\S*)$/) {
+                    # Found a space - break there
+                    my $before_space = $1;
+                    my $partial_word = $2;
+                    
+                    push @output_lines, $before_space;
+                    $remaining = substr($remaining, length($before_space) + 1);  # +1 to skip the space
+                } else {
+                    # No spaces found - hard break at max_length
+                    push @output_lines, $chunk;
+                    $remaining = substr($remaining, $max_length);
+                }
+            }
+            
+            # Add the final piece
+            push @output_lines, $remaining if length($remaining) > 0;
+        }
+    }
+    
+    return join("\n", @output_lines);
 }
 
 =head2 retrieveChunk
