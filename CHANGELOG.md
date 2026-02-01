@@ -27,6 +27,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Changed
 - Disabled test for unimplemented AutoCapture feature (test_ltm_autocapture.pl.disabled)
 
+## [20260131.4] - 2026-02-01
+
+### Fixed
+- **CRITICAL**: Ultra-long lines in tool results causing AI JSON errors and session failures
+  - Lines >1000 chars now automatically wrapped at word boundaries during persistence
+  - Prevents context/tokenization issues that caused cascading JSON errors
+  - Adds metadata warnings for problematic content characteristics
+  - Provides recovery guidance suggesting alternative approaches when read_tool_result fails
+  - Fixes session 2683331c-091c-45f3-b196-77d57231be2d failure (3,803-char line)
+- Moved helper function definition to avoid Perl forward declaration issues
+
+### Added
+- Line wrapping functionality in ToolResultStore for ultra-long lines (>1000 chars)
+- Content analysis to detect and warn about problematic characteristics
+- Tool-specific recovery guidance in WorkflowOrchestrator JSON error handling
+- Comprehensive test suite for line wrapping functionality
+
+### Changed
+- ToolResultStore now wraps long lines at word boundaries before persisting
+- Preview markers now include warnings about extreme content (long lines, few newlines)
+- JSON error recovery now suggests alternatives (terminal_operations, read_file with ranges, grep_search)
+
 ## [20260131.3] - 2026-01-31
 
 ### Added
