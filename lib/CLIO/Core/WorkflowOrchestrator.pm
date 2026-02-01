@@ -100,6 +100,32 @@ sub new {
     return $self;
 }
 
+# Helper function: Provide tool-specific recovery guidance
+# Defined here (before use) to avoid forward declaration issues
+sub _get_tool_specific_guidance {
+    my ($tool_name) = @_;
+    
+    return '' unless defined $tool_name;
+    
+    # Special guidance for read_tool_result failures
+    if ($tool_name eq 'file_operations') {
+        return <<'GUIDANCE';
+
+ALTERNATIVE APPROACHES FOR FILE OPERATIONS:
+If read_tool_result is failing repeatedly, try these instead:
+1. Use terminal_operations with head/tail/sed to view specific portions:
+   terminal_operations(operation: "exec", command: "head -n 50 /path/to/file")
+2. Use file_operations with read_file and line ranges:
+   file_operations(operation: "read_file", path: "/path/to/file", start_line: 1, end_line: 100)
+3. Use grep_search to find specific patterns instead of reading entire file:
+   file_operations(operation: "grep_search", query: "pattern")
+
+GUIDANCE
+    }
+    
+    return '';
+}
+
 =head2 _register_default_tools
 
 Register default tools (file_operations, etc.) with the tool registry.
@@ -432,6 +458,9 @@ sub process_input {
                             }
                         }
                         
+                        # First retry: provide detailed guidance based on the failed tool
+                        my $tool_guidance = _get_tool_specific_guidance($failed_tool_name);
+                        
                         my $guidance_msg = {
                             role => 'system',
                             content => "ERROR: Your previous tool call had invalid JSON parameters.\n\n" .
@@ -441,7 +470,8 @@ sub process_input {
                                        "- Trailing commas\n" .
                                        "- Missing required parameters\n\n" .
                                        "ALL parameters must have valid values - no empty/missing values permitted.\n" .
-                                       "$tool_schema\n" .
+                                       "$tool_schema\n\n" .
+                                       "$tool_guidance" .
                                        "Please retry the operation with correct JSON, or try a different approach if the tool call isn't critical."
                         };
                         push @messages, $guidance_msg;
