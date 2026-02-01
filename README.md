@@ -73,6 +73,15 @@ Get a glimpse of CLIO's beautiful terminal interface in action:
 
 ### Installation
 
+**Homebrew (macOS)**
+
+```bash
+brew tap SyntheticAutonomicMind/homebrew-SAM
+brew install clio
+```
+
+**Manual Installation**
+
 ```bash
 # Clone the repository
 git clone https://github.com/SyntheticAutonomicMind/CLIO.git
