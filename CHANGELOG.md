@@ -4,30 +4,29 @@ All notable changes to CLIO (Command Line Intelligence Orchestrator) are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [20260201.1] - 2026-02-01
 
 ### Added
-- Session auto-pruning configuration (`session_auto_prune`, `session_prune_days`)
-- `/session trim [days]` command to manually prune old sessions
-- `/memory stats` and `/memory prune [days]` commands for LTM management
-- `prune_ltm` and `ltm_stats` operations for agent self-grooming
-- `CLIO::UI::TerminalGuard` module for RAII-style terminal state protection
-- `CLIO::Test::MockAPI` module for testing without API keys
-- Secure directory permissions (0700) for sessions and config directories
-- Performance benchmark suite (`tests/benchmark.pl`)
-- Comprehensive end-to-end test suite (`tests/e2e/e2e_comprehensive_test.pl`)
-- PERFORMANCE.md documentation with metrics and optimization tips
+- **AGENTS.md support** - Reads both `.clio/instructions.md` AND `AGENTS.md` (open standard)
+  - Supports directory tree walking for monorepo compatibility (closest AGENTS.md wins)
+  - Merges both sources into system prompt
+  - Updated `/init` and `/init-with-prd` skills to create both files
+- **Split instructions** - Universal methodology vs project-specific content
+  - `.clio/instructions.md` now contains only universal methodology (The Unbroken Method)
+  - `AGENTS.md` contains CLIO project-specific details
+  - Cleaner template for `/init` in other projects
 
 ### Fixed
-- All 14 integration tests now pass (previously 6 failing)
-- Test suite module path issues when tests change working directory
-- Session continuity test now properly releases locks between operations
-- ToolExecutor now includes `success: 1` in successful tool results
+- **UI clutter reduction:**
+  - Orphaned tool_call warnings downgraded from WARN to DEBUG level (normal after context trimming)
+  - Slash commands no longer echo "YOU: /command" during collaboration prompts
+  - Commands process silently, users see command output not command echo
 
 ### Changed
-- Disabled test for unimplemented AutoCapture feature (test_ltm_autocapture.pl.disabled)
+- **InstructionsReader** now supports both `.clio/instructions.md` and `AGENTS.md`
+- **SkillManager** `/init` skill creates both instruction files for new projects
 
-## [20260131.4] - 2026-02-01
+## [20260131.4] - 2026-01-31
 
 ### Fixed
 - **CRITICAL**: Ultra-long lines in tool results causing AI JSON errors and session failures
@@ -81,16 +80,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [20260130.1] - 2026-01-30
 
 ### Added
+- Session auto-pruning configuration (`session_auto_prune`, `session_prune_days`)
+- `/session trim [days]` command to manually prune old sessions
+- `/memory stats` and `/memory prune [days]` commands for LTM management
+- `prune_ltm` and `ltm_stats` operations for agent self-grooming
+- `CLIO::UI::TerminalGuard` module for RAII-style terminal state protection
+- `CLIO::Test::MockAPI` module for testing without API keys
+- Secure directory permissions (0700) for sessions and config directories
+- Performance benchmark suite (`tests/benchmark.pl`)
+- Comprehensive end-to-end test suite (`tests/e2e/e2e_comprehensive_test.pl`)
 - Session improvements with better state management
 - UI modernization with consistent command patterns
 
-### Removed
-- Agent Client Protocol (ACP) - JSON-RPC over stdio (removed for simplification)
-
 ### Fixed
+- All 14 integration tests now pass (previously 6 failing)
+- Test suite module path issues when tests change working directory
+- Session continuity test now properly releases locks between operations
+- ToolExecutor now includes `success: 1` in successful tool results
 - Multiline command no longer shows unnecessary SYSTEM messages
 
 ### Changed
+- Disabled test for unimplemented AutoCapture feature (test_ltm_autocapture.pl.disabled)
 - Major UI refactoring: extracted all commands from Chat.pm into dedicated modules
   - `CLIO::UI::Commands::API` - API configuration commands
   - `CLIO::UI::Commands::Config` - Configuration management
@@ -98,6 +108,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - `CLIO::UI::Commands::File` - File operations
   - `CLIO::UI::Commands::Session` - Session management
   - `CLIO::UI::Commands::AI` - AI model configuration
+
+### Removed
+- Agent Client Protocol (ACP) - JSON-RPC over stdio (removed for simplification)
   - `CLIO::UI::Commands::System` - System commands (exec, clear, exit)
   - `CLIO::UI::Commands::Memory` - Memory operations
   - `CLIO::UI::Commands::Todo` - Todo list management
