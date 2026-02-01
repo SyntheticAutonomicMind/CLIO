@@ -1834,15 +1834,17 @@ sub _load_conversation_history {
             my $missing_results = 0;
             for my $id (keys %expected_tool_ids) {
                 unless ($found_tool_ids{$id}) {
-                    log_warning('WorkflowOrchestrator', "Orphaned tool_call detected: $id (missing tool_result)");
+                    # This is normal after context trimming - log at DEBUG level only
+                    print STDERR "[DEBUG][WorkflowOrchestrator] Orphaned tool_call detected: $id (missing tool_result - normal after context trim)\n"
+                        if should_log('DEBUG');
                     $missing_results++;
                 }
             }
             
             if ($missing_results > 0) {
                 # Remove tool_calls to prevent API error "tool_use ids were found without tool_result blocks"
-                print STDERR "[WARN][WorkflowOrchestrator] Removing tool_calls from loaded assistant message ($missing_results missing results)\n"
-                    if should_log("WARN");
+                print STDERR "[DEBUG][WorkflowOrchestrator] Removing tool_calls from loaded assistant message ($missing_results missing results - normal after context trim)\n"
+                    if should_log("DEBUG");
                 
                 my $fixed_msg = {
                     role => $msg->{role},
