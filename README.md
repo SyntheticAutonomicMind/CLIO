@@ -42,7 +42,7 @@ CLIO is part of the [Synthetic Autonomic Mind (SAM)](https://github.com/Syntheti
 - **Memory System:** Store and recall information across sessions
 - **Todo Lists:** Manage tasks within your workflow
 - **Web Operations:** Fetch and analyze web content
-- **Custom Instructions:** Per-project AI behavior via `.clio/instructions.md` (enforce standards, pass methodology, adapt to your workflow)
+- **Custom Instructions:** Per-project AI behavior via `.clio/instructions.md` and/or `AGENTS.md` (supports open standard, enforces standards, passes methodology, adapts to your workflow)
 - **Action Transparency:** See exactly what CLIO is doing in real-time, with clear, contextual descriptions for all tool operations
 - **Persistent Session Management:** Conversations saved automatically with full history; resume any session exactly where you left off
 - **Beautiful Terminal UI:** Professional markdown rendering with syntax highlighting, color-coded system messages, and streaming responses
@@ -373,40 +373,59 @@ For advanced configuration options, see [docs/USER_GUIDE.md](docs/USER_GUIDE.md)
 
 ## Custom Instructions
 
-CLIO supports **per-project custom instructions** via `.clio/instructions.md`. This lets you:
+CLIO supports **per-project custom instructions** via `.clio/instructions.md` and/or **`AGENTS.md`** (open standard). This lets you:
 - Enforce project-specific coding standards automatically
 - Pass methodology and best practices to CLIO
 - Adapt CLIO's behavior to your workflow
 - Share project context without repeating it every session
+- **Use the AGENTS.md standard (60k+ projects, 20+ AI tools)**
 
-### Quick Example
+### Quick Example - AGENTS.md (Recommended)
 
-Create `.clio/instructions.md` in your project:
+Create `AGENTS.md` at your project root:
 
 ```markdown
-# CLIO Custom Instructions
+# AGENTS.md
+
+## Setup Commands
+
+- Install deps: `npm install`
+- Run tests: `npm test`
+
+## Code Style
+
+- TypeScript strict mode
+- Single quotes, no semicolons
+- Follow project ESLint config
+```
+
+### Quick Example - .clio/instructions.md (CLIO-specific)
+
+Create `.clio/instructions.md` for CLIO-specific behavior:
+
+```markdown
+# CLIO Instructions
 
 This project follows The Unbroken Method for AI collaboration.
-See ai-assisted/THE_UNBROKEN_METHOD.md for complete details.
 
 ## Standards
 
-- Perl 5.20+ with strict/warnings
-- 4-space indentation (never tabs)
-- POD documentation for all modules
 - Always investigate code before making changes
 - Fix all discovered problems (complete ownership)
 - No "TODO" comments in final code
 ```
 
 When you start CLIO in that directory, it automatically:
-1. Reads `.clio/instructions.md`
-2. **Injects your instructions into the AI system prompt**
-3. Uses them to guide all code suggestions and tool operations
+1. Reads `.clio/instructions.md` (if exists)
+2. Reads `AGENTS.md` (if exists, walks up directory tree)
+3. **Merges and injects both into the AI system prompt**
+4. Uses them to guide all code suggestions and tool operations
 
-The same CLIO installation adapts its behavior to match each project's needs!
+**You can use one OR both!** AGENTS.md for universal guidance + .clio/instructions.md for CLIO-specific behavior.
 
-For complete documentation and examples, see [docs/CUSTOM_INSTRUCTIONS.md](docs/CUSTOM_INSTRUCTIONS.md).
+For complete documentation and examples, see:
+- **[AGENTS.md Support](docs/AGENTS_MD_SUPPORT.md)** - New! AGENTS.md standard support
+- **[Custom Instructions Guide](docs/CUSTOM_INSTRUCTIONS.md)** - Complete guide with examples
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
