@@ -673,7 +673,7 @@ sub get_builtin_theme {
         
         # Input prompts (standardized)
         input_prompt => '{style.muted}({var.prompt})@RESET@',
-        input_prompt_with_default => '{style.muted}({var.prompt}, or {style.command}Enter{style.muted} to {var.default_action})@RESET@',
+        input_prompt_with_default => '{style.muted}({var.prompt} or {style.command}Enter{style.muted} to {var.default_action})@RESET@',
     };
 }
 
