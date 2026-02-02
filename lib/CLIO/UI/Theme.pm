@@ -678,6 +678,64 @@ sub get_builtin_theme {
     };
 }
 
+=head2 validate_style
+
+Validate that a style exists.
+
+Arguments:
+  - style_name: Style identifier
+
+Returns:
+  - (1, '') if valid
+  - (0, error_message) if invalid
+
+=cut
+
+sub validate_style {
+    my ($self, $style_name) = @_;
+    
+    unless (defined $style_name && length($style_name)) {
+        return (0, "Style name cannot be empty");
+    }
+    
+    if (exists $self->{styles}->{$style_name}) {
+        return (1, '');
+    }
+    
+    my @styles = $self->list_styles();
+    my $styles_str = join(', ', @styles);
+    return (0, "Style '$style_name' not found. Available: $styles_str");
+}
+
+=head2 validate_theme
+
+Validate that a theme exists.
+
+Arguments:
+  - theme_name: Theme identifier
+
+Returns:
+  - (1, '') if valid
+  - (0, error_message) if invalid
+
+=cut
+
+sub validate_theme {
+    my ($self, $theme_name) = @_;
+    
+    unless (defined $theme_name && length($theme_name)) {
+        return (0, "Theme name cannot be empty");
+    }
+    
+    if (exists $self->{themes}->{$theme_name}) {
+        return (1, '');
+    }
+    
+    my @themes = $self->list_themes();
+    my $themes_str = join(', ', @themes);
+    return (0, "Theme '$theme_name' not found. Available: $themes_str");
+}
+
 1;
 
 __END__

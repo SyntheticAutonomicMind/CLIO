@@ -440,8 +440,6 @@ Handle /api set <setting> <value> [--session]
 sub _handle_api_set {
     my ($self, $setting, $value, $session_only) = @_;
     
-    use CLIO::Util::Validator;
-    
     $setting = lc($setting || '');
     
     unless ($setting) {
@@ -463,7 +461,7 @@ sub _handle_api_set {
         }
         
         # Validate API key format
-        my ($valid, $error) = CLIO::Util::Validator::validate_api_key($value, 1);
+        my ($valid, $error) = $self->_validate_api_key($value, 1);
         unless ($valid) {
             $self->display_error_message($error);
             return;
@@ -485,7 +483,7 @@ sub _handle_api_set {
         }
         
         # Validate API key format
-        my ($valid, $error) = CLIO::Util::Validator::validate_api_key($value, 1);
+        my ($valid, $error) = $self->_validate_api_key($value, 1);
         unless ($valid) {
             $self->display_error_message($error);
             return;
@@ -502,40 +500,44 @@ sub _handle_api_set {
         }
     }
     elsif ($setting eq 'search_engine') {
-        # Validate search engine using Validator
-        my ($valid, $error) = CLIO::Util::Validator::validate_search_engine($value);
+        # Validate search engine
+        require CLIO::Util::InputHelpers;
+        my @valid_engines = $self->_get_search_engines();
+        my ($valid, $result) = CLIO::Util::InputHelpers::validate_enum($value, \@valid_engines);
         unless ($valid) {
-            $self->display_error_message($error);
+            $self->display_error_message($result);
             return;
         }
         
-        $self->{config}->set('search_engine', lc($value));
+        $self->{config}->set('search_engine', lc($result));
         
         if ($self->{config}->save()) {
-            $self->display_system_message("Search engine set to: " . lc($value) . " (saved)");
+            $self->display_system_message("Search engine set to: " . lc($result) . " (saved)");
         } else {
             $self->display_system_message("Search engine set (warning: failed to save)");
         }
     }
     elsif ($setting eq 'search_provider') {
-        # Validate search provider using Validator
-        my ($valid, $error) = CLIO::Util::Validator::validate_search_provider($value);
+        # Validate search provider
+        require CLIO::Util::InputHelpers;
+        my @valid_providers = $self->_get_search_providers();
+        my ($valid, $result) = CLIO::Util::InputHelpers::validate_enum($value, \@valid_providers);
         unless ($valid) {
-            $self->display_error_message($error);
+            $self->display_error_message($result);
             return;
         }
         
-        $self->{config}->set('search_provider', lc($value));
+        $self->{config}->set('search_provider', lc($result));
         
         if ($self->{config}->save()) {
-            $self->display_system_message("Search provider set to: " . lc($value) . " (saved)");
+            $self->display_system_message("Search provider set to: " . lc($result) . " (saved)");
         } else {
             $self->display_system_message("Search provider set (warning: failed to save)");
         }
     }
     elsif ($setting eq 'base') {
         # Validate URL format
-        my ($valid, $error) = CLIO::Util::Validator::validate_url($value);
+        my ($valid, $error) = $self->_validate_url($value);
         unless ($valid) {
             $self->display_error_message($error);
             return;
@@ -547,7 +549,9 @@ sub _handle_api_set {
     }
     elsif ($setting eq 'model') {
         # Validate model exists using ModelRegistry
-        my ($valid, $error) = CLIO::Util::Validator::validate_model($value);
+        require CLIO::Core::ModelRegistry;
+        my $registry = CLIO::Core::ModelRegistry->new();
+        my ($valid, $error) = $registry->validate_model($value);
         unless ($valid) {
             $self->display_error_message($error);
             return;
@@ -559,7 +563,8 @@ sub _handle_api_set {
     }
     elsif ($setting eq 'provider') {
         # Validate provider exists
-        my ($valid, $error) = CLIO::Util::Validator::validate_provider($value);
+        require CLIO::Providers;
+        my ($valid, $error) = CLIO::Providers::validate_provider($value);
         unless ($valid) {
             $self->display_error_message($error);
             return;
@@ -1143,6 +1148,82 @@ sub _detect_api_type {
     }
     
     return (undef, undef);
+}
+
+=head2 _validate_url
+
+Internal helper: Validate that a string is a reasonable URL format.
+
+Returns: (1, '') if valid, (0, error_message) if invalid
+
+=cut
+
+sub _validate_url {
+    my ($url) = @_;
+    
+    unless (defined $url && length($url)) {
+        return (0, "URL cannot be empty");
+    }
+    
+    # Basic URL validation: must contain :// and not have spaces
+    if ($url =~ m{^https?://[^\s]+$}) {
+        return (1, '');
+    }
+    
+    # Also allow other schemes like ws://, wss://
+    if ($url =~ m{^[a-z][a-z0-9+\-.]*://[^\s]+$}) {
+        return (1, '');
+    }
+    
+    return (0, "Invalid URL format: '$url'. Must be a valid URL (e.g., http://example.com)");
+}
+
+=head2 _validate_api_key
+
+Internal helper: Validate that an API key meets basic requirements.
+
+Returns: (1, '') if valid, (0, error_message) if invalid
+
+=cut
+
+sub _validate_api_key {
+    my ($key, $min_length) = @_;
+    $min_length ||= 1;  # API keys can be very short (like test keys)
+    
+    unless (defined $key && length($key)) {
+        return (0, "API key cannot be empty");
+    }
+    
+    if (length($key) < $min_length) {
+        return (0, "API key too short (minimum $min_length characters)");
+    }
+    
+    # Reject keys with only whitespace
+    if ($key =~ /^\s+$/) {
+        return (0, "API key cannot be only whitespace");
+    }
+    
+    return (1, '');
+}
+
+=head2 _get_search_engines
+
+Internal helper: Get list of valid search engines
+
+=cut
+
+sub _get_search_engines {
+    return qw(google bing duckduckgo);
+}
+
+=head2 _get_search_providers
+
+Internal helper: Get list of valid search providers
+
+=cut
+
+sub _get_search_providers {
+    return qw(auto serpapi duckduckgo_direct);
 }
 
 1;
