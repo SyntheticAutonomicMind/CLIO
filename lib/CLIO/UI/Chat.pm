@@ -941,7 +941,7 @@ sub _build_prompt {
     }
     
     # 4. Prompt indicator (colon) - color depends on mode
-    my $indicator_color = $mode eq 'collaboration' ? 'COLLAB_PROMPT' : 'prompt_indicator';
+    my $indicator_color = $mode eq 'collaboration' ? 'collab_prompt' : 'prompt_indicator';
     push @parts, $self->colorize(":", $indicator_color);
     
     # Join with spaces (except before colon)
