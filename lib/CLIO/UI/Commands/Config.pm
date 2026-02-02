@@ -319,6 +319,17 @@ sub _handle_config_set {
     }
     
     # Set the config value
+    if ($key eq 'working_directory') {
+        # Validate directory exists and is accessible
+        require CLIO::Util::Validator;
+        my ($valid, $result) = CLIO::Util::Validator::validate_directory($value, 1, 0);
+        unless ($valid) {
+            $self->display_error_message($result);
+            return;
+        }
+        $value = $result;  # Use validated/normalized path
+    }
+    
     $self->{config}->set($key, $value);
     $self->display_system_message("Config '$key' set to: $value");
     $self->display_system_message("Use /config save to persist");
