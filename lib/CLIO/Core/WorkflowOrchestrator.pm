@@ -1004,7 +1004,7 @@ sub process_input {
                 }
                 
                 # Handle tool group transitions (new tool type starting)
-                print STDERR "[DEBUG] Comparing: tool_name='$tool_name' current_tool='$current_tool' ne=" . ($tool_name ne $current_tool ? "TRUE" : "FALSE") . "\n" if $self->{debug};
+                print STDERR "[TOOL_COMPARE] tool_name='$tool_name' current_tool='$current_tool' ne=" . ($tool_name ne $current_tool ? "TRUE" : "FALSE") . "\n";
                 if ($tool_name ne $current_tool) {
                     # Transitioning to a new tool type
                     # Print box-drawing header for this tool
