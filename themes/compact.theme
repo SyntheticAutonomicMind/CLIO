@@ -33,7 +33,7 @@ pagination_info={style.dim}{var.info}@RESET@
 # Two-part pause: hint tells what to do, prompt shows page status
 pagination_hint_streaming={style.dim}┌──┤ {style.prompt_indicator}Q{style.dim}|more@RESET@
 pagination_hint_full={style.dim}┌──┤ {style.prompt_indicator}^v{style.dim}|{style.prompt_indicator}Q{style.dim}|more@RESET@
-pagination_prompt={style.dim}└─┤ {style.data}{var.current}/{var.total}{style.dim} │ {var.nav_hint}{style.prompt_indicator}Q{style.dim}>{style.dim}@RESET@
+pagination_prompt={style.dim}└─┤ {style.data}{var.current}/{var.total}{style.dim} │ {var.nav_hint}{style.prompt_indicator}Q{style.dim} {style.prompt_indicator}> {style.dim}@RESET@
 
 # Input prompts (box-drawing - compact style)
 input_prompt={style.dim}┌──┤ {style.prompt_indicator}{var.prompt}@RESET@
