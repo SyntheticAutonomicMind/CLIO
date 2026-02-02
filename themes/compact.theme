@@ -29,6 +29,15 @@ nav_previous={style.prompt_indicator}P@RESET@
 nav_quit={style.prompt_indicator}Q@RESET@
 pagination_info={style.dim}{var.info}@RESET@
 
+# Pagination prompts (standardized - compact style)
+pagination_hint_streaming={style.dim}[{style.prompt_indicator}Q{style.dim}|more]@RESET@
+pagination_hint_full={style.dim}[{style.prompt_indicator}^v{style.dim}|{style.prompt_indicator}Q{style.dim}|more]@RESET@
+pagination_prompt={style.dim}{style.data}[{var.current}/{var.total}]{style.dim} {var.nav_hint}{style.prompt_indicator}Q{style.dim}>{style.dim}@RESET@ 
+
+# Input prompts (standardized - compact style)
+input_prompt={style.dim}>{style.dim} {var.prompt}@RESET@ 
+input_prompt_with_default={style.dim}>{style.dim} {var.prompt} ({style.prompt_indicator}Enter{style.dim} = {var.default_action})@RESET@ 
+
 # Messages - no prefixes, just color differentiation
 user_message_prefix={style.user_text}@RESET@
 agent_message_prefix={style.agent_text}@RESET@
