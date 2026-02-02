@@ -29,18 +29,19 @@ nav_previous={style.prompt_indicator}[P]revious@RESET@
 nav_quit={style.prompt_indicator}[Q]uit@RESET@
 pagination_info={style.dim}{var.info}@RESET@
 
-# Pagination prompts (standardized)
-pagination_hint_streaming={style.dim}[ {style.prompt_indicator}Q{style.dim} quit - any key more ]@RESET@
-pagination_hint_full={style.dim}[ {style.prompt_indicator}^/v{style.dim} pages - {style.prompt_indicator}Q{style.dim} quit - any key more ]@RESET@
-pagination_prompt={style.dim}==={style.data}[ {var.current}/{var.total} ]{style.dim}===@RESET@ {var.nav_hint}{style.prompt_indicator}Q{style.dim} {style.prompt_indicator}>{style.dim}@RESET@ 
+# Pagination prompts (box-drawing format with proper closures)
+# Two-part pause: hint tells what to do, prompt shows page status
+pagination_hint_streaming={style.dim}┌──┤ {style.prompt_indicator}Q{style.dim} quits - any key for more@RESET@
+pagination_hint_full={style.dim}┌──┤ {style.prompt_indicator}^/v{style.dim} pages · {style.prompt_indicator}Q{style.dim} quits · any key for more@RESET@
+pagination_prompt={style.dim}└─┤ {style.data}{var.current}/{var.total}{style.dim} │ {var.nav_hint}{style.prompt_indicator}Q{style.dim} {style.prompt_indicator}>{style.dim}@RESET@
 
-# Input prompts (standardized BBS style)
-input_prompt={style.dim}===[ {var.prompt} ]===@RESET@ 
-input_prompt_with_default={style.dim}===[ {var.prompt} · {style.prompt_indicator}Enter{style.dim} to {var.default_action} ]===@RESET@ 
+# Input prompts (standardized BBS style with box-drawing)
+input_prompt={style.dim}┌──┤ {style.prompt_indicator}{var.prompt}@RESET@
+input_prompt_with_default={style.dim}┌──┤ {style.prompt_indicator}{var.prompt}{style.dim} · {style.data}Enter{style.dim} to {style.data}{var.default_action}@RESET@
 
-# Confirmation prompts (simple box-drawing)
-confirmation_header={style.dim}┌──┤{style.data} {var.question}@RESET@
-confirmation_input={style.dim}└─{style.data} {var.options}{style.dim} [{style.prompt_indicator}Enter{style.dim} to {var.default_action}{style.dim}]: @RESET@
+# Confirmation prompts (box-drawing two-part format)
+confirmation_header={style.dim}┌──┤ {style.prompt_indicator}{var.question}@RESET@
+confirmation_input={style.dim}└─┤ {style.data}{var.options}{style.dim} · {style.data}Enter{style.dim} to {style.data}{var.default_action}{style.dim}:@RESET@
 
 # Messages
 user_message_prefix={style.user_text}YOU: @RESET@
