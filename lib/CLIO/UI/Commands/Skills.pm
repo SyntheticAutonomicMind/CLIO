@@ -385,8 +385,15 @@ sub _delete_skill {
         return;
     }
     
-    print $self->{chat}{theme_mgr}->get_input_prompt("Delete skill '$name'? Type 'yes' to confirm", "cancel") . "\n";
-    print "> ";
+    # Display confirmation prompt using theme
+    my ($header, $input_line) = @{$self->{chat}{theme_mgr}->get_confirmation_prompt(
+        "Delete skill '$name'?",
+        "yes/no",
+        "cancel"
+    )};
+    
+    print $header, "\n";
+    print $input_line;
     my $confirm = <STDIN>;
     chomp $confirm if defined $confirm;
     
