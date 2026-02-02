@@ -2119,12 +2119,15 @@ sub pause {
         ReadMode('normal');
         
         # Clear prompt line (and hint line if it was shown)
-        if ($hint_was_shown) {
-            print "\e[2K";  # Clear prompt line
-            print "\e[1A\e[2K";  # Move up and clear hint line
-            print "\e[" . $self->{terminal_width} . "D";  # Move to start
-        } else {
-            print "\e[2K\e[" . $self->{terminal_width} . "D";  # Clear prompt line only
+        # Skip cursor manipulation during tool execution to preserve tool output headers
+        unless ($self->{_in_tool_execution}) {
+            if ($hint_was_shown) {
+                print "\e[2K";  # Clear prompt line
+                print "\e[1A\e[2K";  # Move up and clear hint line
+                print "\e[" . $self->{terminal_width} . "D";  # Move to start
+            } else {
+                print "\e[2K\e[" . $self->{terminal_width} . "D";  # Clear prompt line only
+            }
         }
         
         $key = uc($key) if $key;
@@ -2179,12 +2182,15 @@ sub pause {
         ReadMode('normal');
         
         # Clear prompt line (and hint line if it was shown)
-        if ($hint_was_shown) {
-            print "\e[2K";  # Clear prompt line
-            print "\e[1A\e[2K";  # Move up and clear hint line
-            print "\e[" . $self->{terminal_width} . "D";  # Move to start
-        } else {
-            print "\e[2K\e[" . $self->{terminal_width} . "D";  # Clear prompt line only
+        # Skip cursor manipulation during tool execution to preserve tool output headers
+        unless ($self->{_in_tool_execution}) {
+            if ($hint_was_shown) {
+                print "\e[2K";  # Clear prompt line
+                print "\e[1A\e[2K";  # Move up and clear hint line
+                print "\e[" . $self->{terminal_width} . "D";  # Move to start
+            } else {
+                print "\e[2K\e[" . $self->{terminal_width} . "D";  # Clear prompt line only
+            }
         }
         
         $key = uc($key) if $key;
