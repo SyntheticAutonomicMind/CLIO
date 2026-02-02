@@ -720,6 +720,80 @@ Returns:
 
 =cut
 
+=head2 get_required_theme_keys
+
+Get list of theme keys that are required for all themes.
+
+Returns: Array of required key names
+
+=cut
+
+sub get_required_theme_keys {
+    return qw(
+        user_prompt_format
+        agent_prefix
+        system_prefix
+        error_prefix
+        banner_line1
+        banner_line2
+        banner_line3
+        banner_line4
+        help_header
+        help_section
+        help_command
+        thinking_indicator
+        nav_next
+        nav_previous
+        nav_quit
+        pagination_info
+        pagination_hint_streaming
+        pagination_hint_full
+        pagination_prompt
+        input_prompt
+        input_prompt_with_default
+        user_message_prefix
+        agent_message_prefix
+    );
+}
+
+=head2 is_theme_complete
+
+Check if a theme has all required keys.
+
+Arguments:
+  - theme_name: Name of theme to check
+
+Returns:
+  - (1, '') if complete
+  - (0, error_message) if incomplete, listing missing keys
+
+=cut
+
+sub is_theme_complete {
+    my ($self, $theme_name) = @_;
+    
+    unless (exists $self->{themes}->{$theme_name}) {
+        return (0, "Theme '$theme_name' not found");
+    }
+    
+    my $theme = $self->{themes}->{$theme_name};
+    my @required = $self->get_required_theme_keys();
+    my @missing;
+    
+    for my $key (@required) {
+        unless (exists $theme->{$key} && defined $theme->{$key} && length($theme->{$key})) {
+            push @missing, $key;
+        }
+    }
+    
+    if (@missing) {
+        my $missing_str = join(', ', @missing);
+        return (0, "Theme '$theme_name' is incomplete. Missing keys: $missing_str");
+    }
+    
+    return (1, '');
+}
+
 sub validate_theme {
     my ($self, $theme_name) = @_;
     
@@ -728,7 +802,13 @@ sub validate_theme {
     }
     
     if (exists $self->{themes}->{$theme_name}) {
-        return (1, '');
+        # Theme exists - check if it's complete
+        my ($complete, $error) = $self->is_theme_complete($theme_name);
+        if ($complete) {
+            return (1, '');
+        } else {
+            return (0, $error);
+        }
     }
     
     my @themes = $self->list_themes();
