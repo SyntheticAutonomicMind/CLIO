@@ -161,10 +161,11 @@ sub readline {
             
             # Read additional bytes with a reasonable timeout
             # Different terminals send sequences at different speeds
-            # Use a timeout of 200ms which is long enough for all modifier sequences
-            # but short enough to not feel like a hang if there's no sequence
+            # Use a timeout of 500ms to accommodate slow network connections (SSH)
+            # while staying responsive if sequence ends early
+            # Most modern terminals send complete sequences within 50ms
             for my $i (1..5) {
-                my $next = ReadKey(0.2);  # 200ms timeout between bytes
+                my $next = ReadKey(0.5);  # 500ms timeout between bytes
                 last unless defined $next;
                 $seq .= $next;
                 
@@ -504,6 +505,8 @@ Go to previous history entry
 sub history_prev {
     my ($self, $input_ref, $cursor_pos_ref, $prompt) = @_;
     
+    # Safety: validate history array is accessible
+    return unless defined $self->{history} && ref($self->{history}) eq 'ARRAY';
     return unless @{$self->{history}};
     
     # First time - save current input
@@ -516,7 +519,14 @@ sub history_prev {
         return;  # Already at oldest
     }
     
-    $$input_ref = $self->{history}->[$self->{history_pos}];
+    # Safety: bounds check before array access
+    if ($self->{history_pos} < 0 || $self->{history_pos} >= scalar(@{$self->{history}})) {
+        print STDERR "[WARN][ReadLine] History position out of bounds: $self->{history_pos}\n";
+        $self->{history_pos} = -1;
+        return;
+    }
+    
+    $$input_ref = $self->{history}->[$self->{history_pos}] // '';
     $$cursor_pos_ref = length($$input_ref);
     $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
 }
@@ -532,6 +542,9 @@ sub history_next {
     
     return if $self->{history_pos} == -1;  # Not in history
     
+    # Safety: validate history array is accessible
+    return unless defined $self->{history} && ref($self->{history}) eq 'ARRAY';
+    
     $self->{history_pos}++;
     
     if ($self->{history_pos} >= scalar(@{$self->{history}})) {
@@ -539,7 +552,14 @@ sub history_next {
         $$input_ref = $self->{current_input} // '';
         $self->{history_pos} = -1;
     } else {
-        $$input_ref = $self->{history}->[$self->{history_pos}];
+        # Safety: bounds check before array access
+        if ($self->{history_pos} < 0 || $self->{history_pos} >= scalar(@{$self->{history}})) {
+            print STDERR "[WARN][ReadLine] History position out of bounds: $self->{history_pos}\n";
+            $$input_ref = $self->{current_input} // '';
+            $self->{history_pos} = -1;
+        } else {
+            $$input_ref = $self->{history}->[$self->{history_pos}] // '';
+        }
     }
     
     $$cursor_pos_ref = length($$input_ref);
@@ -558,8 +578,24 @@ sub redraw_line {
     # Defensive: ensure prompt is defined (should never happen, but prevents warnings)
     $prompt //= '';
     
+    # Safety: clamp cursor position to valid range (0 to length of input)
+    # This prevents display corruption from out-of-bounds cursor positioning
+    my $input_len = length($$input_ref);
+    if ($$cursor_pos_ref < 0) {
+        print STDERR "[WARN][ReadLine] Cursor position was negative ($cursor_pos_ref), clamping to 0\n";
+        $$cursor_pos_ref = 0;
+    } elsif ($$cursor_pos_ref > $input_len) {
+        print STDERR "[WARN][ReadLine] Cursor position exceeded input length ($cursor_pos_ref > $input_len), clamping to $input_len\n";
+        $$cursor_pos_ref = $input_len;
+    }
+    
     # Get terminal width for proper wrapping
     my ($term_width, $term_height) = GetTerminalSize();
+    $term_width ||= 80;  # Fallback if detection fails
+    $term_height ||= 24;
+    
+    # Safety: prevent division by zero on impossibly small terminals
+    $term_width = 80 if $term_width < 10;
     
     # Calculate visible prompt length (strip ANSI codes)
     my $visible_prompt = $prompt;
