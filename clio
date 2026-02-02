@@ -537,25 +537,37 @@ if ($session && $session->can('state') && $session->state()) {
         
         # Use styled output if UI is available, otherwise plain text
         if ($$ui_ref && $$ui_ref->can('display_system_message')) {
-            $$ui_ref->display_system_message("Saving session...");
+            # Buffer system messages for grouped display
+            my @messages = ("Saving session...");
+            
+            if ($$session_ref) {
+                eval {
+                    $$session_ref->save();
+                    push @messages, "Session saved.";
+                };
+                if ($@) {
+                    push @messages, "ERROR: Failed to save session: $@";
+                }
+            } else {
+                push @messages, "WARN: No session to save";
+            }
+            
+            # Display all messages as a single grouped output
+            $$ui_ref->display_system_messages(\@messages);
         } else {
             print "SYSTEM: Saving session...\n";
-        }
-        
-        if ($$session_ref) {
-            eval {
-                $$session_ref->save();
-                if ($$ui_ref && $$ui_ref->can('display_system_message')) {
-                    $$ui_ref->display_system_message("Session saved.");
-                } else {
+            
+            if ($$session_ref) {
+                eval {
+                    $$session_ref->save();
                     print "SYSTEM: Session saved.\n";
+                };
+                if ($@) {
+                    print STDERR "[ERROR] Failed to save session: $@\n";
                 }
-            };
-            if ($@) {
-                print STDERR "[ERROR] Failed to save session: $@\n";
+            } else {
+                print STDERR "[WARN] No session to save (session object is undefined)\n";
             }
-        } else {
-            print STDERR "[WARN] No session to save (session object is undefined)\n";
         }
         
         # Force STDERR flush
@@ -591,13 +603,17 @@ eval {
 
 # Save session after interactive mode completes
 # This ensures all conversation history, including errors, is persisted
-# Show save message for consistency with Ctrl+C exit
-if ($ui && $ui->can('display_system_message')) {
-    $ui->display_system_message("Saving session...");
-}
+# Group all exit messages together for consistency
+my @exit_messages = ("Goodbye!", "Saving session...");
 $session->save();
-if ($ui && $ui->can('display_system_message')) {
-    $ui->display_system_message("Session saved.");
+push @exit_messages, "Session saved.";
+
+if ($ui && $ui->can('display_system_messages')) {
+    $ui->display_system_messages(\@exit_messages);
+} else {
+    for my $msg (@exit_messages) {
+        print "SYSTEM: $msg\n";
+    }
 }
 print "[DEBUG] Session saved after interactive mode\n" if $debug;
 

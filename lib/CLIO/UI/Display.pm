@@ -139,7 +139,11 @@ sub display_assistant_message {
 
 =head2 display_system_message($message)
 
-Display a system message.
+Display a system message using box-drawing format.
+
+Displays a system message with box-drawing format for consistency with tool output:
+  ┌──┤ SYSTEM
+  └─ System message text here
 
 =cut
 
@@ -151,13 +155,34 @@ sub display_system_message {
     # Add to screen buffer
     $chat->add_to_buffer('system', $message);
     
-    my $line = $chat->colorize("SYSTEM: ", 'SYSTEM') . $message;
-    $chat->writeline($line, markdown => 0);
+    # Handle multi-line messages by splitting and applying proper connectors
+    my @lines = split /\n/, $message, -1;
+    pop @lines if @lines && $lines[-1] eq '';  # Remove trailing empty if message ended with \n
+    
+    # Build header with three-color format:
+    # {dim}┌──┤ {assistant}SYSTEM{reset}
+    my $header_conn = $chat->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
+    my $header_name = $chat->colorize("SYSTEM", 'ASSISTANT');
+    print "$header_conn$header_name\n";
+    
+    # Display each line of the message with appropriate connector
+    # {dim}└─ {data}message{reset}
+    for my $i (0..$#lines) {
+        my $is_last = ($i == $#lines);
+        my $connector = $is_last ? "\x{2514}\x{2500} " : "\x{251C}\x{2500} ";  # └─ or ├─
+        my $conn_colored = $chat->colorize($connector, 'DIM');
+        my $msg_colored = $chat->colorize($lines[$i], 'DATA');
+        print "$conn_colored$msg_colored\n";
+    }
 }
 
 =head2 display_error_message($message)
 
-Display an error message.
+Display an error message with box-drawing format.
+
+Format:
+  ┌──┤ ERROR
+  └─ message
 
 =cut
 
@@ -169,13 +194,23 @@ sub display_error_message {
     # Add to screen buffer
     $chat->add_to_buffer('error', $message);
     
-    my $line = $chat->colorize("ERROR: ", 'ERROR') . $message;
-    $chat->writeline($line, markdown => 0);
+    # Box-drawing format
+    my $header_conn = $chat->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
+    my $header_name = $chat->colorize("ERROR", 'ERROR');
+    my $footer_conn = $chat->colorize("\x{2514}\x{2500} ", 'DIM');
+    my $footer_msg = $chat->colorize($message, 'DATA');
+    
+    $chat->writeline("$header_conn$header_name", markdown => 0);
+    $chat->writeline("$footer_conn$footer_msg", markdown => 0);
 }
 
 =head2 display_success_message($message)
 
-Display a success message.
+Display a success message with box-drawing format.
+
+Format:
+  ┌──┤ SUCCESS
+  └─ message
 
 =cut
 
@@ -187,13 +222,23 @@ sub display_success_message {
     # Add to screen buffer
     $chat->add_to_buffer('success', $message);
     
-    my $line = $chat->colorize("", 'success_message') . $message;
-    $chat->writeline($line, markdown => 0);
+    # Box-drawing format
+    my $header_conn = $chat->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
+    my $header_name = $chat->colorize("SUCCESS", 'SUCCESS');
+    my $footer_conn = $chat->colorize("\x{2514}\x{2500} ", 'DIM');
+    my $footer_msg = $chat->colorize($message, 'DATA');
+    
+    $chat->writeline("$header_conn$header_name", markdown => 0);
+    $chat->writeline("$footer_conn$footer_msg", markdown => 0);
 }
 
 =head2 display_warning_message($message)
 
-Display a warning message.
+Display a warning message with box-drawing format.
+
+Format:
+  ┌──┤ WARNING
+  └─ message
 
 =cut
 
@@ -205,13 +250,23 @@ sub display_warning_message {
     # Add to screen buffer
     $chat->add_to_buffer('warning', $message);
     
-    my $line = $chat->colorize("[WARN] ", 'warning_message') . $message;
-    $chat->writeline($line, markdown => 0);
+    # Box-drawing format
+    my $header_conn = $chat->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
+    my $header_name = $chat->colorize("WARNING", 'WARNING');
+    my $footer_conn = $chat->colorize("\x{2514}\x{2500} ", 'DIM');
+    my $footer_msg = $chat->colorize($message, 'DATA');
+    
+    $chat->writeline("$header_conn$header_name", markdown => 0);
+    $chat->writeline("$footer_conn$footer_msg", markdown => 0);
 }
 
 =head2 display_info_message($message)
 
-Display an informational message.
+Display an informational message with box-drawing format.
+
+Format:
+  ┌──┤ INFO
+  └─ message
 
 =cut
 
@@ -223,8 +278,14 @@ sub display_info_message {
     # Add to screen buffer
     $chat->add_to_buffer('info', $message);
     
-    my $line = $chat->colorize("[INFO] ", 'info_message') . $message;
-    $chat->writeline($line, markdown => 0);
+    # Box-drawing format
+    my $header_conn = $chat->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
+    my $header_name = $chat->colorize("INFO", 'ASSISTANT');  # Use ASSISTANT color for info
+    my $footer_conn = $chat->colorize("\x{2514}\x{2500} ", 'DIM');
+    my $footer_msg = $chat->colorize($message, 'DATA');
+    
+    $chat->writeline("$header_conn$header_name", markdown => 0);
+    $chat->writeline("$footer_conn$footer_msg", markdown => 0);
 }
 
 =head2 display_command_header($text, $width)
