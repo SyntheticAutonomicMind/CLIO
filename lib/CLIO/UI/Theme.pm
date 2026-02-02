@@ -473,7 +473,33 @@ sub get_input_prompt {
     }
 }
 
+=head2 get_confirmation_prompt
 
+Get a themed confirmation prompt with box drawing.
+
+Arguments:
+  - question: The question to ask (e.g., "Delete skill 'name'?")
+  - options: Options display (e.g., "yes/no")
+  - default_action: What pressing Enter does (e.g., "skip", "cancel")
+
+Returns: Arrayref of [header, input_line] for printing separately
+
+=cut
+
+sub get_confirmation_prompt {
+    my ($self, $question, $options, $default_action) = @_;
+    
+    my $header = $self->render('confirmation_header', {
+        question => $question,
+    });
+    
+    my $input = $self->render('confirmation_input', {
+        options => $options,
+        default_action => $default_action,
+    });
+    
+    return [$header, $input];
+}
 
 =head2 save_style
 
