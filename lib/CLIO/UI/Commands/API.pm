@@ -548,9 +548,28 @@ sub _handle_api_set {
         $self->_reinit_api_manager();
     }
     elsif ($setting eq 'model') {
-        # Validate model exists using ModelRegistry
+        # Validate model exists using ModelRegistry with GitHub Copilot API support
         require CLIO::Core::ModelRegistry;
-        my $registry = CLIO::Core::ModelRegistry->new();
+        
+        # Get current provider to determine if we need GitHub Copilot API
+        my $provider = $self->{config}->get('provider') || '';
+        my $api_base = $self->{config}->get('api_base') || '';
+        
+        my $registry_args = {};
+        
+        # If using GitHub Copilot, fetch models from their API
+        if ($provider eq 'github_copilot' || $api_base =~ /githubcopilot\.com/) {
+            eval {
+                require CLIO::Core::GitHubCopilotModelsAPI;
+                my $models_api = CLIO::Core::GitHubCopilotModelsAPI->new(debug => $self->{debug});
+                $registry_args->{github_copilot_api} = $models_api;
+            };
+            if ($@) {
+                print STDERR "[WARN][API] Failed to load GitHubCopilotModelsAPI: $@\n" if should_log('DEBUG');
+            }
+        }
+        
+        my $registry = CLIO::Core::ModelRegistry->new(%$registry_args);
         my ($valid, $error) = $registry->validate_model($value);
         unless ($valid) {
             $self->display_error_message($error);

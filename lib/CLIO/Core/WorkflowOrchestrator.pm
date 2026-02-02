@@ -1040,8 +1040,6 @@ sub process_input {
                 
                 # Handle tool group transitions (new tool type starting)
                 if ($tool_name ne $current_tool) {
-                    print STDERR "[DEBUG][WorkflowOrchestrator] Tool transition: old='$current_tool' (len=" . length($current_tool) . ") new='$tool_name' (len=" . length($tool_name) . ")\n" if $self->{debug};
-                    
                     # Transitioning to a new tool type
                     # Print box-drawing header for this tool
                     if ($self->{ui} && $self->{ui}->can('colorize')) {
@@ -1051,12 +1049,11 @@ sub process_input {
                             STDOUT->flush() if STDOUT->can('flush');
                         }
                         
-                        my $dim_color = $self->{ui}->colorize('', 'DIM');
-                        my $data_color = $self->{ui}->colorize('', 'DATA');
-                        my $reset = "\e[0m";  # ANSI reset code instead of @RESET@
-                        
-                        # Build header with box drawing: ┌──┤ TOOL_NAME
-                        print "$dim_color\x{250C}\x{2500}\x{2500}\x{2524} $data_color$tool_display_name$reset\n";
+                        # Build header with three-color format:
+                        # {dim}┌──┤ {agent_label}TOOL NAME{reset}
+                        my $connector = $self->{ui}->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
+                        my $name = $self->{ui}->colorize($tool_display_name, 'ASSISTANT');
+                        print "$connector$name\n";
                     } else {
                         # Fallback without colors
                         if ($current_tool ne '') {
@@ -1067,8 +1064,6 @@ sub process_input {
                     }
                     STDOUT->flush() if STDOUT->can('flush');
                     $current_tool = $tool_name;
-                } else {
-                    print STDERR "[DEBUG][WorkflowOrchestrator] No transition (same tool): '$tool_name'\n" if $self->{debug};
                 }
                 
                 # Execute tool to get the result
@@ -1104,17 +1099,16 @@ sub process_input {
                     }
                     
                     # Determine connector: ├─ if more actions coming, └─ if last
-                    my $connector = ($remaining_same_tool > 0) ? "\x{251C}\x{2500}" : "\x{2514}\x{2500}";
+                    my $connector = ($remaining_same_tool > 0) ? "\x{251C}\x{2500} " : "\x{2514}\x{2500} ";
                     
                     if ($self->{ui} && $self->{ui}->can('colorize')) {
-                        my $dim_color = $self->{ui}->colorize('', 'DIM');
-                        my $data_color = $self->{ui}->colorize('', 'DATA');
-                        my $reset = "\e[0m";  # ANSI reset code
-                        
-                        print "$dim_color$connector $data_color$action_detail$reset\n";
+                        # Format: {dim}├─ {data}action_detail{reset} or {dim}└─ {data}action_detail{reset}
+                        my $conn_colored = $self->{ui}->colorize($connector, 'DIM');
+                        my $action_colored = $self->{ui}->colorize($action_detail, 'DATA');
+                        print "$conn_colored$action_colored\n";
                         STDOUT->flush() if STDOUT->can('flush');
                     } else {
-                        print "$connector $action_detail\n";
+                        print "$connector$action_detail\n";
                         STDOUT->flush() if STDOUT->can('flush');
                     }
                     $| = 1;
