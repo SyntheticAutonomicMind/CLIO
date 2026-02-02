@@ -704,17 +704,17 @@ sub get_builtin_theme {
         pagination_info => '{style.dim}{var.info}@RESET@',
         
         # Pagination prompts (box-drawing format with proper closures)
-        pagination_hint_streaming => '{style.dim}┌──┤ {style.prompt_indicator}Q{style.dim} quits - any key for more@RESET@',
-        pagination_hint_full => '{style.dim}┌──┤ {style.prompt_indicator}^/v{style.dim} pages · {style.prompt_indicator}Q{style.dim} quits · any key for more@RESET@',
-        pagination_prompt => '{style.dim}└─┤ {style.data}{var.current}/{var.total}{style.dim} │ {var.nav_hint}{style.prompt_indicator}Q{style.dim} {style.prompt_indicator}> {style.dim}@RESET@',
+        pagination_hint_streaming => '{style.dim}┌──┤ Q quits | any key for more@RESET@',
+        pagination_hint_full => '{style.dim}┌──┤ ^/v pages | Q quits | any key for more@RESET@',
+        pagination_prompt => '{style.dim}└─┤ {style.data}{var.current}/{var.total}{style.dim} │ {var.nav_hint}Q │ >{style.dim}@RESET@',
         
         # Input prompts (standardized BBS style with box-drawing)
         input_prompt => '{style.dim}┌──┤ {style.prompt_indicator}{var.prompt}@RESET@',
-        input_prompt_with_default => '{style.dim}┌──┤ {style.prompt_indicator}{var.prompt}{style.dim} · {style.data}Enter{style.dim} to {style.data}{var.default_action}@RESET@',
+        input_prompt_with_default => '{style.dim}┌──┤ {style.prompt_indicator}{var.prompt}{style.dim} | {style.data}Enter{style.dim} to {style.data}{var.default_action}@RESET@',
         
         # Confirmation prompts (box-drawing two-part format)
         confirmation_header => '{style.dim}┌──┤ {style.prompt_indicator}{var.question}@RESET@',
-        confirmation_input => '{style.dim}└─┤ {style.data}{var.options}{style.dim} · {style.data}Enter{style.dim} to {style.data}{var.default_action}{style.dim}:@RESET@',
+        confirmation_input => '{style.dim}└─┤ {style.data}{var.options}{style.dim} | {style.data}Enter{style.dim} to {style.data}{var.default_action}{style.dim}:@RESET@',
         
         # Messages
         user_message_prefix => '{style.user_text}YOU: @RESET@',
