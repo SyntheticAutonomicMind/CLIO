@@ -67,6 +67,9 @@ sub new {
         spinner => $args{spinner},  # Store spinner for interactive tools (user_collaboration)
         skip_custom => $args{skip_custom} || 0,  # Skip custom instructions (--no-custom-instructions)
         skip_ltm => $args{skip_ltm} || 0,        # Skip LTM injection (--no-ltm)
+        consecutive_errors => 0,  # Track consecutive identical errors
+        last_error => '',         # Track last error message
+        max_consecutive_errors => 3,  # Break loop after 3 identical errors
     };
     
     bless $self, $class;
@@ -643,6 +646,36 @@ sub process_input {
             
             # Non-retryable error - reset retry counter for next iteration
             $retry_count = 0;
+            
+            # Track consecutive identical errors to prevent infinite loops
+            if ($error eq $self->{last_error}) {
+                $self->{consecutive_errors}++;
+                print STDERR "[WARN][WorkflowOrchestrator] Consecutive error count: $self->{consecutive_errors}/$self->{max_consecutive_errors}\n"
+                    if should_log('WARNING');
+            } else {
+                $self->{consecutive_errors} = 1;
+                $self->{last_error} = $error;
+            }
+            
+            # Break infinite loop if same error repeats too many times
+            if ($self->{consecutive_errors} >= $self->{max_consecutive_errors}) {
+                print STDERR "[ERROR][WorkflowOrchestrator] Same error occurred $self->{consecutive_errors} times in a row. Breaking loop.\n";
+                print STDERR "[ERROR][WorkflowOrchestrator] Persistent error: $error\n";
+                print STDERR "[ERROR][WorkflowOrchestrator] This likely indicates a bug in the request construction or API incompatibility.\n";
+                print STDERR "[ERROR][WorkflowOrchestrator] Check /tmp/clio_json_errors.log for details.\n";
+                
+                # Reset counters and return failure
+                $self->{consecutive_errors} = 0;
+                $self->{last_error} = '';
+                return {
+                    role => 'assistant',
+                    content => "I encountered a persistent error that I cannot resolve:\n\n$error\n\n" .
+                              "This error occurred $self->{consecutive_errors} times consecutively. " .
+                              "There may be a bug in the system or an API incompatibility. " .
+                              "Please check the error logs for more details."
+                };
+            }
+            
             # Remove the last assistant message from @messages array if it exists
             # This prevents issues where a bad AI response keeps triggering the same error
             # The AI will see the error message and try a different approach
@@ -706,6 +739,8 @@ sub process_input {
         
         # API call succeeded - reset retry counter and clear session error count
         $retry_count = 0;
+        $self->{consecutive_errors} = 0;
+        $self->{last_error} = '';
         $session_error_count = 0;  # Reset on success to allow future errors
         delete $session->{_error_count} if $session;
         
