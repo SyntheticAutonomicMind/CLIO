@@ -704,8 +704,8 @@ sub get_builtin_theme {
         pagination_info => '{style.dim}{var.info}@RESET@',
         
         # Pagination prompts (box-drawing format with proper closures)
-        pagination_hint_streaming => '{style.dim}┌──┤ Q quits | any key for more@RESET@',
-        pagination_hint_full => '{style.dim}┌──┤ ^/v pages | Q quits | any key for more@RESET@',
+        pagination_hint_streaming => '{style.dim}┌──┤ {style.agent_label}Q Quits {style.dim}│ {style.agent_label}Any key for more@RESET@',
+        pagination_hint_full => '{style.dim}┌──┤ {style.agent_label}^/v Pages {style.dim}│ {style.agent_label}Q Quits {style.dim}│ {style.agent_label}Any key for more@RESET@',
         pagination_prompt => '{style.dim}└─┤ {style.data}{var.current}/{var.total}{style.dim} │ {var.nav_hint}Q │ >{style.dim}@RESET@',
         
         # Input prompts (standardized BBS style with box-drawing)

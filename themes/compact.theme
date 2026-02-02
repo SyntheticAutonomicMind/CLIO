@@ -31,8 +31,8 @@ pagination_info={style.dim}{var.info}@RESET@
 
 # Pagination prompts (box-drawing format with proper closures)
 # Two-part pause: hint tells what to do, prompt shows page status
-pagination_hint_streaming={style.dim}┌──┤ Q|more@RESET@
-pagination_hint_full={style.dim}┌──┤ ^v|Q|more@RESET@
+pagination_hint_streaming={style.dim}┌──┤ {style.agent_label}Q {style.dim}│ {style.agent_label}More@RESET@
+pagination_hint_full={style.dim}┌──┤ {style.agent_label}^v {style.dim}│ {style.agent_label}Q {style.dim}│ {style.agent_label}More@RESET@
 pagination_prompt={style.dim}└─┤ {style.data}{var.current}/{var.total}{style.dim} │ {var.nav_hint}Q │ >{style.dim}@RESET@
 
 # Input prompts (box-drawing - compact style)
