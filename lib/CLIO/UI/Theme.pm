@@ -676,31 +676,49 @@ sub get_builtin_theme {
     
     return {
         name => 'default',
+        
+        # Prompts
         user_prompt_format => '{style.user_prompt}: @RESET@',
         agent_prefix => '{style.agent_label}CLIO: @RESET@',
         system_prefix => '{style.system_message}SYSTEM: @RESET@',
-        error_prefix => '{style.error}ERROR: @RESET@',
-        banner_line1 => '{style.primary}CLIO@RESET@ {style.secondary}- Command Line Intelligence Orchestrator@RESET@',
-        banner_line2 => '{style.label}Session ID: @RESET@{style.value}{var.session_id}@RESET@',
-        banner_line3 => '{style.label}You are connected to @RESET@{style.value}{var.model}@RESET@',
-        banner_line4 => '{style.muted}Type @RESET@{style.command}"/help"@RESET@ {style.muted}for a list of commands.@RESET@',
-        help_header => '{style.secondary}{var.title}@RESET@',
-        help_section => '{style.normal}{var.section}@RESET@',
-        help_command => '{style.command}{var.command}@RESET@',
-        thinking_indicator => '{style.muted}(thinking...)@RESET@',
-        nav_next => '{style.command}[N]ext@RESET@',
-        nav_previous => '{style.command}[P]revious@RESET@',
-        nav_quit => '{style.command}[Q]uit@RESET@',
-        pagination_info => '{style.muted}{var.info}@RESET@',
+        error_prefix => '{style.error_message}ERROR: @RESET@',
         
-        # Pagination prompts (standardized)
-        pagination_hint_streaming => '{style.muted}[ {style.command}Q{style.muted} quit · any key more ]@RESET@',
-        pagination_hint_full => '{style.muted}[ {style.command}^/v{style.muted} pages · {style.command}Q{style.muted} quit · any key more ]@RESET@',
-        pagination_prompt => '{style.muted}═══{style.data}[ {var.current}/{var.total} ]{style.muted}═══@RESET@ {var.nav_hint}{style.command}Q{style.muted} {style.success}▸@RESET@ ',
+        # Banner (displayed at session start)
+        banner_line1 => '{style.app_title}CLIO@RESET@ {style.app_subtitle}- Command Line Intelligence Orchestrator@RESET@',
+        banner_line2 => '{style.banner_label}Session ID: {style.data}{var.session_id}@RESET@',
+        banner_line3 => '{style.banner_label}You are connected to {style.data}{var.model}@RESET@',
+        banner_line4 => '{style.banner_label}Type "{style.data}/help{style.banner_label}" for a list of commands.@RESET@',
         
-        # Input prompts (standardized)
-        input_prompt => '{style.muted}({var.prompt})@RESET@',
-        input_prompt_with_default => '{style.muted}({var.prompt} or {style.command}Enter{style.muted} to {var.default_action})@RESET@',
+        # Help system
+        help_header => '{style.data}{var.title}@RESET@',
+        help_section => '{style.data}{var.section}@RESET@',
+        help_command => '{style.prompt_indicator}{var.command}@RESET@',
+        
+        # Status indicators
+        thinking_indicator => '{style.dim}(thinking...)@RESET@',
+        
+        # Navigation
+        nav_next => '{style.prompt_indicator}[N]ext@RESET@',
+        nav_previous => '{style.prompt_indicator}[P]revious@RESET@',
+        nav_quit => '{style.prompt_indicator}[Q]uit@RESET@',
+        pagination_info => '{style.dim}{var.info}@RESET@',
+        
+        # Pagination prompts (box-drawing format with proper closures)
+        pagination_hint_streaming => '{style.dim}┌──┤ {style.prompt_indicator}Q{style.dim} quits - any key for more@RESET@',
+        pagination_hint_full => '{style.dim}┌──┤ {style.prompt_indicator}^/v{style.dim} pages · {style.prompt_indicator}Q{style.dim} quits · any key for more@RESET@',
+        pagination_prompt => '{style.dim}└─┤ {style.data}{var.current}/{var.total}{style.dim} │ {var.nav_hint}{style.prompt_indicator}Q{style.dim} {style.prompt_indicator}> {style.dim}@RESET@',
+        
+        # Input prompts (standardized BBS style with box-drawing)
+        input_prompt => '{style.dim}┌──┤ {style.prompt_indicator}{var.prompt}@RESET@',
+        input_prompt_with_default => '{style.dim}┌──┤ {style.prompt_indicator}{var.prompt}{style.dim} · {style.data}Enter{style.dim} to {style.data}{var.default_action}@RESET@',
+        
+        # Confirmation prompts (box-drawing two-part format)
+        confirmation_header => '{style.dim}┌──┤ {style.prompt_indicator}{var.question}@RESET@',
+        confirmation_input => '{style.dim}└─┤ {style.data}{var.options}{style.dim} · {style.data}Enter{style.dim} to {style.data}{var.default_action}{style.dim}:@RESET@',
+        
+        # Messages
+        user_message_prefix => '{style.user_text}YOU: @RESET@',
+        agent_message_prefix => '{style.agent_label}CLIO: @RESET@',
     };
 }
 
@@ -777,6 +795,8 @@ sub get_required_theme_keys {
         pagination_prompt
         input_prompt
         input_prompt_with_default
+        confirmation_header
+        confirmation_input
         user_message_prefix
         agent_message_prefix
     );
