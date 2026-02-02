@@ -440,6 +440,8 @@ Handle /api set <setting> <value> [--session]
 sub _handle_api_set {
     my ($self, $setting, $value, $session_only) = @_;
     
+    use CLIO::Util::Validator;
+    
     $setting = lc($setting || '');
     
     unless ($setting) {
@@ -453,11 +455,18 @@ sub _handle_api_set {
         return;
     }
     
-    # Handle each setting type
+    # Handle each setting type with validation
     if ($setting eq 'key') {
         # API key is always global
         if ($session_only) {
             $self->display_system_message("Note: API key is always global (ignoring --session)");
+        }
+        
+        # Validate API key format
+        my ($valid, $error) = CLIO::Util::Validator::validate_api_key($value, 1);
+        unless ($valid) {
+            $self->display_error_message($error);
+            return;
         }
         
         $self->{config}->set('api_key', $value);
@@ -475,6 +484,13 @@ sub _handle_api_set {
             $self->display_system_message("Note: API keys are always global (ignoring --session)");
         }
         
+        # Validate API key format
+        my ($valid, $error) = CLIO::Util::Validator::validate_api_key($value, 1);
+        unless ($valid) {
+            $self->display_error_message($error);
+            return;
+        }
+        
         $self->{config}->set('serpapi_key', $value);
         
         if ($self->{config}->save()) {
@@ -486,49 +502,69 @@ sub _handle_api_set {
         }
     }
     elsif ($setting eq 'search_engine') {
-        my @valid = qw(google bing duckduckgo);
-        unless (grep { $_ eq lc($value) } @valid) {
-            $self->display_error_message("Invalid search engine: $value");
-            $self->display_system_message("Valid engines: " . join(", ", @valid));
+        # Validate search engine using Validator
+        my ($valid, $error) = CLIO::Util::Validator::validate_search_engine($value);
+        unless ($valid) {
+            $self->display_error_message($error);
             return;
         }
         
         $self->{config}->set('search_engine', lc($value));
         
         if ($self->{config}->save()) {
-            $self->display_system_message("Search engine set to: $value (saved)");
-            $self->display_system_message("SerpAPI will now use $value for searches");
+            $self->display_system_message("Search engine set to: " . lc($value) . " (saved)");
         } else {
             $self->display_system_message("Search engine set (warning: failed to save)");
         }
     }
     elsif ($setting eq 'search_provider') {
-        my @valid = qw(auto serpapi duckduckgo_direct);
-        unless (grep { $_ eq lc($value) } @valid) {
-            $self->display_error_message("Invalid search provider: $value");
-            $self->display_system_message("Valid providers: " . join(", ", @valid));
+        # Validate search provider using Validator
+        my ($valid, $error) = CLIO::Util::Validator::validate_search_provider($value);
+        unless ($valid) {
+            $self->display_error_message($error);
             return;
         }
         
         $self->{config}->set('search_provider', lc($value));
         
         if ($self->{config}->save()) {
-            $self->display_system_message("Search provider set to: $value (saved)");
+            $self->display_system_message("Search provider set to: " . lc($value) . " (saved)");
         } else {
             $self->display_system_message("Search provider set (warning: failed to save)");
         }
     }
     elsif ($setting eq 'base') {
+        # Validate URL format
+        my ($valid, $error) = CLIO::Util::Validator::validate_url($value);
+        unless ($valid) {
+            $self->display_error_message($error);
+            return;
+        }
+        
         $self->_set_api_setting('api_base', $value, $session_only);
         $self->display_system_message("API base set to: $value" . ($session_only ? " (session only)" : " (saved)"));
         $self->_reinit_api_manager();
     }
     elsif ($setting eq 'model') {
+        # Validate model exists using ModelRegistry
+        my ($valid, $error) = CLIO::Util::Validator::validate_model($value);
+        unless ($valid) {
+            $self->display_error_message($error);
+            return;
+        }
+        
         $self->_set_api_setting('model', $value, $session_only);
         $self->display_system_message("Model set to: $value" . ($session_only ? " (session only)" : " (saved)"));
         $self->_reinit_api_manager();
     }
     elsif ($setting eq 'provider') {
+        # Validate provider exists
+        my ($valid, $error) = CLIO::Util::Validator::validate_provider($value);
+        unless ($valid) {
+            $self->display_error_message($error);
+            return;
+        }
+        
         if ($session_only) {
             if ($self->{session} && $self->{session}->state()) {
                 my $state = $self->{session}->state();
