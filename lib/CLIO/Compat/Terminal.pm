@@ -28,24 +28,25 @@ Returns: ($cols, $rows)
 =cut
 
 sub GetTerminalSize {
-    # Check if we have a TTY first
-    unless (-t STDOUT) {
+    # Check if we have a TTY on either STDOUT or STDIN
+    # In some contexts (piped scripts), STDOUT might not be a TTY but STDIN is
+    unless (-t STDOUT || -t STDIN) {
         # Not a terminal, return defaults
         return (80, 24);
     }
     
-    # Try stty first (works on Linux and macOS)
-    if (open(my $stty, '-|', 'stty size 2>/dev/null')) {
-        my $size = <$stty>;
-        close($stty);
-        if ($size && $size =~ /^(\d+)\s+(\d+)/) {
-            return ($2, $1);  # stty returns rows cols, we want cols rows
-        }
+    # Try stty with explicit /dev/tty (works on Linux and macOS)
+    # We can't use open(..., '-|') because that creates a pipe without a controlling TTY
+    # Instead, use backticks with explicit redirection
+    my $size = `stty size < /dev/tty 2>/dev/null`;
+    chomp($size);
+    if ($size && $size =~ /^(\d+)\s+(\d+)/) {
+        return ($2, $1);  # stty returns rows cols, we want cols rows
     }
     
     # Try tput as fallback
-    my $cols = `tput cols 2>/dev/null`;
-    my $rows = `tput lines 2>/dev/null`;
+    my $cols = `tput cols < /dev/tty 2>/dev/null`;
+    my $rows = `tput lines < /dev/tty 2>/dev/null`;
     chomp($cols, $rows);
     
     if ($cols && $rows && $cols =~ /^\d+$/ && $rows =~ /^\d+$/) {
