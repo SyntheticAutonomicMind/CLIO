@@ -1013,10 +1013,10 @@ sub process_input {
                         
                         my $dim_color = $self->{ui}->colorize('', 'DIM');
                         my $data_color = $self->{ui}->colorize('', 'DATA');
-                        my $reset_color = '@RESET@';
+                        my $reset = "\e[0m";  # ANSI reset code instead of @RESET@
                         
                         # Build header with box drawing: ┌──┤ TOOL_NAME
-                        print "$dim_color\x{250C}\x{2500}\x{2500}\x{2524} $data_color$tool_display_name$reset_color\n";
+                        print "$dim_color\x{250C}\x{2500}\x{2500}\x{2524} $data_color$tool_display_name$reset\n";
                     } else {
                         # Fallback without colors
                         if ($current_tool ne '') {
@@ -1067,9 +1067,9 @@ sub process_input {
                     if ($self->{ui} && $self->{ui}->can('colorize')) {
                         my $dim_color = $self->{ui}->colorize('', 'DIM');
                         my $data_color = $self->{ui}->colorize('', 'DATA');
-                        my $reset_color = '@RESET@';
+                        my $reset = "\e[0m";  # ANSI reset code
                         
-                        print "$dim_color$connector $data_color$action_detail$reset_color\n";
+                        print "$dim_color$connector $data_color$action_detail$reset\n";
                         STDOUT->flush() if STDOUT->can('flush');
                     } else {
                         print "$connector $action_detail\n";
