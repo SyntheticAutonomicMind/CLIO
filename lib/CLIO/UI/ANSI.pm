@@ -2,6 +2,10 @@ package CLIO::UI::ANSI;
 
 use strict;
 use warnings;
+use utf8;
+
+binmode(STDOUT, ':encoding(UTF-8)');
+binmode(STDERR, ':encoding(UTF-8)');
 
 =head1 NAME
 
