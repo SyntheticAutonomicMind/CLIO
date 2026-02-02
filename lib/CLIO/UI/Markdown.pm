@@ -3,6 +3,9 @@ package CLIO::UI::Markdown;
 use strict;
 use warnings;
 use utf8;
+
+binmode(STDOUT, ':encoding(UTF-8)');
+binmode(STDERR, ':encoding(UTF-8)');
 use open ':std', ':encoding(UTF-8)';
 use CLIO::Core::Logger qw(should_log);
 
