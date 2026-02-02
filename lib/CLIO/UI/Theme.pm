@@ -601,6 +601,7 @@ sub get_builtin_style {
         prompt_directory => '@BRIGHT_CYAN@',   # Primary - current location
         prompt_git_branch => '@DIM@@CYAN@',    # Muted - branch info
         prompt_indicator => '@BRIGHT_GREEN@',  # Accent - ready state
+        collab_prompt => '@BRIGHT_BLUE@',      # Collaboration prompt - distinct blue
         
         # General UI elements
         theme_header => '@BRIGHT_CYAN@',       # Primary - headers
