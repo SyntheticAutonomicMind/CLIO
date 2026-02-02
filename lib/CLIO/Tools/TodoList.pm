@@ -444,7 +444,19 @@ sub handle_write {
         $output .= "\n🎉 All tasks completed!\n";
     }
     
-    my $action_desc = "writing todo list ($total items)";
+    # Build specific action description
+    my $action_desc;
+    if ($total == 0) {
+        $action_desc = "writing empty todo list";
+    } elsif (@in_progress) {
+        my $first_task = $in_progress[0]->{title};
+        $action_desc = "writing todo list with $total items, starting: $first_task";
+    } elsif (@not_started) {
+        my $first_task = $not_started[0]->{title};
+        $action_desc = "writing todo list with $total items: $first_task" . ($total > 1 ? ", ..." : "");
+    } else {
+        $action_desc = "writing todo list ($total items)";
+    }
     
     return $self->success_result($output, action_description => $action_desc);
 }
@@ -507,8 +519,35 @@ sub handle_update {
         $output .= "\n🎉 All tasks completed!\n";
     }
     
-    my $update_count = scalar(@{$result->{applied}});
-    my $action_desc = "updating todos ($update_count changes)";
+    # Build detailed action description showing what changed
+    my @action_details;
+    foreach my $update (@$updates) {
+        my $todo_id = $update->{id};
+        # Find the actual todo to get its title
+        my ($todo) = grep { $_->{id} == $todo_id } @$todos;
+        my $title = $todo ? $todo->{title} : "unknown";
+        
+        # Determine what changed
+        if ($update->{status}) {
+            if ($update->{status} eq 'completed') {
+                push @action_details, "marked #$todo_id '$title' as completed";
+            } elsif ($update->{status} eq 'in-progress') {
+                push @action_details, "started #$todo_id '$title'";
+            } elsif ($update->{status} eq 'not-started') {
+                push @action_details, "reset #$todo_id '$title' to not-started";
+            } elsif ($update->{status} eq 'blocked') {
+                push @action_details, "blocked #$todo_id '$title'";
+            } else {
+                push @action_details, "updated #$todo_id '$title' status to $update->{status}";
+            }
+        } else {
+            push @action_details, "updated #$todo_id '$title'";
+        }
+    }
+    
+    my $action_desc = @action_details == 1 
+        ? $action_details[0]
+        : "updating todos: " . join(", ", @action_details);
     
     return $self->success_result($output, action_description => $action_desc);
 }
@@ -547,7 +586,17 @@ sub handle_add {
         $output .= "  [ ] #$todo->{id}: $todo->{title}$priority\n";
     }
     
-    my $action_desc = "adding $count new todos";
+    # Build specific action description with todo titles
+    my $action_desc;
+    if ($count == 1) {
+        $action_desc = "adding todo: " . $new_todos->[0]->{title};
+    } elsif ($count == 2) {
+        $action_desc = "adding todos: " . join(", ", map { $_->{title} } @$new_todos);
+    } else {
+        # For 3+ todos, just show count
+        my @titles = map { $_->{title} } @$new_todos[0..1];
+        $action_desc = "adding $count todos: " . join(", ", @titles) . ", ...";
+    }
     
     return $self->success_result($output, action_description => $action_desc);
 }
