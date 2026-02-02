@@ -949,12 +949,23 @@ sub process_input {
             STDOUT->flush() if STDOUT->can('flush');
             $| = 1;
             
+            # Pre-analyze tool calls to know how many of each tool type will execute
+            my %tool_call_count;
+            foreach my $i (0..$#ordered_tool_calls) {
+                my $tool = $ordered_tool_calls[$i]->{function}->{name} || 'unknown';
+                $tool_call_count{$tool}++;
+            }
+            
             # Track if this is the first tool call in the iteration
             my $first_tool_call = 1;
+            my $current_tool = '';
             
-            # Execute tools in classified order
-            for my $tool_call (@ordered_tool_calls) {
+            # Execute tools in classified order with index tracking
+            for my $i (0..$#ordered_tool_calls) {
+                my $tool_call = $ordered_tool_calls[$i];
                 my $tool_name = $tool_call->{function}->{name} || 'unknown';
+                my $tool_display_name = uc($tool_name);
+                $tool_display_name =~ s/_/ /g;
                 
                 print STDERR "[DEBUG][WorkflowOrchestrator] Executing tool: $tool_name\n"
                     if $self->{debug};
@@ -989,18 +1000,24 @@ sub process_input {
                     $first_tool_call = 0;
                 }
                 
-                # Show user-visible feedback BEFORE tool execution (for interactive tools like user_collaboration)
-                # Use themed output via UI when available, fallback to hardcoded ANSI codes
-                if ($self->{ui} && $self->{ui}->can('colorize')) {
-                    print $self->{ui}->colorize("SYSTEM: ", 'SYSTEM');
-                    print $self->{ui}->colorize("[$tool_name]", 'DATA');  # DATA color for tool info
-                } else {
-                    # Fallback when UI is not available
-                    print $COLORS{SYSTEM}, "SYSTEM: ", $COLORS{RESET};
-                    print $COLORS{TOOL}, "[", $tool_name, "]", $COLORS{RESET};
+                # Handle tool group transitions (new tool type starting)
+                if ($tool_name ne $current_tool) {
+                    $current_tool = $tool_name;
+                    
+                    # Print box-drawing header for this tool
+                    if ($self->{ui} && $self->{ui}->can('colorize')) {
+                        my $dim_color = $self->{ui}->colorize('', 'DIM');
+                        my $data_color = $self->{ui}->colorize('', 'DATA');
+                        my $reset_color = '@RESET@';
+                        
+                        # Build header with box drawing: ┌──┤ TOOL_NAME
+                        print "$dim_color\x{250C}\x{2500}\x{2500}\x{2524} $data_color$tool_display_name$reset_color\n";
+                    } else {
+                        # Fallback without colors
+                        print "\x{250C}\x{2500}\x{2500}\x{2524} $tool_display_name\n";
+                    }
+                    STDOUT->flush() if STDOUT->can('flush');
                 }
-                print "\n";
-                STDOUT->flush() if STDOUT->can('flush');  # Ensure tool header appears immediately
                 
                 # Execute tool to get the result
                 my $tool_result = $self->_execute_tool($tool_call);
@@ -1023,12 +1040,28 @@ sub process_input {
                     }
                 }
                 
-                # Display action detail if provided (as indented follow-up to SYSTEM message)
+                # Display action detail if provided (as box-drawing continuation of tool group)
                 if ($action_detail) {
+                    # Determine if this is the last action for this tool
+                    # Count remaining calls to this tool after current index
+                    my $remaining_same_tool = 0;
+                    for my $j ($i+1..$#ordered_tool_calls) {
+                        if ($ordered_tool_calls[$j]->{function}->{name} eq $tool_name) {
+                            $remaining_same_tool++;
+                        }
+                    }
+                    
+                    # Determine connector: ├─ if more actions coming, └─ if last
+                    my $connector = ($remaining_same_tool > 0) ? "\x{251C}\x{2500}" : "\x{2514}\x{2500}";
+                    
                     if ($self->{ui} && $self->{ui}->can('colorize')) {
-                        print $self->{ui}->colorize("  → $action_detail", 'DIM'), "\n";
+                        my $dim_color = $self->{ui}->colorize('', 'DIM');
+                        my $data_color = $self->{ui}->colorize('', 'DATA');
+                        my $reset_color = '@RESET@';
+                        
+                        print "$dim_color$connector $data_color$action_detail$reset_color\n";
                     } else {
-                        print $COLORS{DETAIL}, "  → ", $action_detail, $COLORS{RESET}, "\n";
+                        print "$connector $action_detail\n";
                     }
                     $| = 1;
                 }
