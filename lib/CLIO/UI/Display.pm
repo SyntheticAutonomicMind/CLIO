@@ -277,8 +277,8 @@ sub display_section_header {
     my $underline = "─" x $width;
     
     # Blank line before section for visual separation from previous content
-    # Use direct print to guarantee blank line output
-    print "\n";
+    # Use writeline to ensure proper output handling (UTF-8, color codes, etc.)
+    $chat->writeline('', markdown => 0);
     $chat->writeline($chat->colorize($text, 'command_subheader'), markdown => 0);
     $chat->writeline($chat->colorize($underline, 'dim'), markdown => 0);
 }
@@ -432,11 +432,9 @@ sub display_usage_summary {
         $quota_info = sprintf(" Status: %s/%s Used: %.1f%%", $used_fmt, $ent_display, $percent_used);
     }
     
-    print $chat->colorize("━ SERVER ━ ", 'SYSTEM');
-    print $cost_str;
-    print $quota_info;
-    print " " . $chat->colorize("━", 'SYSTEM');
-    print "\n";
+    # Build complete line with all components and display via writeline for consistency
+    my $line = $chat->colorize("━ SERVER ━ ", 'SYSTEM') . $cost_str . $quota_info . " " . $chat->colorize("━", 'SYSTEM');
+    $chat->writeline($line, markdown => 0);
 }
 
 =head2 show_thinking()
