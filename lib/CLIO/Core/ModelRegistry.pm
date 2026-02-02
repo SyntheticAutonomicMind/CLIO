@@ -394,6 +394,34 @@ sub format_pricing {
     return '-';
 }
 
+=head2 validate_model
+
+Validate that a model name exists in the registry.
+
+Arguments:
+  - model_id: Model identifier (e.g., 'gpt-4o')
+
+Returns:
+  - (1, '') if valid
+  - (0, error_message) if invalid
+
+=cut
+
+sub validate_model {
+    my ($self, $model_id) = @_;
+    
+    unless (defined $model_id && length($model_id)) {
+        return (0, "Model name cannot be empty");
+    }
+    
+    my $model_info = $self->get_model_info($model_id);
+    if ($model_info) {
+        return (1, '');
+    }
+    
+    return (0, "Model '$model_id' not found. Use '/api models' to see available models.");
+}
+
 1;
 
 =head1 NOTES
