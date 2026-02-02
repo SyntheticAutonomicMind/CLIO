@@ -1005,8 +1005,6 @@ sub process_input {
                 
                 # Handle tool group transitions (new tool type starting)
                 if ($tool_name ne $current_tool) {
-                    print STDERR "[DEBUG][WorkflowOrchestrator] Tool transition: old='$current_tool' (len=" . length($current_tool) . ") new='$tool_name' (len=" . length($tool_name) . ")\n" if $self->{debug};
-                    
                     # Transitioning to a new tool type
                     # Print box-drawing header for this tool
                     if ($self->{ui} && $self->{ui}->can('colorize')) {
@@ -1032,8 +1030,6 @@ sub process_input {
                     }
                     STDOUT->flush() if STDOUT->can('flush');
                     $current_tool = $tool_name;
-                } else {
-                    print STDERR "[DEBUG][WorkflowOrchestrator] No transition (same tool): '$tool_name'\n" if $self->{debug};
                 }
                 
                 # Execute tool to get the result
