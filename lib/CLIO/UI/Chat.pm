@@ -1245,29 +1245,54 @@ sub request_collaboration {
     
     # Display context if provided
     if ($context && length($context) > 0) {
+        # Context is rendered markdown, need pagination support
         my $rendered_context = $self->render_markdown($context);
         my @context_lines = split /\n/, $rendered_context;
         
-        print $self->colorize("Context: ", 'SYSTEM');
-        if (@context_lines) {
-            print shift(@context_lines), "\n";
-            $self->{line_count}++;
-        }
+        # Display context header with color
+        my $context_line = $self->colorize("Context: ", 'SYSTEM');
         
-        for my $line (@context_lines) {
-            print $line, "\n";
+        if (@context_lines) {
+            # Print header with first line inline (same pattern as message display)
+            $context_line .= shift(@context_lines);
+            print $context_line, "\n";
             $self->{line_count}++;
             
-            # Pause BEFORE terminal_height to leave room for pause message
-            my $pause_threshold = $self->{terminal_height} - 2;  # Leave 2 lines for pause prompt
+            # Check pagination AFTER first line
+            my $pause_threshold = $self->{terminal_height} - 2;
             if ($self->{line_count} >= $pause_threshold && 
                 $self->{pagination_enabled} && 
                 -t STDIN) {
                 
                 my $response = $self->pause(0);
                 if ($response eq 'Q') {
-                    last;
+                    return;  # User quit during context display
                 }
+                $self->{line_count} = 0;
+            }
+        } else {
+            # Just the header with no content
+            print $context_line, "\n";
+            $self->{line_count}++;
+        }
+        
+        # Print remaining context lines with pagination
+        for my $line (@context_lines) {
+            print $line, "\n";
+            $self->{line_count}++;
+            
+            # Check if we need to paginate BEFORE hitting terminal height
+            my $pause_threshold = $self->{terminal_height} - 2;
+            if ($self->{line_count} >= $pause_threshold && 
+                $self->{pagination_enabled} && 
+                -t STDIN) {
+                
+                my $response = $self->pause(0);  # Non-streaming mode
+                if ($response eq 'Q') {
+                    # User quit - stop displaying context
+                    return;
+                }
+                # Reset line count for next page
                 $self->{line_count} = 0;
             }
         }
