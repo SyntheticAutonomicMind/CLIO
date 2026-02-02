@@ -1583,11 +1583,31 @@ sub _handle_error_response {
     }
     # Handle malformed tool call JSON (400) - the AI generated bad JSON, so retry to give it another chance
     # This prevents wasting a premium request on a transient AI JSON generation error
-    elsif ($status == 400 && $error =~ /invalid.*json.*tool.*call|tool.*call.*invalid.*json/i) {
+    # Also catch generic "invalid JSON" errors from the API
+    elsif ($status == 400 && ($error =~ /invalid.*json.*tool.*call|tool.*call.*invalid.*json/i ||
+                               $error =~ /request body is not valid json|invalid.*json|json.*parse|malformed.*json/i)) {
         $is_retryable_error = 1;
         $retryable = 1;
         $retry_after = 1;  # Quick retry - no server cooldown needed
         $error_type = 'malformed_tool_json';  # Flag for WorkflowOrchestrator to add guidance
+        
+        # Log the rejected JSON payload for debugging
+        if ($json) {
+            if (open my $fh, '>>', '/tmp/clio_json_errors.log') {
+                print $fh "\n" . "="x80 . "\n";
+                print $fh "[" . scalar(localtime) . "] API Rejected JSON\n";
+                print $fh "HTTP Status: $status\n";
+                print $fh "Error: $error\n";
+                print $fh "Payload (first 5000 chars):\n";
+                print $fh substr($json, 0, 5000) . "\n";
+                if (length($json) > 5000) {
+                    print $fh "... (truncated, total length: " . length($json) . " bytes)\n";
+                }
+                close $fh;
+            }
+            print STDERR "[DEBUG][APIManager] API rejected JSON payload - logged to /tmp/clio_json_errors.log\n"
+                if should_log('DEBUG');
+        }
         
         # Try to extract the tool name from the error message or response body
         my $failed_tool = undef;
@@ -1742,7 +1762,46 @@ sub send_request {
         print STDERR "[INFO][APIManager] Message structure repaired successfully\n" if should_log('INFO');
     }
     
-    my $json = encode_json($payload);
+    # Encode payload to JSON with error handling
+    my $json;
+    eval {
+        $json = encode_json($payload);
+    };
+    if ($@) {
+        my $error = $@;
+        print STDERR "[ERROR][APIManager] JSON encoding failed: $error\n";
+        # Log the payload structure for debugging
+        if (open my $fh, '>>', '/tmp/clio_json_errors.log') {
+            use Data::Dumper;
+            print $fh "\n" . "="x80 . "\n";
+            print $fh "[" . scalar(localtime) . "] JSON Encoding Failure\n";
+            print $fh "Error: $error\n";
+            print $fh "Payload structure:\n";
+            print $fh Dumper($payload);
+            close $fh;
+        }
+        return $self->_error("Failed to encode request as JSON: $error");
+    }
+    
+    # Validate the JSON by attempting to decode it
+    eval {
+        decode_json($json);
+    };
+    if ($@) {
+        my $error = $@;
+        print STDERR "[ERROR][APIManager] JSON validation failed: $error\n";
+        # Log the actual JSON for inspection
+        if (open my $fh, '>>', '/tmp/clio_json_errors.log') {
+            print $fh "\n" . "="x80 . "\n";
+            print $fh "[" . scalar(localtime) . "] JSON Validation Failure\n";
+            print $fh "Error: $error\n";
+            print $fh "Generated JSON:\n";
+            print $fh $json . "\n";
+            close $fh;
+        }
+        return $self->_error("Generated invalid JSON: $error");
+    }
+    
     if ($self->{debug}) {
         warn "[DEBUG] Payload: $json\n";
     }
@@ -2177,7 +2236,51 @@ sub send_request_streaming {
         }
     }
     
-    my $json = encode_json($payload);
+    # Encode payload to JSON with error handling
+    my $json;
+    eval {
+        $json = encode_json($payload);
+    };
+    if ($@) {
+        my $error = $@;
+        print STDERR "[ERROR][APIManager] JSON encoding failed (streaming): $error\n";
+        # Log the payload structure for debugging
+        if (open my $fh, '>>', '/tmp/clio_json_errors.log') {
+            use Data::Dumper;
+            print $fh "\n" . "="x80 . "\n";
+            print $fh "[" . scalar(localtime) . "] JSON Encoding Failure (Streaming)\n";
+            print $fh "Error: $error\n";
+            print $fh "Payload structure:\n";
+            print $fh Dumper($payload);
+            close $fh;
+        }
+        return {
+            success => 0,
+            error => "Failed to encode request as JSON: $error"
+        };
+    }
+    
+    # Validate the JSON by attempting to decode it
+    eval {
+        decode_json($json);
+    };
+    if ($@) {
+        my $error = $@;
+        print STDERR "[ERROR][APIManager] JSON validation failed (streaming): $error\n";
+        # Log the actual JSON for inspection
+        if (open my $fh, '>>', '/tmp/clio_json_errors.log') {
+            print $fh "\n" . "="x80 . "\n";
+            print $fh "[" . scalar(localtime) . "] JSON Validation Failure (Streaming)\n";
+            print $fh "Error: $error\n";
+            print $fh "Generated JSON:\n";
+            print $fh $json . "\n";
+            close $fh;
+        }
+        return {
+            success => 0,
+            error => "Generated invalid JSON: $error"
+        };
+    }
     
     # Create HTTP client
     my $ua = CLIO::Compat::HTTP->new(
