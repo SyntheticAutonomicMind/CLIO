@@ -321,8 +321,8 @@ sub _handle_config_set {
     # Set the config value
     if ($key eq 'working_directory') {
         # Validate directory exists and is accessible
-        require CLIO::Util::Validator;
-        my ($valid, $result) = CLIO::Util::Validator::validate_directory($value, 1, 0);
+        require CLIO::Util::InputHelpers;
+        my ($valid, $result) = CLIO::Util::InputHelpers::validate_directory($value, 1, 0);
         unless ($valid) {
             $self->display_error_message($result);
             return;
