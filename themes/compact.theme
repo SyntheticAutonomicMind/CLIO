@@ -38,10 +38,9 @@ pagination_prompt={style.dim}{style.data}[{var.current}/{var.total}]{style.dim} 
 input_prompt={style.dim}>{style.dim} {var.prompt}@RESET@ 
 input_prompt_with_default={style.dim}>{style.dim} {var.prompt} ({style.prompt_indicator}Enter{style.dim} = {var.default_action})@RESET@ 
 
-# Confirmation prompts (minimal box-drawing for compact)
-confirmation_header={style.banner}┌─ {var.question} 
-confirmation_input={style.banner}└─{style.dim} {var.options} [{style.prompt_indicator}->{style.dim}]: @RESET@ 
-input_prompt_with_default={style.dim}>{style.dim} {var.prompt} ({style.prompt_indicator}Enter{style.dim} = {var.default_action})@RESET@ 
+# Confirmation prompts (minimal - no ANSI)
+confirmation_header={var.question} ({var.options})
+confirmation_input=[{style.prompt_indicator}Enter{style.dim} to {var.default_action}]: @RESET@
 
 # Messages - no prefixes, just color differentiation
 user_message_prefix={style.user_text}@RESET@

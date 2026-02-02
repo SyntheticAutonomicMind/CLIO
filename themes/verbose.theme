@@ -41,9 +41,9 @@ pagination_prompt={style.dim}══════{style.data}[ Page {var.current} 
 input_prompt={style.dim}===[ {var.prompt} ]===@RESET@ 
 input_prompt_with_default={style.dim}===[ {var.prompt} · {style.prompt_indicator}Enter{style.dim} to {var.default_action} ]===@RESET@ 
 
-# Confirmation prompts (menu-style with box drawing)
-confirmation_header={style.banner}╔═══ {var.question} ═════════════@RESET@
-confirmation_input={style.banner}╚═══{style.dim} {var.options} [{style.prompt_indicator}Enter{style.dim} to {var.default_action}]@RESET@
+# Confirmation prompts (same as default - simple box-drawing)
+confirmation_header={style.dim}┌──┤{style.data} {var.question}@RESET@
+confirmation_input={style.dim}└─{style.data} {var.options}{style.dim} [{style.prompt_indicator}Enter{style.dim} to {var.default_action}]: @RESET@
 
 # Messages - labeled
 user_message_prefix={style.user_text}[You said]: @RESET@
