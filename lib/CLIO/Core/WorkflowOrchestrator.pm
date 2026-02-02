@@ -1221,6 +1221,12 @@ sub process_input {
                 }
             }
             
+            # Print newline to separate tool output from next iteration
+            # This ensures the spinner (and subsequent "CLIO: " prefix clearing)
+            # doesn't accidentally overwrite the last tool action detail
+            print "\n";
+            STDOUT->flush() if STDOUT->can('flush');
+            
             # Loop back - AI will process tool results
             next;
         }
