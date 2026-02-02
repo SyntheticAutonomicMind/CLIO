@@ -706,7 +706,7 @@ sub get_builtin_theme {
         # Pagination prompts (box-drawing format with proper closures)
         pagination_hint_streaming => '{style.dim}┌──┤ {style.agent_label}Q Quits {style.dim}│ {style.agent_label}Any key for more@RESET@',
         pagination_hint_full => '{style.dim}┌──┤ {style.agent_label}^/v Pages {style.dim}│ {style.agent_label}Q Quits {style.dim}│ {style.agent_label}Any key for more@RESET@',
-        pagination_prompt => '{style.dim}└─┤ {style.data}{var.current}/{var.total}{style.dim} │ {var.nav_hint}Q │ >{style.dim}@RESET@',
+        pagination_prompt => '{style.dim}└─┤ {style.data}{var.current}/{var.total} {style.dim}│ {style.agent_label}{var.nav_hint}Q {style.dim}│ {style.prompt_indicator}> @RESET@',
         
         # Input prompts (standardized BBS style with box-drawing)
         input_prompt => '{style.dim}┌──┤ {style.prompt_indicator}{var.prompt}@RESET@',
