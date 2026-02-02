@@ -163,6 +163,35 @@ sub provider_exists {
     return exists $PROVIDERS{$name} ? 1 : 0;
 }
 
+=head2 validate_provider
+
+Validate that a provider exists.
+
+Arguments:
+  - provider_name: Provider identifier (e.g., 'openai')
+
+Returns:
+  - (1, '') if valid
+  - (0, error_message) if invalid
+
+=cut
+
+sub validate_provider {
+    my ($provider_name) = @_;
+    
+    unless (defined $provider_name && length($provider_name)) {
+        return (0, "Provider name cannot be empty");
+    }
+    
+    if (provider_exists($provider_name)) {
+        return (1, '');
+    }
+    
+    my @providers = list_providers();
+    my $providers_str = join(', ', @providers);
+    return (0, "Provider '$provider_name' not found. Available: $providers_str");
+}
+
 1;
 
 =head1 AUTHOR
