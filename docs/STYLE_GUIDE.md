@@ -1,579 +1,434 @@
-# CLIO Style System Guide
+# CLIO UI/UX Style Guide
 
-## Table of Contents
-1. [Overview](#overview)
-2. [Quick Start](#quick-start)
-3. [Style Schema v2.0](#style-schema-v20)
-4. [Creating Custom Styles](#creating-custom-styles)
-5. [Available Styles](#available-styles)
-6. [Best Practices](#best-practices)
-7. [Migration Guide](#migration-guide)
+**Version:** 1.0  
+**Date:** 2026-02-02  
+**Purpose:** Definitive reference for all terminal UI formatting in CLIO
 
 ---
 
-## Overview
+## Core Principles
 
-CLIO's style system provides a flexible, semantic approach to terminal theming. Version 2.0 introduces a consolidated schema that prevents "screen vomit" while supporting complex, beautiful themes.
-
-### Design Principles
-
-1. **Semantic Hierarchy** - 5 clear levels from primary to subtle
-2. **Consistency** - Same key always serves same purpose
-3. **Flexibility** - Support both simple and complex themes
-4. **Readability** - Visual clarity over decoration
+1. **Consistency First** - All output follows the same formatting patterns
+2. **Three-Color Format** - Box-drawing uses DIM for connectors, ASSISTANT for headers, DATA for content
+3. **Colorize Real Content** - Always pass actual text to `colorize()`, never empty strings
+4. **Box-Drawing for Structure** - Use Unicode box-drawing characters for visual hierarchy
+5. **Minimal Noise** - Don't announce tool calls or internal operations unless they provide value
 
 ---
 
-## Quick Start
+## Box-Drawing Characters
 
-### Using a Style
-
-```bash
-# Try different styles
-./clio --style nord
-./clio --style dracula
-./clio --style solarized-dark
-
-# Set as default
-/config style monokai
-```
-
-### Listing Available Styles
-
-```bash
-./clio --list-styles
-```
-
-Current available styles: **24 themes**
-
----
-
-## Style Schema v2.0
-
-### Core Semantic Hierarchy (Required)
-
-Every style MUST define these 5 levels:
+Use these Unicode characters for structured output:
 
 ```
-primary=@BOLD@@BRIGHT_CYAN@      # Highest emphasis (titles, critical)
-secondary=@BRIGHT_CYAN@          # High emphasis (headers, important)
-normal=@WHITE@                    # Standard text (body content)
-muted=@DIM@@WHITE@               # Low emphasis (labels, hints)
-subtle=@DIM@                     # Lowest emphasis (borders, separators)
-```
-
-**Visual Weight:**
-```
-primary     ████████████  (boldest, brightest)
-secondary   ██████████
-normal      ██████
-muted       ███
-subtle      █             (dimmest)
-```
-
-### Specialized Categories
-
-#### Conversational
-```
-user_prompt=@BRIGHT_GREEN@       # "YOU:" label
-user_text=@WHITE@                # User's input
-agent_label=@BRIGHT_CYAN@        # "CLIO:" label
-agent_text=@WHITE@               # Agent's response
-system_message=@CYAN@            # System notifications
-```
-
-#### Feedback Messages
-```
-error=@BRIGHT_RED@               # Errors, failures
-warning=@BRIGHT_YELLOW@          # Warnings, cautions
-success=@BRIGHT_GREEN@           # Success, completions
-info=@CYAN@                      # Informational messages
-```
-
-#### Data Display (Label/Value Pairs)
-```
-label=@DIM@@WHITE@               # Labels: "Session ID:", "Model:"
-value=@BRIGHT_WHITE@             # Values: actual data
-```
-
-**Usage Example:**
-```
-{style.label}Session ID: {style.value}abc123-def456
-```
-
-Renders as: <dim>Session ID:</dim> <bright>abc123-def456</bright>
-
-#### Actionable Elements
-```
-command=@BRIGHT_GREEN@           # Commands: /help, /exit
-link=@BRIGHT_CYAN@@UNDERLINE@    # URLs, links
-```
-
-#### Prompt Components
-```
-prompt_model=@CYAN@              # Model name in prompt
-prompt_directory=@BRIGHT_CYAN@   # Current directory
-prompt_git_branch=@DIM@@CYAN@    # Git branch
-prompt_indicator=@BRIGHT_GREEN@  # Prompt symbol (>)
-```
-
-#### Markdown Rendering
-```
-markdown_h1=@BOLD@@BRIGHT_CYAN@  # # Header 1
-markdown_h2=@BRIGHT_CYAN@        # ## Header 2
-markdown_h3=@WHITE@              # ### Header 3
-markdown_bold=@BOLD@             # **bold**
-markdown_italic=@DIM@            # *italic*
-markdown_code=@CYAN@             # `code`
-markdown_code_block=@CYAN@       # ```code blocks```
-markdown_link=@BRIGHT_CYAN@@UNDERLINE@  # [links](url)
-markdown_quote=@DIM@@CYAN@       # > quotes
-markdown_list_bullet=@BRIGHT_GREEN@     # - bullets
-```
-
-#### Tables
-```
-table_header=@BOLD@@BRIGHT_CYAN@ # Column headers
-table_border=@DIM@               # Border lines
-```
-
-#### UI Elements
-```
-spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏  # Braille spinner
-```
-
-#### Metadata
-```
-name=my-theme                    # MUST match filename
-```
-
-### Complete Key List
-
-**Total: 31 semantic keys** (+ 25 deprecated for backward compatibility)
-
----
-
-## Creating Custom Styles
-
-### Step 1: Copy Template
-
-```bash
-cp styles/default.style styles/my-theme.style
-```
-
-### Step 2: Update Metadata
-
-```
-name=my-theme
-```
-
-### Step 3: Define Core Hierarchy
-
-Choose your color palette:
-
-**Monochrome Theme Example:**
-```
-primary=@BOLD@@BRIGHT_WHITE@
-secondary=@WHITE@
-normal=@WHITE@
-muted=@DIM@@WHITE@
-subtle=@DIM@
-```
-
-**Colorful Theme Example:**
-```
-primary=@BOLD@@BRIGHT_MAGENTA@
-secondary=@BRIGHT_CYAN@
-normal=@WHITE@
-muted=@DIM@@WHITE@
-subtle=@DIM@
-```
-
-### Step 4: Set Specialized Colors
-
-**Data Display** (most important for readability):
-```
-label=@DIM@@WHITE@      # Make labels subdued
-value=@BRIGHT_CYAN@     # Make values stand out
-```
-
-**Actionable Elements:**
-```
-command=@BRIGHT_GREEN@  # Commands should pop
-link=@BRIGHT_CYAN@@UNDERLINE@
-```
-
-**Feedback:**
-```
-error=@BRIGHT_RED@      # Keep these standard
-warning=@BRIGHT_YELLOW@
-success=@BRIGHT_GREEN@
-info=@CYAN@
-```
-
-### Step 5: Test Your Theme
-
-```bash
-./clio --style my-theme --input "test markdown **bold** and `code`" --exit
-```
-
-### Step 6: Add Deprecated Keys
-
-For backward compatibility, add these mappings:
-
-```
-# Deprecated keys point to new semantic keys
-app_title=@BOLD@@BRIGHT_CYAN@    # -> primary
-app_subtitle=@BRIGHT_CYAN@       # -> secondary
-banner_label=@DIM@@WHITE@        # -> label
-banner_value=@BRIGHT_WHITE@      # -> value
-data=@BRIGHT_WHITE@              # -> value
-# ... (see default.style for complete list)
+┌  U+250C  BOX DRAWINGS LIGHT DOWN AND RIGHT
+├  U+251C  BOX DRAWINGS LIGHT VERTICAL AND RIGHT  
+└  U+2514  BOX DRAWINGS LIGHT UP AND RIGHT
+─  U+2500  BOX DRAWINGS LIGHT HORIZONTAL
+┤  U+2524  BOX DRAWINGS LIGHT VERTICAL AND LEFT
+│  U+2502  BOX DRAWINGS LIGHT VERTICAL
 ```
 
 ---
 
-## Available Styles
+## Tool Output Format
 
-### Modern/Professional (9)
+### Three-Color Format (Standard)
 
-| Style | Description | Primary Color | Best For |
-|-------|-------------|---------------|----------|
-| **default** | Modern blues & grays | Bright Cyan | General use, professional |
-| **greyscale** | Sophisticated monochrome | Bright White | Minimalist, focus |
-| **light** | Light mode | Blue | Bright environments |
-| **dark** | Dark mode | Cyan | Low light, night use |
-| **slate** | Corporate clean | Bright Blue | Business, presentations |
-| **solarized-dark** | Scientific balance | Bright Blue | Long coding sessions |
-| **solarized-light** | Light Solarized | Blue | Bright rooms |
-| **nord** | Arctic blues | Bright Cyan | Cool, professional |
-| **dracula** | Purple/pink vibrant | Bright Magenta | Modern, energetic |
+All box-drawing output uses this three-color pattern:
 
-### Retro/Vintage (9)
-
-| Style | Description | Primary Color | Inspiration |
-|-------|-------------|---------------|-------------|
-| **amber-terminal** | Warm amber CRT | Bright Yellow | Old CRT monitors |
-| **apple-ii** | Classic green | Bright Green | Apple II computers |
-| **bbs-bright** | Cyan BBS | Bright Cyan | Bulletin board systems |
-| **commodore-64** | C64 blue | Bright Blue | Commodore 64 |
-| **dos-blue** | MS-DOS classic | Bright White/Blue | MS-DOS era |
-| **green-screen** | Monochrome terminal | Bright Green | Terminal phosphor |
-| **photon** | Teal/pink combo | Bright Cyan/Magenta | 80s computing |
-| **retro-rainbow** | Multi-color fun | Various | Early terminals |
-| **vt100** | Classic terminal | Bright Green | VT100 terminals |
-
-### Flair/Nature (6)
-
-| Style | Description | Primary Color | Vibe |
-|-------|-------------|---------------|------|
-| **monokai** | Warm vibrant | Bright Magenta | Iconic editor theme |
-| **synthwave** | 80s neon outrun | Bright Magenta | Retro-future |
-| **cyberpunk** | Neon dystopia | Bright Green | Matrix/Blade Runner |
-| **matrix** | Green code rain | Bright Green | The Matrix |
-| **ocean** | Deep sea blues | Bright Cyan | Calming, aquatic |
-| **forest** | Natural greens | Bright Green | Woodland, organic |
-
----
-
-## Best Practices
-
-### DO: Visual Hierarchy
-
-✅ **Good - Clear Distinction:**
+**Header:**
 ```
-label=@DIM@@WHITE@       # Subdued
-value=@BRIGHT_CYAN@      # Stands out
+{DIM}┌──┤ {ASSISTANT}TOOL NAME{RESET}
 ```
 
-❌ **Bad - Same Color:**
+**Action (single):**
 ```
-label=@WHITE@
-value=@WHITE@            # Can't tell them apart!
-```
-
-### DO: Consistent Accents
-
-✅ **Good - Consistent Green for Actions:**
-```
-command=@BRIGHT_GREEN@
-success=@BRIGHT_GREEN@
-user_prompt=@BRIGHT_GREEN@
+{DIM}└─ {DATA}action description{RESET}
 ```
 
-❌ **Bad - Random Colors:**
+**Action (multiple):**
 ```
-command=@BRIGHT_GREEN@
-success=@BRIGHT_YELLOW@  # Why different?
-user_prompt=@BRIGHT_MAGENTA@  # Chaotic!
-```
-
-### DO: Respect Semantic Purpose
-
-✅ **Good - Use Keys as Intended:**
-```
-primary=@BOLD@@BRIGHT_CYAN@   # For titles
-secondary=@BRIGHT_CYAN@       # For headers
-muted=@DIM@@WHITE@           # For labels
+{DIM}├─ {DATA}first action{RESET}
+{DIM}└─ {DATA}last action{RESET}
 ```
 
-❌ **Bad - Backwards Hierarchy:**
-```
-primary=@DIM@                # Too subtle for primary!
-muted=@BOLD@@BRIGHT_CYAN@    # Too bold for muted!
+### Implementation Pattern
+
+```perl
+# Header
+my $conn = $ui->colorize("┌──┤ ", 'DIM');
+my $name = $ui->colorize("TOOL NAME", 'ASSISTANT');
+print "$conn$name\n";
+
+# Action
+my $conn = $ui->colorize("└─ ", 'DIM');
+my $action = $ui->colorize("action description", 'DATA');
+print "$conn$action\n";
 ```
 
-### DON'T: Screen Vomit
+### Single-Line Tool Output
 
-❌ **Bad - Too Many Colors:**
-```
-primary=@BRIGHT_RED@
-secondary=@BRIGHT_YELLOW@
-normal=@BRIGHT_GREEN@
-muted=@BRIGHT_CYAN@
-# Every line a different rainbow color!
-```
+When a tool executes once with one action:
 
-✅ **Good - Cohesive Palette:**
 ```
-primary=@BOLD@@BRIGHT_CYAN@
-secondary=@BRIGHT_CYAN@
-normal=@CYAN@
-muted=@DIM@@CYAN@
-# Variations of same color family
+┌──┤ TOOL NAME
+└─ action description here
 ```
-
-### Color Palette Strategies
-
-**Monochrome** (safe, professional):
-```
-All keys use variations of ONE color (brightness, dim, bold)
-Example: greyscale, amber-terminal, matrix
-```
-
-**Duo-tone** (balanced, modern):
-```
-Primary color + accent color
-Example: nord (cyan + blue), synthwave (magenta + cyan)
-```
-
-**Tri-tone** (complex, vibrant):
-```
-Base + two accent colors
-Example: monokai (magenta + green + yellow)
-```
-
-**Rainbow** (playful, risky):
-```
-Different color for each element type
-Example: retro-rainbow
-⚠️  Easy to become "screen vomit" - use sparingly!
-```
-
----
-
-## Migration Guide
-
-### From v1.0 to v2.0
-
-**Old (v1.0) had 43 confusing keys:**
-```
-banner_label, banner_value, command_label, command_value, 
-data, app_title, app_subtitle, ...
-```
-
-**New (v2.0) has 31 semantic keys:**
-```
-primary, secondary, normal, muted, subtle,
-label, value, command, ...
-```
-
-### Mapping Old → New
-
-| Old Key | New Key | Purpose |
-|---------|---------|---------|
-| `app_title` | `primary` | Main titles |
-| `app_subtitle` | `secondary` | Subtitles |
-| `banner_label` | `label` | All labels |
-| `banner_value` | `value` | All values |
-| `command_label` | `label` | Labels everywhere |
-| `command_value` | `value` | Values everywhere |
-| `data` | `value` | Generic data |
-| `banner_help` | `muted` | Help text |
-| `error_message` | `error` | Errors |
-| `success_message` | `success` | Success |
-| `warning_message` | `warning` | Warnings |
-| `info_message` | `info` | Info |
-
-### Updating Existing Themes
-
-1. **Keep old keys** for backward compatibility
-2. **Add new semantic keys** following hierarchy
-3. **Map old to new** in deprecated section
 
 **Example:**
 ```
-# NEW KEYS (v2.0)
-label=@DIM@@WHITE@
-value=@BRIGHT_CYAN@
+┌──┤ FILE OPERATIONS
+└─ reading lib/CLIO/Core/Config.pm (1247 bytes)
+```
 
-# DEPRECATED (v1.0 compatibility)
-banner_label=@DIM@@WHITE@      # Maps to 'label'
-banner_value=@BRIGHT_CYAN@     # Maps to 'value'
-command_label=@DIM@@WHITE@     # Maps to 'label'
-command_value=@BRIGHT_CYAN@    # Maps to 'value'
-data=@BRIGHT_CYAN@             # Maps to 'value'
+**Colors:**
+- `┌──┤ ` = DIM (dim gray)
+- `FILE OPERATIONS` = ASSISTANT (bright cyan)
+- `└─ ` = DIM (dim gray)
+- `reading lib/...` = DATA (white)
+
+### Interactive Tool Output
+
+Interactive tools (like USER COLLABORATION) display an action line before user interaction:
+
+```
+┌──┤ USER COLLABORATION
+└─ Requesting your input...
+CLIO: Here's my question for you...
+Context: Some helpful context
+[Your answer]: <user types response>
+CLIO: <agent continues with response>
+```
+
+The action line (`└─ Requesting your input...`) closes the box-drawing header and indicates what's happening before the collaboration prompt appears.
+
+### Multi-Line Tool Output
+
+When a tool executes multiple times or has multiple actions:
+
+```
+┌──┤ TOOL NAME
+├─ first action description
+├─ second action description
+└─ last action description
+```
+
+**Example:**
+```
+┌──┤ FILE OPERATIONS
+├─ reading lib/CLIO/UI/Chat.pm (5832 bytes)
+├─ writing lib/CLIO/UI/Chat.pm (5891 bytes)
+└─ created backup at lib/CLIO/UI/Chat.pm.bak
+```
+
+**Colors:**
+- Connectors (`┌──┤ `, `├─ `, `└─ `) = DIM
+- Tool name (`FILE OPERATIONS`) = ASSISTANT
+- Action descriptions = DATA
+
+### Tool Group Transitions
+
+When switching from one tool to another, add a blank line:
+
+```
+┌──┤ FILE OPERATIONS
+└─ reading config file
+
+┌──┤ VERSION CONTROL
+└─ viewing git status
 ```
 
 ---
 
-## Color Reference
+## Colorization Rules
 
-### ANSI Color Codes
+### Theme Style Names
 
-```
-@BLACK@          @BRIGHT_BLACK@
-@RED@            @BRIGHT_RED@
-@GREEN@          @BRIGHT_GREEN@
-@YELLOW@         @BRIGHT_YELLOW@
-@BLUE@           @BRIGHT_BLUE@
-@MAGENTA@        @BRIGHT_MAGENTA@
-@CYAN@           @BRIGHT_CYAN@
-@WHITE@          @BRIGHT_WHITE@
-```
+These are the canonical style names used in CLIO:
 
-### Modifiers
+| Style Name | Purpose | Typical Color | Usage |
+|-----------|---------|---------------|--------|
+| `DIM` | Box-drawing connectors, metadata | Dim/Gray | Connectors: `┌──┤ `, `├─ `, `└─ ` |
+| `ASSISTANT` | Tool names, headers, "CLIO:" prefix | Bright Cyan | Tool/system names |
+| `DATA` | Action descriptions, file content | White | All content data |
+| `USER` | User input, "YOU:" prefix | Default | User messages |
+| `ERROR` | Error messages | Red/Bright Red | Errors |
+| `SUCCESS` | Success indicators | Green/Bright Green | Checkmarks, success |
+| `WARNING` | Warnings | Yellow/Bright Yellow | Warnings |
+| `PROMPT_INDICATOR` | Interactive prompts | Bright Green | `>` prompt symbol |
 
-```
-@BOLD@           Bold text
-@DIM@            Dimmed text
-@UNDERLINE@      Underlined text
-@RESET@          Reset all formatting
-```
+### Correct Colorization Pattern
 
-### Combining Codes
+**CORRECT (Three-color format):**
+```perl
+# Header: connector + name
+my $conn = $ui->colorize("┌──┤ ", 'DIM');
+my $name = $ui->colorize("TOOL NAME", 'ASSISTANT');
+print "$conn$name\n";
 
-```
-@BOLD@@BRIGHT_CYAN@      Bold bright cyan
-@DIM@@WHITE@             Dim white
-@BRIGHT_GREEN@@UNDERLINE@  Underlined bright green
-```
-
----
-
-## Examples
-
-### Minimal Monochrome Theme
-
-```
-name=minimal
-primary=@BOLD@@WHITE@
-secondary=@WHITE@
-normal=@WHITE@
-muted=@DIM@@WHITE@
-subtle=@DIM@
-user_prompt=@WHITE@
-user_text=@WHITE@
-agent_label=@BOLD@@WHITE@
-agent_text=@WHITE@
-system_message=@DIM@@WHITE@
-error=@BRIGHT_RED@
-warning=@BRIGHT_YELLOW@
-success=@WHITE@
-info=@WHITE@
-label=@DIM@@WHITE@
-value=@WHITE@
-command=@WHITE@
-link=@WHITE@@UNDERLINE@
-# ... (continue with all required keys)
+# Action: connector + description
+my $conn = $ui->colorize("└─ ", 'DIM');
+my $action = $ui->colorize("doing something", 'DATA');
+print "$conn$action\n";
 ```
 
-### Vibrant Dual-Tone Theme
-
+**WRONG (Single-color format):**
+```perl
+# Everything the same color - no visual hierarchy
+my $line = "┌──┤ TOOL NAME";
+print $ui->colorize($line, 'DATA') . "\n";
 ```
-name=electric
-primary=@BOLD@@BRIGHT_MAGENTA@
-secondary=@BRIGHT_CYAN@
-normal=@WHITE@
-muted=@MAGENTA@
-subtle=@DIM@
-user_prompt=@BRIGHT_MAGENTA@
-user_text=@WHITE@
-agent_label=@BRIGHT_CYAN@
-agent_text=@WHITE@
-system_message=@CYAN@
-error=@BRIGHT_RED@
-warning=@BRIGHT_YELLOW@
-success=@BRIGHT_GREEN@
-info=@BRIGHT_CYAN@
-label=@MAGENTA@
-value=@BRIGHT_MAGENTA@
-command=@BRIGHT_CYAN@
-link=@BRIGHT_CYAN@@UNDERLINE@
-# ... (continue with all required keys)
+
+**WRONG (Empty string colorization):**
+```perl
+# Colorizing empty strings returns empty strings
+my $color = $ui->colorize('', 'DATA');  # Returns ''!
+print "$color$text\n";  # Uncolored output
+```
+
+**WRONG (Manual ANSI codes):**
+```perl
+# Don't build colors manually - use colorize()
+my $dim = $ui->colorize('', 'DIM');
+my $data = $ui->colorize('', 'DATA');
+my $reset = "\e[0m";
+print "$dim$connector $data$action_detail$reset\n";
 ```
 
 ---
 
-## Troubleshooting
+## Pause Prompts (Pagination)
 
-### Colors Not Showing
+### Two-Part Structure
 
-**Problem:** Style doesn't apply colors
+Pagination prompts have a two-part structure:
 
-**Solutions:**
-1. Check `name` matches filename
-2. Verify terminal supports 256 colors
-3. Test with simple theme first
+**Part 1: Hint (first time only)**
+```
+┌──┤ ^/v Pages - Q Quits - Any key for more
+```
 
-### Too Many Colors (Screen Vomit)
+**Part 2: Progress Indicator (every subsequent page)**
+```
+└─┤ 1/13 │ ^v Q ▸
+```
 
-**Problem:** Interface looks chaotic
+### Implementation
 
-**Solutions:**
-1. Reduce palette to 2-3 colors
-2. Use variations (bright/dim) of same color
-3. Follow 5-level hierarchy strictly
+```perl
+# First page
+my $hint = $theme->get_pagination_hint();
+print $hint;
 
-### Labels and Values Look Same
-
-**Problem:** Can't tell labels from values
-
-**Solutions:**
-1. Make labels `@DIM@` or muted color
-2. Make values `@BRIGHT@` or accent color
-3. Test with real data: `./clio --style mytheme`
-
----
-
-## Contributing Styles
-
-Want to share your theme?
-
-1. Create theme following schema v2.0
-2. Test thoroughly
-3. Add to `styles/` directory
-4. Submit pull request with:
-   - Theme file
-   - Description of aesthetic
-   - Screenshot (optional)
+# Subsequent pages
+my $prompt = $theme->get_pagination_prompt($current, $total);
+print $prompt;
+```
 
 ---
 
-## Resources
+## System Messages
 
-- Schema Reference: `scratch/style_schema_v2.txt`
-- Example Themes: `styles/` directory
-- ANSI Colors: https://en.wikipedia.org/wiki/ANSI_escape_code
+### Command Headers
+
+```
+┌──┤ COMMAND NAME
+```
+
+**Example:**
+```perl
+print $chat->colorize("┌──┤ API CONFIGURATION", 'PROMPT_INDICATOR') . "\n";
+```
+
+### Section Headers
+
+```
+┌──┤ Section Title
+```
+
+### Key-Value Display
+
+```
+├─ Key: value
+└─ Last Key: value
+```
+
+**Example:**
+```
+┌──┤ CURRENT SETTINGS
+├─ Provider: github_copilot
+├─ Model: claude-sonnet-4.5
+└─ API Base: https://api.githubcopilot.com
+```
 
 ---
 
-*Style System v2.0 - Semantic, Flexible, Beautiful*
+## Error Messages
 
+### Format
+
+```
+ERROR: descriptive error message here
+```
+
+**Colorization:** Use 'ERROR' style
+
+**Example:**
+```perl
+$chat->display_error_message("Model 'gpt-5' not found");
+# Outputs: ERROR: Model 'gpt-5' not found
+```
+
+### Multi-Line Errors
+
+For errors with context:
+
+```
+ERROR: Primary error message
+  Context line 1
+  Context line 2
+```
 
 ---
 
-## Related Documentation
+## Success Messages
 
-- [Command Output Guide](COMMAND_OUTPUT_GUIDE.md) - Standards for `/command` help text formatting
-- [Style Quick Reference](STYLE_QUICKREF.md) - Condensed style creation guide
+### Format
+
+```
+✓ Action completed successfully
+```
+
+**Colorization:** Use 'SUCCESS' style (for checkmark) or 'DATA' (for description)
+
+**Example:**
+```perl
+print $chat->colorize("✓", 'SUCCESS') . " File saved\n";
+```
+
+---
+
+## Common Mistakes to Avoid
+
+### ✗ Colorizing Empty Strings
+
+```perl
+# WRONG
+my $color = $ui->colorize('', 'DATA');
+print "$color$text\n";
+
+# RIGHT
+print $ui->colorize($text, 'DATA') . "\n";
+```
+
+### ✗ Missing Action Lines
+
+When displaying tool output, always show the action:
+
+```perl
+# WRONG
+print "┌──┤ FILE OPERATIONS\n";
+print "┌──┤ FILE OPERATIONS\n";  # Header repeats, no action shown
+
+# RIGHT
+print "┌──┤ FILE OPERATIONS\n";
+print "└─ reading file.txt\n";
+```
+
+### ✗ Tool Name Pollution
+
+Don't announce tool calls in the conversation flow:
+
+```perl
+# WRONG
+print "Using file_operations tool...\n";
+print "Calling version_control...\n";
+
+# RIGHT
+# Tools display their own headers via the standard format
+# Don't announce them separately
+```
+
+### ✗ Inconsistent Box Characters
+
+Always use the correct Unicode characters:
+
+```perl
+# WRONG
+print "|-- ACTION\n";  # ASCII approximation
+print "└── ACTION\n";  # Wrong character (U+2500 vs U+2500)
+
+# RIGHT
+print "├─ ACTION\n";   # U+251C U+2500
+print "└─ ACTION\n";   # U+2514 U+2500
+```
+
+---
+
+## Implementation Checklist
+
+When implementing new UI components:
+
+- [ ] Use `colorize()` with actual content, not empty strings
+- [ ] Follow box-drawing format for structure
+- [ ] Use canonical style names from Theme.pm
+- [ ] Test with both `default` and `compact` themes
+- [ ] Verify colors display correctly
+- [ ] Check that multi-line output uses ├─ and └─ correctly
+- [ ] No tool name announcements (let the format speak for itself)
+- [ ] UTF-8 output enabled (`binmode(STDOUT, ':encoding(UTF-8)')`)
+
+---
+
+## Testing
+
+### Visual Test
+
+Run this to see all formatting:
+
+```bash
+./clio --input "read lib/CLIO/Core/Config.pm and show the first 10 lines" --exit
+```
+
+Expected output should show:
+- Clean "CLIO: " prefix
+- Tool header: `┌──┤ FILE OPERATIONS`
+- Action line: `└─ reading lib/CLIO/Core/Config.pm (1247 bytes)`
+- Properly colored output
+
+### Anti-Pattern Detection
+
+Search for these patterns to find violations:
+
+```bash
+# Find colorize('', ...) calls
+grep -rn "colorize(''" lib/
+
+# Find potential tool announcements
+grep -rn "Using.*tool\|Calling.*tool" lib/
+
+# Find hardcoded ANSI codes (should use colorize instead)
+grep -rn '\\e\[' lib/ | grep -v "ANSI reset code"
+```
+
+---
+
+## References
+
+- **Implementation:** `lib/CLIO/Core/WorkflowOrchestrator.pm` - Tool output formatting
+- **Theme System:** `lib/CLIO/UI/Theme.pm` - Color definitions
+- **Display Methods:** `lib/CLIO/UI/Chat.pm` - High-level display methods
+- **Example Usage:** See any tool in `lib/CLIO/Tools/*.pm`
+
+---
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.0 | 2026-02-02 | Initial style guide creation after fixing colorization bugs |
+
+---
+
+**Remember:** When in doubt, colorize the full content, not empty strings. This is the #1 cause of formatting bugs.

@@ -81,11 +81,8 @@ sub get_all_models {
         push @all_models, @{$self->_get_github_copilot_models()};
     }
     
-    # Get OpenAI models (hardcoded with known pricing)
-    push @all_models, @{$self->_get_openai_models()};
-    
-    # Get Anthropic models (hardcoded with known pricing)
-    push @all_models, @{$self->_get_anthropic_models()};
+    # No hardcoded models - all models must come from provider APIs
+    # This ensures the model list is always current and accurate
     
     return \@all_models;
 }
@@ -171,203 +168,6 @@ sub _get_github_copilot_models {
     return \@models;
 }
 
-sub _get_openai_models {
-    my ($self) = @_;
-    
-    # Hardcoded OpenAI model list with current pricing (as of 2026-01)
-    # Pricing: https://openai.com/api/pricing/
-    # Use '-' for models without published pricing (like GitHub does)
-    
-    return [
-        {
-            id => 'gpt-4o',
-            name => 'GPT-4o',
-            provider => 'openai',
-            enabled => 1,
-            pricing => {
-                input_per_1m => 2.50,   # $2.50 per 1M input tokens
-                output_per_1m => 10.00,  # $10.00 per 1M output tokens
-            },
-            capabilities => {
-                max_prompt_tokens => 128000,
-                max_output_tokens => 16384,
-                max_context_window_tokens => 128000,
-                family => 'gpt-4',
-            },
-        },
-        {
-            id => 'gpt-4o-mini',
-            name => 'GPT-4o Mini',
-            provider => 'openai',
-            enabled => 1,
-            pricing => {
-                input_per_1m => 0.150,   # $0.15 per 1M input tokens
-                output_per_1m => 0.600,  # $0.60 per 1M output tokens
-            },
-            capabilities => {
-                max_prompt_tokens => 128000,
-                max_output_tokens => 16384,
-                max_context_window_tokens => 128000,
-                family => 'gpt-4',
-            },
-        },
-        {
-            id => 'gpt-4-turbo',
-            name => 'GPT-4 Turbo',
-            provider => 'openai',
-            enabled => 1,
-            pricing => {
-                input_per_1m => 10.00,
-                output_per_1m => 30.00,
-            },
-            capabilities => {
-                max_prompt_tokens => 128000,
-                max_output_tokens => 4096,
-                max_context_window_tokens => 128000,
-                family => 'gpt-4',
-            },
-        },
-        {
-            id => 'gpt-3.5-turbo',
-            name => 'GPT-3.5 Turbo',
-            provider => 'openai',
-            enabled => 1,
-            pricing => {
-                input_per_1m => 0.50,
-                output_per_1m => 1.50,
-            },
-            capabilities => {
-                max_prompt_tokens => 16385,
-                max_output_tokens => 4096,
-                max_context_window_tokens => 16385,
-                family => 'gpt-3.5',
-            },
-        },
-        {
-            id => 'o1-preview',
-            name => 'o1 Preview',
-            provider => 'openai',
-            enabled => 1,
-            pricing => {
-                input_per_1m => 15.00,
-                output_per_1m => 60.00,
-            },
-            capabilities => {
-                max_prompt_tokens => 128000,
-                max_output_tokens => 32768,
-                max_context_window_tokens => 128000,
-                family => 'o1',
-            },
-        },
-        {
-            id => 'o1-mini',
-            name => 'o1 Mini',
-            provider => 'openai',
-            enabled => 1,
-            pricing => {
-                input_per_1m => 3.00,
-                output_per_1m => 12.00,
-            },
-            capabilities => {
-                max_prompt_tokens => 128000,
-                max_output_tokens => 65536,
-                max_context_window_tokens => 128000,
-                family => 'o1',
-            },
-        },
-    ];
-}
-
-sub _get_anthropic_models {
-    my ($self) = @_;
-    
-    # Hardcoded Anthropic model list with current pricing (as of 2026-01)
-    # Pricing: https://www.anthropic.com/pricing
-    
-    return [
-        {
-            id => 'claude-3-5-sonnet-20241022',
-            name => 'Claude 3.5 Sonnet',
-            provider => 'anthropic',
-            enabled => 1,
-            pricing => {
-                input_per_1m => 3.00,
-                output_per_1m => 15.00,
-            },
-            capabilities => {
-                max_prompt_tokens => 200000,
-                max_output_tokens => 8192,
-                max_context_window_tokens => 200000,
-                family => 'claude-3.5',
-            },
-        },
-        {
-            id => 'claude-3-5-haiku-20241022',
-            name => 'Claude 3.5 Haiku',
-            provider => 'anthropic',
-            enabled => 1,
-            pricing => {
-                input_per_1m => 0.80,
-                output_per_1m => 4.00,
-            },
-            capabilities => {
-                max_prompt_tokens => 200000,
-                max_output_tokens => 8192,
-                max_context_window_tokens => 200000,
-                family => 'claude-3.5',
-            },
-        },
-        {
-            id => 'claude-3-opus-20240229',
-            name => 'Claude 3 Opus',
-            provider => 'anthropic',
-            enabled => 1,
-            pricing => {
-                input_per_1m => 15.00,
-                output_per_1m => 75.00,
-            },
-            capabilities => {
-                max_prompt_tokens => 200000,
-                max_output_tokens => 4096,
-                max_context_window_tokens => 200000,
-                family => 'claude-3',
-            },
-        },
-        {
-            id => 'claude-3-sonnet-20240229',
-            name => 'Claude 3 Sonnet',
-            provider => 'anthropic',
-            enabled => 1,
-            pricing => {
-                input_per_1m => 3.00,
-                output_per_1m => 15.00,
-            },
-            capabilities => {
-                max_prompt_tokens => 200000,
-                max_output_tokens => 4096,
-                max_context_window_tokens => 200000,
-                family => 'claude-3',
-            },
-        },
-        {
-            id => 'claude-3-haiku-20240307',
-            name => 'Claude 3 Haiku',
-            provider => 'anthropic',
-            enabled => 1,
-            pricing => {
-                input_per_1m => 0.25,
-                output_per_1m => 1.25,
-            },
-            capabilities => {
-                max_prompt_tokens => 200000,
-                max_output_tokens => 4096,
-                max_context_window_tokens => 200000,
-                family => 'claude-3',
-            },
-        },
-    ];
-}
-
 =head2 format_pricing
 
 Format pricing information for display.
@@ -426,14 +226,12 @@ sub validate_model {
 
 =head1 NOTES
 
-Model pricing is hardcoded for OpenAI and Anthropic as their APIs don't provide
-this information. GitHub Copilot pricing is fetched from their /models API.
+All models are fetched dynamically from provider APIs. No hardcoded models.
 
-Use '-' for models without pricing information (following SAM's convention).
-
-Update hardcoded pricing periodically from:
-- OpenAI: https://openai.com/api/pricing/
-- Anthropic: https://www.anthropic.com/pricing
+Currently supports:
+- GitHub Copilot: Fetched from their /models API with pricing/billing info
+- OpenAI: Requires API integration (future work)
+- Anthropic: Requires API integration (future work)
 
 =head1 SEE ALSO
 

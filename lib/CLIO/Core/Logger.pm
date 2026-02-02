@@ -3,8 +3,9 @@ package CLIO::Core::Logger;
 use strict;
 use warnings;
 use Exporter 'import';
+use POSIX qw(strftime);
 
-our @EXPORT_OK = qw(should_log log_debug log_info log_warning log_error LOG_LEVEL);
+our @EXPORT_OK = qw(should_log log_debug log_info log_warning log_error LOG_LEVEL get_timestamp);
 
 =head1 NAME
 
@@ -84,28 +85,71 @@ Arguments:
 
 =cut
 
+=head2 get_timestamp
+
+Get current timestamp in Linux journal log format (YYYY-MM-DD HH:MM:SS)
+
+=cut
+
+sub get_timestamp {
+    return strftime("%Y-%m-%d %H:%M:%S", localtime);
+}
+
+=head2 log_debug
+
+Log a debug message with timestamp
+
+Arguments:
+- $module: Module name
+- $message: Log message
+- $config (optional): Config object
+
+=cut
+
 sub log_debug {
     my ($module, $message, $config) = @_;
     return unless should_log('DEBUG', $config);
-    print STDERR "\r\e[K[DEBUG][$module] $message\n";
+    my $ts = get_timestamp();
+    print STDERR "\r\e[K$ts [DEBUG][$module] $message\n";
 }
+
+=head2 log_info
+
+Log an info message with timestamp
+
+=cut
 
 sub log_info {
     my ($module, $message, $config) = @_;
     return unless should_log('INFO', $config);
-    print STDERR "\r\e[K[INFO][$module] $message\n";
+    my $ts = get_timestamp();
+    print STDERR "\r\e[K$ts [INFO][$module] $message\n";
 }
+
+=head2 log_warning
+
+Log a warning message with timestamp
+
+=cut
 
 sub log_warning {
     my ($module, $message, $config) = @_;
     return unless should_log('WARNING', $config);
-    print STDERR "\r\e[K[WARN][$module] $message\n";
+    my $ts = get_timestamp();
+    print STDERR "\r\e[K$ts [WARN][$module] $message\n";
 }
+
+=head2 log_error
+
+Log an error message with timestamp
+
+=cut
 
 sub log_error {
     my ($module, $message, $config) = @_;
     return unless should_log('ERROR', $config);
-    print STDERR "\r\e[K[ERROR][$module] $message\n";
+    my $ts = get_timestamp();
+    print STDERR "\r\e[K$ts [ERROR][$module] $message\n";
 }
 
 1;

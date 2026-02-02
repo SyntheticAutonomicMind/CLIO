@@ -499,22 +499,18 @@ sub run {
                         # Buffer lines for page navigation (split back to lines)
                         my @rendered_lines = split /\n/, $self->{_streaming_markdown_buffer};
                         push @{$self->{current_page}}, @rendered_lines;
-                        $self->{line_count} += scalar(@rendered_lines);
+                        
+                        # Use helper for consistent line counting
+                        my $line_count_delta = $self->_count_visual_lines($self->{_streaming_markdown_buffer});
+                        $self->{line_count} += $line_count_delta;
                         
                         # Reset markdown buffer
                         $self->{_streaming_markdown_buffer} = '';
                         $markdown_line_count = 0;
                         $last_flush_time = $current_time;
                         
-                        # Check pagination - ONLY when explicitly enabled for text responses
-                        # pagination_enabled is set to 1 for agent text responses (no tools)
-                        # and remains 0 during tool execution to let output scroll freely
-                        # Pause BEFORE terminal_height to leave room for pause message
-                        # This prevents content from scrolling off screen before user can read
-                        my $pause_threshold = $self->{terminal_height} - 2;  # Leave 2 lines for pause prompt
-                        if ($self->{line_count} >= $pause_threshold && 
-                            $self->{pagination_enabled} &&
-                            !$self->{_tools_invoked_this_request}) {
+                        # Check pagination using helper for consistency
+                        if ($self->_should_pagination_trigger()) {
                             # Pause for user to read (streaming mode)
                             my $response = $self->pause(1);  # 1 = streaming mode
                             if ($response eq 'Q') {
@@ -571,10 +567,18 @@ sub run {
                 # This ensures system messages start on a clean line
                 print "\r\e[K";  # Carriage return + clear entire line
                 
-                # Display system message with proper styling
-                print $self->colorize("SYSTEM: ", 'SYSTEM') . $message . "\n";
+                # Display system message with three-color box-drawing format:
+                # {dim}┌──┤ {agent_label}SYSTEM{reset}
+                # {dim}└─ {data}message{reset}
+                my $header_conn = $self->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
+                my $header_name = $self->colorize("SYSTEM", 'ASSISTANT');
+                my $footer_conn = $self->colorize("\x{2514}\x{2500} ", 'DIM');
+                my $footer_msg = $self->colorize($message, 'DATA');
+                
+                print "$header_conn$header_name\n";
+                print "$footer_conn$footer_msg\n";
                 STDOUT->flush() if STDOUT->can('flush');
-                $self->{line_count}++;
+                $self->{line_count} += 2;  # Two lines for box-drawing format
                 
                 print STDERR "[DEBUG][Chat] System message: $message\n" if $self->{debug};
             };
@@ -760,9 +764,8 @@ sub run {
         print "\n";
     }
     
-    # Display goodbye
+    # Exit gracefully (goodbye message will be shown by caller)
     print "\n";
-    $self->display_system_message("Goodbye!");
 }
 
 =head2 display_header
@@ -1041,6 +1044,42 @@ sub display_system_message {
     return $self->{display}->display_system_message(@args);
 }
 
+=head2 display_system_messages
+
+Display multiple system messages as a grouped output with box-drawing format.
+
+Arguments:
+- $messages: Arrayref of message strings
+
+Example output:
+  ┌──┤ SYSTEM
+  ├─ Saving session...
+  └─ Session saved.
+
+=cut
+
+sub display_system_messages {
+    my ($self, $messages) = @_;
+    
+    return unless $messages && ref($messages) eq 'ARRAY' && @$messages;
+    
+    # Header
+    my $header_conn = $self->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
+    my $header_name = $self->colorize("SYSTEM", 'ASSISTANT');
+    print "$header_conn$header_name\n";
+    
+    # Messages
+    for my $i (0 .. $#{$messages}) {
+        my $is_last = ($i == $#{$messages});
+        my $connector = $is_last ? "\x{2514}\x{2500} " : "\x{251C}\x{2500} ";
+        my $conn_colored = $self->colorize($connector, 'DIM');
+        my $msg_colored = $self->colorize($messages->[$i], 'DATA');
+        print "$conn_colored$msg_colored\n";
+    }
+    
+    STDOUT->flush() if STDOUT->can('flush');
+}
+
 =head2 display_error_message
 
 Display an error message
@@ -1225,9 +1264,8 @@ sub request_collaboration {
         print $line, "\n";
         $self->{line_count}++;
         
-        # Check if we need to paginate
-        # Pause BEFORE terminal_height to leave room for pause message
-        my $pause_threshold = $self->{terminal_height} - 2;  # Leave 2 lines for pause prompt
+        # Check if we need to paginate using helper for consistent threshold
+        my $pause_threshold = $self->_get_pagination_threshold();
         if ($self->{line_count} >= $pause_threshold && 
             $self->{pagination_enabled} && 
             -t STDIN) {  # Only paginate if interactive
@@ -1258,8 +1296,8 @@ sub request_collaboration {
             print $context_line, "\n";
             $self->{line_count}++;
             
-            # Check pagination AFTER first line
-            my $pause_threshold = $self->{terminal_height} - 2;
+            # Check pagination AFTER first line using helper for consistent threshold
+            my $pause_threshold = $self->_get_pagination_threshold();
             if ($self->{line_count} >= $pause_threshold && 
                 $self->{pagination_enabled} && 
                 -t STDIN) {
@@ -1281,8 +1319,8 @@ sub request_collaboration {
             print $line, "\n";
             $self->{line_count}++;
             
-            # Check if we need to paginate BEFORE hitting terminal height
-            my $pause_threshold = $self->{terminal_height} - 2;
+            # Check if we need to paginate BEFORE hitting terminal height using helper
+            my $pause_threshold = $self->_get_pagination_threshold();
             if ($self->{line_count} >= $pause_threshold && 
                 $self->{pagination_enabled} && 
                 -t STDIN) {
@@ -2072,10 +2110,56 @@ sub repaint_screen {
             print $self->colorize("CLIO: ", 'ASSISTANT'), $msg->{content}, "\n";
         }
         elsif ($msg->{type} eq 'system') {
-            print $self->colorize("SYSTEM: ", 'SYSTEM'), $msg->{content}, "\n";
+            # Display system message with three-color box-drawing format:
+            # {dim}┌──┤ {agent_label}SYSTEM{reset}
+            # {dim}└─ {data}message{reset}
+            my $header_conn = $self->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
+            my $header_name = $self->colorize("SYSTEM", 'ASSISTANT');
+            my $footer_conn = $self->colorize("\x{2514}\x{2500} ", 'DIM');
+            my $footer_msg = $self->colorize($msg->{content}, 'DATA');
+            
+            print "$header_conn$header_name\n";
+            print "$footer_conn$footer_msg\n";
         }
         elsif ($msg->{type} eq 'error') {
-            print $self->colorize("ERROR: ", 'ERROR'), $msg->{content}, "\n";
+            # Display error with box-drawing format
+            my $header_conn = $self->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
+            my $header_name = $self->colorize("ERROR", 'ERROR');
+            my $footer_conn = $self->colorize("\x{2514}\x{2500} ", 'DIM');
+            my $footer_msg = $self->colorize($msg->{content}, 'DATA');
+            
+            print "$header_conn$header_name\n";
+            print "$footer_conn$footer_msg\n";
+        }
+        elsif ($msg->{type} eq 'warning') {
+            # Display warning with box-drawing format
+            my $header_conn = $self->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
+            my $header_name = $self->colorize("WARNING", 'WARNING');
+            my $footer_conn = $self->colorize("\x{2514}\x{2500} ", 'DIM');
+            my $footer_msg = $self->colorize($msg->{content}, 'DATA');
+            
+            print "$header_conn$header_name\n";
+            print "$footer_conn$footer_msg\n";
+        }
+        elsif ($msg->{type} eq 'success') {
+            # Display success with box-drawing format
+            my $header_conn = $self->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
+            my $header_name = $self->colorize("SUCCESS", 'SUCCESS');
+            my $footer_conn = $self->colorize("\x{2514}\x{2500} ", 'DIM');
+            my $footer_msg = $self->colorize($msg->{content}, 'DATA');
+            
+            print "$header_conn$header_name\n";
+            print "$footer_conn$footer_msg\n";
+        }
+        elsif ($msg->{type} eq 'info') {
+            # Display info with box-drawing format
+            my $header_conn = $self->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
+            my $header_name = $self->colorize("INFO", 'ASSISTANT');
+            my $footer_conn = $self->colorize("\x{2514}\x{2500} ", 'DIM');
+            my $footer_msg = $self->colorize($msg->{content}, 'DATA');
+            
+            print "$header_conn$header_name\n";
+            print "$footer_conn$footer_msg\n";
         }
     }
 }
@@ -2247,6 +2331,78 @@ sub render_markdown {
     return $rendered;
 }
 
+=head2 _get_pagination_threshold
+
+Get the threshold at which pagination should pause (internal helper).
+
+Returns the line count threshold based on terminal height. Centralized
+to ensure streaming and writeline use the same pagination point.
+
+=cut
+
+sub _get_pagination_threshold {
+    my ($self) = @_;
+    
+    # Reserve 2 lines for pagination prompt and buffer
+    return ($self->{terminal_height} // 24) - 2;
+}
+
+=head2 _count_visual_lines($text)
+
+Count the visual lines in text (internal helper).
+
+Splits text by newline and returns the count. Used to normalize line 
+counting between streaming (chunks) and writeline (full text) paths.
+
+Arguments:
+- $text: Text to count (may be undef/empty)
+
+Returns: Number of visual lines (0 for empty/undef)
+
+=cut
+
+sub _count_visual_lines {
+    my ($self, $text) = @_;
+    
+    return 0 unless defined $text && length($text) > 0;
+    
+    # Split by newline and count, preserving empty lines
+    my @lines = split /\n/, $text, -1;
+    
+    # If text ends with newline, the last element is empty - don't double-count
+    # Example: "line1\nline2\n" splits to ['line1', 'line2', ''] (3 elements, 2 lines)
+    pop @lines if @lines && $lines[-1] eq '';
+    
+    return scalar(@lines);
+}
+
+=head2 _should_pagination_trigger
+
+Check if pagination should be triggered (internal helper).
+
+Determines if we should pause for pagination based on:
+- Current line count vs threshold
+- Whether pagination is enabled
+- Whether we're in tool execution mode
+- Terminal interactivity
+
+Returns: 1 if pause needed, 0 otherwise
+
+=cut
+
+sub _should_pagination_trigger {
+    my ($self) = @_;
+    
+    return 0 unless -t STDIN;  # Not interactive
+    return 0 unless $self->{pagination_enabled};  # Pagination disabled
+    return 0 if $self->{_tools_invoked_this_request};  # During tool execution
+    
+    my $threshold = $self->_get_pagination_threshold();
+    return 1 if $self->{line_count} >= $threshold;
+    
+    return 0;
+}
+
 =head2 writeline
 
 Write a line with pagination support and automatic markdown rendering.
@@ -2321,7 +2477,7 @@ sub writeline {
         # Check pagination BEFORE printing to prevent scrolling past content
         # Only paginate when: interactive, pagination enabled, and outputting a line
         if ($print_newline && $is_interactive && $should_paginate) {
-            my $pause_threshold = $self->{terminal_height} - 2;
+            my $pause_threshold = $self->_get_pagination_threshold();
             
             if ($self->{line_count} >= $pause_threshold) {
                 # Save current page to buffer before pausing

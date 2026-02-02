@@ -194,6 +194,15 @@ sub request_input {
         };
     }
     
+    # Display action line BEFORE showing collaboration prompt
+    # This closes the box-drawing header and indicates what's happening
+    if ($ui->can('colorize')) {
+        my $conn = $ui->colorize("\x{2514}\x{2500} ", 'DIM');
+        my $action = $ui->colorize("Requesting your input...", 'DATA');
+        print "$conn$action\n";
+        STDOUT->flush() if STDOUT->can('flush');
+    }
+    
     # Request user input through UI
     # This will block until user responds
     my $user_response = $ui->request_collaboration($message, $user_context);
@@ -225,6 +234,7 @@ sub request_input {
     return {
         success => 1,
         output => $user_response,
+        # Don't include action_description since we already displayed it
         metadata => {
             message => $message,
             context => $user_context,
