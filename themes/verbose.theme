@@ -43,7 +43,7 @@ input_prompt_with_default={style.dim}===[ {var.prompt} · {style.prompt_indicato
 
 # Confirmation prompts (same as default - simple box-drawing)
 confirmation_header={style.dim}┌──┤{style.data} {var.question}@RESET@
-confirmation_input={style.dim}└─{style.data} {var.options}{style.dim} [{style.prompt_indicator}Enter{style.dim} to {var.default_action}]: @RESET@
+confirmation_input={style.dim}└─{style.data} {var.options}{style.dim} [{style.prompt_indicator}Enter{style.dim} to {var.default_action}{style.dim}]: @RESET@
 
 # Messages - labeled
 user_message_prefix={style.user_text}[You said]: @RESET@
