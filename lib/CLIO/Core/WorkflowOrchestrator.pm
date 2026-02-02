@@ -949,6 +949,9 @@ sub process_input {
             STDOUT->flush() if STDOUT->can('flush');
             $| = 1;
             
+            # Set flag to prevent UI pagination from clearing tool headers
+            $self->{ui}->{_in_tool_execution} = 1 if $self->{ui};
+            
             # Pre-analyze tool calls to know how many of each tool type will execute
             my %tool_call_count;
             foreach my $i (0..$#ordered_tool_calls) {
@@ -1148,6 +1151,9 @@ sub process_input {
                 print STDERR "[DEBUG][WorkflowOrchestrator] Tool result added to conversation (sanitized)\n"
                     if $self->{debug};
             }
+            
+            # Clear flag that prevented UI pagination from clearing tool headers
+            $self->{ui}->{_in_tool_execution} = 0 if $self->{ui};
             
             # Reset UI streaming state so next iteration shows new CLIO: prefix
             # This ensures proper message formatting after tool execution
