@@ -1002,10 +1002,15 @@ sub process_input {
                 
                 # Handle tool group transitions (new tool type starting)
                 if ($tool_name ne $current_tool) {
-                    $current_tool = $tool_name;
-                    
+                    # Transitioning to a new tool type
                     # Print box-drawing header for this tool
                     if ($self->{ui} && $self->{ui}->can('colorize')) {
+                        # Only add spacing if this isn't the first tool output
+                        if ($current_tool ne '') {
+                            print "\n";
+                            STDOUT->flush() if STDOUT->can('flush');
+                        }
+                        
                         my $dim_color = $self->{ui}->colorize('', 'DIM');
                         my $data_color = $self->{ui}->colorize('', 'DATA');
                         my $reset_color = '@RESET@';
@@ -1014,9 +1019,14 @@ sub process_input {
                         print "$dim_color\x{250C}\x{2500}\x{2500}\x{2524} $data_color$tool_display_name$reset_color\n";
                     } else {
                         # Fallback without colors
+                        if ($current_tool ne '') {
+                            print "\n";
+                            STDOUT->flush() if STDOUT->can('flush');
+                        }
                         print "\x{250C}\x{2500}\x{2500}\x{2524} $tool_display_name\n";
                     }
                     STDOUT->flush() if STDOUT->can('flush');
+                    $current_tool = $tool_name;
                 }
                 
                 # Execute tool to get the result
