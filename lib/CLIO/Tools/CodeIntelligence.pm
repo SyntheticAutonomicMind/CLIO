@@ -120,8 +120,10 @@ sub list_usages {
     print STDERR "[DEBUG][CodeIntelligence] Found $count usages\n" if should_log('DEBUG');
     
     if ($count == 0) {
+        my $action_desc = "searching for symbol '$symbol_name' (found 0 usages)";
         return $self->success_result(
             "No usages found for '$symbol_name'",
+            action_description => $action_desc,
             usages => \@usages,
             count => 0,
             symbol => $symbol_name,
@@ -133,8 +135,11 @@ sub list_usages {
         $a->{file} cmp $b->{file} || $a->{line_number} <=> $b->{line_number}
     } @usages;
     
+    my $action_desc = "searching for symbol '$symbol_name' (found $count usages)";
+    
     return $self->success_result(
         "Found $count usages of '$symbol_name'",
+        action_description => $action_desc,
         usages => \@usages,
         count => $count,
         symbol => $symbol_name,

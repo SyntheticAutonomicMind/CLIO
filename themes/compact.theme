@@ -29,18 +29,19 @@ nav_previous={style.prompt_indicator}P@RESET@
 nav_quit={style.prompt_indicator}Q@RESET@
 pagination_info={style.dim}{var.info}@RESET@
 
-# Pagination prompts (standardized - compact style)
-pagination_hint_streaming={style.dim}[{style.prompt_indicator}Q{style.dim}|more]@RESET@
-pagination_hint_full={style.dim}[{style.prompt_indicator}^v{style.dim}|{style.prompt_indicator}Q{style.dim}|more]@RESET@
-pagination_prompt={style.dim}{style.data}[{var.current}/{var.total}]{style.dim} {var.nav_hint}{style.prompt_indicator}Q{style.dim}>{style.dim}@RESET@ 
+# Pagination prompts (box-drawing format with proper closures)
+# Two-part pause: hint tells what to do, prompt shows page status
+pagination_hint_streaming={style.dim}┌──┤ {style.prompt_indicator}Q{style.dim}|more@RESET@
+pagination_hint_full={style.dim}┌──┤ {style.prompt_indicator}^v{style.dim}|{style.prompt_indicator}Q{style.dim}|more@RESET@
+pagination_prompt={style.dim}└─┤ {style.data}{var.current}/{var.total}{style.dim} │ {var.nav_hint}{style.prompt_indicator}Q{style.dim}>{style.dim}@RESET@
 
-# Input prompts (standardized - compact style)
-input_prompt={style.dim}>{style.dim} {var.prompt}@RESET@ 
-input_prompt_with_default={style.dim}>{style.dim} {var.prompt} ({style.prompt_indicator}Enter{style.dim} = {var.default_action})@RESET@ 
+# Input prompts (box-drawing - compact style)
+input_prompt={style.dim}┌──┤ {style.prompt_indicator}{var.prompt}@RESET@
+input_prompt_with_default={style.dim}┌──┤ {style.prompt_indicator}{var.prompt} ({style.data}↵{style.dim}={var.default_action})@RESET@
 
-# Confirmation prompts (minimal - no ANSI)
-confirmation_header={var.question} ({var.options})
-confirmation_input=[{style.prompt_indicator}Enter{style.dim} to {var.default_action}{style.dim}]: @RESET@
+# Confirmation prompts (minimal box-drawing)
+confirmation_header={style.dim}┌──┤ {style.prompt_indicator}{var.question}@RESET@
+confirmation_input={style.dim}└─┤ {style.data}{var.options}{style.dim} [{style.data}Enter{style.dim}={var.default_action}]@RESET@
 
 # Messages - no prefixes, just color differentiation
 user_message_prefix={style.user_text}@RESET@
