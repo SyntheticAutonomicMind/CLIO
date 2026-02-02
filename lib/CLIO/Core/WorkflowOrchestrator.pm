@@ -951,6 +951,7 @@ sub process_input {
             
             # Set flag to prevent UI pagination from clearing tool headers
             $self->{ui}->{_in_tool_execution} = 1 if $self->{ui};
+            print STDERR "[FLAG_SET] _in_tool_execution=" . ($self->{ui}->{_in_tool_execution} // 'undef') . "\n" if $self->{ui};
             
             # Pre-analyze tool calls to know how many of each tool type will execute
             my %tool_call_count;
@@ -1151,6 +1152,7 @@ sub process_input {
             
             # Clear flag that prevented UI pagination from clearing tool headers
             $self->{ui}->{_in_tool_execution} = 0 if $self->{ui};
+            print STDERR "[FLAG_CLEAR] _in_tool_execution=" . ($self->{ui}->{_in_tool_execution} // 'undef') . "\n" if $self->{ui};
             
             # Reset UI streaming state so next iteration shows new CLIO: prefix
             # This ensures proper message formatting after tool execution
