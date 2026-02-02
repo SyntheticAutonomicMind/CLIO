@@ -264,6 +264,71 @@ sub validate_enum {
     return (0, "Invalid option '$value'. Valid options: $options_str");
 }
 
+=head2 validate_directory
+
+Validate that a directory path is valid and accessible.
+
+Arguments:
+  - path: Directory path to validate
+  - must_exist: If true, directory must already exist (default: true)
+  - writable: If true, directory must be writable (default: false)
+
+Returns:
+  - (1, absolute_path) if valid
+  - (0, error_message) if invalid
+
+=cut
+
+sub validate_directory {
+    my ($path, $must_exist, $writable) = @_;
+    $must_exist = 1 unless defined $must_exist;
+    $writable = 0 unless defined $writable;
+    
+    unless (defined $path && length($path)) {
+        return (0, "Directory path cannot be empty");
+    }
+    
+    # Expand ~ to home directory
+    if ($path =~ /^~/) {
+        require File::Glob;
+        my @expanded = File::Glob::bsd_glob($path);
+        if (@expanded) {
+            $path = $expanded[0];
+        } else {
+            return (0, "Could not expand path: $path");
+        }
+    }
+    
+    # Get absolute path
+    require Cwd;
+    my $abs_path = Cwd::abs_path($path);
+    
+    # Check if directory exists
+    if (-d $abs_path) {
+        # Directory exists - check if writable if requested
+        if ($writable && !-w $abs_path) {
+            return (0, "Directory '$path' exists but is not writable");
+        }
+        return (1, $abs_path);
+    }
+    
+    # Directory doesn't exist
+    if ($must_exist) {
+        return (0, "Directory '$path' does not exist");
+    }
+    
+    # If we don't require it to exist, check that parent exists and is writable
+    my $parent = $path;
+    $parent =~ s{/[^/]*$}{};
+    $parent = '.' if $parent eq '';
+    
+    if (-d $parent && -w $parent) {
+        return (1, $path);
+    }
+    
+    return (0, "Parent directory of '$path' does not exist or is not writable");
+}
+
 =head2 validate_integer
 
 Validate a value is a positive integer within optional bounds.
