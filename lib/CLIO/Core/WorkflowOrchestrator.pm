@@ -1070,8 +1070,10 @@ sub process_input {
                         my $reset_color = '@RESET@';
                         
                         print "$dim_color$connector $data_color$action_detail$reset_color\n";
+                        STDOUT->flush() if STDOUT->can('flush');
                     } else {
                         print "$connector $action_detail\n";
+                        STDOUT->flush() if STDOUT->can('flush');
                     }
                     $| = 1;
                 }
