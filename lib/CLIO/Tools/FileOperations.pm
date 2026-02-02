@@ -1408,8 +1408,11 @@ sub multi_replace_string {
     
     print STDERR "[DEBUG][FileOp] Completed: $success_count succeeded, $fail_count failed, $total_replacements total replacements\n" if should_log('DEBUG');
     
-    # Build summary message
+    # Build summary message and action description
     my $message = "$success_count of $total_count operations succeeded ($total_replacements replacements)";
+    my $action_desc = ($total_count == 1) 
+        ? "replacing text in 1 file ($total_replacements replacement" . ($total_replacements == 1 ? ")" : "s)")
+        : "replacing text in $total_count files ($total_replacements replacements)";
     
     # If all failed, return error
     if ($success_count == 0) {
@@ -1424,6 +1427,7 @@ sub multi_replace_string {
     # If some succeeded, return success with details
     return $self->success_result(
         $message,
+        action_description => $action_desc,
         successful => \@successful,
         failed => \@failed,
         success_count => $success_count,
