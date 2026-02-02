@@ -2,7 +2,11 @@ package CLIO::UI::TerminalGuard;
 
 use strict;
 use warnings;
+use utf8;
 use CLIO::Compat::Terminal qw(ReadMode);
+
+binmode(STDOUT, ':encoding(UTF-8)');
+binmode(STDERR, ':encoding(UTF-8)');
 
 =head1 NAME
 
