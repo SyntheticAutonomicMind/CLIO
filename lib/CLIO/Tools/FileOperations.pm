@@ -952,10 +952,13 @@ sub semantic_search {
     my $message = "Found $result_count files matching '$query'";
     $message .= " (showing top $max_results)" if $result_count > $max_results;
     
+    my $action_desc = "searching codebase for '$query' ($result_count matches)";
+    
     print STDERR "[DEBUG][FileOp] Semantic search found $result_count files\n" if should_log('DEBUG');
     
     return $self->success_result(
         $message,
+        action_description => $action_desc,
         files => \@results,
         count => $result_count,
         keywords => \@keywords,
