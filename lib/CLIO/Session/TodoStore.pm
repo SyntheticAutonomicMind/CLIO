@@ -406,9 +406,15 @@ sub _save {
     my $file = $self->_todos_file();
     my $json = JSON::PP->new->utf8->pretty->canonical->encode($data);
     
-    open my $fh, '>:encoding(UTF-8)', $file or die "Cannot write todos file: $!";
+    # Atomic write: write to temp file, then rename
+    # This prevents corruption if process is killed during write
+    my $temp_file = $file . '.tmp';
+    open my $fh, '>:encoding(UTF-8)', $temp_file or die "Cannot create temp todos file: $!";
     print $fh $json;
     close $fh;
+    
+    # Atomic rename (overwrites target file atomically on Unix)
+    rename $temp_file, $file or die "Cannot save todos (rename failed): $!";
     
     print STDERR "[DEBUG][TodoStore] Saved to $file\n" if should_log('DEBUG');
 }
