@@ -121,13 +121,15 @@ sub list_usages {
     
     if ($count == 0) {
         my $action_desc = "searching for symbol '$symbol_name' (found 0 usages)";
-        return $self->success_result(
-            "No usages found for '$symbol_name'",
+        return {
+            success => 1,
+            output => "No usages found for '$symbol_name'",
             action_description => $action_desc,
-            usages => \@usages,
+            tool_name => 'code_intelligence',
+            usages => [],
             count => 0,
             symbol => $symbol_name,
-        );
+        };
     }
     
     # Sort by file, then line number
