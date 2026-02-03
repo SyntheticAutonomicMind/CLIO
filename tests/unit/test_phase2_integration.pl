@@ -86,15 +86,15 @@ foreach my $theme_name (qw(default verbose compact)) {
     # Test 2.1: Pagination prompts load and render (visual verification shows box-drawing)
     my $hint = $theme->get_pagination_hint(0);
     my $prompt = $theme->get_pagination_prompt(1, 5, 1);
-    my $input = $theme->get_input_prompt("Test");
+    my ($conf_header, $conf_input) = @{$theme->get_confirmation_prompt("Test?", "yes/no", "cancel")};
     
     # Just verify they're not empty and contain expected elements
     my $hint_ok = length($hint) > 5;
     my $prompt_ok = length($prompt) > 5 && $prompt =~ /1\/5/;
-    my $input_ok = length($input) > 5 && $input =~ /Test/;
+    my $conf_ok = length($conf_header) > 5 && length($conf_input) > 5 && $conf_header =~ /Test/;
     
-    if ($hint_ok && $prompt_ok && $input_ok) {
-        print "[PASS] Theme '$theme_name' renders pagination/input prompts\n";
+    if ($hint_ok && $prompt_ok && $conf_ok) {
+        print "[PASS] Theme '$theme_name' renders pagination/confirmation prompts\n";
         $passed++;
     } else {
         print "[FAIL] Theme '$theme_name' prompt rendering\n";

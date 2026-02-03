@@ -40,11 +40,11 @@ pagination_prompt={style.dim}└─┤ {style.data}Page {var.current} of {var.to
 
 # Input prompts (box-drawing style)
 input_prompt={style.dim}┌──┤ {style.prompt_indicator}{var.prompt}@RESET@
-input_prompt_with_default={style.dim}┌──┤ {style.prompt_indicator}{var.prompt}{style.dim} | {style.data}Enter{style.dim} to {style.data}{var.default_action}@RESET@
+input_prompt_with_default={style.dim}┌──┤ {style.prompt_indicator}{var.prompt}{style.dim} │ {style.data}Enter{style.dim} to {style.data}{var.default_action}@RESET@
 
 # Confirmation prompts (box-drawing two-part format)
 confirmation_header={style.dim}┌──┤ {style.prompt_indicator}{var.question}@RESET@
-confirmation_input={style.dim}└─┤ {style.data}{var.options}{style.dim} | {style.data}Enter{style.dim} to {style.data}{var.default_action}{style.dim}:@RESET@
+confirmation_input={style.dim}└─┤ {style.data}{var.options}{style.dim} │ {style.data}Enter{style.dim} to {style.data}{var.default_action}{style.dim}: @RESET@
 
 # Messages - labeled
 user_message_prefix={style.user_text}[You said]: @RESET@
