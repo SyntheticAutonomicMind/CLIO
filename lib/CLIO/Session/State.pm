@@ -81,7 +81,7 @@ sub save {
         }
     }
     
-    open my $fh, '>', $self->{file} or die "Cannot save session: $!";
+    # Prepare data to save
     my $data = {
         history => $self->{history},
         stm     => $self->{stm}->{history},
@@ -102,8 +102,16 @@ sub save {
     if ($ENV{CLIO_DEBUG} || $self->{debug}) {
         print STDERR "[STATE][DEBUG] Data to save: " . Dumper($data) . "\n";
     }
+    
+    # Atomic write: write to temp file, then rename
+    # This prevents corruption if process is killed during write
+    my $temp_file = $self->{file} . '.tmp';
+    open my $fh, '>', $temp_file or die "Cannot create temp session file: $!";
     print $fh encode_json($data);
     close $fh;
+    
+    # Atomic rename (overwrites target file atomically on Unix)
+    rename $temp_file, $self->{file} or die "Cannot save session (rename failed): $!";
 }
 sub load {
     my ($class, $session_id, %args) = @_;
