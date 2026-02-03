@@ -350,15 +350,11 @@ sub run {
                 print STDERR "[DEBUG][Chat] Created persistent spinner in inline mode\n" if should_log('DEBUG');
             }
             
-            # Print "CLIO: " prefix before starting spinner
-            # Spinner will animate inline after this text
-            print $self->colorize("CLIO: ", 'ASSISTANT');
-            STDOUT->flush() if STDOUT->can('flush');
-            $self->{line_count}++;
-            
-            # Start the inline spinner (animates after the prefix we just printed)
+            # DON'T print "CLIO: " prefix here - we'll print it in on_chunk when actual content arrives
+            # This prevents the prefix from appearing for tool-only responses or system messages
+            # Start the inline spinner (will animate until first chunk arrives)
             $self->{spinner}->start();
-            print STDERR "[DEBUG][Chat] Started inline spinner after CLIO: prefix\n" if should_log('DEBUG');
+            print STDERR "[DEBUG][Chat] Started spinner (will print CLIO: prefix on first content chunk)\n" if should_log('DEBUG');
             
             # Reference for use in closures below
             my $spinner = $self->{spinner};
@@ -395,23 +391,21 @@ sub run {
                 print STDERR "[DEBUG][Chat] Received chunk: " . substr($chunk, 0, 50) . "...\n" if $self->{debug};
                 
                 # Stop progress spinner on first chunk (AI is now responding)
-                # Spinner animates inline after "CLIO: " prefix which was already printed
-                # Just stop the spinner to remove it, the prefix stays
+                # Now that we have actual content, print "CLIO: " prefix and stop spinner
                 # Also check _prepare_for_next_iteration flag set by WorkflowOrchestrator
-                # after tool execution - this ensures spinner stops even on continuation chunks
+                # after tool execution - this ensures proper prefix on continuation chunks
                 if (!$first_chunk_received || $self->{_prepare_for_next_iteration}) {
-                    $spinner->stop();  # Removes spinner
+                    $spinner->stop();  # Removes spinner character
                     
-                    # If this is a continuation after tool execution, clear the entire line
-                    # to remove the "CLIO: " prefix that was printed before the spinner
+                    # Print "CLIO: " prefix now that we know there's actual content
+                    print $self->colorize("CLIO: ", 'ASSISTANT');
+                    STDOUT->flush() if STDOUT->can('flush');
+                    
                     if ($self->{_prepare_for_next_iteration}) {
-                        print "\r\e[K";  # Carriage return + clear entire line
-                        # Now print fresh "CLIO: " prefix
-                        print $self->colorize("CLIO: ", 'ASSISTANT');
-                        STDOUT->flush() if STDOUT->can('flush');
+                        # This is a continuation after tool execution
                         $self->{_prepare_for_next_iteration} = 0;  # Clear the flag
+                        print STDERR "[DEBUG][Chat] Printed CLIO: prefix for continuation after tools\n" if $self->{debug};
                     }
-                    # Otherwise just leave the "CLIO: " prefix intact from initial prompt
                     
                     # Enable pagination for text responses (agent is speaking directly)
                     # This will be left enabled unless/until tools are invoked
@@ -420,17 +414,14 @@ sub run {
                         print STDERR "[DEBUG][Chat] Pagination ENABLED for text response\n" if $self->{debug};
                     }
                     
-                    print STDERR "[DEBUG][Chat] First chunk received, spinner removed (CLIO: prefix remains)\n" if $self->{debug};
+                    print STDERR "[DEBUG][Chat] First chunk received, printed CLIO: prefix and removed spinner\n" if $self->{debug};
                     $first_chunk_received = 1;
                 }
                 
-                # Display role label only when _need_agent_prefix is set
-                # (this happens after tool execution when we need a new CLIO: prefix for continuation)
-                # NOTE: This should no longer be needed since we handle it above with _prepare_for_next_iteration
+                # Clear the _need_agent_prefix flag if set (no longer needed)
                 if ($self->{_need_agent_prefix}) {
                     $self->{_need_agent_prefix} = 0;  # Clear the flag
-                    # Don't print prefix here - it's already handled above
-                    print STDERR "[DEBUG][Chat] _need_agent_prefix was set but prefix already printed\n" if $self->{debug};
+                    print STDERR "[DEBUG][Chat] Cleared _need_agent_prefix flag\n" if $self->{debug};
                 }
                 
                 # Add chunk to line buffer (using $self for access from flush_output_buffer)
