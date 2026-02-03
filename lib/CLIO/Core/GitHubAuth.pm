@@ -110,7 +110,7 @@ sub start_device_flow {
     unless ($response->is_success) {
         my $status = $response->code;
         my $error = $response->decoded_content || 'Unknown error';
-        print STDERR "[ERROR][GitHubAuth] Device code request failed: HTTP $status - $error\n";
+        print STDERR "[ERROR][GitHubAuth] Device code request failed: HTTP $status - $error\n" if should_log('ERROR');
         die "Device code request failed: HTTP $status";
     }
     
@@ -202,19 +202,19 @@ sub poll_for_token {
             }
             elsif ($error eq 'expired_token') {
                 # Device code expired
-                print STDERR "[ERROR][GitHubAuth] Device code expired\n";
+                print STDERR "[ERROR][GitHubAuth] Device code expired\n" if should_log('ERROR');
                 alarm(0);  # Disable alarm before dying
                 die "Device code expired. Please try again.";
             }
             elsif ($error eq 'access_denied') {
                 # User denied authorization
-                print STDERR "[ERROR][GitHubAuth] User denied authorization\n";
+                print STDERR "[ERROR][GitHubAuth] User denied authorization\n" if should_log('ERROR');
                 alarm(0);  # Disable alarm before dying
                 die "Authorization denied by user";
             }
             else {
                 # Unknown error
-                print STDERR "[ERROR][GitHubAuth] Token poll error: $error\n";
+                print STDERR "[ERROR][GitHubAuth] Token poll error: $error\n" if should_log('ERROR');
                 alarm(0);  # Disable alarm before dying
                 die "Token poll error: $error";
             }
@@ -233,7 +233,7 @@ sub poll_for_token {
     
     # Timeout reached
     alarm(0);  # Disable alarm before dying
-    print STDERR "[ERROR][GitHubAuth] Authorization timed out after 15 minutes\n";
+    print STDERR "[ERROR][GitHubAuth] Authorization timed out after 15 minutes\n" if should_log('ERROR');
     die "Authorization timed out after 15 minutes. Please try again.";
 }
 
@@ -280,7 +280,7 @@ sub exchange_for_copilot_token {
         }
         
         # Other errors are real failures
-        print STDERR "[ERROR][GitHubAuth] Copilot token exchange failed: HTTP $status - $error\n";
+        print STDERR "[ERROR][GitHubAuth] Copilot token exchange failed: HTTP $status - $error\n" if should_log('ERROR');
         die "Copilot token exchange failed: HTTP $status - $error";
     }
     

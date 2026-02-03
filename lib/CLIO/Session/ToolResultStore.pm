@@ -136,7 +136,7 @@ END_MARKER
     if ($@) {
         # Fallback: If persistence fails, truncate and log warning
         my $error = $@;
-        print STDERR "[ERROR][ToolResultStore] Failed to persist result: $error\n";
+        print STDERR "[ERROR][ToolResultStore] Failed to persist result: $error\n" if should_log('ERROR');
         
         my $truncated = substr($content, 0, $MAX_INLINE_SIZE);
         $marker = <<END_FALLBACK;
@@ -227,7 +227,7 @@ sub persistResult {
     };
     if ($@) {
         my $error = $@;
-        print STDERR "[ERROR][ToolResultStore] Failed to create directory: $error\n";
+        print STDERR "[ERROR][ToolResultStore] Failed to create directory: $error\n" if should_log('ERROR');
         die "Failed to create tool_results directory: $error";
     }
     
@@ -244,7 +244,7 @@ sub persistResult {
     };
     if ($@) {
         my $error = $@;
-        print STDERR "[ERROR][ToolResultStore] Failed to write file: $error\n";
+        print STDERR "[ERROR][ToolResultStore] Failed to write file: $error\n" if should_log('ERROR');
         die "Failed to write tool result file: $error";
     }
     
@@ -403,7 +403,7 @@ sub retrieveChunk {
     };
     if ($@) {
         my $error = $@;
-        print STDERR "[ERROR][ToolResultStore] Failed to read file: $error\n";
+        print STDERR "[ERROR][ToolResultStore] Failed to read file: $error\n" if should_log('ERROR');
         die "Failed to read tool result file: $error";
     }
     
@@ -584,7 +584,7 @@ sub deleteResult {
     };
     if ($@) {
         my $error = $@;
-        print STDERR "[ERROR][ToolResultStore] Failed to delete result: $error\n";
+        print STDERR "[ERROR][ToolResultStore] Failed to delete result: $error\n" if should_log('ERROR');
         die "Failed to delete tool result: $error";
     }
 }
@@ -616,7 +616,7 @@ sub deleteAllResults {
     };
     if ($@) {
         my $error = $@;
-        print STDERR "[ERROR][ToolResultStore] Failed to delete tool results directory: $error\n";
+        print STDERR "[ERROR][ToolResultStore] Failed to delete tool results directory: $error\n" if should_log('ERROR');
         die "Failed to delete tool results directory: $error";
     }
 }
