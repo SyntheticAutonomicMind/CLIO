@@ -282,7 +282,8 @@ sub process_input {
     my @tool_calls_made = ();
     my $start_time = time();
     my $retry_count = 0;  # Track retries per iteration (prevents infinite loops)
-    my $max_retries = 3;  # Maximum retries before giving up
+    my $max_retries = 3;  # Maximum retries for API errors (malformed JSON, etc.)
+    my $max_server_retries = 20;  # Higher limit for server/network errors (502, 503, 599)
     
     # Session-level error budget: Limit total errors across all iterations
     # This prevents cascading failures from consuming the entire session
@@ -409,9 +410,13 @@ sub process_input {
             if ($api_response->{retryable}) {
                 $retry_count++;
                 
+                # Determine which retry limit to use based on error type
+                my $error_type_for_limit = $api_response->{error_type} || '';
+                my $retry_limit = ($error_type_for_limit eq 'server_error') ? $max_server_retries : $max_retries;
+                
                 # Check if we've exceeded max retries for this iteration
-                if ($retry_count > $max_retries) {
-                    log_error('WorkflowOrchestrator', "Maximum retries ($max_retries) exceeded for this iteration");
+                if ($retry_count > $retry_limit) {
+                    log_error('WorkflowOrchestrator', "Maximum retries ($retry_limit) exceeded for this iteration");
                     return {
                         success => 0,
                         error => "Maximum retries exceeded: $error",
@@ -424,7 +429,7 @@ sub process_input {
                 
                 # Determine error type for logging
                 my $error_type = $error =~ /rate limit/i ? "rate limit" : "server error";
-                my $system_msg = "Temporary $error_type detected. Retrying in ${retry_delay}s... (attempt $retry_count/$max_retries)";
+                my $system_msg = "Temporary $error_type detected. Retrying in ${retry_delay}s... (attempt $retry_count/$retry_limit)";
                 
                 # Special handling for malformed tool JSON errors
                 # ONE RETRY ONLY: Remove bad message, add guidance with tool schema, let AI fix it
@@ -577,7 +582,7 @@ sub process_input {
                     $retry_delay = $retry_delay * $backoff_multiplier;
                     
                     $error_type = "server error";
-                    $system_msg = "Server temporarily unavailable. Retrying in ${retry_delay}s with exponential backoff... (attempt $retry_count/$max_retries)";
+                    $system_msg = "Server temporarily unavailable. Retrying in ${retry_delay}s with exponential backoff... (attempt $retry_count/$max_server_retries)";
                     
                     print STDERR "[INFO][WorkflowOrchestrator] Applying exponential backoff for server error: ${retry_delay}s delay\n"
                         if should_log('INFO');
@@ -1030,6 +1035,11 @@ sub process_input {
                 # Handle tool group transitions (new tool type starting)
                 if ($tool_name ne $current_tool) {
                     # Transitioning to a new tool type
+                    # Reset system message flag when tool output starts
+                    if ($self->{ui}) {
+                        $self->{ui}->{_last_was_system_message} = 0;
+                    }
+                    
                     # Print box-drawing header for this tool
                     if ($self->{ui} && $self->{ui}->can('colorize')) {
                         # Only add spacing if this isn't the first tool output
