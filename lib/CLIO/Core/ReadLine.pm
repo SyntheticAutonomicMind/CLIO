@@ -31,6 +31,9 @@ sub new {
         completer => $args{completer},  # CLIO::Core::TabCompletion instance
         debug => $args{debug} || 0,
         max_history => $args{max_history} || 1000,
+        # Track how many terminal lines the current input occupies
+        # This is MEASURED (from last redraw), not calculated
+        display_lines => 1,
     };
     
     return bless $self, $class;
@@ -57,6 +60,9 @@ sub readline {
     my ($self, $prompt) = @_;
     
     $prompt //= $self->{prompt};
+    
+    # Reset display lines tracking for new input
+    $self->{display_lines} = 1;
     
     # Print prompt
     print $prompt;
@@ -568,7 +574,11 @@ sub history_next {
 
 =head2 redraw_line
 
-Redraw the input line with cursor at correct position
+Redraw the input line with cursor at correct position.
+
+Uses natural terminal wrapping instead of cursor positioning arithmetic.
+Tracks the number of lines occupied by the input display and clears them
+before redrawing, avoiding artifacts from cursor movement.
 
 =cut
 
@@ -579,72 +589,83 @@ sub redraw_line {
     $prompt //= '';
     
     # Safety: clamp cursor position to valid range (0 to length of input)
-    # This prevents display corruption from out-of-bounds cursor positioning
     my $input_len = length($$input_ref);
     if ($$cursor_pos_ref < 0) {
-        print STDERR "[WARN][ReadLine] Cursor position was negative ($cursor_pos_ref), clamping to 0\n";
+        print STDERR "[WARN][ReadLine] Cursor position was negative ($$cursor_pos_ref), clamping to 0\n";
         $$cursor_pos_ref = 0;
     } elsif ($$cursor_pos_ref > $input_len) {
-        print STDERR "[WARN][ReadLine] Cursor position exceeded input length ($cursor_pos_ref > $input_len), clamping to $input_len\n";
+        print STDERR "[WARN][ReadLine] Cursor position exceeded input length ($$cursor_pos_ref > $input_len), clamping to $input_len\n";
         $$cursor_pos_ref = $input_len;
     }
     
     # Get terminal width for proper wrapping
     my ($term_width, $term_height) = GetTerminalSize();
-    $term_width ||= 80;  # Fallback if detection fails
+    $term_width ||= 80;
     $term_height ||= 24;
-    
-    # Safety: prevent division by zero on impossibly small terminals
     $term_width = 80 if $term_width < 10;
     
     # Calculate visible prompt length (strip ANSI codes)
     my $visible_prompt = $prompt;
-    $visible_prompt =~ s/\e\[[0-9;]*m//g;  # Remove ANSI color codes
+    $visible_prompt =~ s/\e\[[0-9;]*m//g;
     my $prompt_len = length($visible_prompt);
     
-    # Calculate cursor position accounting for wrapping
-    # Terminal wraps AFTER last column, not AT last column
-    # So column 109 is still row 0, column 110 wraps to row 1
-    my $cursor_col = $prompt_len + $$cursor_pos_ref;
-    my $cursor_row = $cursor_col > 0 ? int(($cursor_col - 1) / $term_width) : 0;
-    my $cursor_col_in_row = $cursor_col > 0 ? (($cursor_col - 1) % $term_width) + 1 : 0;
+    # Clear the current input display
+    # We track how many lines we used last time in $self->{display_lines}
+    my $lines_to_clear = $self->{display_lines} || 1;
     
-    # Calculate where the end of input is
-    my $end_col = $prompt_len + length($$input_ref);
-    my $end_row = $end_col > 0 ? int(($end_col - 1) / $term_width) : 0;
-    
-    # Before clearing, we need to move to the FIRST row (row 0)
-    # Otherwise \e[J will only clear from current row downward, leaving old content above
-    # First, figure out where we are NOW (cursor could be anywhere from previous operations)
-    my $current_col = $prompt_len + $$cursor_pos_ref;
-    my $current_row = $current_col > 0 ? int(($current_col - 1) / $term_width) : 0;
-    
-    # Move up to row 0 if we're not already there
-    if ($current_row > 0) {
-        print "\e[${current_row}A";  # Move up current_row lines
+    if ($lines_to_clear > 1) {
+        my $up_count = $lines_to_clear - 1;
+        print "\e[${up_count}A";
     }
     
-    # Now we're at row 0 - move to beginning of line and clear everything below
-    print "\r";
-    print "\e[J";  # Clear from here (row 0, column 0) to end of screen
+    # Now at first line - move to beginning and clear everything below
+    print "\r\e[J";
     
-    # Print prompt and input
+    # Print prompt and input (terminal wraps naturally)
     print $prompt, $$input_ref;
     
-    # After printing, cursor is at end of input (end_row)
-    # We need to move to cursor position (cursor_row, cursor_col_in_row)
-    my $rows_to_move_up = $end_row - $cursor_row;
+    # Calculate how many lines we just used
+    my $total_chars = $prompt_len + $input_len;
+    my $lines_used = $total_chars > 0 ? int(($total_chars - 1) / $term_width) + 1 : 1;
+    $self->{display_lines} = $lines_used;
     
-    if ($rows_to_move_up > 0) {
-        # Move up to the cursor's row
-        print "\e[${rows_to_move_up}A";
-    }
+    # After printing, cursor is at end of input
+    # We need to position cursor at the correct location
     
-    # Move to beginning of line and then to correct column
-    print "\r";
-    if ($cursor_col_in_row > 0) {
-        print "\e[${cursor_col_in_row}C";
+    # Calculate where cursor should be
+    my $cursor_total_pos = $prompt_len + $$cursor_pos_ref;
+    my $end_total_pos = $prompt_len + $input_len;
+    
+    # Calculate row and column for both positions
+    # Row 0 is first line, counting from 0
+    my $cursor_row = $cursor_total_pos > 0 ? int(($cursor_total_pos - 1) / $term_width) : 0;
+    my $cursor_col = $cursor_total_pos > 0 ? (($cursor_total_pos - 1) % $term_width) + 1 : 1;
+    
+    my $end_row = $end_total_pos > 0 ? int(($end_total_pos - 1) / $term_width) : 0;
+    my $end_col = $end_total_pos > 0 ? (($end_total_pos - 1) % $term_width) + 1 : 1;
+    
+    # Currently at end position (end_row, end_col)
+    # Need to move to cursor position (cursor_row, cursor_col)
+    
+    if ($cursor_row < $end_row) {
+        # Cursor is on an earlier line - move up
+        my $rows_up = $end_row - $cursor_row;
+        print "\e[${rows_up}A";
+        # After moving up, we're at column end_col on the target row
+        # Move to beginning of line, then forward to cursor_col
+        print "\r";
+        if ($cursor_col > 1) {
+            my $cols_right = $cursor_col - 1;
+            print "\e[${cols_right}C";
+        }
+    } elsif ($cursor_row == $end_row) {
+        # Same row - just move horizontally
+        if ($cursor_col < $end_col) {
+            my $cols_left = $end_col - $cursor_col;
+            print "\e[${cols_left}D";
+        }
     }
+    # If cursor_row > end_row, something is wrong (shouldn't happen)
 }
 
 =head2 add_to_history
