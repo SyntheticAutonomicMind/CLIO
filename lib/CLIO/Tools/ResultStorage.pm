@@ -75,7 +75,7 @@ sub process_result {
     };
     
     if ($@) {
-        print STDERR "[ERROR][ResultStorage] Failed to persist: $@\n";
+        print STDERR "[ERROR][ResultStorage] Failed to persist: $@\n" if should_log('ERROR');
         # Fallback: truncate
         my $truncated = substr($content, 0, MAX_INLINE_SIZE);
         return "[WARNING: Result too large ($size bytes) and persistence failed]\n\n"

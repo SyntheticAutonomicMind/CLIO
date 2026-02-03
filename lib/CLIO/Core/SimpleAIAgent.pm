@@ -49,7 +49,7 @@ sub new {
         print STDERR "[DEBUG][SimpleAIAgent] Orchestrator initialized in constructor\n" if should_log('DEBUG');
     };
     if ($@) {
-        print STDERR "[ERROR][SimpleAIAgent] Failed to initialize orchestrator: $@\n";
+        print STDERR "[ERROR][SimpleAIAgent] Failed to initialize orchestrator: $@\n" if should_log('ERROR');
     }
     
     return $self;

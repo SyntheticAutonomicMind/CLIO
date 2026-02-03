@@ -91,14 +91,14 @@ sub execute {
     my $operation = $params->{operation};
     unless ($operation) {
         my $available = join(', ', @{$self->{supported_operations}});
-        print STDERR "[ERROR][Tool:$self->{name}] Missing 'operation' parameter. Available: $available\n";
+        print STDERR "[ERROR][Tool:$self->{name}] Missing 'operation' parameter. Available: $available\n" if should_log('ERROR');
         return $self->operation_error("Missing 'operation' parameter");
     }
     
     # Validate operation
     unless ($self->validate_operation($operation)) {
         my $available = join(', ', @{$self->{supported_operations}});
-        print STDERR "[ERROR][Tool:$self->{name}] Unknown operation: '$operation'. Available: $available\n";
+        print STDERR "[ERROR][Tool:$self->{name}] Unknown operation: '$operation'. Available: $available\n" if should_log('ERROR');
         return $self->operation_error("Unknown operation: $operation");
     }
     

@@ -316,7 +316,7 @@ sub download_version {
     # Get release info for this version
     my $release = $self->get_release_by_version($version);
     unless ($release && $release->{tarball_url}) {
-        print STDERR "[ERROR][Update] Cannot find release for version: $version\n";
+        print STDERR "[ERROR][Update] Cannot find release for version: $version\n" if should_log('ERROR');
         return undef;
     }
     
@@ -331,7 +331,7 @@ sub download_version {
     }
     
     mkpath($download_dir) or do {
-        print STDERR "[ERROR][Update] Cannot create download dir: $!\n";
+        print STDERR "[ERROR][Update] Cannot create download dir: $!\n" if should_log('ERROR');
         return undef;
     };
     
@@ -343,7 +343,7 @@ sub download_version {
     my $curl_result = system("curl", "-sL", "-m", "30", "-o", $tarball_path, $tarball_url);
     
     if ($curl_result != 0) {
-        print STDERR "[ERROR][Update] Download failed\n";
+        print STDERR "[ERROR][Update] Download failed\n" if should_log('ERROR');
         rmtree($download_dir);
         return undef;
     }
@@ -355,7 +355,7 @@ sub download_version {
     my $extract_result = system("cd '$download_dir' && tar -xzf clio.tar.gz 2>/dev/null");
     
     if ($extract_result != 0) {
-        print STDERR "[ERROR][Update] Extraction failed\n";
+        print STDERR "[ERROR][Update] Extraction failed\n" if should_log('ERROR');
         rmtree($download_dir);
         return undef;
     }
@@ -366,7 +366,7 @@ sub download_version {
     closedir($dh);
     
     unless (@subdirs) {
-        print STDERR "[ERROR][Update] No extracted directory found\n";
+        print STDERR "[ERROR][Update] No extracted directory found\n" if should_log('ERROR');
         rmtree($download_dir);
         return undef;
     }
@@ -375,7 +375,7 @@ sub download_version {
     
     # Verify it looks like CLIO
     unless (-f "$extracted_dir/clio") {
-        print STDERR "[ERROR][Update] Downloaded directory doesn't look like CLIO (no ./clio executable)\n";
+        print STDERR "[ERROR][Update] Downloaded directory doesn't look like CLIO (no ./clio executable)\n" if should_log('ERROR');
         rmtree($download_dir);
         return undef;
     }
@@ -704,7 +704,7 @@ sub download_latest {
     # Get latest release info
     my $release = $self->get_latest_version();
     unless ($release && $release->{tarball_url}) {
-        print STDERR "[ERROR][Update] Cannot get latest release info\n";
+        print STDERR "[ERROR][Update] Cannot get latest release info\n" if should_log('ERROR');
         return undef;
     }
     
@@ -720,7 +720,7 @@ sub download_latest {
     }
     
     mkpath($download_dir) or do {
-        print STDERR "[ERROR][Update] Cannot create download dir: $!\n";
+        print STDERR "[ERROR][Update] Cannot create download dir: $!\n" if should_log('ERROR');
         return undef;
     };
     
@@ -732,7 +732,7 @@ sub download_latest {
     my $curl_result = system("curl", "-sL", "-m", "30", "-o", $tarball_path, $tarball_url);
     
     if ($curl_result != 0) {
-        print STDERR "[ERROR][Update] Download failed\n";
+        print STDERR "[ERROR][Update] Download failed\n" if should_log('ERROR');
         rmtree($download_dir);
         return undef;
     }
@@ -744,7 +744,7 @@ sub download_latest {
     my $extract_result = system("cd '$download_dir' && tar -xzf clio.tar.gz 2>/dev/null");
     
     if ($extract_result != 0) {
-        print STDERR "[ERROR][Update] Extraction failed\n";
+        print STDERR "[ERROR][Update] Extraction failed\n" if should_log('ERROR');
         rmtree($download_dir);
         return undef;
     }
@@ -755,7 +755,7 @@ sub download_latest {
     closedir($dh);
     
     unless (@subdirs) {
-        print STDERR "[ERROR][Update] No extracted directory found\n";
+        print STDERR "[ERROR][Update] No extracted directory found\n" if should_log('ERROR');
         rmtree($download_dir);
         return undef;
     }
@@ -764,7 +764,7 @@ sub download_latest {
     
     # Verify it looks like CLIO (has ./clio executable)
     unless (-f "$extracted_dir/clio") {
-        print STDERR "[ERROR][Update] Downloaded directory doesn't look like CLIO (no ./clio executable)\n";
+        print STDERR "[ERROR][Update] Downloaded directory doesn't look like CLIO (no ./clio executable)\n" if should_log('ERROR');
         rmtree($download_dir);
         return undef;
     }
@@ -791,20 +791,20 @@ sub install_from_directory {
     my ($self, $source_dir) = @_;
     
     unless (-d $source_dir && -f "$source_dir/clio") {
-        print STDERR "[ERROR][Update] Invalid source directory: $source_dir\n";
+        print STDERR "[ERROR][Update] Invalid source directory: $source_dir\n" if should_log('ERROR');
         return 0;
     }
     
     # Verify install.sh exists
     unless (-f "$source_dir/install.sh") {
-        print STDERR "[ERROR][Update] install.sh not found in source directory\n";
+        print STDERR "[ERROR][Update] install.sh not found in source directory\n" if should_log('ERROR');
         return 0;
     }
     
     # Detect current installation location
     my $install_info = $self->detect_install_location();
     unless ($install_info) {
-        print STDERR "[ERROR][Update] Cannot detect CLIO installation location\n";
+        print STDERR "[ERROR][Update] Cannot detect CLIO installation location\n" if should_log('ERROR');
         return 0;
     }
     
@@ -822,7 +822,7 @@ sub install_from_directory {
     chomp $original_dir;
     
     chdir($source_dir) or do {
-        print STDERR "[ERROR][Update] Cannot cd to $source_dir: $!\n";
+        print STDERR "[ERROR][Update] Cannot cd to $source_dir: $!\n" if should_log('ERROR');
         return 0;
     };
     
@@ -863,8 +863,8 @@ sub install_from_directory {
     $success = ($result == 0);
     
     if (!$success) {
-        print STDERR "[ERROR][Update] Installation command failed: $install_cmd\n";
-        print STDERR "[ERROR][Update] Exit code: " . ($result >> 8) . "\n";
+        print STDERR "[ERROR][Update] Installation command failed: $install_cmd\n" if should_log('ERROR');
+        print STDERR "[ERROR][Update] Exit code: " . ($result >> 8) . "\n" if should_log('ERROR');
     }
     
     chdir($original_dir);

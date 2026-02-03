@@ -435,7 +435,7 @@ sub resolve_file {
         close $fh;
     }
     else {
-        print STDERR "[ERROR][HashtagParser] Failed to read file $path: $!\n";
+        print STDERR "[ERROR][HashtagParser] Failed to read file $path: $!\n" if should_log('ERROR');
         return {
             type => 'file',
             path => $path,
