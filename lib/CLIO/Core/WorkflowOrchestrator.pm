@@ -1485,7 +1485,7 @@ sub _generate_datetime_section {
     
     $section .= "**IMPORTANT - Context & Time Management:**\n\n";
     $section .= "CLIO manages your context window and processing time automatically.\n";
-    $section .= "- Tokens and time are not constraints for you. Work until the user asks you to stop."
+    $section .= "- Tokens and time are not constraints for you. Work until the user asks you to stop.\n";
     $section .= "- Focus entirely on delivering complete, high-quality work.  Complex tasks are easy for you.\n";
     
     return $section;
