@@ -46,3 +46,6 @@ confirmation_input={style.dim}└─┤ {style.data}{var.options}{style.dim} [{s
 # Messages - no prefixes, just color differentiation
 user_message_prefix={style.user_text}@RESET@
 agent_message_prefix={style.agent_text}@RESET@
+
+# Tool display format
+tool_display_format=box
