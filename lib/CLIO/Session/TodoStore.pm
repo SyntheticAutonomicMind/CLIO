@@ -103,7 +103,7 @@ sub read {
     };
     
     if ($@) {
-        print STDERR "[ERROR][TodoStore] Failed to read todos: $@\n";
+        print STDERR "[ERROR][TodoStore] Failed to read todos: $@\n" if should_log('ERROR');
         return [];
     }
     
@@ -130,7 +130,7 @@ sub write {
     my $errors = $self->validate($todos);
     if (@$errors) {
         my $error_msg = "Todo list validation failed:\n" . join("\n", map { "  - $_" } @$errors);
-        print STDERR "[ERROR][TodoStore] $error_msg\n";
+        print STDERR "[ERROR][TodoStore] $error_msg\n" if should_log('ERROR');
         return (0, $error_msg);
     }
     
@@ -147,7 +147,7 @@ sub write {
     };
     
     if ($@) {
-        print STDERR "[ERROR][TodoStore] Failed to save todos: $@\n";
+        print STDERR "[ERROR][TodoStore] Failed to save todos: $@\n" if should_log('ERROR');
         return (0, "Failed to save todos: $@");
     }
     

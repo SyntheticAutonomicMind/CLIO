@@ -8,6 +8,7 @@ use File::Spec;
 use File::Basename;
 use CLIO::UI::ANSI;
 use CLIO::Util::ConfigPath qw(get_config_dir);
+use CLIO::Core::Logger qw(should_log);
 
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
@@ -182,7 +183,7 @@ sub load_style_file {
     return undef unless -f $path;
     
     open(my $fh, '<:encoding(UTF-8)', $path) or do {
-        print STDERR "[ERROR][Theme] Cannot open style file $path: $!\n";
+        print STDERR "[ERROR][Theme] Cannot open style file $path: $!\n" if should_log('ERROR');
         return undef;
     };
     
@@ -218,7 +219,7 @@ sub load_theme_file {
     return undef unless -f $path;
     
     open(my $fh, '<:encoding(UTF-8)', $path) or do {
-        print STDERR "[ERROR][Theme] Cannot open theme file $path: $!\n";
+        print STDERR "[ERROR][Theme] Cannot open theme file $path: $!\n" if should_log('ERROR');
         return undef;
     };
     
@@ -345,7 +346,7 @@ sub set_style {
     my ($self, $name) = @_;
     
     unless (exists $self->{styles}->{$name}) {
-        print STDERR "[ERROR][Theme] Style '$name' not found\n";
+        print STDERR "[ERROR][Theme] Style '$name' not found\n" if should_log('ERROR');
         return 0;
     }
     
@@ -364,7 +365,7 @@ sub set_theme {
     my ($self, $name) = @_;
     
     unless (exists $self->{themes}->{$name}) {
-        print STDERR "[ERROR][Theme] Theme '$name' not found\n";
+        print STDERR "[ERROR][Theme] Theme '$name' not found\n" if should_log('ERROR');
         return 0;
     }
     
@@ -504,7 +505,7 @@ sub save_style {
     unless (-d $dir) {
         require File::Path;
         File::Path::make_path($dir) or do {
-            print STDERR "[ERROR][Theme] Cannot create style directory: $!\n";
+            print STDERR "[ERROR][Theme] Cannot create style directory: $!\n" if should_log('ERROR');
             return 0;
         };
     }
@@ -512,7 +513,7 @@ sub save_style {
     my $path = File::Spec->catfile($dir, "$name.style");
     
     open(my $fh, '>:encoding(UTF-8)', $path) or do {
-        print STDERR "[ERROR][Theme] Cannot write style file: $!\n";
+        print STDERR "[ERROR][Theme] Cannot write style file: $!\n" if should_log('ERROR');
         return 0;
     };
     
@@ -544,7 +545,7 @@ sub save_theme {
     unless (-d $dir) {
         require File::Path;
         File::Path::make_path($dir) or do {
-            print STDERR "[ERROR][Theme] Cannot create theme directory: $!\n";
+            print STDERR "[ERROR][Theme] Cannot create theme directory: $!\n" if should_log('ERROR');
             return 0;
         };
     }
@@ -552,7 +553,7 @@ sub save_theme {
     my $path = File::Spec->catfile($dir, "$name.theme");
     
     open(my $fh, '>:encoding(UTF-8)', $path) or do {
-        print STDERR "[ERROR][Theme] Cannot write theme file: $!\n";
+        print STDERR "[ERROR][Theme] Cannot write theme file: $!\n" if should_log('ERROR');
         return 0;
     };
     
