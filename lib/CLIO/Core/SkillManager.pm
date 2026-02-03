@@ -450,7 +450,7 @@ sub _read_skills_file {
     
     my $data = eval { decode_json($json) };
     if ($@) {
-        print STDERR "[ERROR][SkillManager] Failed to parse $file: $@\n";
+        print STDERR "[ERROR][SkillManager] Failed to parse $file: $@\n" if should_log('ERROR');
         return {};
     }
     
@@ -735,7 +735,7 @@ sub _save_skills {
     
     # Write JSON
     open my $fh, '>', $self->{user_skills_file} or do {
-        print STDERR "[ERROR][SkillManager] Cannot write to $self->{user_skills_file}: $!\n";
+        print STDERR "[ERROR][SkillManager] Cannot write to $self->{user_skills_file}: $!\n" if should_log('ERROR');
         return;
     };
     print $fh encode_json($data);

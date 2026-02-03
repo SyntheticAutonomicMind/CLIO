@@ -123,13 +123,13 @@ sub fetch_models {
     
     unless ($resp->is_success) {
         print STDERR "[ERROR][GitHubCopilotModelsAPI] Failed to fetch models: " . 
-            $resp->code . " " . $resp->message . "\n";
+            $resp->code . " " . $resp->message . "\n" if should_log('ERROR');
         return undef;
     }
     
     my $data = eval { decode_json($resp->decoded_content) };
     if ($@) {
-        print STDERR "[ERROR][GitHubCopilotModelsAPI] Failed to parse JSON: $@\n";
+        print STDERR "[ERROR][GitHubCopilotModelsAPI] Failed to parse JSON: $@\n" if should_log('ERROR');
         return undef;
     }
     

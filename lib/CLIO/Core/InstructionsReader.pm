@@ -261,7 +261,7 @@ sub _read_file {
     };
     
     if ($@) {
-        print STDERR "[ERROR][InstructionsReader] Failed to read file $file_path: $@\n";
+        print STDERR "[ERROR][InstructionsReader] Failed to read file $file_path: $@\n" if should_log('ERROR');
         return undef;
     }
     
