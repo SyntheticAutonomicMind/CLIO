@@ -2604,22 +2604,41 @@ sub _prompt_session_learnings {
     # Display learning prompt
     print "\n";
     $self->display_system_message("Session ending. Any important discoveries to remember?");
-    print $self->{theme_mgr}->get_input_prompt("Type learnings", "skip") . "\n";
-    print $self->colorize(": ", 'PROMPT');
     
-    # Get user input (simple readline, not going through AI)
+    my ($header, $input_line) = @{$self->{theme_mgr}->get_confirmation_prompt(
+        "Record session learnings?",
+        "yes/no",
+        "skip"
+    )};
+    
+    print $header, "\n";
+    print $input_line;
     my $response = <STDIN>;
     chomp $response if defined $response;
     
+    # Skip if user declined
+    return unless $response && $response =~ /^y(es)?$/i;
+    
+    # Now prompt for the actual learning text
+    print $self->colorize("\nEnter learnings (Ctrl+D when done):\n> ", 'PROMPT');
+    
+    # Read multi-line input
+    my @lines;
+    while (my $line = <STDIN>) {
+        push @lines, $line;
+    }
+    my $learning_text = join('', @lines);
+    chomp $learning_text if defined $learning_text;
+    
     # Skip if empty
-    return unless $response && $response =~ /\S/;
+    return unless $learning_text && $learning_text =~ /\S/;
     
     # Store as discovery in LTM
     # Parse simple format: treat each sentence/line as a separate discovery
     my @learnings;
     
     # Split by newlines or periods followed by space
-    my @parts = split /(?:\n|\.)\s*/, $response;
+    my @parts = split /(?:\n|\.)\s*/, $learning_text;
     
     for my $part (@parts) {
         $part =~ s/^\s+|\s+$//g;  # Trim whitespace
