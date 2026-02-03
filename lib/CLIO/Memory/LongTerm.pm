@@ -566,9 +566,15 @@ sub save {
         metadata => $self->{metadata},
     };
     
-    open my $fh, '>:encoding(UTF-8)', $file or die "Cannot save LTM to $file: $!";
+    # Atomic write: write to temp file, then rename
+    # This prevents corruption if process is killed during write
+    my $temp_file = $file . '.tmp';
+    open my $fh, '>:encoding(UTF-8)', $temp_file or die "Cannot create temp LTM file: $!";
     print $fh JSON::PP->new->pretty->canonical->encode($data);
     close $fh;
+    
+    # Atomic rename (overwrites target file atomically on Unix)
+    rename $temp_file, $file or die "Cannot save LTM (rename failed): $!";
     
     print STDERR "[DEBUG][LTM] Saved to $file\n" if should_log('DEBUG');
 }
