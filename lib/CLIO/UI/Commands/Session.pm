@@ -359,7 +359,14 @@ sub _clear_session_history {
     }
     
     # Confirm
-    print $self->{chat}{theme_mgr}->get_input_prompt("Clear all conversation history?", "cancel") . " ";
+    my ($header, $input_line) = @{$self->{chat}{theme_mgr}->get_confirmation_prompt(
+        "Clear all conversation history?",
+        "yes/no",
+        "cancel"
+    )};
+    
+    print $header, "\n";
+    print $input_line;
     my $response = <STDIN>;
     chomp $response if defined $response;
     
@@ -474,7 +481,15 @@ sub _trim_sessions {
     
     # Confirm
     $self->writeline("", markdown => 0);
-    print $self->{chat}{theme_mgr}->get_input_prompt("Delete these sessions?", "cancel") . " ";
+    
+    my ($header, $input_line) = @{$self->{chat}{theme_mgr}->get_confirmation_prompt(
+        "Delete these sessions?",
+        "yes/no",
+        "cancel"
+    )};
+    
+    print $header, "\n";
+    print $input_line;
     my $response = <STDIN>;
     chomp $response if defined $response;
     
