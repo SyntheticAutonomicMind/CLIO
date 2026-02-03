@@ -74,8 +74,15 @@ sub new {
     
     # Ensure log directory exists
     unless (-d $self->{log_dir}) {
-        make_path($self->{log_dir}) or die "Failed to create log directory: $!";
-        print STDERR "[DEBUG][ToolLogger] Created log directory: $self->{log_dir}\n" if should_log('DEBUG');
+        eval {
+            make_path($self->{log_dir});
+        };
+        if ($@) {
+            print STDERR "[ERROR][ToolLogger] Failed to create log directory $self->{log_dir}: $@\n";
+            # Continue anyway - logging is not critical to operation
+        } else {
+            print STDERR "[DEBUG][ToolLogger] Created log directory: $self->{log_dir}\n" if should_log('DEBUG');
+        }
     }
     
     return $self;
