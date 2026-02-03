@@ -394,20 +394,29 @@ Never hardcode ANSI escape sequences in command output code.
 
 **Document Version History:**
 - 1.0 (2025-01-22): Initial standards document
+- 2.0 (2026-02-02): Updated to use get_confirmation_prompt only
 
 
 ---
 
 ## Input Prompts and Pagination (v2.0)
 
-### BBS-Style Input Prompts
+### BBS-Style Confirmation Prompts
 
-All confirmation and input prompts use a consistent BBS-style format:
+All confirmation prompts use a consistent two-line BBS-style format via `get_confirmation_prompt()`:
 
 ```perl
-print $self->{chat}{theme_mgr}->get_input_prompt("Delete file? (y/N)") . " ";
+my ($header, $input_line) = @{$self->{chat}{theme_mgr}->get_confirmation_prompt(
+    "Delete file 'test.txt'?",
+    "yes/no",
+    "cancel"
+)};
+
+print $header, "\n";
+print $input_line;
 my $response = <STDIN>;
 chomp $response if defined $response;
+
 unless ($response && $response =~ /^y(es)?$/i) {
     $self->display_system_message("Cancelled");
     return;
@@ -416,7 +425,19 @@ unless ($response && $response =~ /^y(es)?$/i) {
 
 **Output:**
 ```
-===[ Delete file? (y/N) ]=== 
+┌──┤ Delete file 'test.txt'?
+└─┤ yes/no | Enter to cancel:
+```
+
+### Text Input Prompts
+
+For text input (not yes/no), use simple formatted prompts:
+
+```perl
+$self->display_section_header("COMMIT MESSAGE");
+print $self->colorize("Enter message (Ctrl+C to cancel):\n", 'PROMPT');
+print $self->colorize("> ", 'PROMPT');
+my $message = <STDIN>;
 ```
 
 ### Pagination Prompts

@@ -691,12 +691,19 @@ sub _check_github_auth {
     unless ($gh_auth->is_authenticated()) {
         $self->writeline("", markdown => 0);
         $self->display_system_message("GitHub Copilot requires authentication");
-        print $self->{chat}{theme_mgr}->get_input_prompt("Login now?", "no") . " ";
+        
+        my ($header, $input_line) = @{$self->{chat}{theme_mgr}->get_confirmation_prompt(
+            "Login now?",
+            "yes/no",
+            "skip"
+        )};
+        
+        print $header, "\n";
+        print $input_line;
         my $response = <STDIN>;
         chomp $response if defined $response;
-        $response = lc($response || 'y');
         
-        if ($response =~ /^y(es)?$/i || $response eq '') {
+        if ($response && $response =~ /^y(es)?$/i) {
             $self->handle_login_command();
         } else {
             $self->display_system_message("You can login later with: /api login");

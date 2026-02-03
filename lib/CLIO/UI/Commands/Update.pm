@@ -190,7 +190,14 @@ sub _install_update {
     $self->writeline("New version:     " . $self->colorize($check_result->{latest_version}, 'command_value'), markdown => 0);
     $self->writeline("", markdown => 0);
     
-    print $self->{chat}{theme_mgr}->get_input_prompt("Install update?", "cancel") . " ";
+    my ($header, $input_line) = @{$self->{chat}{theme_mgr}->get_confirmation_prompt(
+        "Install update?",
+        "yes/no",
+        "cancel"
+    )};
+    
+    print $header, "\n";
+    print $input_line;
     my $confirm = <STDIN>;
     chomp $confirm if $confirm;
     
@@ -360,8 +367,14 @@ sub _switch_version {
     $self->writeline("Target version:  " . $self->colorize($target_version, 'command_value'), markdown => 0);
     $self->writeline("", markdown => 0);
     
-    # Interactive prompt
-    print $self->{chat}{theme_mgr}->get_input_prompt("Switch to version $target_version?", "cancel") . " ";
+    my ($header, $input_line) = @{$self->{chat}{theme_mgr}->get_confirmation_prompt(
+        "Switch to version $target_version?",
+        "yes/no",
+        "cancel"
+    )};
+    
+    print $header, "\n";
+    print $input_line;
     my $confirm = <STDIN>;
     chomp $confirm if $confirm;
     

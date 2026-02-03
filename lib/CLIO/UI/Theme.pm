@@ -446,33 +446,6 @@ sub get_pagination_prompt {
     });
 }
 
-=head2 get_input_prompt
-
-Get a standardized input prompt.
-
-Args:
-    prompt (string) - The prompt text
-    default_action (string, optional) - What Enter does (e.g., "skip")
-
-Returns: Rendered input prompt string
-
-=cut
-
-sub get_input_prompt {
-    my ($self, $prompt, $default_action) = @_;
-    
-    if ($default_action) {
-        return $self->render('input_prompt_with_default', {
-            prompt => $prompt,
-            default_action => $default_action,
-        });
-    } else {
-        return $self->render('input_prompt', {
-            prompt => $prompt,
-        });
-    }
-}
-
 =head2 get_confirmation_prompt
 
 Get a themed confirmation prompt with box drawing.
@@ -708,13 +681,9 @@ sub get_builtin_theme {
         pagination_hint_full => '{style.dim}┌──┤ {style.agent_label}^/v Pages {style.dim}│ {style.agent_label}Q Quits {style.dim}│ {style.agent_label}Any key for more@RESET@',
         pagination_prompt => '{style.dim}└─┤ {style.data}{var.current}/{var.total} {style.dim}│ {style.agent_label}{var.nav_hint}Q {style.dim}│ {style.prompt_indicator}> @RESET@',
         
-        # Input prompts (standardized BBS style with box-drawing)
-        input_prompt => '{style.dim}┌──┤ {style.prompt_indicator}{var.prompt}@RESET@',
-        input_prompt_with_default => '{style.dim}┌──┤ {style.prompt_indicator}{var.prompt}{style.dim} | {style.data}Enter{style.dim} to {style.data}{var.default_action}@RESET@',
-        
         # Confirmation prompts (box-drawing two-part format)
         confirmation_header => '{style.dim}┌──┤ {style.prompt_indicator}{var.question}@RESET@',
-        confirmation_input => '{style.dim}└─┤ {style.data}{var.options}{style.dim} | {style.data}Enter{style.dim} to {style.data}{var.default_action}{style.dim}:@RESET@',
+        confirmation_input => '{style.dim}└─┤ {style.data}{var.options} {style.dim}│ {style.data}Enter{style.dim} to {style.data}{var.default_action}{style.dim}: @RESET@',
         
         # Messages
         user_message_prefix => '{style.user_text}YOU: @RESET@',
@@ -793,8 +762,6 @@ sub get_required_theme_keys {
         pagination_hint_streaming
         pagination_hint_full
         pagination_prompt
-        input_prompt
-        input_prompt_with_default
         confirmation_header
         confirmation_input
         user_message_prefix

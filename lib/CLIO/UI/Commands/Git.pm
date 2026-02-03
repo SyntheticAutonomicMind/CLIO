@@ -258,9 +258,9 @@ sub handle_commit_command {
     # If no message provided, prompt for one
     unless ($message) {
         $self->writeline("", markdown => 0);
-        # Interactive prompt - use standardized input prompt
-        print $self->{chat}{theme_mgr}->get_input_prompt("Enter commit message", "cancel") . "\n";
-        print "> ";
+        $self->display_section_header("COMMIT MESSAGE");
+        print $self->colorize("Enter message (Ctrl+C to cancel):\n", 'PROMPT');
+        print $self->colorize("> ", 'PROMPT');
         $message = <STDIN>;
         chomp $message if defined $message;
         
