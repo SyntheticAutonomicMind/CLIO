@@ -237,9 +237,25 @@ This ensures users always see visual feedback when the system is working.
 sub show_busy_indicator {
     my ($self) = @_;
     
-    # Ensure spinner is initialized
-    unless ($self->{spinner}) {
-        my $spinner_frames = $self->{theme_mgr}->get_spinner_frames();
+    # Ensure spinner is initialized or recreate if theme changed
+    # Check if spinner needs to be recreated due to theme change
+    my $spinner_frames = $self->{theme_mgr}->get_spinner_frames();
+    my $needs_recreation = 0;
+    
+    if (!$self->{spinner}) {
+        $needs_recreation = 1;
+    } elsif ($self->{spinner}->{frames}) {
+        # Check if frames changed (theme/style was switched)
+        my $current_frames = join(',', @{$self->{spinner}->{frames}});
+        my $new_frames = join(',', @$spinner_frames);
+        if ($current_frames ne $new_frames) {
+            $needs_recreation = 1;
+            # Stop old spinner before recreating
+            $self->{spinner}->stop() if $self->{spinner}->{running};
+        }
+    }
+    
+    if ($needs_recreation) {
         $self->{spinner} = CLIO::UI::ProgressSpinner->new(
             frames => $spinner_frames,
             delay => 100000,
@@ -567,18 +583,34 @@ sub run {
                     print "\n";  # Add blank line between consecutive system messages
                 }
                 
-                # Display system message with three-color box-drawing format:
-                # {dim}┌──┤ {agent_label}SYSTEM{reset}
-                # {dim}└─ {data}message{reset}
-                my $header_conn = $self->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
-                my $header_name = $self->colorize("SYSTEM", 'ASSISTANT');
-                my $footer_conn = $self->colorize("\x{2514}\x{2500} ", 'DIM');
-                my $footer_msg = $self->colorize($message, 'DATA');
+                # Display system message with format based on theme
+                # Check if theme uses inline format (like console theme)
+                my $tool_format = 'box';  # default
+                if ($self->{theme_mgr} && $self->{theme_mgr}->can('get_tool_display_format')) {
+                    $tool_format = $self->{theme_mgr}->get_tool_display_format();
+                }
                 
-                print "$header_conn$header_name\n";
-                print "$footer_conn$footer_msg\n";
-                STDOUT->flush() if STDOUT->can('flush');
-                $self->{line_count} += 2;  # Two lines for box-drawing format
+                if ($tool_format eq 'inline') {
+                    # Inline format: [SYSTEM] message
+                    my $prefix = $self->colorize("[SYSTEM] ", 'SYSTEM');
+                    my $msg = $self->colorize($message, 'DATA');
+                    print "$prefix$msg\n";
+                    STDOUT->flush() if STDOUT->can('flush');
+                    $self->{line_count} += 1;
+                } else {
+                    # Box-drawing format (default):
+                    # {dim}┌──┤ {agent_label}SYSTEM{reset}
+                    # {dim}└─ {data}message{reset}
+                    my $header_conn = $self->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
+                    my $header_name = $self->colorize("SYSTEM", 'ASSISTANT');
+                    my $footer_conn = $self->colorize("\x{2514}\x{2500} ", 'DIM');
+                    my $footer_msg = $self->colorize($message, 'DATA');
+                    
+                    print "$header_conn$header_name\n";
+                    print "$footer_conn$footer_msg\n";
+                    STDOUT->flush() if STDOUT->can('flush');
+                    $self->{line_count} += 2;  # Two lines for box-drawing format
+                }
                 $self->{_last_was_system_message} = 1;  # Mark that we just displayed a system message
                 
                 print STDERR "[DEBUG][Chat] System message: $message\n" if $self->{debug};
