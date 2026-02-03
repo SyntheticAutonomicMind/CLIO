@@ -519,7 +519,7 @@ sub _execute_protocol {
     };
     
     if ($@) {
-        print STDERR "[ERROR][ToolExecutor] Protocol execution failed: $@\n";
+        print STDERR "[ERROR][ToolExecutor] Protocol execution failed: $@\n" if should_log('ERROR');
         return $self->_error_result("Protocol execution failed: $@");
     }
     
@@ -644,7 +644,7 @@ sub _format_tool_result {
     # Convert to JSON
     my $json = eval { encode_json($tool_result) };
     if ($@) {
-        print STDERR "[ERROR][ToolExecutor] Failed to encode result: $@\n";
+        print STDERR "[ERROR][ToolExecutor] Failed to encode result: $@\n" if should_log('ERROR');
         return encode_json({
             success => 0,
             error => "Failed to encode result: $@"
@@ -692,7 +692,7 @@ Return a JSON error result.
 sub _error_result {
     my ($self, $error) = @_;
     
-    print STDERR "[ERROR][ToolExecutor] $error\n";
+    print STDERR "[ERROR][ToolExecutor] $error\n" if should_log('ERROR');
     
     return encode_json({
         success => 0,
