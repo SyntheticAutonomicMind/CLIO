@@ -200,7 +200,7 @@ sub save {
     };
     
     if ($@) {
-        print STDERR "[ERROR][Config] Failed to save config: $@\n";
+        print STDERR "[ERROR][Config] Failed to save config: $@\n" if should_log('ERROR');
         return 0;
     }
     
@@ -256,8 +256,8 @@ sub set_provider {
     
     # Check if provider exists in Providers.pm
     unless (provider_exists($provider)) {
-        print STDERR "[ERROR][Config] Unknown provider: $provider\n";
-        print STDERR "[ERROR][Config] Available providers: " . join(', ', list_providers()) . "\n";
+        print STDERR "[ERROR][Config] Unknown provider: $provider\n" if should_log('ERROR');
+        print STDERR "[ERROR][Config] Available providers: " . join(', ', list_providers()) . "\n" if should_log('ERROR');
         return 0;
     }
     

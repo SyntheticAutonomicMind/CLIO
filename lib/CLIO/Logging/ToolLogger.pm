@@ -78,7 +78,7 @@ sub new {
             make_path($self->{log_dir});
         };
         if ($@) {
-            print STDERR "[ERROR][ToolLogger] Failed to create log directory $self->{log_dir}: $@\n";
+            print STDERR "[ERROR][ToolLogger] Failed to create log directory $self->{log_dir}: $@\n" if should_log('ERROR');
             # Continue anyway - logging is not critical to operation
         } else {
             print STDERR "[DEBUG][ToolLogger] Created log directory: $self->{log_dir}\n" if should_log('DEBUG');
@@ -113,7 +113,7 @@ sub log {
     my ($self, $entry) = @_;
     
     unless ($entry && ref($entry) eq 'HASH') {
-        print STDERR "[ERROR][ToolLogger] Invalid log entry (not a hashref)\n";
+        print STDERR "[ERROR][ToolLogger] Invalid log entry (not a hashref)\n" if should_log('ERROR');
         return 0;
     }
     
@@ -130,7 +130,7 @@ sub log {
         $json_line = encode_json($entry);
     };
     if ($@) {
-        print STDERR "[ERROR][ToolLogger] Failed to serialize log entry: $@\n";
+        print STDERR "[ERROR][ToolLogger] Failed to serialize log entry: $@\n" if should_log('ERROR');
         return 0;
     }
     
@@ -143,7 +143,7 @@ sub log {
         close $fh;
     };
     if ($@) {
-        print STDERR "[ERROR][ToolLogger] Failed to write log entry: $@\n";
+        print STDERR "[ERROR][ToolLogger] Failed to write log entry: $@\n" if should_log('ERROR');
         return 0;
     }
     

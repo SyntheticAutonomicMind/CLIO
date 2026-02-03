@@ -339,7 +339,7 @@ sub process_input {
                 if ($on_tool_call_from_ui) {
                     eval { $on_tool_call_from_ui->($tool_name); };
                     if ($@) {
-                        print STDERR "[ERROR][WorkflowOrchestrator] Error in on_tool_call callback: $@\n";
+                        print STDERR "[ERROR][WorkflowOrchestrator] Error in on_tool_call callback: $@\n" if should_log('ERROR');
                     }
                 }
                 
@@ -378,7 +378,7 @@ sub process_input {
         };
         
         if ($@) {
-            print STDERR "[ERROR][WorkflowOrchestrator] API error: $@\n";
+            print STDERR "[ERROR][WorkflowOrchestrator] API error: $@\n" if should_log('ERROR');
             return {
                 success => 0,
                 error => "API request failed: $@",
@@ -567,7 +567,7 @@ sub process_input {
                     
                     # If we've trimmed to minimal context and still failing, give up
                     if ($retry_count > 2 && scalar(@non_system) <= 3) {
-                        print STDERR "[ERROR][WorkflowOrchestrator] Token limit persists even with minimal context - giving up\n";
+                        print STDERR "[ERROR][WorkflowOrchestrator] Token limit persists even with minimal context - giving up\n" if should_log('ERROR');
                         return {
                             success => 0,
                             error => "Token limit exceeded even with minimal conversation history. The request may be too large for this model. Try using a model with a larger context window.",
@@ -660,10 +660,10 @@ sub process_input {
             
             # Break infinite loop if same error repeats too many times
             if ($self->{consecutive_errors} >= $self->{max_consecutive_errors}) {
-                print STDERR "[ERROR][WorkflowOrchestrator] Same error occurred $self->{consecutive_errors} times in a row. Breaking loop.\n";
-                print STDERR "[ERROR][WorkflowOrchestrator] Persistent error: $error\n";
-                print STDERR "[ERROR][WorkflowOrchestrator] This likely indicates a bug in the request construction or API incompatibility.\n";
-                print STDERR "[ERROR][WorkflowOrchestrator] Check /tmp/clio_json_errors.log for details.\n";
+                print STDERR "[ERROR][WorkflowOrchestrator] Same error occurred $self->{consecutive_errors} times in a row. Breaking loop.\n" if should_log('ERROR');
+                print STDERR "[ERROR][WorkflowOrchestrator] Persistent error: $error\n" if should_log('ERROR');
+                print STDERR "[ERROR][WorkflowOrchestrator] This likely indicates a bug in the request construction or API incompatibility.\n" if should_log('ERROR');
+                print STDERR "[ERROR][WorkflowOrchestrator] Check /tmp/clio_json_errors.log for details.\n" if should_log('ERROR');
                 
                 # Reset counters and return failure
                 $self->{consecutive_errors} = 0;
@@ -918,7 +918,7 @@ sub process_input {
                                     if should_log('DEBUG');
                             };
                             if ($@) {
-                                print STDERR "[ERROR][WorkflowOrchestrator] Failed to save error result to session: $@\n";
+                                print STDERR "[ERROR][WorkflowOrchestrator] Failed to save error result to session: $@\n" if should_log('ERROR');
                             }
                         }
                         
@@ -1336,8 +1336,8 @@ sub process_input {
         $elapsed_time
     );
     
-    print STDERR "[ERROR][WorkflowOrchestrator] $error_msg\n";
-    print STDERR "[ERROR][WorkflowOrchestrator] Tool calls made: " . scalar(@tool_calls_made) . "\n";
+    print STDERR "[ERROR][WorkflowOrchestrator] $error_msg\n" if should_log('ERROR');
+    print STDERR "[ERROR][WorkflowOrchestrator] Tool calls made: " . scalar(@tool_calls_made) . "\n" if should_log('ERROR');
     
     return {
         success => 0,
@@ -2090,7 +2090,7 @@ sub _inject_context_files {
         };
         
         if ($@) {
-            print STDERR "[ERROR][WorkflowOrchestrator] Failed to read context file $file: $@\n";
+            print STDERR "[ERROR][WorkflowOrchestrator] Failed to read context file $file: $@\n" if should_log('ERROR');
         }
     }
     
