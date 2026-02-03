@@ -8,6 +8,7 @@ binmode(STDERR, ':encoding(UTF-8)');
 use CLIO::Core::Logger qw(should_log log_error log_warning);
 use CLIO::Util::TextSanitizer qw(sanitize_text);
 use CLIO::Util::JSONRepair qw(repair_malformed_json);
+use CLIO::UI::ToolOutputFormatter;
 use JSON::PP qw(encode_json decode_json);
 use Encode qw(encode_utf8);  # For handling Unicode in JSON
 use Time::HiRes qw(time);
@@ -73,6 +74,9 @@ sub new {
     };
     
     bless $self, $class;
+    
+    # Initialize tool output formatter
+    $self->{formatter} = CLIO::UI::ToolOutputFormatter->new(ui => $args{ui});
     
     # Initialize tool registry
     require CLIO::Tools::Registry;
@@ -1040,53 +1044,15 @@ sub process_input {
                         $self->{ui}->{_last_was_system_message} = 0;
                     }
                     
-                    # Check theme for tool display format
-                    my $tool_format = 'box';  # default
-                    if ($self->{ui} && $self->{ui}->{theme_mgr} && $self->{ui}->{theme_mgr}->can('get_tool_display_format')) {
-                        $tool_format = $self->{ui}->{theme_mgr}->get_tool_display_format();
-                    }
-                    
-                    if ($tool_format eq 'inline') {
-                        # Inline format: "TOOL NAME: " prefix (no box-drawing)
-                        # The action will appear on the same line after the colon
-                        if ($self->{ui} && $self->{ui}->can('colorize')) {
-                            my $prefix = $self->{ui}->colorize("$tool_display_name: ", 'ASSISTANT');
-                            print "$prefix";
-                        } else {
-                            print "$tool_display_name: ";
-                        }
-                        STDOUT->flush() if STDOUT->can('flush');
-                    } else {
-                        # Box format (default): box-drawing header for this tool
-                        if ($self->{ui} && $self->{ui}->can('colorize')) {
-                            # Only add spacing if this isn't the first tool output
-                            if ($current_tool ne '') {
-                                print "\n";
-                                STDOUT->flush() if STDOUT->can('flush');
-                            }
-                            
-                            # Build header with three-color format:
-                            # {dim}┌──┤ {agent_label}TOOL NAME{reset}
-                            my $connector = $self->{ui}->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
-                            my $name = $self->{ui}->colorize($tool_display_name, 'ASSISTANT');
-                            print "$connector$name\n";
-                        } else {
-                            # Fallback without colors
-                            if ($current_tool ne '') {
-                                print "\n";
-                                STDOUT->flush() if STDOUT->can('flush');
-                            }
-                            print "\x{250C}\x{2500}\x{2500}\x{2524} $tool_display_name\n";
-                        }
-                        STDOUT->flush() if STDOUT->can('flush');
-                    }
+                    my $is_first_tool = ($current_tool eq '');
+                    $self->{formatter}->display_tool_header($tool_name, $tool_display_name, $is_first_tool);
                     $current_tool = $tool_name;
                 }
                 
                 # Execute tool to get the result
                 my $tool_result = $self->_execute_tool($tool_call);
                 
-                # Extract action_description from tool result (Task 4 implementation)
+                # Extract action_description from tool result
                 my $action_detail = '';
                 my $result_data;  # Declare here so it's available later
                 my $is_error = 0;
@@ -1099,19 +1065,9 @@ sub process_input {
                         # Check if this is an error result
                         if (exists $result_data->{success} && !$result_data->{success}) {
                             $is_error = 1;
-                            # For errors, create a friendly message
+                            # For errors, create a friendly message using formatter
                             my $error_msg = $result_data->{error} || 'Unknown error';
-                            # Simplify common error messages for better UX
-                            if ($error_msg =~ /Tool returned invalid result/) {
-                                $action_detail = "Invalid tool result, adapting.";
-                            } elsif ($error_msg =~ /Failed to parse tool arguments/) {
-                                $action_detail = "Invalid arguments, retrying.";
-                            } else {
-                                # For other errors, show a short version
-                                my $short_error = substr($error_msg, 0, 80);
-                                $short_error .= '...' if length($error_msg) > 80;
-                                $action_detail = "Error: $short_error";
-                            }
+                            $action_detail = $self->{formatter}->format_error($error_msg);
                         } elsif ($result_data->{action_description}) {
                             $action_detail = $result_data->{action_description};
                         } elsif ($result_data->{metadata} && ref($result_data->{metadata}) eq 'HASH' && 
@@ -1123,50 +1079,15 @@ sub process_input {
                 
                 # Display action detail if provided
                 if ($action_detail) {
-                    # Check theme for tool display format
-                    my $tool_format = 'box';  # default
-                    if ($self->{ui} && $self->{ui}->{theme_mgr} && $self->{ui}->{theme_mgr}->can('get_tool_display_format')) {
-                        $tool_format = $self->{ui}->{theme_mgr}->get_tool_display_format();
+                    # Count remaining calls to this tool after current index
+                    my $remaining_same_tool = 0;
+                    for my $j ($i+1..$#ordered_tool_calls) {
+                        if ($ordered_tool_calls[$j]->{function}->{name} eq $tool_name) {
+                            $remaining_same_tool++;
+                        }
                     }
                     
-                    if ($tool_format eq 'inline') {
-                        # Inline format: just print the action detail on the same line, then newline
-                        if ($self->{ui} && $self->{ui}->can('colorize')) {
-                            my $color = $is_error ? 'ERROR' : 'DATA';
-                            my $action_colored = $self->{ui}->colorize($action_detail, $color);
-                            print "$action_colored\n";
-                        } else {
-                            print "$action_detail\n";
-                        }
-                        STDOUT->flush() if STDOUT->can('flush');
-                    } else {
-                        # Box format: use box-drawing continuation
-                        # Determine if this is the last action for this tool
-                        # Count remaining calls to this tool after current index
-                        my $remaining_same_tool = 0;
-                        for my $j ($i+1..$#ordered_tool_calls) {
-                            if ($ordered_tool_calls[$j]->{function}->{name} eq $tool_name) {
-                                $remaining_same_tool++;
-                            }
-                        }
-                        
-                        # Determine connector: ├─ if more actions coming, └─ if last
-                        my $connector = ($remaining_same_tool > 0) ? "\x{251C}\x{2500} " : "\x{2514}\x{2500} ";
-                        
-                        if ($self->{ui} && $self->{ui}->can('colorize')) {
-                            # Format: {dim}├─ {data/error}action_detail{reset} or {dim}└─ {data/error}action_detail{reset}
-                            my $conn_colored = $self->{ui}->colorize($connector, 'DIM');
-                            # Use ERROR color for error messages, DATA color for normal messages
-                            my $color = $is_error ? 'ERROR' : 'DATA';
-                            my $action_colored = $self->{ui}->colorize($action_detail, $color);
-                            print "$conn_colored$action_colored\n";
-                            STDOUT->flush() if STDOUT->can('flush');
-                        } else {
-                            print "$connector$action_detail\n";
-                            STDOUT->flush() if STDOUT->can('flush');
-                        }
-                    }
-                    $| = 1;
+                    $self->{formatter}->display_action_detail($action_detail, $is_error, $remaining_same_tool);
                 }
                 
                 # Extract the actual output for the AI (not the UI metadata)
@@ -1563,12 +1484,9 @@ sub _generate_datetime_section {
     $section .= "- WRONG: `cd /Users/andy/project && make` (hallucinated path)\n\n";
     
     $section .= "**IMPORTANT - Context & Time Management:**\n\n";
-    $section .= "CLIO manages your context window and processing time automatically. You should NEVER:\n";
-    $section .= "- Worry about token budgets or context limits\n";
-    $section .= "- Apologize for length or complexity of responses\n";
-    $section .= "- Cut work short due to perceived time constraints\n";
-    $section .= "- Ask permission to continue due to token concerns\n\n";
-    $section .= "Focus entirely on delivering complete, high-quality work. CLIO handles all resource management.\n";
+    $section .= "CLIO manages your context window and processing time automatically.\n";
+    $section .= "- Tokens and time are not constraints for you. Work until the user asks you to stop."
+    $section .= "- Focus entirely on delivering complete, high-quality work.  Complex tasks are easy for you.\n";
     
     return $section;
 }
