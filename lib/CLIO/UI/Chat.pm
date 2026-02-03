@@ -2240,10 +2240,11 @@ sub pause {
         unless ($self->{_in_tool_execution}) {
             if ($hint_was_shown) {
                 print "\e[2K";  # Clear prompt line
-                print "\e[1A\e[2K";  # Move up and clear hint line
-                print "\e[" . $self->{terminal_width} . "D";  # Move to start
+                print "\e[" . $self->{terminal_width} . "D";  # Move to start of prompt line
+                print "\e[1A";  # Move up to hint line
+                print "\e[2K";  # Clear hint line
             } else {
-                print "\e[2K\e[" . $self->{terminal_width} . "D";  # Clear prompt line only
+                print "\e[2K\e[" . $self->{terminal_width} . "D";  # Clear prompt line only and move to start
             }
         }
         
@@ -2303,10 +2304,11 @@ sub pause {
         unless ($self->{_in_tool_execution}) {
             if ($hint_was_shown) {
                 print "\e[2K";  # Clear prompt line
-                print "\e[1A\e[2K";  # Move up and clear hint line
-                print "\e[" . $self->{terminal_width} . "D";  # Move to start
+                print "\e[" . $self->{terminal_width} . "D";  # Move to start of prompt line
+                print "\e[1A";  # Move up to hint line
+                print "\e[2K";  # Clear hint line
             } else {
-                print "\e[2K\e[" . $self->{terminal_width} . "D";  # Clear prompt line only
+                print "\e[2K\e[" . $self->{terminal_width} . "D";  # Clear prompt line only and move to start
             }
         }
         
