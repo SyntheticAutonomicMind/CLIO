@@ -36,3 +36,4 @@ reference/
 debug.log
 output.log
 
+*.backup
