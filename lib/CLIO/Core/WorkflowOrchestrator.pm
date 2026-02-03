@@ -1061,13 +1061,30 @@ sub process_input {
                 # Extract action_description from tool result (Task 4 implementation)
                 my $action_detail = '';
                 my $result_data;  # Declare here so it's available later
+                my $is_error = 0;
                 if ($tool_result) {
                     $result_data = eval { 
                         # Tool result might be JSON string or already decoded
                         ref($tool_result) eq 'HASH' ? $tool_result : decode_json($tool_result);
                     };
                     if ($result_data && ref($result_data) eq 'HASH') {
-                        if ($result_data->{action_description}) {
+                        # Check if this is an error result
+                        if (exists $result_data->{success} && !$result_data->{success}) {
+                            $is_error = 1;
+                            # For errors, create a friendly message
+                            my $error_msg = $result_data->{error} || 'Unknown error';
+                            # Simplify common error messages for better UX
+                            if ($error_msg =~ /Tool returned invalid result/) {
+                                $action_detail = "Invalid tool result, adapting.";
+                            } elsif ($error_msg =~ /Failed to parse tool arguments/) {
+                                $action_detail = "Invalid arguments, retrying.";
+                            } else {
+                                # For other errors, show a short version
+                                my $short_error = substr($error_msg, 0, 80);
+                                $short_error .= '...' if length($error_msg) > 80;
+                                $action_detail = "Error: $short_error";
+                            }
+                        } elsif ($result_data->{action_description}) {
                             $action_detail = $result_data->{action_description};
                         } elsif ($result_data->{metadata} && ref($result_data->{metadata}) eq 'HASH' && 
                                  $result_data->{metadata}->{action_description}) {
@@ -1091,9 +1108,11 @@ sub process_input {
                     my $connector = ($remaining_same_tool > 0) ? "\x{251C}\x{2500} " : "\x{2514}\x{2500} ";
                     
                     if ($self->{ui} && $self->{ui}->can('colorize')) {
-                        # Format: {dim}├─ {data}action_detail{reset} or {dim}└─ {data}action_detail{reset}
+                        # Format: {dim}├─ {data/error}action_detail{reset} or {dim}└─ {data/error}action_detail{reset}
                         my $conn_colored = $self->{ui}->colorize($connector, 'DIM');
-                        my $action_colored = $self->{ui}->colorize($action_detail, 'DATA');
+                        # Use ERROR color for error messages, DATA color for normal messages
+                        my $color = $is_error ? 'ERROR' : 'DATA';
+                        my $action_colored = $self->{ui}->colorize($action_detail, $color);
                         print "$conn_colored$action_colored\n";
                         STDOUT->flush() if STDOUT->can('flush');
                     } else {
