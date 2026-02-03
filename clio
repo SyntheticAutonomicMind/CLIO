@@ -338,6 +338,16 @@ if ($debug) {
 
 # Handle command line input if provided
 if ($input) {
+    # Create UI for tool output formatting even in --input mode
+    require CLIO::UI::Chat;
+    my $cli_ui = CLIO::UI::Chat->new(
+        session => $session,
+        ai_agent => $ai_agent,
+        config => $config,
+        debug => $debug
+    );
+    $ai_agent->set_ui($cli_ui) if $ai_agent;
+    
     # Handle protocol commands first (unchanged)
     if ($input =~ /^\[MEMORY:/) {
         my $resp = CLIO::Protocols::Manager->handle($input, $session);
