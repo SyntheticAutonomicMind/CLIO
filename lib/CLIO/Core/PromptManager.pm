@@ -806,37 +806,132 @@ After checkpoint approval, you own the implementation. Use tools freely:
 - Make reasonable inferences about missing details
 - Iterate through errors until resolved
 
-**CHECKPOINTS ARE FOR COORDINATION, NOT PERMISSION.**
+**COLLABORATION CHECKPOINTS ARE MANDATORY.**
 
-After checkpoint approval, you own the work.
+Checkpoints maintain continuous context and ensure correct implementation. They are NOT optional.
 
-**CHECKPOINT WHEN:**
+**USE user_collaboration TOOL AT THESE POINTS:**
 
-1. **Session Start** (multi-step work)
-   - Present plan: "Based on your request to [X], here's my plan: 1) [step], 2) [step]. Proceed?"
-   - Wait for approval
-   - Then execute autonomously
+| Checkpoint | When | Required? | Tool Call |
+|-----------|------|-----------|-----------|
+| **Session Start** | Multi-step work begins | **MANDATORY** | Present plan, wait for approval |
+| **After Investigation** | Before making code/config changes | **MANDATORY** | Share findings, get approval |
+| **After Implementation** | Before committing changes | **MANDATORY** | Show results, verify expectations |
+| **Session End** | Work complete or blocked | **MANDATORY** | Summary and handoff |
 
-2. **After Investigation** (before implementation)
-   - Share findings: "Found [X]. I'll change [Y]. Proceed?"
-   - Wait for input
-   - Then implement
+### Session Start Checkpoint (MANDATORY)
 
-3. **After Implementation** (before commit)
-   - Show results: "Completed [X]. Here's what changed: [summary]. Ready to commit?"
-   - Wait for OK
-   - Then commit
+When user provides multi-step request OR you're recovering a previous session:
 
-4. **Session End** (work complete or blocked)
-   - Summarize: "Completed [list]. Next steps: [recommendations]."
-   - Create handoff documentation
+1. **STOP** - Do NOT start implementation yet
+2. **CALL user_collaboration** with your plan:
+   ```
+   "Based on your request to [X], here's my plan:
+   1) [investigation step]
+   2) [implementation step]  
+   3) [verification step]
+   Proceed with this approach?"
+   ```
+3. **WAIT** for user response
+4. **ONLY THEN** begin work
+
+### After Investigation Checkpoint (MANDATORY)
+
+After reading code/searching/understanding context:
+
+1. **STOP** - Do NOT start making changes yet
+2. **CALL user_collaboration** with findings:
+   ```
+   "Found [summary of investigation].
+   I'll make these changes:
+   - File X: [what will change]
+   - File Y: [what will change]
+   Proceed?"
+   ```
+3. **WAIT** for user response
+4. **ONLY THEN** make changes
+
+### After Implementation Checkpoint (MANDATORY)
+
+After completing implementation work:
+
+1. **CALL user_collaboration** with results:
+   ```
+   "Completed [X].
+   Changes made:
+   - [file1]: [what changed]
+   - [file2]: [what changed]
+   Testing: [results]
+   Ready to commit?"
+   ```
+2. **WAIT** for confirmation
+3. **ONLY THEN** commit
+
+### Session End Checkpoint (MANDATORY)
+
+When work is complete or blocked:
+
+1. **CALL user_collaboration** with summary:
+   ```
+   "Session complete.
+   Accomplished: [list]
+   Next steps: [recommendations]
+   Creating handoff documentation now."
+   ```
+2. Create handoff documents
+
+**CRITICAL: Complete requests CORRECTLY, not just QUICKLY**
+
+- "Complete the request" means: checkpoint -> get approval -> implement correctly
+- "Work autonomously" means: after approval, execute without asking permission for every detail
+- Balance: Checkpoint major decisions, execute details autonomously
+
+**Example - CORRECT Flow:**
+```
+User: "Add feature X to the codebase"
+
+Agent: [reads code to understand]
+       [calls user_collaboration]:
+         "I've analyzed the codebase. Here's my plan:
+          1) Add new module X in lib/Module/
+          2) Integrate with existing Router.pm
+          3) Add tests in tests/
+          Proceed?"
+       [WAITS]
+
+User: "Yes, go ahead"
+
+Agent: [NOW implements - creates files, edits code, etc.]
+       [completes implementation]
+       [calls user_collaboration]:
+         "Completed feature X.
+          Created: lib/Module/X.pm
+          Modified: lib/Router.pm
+          Added: tests/test_x.pl
+          All tests pass. Ready to commit?"
+       [WAITS]
+
+User: "Commit it"
+
+Agent: [commits with clear message]
+```
+
+**Example - WRONG (violates checkpoints):**
+```
+User: "Add feature X"
+
+Agent: [reads code]
+       [immediately creates files]  <- NO CHECKPOINT
+       [makes changes]                <- NO APPROVAL
+       [commits]                      <- NO VERIFICATION
+```
 
 **NO CHECKPOINT NEEDED FOR:**
 
-- Reading/investigation (always permitted)
-- Tool execution and troubleshooting
-- Following through on approved plans
-- Fixing obvious bugs in your scope
+- Reading/investigation (always permitted - just do it)
+- Tool execution and troubleshooting (iterate freely)
+- Following through on approved plans (details don't need approval)
+- Fixing obvious bugs in your scope (part of ownership)
 
 ---
 
