@@ -1,0 +1,121 @@
+# CLIO Style: console
+# Traditional console - no colors, ASCII-only
+#
+# Color Philosophy:
+# - No colors - plain text only
+# - ASCII spinner instead of braille
+# - Maximum compatibility with all terminals
+# - Traditional console experience
+#
+# Based on Consolidated Style Schema v2.0
+
+name=console
+
+# ═══════════════════════════════════════════════════════════════
+# CORE SEMANTIC HIERARCHY
+# ═══════════════════════════════════════════════════════════════
+
+primary=@RESET@
+secondary=@RESET@
+normal=@RESET@
+muted=@DIM@
+subtle=@DIM@
+
+# ═══════════════════════════════════════════════════════════════
+# CONVERSATIONAL
+# ═══════════════════════════════════════════════════════════════
+
+user_prompt=@RESET@
+user_text=@RESET@
+agent_label=@RESET@
+agent_text=@RESET@
+system_message=@DIM@
+
+# ═══════════════════════════════════════════════════════════════
+# FEEDBACK MESSAGES
+# ═══════════════════════════════════════════════════════════════
+
+error=@RESET@
+warning=@RESET@
+success=@RESET@
+info=@DIM@
+
+# ═══════════════════════════════════════════════════════════════
+# DATA DISPLAY
+# ═══════════════════════════════════════════════════════════════
+
+label=@DIM@
+value=@RESET@
+
+# ═══════════════════════════════════════════════════════════════
+# ACTIONABLE ELEMENTS
+# ═══════════════════════════════════════════════════════════════
+
+command=@RESET@
+link=@UNDERLINE@
+
+# ═══════════════════════════════════════════════════════════════
+# PROMPT
+# ═══════════════════════════════════════════════════════════════
+
+prompt_model=@DIM@
+prompt_directory=@RESET@
+prompt_git_branch=@DIM@
+prompt_indicator=@RESET@
+
+# ═══════════════════════════════════════════════════════════════
+# MARKDOWN
+# ═══════════════════════════════════════════════════════════════
+
+markdown_h1=@BOLD@
+markdown_h2=@RESET@
+markdown_h3=@DIM@
+markdown_bold=@BOLD@
+markdown_italic=@DIM@
+markdown_code=@DIM@
+markdown_code_block=@DIM@
+markdown_link=@UNDERLINE@
+markdown_quote=@DIM@
+markdown_list_bullet=@RESET@
+
+# ═══════════════════════════════════════════════════════════════
+# TABLES
+# ═══════════════════════════════════════════════════════════════
+
+table_header=@BOLD@
+table_border=@DIM@
+
+# ═══════════════════════════════════════════════════════════════
+# UI ELEMENTS
+# ═══════════════════════════════════════════════════════════════
+
+# ASCII spinner - compatible with all terminals, no Unicode required
+spinner_frames=-,\\,|,/
+
+# ═══════════════════════════════════════════════════════════════
+# DEPRECATED (Backward Compatibility)
+# ═══════════════════════════════════════════════════════════════
+
+app_title=@BOLD@
+app_subtitle=@RESET@
+banner_label=@DIM@
+banner_value=@RESET@
+banner_help=@DIM@
+banner_command=@RESET@
+command_label=@DIM@
+command_value=@RESET@
+command_header=@BOLD@
+command_subheader=@RESET@
+data=@RESET@
+dim=@DIM@
+highlight=@RESET@
+theme_header=@RESET@
+help_command=@RESET@
+markdown_formula=@RESET@
+markdown_link_text=@UNDERLINE@
+markdown_link_url=@DIM@
+error_message=@RESET@
+warning_message=@RESET@
+success_message=@RESET@
+info_message=@DIM@
+banner=@RESET@
