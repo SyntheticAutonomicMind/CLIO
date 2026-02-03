@@ -9,6 +9,7 @@ use CLIO::Core::Logger qw(should_log log_error log_warning);
 use CLIO::Util::TextSanitizer qw(sanitize_text);
 use CLIO::Util::JSONRepair qw(repair_malformed_json);
 use CLIO::UI::ToolOutputFormatter;
+use CLIO::Core::ToolErrorGuidance;
 use JSON::PP qw(encode_json decode_json);
 use Encode qw(encode_utf8);  # For handling Unicode in JSON
 use Time::HiRes qw(time);
@@ -77,6 +78,9 @@ sub new {
     
     # Initialize tool output formatter
     $self->{formatter} = CLIO::UI::ToolOutputFormatter->new(ui => $args{ui});
+    
+    # Initialize tool error guidance
+    $self->{error_guidance} = CLIO::Core::ToolErrorGuidance->new();
     
     # Initialize tool registry
     require CLIO::Tools::Registry;
@@ -1056,6 +1060,7 @@ sub process_input {
                 my $action_detail = '';
                 my $result_data;  # Declare here so it's available later
                 my $is_error = 0;
+                my $enhanced_error_for_ai = '';  # Enhanced error with schema guidance
                 if ($tool_result) {
                     $result_data = eval { 
                         # Tool result might be JSON string or already decoded
@@ -1068,6 +1073,33 @@ sub process_input {
                             # For errors, create a friendly message using formatter
                             my $error_msg = $result_data->{error} || 'Unknown error';
                             $action_detail = $self->{formatter}->format_error($error_msg);
+                            
+                            # ENHANCEMENT: Provide schema guidance to help agent recover
+                            # Get the tool definition for schema information
+                            my $tool_obj = $self->{tool_registry}->get_tool($tool_name);
+                            my $tool_def = undef;
+                            if ($tool_obj && $tool_obj->can('get_tool_definition')) {
+                                $tool_def = $tool_obj->get_tool_definition();
+                            }
+                            
+                            # Get the attempted parameters (what agent tried)
+                            my $attempted_params = {};
+                            if ($tool_call->{function}->{arguments}) {
+                                eval {
+                                    $attempted_params = decode_json($tool_call->{function}->{arguments});
+                                };
+                            }
+                            
+                            # Use error guidance system to enhance the error message
+                            $enhanced_error_for_ai = $self->{error_guidance}->enhance_tool_error(
+                                error => $error_msg,
+                                tool_name => $tool_name,
+                                tool_definition => $tool_def,
+                                attempted_params => $attempted_params
+                            );
+                            
+                            print STDERR "[DEBUG][WorkflowOrchestrator] Enhanced error for AI: " . substr($enhanced_error_for_ai, 0, 100) . "...\n"
+                                if should_log('DEBUG');
                         } elsif ($result_data->{action_description}) {
                             $action_detail = $result_data->{action_description};
                         } elsif ($result_data->{metadata} && ref($result_data->{metadata}) eq 'HASH' && 
@@ -1091,8 +1123,13 @@ sub process_input {
                 }
                 
                 # Extract the actual output for the AI (not the UI metadata)
+                # For ERRORS: Use the enhanced error message with schema guidance
+                # For SUCCESS: Use the regular output
                 my $ai_content = $tool_result;
-                if ($result_data && ref($result_data) eq 'HASH' && exists $result_data->{output}) {
+                if ($is_error && $enhanced_error_for_ai) {
+                    # Use enhanced error with schema guidance
+                    $ai_content = $enhanced_error_for_ai;
+                } elsif ($result_data && ref($result_data) eq 'HASH' && exists $result_data->{output}) {
                     $ai_content = $result_data->{output};
                 }
                 
