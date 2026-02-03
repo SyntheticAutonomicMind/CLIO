@@ -604,9 +604,9 @@ eval {
 # Save session after interactive mode completes
 # This ensures all conversation history, including errors, is persisted
 # Group all exit messages together for consistency
-my @exit_messages = ("Goodbye!", "Saving session...");
+my @exit_messages = ("Saving session");
 $session->save();
-push @exit_messages, "Session saved.";
+push @exit_messages, "Goodbye!";
 
 if ($ui && $ui->can('display_system_messages')) {
     $ui->display_system_messages(\@exit_messages);
