@@ -279,6 +279,23 @@ sub get_spinner_frames {
     return \@frames;
 }
 
+=head2 get_tool_display_format
+
+Get tool display format from current theme: 'box' or 'inline'
+
+Returns 'box' (default) or 'inline'
+
+=cut
+
+sub get_tool_display_format {
+    my ($self) = @_;
+    
+    my $theme = $self->{themes}->{$self->{current_theme}} || $self->{themes}->{default};
+    return 'box' unless $theme;
+    
+    return $theme->{tool_display_format} || 'box';
+}
+
 =head2 get_template
 
 Get a template from the current theme
