@@ -45,3 +45,8 @@ confirmation_input={style.data}{var.options} {style.dim}(Enter={var.default_acti
 # Messages - simple prefixes
 user_message_prefix={style.user_text}YOU: @RESET@
 agent_message_prefix={style.agent_label}CLIO: @RESET@
+
+# Tool display format: 'box' (default) or 'inline'
+# box: Uses box-drawing characters (┌──┤ TOOL NAME)
+# inline: Simple text prefix (TOOL NAME: action)
+tool_display_format=inline

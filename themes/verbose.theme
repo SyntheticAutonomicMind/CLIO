@@ -49,3 +49,6 @@ confirmation_input={style.dim}└─┤ {style.data}{var.options}{style.dim} │
 # Messages - labeled
 user_message_prefix={style.user_text}[You said]: @RESET@
 agent_message_prefix={style.agent_label}[Agent responds]: @RESET@
+
+# Tool display format
+tool_display_format=box
