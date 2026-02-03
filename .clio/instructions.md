@@ -24,35 +24,109 @@ This project follows **The Unbroken Method** for human-AI collaboration. This is
 
 ## Collaboration Checkpoint Protocol
 
-**Checkpoints are for coordination, not permission.**
+**Collaboration checkpoints are MANDATORY per THE_UNBROKEN_METHOD.**
 
-After approval, you own the implementation.
+Checkpoints maintain continuous context within sessions. They are the heart of the methodology.
 
-| Checkpoint | When | Format |
-|-----------|------|--------|
-| **Session Start** | Multi-step work begins | "Based on your request to [X], here's my plan: 1) [step], 2) [step], 3) [step]. Proceed?" |
-| **After Investigation** | Before making changes | "Found [X]. I'll change [Y]. Proceed?" |
-| **After Implementation** | Before commit | "Completed [X]. Changes: [summary]. Ready to commit?" |
-| **Session End** | Work complete or blocked | "Completed [list]. Next: [recommendations]." |
+| Checkpoint | When | Required? | What to Do |
+|-----------|------|-----------|------------|
+| **Session Start** | Multi-step work begins | **MANDATORY** | Present plan, wait for approval, THEN begin |
+| **After Investigation** | Before making changes | **MANDATORY** | Share findings, get approval, THEN implement |
+| **After Implementation** | Before commit | **MANDATORY** | Show results, verify expectations, THEN commit |
+| **Session End** | Work complete or blocked | **MANDATORY** | Summary and create handoff docs |
 
-**Decision Tree:**
+### Session Start Protocol
 
+**When:** User gives multi-step request OR recovering from handoff
+
+**Steps:**
+1. STOP - Do NOT start implementation  
+2. CALL user_collaboration with plan
+3. WAIT for user response
+4. ONLY THEN begin work
+
+**Template:**
 ```
-Is this investigation/reading?
-  YES -> No checkpoint, just do it
-  NO -> Is this changing code/config/files?
-    YES -> Checkpoint required (show what you'll change)
-    NO -> Is this following approved plan?
-      YES -> No checkpoint, proceed
-      NO -> Checkpoint if user input needed
+"Based on your request to [X], here's my plan:
+1) [investigation step]
+2) [implementation step]  
+3) [verification step]
+Proceed with this approach?"
 ```
+
+### After Investigation Protocol
+
+**When:** After reading code/searching but BEFORE making changes
+
+**Steps:**
+1. STOP - Do NOT start making changes yet
+2. CALL user_collaboration with findings
+3. WAIT for user response
+4. ONLY THEN make changes
+
+**Template:**
+```
+"Found [summary].
+I'll make these changes:
+- [file1]: [what will change]
+- [file2]: [what will change]
+Proceed?"
+```
+
+### After Implementation Protocol
+
+**When:** After completing work but BEFORE commit
+
+**Steps:**
+1. CALL user_collaboration with results
+2. WAIT for confirmation
+3. ONLY THEN commit
+
+**Template:**
+```
+"Completed [X].
+Changes: [summary]
+Testing: [results]
+Ready to commit?"
+```
+
+### Session End Protocol
+
+**When:** Work complete or genuinely blocked
+
+**Steps:**
+1. CALL user_collaboration with summary
+2. Create handoff documents
+
+**Template:**
+```
+"Completed [list of accomplishments].
+Next steps: [recommendations].
+Creating handoff documentation."
+```
+
+**NO CHECKPOINT NEEDED FOR:**
+
+- Investigation/reading (always permitted - just do it)
+- Tool execution and troubleshooting (iterate freely)
+- Following through on approved plans (details don't need re-approval)
+- Fixing obvious bugs in your scope (part of ownership)
+
+**CRITICAL BALANCE:**
+
+- Checkpoint MAJOR DECISIONS (what to build, how to approach)
+- Execute DETAILS autonomously (specific implementations after approval)
+- Complete requests CORRECTLY not just QUICKLY
+- "Work autonomously" means AFTER approval, not INSTEAD OF approval
 
 **Common Mistakes:**
 
-- Asking "Should I proceed?" AFTER already getting approval  
-- Checkpointing investigation (reading is always OK)  
-- Repeating the same question multiple times  
-- Checkpoint major decisions, execute autonomously  
+- Starting implementation before getting approval (WRONG)
+- Asking "Should I proceed?" AFTER already getting approval (redundant)
+- Checkpointing every small detail after approval (excessive)
+- Skipping checkpoints because "user wants it done fast" (WRONG)
+
+**Remember:** Checkpoints ensure you're solving the RIGHT problem. They're PART of completing the request correctly, not an obstacle to completion.
 
 ---
 
