@@ -390,6 +390,9 @@ sub run {
                 
                 print STDERR "[DEBUG][Chat] Received chunk: " . substr($chunk, 0, 50) . "...\n" if $self->{debug};
                 
+                # Reset system message flag when we start outputting text
+                $self->{_last_was_system_message} = 0;
+                
                 # Stop progress spinner on first chunk (AI is now responding)
                 # Now that we have actual content, print "CLIO: " prefix and stop spinner
                 # Also check _prepare_for_next_iteration flag set by WorkflowOrchestrator
@@ -558,6 +561,12 @@ sub run {
                 # This ensures system messages start on a clean line
                 print "\r\e[K";  # Carriage return + clear entire line
                 
+                # Add visual separation if this isn't the first system message
+                # Check if we just displayed another system message (line_count increased)
+                if ($self->{_last_was_system_message}) {
+                    print "\n";  # Add blank line between consecutive system messages
+                }
+                
                 # Display system message with three-color box-drawing format:
                 # {dim}┌──┤ {agent_label}SYSTEM{reset}
                 # {dim}└─ {data}message{reset}
@@ -570,6 +579,7 @@ sub run {
                 print "$footer_conn$footer_msg\n";
                 STDOUT->flush() if STDOUT->can('flush');
                 $self->{line_count} += 2;  # Two lines for box-drawing format
+                $self->{_last_was_system_message} = 1;  # Mark that we just displayed a system message
                 
                 print STDERR "[DEBUG][Chat] System message: $message\n" if $self->{debug};
             };
