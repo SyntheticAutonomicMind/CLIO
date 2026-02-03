@@ -99,7 +99,9 @@ sub list_usages {
     my $file_paths = $params->{file_paths} || ['.'];
     my $context_lines = $params->{context_lines} || 0;
     
-    return $self->error_result("Missing 'symbol_name' parameter") unless $symbol_name;
+    return $self->error_result("Missing 'symbol_name' parameter", 
+        action_description => "Error: Missing 'symbol_name' parameter"
+    ) unless $symbol_name;
     return $self->error_result("'file_paths' must be an array") 
         unless ref($file_paths) eq 'ARRAY';
     
