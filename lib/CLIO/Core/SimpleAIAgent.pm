@@ -68,6 +68,8 @@ Arguments:
 sub set_ui {
     my ($self, $ui) = @_;
     
+    print STDERR "[DEBUG][SimpleAIAgent] set_ui() called, ui=" . (defined $ui ? "YES" : "NO") . ", orchestrator=" . (defined $self->{orchestrator} ? "YES" : "NO") . "\n" if should_log('DEBUG');
+    
     return unless $ui;
     
     $self->{ui} = $ui;
@@ -76,7 +78,8 @@ sub set_ui {
     if ($self->{orchestrator}) {
         $self->{orchestrator}->{ui} = $ui;
         $self->{orchestrator}->{tool_executor}->{ui} = $ui if $self->{orchestrator}->{tool_executor};
-        print STDERR "[DEBUG][SimpleAIAgent] Updated orchestrator and tool_executor with UI\n" if should_log('DEBUG');
+        $self->{orchestrator}->{formatter}->{ui} = $ui if $self->{orchestrator}->{formatter};
+        print STDERR "[DEBUG][SimpleAIAgent] Updated orchestrator, tool_executor, and formatter with UI\n" if should_log('DEBUG');
     }
 }
 
