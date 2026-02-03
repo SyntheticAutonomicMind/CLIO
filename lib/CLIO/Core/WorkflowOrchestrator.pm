@@ -308,15 +308,11 @@ sub process_input {
         
         # Show busy indicator before API call if this is a continuation after tool execution
         # On first iteration, the spinner is already shown by Chat.pm before calling orchestrate()
-        # On subsequent iterations (after tools), show "CLIO: " prefix + spinner here
+        # On subsequent iterations (after tools), DON'T show "CLIO: " here - let streaming callback
+        # decide whether to show it based on whether there's actual content or just tool calls
         if ($iteration > 1 && $self->{ui}) {
-            # Print "CLIO: " prefix before showing spinner
-            if ($self->{ui}->can('colorize')) {
-                print $self->{ui}->colorize("CLIO: ", 'ASSISTANT');
-                STDOUT->flush() if STDOUT->can('flush');
-            }
-            
-            # Show the busy indicator
+            # Show the busy indicator (spinner) without prefix
+            # If there's content, the streaming callback will print "CLIO: " before it
             if ($self->{ui}->can('show_busy_indicator')) {
                 $self->{ui}->show_busy_indicator();
                 print STDERR "[DEBUG][WorkflowOrchestrator] Showing busy indicator before API iteration $iteration\n"
