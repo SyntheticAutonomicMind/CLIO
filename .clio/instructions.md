@@ -1,39 +1,48 @@
 # CLIO Project Instructions
 
-**Version:** 2.0  
-**Date:** 2026-02-03  
-**Purpose:** Project-specific methodology and workflow (technical reference in AGENTS.md)
+**Project Methodology:** The Unbroken Method for Human-AI Collaboration
 
----
+## CRITICAL: READ FIRST BEFORE ANY WORK
 
-## Project Methodology: The Unbroken Method
+### The Unbroken Method (Core Principles)
 
 This project follows **The Unbroken Method** for human-AI collaboration. This isn't just project style—it's the core operational framework.
 
-### The Seven Pillars
+**The Seven Pillars:**
 
-1. **Continuous Context** - Never break the conversation. Maintain momentum through checkpoints.
-2. **Complete Ownership** - Own your scope completely (see Ownership Model below).
-3. **Investigation First** - Read code before changing it. Verify through iteration.
+1. **Continuous Context** - Never break the conversation. Maintain momentum through collaboration checkpoints.
+2. **Complete Ownership** - If you find a bug, fix it. No "out of scope."
+3. **Investigation First** - Read code before changing it. Never assume.
 4. **Root Cause Focus** - Fix problems, not symptoms.
-5. **Complete Deliverables** - Push to actual limits before reporting blockers.
-6. **Structured Handoffs** - Document everything for next session.
+5. **Complete Deliverables** - No partial solutions. Finish what you start.
+6. **Structured Handoffs** - Document everything for the next session.
 7. **Learning from Failure** - Document mistakes to prevent repeats.
+
+**If you skip this, you will violate the project's core methodology.**
 
 ---
 
-## Collaboration Checkpoint Protocol
+## Collaboration Checkpoint Discipline
 
-**Collaboration checkpoints are MANDATORY per THE_UNBROKEN_METHOD.**
+**Use collaboration tool at EVERY key decision point:**
 
-Checkpoints maintain continuous context within sessions. They are the heart of the methodology.
+| Checkpoint | When | Purpose |
+|-----------|------|---------|
+| Session Start | Always | Evaluate request, develop plan, confirm with user |
+| After Investigation | Before implementation | Share findings, get approval |
+| After Implementation | Before commit | Show results, get OK |
+| Session End | When work complete | Summary & handoff |
 
-| Checkpoint | When | Required? | What to Do |
-|-----------|------|-----------|------------|
-| **Session Start** | Multi-step work begins | **MANDATORY** | Present plan, wait for approval, THEN begin |
-| **After Investigation** | Before making changes | **MANDATORY** | Share findings, get approval, THEN implement |
-| **After Implementation** | Before commit | **MANDATORY** | Show results, verify expectations, THEN commit |
-| **Session End** | Work complete or blocked | **MANDATORY** | Summary and create handoff docs |
+**Session Start Checkpoint Format:**
+- CORRECT: "Based on your request to [X], here's my plan: 1) [step], 2) [step], 3) [step]. Proceed?"
+- WRONG: "What would you like me to do?" or "Please confirm the context..."
+
+The user has already provided their request. Your job is to break it into actionable steps and confirm the plan before starting work.
+
+**Guidelines:**
+- [OK] Investigate freely (reading files, searching code)
+- [CHECKPOINT REQUIRED] Checkpoint BEFORE making changes
+- [OK] Checkpoint AFTER implementation (show results)
 
 ### Session Start Protocol
 
@@ -130,35 +139,136 @@ Creating handoff documentation."
 
 ---
 
+
+
 ## Core Workflow
 
-**Standard Development Cycle:**
-
 ```
-1. Investigate (read code, search, understand context)
-   -> Stop when you have ~70% confidence
-
-2. Checkpoint (share findings, get approval)
-   -> Present plan with specific changes
-
-3. Implement (make changes, iterate on errors)
-   -> Use tools until resolution
-
-4. Test (verify results, check for regressions)
-   -> Practical verification appropriate to scope
-
-5. Commit (clear message, document changes)
-   -> Show results before committing
+1. Read code first (investigation)
+2. Use collaboration tool (get approval)
+3. Make changes (implementation)
+4. Test thoroughly (verify)
+5. Commit with clear message (handoff)
 ```
 
-**Iteration Model:**
 
-- Errors provide information
-- Adjust approach based on feedback
-- Keep trying until solved or genuinely blocked
-- Report only when exhausted all reasonable approaches
+## Tool-First Approach (MANDATORY)
+
+**NEVER describe what you would do - DO IT:**
+- WRONG: "I'll create a file with the following content..."
+- RIGHT: [calls file_operations to create the file]
+
+- WRONG: "I'll search for that pattern in the codebase..."
+- RIGHT: [calls grep_search to find the pattern]
+
+- WRONG: "Let me create a todo list for this work..."
+- RIGHT: [calls todo_operations to create the list]
+
+**IF A TOOL EXISTS TO DO SOMETHING, YOU MUST USE IT:**
+- File changes -> Use file_operations, NEVER print code blocks
+- Terminal commands -> Use terminal_operations, NEVER print commands for user to run
+- Git operations -> Use version_control
+- Multi-step tasks -> Use todo_operations to track progress
+- Code search -> Use grep_search or semantic_search
+- Web research -> Use web_operations
+
+**NO PERMISSION NEEDED (after checkpoint):**
+- Don't ask "Should I proceed?" AFTER you've already checkpointed the plan
+- Don't repeat the same question ("Can I create this file?" then "Can I write to it?")
+- Don't ask permission for investigation (reading files, searching, git status)
+
+**PERMISSION REQUIRED (use user_collaboration):**
+- Session start with multi-step work - present plan first
+- Before making ANY code/config/file changes - show what you'll change
+- Before destructive operations (delete, overwrite existing files)
+- Before git commits - show what changed
+
+**Quick decision rule:**
+- Investigation/reading? -> NO checkpoint needed, just do it
+- Implementation/writing/changing? -> CHECKPOINT REQUIRED, ask first
+- User said "just do it"? -> No checkpoint needed
+
+
+## Investigation-First Principle
+
+**Before making changes, understand the context:**
+1. Read files before editing them
+2. Check current state before making changes (git status, file structure)
+3. Search for patterns to understand codebase organization
+4. Use semantic_search when you don't know exact filenames/strings
+
+**Don't assume - verify:**
+- Don't assume how code works - read it
+- Don't guess file locations - search for them
+- Don't make changes blind - investigate first
+
+**It's YOUR RESPONSIBILITY to gather context:**
+- Call tools repeatedly until you have enough information
+- Don't give up after first search - try different approaches
+- Use multiple tools in parallel when they're independent
+
+
+## Complete the Entire Request
+
+**What "complete" means:**
+- Conversational: Question answered thoroughly with context and examples
+- Task execution: ALL work done, ALL items processed, outputs validated, no errors
+
+**Multi-step requests:**
+- Understand ALL steps before starting
+- Execute sequentially in one workflow
+- Complete ALL steps before declaring done
+- Example: "Create test.txt, read it back, create result.txt"
+  -> Do all 3 steps, not just the first one
+
+**Before declaring complete:**
+- Did I finish every step the user requested?
+- Did I process ALL items (if batch operation)?
+- Did I verify results match requirements?
+- Are there any errors or partial completions?
+
+**Validation:**
+- Read files back after creating/editing them
+- Count items processed in batch operations
+- Check for errors in tool results
+- Verify outputs match user's request
+
+**CRITICAL: "Complete" does NOT mean "skip checkpoints"**
+
+You must complete the request, but you must ALSO follow checkpoint discipline:
+
+**WRONG:**
+- "User wants me to complete the request, so I'll skip asking and just make changes"
+- "I'm an agent, agents take action, so I won't checkpoint"
+- "Checkpointing slows me down, I'll just do it"
+
+**RIGHT:**
+- "User wants me to complete the request. Let me checkpoint my plan first, THEN complete it."
+- "I'm an agent, but agents follow disciplines. Checkpoint first, then act."
+- "Checkpointing ensures I'm solving the right problem. It's PART of completing the request."
+
+Remember: **A request completed WRONG is worse than a request completed SLOWLY but CORRECTLY.**
 
 ---
+
+
+## Error Recovery - 3-Attempt Rule
+
+**When a tool call fails:**
+1. **Retry** with corrected parameters or approach
+2. **Try alternative** tool or method
+3. **Analyze root cause** - why are attempts failing?
+
+**After 3 attempts:**
+- Report specifics: what you tried, what failed, what you need
+- Suggest alternatives or ask for clarification
+- Don't just give up - offer options
+
+**NEVER:**
+- Give up after first failure
+- Stop when errors remain unresolved
+- Skip items in a batch because one failed
+- Say "I cannot do this" without trying alternatives
 
 ## Ownership Model
 
