@@ -55,6 +55,30 @@ sub repair_malformed_json {
     $debug //= 0;
     
     my $original = $json_str;
+
+    # CRITICAL FIX 1: Strip embedded XML parameter tags
+    if ($json_str =~ /<\/?parameter/) {
+        print STDERR "[DEBUG][JSONRepair] Cleaning embedded XML tags\n" if $debug;
+
+        # Remove closing tags
+        $json_str =~ s/<\/parameter>//g;
+
+        # Handle opening tags
+        while ($json_str =~ /<parameter\s+name="([^"]+)"[^>]*>\s*(?::\s*)?/g) {
+            my $param_name = $1;
+            my $before = substr($json_str, 0, $-[0]);
+            my $after = substr($json_str, $+[0]);
+
+            if ($before =~ /\{[^}]*$/) {
+                my $comma = ($before !~ /[{]\s*$/) ? ',' : '';
+                $json_str = $before . $comma . "\"$param_name\":" . $after;
+            } else {
+                $json_str = $before . $after;
+            }
+        }
+
+        print STDERR "[DEBUG][JSONRepair] After cleanup: " . substr($json_str, 0, 200) . "\n" if $debug;
+    }
     
     # CRITICAL FIX: Strip XML-like garbage appended after valid JSON
     # Pattern: valid JSON followed by </parameter>, </invoke>, or other XML closing tags
