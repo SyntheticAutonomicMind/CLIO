@@ -758,14 +758,12 @@ sub handle_login_command {
     $self->writeline("  1. Visit: " . $self->colorize($device_data->{verification_uri}, 'USER'), markdown => 0);
     $self->writeline("  2. Enter code: " . $self->colorize($device_data->{user_code}, 'DATA'), markdown => 0);
     $self->writeline("", markdown => 0);
-    # Progress indicator - needs immediate output
-    print "  Waiting for authorization";
     
     # Poll for token with visual feedback
     my $github_token;
     
-    # Progress message - needs immediate output without newline handling
-    print "\n  " . $self->colorize("Waiting for authorization...", 'DIM') . " (this may take a few minutes)\n  ";
+    # Progress message - needs immediate output without newline handling (styled)
+    print "  " . $self->colorize("Waiting for authorization...", 'DIM') . " (this may take a few minutes)\n  ";
     
     eval {
         $github_token = $auth->poll_for_token(

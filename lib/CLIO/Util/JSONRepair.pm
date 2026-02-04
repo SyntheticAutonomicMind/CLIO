@@ -56,6 +56,18 @@ sub repair_malformed_json {
     
     my $original = $json_str;
     
+    # CRITICAL FIX: Strip XML-like garbage appended after valid JSON
+    # Pattern: valid JSON followed by </parameter>, </invoke>, or other XML closing tags
+    # Example: {"valid":"json"}</parameter>\n</invoke>": ""}
+    # This happens when AI mixes JSON and XML formats
+    if ($json_str =~ m/^(\{.*\}|\[.*\])(<\/\w+>|":\s*"")/) {
+        my $clean_json = $1;
+        my $garbage = substr($json_str, length($clean_json));
+        print STDERR "[DEBUG][JSONRepair] Stripped XML garbage after valid JSON: " . substr($garbage, 0, 50) . "...\n"
+            if $debug;
+        $json_str = $clean_json;
+    }
+    
     # Check if this is Anthropic/Claude XML parameter format: <parameter name="...">value</parameter>
     # This happens when the model uses XML-style tool calling instead of JSON
     if ($json_str =~ /<parameter|<\/parameter>/) {
