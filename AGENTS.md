@@ -356,6 +356,54 @@ rename $temp, $file or die;  # Atomic on Unix
 | `.clio/instructions.md` | Project methodology | AI agents |
 | `AGENTS.md` | Technical reference | AI agents |
 
+### Working Documents (scratch/)
+
+**Purpose:** The `scratch/` directory is your gitignored workspace for investigation, analysis, and planning documents.
+
+**Use scratch/ for:**
+- Code health assessments (`scratch/CODEBASE_REVIEW.md`)
+- Refactoring roadmaps (`scratch/ACTION_PLAN.md`)
+- Investigation summaries
+- Analysis documents  
+- Working notes
+- Planning documents
+
+**NEVER create these in project root** - they clutter the repository and violate project protocols.
+
+**Why scratch/ exists:**
+- Gitignored (won't be committed)
+- Persistent across sessions (unlike ai-assisted/ handoffs)
+- Shareable workspace for investigation findings
+- Clear separation from committed documentation
+
+**Pattern:**
+```
+Investigation findings -> scratch/ANALYSIS.md (not committed)
+Session handoffs -> ai-assisted/YYYYMMDD/HHMM/ (not committed)
+Permanent knowledge -> Detailed commit message (committed)
+```
+
+---
+
+## Anti-Patterns (What NOT To Do)
+
+**CRITICAL:** These are common mistakes that harm code quality and project workflow.
+
+| Anti-Pattern | Why It's Wrong | What To Do |
+|--------------|----------------|------------|
+| Skip syntax check before commit | Causes silent failures in production | Run `perl -c` on all changed files |
+| Use `print()` without `should_log()` | Floods debug output, harms readability | Use Logger module with proper guards |
+| Label bugs as "out of scope" | Violates Complete Ownership principle | Fix bugs you find in your scope |
+| Leave `TODO` comments in code | Creates technical debt, incomplete work | Finish implementation before committing |
+| Assume code behavior | Causes bugs, breaks things | Read the code, investigate first |
+| Commit without testing | Breaks builds, wastes time | Test syntax, run integration tests |
+| Use bare `die` in tools | Crashes AI loop ungracefully | Use error handlers with eval |
+| Create giant modules (>1000 lines) | Hard to maintain and understand | Split into focused, cohesive modules |
+| Create summary docs in root | Clutters repository, wrong location | Use scratch/ for working documents |
+| Skip collaboration checkpoints | Violates Unbroken Method | Use user_collaboration at key decision points |
+
+**Remember:** If you find yourself doing any of these, STOP and do it correctly.
+
 ---
 
 ## Quick Reference
