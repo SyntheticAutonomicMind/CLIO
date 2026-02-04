@@ -347,7 +347,6 @@ sub process_input {
                 if ($on_tool_call_from_ui) {
                     eval { $on_tool_call_from_ui->($tool_name); };
                     if ($@) {
-                        # Callback error - skip silently. Only log if debugging.
                         print STDERR "[DEBUG][WorkflowOrchestrator] UI callback error: $@\n" if should_log('DEBUG');
                     }
                 }
@@ -387,7 +386,6 @@ sub process_input {
         };
         
         if ($@) {
-            # Critical API error - will be returned to user
             print STDERR "[DEBUG][WorkflowOrchestrator] API error: $@\n" if should_log('DEBUG');
             return {
                 success => 0,

@@ -1643,9 +1643,9 @@ sub _handle_error_response {
         }
     } else {
         # ERROR: Log fatal errors with full details
-        print STDERR "[DEBUG][APIManager $error\n" if should_log('ERROR');
+        print STDERR "[DEBUG][APIManager $error\n" if should_log('DEBUG');
         if ($is_streaming) {
-            print STDERR "[DEBUG][APIManager Response body: " . $resp->decoded_content . "\n" if should_log('ERROR');
+            print STDERR "[DEBUG][APIManager Response body: " . $resp->decoded_content . "\n" if should_log('DEBUG');
             print STDERR "[DEBUG][APIManager] Request was: " . substr($json, 0, 500) . "...\n" if should_log('DEBUG');
         } elsif ($self->{debug}) {
             warn "[ERROR] $error\n";
@@ -1749,7 +1749,7 @@ sub send_request {
     my $preflight_errors = $self->_preflight_validate_messages($payload->{messages});
     if ($preflight_errors && @$preflight_errors) {
         my $error_summary = join('; ', @$preflight_errors);
-        print STDERR "[DEBUG][APIManager Pre-flight validation failed: $error_summary\n" if should_log('ERROR');
+        print STDERR "[DEBUG][APIManager Pre-flight validation failed: $error_summary\n" if should_log('DEBUG');
         
         # Attempt auto-repair
         $payload->{messages} = $self->_validate_tool_message_pairs($payload->{messages});
@@ -1769,7 +1769,7 @@ sub send_request {
     };
     if ($@) {
         my $error = $@;
-        print STDERR "[DEBUG][APIManager JSON encoding failed: $error\n" if should_log('ERROR');
+        print STDERR "[DEBUG][APIManager JSON encoding failed: $error\n" if should_log('DEBUG');
         # Log the payload structure for debugging
         if (open my $fh, '>>', '/tmp/clio_json_errors.log') {
             use Data::Dumper;
@@ -1789,7 +1789,7 @@ sub send_request {
     };
     if ($@) {
         my $error = $@;
-        print STDERR "[DEBUG][APIManager JSON validation failed: $error\n" if should_log('ERROR');
+        print STDERR "[DEBUG][APIManager JSON validation failed: $error\n" if should_log('DEBUG');
         # Log the actual JSON for inspection
         if (open my $fh, '>>', '/tmp/clio_json_errors.log') {
             print $fh "\n" . "="x80 . "\n";
@@ -1940,7 +1940,7 @@ sub send_request {
             $self->{session}->save();
             print STDERR "[INFO][APIManager] ✓ Session saved with response_id\n" if should_log('INFO');
         } else {
-            print STDERR "[DEBUG][APIManager Session object cannot save! Response ID will be lost!\n" if should_log('ERROR');
+            print STDERR "[DEBUG][APIManager Session object cannot save! Response ID will be lost!\n" if should_log('DEBUG');
         }
     } else {
         print STDERR "[WARNING][APIManager] Cannot store response_id: " .
@@ -2202,7 +2202,7 @@ sub send_request_streaming {
     my $preflight_errors = $self->_preflight_validate_messages($payload->{messages});
     if ($preflight_errors && @$preflight_errors) {
         my $error_summary = join('; ', @$preflight_errors);
-        print STDERR "[DEBUG][APIManager Pre-flight validation failed: $error_summary\n" if should_log('ERROR');
+        print STDERR "[DEBUG][APIManager Pre-flight validation failed: $error_summary\n" if should_log('DEBUG');
         
         # Attempt auto-repair via _validate_tool_message_pairs
         print STDERR "[INFO][APIManager] Attempting auto-repair of message structure\n" if should_log('INFO');
@@ -2243,7 +2243,7 @@ sub send_request_streaming {
     };
     if ($@) {
         my $error = $@;
-        print STDERR "[DEBUG][APIManager JSON encoding failed (streaming): $error\n" if should_log('ERROR');
+        print STDERR "[DEBUG][APIManager JSON encoding failed (streaming): $error\n" if should_log('DEBUG');
         # Log the payload structure for debugging
         if (open my $fh, '>>', '/tmp/clio_json_errors.log') {
             use Data::Dumper;
@@ -2266,7 +2266,7 @@ sub send_request_streaming {
     };
     if ($@) {
         my $error = $@;
-        print STDERR "[DEBUG][APIManager JSON validation failed (streaming): $error\n" if should_log('ERROR');
+        print STDERR "[DEBUG][APIManager JSON validation failed (streaming): $error\n" if should_log('DEBUG');
         # Log the actual JSON for inspection
         if (open my $fh, '>>', '/tmp/clio_json_errors.log') {
             print $fh "\n" . "="x80 . "\n";
@@ -2373,7 +2373,7 @@ sub send_request_streaming {
                             $self->{session}->save();
                             print STDERR "[INFO][APIManager] ✓ Session saved with response_id (streaming)\n" if should_log('INFO');
                         } else {
-                            print STDERR "[DEBUG][APIManager Session object cannot save! Response ID will be lost!\n" if should_log('ERROR');
+                            print STDERR "[DEBUG][APIManager Session object cannot save! Response ID will be lost!\n" if should_log('DEBUG');
                         }
                     } elsif ($data->{id}) {
                         print STDERR "[WARNING][APIManager] Cannot store response_id (streaming): session is undef\n" 
@@ -2493,7 +2493,7 @@ sub send_request_streaming {
     # Handle request errors
     if ($@) {
         my $error = "Streaming request failed: $@";
-        print STDERR "[DEBUG][APIManager $error\n" if should_log('ERROR');
+        print STDERR "[DEBUG][APIManager $error\n" if should_log('DEBUG');
         return { success => 0, error => $error };
     }
     
@@ -3161,7 +3161,7 @@ sub _process_quota_headers {
     if ($available < 10 && $available > 0) {
         print STDERR "[WARNING][APIManager] Only $available premium requests remaining!\n";
     } elsif ($available <= 0 && !$overage_permitted) {
-        print STDERR "[DEBUG][APIManager Premium quota exhausted! Requests may fail.\n" if should_log('ERROR');
+        print STDERR "[DEBUG][APIManager Premium quota exhausted! Requests may fail.\n" if should_log('DEBUG');
     }
 }
 
@@ -3199,7 +3199,7 @@ sub _store_stateful_marker {
     
     # Debug: Check if session exists
     unless ($self->{session}) {
-        print STDERR "[DEBUG][APIManager Cannot store stateful_marker - no session object!\n" if should_log('ERROR');
+        print STDERR "[DEBUG][APIManager Cannot store stateful_marker - no session object!\n" if should_log('DEBUG');
         return;
     }
     
@@ -3225,7 +3225,7 @@ sub _store_stateful_marker {
         $self->{session}->save();
         print STDERR "[INFO][APIManager] ✓ Session saved with stateful_marker\n" if should_log('INFO');
     } else {
-        print STDERR "[DEBUG][APIManager Session object cannot save! stateful_marker will be lost!\n" if should_log('ERROR');
+        print STDERR "[DEBUG][APIManager Session object cannot save! stateful_marker will be lost!\n" if should_log('DEBUG');
     }
 }
 
@@ -3247,7 +3247,7 @@ sub _get_stateful_marker_for_model {
     my ($self, $model) = @_;
     
     unless ($self->{session}) {
-        print STDERR "[DEBUG][APIManager Cannot get stateful_marker - no session object!\n" if should_log('ERROR');
+        print STDERR "[DEBUG][APIManager Cannot get stateful_marker - no session object!\n" if should_log('DEBUG');
         return undef;
     }
     
