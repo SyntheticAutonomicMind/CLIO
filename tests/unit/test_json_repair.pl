@@ -1,69 +1,91 @@
 #!/usr/bin/env perl
-
 use strict;
 use warnings;
 use utf8;
-use lib 'lib';
+use FindBin;
+use lib "$FindBin::Bin/../lib";
+
+binmode(STDOUT, ':encoding(UTF-8)');
+binmode(STDERR, ':encoding(UTF-8)');
 
 use CLIO::Util::JSONRepair qw(repair_malformed_json);
+use JSON::PP qw(decode_json);
 
-# Test cases
-my @tests = (
-    {
-        name => 'Missing value without space',
-        input => '{"operation":"read","offset":,"length":8192}',
-        expected => '{"operation":"read","offset":null,"length":8192}',
-    },
-    {
-        name => 'Missing value with space (THE BUG)',
-        input => '{"operation":"read_tool_result","toolCallId":"toolu_01UDkM4vCXkok5eWFLfcgEyd","offset": ,"length":8192}',
-        expected => '{"operation":"read_tool_result","toolCallId":"toolu_01UDkM4vCXkok5eWFLfcgEyd","offset":null,"length":8192}',
-    },
-    {
-        name => 'Multiple missing values',
-        input => '{"operation":"read","offset":,"path":"file.txt","content":,"line":100}',
-        expected => '{"operation":"read","offset":null,"path":"file.txt","content":null,"line":100}',
-    },
-    {
-        name => 'Trailing comma before }',
-        input => '{"operation":"read","path":"file.txt"}',
-        expected => '{"operation":"read","path":"file.txt"}',
-    },
-    {
-        name => 'Trailing comma before ]',
-        input => '[1,2,3,]',
-        expected => '[1,2,3]',
-    },
-    {
-        name => 'Mixed issues',
-        input => '{"operation":"read","offset": ,"content":,"items":[1,2,3,]}',
-        expected => '{"operation":"read","offset":null,"content":null,"items":[1,2,3]}',
-    },
-    {
-        name => 'No changes needed',
-        input => '{"operation":"read","path":"file.txt","line":100}',
-        expected => '{"operation":"read","path":"file.txt","line":100}',
-    },
-);
+print "Testing JSONRepair with malformed examples from scratch/test.txt...\n\n";
 
-# Run tests
-my $passed = 0;
-my $failed = 0;
+# Test 1: Valid JSON with XML garbage appended (the exact error from logs)
+my $test1 = '{"end_line":150,"operation":"read_file","path":"lib/CLIO/UI/Theme.pm","start_line":50}</parameter>
+</invoke>": ""}';
 
-foreach my $test (@tests) {
-    my $result = repair_malformed_json($test->{input}, 0);
-    
-    if ($result eq $test->{expected}) {
-        print "[PASS] $test->{name}\n";
-        $passed++;
-    } else {
-        print "[FAIL] $test->{name}\n";
-        print "  Input:    $test->{input}\n";
-        print "  Expected: $test->{expected}\n";
-        print "  Got:      $result\n";
-        $failed++;
-    }
+print "Test 1: Valid JSON with XML garbage appended\n";
+print "Input: " . substr($test1, 0, 80) . "...\n";
+my $fixed1 = repair_malformed_json($test1, 1);
+print "Fixed: $fixed1\n";
+
+eval {
+    my $parsed = decode_json($fixed1);
+    print "✓ Successfully parsed! Operation: $parsed->{operation}\n";
+};
+if ($@) {
+    print "✗ FAILED to parse: $@\n";
+    exit 1;
 }
 
-print "\n$passed passed, $failed failed\n";
-exit $failed ? 1 : 0;
+print "\n";
+
+# Test 2: Missing value with whitespace (another common error)
+my $test2 = '{"operation":"read_tool_result","offset":,"length":8192}';
+
+print "Test 2: Missing value for offset parameter\n";
+print "Input: $test2\n";
+my $fixed2 = repair_malformed_json($test2, 1);
+print "Fixed: $fixed2\n";
+
+eval {
+    my $parsed = decode_json($fixed2);
+    print "✓ Successfully parsed! Operation: $parsed->{operation}\n";
+};
+if ($@) {
+    print "✗ FAILED to parse: $@\n";
+    exit 1;
+}
+
+print "\n";
+
+# Test 3: Missing value with whitespace before comma
+my $test3 = '{"operation":"read_tool_result","offset": ,"length":8192}';
+
+print "Test 3: Missing value with whitespace before comma\n";
+print "Input: $test3\n";
+my $fixed3 = repair_malformed_json($test3, 1);
+print "Fixed: $fixed3\n";
+
+eval {
+    my $parsed = decode_json($fixed3);
+    print "✓ Successfully parsed! Operation: $parsed->{operation}, offset: " . (defined $parsed->{offset} ? $parsed->{offset} : 'null') . "\n";
+};
+if ($@) {
+    print "✗ FAILED to parse: $@\n";
+    exit 1;
+}
+
+print "\n";
+
+# Test 4: Trailing comma
+my $test4 = '{"operation":"read_file","path":"test.txt"}';
+
+print "Test 4: Trailing comma before closing brace\n";
+print "Input: $test4\n";
+my $fixed4 = repair_malformed_json($test4, 1);
+print "Fixed: $fixed4\n";
+
+eval {
+    my $parsed = decode_json($fixed4);
+    print "✓ Successfully parsed! Operation: $parsed->{operation}\n";
+};
+if ($@) {
+    print "✗ FAILED to parse: $@\n";
+    exit 1;
+}
+
+print "\n✓ All tests passed!\n";

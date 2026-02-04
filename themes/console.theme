@@ -10,7 +10,7 @@ system_prefix={style.system_message}[SYSTEM] @RESET@
 error_prefix={style.error_message}[ERROR] @RESET@
 
 # Banner - simple text
-banner_line1={style.app_title}CLIO@RESET@ {style.dim}v1.0@RESET@
+banner_line1={style.app_title}CLIO@RESET@ {style.dim}- Command Line Intelligence Orchestrator@RESET@
 banner_line2={style.dim}Session: {style.data}{var.session_id}@RESET@
 banner_line3={style.dim}Model: {style.data}{var.model}@RESET@
 banner_line4={style.dim}Type /help for help@RESET@
