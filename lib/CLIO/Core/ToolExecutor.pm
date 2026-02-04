@@ -169,12 +169,30 @@ sub execute_tool {
         return $self->_error_result("Tool registry not available");
     }
     
+    # Tool aliasing - map common operation names to their parent tool
+    # This handles cases where AI calls "grep_search" instead of "file_operations" with operation="grep_search"
+    my %TOOL_ALIASES = (
+        'grep_search' => { tool => 'file_operations', operation => 'grep_search' },
+        'semantic_search' => { tool => 'file_operations', operation => 'semantic_search' },
+        'file_search' => { tool => 'file_operations', operation => 'file_search' },
+        'read_file' => { tool => 'file_operations', operation => 'read_file' },
+    );
+    
+    my $original_tool_name = $tool_name;
+    if (exists $TOOL_ALIASES{$tool_name}) {
+        my $alias = $TOOL_ALIASES{$tool_name};
+        print STDERR "[DEBUG][ToolExecutor] Aliasing '$tool_name' -> '$alias->{tool}' with operation='$alias->{operation}'\n" 
+            if should_log('DEBUG');
+        $tool_name = $alias->{tool};
+        $arguments->{operation} = $alias->{operation};
+    }
+    
     my $tool = $tool_registry->get_tool($tool_name);
     unless ($tool) {
         # Log unknown tool error
         $self->_log_tool_operation({
             tool_call_id => $tool_call_id,
-            tool_name => $tool_name,
+            tool_name => $original_tool_name,
             operation => 'unknown',
             parameters => $arguments,
             output => {},

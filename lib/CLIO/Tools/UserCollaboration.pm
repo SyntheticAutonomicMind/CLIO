@@ -120,6 +120,28 @@ sub route_operation {
     return $self->operation_error("Unknown operation: $operation");
 }
 
+
+=head2 get_additional_parameters
+
+Define parameters for user_collaboration in JSON schema sent to AI.
+
+=cut
+
+sub get_additional_parameters {
+    my ($self) = @_;
+    
+    return {
+        message => {
+            type => "string",
+            description => "Your question/update for the user (required)",
+        },
+        context => {
+            type => "string",
+            description => "Optional additional context to help user understand",
+        },
+    };
+}
+
 =head2 request_input
 
 Request input from user mid-execution.
