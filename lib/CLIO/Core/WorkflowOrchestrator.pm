@@ -8,6 +8,7 @@ binmode(STDERR, ':encoding(UTF-8)');
 use CLIO::Core::Logger qw(should_log log_error log_warning);
 use CLIO::Util::TextSanitizer qw(sanitize_text);
 use CLIO::Util::JSONRepair qw(repair_malformed_json);
+use CLIO::Util::AnthropicXMLParser qw(is_anthropic_xml_format parse_anthropic_xml_to_json);
 use CLIO::UI::ToolOutputFormatter;
 use CLIO::Core::ToolErrorGuidance;
 use JSON::PP qw(encode_json decode_json);
@@ -912,21 +913,31 @@ sub process_input {
                 my $params = {};
                 if ($tool_call->{function}->{arguments}) {
                     eval {
-                        # Repair malformed JSON from AI (e.g., "offset":, → "offset":0,)
                         my $json_str = $tool_call->{function}->{arguments};
-                        
-                        # Debug: Show original JSON before repair
+
+                        # Debug: Show original arguments before any processing
                         if ($self->{debug}) {
                             my $preview = substr($json_str, 0, 300);
-                            print STDERR "[DEBUG][WorkflowOrchestrator] Original JSON arguments (first 300 chars): $preview\n";
+                            print STDERR "[DEBUG][WorkflowOrchestrator] Original arguments (first 300 chars): $preview\n";
                         }
-                        
-                        $json_str = repair_malformed_json($json_str, $self->{debug});
-                        
-                        # Debug: Show repaired JSON
-                        if ($self->{debug}) {
-                            my $preview = substr($json_str, 0, 300);
-                            print STDERR "[DEBUG][WorkflowOrchestrator] Repaired JSON arguments (first 300 chars): $preview\n";
+
+                        # CRITICAL: Check for Anthropic XML format FIRST
+                        # Claude sometimes uses native XML instead of JSON for tool calls
+                        if (is_anthropic_xml_format($json_str)) {
+                            print STDERR "[INFO][WorkflowOrchestrator] Detected Anthropic XML format, converting to JSON\n"
+                                if should_log('INFO');
+                            $json_str = parse_anthropic_xml_to_json($json_str, $self->{debug});
+                            print STDERR "[DEBUG][WorkflowOrchestrator] Converted XML to JSON: " . substr($json_str, 0, 300) . "\n"
+                                if $self->{debug};
+                        } else {
+                            # Standard JSON path - try repair if needed
+                            $json_str = repair_malformed_json($json_str, $self->{debug});
+
+                            # Debug: Show repaired JSON
+                            if ($self->{debug}) {
+                                my $preview = substr($json_str, 0, 300);
+                                print STDERR "[DEBUG][WorkflowOrchestrator] Repaired JSON arguments (first 300 chars): $preview\n";
+                            }
                         }
                         
                         # Encode to UTF-8 bytes to avoid "Wide character in subroutine entry"
