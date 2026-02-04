@@ -137,6 +137,84 @@ sub route_operation {
     return $self->error_result("Operation not implemented: $operation");
 }
 
+=head2 get_additional_parameters
+
+Define parameters for memory_operations in JSON schema sent to AI.
+
+=cut
+
+sub get_additional_parameters {
+    my ($self) = @_;
+    
+    return {
+        key => {
+            type => "string",
+            description => "Memory key for store/retrieve/delete operations",
+        },
+        content => {
+            type => "string",
+            description => "Content to store (for store operation)",
+        },
+        query => {
+            type => "string",
+            description => "Search query (for search/recall_sessions operations)",
+        },
+        max_sessions => {
+            type => "integer",
+            description => "Maximum number of sessions to search (for recall_sessions, default: 10)",
+        },
+        max_results => {
+            type => "integer",
+            description => "Maximum results to return (for recall_sessions, default: 5)",
+        },
+        fact => {
+            type => "string",
+            description => "Discovery fact to store (for add_discovery operation)",
+        },
+        confidence => {
+            type => "number",
+            description => "Confidence level 0.0-1.0 (for add_discovery/add_pattern operations)",
+        },
+        error => {
+            type => "string",
+            description => "Error/problem description (for add_solution operation)",
+        },
+        solution => {
+            type => "string",
+            description => "Solution description (for add_solution operation)",
+        },
+        pattern => {
+            type => "string",
+            description => "Pattern description (for add_pattern operation)",
+        },
+        examples => {
+            type => "array",
+            items => { type => "string" },
+            description => "Example file paths (for add_solution/add_pattern operations)",
+        },
+        max_age_days => {
+            type => "integer",
+            description => "Max age in days for LTM entries (for prune_ltm, default: 90)",
+        },
+        min_confidence => {
+            type => "number",
+            description => "Minimum confidence threshold (for prune_ltm, default: 0.3)",
+        },
+        max_discoveries => {
+            type => "integer",
+            description => "Max discoveries to keep (for prune_ltm, default: 50)",
+        },
+        max_solutions => {
+            type => "integer",
+            description => "Max solutions to keep (for prune_ltm, default: 50)",
+        },
+        max_patterns => {
+            type => "integer",
+            description => "Max patterns to keep (for prune_ltm, default: 30)",
+        },
+    };
+}
+
 sub store {
     my ($self, $params, $context) = @_;
     
