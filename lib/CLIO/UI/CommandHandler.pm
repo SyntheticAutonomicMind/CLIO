@@ -20,6 +20,7 @@ use CLIO::UI::Commands::Update;
 use CLIO::UI::Commands::Skills;
 use CLIO::UI::Commands::Prompt;
 use CLIO::UI::Commands::Project;
+use CLIO::UI::Commands::Device;
 
 =head1 NAME
 
@@ -398,6 +399,14 @@ sub handle_command {
         # Use extracted Project command module
         my $prompt = $self->{project_cmd}->handle_design_command(@args);
         return (1, $prompt) if $prompt;  # Return prompt to be sent to AI
+    }
+    elsif ($cmd eq 'device' || $cmd eq 'dev') {
+        # Device registry management
+        CLIO::UI::Commands::Device::handle_device_command(join(' ', @args), { chat => $chat });
+    }
+    elsif ($cmd eq 'group') {
+        # Device group management
+        CLIO::UI::Commands::Device::handle_group_command(join(' ', @args), { chat => $chat });
     }
     else {
         $chat->display_error_message("Unknown command: /$cmd (type /help for help)");

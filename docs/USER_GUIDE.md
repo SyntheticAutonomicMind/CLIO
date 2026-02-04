@@ -581,6 +581,27 @@ YOU: Fetch the documentation from https://docs.example.com/api
 YOU: Summarize the content of https://blog.example.com/article
 ```
 
+### Remote Execution
+
+**execute_remote** - Run AI tasks on remote systems via SSH
+```
+YOU: Use remote execution to check the disk space on myserver
+YOU: Execute on admin@webserver with gpt-4.1: create a system health report
+YOU: Remote execute on builder@arm-device: compile the project and report any errors
+```
+
+**check_remote** - Verify remote system is ready for execution
+```
+YOU: Check if server@production is ready for remote CLIO execution
+```
+
+**prepare_remote** - Pre-stage CLIO on a remote system
+```
+YOU: Prepare CLIO on dev@buildserver for repeated tasks
+```
+
+Remote execution enables powerful distributed workflows - run analysis on servers, build on specific hardware, gather diagnostics from multiple systems, and more. See [Remote Execution Guide](REMOTE_EXECUTION.md) for complete documentation.
+
 ---------------------------------------------------
 
 ## Usage Examples
