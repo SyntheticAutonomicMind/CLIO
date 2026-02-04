@@ -455,7 +455,7 @@ sub read_file {
     };
     
     if ($@) {
-        print STDERR "[ERROR][FileOp] Failed to read $path: $@\n" if should_log('ERROR');
+        print STDERR "[DEBUG][FileOp Failed to read $path: $@\n" if should_log('ERROR');
         return $self->error_result("Failed to read file: $@");
     }
     
@@ -528,7 +528,7 @@ sub list_dir {
     };
     
     if ($@) {
-        print STDERR "[ERROR][FileOp] Failed to list directory $path: $@\n" if should_log('ERROR');
+        print STDERR "[DEBUG][FileOp Failed to list directory $path: $@\n" if should_log('ERROR');
         return $self->error_result("Failed to list directory: $@");
     }
     
@@ -744,7 +744,7 @@ sub file_search {
     };
     
     if ($@) {
-        print STDERR "[ERROR][FileOp] File search failed: $@\n" if should_log('ERROR');
+        print STDERR "[DEBUG][FileOp File search failed: $@\n" if should_log('ERROR');
         return $self->error_result("File search failed: $@");
     }
     
@@ -864,7 +864,7 @@ sub grep_search {
     };
     
     if ($@) {
-        print STDERR "[ERROR][FileOp] Grep search failed: $@\n" if should_log('ERROR');
+        print STDERR "[DEBUG][FileOp Grep search failed: $@\n" if should_log('ERROR');
         return $self->error_result("Grep search failed: $@");
     }
     
@@ -1140,7 +1140,7 @@ sub create_file {
     };
     
     if ($@) {
-        print STDERR "[ERROR][FileOp] Failed to create file: $@\n" if should_log('ERROR');
+        print STDERR "[DEBUG][FileOp Failed to create file: $@\n" if should_log('ERROR');
         return $self->error_result("Failed to create file: $@");
     }
     
@@ -1191,7 +1191,7 @@ sub write_file {
     };
     
     if ($@) {
-        print STDERR "[ERROR][FileOp] Failed to write file: $@\n" if should_log('ERROR');
+        print STDERR "[DEBUG][FileOp Failed to write file: $@\n" if should_log('ERROR');
         return $self->error_result("Failed to write file: $@");
     }
     
@@ -1242,7 +1242,7 @@ sub append_file {
     };
     
     if ($@) {
-        print STDERR "[ERROR][FileOp] Failed to append to file: $@\n" if should_log('ERROR');
+        print STDERR "[DEBUG][FileOp Failed to append to file: $@\n" if should_log('ERROR');
         return $self->error_result("Failed to append to file: $@");
     }
     
@@ -1300,7 +1300,7 @@ sub replace_string {
     };
     
     if ($@) {
-        print STDERR "[ERROR][FileOp] Failed to replace string: $@\n" if should_log('ERROR');
+        print STDERR "[DEBUG][FileOp Failed to replace string: $@\n" if should_log('ERROR');
         return $self->error_result("Failed to replace string: $@");
     }
     
@@ -1487,7 +1487,7 @@ sub insert_at_line {
     };
     
     if ($@) {
-        print STDERR "[ERROR][FileOp] Failed to insert at line: $@\n" if should_log('ERROR');
+        print STDERR "[DEBUG][FileOp Failed to insert at line: $@\n" if should_log('ERROR');
         return $self->error_result("Failed to insert at line: $@");
     }
     
@@ -1543,7 +1543,7 @@ sub delete_file {
     };
     
     if ($@) {
-        print STDERR "[ERROR][FileOp] Failed to delete: $@\n" if should_log('ERROR');
+        print STDERR "[DEBUG][FileOp Failed to delete: $@\n" if should_log('ERROR');
         return $self->error_result("Failed to delete: $@");
     }
     
@@ -1598,7 +1598,7 @@ sub rename_file {
     };
     
     if ($@) {
-        print STDERR "[ERROR][FileOp] Failed to rename: $@\n" if should_log('ERROR');
+        print STDERR "[DEBUG][FileOp Failed to rename: $@\n" if should_log('ERROR');
         return $self->error_result("Failed to rename: $@");
     }
     
@@ -1642,7 +1642,7 @@ sub create_directory {
     };
     
     if ($@) {
-        print STDERR "[ERROR][FileOp] Failed to create directory: $@\n" if should_log('ERROR');
+        print STDERR "[DEBUG][FileOp Failed to create directory: $@\n" if should_log('ERROR');
         return $self->error_result("Failed to create directory: $@");
     }
     

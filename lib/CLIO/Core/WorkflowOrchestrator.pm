@@ -347,7 +347,8 @@ sub process_input {
                 if ($on_tool_call_from_ui) {
                     eval { $on_tool_call_from_ui->($tool_name); };
                     if ($@) {
-                        print STDERR "[ERROR][WorkflowOrchestrator] Error in on_tool_call callback: $@\n" if should_log('ERROR');
+                        # Callback error - skip silently. Only log if debugging.
+                        print STDERR "[DEBUG][WorkflowOrchestrator] UI callback error: $@\n" if should_log('DEBUG');
                     }
                 }
                 
@@ -386,7 +387,8 @@ sub process_input {
         };
         
         if ($@) {
-            print STDERR "[ERROR][WorkflowOrchestrator] API error: $@\n" if should_log('ERROR');
+            # Critical API error - will be returned to user
+            print STDERR "[DEBUG][WorkflowOrchestrator] API error: $@\n" if should_log('DEBUG');
             return {
                 success => 0,
                 error => "API request failed: $@",
@@ -530,6 +532,7 @@ sub process_input {
                 elsif ($api_response->{error_type} && $api_response->{error_type} eq 'token_limit_exceeded') {
                     # Trim conversation history to fit within model's context window
                     # Remove oldest messages while keeping system prompt and recent context
+                    # IMPORTANT: Preserve tool_call/tool_result pairs to avoid orphans
                     
                     my $system_prompt = undef;
                     my @non_system = ();
@@ -545,13 +548,64 @@ sub process_input {
                     
                     my $original_count = scalar(@non_system);
                     
+                    # Build map of tool_call_id -> message indices for smart trimming
+                    my %tool_call_indices = ();  # tool_call_id => index in @non_system
+                    my %tool_result_indices = (); # tool_call_id => index in @non_system
+                    
+                    for (my $i = 0; $i < @non_system; $i++) {
+                        my $msg = $non_system[$i];
+                        # Track tool_calls from assistant messages
+                        if ($msg->{role} && $msg->{role} eq 'assistant' && 
+                            $msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
+                            for my $tc (@{$msg->{tool_calls}}) {
+                                $tool_call_indices{$tc->{id}} = $i if $tc->{id};
+                            }
+                        }
+                        # Track tool_results
+                        elsif ($msg->{role} && $msg->{role} eq 'tool' && $msg->{tool_call_id}) {
+                            $tool_result_indices{$msg->{tool_call_id}} = $i;
+                        }
+                    }
+                    
                     if ($retry_count == 1) {
                         # First retry: Keep last 50% of messages
                         my $keep_count = int($original_count / 2);
                         $keep_count = 10 if $keep_count < 10 && $original_count >= 10;  # Keep at least 10
-                        @non_system = @non_system[-$keep_count..-1] if $keep_count > 0;
+                        
+                        # Calculate starting index
+                        my $start_idx = $original_count - $keep_count;
+                        $start_idx = 0 if $start_idx < 0;
+                        
+                        # Find any tool_results in the kept range that need their tool_calls
+                        my @must_include = ();
+                        for (my $i = $start_idx; $i < $original_count; $i++) {
+                            my $msg = $non_system[$i];
+                            if ($msg->{role} && $msg->{role} eq 'tool' && $msg->{tool_call_id}) {
+                                my $tc_id = $msg->{tool_call_id};
+                                if (exists $tool_call_indices{$tc_id}) {
+                                    my $tc_idx = $tool_call_indices{$tc_id};
+                                    if ($tc_idx < $start_idx) {
+                                        push @must_include, $tc_idx;
+                                    }
+                                }
+                            }
+                        }
+                        
+                        # Include the essential tool_call messages
+                        if (@must_include) {
+                            @must_include = sort { $a <=> $b } @must_include;
+                            my @preserved = ();
+                            for my $idx (@must_include) {
+                                push @preserved, $non_system[$idx];
+                            }
+                            # Add the trimmed messages
+                            push @preserved, @non_system[$start_idx..-1];
+                            @non_system = @preserved;
+                        } else {
+                            @non_system = @non_system[$start_idx..-1];
+                        }
                     } elsif ($retry_count == 2) {
-                        # Second retry: Keep last 25% of messages
+                        # Second retry: Keep last 25% of messages (simplified - just take last quarter)
                         my $keep_count = int($original_count / 4);
                         $keep_count = 5 if $keep_count < 5 && $original_count >= 5;  # Keep at least 5
                         @non_system = @non_system[-$keep_count..-1] if $keep_count > 0;
@@ -575,7 +629,7 @@ sub process_input {
                     
                     # If we've trimmed to minimal context and still failing, give up
                     if ($retry_count > 2 && scalar(@non_system) <= 3) {
-                        print STDERR "[ERROR][WorkflowOrchestrator] Token limit persists even with minimal context - giving up\n" if should_log('ERROR');
+                        print STDERR "[DEBUG][WorkflowOrchestrator] Token limit persists even with minimal context - giving up\n" if should_log('DEBUG');
                         return {
                             success => 0,
                             error => "Token limit exceeded even with minimal conversation history. The request may be too large for this model. Try using a model with a larger context window.",
@@ -633,7 +687,7 @@ sub process_input {
                 # Call system message callback if provided
                 if ($on_system_message) {
                     eval { $on_system_message->($system_msg); };
-                    print STDERR "[ERROR][WorkflowOrchestrator] Error in on_system_message callback: $@\n" if $@;
+                    print STDERR "[DEBUG][WorkflowOrchestrator] UI callback error: $@\n" if should_log('DEBUG') && $@;
                 } else {
                     print STDERR "[INFO][WorkflowOrchestrator] Retryable $error_type detected, retrying in ${retry_delay}s on next iteration (attempt $retry_count/$max_retries)\n";
                 }
@@ -668,10 +722,10 @@ sub process_input {
             
             # Break infinite loop if same error repeats too many times
             if ($self->{consecutive_errors} >= $self->{max_consecutive_errors}) {
-                print STDERR "[ERROR][WorkflowOrchestrator] Same error occurred $self->{consecutive_errors} times in a row. Breaking loop.\n" if should_log('ERROR');
-                print STDERR "[ERROR][WorkflowOrchestrator] Persistent error: $error\n" if should_log('ERROR');
-                print STDERR "[ERROR][WorkflowOrchestrator] This likely indicates a bug in the request construction or API incompatibility.\n" if should_log('ERROR');
-                print STDERR "[ERROR][WorkflowOrchestrator] Check /tmp/clio_json_errors.log for details.\n" if should_log('ERROR');
+                print STDERR "[DEBUG][WorkflowOrchestrator] Same error occurred $self->{consecutive_errors} times in a row. Breaking loop.\n" if should_log('DEBUG');
+                print STDERR "[DEBUG][WorkflowOrchestrator] Persistent error: $error\n" if should_log('DEBUG');
+                print STDERR "[DEBUG][WorkflowOrchestrator] This likely indicates a bug in the request construction or API incompatibility.\n" if should_log('DEBUG');
+                print STDERR "[DEBUG][WorkflowOrchestrator] Check /tmp/clio_json_errors.log for details.\n" if should_log('DEBUG');
                 
                 # Reset counters and return failure
                 $self->{consecutive_errors} = 0;
@@ -926,7 +980,7 @@ sub process_input {
                                     if should_log('DEBUG');
                             };
                             if ($@) {
-                                print STDERR "[ERROR][WorkflowOrchestrator] Failed to save error result to session: $@\n" if should_log('ERROR');
+                                print STDERR "[DEBUG][WorkflowOrchestrator] Session save error (non-critical): $@\n" if should_log('DEBUG');
                             }
                         }
                         
@@ -1294,8 +1348,8 @@ sub process_input {
         $elapsed_time
     );
     
-    print STDERR "[ERROR][WorkflowOrchestrator] $error_msg\n" if should_log('ERROR');
-    print STDERR "[ERROR][WorkflowOrchestrator] Tool calls made: " . scalar(@tool_calls_made) . "\n" if should_log('ERROR');
+    print STDERR "[DEBUG][WorkflowOrchestrator] $error_msg\n" if should_log('DEBUG');
+    print STDERR "[DEBUG][WorkflowOrchestrator] Tool calls made: " . scalar(@tool_calls_made) . "\n" if should_log('DEBUG');
     
     return {
         success => 0,
@@ -2045,7 +2099,7 @@ sub _inject_context_files {
         };
         
         if ($@) {
-            print STDERR "[ERROR][WorkflowOrchestrator] Failed to read context file $file: $@\n" if should_log('ERROR');
+            print STDERR "[DEBUG][WorkflowOrchestrator] Failed to read context file $file (skipping): $@\n" if should_log('DEBUG');
         }
     }
     
