@@ -23,25 +23,30 @@ character is removed, preserving any text that came before it on the line.
 
 =head1 SYNOPSIS
 
-    # Standalone spinner (prints on its own line)
+    # Standalone spinner with theme-managed frames
     my $spinner = CLIO::UI::ProgressSpinner->new(
-        frames => ['.', 'o', 'O', 'o'],
+        theme_mgr => $theme_manager,
         delay => 100000,  # microseconds (100ms)
     );
     $spinner->start();
     # ... do work ...
     $spinner->stop();
 
+    # Custom spinner (explicit frames override theme)
+    my $spinner = CLIO::UI::ProgressSpinner->new(
+        frames => ['.', 'o', 'O', 'o'],
+        delay => 100000,
+    );
+
     # Inline spinner (animates on same line as existing text)
     # Usage: Print "CLIO: " then start inline spinner
     print "CLIO: ";
     my $spinner = CLIO::UI::ProgressSpinner->new(
-        frames => ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'],
-        delay => 100000,
+        theme_mgr => $theme_manager,
         inline => 1,  # Don't clear entire line on stop, just remove spinner
     );
     $spinner->start();
-    # Terminal shows: "CLIO: ⠋" animating
+    # Terminal shows: "CLIO: ⠋" animating (using frames from theme)
     # ... do work ...
     $spinner->stop();
     # Terminal shows: "CLIO: " with cursor after it for content to follow
@@ -51,11 +56,20 @@ character is removed, preserving any text that came before it on the line.
 sub new {
     my ($class, %args) = @_;
     
+    # Use theme manager frames if available, otherwise fall back to default
+    my @frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+    if ($args{theme_mgr} && $args{theme_mgr}->can('get_spinner_frames')) {
+        @frames = @{$args{theme_mgr}->get_spinner_frames()};
+    } elsif ($args{frames}) {
+        @frames = @{$args{frames}};
+    }
+    
     my $self = {
-        # Default to braille pattern spinner (smooth, compatible animation)
-        frames => $args{frames} || ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'],
+        # Frames from theme or explicit argument or default braille pattern
+        frames => \@frames,
         delay => $args{delay} || 100000,  # 100ms default
         inline => $args{inline} // 0,     # Inline mode: don't clear entire line
+        theme_mgr => $args{theme_mgr},    # Store theme manager for potential future use
         pid => undef,
         running => 0,
     };
