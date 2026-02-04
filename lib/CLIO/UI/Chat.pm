@@ -1717,6 +1717,15 @@ sub display_help {
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/prompt', 'help_command'), 'Manage system prompts');
     push @help_lines, "";
     
+    push @help_lines, $self->colorize("DEVICES & REMOTE", 'command_subheader');
+    push @help_lines, $self->colorize("─" x 62, 'dim');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/device', 'help_command'), 'List registered devices');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/device add <name> <host>', 'help_command'), 'Register device');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/device info <name>', 'help_command'), 'Device details');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/group', 'help_command'), 'List device groups');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/group add <name> <devs...>', 'help_command'), 'Create group');
+    push @help_lines, "";
+    
     push @help_lines, $self->colorize("OTHER", 'command_subheader');
     push @help_lines, $self->colorize("─" x 62, 'dim');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/billing', 'help_command'), 'API usage stats');

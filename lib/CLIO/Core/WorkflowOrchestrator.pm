@@ -195,6 +195,12 @@ sub _register_default_tools {
         CLIO::Tools::UserCollaboration->new(debug => $self->{debug})
     );
     
+    # Register RemoteExecution tool
+    require CLIO::Tools::RemoteExecution;
+    $self->{tool_registry}->register_tool(
+        CLIO::Tools::RemoteExecution->new(debug => $self->{debug})
+    );
+    
     print STDERR "[DEBUG][WorkflowOrchestrator] Registered default tools\n" if should_log('DEBUG');
 }
 
