@@ -144,7 +144,6 @@ sub execute_tool {
     };
     if ($@) {
         my $error = $@;
-        # Recoverable error - agent will adapt. Don't display to user.
         print STDERR "[DEBUG][ToolExecutor] JSON parse error: $error\n" if should_log('DEBUG');
         
         # Log the error
@@ -520,7 +519,6 @@ sub _execute_protocol {
     };
     
     if ($@) {
-        # Recoverable error - agent will adapt. Don't display to user.
         print STDERR "[DEBUG][ToolExecutor] Protocol execution failed: $@\n" if should_log('DEBUG');
         return $self->_error_result("Protocol execution failed: $@");
     }
@@ -646,7 +644,6 @@ sub _format_tool_result {
     # Convert to JSON
     my $json = eval { encode_json($tool_result) };
     if ($@) {
-        # Recoverable error - agent will adapt. Don't display to user.
         print STDERR "[DEBUG][ToolExecutor] Failed to encode result: $@\n" if should_log('DEBUG');
         return encode_json({
             success => 0,
@@ -682,7 +679,6 @@ sub _log_tool_operation {
         $self->{tool_logger}->log($entry);
     };
     if ($@) {
-        # Logging error - don't display to user. Only log if debugging.
         print STDERR "[DEBUG][ToolExecutor] Failed to log tool operation: $@\n" if should_log('DEBUG');
     }
 }
@@ -696,7 +692,6 @@ Return a JSON error result.
 sub _error_result {
     my ($self, $error) = @_;
     
-    # Tool errors are handled gracefully - don't display to user
     print STDERR "[DEBUG][ToolExecutor] Error: $error\n" if should_log('DEBUG');
     
     return encode_json({
