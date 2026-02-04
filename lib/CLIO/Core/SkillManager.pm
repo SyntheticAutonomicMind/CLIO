@@ -205,66 +205,216 @@ I need you to initialize CLIO for this project. This is a comprehensive setup ta
 
 ## Your Tasks:
 
-### 1. Fetch CLIO's Core Methodology
-Fetch this reference document:
-- CLIO's universal methodology template: https://raw.githubusercontent.com/SyntheticAutonomicMind/CLIO/main/.clio/instructions.md
+### 1. Fetch CLIO's Reference Documents
 
-This template contains The Unbroken Method and collaboration checkpoint discipline that works for ANY project.
+Fetch BOTH of these files to use as templates:
+
+**A) Methodology template:**
+https://raw.githubusercontent.com/SyntheticAutonomicMind/CLIO/main/.clio/instructions.md
+
+This defines HOW agents work - The Unbroken Method, collaboration checkpoints, workflow protocols. 
+
+**B) Technical reference schema:**
+https://raw.githubusercontent.com/SyntheticAutonomicMind/CLIO/main/AGENTS.md
+
+This defines WHAT technical knowledge agents need - setup commands, code style, testing, architecture.
+
+**CRITICAL - Understand the Separation:**
+- `.clio/instructions.md` = Process/methodology (HOW to work)
+- `AGENTS.md` = Technical reference (WHAT to build)
+- **NO overlap** - methodology in one, technical details in the other
 
 ### 2. Analyze This Codebase
+
 Do a thorough analysis of this project:
 - Programming language(s), frameworks, libraries
-- Project structure and architecture
+- Project structure and architecture  
 - Existing tests, CI/CD, documentation
 - Code style patterns and conventions
 - Build and test commands
 - Common development workflows
+- Entry points and key modules
 
 ### 3. Create Project Instructions
 
-**Create TWO files:**
+**A) `.clio/instructions.md`** - Methodology (HOW to work)
 
-**A) `.clio/instructions.md`** - Use the fetched template as-is OR customize if this project needs CLIO-specific methodology adjustments. This file defines HOW CLIO operates as an agent.
+**DO:** Use the fetched instructions.md as-is UNLESS this project has specific workflow requirements
+**DO NOT:** Put technical details here (commands, file paths, stack info) - those go in AGENTS.md
+**CUSTOMIZE ONLY IF:** This project needs CLIO-specific methodology adjustments (rare!)
 
-**B) `AGENTS.md`** - Create project-specific context in AGENTS.md format:
+Most projects should use CLIO's instructions.md unchanged.
+
+**B) `AGENTS.md`** - Technical Reference (WHAT to build)
+
+**DO:** Use CLIO's AGENTS.md as the SCHEMA TEMPLATE - copy its structure/sections
+**DO:** Replace CLIO-specific content with this project's technical details
+**DO NOT:** Include methodology, checkpoints, or workflow protocols (those are in .clio/instructions.md)
+
+**Use this structure from CLIO's AGENTS.md:**
+
 ```markdown
 # AGENTS.md
 
-## Setup Commands
+**Version:** 1.0
+**Date:** [today]
+**Purpose:** Technical reference for [Project Name] development
 
-- Install: [command]
-- Build: [command]
-- Test: [command]
+---
+
+## Project Overview
+
+[Language, architecture, purpose]
+
+---
+
+## Quick Setup
+
+\`\`\`bash
+# Install dependencies
+[command]
+
+# Build/compile
+[command]
+
+# Run/start
+[command]
+
+# Test
+[command]
+\`\`\`
+
+---
+
+## Architecture
+
+[Diagram or description of system architecture]
+
+---
+
+## Directory Structure
+
+| Path | Purpose |
+|------|---------|
+| [dir/] | [what it contains] |
+
+---
 
 ## Code Style
 
-- [Language-specific style guide]
-- [Formatting rules]
-- [Naming conventions]
+**[Language] Conventions:**
 
-## Testing Instructions
+- [Style rule 1]
+- [Style rule 2]
+- [Module/class patterns]
 
-- [How to run tests]
-- [Coverage requirements]
-- [CI/CD info]
+---
 
-## Project Structure
+## Module Naming Conventions
 
-- [Key directories]
-- [Important files]
-- [Architecture notes]
+[If applicable - how modules/files are named and organized]
+
+---
+
+## Testing
+
+**Before Committing:**
+
+\`\`\`bash
+# Run tests
+[command]
+
+# Linting
+[command]
+
+# Coverage
+[command]
+\`\`\`
+
+---
+
+## Commit Format
+
+[Project's commit message conventions]
+
+---
+
+## Development Tools
+
+**Common Commands:**
+
+\`\`\`bash
+# Useful development commands
+\`\`\`
+
+---
+
+## Common Patterns
+
+**[Pattern Name]:**
+
+\`\`\`[language]
+# Example code patterns used in this project
+\`\`\`
+
+---
+
+## Documentation
+
+### What Needs Documentation
+
+| Change Type | Required Documentation |
+|-------------|------------------------|
+| [type] | [what to update] |
+
+---
+
+## Anti-Patterns (What NOT To Do)
+
+| Anti-Pattern | Why It's Wrong | What To Do |
+|--------------|----------------|------------|
+| [pattern] | [reason] | [alternative] |
+
+---
+
+## Quick Reference
+
+[Quick commands/shortcuts for daily development]
+
+---
+
+*For project methodology and workflow, see .clio/instructions.md*
 ```
 
-This file provides domain knowledge that works with ALL AI coding tools (Cursor, Aider, Jules, GitHub Copilot, etc.).
+**Anti-Duplication Rules:**
+
+- If it's about HOW to work (checkpoints, workflow, error handling) -> `.clio/instructions.md`
+- If it's about WHAT to build (commands, syntax, architecture) -> `AGENTS.md`
+- When in doubt: Technical = AGENTS.md, Process = instructions.md
 
 ### 4. Set Up .gitignore
-Ensure `.gitignore` includes CLIO-specific entries.
+
+Ensure `.gitignore` includes CLIO-specific entries:
+```
+scratch/
+reference/
+ai-assisted/
+*.txt
+.clio/*.json
+.clio/sessions/
+```
 
 ### 5. Initialize or Update Git
+
 Initialize git if needed, or add/commit the .clio/ directory and AGENTS.md.
 
 ### 6. Report What You Did
-Provide a summary of the project analysis and setup completed.
+
+Provide a summary of:
+- Project analysis findings
+- What you put in `.clio/instructions.md` (customized or used template as-is?)
+- Key sections of `AGENTS.md` you created
+- Setup completed
 
 Begin now - use your tools to complete all these tasks.
 INIT_PROMPT
@@ -282,16 +432,31 @@ I need you to initialize CLIO for this project. This is a comprehensive setup ta
 
 ## Your Tasks:
 
-### 1. Fetch CLIO's Core Methodology
-Fetch this reference document:
-- CLIO's universal methodology template: https://raw.githubusercontent.com/SyntheticAutonomicMind/CLIO/main/.clio/instructions.md
+### 1. Fetch CLIO's Reference Documents
 
-This template contains The Unbroken Method and collaboration checkpoint discipline that works for ANY project.
+Fetch BOTH of these files to use as templates:
+
+**A) Methodology template:**
+https://raw.githubusercontent.com/SyntheticAutonomicMind/CLIO/main/.clio/instructions.md
+
+This defines HOW agents work - The Unbroken Method, collaboration checkpoints, workflow protocols.
+
+**B) Technical reference schema:**
+https://raw.githubusercontent.com/SyntheticAutonomicMind/CLIO/main/AGENTS.md
+
+This defines WHAT technical knowledge agents need - setup commands, code style, testing, architecture.
+
+**CRITICAL - Understand the Separation:**
+- `.clio/instructions.md` = Process/methodology (HOW to work)
+- `AGENTS.md` = Technical reference (WHAT to build)
+- **NO overlap** - methodology in one, technical details in the other
 
 ### 2. Read the PRD
-Read `.clio/PRD.md` to understand the project goals and architecture.
+
+Read `.clio/PRD.md` to understand the project goals and architecture decisions.
 
 ### 3. Analyze This Codebase
+
 Do a thorough analysis of this project:
 - Programming language(s), frameworks, libraries
 - Project structure and architecture
@@ -299,60 +464,63 @@ Do a thorough analysis of this project:
 - Code style patterns and conventions
 - Build and test commands
 - Common development workflows
+- Entry points and key modules
 
 ### 4. Create Project Instructions
 
-**Create TWO files:**
+**A) `.clio/instructions.md`** - Methodology (HOW to work)
 
-**A) `.clio/instructions.md`** - Use the fetched template as-is OR customize if this project needs CLIO-specific methodology adjustments. Incorporate relevant info from the PRD if it affects how CLIO should operate.
+**DO:** Use the fetched instructions.md as-is UNLESS this project has specific workflow requirements
+**DO NOT:** Put technical details here (commands, file paths, stack info) - those go in AGENTS.md
+**CUSTOMIZE ONLY IF:** PRD specifies unique agent workflow requirements (rare!)
 
-**B) `AGENTS.md`** - Create project-specific context in AGENTS.md format, incorporating information from the PRD:
-```markdown
-# AGENTS.md
+Most projects should use CLIO's instructions.md unchanged.
 
-## Project Overview
+**B) `AGENTS.md`** - Technical Reference (WHAT to build)
 
-[Brief description from PRD]
+**DO:** Use CLIO's AGENTS.md as the SCHEMA TEMPLATE - copy its structure/sections
+**DO:** Replace CLIO-specific content with this project's technical details
+**DO:** Incorporate relevant information from the PRD (architecture, design decisions)
+**DO NOT:** Include methodology, checkpoints, or workflow protocols (those are in .clio/instructions.md)
 
-## Setup Commands
+**Follow the structure from CLIO's AGENTS.md and incorporate PRD information:**
 
-- Install: [command]
-- Build: [command]
-- Test: [command]
+- **Project Overview** - Use description from PRD
+- **Architecture** - Include architecture decisions from PRD
+- **Code Style** - Project's conventions (from codebase analysis)
+- **Testing** - Testing requirements (from PRD + current setup)
+- **Anti-Patterns** - Project-specific anti-patterns based on PRD guidance
 
-## Code Style
+**Anti-Duplication Rules:**
 
-- [Language-specific style guide]
-- [Formatting rules]
-- [Naming conventions]
-
-## Architecture
-
-[Key architecture decisions from PRD]
-
-## Testing Instructions
-
-- [How to run tests]
-- [Coverage requirements]
-- [CI/CD info]
-
-## Project Structure
-
-- [Key directories]
-- [Important files]
-- [Architecture notes]
-```
-
-This file provides domain knowledge that works with ALL AI coding tools.
+- If it's about HOW to work (checkpoints, workflow, error handling) -> `.clio/instructions.md`
+- If it's about WHAT to build (commands, syntax, architecture) -> `AGENTS.md`
+- When in doubt: Technical = AGENTS.md, Process = instructions.md
 
 ### 5. Set Up .gitignore
-Ensure `.gitignore` includes CLIO-specific entries.
+
+Ensure `.gitignore` includes CLIO-specific entries:
+```
+scratch/
+reference/
+ai-assisted/
+*.txt
+.clio/*.json
+.clio/sessions/
+```
 
 ### 6. Initialize or Update Git
+
 Initialize git if needed, or add/commit the .clio/ directory and AGENTS.md.
 
 ### 7. Report What You Did
-Provide a summary of the project analysis and setup completed.
+
+Provide a summary of:
+- Project analysis findings
+- Key information from PRD
+- What you put in `.clio/instructions.md` (customized or used template as-is?)
+- Key sections of `AGENTS.md` you created (with PRD integration)
+- Setup completed
 
 Begin now - use your tools to complete all these tasks.
 INIT_PRD_PROMPT
