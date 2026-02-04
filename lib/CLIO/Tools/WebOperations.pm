@@ -66,6 +66,35 @@ sub route_operation {
     return $self->error_result("Operation not implemented: $operation");
 }
 
+=head2 get_additional_parameters
+
+Define parameters for web_operations in JSON schema sent to AI.
+
+=cut
+
+sub get_additional_parameters {
+    my ($self) = @_;
+    
+    return {
+        url => {
+            type => "string",
+            description => "URL to fetch (for fetch_url operation, required)",
+        },
+        query => {
+            type => "string",
+            description => "Search query (for search_web operation, required)",
+        },
+        timeout => {
+            type => "integer",
+            description => "Timeout in seconds (optional, default: 30)",
+        },
+        max_results => {
+            type => "integer",
+            description => "Maximum search results to return (for search_web, default: 10)",
+        },
+    };
+}
+
 sub fetch_url {
     my ($self, $params, $context) = @_;
     

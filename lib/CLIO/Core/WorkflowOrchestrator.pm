@@ -1503,6 +1503,20 @@ sub _generate_tools_section {
     $section .= "\n**Important:** You HAVE all $tool_count of these tools. ";
     $section .= "Do NOT say you don't have a tool that's on this list!\n\n";
     
+    # Add operation-based tool explanation
+    $section .= "## **HOW TO USE OPERATION-BASED TOOLS**\n\n";
+    $section .= "Most tools use an **operation-based pattern**: one tool with multiple operations.\n\n";
+    $section .= "**Example:** `file_operations` has 17 operations (read_file, write_file, grep_search, etc.)\n\n";
+    $section .= "**CORRECT way to call:**\n";
+    $section .= "```\n";
+    $section .= "file_operations(\n";
+    $section .= "  operation: \"read_file\",\n";
+    $section .= "  path: \"lib/Example.pm\"\n";
+    $section .= ")\n";
+    $section .= "```\n\n";
+    $section .= "**The `operation` parameter is ALWAYS REQUIRED.** Every tool call must specify which operation to perform.\n\n";
+    $section .= "**Each operation needs different parameters** - check the tool's schema to see what parameters each operation requires.\n\n";
+    
     # Add JSON formatting instruction with HIGH priority to prevent malformed JSON
     $section .= "## **CRITICAL - JSON FORMAT REQUIREMENT**\n\n";
     $section .= "When calling tools, you MUST generate valid JSON. This is NON-NEGOTIABLE.\n\n";

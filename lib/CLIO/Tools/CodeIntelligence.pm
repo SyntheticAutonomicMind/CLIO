@@ -73,6 +73,32 @@ sub route_operation {
     return $self->error_result("Operation not implemented: $operation");
 }
 
+=head2 get_additional_parameters
+
+Define parameters for code_intelligence in JSON schema sent to AI.
+
+=cut
+
+sub get_additional_parameters {
+    my ($self) = @_;
+    
+    return {
+        symbol_name => {
+            type => "string",
+            description => "Symbol to search for (required for list_usages)",
+        },
+        file_paths => {
+            type => "array",
+            items => { type => "string" },
+            description => "Array of paths to search in (optional, default: current directory)",
+        },
+        context_lines => {
+            type => "integer",
+            description => "Number of context lines around match (optional, default: 0)",
+        },
+    };
+}
+
 =head2 list_usages
 
 Find all usages of a symbol across the codebase.
