@@ -5,7 +5,7 @@ use warnings;
 use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
-use CLIO::Core::Logger qw(should_log log_error log_warning);
+use CLIO::Core::Logger qw(should_log log_error log_warning log_info log_debug);
 use CLIO::Util::TextSanitizer qw(sanitize_text);
 use CLIO::Util::JSONRepair qw(repair_malformed_json);
 use CLIO::Util::AnthropicXMLParser qw(is_anthropic_xml_format parse_anthropic_xml_to_json);
@@ -864,10 +864,15 @@ sub process_input {
                 my $arguments_str = $tool_call->{function}->{arguments} || '{}';
                 
                 # Attempt to parse arguments JSON
+                # Handle UTF-8: JSON::PP expects bytes, not Perl's internal UTF-8 strings
                 my $arguments_valid = 0;
                 eval {
                     use JSON::PP qw(decode_json);
-                    my $parsed = decode_json($arguments_str);
+                    use Encode qw(encode_utf8);
+                    
+                    # Convert to UTF-8 bytes if it's a wide string
+                    my $json_bytes = utf8::is_utf8($arguments_str) ? encode_utf8($arguments_str) : $arguments_str;
+                    my $parsed = decode_json($json_bytes);
                     $arguments_valid = 1;
                 };
                 
