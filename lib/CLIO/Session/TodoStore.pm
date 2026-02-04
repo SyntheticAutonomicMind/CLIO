@@ -317,7 +317,7 @@ sub validate {
     my %todo_ids = map { $_->{id} => 1 } @$todos;
     
     # Count in-progress todos
-    my @in_progress = grep { $_->{status} eq 'in-progress' } @$todos;
+    my @in_progress = grep { defined $_->{status} && $_->{status} eq 'in-progress' } @$todos;
     if (@in_progress > 1) {
         push @errors, "Multiple todos marked as in-progress (only 1 allowed): " . 
             join(", ", map { "#$_->{id}" } @in_progress);
@@ -367,7 +367,7 @@ sub validate {
         }
         
         # Blocked status requires reason
-        if ($todo->{status} eq 'blocked' && !$todo->{blockedReason}) {
+        if (defined $todo->{status} && $todo->{status} eq 'blocked' && !$todo->{blockedReason}) {
             push @errors, "Todo #$id is blocked but has no blockedReason";
         }
         
