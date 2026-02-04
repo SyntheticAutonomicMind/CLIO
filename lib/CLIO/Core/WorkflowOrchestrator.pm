@@ -853,15 +853,84 @@ sub process_input {
         my $assistant_msg_pending = undef;  # Will be set if we need delayed save
         
         if ($api_response->{tool_calls} && @{$api_response->{tool_calls}}) {
+            # CRITICAL: Validate tool_calls arguments JSON BEFORE adding to history
+            # This prevents malformed JSON from contaminating conversation history
+            # which would cause API rejection on the next request
+            my @validated_tool_calls = ();
+            my $had_validation_errors = 0;
+            
+            for my $tool_call (@{$api_response->{tool_calls}}) {
+                my $tool_name = $tool_call->{function}->{name} || 'unknown';
+                my $arguments_str = $tool_call->{function}->{arguments} || '{}';
+                
+                # Attempt to parse arguments JSON
+                my $arguments_valid = 0;
+                eval {
+                    use JSON::PP qw(decode_json);
+                    my $parsed = decode_json($arguments_str);
+                    $arguments_valid = 1;
+                };
+                
+                if ($@) {
+                    # JSON parsing failed - log the error and attempt repair
+                    my $error = $@;
+                    $had_validation_errors = 1;
+                    
+                    log_error('WorkflowOrchestrator', "Invalid JSON in tool call arguments for '$tool_name': $error");
+                    log_error('WorkflowOrchestrator', "Malformed arguments: " . substr($arguments_str, 0, 200));
+                    
+                    # Attempt to repair common JSON errors
+                    my $repaired = $self->_repair_tool_call_json($arguments_str);
+                    
+                    if ($repaired) {
+                        # Repair succeeded - use repaired version
+                        log_info('WorkflowOrchestrator', "Successfully repaired JSON for tool '$tool_name'");
+                        $tool_call->{function}->{arguments} = $repaired;
+                        push @validated_tool_calls, $tool_call;
+                    } else {
+                        # Repair failed - reject this tool call entirely
+                        log_error('WorkflowOrchestrator', "Could not repair JSON for tool '$tool_name' - tool call will be skipped");
+                        
+                        # Add an error message to conversation explaining what happened
+                        push @messages, {
+                            role => 'tool',
+                            tool_call_id => $tool_call->{id},
+                            content => "ERROR: Tool call rejected due to invalid JSON in arguments. The AI generated malformed parameters that could not be parsed. Please retry with valid JSON."
+                        };
+                    }
+                } else {
+                    # JSON is valid - add to validated list
+                    push @validated_tool_calls, $tool_call;
+                }
+            }
+            
+            # Replace tool_calls with validated version
+            $api_response->{tool_calls} = \@validated_tool_calls;
+            
+            # If all tool calls were rejected, skip tool execution entirely
+            if (@validated_tool_calls == 0) {
+                log_error('WorkflowOrchestrator', "All tool calls were rejected due to invalid JSON - skipping tool execution");
+                
+                # Add simple text response to continue conversation
+                push @messages, {
+                    role => 'assistant',
+                    content => $api_response->{content} || "I encountered an error with my tool calls. Let me try a different approach."
+                };
+                
+                # Skip tool execution - continue to next iteration
+                next;
+            }
+            
             print STDERR "[DEBUG][WorkflowOrchestrator] Processing " . 
-                scalar(@{$api_response->{tool_calls}}) . " tool calls\n"
+                scalar(@validated_tool_calls) . " validated tool calls" .
+                ($had_validation_errors ? " (some were rejected/repaired)" : "") . "\n"
                 if $self->{debug};
             
-            # Add assistant's message with tool_calls to conversation
+            # Add assistant's message with VALIDATED tool_calls to conversation
             push @messages, {
                 role => 'assistant',
                 content => $api_response->{content},
-                tool_calls => $api_response->{tool_calls}
+                tool_calls => \@validated_tool_calls
             };
             
             # DELAYED SAVE: Do NOT save assistant message with tool_calls yet.
@@ -886,7 +955,7 @@ sub process_input {
             $assistant_msg_pending = {
                 role => 'assistant',
                 content => $api_response->{content} // '',
-                tool_calls => $api_response->{tool_calls}
+                tool_calls => \@validated_tool_calls  # Use validated version
             };
             
             print STDERR "[DEBUG][WorkflowOrchestrator] Delaying save of assistant message with tool_calls until first tool result completes\n"
@@ -2165,6 +2234,71 @@ sub _generate_tool_call_id {
     
     # Format as OpenAI-style ID
     return 'call_' . substr($hash, 0, 24);
+}
+
+=head2 _repair_tool_call_json
+
+Attempt to repair common JSON errors in tool call arguments.
+
+Common issues:
+- Missing values: {"offset":,"length":8192}
+- Trailing commas: {"offset":0,"length":8192}
+- Unescaped quotes: {"text":"He said "hello""}
+
+Arguments:
+- $json_str: Potentially malformed JSON string
+
+Returns:
+- Repaired JSON string if successful, undef if repair failed
+
+=cut
+
+sub _repair_tool_call_json {
+    my ($self, $json_str) = @_;
+    
+    return undef unless defined $json_str;
+    
+    # Use JSONRepair utility if available
+    eval {
+        require CLIO::Util::JSONRepair;
+        my $repaired = CLIO::Util::JSONRepair::repair_malformed_json($json_str, $self->{debug});
+        return $repaired if $repaired;
+    };
+    if ($@) {
+        log_debug('WorkflowOrchestrator', "JSONRepair module not available: $@");
+    }
+    
+    # Fallback: Apply common repair patterns manually
+    my $repaired = $json_str;
+    
+    # Fix 1: Missing values in key-value pairs (e.g., "offset":, -> "offset":null,)
+    # This is the most common error from the logs
+    $repaired =~ s/:\s*,/: null,/g;          # "key":, -> "key": null,
+    $repaired =~ s/:\s*\}/: null}/g;          # "key":} -> "key": null}
+    $repaired =~ s/:\s*\]/: null]/g;          # "key":] -> "key": null]
+    
+    # Fix 2: Trailing commas before closing braces/brackets
+    $repaired =~ s/,\s*\}/}/g;                 # {...} -> {...}
+    $repaired =~ s/,\s*\]/]/g;                 # [...] -> [...]
+    
+    # Fix 3: Unescaped quotes in string values (simple cases only)
+    # This is more complex and risky - only fix obvious cases
+    # TODO: Implement more sophisticated quote escaping if needed
+    
+    # Validate that repair worked
+    eval {
+        use JSON::PP qw(decode_json);
+        decode_json($repaired);
+    };
+    
+    if ($@) {
+        # Repair failed
+        log_debug('WorkflowOrchestrator', "JSON repair attempt failed: $@");
+        return undef;
+    }
+    
+    # Repair successful
+    return $repaired;
 }
 
 =head2 _enforce_message_alternation
