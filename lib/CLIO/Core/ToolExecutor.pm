@@ -144,7 +144,8 @@ sub execute_tool {
     };
     if ($@) {
         my $error = $@;
-        print STDERR "[ERROR][ToolExecutor] JSON parse error: $error\n" if should_log('ERROR');
+        # Recoverable error - agent will adapt. Don't display to user.
+        print STDERR "[DEBUG][ToolExecutor] JSON parse error: $error\n" if should_log('DEBUG');
         
         # Log the error
         $self->_log_tool_operation({
@@ -519,7 +520,8 @@ sub _execute_protocol {
     };
     
     if ($@) {
-        print STDERR "[ERROR][ToolExecutor] Protocol execution failed: $@\n" if should_log('ERROR');
+        # Recoverable error - agent will adapt. Don't display to user.
+        print STDERR "[DEBUG][ToolExecutor] Protocol execution failed: $@\n" if should_log('DEBUG');
         return $self->_error_result("Protocol execution failed: $@");
     }
     
@@ -644,7 +646,8 @@ sub _format_tool_result {
     # Convert to JSON
     my $json = eval { encode_json($tool_result) };
     if ($@) {
-        print STDERR "[ERROR][ToolExecutor] Failed to encode result: $@\n" if should_log('ERROR');
+        # Recoverable error - agent will adapt. Don't display to user.
+        print STDERR "[DEBUG][ToolExecutor] Failed to encode result: $@\n" if should_log('DEBUG');
         return encode_json({
             success => 0,
             error => "Failed to encode result: $@"
@@ -679,7 +682,8 @@ sub _log_tool_operation {
         $self->{tool_logger}->log($entry);
     };
     if ($@) {
-        print STDERR "[ERROR][ToolExecutor] Failed to log tool operation: $@\n" if should_log('ERROR');
+        # Logging error - don't display to user. Only log if debugging.
+        print STDERR "[DEBUG][ToolExecutor] Failed to log tool operation: $@\n" if should_log('DEBUG');
     }
 }
 
@@ -692,7 +696,8 @@ Return a JSON error result.
 sub _error_result {
     my ($self, $error) = @_;
     
-    print STDERR "[ERROR][ToolExecutor] $error\n" if should_log('ERROR');
+    # Tool errors are handled gracefully - don't display to user
+    print STDERR "[DEBUG][ToolExecutor] Error: $error\n" if should_log('DEBUG');
     
     return encode_json({
         success => 0,

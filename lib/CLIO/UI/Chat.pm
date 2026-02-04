@@ -257,7 +257,7 @@ sub show_busy_indicator {
     
     if ($needs_recreation) {
         $self->{spinner} = CLIO::UI::ProgressSpinner->new(
-            frames => $spinner_frames,
+            theme_mgr => $self->{theme_mgr},  # Use theme-managed frames
             delay => 100000,
             inline => 1,
         );
@@ -2235,17 +2235,15 @@ sub pause {
         my $key = ReadKey(0);
         ReadMode('normal');
         
-        # Clear prompt line (and hint line if it was shown)
-        # Skip cursor manipulation during tool execution to preserve tool output headers
-        unless ($self->{_in_tool_execution}) {
-            if ($hint_was_shown) {
-                print "\e[2K";  # Clear prompt line
-                print "\e[" . $self->{terminal_width} . "D";  # Move to start of prompt line
-                print "\e[1A";  # Move up to hint line
-                print "\e[2K";  # Clear hint line
-            } else {
-                print "\e[2K\e[" . $self->{terminal_width} . "D";  # Clear prompt line only and move to start
-            }
+        # Always clear pagination prompt lines (even during tool execution)
+        # The _in_tool_execution flag should not prevent clearing user prompts
+        if ($hint_was_shown) {
+            print "\e[2K";  # Clear prompt line
+            print "\e[" . $self->{terminal_width} . "D";  # Move to start of prompt line
+            print "\e[1A";  # Move up to hint line
+            print "\e[2K";  # Clear hint line
+        } else {
+            print "\e[2K\e[" . $self->{terminal_width} . "D";  # Clear prompt line only and move to start
         }
         
         $key = uc($key) if $key;
@@ -2299,17 +2297,15 @@ sub pause {
         # Regular key handling - restore normal mode first
         ReadMode('normal');
         
-        # Clear prompt line (and hint line if it was shown)
-        # Skip cursor manipulation during tool execution to preserve tool output headers
-        unless ($self->{_in_tool_execution}) {
-            if ($hint_was_shown) {
-                print "\e[2K";  # Clear prompt line
-                print "\e[" . $self->{terminal_width} . "D";  # Move to start of prompt line
-                print "\e[1A";  # Move up to hint line
-                print "\e[2K";  # Clear hint line
-            } else {
-                print "\e[2K\e[" . $self->{terminal_width} . "D";  # Clear prompt line only and move to start
-            }
+        # Always clear pagination prompt lines (even during tool execution)
+        # The _in_tool_execution flag should not prevent clearing user prompts
+        if ($hint_was_shown) {
+            print "\e[2K";  # Clear prompt line
+            print "\e[" . $self->{terminal_width} . "D";  # Move to start of prompt line
+            print "\e[1A";  # Move up to hint line
+            print "\e[2K";  # Clear hint line
+        } else {
+            print "\e[2K\e[" . $self->{terminal_width} . "D";  # Clear prompt line only and move to start
         }
         
         $key = uc($key) if $key;
@@ -2357,8 +2353,8 @@ sub render_markdown {
     
     # If rendering failed or returned undef/empty, fall back to original text
     if ($@ || !defined $rendered || $rendered eq '') {
-        print STDERR "[ERROR][Chat] Markdown rendering failed: $@\n" if $@;
-        print STDERR "[WARN][Chat] Markdown render returned empty/undef, using raw text\n" 
+        print STDERR "[DEBUG][Chat] Markdown rendering issue (falling back to raw): $@\n" if $@;
+        print STDERR "[DEBUG][Chat] Markdown render returned empty/undef, using raw text\n" 
             if !$@ && (!defined $rendered || $rendered eq '');
         return $text;  # Fallback to raw text rather than breaking output
     }
