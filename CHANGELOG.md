@@ -4,6 +4,43 @@ All notable changes to CLIO (Command Line Intelligence Orchestrator) are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased] - feature/distributed-agents
+
+### Added
+- **Remote Execution Tool** - Execute AI-powered tasks on remote systems via SSH
+  - `execute_remote` - Run CLIO tasks on any SSH-accessible system
+  - `execute_parallel` - Execute tasks on multiple devices simultaneously
+  - `check_remote` - Verify remote system meets requirements (Perl, disk space, tools)
+  - `prepare_remote` - Pre-stage CLIO on remote for repeated tasks
+  - `cleanup_remote` - Remove CLIO and temporary files from remote
+  - `transfer_files` / `retrieve_files` - Move files to/from remote systems
+- **RemoteDistribution Protocol** - Multi-stage workflow orchestration across devices
+  - Multi-device execution with retry logic
+  - Parallel execution support (configurable parallelism via forking)
+  - Result aggregation with comprehensive Markdown summary reports
+  - Device resolution via DeviceRegistry integration
+  - Error handling with fail-fast or continue strategies
+  - Exponential backoff for retries
+- **DeviceRegistry** - Named device and device group management
+  - Register devices with friendly names (e.g., 'laptop' -> 'user@laptop')
+  - Device groups for bulk operations (e.g., 'workstations' -> ['desktop1', 'desktop2', 'server1'])
+  - Per-device SSH configuration (port, key, default model)
+  - `/device` and `/group` commands for management
+- **GitHub Copilot auto-authentication** - Token automatically forwarded to remote (never persisted)
+- **Local CLIO copy to remote** - Uses rsync to copy local installation (version consistency)
+- **Base64 script encoding** - Prevents shell quoting issues with complex remote commands
+- **Remote Execution documentation** - Comprehensive guide at `docs/REMOTE_EXECUTION.md`
+- **Knowledge Broker design** - Architecture document for future shared knowledge bus between agents (`docs/KNOWLEDGE_BROKER.md`)
+
+### Technical Details
+- Protocol supports both sequential and parallel device execution
+- Retry logic with exponential backoff (configurable retry count)
+- Result aggregation includes statistics, success rates, and per-device/per-stage summaries
+- DeviceRegistry integrates with RemoteExecution and RemoteDistribution
+- Supports gpt-4.1 and other models via GitHub Copilot
+- Automatic cleanup after execution (configurable)
+- Ready for real-world testing with actual SSH hosts
+
 ## [20260201.1] - 2026-02-01
 
 ### Added

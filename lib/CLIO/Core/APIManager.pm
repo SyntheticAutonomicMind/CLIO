@@ -1480,8 +1480,8 @@ sub _build_request {
         );
         
         $req->header('X-Request-Id' => $uuid);
-        $req->header('X-Interaction-Type' => 'conversational');
-        $req->header('OpenAI-Intent' => 'conversational');
+        # Note: X-Interaction-Type and OpenAI-Intent headers removed
+        # They were causing some models (gpt-4.1) to behave conversationally instead of agentically
         $req->header('X-GitHub-Api-Version' => '2025-05-01');
         $req->header('Editor-Version' => 'vscode/1.96.0');
         $req->header('Editor-Plugin-Version' => 'copilot-chat/0.22.4');

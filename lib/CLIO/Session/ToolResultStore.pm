@@ -92,6 +92,9 @@ Returns: Either the original content (if small) or a marker with preview (if lar
 sub processToolResult {
     my ($self, $toolCallId, $content, $session_id) = @_;
     
+    # Handle undefined content gracefully
+    $content //= '';
+    
     my $content_size = length($content);
     
     if ($content_size <= $MAX_INLINE_SIZE) {
