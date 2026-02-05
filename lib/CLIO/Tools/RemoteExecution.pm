@@ -278,6 +278,16 @@ sub execute_remote {
         return $validation;
     }
     
+    # Validate SSH setup before attempting execution
+    my $ssh_validation = $self->_validate_ssh_setup(
+        host => $host,
+        ssh_key => $ssh_key,
+        ssh_port => $ssh_port,
+    );
+    unless ($ssh_validation->{success}) {
+        return $ssh_validation;
+    }
+    
     # Create temporary directory for staging
     my $local_staging = tempdir(CLEANUP => 1);
     my $remote_staging = "$working_dir/clio-exec-$$-" . time();
@@ -945,6 +955,114 @@ sub _validate_execute_params {
     
     return $self->success_result("Parameters valid");
 }
+
+=head2 _validate_ssh_setup
+
+Validate SSH connectivity and configuration before attempting remote execution.
+
+Checks:
+1. SSH agent is running (if no explicit key provided)
+2. Can connect to remote without password prompt
+3. Provides actionable guidance if setup incomplete
+
+Returns success result if SSH is properly configured, error result with guidance otherwise.
+
+=cut
+
+sub _validate_ssh_setup {
+    my ($self, %args) = @_;
+    
+    my $host = $args{host};
+    my $ssh_key = $args{ssh_key};
+    my $ssh_port = $args{ssh_port} || 22;
+    
+    # Check if ssh-agent is running (only if no explicit key provided)
+    unless ($ssh_key) {
+        my $agent_check = `ssh-add -l 2>&1`;
+        my $agent_exit = $? >> 8;
+        
+        # Exit code 2 means agent not running
+        # Exit code 1 means agent running but no keys
+        # Exit code 0 means agent running with keys
+        
+        if ($agent_exit == 2) {
+            return $self->error_result(
+                "SSH agent not running. Remote execution requires SSH agent or explicit key.\n\n" .
+                "Setup guide:\n" .
+                "1. Start ssh-agent: eval \"\$(ssh-agent -s)\"\n" .
+                "2. Add your key: ssh-add ~/.ssh/id_rsa (or id_ed25519)\n" .
+                "3. Test connection: ssh $host exit\n\n" .
+                "See docs/REMOTE_EXECUTION.md for detailed setup instructions."
+            );
+        }
+        
+        if ($agent_exit == 1) {
+            return $self->error_result(
+                "SSH agent running but no keys loaded.\n\n" .
+                "Add your SSH key:\n" .
+                "  ssh-add ~/.ssh/id_rsa  (or id_ed25519)\n\n" .
+                "Or create a new key:\n" .
+                "  ssh-keygen -t ed25519 -C \"your_email\@example.com\"\n" .
+                "  ssh-copy-id $host\n" .
+                "  ssh-add ~/.ssh/id_ed25519\n\n" .
+                "See docs/REMOTE_EXECUTION.md for detailed setup instructions."
+            );
+        }
+    }
+    
+    # Test passwordless connection
+    my $ssh_cmd = 'ssh -o BatchMode=yes -o ConnectTimeout=5';
+    $ssh_cmd .= " -p $ssh_port" if $ssh_port != 22;
+    $ssh_cmd .= " -i $ssh_key" if $ssh_key;
+    $ssh_cmd .= " $host exit 2>&1";
+    
+    my $test_output = `$ssh_cmd`;
+    my $test_exit = $? >> 8;
+    
+    if ($test_exit != 0) {
+        # Try to provide helpful error message based on output
+        my $guidance = "";
+        
+        if ($test_output =~ /Permission denied/i) {
+            $guidance = 
+                "SSH authentication failed.\n\n" .
+                "Fix:\n" .
+                "1. Copy your SSH key to remote: ssh-copy-id $host\n" .
+                "2. Or add key to ssh-agent: ssh-add ~/.ssh/id_rsa\n" .
+                "3. Test: ssh $host exit\n\n";
+        } elsif ($test_output =~ /Connection refused/i) {
+            $guidance = 
+                "SSH connection refused - is SSH server running on $host?\n\n" .
+                "Check:\n" .
+                "1. SSH daemon running: systemctl status sshd\n" .
+                "2. Firewall allows port $ssh_port\n" .
+                "3. Correct hostname/IP\n\n";
+        } elsif ($test_output =~ /Connection timed out/i || $test_output =~ /Could not resolve/i) {
+            $guidance = 
+                "Cannot reach $host - check network connectivity.\n\n" .
+                "Check:\n" .
+                "1. Host is reachable: ping $host\n" .
+                "2. DNS resolution working\n" .
+                "3. No firewall blocking connection\n\n";
+        } else {
+            $guidance = 
+                "SSH connection test failed.\n\n" .
+                "Error: $test_output\n\n" .
+                "Troubleshooting:\n" .
+                "1. Test manually: ssh $host exit\n" .
+                "2. Check SSH logs: journalctl -u sshd\n" .
+                "3. Verify SSH key setup\n\n";
+        }
+        
+        $guidance .= "See docs/REMOTE_EXECUTION.md for detailed setup instructions.";
+        
+        return $self->error_result($guidance);
+    }
+    
+    # All checks passed
+    return $self->success_result("SSH connection validated");
+}
+
 
 sub _ssh_exec {
     my ($self, %args) = @_;
