@@ -30,7 +30,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Local CLIO copy to remote** - Uses rsync to copy local installation (version consistency)
 - **Base64 script encoding** - Prevents shell quoting issues with complex remote commands
 - **Remote Execution documentation** - Comprehensive guide at `docs/REMOTE_EXECUTION.md`
-- **Knowledge Broker design** - Architecture document for future shared knowledge bus between agents (`docs/KNOWLEDGE_BROKER.md`)
 
 ### Technical Details
 - Protocol supports both sequential and parallel device execution
