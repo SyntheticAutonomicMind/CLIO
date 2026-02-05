@@ -381,7 +381,7 @@ if ($input) {
             # Extract command and args
             my $cmd = $command;
             $cmd =~ s/^\///;  # Remove leading slash
-            my ($cmd_name) = split /\s+/, $cmd;
+            my ($cmd_name, @cmd_args) = split /\s+/, $cmd;
             $cmd_name = lc($cmd_name);
             
             # Handle common slash commands
@@ -394,6 +394,7 @@ if ($input) {
                 print "  /session                   Show session ID\n";
                 print "  /config                    Show configuration\n";
                 print "  /api                       Show API status\n";
+                print "  /subagent, /agent          Multi-agent commands\n";
                 print "\n";
                 print "For full command list, use interactive mode (./clio)\n";
                 next;  # Skip to next command
@@ -410,6 +411,16 @@ if ($input) {
             }
             elsif ($cmd_name eq 'session') {
                 print "[SYSTEM] Current session: " . ($session->{session_id} || 'unknown') . "\n";
+                next;
+            }
+            elsif ($cmd_name eq 'subagent' || $cmd_name eq 'agent') {
+                # Handle subagent commands
+                require CLIO::UI::Commands::SubAgent;
+                my $subagent_cmd = CLIO::UI::Commands::SubAgent->new(chat => $cli_ui);
+                my $subcommand = shift @cmd_args || 'help';
+                my $args = join(' ', @cmd_args);
+                my $result = $subagent_cmd->handle($subcommand, $args);
+                print "$result\n";
                 next;
             }
             else {

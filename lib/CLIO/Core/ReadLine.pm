@@ -189,15 +189,17 @@ sub readline {
         
         # Ctrl-A (beginning of line)
         if ($ord == 1) {
+            my $old_pos = $cursor_pos;
             $cursor_pos = 0;
-            $self->redraw_line(\$input, \$cursor_pos, $prompt);
+            $self->reposition_cursor(\$old_pos, \$cursor_pos, \$input, $prompt);
             next;
         }
         
         # Ctrl-E (end of line)
         if ($ord == 5) {
+            my $old_pos = $cursor_pos;
             $cursor_pos = length($input);
-            $self->redraw_line(\$input, \$cursor_pos, $prompt);
+            $self->reposition_cursor(\$old_pos, \$cursor_pos, \$input, $prompt);
             next;
         }
         
@@ -350,14 +352,16 @@ sub handle_escape_sequence {
         } elsif ($dir eq 'C') {
             # Right arrow - move one character right
             if ($$cursor_pos_ref < length($$input_ref)) {
+                my $old_pos = $$cursor_pos_ref;
                 $$cursor_pos_ref++;
-                $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
+                $self->reposition_cursor(\$old_pos, $cursor_pos_ref, $input_ref, $prompt);
             }
         } elsif ($dir eq 'D') {
             # Left arrow - move one character left
             if ($$cursor_pos_ref > 0) {
+                my $old_pos = $$cursor_pos_ref;
                 $$cursor_pos_ref--;
-                $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
+                $self->reposition_cursor(\$old_pos, $cursor_pos_ref, $input_ref, $prompt);
             }
         }
         return;
@@ -373,12 +377,14 @@ sub handle_escape_sequence {
             # Ctrl modifier (5=standard xterm, 3=Terminal.app)
             if ($dir eq 'C') {
                 # Ctrl+Right - move to end of line
+                my $old_pos = $$cursor_pos_ref;
                 $$cursor_pos_ref = length($$input_ref);
-                $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
+                $self->reposition_cursor(\$old_pos, $cursor_pos_ref, $input_ref, $prompt);
             } elsif ($dir eq 'D') {
                 # Ctrl+Left - move to beginning of line
+                my $old_pos = $$cursor_pos_ref;
                 $$cursor_pos_ref = 0;
-                $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
+                $self->reposition_cursor(\$old_pos, $cursor_pos_ref, $input_ref, $prompt);
             }
         } elsif ($modifier == 2) {
             # Shift modifier
@@ -401,12 +407,14 @@ sub handle_escape_sequence {
             # Ctrl modifier
             if ($dir eq 'C') {
                 # Ctrl+Right - move to end of line
+                my $old_pos = $$cursor_pos_ref;
                 $$cursor_pos_ref = length($$input_ref);
-                $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
+                $self->reposition_cursor(\$old_pos, $cursor_pos_ref, $input_ref, $prompt);
             } elsif ($dir eq 'D') {
                 # Ctrl+Left - move to beginning of line
+                my $old_pos = $$cursor_pos_ref;
                 $$cursor_pos_ref = 0;
-                $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
+                $self->reposition_cursor(\$old_pos, $cursor_pos_ref, $input_ref, $prompt);
             }
         } elsif ($modifier == 6) {
             # Shift modifier (alternative format)
@@ -446,6 +454,7 @@ sub move_word_forward {
     my ($self, $input_ref, $cursor_pos_ref, $prompt) = @_;
     
     my $len = length($$input_ref);
+    my $old_pos = $$cursor_pos_ref;
     my $pos = $$cursor_pos_ref;
     
     return if $pos >= $len;  # Already at end
@@ -465,7 +474,7 @@ sub move_word_forward {
     }
     
     $$cursor_pos_ref = $pos;
-    $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
+    $self->reposition_cursor(\$old_pos, $cursor_pos_ref, $input_ref, $prompt);
 }
 
 =head2 move_word_backward
@@ -479,6 +488,7 @@ A word is defined as a sequence of non-whitespace characters or whitespace.
 sub move_word_backward {
     my ($self, $input_ref, $cursor_pos_ref, $prompt) = @_;
     
+    my $old_pos = $$cursor_pos_ref;
     my $pos = $$cursor_pos_ref;
     
     return if $pos <= 0;  # Already at beginning
@@ -499,7 +509,7 @@ sub move_word_backward {
     }
     
     $$cursor_pos_ref = $pos;
-    $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
+    $self->reposition_cursor(\$old_pos, $cursor_pos_ref, $input_ref, $prompt);
 }
 
 =head2 history_prev
@@ -572,9 +582,92 @@ sub history_next {
     $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
 }
 
+=head2 reposition_cursor
+
+Reposition the cursor without redrawing the entire line.
+
+This is used for cursor-only movements (arrows, home/end) where the input
+content hasn't changed. We ONLY move the cursor up when we're moving from
+a lower line to an upper line - NOT just because cursor is before end.
+
+Arguments:
+- $old_pos_ref: Reference to previous cursor position (BEFORE movement)
+- $new_pos_ref: Reference to new cursor position (AFTER movement)
+- $prompt: Prompt string (for calculating display positions)
+
+=cut
+
+sub reposition_cursor {
+    my ($self, $old_pos_ref, $new_pos_ref, $input_ref, $prompt) = @_;
+    
+    $prompt //= '';
+    
+    # Get terminal width
+    my ($term_width, $term_height) = GetTerminalSize();
+    $term_width ||= 80;
+    $term_width = 80 if $term_width < 10;
+    
+    # Calculate visible prompt length (strip ANSI codes)
+    my $visible_prompt = $prompt;
+    $visible_prompt =~ s/\e\[[0-9;]*m//g;
+    my $prompt_len = length($visible_prompt);
+    
+    # Calculate old and new positions (including prompt)
+    my $old_total_pos = $prompt_len + $$old_pos_ref;
+    my $new_total_pos = $prompt_len + $$new_pos_ref;
+    
+    # Calculate row and column for both positions
+    my $old_row = $old_total_pos > 0 ? int(($old_total_pos - 1) / $term_width) : 0;
+    my $old_col = $old_total_pos > 0 ? (($old_total_pos - 1) % $term_width) + 1 : 1;
+    
+    my $new_row = $new_total_pos > 0 ? int(($new_total_pos - 1) / $term_width) : 0;
+    my $new_col = $new_total_pos > 0 ? (($new_total_pos - 1) % $term_width) + 1 : 1;
+    
+    # Currently at old position (old_row, old_col)
+    # Need to move to new position (new_row, new_col)
+    
+    if ($new_row < $old_row) {
+        # Moving UP to an earlier line (e.g., scrolling left past line boundary)
+        my $rows_up = $old_row - $new_row;
+        print "\e[${rows_up}A";
+        # After moving up, we're at column old_col on the target row
+        # Move to beginning of line, then forward to new_col
+        print "\r";
+        if ($new_col > 1) {
+            my $cols_right = $new_col - 1;
+            print "\e[${cols_right}C";
+        }
+    } elsif ($new_row > $old_row) {
+        # Moving DOWN to a later line (e.g., scrolling right past line boundary)
+        my $rows_down = $new_row - $old_row;
+        print "\e[${rows_down}B";
+        # After moving down, we're at column old_col on the target row
+        # Move to beginning of line, then forward to new_col
+        print "\r";
+        if ($new_col > 1) {
+            my $cols_right = $new_col - 1;
+            print "\e[${cols_right}C";
+        }
+    } else {
+        # Same row - just move horizontally
+        if ($new_col < $old_col) {
+            my $cols_left = $old_col - $new_col;
+            print "\e[${cols_left}D";
+        } elsif ($new_col > $old_col) {
+            my $cols_right = $new_col - $old_col;
+            print "\e[${cols_right}C";
+        }
+    }
+}
+
 =head2 redraw_line
 
 Redraw the input line with cursor at correct position.
+
+This method performs a FULL clear-and-redraw of the input line. It should ONLY
+be called when the input CONTENT has changed (character added/deleted, text replaced).
+
+For cursor-only movements (arrows, home/end), use reposition_cursor() instead.
 
 Uses natural terminal wrapping instead of cursor positioning arithmetic.
 Tracks the number of lines occupied by the input display and clears them

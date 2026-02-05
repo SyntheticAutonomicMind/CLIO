@@ -604,6 +604,92 @@ Remote execution enables powerful distributed workflows - run analysis on server
 
 ---------------------------------------------------
 
+### Multi-Agent Coordination
+
+**NEW!** CLIO now supports spawning multiple AI agents that work in parallel while coordinating to prevent conflicts.
+
+**Sub-Agent Commands** (`/subagent` or `/agent`):
+
+```bash
+/subagent spawn <task> [--model <name>]    # Spawn a new sub-agent
+/subagent list                              # List active agents
+/subagent status <agent-id>                 # Show detailed status
+/subagent kill <agent-id>                   # Terminate agent
+/subagent killall                           # Terminate all agents
+/subagent locks                             # Show file/git locks
+/subagent discoveries                       # Show shared discoveries
+/subagent warnings                          # Show shared warnings
+```
+
+**How It Works:**
+
+When you spawn sub-agents, CLIO automatically starts a coordination broker that manages:
+- **File Locking**: Prevents concurrent edits to the same file
+- **Git Locking**: Serializes commits to avoid conflicts
+- **Knowledge Sharing**: Agents can share discoveries and warnings
+
+**Example Usage:**
+
+```
+YOU: /subagent spawn "analyze lib/Module/A.pm and document key patterns" --model gpt-4.1
+
+CLIO: ✓ Spawned sub-agent: agent-1
+      Task: analyze lib/Module/A.pm and document key patterns
+      Model: gpt-4.1
+      
+      Use /subagent list to monitor progress
+
+YOU: /subagent spawn "create tests for lib/Module/B.pm" --model gpt-5-mini
+
+CLIO: ✓ Spawned sub-agent: agent-2
+      Task: create tests for lib/Module/B.pm
+      Model: gpt-5-mini
+
+YOU: /subagent list
+
+CLIO: Active Sub-Agents:
+      
+      ● agent-1      [running]    analyze lib/Module/A.pm and document key patterns (2m15s)
+      ● agent-2      [running]    create tests for lib/Module/B.pm (45s)
+
+YOU: /subagent locks
+
+CLIO: Current Locks:
+      
+      File Locks:
+        [LOCK] lib/Module/B.pm
+           Owner: agent-2
+           Mode: write
+      
+      No git lock
+```
+
+**Best Practices:**
+
+1. **Use Different Models for Different Tasks**: Use `gpt-4.1` for complex analysis, `gpt-5-mini` for simple tasks
+2. **Monitor Progress**: Check `/subagent list` to see which agents are still running
+3. **Check Logs**: Agent logs are in `/tmp/clio-agent-<agent-id>.log`
+4. **Avoid Overlapping Work**: Don't spawn multiple agents to edit the same files
+5. **Review Before Commit**: Check agent outputs before committing changes
+
+**When to Use Multi-Agent Mode:**
+
+- **Parallel Tasks**: Multiple independent changes across different files
+- **Long-Running Work**: Spawn agents for complex analysis while continuing other work
+- **Different Expertise**: Use different models for different types of tasks
+- **Bulk Operations**: Process multiple files/modules in parallel
+
+**Limitations:**
+
+- Sub-agents run with `--exit` flag (single task execution)
+- Each agent operates independently (no direct communication)
+- Broker requires `/dev/shm` (Linux) or `/tmp` (macOS)
+- Agent logs accumulate in `/tmp` (clean up periodically)
+
+For more details, see the Multi-Agent Coordination documentation.
+
+---------------------------------------------------
+
 ## Usage Examples
 
 ### Example 1: Project Design & Setup
