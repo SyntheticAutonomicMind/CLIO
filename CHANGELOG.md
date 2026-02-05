@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - `prepare_remote` - Pre-stage CLIO on remote for repeated tasks
   - `cleanup_remote` - Remove CLIO and temporary files from remote
   - `transfer_files` / `retrieve_files` - Move files to/from remote systems
+  - **SSH Setup Validation** - Automatic validation of SSH agent and passwordless authentication before execution
+  - **Comprehensive SSH Setup Documentation** - Step-by-step guide at `docs/REMOTE_EXECUTION.md` with troubleshooting
 - **RemoteDistribution Protocol** - Multi-stage workflow orchestration across devices
   - Multi-device execution with retry logic
   - Parallel execution support (configurable parallelism via forking)
@@ -26,10 +28,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - Device groups for bulk operations (e.g., 'workstations' -> ['desktop1', 'desktop2', 'server1'])
   - Per-device SSH configuration (port, key, default model)
   - `/device` and `/group` commands for management
+- **Enhanced /git command suite** - Comprehensive Git operations
+  - Branch operations: list, create, switch, delete
+  - Remote operations: push, pull (with optional remote/branch arguments)
+  - Stash operations: save, apply, drop, list
+  - Tag operations: create, delete, list
+  - Blame: show file annotation
+  - All operations with consistent error handling and user feedback
 - **GitHub Copilot auto-authentication** - Token automatically forwarded to remote (never persisted)
 - **Local CLIO copy to remote** - Uses rsync to copy local installation (version consistency)
 - **Base64 script encoding** - Prevents shell quoting issues with complex remote commands
-- **Remote Execution documentation** - Comprehensive guide at `docs/REMOTE_EXECUTION.md`
 
 ### Technical Details
 - Protocol supports both sequential and parallel device execution
