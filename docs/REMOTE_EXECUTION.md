@@ -57,6 +57,241 @@ CLIO will:
 
 ---
 
+## SSH Setup (REQUIRED)
+
+Remote execution **requires** passwordless SSH authentication. CLIO will not work with password-based SSH or prompt for passphrases during execution.
+
+### Why SSH Keys + Agent?
+
+- **Security**: Keys are more secure than passwords
+- **Automation**: No manual password entry during execution
+- **Parallel Execution**: Multiple simultaneous connections without password prompts
+- **Best Practice**: Industry standard for remote automation
+
+### Quick Setup (5 Minutes)
+
+#### 1. Generate SSH Key (if you don't have one)
+
+```bash
+# Generate ed25519 key (recommended)
+ssh-keygen -t ed25519 -C "your_email@example.com"
+
+# Or RSA if ed25519 not supported
+ssh-keygen -t rsa -b 4096 -C "your_email@example.com"
+
+# When prompted:
+# - Accept default location (~/.ssh/id_ed25519)
+# - Optionally set a passphrase (recommended for security)
+```
+
+**Passphrase Recommendation:**
+- **Use one** - Protects your key if laptop is lost/stolen
+- ssh-agent will cache it so you only enter it once per session
+- CLIO will fail gracefully if passphrase needed but not in agent
+
+#### 2. Copy Key to Remote System
+
+```bash
+# Copy your public key to remote
+ssh-copy-id user@remote-host
+
+# For non-standard port:
+ssh-copy-id -p 2222 user@remote-host
+
+# For specific key:
+ssh-copy-id -i ~/.ssh/id_ed25519.pub user@remote-host
+```
+
+This adds your public key to `~/.ssh/authorized_keys` on the remote system.
+
+#### 3. Start ssh-agent
+
+```bash
+# Start ssh-agent (one-time per terminal session)
+eval "$(ssh-agent -s)"
+
+# Verify agent is running
+ssh-add -l
+```
+
+**Make it persistent** - Add to your shell startup file (`~/.bashrc`, `~/.zshrc`, etc.):
+
+```bash
+# Auto-start ssh-agent
+if [ -z "$SSH_AUTH_SOCK" ]; then
+  eval "$(ssh-agent -s)" > /dev/null
+fi
+```
+
+#### 4. Add Your Key to ssh-agent
+
+```bash
+# Add your private key to agent
+ssh-add ~/.ssh/id_ed25519
+
+# If you set a passphrase, enter it now
+# ssh-agent will remember it for the session
+
+# Verify key is loaded
+ssh-add -l
+```
+
+You should see output like:
+```
+256 SHA256:xxxxx... your_email@example.com (ED25519)
+```
+
+#### 5. Test Passwordless Connection
+
+```bash
+# Test connection (should NOT prompt for password or passphrase)
+ssh user@remote-host exit
+
+# If successful (no prompts), you're ready!
+```
+
+---
+
+### Validation
+
+CLIO automatically validates SSH setup before executing remote tasks:
+
+✓ Checks if ssh-agent is running  
+✓ Verifies passwordless connection to remote  
+✓ Provides clear guidance if setup incomplete
+
+**Example Error:**
+
+```
+SSH agent not running. Remote execution requires SSH agent or explicit key.
+
+Setup guide:
+1. Start ssh-agent: eval "$(ssh-agent -s)"
+2. Add your key: ssh-add ~/.ssh/id_rsa (or id_ed25519)
+3. Test connection: ssh user@host exit
+
+See docs/REMOTE_EXECUTION.md for detailed setup instructions.
+```
+
+---
+
+### Alternative: Explicit SSH Key
+
+If you don't want to use ssh-agent, specify a key directly:
+
+```json
+{
+  "operation": "execute_remote",
+  "host": "user@remote",
+  "ssh_key": "/path/to/private/key",
+  "command": "your task"
+}
+```
+
+**Note:** The key file must **not** have a passphrase, as CLIO cannot prompt for it.
+
+---
+
+### Troubleshooting SSH Setup
+
+#### "Permission denied (publickey)"
+
+**Cause:** Your public key isn't on the remote system.
+
+**Fix:**
+```bash
+ssh-copy-id user@remote-host
+```
+
+#### "ssh-add -l" says "Could not open a connection to your authentication agent"
+
+**Cause:** ssh-agent isn't running.
+
+**Fix:**
+```bash
+eval "$(ssh-agent -s)"
+ssh-add ~/.ssh/id_ed25519
+```
+
+#### "ssh-add -l" says "The agent has no identities"
+
+**Cause:** No keys loaded in agent.
+
+**Fix:**
+```bash
+ssh-add ~/.ssh/id_ed25519
+```
+
+#### Connection prompts for passphrase every time
+
+**Cause:** Key has passphrase but isn't in ssh-agent.
+
+**Fix:**
+```bash
+ssh-add ~/.ssh/id_ed25519
+# Enter passphrase once, agent caches it
+```
+
+#### Want to remove passphrase from existing key
+
+```bash
+# Remove passphrase (less secure but more convenient)
+ssh-keygen -p -f ~/.ssh/id_ed25519
+
+# When prompted:
+# - Enter old passphrase
+# - Leave new passphrase empty (press Enter twice)
+```
+
+**Warning:** Removing passphrases reduces security. Better to use ssh-agent.
+
+---
+
+### Multiple Remote Systems
+
+For multiple remote hosts:
+
+```bash
+# Copy key to all systems
+ssh-copy-id user@host1
+ssh-copy-id user@host2
+ssh-copy-id user@host3
+
+# Test all connections
+for host in host1 host2 host3; do
+  echo "Testing $host..."
+  ssh user@$host exit && echo "✓ $host OK" || echo "✗ $host FAILED"
+done
+```
+
+---
+
+### Security Best Practices
+
+1. **Always use passphrases on SSH keys**
+   - Protects key if laptop is compromised
+   - ssh-agent makes this painless
+
+2. **Don't share private keys**
+   - Each person/machine should have their own key pair
+   - Use `ssh-copy-id` to distribute public keys
+
+3. **Use ed25519 keys**
+   - More secure and faster than RSA
+   - Smaller key size (256-bit vs 2048-4096 bit)
+
+4. **Restrict key permissions**
+   ```bash
+   chmod 600 ~/.ssh/id_ed25519      # Private key
+   chmod 644 ~/.ssh/id_ed25519.pub  # Public key
+   ```
+
+5. **Use per-device keys if desired**
+   - Create different keys for different purposes
+   - Add all to ssh-agent: `ssh-add ~/.ssh/key1 ~/.ssh/key2`
+
+---
+
 ## Operations
 
 ### execute_remote (Primary Operation)
