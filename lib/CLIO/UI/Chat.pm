@@ -343,6 +343,15 @@ sub run {
             $self->display_user_message($input);
         }
         
+        # CRITICAL FIX: Add user message to session BEFORE processing
+        # This ensures conversation history is preserved on session resume
+        # Previously, only assistant responses were saved, causing history loss
+        # when resuming a session (Bug: user questions were missing)
+        if ($self->{session}) {
+            $self->{session}->add_message('user', $input);
+            print STDERR "[DEBUG][Chat] Added user message to session history\n" if should_log('DEBUG');
+        }
+        
         # Process with AI agent (using streaming)
         if ($self->{ai_agent}) {
             print STDERR "[DEBUG][Chat] About to process user input with AI agent\n" if should_log('DEBUG');
