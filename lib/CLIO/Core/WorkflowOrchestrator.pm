@@ -1114,15 +1114,35 @@ sub process_input {
                 }
             }
             
-            # Combine in execution order: BLOCKING first (serially), then SERIAL, then PARALLEL
-            # For now, all execute serially since we don't have async execution
-            # But BLOCKING tools are clearly separated for future enhancement
-            my @ordered_tool_calls = (@blocking_tools, @serial_tools, @parallel_tools);
+            # CRITICAL FIX: Separate user_collaboration from other blocking tools
+            # user_collaboration MUST execute LAST to ensure:
+            # 1. All other tool results are available when showing to user
+            # 2. User sees correct state before responding
+            # 3. No race conditions between tool execution and user input
+            my @user_collaboration_tools = ();
+            my @other_blocking_tools = ();
+            
+            for my $tool_call (@blocking_tools) {
+                my $tool_name = $tool_call->{function}->{name} || 'unknown';
+                if ($tool_name eq 'user_collaboration') {
+                    push @user_collaboration_tools, $tool_call;
+                } else {
+                    push @other_blocking_tools, $tool_call;
+                }
+            }
+            
+            # Combine in execution order: 
+            # 1. Other blocking tools (non-user_collaboration interactive tools)
+            # 2. Serial tools
+            # 3. Parallel tools  
+            # 4. user_collaboration tools (ALWAYS LAST)
+            my @ordered_tool_calls = (@other_blocking_tools, @serial_tools, @parallel_tools, @user_collaboration_tools);
             
             print STDERR "[DEBUG][WorkflowOrchestrator] Execution order: " .
-                scalar(@blocking_tools) . " blocking, " .
+                scalar(@other_blocking_tools) . " other blocking, " .
                 scalar(@serial_tools) . " serial, " .
-                scalar(@parallel_tools) . " parallel\n" if $self->{debug};
+                scalar(@parallel_tools) . " parallel, " .
+                scalar(@user_collaboration_tools) . " user_collaboration (LAST)\n" if $self->{debug};
             
             # Flush UI streaming buffer BEFORE executing any tools
             # This ensures agent text appears BEFORE tool execution output

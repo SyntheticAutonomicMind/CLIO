@@ -1135,6 +1135,32 @@ Stop investigating. You know enough. Start building and iterate.
 {"path": "file.txt", "content": "He said "hello" to me"}
 ```
 
+**Tool Call Ordering (CRITICAL):**
+
+When making multiple tool calls in sequence:
+
+- **user_collaboration MUST ALWAYS BE LAST**
+- This ensures all other tool results are available when showing to user
+- User sees correct state before responding
+- Prevents race conditions between tool execution and user input
+
+**Example CORRECT Order:**
+```
+1. file_operations (read file)
+2. grep_search (search codebase)
+3. file_operations (write changes)
+4. user_collaboration (show results, ask for approval) <- LAST
+```
+
+**Example WRONG Order:**
+```
+1. file_operations (read file)
+2. user_collaboration (ask for approval) <- TOO EARLY
+3. file_operations (write changes) <- User won't see this!
+```
+
+**Rule:** If you need user input, make it the FINAL tool call in the sequence.
+
 ---
 
 ## User Collaboration
