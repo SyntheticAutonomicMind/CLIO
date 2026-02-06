@@ -702,10 +702,27 @@ sub redraw_line {
     $visible_prompt =~ s/\e\[[0-9;]*m//g;
     my $prompt_len = length($visible_prompt);
     
-    # Clear the current input display
-    # We track how many lines we used last time in $self->{display_lines}
+    # CRITICAL FIX: Before clearing, we need to know where the terminal cursor currently is.
+    # After reposition_cursor(), the terminal cursor might be in the middle of the input, not at the end.
+    # We can't reliably clear from an unknown position, so we need to move to a known position first.
+    #
+    # Strategy: Move to the end of the input display, THEN move up and clear.
+    # This ensures we clear from a consistent starting point.
+    
     my $lines_to_clear = $self->{display_lines} || 1;
     
+    # First, move to the end of the current display (last line, last column)
+    # We do this by moving down to the last line, then to the end
+    if ($lines_to_clear > 1) {
+        # Move down to last line of display
+        my $down_count = $lines_to_clear - 1;
+        print "\e[${down_count}B";
+    }
+    # Now we're on the last line - move to end of line
+    # (This is a no-op if we're already there, but ensures consistency)
+    print "\e[999C";  # Move far right (terminal stops at edge)
+    
+    # NOW move back up to first line and clear
     if ($lines_to_clear > 1) {
         my $up_count = $lines_to_clear - 1;
         print "\e[${up_count}A";
@@ -737,14 +754,20 @@ sub redraw_line {
     my $end_row = $end_total_pos > 0 ? int(($end_total_pos - 1) / $term_width) : 0;
     my $end_col = $end_total_pos > 0 ? (($end_total_pos - 1) % $term_width) + 1 : 1;
     
+    if (should_log('DEBUG')) {
+        print STDERR "[DEBUG][ReadLine] redraw_line: cursor_pos=$$cursor_pos_ref, input_len=$input_len, term_width=$term_width, prompt_len=$prompt_len\n";
+        print STDERR "[DEBUG][ReadLine] redraw_line: cursor_total_pos=$cursor_total_pos, end_total_pos=$end_total_pos\n";
+        print STDERR "[DEBUG][ReadLine] redraw_line: cursor at ($cursor_row,$cursor_col), end at ($end_row,$end_col)\n";
+    }
+    
     # Currently at end position (end_row, end_col)
     # Need to move to cursor position (cursor_row, cursor_col)
     
     if ($cursor_row < $end_row) {
-        # Cursor is on an earlier line - move up
+        # Cursor is on an earlier line - move up, then to correct column
         my $rows_up = $end_row - $cursor_row;
         print "\e[${rows_up}A";
-        # After moving up, we're at column end_col on the target row
+        # After moving up, cursor column stays at end_col (vertical movement doesn't change column)
         # Move to beginning of line, then forward to cursor_col
         print "\r";
         if ($cursor_col > 1) {
