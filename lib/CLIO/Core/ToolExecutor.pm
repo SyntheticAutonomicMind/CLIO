@@ -163,6 +163,11 @@ sub execute_tool {
         return $self->_error_result("Failed to parse tool arguments: $error");
     }
     
+    # PHASE 1: Normalize dual JSON parameters (_json variants)
+    # If agent passed content_json (object), convert to content (string)
+    # This allows agents to pass complex data without escaping
+    $arguments = $self->_normalize_dual_json_params($arguments);
+    
     # Get tool from registry
     my $tool_registry = $self->{tool_registry};
     unless ($tool_registry) {
@@ -716,6 +721,68 @@ sub _error_result {
         success => 0,
         error => $error
     });
+}
+
+=head2 _normalize_dual_json_params
+
+Normalize dual JSON parameters (_json variants) to their base form.
+
+This enables agents to pass complex data as JSON objects instead of escaped strings.
+
+Example:
+  Agent passes: {content_json: {"key": "value"}}
+  System converts to: {content: "{\"key\": \"value\"}"}
+
+Arguments:
+- $params: Hashref of tool parameters
+
+Returns:
+- Normalized params hashref
+
+=cut
+
+sub _normalize_dual_json_params {
+    my ($self, $params) = @_;
+    
+    return $params unless $params && ref($params) eq 'HASH';
+    
+    # Look for _json parameter variants
+    my @param_keys = keys %$params;
+    for my $key (@param_keys) {
+        # Check if this is a _json variant (e.g., content_json, data_json)
+        if ($key =~ /^(.+)_json$/) {
+            my $base_key = $1;  # Remove _json suffix
+            my $json_value = $params->{$key};
+            
+            # Skip if both _json and base exist (base takes precedence for backward compat)
+            if (exists $params->{$base_key}) {
+                print STDERR "[DEBUG][ToolExecutor] Both $key and $base_key exist - using $base_key\n"
+                    if should_log('DEBUG');
+                delete $params->{$key};  # Remove _json version
+                next;
+            }
+            
+            # Convert JSON object/array to string
+            if (ref($json_value) eq 'HASH' || ref($json_value) eq 'ARRAY') {
+                print STDERR "[DEBUG][ToolExecutor] Normalizing $key -> $base_key (object to string)\n"
+                    if should_log('DEBUG');
+                
+                # Serialize the object/array to JSON string
+                my $json_string = encode_json($json_value);
+                $params->{$base_key} = $json_string;
+                delete $params->{$key};  # Remove _json version
+            }
+            elsif (!ref($json_value)) {
+                # Already a string - just move it to base key
+                print STDERR "[DEBUG][ToolExecutor] Normalizing $key -> $base_key (string to string)\n"
+                    if should_log('DEBUG');
+                $params->{$base_key} = $json_value;
+                delete $params->{$key};
+            }
+        }
+    }
+    
+    return $params;
 }
 
 1;
