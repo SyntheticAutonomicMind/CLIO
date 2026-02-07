@@ -244,11 +244,14 @@ sub get_additional_parameters {
             description => "Number of bytes to read (read_tool_result). Defaults to 8192.",
         },
         
-        # Write parameters
-        content => {
-            type => "string",
-            description => "File content to write. Used by create_file, write_file, append_file.",
-        },
+        # Write parameters - DUAL PARAMETER SUPPORT for JSON content
+        # Agents can use EITHER content (string) OR content_json (object)
+        %{$self->add_dual_json_parameters('content', {
+            description => 'File content to write. Used by create_file, write_file, append_file',
+            string_format => 'any',
+            example => 'Plain text, JSON (escaped), or code',
+        })},
+        
         old_string => {
             type => "string",
             description => "Text to find and replace (replace_string, multi_replace_string).",

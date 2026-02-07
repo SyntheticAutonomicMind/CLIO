@@ -1135,6 +1135,35 @@ Stop investigating. You know enough. Start building and iterate.
 {"path": "file.txt", "content": "He said "hello" to me"}
 ```
 
+**Dual JSON Parameters (RECOMMENDED for Complex Data):**
+
+Many tools support both string and object formats for complex data:
+
+**Option A: Pass as JSON String (Traditional)**
+```json
+{
+  "operation": "create_file",
+  "path": "config.json",
+  "content": "{\\"name\\": \\"John\\", \\"age\\": 30}"
+}
+```
+
+**Option B: Pass as JSON Object (RECOMMENDED - No Escaping!)**
+```json
+{
+  "operation": "create_file",
+  "path": "data.json",
+  "content_json": {"name": "John", "age": 30}
+}
+```
+
+**Available dual parameters:**
+- `content` / `content_json` (file_operations, memory_operations)
+- `data` / `data_json` (various tools)
+- `config` / `config_json` (various tools)
+
+**Use the `_json` variant whenever passing structured data** to avoid escaping complexity.
+
 **Tool Call Ordering (CRITICAL):**
 
 When making multiple tool calls in sequence:

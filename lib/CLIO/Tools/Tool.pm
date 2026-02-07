@@ -225,6 +225,65 @@ sub get_additional_parameters {
     return {};
 }
 
+=head2 add_dual_json_parameters
+
+Helper method to generate both string and JSON object parameter variants.
+
+This reduces escaping complexity for agents by allowing them to pass complex
+data as JSON objects instead of escaped strings.
+
+Usage in subclass get_additional_parameters():
+
+    return {
+        %{$self->add_dual_json_parameters('content', {
+            description => 'File content to write',
+            string_format => 'any',  # text, json, yaml, code, etc.
+        })},
+        # ... other parameters ...
+    };
+
+This generates BOTH:
+    - "content": string (escaped format - backward compatible)
+    - "content_json": object (new format - no escaping needed)
+
+Arguments:
+- $param_name: Base parameter name (e.g., 'content', 'data', 'config')
+- $opts: Options hashref:
+    * description: Parameter description (required)
+    * string_format: Expected format when passed as string (default: 'any')
+    * example: Example value for documentation (optional)
+
+Returns: Hashref with both string and _json parameter definitions
+
+=cut
+
+sub add_dual_json_parameters {
+    my ($self, $param_name, $opts) = @_;
+    
+    croak "add_dual_json_parameters requires param_name" unless $param_name;
+    croak "add_dual_json_parameters requires description" unless $opts->{description};
+    
+    my $description = $opts->{description};
+    my $format = $opts->{string_format} || 'any';
+    my $example = $opts->{example} || '';
+    
+    my $example_text = $example ? "\n\nExample: $example" : '';
+    
+    return {
+        # String version (backward compatible)
+        $param_name => {
+            type => "string",
+            description => "$description (as string - escape JSON quotes if needed)$example_text",
+        },
+        
+        # JSON object version (new - no escaping needed)
+        "${param_name}_json" => {
+            type => "object",
+            description => "$description (as JSON object - RECOMMENDED: no escaping needed, pass structured data directly)",
+        },
+    };
+}
+
 =head2 success_result
 
 Helper to create a success result.
