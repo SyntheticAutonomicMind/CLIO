@@ -528,8 +528,9 @@ sub run {
                         $markdown_line_count = 0;
                         $last_flush_time = $current_time;
                         
-                        # Check pagination using helper for consistency
-                        if ($self->_should_pagination_trigger()) {
+                        # Check pagination using agent streaming helper (ignores tool flag)
+                        # Agent text should paginate even when tools are executing
+                        if ($self->_should_pagination_trigger_for_agent_streaming()) {
                             # Pause for user to read (streaming mode)
                             my $response = $self->pause(1);  # 1 = streaming mode
                             if ($response eq 'Q') {
@@ -561,14 +562,13 @@ sub run {
                 
                 $current_tool = $tool_name;
                 
-                # Mark that tools have been invoked - disables streaming pagination
-                # so user doesn't have to press space during AI "work"
+                # Mark that tools have been invoked - disables pagination in writeline()
+                # so user doesn't have to press space during tool output.
+                # Note: _tools_invoked_this_request is checked in _should_pagination_trigger()
+                # Agent streaming output is NOT affected by this flag and remains paginated
                 $self->{_tools_invoked_this_request} = 1;
                 
-                # Disable pagination during tool execution
-                $self->{pagination_enabled} = 0;
-                print STDERR "[DEBUG][Chat] Pagination DISABLED for tool execution: $tool_name\n" if $self->{debug};
-                
+                print STDERR "[DEBUG][Chat] Tool execution marked (pagination still enabled for agent text)\n" if $self->{debug};
                 print STDERR "[DEBUG][Chat] Tool called: $tool_name\n" if $self->{debug};
             };
             
@@ -2445,6 +2445,31 @@ sub _should_pagination_trigger {
     return 0 unless -t STDIN;  # Not interactive
     return 0 unless $self->{pagination_enabled};  # Pagination disabled
     return 0 if $self->{_tools_invoked_this_request};  # During tool execution
+    
+    my $threshold = $self->_get_pagination_threshold();
+    return 1 if $self->{line_count} >= $threshold;
+    
+    return 0;
+}
+
+=head2 _should_pagination_trigger_for_agent_streaming
+
+Check if pagination should trigger for agent streaming output (on_chunk callback).
+
+This is DIFFERENT from _should_pagination_trigger which also checks _tools_invoked_this_request.
+Agent streaming should always be paginated when enabled, regardless of tool execution state.
+Tool output gets separate pagination control via the tool flag.
+
+Returns: 1 if pause needed, 0 otherwise
+
+=cut
+
+sub _should_pagination_trigger_for_agent_streaming {
+    my ($self) = @_;
+    
+    return 0 unless -t STDIN;  # Not interactive
+    return 0 unless $self->{pagination_enabled};  # Pagination disabled
+    # NOTE: Do NOT check _tools_invoked_this_request - agent text should paginate even during tool execution
     
     my $threshold = $self->_get_pagination_threshold();
     return 1 if $self->{line_count} >= $threshold;
