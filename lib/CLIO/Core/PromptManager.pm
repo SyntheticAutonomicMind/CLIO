@@ -127,6 +127,43 @@ sub get_system_prompt {
         $prompt = $self->_get_default_prompt_content();
     }
     
+    # Inject LTM patterns early (right after Core Identity) if session is provided
+    # This improves visibility via primacy effect - models pay more attention to info at the start
+    if ($session) {
+        my $ltm_section = $self->_format_ltm_patterns($session);
+        if ($ltm_section) {
+            print STDERR "[DEBUG][PromptManager] Injecting LTM patterns (early position), length=" . length($ltm_section) . "\n"
+                if $self->{debug};
+            
+            # Find the end of Core Identity section and inject LTM there
+            # Look for the "---" separator after Core Identity
+            if ($prompt =~ /^## Core Identity\s*\n.*?\n---\s*\n/sm) {
+                # Insert LTM right after Core Identity section
+                print STDERR "[DEBUG][PromptManager] Found Core Identity marker, injecting LTM\n"
+                    if $self->{debug};
+                my $before_len = length($prompt);
+                $prompt =~ s/(^## Core Identity\s*\n.*?\n---\s*\n)/$1$ltm_section\n---\n\n/sm;
+                my $after_len = length($prompt);
+                print STDERR "[DEBUG][PromptManager] After injection, prompt length=$after_len (added " . ($after_len - $before_len) . " bytes)\n"
+                    if $self->{debug};
+                
+                # DEBUG: Show what was injected
+                if ($self->{debug}) {
+                    if ($prompt =~ /(## Long-Term Memory Patterns.*?)(?=\n##)/s) {
+                        print STDERR "[DEBUG][PromptManager] Injected LTM section (first 200 chars): " . substr($1, 0, 200) . "...\n";
+                    }
+                }
+            } else {
+                # Fallback: inject at the end if pattern not found
+                print STDERR "[WARN][PromptManager] Could not find Core Identity section marker, appending LTM at end\n" if should_log('WARN');
+                $prompt .= "\n\n" . $ltm_section;
+            }
+        } else {
+            print STDERR "[DEBUG][PromptManager] No LTM patterns to inject (empty section)\n"
+                if $self->{debug};
+        }
+    }
+    
     # Append custom instructions if they exist (unless --no-custom-instructions flag set)
     if (!$self->{skip_custom}) {
         my $custom = $self->_load_custom_instructions();
@@ -147,16 +184,6 @@ sub get_system_prompt {
         }
     } elsif ($self->{debug}) {
         print STDERR "[DEBUG][PromptManager] Skipping custom instructions (--no-custom-instructions flag)\n";
-    }
-    
-    # Inject LTM patterns if session is provided
-    if ($session) {
-        my $ltm_section = $self->_format_ltm_patterns($session);
-        if ($ltm_section) {
-            print STDERR "[DEBUG][PromptManager] Injecting LTM patterns\n"
-                if $self->{debug};
-            $prompt .= "\n\n" . $ltm_section;
-        }
     }
     
     return $prompt;
@@ -767,6 +794,19 @@ When asked for your name, you must respond with "CLIO".
 - Avoid content that violates copyrights
 - If asked to generate harmful content, respond: "Sorry, I can't assist with that."
 - Provide verifiable, accurate information
+
+**Long-Term Memory (LTM) Usage:**
+
+If LTM patterns appear below (after Core Identity section), they contain project-specific knowledge learned from previous sessions. You MUST:
+
+- **Check LTM first** when starting work - it may contain directly relevant solutions
+- **Consult Problem Solutions** before debugging - past fixes may apply to current issues
+- **Follow Code Patterns** - these are verified project conventions with high confidence
+- **Learn from Discoveries** - these are facts about the codebase structure and behavior
+- **Use memory_operations** to search for relevant patterns when needed
+- **Add to LTM** when you discover new patterns, solve novel problems, or fix bugs
+
+LTM is your institutional knowledge. Use it actively, not passively.
 
 ---
 
