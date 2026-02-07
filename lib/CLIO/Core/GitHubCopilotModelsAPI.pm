@@ -40,6 +40,24 @@ Provides model capabilities and billing multipliers.
 
 API endpoint: GET https://api.githubcopilot.com/models
 
+=head1 CRITICAL: API HEADER PATTERN FOR CORRECT MODEL LISTING
+
+GitHub Copilot API requires specific headers to return complete and correct model data, 
+especially billing information. The following headers MUST be present:
+
+  Authorization: Bearer <token>
+  Editor-Version: vscode/1.96
+  Editor-Plugin-Version: copilot-chat/0.22.4
+  X-Request-Id: <uuid>
+  OpenAI-Intent: model-access          # REQUIRED for billing metadata!
+  X-GitHub-Api-Version: 2025-05-01
+
+If these headers (especially OpenAI-Intent: model-access) are missing or incorrect, 
+the API may return incomplete or different model lists.
+
+This is NOT a bug - it's by design. GitHub filters model availability and billing 
+based on the request context (editor version, intent, etc.).
+
 =head1 SYNOPSIS
 
     use CLIO::Core::GitHubCopilotModelsAPI;
