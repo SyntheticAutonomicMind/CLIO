@@ -168,6 +168,11 @@ sub execute_tool {
     # This allows agents to pass complex data without escaping
     $arguments = $self->_normalize_dual_json_params($arguments);
     
+    # PHASE 2: Handle oneOf parameters (standard JSON Schema)
+    # If tool uses oneOf with string/object types, accept both formats
+    # This uses standard JSON Schema instead of custom "json_string" type
+    $arguments = $self->_normalize_oneof_params($arguments, $tool_name);
+    
     # Get tool from registry
     my $tool_registry = $self->{tool_registry};
     unless ($tool_registry) {
@@ -778,6 +783,102 @@ sub _normalize_dual_json_params {
                     if should_log('DEBUG');
                 $params->{$base_key} = $json_value;
                 delete $params->{$key};
+            }
+        }
+    }
+    
+    return $params;
+}
+
+=head2 _normalize_oneof_params
+
+Normalize oneOf type parameters to accept both formats.
+
+This is Phase 2 using standard JSON Schema with oneOf.
+A parameter defined with oneOf can accept multiple types:
+
+```perl
+{
+  "text": {
+    "oneOf": [
+      {"type": "string"},
+      {"type": "object"}
+    ]
+  }
+}
+```
+
+Both formats are valid:
+  text: {"key": "value"}        <- JSON object
+  text: "{\"key\": \"value\"}"  <- JSON string
+
+We normalize both to string format internally.
+
+Arguments:
+- $params: Hashref of tool parameters
+- $tool_name: Tool name (for looking up parameter schemas)
+
+Returns:
+- Normalized params hashref
+
+=cut
+
+sub _normalize_oneof_params {
+    my ($self, $params, $tool_name) = @_;
+    
+    return $params unless $params && ref($params) eq 'HASH';
+    return $params unless $tool_name;
+    
+    # Get tool from registry to check parameter schemas
+    my $tool = $self->{tool_registry}->get_tool($tool_name);
+    return $params unless $tool;
+    
+    # Get tool definition to check parameter schemas
+    my $tool_def = $tool->get_tool_definition();
+    return $params unless $tool_def && $tool_def->{parameters};
+    
+    my $properties = $tool_def->{parameters}{properties};
+    return $params unless $properties && ref($properties) eq 'HASH';
+    
+    # Check each parameter
+    for my $param_name (keys %$params) {
+        my $param_def = $properties->{$param_name};
+        next unless $param_def && ref($param_def) eq 'HASH';
+        
+        # Check if this parameter has oneOf with string and object types
+        next unless $param_def->{oneOf} && ref($param_def->{oneOf}) eq 'ARRAY';
+        
+        my $has_string = 0;
+        my $has_object = 0;
+        
+        for my $option (@{$param_def->{oneOf}}) {
+            $has_string = 1 if $option->{type} && $option->{type} eq 'string';
+            $has_object = 1 if $option->{type} && $option->{type} eq 'object';
+        }
+        
+        # Only process if oneOf includes both string and object
+        next unless $has_string && $has_object;
+        
+        my $param_value = $params->{$param_name};
+        
+        # If it's a HASH or ARRAY, convert to JSON string
+        if (ref($param_value) eq 'HASH' || ref($param_value) eq 'ARRAY') {
+            print STDERR "[DEBUG][ToolExecutor] oneOf param '$param_name': object -> string\n"
+                if should_log('DEBUG');
+            
+            # Serialize to JSON string
+            $params->{$param_name} = encode_json($param_value);
+        }
+        elsif (!ref($param_value)) {
+            # Already a string - optionally validate it's valid JSON
+            my $parsed = eval { decode_json($param_value) };
+            if ($@) {
+                # Not JSON or invalid - that's OK, might be plain text
+                print STDERR "[DEBUG][ToolExecutor] oneOf param '$param_name': plain string (not JSON)\n"
+                    if should_log('DEBUG');
+            } else {
+                print STDERR "[DEBUG][ToolExecutor] oneOf param '$param_name': valid JSON string (passthrough)\n"
+                    if should_log('DEBUG');
             }
         }
     }
