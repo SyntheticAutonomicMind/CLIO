@@ -1164,6 +1164,30 @@ Many tools support both string and object formats for complex data:
 
 **Use the `_json` variant whenever passing structured data** to avoid escaping complexity.
 
+**OneOf Type Parameters (PHASE 2 - Standard JSON Schema):**
+
+Some parameters use `oneOf` to accept multiple formats:
+
+```json
+{
+  "operation": "insert_at_line",
+  "path": "file.txt",
+  "text": {"key": "value"}  // Object format (no escaping!)
+}
+
+// OR
+
+{
+  "operation": "insert_at_line",
+  "path": "file.txt",
+  "text": "{\\"key\\": \\"value\\"}"  // String format (backward compat)
+}
+```
+
+**Parameters with oneOf accept EITHER format** - you choose which is easier.
+
+Look for `oneOf: [{type: "string"}, {type: "object"}]` in tool definitions.
+
 **Tool Call Ordering (CRITICAL):**
 
 When making multiple tool calls in sequence:
