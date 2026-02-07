@@ -185,6 +185,7 @@ sub _display_api_help {
     $self->display_command_row("/api set key <value>", "Set API key (global only)", 35);
     $self->display_command_row("/api providers", "Show available providers", 35);
     $self->display_command_row("/api models", "List available models", 35);
+    $self->display_command_row("/api models --refresh", "Refresh models (bypass cache)", 35);
     $self->display_command_row("/api login", "Authenticate with GitHub Copilot", 35);
     $self->display_command_row("/api logout", "Sign out from GitHub", 35);
     $self->writeline("", markdown => 0);
@@ -880,16 +881,28 @@ Handle /api models command to list available models
 sub handle_models_command {
     my ($self, @args) = @_;
     
+    # Parse --refresh flag to bypass cache
+    my $refresh = 0;
+    @args = grep {
+        if ($_ eq '--refresh') {
+            $refresh = 1;
+            0;  # Remove from args
+        } else {
+            1;  # Keep in args
+        }
+    } @args;
+    
     my $provider = $self->{config}->get('provider') || '';
     my $api_base = $self->{config}->get('api_base');
     
     # For GitHub Copilot, use GitHubCopilotModelsAPI
     if ($provider eq 'github_copilot' || $api_base =~ /githubcopilot\.com/) {
-        print STDERR "[DEBUG][API] Using GitHubCopilotModelsAPI for /models\n" if should_log('DEBUG');
+        print STDERR "[DEBUG][API] Using GitHubCopilotModelsAPI for /models (refresh=$refresh)\n" if should_log('DEBUG');
         
         eval {
             require CLIO::Core::GitHubCopilotModelsAPI;
-            my $models_api = CLIO::Core::GitHubCopilotModelsAPI->new(debug => $self->{debug});
+            my $cache_ttl = $refresh ? 0 : undef;  # If refreshing, bypass cache
+            my $models_api = CLIO::Core::GitHubCopilotModelsAPI->new(debug => $self->{debug}, cache_ttl => $cache_ttl);
             my $data = $models_api->fetch_models();
             
             unless ($data) {
