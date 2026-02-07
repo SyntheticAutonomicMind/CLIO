@@ -3,6 +3,9 @@ package CLIO::Core::ReadLine;
 use strict;
 use warnings;
 use CLIO::Core::Logger qw(should_log);
+
+# Ensure STDOUT is autoflushed for immediate terminal response
+$| = 1;
 use feature 'say';
 use CLIO::Compat::Terminal qw(ReadMode ReadKey GetTerminalSize);
 
@@ -34,6 +37,10 @@ sub new {
         # Track how many terminal lines the current input occupies
         # This is MEASURED (from last redraw), not calculated
         display_lines => 1,
+        # Track where the cursor was positioned in the last redraw
+        # This allows us to know exactly where to start the next redraw from
+        last_cursor_row => 0,
+        last_cursor_col => 0,
     };
     
     return bless $self, $class;
@@ -63,6 +70,8 @@ sub readline {
     
     # Reset display lines tracking for new input
     $self->{display_lines} = 1;
+    $self->{last_cursor_row} = 0;
+    $self->{last_cursor_col} = 0;
     
     # Print prompt
     print $prompt;
@@ -224,9 +233,51 @@ sub readline {
         # For single-byte ASCII, $ord will be >= 32
         if ($ord >= 32 || ($ord >= 128)) {
             # This is either ASCII printable or the start of a UTF-8 multi-byte sequence
+            if (should_log('DEBUG')) {
+                print STDERR "[DEBUG][ReadLine] Inserting '$char' at cursor_pos=$cursor_pos, input_len=" . length($input) . "\n";
+                print STDERR "[DEBUG][ReadLine] Input before: '$input'\n";
+            }
+            
+            my $input_len = length($input);
+            my $inserting_at_end = ($cursor_pos == $input_len);
+            
             substr($input, $cursor_pos, 0, $char);
             $cursor_pos += length($char);  # Increment by actual character length
-            $self->redraw_line(\$input, \$cursor_pos, $prompt);
+            
+            if (should_log('DEBUG')) {
+                print STDERR "[DEBUG][ReadLine] Input after: '$input', new cursor_pos=$cursor_pos\n";
+            }
+            
+            if ($inserting_at_end) {
+                # Optimization: if inserting at end, just print the character
+                # This avoids full redraw and prevents scroll issues when wrapping
+                print $char;
+                
+                # Update cursor tracking
+                my ($term_width, $term_height) = GetTerminalSize();
+                $term_width ||= 80;
+                
+                # Calculate visible prompt length
+                my $visible_prompt = $prompt;
+                $visible_prompt =~ s/\e\[[0-9;]*m//g;
+                my $prompt_len = length($visible_prompt);
+                
+                # Calculate new cursor position
+                my $total_pos = $prompt_len + $cursor_pos;
+                my $new_row = int($total_pos / $term_width);
+                my $new_col = ($total_pos % $term_width) + 1;
+                
+                # Update display lines if we wrapped to a new line
+                if ($new_row >= $self->{display_lines}) {
+                    $self->{display_lines} = $new_row + 1;
+                }
+                
+                $self->{last_cursor_row} = $new_row;
+                $self->{last_cursor_col} = $new_col;
+            } else {
+                # Inserting in middle - need full redraw
+                $self->redraw_line(\$input, \$cursor_pos, $prompt);
+            }
         }
     }
 }
@@ -617,11 +668,22 @@ sub reposition_cursor {
     my $new_total_pos = $prompt_len + $$new_pos_ref;
     
     # Calculate row and column for both positions
-    my $old_row = $old_total_pos > 0 ? int(($old_total_pos - 1) / $term_width) : 0;
-    my $old_col = $old_total_pos > 0 ? (($old_total_pos - 1) % $term_width) + 1 : 1;
+    # Position represents "cursor is after this many characters have been printed"
+    # So pos=0 means cursor at column 1 (before first char)
+    # pos=1 means cursor at column 2 (after first char)
+    # pos=80 means cursor at column 81 -> but terminal wraps, so row 1, column 1
+    # Formula: row = pos / width, col = (pos % width) + 1
+    my $old_row = int($old_total_pos / $term_width);
+    my $old_col = ($old_total_pos % $term_width) + 1;
     
-    my $new_row = $new_total_pos > 0 ? int(($new_total_pos - 1) / $term_width) : 0;
-    my $new_col = $new_total_pos > 0 ? (($new_total_pos - 1) % $term_width) + 1 : 1;
+    my $new_row = int($new_total_pos / $term_width);
+    my $new_col = ($new_total_pos % $term_width) + 1;
+    
+    if (should_log('DEBUG')) {
+        print STDERR "[DEBUG][ReadLine] reposition_cursor: old_pos=$$old_pos_ref, new_pos=$$new_pos_ref\n";
+        print STDERR "[DEBUG][ReadLine] reposition_cursor: old_total=$old_total_pos, new_total=$new_total_pos\n";
+        print STDERR "[DEBUG][ReadLine] reposition_cursor: from ($old_row,$old_col) to ($new_row,$new_col)\n";
+    }
     
     # Currently at old position (old_row, old_col)
     # Need to move to new position (new_row, new_col)
@@ -631,8 +693,9 @@ sub reposition_cursor {
         my $rows_up = $old_row - $new_row;
         print "\e[${rows_up}A";
         # After moving up, we're at column old_col on the target row
-        # Move to beginning of line, then forward to new_col
-        print "\r";
+        # After moving up, use absolute column positioning to avoid
+        # issues with VT100 pending wrap state
+        print "\r";  # Go to column 1
         if ($new_col > 1) {
             my $cols_right = $new_col - 1;
             print "\e[${cols_right}C";
@@ -641,22 +704,28 @@ sub reposition_cursor {
         # Moving DOWN to a later line (e.g., scrolling right past line boundary)
         my $rows_down = $new_row - $old_row;
         print "\e[${rows_down}B";
-        # After moving down, we're at column old_col on the target row
-        # Move to beginning of line, then forward to new_col
-        print "\r";
+        # After moving down, use absolute column positioning
+        print "\r";  # Go to column 1
         if ($new_col > 1) {
             my $cols_right = $new_col - 1;
             print "\e[${cols_right}C";
         }
     } else {
-        # Same row - just move horizontally
-        if ($new_col < $old_col) {
-            my $cols_left = $old_col - $new_col;
-            print "\e[${cols_left}D";
-        } elsif ($new_col > $old_col) {
-            my $cols_right = $new_col - $old_col;
+        # Same row - use absolute column positioning to be safe
+        # This handles the case where old_col was at term_width (pending wrap state)
+        print "\r";  # Go to column 1
+        if ($new_col > 1) {
+            my $cols_right = $new_col - 1;
             print "\e[${cols_right}C";
         }
+    }
+    
+    # Update tracked cursor position
+    $self->{last_cursor_row} = $new_row;
+    $self->{last_cursor_col} = $new_col;
+    
+    if (should_log('DEBUG')) {
+        print STDERR "[DEBUG][ReadLine] reposition_cursor: saved last_cursor=($new_row,$new_col)\n";
     }
 }
 
@@ -702,86 +771,137 @@ sub redraw_line {
     $visible_prompt =~ s/\e\[[0-9;]*m//g;
     my $prompt_len = length($visible_prompt);
     
-    # CRITICAL FIX: Before clearing, we need to know where the terminal cursor currently is.
-    # After reposition_cursor(), the terminal cursor might be in the middle of the input, not at the end.
-    # We can't reliably clear from an unknown position, so we need to move to a known position first.
+    # Helper function to convert character position to (row, col)
+    # Position means "cursor is before the character at this index"
+    # Position 0 = cursor before first char = column prompt_len+1
+    # Position 1 = cursor after first char = column prompt_len+2
+    # ...but we're computing position INCLUDING prompt, so:
+    # pos=1 means "after first character printed" = column 2
+    # pos=N means "after Nth character printed" = column N+1
     #
-    # Strategy: Move to the end of the input display, THEN move up and clear.
-    # This ensures we clear from a consistent starting point.
+    # WAIT: Actually terminals are 1-indexed. If we print "abc":
+    # 'a' goes to column 1, 'b' to column 2, 'c' to column 3
+    # Cursor ends up at column 4 (after 'c')
+    # So: after printing N characters, cursor is at column N+1
+    # 
+    # For row calculation: if width=80, after printing 80 chars,
+    # cursor is at column 81 which wraps to column 1 of next row.
+    # Actually in VT100, it's "pending wrap" at column 80, then wraps when next char comes.
+    # But for our purposes, let's say: after printing 80 chars, cursor is at col 80 (or pending wrap).
+    # After printing 81 chars, cursor is at col 1 of row 1.
+    #
+    # Position N (0-indexed chars printed) -> cursor is after Nth char
+    # So pos=0 means nothing printed, cursor at col 1 of row 0
+    # pos=1 means 1 char printed, cursor at col 2 of row 0
+    # pos=80 means 80 chars printed, cursor at col 81 -> but that wraps to col 1 of row 1?
+    # 
+    # Let's think differently:
+    # pos=0: cursor at column 1, row 0
+    # pos=N: cursor at column ((N-1) % width) + 2, row = (N-1) / width (if N > 0)
+    #        OR: column (N % width) + 1 if N % width != 0, else column = width and might wrap
+    #
+    # Simpler: 
+    # pos 0 -> col 1, row 0
+    # pos 1 -> col 2, row 0
+    # ...
+    # pos 79 -> col 80, row 0 (but this is the "pending wrap" position!)
+    # pos 80 -> col 1, row 1 (first char of second line)
+    # pos 81 -> col 2, row 1
+    # ...
+    #
+    # So: row = pos / width, col = (pos % width) + 1
+    my $pos_to_rowcol = sub {
+        my ($pos) = @_;
+        
+        my $row = int($pos / $term_width);
+        my $col = ($pos % $term_width) + 1;
+        
+        return ($row, $col);
+    };
     
-    my $lines_to_clear = $self->{display_lines} || 1;
+    # Calculate how many lines the NEW input will use
+    my $total_chars = $prompt_len + $input_len;
+    my $new_lines_needed = $total_chars > 0 ? int(($total_chars - 1) / $term_width) + 1 : 1;
     
-    # First, move to the end of the current display (last line, last column)
-    # We do this by moving down to the last line, then to the end
-    if ($lines_to_clear > 1) {
-        # Move down to last line of display
-        my $down_count = $lines_to_clear - 1;
-        print "\e[${down_count}B";
+    # We need to move to the start of our input area to clear and redraw.
+    # We don't know exactly where the cursor is right now, but we know:
+    #  - The previous redraw used $self->{display_lines} lines
+    #  - The cursor is somewhere within that area (probably)
+    # 
+    # Strategy: Move to column 0, then move up by enough lines to reach the start.
+    # We'll use the maximum of old_display_lines and new_lines_needed to be safe.
+    
+    my $old_display_lines = $self->{display_lines} || 1;
+    my $max_lines = $old_display_lines > $new_lines_needed ? $old_display_lines : $new_lines_needed;
+    
+    if (should_log('DEBUG')) {
+        print STDERR "[DEBUG][ReadLine] redraw_line: input_len=$input_len, prompt_len=$prompt_len, total_chars=$total_chars\n";
+        print STDERR "[DEBUG][ReadLine] redraw_line: term_width=$term_width, new_lines_needed=$new_lines_needed\n";
+        print STDERR "[DEBUG][ReadLine] redraw_line: old_display_lines=$old_display_lines, max_lines=$max_lines\n";
+        print STDERR "[DEBUG][ReadLine] redraw_line: last cursor was at row=$self->{last_cursor_row}, col=$self->{last_cursor_col}\n";
     }
-    # Now we're on the last line - move to end of line
-    # (This is a no-op if we're already there, but ensures consistency)
-    print "\e[999C";  # Move far right (terminal stops at edge)
     
-    # NOW move back up to first line and clear
-    if ($lines_to_clear > 1) {
-        my $up_count = $lines_to_clear - 1;
-        print "\e[${up_count}A";
+    # Move to column 1 of current line
+    print "\r";
+    
+    # Move up from the last cursor position to row 0
+    # We know exactly where the cursor was from the previous redraw
+    my $lines_to_move_up = $self->{last_cursor_row};
+    if ($lines_to_move_up > 0) {
+        print "\e[${lines_to_move_up}A";
     }
     
-    # Now at first line - move to beginning and clear everything below
-    print "\r\e[J";
+    # Now we're at column 1 of row 0 (first line of our input)
+    # Clear from here to end of screen
+    print "\e[J";
     
     # Print prompt and input (terminal wraps naturally)
     print $prompt, $$input_ref;
     
-    # Calculate how many lines we just used
-    my $total_chars = $prompt_len + $input_len;
-    my $lines_used = $total_chars > 0 ? int(($total_chars - 1) / $term_width) + 1 : 1;
-    $self->{display_lines} = $lines_used;
+    # Update display_lines for next redraw
+    $self->{display_lines} = $new_lines_needed;
     
-    # After printing, cursor is at end of input
-    # We need to position cursor at the correct location
+    # After printing, calculate where cursor is now (at end of what we printed)
+    # After print(), cursor is at the position AFTER the last character.
+    # If we printed exactly term_width characters on a line, cursor is at column term_width
+    # (in "pending wrap" state, not yet wrapped to next line).
+    my $end_pos = $total_chars;
+    my ($end_row, $end_col) = $pos_to_rowcol->($end_pos);
     
-    # Calculate where cursor should be
-    my $cursor_total_pos = $prompt_len + $$cursor_pos_ref;
-    my $end_total_pos = $prompt_len + $input_len;
-    
-    # Calculate row and column for both positions
-    # Row 0 is first line, counting from 0
-    my $cursor_row = $cursor_total_pos > 0 ? int(($cursor_total_pos - 1) / $term_width) : 0;
-    my $cursor_col = $cursor_total_pos > 0 ? (($cursor_total_pos - 1) % $term_width) + 1 : 1;
-    
-    my $end_row = $end_total_pos > 0 ? int(($end_total_pos - 1) / $term_width) : 0;
-    my $end_col = $end_total_pos > 0 ? (($end_total_pos - 1) % $term_width) + 1 : 1;
+    # Calculate where we WANT the cursor to be
+    my $desired_pos = $prompt_len + $$cursor_pos_ref;
+    my ($desired_row, $desired_col) = $pos_to_rowcol->($desired_pos);
     
     if (should_log('DEBUG')) {
-        print STDERR "[DEBUG][ReadLine] redraw_line: cursor_pos=$$cursor_pos_ref, input_len=$input_len, term_width=$term_width, prompt_len=$prompt_len\n";
-        print STDERR "[DEBUG][ReadLine] redraw_line: cursor_total_pos=$cursor_total_pos, end_total_pos=$end_total_pos\n";
-        print STDERR "[DEBUG][ReadLine] redraw_line: cursor at ($cursor_row,$cursor_col), end at ($end_row,$end_col)\n";
+        print STDERR "[DEBUG][ReadLine] redraw_line: end position: row=$end_row, col=$end_col\n";
+        print STDERR "[DEBUG][ReadLine] redraw_line: desired cursor: row=$desired_row, col=$desired_col\n";
     }
     
-    # Currently at end position (end_row, end_col)
-    # Need to move to cursor position (cursor_row, cursor_col)
-    
-    if ($cursor_row < $end_row) {
-        # Cursor is on an earlier line - move up, then to correct column
-        my $rows_up = $end_row - $cursor_row;
-        print "\e[${rows_up}A";
-        # After moving up, cursor column stays at end_col (vertical movement doesn't change column)
-        # Move to beginning of line, then forward to cursor_col
-        print "\r";
-        if ($cursor_col > 1) {
-            my $cols_right = $cursor_col - 1;
+    # Only reposition if we're not already at the correct position
+    if ($desired_row != $end_row || $desired_col != $end_col) {
+        # Move from end position to desired cursor position
+        if ($desired_row < $end_row) {
+            # Need to move up
+            my $rows_up = $end_row - $desired_row;
+            print "\e[${rows_up}A";
+        } elsif ($desired_row > $end_row) {
+            # Need to move down (shouldn't normally happen)
+            my $rows_down = $desired_row - $end_row;
+            print "\e[${rows_down}B";
+        }
+        
+        # Now position to correct column using absolute positioning
+        # This avoids any issues with pending wrap state at column term_width
+        print "\r";  # Go to column 1
+        if ($desired_col > 1) {
+            my $cols_right = $desired_col - 1;
             print "\e[${cols_right}C";
         }
-    } elsif ($cursor_row == $end_row) {
-        # Same row - just move horizontally
-        if ($cursor_col < $end_col) {
-            my $cols_left = $end_col - $cursor_col;
-            print "\e[${cols_left}D";
-        }
     }
-    # If cursor_row > end_row, something is wrong (shouldn't happen)
+    
+    # Save the final cursor position for the next redraw
+    $self->{last_cursor_row} = $desired_row;
+    $self->{last_cursor_col} = $desired_col;
 }
 
 =head2 add_to_history
