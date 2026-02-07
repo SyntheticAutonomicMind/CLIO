@@ -273,9 +273,15 @@ sub get_additional_parameters {
             },
             description => "Array of replacement operations (multi_replace_string).",
         },
+        
+        # PHASE 2: oneOf type parameter (accepts both formats)
+        # Using standard JSON Schema with oneOf to accept string OR object
         text => {
-            type => "string",
-            description => "Text to insert (insert_at_line).",
+            oneOf => [
+                {type => "string", description => "Text as escaped JSON string"},
+                {type => "object", description => "Text as JSON object (no escaping needed)"}
+            ],
+            description => "Text to insert (insert_at_line). Can be JSON object or escaped string.",
         },
         line => {
             type => "integer",
