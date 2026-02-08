@@ -64,6 +64,7 @@ sub new {
         config => $args{config},  # Store config for API keys (web search, etc.)
         ui => $args{ui},  # Store UI for tools
         spinner => $args{spinner},  # Store spinner for interactive tools
+        broker_client => $args{broker_client},  # Broker client for multi-agent coordination
         debug => $args{debug} || 0,
         storage => CLIO::Session::ToolResultStore->new(debug => $args{debug}),
     };
@@ -231,6 +232,7 @@ sub execute_tool {
         tool_call_id => $tool_call_id,
         ui => $self->{ui},  # Provide UI for user_collaboration
         spinner => $self->{spinner},  # Provide spinner for interactive tools
+        broker_client => $self->{broker_client},  # Provide broker for coordination
     });
     
     my $execution_time_ms = int((time() - $start_time) * 1000);

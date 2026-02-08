@@ -381,6 +381,59 @@ sub _check_write_authorization {
     return $result;
 }
 
+=head2 _acquire_file_lock
+
+Attempt to acquire a file lock via the broker for multi-agent coordination.
+
+Returns: (lock_acquired, error_message)
+- lock_acquired: 1 if lock acquired, 0 otherwise
+- error_message: undef if ok, error string if lock denied
+
+=cut
+
+sub _acquire_file_lock {
+    my ($self, $path, $context) = @_;
+    
+    return (0, undef) unless $context->{broker_client};
+    
+    print STDERR "[INFO][FileOp] Requesting file lock via broker: $path\n" if should_log('INFO');
+    
+    eval {
+        my $lock_result = $context->{broker_client}->request_file_lock([$path], 'write');
+        if ($lock_result) {
+            print STDERR "[INFO][FileOp] Lock acquired for: $path\n" if should_log('INFO');
+            return (1, undef);
+        } else {
+            return (0, "File is locked by another agent. Wait for the other agent to finish or coordinate with them.");
+        }
+    };
+    if ($@) {
+        print STDERR "[WARN][FileOp] Failed to acquire lock (broker error): $@\n" if should_log('WARN');
+        print STDERR "[WARN][FileOp] Continuing without lock\n" if should_log('WARN');
+        return (0, undef);  # Continue without lock on broker errors
+    }
+}
+
+=head2 _release_file_lock
+
+Release a file lock via the broker.
+
+=cut
+
+sub _release_file_lock {
+    my ($self, $path, $context) = @_;
+    
+    return unless $context->{broker_client};
+    
+    eval {
+        $context->{broker_client}->release_file_lock([$path]);
+        print STDERR "[INFO][FileOp] Released lock for: $path\n" if should_log('INFO');
+    };
+    if ($@) {
+        print STDERR "[WARN][FileOp] Failed to release lock: $@\n" if should_log('WARN');
+    }
+}
+
 #
 # READ OPERATIONS
 #
@@ -1119,6 +1172,10 @@ sub create_file {
         return $self->error_result("Authorization denied: $auth_result->{reason}");
     }
     
+    # Multi-agent coordination: Request file lock via broker
+    my ($lock_acquired, $lock_error) = $self->_acquire_file_lock($path, $context);
+    return $self->error_result($lock_error) if $lock_error;
+    
     print STDERR "[DEBUG][FileOp] Creating file: $path (authorized: $auth_result->{reason})\n" if should_log('DEBUG');
     
     my $result;
@@ -1147,6 +1204,9 @@ sub create_file {
             size => $size,
         );
     };
+    
+    # Release lock if acquired
+    $self->_release_file_lock($path, $context) if $lock_acquired;
     
     if ($@) {
         print STDERR "[DEBUG][FileOp Failed to create file: $@\n" if should_log('ERROR');
@@ -1177,6 +1237,10 @@ sub write_file {
         return $self->error_result("Authorization denied: $auth_result->{reason}");
     }
     
+    # Multi-agent coordination: Request file lock via broker
+    my ($lock_acquired, $lock_error) = $self->_acquire_file_lock($path, $context);
+    return $self->error_result($lock_error) if $lock_error;
+    
     print STDERR "[DEBUG][FileOp] Writing file: $path (authorized: $auth_result->{reason})\n" if should_log('DEBUG');
     
     my $result;
@@ -1198,6 +1262,9 @@ sub write_file {
             size => $size,
         );
     };
+    
+    # Release lock if acquired
+    $self->_release_file_lock($path, $context) if $lock_acquired;
     
     if ($@) {
         print STDERR "[DEBUG][FileOp Failed to write file: $@\n" if should_log('ERROR');
@@ -1228,6 +1295,10 @@ sub append_file {
         return $self->error_result("Authorization denied: $auth_result->{reason}");
     }
     
+    # Multi-agent coordination: Request file lock via broker
+    my ($lock_acquired, $lock_error) = $self->_acquire_file_lock($path, $context);
+    return $self->error_result($lock_error) if $lock_error;
+    
     print STDERR "[DEBUG][FileOp] Appending to file: $path (authorized: $auth_result->{reason})\n" if should_log('DEBUG');
     
     my $result;
@@ -1250,6 +1321,9 @@ sub append_file {
         );
     };
     
+    # Release lock if acquired
+    $self->_release_file_lock($path, $context) if $lock_acquired;
+    
     if ($@) {
         print STDERR "[DEBUG][FileOp Failed to append to file: $@\n" if should_log('ERROR');
         return $self->error_result("Failed to append to file: $@");
@@ -1269,6 +1343,10 @@ sub replace_string {
     return $self->error_result("Missing 'old_string' parameter") unless defined $old_string;
     return $self->error_result("Missing 'new_string' parameter") unless defined $new_string;
     return $self->error_result("File not found: $path") unless -f $path;
+    
+    # Multi-agent coordination: Request file lock via broker
+    my ($lock_acquired, $lock_error) = $self->_acquire_file_lock($path, $context);
+    return $self->error_result($lock_error) if $lock_error;
     
     print STDERR "[DEBUG][FileOp] Replacing string in: $path\n" if should_log('DEBUG');
     
@@ -1307,6 +1385,9 @@ sub replace_string {
             replacements => $count,
         );
     };
+    
+    # Release lock if acquired
+    $self->_release_file_lock($path, $context) if $lock_acquired;
     
     if ($@) {
         print STDERR "[DEBUG][FileOp Failed to replace string: $@\n" if should_log('ERROR');
@@ -1462,6 +1543,10 @@ sub insert_at_line {
     return $self->error_result("File not found: $path") unless -f $path;
     return $self->error_result("Invalid line number") unless $line_number > 0;
     
+    # Multi-agent coordination: Request file lock via broker
+    my ($lock_acquired, $lock_error) = $self->_acquire_file_lock($path, $context);
+    return $self->error_result($lock_error) if $lock_error;
+    
     print STDERR "[DEBUG][FileOp] Inserting at line $line_number in: $path\n" if should_log('DEBUG');
     
     my $result;
@@ -1495,6 +1580,9 @@ sub insert_at_line {
         );
     };
     
+    # Release lock if acquired
+    $self->_release_file_lock($path, $context) if $lock_acquired;
+    
     if ($@) {
         print STDERR "[DEBUG][FileOp Failed to insert at line: $@\n" if should_log('ERROR');
         return $self->error_result("Failed to insert at line: $@");
@@ -1523,6 +1611,10 @@ sub delete_file {
         return $self->error_result("Authorization denied: $auth_result->{reason}");
     }
     
+    # Multi-agent coordination: Request file lock via broker
+    my ($lock_acquired, $lock_error) = $self->_acquire_file_lock($path, $context);
+    return $self->error_result($lock_error) if $lock_error;
+    
     print STDERR "[DEBUG][FileOp] Deleting: $path (recursive=$recursive, authorized: $auth_result->{reason})\n" if should_log('DEBUG');
     
     my $result;
@@ -1550,6 +1642,9 @@ sub delete_file {
             recursive => $recursive,
         );
     };
+    
+    # Release lock if acquired
+    $self->_release_file_lock($path, $context) if $lock_acquired;
     
     if ($@) {
         print STDERR "[DEBUG][FileOp Failed to delete: $@\n" if should_log('ERROR');
@@ -1582,6 +1677,10 @@ sub rename_file {
         );
     }
     
+    # Multi-agent coordination: Request file lock on source (old_path)
+    my ($lock_acquired, $lock_error) = $self->_acquire_file_lock($old_path, $context);
+    return $self->error_result($lock_error) if $lock_error;
+    
     print STDERR "[DEBUG][FileOp] Renaming: $old_path -> $new_path (authorized)\n" if should_log('DEBUG');
     
     my $result;
@@ -1605,6 +1704,9 @@ sub rename_file {
             new_path => $new_path,
         );
     };
+    
+    # Release lock if acquired
+    $self->_release_file_lock($old_path, $context) if $lock_acquired;
     
     if ($@) {
         print STDERR "[DEBUG][FileOp Failed to rename: $@\n" if should_log('ERROR');

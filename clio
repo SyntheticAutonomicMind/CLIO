@@ -16,6 +16,7 @@ use File::Path qw(make_path);
 use JSON::PP;
 use CLIO::UI::Chat;
 use CLIO::Util::PathResolver;
+use CLIO::Core::Logger qw(should_log);
 
 # Initialize path resolver early
 CLIO::Util::PathResolver::init();
@@ -306,6 +307,36 @@ if (!$session) {
 }
 print "[SESSION] Using session: $session_id\n" if $debug;
 
+# Check for broker coordination (sub-agent mode)
+my $broker_client;
+my $broker_session = $ENV{CLIO_BROKER_SESSION} || '';
+my $broker_agent_id = $ENV{CLIO_BROKER_AGENT_ID} || '';
+
+print STDERR "[TRACE][BROKER] Checking env vars: SESSION=$broker_session, AGENT=$broker_agent_id\n" if should_log('TRACE');
+
+if ($broker_session && $broker_agent_id) {
+    print STDERR "[INFO] Detected sub-agent mode (broker env vars present)\n" if should_log('INFO');
+    print STDERR "[INFO] Broker session: $broker_session\n" if should_log('INFO');
+    print STDERR "[INFO] Agent ID: $broker_agent_id\n" if should_log('INFO');
+    
+    eval {
+        require CLIO::Coordination::Client;
+        $broker_client = CLIO::Coordination::Client->new(
+            session_id => $broker_session,
+            agent_id => $broker_agent_id,
+            task => $input || "Unnamed task",
+            debug => $debug,
+        );
+        print STDERR "[INFO] Connected to broker successfully\n" if should_log('INFO');
+    };
+    if ($@) {
+        print STDERR "[WARN] Could not connect to broker: $@\n" if should_log('WARN');
+        print STDERR "[WARN] Continuing without coordination\n" if should_log('WARN');
+    }
+} else {
+    print STDERR "[TRACE][BROKER] No broker env vars, running standalone\n" if should_log('TRACE');
+}
+
 # Apply --model override if specified (temporary, not persisted to config file)
 if ($model_override) {
     $config->set('model', $model_override, 0);  # 0 = don't mark as user-set (not persisted)
@@ -325,6 +356,7 @@ my $ai_agent = CLIO::Core::SimpleAIAgent->new(
     api => $api,
     skip_custom => $skip_custom,
     skip_ltm => $skip_ltm,
+    broker_client => $broker_client,  # Pass broker client for coordination
 );
 
 if ($debug) {
@@ -381,7 +413,7 @@ if ($input) {
             # Extract command and args
             my $cmd = $command;
             $cmd =~ s/^\///;  # Remove leading slash
-            my ($cmd_name) = split /\s+/, $cmd;
+            my ($cmd_name, @cmd_args) = split /\s+/, $cmd;
             $cmd_name = lc($cmd_name);
             
             # Handle common slash commands
@@ -394,6 +426,7 @@ if ($input) {
                 print "  /session                   Show session ID\n";
                 print "  /config                    Show configuration\n";
                 print "  /api                       Show API status\n";
+                print "  /subagent, /agent          Multi-agent commands\n";
                 print "\n";
                 print "For full command list, use interactive mode (./clio)\n";
                 next;  # Skip to next command
@@ -410,6 +443,16 @@ if ($input) {
             }
             elsif ($cmd_name eq 'session') {
                 print "[SYSTEM] Current session: " . ($session->{session_id} || 'unknown') . "\n";
+                next;
+            }
+            elsif ($cmd_name eq 'subagent' || $cmd_name eq 'agent') {
+                # Handle subagent commands
+                require CLIO::UI::Commands::SubAgent;
+                my $subagent_cmd = CLIO::UI::Commands::SubAgent->new(chat => $cli_ui);
+                my $subcommand = shift @cmd_args || 'help';
+                my $args = join(' ', @cmd_args);
+                my $result = $subagent_cmd->handle($subcommand, $args);
+                print "$result\n";
                 next;
             }
             else {

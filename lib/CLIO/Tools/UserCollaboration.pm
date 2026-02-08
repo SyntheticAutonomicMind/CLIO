@@ -178,6 +178,12 @@ sub request_input {
     print STDERR "[DEBUG][UserCollaboration] Requesting user input\n" if should_log('DEBUG');
     print STDERR "[DEBUG][UserCollaboration] Message: $message\n" if should_log('DEBUG');
     
+    # === SUB-AGENT MODE: Route to broker instead of interactive UI ===
+    if ($context->{broker_client}) {
+        print STDERR "[DEBUG][UserCollaboration] Sub-agent mode detected - routing to broker\n" if should_log('DEBUG');
+        return $self->_request_via_broker($params, $context);
+    }
+    
     # Stop busy indicator before displaying collaboration prompt
     # This is the only interactive tool that waits for user input, so spinner must stop
     # Get spinner from UI instead of directly from context (context.spinner is not reliably set)
@@ -262,6 +268,123 @@ sub request_input {
             context => $user_context,
             user_response => $user_response,
             collaboration_type => 'request_input'
+        }
+    };
+}
+
+=head2 _request_via_broker
+
+Handle collaboration request for sub-agents via the message broker.
+
+Instead of interactive terminal I/O, sub-agents:
+1. Send their question to the user's inbox via broker
+2. Poll their own inbox for a response
+3. Return the response to continue processing
+
+This enables the "swarm" pattern where sub-agents work autonomously
+but can still ask questions and receive guidance from the primary
+agent or user.
+
+=cut
+
+sub _request_via_broker {
+    my ($self, $params, $context) = @_;
+    
+    my $broker_client = $context->{broker_client};
+    my $message = $params->{message};
+    my $user_context = $params->{context} || '';
+    
+    print STDERR "[DEBUG][UserCollaboration] Sending question to broker for user\n" if should_log('DEBUG');
+    
+    # Build full message with context
+    my $full_message = $message;
+    if ($user_context) {
+        $full_message .= "\n\nContext: $user_context";
+    }
+    
+    # Send question to user inbox
+    my $msg_id = $broker_client->send_question(
+        to => 'user',
+        question => $full_message,
+    );
+    
+    unless ($msg_id) {
+        print STDERR "[ERROR][UserCollaboration] Failed to send question to broker\n" if should_log('ERROR');
+        return {
+            success => 0,
+            error => "Failed to send question to broker"
+        };
+    }
+    
+    print STDERR "[DEBUG][UserCollaboration] Question sent (id: $msg_id), polling for response...\n" if should_log('DEBUG');
+    
+    # Poll for response with timeout
+    my $timeout = 300;  # 5 minutes max wait
+    my $poll_interval = 2;  # Check every 2 seconds
+    my $start_time = time();
+    my $response = undef;
+    
+    while (time() - $start_time < $timeout) {
+        # Poll our inbox for clarification or guidance messages
+        my $messages = $broker_client->poll_my_inbox();
+        
+        for my $msg (@$messages) {
+            my $type = $msg->{type} || '';
+            
+            print STDERR "[TRACE][UserCollaboration] Polled message: type='$type' from='$msg->{from}'\n" if should_log('TRACE');
+            
+            # Accept clarification or guidance as response
+            if ($type eq 'clarification' || $type eq 'guidance' || $type eq 'response') {
+                $response = ref($msg->{content}) ? $msg->{content} : $msg->{content};
+                print STDERR "[INFO][UserCollaboration] Received response: $response\n" if should_log('INFO');
+                last;
+            }
+            
+            # Handle stop signals gracefully
+            if ($type eq 'stop') {
+                return {
+                    success => 0,
+                    error => "Received stop signal from coordinator"
+                };
+            }
+        }
+        
+        last if defined $response;
+        
+        # Wait before polling again
+        sleep($poll_interval);
+    }
+    
+    unless (defined $response) {
+        print STDERR "[WARN][UserCollaboration] Timeout waiting for response from user\n" if should_log('WARN');
+        return {
+            success => 0,
+            error => "Timeout waiting for user response via broker (waited ${timeout}s)"
+        };
+    }
+    
+    # Store in session if available
+    if ($context->{session}) {
+        $context->{session}->add_message({
+            role => 'assistant',
+            content => "[BROKER QUESTION] $message"
+        });
+        $context->{session}->add_message({
+            role => 'user', 
+            content => $response
+        });
+    }
+    
+    return {
+        success => 1,
+        output => $response,
+        metadata => {
+            message => $message,
+            context => $user_context,
+            user_response => $response,
+            collaboration_type => 'request_input',
+            via_broker => 1,
+            broker_message_id => $msg_id,
         }
     };
 }

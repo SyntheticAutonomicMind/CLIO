@@ -70,6 +70,7 @@ sub new {
         spinner => $args{spinner},  # Store spinner for interactive tools (user_collaboration)
         skip_custom => $args{skip_custom} || 0,  # Skip custom instructions (--no-custom-instructions)
         skip_ltm => $args{skip_ltm} || 0,        # Skip LTM injection (--no-ltm)
+        broker_client => $args{broker_client},   # Broker client for multi-agent coordination
         consecutive_errors => 0,  # Track consecutive identical errors
         last_error => '',         # Track last error message
         max_consecutive_errors => 3,  # Break loop after 3 identical errors
@@ -98,6 +99,7 @@ sub new {
         config => $args{config},  # Forward config for web search API keys
         ui => $args{ui},  # Forward UI for user_collaboration
         spinner => $args{spinner},  # Forward spinner for interactive tools
+        broker_client => $args{broker_client},  # Forward broker client for coordination
         debug => $args{debug}
     );
     
@@ -147,6 +149,15 @@ Register default tools (file_operations, etc.) with the tool registry.
 sub _register_default_tools {
     my ($self) = @_;
     
+    # Tools blocked for sub-agents (to prevent coordination issues and fork bombs)
+    my %blocked_for_subagent = (
+        'remote_execution' => 1,    # Cannot spawn remote work
+        'agent_operations' => 1,    # Cannot spawn additional sub-agents
+    );
+    
+    # Check if we're running as a sub-agent
+    my $is_subagent = $self->{broker_client} ? 1 : 0;
+    
     # Register FileOperations tool
     require CLIO::Tools::FileOperations;
     $self->{tool_registry}->register_tool(
@@ -195,13 +206,27 @@ sub _register_default_tools {
         CLIO::Tools::UserCollaboration->new(debug => $self->{debug})
     );
     
-    # Register RemoteExecution tool
-    require CLIO::Tools::RemoteExecution;
-    $self->{tool_registry}->register_tool(
-        CLIO::Tools::RemoteExecution->new(debug => $self->{debug})
-    );
+    # Register RemoteExecution tool (blocked for sub-agents)
+    unless ($is_subagent && $blocked_for_subagent{'remote_execution'}) {
+        require CLIO::Tools::RemoteExecution;
+        $self->{tool_registry}->register_tool(
+            CLIO::Tools::RemoteExecution->new(debug => $self->{debug})
+        );
+    } else {
+        print STDERR "[DEBUG][WorkflowOrchestrator] Blocked remote_execution for sub-agent\n" if should_log('DEBUG');
+    }
     
-    print STDERR "[DEBUG][WorkflowOrchestrator] Registered default tools\n" if should_log('DEBUG');
+    # Register SubAgentOperations tool (blocked for sub-agents to prevent fork bombs)
+    unless ($is_subagent && $blocked_for_subagent{'agent_operations'}) {
+        require CLIO::Tools::SubAgentOperations;
+        $self->{tool_registry}->register_tool(
+            CLIO::Tools::SubAgentOperations->new(debug => $self->{debug})
+        );
+    } else {
+        print STDERR "[DEBUG][WorkflowOrchestrator] Blocked agent_operations for sub-agent\n" if should_log('DEBUG');
+    }
+    
+    print STDERR "[DEBUG][WorkflowOrchestrator] Registered default tools (subagent=$is_subagent)\n" if should_log('DEBUG');
 }
 
 =head2 process_input
@@ -536,18 +561,26 @@ sub process_input {
                 # Special handling for token limit exceeded errors
                 elsif ($api_response->{error_type} && $api_response->{error_type} eq 'token_limit_exceeded') {
                     # Trim conversation history to fit within model's context window
-                    # Remove oldest messages while keeping system prompt and recent context
+                    # Remove oldest messages while keeping system prompt, FIRST USER MESSAGE, and recent context
                     # IMPORTANT: Preserve tool_call/tool_result pairs to avoid orphans
                     
                     my $system_prompt = undef;
                     my @non_system = ();
+                    my $first_user_msg = undef;
+                    my $first_user_idx = -1;
                     
-                    # Separate system prompt from other messages
+                    # Separate system prompt and find first user message
                     for my $msg (@messages) {
                         if ($msg->{role} eq 'system' && !$system_prompt) {
                             $system_prompt = $msg;
                         } else {
                             push @non_system, $msg;
+                            # Track first user message (critical for context)
+                            if (!$first_user_msg && $msg->{role} && $msg->{role} eq 'user' &&
+                                ($msg->{_importance} // 0) >= 10.0) {
+                                $first_user_msg = $msg;
+                                $first_user_idx = $#non_system;
+                            }
                         }
                     }
                     
@@ -573,7 +606,7 @@ sub process_input {
                     }
                     
                     if ($retry_count == 1) {
-                        # First retry: Keep last 50% of messages
+                        # First retry: Keep last 50% of messages + first user message
                         my $keep_count = int($original_count / 2);
                         $keep_count = 10 if $keep_count < 10 && $original_count >= 10;  # Keep at least 10
                         
@@ -583,6 +616,12 @@ sub process_input {
                         
                         # Find any tool_results in the kept range that need their tool_calls
                         my @must_include = ();
+                        
+                        # Always include first user message if it would be trimmed
+                        if ($first_user_idx >= 0 && $first_user_idx < $start_idx) {
+                            push @must_include, $first_user_idx;
+                        }
+                        
                         for (my $i = $start_idx; $i < $original_count; $i++) {
                             my $msg = $non_system[$i];
                             if ($msg->{role} && $msg->{role} eq 'tool' && $msg->{tool_call_id}) {
@@ -596,11 +635,13 @@ sub process_input {
                             }
                         }
                         
-                        # Include the essential tool_call messages
+                        # Include the essential messages (first user + tool_calls)
                         if (@must_include) {
                             @must_include = sort { $a <=> $b } @must_include;
                             my @preserved = ();
+                            my %seen = ();
                             for my $idx (@must_include) {
+                                next if $seen{$idx}++;
                                 push @preserved, $non_system[$idx];
                             }
                             # Add the trimmed messages
@@ -610,13 +651,29 @@ sub process_input {
                             @non_system = @non_system[$start_idx..-1];
                         }
                     } elsif ($retry_count == 2) {
-                        # Second retry: Keep last 25% of messages (simplified - just take last quarter)
+                        # Second retry: Keep last 25% of messages + first user message
                         my $keep_count = int($original_count / 4);
                         $keep_count = 5 if $keep_count < 5 && $original_count >= 5;  # Keep at least 5
-                        @non_system = @non_system[-$keep_count..-1] if $keep_count > 0;
+                        
+                        my @kept = @non_system[-$keep_count..-1] if $keep_count > 0;
+                        
+                        # Ensure first user message is preserved
+                        if ($first_user_msg && !grep { $_ == $first_user_msg } @kept) {
+                            unshift @kept, $first_user_msg;
+                        }
+                        @non_system = @kept;
                     } else {
-                        # Third retry: Keep only last 3 messages (minimal context)
-                        @non_system = @non_system[-3..-1] if scalar(@non_system) > 3;
+                        # Third retry: Keep first user message + last 2 messages (minimal context)
+                        my @kept = ();
+                        push @kept, $first_user_msg if $first_user_msg;
+                        
+                        # Add last 2 messages (if not the first user message)
+                        my @last_two = @non_system[-2..-1];
+                        for my $msg (@last_two) {
+                            next if $first_user_msg && $msg == $first_user_msg;
+                            push @kept, $msg;
+                        }
+                        @non_system = @kept;
                     }
                     
                     my $trimmed_count = $original_count - scalar(@non_system);
@@ -627,9 +684,10 @@ sub process_input {
                     push @messages, @non_system;
                     
                     $error_type = "token limit exceeded";
-                    $system_msg = "Token limit exceeded. Trimmed $trimmed_count messages from conversation history and retrying... (attempt $retry_count/$max_retries)";
+                    my $preserved_info = $first_user_msg ? " (first user message preserved)" : "";
+                    $system_msg = "Token limit exceeded. Trimmed $trimmed_count messages from conversation history and retrying$preserved_info... (attempt $retry_count/$max_retries)";
                     
-                    print STDERR "[INFO][WorkflowOrchestrator] Trimmed $trimmed_count messages due to token limit (kept " . scalar(@non_system) . " messages)\n"
+                    print STDERR "[INFO][WorkflowOrchestrator] Trimmed $trimmed_count messages due to token limit (kept " . scalar(@non_system) . " messages, first_user=" . ($first_user_msg ? 'YES' : 'NO') . ")\n"
                         if should_log('INFO');
                     
                     # If we've trimmed to minimal context and still failing, give up
@@ -1892,42 +1950,100 @@ sub _trim_conversation_for_api {
     my @messages = @$history;
     my @trimmed = ();
     
-    # Strategy: Keep recent messages, trim older ones
-    # Recent messages are more important for context continuity
-    # Calculate target based on available space (current safe threshold - system prompt)
+    # Strategy: Preserve critical messages FIRST, then fill with recent
+    # 1. ALWAYS preserve first user message (original task - importance >= 10.0)
+    # 2. Keep recent messages for context continuity
+    # 3. Fill remaining budget with high-importance older messages
+    
+    # Calculate target based on available space (safe threshold - system prompt)
     my $target_tokens = int(($safe_threshold - $system_tokens) * 0.9);  # 90% of remaining space
+    
+    # Ensure target_tokens is reasonable (minimum 5000 tokens for conversation)
+    if ($target_tokens < 5000) {
+        $target_tokens = 5000;
+        print STDERR "[WARN][WorkflowOrchestrator::_trim_conversation_for_api] Target tokens very low ($target_tokens), system prompt may be too large\n"
+            if $self->{debug};
+    }
+    
     my $keep_recent = 10;      # Always keep at least last 10 messages
     my $current_count = scalar(@messages);
     
+    # Step 1: Extract and preserve the first user message (critical for context)
+    # This MUST be preserved regardless of token budget - without it, models lose the original task
+    my $first_user_msg = undef;
+    my $first_user_tokens = 0;
+    my $first_user_idx = -1;
+    
+    for my $i (0 .. $#messages) {
+        my $msg = $messages[$i];
+        if ($msg->{role} && $msg->{role} eq 'user') {
+            # Check if this is the critical first user message (importance >= 10.0)
+            if (($msg->{_importance} // 0) >= 10.0) {
+                $first_user_msg = $msg;
+                $first_user_tokens = CLIO::Memory::TokenEstimator::estimate_tokens($msg->{content} // '');
+                $first_user_idx = $i;
+                print STDERR "[DEBUG][WorkflowOrchestrator::_trim_conversation_for_api] Preserving first user message (importance=" . 
+                    ($msg->{_importance} // 0) . ", tokens=$first_user_tokens)\n"
+                    if $self->{debug};
+            }
+            last;  # Only looking for FIRST user message
+        }
+    }
+    
+    # Reserve budget for first user message
+    my $reserved_tokens = $first_user_tokens;
+    my $available_tokens = $target_tokens - $reserved_tokens;
+    
     # If we have more messages than we want to keep
     if ($current_count > $keep_recent) {
-        # Calculate how many messages to keep from the beginning
-        # Keep older messages by importance, remove lower-importance older messages
-        my @recent = @messages[-$keep_recent .. -1];  # Last N messages
-        my @older = @messages[0 .. $current_count - $keep_recent - 1];  # Everything else
+        # Get recent messages (last N), excluding the first user message if it's in this range
+        my @recent = ();
+        for my $i (($current_count - $keep_recent) .. ($current_count - 1)) {
+            next if $i == $first_user_idx;  # Skip first user message (handled separately)
+            push @recent, $messages[$i] if $i >= 0;
+        }
+        
+        # Get older messages (everything before recent), excluding first user message
+        my @older = ();
+        for my $i (0 .. ($current_count - $keep_recent - 1)) {
+            next if $i == $first_user_idx;  # Skip first user message (handled separately)
+            push @older, $messages[$i] if $i >= 0;
+        }
         
         # Sort older messages by importance (highest first)
         my @sorted_older = sort {
             ($b->{_importance} // 0) <=> ($a->{_importance} // 0)
         } @older;
         
-        # Keep recent and some older high-importance messages
-        @trimmed = @recent;
+        # Start with recent messages (but respect token budget)
+        my $trimmed_tokens = 0;
+        my @kept_recent = ();
         
-        # Estimate tokens in recent messages
-        my $trimmed_tokens = CLIO::Memory::TokenEstimator::estimate_messages_tokens(\@recent);
-        
-        # Add older important messages until we reach target or run out
-        for my $msg (@sorted_older) {
+        # Add recent messages while respecting budget
+        for my $msg (@recent) {
             my $msg_tokens = CLIO::Memory::TokenEstimator::estimate_tokens($msg->{content} // '');
-            if ($trimmed_tokens + $msg_tokens <= $target_tokens) {
-                push @trimmed, $msg;
+            if ($trimmed_tokens + $msg_tokens <= $available_tokens) {
+                push @kept_recent, $msg;
                 $trimmed_tokens += $msg_tokens;
             }
         }
         
-        # Maintain chronological order for trimmed messages
-        @trimmed = sort { 
+        # Add older important messages until we reach target or run out
+        my @kept_older = ();
+        for my $msg (@sorted_older) {
+            my $msg_tokens = CLIO::Memory::TokenEstimator::estimate_tokens($msg->{content} // '');
+            if ($trimmed_tokens + $msg_tokens <= $available_tokens) {
+                push @kept_older, $msg;
+                $trimmed_tokens += $msg_tokens;
+            }
+        }
+        
+        # Build trimmed list: first_user + older (in order) + recent
+        @trimmed = ();
+        push @trimmed, $first_user_msg if $first_user_msg;
+        
+        # Sort kept_older by original position
+        @kept_older = sort { 
             my $idx_a = 0;
             my $idx_b = 0;
             for my $i (0 .. $#messages) {
@@ -1935,12 +2051,17 @@ sub _trim_conversation_for_api {
                 $idx_b = $i if $messages[$i] == $b;
             }
             $idx_a <=> $idx_b
-        } @trimmed;
+        } @kept_older;
         
-        my $final_tokens = CLIO::Memory::TokenEstimator::estimate_messages_tokens(\@trimmed);
+        push @trimmed, @kept_older;
+        push @trimmed, @kept_recent;
+        
+        my $final_tokens = $reserved_tokens + $trimmed_tokens;
         if ($self->{debug}) {
             print STDERR "[DEBUG][WorkflowOrchestrator::_trim_conversation_for_api] Trimmed: " . 
                          scalar(@messages) . " -> " . scalar(@trimmed) . " messages\n";
+            print STDERR "[DEBUG]  First user preserved: " . ($first_user_msg ? 'YES' : 'NO') . 
+                         ($first_user_msg ? " ($first_user_tokens tokens)" : "") . "\n";
             print STDERR "[DEBUG]  Token reduction: $history_tokens -> $final_tokens tokens\n";
             print STDERR "[DEBUG]  Final total with system: " . ($system_tokens + $final_tokens) . " of $safe_threshold safe limit\n";
         }

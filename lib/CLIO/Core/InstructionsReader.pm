@@ -78,6 +78,33 @@ Returns:
 sub read_instructions {
     my ($self, $workspace_path) = @_;
     
+    # Check for environment variable override (used by sub-agents)
+    my $custom_path = $ENV{CLIO_CUSTOM_INSTRUCTIONS};
+    if ($custom_path) {
+        print STDERR "[DEBUG][InstructionsReader] Found CLIO_CUSTOM_INSTRUCTIONS env var: $custom_path\n";
+        
+        if (-f $custom_path) {
+            print STDERR "[DEBUG][InstructionsReader] Loading custom instructions from: $custom_path\n";
+            
+            open(my $fh, '<:encoding(UTF-8)', $custom_path) or do {
+                print STDERR "[WARN][InstructionsReader] Cannot read custom instructions file: $!\n";
+                # Fall through to normal loading
+                goto NORMAL_LOADING;
+            };
+            
+            my $content = do { local $/; <$fh> };
+            close($fh);
+            
+            if ($content) {
+                print STDERR "[DEBUG][InstructionsReader] Loaded " . length($content) . " bytes from custom instructions\n";
+                return $content;
+            }
+        } else {
+            print STDERR "[WARN][InstructionsReader] CLIO_CUSTOM_INSTRUCTIONS file does not exist: $custom_path\n";
+        }
+    }
+    
+    NORMAL_LOADING:
     # Default to current working directory if not provided
     $workspace_path ||= getcwd();
     

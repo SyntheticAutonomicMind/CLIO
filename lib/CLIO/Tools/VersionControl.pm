@@ -287,6 +287,28 @@ sub commit {
     
     return $self->error_result("Missing 'message' parameter") unless $message;
     
+    # Multi-agent coordination: Request git lock via broker
+    my $lock_acquired = 0;
+    if ($context->{broker_client}) {
+        print STDERR "[INFO][VersionControl] Requesting git lock via broker\n" if should_log('INFO');
+        eval {
+            my $lock_result = $context->{broker_client}->request_git_lock();
+            if ($lock_result) {
+                $lock_acquired = 1;
+                print STDERR "[INFO][VersionControl] Git lock acquired\n" if should_log('INFO');
+            } else {
+                return $self->error_result(
+                    "Git is locked by another agent.\n" .
+                    "Wait for the other agent's commit to complete."
+                );
+            }
+        };
+        if ($@) {
+            print STDERR "[WARN][VersionControl] Failed to acquire git lock: $@\n" if should_log('WARN');
+            print STDERR "[WARN][VersionControl] Continuing without lock\n" if should_log('WARN');
+        }
+    }
+    
     eval {
         my $original_cwd = getcwd();
         chdir $repo_path if $repo_path ne '.';
@@ -307,6 +329,17 @@ sub commit {
             message => $message,
         );
     };
+    
+    # Release git lock if acquired
+    if ($lock_acquired && $context->{broker_client}) {
+        eval {
+            $context->{broker_client}->release_git_lock();
+            print STDERR "[INFO][VersionControl] Git lock released\n" if should_log('INFO');
+        };
+        if ($@) {
+            print STDERR "[WARN][VersionControl] Failed to release git lock: $@\n" if should_log('WARN');
+        }
+    }
     
     if ($@) {
         return $self->error_result("Git commit failed: $@");

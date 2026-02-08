@@ -29,6 +29,7 @@ sub new {
         ui => $opts{ui} || undef,  # UI reference for user_collaboration
         skip_custom => $opts{skip_custom} || 0,  # Skip custom instructions
         skip_ltm => $opts{skip_ltm} || 0,        # Skip LTM injection
+        broker_client => $opts{broker_client},   # Broker client for multi-agent coordination
     };
     
     bless $self, $class;
@@ -45,6 +46,7 @@ sub new {
             ui => $self->{ui},
             skip_custom => $self->{skip_custom},
             skip_ltm => $self->{skip_ltm},
+            broker_client => $self->{broker_client},  # Pass broker client to orchestrator
         );
         print STDERR "[DEBUG][SimpleAIAgent] Orchestrator initialized in constructor\n" if should_log('DEBUG');
     };
@@ -81,6 +83,19 @@ sub set_ui {
         $self->{orchestrator}->{formatter}->{ui} = $ui if $self->{orchestrator}->{formatter};
         print STDERR "[DEBUG][SimpleAIAgent] Updated orchestrator, tool_executor, and formatter with UI\n" if should_log('DEBUG');
     }
+}
+
+=head2 broker_client
+
+Get the broker client for multi-agent coordination.
+
+Returns the broker client if connected, undef otherwise.
+
+=cut
+
+sub broker_client {
+    my ($self) = @_;
+    return $self->{broker_client};
 }
 
 =head2 process_user_request
