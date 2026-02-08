@@ -155,10 +155,10 @@ sub run_oneshot_agent {
         die "Cannot find CLIO executable: $clio_path";
     }
     
-    # Set environment for broker connection and custom configuration
+    # Set environment for broker connection and sub-agent mode
     $ENV{CLIO_BROKER_SESSION} = $self->{session_id};
     $ENV{CLIO_BROKER_AGENT_ID} = $agent_id;
-    $ENV{CLIO_CUSTOM_INSTRUCTIONS} = "$FindBin::Bin/.clio/subagent-instructions.md";  # Override instructions
+    $ENV{IS_SUBAGENT} = 1;  # Triggers sub-agent instructions in PromptManager
     
     # Build CLIO command
     my $model = $options{model} || 'gpt-5-mini';
@@ -173,7 +173,7 @@ sub run_oneshot_agent {
     print "Command: " . join(' ', @cmd) . "\n";
     print "Env: CLIO_BROKER_SESSION=$ENV{CLIO_BROKER_SESSION}\n";
     print "Env: CLIO_BROKER_AGENT_ID=$ENV{CLIO_BROKER_AGENT_ID}\n";
-    print "Env: CLIO_CUSTOM_INSTRUCTIONS=$ENV{CLIO_CUSTOM_INSTRUCTIONS}\n\n";
+    print "Env: IS_SUBAGENT=$ENV{IS_SUBAGENT}\n\n";
     
     # Execute (replaces this process entirely)
     exec(@cmd) or die "Cannot exec CLIO: $!";
@@ -229,14 +229,8 @@ sub run_persistent_agent {
         broker_client => $client,  # Pass broker client for coordination
     );
     
-    # Load custom instructions if available
-    my $custom_instructions = '';
-    if ($ENV{CLIO_CUSTOM_INSTRUCTIONS} && -f $ENV{CLIO_CUSTOM_INSTRUCTIONS}) {
-        open my $fh, '<', $ENV{CLIO_CUSTOM_INSTRUCTIONS};
-        $custom_instructions = do { local $/; <$fh> };
-        close $fh;
-        print "Loaded custom instructions\n";
-    }
+    # Custom instructions (including sub-agent mode) are automatically loaded
+    # via PromptManager based on IS_SUBAGENT env var
     
     # Define task handler callback
     my $task_handler = sub {
@@ -244,11 +238,11 @@ sub run_persistent_agent {
         
         print "[AgentLoop] Processing task: $task_content\n";
         
-        # Build prompt with custom instructions
-        my $prompt = $custom_instructions ? "$custom_instructions\n\n$task_content" : $task_content;
+        # Custom instructions (including sub-agent mode) automatically loaded via PromptManager
+        # No need to prepend here - system prompt handles it
         
         # Call AI to process task using SimpleAIAgent (same as main CLIO)
-        my $result = $ai_agent->process_user_request($prompt, {
+        my $result = $ai_agent->process_user_request($task_content, {
             on_chunk => sub {
                 my ($chunk) = @_;
                 print $chunk if defined $chunk;
