@@ -410,6 +410,7 @@ sub _sanitize_terminal_output {
     # Remove other common escape sequences
     $output =~ s/\x1b[(\)][AB012]//g;  # Character set selection
     $output =~ s/\x1b\][0-9];[^\x07]*\x07//g;  # OSC sequences (title setting, etc.)
+    $output =~ s/\x1b[=>]//g;  # Application keypad mode
     
     # Remove carriage returns that are just for terminal formatting
     # Keep newlines, but remove CR that appear mid-line (used for progress bars, etc.)
@@ -418,6 +419,9 @@ sub _sanitize_terminal_output {
     
     # Remove backspace characters and the character they delete
     while ($output =~ s/.\x08//g) {}  # Loop until no more backspaces
+    
+    # Remove BEL (bell) characters
+    $output =~ s/\x07//g;
     
     return $output;
 }
