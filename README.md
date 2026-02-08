@@ -17,7 +17,7 @@ CLIO is part of the [Synthetic Autonomic Mind (SAM)](https://github.com/Syntheti
 ## What Makes CLIO Different
 
 - **Terminal-First Experience:** Runs entirely in your terminal with professional markdown rendering, color themes, and streaming output
-- **Portable & Minimal:** No CPAN, npm, or pip dependencies - just Perl core modules
+- **Portable & Minimal:** Works with standard Unix tools (git, curl, etc.) - no heavy frameworks or package managers required. See [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) for details.
 - **Tool-Powered:** Real file, git, and terminal operations with real-time action descriptions
 - **Privacy & Control:** Your code stays on your machine - only minimum context sent to AI providers
 - **Persistent Sessions:** Pick up exactly where you left off with full conversation history
@@ -59,6 +59,14 @@ CLIO is part of the [Synthetic Autonomic Mind (SAM)](https://github.com/Syntheti
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Quick Start
+
+### Check Dependencies
+
+```bash
+./check-deps  # Verify all required tools are installed
+```
+
+CLIO requires standard Unix tools (git, curl, perl 5.32+, etc.). See [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) for details.
 
 ### Install
 

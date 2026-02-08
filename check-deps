@@ -1,0 +1,103 @@
+#!/usr/bin/env perl
+# CLIO Dependency Checker
+# Verifies all required external dependencies are present
+
+use strict;
+use warnings;
+use feature 'say';
+
+my @required_commands = qw(perl git curl stty tput script tar);
+my @optional_commands = qw(readlink which);
+
+my $all_ok = 1;
+my @missing;
+my @warnings;
+
+say "CLIO Dependency Checker";
+say "=" x 60;
+say "";
+
+# Check Perl version
+say "[*] Checking Perl version...";
+my $perl_version = $];
+if ($perl_version >= 5.032) {
+    say "    [OK] Perl $perl_version (>= 5.32 required)";
+} else {
+    say "    [FAIL] Perl $perl_version is too old (5.32+ required)";
+    $all_ok = 0;
+    push @missing, "perl 5.32+";
+}
+
+say "";
+
+# Check required commands
+say "[*] Checking required system commands...";
+for my $cmd (@required_commands) {
+    next if $cmd eq 'perl';  # Already checked
+    
+    my $path = `which $cmd 2>/dev/null`;
+    chomp $path;
+    
+    if ($path && -x $path) {
+        say "    [OK] $cmd found at $path";
+    } else {
+        say "    [FAIL] $cmd not found";
+        $all_ok = 0;
+        push @missing, $cmd;
+    }
+}
+
+say "";
+
+# Check optional commands
+say "[*] Checking optional commands...";
+for my $cmd (@optional_commands) {
+    my $path = `which $cmd 2>/dev/null`;
+    chomp $path;
+    
+    if ($path && -x $path) {
+        say "    [OK] $cmd found at $path";
+    } else {
+        say "    [WARN] $cmd not found (optional, has fallback)";
+        push @warnings, $cmd;
+    }
+}
+
+say "";
+
+# DEPRECATED: We don't use these anymore, CLIO has built-in implementations
+# Keeping check code here for reference but removing from output
+my @deprecated_modules = (
+    # Term::ANSIColor - replaced by CLIO::UI::ANSI  
+    # Term::ReadKey - replaced by CLIO::Compat::Terminal
+);
+
+say "=" x 60;
+
+if ($all_ok && !@warnings) {
+    say "[OK] All dependencies satisfied! CLIO should work perfectly.";
+    exit 0;
+} elsif ($all_ok) {
+    say "[OK] All required dependencies satisfied.";
+    say "";
+    say "Optional items missing (won't affect core functionality):";
+    for my $item (@warnings) {
+        say "  - $item";
+    }
+    exit 0;
+} else {
+    say "[FAIL] Missing required dependencies:";
+    for my $item (@missing) {
+        say "  - $item";
+    }
+    say "";
+    say "See docs/DEPENDENCIES.md for installation instructions.";
+    say "";
+    say "Quick install (Debian/Ubuntu):";
+    say "  sudo apt install " . join(" ", grep { $_ ne 'perl 5.32+' } @missing);
+    say "";
+    say "Quick install (macOS):";
+    say "  # Most tools pre-installed. If git is missing:";
+    say "  xcode-select --install";
+    exit 1;
+}
