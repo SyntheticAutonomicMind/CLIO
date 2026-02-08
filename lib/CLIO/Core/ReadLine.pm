@@ -155,10 +155,50 @@ sub readline {
         # Backspace or Delete (127 = DEL, 8 = BS)
         if ($ord == 127 || $ord == 8) {
             if ($cursor_pos > 0) {
+                # Check if we're deleting from the end
+                my $input_len = length($input);
+                my $deleting_at_end = ($cursor_pos == $input_len);
+                
                 # Remove character before cursor
                 substr($input, $cursor_pos - 1, 1, '');
                 $cursor_pos--;
-                $self->redraw_line(\$input, \$cursor_pos, $prompt);
+                
+                if ($deleting_at_end) {
+                    # Optimization: if deleting from end, we can handle it locally
+                    # This avoids full redraw and prevents scroll issues when unwrapping
+                    
+                    my ($term_width, $term_height) = GetTerminalSize();
+                    $term_width ||= 80;
+                    
+                    # Calculate visible prompt length
+                    my $visible_prompt = $prompt;
+                    $visible_prompt =~ s/\e\[[0-9;]*m//g;
+                    my $prompt_len = length($visible_prompt);
+                    
+                    # Calculate old and new cursor positions
+                    my $old_total_pos = $prompt_len + $cursor_pos + 1;  # +1 because we already decremented cursor_pos
+                    my $new_total_pos = $prompt_len + $cursor_pos;
+                    
+                    my $old_row = int($old_total_pos / $term_width);
+                    my $new_row = int($new_total_pos / $term_width);
+                    
+                    # Check if we're unwrapping (going from row 1 to row 0)
+                    if ($old_row > $new_row) {
+                        # We unwrapped - need full redraw to avoid scroll issues
+                        $self->redraw_line(\$input, \$cursor_pos, $prompt);
+                    } else {
+                        # Same row - just backspace locally
+                        print "\b \b";  # Move back, print space, move back again
+                        
+                        # Update cursor tracking
+                        my $new_col = ($new_total_pos % $term_width) + 1;
+                        $self->{last_cursor_row} = $new_row;
+                        $self->{last_cursor_col} = $new_col;
+                    }
+                } else {
+                    # Deleting from middle - need full redraw
+                    $self->redraw_line(\$input, \$cursor_pos, $prompt);
+                }
             }
             next;
         }
