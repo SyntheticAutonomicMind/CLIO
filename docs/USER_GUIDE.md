@@ -9,15 +9,16 @@
 1. [Introduction](#introduction)
 2. [Installation](#installation)
 3. [Getting Started](#getting-started)
-4. [Core Concepts](#core-concepts)
-5. [Available Tools](#available-tools)
-6. [Usage Examples](#usage-examples)
-7. [Configuration](#configuration)
-8. [Customization](#customization)
-9. [Skills](#skills)
-10. [Tips & Best Practices](#tips--best-practices)
-11. [Troubleshooting](#troubleshooting)
-12. [FAQ](#faq)
+4. [Slash Commands Reference](#slash-commands-reference)
+5. [Core Concepts](#core-concepts)
+6. [Available Tools](#available-tools)
+7. [Usage Examples](#usage-examples)
+8. [Configuration](#configuration)
+9. [Customization](#customization)
+10. [Skills](#skills)
+11. [Tips & Best Practices](#tips--best-practices)
+12. [Troubleshooting](#troubleshooting)
+13. [FAQ](#faq)
 
 ---------------------------------------------------
 
@@ -173,6 +174,55 @@ Press "?" for a list of commands.
 YOU: 
 ```
 
+### Keyboard Controls
+
+**During AI Responses:**
+
+| Key | Action |
+|-----|--------|
+| `Space` / `Any Key` | Continue to next page (long responses) |
+| `q` / `Q` | Quit pagination, return to prompt |
+| `↑` / `↓` (Arrows) | Navigate pages (non-streaming mode) |
+| `Ctrl+D` or `Ctrl+C` | Exit CLIO |
+| `ESC` | Interrupt workflow, return to prompt |
+
+**In Text Input:**
+
+| Key | Action |
+|-----|--------|
+| `←` / `→` (Arrows) | Move cursor one character |
+| `Alt+←` / `Alt+→` | Jump by word |
+| `Home` / `End` | Move to start/end of line |
+| `Ctrl+A` / `Ctrl+E` | Start/end of line (emacs) |
+| `Tab` | Auto-complete commands/paths |
+| `ESC` | Cancel multi-line input |
+
+### Input Modes
+
+**Single-Line Input (Default):**
+```
+: Your question here...
+```
+
+**Multi-Line Input** - Open your editor for complex prompts:
+```
+: /multiline
+# or
+: /ml
+# (Opens $EDITOR for full prompt composition)
+```
+
+### Smart Pagination
+
+CLIO automatically handles long responses intelligently:
+
+- **During AI Thinking**: No pagination interruption (tool operations flow freely)
+- **During Final Response**: Automatic pause at screen height (press any key to continue)
+- **Stream Mode**: Quick confirmation pauses for long outputs
+- **Page Navigation**: Arrow keys to scroll back through pages (non-streaming)
+
+This means you can stay focused - no constant prompts during tool work, but clean pagination when the AI is presenting results.
+
 **Try a simple command:**
 
 ```
@@ -258,6 +308,128 @@ Your entire conversation history, including all tool operations and responses, w
 
 ---------------------------------------------------
 
+## Slash Commands Reference
+
+CLIO provides 35+ powerful slash commands. Type `/help` in any session to see the full list.
+
+### Basics
+
+| Command | Purpose |
+|---------|---------|
+| `/help`, `/h` | Display command help |
+| `/exit`, `/quit`, `/q` | Exit CLIO |
+| `/clear` | Clear screen |
+
+### Project Setup
+
+| Command | Purpose |
+|---------|---------|
+| `/design` | Collaborative PRD development with AI architect |
+| `/init` | Initialize project with custom instructions |
+| `/init --force` | Re-initialize project (updates instructions from PRD) |
+
+### API & Configuration
+
+| Command | Purpose |
+|---------|---------|
+| `/api` | Show API settings help |
+| `/api set provider <name>` | Change AI provider |
+| `/api set model <name>` | Set AI model |
+| `/api set key <value>` | Set API key |
+| `/api models` | List available models |
+| `/api login` | Authenticate with GitHub Copilot |
+| `/api logout` | Sign out from GitHub |
+| `/config save` | Save configuration to file |
+| `/config show` | Display current configuration |
+
+### Session Management
+
+| Command | Purpose |
+|---------|---------|
+| `/session list` | List all saved sessions |
+| `/session switch <id>` | Resume a specific session |
+| `/session trim [days]` | Remove sessions older than N days (default: 30) |
+
+### File & Git Operations
+
+| Command | Purpose |
+|---------|---------|
+| `/file read <path>` | View file contents |
+| `/file write <path>` | Create/overwrite file |
+| `/file edit <path>` | Edit file in $EDITOR |
+| `/read <path>` | View file (shorthand) |
+| `/edit <path>` | Edit file (shorthand) |
+| `/git status` | Show git status |
+| `/git diff [file]` | Show git differences |
+| `/git log [n]` | Show commit history |
+| `/git commit [msg]` | Create git commit |
+| `/git branch` | List/create/delete branches |
+| `/git switch <name>` | Switch to branch |
+| `/git push [remote] [branch]` | Push changes to remote |
+| `/git pull [remote] [branch]` | Pull changes from remote |
+| `/git stash [save\|apply\|drop]` | Manage stashed changes |
+| `/git tag [name]` | List/create/delete tags |
+| `/git blame <file>` | Show who changed each line |
+| `/status` | Show git status (shorthand) |
+| `/diff` | Show git diff (shorthand) |
+| `/commit` | Create commit (shorthand) |
+
+### Task Management
+
+| Command | Purpose |
+|---------|---------|
+| `/todo` | View agent's current todo list |
+| `/todo add <text>` | Add new todo |
+| `/todo done <id>` | Mark todo as complete |
+
+### Memory & Learning
+
+| Command | Purpose |
+|---------|---------|
+| `/memory` | View long-term memory patterns |
+| `/memory list [type]` | List discoveries, solutions, patterns |
+| `/memory store <type>` | Store new pattern (via AI) |
+| `/memory stats` | Show LTM statistics |
+| `/memory prune [days]` | Remove old/low-confidence entries |
+| `/memory clear` | Clear all patterns |
+
+### Developer Tools
+
+| Command | Purpose |
+|---------|---------|
+| `/debug [on\|off]` | Toggle debug mode |
+| `/context` | View token usage statistics |
+| `/multiline`, `/ml` | Open editor for multi-line input |
+| `/theme <name>` | Change color theme |
+| `/theme list` | List available themes |
+
+### Skills & Customization
+
+| Command | Purpose |
+|---------|---------|
+| `/skill` | Show skill system help |
+| `/skill list` | List available skills |
+| `/skill new <name>` | Create new skill |
+| `/skill edit <name>` | Edit existing skill |
+| `/skill delete <name>` | Delete skill |
+| `/skill show <name>` | Show skill contents |
+| `/skill test <name>` | Test skill with query |
+| `/skill import <path>` | Import skill from file |
+| `/skill export <name>` | Export skill to file |
+
+### Execution & Utilities
+
+| Command | Purpose |
+|---------|---------|
+| `/exec <cmd>` | Execute shell command |
+| `/! <cmd>` | Execute shell command (shorthand) |
+| `/subagent spawn <task>` | Spawn sub-agent for parallel work |
+| `/subagent list` | List active sub-agents |
+| `/subagent inbox` | View messages from sub-agents |
+| `/subagent send <id> <msg>` | Send message to sub-agent |
+
+---------------------------------------------------
+
 ## Core Concepts
 
 ### Sessions
@@ -317,6 +489,24 @@ This transparency means:
 - No hidden command execution
 - Complete visibility into CLIO's actions
 - Easy auditing of what changed
+
+### Streaming Responses
+
+CLIO provides real-time streaming for all AI responses:
+
+**AI Responses Stream Immediately:**
+- Text appears as it's generated
+- Markdown rendering applies live
+- Code blocks appear with syntax highlighting
+
+**Tool Operations Show Live:**
+```
+SYSTEM: [file_operations] - Reading ./lib/Main.pm (245 lines)
+SYSTEM: [git] - Executing git status in ./
+SYSTEM: [terminal] - Running: perl -I./lib -c lib/Main.pm
+```
+
+Every action is transparent and immediate - no hidden work, no waiting.
 
 ### Markdown Rendering
 
@@ -601,6 +791,161 @@ YOU: Prepare CLIO on dev@buildserver for repeated tasks
 ```
 
 Remote execution enables powerful distributed workflows - run analysis on servers, build on specific hardware, gather diagnostics from multiple systems, and more. See [Remote Execution Guide](REMOTE_EXECUTION.md) for complete documentation.
+
+---------------------------------------------------
+
+### Multi-Agent Coordination
+
+**NEW!** CLIO now supports spawning multiple AI agents that work in parallel while coordinating to prevent conflicts.
+
+**Sub-Agent Commands** (`/subagent` or `/agent`):
+
+```bash
+# Agent Lifecycle
+/subagent spawn <task> [--model <name>]    # Spawn a new sub-agent
+/subagent spawn <task> --persistent        # Spawn persistent agent (stays alive)
+/subagent list                              # List active agents
+/subagent status <agent-id>                 # Show detailed status
+/subagent kill <agent-id>                   # Terminate agent
+/subagent killall                           # Terminate all agents
+
+# Communication (NEW!)
+/subagent inbox                             # Check messages from agents
+/subagent send <agent-id> <message>         # Send guidance to agent
+/subagent reply <agent-id> <response>       # Reply to agent question
+/subagent broadcast <message>               # Send message to all agents
+
+# Coordination
+/subagent locks                             # Show file/git locks
+/subagent discoveries                       # Show shared discoveries
+/subagent warnings                          # Show shared warnings
+```
+
+**How It Works:**
+
+When you spawn sub-agents, CLIO automatically starts a coordination broker that manages:
+- **File Locking**: Prevents concurrent edits to the same file
+- **Git Locking**: Serializes commits to avoid conflicts
+- **Knowledge Sharing**: Agents can share discoveries and warnings
+- **Message Bus**: Agents can send questions, status updates, and completion messages
+
+**Agent Modes:**
+
+1. **Oneshot (Default)**: Agent completes one task and exits
+2. **Persistent (`--persistent`)**: Agent stays alive, polls for messages, handles multiple tasks
+
+**Communication Flow:**
+
+```
+Agent has question         -> Uses user_collaboration tool
+                           -> Question routed to broker
+                           -> Appears in your inbox
+
+You see the question       -> Run /subagent inbox
+                           -> Reply with /subagent reply <id> <answer>
+
+Agent receives answer      -> Continues work with your guidance
+                           -> Sends completion message when done
+```
+
+**Example with Messaging:**
+
+```
+YOU: /subagent spawn "refactor auth module" --persistent
+
+CLIO:  Spawned sub-agent: agent-1 (PERSISTENT MODE)
+      Task: refactor auth module
+      Model: gpt-5-mini
+
+[Agent works autonomously... then has a question]
+
+CLIO: ─────────────────────────────────────────────
+      Agent Message: agent-1 [QUESTION]
+      Should I split the auth module into OAuth and BasicAuth?
+      Or keep them unified with a common interface?
+      Reply: /subagent reply agent-1 <your-response>
+
+YOU: /subagent reply agent-1 "Split them but use a common AuthProvider interface"
+
+CLIO: Reply sent to agent-1 (id: 5)
+
+[Agent continues with your guidance...]
+
+CLIO: ─────────────────────────────────────────────
+      Agent Message: agent-1 [COMPLETE]
+      Refactoring complete. Created:
+      - lib/Auth/OAuth.pm
+      - lib/Auth/Basic.pm
+      - lib/Auth/Provider.pm (interface)
+      All tests passing.
+```
+
+**Example Multi-Agent Workflow:**
+
+```
+YOU: /subagent spawn "analyze lib/Module/A.pm" --model gpt-4.1
+
+CLIO: ✓ Spawned sub-agent: agent-1
+      Task: analyze lib/Module/A.pm and document key patterns
+      Model: gpt-4.1
+      
+      Use /subagent list to monitor progress
+
+YOU: /subagent spawn "create tests for lib/Module/B.pm" --model gpt-5-mini
+
+CLIO: ✓ Spawned sub-agent: agent-2
+      Task: create tests for lib/Module/B.pm
+      Model: gpt-5-mini
+
+YOU: /subagent list
+
+CLIO: Active Sub-Agents:
+      
+       agent-1      [running]    analyze lib/Module/A.pm (2m15s)
+       agent-2      [running]    create tests for lib/Module/B.pm (45s)
+
+YOU: /subagent inbox
+
+CLIO: === Agent Messages (2) ===
+
+      [status] from agent-1 (id: 3)
+        progress: 50%
+        current_task: Documenting function signatures
+      
+      [question] from agent-2 (id: 4)
+        Should I use Test::More or Test2::V0 for the tests?
+      
+      Use '/subagent reply <agent-id> <response>' to respond
+
+YOU: /subagent reply agent-2 "Use Test::More for consistency with existing tests"
+
+CLIO: Reply sent to agent-2 (id: 5)
+```
+
+**Best Practices:**
+
+1. **Use Different Models for Different Tasks**: Use `gpt-4.1` for complex analysis, `gpt-5-mini` for simple tasks
+2. **Monitor Your Inbox**: Check `/subagent inbox` periodically for questions
+3. **Use Persistent Mode for Complex Work**: Agents can ask questions and receive guidance
+4. **Check Logs**: Agent logs are in `/tmp/clio-agent-<agent-id>.log`
+5. **Avoid Overlapping Work**: Don't spawn multiple agents to edit the same files
+6. **Review Before Commit**: Check agent outputs before committing changes
+
+**When to Use Multi-Agent Mode:**
+
+- **Parallel Tasks**: Multiple independent changes across different files
+- **Long-Running Work**: Spawn agents for complex analysis while continuing other work
+- **Different Expertise**: Use different models for different types of tasks
+- **Bulk Operations**: Process multiple files/modules in parallel
+
+**Limitations:**
+
+- Sub-agents cannot spawn additional sub-agents (prevents fork bombs)
+- Sub-agents cannot use remote_execution tool
+- Broker requires `/dev/shm` (Linux) or `/tmp` (macOS)
+- Agent logs accumulate in `/tmp` (clean up periodically)
+
+For more details, see the Multi-Agent Coordination documentation.
 
 ---------------------------------------------------
 
