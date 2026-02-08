@@ -113,25 +113,45 @@ sub execute_command {
             : $command;
         
         if ($use_passthrough) {
-            # Passthrough mode: Execute with direct TTY access
+            # Hybrid passthrough mode: Execute with direct TTY access while capturing output
             # User can interact (editor, GPG prompts, etc.)
-            # Agent only gets exit code, not output
+            # Agent gets both output AND exit code
+            
+            # Create temporary log file for output capture
+            my $log_file = "/tmp/clio_terminal_$$.log";
+            
+            # Detect platform for script command syntax
+            my $script_cmd = $self->_get_script_command($command, $log_file);
             
             local $SIG{ALRM} = sub { die "Command timeout after ${timeout}s\n" };
             alarm($timeout);
             
-            my $exit_code = system($command);
+            my $exit_code = system($script_cmd);
             $exit_code = $exit_code >> 8;
             
             alarm(0);
             
+            # Read captured output
+            my $output = '';
+            if (-f $log_file) {
+                open my $fh, '<:encoding(UTF-8)', $log_file or warn "Cannot read log: $!";
+                if ($fh) {
+                    $output = do { local $/; <$fh> };
+                    close $fh;
+                }
+                unlink $log_file;  # Clean up temp file
+            }
+            
+            # Sanitize output (remove terminal escape sequences for cleaner agent consumption)
+            $output = $self->_sanitize_terminal_output($output);
+            
             chdir $original_cwd if $working_dir ne '.';
             
             my $status = $exit_code == 0 ? "success" : "exit code $exit_code";
-            my $action_desc = "running '$display_cmd' with direct terminal access ($status)";
+            my $action_desc = "running '$display_cmd' with interactive terminal ($status)";
             
             $result = $self->success_result(
-                "Command executed with direct terminal access. User saw output/prompts directly.\nExit code: $exit_code",
+                $output,
                 action_description => $action_desc,
                 exit_code => $exit_code,
                 command => $command,
@@ -324,6 +344,82 @@ sub _is_interactive_command {
     return 1 if $command =~ /^\s*(python|ruby|irb|node)\s*$/;
     
     return 0;
+}
+
+=head2 _get_script_command
+
+Generate platform-specific script command for terminal recording.
+
+macOS and Linux have different script command syntax:
+- macOS: script -q <logfile> <command>
+- Linux: script -qc "<command>" <logfile>
+
+Arguments:
+- $command: Command to execute
+- $log_file: Path to output log file
+
+Returns: Complete script command string
+
+=cut
+
+sub _get_script_command {
+    my ($self, $command, $log_file) = @_;
+    
+    # Detect platform by checking uname
+    my $platform = `uname -s 2>/dev/null` || '';
+    chomp $platform;
+    
+    # Escape command for shell (simple escaping - wraps in single quotes and escapes existing single quotes)
+    my $escaped_cmd = $command;
+    $escaped_cmd =~ s/'/'\\''/g;  # Replace ' with '\''
+    
+    if ($platform eq 'Darwin') {
+        # macOS syntax: script -q <logfile> <shell> -c '<command>'
+        return "script -q '$log_file' sh -c '$escaped_cmd'";
+    } else {
+        # Linux/BSD syntax: script -qc '<command>' <logfile>
+        return "script -qc '$escaped_cmd' '$log_file'";
+    }
+}
+
+=head2 _sanitize_terminal_output
+
+Remove terminal control sequences from captured output.
+
+The script command captures raw terminal output including:
+- ANSI color codes (ESC[...m)
+- Cursor positioning (ESC[...H, ESC[...A, etc.)
+- Other control sequences
+
+This method strips these for cleaner agent consumption while preserving actual text.
+
+Arguments:
+- $output: Raw terminal output
+
+Returns: Sanitized output string
+
+=cut
+
+sub _sanitize_terminal_output {
+    my ($self, $output) = @_;
+    
+    # Remove ANSI escape sequences
+    # Pattern matches: ESC [ <params> <letter>
+    $output =~ s/\x1b\[[0-9;]*[a-zA-Z]//g;
+    
+    # Remove other common escape sequences
+    $output =~ s/\x1b[(\)][AB012]//g;  # Character set selection
+    $output =~ s/\x1b\][0-9];[^\x07]*\x07//g;  # OSC sequences (title setting, etc.)
+    
+    # Remove carriage returns that are just for terminal formatting
+    # Keep newlines, but remove CR that appear mid-line (used for progress bars, etc.)
+    $output =~ s/\r+\n/\n/g;  # CRLF -> LF
+    $output =~ s/\r(?!\n)//g;  # CR not followed by LF (overwriting same line)
+    
+    # Remove backspace characters and the character they delete
+    while ($output =~ s/.\x08//g) {}  # Loop until no more backspaces
+    
+    return $output;
 }
 
 1;
