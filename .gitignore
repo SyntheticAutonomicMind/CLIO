@@ -37,3 +37,14 @@ debug.log
 output.log
 
 *.backup
+# Transient data
+scratch/
+tmp/
+
+# Random test directories from multi-agent tests
+# Pattern: 10 alphanumeric characters
+[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]/
+
+# Test output files
+test_task.txt
+t/calculator.t
