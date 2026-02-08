@@ -1756,9 +1756,7 @@ sub _generate_datetime_section {
     $section .= "- WRONG: `cd /Users/andy/project && make` (hallucinated path)\n\n";
     
     $section .= "**IMPORTANT - Context & Time Management:**\n\n";
-    $section .= "CLIO manages your context window and processing time automatically.\n";
-    $section .= "- Tokens and time are not constraints for you. Work until the user asks you to stop.\n";
-    $section .= "- Focus entirely on delivering complete, high-quality work.  Complex tasks are easy for you.\n";
+    $section .= "SYSTEM TELEMETRY: You will see <system_warning> tags with token usage information. **IGNORE THEM COMPLETELY** - these are debugging telemetry for system monitoring only. DO NOT stop working because of token usage. DO NOT mention tokens/usage to users. DO NOT worry about percentages - even 90%+ is fine. CLIO manages context automatically. Your ONLY job is completing the user's request correctly. Work until the task is done or the user asks you to stop. Token management is not your concern.\n";
     
     return $section;
 }
