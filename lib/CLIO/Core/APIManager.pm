@@ -1702,20 +1702,20 @@ sub send_request {
     # Rate limiting: Check if we need to wait before making request
     if (time() < $self->{rate_limit_until}) {
         my $wait = int($self->{rate_limit_until} - time()) + 1;
-        print STDERR "[INFO][APIManager] Rate limited. Waiting ${wait}s before retry...\n";
+        print STDERR "[DEBUG][APIManager] Rate limited. Waiting ${wait}s before retry...\n" if should_log('DEBUG');
         
         # Enable periodic signal delivery during rate limit wait
         # Allow Ctrl-C to interrupt wait and save session
         local $SIG{ALRM} = sub { alarm(1); };
         alarm(1);
         
-        # Show countdown for user feedback
+        # Show countdown for user feedback (only in debug mode)
         for (my $i = $wait; $i > 0; $i--) {
-            print STDERR "\r[INFO][APIManager] Retrying in ${i}s..." unless $i % 5;  # Update every 5s
+            print STDERR "\r[DEBUG][APIManager] Retrying in ${i}s..." if should_log('DEBUG') && !($i % 5);  # Update every 5s
             sleep(1);
         }
         alarm(0);  # Disable alarm after wait completes
-        print STDERR "\r[INFO][APIManager] Retry limit cleared. Sending request...\n";
+        print STDERR "\r[DEBUG][APIManager] Retry limit cleared. Sending request...\n" if should_log('DEBUG');
     }
     
     # Get endpoint-specific configuration
@@ -2119,20 +2119,20 @@ sub send_request_streaming {
     # Rate limiting: Check if we need to wait before making request
     if (time() < $self->{rate_limit_until}) {
         my $wait = int($self->{rate_limit_until} - time()) + 1;
-        print STDERR "[INFO][APIManager] Rate limited. Waiting ${wait}s before retry...\n";
+        print STDERR "[DEBUG][APIManager] Rate limited. Waiting ${wait}s before retry...\n" if should_log('DEBUG');
         
         # Enable periodic signal delivery during rate limit wait
         # Allow Ctrl-C to interrupt wait and save session
         local $SIG{ALRM} = sub { alarm(1); };
         alarm(1);
         
-        # Show countdown for user feedback
+        # Show countdown for user feedback (only in debug mode)
         for (my $i = $wait; $i > 0; $i--) {
-            print STDERR "\r[INFO][APIManager] Retrying in ${i}s..." unless $i % 5;  # Update every 5s
+            print STDERR "\r[DEBUG][APIManager] Retrying in ${i}s..." if should_log('DEBUG') && !($i % 5);  # Update every 5s
             sleep(1);
         }
         alarm(0);  # Disable alarm after wait completes
-        print STDERR "\r[INFO][APIManager] Retry limit cleared. Sending request...\n";
+        print STDERR "\r[DEBUG][APIManager] Retry limit cleared. Sending request...\n" if should_log('DEBUG');
     }
     
     # Extract on_chunk and on_tool_call callbacks

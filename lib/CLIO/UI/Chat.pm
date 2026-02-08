@@ -127,6 +127,17 @@ sub new {
     return $self;
 }
 
+=head2 get_command_handler
+
+Return the command handler hash for tools that need to access it
+
+=cut
+
+sub get_command_handler {
+    my ($self) = @_;
+    return $self->{command_handler};
+}
+
 =head2 refresh_terminal_size
 
 Refresh terminal dimensions (handle resize events)
@@ -309,6 +320,20 @@ sub run {
     
     # Main loop
     while (1) {
+        # Check for agent messages (if broker client available)
+        # Look in multiple places: ai_agent (for sub-agents) or subagent_cmd (for primary user)
+        my $broker_client;
+        if ($self->{ai_agent} && $self->{ai_agent}->can('broker_client')) {
+            $broker_client = $self->{ai_agent}->broker_client();
+        }
+        # Also check SubAgent command handler for primary user session
+        if (!$broker_client && $self->{command_handler} && $self->{command_handler}{subagent_cmd}) {
+            $broker_client = $self->{command_handler}{subagent_cmd}{broker_client};
+        }
+        if ($broker_client) {
+            $self->check_agent_messages($broker_client);
+        }
+        
         # Get user input
         my $input = $self->get_input();
         
@@ -807,6 +832,113 @@ sub run {
     }
     
     # Exit gracefully (goodbye message will be shown by caller)
+    print "\n";
+}
+
+=head2 check_agent_messages($broker_client)
+
+Check for and display messages from sub-agents.
+
+=cut
+
+sub check_agent_messages {
+    my ($self, $broker_client) = @_;
+    
+    return unless $broker_client;
+    
+    # Poll user inbox
+    my $messages = eval { $broker_client->poll_user_inbox() };
+    
+    # Handle errors gracefully
+    if ($@) {
+        print STDERR "[WARN][Chat] Failed to poll agent inbox: $@\n" if $self->{debug};
+        return;
+    }
+    
+    return unless $messages && @$messages;
+    
+    # Display each message
+    for my $msg (@$messages) {
+        $self->display_agent_message($msg);
+    }
+}
+
+=head2 display_agent_message($msg)
+
+Display a single message from a sub-agent with proper formatting.
+
+=cut
+
+sub display_agent_message {
+    my ($self, $msg) = @_;
+    
+    my $from = $msg->{from} || 'unknown';
+    my $type = $msg->{type} || 'generic';
+    my $content = $msg->{content} || '';
+    my $time = localtime($msg->{timestamp}) if $msg->{timestamp};
+    my $id = $msg->{id};
+    
+    # Color and icon by message type
+    my ($color, $icon, $label);
+    if ($type eq 'question') {
+        $color = 'YELLOW';
+        $icon = '❓';
+        $label = 'QUESTION';
+    } elsif ($type eq 'blocked') {
+        $color = 'RED';
+        $icon = '🚫';
+        $label = 'BLOCKED';
+    } elsif ($type eq 'complete') {
+        $color = 'GREEN';
+        $icon = '✓';
+        $label = 'COMPLETE';
+    } elsif ($type eq 'status') {
+        $color = 'CYAN';
+        $icon = 'ℹ';
+        $label = 'STATUS';
+    } elsif ($type eq 'discovery') {
+        $color = 'MAGENTA';
+        $icon = '💡';
+        $label = 'DISCOVERY';
+    } else {
+        $color = 'WHITE';
+        $icon = '📨';
+        $label = uc($type);
+    }
+    
+    # Print separator
+    print $self->colorize("─" x 80, 'DIM'), "\n";
+    
+    # Print header
+    my $header = "$icon Agent Message: " . $self->colorize("$from", 'BOLD') . 
+                 " [$label]";
+    if ($time) {
+        $header .= $self->colorize(" ($time)", 'DIM');
+    }
+    print $header, "\n";
+    
+    # Print content
+    if (ref($content) eq 'HASH') {
+        # Structured content (e.g., status updates)
+        for my $key (sort keys %$content) {
+            next unless defined $content->{$key};
+            my $value = $content->{$key};
+            print "  " . $self->colorize("$key:", 'DIM') . " $value\n";
+        }
+    } else {
+        # Simple text content
+        print $self->colorize($content, $color), "\n";
+    }
+    
+    # Print footer with reply hint for questions
+    if ($type eq 'question' || $type eq 'blocked') {
+        # Ring terminal bell to alert user
+        print "\a";  # Bell character
+        print $self->colorize("ACTION REQUIRED: ", 'YELLOW');
+        print "Reply with: " . $self->colorize("/subagent reply $from <your-response>", 'BOLD'), "\n";
+    }
+    
+    print $self->colorize("─" x 80, 'DIM'), "\n";
     print "\n";
 }
 

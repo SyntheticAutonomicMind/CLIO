@@ -181,7 +181,7 @@ if (should_log('DEBUG')) {
 **Before Committing:**
 
 ```bash
-# 1. Syntax check
+# 1. Syntax check specific module
 perl -I./lib -c lib/CLIO/Core/MyModule.pm
 
 # 2. All syntax checks
@@ -190,10 +190,13 @@ find lib -name "*.pm" -exec perl -I./lib -c {} \;
 # 3. Run unit test
 perl -I./lib tests/unit/test_mymodule.pl
 
-# 4. Integration test
+# 4. Run all unit tests for a component
+cd tests/unit && for t in test_<component>*.pl; do perl -I../../lib $t; done
+
+# 5. Integration test
 ./clio --debug --input "test your change" --exit
 
-# 5. Check for errors
+# 6. Check for errors
 ./clio --input "complex test" --debug --exit 2>&1 | grep ERROR
 ```
 
@@ -202,11 +205,19 @@ perl -I./lib tests/unit/test_mymodule.pl
 - `tests/unit/` - Single module tests
 - `tests/integration/` - Cross-module tests
 
-**New Feature = New Test:**
+**Test Requirements:**
+
+1. **Syntax must pass** - All changed .pm files must pass `perl -c`
+2. **Unit tests must exist** - New features require new tests
+3. **Tests must pass** - Exit code 0 required
+4. **Integration testing** - Complex features need end-to-end verification
+
+**New Feature Checklist:**
 
 1. Create: `tests/unit/test_your_feature.pl`
 2. Run: `perl -I./lib tests/unit/test_your_feature.pl`
-3. Include in commit
+3. Verify exit code 0
+4. Include in commit
 
 ---
 

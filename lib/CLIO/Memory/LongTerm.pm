@@ -567,14 +567,22 @@ sub save {
     };
     
     # Atomic write: write to temp file, then rename
-    # This prevents corruption if process is killed during write
-    my $temp_file = $file . '.tmp';
-    open my $fh, '>:encoding(UTF-8)', $temp_file or die "Cannot create temp LTM file: $!";
-    print $fh JSON::PP->new->pretty->canonical->encode($data);
-    close $fh;
+    # Use PID in temp filename to prevent race conditions with multiple agents
+    my $temp_file = $file . '.tmp.' . $$;  # $$ = process ID
     
-    # Atomic rename (overwrites target file atomically on Unix)
-    rename $temp_file, $file or die "Cannot save LTM (rename failed): $!";
+    eval {
+        open my $fh, '>:encoding(UTF-8)', $temp_file or die "Cannot create temp LTM file: $!";
+        print $fh JSON::PP->new->pretty->canonical->encode($data);
+        close $fh;
+        
+        # Atomic rename (overwrites target file atomically on Unix)
+        rename $temp_file, $file or die "Cannot save LTM (rename failed): $!";
+    };
+    if ($@) {
+        # Clean up temp file if it exists
+        unlink $temp_file if -f $temp_file;
+        die $@;
+    }
     
     print STDERR "[DEBUG][LTM] Saved to $file\n" if should_log('DEBUG');
 }

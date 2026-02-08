@@ -21,6 +21,7 @@ use CLIO::UI::Commands::Skills;
 use CLIO::UI::Commands::Prompt;
 use CLIO::UI::Commands::Project;
 use CLIO::UI::Commands::Device;
+use CLIO::UI::Commands::SubAgent;
 
 =head1 NAME
 
@@ -183,6 +184,11 @@ sub new {
     );
     
     $self->{project_cmd} = CLIO::UI::Commands::Project->new(
+        chat => $self->{chat},
+        debug => $self->{debug},
+    );
+    
+    $self->{subagent_cmd} = CLIO::UI::Commands::SubAgent->new(
         chat => $self->{chat},
         debug => $self->{debug},
     );
@@ -389,6 +395,12 @@ sub handle_command {
     elsif ($cmd eq 'update') {
         # Use extracted Update command module
         $self->{update_cmd}->handle_update_command(@args);
+    }
+    elsif ($cmd eq 'subagent' || $cmd eq 'agent') {
+        # Multi-agent coordination
+        my $subcommand = shift @args || 'help';
+        my $result = $self->{subagent_cmd}->handle($subcommand, join(' ', @args));
+        print "$result\n" if $result;
     }
     elsif ($cmd eq 'init') {
         # Use extracted Project command module
