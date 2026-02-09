@@ -103,9 +103,20 @@ sub save {
         print STDERR "[STATE][DEBUG] Data to save: " . Dumper($data) . "\n";
     }
     
+    # Ensure session directory exists before writing
+    my $dir = File::Basename::dirname($self->{file});
+    unless (-d $dir) {
+        require File::Path;
+        eval { File::Path::make_path($dir) };
+        if ($@) {
+            warn "[WARN][State] Failed to create session directory: $@";
+        }
+    }
+    
     # Atomic write: write to temp file, then rename
     # This prevents corruption if process is killed during write
-    my $temp_file = $self->{file} . '.tmp';
+    # Use process ID in temp filename to prevent race conditions with multiple agents
+    my $temp_file = $self->{file} . '.tmp.' . $$;
     open my $fh, '>', $temp_file or die "Cannot create temp session file: $!";
     print $fh encode_json($data);
     close $fh;
