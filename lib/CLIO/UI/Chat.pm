@@ -611,10 +611,11 @@ sub run {
                 # This ensures system messages start on a clean line
                 print "\r\e[K";  # Carriage return + clear entire line
                 
-                # Add visual separation if this isn't the first system message
-                # Check if we just displayed another system message (line_count increased)
-                if ($self->{_last_was_system_message}) {
-                    print "\n";  # Add blank line between consecutive system messages
+                # Add visual separation before SYSTEM message
+                # - Add blank line if there was prior output (tool calls, etc.)
+                # - Don't add if this is the first system message after a blank (avoid double spacing)
+                if ($self->{line_count} > 0 && !$self->{_last_was_system_message}) {
+                    print "\n";  # Add blank line for visual separation
                 }
                 
                 # Display system message with format based on theme
