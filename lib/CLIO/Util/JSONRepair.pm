@@ -38,6 +38,7 @@ Repairs common malformed JSON patterns from AI model outputs.
 Handles:
 - Missing values: "param":, -> "param":null,
 - Missing values with whitespace: "param": , -> "param":null,
+- Decimals without leading zero: .1 -> 0.1, .05 -> 0.05 (JavaScript-style decimals)
 - Trailing commas: {...} -> {...}
 - XML parameter format: <parameter name="key">value</parameter>
 
@@ -136,6 +137,15 @@ sub repair_malformed_json {
     #   \s*      - Optional whitespace before comma (THIS WAS THE BUG)
     #   ,        - Comma that indicates missing value
     $json_str =~ s/"(\w+)"\s*:\s*,/"$1":null,/g;
+    
+    # CRITICAL FIX: Decimals without leading zero (e.g., .1 -> 0.1, .05 -> 0.05)
+    # Models sometimes output JavaScript-style decimals which are invalid JSON
+    # Pattern: colon followed by optional whitespace, then a decimal point and digits
+    # Examples: "progress":.1 -> "progress":0.1
+    #           "progress": .05 -> "progress": 0.05
+    #           "value":-.5 -> "value":-0.5 (negative decimals)
+    $json_str =~ s/:(\s*)\.(\d)/:${1}0.$2/g;
+    $json_str =~ s/:(\s*)-\.(\d)/:${1}-0.$2/g;
     
     # Fix trailing comma before } or ] (another common AI mistake)
     $json_str =~ s/,\s*}/}/g;

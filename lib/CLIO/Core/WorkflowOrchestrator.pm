@@ -944,23 +944,22 @@ sub process_input {
                 };
                 
                 if ($@) {
-                    # JSON parsing failed - log the error and attempt repair
+                    # JSON parsing failed - attempt repair first, only log error if repair fails
                     my $error = $@;
-                    $had_validation_errors = 1;
-                    
-                    log_error('WorkflowOrchestrator', "Invalid JSON in tool call arguments for '$tool_name': $error");
-                    log_error('WorkflowOrchestrator', "Malformed arguments: " . substr($arguments_str, 0, 200));
                     
                     # Attempt to repair common JSON errors
                     my $repaired = $self->_repair_tool_call_json($arguments_str);
                     
                     if ($repaired) {
-                        # Repair succeeded - use repaired version
-                        log_info('WorkflowOrchestrator', "Successfully repaired JSON for tool '$tool_name'");
+                        # Repair succeeded - log at DEBUG level (user doesn't need to know)
+                        log_debug('WorkflowOrchestrator', "Repaired malformed JSON for tool '$tool_name'");
                         $tool_call->{function}->{arguments} = $repaired;
                         push @validated_tool_calls, $tool_call;
                     } else {
-                        # Repair failed - reject this tool call entirely
+                        # Repair failed - NOW log the error at ERROR level
+                        $had_validation_errors = 1;
+                        log_error('WorkflowOrchestrator', "Invalid JSON in tool call arguments for '$tool_name': $error");
+                        log_error('WorkflowOrchestrator', "Malformed arguments: " . substr($arguments_str, 0, 200));
                         log_error('WorkflowOrchestrator', "Could not repair JSON for tool '$tool_name' - tool call will be skipped");
                         
                         # Add an error message to conversation explaining what happened
@@ -1702,7 +1701,8 @@ sub _generate_tools_section {
     $section .= "**CORRECT Options:**\n";
     $section .= "1. Omit optional param: `{\"operation\":\"read_tool_result\",\"length\":8192}`\n";
     $section .= "2. Include with value: `{\"operation\":\"read_tool_result\",\"offset\":0,\"length\":8192}`\n\n";
-    $section .= "**Rule:** EVERY parameter key MUST have a value. No exceptions.\n";
+    $section .= "**Rule:** EVERY parameter key MUST have a value. No exceptions.\n\n";
+    $section .= "**DECIMAL NUMBERS:** Always include leading zero: `0.1` not `.1`, `0.05` not `.05`\n";
     
     return $section;
 }
@@ -2403,6 +2403,7 @@ Common issues:
 - Missing values: {"offset":,"length":8192}
 - Trailing commas: {"offset":0,"length":8192}
 - Unescaped quotes: {"text":"He said "hello""}
+- Decimals without leading zero: {"progress":.1} (JavaScript-style)
 
 Arguments:
 - $json_str: Potentially malformed JSON string
@@ -2436,7 +2437,13 @@ sub _repair_tool_call_json {
     $repaired =~ s/:\s*\}/: null}/g;          # "key":} -> "key": null}
     $repaired =~ s/:\s*\]/: null]/g;          # "key":] -> "key": null]
     
-    # Fix 2: Trailing commas before closing braces/brackets
+    # Fix 2: Decimals without leading zero (JavaScript-style decimals are invalid JSON)
+    # Examples: "progress":.1 -> "progress":0.1, "progress":.05 -> "progress":0.05
+    #           "value":-.5 -> "value":-0.5 (negative decimals)
+    $repaired =~ s/:(\s*)\.(\d)/:${1}0.$2/g;
+    $repaired =~ s/:(\s*)-\.(\d)/:${1}-0.$2/g;
+    
+    # Fix 3: Trailing commas before closing braces/brackets
     $repaired =~ s/,\s*\}/}/g;                 # {...} -> {...}
     $repaired =~ s/,\s*\]/]/g;                 # [...] -> [...]
     
