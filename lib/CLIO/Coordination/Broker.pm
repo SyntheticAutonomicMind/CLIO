@@ -69,7 +69,8 @@ sub new {
         
         # Message bus (Phase 2)
         agent_inboxes => {},  # agent_id => [@messages]
-        user_inbox => [],     # Messages for user
+        user_inbox => [],     # Messages for user (unread)
+        user_inbox_history => [],  # All messages ever sent to user (read + unread)
         next_msg_id => 1,
     };
     
@@ -285,6 +286,12 @@ sub handle_message {
     }
     elsif ($type eq 'poll_user_inbox') {
         $self->handle_poll_user_inbox($fd);
+    }
+    elsif ($type eq 'acknowledge_messages') {
+        $self->handle_acknowledge_messages($fd, $msg);
+    }
+    elsif ($type eq 'get_message_history') {
+        $self->handle_get_message_history($fd);
     }
     else {
         $self->send_error($fd, "Unknown message type: $type");
@@ -581,6 +588,7 @@ sub handle_send_message {
     # Route message to appropriate inbox
     if ($recipient eq 'user') {
         push @{$self->{user_inbox}}, $message;
+        push @{$self->{user_inbox_history}}, $message;  # Keep in history
         $self->log_debug("Message from $sender to user: $message_type");
     }
     elsif ($recipient eq 'all') {
@@ -635,16 +643,58 @@ sub handle_poll_inbox {
 sub handle_poll_user_inbox {
     my ($self, $fd) = @_;
     
-    # Get all user messages
+    # Get unread messages (don't clear - let acknowledge_messages do that)
     my @messages = @{$self->{user_inbox}};
     
-    # Clear user inbox after retrieval
-    $self->{user_inbox} = [];
-    
-    $self->log_debug("User polled inbox: " . scalar(@messages) . " messages");
+    $self->log_debug("User polled inbox: " . scalar(@messages) . " unread messages");
     
     $self->send_message($fd, {
         type => 'user_inbox',
+        messages => \@messages,
+        count => scalar(@messages),
+    });
+}
+
+sub handle_acknowledge_messages {
+    my ($self, $fd, $msg) = @_;
+    
+    my $message_ids = $msg->{message_ids} || [];  # Optional: specific IDs to acknowledge
+    
+    if (@$message_ids) {
+        # Acknowledge specific messages
+        my %ids_to_ack = map { $_ => 1 } @$message_ids;
+        my @remaining;
+        for my $m (@{$self->{user_inbox}}) {
+            if ($ids_to_ack{$m->{id}}) {
+                $self->log_debug("Acknowledged message: $m->{id}");
+            } else {
+                push @remaining, $m;
+            }
+        }
+        $self->{user_inbox} = \@remaining;
+    } else {
+        # Acknowledge all messages
+        my $count = scalar(@{$self->{user_inbox}});
+        $self->{user_inbox} = [];
+        $self->log_debug("Acknowledged all $count messages");
+    }
+    
+    $self->send_message($fd, {
+        type => 'acknowledge_result',
+        success => 1,
+    });
+}
+
+sub handle_get_message_history {
+    my ($self, $fd) = @_;
+    
+    # Return all messages ever sent to user (both read and unread)
+    my @messages = @{$self->{user_inbox_history}};
+    
+    $self->log_debug("User requested history: " . scalar(@messages) . " total messages");
+    
+    $self->send_message($fd, {
+        type => 'message_history',
         messages => \@messages,
         count => scalar(@messages),
     });
