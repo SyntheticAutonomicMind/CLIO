@@ -611,13 +611,6 @@ sub run {
                 # This ensures system messages start on a clean line
                 print "\r\e[K";  # Carriage return + clear entire line
                 
-                # Add visual separation before SYSTEM message
-                # - Add blank line if there was prior output (tool calls, etc.)
-                # - Don't add if this is the first system message after a blank (avoid double spacing)
-                if ($self->{line_count} > 0 && !$self->{_last_was_system_message}) {
-                    print "\n";  # Add blank line for visual separation
-                }
-                
                 # Display system message with format based on theme
                 # Check if theme uses inline format (like console theme)
                 my $tool_format = 'box';  # default
@@ -630,8 +623,9 @@ sub run {
                     my $prefix = $self->colorize("[SYSTEM] ", 'SYSTEM');
                     my $msg = $self->colorize($message, 'DATA');
                     print "$prefix$msg\n";
+                    print "\n";  # Add blank line AFTER system message for separation
                     STDOUT->flush() if STDOUT->can('flush');
-                    $self->{line_count} += 1;
+                    $self->{line_count} += 2;  # Message + blank line
                 } else {
                     # Box-drawing format (default):
                     # {dim}┌──┤ {agent_label}SYSTEM{reset}
@@ -643,8 +637,9 @@ sub run {
                     
                     print "$header_conn$header_name\n";
                     print "$footer_conn$footer_msg\n";
+                    print "\n";  # Add blank line AFTER system message for separation
                     STDOUT->flush() if STDOUT->can('flush');
-                    $self->{line_count} += 2;  # Two lines for box-drawing format
+                    $self->{line_count} += 3;  # Header + footer + blank line
                 }
                 $self->{_last_was_system_message} = 1;  # Mark that we just displayed a system message
                 
