@@ -1343,7 +1343,13 @@ sub process_input {
                         }
                     }
                     
-                    $self->{formatter}->display_action_detail($action_detail, $is_error, $remaining_same_tool);
+                    # Check for expanded_content (multi-line detail like agent messages)
+                    my $expanded_content;
+                    if ($result_data && ref($result_data) eq 'HASH') {
+                        $expanded_content = $result_data->{expanded_content};
+                    }
+                    
+                    $self->{formatter}->display_action_detail($action_detail, $is_error, $remaining_same_tool, $expanded_content);
                 }
                 
                 # Extract the actual output for the AI (not the UI metadata)

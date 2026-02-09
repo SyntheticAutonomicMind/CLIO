@@ -448,6 +448,33 @@ sub inbox {
     my $count = scalar(@formatted);
     $action_desc = "found $count unread message(s) from sub-agents";
     
+    # Build expanded_content for the tool card display
+    # Shows message summaries inline so user can see what agents sent
+    my @expanded_content;
+    for my $msg (@formatted) {
+        my $from = $msg->{from} || 'unknown';
+        my $type = $msg->{type} || 'generic';
+        my $content = $msg->{content} || '';
+        
+        # Format content for single line display
+        my $content_preview;
+        if (ref($content) eq 'HASH') {
+            # For structured content (like status), show key fields
+            if ($content->{status}) {
+                $content_preview = $content->{status};
+                $content_preview .= ": $content->{current_task}" if $content->{current_task};
+            } else {
+                my @parts = map { "$_: $content->{$_}" } (sort keys %$content)[0..1];  # First 2 keys
+                $content_preview = join(', ', @parts);
+            }
+        } else {
+            # For string content, truncate if needed
+            $content_preview = length($content) > 60 ? substr($content, 0, 57) . '...' : $content;
+        }
+        
+        push @expanded_content, "[$from] $type: $content_preview";
+    }
+    
     # Build output that shows actual message content prominently
     # This ensures AI cannot ignore the messages
     my @output_lines;
@@ -472,6 +499,7 @@ sub inbox {
     return $self->success_result(
         join("\n", @output_lines),
         action_description => $action_desc,
+        expanded_content => \@expanded_content,
         messages => \@formatted,
         count => $count,
     );
@@ -573,10 +601,15 @@ sub send {
         content => $message,
     );
     
+    # Create expanded content showing the message preview
+    my $message_preview = length($message) > 70 ? substr($message, 0, 67) . '...' : $message;
+    my @expanded_content = ($message_preview);
+    
     if ($msg_id) {
         return $self->success_result(
             "Message sent to $agent_id",
             action_description => $action_desc,
+            expanded_content => \@expanded_content,
             message_id => $msg_id,
             agent_id => $agent_id,
         );

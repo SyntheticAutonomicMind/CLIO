@@ -72,6 +72,27 @@ sub new {
         user_inbox => [],     # Messages for user (unread)
         user_inbox_history => [],  # All messages ever sent to user (read + unread)
         next_msg_id => 1,
+        
+        # API Rate Limiting (Phase 3)
+        # Modeled after VSCode's RequestRateLimiter
+        api_rate_limit => {
+            max_parallel => $args{max_parallel_api} || 2,  # Max concurrent API requests
+            min_delay => 0.025,  # Minimum 25ms between requests (40/sec limit)
+            last_request_time => 0,
+            in_flight => 0,  # Current number of requests in progress
+            queue => [],     # Waiting requests: [{agent_id, request_id, queued_at}]
+            
+            # Rate limit state from response headers
+            remaining => undef,    # x-ratelimit-remaining
+            reset_at => undef,     # x-ratelimit-reset (unix timestamp)
+            retry_after => undef,  # retry-after header value
+            retry_until => 0,      # Don't send requests until this time
+            
+            # Quota tracking
+            quota_used => undef,   # x-github-total-quota-used percentage
+            quota_timestamp => 0,
+            target_quota => 80,    # Start throttling above this %
+        },
     };
     
     return bless $self, $class;
@@ -292,6 +313,16 @@ sub handle_message {
     }
     elsif ($type eq 'get_message_history') {
         $self->handle_get_message_history($fd);
+    }
+    # API Rate Limiting (Phase 3)
+    elsif ($type eq 'request_api_slot') {
+        $self->handle_request_api_slot($fd, $msg);
+    }
+    elsif ($type eq 'release_api_slot') {
+        $self->handle_release_api_slot($fd, $msg);
+    }
+    elsif ($type eq 'get_rate_limit_status') {
+        $self->handle_get_rate_limit_status($fd);
     }
     else {
         $self->send_error($fd, "Unknown message type: $type");
@@ -760,6 +791,185 @@ sub send_error {
         type => 'error',
         message => $message,
     });
+}
+
+# =============================================================================
+# API Rate Limiting Handlers (Phase 3)
+# Implements VSCode-style request queuing and rate limit coordination
+# =============================================================================
+
+sub handle_request_api_slot {
+    my ($self, $fd, $msg) = @_;
+    
+    my $agent_id = $msg->{agent_id} || 'unknown';
+    my $request_id = $msg->{request_id} || int(rand(1000000));
+    my $rl = $self->{api_rate_limit};
+    my $now = time();
+    
+    # Calculate required delay
+    my $delay = $self->_calculate_api_delay();
+    
+    # Check if we can grant immediately
+    if ($rl->{in_flight} < $rl->{max_parallel} && $delay <= 0) {
+        $rl->{in_flight}++;
+        $rl->{last_request_time} = $now;
+        
+        $self->log_debug("API slot granted immediately to $agent_id (in_flight: $rl->{in_flight})");
+        
+        $self->send_message($fd, {
+            type => 'api_slot_granted',
+            request_id => $request_id,
+            delay => 0,
+        });
+        return;
+    }
+    
+    # Need to wait - calculate total delay
+    my $wait_for_slot = 0;
+    if ($rl->{in_flight} >= $rl->{max_parallel}) {
+        # Estimate when a slot will free up (average request takes ~2-5 seconds)
+        $wait_for_slot = 0.5;  # Small delay, will re-check
+    }
+    
+    my $total_delay = $delay > 0 ? $delay : $wait_for_slot;
+    $total_delay = 0.1 if $total_delay < 0.1;  # Minimum 100ms
+    
+    $self->log_debug("API slot delayed for $agent_id: ${total_delay}s (in_flight: $rl->{in_flight}, delay: $delay)");
+    
+    $self->send_message($fd, {
+        type => 'api_slot_wait',
+        request_id => $request_id,
+        delay => $total_delay,
+        in_flight => $rl->{in_flight},
+        reason => $delay > 0 ? 'rate_limit' : 'max_parallel',
+    });
+}
+
+sub handle_release_api_slot {
+    my ($self, $fd, $msg) = @_;
+    
+    my $agent_id = $msg->{agent_id} || 'unknown';
+    my $request_id = $msg->{request_id} || 0;
+    my $rl = $self->{api_rate_limit};
+    
+    # Decrement in-flight counter
+    $rl->{in_flight}-- if $rl->{in_flight} > 0;
+    
+    # Update rate limit state from response headers if provided
+    if ($msg->{headers}) {
+        my $h = $msg->{headers};
+        
+        # Parse x-ratelimit-remaining
+        if (defined $h->{'x-ratelimit-remaining'}) {
+            $rl->{remaining} = int($h->{'x-ratelimit-remaining'});
+        }
+        
+        # Parse x-ratelimit-reset (Unix timestamp)
+        if (defined $h->{'x-ratelimit-reset'}) {
+            $rl->{reset_at} = int($h->{'x-ratelimit-reset'});
+        }
+        
+        # Parse retry-after header
+        if (defined $h->{'retry-after'}) {
+            my $retry = $h->{'retry-after'};
+            # Could be seconds or HTTP date
+            if ($retry =~ /^\d+$/) {
+                $rl->{retry_until} = time() + $retry;
+                $rl->{retry_after} = $retry;
+            }
+        }
+        
+        # Parse quota used percentage
+        if (defined $h->{'x-github-total-quota-used'}) {
+            $rl->{quota_used} = $h->{'x-github-total-quota-used'};
+            $rl->{quota_timestamp} = time();
+        }
+        
+        $self->log_debug("Updated rate limit state: remaining=" . ($rl->{remaining} // 'N/A') . 
+                        ", reset=" . ($rl->{reset_at} // 'N/A') . 
+                        ", quota=" . ($rl->{quota_used} // 'N/A') . "%");
+    }
+    
+    # Handle error responses
+    if ($msg->{status} && $msg->{status} == 429) {
+        # Rate limited - set retry_until from retry-after or default 60s
+        my $retry_delay = $msg->{retry_after} || 60;
+        $rl->{retry_until} = time() + $retry_delay;
+        $self->log_info("Rate limit hit by $agent_id, blocking requests for ${retry_delay}s");
+    }
+    
+    $self->log_debug("API slot released by $agent_id (in_flight: $rl->{in_flight})");
+    
+    $self->send_message($fd, {
+        type => 'ack',
+        success => 1,
+    });
+}
+
+sub handle_get_rate_limit_status {
+    my ($self, $fd) = @_;
+    
+    my $rl = $self->{api_rate_limit};
+    my $now = time();
+    
+    $self->send_message($fd, {
+        type => 'rate_limit_status',
+        in_flight => $rl->{in_flight},
+        max_parallel => $rl->{max_parallel},
+        remaining => $rl->{remaining},
+        reset_at => $rl->{reset_at},
+        retry_until => $rl->{retry_until},
+        quota_used => $rl->{quota_used},
+        can_request => ($rl->{in_flight} < $rl->{max_parallel} && $now >= $rl->{retry_until}),
+    });
+}
+
+sub _calculate_api_delay {
+    my ($self) = @_;
+    
+    my $rl = $self->{api_rate_limit};
+    my $now = time();
+    my $delay = 0;
+    
+    # Check retry_until (rate limit cooldown)
+    if ($rl->{retry_until} > $now) {
+        $delay = $rl->{retry_until} - $now;
+        return $delay;
+    }
+    
+    # Check minimum delay between requests (abuse prevention)
+    my $elapsed = $now - $rl->{last_request_time};
+    if ($elapsed < $rl->{min_delay}) {
+        $delay = $rl->{min_delay} - $elapsed;
+    }
+    
+    # Check remaining requests in window
+    if (defined $rl->{remaining} && $rl->{remaining} <= $rl->{in_flight}) {
+        # No remaining requests, wait until reset
+        if (defined $rl->{reset_at} && $rl->{reset_at} > $now) {
+            my $reset_delay = $rl->{reset_at} - $now;
+            $delay = $reset_delay if $reset_delay > $delay;
+        }
+    }
+    
+    # Quota-based throttling (like VSCode)
+    if (defined $rl->{quota_used} && $rl->{quota_used} > $rl->{target_quota}) {
+        my $quota_delta = $rl->{quota_used} - $rl->{target_quota};
+        my $time_since_quota = $now - $rl->{quota_timestamp};
+        
+        # Decay time - assume quota decays over ~60 seconds
+        my $decay_time = 60;
+        my $max_quota_delay = 5;  # Max 5s delay from quota
+        
+        my $quota_adjustment = ($quota_delta / (100 - $rl->{target_quota}));
+        $quota_adjustment *= (1.0 - ($time_since_quota / $decay_time)) if $time_since_quota < $decay_time;
+        $quota_adjustment = 0 if $quota_adjustment < 0;
+        
+        my $quota_delay = $quota_adjustment * $max_quota_delay;
+        $delay = $quota_delay if $quota_delay > $delay;
+    }
+    
+    return $delay;
 }
 
 sub log_info {

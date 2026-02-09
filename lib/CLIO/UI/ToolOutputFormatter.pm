@@ -123,7 +123,7 @@ sub display_tool_header {
     }
 }
 
-=head2 display_action_detail($action_detail, $is_error, $remaining_same_tool)
+=head2 display_action_detail($action_detail, $is_error, $remaining_same_tool, $expanded_content)
 
 Display the action detail line (what the tool did).
 
@@ -131,11 +131,12 @@ Arguments:
 - action_detail: Description of what the tool did
 - is_error: Boolean - whether this is an error message
 - remaining_same_tool: Integer - count of remaining calls to same tool (for connector choice)
+- expanded_content: Optional array of additional lines to display below the action
 
 =cut
 
 sub display_action_detail {
-    my ($self, $action_detail, $is_error, $remaining_same_tool) = @_;
+    my ($self, $action_detail, $is_error, $remaining_same_tool, $expanded_content) = @_;
     
     return unless $action_detail;
     
@@ -150,11 +151,25 @@ sub display_action_detail {
         } else {
             print "$action_detail\n";
         }
+        
+        # Display expanded content if present
+        if ($expanded_content && ref($expanded_content) eq 'ARRAY' && @$expanded_content) {
+            for my $line (@$expanded_content) {
+                if ($self->{ui} && $self->{ui}->can('colorize')) {
+                    my $line_colored = $self->{ui}->colorize("  $line", 'DIM');
+                    print "$line_colored\n";
+                } else {
+                    print "  $line\n";
+                }
+            }
+        }
+        
         STDOUT->flush() if STDOUT->can('flush');
     } else {
         # Box format: use box-drawing continuation
-        # Determine connector: ├─ if more actions coming, └─ if last
-        my $connector = ($remaining_same_tool > 0) ? "\x{251C}\x{2500} " : "\x{2514}\x{2500} ";
+        # Determine connector: ├─ if more actions/content coming, └─ if last
+        my $has_expanded = ($expanded_content && ref($expanded_content) eq 'ARRAY' && @$expanded_content);
+        my $connector = ($remaining_same_tool > 0 || $has_expanded) ? "\x{251C}\x{2500} " : "\x{2514}\x{2500} ";
         
         if ($self->{ui} && $self->{ui}->can('colorize')) {
             # Format: {dim}├─ {data/error}action_detail{reset} or {dim}└─ {data/error}action_detail{reset}
@@ -166,6 +181,27 @@ sub display_action_detail {
             STDOUT->flush() if STDOUT->can('flush');
         } else {
             print "$connector$action_detail\n";
+            STDOUT->flush() if STDOUT->can('flush');
+        }
+        
+        # Display expanded content with continuation lines
+        if ($has_expanded) {
+            my $pipe = "\x{2502}  ";  # │  (vertical bar with indent)
+            my $last_conn = ($remaining_same_tool > 0) ? "\x{251C}\x{2500} " : "\x{2514}\x{2500} ";
+            
+            for my $idx (0 .. $#$expanded_content) {
+                my $line = $expanded_content->[$idx];
+                my $is_last_line = ($idx == $#$expanded_content);
+                my $line_connector = $is_last_line ? $last_conn : $pipe;
+                
+                if ($self->{ui} && $self->{ui}->can('colorize')) {
+                    my $conn_colored = $self->{ui}->colorize($line_connector, 'DIM');
+                    my $line_colored = $self->{ui}->colorize($line, 'DIM');
+                    print "$conn_colored$line_colored\n";
+                } else {
+                    print "$line_connector$line\n";
+                }
+            }
             STDOUT->flush() if STDOUT->can('flush');
         }
     }
