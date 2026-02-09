@@ -513,8 +513,7 @@ sub cmd_inbox {
     my $messages = $self->{broker_client}->poll_user_inbox();
     
     unless ($messages && @$messages) {
-        $self->display_system_message("No unread messages from sub-agents.");
-        $self->writeline("Use " . $self->colorize("/subagent history", 'BOLD') . " to see all messages", markdown => 0);
+        $self->display_system_message("No unread messages from sub-agents.\nUse /subagent history to see all messages");
         return "";
     }
     
