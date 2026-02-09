@@ -874,6 +874,13 @@ sub start_broker {
             task => 'Primary user session',
         );
         print STDERR "[DEBUG] Connected to broker as primary user\n" if should_log('DEBUG');
+        
+        # CRITICAL: Also update the main agent's APIManager to use broker coordination
+        # This ensures ALL API requests (main + sub-agents) go through centralized rate limiting
+        if ($self->{chat} && $self->{chat}{ai_agent} && $self->{chat}{ai_agent}{api}) {
+            $self->{chat}{ai_agent}{api}{broker_client} = $self->{broker_client};
+            print STDERR "[INFO] Main agent's APIManager now using broker for rate limit coordination\n" if should_log('INFO');
+        }
     };
     if ($@) {
         print STDERR "[WARN] Could not connect to broker: $@\n" if should_log('WARN');

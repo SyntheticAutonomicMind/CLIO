@@ -348,7 +348,8 @@ if ($model_override) {
 my $api = CLIO::Core::APIManager->new(
     debug => $debug,
     session => $session->state(),
-    config => $config
+    config => $config,
+    broker_client => $broker_client,  # Pass broker client for API rate limiting coordination
 );
 my $ai_agent = CLIO::Core::SimpleAIAgent->new(
     debug => $debug,

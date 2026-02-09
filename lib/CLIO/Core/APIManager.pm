@@ -166,6 +166,7 @@ sub new {
         debug            => $args{debug} // 0,
         rate_limit_until => 0,  # Rate limiting support
         session          => $args{session},  # Session for statefulMarker
+        broker_client    => $args{broker_client},  # Broker client for multi-agent rate limit coordination
         performance_monitor => CLIO::Core::PerformanceMonitor->new(debug => $args{debug} // 0),
         
         # Token estimation with adaptive learning
@@ -1679,10 +1680,25 @@ sub _handle_error_response {
 sub send_request {
     my ($self, $input, %opts) = @_;
     
+    # Broker-based rate limiting coordination (for multi-agent scenarios)
+    my $broker_request_id;
+    if ($self->{broker_client}) {
+        # Wait for an API slot from the broker
+        my $slot_result = $self->{broker_client}->wait_for_api_slot(120);
+        $broker_request_id = $slot_result->{request_id};
+        
+        if (!$slot_result->{success}) {
+            print STDERR "[WARN][APIManager] Broker rate limit timeout after $slot_result->{waited}s, proceeding anyway\n" if should_log('WARN');
+        } elsif ($slot_result->{waited} > 0) {
+            print STDERR "[DEBUG][APIManager] Broker granted API slot after waiting " . sprintf("%.2f", $slot_result->{waited}) . "s\n" if should_log('DEBUG');
+        }
+    }
+    
+    # Fallback: Local rate limit prevention when broker not available
     # Prevent rate limits: Add delay between requests
     # Track wall clock time, not just request timestamps
     # This ensures delay even when tool executions happen between requests
-    if (defined $self->{last_request_time}) {
+    if (!$self->{broker_client} && defined $self->{last_request_time}) {
         my $now = Time::HiRes::time();  # High resolution time
         my $elapsed = $now - $self->{last_request_time};
         # Use dynamic delay if set by rate limit headers, otherwise default to 1.0s
@@ -1699,8 +1715,12 @@ sub send_request {
     # Record timestamp BEFORE request (prevents race conditions)
     $self->{last_request_time} = Time::HiRes::time();
     
-    # Rate limiting: Check if we need to wait before making request
-    if (time() < $self->{rate_limit_until}) {
+    # Store broker_request_id for later release
+    $self->{_current_broker_request_id} = $broker_request_id;
+    
+    # Local rate limit cooldown check (only when NOT using broker)
+    # When broker is active, it handles all rate limit delays centrally
+    if (!$self->{broker_client} && time() < $self->{rate_limit_until}) {
         my $wait = int($self->{rate_limit_until} - time()) + 1;
         print STDERR "[DEBUG][APIManager] Rate limited. Waiting ${wait}s before retry...\n" if should_log('DEBUG');
         
@@ -1888,10 +1908,16 @@ sub send_request {
             }
         );
         
+        # Release broker slot before returning
+        $self->_release_broker_slot(undef, 599);  # 599 = network error
+        
         return $self->_error($error);
     }
     
     if (!$resp->is_success) {
+        # Release broker slot with response info before returning
+        $self->_release_broker_slot($resp, $resp->code);
+        
         return $self->_handle_error_response($resp, $json, 0);
     }
     
@@ -2042,6 +2068,8 @@ sub send_request {
                 warn "[DEBUG] Including tool_calls in result\n";
             }
         }
+        # Release broker slot on success
+        $self->_release_broker_slot($resp, 200);
         
         return $result;
     }
@@ -2052,6 +2080,9 @@ sub send_request {
             warn "[DEBUG] Response contains only tool_calls (no text content)\n";
         }
         
+        # Release broker slot on success
+        $self->_release_broker_slot($resp, 200);
+        
         return {
             content => '',  # Empty content when only tool_calls
             tool_calls => $tool_calls,
@@ -2061,6 +2092,10 @@ sub send_request {
     
     # No valid content found
     warn "[ERROR] No message content in response\n" if $self->{debug};
+    
+    # Release broker slot before returning error
+    $self->_release_broker_slot($resp, 200);  # Response was successful but content invalid
+    
     return $self->_error("No message content in response");
 }
 
@@ -2095,10 +2130,25 @@ sub send_request_streaming {
     
     print STDERR "[DEBUG][APIManager] Starting streaming request\n" if should_log('DEBUG');
     
+    # Broker-based rate limiting coordination (for multi-agent scenarios)
+    my $broker_request_id;
+    if ($self->{broker_client}) {
+        # Wait for an API slot from the broker
+        my $slot_result = $self->{broker_client}->wait_for_api_slot(120);
+        $broker_request_id = $slot_result->{request_id};
+        
+        if (!$slot_result->{success}) {
+            print STDERR "[WARN][APIManager] Broker rate limit timeout after $slot_result->{waited}s, proceeding anyway\n" if should_log('WARN');
+        } elsif ($slot_result->{waited} > 0) {
+            print STDERR "[DEBUG][APIManager] Broker granted API slot after waiting " . sprintf("%.2f", $slot_result->{waited}) . "s\n" if should_log('DEBUG');
+        }
+    }
+    
+    # Fallback: Local rate limit prevention when broker not available
     # Prevent rate limits: Add delay between requests
     # Track wall clock time, not just request timestamps
     # This ensures delay even when tool executions happen between requests
-    if (defined $self->{last_request_time}) {
+    if (!$self->{broker_client} && defined $self->{last_request_time}) {
         my $now = Time::HiRes::time();  # High resolution time
         my $elapsed = $now - $self->{last_request_time};
         # Use dynamic delay if set by rate limit headers, otherwise default to 1.0s
@@ -2116,8 +2166,12 @@ sub send_request_streaming {
     # Record timestamp BEFORE request (prevents race conditions)
     $self->{last_request_time} = Time::HiRes::time();
     
-    # Rate limiting: Check if we need to wait before making request
-    if (time() < $self->{rate_limit_until}) {
+    # Store broker_request_id for later release
+    $self->{_current_broker_request_id} = $broker_request_id;
+    
+    # Local rate limit cooldown check (only when NOT using broker)
+    # When broker is active, it handles all rate limit delays centrally
+    if (!$self->{broker_client} && time() < $self->{rate_limit_until}) {
         my $wait = int($self->{rate_limit_until} - time()) + 1;
         print STDERR "[DEBUG][APIManager] Rate limited. Waiting ${wait}s before retry...\n" if should_log('DEBUG');
         
@@ -2494,10 +2548,17 @@ sub send_request_streaming {
     if ($@) {
         my $error = "Streaming request failed: $@";
         print STDERR "[DEBUG][APIManager $error\n" if should_log('DEBUG');
+        
+        # Release broker slot on error
+        $self->_release_broker_slot(undef, 599);  # 599 = network error
+        
         return { success => 0, error => $error };
     }
     
     if (!$resp->is_success) {
+        # Release broker slot with response info before returning
+        $self->_release_broker_slot($resp, $resp->code);
+        
         return $self->_handle_error_response($resp, $json, 1);
     }
     
@@ -2616,6 +2677,9 @@ sub send_request_streaming {
         print STDERR "[DEBUG][APIManager] Content preview: " . substr($response->{content}, 0, 200) . "...\n";
         print STDERR "[DEBUG][APIManager] ===== END API RESPONSE =====\n";
     }
+    
+    # Release broker slot on success
+    $self->_release_broker_slot($resp, 200);
     
     return $response;
 }
@@ -2976,6 +3040,84 @@ sub _process_rate_limit_headers {
                 if should_log('INFO');
         }
     }
+}
+
+=head2 _release_broker_slot
+
+Release the API slot back to the broker after request completes.
+Also reports rate limit headers for centralized tracking.
+
+Arguments:
+- $resp: HTTP::Response object (optional)
+- $status: HTTP status code (optional, defaults to 200)
+
+=cut
+
+sub _release_broker_slot {
+    my ($self, $resp, $status) = @_;
+    
+    return unless $self->{broker_client};
+    return unless $self->{_current_broker_request_id};
+    
+    $status ||= 200;
+    
+    # Extract relevant headers for broker
+    my %headers;
+    if ($resp && $resp->can('headers')) {
+        my $h = $resp->headers;
+        $h->scan(sub {
+            my ($name, $value) = @_;
+            my $lc_name = lc($name);
+            
+            # Rate limit headers
+            if ($lc_name eq 'x-ratelimit-remaining') {
+                $headers{'x-ratelimit-remaining'} = $value;
+            }
+            elsif ($lc_name eq 'x-ratelimit-reset') {
+                $headers{'x-ratelimit-reset'} = $value;
+            }
+            elsif ($lc_name eq 'retry-after') {
+                $headers{'retry-after'} = $value;
+            }
+            elsif ($lc_name eq 'x-github-total-quota-used') {
+                $headers{'x-github-total-quota-used'} = $value;
+            }
+            # GitHub Copilot quota headers - extract percentage remaining
+            elsif ($lc_name =~ /^x-quota-snapshot-/) {
+                if ($value =~ /rem=([\d.]+)/) {
+                    $headers{'x-github-total-quota-used'} = 100 - $1;  # Convert remaining to used
+                }
+            }
+        });
+    }
+    
+    # Calculate retry_after from response if 429
+    my $retry_after;
+    if ($status == 429) {
+        $retry_after = $headers{'retry-after'};
+        if (!$retry_after && $resp && $resp->can('decoded_content')) {
+            my $content = eval { decode_json($resp->decoded_content) };
+            if ($content && $content->{message} && $content->{message} =~ /retry in ([\d.]+)\s*s/i) {
+                $retry_after = int($1) + 1;
+            }
+        }
+        $retry_after ||= 60;  # Default fallback
+    }
+    
+    eval {
+        $self->{broker_client}->release_api_slot(
+            request_id => $self->{_current_broker_request_id},
+            status => $status,
+            retry_after => $retry_after,
+            headers => \%headers,
+        );
+    };
+    if ($@) {
+        print STDERR "[WARN][APIManager] Failed to release broker slot: $@\n" if should_log('WARN');
+    }
+    
+    # Clear the request ID
+    delete $self->{_current_broker_request_id};
 }
 
 =head2 _process_quota_headers

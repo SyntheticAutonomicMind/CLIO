@@ -359,6 +359,123 @@ sub send_blocked {
 
 # === End Message Bus Methods ===
 
+# === API Rate Limiting Methods (Phase 3) ===
+
+sub request_api_slot {
+    my ($self, $request_id) = @_;
+    
+    $request_id ||= int(rand(1000000));
+    
+    my $result = $self->send_and_wait({
+        type => 'request_api_slot',
+        agent_id => $self->{agent_id},
+        request_id => $request_id,
+    }, 10);  # Longer timeout for rate limit waits
+    
+    if (!$result) {
+        # Broker not responding - allow request to proceed
+        $self->log_debug("Broker not responding for API slot request, proceeding");
+        return { granted => 1, delay => 0 };
+    }
+    
+    if ($result->{type} eq 'api_slot_granted') {
+        $self->log_debug("API slot granted immediately");
+        return {
+            granted => 1,
+            delay => 0,
+            request_id => $result->{request_id},
+        };
+    }
+    elsif ($result->{type} eq 'api_slot_wait') {
+        $self->log_debug("API slot requires wait: $result->{delay}s ($result->{reason})");
+        return {
+            granted => 0,
+            delay => $result->{delay},
+            reason => $result->{reason},
+            in_flight => $result->{in_flight},
+            request_id => $result->{request_id},
+        };
+    }
+    
+    # Unknown response, allow request
+    return { granted => 1, delay => 0 };
+}
+
+sub release_api_slot {
+    my ($self, %args) = @_;
+    
+    my $msg = {
+        type => 'release_api_slot',
+        agent_id => $self->{agent_id},
+        request_id => $args{request_id} || 0,
+        status => $args{status},
+        retry_after => $args{retry_after},
+    };
+    
+    # Include rate limit headers if provided
+    if ($args{headers}) {
+        $msg->{headers} = $args{headers};
+    }
+    
+    my $result = $self->send_and_wait($msg, 2);
+    
+    return ($result && $result->{success}) ? 1 : 0;
+}
+
+sub get_rate_limit_status {
+    my ($self) = @_;
+    
+    my $result = $self->send_and_wait({
+        type => 'get_rate_limit_status',
+    }, 2);
+    
+    if ($result && $result->{type} eq 'rate_limit_status') {
+        return $result;
+    }
+    
+    return {
+        can_request => 1,
+        in_flight => 0,
+    };
+}
+
+sub wait_for_api_slot {
+    my ($self, $max_wait) = @_;
+    
+    $max_wait ||= 120;  # Default 2 minute max wait
+    my $start = time();
+    my $request_id = int(rand(1000000));
+    
+    while (time() - $start < $max_wait) {
+        my $result = $self->request_api_slot($request_id);
+        
+        if ($result->{granted}) {
+            return {
+                success => 1,
+                request_id => $request_id,
+                waited => time() - $start,
+            };
+        }
+        
+        # Need to wait
+        my $delay = $result->{delay} || 0.5;
+        $delay = 30 if $delay > 30;  # Cap individual waits at 30s
+        
+        $self->log_debug("Waiting ${delay}s for API slot (reason: $result->{reason})");
+        sleep($delay);
+    }
+    
+    # Timeout - return failure but include request_id so caller can proceed anyway
+    return {
+        success => 0,
+        request_id => $request_id,
+        waited => time() - $start,
+        reason => 'timeout',
+    };
+}
+
+# === End API Rate Limiting Methods ===
+
 
 sub send {
     my ($self, $msg) = @_;
