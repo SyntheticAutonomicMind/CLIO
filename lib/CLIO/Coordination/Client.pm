@@ -274,6 +274,31 @@ sub poll_user_inbox {
     return [];
 }
 
+sub acknowledge_messages {
+    my ($self, @message_ids) = @_;
+    
+    my $result = $self->send_and_wait({
+        type => 'acknowledge_messages',
+        message_ids => \@message_ids,
+    }, 2);
+    
+    return ($result && $result->{success}) ? 1 : 0;
+}
+
+sub get_message_history {
+    my ($self) = @_;
+    
+    my $result = $self->send_and_wait({
+        type => 'get_message_history',
+    }, 2);
+    
+    if ($result && $result->{type} eq 'message_history') {
+        return $result->{messages} || [];
+    }
+    
+    return [];
+}
+
 sub send_status {
     my ($self, %args) = @_;
     
