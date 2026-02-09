@@ -396,12 +396,11 @@ Most projects should use CLIO's instructions.md unchanged.
 
 Ensure `.gitignore` includes CLIO-specific entries:
 ```
-scratch/
-reference/
-ai-assisted/
-*.txt
-.clio/*.json
+# CLIO
+.clio/logs/
 .clio/sessions/
+.clio/memory/
+.clio/*json
 ```
 
 ### 5. Initialize or Update Git
