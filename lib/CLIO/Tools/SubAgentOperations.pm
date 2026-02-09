@@ -40,7 +40,7 @@ sub new {
     
     my $self = $class->SUPER::new(
         name => 'agent_operations',
-        supported_operations => [qw(spawn list status kill killall inbox send broadcast)],
+        supported_operations => [qw(spawn list status kill killall inbox acknowledge history send broadcast)],
         description => q{Sub-agent management for multi-agent coordination.
 
 Spawn and manage sub-agents to work on tasks in parallel.
@@ -71,9 +71,18 @@ Spawn and manage sub-agents to work on tasks in parallel.
    Returns: Count of terminated agents
 
 ━━━━━━━━━━━━━━━━━━━━━ COMMUNICATE (messages) ━━━━━━━━━━━━━━━━━━━━
--  inbox - Check for messages from sub-agents
+-  inbox - Check for UNREAD messages from sub-agents (non-destructive)
    Parameters: none
-   Returns: List of messages (questions, status updates, completions)
+   Returns: List of unread messages (questions, status updates, completions)
+   NOTE: Messages remain unread until you call acknowledge
+
+-  acknowledge - Mark messages as read (clears from inbox)
+   Parameters: message_ids (optional, array) - specific IDs to acknowledge, or omit for all
+   Returns: Confirmation
+
+-  history - View ALL messages from this session (read and unread)
+   Parameters: none
+   Returns: Complete message history
 
 -  send - Send guidance to a specific agent
    Parameters: agent_id (required), message (required)
@@ -88,6 +97,7 @@ EXAMPLE WORKFLOW:
 2. Monitor: agent_operations(operation: "list")
 3. Check messages: agent_operations(operation: "inbox")
 4. Reply if needed: agent_operations(operation: "send", agent_id: "agent-1", message: "yes")
+5. Mark as read: agent_operations(operation: "acknowledge")
 },
         %opts,
     );
@@ -101,7 +111,7 @@ sub schema {
         properties => {
             operation => {
                 type => 'string',
-                enum => ['spawn', 'list', 'status', 'kill', 'killall', 'inbox', 'send', 'broadcast'],
+                enum => ['spawn', 'list', 'status', 'kill', 'killall', 'inbox', 'acknowledge', 'history', 'send', 'broadcast'],
                 description => 'Operation to perform',
             },
             task => {
@@ -157,6 +167,12 @@ sub execute {
     }
     elsif ($operation eq 'inbox') {
         return $self->inbox($subagent_cmd);
+    }
+    elsif ($operation eq 'acknowledge') {
+        return $self->acknowledge($params, $subagent_cmd);
+    }
+    elsif ($operation eq 'history') {
+        return $self->history($subagent_cmd);
     }
     elsif ($operation eq 'send') {
         return $self->send($params, $subagent_cmd);
@@ -416,7 +432,7 @@ sub inbox {
     my $messages = $handler->{broker_client}->poll_user_inbox();
     
     unless ($messages && @$messages) {
-        return $self->success_result("No messages from sub-agents", action_description => "inbox empty", messages => []);
+        return $self->success_result("No unread messages from sub-agents", action_description => "inbox empty", messages => []);
     }
     
     my @formatted = map {
@@ -430,10 +446,106 @@ sub inbox {
     } @$messages;
     
     my $count = scalar(@formatted);
-    $action_desc = "received $count message(s) from sub-agents";
+    $action_desc = "found $count unread message(s) from sub-agents";
+    
+    # Build output that shows actual message content prominently
+    # This ensures AI cannot ignore the messages
+    my @output_lines;
+    push @output_lines, "=== UNREAD MESSAGES ($count) ===";
+    for my $msg (@formatted) {
+        my $from = $msg->{from} || 'unknown';
+        my $type = $msg->{type} || 'generic';
+        my $content = $msg->{content} || '';
+        push @output_lines, "";
+        push @output_lines, "--- Message #$msg->{id} from $from [$type] ---";
+        if (ref($content) eq 'HASH') {
+            for my $key (sort keys %$content) {
+                push @output_lines, "  $key: $content->{$key}";
+            }
+        } else {
+            push @output_lines, "  $content";
+        }
+    }
+    push @output_lines, "";
+    push @output_lines, "Call agent_operations(operation: 'acknowledge') to mark as read.";
     
     return $self->success_result(
-        "Received $count message(s)",
+        join("\n", @output_lines),
+        action_description => $action_desc,
+        messages => \@formatted,
+        count => $count,
+    );
+}
+
+sub acknowledge {
+    my ($self, $params, $handler) = @_;
+    
+    my $action_desc = "acknowledging messages";
+    
+    unless ($handler->{broker_client}) {
+        return $self->error_result("Broker not active");
+    }
+    
+    my $message_ids = $params->{message_ids} || [];
+    my $success = $handler->{broker_client}->acknowledge_messages(@$message_ids);
+    
+    if ($success) {
+        my $desc = @$message_ids ? "acknowledged " . scalar(@$message_ids) . " message(s)" : "acknowledged all messages";
+        return $self->success_result("Messages acknowledged", action_description => $desc);
+    } else {
+        return $self->error_result("Failed to acknowledge messages");
+    }
+}
+
+sub history {
+    my ($self, $handler) = @_;
+    
+    my $action_desc = "retrieving message history";
+    
+    unless ($handler->{broker_client}) {
+        return $self->success_result("No history (broker not active)", action_description => $action_desc, messages => []);
+    }
+    
+    my $messages = $handler->{broker_client}->get_message_history();
+    
+    unless ($messages && @$messages) {
+        return $self->success_result("No messages in history", action_description => "history empty", messages => []);
+    }
+    
+    my @formatted = map {
+        {
+            id => $_->{id},
+            from => $_->{from},
+            type => $_->{type},
+            content => $_->{content},
+            timestamp => $_->{timestamp},
+        }
+    } @$messages;
+    
+    my $count = scalar(@formatted);
+    $action_desc = "found $count message(s) in history";
+    
+    # Build output showing complete message history
+    my @output_lines;
+    push @output_lines, "=== MESSAGE HISTORY ($count messages) ===";
+    for my $msg (@formatted) {
+        my $from = $msg->{from} || 'unknown';
+        my $type = $msg->{type} || 'generic';
+        my $content = $msg->{content} || '';
+        my $time = localtime($msg->{timestamp});
+        push @output_lines, "";
+        push @output_lines, "--- Message #$msg->{id} from $from [$type] at $time ---";
+        if (ref($content) eq 'HASH') {
+            for my $key (sort keys %$content) {
+                push @output_lines, "  $key: $content->{$key}";
+            }
+        } else {
+            push @output_lines, "  $content";
+        }
+    }
+    
+    return $self->success_result(
+        join("\n", @output_lines),
         action_description => $action_desc,
         messages => \@formatted,
         count => $count,

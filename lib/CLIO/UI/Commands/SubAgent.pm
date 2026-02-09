@@ -90,6 +90,12 @@ sub handle {
     elsif ($subcommand eq 'inbox' || $subcommand eq 'messages') {
         return $self->cmd_inbox();
     }
+    elsif ($subcommand eq 'ack' || $subcommand eq 'acknowledge') {
+        return $self->cmd_ack($args);
+    }
+    elsif ($subcommand eq 'history' || $subcommand eq 'hist') {
+        return $self->cmd_history();
+    }
     elsif ($subcommand eq 'send') {
         return $self->cmd_send($args);
     }
@@ -507,14 +513,15 @@ sub cmd_inbox {
     my $messages = $self->{broker_client}->poll_user_inbox();
     
     unless ($messages && @$messages) {
-        $self->display_system_message("No messages from sub-agents.");
+        $self->display_system_message("No unread messages from sub-agents.");
+        $self->writeline("Use " . $self->colorize("/subagent history", 'BOLD') . " to see all messages", markdown => 0);
         return "";
     }
     
     # Enable pagination for long output
     $self->{chat}{pagination_enabled} = 1;
     
-    $self->display_section_header("AGENT MESSAGES (" . scalar(@$messages) . ")");
+    $self->display_section_header("UNREAD MESSAGES (" . scalar(@$messages) . ")");
     
     for my $msg (@$messages) {
         my $from = $msg->{from} || 'unknown';
@@ -546,6 +553,88 @@ sub cmd_inbox {
     }
     
     $self->writeline("Use " . $self->colorize("/subagent reply <agent-id> <response>", 'BOLD') . " to respond", markdown => 0);
+    $self->writeline("Use " . $self->colorize("/subagent ack", 'BOLD') . " to mark messages as read", markdown => 0);
+    
+    # Disable pagination
+    $self->{chat}{pagination_enabled} = 0;
+    
+    return "";  # Already displayed
+}
+
+sub cmd_ack {
+    my ($self, $args) = @_;
+    
+    unless ($self->{broker_client}) {
+        $self->display_error_message("Broker not running.");
+        return "";
+    }
+    
+    # Parse optional message IDs from args
+    my @ids;
+    if ($args) {
+        @ids = split /\s*,\s*|\s+/, $args;
+    }
+    
+    my $success = $self->{broker_client}->acknowledge_messages(@ids);
+    
+    if ($success) {
+        my $msg = @ids ? "Acknowledged " . scalar(@ids) . " message(s)" : "All messages acknowledged";
+        $self->display_system_message($msg);
+    } else {
+        $self->display_error_message("Failed to acknowledge messages");
+    }
+    
+    return "";
+}
+
+sub cmd_history {
+    my ($self) = @_;
+    
+    unless ($self->{broker_client}) {
+        $self->display_error_message("Broker not running. Spawn an agent first.");
+        return "";
+    }
+    
+    my $messages = $self->{broker_client}->get_message_history();
+    
+    unless ($messages && @$messages) {
+        $self->display_system_message("No messages in history.");
+        return "";
+    }
+    
+    # Enable pagination for long output
+    $self->{chat}{pagination_enabled} = 1;
+    
+    $self->display_section_header("MESSAGE HISTORY (" . scalar(@$messages) . ")");
+    
+    for my $msg (@$messages) {
+        my $from = $msg->{from} || 'unknown';
+        my $type = $msg->{type} || 'generic';
+        my $content = $msg->{content} || '';
+        my $time = localtime($msg->{timestamp});
+        my $id = $msg->{id};
+        
+        # Color by message type
+        my $type_color = 'DIM';
+        $type_color = 'YELLOW' if $type eq 'question';
+        $type_color = 'GREEN' if $type eq 'complete';
+        $type_color = 'RED' if $type eq 'blocked';
+        $type_color = 'CYAN' if $type eq 'status';
+        $type_color = 'MAGENTA' if $type eq 'discovery';
+        
+        $self->writeline($self->colorize("[$type]", $type_color) . " from " . 
+            $self->colorize($from, 'BOLD') . " (id: $id) at $time", markdown => 0);
+        
+        if (ref($content) eq 'HASH') {
+            for my $key (sort keys %$content) {
+                $self->display_key_value("  $key", $content->{$key}) if defined $content->{$key};
+            }
+        } else {
+            $self->writeline("  $content", markdown => 0);
+        }
+        
+        $self->writeline("", markdown => 0);
+    }
     
     # Disable pagination
     $self->{chat}{pagination_enabled} = 0;
@@ -662,7 +751,9 @@ sub cmd_help {
     $self->writeline("", markdown => 0);
     
     $self->display_section_header("COMMUNICATION");
-    $self->display_command_row("/subagent inbox", "Show messages from agents", 35);
+    $self->display_command_row("/subagent inbox", "Show UNREAD messages from agents", 35);
+    $self->display_command_row("/subagent ack [ids]", "Mark messages as read", 35);
+    $self->display_command_row("/subagent history", "Show ALL messages (read+unread)", 35);
     $self->display_command_row("/subagent send <id> <msg>", "Send message to agent", 35);
     $self->display_command_row("/subagent reply <id> <msg>", "Reply to agent question", 35);
     $self->display_command_row("/subagent broadcast <msg>", "Send message to all agents", 35);
