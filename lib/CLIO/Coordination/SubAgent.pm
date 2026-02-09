@@ -218,6 +218,7 @@ sub run_persistent_agent {
         config => $config,
         model => $model,
         session => $session->state(),  # Pass session state for thread tracking
+        broker_client => $client,      # Pass broker client for API rate limiting coordination
         debug => $debug,
     );
     

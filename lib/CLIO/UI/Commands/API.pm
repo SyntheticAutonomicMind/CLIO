@@ -663,11 +663,15 @@ sub _reinit_api_manager {
     
     print STDERR "[DEBUG][API] Re-initializing APIManager after config change\n" if $self->{debug};
     
+    # Preserve broker_client from existing APIManager if present
+    my $broker_client = $self->{ai_agent}->{api} ? $self->{ai_agent}->{api}{broker_client} : undef;
+    
     require CLIO::Core::APIManager;
     my $new_api = CLIO::Core::APIManager->new(
         debug => $self->{debug},
         session => $self->{session}->state(),
-        config => $self->{config}
+        config => $self->{config},
+        broker_client => $broker_client,  # Preserve broker coordination
     );
     $self->{ai_agent}->{api} = $new_api;
     
