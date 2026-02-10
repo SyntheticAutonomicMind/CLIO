@@ -1,0 +1,41 @@
+# Git repository
+.git
+.gitignore
+
+# GitHub specific
+.github
+
+# Development artifacts
+.clio/sessions
+.clio/memory
+.clio/cache
+ai-assisted
+scratch
+
+# Editor files
+*.swp
+*.swo
+*.bak
+*~
+.vscode
+.idea
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Test artifacts
+tests/results
+coverage
+
+# Build artifacts
+*.tar.gz
+*.zip
+
+# Documentation source (keep only essential docs)
+# docs/investigations
+
+# Temporary files
+/tmp
+*.tmp
+*.log
