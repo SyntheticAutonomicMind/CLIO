@@ -195,9 +195,10 @@ sub poll_for_token {
                 next;
             }
             elsif ($error eq 'slow_down') {
-                # Polling too fast, slow down
-                print STDERR "[WARN]GitHubAuth] Polling too fast, slowing down\n" if should_log('WARNING');
-                sleep($interval + 5);
+                # Polling too fast - per OAuth spec, PERMANENTLY increase interval by 5 seconds
+                $interval += 5;
+                print STDERR "[WARN]GitHubAuth] Polling too fast, increasing interval to ${interval}s\n" if should_log('WARNING');
+                sleep($interval);
                 next;
             }
             elsif ($error eq 'expired_token') {
