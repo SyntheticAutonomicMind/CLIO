@@ -109,7 +109,7 @@ We welcome security testing and responsible disclosure. Areas of interest:
 
 ## Changelog
 
-Security-related changes are noted in [CHANGELOG.md](CHANGELOG.md).
+Security-related changes are documented in git commit history and GitHub releases.
 
 ## Contact
 

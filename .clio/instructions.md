@@ -311,7 +311,6 @@ Remember: **A request completed WRONG is worse than a request completed SLOWLY b
 ai-assisted/YYYYMMDD/HHMM/
 ├── CONTINUATION_PROMPT.md  [MANDATORY] - Next session's complete context
 ├── AGENT_PLAN.md           [MANDATORY] - Remaining priorities & blockers
-├── CHANGELOG.md            [OPTIONAL]  - User-facing changes
 └── NOTES.md                [OPTIONAL]  - Technical notes
 ```
 
