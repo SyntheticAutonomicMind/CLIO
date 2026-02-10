@@ -155,6 +155,15 @@ This is perfect for: analyzing remote systems, running builds on specific hardwa
 sub route_operation {
     my ($self, $operation, $params, $context) = @_;
     
+    # Sandbox mode: Block all remote execution
+    if ($context && $context->{config} && $context->{config}->get('sandbox')) {
+        return $self->error_result(
+            "Sandbox mode: Remote execution is disabled.\n\n" .
+            "The --sandbox flag blocks all remote operations. " .
+            "This is a security feature to prevent the agent from reaching outside the local project."
+        );
+    }
+    
     if ($operation eq 'execute_remote') {
         return $self->execute_remote($params, $context);
     } elsif ($operation eq 'execute_parallel') {

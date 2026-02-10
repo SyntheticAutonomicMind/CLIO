@@ -172,6 +172,7 @@ For more examples, see [docs/USER_GUIDE.md](docs/USER_GUIDE.md#usage-examples).
 |----------|-------------|
 | [User Guide](docs/USER_GUIDE.md) | Complete usage guide with examples |
 | [Installation](docs/INSTALLATION.md) | Detailed installation instructions |
+| [Sandbox Mode](docs/SANDBOX.md) | Security isolation options |
 | [Architecture](docs/ARCHITECTURE.md) | System design and internals |
 | [Developer Guide](docs/DEVELOPER_GUIDE.md) | Contributing and extending CLIO |
 | [Remote Execution](docs/REMOTE_EXECUTION.md) | Distributed AI workflows |

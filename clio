@@ -38,6 +38,7 @@ OPTIONS:
     --input <text>     Process input and exit
     --exit             Exit after processing (with --input)
     --model <name>     Use specific model (temporary, not persisted)
+    --sandbox          Restrict file access to project directory only
     --no-custom-instructions  Skip .clio/instructions.md
     --no-ltm           Skip long-term memory pattern injection
     --incognito        Skip both custom instructions AND LTM (fresh audit mode)
@@ -126,6 +127,7 @@ my $config = CLIO::Core::Config->new(debug => $debug);
 my $should_exit = 0;
 my $skip_custom = 0;
 my $skip_ltm = 0;
+my $sandbox_mode = 0;  # Sandbox mode - restrict file access to project directory
 my $model_override = undef;  # Temporary model override from --model flag
 for (my $i = 0; $i < @ARGV; $i++) {
     if ($ARGV[$i] eq '--input' && defined $ARGV[$i+1]) {
@@ -158,6 +160,9 @@ for (my $i = 0; $i < @ARGV; $i++) {
         $skip_custom = 1;
         $skip_ltm = 1;
     }
+    if ($ARGV[$i] eq '--sandbox') {
+        $sandbox_mode = 1;
+    }
     if ($ARGV[$i] eq '--model' && defined $ARGV[$i+1]) {
         $model_override = $ARGV[$i+1];
     }
@@ -180,6 +185,12 @@ if (!$mode) {
     $mode = 'new';
 }
 print STDERR "[TRACE] Mode before session creation: $mode\n" if $debug;
+
+# Set sandbox mode in config (runtime only, not persisted)
+if ($sandbox_mode) {
+    $config->set('sandbox', 1, 0);  # 0 = don't mark as user-set (not persisted)
+    print STDERR "[INFO] Sandbox mode enabled - file access restricted to project directory\n";
+}
 
 # Create or load session
 if ($mode eq 'new') {
