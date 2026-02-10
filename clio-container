@@ -1,0 +1,146 @@
+#!/bin/bash
+# clio-container - Run CLIO in a sandboxed Docker container
+#
+# This script provides an easy way to run CLIO with true OS-level isolation.
+# The container can only access the specified project directory.
+#
+# Usage:
+#   clio-container [project_dir] [clio_args...]
+#
+# Examples:
+#   clio-container                           # Current directory, new session
+#   clio-container ~/projects/myapp          # Specific project
+#   clio-container ~/projects/myapp --resume # Resume session
+#   clio-container --new                     # Explicit new session
+#
+# The container:
+#   - Runs with --sandbox enabled (file access restricted to project)
+#   - Persists authentication across runs
+#   - Supports both Intel and Apple Silicon Macs
+#   - Is ephemeral (destroyed on exit, except auth)
+
+set -e
+
+# Configuration
+IMAGE_NAME="${CLIO_IMAGE:-ghcr.io/syntheticautonomicmind/clio:latest}"
+AUTH_VOLUME="clio-auth"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Print with color
+info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+error() { echo -e "${RED}[ERROR]${NC} $1"; }
+success() { echo -e "${GREEN}[OK]${NC} $1"; }
+
+# Check if Docker is installed
+if ! command -v docker &> /dev/null; then
+    error "Docker is not installed or not in PATH"
+    echo ""
+    echo "To install Docker, see: https://docs.docker.com/get-docker/"
+    echo ""
+    echo "On macOS with Homebrew:"
+    echo "  brew install docker"
+    echo "  brew install colima && colima start"
+    echo ""
+    echo "On Linux:"
+    echo "  curl -fsSL https://get.docker.com | sh"
+    exit 1
+fi
+
+# Check if Docker daemon is running
+if ! docker info &> /dev/null; then
+    error "Docker daemon is not running"
+    echo ""
+    echo "Start Docker:"
+    echo "  - macOS with Docker Desktop: Launch Docker.app"
+    echo "  - macOS with Colima: colima start"
+    echo "  - Linux: sudo systemctl start docker"
+    exit 1
+fi
+
+# Parse arguments
+# First argument might be a directory path or a clio flag
+PROJECT_DIR="."
+CLIO_ARGS=()
+
+if [[ $# -gt 0 ]]; then
+    # Check if first arg is a directory
+    if [[ -d "$1" ]]; then
+        PROJECT_DIR="$1"
+        shift
+    elif [[ ! "$1" =~ ^-- ]]; then
+        # First arg is not a flag and not a dir - treat as potential dir
+        if [[ -e "$1" ]]; then
+            error "Path exists but is not a directory: $1"
+            exit 1
+        else
+            # Could be a new directory or typo
+            warn "Directory does not exist: $1"
+            warn "Using current directory instead"
+        fi
+    fi
+fi
+
+# Remaining args go to CLIO
+CLIO_ARGS=("$@")
+
+# If no CLIO args and not resuming, default to --new
+if [[ ${#CLIO_ARGS[@]} -eq 0 ]]; then
+    CLIO_ARGS=("--new")
+fi
+
+# Resolve to absolute path
+PROJECT_PATH="$(cd "$PROJECT_DIR" && pwd)"
+
+# Create auth volume if it doesn't exist
+docker volume create "$AUTH_VOLUME" &> /dev/null || true
+
+# Header
+echo ""
+echo "╔══════════════════════════════════════════════════════════════╗"
+echo "║             CLIO Container Sandbox                           ║"
+echo "╚══════════════════════════════════════════════════════════════╝"
+echo ""
+info "Project: $PROJECT_PATH"
+info "Image:   $IMAGE_NAME"
+echo ""
+echo "┌─────────────────────────────────────────────────────────────┐"
+echo "│ SECURITY                                                    │"
+echo "├─────────────────────────────────────────────────────────────┤"
+echo "│ ✓ File access: /workspace only (your project)              │"
+echo "│ ✓ Sandbox mode: enabled (--sandbox)                        │"
+echo "│ ✓ Container: ephemeral (destroyed on exit)                 │"
+echo "│ ! Network: unrestricted                                    │"
+echo "└─────────────────────────────────────────────────────────────┘"
+echo ""
+
+# Pull latest image (skip if offline)
+info "Checking for updates..."
+if docker pull "$IMAGE_NAME" 2>/dev/null; then
+    success "Image up to date"
+else
+    warn "Could not pull latest image (offline?). Using cached version."
+fi
+echo ""
+
+# Run the container
+info "Starting CLIO..."
+echo ""
+
+docker run -it --rm \
+    --cap-drop ALL \
+    --security-opt no-new-privileges \
+    -v "$PROJECT_PATH":/workspace:rw \
+    -v "$AUTH_VOLUME":/root/.clio \
+    -w /workspace \
+    "$IMAGE_NAME" \
+    --sandbox "${CLIO_ARGS[@]}"
+
+echo ""
+success "Container exited cleanly"

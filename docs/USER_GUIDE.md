@@ -16,9 +16,10 @@
 8. [Configuration](#configuration)
 9. [Customization](#customization)
 10. [Skills](#skills)
-11. [Tips & Best Practices](#tips--best-practices)
-12. [Troubleshooting](#troubleshooting)
-13. [FAQ](#faq)
+11. [Security & Sandbox Mode](#security--sandbox-mode)
+12. [Tips & Best Practices](#tips--best-practices)
+13. [Troubleshooting](#troubleshooting)
+14. [FAQ](#faq)
 
 ---------------------------------------------------
 
@@ -1722,6 +1723,59 @@ System prompts define CLIO's base behavior and personality. You can customize th
 Create `.clio/instructions.md` in your project root. This content is automatically appended to the system prompt when working in that directory.
 
 Variables in `${brackets}` are replaced when the skill is executed.
+
+---------------------------------------------------
+
+## Security & Sandbox Mode
+
+CLIO provides two levels of isolation to protect your system:
+
+### Soft Sandbox (`--sandbox` flag)
+
+Restricts file operations to your project directory:
+
+```bash
+clio --sandbox --new
+```
+
+**What Gets Restricted:**
+- File operations: blocked outside project
+- Remote execution: completely blocked
+- Version control: limited to project repository
+- Terminal operations: NOT restricted
+
+### Container Sandbox (Docker)
+
+For complete isolation, run CLIO in a container:
+
+```bash
+# Using the wrapper script
+./clio-container ~/projects/myapp
+
+# Or directly with Docker
+docker run -it --rm \
+    -v "$(pwd)":/workspace \
+    -v clio-auth:/root/.clio \
+    -w /workspace \
+    ghcr.io/syntheticautonomicmind/clio:latest \
+    --sandbox --new
+```
+
+**What Gets Restricted:**
+- Filesystem: only project directory accessible
+- All other host files: completely inaccessible
+- Network: unrestricted (potential risk)
+
+### When to Use Each Mode
+
+| Scenario | Recommendation |
+|----------|----------------|
+| Trusted environment | No sandbox needed |
+| Unfamiliar codebase | `--sandbox` flag |
+| Sensitive project | `--sandbox` flag |
+| Maximum security | Container sandbox |
+
+For detailed information, see [docs/SANDBOX.md](SANDBOX.md).
 
 ---------------------------------------------------
 

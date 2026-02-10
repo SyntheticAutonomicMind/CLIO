@@ -1,17 +1,17 @@
 # CLIO Sandbox Mode
 
-CLIO provides two levels of sandbox isolation to help protect your system from unintended changes.
+CLIO provides two levels of isolation to help protect your system:
 
-## Overview
+| Mode | Method | Protection Level |
+|------|--------|------------------|
+| **Soft Sandbox** | `--sandbox` flag | Prevents accidental file access |
+| **Container Sandbox** | `clio-container` script | True OS-level isolation |
 
-| Mode | Flag | Protection | Use Case |
-|------|------|------------|----------|
-| **Soft Sandbox** | `--sandbox` | Application-level | Prevent accidental file access outside project |
-| **Docker Sandbox** | `scripts/clio-sandbox.sh` | OS-level | True isolation for maximum security |
+---
 
 ## Soft Sandbox (`--sandbox` flag)
 
-The `--sandbox` flag enables application-level restrictions that prevent CLIO from accessing files outside your project directory.
+The `--sandbox` flag restricts file access to your project directory, helping prevent accidental changes outside your workspace.
 
 ### Usage
 
@@ -32,20 +32,6 @@ clio --sandbox --resume
 | **version_control** | Repository path must be within project |
 | **terminal_operations** | **NOT restricted** (see Limitations) |
 
-### Limitations
-
-**Important:** The soft sandbox does NOT restrict terminal operations.
-
-The agent can still execute arbitrary shell commands, which means:
-- It can read files outside the project via `cat`, `head`, etc.
-- It can write files outside the project via `echo`, `>`, etc.
-- It can access network via `curl`, `wget`, etc.
-- It can execute any program on your system
-
-**The soft sandbox prevents accidental access, not malicious behavior.**
-
-For true isolation, use the Docker sandbox (see below).
-
 ### Error Messages
 
 When the agent tries to access a path outside the project:
@@ -62,104 +48,109 @@ Sandbox mode: Remote execution is disabled.
 The --sandbox flag blocks all remote operations. This is a security feature to prevent the agent from reaching outside the local project.
 ```
 
-## Docker Sandbox (True Isolation)
+### Limitations
 
-For complete isolation, run CLIO inside a Docker container that only has access to your project directory.
+**Important:** The soft sandbox does NOT restrict terminal operations.
 
-### Prerequisites
+The agent can still execute arbitrary shell commands, which means:
+- It can read files outside the project via `cat`, `head`, etc.
+- It can write files outside the project via `echo`, `>`, etc.
+- It can access network via `curl`, `wget`, etc.
+- It can execute any program on your system
 
-- Docker or rootless Docker installed
-- CLIO Docker image built
+**The soft sandbox prevents accidental access, not malicious behavior.**
 
-### Building the Image
+For true isolation, use the `clio-container` script.
 
-```bash
-# From CLIO project root
-docker build -t clio-sandbox:latest -f scripts/Dockerfile.sandbox .
-```
+---
+
+## Container Sandbox (`clio-container`)
+
+For complete filesystem isolation, use the `clio-container` wrapper script. It runs CLIO inside a Docker container that can only access your project directory.
+
+### Requirements
+
+- Docker installed and running
+- macOS: Docker Desktop or [Colima](https://github.com/abiosoft/colima)
+- Linux: Docker Engine
 
 ### Usage
 
 ```bash
-# Run CLIO sandboxed in a specific project
-./scripts/clio-sandbox.sh ~/projects/myapp --new
+# Run CLIO sandboxed in current directory
+./clio-container
 
-# Run in current directory
-./scripts/clio-sandbox.sh --new
+# Run in a specific project
+./clio-container ~/projects/myapp
 
 # Resume a session
-./scripts/clio-sandbox.sh ~/projects/myapp --resume
+./clio-container ~/projects/myapp --resume
+
+# Pass any CLIO flags
+./clio-container ~/projects/myapp --debug --new
 ```
+
+### What It Does
+
+1. **Checks Docker** - Errors if Docker isn't installed or running
+2. **Creates auth volume** - Persists your API authentication between runs
+3. **Pulls latest image** - Updates to newest CLIO version
+4. **Starts container** - With security restrictions and `--sandbox` enabled
+5. **Cleans up** - Container destroyed on exit, auth preserved
 
 ### Security Properties
 
 | Property | Status |
 |----------|--------|
-| Filesystem access | ✅ Limited to project directory only |
-| Network access | ⚠️ Unrestricted (data exfiltration possible) |
-| Container capabilities | ✅ All dropped |
-| Privilege escalation | ✅ Blocked |
-| Auth persistence | ✅ Stored in named Docker volume |
+| Filesystem access | [OK] Limited to mounted project directory only |
+| Sandbox mode | [OK] Automatically enabled |
+| Container capabilities | [OK] All dropped |
+| Privilege escalation | [OK] Blocked |
+| Auth persistence | [OK] Via Docker volume |
+| Network access | [WARN] Unrestricted |
 
-### How It Works
+### Container Image
 
-The Docker sandbox:
-
-1. Mounts your project directory as `/workspace` in the container
-2. Drops all Linux capabilities
-3. Prevents privilege escalation
-4. Persists CLIO config/auth in a named volume (`clio-sandbox-auth`)
-5. Destroys the container on exit (ephemeral)
-
-### Rootless Docker (Recommended)
-
-For additional security on Linux, use [rootless Docker](https://docs.docker.com/engine/security/rootless/):
-
-```bash
-# Install prerequisites
-sudo apt-get install uidmap dbus-user-session
-
-# Install rootless Docker
-dockerd-rootless-setuptool.sh install
-
-# Configure shell
-export DOCKER_HOST=unix:///run/user/$(id -u)/docker.sock
+```
+ghcr.io/syntheticautonomicmind/clio:latest
 ```
 
-### Network Isolation
+Supports: `linux/amd64` (Intel/AMD) and `linux/arm64` (Apple Silicon, ARM)
 
-The Docker sandbox does NOT restrict network access by default. The agent can:
-- Make HTTP requests to external servers
-- Download files from the internet
-- Potentially exfiltrate data
+### Manual Docker Usage
 
-For network isolation, consider:
-- Running on an isolated VM
-- Using Docker network restrictions
-- Firewall rules to block container traffic
+If you prefer to run Docker directly:
 
-## Choosing the Right Mode
+```bash
+# Create auth volume (once)
+docker volume create clio-auth
 
-| If you need... | Use... |
-|----------------|--------|
-| Quick protection against accidents | `--sandbox` flag |
-| True filesystem isolation | Docker sandbox |
-| Complete isolation (incl. network) | Docker on isolated VM |
-| Zero restrictions (trusted environment) | No sandbox (default) |
+# Run CLIO
+docker run -it --rm \
+    --cap-drop ALL \
+    --security-opt no-new-privileges \
+    -v "$(pwd)":/workspace \
+    -v clio-auth:/root/.clio \
+    -w /workspace \
+    ghcr.io/syntheticautonomicmind/clio:latest \
+    --sandbox --new
+```
 
-## Security Best Practices
+### Environment Variables
 
-1. **Don't run untrusted code** - Even in a sandbox, AI agents can make mistakes
-2. **Review changes before committing** - Use `git diff` before `git commit`
-3. **Use sandbox for unfamiliar projects** - Extra protection when exploring new codebases
-4. **Consider Docker for sensitive work** - When mistakes could be costly
-5. **Back up important data** - Sandboxes reduce but don't eliminate risk
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `CLIO_IMAGE` | Override container image | `ghcr.io/syntheticautonomicmind/clio:latest` |
+
+Example: `CLIO_IMAGE=clio:dev ./clio-container`
+
+---
 
 ## Technical Implementation
 
 ### Soft Sandbox Path Resolution
 
-The soft sandbox resolves all paths to absolute form and checks if they start with the project directory:
+The soft sandbox resolves all paths to absolute form and checks containment:
 
 ```perl
 # Path must be exactly project_dir or start with project_dir/
@@ -173,23 +164,27 @@ This handles:
 - Tilde expansion (`~/project/file`)
 - Symlink resolution
 
-### Docker Sandbox Container Security
+---
 
-The container runs with:
+## When to Use Each Mode
 
-```bash
-docker run --rm -it \
-    --cap-drop ALL \                    # Drop all capabilities
-    --security-opt no-new-privileges \  # Prevent privilege escalation
-    -v "$PROJECT_PATH":/workspace:rw \  # Only project is mounted
-    -v "$AUTH_VOLUME":/root/.clio \     # Persist auth
-    -w /workspace \
-    clio-sandbox:latest \
-    clio "$@"
-```
+| Scenario | Recommendation |
+|----------|----------------|
+| Trusted local environment | No sandbox needed |
+| Exploring unfamiliar codebase | `--sandbox` flag |
+| Working on sensitive project | `--sandbox` flag |
+| Maximum security required | `clio-container` |
+| CI/CD pipelines | Container image directly |
+
+## Security Best Practices
+
+1. **Review changes before committing** - Use `git diff` before `git commit`
+2. **Use sandbox for unfamiliar projects** - Extra protection when exploring new codebases
+3. **Don't rely solely on soft sandbox** - It prevents accidents, not attacks
+4. **Use containers for sensitive work** - When mistakes could be costly
+5. **Consider network isolation** - Container doesn't restrict network by default
 
 ## See Also
 
-- [INSTALLATION.md](INSTALLATION.md) - Installing CLIO
 - [USER_GUIDE.md](USER_GUIDE.md) - General usage guide
 - [REMOTE_EXECUTION.md](REMOTE_EXECUTION.md) - Remote execution (blocked in sandbox)
