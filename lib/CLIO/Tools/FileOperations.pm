@@ -434,6 +434,85 @@ sub _release_file_lock {
     }
 }
 
+=head2 _check_sandbox
+
+Check if a path is allowed under sandbox mode.
+
+Sandbox mode restricts all file operations to the project directory.
+This is a soft sandbox - terminal operations are NOT restricted.
+
+Arguments:
+- path: Path to check (relative or absolute)
+- context: Context with config object
+
+Returns: Hashref with:
+- allowed: 1 if allowed, 0 if blocked
+- error: Error message if blocked
+
+=cut
+
+sub _check_sandbox {
+    my ($self, $path, $context) = @_;
+    
+    # Check if sandbox mode is enabled
+    my $config = $context->{config};
+    return { allowed => 1 } unless $config;
+    
+    my $sandbox_enabled = $config->get('sandbox');
+    return { allowed => 1 } unless $sandbox_enabled;
+    
+    # Get project directory (working directory)
+    use Cwd qw(abs_path getcwd realpath);
+    my $project_dir = getcwd();  # Default to current working directory
+    
+    # Try to get from session state if available
+    if ($context->{session} && $context->{session}->{state}) {
+        my $session_wd = $context->{session}->{state}->{working_directory};
+        $project_dir = $session_wd if $session_wd;
+    }
+    
+    # Resolve project directory to absolute path
+    $project_dir = realpath($project_dir) || abs_path($project_dir) || $project_dir;
+    
+    # Expand tilde in path
+    $path =~ s/^~/$ENV{HOME}/;
+    
+    # Resolve path to absolute - handle relative paths
+    my $resolved_path;
+    if ($path =~ m{^/}) {
+        # Absolute path
+        $resolved_path = realpath($path) || $path;
+    } else {
+        # Relative path - resolve against project directory
+        use File::Spec;
+        my $full_path = File::Spec->rel2abs($path, $project_dir);
+        $resolved_path = realpath($full_path) || $full_path;
+    }
+    
+    # Normalize paths for comparison (ensure trailing slash handling)
+    $project_dir =~ s{/+$}{};
+    $resolved_path =~ s{/+$}{};
+    
+    # Check if path is inside project directory
+    # Path is allowed if it equals project_dir OR starts with project_dir/
+    my $is_inside = ($resolved_path eq $project_dir) ||
+                    ($resolved_path =~ /^\Q$project_dir\E\//);
+    
+    if ($is_inside) {
+        print STDERR "[DEBUG][FileOp] Sandbox: allowed path $resolved_path (inside $project_dir)\n" 
+            if should_log('DEBUG');
+        return { allowed => 1 };
+    }
+    
+    print STDERR "[INFO][FileOp] Sandbox: BLOCKED path $resolved_path (outside $project_dir)\n" 
+        if should_log('INFO');
+    
+    return {
+        allowed => 0,
+        error => "Sandbox mode: Access denied to '$path' - path is outside project directory '$project_dir'",
+    };
+}
+
 #
 # READ OPERATIONS
 #
@@ -447,6 +526,11 @@ sub read_file {
     
     # Validation
     return $self->error_result("Missing 'path' parameter") unless $path;
+    
+    # Sandbox check
+    my $sandbox_check = $self->_check_sandbox($path, $context);
+    return $self->error_result($sandbox_check->{error}) unless $sandbox_check->{allowed};
+    
     return $self->error_result("File not found: $path") unless -f $path;
     return $self->error_result("File not readable: $path") unless -r $path;
     
@@ -530,6 +614,10 @@ sub list_dir {
     my $path = $params->{path} || '.';
     my $recursive = $params->{recursive} || 0;
     
+    # Sandbox check
+    my $sandbox_check = $self->_check_sandbox($path, $context);
+    return $self->error_result($sandbox_check->{error}) unless $sandbox_check->{allowed};
+    
     # Validation
     return $self->error_result("Directory not found: $path") unless -d $path;
     return $self->error_result("Directory not readable: $path") unless -r $path;
@@ -604,6 +692,10 @@ sub file_exists {
     
     return $self->error_result("Missing 'path' parameter") unless $path;
     
+    # Sandbox check
+    my $sandbox_check = $self->_check_sandbox($path, $context);
+    return $self->error_result($sandbox_check->{error}) unless $sandbox_check->{allowed};
+    
     print STDERR "[DEBUG][FileOp] Checking existence: $path\n" if should_log('DEBUG');
     
     my $exists = -e $path;
@@ -626,6 +718,11 @@ sub get_file_info {
     my $path = $params->{path};
     
     return $self->error_result("Missing 'path' parameter") unless $path;
+    
+    # Sandbox check
+    my $sandbox_check = $self->_check_sandbox($path, $context);
+    return $self->error_result($sandbox_check->{error}) unless $sandbox_check->{allowed};
+    
     return $self->error_result("File not found: $path") unless -e $path;
     
     print STDERR "[DEBUG][FileOp] Getting file info: $path\n" if should_log('DEBUG');
@@ -711,6 +808,11 @@ sub file_search {
     my $directory = $params->{directory} || '.';
     
     return $self->error_result("Missing 'pattern' parameter") unless $pattern;
+    
+    # Sandbox check for directory
+    my $sandbox_check = $self->_check_sandbox($directory, $context);
+    return $self->error_result($sandbox_check->{error}) unless $sandbox_check->{allowed};
+    
     return $self->error_result("Directory not found: $directory") unless -d $directory;
     
     print STDERR "[DEBUG][FileOp] Searching files: pattern=$pattern, dir=$directory\n" if should_log('DEBUG');
@@ -1158,6 +1260,11 @@ sub create_file {
     
     return $self->error_result("Missing 'path' parameter") unless $path;
     return $self->error_result("Missing 'content' parameter") unless defined $content;
+    
+    # Sandbox check (before other validation to give clear error)
+    my $sandbox_check = $self->_check_sandbox($path, $context);
+    return $self->error_result($sandbox_check->{error}) unless $sandbox_check->{allowed};
+    
     return $self->error_result("File already exists: $path") if -e $path;
     
     # Check authorization
@@ -1224,6 +1331,11 @@ sub write_file {
     
     return $self->error_result("Missing 'path' parameter") unless $path;
     return $self->error_result("Missing 'content' parameter") unless defined $content;
+    
+    # Sandbox check
+    my $sandbox_check = $self->_check_sandbox($path, $context);
+    return $self->error_result($sandbox_check->{error}) unless $sandbox_check->{allowed};
+    
     return $self->error_result("File not found: $path") unless -f $path;
     
     # Check authorization
@@ -1282,6 +1394,11 @@ sub append_file {
     
     return $self->error_result("Missing 'path' parameter") unless $path;
     return $self->error_result("Missing 'content' parameter") unless defined $content;
+    
+    # Sandbox check
+    my $sandbox_check = $self->_check_sandbox($path, $context);
+    return $self->error_result($sandbox_check->{error}) unless $sandbox_check->{allowed};
+    
     return $self->error_result("File not found: $path") unless -f $path;
     
     # Check authorization
@@ -1342,6 +1459,11 @@ sub replace_string {
     return $self->error_result("Missing 'path' parameter") unless $path;
     return $self->error_result("Missing 'old_string' parameter") unless defined $old_string;
     return $self->error_result("Missing 'new_string' parameter") unless defined $new_string;
+    
+    # Sandbox check
+    my $sandbox_check = $self->_check_sandbox($path, $context);
+    return $self->error_result($sandbox_check->{error}) unless $sandbox_check->{allowed};
+    
     return $self->error_result("File not found: $path") unless -f $path;
     
     # Multi-agent coordination: Request file lock via broker
@@ -1540,6 +1662,11 @@ sub insert_at_line {
     return $self->error_result("Missing 'path' parameter") unless $path;
     return $self->error_result("Missing 'line_number' parameter") unless defined $line_number;
     return $self->error_result("Missing 'content' parameter") unless defined $content;
+    
+    # Sandbox check
+    my $sandbox_check = $self->_check_sandbox($path, $context);
+    return $self->error_result($sandbox_check->{error}) unless $sandbox_check->{allowed};
+    
     return $self->error_result("File not found: $path") unless -f $path;
     return $self->error_result("Invalid line number") unless $line_number > 0;
     
@@ -1598,6 +1725,11 @@ sub delete_file {
     my $recursive = $params->{recursive} || 0;
     
     return $self->error_result("Missing 'path' parameter") unless $path;
+    
+    # Sandbox check
+    my $sandbox_check = $self->_check_sandbox($path, $context);
+    return $self->error_result($sandbox_check->{error}) unless $sandbox_check->{allowed};
+    
     return $self->error_result("Path not found: $path") unless -e $path;
     
     # Check authorization
@@ -1662,6 +1794,14 @@ sub rename_file {
     
     return $self->error_result("Missing 'old_path' parameter") unless $old_path;
     return $self->error_result("Missing 'new_path' parameter") unless $new_path;
+    
+    # Sandbox check for both paths
+    my $sandbox_check = $self->_check_sandbox($old_path, $context);
+    return $self->error_result($sandbox_check->{error}) unless $sandbox_check->{allowed};
+    
+    $sandbox_check = $self->_check_sandbox($new_path, $context);
+    return $self->error_result($sandbox_check->{error}) unless $sandbox_check->{allowed};
+    
     return $self->error_result("Source not found: $old_path") unless -e $old_path;
     return $self->error_result("Destination already exists: $new_path") if -e $new_path;
     
@@ -1722,6 +1862,11 @@ sub create_directory {
     my $path = $params->{path};
     
     return $self->error_result("Missing 'path' parameter") unless $path;
+    
+    # Sandbox check
+    my $sandbox_check = $self->_check_sandbox($path, $context);
+    return $self->error_result($sandbox_check->{error}) unless $sandbox_check->{allowed};
+    
     return $self->error_result("Directory already exists: $path") if -d $path;
     
     # Check authorization

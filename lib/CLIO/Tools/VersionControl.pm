@@ -68,6 +68,13 @@ sub route_operation {
     
     # Verify git repository
     my $repo_path = $params->{repository_path} || '.';
+    
+    # Sandbox mode: Check if repository_path is within project directory
+    if ($context && $context->{config} && $context->{config}->get('sandbox')) {
+        my $sandbox_check = $self->_check_sandbox_path($repo_path, $context);
+        return $self->error_result($sandbox_check->{error}) unless $sandbox_check->{allowed};
+    }
+    
     unless ($self->_is_git_repo($repo_path)) {
         return $self->error_result("Not a Git repository: $repo_path");
     }
@@ -555,6 +562,50 @@ sub tag {
     }
     
     return $result;
+}
+
+sub _check_sandbox_path {
+    my ($self, $path, $context) = @_;
+    
+    use Cwd qw(abs_path getcwd realpath);
+    use File::Spec;
+    
+    # Get project directory
+    my $project_dir = getcwd();
+    if ($context->{session} && $context->{session}->{state}) {
+        my $session_wd = $context->{session}->{state}->{working_directory};
+        $project_dir = $session_wd if $session_wd;
+    }
+    $project_dir = realpath($project_dir) || abs_path($project_dir) || $project_dir;
+    
+    # Expand tilde
+    $path =~ s/^~/$ENV{HOME}/;
+    
+    # Resolve path
+    my $resolved_path;
+    if ($path =~ m{^/}) {
+        $resolved_path = realpath($path) || $path;
+    } else {
+        my $full_path = File::Spec->rel2abs($path, $project_dir);
+        $resolved_path = realpath($full_path) || $full_path;
+    }
+    
+    # Normalize paths
+    $project_dir =~ s{/+$}{};
+    $resolved_path =~ s{/+$}{};
+    
+    # Check containment
+    my $is_inside = ($resolved_path eq $project_dir) ||
+                    ($resolved_path =~ /^\Q$project_dir\E\//);
+    
+    if ($is_inside) {
+        return { allowed => 1 };
+    }
+    
+    return {
+        allowed => 0,
+        error => "Sandbox mode: Access denied to '$path' - path is outside project directory '$project_dir'",
+    };
 }
 
 sub _is_git_repo {
