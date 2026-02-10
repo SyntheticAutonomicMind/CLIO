@@ -8,12 +8,13 @@
 
 1. [System Requirements](#system-requirements)
 2. [Quick Installation](#quick-installation)
-3. [Installation Options](#installation-options)
-4. [Configuration](#configuration)
-5. [Verification](#verification)
-6. [Uninstallation](#uninstallation)
-7. [Troubleshooting](#troubleshooting)
-8. [Platform-Specific Notes](#platform-specific-notes)
+3. [Docker Installation](#docker-installation)
+4. [Installation Options](#installation-options)
+5. [Configuration](#configuration)
+6. [Verification](#verification)
+7. [Uninstallation](#uninstallation)
+8. [Troubleshooting](#troubleshooting)
+9. [Platform-Specific Notes](#platform-specific-notes)
 
 ---------------------------------------------------
 
@@ -123,6 +124,68 @@ clio --new
 ```
 
 That's it! CLIO is now installed to `/opt/clio` with a symlink at `/usr/local/bin/clio`.
+
+---------------------------------------------------
+
+## Docker Installation
+
+**The easiest way to run CLIO with full isolation:**
+
+### Quick Start
+
+```bash
+# Run CLIO in a container (project directory mounted)
+docker run -it --rm \
+    -v "$(pwd)":/workspace \
+    -v clio-auth:/root/.clio \
+    -w /workspace \
+    ghcr.io/syntheticautonomicmind/clio:latest \
+    --new
+```
+
+### Using the Wrapper Script
+
+For convenience, CLIO provides a `clio-container` wrapper:
+
+```bash
+# Clone the repo to get the wrapper script
+git clone https://github.com/SyntheticAutonomicMind/CLIO.git
+cd clio
+
+# Run sandboxed in any project
+./clio-container ~/projects/myapp
+```
+
+The wrapper:
+- Checks Docker is installed and running
+- Creates a persistent auth volume
+- Pulls the latest CLIO image
+- Runs with `--sandbox` enabled automatically
+
+### Supported Architectures
+
+| Architecture | Platform |
+|--------------|----------|
+| `linux/amd64` | Intel/AMD (x86-64) |
+| `linux/arm64` | Apple Silicon, ARM servers |
+
+### Image Tags
+
+| Tag | Description |
+|-----|-------------|
+| `:latest` | Most recent stable release |
+| `:YYYYMMDD.N` | Specific version (e.g., `:20260210.1`) |
+| `:sha-XXXXXX` | Specific Git commit |
+
+### Benefits
+
+- No Perl installation required
+- Works on any system with Docker
+- Includes all dependencies
+- Automatic sandboxing (file access limited to project)
+- Auth persists across runs
+
+See [docs/SANDBOX.md](SANDBOX.md) for security details.
 
 ---------------------------------------------------
 

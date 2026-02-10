@@ -76,6 +76,16 @@ brew tap SyntheticAutonomicMind/homebrew-SAM
 brew install clio
 ```
 
+**Docker (Any Platform)**
+```bash
+docker run -it --rm \
+    -v "$(pwd)":/workspace \
+    -v clio-auth:/root/.clio \
+    -w /workspace \
+    ghcr.io/syntheticautonomicmind/clio:latest \
+    --new
+```
+
 **Manual**
 ```bash
 git clone https://github.com/SyntheticAutonomicMind/CLIO.git
