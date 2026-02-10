@@ -152,16 +152,20 @@ sub poll_for_token {
     
     print STDERR "[INFO][GitHubAuth] Polling for access token (15min timeout)...\n" if should_log('INFO');
     
-    # Enable periodic signal delivery during polling
-    # GitHub auth can block for up to 15 minutes waiting for user
-    # Without ALRM, Ctrl-C won't save session state
-    my $alarm_handler = sub {
-        alarm($interval);  # Re-arm using same interval as polling
-    };
-    local $SIG{ALRM} = $alarm_handler;
-    alarm($interval);
+    # Track next poll time to avoid polling too fast
+    my $next_poll_time = time();
     
     while (time() < $timeout) {
+        # Wait until next poll time (interruptible sleep for Ctrl-C)
+        while (time() < $next_poll_time) {
+            my $remaining = $next_poll_time - time();
+            last if $remaining <= 0;
+            sleep(1);  # Sleep in 1-second increments for responsiveness
+        }
+        
+        # Set next poll time BEFORE making request (so slow_down is respected)
+        $next_poll_time = time() + $interval;
+        
         my $request = HTTP::Request->new(POST => $url);
         $request->header('Accept' => 'application/json');
         $request->header('Content-Type' => 'application/json');
@@ -177,12 +181,15 @@ sub poll_for_token {
         my $response = $self->{ua}->request($request);
         
         unless ($response->is_success) {
-            # Exponential backoff on rate limit
-            sleep($interval);
-            next;
+            # HTTP error (rare - GitHub usually returns 200 with error in body)
+            print STDERR "[WARN]GitHubAuth] HTTP error during polling: " . $response->code . "\n" if should_log('WARNING');
+            next;  # Will wait at top of loop
         }
         
         my $data = decode_json($response->decoded_content);
+        
+        # DEBUG: Log the full response
+        print STDERR "[DEBUG][GitHubAuth] Poll response: " . $response->decoded_content . "\n" if should_log('DEBUG');
         
         # Check for errors
         if ($data->{error}) {
@@ -191,32 +198,29 @@ sub poll_for_token {
             if ($error eq 'authorization_pending') {
                 # User hasn't authorized yet, keep polling
                 print STDERR "[DEBUG][GitHubAuth] Authorization pending...\n" if should_log('DEBUG');
-                sleep($interval);
-                next;
+                next;  # Will wait at top of loop
             }
             elsif ($error eq 'slow_down') {
                 # Polling too fast - per OAuth spec, PERMANENTLY increase interval by 5 seconds
                 $interval += 5;
+                # Also push back next poll time by the new interval
+                $next_poll_time = time() + $interval;
                 print STDERR "[WARN]GitHubAuth] Polling too fast, increasing interval to ${interval}s\n" if should_log('WARNING');
-                sleep($interval);
-                next;
+                next;  # Will wait at top of loop
             }
             elsif ($error eq 'expired_token') {
                 # Device code expired
                 print STDERR "[ERROR][GitHubAuth] Device code expired\n" if should_log('ERROR');
-                alarm(0);  # Disable alarm before dying
                 die "Device code expired. Please try again.";
             }
             elsif ($error eq 'access_denied') {
                 # User denied authorization
                 print STDERR "[ERROR][GitHubAuth] User denied authorization\n" if should_log('ERROR');
-                alarm(0);  # Disable alarm before dying
                 die "Authorization denied by user";
             }
             else {
                 # Unknown error
                 print STDERR "[ERROR][GitHubAuth] Token poll error: $error\n" if should_log('ERROR');
-                alarm(0);  # Disable alarm before dying
                 die "Token poll error: $error";
             }
         }
@@ -224,16 +228,14 @@ sub poll_for_token {
         # Success! We have the access token
         if ($data->{access_token}) {
             print STDERR "[INFO][GitHubAuth] Access token obtained successfully\n" if should_log('INFO');
-            alarm(0);  # Disable alarm on success
             return $data->{access_token};
         }
         
-        # No error and no token, keep polling
-        sleep($interval);
+        # No error and no token - unusual, keep polling
+        print STDERR "[DEBUG][GitHubAuth] No error and no token in response, continuing...\n" if should_log('DEBUG');
     }
     
     # Timeout reached
-    alarm(0);  # Disable alarm before dying
     print STDERR "[ERROR][GitHubAuth] Authorization timed out after 15 minutes\n" if should_log('ERROR');
     die "Authorization timed out after 15 minutes. Please try again.";
 }
