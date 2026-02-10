@@ -1,0 +1,64 @@
+name: Update Homebrew Formula
+
+# Trigger Homebrew formula update when a CLIO release is published
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to update (e.g., 20260210.1)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  trigger-homebrew-update:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Extract version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${{ github.event.release.tag_name }}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Release version: $VERSION"
+
+      - name: Get release tarball URL
+        id: asset
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          URL="https://github.com/SyntheticAutonomicMind/CLIO/releases/download/${VERSION}/clio-${VERSION}.tar.gz"
+          echo "url=$URL" >> $GITHUB_OUTPUT
+          echo "Tarball URL: $URL"
+
+      - name: Trigger Homebrew formula update
+        uses: peter-evans/repository-dispatch@v2
+        with:
+          token: ${{ secrets.HOMEBREW_PAT }}
+          repository: SyntheticAutonomicMind/homebrew-SAM
+          event-type: formula-update
+          client-payload: |
+            {
+              "project": "clio",
+              "version": "${{ steps.version.outputs.version }}",
+              "download_url": "${{ steps.asset.outputs.url }}"
+            }
+
+      - name: Notify success
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "[OK] Homebrew update triggered!"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "Project: clio"
+          echo "Version: ${{ steps.version.outputs.version }}"
+          echo "Tarball: ${{ steps.asset.outputs.url }}"
+          echo ""
+          echo "Monitor: https://github.com/SyntheticAutonomicMind/homebrew-SAM/actions"
