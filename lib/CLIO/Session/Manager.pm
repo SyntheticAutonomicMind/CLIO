@@ -288,6 +288,25 @@ sub load {
     $state->{ltm}  = $ltm;
     $state->{yarn} = $yarn;
     print STDERR "[MANAGER] yarn object ref (load): $self->{yarn}\n" if $self->{debug} || $ENV{CLIO_DEBUG};
+    
+    # Cleanup old tool results (older than 24 hours) to prevent disk bloat
+    # This runs once when session is resumed - non-critical if it fails
+    eval {
+        require CLIO::Session::ToolResultStore;
+        my $tool_store = CLIO::Session::ToolResultStore->new(debug => $self->{debug});
+        my $cleanup_result = $tool_store->cleanupOldResults($session_id, 24);
+        
+        if ($cleanup_result->{deleted_count} > 0) {
+            my $mb_reclaimed = sprintf("%.2f", $cleanup_result->{reclaimed_bytes} / 1_048_576);
+            print STDERR "[INFO][Manager] Cleaned up $cleanup_result->{deleted_count} old tool results (${mb_reclaimed}MB reclaimed)\n"
+                if should_log('INFO');
+        }
+    };
+    if ($@) {
+        # Don't fail session load if cleanup fails - just log warning
+        print STDERR "[WARNING][Manager] Tool result cleanup failed: $@\n" if should_log('WARNING');
+    }
+    
     return $self;
 }
 
