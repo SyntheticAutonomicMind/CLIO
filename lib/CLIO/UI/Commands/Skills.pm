@@ -314,7 +314,7 @@ sub _build_skill_context {
 
 =head2 _show_skill($sm, @args)
 
-Display skill details with modern formatting.
+Display skill details with modern formatting and pagination.
 
 =cut
 
@@ -334,39 +334,46 @@ sub _show_skill {
         return;
     }
     
-    $self->display_command_header("SKILL: " . uc($name));
+    # Build output lines for paginated display
+    my @lines;
     
     # Metadata section
-    $self->display_section_header("DETAILS");
-    $self->display_key_value("Name", $name);
-    $self->display_key_value("Type", $skill->{type} || 'custom');
-    $self->display_key_value("Description", $skill->{description} || '(none)');
+    push @lines, $self->colorize("DETAILS", 'SECTION_HEADER');
+    push @lines, "";
+    push @lines, $self->colorize("Name:        ", 'LABEL') . $self->colorize($name, 'DATA');
+    push @lines, $self->colorize("Type:        ", 'LABEL') . $self->colorize($skill->{type} || 'custom', 'DATA');
+    push @lines, $self->colorize("Description: ", 'LABEL') . $self->colorize($skill->{description} || '(none)', 'DATA');
     
     if ($skill->{variables} && @{$skill->{variables}}) {
-        $self->display_key_value("Variables", join(", ", @{$skill->{variables}}));
+        push @lines, $self->colorize("Variables:   ", 'LABEL') . $self->colorize(join(", ", @{$skill->{variables}}), 'DATA');
     }
     
     if ($skill->{created}) {
-        $self->display_key_value("Created", scalar(localtime($skill->{created})));
+        push @lines, $self->colorize("Created:     ", 'LABEL') . $self->colorize(scalar(localtime($skill->{created})), 'DATA');
     }
     if ($skill->{modified}) {
-        $self->display_key_value("Modified", scalar(localtime($skill->{modified})));
+        push @lines, $self->colorize("Modified:    ", 'LABEL') . $self->colorize(scalar(localtime($skill->{modified})), 'DATA');
     }
-    $self->writeline("", markdown => 0);
+    push @lines, "";
     
     # Prompt section
-    $self->display_section_header("PROMPT TEMPLATE");
-    $self->writeline("", markdown => 0);
+    push @lines, $self->colorize("PROMPT TEMPLATE", 'SECTION_HEADER');
+    push @lines, "";
     
     # Render through markdown pipeline for proper formatting
     my $rendered = $self->render_markdown($skill->{prompt});
     if (defined $rendered) {
-        for my $line (split /\n/, $rendered) {
-            $self->writeline($line, markdown => 0);  # Already rendered
-        }
+        push @lines, split /\n/, $rendered;
     }
     
-    $self->writeline("", markdown => 0);
+    push @lines, "";
+    
+    # Use Chat's display_paginated_content for consistent pagination
+    $self->{chat}->display_paginated_content(
+        "SKILL: " . uc($name),
+        \@lines,
+        undef  # No filepath for skills
+    );
 }
 
 =head2 _delete_skill($sm, @args)
