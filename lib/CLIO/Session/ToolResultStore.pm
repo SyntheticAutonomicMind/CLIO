@@ -624,6 +624,107 @@ sub deleteAllResults {
     }
 }
 
+=head2 cleanupOldResults
+
+Delete tool results older than a specified age.
+
+This prevents tool_results/ directories from growing indefinitely in long-running
+sessions. Tool results are only needed during active conversation - once the AI
+has processed the output and generated a response, the raw tool result is rarely
+needed again.
+
+Arguments:
+- session_id: Session to clean up
+- max_age_hours: Maximum age in hours (default: 24)
+
+Returns: Hashref with {deleted_count, reclaimed_bytes, errors}
+
+=cut
+
+sub cleanupOldResults {
+    my ($self, $session_id, $max_age_hours) = @_;
+    
+    $max_age_hours //= 24;  # Default: delete results older than 24 hours
+    
+    my $session_dir = File::Spec->catdir($self->{sessions_dir}, $session_id);
+    my $tool_results_dir = File::Spec->catdir($session_dir, 'tool_results');
+    
+    my $deleted_count = 0;
+    my $reclaimed_bytes = 0;
+    my @errors;
+    
+    # No tool results directory - nothing to clean
+    return {
+        deleted_count => 0,
+        reclaimed_bytes => 0,
+        errors => [],
+    } unless -d $tool_results_dir;
+    
+    # Calculate cutoff time (current time - max_age_hours)
+    my $cutoff_time = time() - ($max_age_hours * 3600);
+    
+    print STDERR "[DEBUG][ToolResultStore] Cleaning up tool results older than $max_age_hours hours (cutoff: $cutoff_time) in session $session_id\n"
+        if should_log('DEBUG');
+    
+    # Scan tool results directory
+    opendir(my $dh, $tool_results_dir) or do {
+        push @errors, "Failed to open tool_results directory: $!";
+        return {
+            deleted_count => 0,
+            reclaimed_bytes => 0,
+            errors => \@errors,
+        };
+    };
+    
+    my @files = grep { /\.txt$/ && -f File::Spec->catfile($tool_results_dir, $_) } readdir($dh);
+    closedir($dh);
+    
+    # Check each file's age and delete if too old
+    for my $filename (@files) {
+        my $filepath = File::Spec->catfile($tool_results_dir, $filename);
+        
+        # Get file modification time
+        my $mtime = (stat($filepath))[9];
+        
+        unless (defined $mtime) {
+            push @errors, "Failed to stat $filename: $!";
+            next;
+        }
+        
+        # Skip if file is newer than cutoff
+        next if $mtime >= $cutoff_time;
+        
+        # File is old - delete it
+        my $size = (stat($filepath))[7] || 0;
+        
+        if (unlink $filepath) {
+            $deleted_count++;
+            $reclaimed_bytes += $size;
+            
+            my $age_hours = int((time() - $mtime) / 3600);
+            print STDERR "[DEBUG][ToolResultStore] Deleted old result: $filename (age: ${age_hours}h, size: $size bytes)\n"
+                if should_log('DEBUG');
+        } else {
+            push @errors, "Failed to delete $filename: $!";
+        }
+    }
+    
+    # Log summary
+    if ($deleted_count > 0) {
+        my $reclaimed_mb = sprintf("%.2f", $reclaimed_bytes / 1_048_576);
+        print STDERR "[INFO][ToolResultStore] Cleanup completed: deleted $deleted_count old tool results, reclaimed ${reclaimed_mb}MB in session $session_id\n"
+            if should_log('INFO');
+    } elsif ($self->{debug}) {
+        print STDERR "[DEBUG][ToolResultStore] Cleanup: no old results to delete in session $session_id\n";
+    }
+    
+    return {
+        deleted_count => $deleted_count,
+        reclaimed_bytes => $reclaimed_bytes,
+        errors => \@errors,
+    };
+}
+
 =head2 listResults
 
 List all tool result IDs for a session.
