@@ -320,6 +320,9 @@ sub run {
     
     # Main loop
     while (1) {
+        # Check for update notifications from background check
+        $self->check_for_update_notification();
+        
         # Check for agent messages (if broker client available)
         # Look in multiple places: ai_agent (for sub-agents) or subagent_cmd (for primary user)
         my $broker_client;
@@ -975,6 +978,15 @@ sub check_for_updates_async {
             $self->colorize('/update install', 'command') . " to upgrade.");
     }
     
+    # Track cache file modification time for periodic checking
+    # This allows us to detect when background check completes and finds an update
+    my $cache_file = File::Spec->catfile('.clio', 'update_check_cache');
+    if (-f $cache_file) {
+        $self->{_update_cache_mtime} = (stat($cache_file))[9];
+        print STDERR "[DEBUG][Chat] Tracking update cache mtime: $self->{_update_cache_mtime}\n" 
+            if should_log('DEBUG');
+    }
+    
     # Fork background process to check for updates
     # Parent returns immediately, child checks and caches result
     my $pid = fork();
@@ -1002,6 +1014,69 @@ sub check_for_updates_async {
     }
     
     # Parent continues - don't wait for child
+}
+
+=head2 check_for_update_notification
+
+Check if background update check has completed and notify user if update available.
+
+This is called periodically during the main loop to detect when the background
+update check (forked process) completes and writes a new result to the cache.
+
+=cut
+
+sub check_for_update_notification {
+    my ($self) = @_;
+    
+    # Only check periodically - not on every loop iteration
+    # Track last check time in $self->{_last_update_check}
+    my $now = time();
+    my $last_check = $self->{_last_update_check} || 0;
+    my $check_interval = 30;  # Check every 30 seconds
+    
+    return if ($now - $last_check) < $check_interval;
+    
+    $self->{_last_update_check} = $now;
+    
+    # Load Update module
+    eval {
+        require CLIO::Update;
+    };
+    return if $@;
+    
+    my $cache_file = File::Spec->catfile('.clio', 'update_check_cache');
+    
+    # Check if cache file has been modified since we last checked
+    return unless -f $cache_file;
+    
+    my $current_mtime = (stat($cache_file))[9];
+    my $last_known_mtime = $self->{_update_cache_mtime} || 0;
+    
+    # No change - return early
+    return if $current_mtime <= $last_known_mtime;
+    
+    # Cache file has been updated - check if there's a new update available
+    print STDERR "[DEBUG][Chat] Update cache modified, checking for new updates\n"
+        if should_log('DEBUG');
+    
+    my $updater = CLIO::Update->new(debug => $self->{debug});
+    my $update_info = $updater->get_available_update();
+    
+    # Update our tracked mtime
+    $self->{_update_cache_mtime} = $current_mtime;
+    
+    # If update is available and we haven't already notified, display message
+    if ($update_info && $update_info->{cached} && !$update_info->{up_to_date}) {
+        # Only notify if we haven't already shown this version
+        my $version = $update_info->{version} || 'unknown';
+        my $notified_version = $self->{_notified_update_version} || '';
+        
+        if ($version ne $notified_version) {
+            $self->display_system_message("An update is available ($version). Run " . 
+                $self->colorize('/update install', 'command') . " to upgrade.");
+            $self->{_notified_update_version} = $version;
+        }
+    }
 }
 
 sub display_header {
