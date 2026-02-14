@@ -116,6 +116,7 @@ my %PROVIDERS = (
         supports_streaming => 1,
         native_api => 1,  # Uses native provider module, not OpenAI-compatible
         provider_module => 'CLIO::Providers::Anthropic',
+        experimental => 1,  # Native API support is experimental
     },
     
     google => {
@@ -127,6 +128,7 @@ my %PROVIDERS = (
         supports_streaming => 1,
         native_api => 1,
         provider_module => 'CLIO::Providers::Google',
+        experimental => 1,  # Native API support is experimental
     },
 );
 
