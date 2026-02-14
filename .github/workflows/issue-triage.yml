@@ -1,10 +1,13 @@
 name: Issue Triage with CLIO
 
-# Trigger on new issues, edits, or reopens
+# Trigger on new issues, edits, reopens, or new comments
 # Note: 'edited' triggers when title or body changes
+# Note: 'issue_comment' triggers when someone replies - allowing follow-up triage
 on:
   issues:
     types: [opened, edited, reopened]
+  issue_comment:
+    types: [created]
 
 permissions:
   issues: write
@@ -21,8 +24,16 @@ jobs:
     name: Analyze and Triage Issue
     runs-on: ubuntu-latest
     
-    # Skip if issue was created by a bot (prevent loops)
-    if: github.event.issue.user.type != 'Bot'
+    # Skip conditions:
+    # - Skip if created by a bot (prevent loops)
+    # - For issue_comment: only run if comment is on an issue (not PR) and not from bot
+    # - For issue_comment: only run if issue has 'needs-info' label (user responding to CLIO)
+    if: |
+      (github.event_name == 'issues' && github.event.issue.user.type != 'Bot') ||
+      (github.event_name == 'issue_comment' && 
+       !github.event.issue.pull_request && 
+       github.event.comment.user.type != 'Bot' &&
+       contains(github.event.issue.labels.*.name, 'needs-info'))
     
     steps:
       - name: Checkout repository
@@ -61,6 +72,7 @@ jobs:
         id: context
         env:
           ISSUE_BODY: ${{ github.event.issue.body }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Write issue metadata to file (handles special characters safely)
           cat > /tmp/clio-workspace/issue.json << 'ISSUE_EOF'
@@ -71,12 +83,28 @@ jobs:
           # This safely handles multi-line content with special characters
           printf '%s' "$ISSUE_BODY" > /tmp/clio-workspace/issue_body.md
           
+          # Fetch all comments on this issue for context
+          echo "Fetching issue comments..."
+          gh api repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
+            --jq '.[] | "---\n**\(.user.login)** commented at \(.created_at):\n\(.body)\n"' \
+            > /tmp/clio-workspace/issue_comments.md 2>/dev/null || echo "" > /tmp/clio-workspace/issue_comments.md
+          
+          COMMENT_COUNT=$(gh api repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments --jq 'length' 2>/dev/null || echo "0")
+          echo "Found $COMMENT_COUNT comments"
+          
+          # Fetch current labels
+          CURRENT_LABELS=$(echo '${{ toJson(github.event.issue.labels) }}' | jq -r '.[].name' | tr '\n' ',' | sed 's/,$//')
+          echo "Current labels: $CURRENT_LABELS"
+          
           # Output key fields
           echo "issue_number=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
           echo "issue_title<<EOF" >> $GITHUB_OUTPUT
           echo "${{ github.event.issue.title }}" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
           echo "issue_author=${{ github.event.issue.user.login }}" >> $GITHUB_OUTPUT
+          echo "comment_count=$COMMENT_COUNT" >> $GITHUB_OUTPUT
+          echo "current_labels=$CURRENT_LABELS" >> $GITHUB_OUTPUT
+          echo "event_type=${{ github.event_name }}" >> $GITHUB_OUTPUT
       
       - name: Configure CLIO authentication
         env:
@@ -106,9 +134,13 @@ jobs:
           
           # Read issue details
           ISSUE_BODY=$(cat /tmp/clio-workspace/issue_body.md)
+          ISSUE_COMMENTS=$(cat /tmp/clio-workspace/issue_comments.md 2>/dev/null || echo "")
           ISSUE_NUMBER="${{ steps.context.outputs.issue_number }}"
           ISSUE_TITLE="${{ steps.context.outputs.issue_title }}"
           ISSUE_AUTHOR="${{ steps.context.outputs.issue_author }}"
+          CURRENT_LABELS="${{ steps.context.outputs.current_labels }}"
+          EVENT_TYPE="${{ steps.context.outputs.event_type }}"
+          COMMENT_COUNT="${{ steps.context.outputs.comment_count }}"
           
           # Combine into full prompt
           cat > /tmp/clio-workspace/full_prompt.md << PROMPT_EOF
@@ -121,11 +153,26 @@ jobs:
           **Issue #${ISSUE_NUMBER}**
           **Title:** ${ISSUE_TITLE}
           **Author:** ${ISSUE_AUTHOR}
+          **Current Labels:** ${CURRENT_LABELS:-none}
+          **Event:** ${EVENT_TYPE} (comment count: ${COMMENT_COUNT})
           
           ## Issue Body
           
           ${ISSUE_BODY}
           PROMPT_EOF
+          
+          # Add comments section if there are any
+          if [ -n "$ISSUE_COMMENTS" ] && [ "$COMMENT_COUNT" != "0" ]; then
+            cat >> /tmp/clio-workspace/full_prompt.md << COMMENTS_EOF
+          
+          ## Conversation History
+          
+          The following comments have been added to this issue. Review them to understand the conversation context.
+          If a user has responded to a request for more information, consider whether the issue is now complete.
+          
+          ${ISSUE_COMMENTS}
+          COMMENTS_EOF
+          fi
           
           echo "Prompt prepared ($(wc -c < /tmp/clio-workspace/full_prompt.md) bytes)"
       
