@@ -1,8 +1,5 @@
 name: Issue Triage with CLIO
 
-# Trigger on new issues, edits, reopens, or new comments
-# Note: 'edited' triggers when title or body changes
-# Note: 'issue_comment' triggers when someone replies - allowing follow-up triage
 on:
   issues:
     types: [opened, edited, reopened]
@@ -12,10 +9,9 @@ on:
 permissions:
   issues: write
   contents: read
-  packages: read  # Required to pull CLIO container from GHCR
+  packages: read
 
 env:
-  # Use GitHub Copilot free-tier model for cost-effective triage
   CLIO_MODEL: gpt-5-mini
   REGISTRY: ghcr.io
 
@@ -24,10 +20,6 @@ jobs:
     name: Analyze and Triage Issue
     runs-on: ubuntu-latest
     
-    # Skip conditions:
-    # - Skip if created by a bot (prevent loops)
-    # - For issue_comment: only run if comment is on an issue (not PR) and not from bot
-    # - For issue_comment: only run if issue has 'needs-info' label (user responding to CLIO)
     if: |
       (github.event_name == 'issues' && github.event.issue.user.type != 'Bot') ||
       (github.event_name == 'issue_comment' && 
@@ -41,7 +33,7 @@ jobs:
         with:
           fetch-depth: 1
       
-      - name: Log in to GitHub Container Registry
+      - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -49,465 +41,257 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       
       - name: Pull CLIO container
-        run: |
-          docker pull ghcr.io/syntheticautonomicmind/clio:latest
+        run: docker pull ghcr.io/syntheticautonomicmind/clio:latest
       
-      - name: Prepare writable workspace
+      - name: Prepare workspace
         run: |
-          # CLIO needs a writable working directory for session storage
-          # Copy repo to /tmp/clio-workspace which is writable
           mkdir -p /tmp/clio-workspace
           cp -r ./* /tmp/clio-workspace/ 2>/dev/null || true
           cp -r ./.clio /tmp/clio-workspace/ 2>/dev/null || true
           cp -r ./.github /tmp/clio-workspace/ 2>/dev/null || true
-          
-          # Create directories CLIO needs
           mkdir -p /tmp/clio-workspace/.clio/sessions
           mkdir -p /tmp/clio-config
-          
-          echo "Workspace prepared at /tmp/clio-workspace"
-          ls -la /tmp/clio-workspace/
-      
-      - name: Prepare issue context
-        id: context
-        env:
-          ISSUE_BODY: ${{ github.event.issue.body }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # Write issue metadata to file (handles special characters safely)
-          cat > /tmp/clio-workspace/issue.json << 'ISSUE_EOF'
-          ${{ toJson(github.event.issue) }}
-          ISSUE_EOF
-          
-          # Write issue body to separate file using environment variable
-          # This safely handles multi-line content with special characters
-          printf '%s' "$ISSUE_BODY" > /tmp/clio-workspace/issue_body.md
-          
-          # Fetch all comments on this issue for context
-          echo "Fetching issue comments..."
-          gh api repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
-            --jq '.[] | "---\n**\(.user.login)** commented at \(.created_at):\n\(.body)\n"' \
-            > /tmp/clio-workspace/issue_comments.md 2>/dev/null || echo "" > /tmp/clio-workspace/issue_comments.md
-          
-          COMMENT_COUNT=$(gh api repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments --jq 'length' 2>/dev/null || echo "0")
-          echo "Found $COMMENT_COUNT comments"
-          
-          # Fetch current labels (escape newlines properly)
-          CURRENT_LABELS=$(echo '${{ toJson(github.event.issue.labels) }}' | jq -r '.[].name' | paste -sd ',' -)
-          echo "Current labels: $CURRENT_LABELS"
-          
-          # Output key fields using heredoc for safety with special chars
-          echo "issue_number=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
-          
-          echo "issue_title<<EOF" >> $GITHUB_OUTPUT
-          echo "${{ github.event.issue.title }}" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-          
-          echo "issue_author=${{ github.event.issue.user.login }}" >> $GITHUB_OUTPUT
-          echo "comment_count=$COMMENT_COUNT" >> $GITHUB_OUTPUT
-          
-          # Use heredoc for labels to avoid format issues
-          echo "current_labels<<EOF" >> $GITHUB_OUTPUT
-          echo "$CURRENT_LABELS" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-          
-          echo "event_type=${{ github.event_name }}" >> $GITHUB_OUTPUT
       
       - name: Configure CLIO authentication
         env:
           CLIO_ACCESS: ${{ secrets.CLIO_ACCESS }}
         run: |
-          # Create CLIO config directory
-          # IMPORTANT: Use set +x to prevent logging the secret
           set +x
-          
-          # Create github_tokens.json with the OAuth token
-          # OAuth tokens from device flow go in github_tokens.json, NOT config.json
           printf '{"github_token": "%s", "saved_at": %d}' "$CLIO_ACCESS" "$(date +%s)" > /tmp/clio-config/github_tokens.json
           chmod 600 /tmp/clio-config/github_tokens.json
-          
-          # Create minimal config.json for provider selection
           echo '{"provider": "github_copilot"}' > /tmp/clio-config/config.json
-          
-          # Verify files were created (without showing contents)
-          echo "CLIO authentication configured"
-          ls -la /tmp/clio-config/
       
-      - name: Build analysis prompt
-        id: prompt
+      - name: Prepare issue info files
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Read the triage prompt from the prompt file
-          TRIAGE_PROMPT=$(cat .github/clio-prompts/issue-triage.md)
+          ISSUE_NUMBER="${{ github.event.issue.number }}"
           
-          # Read issue details
-          ISSUE_BODY=$(cat /tmp/clio-workspace/issue_body.md)
-          ISSUE_COMMENTS=$(cat /tmp/clio-workspace/issue_comments.md 2>/dev/null || echo "")
-          ISSUE_NUMBER="${{ steps.context.outputs.issue_number }}"
-          ISSUE_TITLE="${{ steps.context.outputs.issue_title }}"
-          ISSUE_AUTHOR="${{ steps.context.outputs.issue_author }}"
-          CURRENT_LABELS="${{ steps.context.outputs.current_labels }}"
-          EVENT_TYPE="${{ steps.context.outputs.event_type }}"
-          COMMENT_COUNT="${{ steps.context.outputs.comment_count }}"
+          # Write issue body
+          printf '%s' "$ISSUE_BODY" > /tmp/clio-workspace/ISSUE_BODY.md
           
-          # Combine into full prompt
-          cat > /tmp/clio-workspace/full_prompt.md << PROMPT_EOF
-          ${TRIAGE_PROMPT}
+          # Fetch comments
+          gh api repos/${{ github.repository }}/issues/${ISSUE_NUMBER}/comments \
+            --jq '.[] | "---\n**\(.user.login)** commented at \(.created_at):\n\(.body)\n"' \
+            > /tmp/clio-workspace/ISSUE_COMMENTS.md 2>/dev/null || echo "" > /tmp/clio-workspace/ISSUE_COMMENTS.md
           
-          ---
+          COMMENT_COUNT=$(gh api repos/${{ github.repository }}/issues/${ISSUE_NUMBER}/comments --jq 'length' 2>/dev/null || echo "0")
+          CURRENT_LABELS=$(echo '${{ toJson(github.event.issue.labels) }}' | jq -r '.[].name' | paste -sd ',' - || echo "none")
           
-          # Issue to Analyze
+          # Create issue info file
+          echo "# Issue #${ISSUE_NUMBER}" > /tmp/clio-workspace/ISSUE_INFO.md
+          echo "" >> /tmp/clio-workspace/ISSUE_INFO.md
+          echo "**Title:** ${{ github.event.issue.title }}" >> /tmp/clio-workspace/ISSUE_INFO.md
+          echo "**Author:** ${{ github.event.issue.user.login }}" >> /tmp/clio-workspace/ISSUE_INFO.md
+          echo "**Current Labels:** ${CURRENT_LABELS}" >> /tmp/clio-workspace/ISSUE_INFO.md
+          echo "**Event:** ${{ github.event_name }} (comments: ${COMMENT_COUNT})" >> /tmp/clio-workspace/ISSUE_INFO.md
+          echo "" >> /tmp/clio-workspace/ISSUE_INFO.md
+          echo "## Body" >> /tmp/clio-workspace/ISSUE_INFO.md
+          echo "" >> /tmp/clio-workspace/ISSUE_INFO.md
+          echo "See ISSUE_BODY.md" >> /tmp/clio-workspace/ISSUE_INFO.md
           
-          **Issue #${ISSUE_NUMBER}**
-          **Title:** ${ISSUE_TITLE}
-          **Author:** ${ISSUE_AUTHOR}
-          **Current Labels:** ${CURRENT_LABELS:-none}
-          **Event:** ${EVENT_TYPE} (comment count: ${COMMENT_COUNT})
-          
-          ## Issue Body
-          
-          ${ISSUE_BODY}
-          PROMPT_EOF
-          
-          # Add comments section if there are any
-          if [ -n "$ISSUE_COMMENTS" ] && [ "$COMMENT_COUNT" != "0" ]; then
-            cat >> /tmp/clio-workspace/full_prompt.md << COMMENTS_EOF
-          
-          ## Conversation History
-          
-          The following comments have been added to this issue. Review them to understand the conversation context.
-          If a user has responded to a request for more information, consider whether the issue is now complete.
-          
-          ${ISSUE_COMMENTS}
-          COMMENTS_EOF
-          fi
-          
-          echo "Prompt prepared ($(wc -c < /tmp/clio-workspace/full_prompt.md) bytes)"
+          echo "Issue info prepared"
       
-      - name: Analyze issue with CLIO
-        id: analysis
+      - name: Run CLIO Issue Triage
+        id: triage
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Debug: show what's in the CLIO config directory
-          echo "=== CLIO Config Directory Contents ==="
-          ls -la /tmp/clio-config/
-          echo "=== Config.json ==="
-          cat /tmp/clio-config/config.json
+          ISSUE_NUMBER="${{ github.event.issue.number }}"
           
-          echo "=== Starting CLIO Analysis ==="
-          echo "Prompt size: $(wc -c < /tmp/clio-workspace/full_prompt.md) bytes"
-          echo ""
+          TASK="You are in HEADLESS CI/CD MODE. No human is present.
+
+          TASK: Triage Issue #${ISSUE_NUMBER}
+
+          STEPS:
+          1. Read .github/clio-prompts/issue-triage.md for instructions
+          2. Read ISSUE_INFO.md and ISSUE_BODY.md for issue details
+          3. Read ISSUE_COMMENTS.md if there are comments
+          4. WRITE your triage JSON to /workspace/triage.json using file_operations
+
+          CRITICAL: 
+          - DO NOT use user_collaboration (it will hang forever)
+          - Write JSON to /workspace/triage.json using file_operations create_file"
           
-          # Run CLIO in container with prompt piped to stdin
-          # Use tee to stream output to both file AND stderr (visible in real-time)
-          echo "--- CLIO Output (streaming) ---"
-          cat /tmp/clio-workspace/full_prompt.md | docker run -i --rm \
+          echo "=== Starting CLIO Issue Triage ==="
+          
+          docker run -i --rm \
             -v "/tmp/clio-workspace":/workspace:rw \
             -v "/tmp/clio-config":/root/.clio:rw \
             -w /workspace \
-            -e CLIO_LOG_LEVEL=INFO \
+            -e CLIO_LOG_LEVEL=WARNING \
+            -e GH_TOKEN="${GH_TOKEN}" \
             ghcr.io/syntheticautonomicmind/clio:latest \
             --new \
             --model "$CLIO_MODEL" \
-            --sandbox \
+            --input "$TASK" \
             --exit 2>&1 | tee /tmp/clio-workspace/full_response.txt || true
           
           echo ""
-          echo "--- End CLIO Output ---"
-          echo "Response size: $(wc -c < /tmp/clio-workspace/full_response.txt) bytes"
+          echo "=== CLIO Triage Complete ==="
           
-          # Read the saved output for processing
-          ANALYSIS=$(cat /tmp/clio-workspace/full_response.txt)
-          
-          # Create a Python script for JSON extraction (avoids YAML escaping issues)
-          cat > /tmp/extract_json.py << 'PYEOF'
-          import sys, json, re
-          with open('/tmp/clio-workspace/full_response.txt', 'r') as f:
-              content = f.read()
-          # Try to find JSON between ```json and ```
-          match = re.search(r'```json\s*(.*?)\s*```', content, re.DOTALL)
-          if match:
-              try:
-                  obj = json.loads(match.group(1))
-                  print(json.dumps(obj))
-                  sys.exit(0)
-              except: pass
-          # Try to find raw JSON with "summary" key
-          for i in range(len(content)):
-              if content[i] == '{':
-                  depth = 0
-                  for j in range(i, len(content)):
-                      if content[j] == '{': depth += 1
-                      elif content[j] == '}': depth -= 1
-                      if depth == 0:
-                          try:
-                              obj = json.loads(content[i:j+1])
-                              if 'summary' in obj or 'completeness' in obj:
-                                  print(json.dumps(obj))
-                                  sys.exit(0)
-                          except: pass
-                          break
-          print("")
-          PYEOF
-          
-          # Extract JSON from the response
-          # Method 1: Try to find content between ```json and ```
-          JSON_RESPONSE=$(echo "$ANALYSIS" | sed -n '/```json/,/```/p' | sed '1d;$d')
-          
-          # Method 2: If no fenced JSON, use Python script for robust extraction
-          if [ -z "$JSON_RESPONSE" ] || ! echo "$JSON_RESPONSE" | jq . > /dev/null 2>&1; then
-            JSON_RESPONSE=$(python3 /tmp/extract_json.py) || true
+          if [ -f /tmp/clio-workspace/triage.json ]; then
+            echo "triage.json found!"
+          else
+            echo "triage.json NOT found"
           fi
-          
-          # Validate JSON and save
-          if [ -n "$JSON_RESPONSE" ] && echo "$JSON_RESPONSE" | jq . > /dev/null 2>&1; then
-            echo "$JSON_RESPONSE" > /tmp/clio-workspace/analysis.json
+      
+      - name: Get triage JSON
+        id: extract
+        run: |
+          if [ -f /tmp/clio-workspace/triage.json ] && jq . /tmp/clio-workspace/triage.json > /dev/null 2>&1; then
+            echo "Using triage.json written by CLIO"
+            cp /tmp/clio-workspace/triage.json /tmp/clio-workspace/analysis.json
             echo "json_valid=true" >> $GITHUB_OUTPUT
           else
-            # Create fallback JSON
-            cat > /tmp/clio-workspace/analysis.json << 'FALLBACK_EOF'
-          {
-            "completeness": {"score": 50},
-            "classification": "bug",
-            "severity": "medium",
-            "recommendation": "needs-info",
-            "missing_info": ["Unable to fully parse CLIO response"],
-            "affected_areas": [],
-            "suggested_labels": ["needs-triage"],
-            "reproduction_test": null,
-            "summary": "Automated analysis encountered an issue. Manual review recommended."
-          }
-          FALLBACK_EOF
             echo "json_valid=false" >> $GITHUB_OUTPUT
+            echo '{"completeness":50,"classification":"bug","severity":"medium","priority":"medium","recommendation":"ready-for-review","labels":["needs-review"],"assign_to":"fewtarius","summary":"Automated triage could not produce triage.json. Manual review recommended."}' > /tmp/clio-workspace/analysis.json
+            echo "Using fallback JSON"
           fi
           
-          # Debug output (truncated to avoid log spam)
-          echo "=== Full CLIO Response (last 1500 chars) ==="
-          tail -c 1500 /tmp/clio-workspace/full_response.txt
-          echo ""
-          echo "=== Extracted JSON ==="
+          echo "=== Triage JSON ==="
           cat /tmp/clio-workspace/analysis.json
       
-      - name: Parse analysis results
+      - name: Parse results
         id: parse
         run: |
-          # Read the analysis JSON
-          ANALYSIS_JSON=$(cat /tmp/clio-workspace/analysis.json)
+          ANALYSIS=$(cat /tmp/clio-workspace/analysis.json)
           
-          # Extract fields with jq (with defaults)
-          RECOMMENDATION=$(echo "$ANALYSIS_JSON" | jq -r '.recommendation // "needs-info"')
-          CLASSIFICATION=$(echo "$ANALYSIS_JSON" | jq -r '.classification // "bug"')
-          SEVERITY=$(echo "$ANALYSIS_JSON" | jq -r '.severity // "medium"')
-          SUMMARY=$(echo "$ANALYSIS_JSON" | jq -r '.summary // "Analysis complete."')
-          CLOSE_REASON=$(echo "$ANALYSIS_JSON" | jq -r '.close_reason // ""')
-          ASSIGN_TO=$(echo "$ANALYSIS_JSON" | jq -r '.assign_to // ""')
+          RECOMMENDATION=$(echo "$ANALYSIS" | jq -r '.recommendation // "ready-for-review"')
+          CLASSIFICATION=$(echo "$ANALYSIS" | jq -r '.classification // "bug"')
+          PRIORITY=$(echo "$ANALYSIS" | jq -r '.priority // "medium"')
+          COMPLETENESS=$(echo "$ANALYSIS" | jq -r '.completeness // 50')
+          LABELS=$(echo "$ANALYSIS" | jq -r '(.labels // []) | join(",")')
+          ASSIGN_TO=$(echo "$ANALYSIS" | jq -r '.assign_to // ""')
+          CLOSE_REASON=$(echo "$ANALYSIS" | jq -r '.close_reason // ""')
           
-          # Handle completeness being either a number or an object with score
-          COMPLETENESS_SCORE=$(echo "$ANALYSIS_JSON" | jq -r 'if (.completeness | type) == "number" then .completeness else (.completeness.score // 50) end')
-          MISSING_INFO=$(echo "$ANALYSIS_JSON" | jq -r 'if .missing_info then (.missing_info | map("- " + .) | join("\n")) else "" end')
-          
-          # Handle both "labels" and "suggested_labels" field names
-          SUGGESTED_LABELS=$(echo "$ANALYSIS_JSON" | jq -r '(.labels // .suggested_labels // []) | join(",")')
-          
-          REPRODUCTION_TEST=$(echo "$ANALYSIS_JSON" | jq -r '.reproduction_test // ""')
-          AFFECTED_AREAS=$(echo "$ANALYSIS_JSON" | jq -r 'if .affected_areas then (.affected_areas | join(", ")) else "" end')
-          
-          # Output for next steps 
-          # Using heredoc format for any values that might contain special characters
-          {
-            echo "recommendation=$RECOMMENDATION"
-            echo "classification=$CLASSIFICATION"
-            echo "severity=$SEVERITY"
-            echo "completeness_score=$COMPLETENESS_SCORE"
-            echo "close_reason=$CLOSE_REASON"
-            echo "assign_to=$ASSIGN_TO"
-            
-            # Heredoc for labels (contains hyphens and colons)
-            echo "suggested_labels<<LABELS_EOF"
-            echo "$SUGGESTED_LABELS"
-            echo "LABELS_EOF"
-            
-            # Heredoc for areas
-            echo "affected_areas<<AREAS_EOF"
-            echo "$AFFECTED_AREAS"
-            echo "AREAS_EOF"
-            
-            # Heredoc for summary
-            echo "summary<<SUMMARY_EOF"
-            echo "$SUMMARY"
-            echo "SUMMARY_EOF"
-            
-            # Heredoc for missing info
-            echo "missing_info<<MISSING_EOF"
-            echo "$MISSING_INFO"
-            echo "MISSING_EOF"
-          } >> $GITHUB_OUTPUT
-          
-          # Handle reproduction test
-          if [ -n "$REPRODUCTION_TEST" ] && [ "$REPRODUCTION_TEST" != "null" ] && [ "$REPRODUCTION_TEST" != "" ]; then
-            echo "has_reproduction_test=true" >> $GITHUB_OUTPUT
-            echo "$REPRODUCTION_TEST" > /tmp/clio-workspace/reproduction_test.pl
-          else
-            echo "has_reproduction_test=false" >> $GITHUB_OUTPUT
-          fi
-      
-      - name: Run reproduction test (if generated)
-        id: repro
-        if: steps.parse.outputs.has_reproduction_test == 'true'
-        continue-on-error: true
-        run: |
-          echo "=== Running Reproduction Test ==="
-          
-          # Run with syntax check first
-          if perl -I./lib -c /tmp/clio-workspace/reproduction_test.pl 2>&1; then
-            echo "repro_syntax=pass" >> $GITHUB_OUTPUT
-            
-            # Try to run the test (with timeout)
-            RESULT=$(timeout 30 perl -I./lib /tmp/clio-workspace/reproduction_test.pl 2>&1) || true
-            EXIT_CODE=$?
-            
-            echo "Test output: $RESULT"
-            
-            if [ $EXIT_CODE -eq 0 ]; then
-              echo "repro_result=pass" >> $GITHUB_OUTPUT
-              echo "repro_message=Test passed - issue may not be reproducible in current codebase" >> $GITHUB_OUTPUT
-            else
-              echo "repro_result=fail" >> $GITHUB_OUTPUT
-              echo "repro_message=Test failed (exit code $EXIT_CODE) - issue appears reproducible" >> $GITHUB_OUTPUT
-            fi
-          else
-            echo "repro_syntax=fail" >> $GITHUB_OUTPUT
-            echo "repro_result=skip" >> $GITHUB_OUTPUT
-            echo "repro_message=Generated test has syntax errors - manual review needed" >> $GITHUB_OUTPUT
-          fi
+          echo "recommendation=$RECOMMENDATION" >> $GITHUB_OUTPUT
+          echo "classification=$CLASSIFICATION" >> $GITHUB_OUTPUT
+          echo "priority=$PRIORITY" >> $GITHUB_OUTPUT
+          echo "completeness=$COMPLETENESS" >> $GITHUB_OUTPUT
+          echo "labels=$LABELS" >> $GITHUB_OUTPUT
+          echo "assign_to=$ASSIGN_TO" >> $GITHUB_OUTPUT
+          echo "close_reason=$CLOSE_REASON" >> $GITHUB_OUTPUT
       
       - name: Apply labels
-        if: steps.parse.outputs.suggested_labels != ''
+        if: steps.parse.outputs.labels != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Label color mapping for auto-creation
-          declare -A LABEL_COLORS
-          LABEL_COLORS["bug"]="d73a4a"
-          LABEL_COLORS["enhancement"]="a2eeef"
-          LABEL_COLORS["documentation"]="0075ca"
-          LABEL_COLORS["question"]="d876e3"
-          LABEL_COLORS["needs-triage"]="fbca04"
-          LABEL_COLORS["needs-info"]="d876e3"
-          LABEL_COLORS["area:core"]="c5def5"
-          LABEL_COLORS["area:tools"]="c5def5"
-          LABEL_COLORS["area:ui"]="c5def5"
-          LABEL_COLORS["area:session"]="c5def5"
-          LABEL_COLORS["area:memory"]="c5def5"
-          LABEL_COLORS["area:ci"]="c5def5"
-          LABEL_COLORS["priority:critical"]="b60205"
-          LABEL_COLORS["priority:high"]="d93f0b"
-          LABEL_COLORS["priority:medium"]="fbca04"
-          LABEL_COLORS["priority:low"]="0e8a16"
-          LABEL_COLORS["good-first-issue"]="7057ff"
-          LABEL_COLORS["help-wanted"]="008672"
+          # First remove any conflicting labels
+          ISSUE_NUMBER="${{ github.event.issue.number }}"
           
-          # Split labels and apply each one
-          IFS=',' read -ra LABELS <<< "${{ steps.parse.outputs.suggested_labels }}"
+          # Remove old priority labels if we're setting a new one
+          gh issue edit $ISSUE_NUMBER --remove-label "priority:critical" 2>/dev/null || true
+          gh issue edit $ISSUE_NUMBER --remove-label "priority:high" 2>/dev/null || true
+          gh issue edit $ISSUE_NUMBER --remove-label "priority:medium" 2>/dev/null || true
+          gh issue edit $ISSUE_NUMBER --remove-label "priority:low" 2>/dev/null || true
+          
+          # Remove needs-info if issue is now complete
+          if [ "${{ steps.parse.outputs.recommendation }}" != "needs-info" ]; then
+            gh issue edit $ISSUE_NUMBER --remove-label "needs-info" 2>/dev/null || true
+          fi
+          
+          # Apply new labels
+          IFS=',' read -ra LABELS <<< "${{ steps.parse.outputs.labels }}"
           for label in "${LABELS[@]}"; do
-            label=$(echo "$label" | xargs)  # Trim whitespace
+            label=$(echo "$label" | xargs)
             if [ -n "$label" ]; then
-              # Try to add label, create if it doesn't exist
-              if ! gh issue edit ${{ github.event.issue.number }} --add-label "$label" 2>/dev/null; then
-                # Label doesn't exist, create it
-                COLOR="${LABEL_COLORS[$label]:-c5def5}"  # Default to blue if not in map
-                echo "Creating label '$label' with color #$COLOR"
-                gh label create "$label" --color "$COLOR" 2>/dev/null || true
-                # Now apply it
-                gh issue edit ${{ github.event.issue.number }} --add-label "$label" 2>/dev/null || \
-                  echo "Warning: Could not apply label '$label'"
-              fi
+              gh issue edit $ISSUE_NUMBER --add-label "$label" 2>/dev/null || \
+              (gh label create "$label" --color "c5def5" 2>/dev/null; gh issue edit $ISSUE_NUMBER --add-label "$label" 2>/dev/null) || true
             fi
           done
       
       - name: Assign issue
-        if: steps.parse.outputs.recommendation == 'ready-for-review'
+        if: steps.parse.outputs.assign_to != '' && steps.parse.outputs.recommendation != 'close'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Always assign valid issues to fewtarius regardless of CLIO's response
-          ASSIGNEE="${{ steps.parse.outputs.assign_to }}"
-          if [ -z "$ASSIGNEE" ] || [ "$ASSIGNEE" == "null" ]; then
-            ASSIGNEE="fewtarius"
-          fi
-          echo "Assigning issue to $ASSIGNEE"
-          gh issue edit ${{ github.event.issue.number }} --add-assignee "$ASSIGNEE" || \
-            echo "Note: Could not assign to $ASSIGNEE"
+          gh issue edit ${{ github.event.issue.number }} --add-assignee "${{ steps.parse.outputs.assign_to }}" 2>/dev/null || true
       
-      - name: Close invalid issues
+      - name: Handle close recommendation
         if: steps.parse.outputs.recommendation == 'close'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Closing issue as: ${{ steps.parse.outputs.close_reason }}"
+          ANALYSIS=$(cat /tmp/clio-workspace/analysis.json)
+          SUMMARY=$(echo "$ANALYSIS" | jq -r '.summary // "Issue closed by automated triage."')
+          CLOSE_REASON="${{ steps.parse.outputs.close_reason }}"
           
-          # Post a comment explaining why the issue is being closed
-          CLOSE_COMMENT="## [CLOSE] Issue Closed by CLIO Triage
+          echo "## Issue Closed" > /tmp/comment.md
+          echo "" >> /tmp/comment.md
+          echo "$SUMMARY" >> /tmp/comment.md
+          echo "" >> /tmp/comment.md
           
-          This issue has been automatically closed because: **${{ steps.parse.outputs.close_reason }}**
+          case "$CLOSE_REASON" in
+            "spam") echo "**Reason:** This appears to be spam." >> /tmp/comment.md ;;
+            "duplicate") echo "**Reason:** This appears to be a duplicate." >> /tmp/comment.md ;;
+            "question") echo "**Reason:** Please use [Discussions](../discussions) for questions." >> /tmp/comment.md ;;
+            "test-issue") echo "**Reason:** This appears to be a test issue." >> /tmp/comment.md ;;
+            *) echo "**Reason:** $CLOSE_REASON" >> /tmp/comment.md ;;
+          esac
           
-          **Analysis:** ${{ steps.parse.outputs.summary }}
+          echo "" >> /tmp/comment.md
+          echo "---" >> /tmp/comment.md
+          echo "*Automated triage by [CLIO](https://github.com/SyntheticAutonomicMind/CLIO)*" >> /tmp/comment.md
           
-          If you believe this was done in error, please:
-          1. Review the [issue templates](https://github.com/SyntheticAutonomicMind/CLIO/issues/new/choose)
-          2. Open a new issue with complete information
-          3. Or reply to this issue with additional context
-          
-          ---
-          *Automated triage by [CLIO](https://github.com/SyntheticAutonomicMind/CLIO)*"
-          
-          gh issue comment ${{ github.event.issue.number }} --body "$CLOSE_COMMENT"
+          gh issue comment ${{ github.event.issue.number }} --body-file /tmp/comment.md
           gh issue close ${{ github.event.issue.number }} --reason "not planned"
       
-      - name: Post triage comment
-        if: steps.parse.outputs.recommendation != 'close'
+      - name: Handle needs-info
+        if: steps.parse.outputs.recommendation == 'needs-info'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Build the comment body with human-friendly formatting
-          cat > /tmp/clio-workspace/comment.md << 'COMMENT_EOF'
-          ## 🤖 CLIO Triage Analysis
+          ANALYSIS=$(cat /tmp/clio-workspace/analysis.json)
+          SUMMARY=$(echo "$ANALYSIS" | jq -r '.summary // "More information needed."')
           
-          | Field | Value |
-          |-------|-------|
-          | **Classification** | ${{ steps.parse.outputs.classification }} |
-          | **Severity** | ${{ steps.parse.outputs.severity }} |
-          | **Completeness** | ${{ steps.parse.outputs.completeness_score }}/100 |
-          | **Recommendation** | ${{ steps.parse.outputs.recommendation }} |
+          echo "## More Information Needed" > /tmp/comment.md
+          echo "" >> /tmp/comment.md
+          echo "$SUMMARY" >> /tmp/comment.md
+          echo "" >> /tmp/comment.md
+          echo "### Missing Information" >> /tmp/comment.md
+          echo "" >> /tmp/comment.md
+          echo "$ANALYSIS" | jq -r '.missing_info[]' | while read line; do echo "- $line" >> /tmp/comment.md; done
+          echo "" >> /tmp/comment.md
+          echo "---" >> /tmp/comment.md
+          echo "*Automated triage by [CLIO](https://github.com/SyntheticAutonomicMind/CLIO)*" >> /tmp/comment.md
           
-          ### 📋 Summary
-          ${{ steps.parse.outputs.summary }}
-          COMMENT_EOF
-          
-          # Add missing info section if applicable
-          MISSING_INFO="${{ steps.parse.outputs.missing_info }}"
-          if [ -n "$MISSING_INFO" ] && [ "$MISSING_INFO" != "- Unable to fully parse CLIO response" ]; then
-            cat >> /tmp/clio-workspace/comment.md << MISSING_EOF
-          
-          ### ℹ️ Additional Information Needed
-          ${MISSING_INFO}
-          MISSING_EOF
-          fi
-          
-          # Add footer
-          cat >> /tmp/clio-workspace/comment.md << 'FOOTER_EOF'
-          
-          ---
-          *This analysis was performed automatically by [CLIO](https://github.com/SyntheticAutonomicMind/CLIO). A human maintainer will review this issue soon.*
-          FOOTER_EOF
-          
-          # Post the comment
-          gh issue comment ${{ github.event.issue.number }} --body-file /tmp/clio-workspace/comment.md
+          gh issue comment ${{ github.event.issue.number }} --body-file /tmp/comment.md
       
-      - name: Upload analysis artifacts
+      - name: Handle ready-for-review
+        if: steps.parse.outputs.recommendation == 'ready-for-review'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ANALYSIS=$(cat /tmp/clio-workspace/analysis.json)
+          SUMMARY=$(echo "$ANALYSIS" | jq -r '.summary // "Issue triaged."')
+          CLASSIFICATION="${{ steps.parse.outputs.classification }}"
+          PRIORITY="${{ steps.parse.outputs.priority }}"
+          COMPLETENESS="${{ steps.parse.outputs.completeness }}"
+          
+          echo "## CLIO Triage Summary" > /tmp/comment.md
+          echo "" >> /tmp/comment.md
+          echo "| Field | Value |" >> /tmp/comment.md
+          echo "|-------|-------|" >> /tmp/comment.md
+          echo "| **Classification** | $CLASSIFICATION |" >> /tmp/comment.md
+          echo "| **Priority** | $PRIORITY |" >> /tmp/comment.md
+          echo "| **Completeness** | ${COMPLETENESS}% |" >> /tmp/comment.md
+          echo "" >> /tmp/comment.md
+          echo "### Summary" >> /tmp/comment.md
+          echo "" >> /tmp/comment.md
+          echo "$SUMMARY" >> /tmp/comment.md
+          echo "" >> /tmp/comment.md
+          echo "---" >> /tmp/comment.md
+          echo "*Automated triage by [CLIO](https://github.com/SyntheticAutonomicMind/CLIO)*" >> /tmp/comment.md
+          
+          gh issue comment ${{ github.event.issue.number }} --body-file /tmp/comment.md
+      
+      - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: clio-triage-analysis-${{ github.event.issue.number }}
+          name: clio-issue-triage-${{ github.event.issue.number }}-${{ github.run_number }}
           path: /tmp/clio-workspace/
           retention-days: 7
