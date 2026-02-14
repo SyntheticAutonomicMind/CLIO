@@ -119,6 +119,35 @@ No environment variables needed! Just start CLIO and login:
 # Tokens are saved automatically to ~/.clio/github_tokens.json
 ```
 
+**Want More AI Models?**
+
+The default OAuth authentication provides access to ~31 models. To unlock all ~37 models (including latest preview models), you can use a Personal Access Token (PAT):
+
+1. **Create a PAT at GitHub:**
+   - Go to https://github.com/settings/tokens
+   - Click "Generate new token (classic)"
+   - Select scopes: `copilot` and `manage_billing:copilot`
+   - Generate and copy the token
+
+2. **Set the PAT in CLIO:**
+   ```bash
+   ./clio
+   : /api set github_pat ghp_your_token_here
+   ```
+
+3. **Verify you have more models:**
+   ```bash
+   : /api models
+   # Should show ~37 models including:
+   # - claude-opus-4.6
+   # - gemini-3-flash-preview
+   # - gemini-3-pro-preview
+   # - gpt-5.1-codex-mini
+   # - gpt-5.2-codex
+   ```
+
+**Note:** PAT authentication takes priority over OAuth when both are configured. To revert to OAuth, clear the PAT with `/api set github_pat ""`.
+
 **Alternative Provider Setup**
 
 Use `/api` commands interactively:
