@@ -844,22 +844,80 @@ sub process_input {
                     if should_log('INFO');
             } else {
                 # Token limit error - trim messages instead of adding error
-                print STDERR "[WARN][WorkflowOrchestrator] Token limit error detected. Aggressively trimming conversation...\n"
+                print STDERR "[WARN][WorkflowOrchestrator] Token limit error detected. Using smart context trimming...\n"
                     if should_log('WARNING');
                 
-                # Force aggressive trim - keep only last 5 messages
-                my @kept_messages = grep { $_->{role} eq 'system' || $_->{role} eq 'user' } @messages;
-                my @last_user_messages = grep { $_->{role} eq 'user' } @messages;
+                # Smart trim: Keep system message + recent complete message groups
+                # A "message group" is either:
+                # - A user message
+                # - An assistant message followed by all its tool results (if any)
+                # This preserves tool call/result pairs to avoid API errors
                 
-                if (@last_user_messages > 5) {
-                    # Remove user messages beyond the last 5
-                    my $remove_count = @last_user_messages - 5;
-                    for (my $i = 0; $i < $remove_count; $i++) {
-                        @messages = grep { $_ != $last_user_messages[$i] } @messages;
+                my $system_msg = undef;
+                my @non_system = ();
+                for my $msg (@messages) {
+                    if ($msg->{role} && $msg->{role} eq 'system') {
+                        $system_msg = $msg;
+                    } else {
+                        push @non_system, $msg;
                     }
-                    print STDERR "[DEBUG][WorkflowOrchestrator] Removed " . $remove_count . " older user messages\n"
-                        if $self->{debug};
                 }
+                
+                # Group messages into logical units
+                my @groups = ();  # Each group is an arrayref of messages
+                my $current_group = [];
+                
+                for (my $i = 0; $i < @non_system; $i++) {
+                    my $msg = $non_system[$i];
+                    
+                    if ($msg->{role} eq 'user') {
+                        # User messages start a new group (except first)
+                        if (@$current_group > 0) {
+                            push @groups, $current_group;
+                        }
+                        $current_group = [$msg];
+                    } elsif ($msg->{role} eq 'assistant') {
+                        # Assistant messages either continue or start a group
+                        if (@$current_group > 0 && $current_group->[-1]{role} eq 'user') {
+                            # Continue the current group (user -> assistant)
+                            push @$current_group, $msg;
+                        } else {
+                            # Start a new group
+                            if (@$current_group > 0) {
+                                push @groups, $current_group;
+                            }
+                            $current_group = [$msg];
+                        }
+                    } elsif ($msg->{role} eq 'tool') {
+                        # Tool results always belong to the current group
+                        push @$current_group, $msg;
+                    } else {
+                        # Unknown role - add to current group
+                        push @$current_group, $msg;
+                    }
+                }
+                # Don't forget the last group
+                if (@$current_group > 0) {
+                    push @groups, $current_group;
+                }
+                
+                # Keep last 3 complete groups (typically user + assistant + tools)
+                my $keep_count = 3;
+                $keep_count = scalar(@groups) if $keep_count > scalar(@groups);
+                
+                my @kept_groups = @groups[-$keep_count..-1] if $keep_count > 0;
+                
+                # Rebuild messages array
+                @messages = ();
+                push @messages, $system_msg if $system_msg;
+                for my $group (@kept_groups) {
+                    push @messages, @$group;
+                }
+                
+                my $removed_groups = scalar(@groups) - $keep_count;
+                print STDERR "[INFO][WorkflowOrchestrator] Smart trim: kept $keep_count of " . 
+                    scalar(@groups) . " message groups (removed $removed_groups)\n"
+                    if should_log('INFO');
             }
             
             # Continue to next iteration - let AI try again with the error context
