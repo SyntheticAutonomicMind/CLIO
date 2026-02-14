@@ -7,7 +7,7 @@
 - DO NOT use user_collaboration - it will hang forever
 - DO NOT ask questions - nobody will answer
 - DO NOT checkpoint - this is automated
-- JUST READ FILES AND OUTPUT JSON
+- JUST READ FILES AND WRITE JSON TO FILE
 
 ## Your Task
 
@@ -17,7 +17,7 @@
 4. Check relevant project files if needed:
    - `AGENTS.md` - Code style, naming conventions
    - `docs/STYLE_GUIDE.md` - Detailed style rules
-5. Output a JSON review
+5. **WRITE your review to `/workspace/review.json`**
 
 ## Key Style Requirements
 
@@ -36,9 +36,11 @@
 - `chmod 777` or permissive modes
 - Path traversal (`../`)
 
-## Output Format
+## Output - WRITE TO FILE
 
-Your FINAL output must be ONLY this JSON:
+**CRITICAL: Write your review to `/workspace/review.json` using file_operations**
+
+Use `file_operations` with operation `create_file` to write:
 
 ```json
 {
@@ -58,5 +60,5 @@ Your FINAL output must be ONLY this JSON:
 
 - NO user_collaboration (causes hang)
 - NO questions (nobody will answer)
-- Read the files, analyze, output JSON
-- That's it. Just JSON at the end.
+- Read the files, analyze, **WRITE JSON TO /workspace/review.json**
+- Use file_operations to create the file
