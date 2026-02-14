@@ -468,10 +468,13 @@ sub _handle_api_set {
             return;
         }
         
+        # Store for current provider (enables seamless provider switching)
+        my $current_provider = $self->{config}->get('provider');
+        $self->{config}->set_provider_key($current_provider, $value);
         $self->{config}->set('api_key', $value);
         
         if ($self->{config}->save()) {
-            $self->display_system_message("API key set and saved");
+            $self->display_system_message("API key set and saved for provider: $current_provider");
         } else {
             $self->display_system_message("API key set (warning: failed to save)");
         }
@@ -549,6 +552,34 @@ sub _handle_api_set {
         $self->_reinit_api_manager();
     }
     elsif ($setting eq 'model') {
+        # Support provider-prefixed model names: provider/model
+        # e.g., anthropic/claude-sonnet-4, google/gemini-2.5-flash
+        my $target_provider;
+        my $model_name = $value;
+        
+        if ($value =~ m{^([a-z_-]+)/(.+)$}i) {
+            my ($prefix, $suffix) = ($1, $2);
+            
+            # Check if prefix is a valid provider
+            require CLIO::Providers;
+            if (CLIO::Providers::provider_exists($prefix)) {
+                $target_provider = $prefix;
+                $model_name = $suffix;
+                
+                # Auto-switch provider
+                my $current_provider = $self->{config}->get('provider');
+                if ($current_provider ne $target_provider) {
+                    # Switch provider first
+                    if ($self->{config}->set_provider($target_provider)) {
+                        $self->display_system_message("Auto-switched to provider: $target_provider");
+                    } else {
+                        $self->display_error_message("Failed to switch to provider: $target_provider");
+                        return;
+                    }
+                }
+            }
+        }
+        
         # Validate model exists using ModelRegistry with GitHub Copilot API support
         require CLIO::Core::ModelRegistry;
         
@@ -571,14 +602,26 @@ sub _handle_api_set {
         }
         
         my $registry = CLIO::Core::ModelRegistry->new(%$registry_args);
-        my ($valid, $error) = $registry->validate_model($value);
+        my ($valid, $error) = $registry->validate_model($model_name);
+        
+        # If validation fails and we have a native provider, skip validation
+        # (native providers may have models not in registry)
+        my $provider_config = CLIO::Providers::get_provider($provider);
+        if (!$valid && $provider_config && $provider_config->{native_api}) {
+            $valid = 1;  # Allow any model name for native providers
+            print STDERR "[DEBUG][API] Skipping model validation for native provider: $provider\n"
+                if $self->{debug};
+        }
+        
         unless ($valid) {
             $self->display_error_message($error);
             return;
         }
         
-        $self->_set_api_setting('model', $value, $session_only);
-        $self->display_system_message("Model set to: $value" . ($session_only ? " (session only)" : " (saved)"));
+        $self->_set_api_setting('model', $model_name, $session_only);
+        
+        my $display_model = $target_provider ? "$target_provider/$model_name" : $model_name;
+        $self->display_system_message("Model set to: $display_model" . ($session_only ? " (session only)" : " (saved)"));
         $self->_reinit_api_manager();
     }
     elsif ($setting eq 'provider') {
