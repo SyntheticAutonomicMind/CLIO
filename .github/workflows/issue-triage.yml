@@ -302,24 +302,36 @@ jobs:
           REPRODUCTION_TEST=$(echo "$ANALYSIS_JSON" | jq -r '.reproduction_test // ""')
           AFFECTED_AREAS=$(echo "$ANALYSIS_JSON" | jq -r 'if .affected_areas then (.affected_areas | join(", ")) else "" end')
           
-          # Output for next steps (using heredoc for multi-line)
-          echo "recommendation=$RECOMMENDATION" >> $GITHUB_OUTPUT
-          echo "classification=$CLASSIFICATION" >> $GITHUB_OUTPUT
-          echo "severity=$SEVERITY" >> $GITHUB_OUTPUT
-          echo "completeness_score=$COMPLETENESS_SCORE" >> $GITHUB_OUTPUT
-          echo "suggested_labels=$SUGGESTED_LABELS" >> $GITHUB_OUTPUT
-          echo "affected_areas=$AFFECTED_AREAS" >> $GITHUB_OUTPUT
-          echo "close_reason=$CLOSE_REASON" >> $GITHUB_OUTPUT
-          echo "assign_to=$ASSIGN_TO" >> $GITHUB_OUTPUT
-          
-          # Handle multi-line fields with heredoc
-          echo "summary<<EOF" >> $GITHUB_OUTPUT
-          echo "$SUMMARY" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-          
-          echo "missing_info<<EOF" >> $GITHUB_OUTPUT
-          echo "$MISSING_INFO" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          # Output for next steps 
+          # Using heredoc format for any values that might contain special characters
+          {
+            echo "recommendation=$RECOMMENDATION"
+            echo "classification=$CLASSIFICATION"
+            echo "severity=$SEVERITY"
+            echo "completeness_score=$COMPLETENESS_SCORE"
+            echo "close_reason=$CLOSE_REASON"
+            echo "assign_to=$ASSIGN_TO"
+            
+            # Heredoc for labels (contains hyphens and colons)
+            echo "suggested_labels<<LABELS_EOF"
+            echo "$SUGGESTED_LABELS"
+            echo "LABELS_EOF"
+            
+            # Heredoc for areas
+            echo "affected_areas<<AREAS_EOF"
+            echo "$AFFECTED_AREAS"
+            echo "AREAS_EOF"
+            
+            # Heredoc for summary
+            echo "summary<<SUMMARY_EOF"
+            echo "$SUMMARY"
+            echo "SUMMARY_EOF"
+            
+            # Heredoc for missing info
+            echo "missing_info<<MISSING_EOF"
+            echo "$MISSING_INFO"
+            echo "MISSING_EOF"
+          } >> $GITHUB_OUTPUT
           
           # Handle reproduction test
           if [ -n "$REPRODUCTION_TEST" ] && [ "$REPRODUCTION_TEST" != "null" ] && [ "$REPRODUCTION_TEST" != "" ]; then
