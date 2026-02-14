@@ -96,13 +96,11 @@ runs:
       env:
         CLIO_TOKEN: ${{ inputs.clio-token }}
       run: |
-        # Create github_tokens.json for CLIO authentication
-        # Also create sessions directory (CLIO needs writable .clio directory)
+        # Create config.json with PAT for GitHub Copilot auth
         # IMPORTANT: set +x prevents logging the secret
         set +x
-        mkdir -p /tmp/clio-config/sessions
-        printf '{"github_token": "%s", "saved_at": %d}' "$CLIO_TOKEN" "$(date +%s)" > /tmp/clio-config/github_tokens.json
-        chmod 600 /tmp/clio-config/github_tokens.json
+        printf '{"provider": "github_copilot", "github_pat": "%s"}' "$CLIO_TOKEN" > /tmp/clio-config/config.json
+        chmod 600 /tmp/clio-config/config.json
         echo "CLIO authentication configured"
     
     - name: Build analysis prompt
