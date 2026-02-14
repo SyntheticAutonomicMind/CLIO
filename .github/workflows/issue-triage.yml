@@ -71,8 +71,11 @@ jobs:
         run: |
           # Create CLIO config directory and set up GitHub token for Copilot auth
           # The token is written to a file that's mounted into the container
-          # IMPORTANT: Use printf to avoid newlines and set -x to prevent logging the secret
+          # IMPORTANT: Use printf to avoid newlines and set +x to prevent logging the secret
           set +x  # Disable command echoing for this section
+          
+          # Create sessions directory (CLIO needs this to be writable)
+          mkdir -p /tmp/clio-config/sessions
           
           # Create the github_tokens.json file with the PAT
           # CLIO's GitHubAuth module checks for github_pat pattern and uses it directly
@@ -124,11 +127,11 @@ jobs:
           # Run CLIO in container with prompt piped to stdin
           # Mount:
           #   - Repository as read-only /workspace
-          #   - Auth config as /root/.clio (for github_tokens.json)
+          #   - Auth config as /root/.clio (READ-WRITE for session storage)
           #   - Workspace for output
           ANALYSIS=$(cat /tmp/clio-workspace/full_prompt.md | docker run -i --rm \
             -v "$(pwd)":/workspace:ro \
-            -v "/tmp/clio-config":/root/.clio:ro \
+            -v "/tmp/clio-config":/root/.clio:rw \
             -v "/tmp/clio-workspace":/tmp/analysis:rw \
             -w /workspace \
             ghcr.io/syntheticautonomicmind/clio:latest \
