@@ -9,9 +9,9 @@ body:
         ## Before You Continue...
         
         **Have you checked these resources first?**
-        - 📚 [Documentation](https://github.com/SyntheticAutonomicMind/CLIO/tree/main/docs)
-        - 💬 [GitHub Discussions](https://github.com/SyntheticAutonomicMind/CLIO/discussions) - For questions and support
-        - 🔍 [Existing Issues](https://github.com/SyntheticAutonomicMind/CLIO/issues) - Your issue may already be reported
+        - [DOC] [Documentation](https://github.com/SyntheticAutonomicMind/CLIO/tree/main/docs)
+        -  [GitHub Discussions](https://github.com/SyntheticAutonomicMind/CLIO/discussions) - For questions and support
+        - [SEARCH] [Existing Issues](https://github.com/SyntheticAutonomicMind/CLIO/issues) - Your issue may already be reported
         
         **Common issues with quick fixes:**
         - **"API key invalid"** -> Run `clio /api` to configure your provider
@@ -101,7 +101,7 @@ body:
     id: version
     attributes:
       label: CLIO Version
-      description: What version of CLIO are you using? (Run `clio --version`)
+      description: What version of CLIO are you using? (Run `clio --version` or check VERSION file)
       placeholder: "e.g., 20260214.1"
     validations:
       required: true
@@ -140,6 +140,20 @@ body:
     validations:
       required: true
 
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: How often does this occur?
+      description: Helps us understand if it's intermittent or consistent
+      options:
+        - Every time (100% reproducible)
+        - Most of the time (>50%)
+        - Sometimes (<50%)
+        - Rarely (hard to reproduce)
+        - Only happened once
+    validations:
+      required: true
+
   - type: textarea
     id: logs
     attributes:
@@ -155,7 +169,6 @@ body:
       label: Additional Context
       description: Add any other context about the problem here
       placeholder: |
-        - Does this happen consistently or intermittently?
         - Did this work in a previous version?
         - What terminal are you using?
         - Are there any error messages?

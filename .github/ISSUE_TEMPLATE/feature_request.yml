@@ -83,18 +83,6 @@ body:
     validations:
       required: true
 
-  - type: dropdown
-    id: priority
-    attributes:
-      label: How important is this to you?
-      options:
-        - Nice to have
-        - Would improve my workflow
-        - Important for my use case
-        - Critical - blocking my usage
-    validations:
-      required: true
-
   - type: textarea
     id: alternatives
     attributes:
@@ -104,6 +92,16 @@ body:
         I've tried...
         Other tools do this by...
         A workaround could be...
+
+  - type: textarea
+    id: examples
+    attributes:
+      label: Examples / References
+      description: Any examples, mockups, or references that help explain your idea?
+      placeholder: |
+        - Similar feature in [tool X]
+        - Example command: `clio --new-flag`
+        - Mockup/diagram: ...
 
   - type: dropdown
     id: contribution
@@ -120,4 +118,4 @@ body:
     id: additional
     attributes:
       label: Additional Context
-      description: Any other context or examples for the feature request
+      description: Any other context about the feature request
