@@ -11,7 +11,7 @@ inputs:
     description: 'GitHub token for CLIO Copilot authentication (requires copilot scope)'
     required: true
   github-token:
-    description: 'GitHub token for issue operations (defaults to GITHUB_TOKEN)'
+    description: 'GitHub token for issue operations and GHCR access (defaults to GITHUB_TOKEN)'
     required: false
     default: ${{ github.token }}
   model:
@@ -128,6 +128,13 @@ runs:
         
         ${ISSUE_BODY}
         PROMPT_EOF
+    
+    - name: Log in to GitHub Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ inputs.github-token }}
     
     - name: Pull CLIO container
       shell: bash
