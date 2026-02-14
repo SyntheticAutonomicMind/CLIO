@@ -310,25 +310,58 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # Label color mapping for auto-creation
+          declare -A LABEL_COLORS
+          LABEL_COLORS["bug"]="d73a4a"
+          LABEL_COLORS["enhancement"]="a2eeef"
+          LABEL_COLORS["documentation"]="0075ca"
+          LABEL_COLORS["question"]="d876e3"
+          LABEL_COLORS["needs-triage"]="fbca04"
+          LABEL_COLORS["needs-info"]="d876e3"
+          LABEL_COLORS["area:core"]="c5def5"
+          LABEL_COLORS["area:tools"]="c5def5"
+          LABEL_COLORS["area:ui"]="c5def5"
+          LABEL_COLORS["area:session"]="c5def5"
+          LABEL_COLORS["area:memory"]="c5def5"
+          LABEL_COLORS["area:ci"]="c5def5"
+          LABEL_COLORS["priority:critical"]="b60205"
+          LABEL_COLORS["priority:high"]="d93f0b"
+          LABEL_COLORS["priority:medium"]="fbca04"
+          LABEL_COLORS["priority:low"]="0e8a16"
+          LABEL_COLORS["good-first-issue"]="7057ff"
+          LABEL_COLORS["help-wanted"]="008672"
+          
           # Split labels and apply each one
           IFS=',' read -ra LABELS <<< "${{ steps.parse.outputs.suggested_labels }}"
           for label in "${LABELS[@]}"; do
             label=$(echo "$label" | xargs)  # Trim whitespace
             if [ -n "$label" ]; then
-              # Try to add label (may fail if label doesn't exist)
-              gh issue edit ${{ github.event.issue.number }} --add-label "$label" 2>/dev/null || \
-                echo "Note: Label '$label' does not exist in this repository"
+              # Try to add label, create if it doesn't exist
+              if ! gh issue edit ${{ github.event.issue.number }} --add-label "$label" 2>/dev/null; then
+                # Label doesn't exist, create it
+                COLOR="${LABEL_COLORS[$label]:-c5def5}"  # Default to blue if not in map
+                echo "Creating label '$label' with color #$COLOR"
+                gh label create "$label" --color "$COLOR" 2>/dev/null || true
+                # Now apply it
+                gh issue edit ${{ github.event.issue.number }} --add-label "$label" 2>/dev/null || \
+                  echo "Warning: Could not apply label '$label'"
+              fi
             fi
           done
       
       - name: Assign issue
-        if: steps.parse.outputs.assign_to != '' && steps.parse.outputs.assign_to != 'null'
+        if: steps.parse.outputs.recommendation == 'ready-for-review'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Assigning issue to ${{ steps.parse.outputs.assign_to }}"
-          gh issue edit ${{ github.event.issue.number }} --add-assignee "${{ steps.parse.outputs.assign_to }}" || \
-            echo "Note: Could not assign to ${{ steps.parse.outputs.assign_to }}"
+          # Always assign valid issues to fewtarius regardless of CLIO's response
+          ASSIGNEE="${{ steps.parse.outputs.assign_to }}"
+          if [ -z "$ASSIGNEE" ] || [ "$ASSIGNEE" == "null" ]; then
+            ASSIGNEE="fewtarius"
+          fi
+          echo "Assigning issue to $ASSIGNEE"
+          gh issue edit ${{ github.event.issue.number }} --add-assignee "$ASSIGNEE" || \
+            echo "Note: Could not assign to $ASSIGNEE"
       
       - name: Close invalid issues
         if: steps.parse.outputs.recommendation == 'close'
