@@ -47,6 +47,16 @@ CLIO uses structured issue templates. Valid issues should match one of these:
 - Issue has complete information per template
 - Bug is clearly described with reproduction steps
 - Feature has clear problem and proposed solution
+- **User has responded** to a previous needs-info request with sufficient details
+
+## Handling Follow-up Comments
+
+When you see "Conversation History" in the issue:
+1. Read ALL comments to understand the full context
+2. If user has provided the missing information, upgrade from needs-info to ready-for-review
+3. If CLIO previously asked questions and user answered, acknowledge and re-evaluate
+4. Consider the ENTIRE thread, not just the original issue body
+5. If issue now has complete information after discussion, mark ready-for-review
 
 ## CLIO Project Context
 
