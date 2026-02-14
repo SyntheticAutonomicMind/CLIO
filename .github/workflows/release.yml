@@ -29,6 +29,8 @@ jobs:
         uses: shogo82148/actions-setup-perl@v1
         with:
           perl-version: '5.38'
+          # Skip attestation verification (workaround for GitHub attestation API issues)
+          enable-attestations: false
       
       - name: Extract version from tag
         id: version
