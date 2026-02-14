@@ -178,31 +178,37 @@ sub _display_api_help {
     $self->display_command_header("API");
     
     $self->display_section_header("COMMANDS");
-    $self->display_command_row("/api show", "Display current API configuration", 35);
-    $self->display_command_row("/api set model <name>", "Set AI model", 35);
-    $self->display_command_row("/api set provider <name>", "Set provider (github_copilot, openai)", 35);
-    $self->display_command_row("/api set base <url>", "Set API base URL", 35);
-    $self->display_command_row("/api set key <value>", "Set API key (global only)", 35);
-    $self->display_command_row("/api providers", "Show available providers", 35);
-    $self->display_command_row("/api models", "List available models", 35);
-    $self->display_command_row("/api models --refresh", "Refresh models (bypass cache)", 35);
-    $self->display_command_row("/api login", "Authenticate with GitHub Copilot", 35);
-    $self->display_command_row("/api logout", "Sign out from GitHub", 35);
+    $self->display_command_row("/api show", "Display current API configuration", 40);
+    $self->display_command_row("/api set model <name>", "Set AI model", 40);
+    $self->display_command_row("/api set model <provider>/<model>", "Set model + auto-switch provider", 40);
+    $self->display_command_row("/api set provider <name>", "Set provider (anthropic, google, etc.)", 40);
+    $self->display_command_row("/api set base <url>", "Set API base URL", 40);
+    $self->display_command_row("/api set key <value>", "Set API key (stored per-provider)", 40);
+    $self->display_command_row("/api providers", "Show available providers", 40);
+    $self->display_command_row("/api models", "List available models", 40);
+    $self->display_command_row("/api models --refresh", "Refresh models (bypass cache)", 40);
+    $self->display_command_row("/api login", "Authenticate with GitHub Copilot", 40);
+    $self->display_command_row("/api logout", "Sign out from GitHub", 40);
+    $self->writeline("", markdown => 0);
+    
+    $self->display_section_header("PROVIDERS");
+    $self->display_command_row("github_copilot", "GitHub Copilot (OAuth login)", 40);
+    $self->display_command_row("anthropic", "Anthropic Claude (native API)", 40);
+    $self->display_command_row("google", "Google Gemini (native API)", 40);
+    $self->display_command_row("openai", "OpenAI (compatible API)", 40);
+    $self->display_command_row("openrouter", "OpenRouter (proxy to many models)", 40);
     $self->writeline("", markdown => 0);
     
     $self->display_section_header("WEB SEARCH");
-    $self->display_command_row("/api set serpapi_key <key>", "Set SerpAPI key", 35);
-    $self->display_command_row("/api set search_engine <name>", "Set engine (google|bing|duckduckgo)", 35);
-    $self->writeline("", markdown => 0);
-    
-    $self->display_section_header("FLAGS");
-    $self->display_command_row("--session", "Save setting to this session only", 35);
+    $self->display_command_row("/api set serpapi_key <key>", "Set SerpAPI key", 40);
+    $self->display_command_row("/api set search_engine <name>", "Set engine (google|bing|duckduckgo)", 40);
     $self->writeline("", markdown => 0);
     
     $self->display_section_header("EXAMPLES");
-    $self->display_command_row("/api set model claude-sonnet-4", "Global + session", 35);
-    $self->display_command_row("/api set model gpt-4o --session", "This session only", 35);
-    $self->display_command_row("/api set provider github_copilot", "Switch provider", 35);
+    $self->display_command_row("/api set model anthropic/claude-sonnet-4", "Switch to Anthropic + model", 45);
+    $self->display_command_row("/api set model google/gemini-2.5-flash", "Switch to Google + model", 45);
+    $self->display_command_row("/api set provider anthropic", "Switch provider only", 45);
+    $self->display_command_row("/api set key sk-ant-...", "Set key for current provider", 45);
     $self->writeline("", markdown => 0);
 }
 
