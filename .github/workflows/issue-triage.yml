@@ -225,18 +225,20 @@ jobs:
           CLOSE_REASON: ${{ steps.parse.outputs.close_reason }}
         run: |
           ANALYSIS=$(cat /tmp/clio-workspace/analysis.json)
-          SUMMARY=$(echo "$ANALYSIS" | jq -r '.summary // "Issue closed by automated triage."')
           
-          gh issue comment "$ISSUE_NUMBER" --body "## Automated Triage Result
-
-          This issue has been automatically closed.
-
-          **Reason:** ${CLOSE_REASON}
-
-          ${SUMMARY}
-
-          If you believe this is incorrect, please reopen the issue with additional information."
+          {
+            echo "## Automated Triage Result"
+            echo ""
+            echo "This issue has been automatically closed."
+            echo ""
+            echo "**Reason:** ${CLOSE_REASON}"
+            echo ""
+            echo "$(echo "$ANALYSIS" | jq -r '.summary // "Issue closed by automated triage."')"
+            echo ""
+            echo "If you believe this is incorrect, please reopen the issue with additional information."
+          } > /tmp/clio-workspace/close_comment.md
           
+          gh issue comment "$ISSUE_NUMBER" --body-file /tmp/clio-workspace/close_comment.md
           gh issue close "$ISSUE_NUMBER" --reason "not planned" 2>/dev/null || gh issue close "$ISSUE_NUMBER"
       
       - name: Handle needs-info recommendation
@@ -246,18 +248,19 @@ jobs:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: |
           ANALYSIS=$(cat /tmp/clio-workspace/analysis.json)
-          MISSING=$(echo "$ANALYSIS" | jq -r '(.missing_info // []) | map("- " + .) | join("\n")' || echo "- Additional details needed")
-          SUMMARY=$(echo "$ANALYSIS" | jq -r '.summary // "More information is needed to process this issue."')
           
-          gh issue comment "$ISSUE_NUMBER" --body "## More Information Needed
-
-          ${SUMMARY}
-
-          **Please provide:**
-          ${MISSING}
-
-          Once you've added this information, the issue will be re-evaluated."
+          {
+            echo "## More Information Needed"
+            echo ""
+            echo "$(echo "$ANALYSIS" | jq -r '.summary // "More information is needed to process this issue."')"
+            echo ""
+            echo "**Please provide:**"
+            echo "$ANALYSIS" | jq -r '(.missing_info // ["Additional details needed"])[] | "- " + .'
+            echo ""
+            echo "Once you've added this information, the issue will be re-evaluated."
+          } > /tmp/clio-workspace/needs_info_comment.md
           
+          gh issue comment "$ISSUE_NUMBER" --body-file /tmp/clio-workspace/needs_info_comment.md
           gh issue edit "$ISSUE_NUMBER" --add-label "needs-info" 2>/dev/null || \
           (gh label create "needs-info" --color "d876e3" --description "Awaiting more information from reporter" 2>/dev/null; gh issue edit "$ISSUE_NUMBER" --add-label "needs-info") || true
       
@@ -268,22 +271,25 @@ jobs:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: |
           ANALYSIS=$(cat /tmp/clio-workspace/analysis.json)
-          SUMMARY=$(echo "$ANALYSIS" | jq -r '.summary // "Issue triaged successfully."')
           CLASSIFICATION=$(echo "$ANALYSIS" | jq -r '.classification // "unknown"')
           PRIORITY=$(echo "$ANALYSIS" | jq -r '.priority // "medium"')
           COMPLETENESS=$(echo "$ANALYSIS" | jq -r '.completeness // "N/A"')
           
-          gh issue comment "$ISSUE_NUMBER" --body "## Automated Triage Summary
-
-          | Field | Value |
-          |-------|-------|
-          | Classification | \`${CLASSIFICATION}\` |
-          | Priority | \`${PRIORITY}\` |
-          | Completeness | ${COMPLETENESS}% |
-
-          **Analysis:** ${SUMMARY}
-
-          _This is an automated analysis. A maintainer will review shortly._"
+          {
+            echo "## Automated Triage Summary"
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| Classification | \`${CLASSIFICATION}\` |"
+            echo "| Priority | \`${PRIORITY}\` |"
+            echo "| Completeness | ${COMPLETENESS}% |"
+            echo ""
+            echo "**Analysis:** $(echo "$ANALYSIS" | jq -r '.summary // "Issue triaged successfully."')"
+            echo ""
+            echo "_This is an automated analysis. A maintainer will review shortly._"
+          } > /tmp/clio-workspace/triage_comment.md
+          
+          gh issue comment "$ISSUE_NUMBER" --body-file /tmp/clio-workspace/triage_comment.md
       
       - name: Upload artifacts
         if: always()
@@ -296,4 +302,5 @@ jobs:
             /tmp/clio-workspace/analysis.json
             /tmp/clio-workspace/ISSUE_INFO.md
             /tmp/clio-workspace/ISSUE_BODY.md
+            /tmp/clio-workspace/*.md
           retention-days: 7
