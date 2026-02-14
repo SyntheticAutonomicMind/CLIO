@@ -88,5 +88,6 @@ Respond with ONLY a JSON object:
 - Status: `needs-info`, `good-first-issue`, `help-wanted`
 
 ### Assignment Rules:
-- Assign to "fewtarius" if: valid bug or enhancement that's ready for review
-- Assign to null if: needs more info or should be closed
+- **ALWAYS** set `assign_to: "fewtarius"` for ANY issue that is NOT being closed
+- Only set `assign_to: null` if `recommendation: "close"`
+- When in doubt, assign to fewtarius - human review is preferred
