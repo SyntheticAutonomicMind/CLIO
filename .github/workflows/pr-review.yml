@@ -180,7 +180,6 @@ jobs:
         run: |
           ANALYSIS=$(cat /tmp/clio-workspace/analysis.json)
           RECOMMENDATION=$(echo "$ANALYSIS" | jq -r '.recommendation // "needs-review"')
-          SUMMARY=$(echo "$ANALYSIS" | jq -r '.summary // "Analysis complete."')
           TEST_COV=$(echo "$ANALYSIS" | jq -r '.test_coverage // "unknown"')
           BREAKING=$(echo "$ANALYSIS" | jq -r '.breaking_changes // false')
           
@@ -191,33 +190,50 @@ jobs:
             *) EMOJI="INFO"; VERDICT="Needs Review" ;;
           esac
           
-          # Build security concerns section
-          SEC_CONCERNS=$(echo "$ANALYSIS" | jq -r '(.security_concerns // []) | if length > 0 then "## Security Concerns\n\n" + (map("- " + .) | join("\n")) + "\n" else "" end')
+          # Build comment body to a file using jq to safely handle content
+          {
+            echo "## ${EMOJI} CLIO Automated Review: ${VERDICT}"
+            echo ""
+            echo "**Summary:** $(echo "$ANALYSIS" | jq -r '.summary // "Analysis complete."')"
+            echo ""
+            echo "| Metric | Value |"
+            echo "|--------|-------|"
+            echo "| Test Coverage | \`${TEST_COV}\` |"
+            echo "| Breaking Changes | \`${BREAKING}\` |"
+            echo ""
+            
+            # Security concerns
+            SEC_COUNT=$(echo "$ANALYSIS" | jq -r '(.security_concerns // []) | length')
+            if [ "$SEC_COUNT" -gt 0 ]; then
+              echo "## Security Concerns"
+              echo ""
+              echo "$ANALYSIS" | jq -r '(.security_concerns // [])[] | "- " + .'
+              echo ""
+            fi
+            
+            # Style issues
+            STYLE_COUNT=$(echo "$ANALYSIS" | jq -r '(.style_issues // []) | length')
+            if [ "$STYLE_COUNT" -gt 0 ]; then
+              echo "## Style Issues"
+              echo ""
+              echo "$ANALYSIS" | jq -r '(.style_issues // [])[] | "- " + .'
+              echo ""
+            fi
+            
+            # Detailed feedback
+            FB_COUNT=$(echo "$ANALYSIS" | jq -r '(.detailed_feedback // []) | length')
+            if [ "$FB_COUNT" -gt 0 ]; then
+              echo "## Detailed Feedback"
+              echo ""
+              echo "$ANALYSIS" | jq -r '(.detailed_feedback // [])[] | "- " + .'
+              echo ""
+            fi
+            
+            echo "---"
+            echo "_This is an automated review. A human maintainer will provide final approval._"
+          } > /tmp/clio-workspace/comment.md
           
-          # Build style issues section  
-          STYLE_ISSUES=$(echo "$ANALYSIS" | jq -r '(.style_issues // []) | if length > 0 then "## Style Issues\n\n" + (map("- " + .) | join("\n")) + "\n" else "" end')
-          
-          # Build detailed feedback section
-          FEEDBACK=$(echo "$ANALYSIS" | jq -r '(.detailed_feedback // []) | if length > 0 then "## Detailed Feedback\n\n" + (map("- " + .) | join("\n")) + "\n" else "" end')
-          
-          # Construct comment body
-          COMMENT_BODY="## ${EMOJI} CLIO Automated Review: ${VERDICT}
-
-**Summary:** ${SUMMARY}
-
-| Metric | Value |
-|--------|-------|
-| Test Coverage | \`${TEST_COV}\` |
-| Breaking Changes | \`${BREAKING}\` |
-
-${SEC_CONCERNS}
-${STYLE_ISSUES}
-${FEEDBACK}
-
----
-_This is an automated review. A human maintainer will provide final approval._"
-          
-          gh pr comment "$PR_NUMBER" --body "$COMMENT_BODY"
+          gh pr comment "$PR_NUMBER" --body-file /tmp/clio-workspace/comment.md
       
       - name: Upload artifacts
         if: always()
@@ -230,4 +246,5 @@ _This is an automated review. A human maintainer will provide final approval._"
             /tmp/clio-workspace/analysis.json
             /tmp/clio-workspace/PR_INFO.md
             /tmp/clio-workspace/PR_DIFF.txt
+            /tmp/clio-workspace/comment.md
           retention-days: 7
