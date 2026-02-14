@@ -137,20 +137,16 @@ jobs:
           # Debug: show what's in the CLIO config directory
           echo "=== CLIO Config Directory Contents ==="
           ls -la /tmp/clio-config/
-          echo "=== Config.json (redacted) ==="
-          cat /tmp/clio-config/config.json | sed 's/ghp_[a-zA-Z0-9]*/ghp_REDACTED/g'
+          echo "=== Config.json ==="
+          cat /tmp/clio-config/config.json
           
           # Run CLIO in container with prompt piped to stdin
-          # Mount:
-          #   - Writable workspace copy at /workspace (for sessions)
-          #   - Auth config as /root/.clio (for config.json)
           ANALYSIS=$(cat /tmp/clio-workspace/full_prompt.md | docker run -i --rm \
             -v "/tmp/clio-workspace":/workspace:rw \
             -v "/tmp/clio-config":/root/.clio:rw \
             -w /workspace \
-            -e CLIO_LOG_LEVEL=DEBUG \
+            -e CLIO_LOG_LEVEL=INFO \
             ghcr.io/syntheticautonomicmind/clio:latest \
-            --debug \
             --new \
             --model "$CLIO_MODEL" \
             --sandbox \
@@ -159,18 +155,48 @@ jobs:
           # Save full response for debugging
           echo "$ANALYSIS" > /tmp/clio-workspace/full_response.txt
           
-          # Extract JSON from the response
-          # First try to find content between ```json and ```
-          JSON_RESPONSE=$(echo "$ANALYSIS" | sed -n '/```json/,/```/p' | sed '1d;$d' | tr -d '\n')
+          # Create a Python script for JSON extraction (avoids YAML escaping issues)
+          cat > /tmp/extract_json.py << 'PYEOF'
+          import sys, json, re
+          with open('/tmp/clio-workspace/full_response.txt', 'r') as f:
+              content = f.read()
+          # Try to find JSON between ```json and ```
+          match = re.search(r'```json\s*(.*?)\s*```', content, re.DOTALL)
+          if match:
+              try:
+                  obj = json.loads(match.group(1))
+                  print(json.dumps(obj))
+                  sys.exit(0)
+              except: pass
+          # Try to find raw JSON with "summary" key
+          for i in range(len(content)):
+              if content[i] == '{':
+                  depth = 0
+                  for j in range(i, len(content)):
+                      if content[j] == '{': depth += 1
+                      elif content[j] == '}': depth -= 1
+                      if depth == 0:
+                          try:
+                              obj = json.loads(content[i:j+1])
+                              if 'summary' in obj or 'completeness' in obj:
+                                  print(json.dumps(obj))
+                                  sys.exit(0)
+                          except: pass
+                          break
+          print("")
+          PYEOF
           
-          # If no JSON block found, try to find raw JSON object
-          if [ -z "$JSON_RESPONSE" ] || [ "$JSON_RESPONSE" = "" ]; then
-            # Look for JSON starting with { containing "completeness"
-            JSON_RESPONSE=$(echo "$ANALYSIS" | grep -oP '\{[^{}]*"completeness"[^{}]*\}' | head -1) || true
+          # Extract JSON from the response
+          # Method 1: Try to find content between ```json and ```
+          JSON_RESPONSE=$(echo "$ANALYSIS" | sed -n '/```json/,/```/p' | sed '1d;$d')
+          
+          # Method 2: If no fenced JSON, use Python script for robust extraction
+          if [ -z "$JSON_RESPONSE" ] || ! echo "$JSON_RESPONSE" | jq . > /dev/null 2>&1; then
+            JSON_RESPONSE=$(python3 /tmp/extract_json.py) || true
           fi
           
           # Validate JSON and save
-          if echo "$JSON_RESPONSE" | jq . > /dev/null 2>&1; then
+          if [ -n "$JSON_RESPONSE" ] && echo "$JSON_RESPONSE" | jq . > /dev/null 2>&1; then
             echo "$JSON_RESPONSE" > /tmp/clio-workspace/analysis.json
             echo "json_valid=true" >> $GITHUB_OUTPUT
           else
@@ -192,8 +218,8 @@ jobs:
           fi
           
           # Debug output (truncated to avoid log spam)
-          echo "=== Full CLIO Response (last 1000 chars) ==="
-          tail -c 1000 /tmp/clio-workspace/full_response.txt
+          echo "=== Full CLIO Response (last 1500 chars) ==="
+          tail -c 1500 /tmp/clio-workspace/full_response.txt
           echo ""
           echo "=== Extracted JSON ==="
           cat /tmp/clio-workspace/analysis.json
@@ -290,9 +316,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Build the comment body
+          # Build the comment body with human-friendly formatting
           cat > /tmp/clio-workspace/comment.md << 'COMMENT_EOF'
-          ##  CLIO Triage Analysis
+          ## 🤖 CLIO Triage Analysis
           
           | Field | Value |
           |-------|-------|
@@ -301,43 +327,25 @@ jobs:
           | **Completeness** | ${{ steps.parse.outputs.completeness_score }}/100 |
           | **Recommendation** | ${{ steps.parse.outputs.recommendation }} |
           
-          ### Summary
+          ### 📋 Summary
           ${{ steps.parse.outputs.summary }}
           COMMENT_EOF
           
-          # Add affected areas if present
-          if [ -n "${{ steps.parse.outputs.affected_areas }}" ]; then
-            cat >> /tmp/clio-workspace/comment.md << 'AREAS_EOF'
-          
-          ###  Potentially Affected Areas
-          ${{ steps.parse.outputs.affected_areas }}
-          AREAS_EOF
-          fi
-          
           # Add missing info section if applicable
           MISSING_INFO="${{ steps.parse.outputs.missing_info }}"
-          if [ -n "$MISSING_INFO" ]; then
+          if [ -n "$MISSING_INFO" ] && [ "$MISSING_INFO" != "- Unable to fully parse CLIO response" ]; then
             cat >> /tmp/clio-workspace/comment.md << MISSING_EOF
           
-          ### [INFO]️ Additional Information Needed
+          ### ℹ️ Additional Information Needed
           ${MISSING_INFO}
           MISSING_EOF
-          fi
-          
-          # Add reproduction test results if run
-          if [ "${{ steps.parse.outputs.has_reproduction_test }}" == "true" ]; then
-            cat >> /tmp/clio-workspace/comment.md << 'REPRO_EOF'
-          
-          ###  Reproduction Test
-          ${{ steps.repro.outputs.repro_message }}
-          REPRO_EOF
           fi
           
           # Add footer
           cat >> /tmp/clio-workspace/comment.md << 'FOOTER_EOF'
           
           ---
-          *This analysis was performed automatically by [CLIO](https://github.com/SyntheticAutonomicMind/CLIO) using gpt-5-mini. A human maintainer will review this issue soon.*
+          *This analysis was performed automatically by [CLIO](https://github.com/SyntheticAutonomicMind/CLIO). A human maintainer will review this issue soon.*
           FOOTER_EOF
           
           # Post the comment
