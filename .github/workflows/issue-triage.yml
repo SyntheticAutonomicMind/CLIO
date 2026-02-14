@@ -235,7 +235,8 @@ jobs:
           CLASSIFICATION=$(echo "$ANALYSIS_JSON" | jq -r '.classification // "bug"')
           SEVERITY=$(echo "$ANALYSIS_JSON" | jq -r '.severity // "medium"')
           SUMMARY=$(echo "$ANALYSIS_JSON" | jq -r '.summary // "Analysis complete."')
-          COMPLETENESS_SCORE=$(echo "$ANALYSIS_JSON" | jq -r '.completeness.score // 50')
+          # Handle completeness being either a number or an object with score
+          COMPLETENESS_SCORE=$(echo "$ANALYSIS_JSON" | jq -r 'if (.completeness | type) == "number" then .completeness else (.completeness.score // 50) end')
           MISSING_INFO=$(echo "$ANALYSIS_JSON" | jq -r 'if .missing_info then (.missing_info | map("- " + .) | join("\n")) else "" end')
           SUGGESTED_LABELS=$(echo "$ANALYSIS_JSON" | jq -r '.suggested_labels // [] | join(",")')
           REPRODUCTION_TEST=$(echo "$ANALYSIS_JSON" | jq -r '.reproduction_test // ""')
