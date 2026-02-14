@@ -1,0 +1,123 @@
+name:  Feature Request
+description: Suggest a new feature or enhancement for CLIO
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Before Requesting a Feature...
+        
+        **Have you checked if this already exists?**
+        - [DOC] [Documentation](https://github.com/SyntheticAutonomicMind/CLIO/tree/main/docs)
+        - [SEARCH] [Existing Issues](https://github.com/SyntheticAutonomicMind/CLIO/issues)
+        -  [Discussions](https://github.com/SyntheticAutonomicMind/CLIO/discussions)
+        
+        **CLIO's current capabilities:**
+        -  Terminal-based AI coding assistant
+        -  10 integrated tools (file ops, git, terminal, memory, web, code intel, etc.)
+        -  Multi-provider support (GitHub Copilot, OpenAI, Claude, etc.)
+        -  Session management with handoff documentation
+        -  Multi-agent coordination (sub-agents)
+        -  Remote execution via SSH
+        -  Long-term memory with project patterns
+        -  Todo tracking for complex tasks
+        
+        Still want to request a feature? Let's hear your idea!
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission Checklist
+      options:
+        - label: I have searched existing issues and discussions
+          required: true
+        - label: I have read the documentation
+          required: true
+        - label: This is a feature request, not a bug report
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What problem does this feature solve? What's the use case?
+      placeholder: |
+        As a developer, I want to...
+        Currently, I have to...
+        This would help me...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: How would you like this feature to work?
+      placeholder: |
+        CLIO should be able to...
+        When I run X, it would...
+        The tool could...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which area would this affect?
+      description: Select the primary component this feature relates to
+      options:
+        - New Tool
+        - Terminal UI / UX
+        - API / Provider Integration
+        - Session Management
+        - Memory / Context
+        - Multi-Agent / Sub-Agents
+        - Remote Execution
+        - Configuration
+        - Performance
+        - Developer Experience
+        - Documentation
+        - GitHub Actions / CI
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: How important is this to you?
+      options:
+        - Nice to have
+        - Would improve my workflow
+        - Important for my use case
+        - Critical - blocking my usage
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Have you considered any alternative solutions or workarounds?
+      placeholder: |
+        I've tried...
+        Other tools do this by...
+        A workaround could be...
+
+  - type: dropdown
+    id: contribution
+    attributes:
+      label: Would you be willing to contribute?
+      description: CLIO is open source - contributions are welcome!
+      options:
+        - "No, I'm just suggesting"
+        - "Maybe, with guidance"
+        - "Yes, I'd like to implement this"
+        - "Yes, I've already started working on it"
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other context or examples for the feature request
