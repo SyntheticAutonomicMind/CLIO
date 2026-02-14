@@ -96,11 +96,14 @@ runs:
       env:
         CLIO_TOKEN: ${{ inputs.clio-token }}
       run: |
-        # Create config.json with PAT for GitHub Copilot auth
+        # Create github_tokens.json with OAuth token from device flow
         # IMPORTANT: set +x prevents logging the secret
         set +x
-        printf '{"provider": "github_copilot", "github_pat": "%s"}' "$CLIO_TOKEN" > /tmp/clio-config/config.json
-        chmod 600 /tmp/clio-config/config.json
+        printf '{"github_token": "%s", "saved_at": %d}' "$CLIO_TOKEN" "$(date +%s)" > /tmp/clio-config/github_tokens.json
+        chmod 600 /tmp/clio-config/github_tokens.json
+        
+        # Minimal config for provider
+        echo '{"provider": "github_copilot"}' > /tmp/clio-config/config.json
         echo "CLIO authentication configured"
     
     - name: Build analysis prompt
