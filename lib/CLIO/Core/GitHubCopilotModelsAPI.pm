@@ -46,17 +46,24 @@ GitHub Copilot API requires specific headers to return complete and correct mode
 especially billing information. The following headers MUST be present:
 
   Authorization: Bearer <token>
-  Editor-Version: vscode/1.96
-  Editor-Plugin-Version: copilot-chat/0.22.4
-  X-Request-Id: <uuid>
-  OpenAI-Intent: model-access          # REQUIRED for billing metadata!
-  X-GitHub-Api-Version: 2025-05-01
+  Editor-Version: vscode/2.0.0 (configurable via editor_version in config)
+  Editor-Plugin-Version: copilot-chat/0.38.0 (configurable via plugin_version in config)
+  Copilot-Language-Server-Version: 1.378.1799 (configurable via copilot_language_server_version in config)
+  X-Request-Id: <uuid> (generated per request)
+  OpenAI-Intent: model-access (REQUIRED for billing metadata!)
+  X-GitHub-Api-Version: 2025-05-01 (configurable via github_api_version in config)
 
 If these headers (especially OpenAI-Intent: model-access) are missing or incorrect, 
 the API may return incomplete or different model lists.
 
 This is NOT a bug - it's by design. GitHub filters model availability and billing 
 based on the request context (editor version, intent, etc.).
+
+Version headers can be updated via config to match latest vscode-copilot-chat:
+  /api set editor_version vscode/2.0.0
+  /api set plugin_version copilot-chat/0.38.0
+  /api set copilot_language_server_version 1.378.1799
+  /api set github_api_version 2025-05-01
 
 =head1 SYNOPSIS
 
@@ -77,23 +84,74 @@ sub new {
     
     # If api_key not provided, try to get it from GitHubAuth
     my $api_key = $args{api_key};
+    my $api_base_url;
+    
     unless ($api_key) {
         eval {
             require CLIO::Core::GitHubAuth;
             my $auth = CLIO::Core::GitHubAuth->new(debug => $args{debug} || 0);
-            $api_key = $auth->get_copilot_token();  # Returns GitHub token if Copilot token unavailable
+            $api_key = $auth->get_copilot_token();
+            
+            # Get user-specific API endpoint from /copilot_internal/user
+            my $token_data = $auth->load_tokens();
+            if ($token_data && $token_data->{github_token}) {
+                my $ua = CLIO::Compat::HTTP->new(timeout => 10);
+                my $req = HTTP::Request->new(GET => 'https://api.github.com/copilot_internal/user');
+                $req->header('Authorization' => "token $token_data->{github_token}");
+                my $resp = $ua->request($req);
+                
+                if ($resp->is_success) {
+                    my $user_data = eval { decode_json($resp->decoded_content) };
+                    if ($user_data && $user_data->{endpoints} && $user_data->{endpoints}{api}) {
+                        $api_base_url = $user_data->{endpoints}{api};
+                        print STDERR "[DEBUG][GitHubCopilotModelsAPI] Using user-specific API: $api_base_url\n"
+                            if $args{debug};
+                    }
+                }
+            }
         };
         if ($@) {
-            print STDERR "[WARN]GitHubCopilotModelsAPI] Failed to get GitHub token: $@\n";
+            print STDERR "[WARN][GitHubCopilotModelsAPI] Failed to get GitHub token: $@\n";
         }
+    }
+    
+    # Determine the base URL for /models endpoint
+    # Priority: explicit models_base_url arg > user-specific API > default
+    my $models_base_url = $args{models_base_url} || $api_base_url || 'https://api.githubcopilot.com';
+    
+    # Load version headers from config (with fallback defaults)
+    my ($editor_version, $plugin_version, $copilot_language_server_version, $github_api_version);
+    eval {
+        require CLIO::Core::Config;
+        my $config = CLIO::Core::Config->new(debug => $args{debug} || 0);
+        $editor_version = $config->get('editor_version') || 'vscode/2.0.0';
+        $plugin_version = $config->get('plugin_version') || 'copilot-chat/0.38.0';
+        $copilot_language_server_version = $config->get('copilot_language_server_version') || '1.378.1799';
+        $github_api_version = $config->get('github_api_version') || '2025-05-01';
+    };
+    if ($@) {
+        # Fallback if Config fails to load
+        $editor_version = 'vscode/2.0.0';
+        $plugin_version = 'copilot-chat/0.38.0';
+        $copilot_language_server_version = '1.378.1799';
+        $github_api_version = '2025-05-01';
     }
     
     my $self = {
         api_key => $api_key,  # API key from parameter or GitHubAuth
+        models_base_url => $models_base_url,  # Base URL for /models endpoint
         cache_file => $args{cache_file} || $cache_file,
         cache_ttl => $args{cache_ttl} || 3600,  # 1 hour
         debug => $args{debug} || 0,
+        editor_version => $editor_version,  # From Config or default
+        plugin_version => $plugin_version,  # From Config or default
+        copilot_language_server_version => $copilot_language_server_version,  # From Config or default
+        github_api_version => $github_api_version,  # From Config or default
     };
+    
+    if ($self->{debug}) {
+        print STDERR "[DEBUG][GitHubCopilotModelsAPI] Using models base URL: $models_base_url\n";
+    }
     
     return bless $self, $class;
 }
@@ -127,15 +185,22 @@ sub fetch_models {
     print STDERR "[DEBUG][GitHubCopilotModelsAPI] Fetching from API\n" 
         if $self->{debug};
     
+    # Build models endpoint URL
+    my $models_url = "$self->{models_base_url}/models";
+    
+    print STDERR "[DEBUG][GitHubCopilotModelsAPI] Fetching models from: $models_url\n"
+        if $self->{debug};
+    
     # Fetch from API
     my $ua = CLIO::Compat::HTTP->new(timeout => 30);
-    my $req = HTTP::Request->new(GET => 'https://api.githubcopilot.com/models');
+    my $req = HTTP::Request->new(GET => $models_url);
     $req->header('Authorization' => "Bearer $self->{api_key}");
-    $req->header('Editor-Version' => 'vscode/1.96');
-    $req->header('Editor-Plugin-Version' => 'copilot-chat/0.22.4');
+    $req->header('Editor-Version' => $self->{editor_version});
+    $req->header('Editor-Plugin-Version' => $self->{plugin_version});
+    $req->header('Copilot-Language-Server-Version' => $self->{copilot_language_server_version});
     $req->header('X-Request-Id' => $self->_generate_uuid());
     $req->header('OpenAI-Intent' => 'model-access');  # Required for billing metadata
-    $req->header('X-GitHub-Api-Version' => '2025-05-01');
+    $req->header('X-GitHub-Api-Version' => $self->{github_api_version});
     
     my $resp = $ua->request($req);
     
