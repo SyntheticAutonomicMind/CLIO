@@ -1,0 +1,20 @@
+blank_issues_enabled: false
+contact_links:
+  - name:  GitHub Discussions - Questions & Support
+    url: https://github.com/SyntheticAutonomicMind/CLIO/discussions
+    about: |
+      Please use GitHub Discussions for:
+      - General questions ("How do I...?")
+      - Troubleshooting help
+      - Usage guidance
+      - Sharing tips and workflows
+      
+      Issues are for confirmed bugs and feature requests only.
+  
+  - name: [DOC] Documentation
+    url: https://github.com/SyntheticAutonomicMind/CLIO/tree/main/docs
+    about: Check the documentation first - it may answer your question!
+  
+  - name: [TOOLS]️ User Guide
+    url: https://github.com/SyntheticAutonomicMind/CLIO/blob/main/docs/USER_GUIDE.md
+    about: New to CLIO? Start here for installation and usage help.

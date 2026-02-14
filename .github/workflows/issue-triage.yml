@@ -235,10 +235,16 @@ jobs:
           CLASSIFICATION=$(echo "$ANALYSIS_JSON" | jq -r '.classification // "bug"')
           SEVERITY=$(echo "$ANALYSIS_JSON" | jq -r '.severity // "medium"')
           SUMMARY=$(echo "$ANALYSIS_JSON" | jq -r '.summary // "Analysis complete."')
+          CLOSE_REASON=$(echo "$ANALYSIS_JSON" | jq -r '.close_reason // ""')
+          ASSIGN_TO=$(echo "$ANALYSIS_JSON" | jq -r '.assign_to // ""')
+          
           # Handle completeness being either a number or an object with score
           COMPLETENESS_SCORE=$(echo "$ANALYSIS_JSON" | jq -r 'if (.completeness | type) == "number" then .completeness else (.completeness.score // 50) end')
           MISSING_INFO=$(echo "$ANALYSIS_JSON" | jq -r 'if .missing_info then (.missing_info | map("- " + .) | join("\n")) else "" end')
-          SUGGESTED_LABELS=$(echo "$ANALYSIS_JSON" | jq -r '.suggested_labels // [] | join(",")')
+          
+          # Handle both "labels" and "suggested_labels" field names
+          SUGGESTED_LABELS=$(echo "$ANALYSIS_JSON" | jq -r '(.labels // .suggested_labels // []) | join(",")')
+          
           REPRODUCTION_TEST=$(echo "$ANALYSIS_JSON" | jq -r '.reproduction_test // ""')
           AFFECTED_AREAS=$(echo "$ANALYSIS_JSON" | jq -r 'if .affected_areas then (.affected_areas | join(", ")) else "" end')
           
@@ -249,6 +255,8 @@ jobs:
           echo "completeness_score=$COMPLETENESS_SCORE" >> $GITHUB_OUTPUT
           echo "suggested_labels=$SUGGESTED_LABELS" >> $GITHUB_OUTPUT
           echo "affected_areas=$AFFECTED_AREAS" >> $GITHUB_OUTPUT
+          echo "close_reason=$CLOSE_REASON" >> $GITHUB_OUTPUT
+          echo "assign_to=$ASSIGN_TO" >> $GITHUB_OUTPUT
           
           # Handle multi-line fields with heredoc
           echo "summary<<EOF" >> $GITHUB_OUTPUT
@@ -313,7 +321,42 @@ jobs:
             fi
           done
       
+      - name: Assign issue
+        if: steps.parse.outputs.assign_to != '' && steps.parse.outputs.assign_to != 'null'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Assigning issue to ${{ steps.parse.outputs.assign_to }}"
+          gh issue edit ${{ github.event.issue.number }} --add-assignee "${{ steps.parse.outputs.assign_to }}" || \
+            echo "Note: Could not assign to ${{ steps.parse.outputs.assign_to }}"
+      
+      - name: Close invalid issues
+        if: steps.parse.outputs.recommendation == 'close'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Closing issue as: ${{ steps.parse.outputs.close_reason }}"
+          
+          # Post a comment explaining why the issue is being closed
+          CLOSE_COMMENT="## [CLOSE] Issue Closed by CLIO Triage
+          
+          This issue has been automatically closed because: **${{ steps.parse.outputs.close_reason }}**
+          
+          **Analysis:** ${{ steps.parse.outputs.summary }}
+          
+          If you believe this was done in error, please:
+          1. Review the [issue templates](https://github.com/SyntheticAutonomicMind/CLIO/issues/new/choose)
+          2. Open a new issue with complete information
+          3. Or reply to this issue with additional context
+          
+          ---
+          *Automated triage by [CLIO](https://github.com/SyntheticAutonomicMind/CLIO)*"
+          
+          gh issue comment ${{ github.event.issue.number }} --body "$CLOSE_COMMENT"
+          gh issue close ${{ github.event.issue.number }} --reason "not planned"
+      
       - name: Post triage comment
+        if: steps.parse.outputs.recommendation != 'close'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
