@@ -1,10 +1,6 @@
 name: PR Review with CLIO
 
-# Trigger on PR events:
-# - opened: New PR created
-# - synchronize: New commits pushed to PR
-# - reopened: PR reopened after being closed
-# - review_requested: When review is specifically requested
+# Trigger on PR events
 on:
   pull_request:
     types: [opened, synchronize, reopened, review_requested]
@@ -12,10 +8,9 @@ on:
 permissions:
   pull-requests: write
   contents: read
-  packages: read  # Required to pull CLIO container from GHCR
+  packages: read
 
 env:
-  # Use GitHub Copilot free-tier model for cost-effective review
   CLIO_MODEL: gpt-5-mini
   REGISTRY: ghcr.io
 
@@ -24,9 +19,6 @@ jobs:
     name: Analyze and Review PR
     runs-on: ubuntu-latest
     
-    # Skip conditions:
-    # - Skip if created by a bot (prevent loops)
-    # - Skip draft PRs
     if: |
       github.event.pull_request.user.type != 'Bot' &&
       github.event.pull_request.draft != true
@@ -35,9 +27,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Full history for better diff context
+          fetch-depth: 0
       
-      - name: Log in to GitHub Container Registry
+      - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -45,304 +37,117 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       
       - name: Pull CLIO container
-        run: |
-          docker pull ghcr.io/syntheticautonomicmind/clio:latest
+        run: docker pull ghcr.io/syntheticautonomicmind/clio:latest
       
-      - name: Prepare writable workspace
+      - name: Prepare workspace
         run: |
-          # CLIO needs a writable working directory for session storage
           mkdir -p /tmp/clio-workspace
           cp -r ./* /tmp/clio-workspace/ 2>/dev/null || true
           cp -r ./.clio /tmp/clio-workspace/ 2>/dev/null || true
           cp -r ./.github /tmp/clio-workspace/ 2>/dev/null || true
-          
-          # Create directories CLIO needs
           mkdir -p /tmp/clio-workspace/.clio/sessions
           mkdir -p /tmp/clio-config
-          
-          echo "Workspace prepared at /tmp/clio-workspace"
-          ls -la /tmp/clio-workspace/
-      
-      - name: Prepare PR context
-        id: context
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          PR_NUMBER="${{ github.event.pull_request.number }}"
-          EVENT_ACTION="${{ github.event.action }}"
-          
-          # Write PR metadata to file
-          cat > /tmp/clio-workspace/pr.json << 'PR_EOF'
-          ${{ toJson(github.event.pull_request) }}
-          PR_EOF
-          
-          # Write PR body to separate file
-          printf '%s' "${{ github.event.pull_request.body }}" > /tmp/clio-workspace/pr_body.md
-          
-          # Fetch PR diff
-          echo "Fetching PR diff..."
-          gh pr diff $PR_NUMBER > /tmp/clio-workspace/pr_diff.txt 2>/dev/null || echo "" > /tmp/clio-workspace/pr_diff.txt
-          DIFF_SIZE=$(wc -c < /tmp/clio-workspace/pr_diff.txt)
-          echo "Diff size: $DIFF_SIZE bytes"
-          
-          # Truncate diff if too large (avoid context overflow)
-          if [ "$DIFF_SIZE" -gt 50000 ]; then
-            echo "Diff too large, truncating to first 50KB..."
-            head -c 50000 /tmp/clio-workspace/pr_diff.txt > /tmp/clio-workspace/pr_diff_truncated.txt
-            mv /tmp/clio-workspace/pr_diff_truncated.txt /tmp/clio-workspace/pr_diff.txt
-            echo "" >> /tmp/clio-workspace/pr_diff.txt
-            echo "[DIFF TRUNCATED - Original size: $DIFF_SIZE bytes]" >> /tmp/clio-workspace/pr_diff.txt
-          fi
-          
-          # Fetch list of changed files
-          echo "Fetching changed files..."
-          gh pr view $PR_NUMBER --json files --jq '.files[].path' > /tmp/clio-workspace/changed_files.txt 2>/dev/null || echo "" > /tmp/clio-workspace/changed_files.txt
-          FILE_COUNT=$(wc -l < /tmp/clio-workspace/changed_files.txt | tr -d ' ')
-          echo "Changed files: $FILE_COUNT"
-          
-          # Get PR stats
-          ADDITIONS=$(gh pr view $PR_NUMBER --json additions --jq '.additions' 2>/dev/null || echo "0")
-          DELETIONS=$(gh pr view $PR_NUMBER --json deletions --jq '.deletions' 2>/dev/null || echo "0")
-          COMMITS=$(gh pr view $PR_NUMBER --json commits --jq '.commits | length' 2>/dev/null || echo "0")
-          
-          # Fetch PR review comments for context (if this is a re-review)
-          echo "Fetching review comments..."
-          gh api repos/${{ github.repository }}/pulls/$PR_NUMBER/comments \
-            --jq '.[] | "---\n**\(.user.login)** commented on \(.path) line \(.line // .original_line):\n\(.body)\n"' \
-            > /tmp/clio-workspace/review_comments.txt 2>/dev/null || echo "" > /tmp/clio-workspace/review_comments.txt
-          REVIEW_COMMENT_COUNT=$(gh api repos/${{ github.repository }}/pulls/$PR_NUMBER/comments --jq 'length' 2>/dev/null || echo "0")
-          
-          # Fetch PR conversation comments
-          gh api repos/${{ github.repository }}/issues/$PR_NUMBER/comments \
-            --jq '.[] | "---\n**\(.user.login)** commented:\n\(.body)\n"' \
-            > /tmp/clio-workspace/conversation_comments.txt 2>/dev/null || echo "" > /tmp/clio-workspace/conversation_comments.txt
-          CONVO_COMMENT_COUNT=$(gh api repos/${{ github.repository }}/issues/$PR_NUMBER/comments --jq 'length' 2>/dev/null || echo "0")
-          
-          echo "Review comments: $REVIEW_COMMENT_COUNT, Conversation comments: $CONVO_COMMENT_COUNT"
-          
-          # Output key fields
-          echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
-          echo "event_action=$EVENT_ACTION" >> $GITHUB_OUTPUT
-          
-          echo "pr_title<<EOF" >> $GITHUB_OUTPUT
-          echo "${{ github.event.pull_request.title }}" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-          
-          echo "pr_author=${{ github.event.pull_request.user.login }}" >> $GITHUB_OUTPUT
-          echo "base_branch=${{ github.event.pull_request.base.ref }}" >> $GITHUB_OUTPUT
-          echo "head_branch=${{ github.event.pull_request.head.ref }}" >> $GITHUB_OUTPUT
-          echo "file_count=$FILE_COUNT" >> $GITHUB_OUTPUT
-          echo "additions=$ADDITIONS" >> $GITHUB_OUTPUT
-          echo "deletions=$DELETIONS" >> $GITHUB_OUTPUT
-          echo "commits=$COMMITS" >> $GITHUB_OUTPUT
-          echo "review_comment_count=$REVIEW_COMMENT_COUNT" >> $GITHUB_OUTPUT
-          echo "convo_comment_count=$CONVO_COMMENT_COUNT" >> $GITHUB_OUTPUT
       
       - name: Configure CLIO authentication
         env:
           CLIO_ACCESS: ${{ secrets.CLIO_ACCESS }}
         run: |
-          # Create CLIO config directory
           set +x
-          
-          # Create github_tokens.json with the OAuth token
           printf '{"github_token": "%s", "saved_at": %d}' "$CLIO_ACCESS" "$(date +%s)" > /tmp/clio-config/github_tokens.json
           chmod 600 /tmp/clio-config/github_tokens.json
-          
-          # Create minimal config.json for provider selection
           echo '{"provider": "github_copilot"}' > /tmp/clio-config/config.json
-          
-          echo "CLIO authentication configured"
-          ls -la /tmp/clio-config/
       
-      - name: Build review prompt
-        id: prompt
-        run: |
-          # Read the review prompt from the prompt file
-          REVIEW_PROMPT=$(cat .github/clio-prompts/pr-review.md)
-          
-          # === BENCHMARKING REFERENCE: AGENTS.md ===
-          AGENTS_MD=""
-          if [ -f "AGENTS.md" ]; then
-            # Extract key sections: Code Style, Module Naming, Testing, Commit Format
-            AGENTS_MD=$(awk '
-              /^## Code Style/,/^## [^C]/ { print }
-              /^## Module Naming/,/^## [^M]/ { print }
-              /^## Testing/,/^## [^T]/ { print }
-              /^## Commit Format/,/^## [^C]/ { print }
-            ' AGENTS.md | head -200)
-          fi
-          
-          # === BENCHMARKING REFERENCE: docs/STYLE_GUIDE.md ===
-          STYLE_GUIDE=""
-          if [ -f "docs/STYLE_GUIDE.md" ]; then
-            # Get first 300 lines (key style rules)
-            STYLE_GUIDE=$(head -300 docs/STYLE_GUIDE.md)
-          fi
-          
-          # === BENCHMARKING REFERENCE: docs/STYLE_QUICKREF.md ===
-          STYLE_QUICKREF=""
-          if [ -f "docs/STYLE_QUICKREF.md" ]; then
-            # Include the whole quickref (it's designed to be brief)
-            STYLE_QUICKREF=$(cat docs/STYLE_QUICKREF.md)
-          fi
-          
-          # === BENCHMARKING REFERENCE: docs/ARCHITECTURE.md (summary) ===
-          ARCHITECTURE=""
-          if [ -f "docs/ARCHITECTURE.md" ]; then
-            # Extract just the overview and directory structure sections
-            ARCHITECTURE=$(awk '
-              /^## Overview/,/^## [^O]/ { print }
-              /^## Directory Structure/,/^## [^D]/ { print }
-            ' docs/ARCHITECTURE.md | head -150)
-          fi
-          
-          # Read PR details
-          PR_BODY=$(cat /tmp/clio-workspace/pr_body.md)
-          PR_DIFF=$(cat /tmp/clio-workspace/pr_diff.txt)
-          CHANGED_FILES=$(cat /tmp/clio-workspace/changed_files.txt)
-          REVIEW_COMMENTS=$(cat /tmp/clio-workspace/review_comments.txt 2>/dev/null || echo "")
-          CONVO_COMMENTS=$(cat /tmp/clio-workspace/conversation_comments.txt 2>/dev/null || echo "")
-          
-          PR_NUMBER="${{ steps.context.outputs.pr_number }}"
-          PR_TITLE="${{ steps.context.outputs.pr_title }}"
-          PR_AUTHOR="${{ steps.context.outputs.pr_author }}"
-          BASE_BRANCH="${{ steps.context.outputs.base_branch }}"
-          HEAD_BRANCH="${{ steps.context.outputs.head_branch }}"
-          FILE_COUNT="${{ steps.context.outputs.file_count }}"
-          ADDITIONS="${{ steps.context.outputs.additions }}"
-          DELETIONS="${{ steps.context.outputs.deletions }}"
-          COMMITS="${{ steps.context.outputs.commits }}"
-          EVENT_ACTION="${{ steps.context.outputs.event_action }}"
-          REVIEW_COMMENT_COUNT="${{ steps.context.outputs.review_comment_count }}"
-          CONVO_COMMENT_COUNT="${{ steps.context.outputs.convo_comment_count }}"
-          
-          # Combine into full prompt with all reference materials
-          cat > /tmp/clio-workspace/full_prompt.md << PROMPT_EOF
-          ${REVIEW_PROMPT}
-          
-          ---
-          
-          # Project Reference Documentation
-          
-          Use the following documentation to benchmark the PR against ACTUAL project standards.
-          
-          ## From AGENTS.md (AI Agent Guidelines)
-          
-          ${AGENTS_MD}
-          
-          ## From docs/STYLE_QUICKREF.md (Quick Reference)
-          
-          ${STYLE_QUICKREF}
-          
-          ## From docs/STYLE_GUIDE.md (Detailed Style Guide)
-          
-          ${STYLE_GUIDE}
-          
-          ## From docs/ARCHITECTURE.md (Project Structure)
-          
-          ${ARCHITECTURE}
-          
-          ---
-          
-          # Pull Request to Review
-          
-          **PR #${PR_NUMBER}**
-          **Title:** ${PR_TITLE}
-          **Author:** ${PR_AUTHOR}
-          **Branch:** ${HEAD_BRANCH} -> ${BASE_BRANCH}
-          **Stats:** +${ADDITIONS}/-${DELETIONS} in ${FILE_COUNT} files (${COMMITS} commits)
-          **Event:** ${EVENT_ACTION}
-          
-          ## PR Description
-          
-          ${PR_BODY}
-          
-          ## Changed Files
-          
-          \`\`\`
-          ${CHANGED_FILES}
-          \`\`\`
-          
-          ## Diff
-          
-          \`\`\`diff
-          ${PR_DIFF}
-          \`\`\`
-          PROMPT_EOF
-          
-          # Add review comments section if this is a re-review
-          if [ "$REVIEW_COMMENT_COUNT" != "0" ] && [ -n "$REVIEW_COMMENTS" ]; then
-            cat >> /tmp/clio-workspace/full_prompt.md << REVIEW_EOF
-          
-          ## Previous Review Comments
-          
-          The following review comments have been made on this PR. 
-          Consider whether the latest changes address these concerns.
-          
-          ${REVIEW_COMMENTS}
-          REVIEW_EOF
-          fi
-          
-          # Add conversation comments if any
-          if [ "$CONVO_COMMENT_COUNT" != "0" ] && [ -n "$CONVO_COMMENTS" ]; then
-            cat >> /tmp/clio-workspace/full_prompt.md << CONVO_EOF
-          
-          ## PR Conversation
-          
-          ${CONVO_COMMENTS}
-          CONVO_EOF
-          fi
-          
-          # Add context note for synchronize events
-          if [ "$EVENT_ACTION" = "synchronize" ]; then
-            cat >> /tmp/clio-workspace/full_prompt.md << SYNC_EOF
-          
-          ---
-          
-          **NOTE:** This is a re-review after new commits were pushed.
-          Compare the current state against any previous feedback.
-          Check if previous issues have been addressed.
-          SYNC_EOF
-          fi
-          
-          echo "Prompt prepared ($(wc -c < /tmp/clio-workspace/full_prompt.md) bytes)"
-      
-      - name: Analyze PR with CLIO
-        id: analysis
+      - name: Prepare PR info file
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "=== Starting CLIO Analysis ==="
-          echo "Prompt size: $(wc -c < /tmp/clio-workspace/full_prompt.md) bytes"
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          
+          # Fetch PR diff and save to workspace
+          gh pr diff $PR_NUMBER > /tmp/clio-workspace/PR_DIFF.txt 2>/dev/null || echo "No diff available" > /tmp/clio-workspace/PR_DIFF.txt
+          
+          # Fetch changed files
+          gh pr view $PR_NUMBER --json files --jq '.files[].path' > /tmp/clio-workspace/PR_FILES.txt 2>/dev/null || echo "" > /tmp/clio-workspace/PR_FILES.txt
+          
+          # Create PR info file
+          cat > /tmp/clio-workspace/PR_INFO.md << EOF
+          # Pull Request #${PR_NUMBER}
+          
+          **Title:** ${{ github.event.pull_request.title }}
+          **Author:** ${{ github.event.pull_request.user.login }}
+          **Branch:** ${{ github.event.pull_request.head.ref }} -> ${{ github.event.pull_request.base.ref }}
+          **Event:** ${{ github.event.action }}
+          
+          ## Description
+          
+          ${{ github.event.pull_request.body }}
+          
+          ## Changed Files
+          
+          See PR_FILES.txt
+          
+          ## Diff
+          
+          See PR_DIFF.txt
+          EOF
+          
+          echo "PR info prepared"
+          wc -l /tmp/clio-workspace/PR_DIFF.txt
+          wc -l /tmp/clio-workspace/PR_FILES.txt
+      
+      - name: Run CLIO PR Review
+        id: review
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          
+          # Build the task for CLIO
+          TASK="You are in HEADLESS CI/CD MODE. No human is present - do not use user_collaboration or it will hang forever.
+
+          TASK: Review Pull Request #${PR_NUMBER}
+
+          STEPS:
+          1. Read .github/clio-prompts/pr-review.md for review instructions
+          2. Read PR_INFO.md for PR details
+          3. Read PR_DIFF.txt for the code diff
+          4. Read PR_FILES.txt to see changed files
+          5. If needed, read relevant project files (AGENTS.md, docs/STYLE_GUIDE.md)
+          6. Output your review as a JSON object
+
+          CRITICAL: Output ONLY a JSON object at the end. No prose. No questions. No user_collaboration."
+          
+          echo "=== Starting CLIO PR Review ==="
+          echo "Task: Review PR #${PR_NUMBER}"
           echo ""
           
-          # Run CLIO in container with prompt piped to stdin
-          # Use tee to stream output to both file AND stderr (visible in real-time)
-          echo "--- CLIO Output (streaming) ---"
-          cat /tmp/clio-workspace/full_prompt.md | docker run -i --rm \
+          # Run CLIO with the task as --input
+          docker run -i --rm \
             -v "/tmp/clio-workspace":/workspace:rw \
             -v "/tmp/clio-config":/root/.clio:rw \
             -w /workspace \
             -e CLIO_LOG_LEVEL=INFO \
+            -e GH_TOKEN="${GH_TOKEN}" \
             ghcr.io/syntheticautonomicmind/clio:latest \
             --new \
             --model "$CLIO_MODEL" \
-            --sandbox \
+            --input "$TASK" \
             --exit 2>&1 | tee /tmp/clio-workspace/full_response.txt || true
           
           echo ""
-          echo "--- End CLIO Output ---"
+          echo "=== CLIO Review Complete ==="
           echo "Response size: $(wc -c < /tmp/clio-workspace/full_response.txt) bytes"
-          
-          # Read the saved output for processing
-          ANALYSIS=$(cat /tmp/clio-workspace/full_response.txt)
-          
+      
+      - name: Extract JSON from response
+        id: extract
+        run: |
           # Create Python script for JSON extraction
           cat > /tmp/extract_json.py << 'PYEOF'
           import sys, json, re
+          
           with open('/tmp/clio-workspace/full_response.txt', 'r') as f:
               content = f.read()
+          
           # Try to find JSON between ```json and ```
           match = re.search(r'```json\s*(.*?)\s*```', content, re.DOTALL)
           if match:
@@ -350,7 +155,9 @@ jobs:
                   obj = json.loads(match.group(1))
                   print(json.dumps(obj))
                   sys.exit(0)
-              except: pass
+              except:
+                  pass
+          
           # Try to find raw JSON with expected keys
           for i in range(len(content)):
               if content[i] == '{':
@@ -361,28 +168,21 @@ jobs:
                       if depth == 0:
                           try:
                               obj = json.loads(content[i:j+1])
-                              if 'recommendation' in obj or 'security_concerns' in obj:
+                              if 'recommendation' in obj or 'summary' in obj:
                                   print(json.dumps(obj))
                                   sys.exit(0)
-                          except: pass
+                          except:
+                              pass
                           break
           print("")
           PYEOF
           
-          # Extract JSON from the response
-          JSON_RESPONSE=$(echo "$ANALYSIS" | sed -n '/```json/,/```/p' | sed '1d;$d')
+          JSON_RESPONSE=$(python3 /tmp/extract_json.py) || true
           
-          # If no fenced JSON, use Python script
-          if [ -z "$JSON_RESPONSE" ] || ! echo "$JSON_RESPONSE" | jq . > /dev/null 2>&1; then
-            JSON_RESPONSE=$(python3 /tmp/extract_json.py) || true
-          fi
-          
-          # Validate JSON and save
           if [ -n "$JSON_RESPONSE" ] && echo "$JSON_RESPONSE" | jq . > /dev/null 2>&1; then
             echo "$JSON_RESPONSE" > /tmp/clio-workspace/analysis.json
             echo "json_valid=true" >> $GITHUB_OUTPUT
           else
-            # Create fallback JSON
             cat > /tmp/clio-workspace/analysis.json << 'FALLBACK_EOF'
           {
             "recommendation": "needs-review",
@@ -392,62 +192,44 @@ jobs:
             "test_coverage": "unknown",
             "breaking_changes": false,
             "suggested_labels": ["needs-review"],
-            "summary": "Automated analysis encountered an issue. Manual review recommended.",
+            "summary": "Automated analysis could not parse response. Manual review recommended.",
             "detailed_feedback": []
           }
           FALLBACK_EOF
             echo "json_valid=false" >> $GITHUB_OUTPUT
           fi
           
-          # Debug output
-          echo "=== Full CLIO Response (last 1500 chars) ==="
-          tail -c 1500 /tmp/clio-workspace/full_response.txt
-          echo ""
           echo "=== Extracted JSON ==="
           cat /tmp/clio-workspace/analysis.json
       
-      - name: Parse analysis results
+      - name: Parse results
         id: parse
         run: |
-          # Read the analysis JSON
           ANALYSIS_JSON=$(cat /tmp/clio-workspace/analysis.json)
           
-          # Extract fields with jq (with defaults)
           RECOMMENDATION=$(echo "$ANALYSIS_JSON" | jq -r '.recommendation // "needs-review"')
           SUMMARY=$(echo "$ANALYSIS_JSON" | jq -r '.summary // "Analysis complete."')
           BREAKING_CHANGES=$(echo "$ANALYSIS_JSON" | jq -r '.breaking_changes // false')
           TEST_COVERAGE=$(echo "$ANALYSIS_JSON" | jq -r '.test_coverage // "unknown"')
-          ADDRESSED_FEEDBACK=$(echo "$ANALYSIS_JSON" | jq -r '.addressed_previous_feedback // "unknown"')
           
-          # Extract arrays
-          SECURITY_CONCERNS=$(echo "$ANALYSIS_JSON" | jq -r 'if .security_concerns then (.security_concerns | map("- ⚠️ " + .) | join("\n")) else "" end')
-          STYLE_ISSUES=$(echo "$ANALYSIS_JSON" | jq -r 'if .style_issues then (.style_issues | map("- 📝 " + .) | join("\n")) else "" end')
-          DOC_ISSUES=$(echo "$ANALYSIS_JSON" | jq -r 'if .documentation_issues then (.documentation_issues | map("- 📄 " + .) | join("\n")) else "" end')
-          DETAILED_FEEDBACK=$(echo "$ANALYSIS_JSON" | jq -r 'if .detailed_feedback then (.detailed_feedback | map("- " + .) | join("\n")) else "" end')
+          SECURITY_CONCERNS=$(echo "$ANALYSIS_JSON" | jq -r 'if .security_concerns and (.security_concerns | length) > 0 then (.security_concerns | map("- ⚠️ " + .) | join("\n")) else "" end')
+          STYLE_ISSUES=$(echo "$ANALYSIS_JSON" | jq -r 'if .style_issues and (.style_issues | length) > 0 then (.style_issues | map("- 📝 " + .) | join("\n")) else "" end')
+          DOC_ISSUES=$(echo "$ANALYSIS_JSON" | jq -r 'if .documentation_issues and (.documentation_issues | length) > 0 then (.documentation_issues | map("- 📚 " + .) | join("\n")) else "" end')
+          DETAILED_FEEDBACK=$(echo "$ANALYSIS_JSON" | jq -r 'if .detailed_feedback and (.detailed_feedback | length) > 0 then (.detailed_feedback | map("- " + .) | join("\n")) else "" end')
           
-          # Handle labels
           SUGGESTED_LABELS=$(echo "$ANALYSIS_JSON" | jq -r '(.labels // .suggested_labels // []) | join(",")')
           
-          # Determine if there are any issues
           SECURITY_COUNT=$(echo "$ANALYSIS_JSON" | jq -r '(.security_concerns // []) | length')
           STYLE_COUNT=$(echo "$ANALYSIS_JSON" | jq -r '(.style_issues // []) | length')
           DOC_COUNT=$(echo "$ANALYSIS_JSON" | jq -r '(.documentation_issues // []) | length')
           
-          HAS_ISSUES="false"
-          if [ "$SECURITY_COUNT" -gt 0 ] || [ "$STYLE_COUNT" -gt 0 ] || [ "$DOC_COUNT" -gt 0 ]; then
-            HAS_ISSUES="true"
-          fi
-          
-          # Output for next steps using heredoc format
           {
             echo "recommendation=$RECOMMENDATION"
             echo "breaking_changes=$BREAKING_CHANGES"
             echo "test_coverage=$TEST_COVERAGE"
-            echo "has_issues=$HAS_ISSUES"
             echo "security_count=$SECURITY_COUNT"
             echo "style_count=$STYLE_COUNT"
             echo "doc_count=$DOC_COUNT"
-            echo "addressed_feedback=$ADDRESSED_FEEDBACK"
             
             echo "suggested_labels<<LABELS_EOF"
             echo "$SUGGESTED_LABELS"
@@ -479,7 +261,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Label color mapping for auto-creation
           declare -A LABEL_COLORS
           LABEL_COLORS["needs-review"]="fbca04"
           LABEL_COLORS["needs-changes"]="d93f0b"
@@ -489,28 +270,18 @@ jobs:
           LABEL_COLORS["needs-tests"]="d876e3"
           LABEL_COLORS["needs-docs"]="0075ca"
           LABEL_COLORS["style-issues"]="c5def5"
-          LABEL_COLORS["good-first-issue"]="7057ff"
           LABEL_COLORS["area:core"]="c5def5"
           LABEL_COLORS["area:tools"]="c5def5"
           LABEL_COLORS["area:ui"]="c5def5"
-          LABEL_COLORS["area:session"]="c5def5"
-          LABEL_COLORS["area:memory"]="c5def5"
-          LABEL_COLORS["area:ci"]="c5def5"
           
-          # Split labels and apply each one
           IFS=',' read -ra LABELS <<< "${{ steps.parse.outputs.suggested_labels }}"
           for label in "${LABELS[@]}"; do
-            label=$(echo "$label" | xargs)  # Trim whitespace
+            label=$(echo "$label" | xargs)
             if [ -n "$label" ]; then
-              # Try to add label, create if it doesn't exist
               if ! gh pr edit ${{ github.event.pull_request.number }} --add-label "$label" 2>/dev/null; then
-                # Label doesn't exist, create it
-                COLOR="${LABEL_COLORS[$label]:-c5def5}"  # Default to blue
-                echo "Creating label '$label' with color #$COLOR"
+                COLOR="${LABEL_COLORS[$label]:-c5def5}"
                 gh label create "$label" --color "$COLOR" 2>/dev/null || true
-                # Now apply it
-                gh pr edit ${{ github.event.pull_request.number }} --add-label "$label" 2>/dev/null || \
-                  echo "Warning: Could not apply label '$label'"
+                gh pr edit ${{ github.event.pull_request.number }} --add-label "$label" 2>/dev/null || true
               fi
             fi
           done
@@ -519,109 +290,61 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Determine emoji and verdict based on recommendation
           case "${{ steps.parse.outputs.recommendation }}" in
-            "approve"|"approved")
-              EMOJI="✅"
-              VERDICT="LGTM - Ready for Human Review"
-              ;;
-            "needs-changes"|"request-changes")
-              EMOJI="⚠️"
-              VERDICT="Changes Requested"
-              ;;
-            "security-concern")
-              EMOJI="🔒"
-              VERDICT="Security Review Required"
-              ;;
-            *)
-              EMOJI="👀"
-              VERDICT="Needs Human Review"
-              ;;
+            "approve"|"approved") EMOJI="✅"; VERDICT="LGTM - Ready for Human Review" ;;
+            "needs-changes") EMOJI="⚠️"; VERDICT="Changes Requested" ;;
+            "security-concern") EMOJI="🔒"; VERDICT="Security Review Required" ;;
+            *) EMOJI="👀"; VERDICT="Needs Human Review" ;;
           esac
           
-          # Note if this is a re-review
-          REVIEW_NOTE=""
-          if [ "${{ steps.context.outputs.event_action }}" = "synchronize" ]; then
-            REVIEW_NOTE="*(Re-review after new commits)*"
-          fi
-          
-          # Build the comment body
           cat > /tmp/clio-workspace/comment.md << COMMENT_EOF
-          ## ${EMOJI} CLIO PR Review ${REVIEW_NOTE}
+          ## ${EMOJI} CLIO PR Review
           
           | Field | Value |
           |-------|-------|
           | **Recommendation** | ${VERDICT} |
           | **Test Coverage** | ${{ steps.parse.outputs.test_coverage }} |
           | **Breaking Changes** | ${{ steps.parse.outputs.breaking_changes }} |
-          | **Files Changed** | ${{ steps.context.outputs.file_count }} |
-          | **Changes** | +${{ steps.context.outputs.additions }}/-${{ steps.context.outputs.deletions }} |
           
           ### 📋 Summary
           ${{ steps.parse.outputs.summary }}
           COMMENT_EOF
           
-          # Add note about addressed feedback if this is a re-review
-          ADDRESSED="${{ steps.parse.outputs.addressed_feedback }}"
-          if [ "${{ steps.context.outputs.event_action }}" = "synchronize" ] && [ -n "$ADDRESSED" ] && [ "$ADDRESSED" != "unknown" ]; then
-            cat >> /tmp/clio-workspace/comment.md << ADDRESSED_EOF
-          
-          ### 🔄 Previous Feedback
-          **Status:** ${ADDRESSED}
-          ADDRESSED_EOF
-          fi
-          
-          # Add security concerns if any
           SECURITY="${{ steps.parse.outputs.security_concerns }}"
           if [ -n "$SECURITY" ] && [ "${{ steps.parse.outputs.security_count }}" -gt 0 ]; then
-            cat >> /tmp/clio-workspace/comment.md << SECURITY_EOF
-          
-          ### 🔒 Security Concerns
-          ${SECURITY}
-          SECURITY_EOF
+            echo "" >> /tmp/clio-workspace/comment.md
+            echo "### 🔒 Security Concerns" >> /tmp/clio-workspace/comment.md
+            echo "$SECURITY" >> /tmp/clio-workspace/comment.md
           fi
           
-          # Add style issues if any
           STYLE="${{ steps.parse.outputs.style_issues }}"
           if [ -n "$STYLE" ] && [ "${{ steps.parse.outputs.style_count }}" -gt 0 ]; then
-            cat >> /tmp/clio-workspace/comment.md << STYLE_EOF
-          
-          ### 📝 Style Issues
-          ${STYLE}
-          STYLE_EOF
+            echo "" >> /tmp/clio-workspace/comment.md
+            echo "### 📝 Style Issues" >> /tmp/clio-workspace/comment.md
+            echo "$STYLE" >> /tmp/clio-workspace/comment.md
           fi
           
-          # Add documentation issues if any
           DOCS="${{ steps.parse.outputs.doc_issues }}"
           if [ -n "$DOCS" ] && [ "${{ steps.parse.outputs.doc_count }}" -gt 0 ]; then
-            cat >> /tmp/clio-workspace/comment.md << DOCS_EOF
-          
-          ### 📄 Documentation Issues
-          ${DOCS}
-          DOCS_EOF
+            echo "" >> /tmp/clio-workspace/comment.md
+            echo "### 📚 Documentation Issues" >> /tmp/clio-workspace/comment.md
+            echo "$DOCS" >> /tmp/clio-workspace/comment.md
           fi
           
-          # Add detailed feedback if any
           FEEDBACK="${{ steps.parse.outputs.detailed_feedback }}"
           if [ -n "$FEEDBACK" ]; then
-            cat >> /tmp/clio-workspace/comment.md << FEEDBACK_EOF
-          
-          ### 💡 Detailed Feedback
-          ${FEEDBACK}
-          FEEDBACK_EOF
+            echo "" >> /tmp/clio-workspace/comment.md
+            echo "### 💡 Feedback" >> /tmp/clio-workspace/comment.md
+            echo "$FEEDBACK" >> /tmp/clio-workspace/comment.md
           fi
           
-          # Add footer
-          cat >> /tmp/clio-workspace/comment.md << 'FOOTER_EOF'
+          echo "" >> /tmp/clio-workspace/comment.md
+          echo "---" >> /tmp/clio-workspace/comment.md
+          echo "*Automated review by [CLIO](https://github.com/SyntheticAutonomicMind/CLIO)*" >> /tmp/clio-workspace/comment.md
           
-          ---
-          *This review was performed automatically by [CLIO](https://github.com/SyntheticAutonomicMind/CLIO). A human maintainer will perform the final review.*
-          FOOTER_EOF
-          
-          # Post the comment
           gh pr comment ${{ github.event.pull_request.number }} --body-file /tmp/clio-workspace/comment.md
       
-      - name: Upload analysis artifacts
+      - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
