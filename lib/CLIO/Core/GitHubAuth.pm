@@ -57,7 +57,9 @@ sub new {
     my ($class, %args) = @_;
     
     my $self = {
-        client_id => $args{client_id} || 'Ov23lix5mfpW4hHM7y9G',  # SAM's GitHub OAuth app
+        # Use SAM's OAuth App - we control this, it's trustworthy
+        # Users who want more models (37 vs 31) can use /api set github_pat
+        client_id => $args{client_id} || 'Ov23lix5mfpW4hHM7y9G',
         debug => $args{debug} || 0,
         ua => CLIO::Compat::HTTP->new(
             agent => 'CLIO/2.0.0',
@@ -100,7 +102,7 @@ sub start_device_flow {
     
     my $body = encode_json({
         client_id => $self->{client_id},
-        scope => 'read:user user:email repo workflow',  # Match VSCode Copilot scopes (GITHUB_SCOPE_ALIGNED)
+        scope => 'read:user user:email repo workflow copilot',  # Include copilot scope for model access
     });
     
     $request->content($body);
@@ -372,14 +374,31 @@ sub load_tokens {
 =head2 get_copilot_token
 
 Get current Copilot token, refreshing if expired.
-Falls back to GitHub token if Copilot token not available.
 
-Returns: Token string (Copilot or GitHub), or undef if not authenticated.
+Priority order:
+1. PAT from config (if set via /api set github_pat)
+2. Copilot token from OAuth flow (with auto-refresh)
+3. GitHub token from OAuth flow (fallback)
+
+Returns: Token string (PAT, Copilot, or GitHub), or undef if not authenticated.
 
 =cut
 
 sub get_copilot_token {
     my ($self) = @_;
+    
+    # Priority 1: Check for PAT in config (returns more models)
+    my $pat;
+    eval {
+        require CLIO::Core::Config;
+        my $config = CLIO::Core::Config->new(debug => $self->{debug});
+        $pat = $config->get('github_pat');
+    };
+    if ($pat && $pat =~ /^(ghp_|github_pat_)/) {
+        print STDERR "[DEBUG][GitHubAuth] Using PAT from config\n" if should_log('DEBUG');
+        return $pat;
+    }
+    # Ignore config errors, fall through to OAuth tokens
     
     my $tokens = $self->load_tokens();
     return undef unless $tokens;
@@ -429,13 +448,25 @@ sub get_copilot_token {
 
 Check if user is authenticated with valid tokens.
 
-Returns: Boolean
+Returns: Boolean (true if PAT is set or OAuth tokens exist)
 
 =cut
 
 sub is_authenticated {
     my ($self) = @_;
     
+    # Check for PAT first
+    my $pat;
+    eval {
+        require CLIO::Core::Config;
+        my $config = CLIO::Core::Config->new(debug => $self->{debug});
+        $pat = $config->get('github_pat');
+    };
+    if ($pat && $pat =~ /^(ghp_|github_pat_)/) {
+        return 1;
+    }
+    
+    # Fall back to OAuth tokens
     my $tokens = $self->load_tokens();
     return 0 unless $tokens;
     return 0 unless $tokens->{github_token};
