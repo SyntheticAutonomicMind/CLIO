@@ -25,12 +25,12 @@ jobs:
         with:
           fetch-depth: 0
       
-      - name: Set up Perl
-        uses: shogo82148/actions-setup-perl@v1
-        with:
-          perl-version: '5.38'
-          # Skip attestation verification (workaround for GitHub attestation API issues)
-          enable-attestations: false
+      # Use system Perl instead of shogo82148/actions-setup-perl
+      # Ubuntu 22.04 (ubuntu-latest) has Perl 5.34 which is sufficient
+      - name: Check Perl version
+        run: |
+          perl -v
+          echo "Using system Perl (no setup action needed)"
       
       - name: Extract version from tag
         id: version
