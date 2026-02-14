@@ -86,12 +86,15 @@ jobs:
           # IMPORTANT: Use set +x to prevent logging the secret
           set +x
           
-          # Create config.json with the PAT for GitHub Copilot auth
-          # The token goes in 'github_pat' field for direct PAT usage
-          printf '{"provider": "github_copilot", "github_pat": "%s"}' "$CLIO_ACCESS" > /tmp/clio-config/config.json
-          chmod 600 /tmp/clio-config/config.json
+          # Create github_tokens.json with the OAuth token
+          # OAuth tokens from device flow go in github_tokens.json, NOT config.json
+          printf '{"github_token": "%s", "saved_at": %d}' "$CLIO_ACCESS" "$(date +%s)" > /tmp/clio-config/github_tokens.json
+          chmod 600 /tmp/clio-config/github_tokens.json
           
-          # Verify file was created (without showing contents)
+          # Create minimal config.json for provider selection
+          echo '{"provider": "github_copilot"}' > /tmp/clio-config/config.json
+          
+          # Verify files were created (without showing contents)
           echo "CLIO authentication configured"
           ls -la /tmp/clio-config/
       
