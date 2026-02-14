@@ -64,32 +64,39 @@ jobs:
       - name: Prepare issue info files
         env:
           ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_LABELS_JSON: ${{ toJson(github.event.issue.labels) }}
+          ISSUE_AUTHOR: ${{ github.event.issue.user.login }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          EVENT_NAME: ${{ github.event_name }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          ISSUE_NUMBER="${{ github.event.issue.number }}"
-          
-          # Write issue body
+          # Write issue body (safely via env var)
           printf '%s' "$ISSUE_BODY" > /tmp/clio-workspace/ISSUE_BODY.md
           
           # Fetch comments
-          gh api repos/${{ github.repository }}/issues/${ISSUE_NUMBER}/comments \
+          gh api "repos/${{ github.repository }}/issues/${ISSUE_NUMBER}/comments" \
             --jq '.[] | "---\n**\(.user.login)** commented at \(.created_at):\n\(.body)\n"' \
             > /tmp/clio-workspace/ISSUE_COMMENTS.md 2>/dev/null || echo "" > /tmp/clio-workspace/ISSUE_COMMENTS.md
           
-          COMMENT_COUNT=$(gh api repos/${{ github.repository }}/issues/${ISSUE_NUMBER}/comments --jq 'length' 2>/dev/null || echo "0")
-          CURRENT_LABELS=$(echo '${{ toJson(github.event.issue.labels) }}' | jq -r '.[].name' | paste -sd ',' - || echo "none")
+          COMMENT_COUNT=$(gh api "repos/${{ github.repository }}/issues/${ISSUE_NUMBER}/comments" --jq 'length' 2>/dev/null || echo "0")
           
-          # Create issue info file
-          echo "# Issue #${ISSUE_NUMBER}" > /tmp/clio-workspace/ISSUE_INFO.md
-          echo "" >> /tmp/clio-workspace/ISSUE_INFO.md
-          echo "**Title:** ${{ github.event.issue.title }}" >> /tmp/clio-workspace/ISSUE_INFO.md
-          echo "**Author:** ${{ github.event.issue.user.login }}" >> /tmp/clio-workspace/ISSUE_INFO.md
-          echo "**Current Labels:** ${CURRENT_LABELS}" >> /tmp/clio-workspace/ISSUE_INFO.md
-          echo "**Event:** ${{ github.event_name }} (comments: ${COMMENT_COUNT})" >> /tmp/clio-workspace/ISSUE_INFO.md
-          echo "" >> /tmp/clio-workspace/ISSUE_INFO.md
-          echo "## Body" >> /tmp/clio-workspace/ISSUE_INFO.md
-          echo "" >> /tmp/clio-workspace/ISSUE_INFO.md
-          echo "See ISSUE_BODY.md" >> /tmp/clio-workspace/ISSUE_INFO.md
+          # Parse labels from env var (safely)
+          CURRENT_LABELS=$(echo "$ISSUE_LABELS_JSON" | jq -r '.[].name' 2>/dev/null | paste -sd ',' - || echo "none")
+          
+          # Create issue info file (using env vars for safety)
+          {
+            echo "# Issue #${ISSUE_NUMBER}"
+            echo ""
+            echo "**Title:** ${ISSUE_TITLE}"
+            echo "**Author:** ${ISSUE_AUTHOR}"
+            echo "**Current Labels:** ${CURRENT_LABELS}"
+            echo "**Event:** ${EVENT_NAME} (comments: ${COMMENT_COUNT})"
+            echo ""
+            echo "## Body"
+            echo ""
+            echo "See ISSUE_BODY.md"
+          } > /tmp/clio-workspace/ISSUE_INFO.md
           
           echo "Issue info prepared"
       
@@ -97,9 +104,8 @@ jobs:
         id: triage
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: |
-          ISSUE_NUMBER="${{ github.event.issue.number }}"
-          
           TASK="You are in HEADLESS CI/CD MODE. No human is present.
 
           TASK: Triage Issue #${ISSUE_NUMBER}
@@ -178,28 +184,27 @@ jobs:
         if: steps.parse.outputs.labels != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          RECOMMENDATION: ${{ steps.parse.outputs.recommendation }}
         run: |
-          # First remove any conflicting labels
-          ISSUE_NUMBER="${{ github.event.issue.number }}"
-          
           # Remove old priority labels if we're setting a new one
-          gh issue edit $ISSUE_NUMBER --remove-label "priority:critical" 2>/dev/null || true
-          gh issue edit $ISSUE_NUMBER --remove-label "priority:high" 2>/dev/null || true
-          gh issue edit $ISSUE_NUMBER --remove-label "priority:medium" 2>/dev/null || true
-          gh issue edit $ISSUE_NUMBER --remove-label "priority:low" 2>/dev/null || true
+          gh issue edit "$ISSUE_NUMBER" --remove-label "priority:critical" 2>/dev/null || true
+          gh issue edit "$ISSUE_NUMBER" --remove-label "priority:high" 2>/dev/null || true
+          gh issue edit "$ISSUE_NUMBER" --remove-label "priority:medium" 2>/dev/null || true
+          gh issue edit "$ISSUE_NUMBER" --remove-label "priority:low" 2>/dev/null || true
           
           # Remove needs-info if issue is now complete
-          if [ "${{ steps.parse.outputs.recommendation }}" != "needs-info" ]; then
-            gh issue edit $ISSUE_NUMBER --remove-label "needs-info" 2>/dev/null || true
+          if [ "$RECOMMENDATION" != "needs-info" ]; then
+            gh issue edit "$ISSUE_NUMBER" --remove-label "needs-info" 2>/dev/null || true
           fi
           
-          # Apply new labels
+          # Add new labels
           IFS=',' read -ra LABELS <<< "${{ steps.parse.outputs.labels }}"
           for label in "${LABELS[@]}"; do
             label=$(echo "$label" | xargs)
             if [ -n "$label" ]; then
-              gh issue edit $ISSUE_NUMBER --add-label "$label" 2>/dev/null || \
-              (gh label create "$label" --color "c5def5" 2>/dev/null; gh issue edit $ISSUE_NUMBER --add-label "$label" 2>/dev/null) || true
+              gh issue edit "$ISSUE_NUMBER" --add-label "$label" 2>/dev/null || \
+              (gh label create "$label" --color "c5def5" 2>/dev/null; gh issue edit "$ISSUE_NUMBER" --add-label "$label" 2>/dev/null) || true
             fi
           done
       
@@ -207,91 +212,88 @@ jobs:
         if: steps.parse.outputs.assign_to != '' && steps.parse.outputs.recommendation != 'close'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ASSIGN_TO: ${{ steps.parse.outputs.assign_to }}
         run: |
-          gh issue edit ${{ github.event.issue.number }} --add-assignee "${{ steps.parse.outputs.assign_to }}" 2>/dev/null || true
+          gh issue edit "$ISSUE_NUMBER" --add-assignee "$ASSIGN_TO" 2>/dev/null || true
       
       - name: Handle close recommendation
         if: steps.parse.outputs.recommendation == 'close'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          CLOSE_REASON: ${{ steps.parse.outputs.close_reason }}
         run: |
           ANALYSIS=$(cat /tmp/clio-workspace/analysis.json)
           SUMMARY=$(echo "$ANALYSIS" | jq -r '.summary // "Issue closed by automated triage."')
-          CLOSE_REASON="${{ steps.parse.outputs.close_reason }}"
           
-          echo "## Issue Closed" > /tmp/comment.md
-          echo "" >> /tmp/comment.md
-          echo "$SUMMARY" >> /tmp/comment.md
-          echo "" >> /tmp/comment.md
+          gh issue comment "$ISSUE_NUMBER" --body "## Automated Triage Result
+
+          This issue has been automatically closed.
+
+          **Reason:** ${CLOSE_REASON}
+
+          ${SUMMARY}
+
+          If you believe this is incorrect, please reopen the issue with additional information."
           
-          case "$CLOSE_REASON" in
-            "spam") echo "**Reason:** This appears to be spam." >> /tmp/comment.md ;;
-            "duplicate") echo "**Reason:** This appears to be a duplicate." >> /tmp/comment.md ;;
-            "question") echo "**Reason:** Please use [Discussions](../discussions) for questions." >> /tmp/comment.md ;;
-            "test-issue") echo "**Reason:** This appears to be a test issue." >> /tmp/comment.md ;;
-            *) echo "**Reason:** $CLOSE_REASON" >> /tmp/comment.md ;;
-          esac
-          
-          echo "" >> /tmp/comment.md
-          echo "---" >> /tmp/comment.md
-          echo "*Automated triage by [CLIO](https://github.com/SyntheticAutonomicMind/CLIO)*" >> /tmp/comment.md
-          
-          gh issue comment ${{ github.event.issue.number }} --body-file /tmp/comment.md
-          gh issue close ${{ github.event.issue.number }} --reason "not planned"
+          gh issue close "$ISSUE_NUMBER" --reason "not planned" 2>/dev/null || gh issue close "$ISSUE_NUMBER"
       
-      - name: Handle needs-info
+      - name: Handle needs-info recommendation
         if: steps.parse.outputs.recommendation == 'needs-info'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: |
           ANALYSIS=$(cat /tmp/clio-workspace/analysis.json)
-          SUMMARY=$(echo "$ANALYSIS" | jq -r '.summary // "More information needed."')
+          MISSING=$(echo "$ANALYSIS" | jq -r '(.missing_info // []) | map("- " + .) | join("\n")' || echo "- Additional details needed")
+          SUMMARY=$(echo "$ANALYSIS" | jq -r '.summary // "More information is needed to process this issue."')
           
-          echo "## More Information Needed" > /tmp/comment.md
-          echo "" >> /tmp/comment.md
-          echo "$SUMMARY" >> /tmp/comment.md
-          echo "" >> /tmp/comment.md
-          echo "### Missing Information" >> /tmp/comment.md
-          echo "" >> /tmp/comment.md
-          echo "$ANALYSIS" | jq -r '.missing_info[]' | while read line; do echo "- $line" >> /tmp/comment.md; done
-          echo "" >> /tmp/comment.md
-          echo "---" >> /tmp/comment.md
-          echo "*Automated triage by [CLIO](https://github.com/SyntheticAutonomicMind/CLIO)*" >> /tmp/comment.md
+          gh issue comment "$ISSUE_NUMBER" --body "## More Information Needed
+
+          ${SUMMARY}
+
+          **Please provide:**
+          ${MISSING}
+
+          Once you've added this information, the issue will be re-evaluated."
           
-          gh issue comment ${{ github.event.issue.number }} --body-file /tmp/comment.md
+          gh issue edit "$ISSUE_NUMBER" --add-label "needs-info" 2>/dev/null || \
+          (gh label create "needs-info" --color "d876e3" --description "Awaiting more information from reporter" 2>/dev/null; gh issue edit "$ISSUE_NUMBER" --add-label "needs-info") || true
       
-      - name: Handle ready-for-review
+      - name: Post triage summary
         if: steps.parse.outputs.recommendation == 'ready-for-review'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: |
           ANALYSIS=$(cat /tmp/clio-workspace/analysis.json)
-          SUMMARY=$(echo "$ANALYSIS" | jq -r '.summary // "Issue triaged."')
-          CLASSIFICATION="${{ steps.parse.outputs.classification }}"
-          PRIORITY="${{ steps.parse.outputs.priority }}"
-          COMPLETENESS="${{ steps.parse.outputs.completeness }}"
+          SUMMARY=$(echo "$ANALYSIS" | jq -r '.summary // "Issue triaged successfully."')
+          CLASSIFICATION=$(echo "$ANALYSIS" | jq -r '.classification // "unknown"')
+          PRIORITY=$(echo "$ANALYSIS" | jq -r '.priority // "medium"')
+          COMPLETENESS=$(echo "$ANALYSIS" | jq -r '.completeness // "N/A"')
           
-          echo "## CLIO Triage Summary" > /tmp/comment.md
-          echo "" >> /tmp/comment.md
-          echo "| Field | Value |" >> /tmp/comment.md
-          echo "|-------|-------|" >> /tmp/comment.md
-          echo "| **Classification** | $CLASSIFICATION |" >> /tmp/comment.md
-          echo "| **Priority** | $PRIORITY |" >> /tmp/comment.md
-          echo "| **Completeness** | ${COMPLETENESS}% |" >> /tmp/comment.md
-          echo "" >> /tmp/comment.md
-          echo "### Summary" >> /tmp/comment.md
-          echo "" >> /tmp/comment.md
-          echo "$SUMMARY" >> /tmp/comment.md
-          echo "" >> /tmp/comment.md
-          echo "---" >> /tmp/comment.md
-          echo "*Automated triage by [CLIO](https://github.com/SyntheticAutonomicMind/CLIO)*" >> /tmp/comment.md
-          
-          gh issue comment ${{ github.event.issue.number }} --body-file /tmp/comment.md
+          gh issue comment "$ISSUE_NUMBER" --body "## Automated Triage Summary
+
+          | Field | Value |
+          |-------|-------|
+          | Classification | \`${CLASSIFICATION}\` |
+          | Priority | \`${PRIORITY}\` |
+          | Completeness | ${COMPLETENESS}% |
+
+          **Analysis:** ${SUMMARY}
+
+          _This is an automated analysis. A maintainer will review shortly._"
       
       - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: clio-issue-triage-${{ github.event.issue.number }}-${{ github.run_number }}
-          path: /tmp/clio-workspace/
+          name: triage-artifacts
+          path: |
+            /tmp/clio-workspace/full_response.txt
+            /tmp/clio-workspace/triage.json
+            /tmp/clio-workspace/analysis.json
+            /tmp/clio-workspace/ISSUE_INFO.md
+            /tmp/clio-workspace/ISSUE_BODY.md
           retention-days: 7
