@@ -1,6 +1,5 @@
 name: PR Review with CLIO
 
-# Trigger on PR events
 on:
   pull_request:
     types: [opened, synchronize, reopened, review_requested]
@@ -63,13 +62,9 @@ jobs:
         run: |
           PR_NUMBER="${{ github.event.pull_request.number }}"
           
-          # Fetch PR diff and save to workspace
           gh pr diff $PR_NUMBER > /tmp/clio-workspace/PR_DIFF.txt 2>/dev/null || echo "No diff available" > /tmp/clio-workspace/PR_DIFF.txt
-          
-          # Fetch changed files
           gh pr view $PR_NUMBER --json files --jq '.files[].path' > /tmp/clio-workspace/PR_FILES.txt 2>/dev/null || echo "" > /tmp/clio-workspace/PR_FILES.txt
           
-          # Create PR info file
           cat > /tmp/clio-workspace/PR_INFO.md << EOF
           # Pull Request #${PR_NUMBER}
           
@@ -81,19 +76,9 @@ jobs:
           ## Description
           
           ${{ github.event.pull_request.body }}
-          
-          ## Changed Files
-          
-          See PR_FILES.txt
-          
-          ## Diff
-          
-          See PR_DIFF.txt
           EOF
           
           echo "PR info prepared"
-          wc -l /tmp/clio-workspace/PR_DIFF.txt
-          wc -l /tmp/clio-workspace/PR_FILES.txt
       
       - name: Run CLIO PR Review
         id: review
@@ -102,26 +87,22 @@ jobs:
         run: |
           PR_NUMBER="${{ github.event.pull_request.number }}"
           
-          # Build the task for CLIO
-          TASK="You are in HEADLESS CI/CD MODE. No human is present - do not use user_collaboration or it will hang forever.
+          TASK="You are in HEADLESS CI/CD MODE. No human is present.
 
           TASK: Review Pull Request #${PR_NUMBER}
 
           STEPS:
-          1. Read .github/clio-prompts/pr-review.md for review instructions
-          2. Read PR_INFO.md for PR details
-          3. Read PR_DIFF.txt for the code diff
-          4. Read PR_FILES.txt to see changed files
-          5. If needed, read relevant project files (AGENTS.md, docs/STYLE_GUIDE.md)
-          6. Output your review as a JSON object
+          1. Read .github/clio-prompts/pr-review.md for instructions
+          2. Read PR_INFO.md, PR_DIFF.txt, PR_FILES.txt
+          3. Check AGENTS.md and docs/STYLE_GUIDE.md if needed
+          4. WRITE your review JSON to /workspace/review.json using file_operations
 
-          CRITICAL: Output ONLY a JSON object at the end. No prose. No questions. No user_collaboration."
+          CRITICAL: 
+          - DO NOT use user_collaboration (it will hang forever)
+          - Write JSON to /workspace/review.json using file_operations create_file"
           
           echo "=== Starting CLIO PR Review ==="
-          echo "Task: Review PR #${PR_NUMBER}"
-          echo ""
           
-          # Run CLIO with the task as --input
           docker run -i --rm \
             -v "/tmp/clio-workspace":/workspace:rw \
             -v "/tmp/clio-config":/root/.clio:rw \
@@ -136,182 +117,75 @@ jobs:
           
           echo ""
           echo "=== CLIO Review Complete ==="
-          echo "Response size: $(wc -c < /tmp/clio-workspace/full_response.txt) bytes"
+          
+          # Check if review.json was created
+          if [ -f /tmp/clio-workspace/review.json ]; then
+            echo "review.json found!"
+          else
+            echo "review.json NOT found"
+          fi
       
-      - name: Extract JSON from response
+      - name: Get review JSON
         id: extract
         run: |
-          # Create Python script for JSON extraction
-          cat > /tmp/extract_json.py << 'PYEOF'
-          import sys, json, re
-          
-          with open('/tmp/clio-workspace/full_response.txt', 'r') as f:
-              content = f.read()
-          
-          # Strip ANSI escape codes and spinner characters
-          content = re.sub(r'\x1b\[[0-9;]*[mGKHF]', '', content)  # ANSI codes
-          content = re.sub(r'[\u2800-\u28FF]', '', content)  # Braille spinner chars
-          content = re.sub(r'\$\[0m', '', content)  # Escaped ANSI
-          
-          # Try to find JSON after [RESPONSE] marker
-          match = re.search(r'\[RESPONSE\]\s*(\{.*?\})\s*(?:\n|$)', content, re.DOTALL)
-          if match:
-              try:
-                  obj = json.loads(match.group(1))
-                  print(json.dumps(obj))
-                  sys.exit(0)
-              except:
-                  pass
-          
-          # Try to find JSON between ```json and ```
-          match = re.search(r'```json\s*(.*?)\s*```', content, re.DOTALL)
-          if match:
-              try:
-                  obj = json.loads(match.group(1))
-                  print(json.dumps(obj))
-                  sys.exit(0)
-              except:
-                  pass
-          
-          # Try to find raw JSON object with expected keys
-          # Look for lines starting with { that contain "recommendation"
-          for line in content.split('\n'):
-              line = line.strip()
-              if line.startswith('{') and 'recommendation' in line.lower():
-                  try:
-                      obj = json.loads(line)
-                      print(json.dumps(obj))
-                      sys.exit(0)
-                  except:
-                      pass
-          
-          # Try to find multi-line JSON block
-          json_start = None
-          for i, char in enumerate(content):
-              if char == '{' and json_start is None:
-                  # Look ahead to see if this could be our JSON
-                  ahead = content[i:i+100]
-                  if 'recommendation' in ahead.lower():
-                      json_start = i
-              if json_start is not None and char == '}':
-                  candidate = content[json_start:i+1]
-                  try:
-                      obj = json.loads(candidate)
-                      if 'recommendation' in obj or 'summary' in obj:
-                          print(json.dumps(obj))
-                          sys.exit(0)
-                  except:
-                      pass
-          
-          print("")
-          PYEOF
-          
-          JSON_RESPONSE=$(python3 /tmp/extract_json.py) || true
-          
-          if [ -n "$JSON_RESPONSE" ] && echo "$JSON_RESPONSE" | jq . > /dev/null 2>&1; then
-            echo "$JSON_RESPONSE" > /tmp/clio-workspace/analysis.json
+          # Check if CLIO wrote the file directly
+          if [ -f /tmp/clio-workspace/review.json ] && jq . /tmp/clio-workspace/review.json > /dev/null 2>&1; then
+            echo "Using review.json written by CLIO"
+            cp /tmp/clio-workspace/review.json /tmp/clio-workspace/analysis.json
             echo "json_valid=true" >> $GITHUB_OUTPUT
           else
-            cat > /tmp/clio-workspace/analysis.json << 'FALLBACK_EOF'
-          {
-            "recommendation": "needs-review",
-            "security_concerns": [],
-            "style_issues": [],
-            "documentation_issues": [],
-            "test_coverage": "unknown",
-            "breaking_changes": false,
-            "suggested_labels": ["needs-review"],
-            "summary": "Automated analysis could not parse response. Manual review recommended.",
-            "detailed_feedback": []
-          }
-          FALLBACK_EOF
             echo "json_valid=false" >> $GITHUB_OUTPUT
+            echo '{"recommendation":"needs-review","security_concerns":[],"style_issues":[],"documentation_issues":[],"test_coverage":"unknown","breaking_changes":false,"suggested_labels":["needs-review"],"summary":"Automated analysis could not produce review.json. Manual review recommended.","detailed_feedback":[]}' > /tmp/clio-workspace/analysis.json
+            echo "Using fallback JSON"
           fi
           
-          echo "=== Extracted JSON ==="
+          echo "=== Review JSON ==="
           cat /tmp/clio-workspace/analysis.json
       
       - name: Parse results
         id: parse
         run: |
-          ANALYSIS_JSON=$(cat /tmp/clio-workspace/analysis.json)
+          ANALYSIS=$(cat /tmp/clio-workspace/analysis.json)
           
-          RECOMMENDATION=$(echo "$ANALYSIS_JSON" | jq -r '.recommendation // "needs-review"')
-          SUMMARY=$(echo "$ANALYSIS_JSON" | jq -r '.summary // "Analysis complete."')
-          BREAKING_CHANGES=$(echo "$ANALYSIS_JSON" | jq -r '.breaking_changes // false')
-          TEST_COVERAGE=$(echo "$ANALYSIS_JSON" | jq -r '.test_coverage // "unknown"')
+          # Extract values safely using jq
+          RECOMMENDATION=$(echo "$ANALYSIS" | jq -r '.recommendation // "needs-review"')
+          SUMMARY=$(echo "$ANALYSIS" | jq -r '.summary // "Analysis complete."')
+          BREAKING=$(echo "$ANALYSIS" | jq -r '.breaking_changes // false')
+          TEST_COV=$(echo "$ANALYSIS" | jq -r '.test_coverage // "unknown"')
+          LABELS=$(echo "$ANALYSIS" | jq -r '(.labels // .suggested_labels // []) | join(",")')
           
-          SECURITY_CONCERNS=$(echo "$ANALYSIS_JSON" | jq -r 'if .security_concerns and (.security_concerns | length) > 0 then (.security_concerns | map("- ⚠️ " + .) | join("\n")) else "" end')
-          STYLE_ISSUES=$(echo "$ANALYSIS_JSON" | jq -r 'if .style_issues and (.style_issues | length) > 0 then (.style_issues | map("- 📝 " + .) | join("\n")) else "" end')
-          DOC_ISSUES=$(echo "$ANALYSIS_JSON" | jq -r 'if .documentation_issues and (.documentation_issues | length) > 0 then (.documentation_issues | map("- 📚 " + .) | join("\n")) else "" end')
-          DETAILED_FEEDBACK=$(echo "$ANALYSIS_JSON" | jq -r 'if .detailed_feedback and (.detailed_feedback | length) > 0 then (.detailed_feedback | map("- " + .) | join("\n")) else "" end')
+          SEC_COUNT=$(echo "$ANALYSIS" | jq -r '(.security_concerns // []) | length')
+          STYLE_COUNT=$(echo "$ANALYSIS" | jq -r '(.style_issues // []) | length')
+          DOC_COUNT=$(echo "$ANALYSIS" | jq -r '(.documentation_issues // []) | length')
           
-          SUGGESTED_LABELS=$(echo "$ANALYSIS_JSON" | jq -r '(.labels // .suggested_labels // []) | join(",")')
-          
-          SECURITY_COUNT=$(echo "$ANALYSIS_JSON" | jq -r '(.security_concerns // []) | length')
-          STYLE_COUNT=$(echo "$ANALYSIS_JSON" | jq -r '(.style_issues // []) | length')
-          DOC_COUNT=$(echo "$ANALYSIS_JSON" | jq -r '(.documentation_issues // []) | length')
-          
+          # Write to output file to avoid GITHUB_OUTPUT parsing issues
+          cat > /tmp/clio-workspace/parsed.json << PARSED_EOF
           {
-            echo "recommendation=$RECOMMENDATION"
-            echo "breaking_changes=$BREAKING_CHANGES"
-            echo "test_coverage=$TEST_COVERAGE"
-            echo "security_count=$SECURITY_COUNT"
-            echo "style_count=$STYLE_COUNT"
-            echo "doc_count=$DOC_COUNT"
-            
-            echo "suggested_labels<<LABELS_EOF"
-            echo "$SUGGESTED_LABELS"
-            echo "LABELS_EOF"
-            
-            echo "summary<<SUMMARY_EOF"
-            echo "$SUMMARY"
-            echo "SUMMARY_EOF"
-            
-            echo "security_concerns<<SECURITY_EOF"
-            echo "$SECURITY_CONCERNS"
-            echo "SECURITY_EOF"
-            
-            echo "style_issues<<STYLE_EOF"
-            echo "$STYLE_ISSUES"
-            echo "STYLE_EOF"
-            
-            echo "doc_issues<<DOC_EOF"
-            echo "$DOC_ISSUES"
-            echo "DOC_EOF"
-            
-            echo "detailed_feedback<<FEEDBACK_EOF"
-            echo "$DETAILED_FEEDBACK"
-            echo "FEEDBACK_EOF"
-          } >> $GITHUB_OUTPUT
+            "recommendation": "$RECOMMENDATION",
+            "summary": $(echo "$ANALYSIS" | jq '.summary'),
+            "breaking_changes": $BREAKING,
+            "test_coverage": "$TEST_COV",
+            "labels": "$LABELS",
+            "security_count": $SEC_COUNT,
+            "style_count": $STYLE_COUNT,
+            "doc_count": $DOC_COUNT
+          }
+          PARSED_EOF
+          
+          echo "recommendation=$RECOMMENDATION" >> $GITHUB_OUTPUT
+          echo "labels=$LABELS" >> $GITHUB_OUTPUT
       
       - name: Apply labels
-        if: steps.parse.outputs.suggested_labels != ''
+        if: steps.parse.outputs.labels != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          declare -A LABEL_COLORS
-          LABEL_COLORS["needs-review"]="fbca04"
-          LABEL_COLORS["needs-changes"]="d93f0b"
-          LABEL_COLORS["security-concern"]="b60205"
-          LABEL_COLORS["approved"]="0e8a16"
-          LABEL_COLORS["breaking-change"]="d73a4a"
-          LABEL_COLORS["needs-tests"]="d876e3"
-          LABEL_COLORS["needs-docs"]="0075ca"
-          LABEL_COLORS["style-issues"]="c5def5"
-          LABEL_COLORS["area:core"]="c5def5"
-          LABEL_COLORS["area:tools"]="c5def5"
-          LABEL_COLORS["area:ui"]="c5def5"
-          
-          IFS=',' read -ra LABELS <<< "${{ steps.parse.outputs.suggested_labels }}"
+          IFS=',' read -ra LABELS <<< "${{ steps.parse.outputs.labels }}"
           for label in "${LABELS[@]}"; do
             label=$(echo "$label" | xargs)
             if [ -n "$label" ]; then
-              if ! gh pr edit ${{ github.event.pull_request.number }} --add-label "$label" 2>/dev/null; then
-                COLOR="${LABEL_COLORS[$label]:-c5def5}"
-                gh label create "$label" --color "$COLOR" 2>/dev/null || true
-                gh pr edit ${{ github.event.pull_request.number }} --add-label "$label" 2>/dev/null || true
-              fi
+              gh pr edit ${{ github.event.pull_request.number }} --add-label "$label" 2>/dev/null || \
+              (gh label create "$label" --color "c5def5" 2>/dev/null; gh pr edit ${{ github.event.pull_request.number }} --add-label "$label" 2>/dev/null) || true
             fi
           done
       
@@ -319,59 +193,65 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          case "${{ steps.parse.outputs.recommendation }}" in
-            "approve"|"approved") EMOJI="✅"; VERDICT="LGTM - Ready for Human Review" ;;
-            "needs-changes") EMOJI="⚠️"; VERDICT="Changes Requested" ;;
-            "security-concern") EMOJI="🔒"; VERDICT="Security Review Required" ;;
-            *) EMOJI="👀"; VERDICT="Needs Human Review" ;;
+          ANALYSIS=$(cat /tmp/clio-workspace/analysis.json)
+          RECOMMENDATION=$(echo "$ANALYSIS" | jq -r '.recommendation // "needs-review"')
+          SUMMARY=$(echo "$ANALYSIS" | jq -r '.summary // "Analysis complete."')
+          TEST_COV=$(echo "$ANALYSIS" | jq -r '.test_coverage // "unknown"')
+          BREAKING=$(echo "$ANALYSIS" | jq -r '.breaking_changes // false')
+          
+          case "$RECOMMENDATION" in
+            "approve"|"approved") EMOJI="OK"; VERDICT="LGTM - Ready for Human Review" ;;
+            "needs-changes") EMOJI="WARN"; VERDICT="Changes Requested" ;;
+            "security-concern") EMOJI="LOCK"; VERDICT="Security Review Required" ;;
+            *) EMOJI="REVIEW"; VERDICT="Needs Human Review" ;;
           esac
           
-          cat > /tmp/clio-workspace/comment.md << COMMENT_EOF
-          ## ${EMOJI} CLIO PR Review
+          # Build comment using echo (avoids heredoc issues)
+          echo "## [$EMOJI] CLIO PR Review" > /tmp/comment.md
+          echo "" >> /tmp/comment.md
+          echo "| Field | Value |" >> /tmp/comment.md
+          echo "|-------|-------|" >> /tmp/comment.md
+          echo "| **Recommendation** | $VERDICT |" >> /tmp/comment.md
+          echo "| **Test Coverage** | $TEST_COV |" >> /tmp/comment.md
+          echo "| **Breaking Changes** | $BREAKING |" >> /tmp/comment.md
+          echo "" >> /tmp/comment.md
+          echo "### Summary" >> /tmp/comment.md
+          echo "$SUMMARY" >> /tmp/comment.md
           
-          | Field | Value |
-          |-------|-------|
-          | **Recommendation** | ${VERDICT} |
-          | **Test Coverage** | ${{ steps.parse.outputs.test_coverage }} |
-          | **Breaking Changes** | ${{ steps.parse.outputs.breaking_changes }} |
-          
-          ### 📋 Summary
-          ${{ steps.parse.outputs.summary }}
-          COMMENT_EOF
-          
-          SECURITY="${{ steps.parse.outputs.security_concerns }}"
-          if [ -n "$SECURITY" ] && [ "${{ steps.parse.outputs.security_count }}" -gt 0 ]; then
-            echo "" >> /tmp/clio-workspace/comment.md
-            echo "### 🔒 Security Concerns" >> /tmp/clio-workspace/comment.md
-            echo "$SECURITY" >> /tmp/clio-workspace/comment.md
+          # Add sections if they have content
+          SEC_COUNT=$(echo "$ANALYSIS" | jq -r '(.security_concerns // []) | length')
+          if [ "$SEC_COUNT" -gt 0 ]; then
+            echo "" >> /tmp/comment.md
+            echo "### Security Concerns" >> /tmp/comment.md
+            echo "$ANALYSIS" | jq -r '.security_concerns[]' | while read line; do echo "- $line" >> /tmp/comment.md; done
           fi
           
-          STYLE="${{ steps.parse.outputs.style_issues }}"
-          if [ -n "$STYLE" ] && [ "${{ steps.parse.outputs.style_count }}" -gt 0 ]; then
-            echo "" >> /tmp/clio-workspace/comment.md
-            echo "### 📝 Style Issues" >> /tmp/clio-workspace/comment.md
-            echo "$STYLE" >> /tmp/clio-workspace/comment.md
+          STYLE_COUNT=$(echo "$ANALYSIS" | jq -r '(.style_issues // []) | length')
+          if [ "$STYLE_COUNT" -gt 0 ]; then
+            echo "" >> /tmp/comment.md
+            echo "### Style Issues" >> /tmp/comment.md
+            echo "$ANALYSIS" | jq -r '.style_issues[]' | while read line; do echo "- $line" >> /tmp/comment.md; done
           fi
           
-          DOCS="${{ steps.parse.outputs.doc_issues }}"
-          if [ -n "$DOCS" ] && [ "${{ steps.parse.outputs.doc_count }}" -gt 0 ]; then
-            echo "" >> /tmp/clio-workspace/comment.md
-            echo "### 📚 Documentation Issues" >> /tmp/clio-workspace/comment.md
-            echo "$DOCS" >> /tmp/clio-workspace/comment.md
+          DOC_COUNT=$(echo "$ANALYSIS" | jq -r '(.documentation_issues // []) | length')
+          if [ "$DOC_COUNT" -gt 0 ]; then
+            echo "" >> /tmp/comment.md
+            echo "### Documentation Issues" >> /tmp/comment.md
+            echo "$ANALYSIS" | jq -r '.documentation_issues[]' | while read line; do echo "- $line" >> /tmp/comment.md; done
           fi
           
-          FEEDBACK="${{ steps.parse.outputs.detailed_feedback }}"
-          if [ -n "$FEEDBACK" ]; then
-            echo "" >> /tmp/clio-workspace/comment.md
-            echo "### 💡 Feedback" >> /tmp/clio-workspace/comment.md
-            echo "$FEEDBACK" >> /tmp/clio-workspace/comment.md
+          FB_COUNT=$(echo "$ANALYSIS" | jq -r '(.detailed_feedback // []) | length')
+          if [ "$FB_COUNT" -gt 0 ]; then
+            echo "" >> /tmp/comment.md
+            echo "### Detailed Feedback" >> /tmp/comment.md
+            echo "$ANALYSIS" | jq -r '.detailed_feedback[]' | while read line; do echo "- $line" >> /tmp/comment.md; done
           fi
           
-          echo "" >> /tmp/clio-workspace/comment.md
-          echo "---" >> /tmp/clio-workspace/comment.md
-          echo "*Automated review by [CLIO](https://github.com/SyntheticAutonomicMind/CLIO)*" >> /tmp/clio-workspace/comment.md
+          echo "" >> /tmp/comment.md
+          echo "---" >> /tmp/comment.md
+          echo "*Automated review by [CLIO](https://github.com/SyntheticAutonomicMind/CLIO)*" >> /tmp/comment.md
           
-          gh pr comment ${{ github.event.pull_request.number }} --body-file /tmp/clio-workspace/comment.md
+          gh pr comment ${{ github.event.pull_request.number }} --body-file /tmp/comment.md
       
       - name: Upload artifacts
         if: always()
