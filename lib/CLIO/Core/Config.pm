@@ -37,6 +37,7 @@ use constant LOG_LEVEL => {
 # Provider-specific defaults come from CLIO::Providers
 use constant DEFAULT_CONFIG => {
     api_key => '',
+    api_keys => {},  # Per-provider API keys: { anthropic => 'sk-ant-...', google => 'AIza...' }
     provider => 'github_copilot',  # Default provider
     editor => $ENV{EDITOR} || $ENV{VISUAL} || 'vim',  # Default editor
     log_level => 'INFO',  # Default log level: ERROR, WARNING, INFO, DEBUG
@@ -275,13 +276,20 @@ sub set_provider {
     $self->{config}->{api_base} = $provider_config->{api_base};
     $self->{config}->{model} = $provider_config->{model};
     
-    # Clear old API key when switching providers
-    # Each provider has its own authentication mechanism
-    # (SAM uses api_key, GitHub Copilot uses OAuth tokens, etc.)
-    # Keeping the old key causes authentication to fail
-    delete $self->{config}->{api_key};
-    delete $self->{user_set}->{api_key};
-    print STDERR "[DEBUG][Config] Cleared api_key when switching to $provider\n" if should_log('DEBUG');
+    # When switching providers, load the per-provider API key if available
+    # This enables seamless switching between providers with stored keys
+    my $provider_key = $self->get_provider_key($provider);
+    if ($provider_key) {
+        $self->{config}->{api_key} = $provider_key;
+        print STDERR "[DEBUG][Config] Loaded API key for provider '$provider' from api_keys\n" if should_log('DEBUG');
+    } else {
+        # Clear old API key when switching providers (no stored key)
+        # Each provider has its own authentication mechanism
+        # (SAM uses api_key, GitHub Copilot uses OAuth tokens, etc.)
+        delete $self->{config}->{api_key};
+        delete $self->{user_set}->{api_key};
+        print STDERR "[DEBUG][Config] No stored API key for provider '$provider'\n" if should_log('DEBUG');
+    }
     
     # Remove api_base and model from user_set if they were there
     # (user is now using provider defaults, not custom values)
@@ -293,6 +301,80 @@ sub set_provider {
     print STDERR "[DEBUG][Config]   model: $provider_config->{model} (from provider)\n" if should_log('DEBUG');
     
     return 1;
+}
+
+=head2 get_provider_key($provider)
+
+Get the API key for a specific provider from per-provider storage.
+
+Arguments:
+- $provider: Provider name (e.g., 'anthropic', 'google')
+
+Returns: API key string or undef if not set
+
+=cut
+
+sub get_provider_key {
+    my ($self, $provider) = @_;
+    
+    return unless $provider;
+    
+    my $api_keys = $self->{config}->{api_keys} || {};
+    return $api_keys->{$provider};
+}
+
+=head2 set_provider_key($provider, $key)
+
+Set the API key for a specific provider.
+This stores the key in per-provider storage and also sets it as current
+if the provider matches the current provider.
+
+Arguments:
+- $provider: Provider name (e.g., 'anthropic', 'google')
+- $key: API key value
+
+Returns: 1 on success
+
+=cut
+
+sub set_provider_key {
+    my ($self, $provider, $key) = @_;
+    
+    # Initialize api_keys hash if needed
+    $self->{config}->{api_keys} //= {};
+    
+    # Store the key
+    $self->{config}->{api_keys}{$provider} = $key;
+    $self->{user_set}->{api_keys} = 1;
+    
+    # If this is the current provider, also set api_key
+    my $current_provider = $self->get('provider');
+    if ($current_provider && $current_provider eq $provider) {
+        $self->{config}->{api_key} = $key;
+        $self->{user_set}->{api_key} = 1;
+    }
+    
+    print STDERR "[DEBUG][Config] Stored API key for provider '$provider'\n" if should_log('DEBUG');
+    
+    # Save config (keys are sensitive, save immediately)
+    $self->save();
+    
+    return 1;
+}
+
+=head2 list_provider_keys()
+
+List all providers that have stored API keys.
+
+Returns: Array of provider names
+
+=cut
+
+sub list_provider_keys {
+    my ($self) = @_;
+    
+    my $api_keys = $self->{config}->{api_keys} || {};
+    return sort keys %$api_keys;
 }
 
 =head2 get_all
