@@ -193,8 +193,8 @@ sub _display_api_help {
     
     $self->display_section_header("PROVIDERS");
     $self->display_command_row("github_copilot", "GitHub Copilot (OAuth login)", 40);
-    $self->display_command_row("anthropic", "Anthropic Claude (native API)", 40);
-    $self->display_command_row("google", "Google Gemini (native API)", 40);
+    $self->display_command_row("anthropic", "Anthropic Claude (native API) [EXPERIMENTAL]", 40);
+    $self->display_command_row("google", "Google Gemini (native API) [EXPERIMENTAL]", 40);
     $self->display_command_row("openai", "OpenAI (compatible API)", 40);
     $self->display_command_row("openrouter", "OpenRouter (proxy to many models)", 40);
     $self->writeline("", markdown => 0);
