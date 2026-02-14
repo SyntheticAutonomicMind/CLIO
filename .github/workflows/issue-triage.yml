@@ -41,15 +41,27 @@ jobs:
         run: |
           docker pull ghcr.io/syntheticautonomicmind/clio:latest
       
+      - name: Prepare writable workspace
+        run: |
+          # CLIO needs a writable working directory for session storage
+          # Copy repo to /tmp/clio-workspace which is writable
+          mkdir -p /tmp/clio-workspace
+          cp -r ./* /tmp/clio-workspace/ 2>/dev/null || true
+          cp -r ./.clio /tmp/clio-workspace/ 2>/dev/null || true
+          cp -r ./.github /tmp/clio-workspace/ 2>/dev/null || true
+          
+          # Create directories CLIO needs
+          mkdir -p /tmp/clio-workspace/.clio/sessions
+          mkdir -p /tmp/clio-config
+          
+          echo "Workspace prepared at /tmp/clio-workspace"
+          ls -la /tmp/clio-workspace/
+      
       - name: Prepare issue context
         id: context
         env:
           ISSUE_BODY: ${{ github.event.issue.body }}
         run: |
-          # Create workspace directory
-          mkdir -p /tmp/clio-workspace
-          mkdir -p /tmp/clio-config
-          
           # Write issue metadata to file (handles special characters safely)
           cat > /tmp/clio-workspace/issue.json << 'ISSUE_EOF'
           ${{ toJson(github.event.issue) }}
@@ -127,13 +139,12 @@ jobs:
         run: |
           # Run CLIO in container with prompt piped to stdin
           # Mount:
-          #   - Repository as read-only /workspace
-          #   - Auth config as /root/.clio (READ-WRITE for session storage)
-          #   - Workspace for output
+          #   - Writable workspace copy at /workspace (for sessions)
+          #   - Auth config as /root/.clio (for github_tokens.json)
+          #   - Prompt file
           ANALYSIS=$(cat /tmp/clio-workspace/full_prompt.md | docker run -i --rm \
-            -v "$(pwd)":/workspace:ro \
+            -v "/tmp/clio-workspace":/workspace:rw \
             -v "/tmp/clio-config":/root/.clio:rw \
-            -v "/tmp/clio-workspace":/tmp/analysis:rw \
             -w /workspace \
             ghcr.io/syntheticautonomicmind/clio:latest \
             --new \

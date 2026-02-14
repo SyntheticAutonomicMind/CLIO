@@ -78,8 +78,15 @@ runs:
       env:
         ISSUE_BODY: ${{ inputs.issue-body }}
       run: |
+        # Create writable workspace (CLIO needs writable project dir for sessions)
         mkdir -p /tmp/clio-triage
+        mkdir -p /tmp/clio-triage/.clio/sessions
         mkdir -p /tmp/clio-config
+        
+        # Copy project files to writable workspace
+        cp -r ${{ github.workspace }}/* /tmp/clio-triage/ 2>/dev/null || true
+        cp -r ${{ github.workspace }}/.clio /tmp/clio-triage/ 2>/dev/null || true
+        cp -r ${{ github.workspace }}/.github /tmp/clio-triage/ 2>/dev/null || true
         
         # Write issue body to file (handles special characters)
         printf '%s' "$ISSUE_BODY" > /tmp/clio-triage/issue_body.md
@@ -150,9 +157,9 @@ runs:
         CLIO_MODEL: ${{ inputs.model }}
       run: |
         # Run CLIO with prompt piped to stdin
-        # Mount auth config as /root/.clio (READ-WRITE for session storage)
+        # Mount writable workspace copy (CLIO needs writable cwd for sessions)
         ANALYSIS=$(cat /tmp/clio-triage/full_prompt.md | docker run -i --rm \
-          -v "${{ github.workspace }}":/workspace:ro \
+          -v "/tmp/clio-triage":/workspace:rw \
           -v "/tmp/clio-config":/root/.clio:rw \
           -w /workspace \
           ghcr.io/syntheticautonomicmind/clio:latest \
