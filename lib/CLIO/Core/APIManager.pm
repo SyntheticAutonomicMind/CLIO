@@ -2204,6 +2204,23 @@ sub send_request_streaming {
     # Prepare and trim messages
     my $messages = $self->_prepare_messages($input, %opts);
     
+    # Check for native provider (non-OpenAI-compatible API)
+    my $native_provider = $self->_get_native_provider();
+    if ($native_provider) {
+        # Dispatch to native provider implementation
+        return $self->_send_native_streaming(
+            $native_provider, 
+            $messages, 
+            $opts{tools},
+            on_chunk => $on_chunk,
+            on_tool_call => $on_tool_call,
+            model => $model,
+            %opts
+        );
+    }
+    
+    # Continue with OpenAI-compatible implementation...
+    
     # Debug logging
     if ($self->{debug}) {
         print STDERR "[DEBUG][APIManager] Streaming to $endpoint\n";
@@ -3427,6 +3444,225 @@ sub _get_stateful_marker_for_model {
     }
     
     return undef;
+}
+
+=head2 _get_native_provider()
+
+Check if the current provider uses a native (non-OpenAI-compatible) API
+and return the provider handler instance if so.
+
+Returns: Provider instance if native, undef if OpenAI-compatible
+
+=cut
+
+sub _get_native_provider {
+    my ($self) = @_;
+    
+    # Get provider configuration
+    my $provider_name = $self->{provider} // 'github_copilot';
+    my $provider_config = get_provider($provider_name);
+    
+    return undef unless $provider_config;
+    return undef unless $provider_config->{native_api};
+    
+    my $module = $provider_config->{provider_module};
+    return undef unless $module;
+    
+    # Load and instantiate the provider module
+    eval "require $module";
+    if ($@) {
+        print STDERR "[ERROR][APIManager] Failed to load native provider $module: $@\n"
+            if should_log('ERROR');
+        return undef;
+    }
+    
+    my $provider = $module->new(
+        api_key => $self->{api_key},
+        api_base => $provider_config->{api_base},
+        model => $self->{model},
+        debug => $self->{debug},
+    );
+    
+    print STDERR "[DEBUG][APIManager] Using native provider: $module\n" if should_log('DEBUG');
+    
+    return $provider;
+}
+
+=head2 _send_native_streaming($provider, $messages, $tools, %opts)
+
+Send a streaming request using a native provider implementation.
+
+Arguments:
+- $provider: Native provider instance (e.g., CLIO::Providers::Anthropic)
+- $messages: Array of messages in OpenAI format
+- $tools: Array of tool definitions in OpenAI format
+- %opts: Options including callbacks (on_chunk, on_tool_call)
+
+Returns: Same format as send_request_streaming
+
+=cut
+
+sub _send_native_streaming {
+    my ($self, $provider, $messages, $tools, %opts) = @_;
+    
+    my $on_chunk = $opts{on_chunk};
+    my $on_tool_call = $opts{on_tool_call};
+    
+    # Build the request using the native provider
+    my $request = $provider->build_request($messages, $tools, {
+        model => $opts{model} // $self->{model},
+        max_tokens => $opts{max_tokens} // 8192,
+        temperature => $opts{temperature} // 0.2,
+    });
+    
+    # Initialize tracking
+    my $start_time = time();
+    my $first_token_time;
+    my $accumulated_content = '';
+    my @tool_calls;
+    my $current_tool_call;
+    my $token_count = 0;
+    my $buffer = '';
+    
+    # Create HTTP client
+    my $ua = CLIO::Compat::HTTP->new(
+        timeout => 300,
+        agent => 'CLIO/1.0',
+        ssl_opts => { verify_hostname => 1 },
+    );
+    
+    # Build HTTP request
+    require HTTP::Request;
+    my $http_req = HTTP::Request->new(
+        $request->{method} => $request->{url}
+    );
+    
+    for my $header (keys %{$request->{headers}}) {
+        $http_req->header($header => $request->{headers}{$header});
+    }
+    $http_req->content($request->{body});
+    
+    print STDERR "[DEBUG][APIManager] Native request to: $request->{url}\n" if $self->{debug};
+    
+    # Make streaming request
+    my $response;
+    eval {
+        $response = $ua->request($http_req, sub {
+            my ($chunk, $resp, $proto) = @_;
+            
+            $buffer .= $chunk;
+            
+            # Process complete SSE events
+            while ($buffer =~ s/^(.*?)\n//s) {
+                my $line = $1;
+                
+                my $event = $provider->parse_stream_event($line);
+                next unless $event;
+                
+                my $type = $event->{type};
+                
+                if ($type eq 'text') {
+                    # Record first token time
+                    $first_token_time //= time();
+                    $token_count++;
+                    
+                    $accumulated_content .= $event->{content};
+                    
+                    # Call chunk callback
+                    if ($on_chunk) {
+                        $on_chunk->($event->{content});
+                    }
+                }
+                elsif ($type eq 'tool_start') {
+                    $current_tool_call = {
+                        id => $event->{id},
+                        type => 'function',
+                        function => {
+                            name => $event->{name},
+                            arguments => '',
+                        },
+                    };
+                }
+                elsif ($type eq 'tool_args') {
+                    if ($current_tool_call) {
+                        $current_tool_call->{function}{arguments} .= $event->{content};
+                    }
+                }
+                elsif ($type eq 'tool_end') {
+                    if ($current_tool_call) {
+                        # Parse arguments JSON
+                        if ($event->{arguments}) {
+                            $current_tool_call->{function}{arguments} = 
+                                encode_json($event->{arguments});
+                        }
+                        
+                        push @tool_calls, $current_tool_call;
+                        
+                        # Call tool callback
+                        if ($on_tool_call) {
+                            $on_tool_call->($current_tool_call);
+                        }
+                        
+                        $current_tool_call = undef;
+                    }
+                }
+                elsif ($type eq 'error') {
+                    die "API Error: $event->{message}";
+                }
+            }
+        });
+    };
+    
+    if ($@) {
+        my $error = $@;
+        print STDERR "[ERROR][APIManager] Native streaming failed: $error\n" if should_log('ERROR');
+        return {
+            success => 0,
+            error => $error,
+        };
+    }
+    
+    # Check HTTP status
+    if (!$response->is_success) {
+        my $status = $response->code;
+        my $body = $response->decoded_content // '';
+        
+        print STDERR "[ERROR][APIManager] Native API error $status: $body\n" if should_log('ERROR');
+        
+        return {
+            success => 0,
+            error => "HTTP $status: $body",
+            retryable => ($status == 429 || $status >= 500),
+        };
+    }
+    
+    # Calculate metrics
+    my $end_time = time();
+    my $duration = $end_time - $start_time;
+    my $ttft = $first_token_time ? ($first_token_time - $start_time) : $duration;
+    my $tps = $duration > 0 ? $token_count / $duration : 0;
+    
+    # Build response
+    my $result = {
+        success => 1,
+        content => $accumulated_content,
+        metrics => {
+            ttft => $ttft,
+            tps => $tps,
+            tokens => $token_count,
+            duration => $duration,
+        },
+    };
+    
+    # Add tool calls if present
+    if (@tool_calls) {
+        $result->{tool_calls} = \@tool_calls;
+        $result->{finish_reason} = 'tool_calls';
+    } else {
+        $result->{finish_reason} = 'stop';
+    }
+    
+    return $result;
 }
 
 1;

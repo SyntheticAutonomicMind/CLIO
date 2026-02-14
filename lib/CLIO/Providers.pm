@@ -106,6 +106,28 @@ my %PROVIDERS = (
         supports_tools => 1,
         supports_streaming => 1,
     },
+    
+    anthropic => {
+        name => 'Anthropic',
+        api_base => 'https://api.anthropic.com/v1/messages',
+        model => 'claude-sonnet-4-20250514',
+        requires_auth => 'apikey',
+        supports_tools => 1,
+        supports_streaming => 1,
+        native_api => 1,  # Uses native provider module, not OpenAI-compatible
+        provider_module => 'CLIO::Providers::Anthropic',
+    },
+    
+    google => {
+        name => 'Google Gemini',
+        api_base => 'https://generativelanguage.googleapis.com/v1beta',
+        model => 'gemini-2.5-flash',
+        requires_auth => 'apikey',
+        supports_tools => 1,
+        supports_streaming => 1,
+        native_api => 1,
+        provider_module => 'CLIO::Providers::Google',
+    },
 );
 
 =head2 get_provider
