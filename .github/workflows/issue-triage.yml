@@ -1,9 +1,10 @@
 name: Issue Triage with CLIO
 
-# Trigger on new or edited issues
+# Trigger on new issues, edits, or reopens
+# Note: 'edited' triggers when title or body changes
 on:
   issues:
-    types: [opened, edited]
+    types: [opened, edited, reopened]
 
 permissions:
   issues: write
