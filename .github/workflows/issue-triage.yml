@@ -92,18 +92,25 @@ jobs:
           COMMENT_COUNT=$(gh api repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments --jq 'length' 2>/dev/null || echo "0")
           echo "Found $COMMENT_COUNT comments"
           
-          # Fetch current labels
-          CURRENT_LABELS=$(echo '${{ toJson(github.event.issue.labels) }}' | jq -r '.[].name' | tr '\n' ',' | sed 's/,$//')
+          # Fetch current labels (escape newlines properly)
+          CURRENT_LABELS=$(echo '${{ toJson(github.event.issue.labels) }}' | jq -r '.[].name' | paste -sd ',' -)
           echo "Current labels: $CURRENT_LABELS"
           
-          # Output key fields
+          # Output key fields using heredoc for safety with special chars
           echo "issue_number=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
+          
           echo "issue_title<<EOF" >> $GITHUB_OUTPUT
           echo "${{ github.event.issue.title }}" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
+          
           echo "issue_author=${{ github.event.issue.user.login }}" >> $GITHUB_OUTPUT
           echo "comment_count=$COMMENT_COUNT" >> $GITHUB_OUTPUT
-          echo "current_labels=$CURRENT_LABELS" >> $GITHUB_OUTPUT
+          
+          # Use heredoc for labels to avoid format issues
+          echo "current_labels<<EOF" >> $GITHUB_OUTPUT
+          echo "$CURRENT_LABELS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          
           echo "event_type=${{ github.event_name }}" >> $GITHUB_OUTPUT
       
       - name: Configure CLIO authentication
