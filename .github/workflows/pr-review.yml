@@ -126,7 +126,7 @@ jobs:
             -v "/tmp/clio-workspace":/workspace:rw \
             -v "/tmp/clio-config":/root/.clio:rw \
             -w /workspace \
-            -e CLIO_LOG_LEVEL=INFO \
+            -e CLIO_LOG_LEVEL=WARNING \
             -e GH_TOKEN="${GH_TOKEN}" \
             ghcr.io/syntheticautonomicmind/clio:latest \
             --new \
@@ -148,6 +148,21 @@ jobs:
           with open('/tmp/clio-workspace/full_response.txt', 'r') as f:
               content = f.read()
           
+          # Strip ANSI escape codes and spinner characters
+          content = re.sub(r'\x1b\[[0-9;]*[mGKHF]', '', content)  # ANSI codes
+          content = re.sub(r'[\u2800-\u28FF]', '', content)  # Braille spinner chars
+          content = re.sub(r'\$\[0m', '', content)  # Escaped ANSI
+          
+          # Try to find JSON after [RESPONSE] marker
+          match = re.search(r'\[RESPONSE\]\s*(\{.*?\})\s*(?:\n|$)', content, re.DOTALL)
+          if match:
+              try:
+                  obj = json.loads(match.group(1))
+                  print(json.dumps(obj))
+                  sys.exit(0)
+              except:
+                  pass
+          
           # Try to find JSON between ```json and ```
           match = re.search(r'```json\s*(.*?)\s*```', content, re.DOTALL)
           if match:
@@ -158,22 +173,36 @@ jobs:
               except:
                   pass
           
-          # Try to find raw JSON with expected keys
-          for i in range(len(content)):
-              if content[i] == '{':
-                  depth = 0
-                  for j in range(i, len(content)):
-                      if content[j] == '{': depth += 1
-                      elif content[j] == '}': depth -= 1
-                      if depth == 0:
-                          try:
-                              obj = json.loads(content[i:j+1])
-                              if 'recommendation' in obj or 'summary' in obj:
-                                  print(json.dumps(obj))
-                                  sys.exit(0)
-                          except:
-                              pass
-                          break
+          # Try to find raw JSON object with expected keys
+          # Look for lines starting with { that contain "recommendation"
+          for line in content.split('\n'):
+              line = line.strip()
+              if line.startswith('{') and 'recommendation' in line.lower():
+                  try:
+                      obj = json.loads(line)
+                      print(json.dumps(obj))
+                      sys.exit(0)
+                  except:
+                      pass
+          
+          # Try to find multi-line JSON block
+          json_start = None
+          for i, char in enumerate(content):
+              if char == '{' and json_start is None:
+                  # Look ahead to see if this could be our JSON
+                  ahead = content[i:i+100]
+                  if 'recommendation' in ahead.lower():
+                      json_start = i
+              if json_start is not None and char == '}':
+                  candidate = content[json_start:i+1]
+                  try:
+                      obj = json.loads(candidate)
+                      if 'recommendation' in obj or 'summary' in obj:
+                          print(json.dumps(obj))
+                          sys.exit(0)
+                  except:
+                      pass
+          
           print("")
           PYEOF
           
