@@ -58,25 +58,33 @@ jobs:
       
       - name: Prepare PR info file
         env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_HEAD: ${{ github.event.pull_request.head.ref }}
+          PR_BASE: ${{ github.event.pull_request.base.ref }}
+          PR_ACTION: ${{ github.event.action }}
+          PR_BODY: ${{ github.event.pull_request.body }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          PR_NUMBER="${{ github.event.pull_request.number }}"
+          gh pr diff "$PR_NUMBER" > /tmp/clio-workspace/PR_DIFF.txt 2>/dev/null || echo "No diff available" > /tmp/clio-workspace/PR_DIFF.txt
+          gh pr view "$PR_NUMBER" --json files --jq '.files[].path' > /tmp/clio-workspace/PR_FILES.txt 2>/dev/null || echo "" > /tmp/clio-workspace/PR_FILES.txt
           
-          gh pr diff $PR_NUMBER > /tmp/clio-workspace/PR_DIFF.txt 2>/dev/null || echo "No diff available" > /tmp/clio-workspace/PR_DIFF.txt
-          gh pr view $PR_NUMBER --json files --jq '.files[].path' > /tmp/clio-workspace/PR_FILES.txt 2>/dev/null || echo "" > /tmp/clio-workspace/PR_FILES.txt
+          # Create PR info file using env vars (safe from shell metacharacters)
+          {
+            echo "# Pull Request #${PR_NUMBER}"
+            echo ""
+            echo "**Title:** ${PR_TITLE}"
+            echo "**Author:** ${PR_AUTHOR}"
+            echo "**Branch:** ${PR_HEAD} -> ${PR_BASE}"
+            echo "**Event:** ${PR_ACTION}"
+            echo ""
+            echo "## Description"
+            echo ""
+          } > /tmp/clio-workspace/PR_INFO.md
           
-          cat > /tmp/clio-workspace/PR_INFO.md << EOF
-          # Pull Request #${PR_NUMBER}
-          
-          **Title:** ${{ github.event.pull_request.title }}
-          **Author:** ${{ github.event.pull_request.user.login }}
-          **Branch:** ${{ github.event.pull_request.head.ref }} -> ${{ github.event.pull_request.base.ref }}
-          **Event:** ${{ github.event.action }}
-          
-          ## Description
-          
-          ${{ github.event.pull_request.body }}
-          EOF
+          # Append body safely via printf
+          printf '%s\n' "$PR_BODY" >> /tmp/clio-workspace/PR_INFO.md
           
           echo "PR info prepared"
       
@@ -84,9 +92,8 @@ jobs:
         id: review
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          PR_NUMBER="${{ github.event.pull_request.number }}"
-          
           TASK="You are in HEADLESS CI/CD MODE. No human is present.
 
           TASK: Review Pull Request #${PR_NUMBER}
@@ -118,7 +125,6 @@ jobs:
           echo ""
           echo "=== CLIO Review Complete ==="
           
-          # Check if review.json was created
           if [ -f /tmp/clio-workspace/review.json ]; then
             echo "review.json found!"
           else
@@ -128,7 +134,6 @@ jobs:
       - name: Get review JSON
         id: extract
         run: |
-          # Check if CLIO wrote the file directly
           if [ -f /tmp/clio-workspace/review.json ] && jq . /tmp/clio-workspace/review.json > /dev/null 2>&1; then
             echo "Using review.json written by CLIO"
             cp /tmp/clio-workspace/review.json /tmp/clio-workspace/analysis.json
@@ -147,30 +152,8 @@ jobs:
         run: |
           ANALYSIS=$(cat /tmp/clio-workspace/analysis.json)
           
-          # Extract values safely using jq
           RECOMMENDATION=$(echo "$ANALYSIS" | jq -r '.recommendation // "needs-review"')
-          SUMMARY=$(echo "$ANALYSIS" | jq -r '.summary // "Analysis complete."')
-          BREAKING=$(echo "$ANALYSIS" | jq -r '.breaking_changes // false')
-          TEST_COV=$(echo "$ANALYSIS" | jq -r '.test_coverage // "unknown"')
           LABELS=$(echo "$ANALYSIS" | jq -r '(.labels // .suggested_labels // []) | join(",")')
-          
-          SEC_COUNT=$(echo "$ANALYSIS" | jq -r '(.security_concerns // []) | length')
-          STYLE_COUNT=$(echo "$ANALYSIS" | jq -r '(.style_issues // []) | length')
-          DOC_COUNT=$(echo "$ANALYSIS" | jq -r '(.documentation_issues // []) | length')
-          
-          # Write to output file to avoid GITHUB_OUTPUT parsing issues
-          cat > /tmp/clio-workspace/parsed.json << PARSED_EOF
-          {
-            "recommendation": "$RECOMMENDATION",
-            "summary": $(echo "$ANALYSIS" | jq '.summary'),
-            "breaking_changes": $BREAKING,
-            "test_coverage": "$TEST_COV",
-            "labels": "$LABELS",
-            "security_count": $SEC_COUNT,
-            "style_count": $STYLE_COUNT,
-            "doc_count": $DOC_COUNT
-          }
-          PARSED_EOF
           
           echo "recommendation=$RECOMMENDATION" >> $GITHUB_OUTPUT
           echo "labels=$LABELS" >> $GITHUB_OUTPUT
@@ -179,19 +162,21 @@ jobs:
         if: steps.parse.outputs.labels != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           IFS=',' read -ra LABELS <<< "${{ steps.parse.outputs.labels }}"
           for label in "${LABELS[@]}"; do
             label=$(echo "$label" | xargs)
             if [ -n "$label" ]; then
-              gh pr edit ${{ github.event.pull_request.number }} --add-label "$label" 2>/dev/null || \
-              (gh label create "$label" --color "c5def5" 2>/dev/null; gh pr edit ${{ github.event.pull_request.number }} --add-label "$label" 2>/dev/null) || true
+              gh pr edit "$PR_NUMBER" --add-label "$label" 2>/dev/null || \
+              (gh label create "$label" --color "c5def5" 2>/dev/null; gh pr edit "$PR_NUMBER" --add-label "$label" 2>/dev/null) || true
             fi
           done
       
       - name: Post review comment
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           ANALYSIS=$(cat /tmp/clio-workspace/analysis.json)
           RECOMMENDATION=$(echo "$ANALYSIS" | jq -r '.recommendation // "needs-review"')
@@ -202,61 +187,47 @@ jobs:
           case "$RECOMMENDATION" in
             "approve"|"approved") EMOJI="OK"; VERDICT="LGTM - Ready for Human Review" ;;
             "needs-changes") EMOJI="WARN"; VERDICT="Changes Requested" ;;
-            "security-concern") EMOJI="LOCK"; VERDICT="Security Review Required" ;;
-            *) EMOJI="REVIEW"; VERDICT="Needs Human Review" ;;
+            "security-concern") EMOJI="STOP"; VERDICT="Security Review Required" ;;
+            *) EMOJI="INFO"; VERDICT="Needs Review" ;;
           esac
           
-          # Build comment using echo (avoids heredoc issues)
-          echo "## [$EMOJI] CLIO PR Review" > /tmp/comment.md
-          echo "" >> /tmp/comment.md
-          echo "| Field | Value |" >> /tmp/comment.md
-          echo "|-------|-------|" >> /tmp/comment.md
-          echo "| **Recommendation** | $VERDICT |" >> /tmp/comment.md
-          echo "| **Test Coverage** | $TEST_COV |" >> /tmp/comment.md
-          echo "| **Breaking Changes** | $BREAKING |" >> /tmp/comment.md
-          echo "" >> /tmp/comment.md
-          echo "### Summary" >> /tmp/comment.md
-          echo "$SUMMARY" >> /tmp/comment.md
+          # Build security concerns section
+          SEC_CONCERNS=$(echo "$ANALYSIS" | jq -r '(.security_concerns // []) | if length > 0 then "## Security Concerns\n\n" + (map("- " + .) | join("\n")) + "\n" else "" end')
           
-          # Add sections if they have content
-          SEC_COUNT=$(echo "$ANALYSIS" | jq -r '(.security_concerns // []) | length')
-          if [ "$SEC_COUNT" -gt 0 ]; then
-            echo "" >> /tmp/comment.md
-            echo "### Security Concerns" >> /tmp/comment.md
-            echo "$ANALYSIS" | jq -r '.security_concerns[]' | while read line; do echo "- $line" >> /tmp/comment.md; done
-          fi
+          # Build style issues section  
+          STYLE_ISSUES=$(echo "$ANALYSIS" | jq -r '(.style_issues // []) | if length > 0 then "## Style Issues\n\n" + (map("- " + .) | join("\n")) + "\n" else "" end')
           
-          STYLE_COUNT=$(echo "$ANALYSIS" | jq -r '(.style_issues // []) | length')
-          if [ "$STYLE_COUNT" -gt 0 ]; then
-            echo "" >> /tmp/comment.md
-            echo "### Style Issues" >> /tmp/comment.md
-            echo "$ANALYSIS" | jq -r '.style_issues[]' | while read line; do echo "- $line" >> /tmp/comment.md; done
-          fi
+          # Build detailed feedback section
+          FEEDBACK=$(echo "$ANALYSIS" | jq -r '(.detailed_feedback // []) | if length > 0 then "## Detailed Feedback\n\n" + (map("- " + .) | join("\n")) + "\n" else "" end')
           
-          DOC_COUNT=$(echo "$ANALYSIS" | jq -r '(.documentation_issues // []) | length')
-          if [ "$DOC_COUNT" -gt 0 ]; then
-            echo "" >> /tmp/comment.md
-            echo "### Documentation Issues" >> /tmp/comment.md
-            echo "$ANALYSIS" | jq -r '.documentation_issues[]' | while read line; do echo "- $line" >> /tmp/comment.md; done
-          fi
+          # Construct comment body
+          COMMENT_BODY="## ${EMOJI} CLIO Automated Review: ${VERDICT}
+
+**Summary:** ${SUMMARY}
+
+| Metric | Value |
+|--------|-------|
+| Test Coverage | \`${TEST_COV}\` |
+| Breaking Changes | \`${BREAKING}\` |
+
+${SEC_CONCERNS}
+${STYLE_ISSUES}
+${FEEDBACK}
+
+---
+_This is an automated review. A human maintainer will provide final approval._"
           
-          FB_COUNT=$(echo "$ANALYSIS" | jq -r '(.detailed_feedback // []) | length')
-          if [ "$FB_COUNT" -gt 0 ]; then
-            echo "" >> /tmp/comment.md
-            echo "### Detailed Feedback" >> /tmp/comment.md
-            echo "$ANALYSIS" | jq -r '.detailed_feedback[]' | while read line; do echo "- $line" >> /tmp/comment.md; done
-          fi
-          
-          echo "" >> /tmp/comment.md
-          echo "---" >> /tmp/comment.md
-          echo "*Automated review by [CLIO](https://github.com/SyntheticAutonomicMind/CLIO)*" >> /tmp/comment.md
-          
-          gh pr comment ${{ github.event.pull_request.number }} --body-file /tmp/comment.md
+          gh pr comment "$PR_NUMBER" --body "$COMMENT_BODY"
       
       - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: clio-pr-review-${{ github.event.pull_request.number }}-${{ github.run_number }}
-          path: /tmp/clio-workspace/
+          name: review-artifacts
+          path: |
+            /tmp/clio-workspace/full_response.txt
+            /tmp/clio-workspace/review.json
+            /tmp/clio-workspace/analysis.json
+            /tmp/clio-workspace/PR_INFO.md
+            /tmp/clio-workspace/PR_DIFF.txt
           retention-days: 7
