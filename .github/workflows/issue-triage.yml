@@ -131,16 +131,23 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # Debug: show what's in the CLIO config directory
+          echo "=== CLIO Config Directory Contents ==="
+          ls -la /tmp/clio-config/
+          echo "=== Config.json (redacted) ==="
+          cat /tmp/clio-config/config.json | sed 's/ghp_[a-zA-Z0-9]*/ghp_REDACTED/g'
+          
           # Run CLIO in container with prompt piped to stdin
           # Mount:
           #   - Writable workspace copy at /workspace (for sessions)
-          #   - Auth config as /root/.clio (for github_tokens.json)
-          #   - Prompt file
+          #   - Auth config as /root/.clio (for config.json)
           ANALYSIS=$(cat /tmp/clio-workspace/full_prompt.md | docker run -i --rm \
             -v "/tmp/clio-workspace":/workspace:rw \
             -v "/tmp/clio-config":/root/.clio:rw \
             -w /workspace \
+            -e CLIO_LOG_LEVEL=DEBUG \
             ghcr.io/syntheticautonomicmind/clio:latest \
+            --debug \
             --new \
             --model "$CLIO_MODEL" \
             --sandbox \
