@@ -313,8 +313,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          echo "=== Starting CLIO Analysis ==="
+          echo "Prompt size: $(wc -c < /tmp/clio-workspace/full_prompt.md) bytes"
+          echo ""
+          
           # Run CLIO in container with prompt piped to stdin
-          ANALYSIS=$(cat /tmp/clio-workspace/full_prompt.md | docker run -i --rm \
+          # Use tee to stream output to both file AND stderr (visible in real-time)
+          echo "--- CLIO Output (streaming) ---"
+          cat /tmp/clio-workspace/full_prompt.md | docker run -i --rm \
             -v "/tmp/clio-workspace":/workspace:rw \
             -v "/tmp/clio-config":/root/.clio:rw \
             -w /workspace \
@@ -323,10 +329,14 @@ jobs:
             --new \
             --model "$CLIO_MODEL" \
             --sandbox \
-            --exit 2>&1) || true
+            --exit 2>&1 | tee /tmp/clio-workspace/full_response.txt || true
           
-          # Save full response for debugging
-          echo "$ANALYSIS" > /tmp/clio-workspace/full_response.txt
+          echo ""
+          echo "--- End CLIO Output ---"
+          echo "Response size: $(wc -c < /tmp/clio-workspace/full_response.txt) bytes"
+          
+          # Read the saved output for processing
+          ANALYSIS=$(cat /tmp/clio-workspace/full_response.txt)
           
           # Create Python script for JSON extraction
           cat > /tmp/extract_json.py << 'PYEOF'
