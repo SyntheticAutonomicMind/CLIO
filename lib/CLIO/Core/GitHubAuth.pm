@@ -100,7 +100,7 @@ sub start_device_flow {
     
     my $body = encode_json({
         client_id => $self->{client_id},
-        scope => 'read:user copilot',
+        scope => 'read:user user:email repo workflow',  # Match VSCode Copilot scopes (GITHUB_SCOPE_ALIGNED)
     });
     
     $request->content($body);
