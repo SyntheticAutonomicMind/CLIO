@@ -426,7 +426,7 @@ sub _show_stats {
     
     my $total = $stats->{discoveries} + $stats->{solutions} + $stats->{patterns} + 
                 $stats->{workflows} + $stats->{failures};
-    $self->writeline("  " . "-" x 20, markdown => 0);
+    $self->writeline("  " . "─" x 20, markdown => 0);
     $self->writeline(sprintf("  Total:          %3d", $total), markdown => 0);
     $self->writeline("", markdown => 0);
     

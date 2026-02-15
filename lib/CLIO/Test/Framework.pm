@@ -625,9 +625,9 @@ sub _print_summary {
     
     my $duration = $self->{stats}->{end_time} - $self->{stats}->{start_time};
     
-    print "\n" . "="x60 . "\n";
+    print "\n" . "═"x62 . "\n";
     print "TEST SUMMARY\n";
-    print "="x60 . "\n";
+    print "═"x62 . "\n";
     print "Suite: $self->{current_suite}\n";
     print "Total Tests: $self->{stats}->{total_tests}\n";
     print "Passed: $self->{stats}->{passed}\n";
@@ -640,7 +640,7 @@ sub _print_summary {
         print "Result: ✗ " . $self->{stats}->{failed} . " TESTS FAILED\n";
     }
     
-    print "="x60 . "\n\n";
+    print "═"x62 . "\n\n";
 }
 
 1;
