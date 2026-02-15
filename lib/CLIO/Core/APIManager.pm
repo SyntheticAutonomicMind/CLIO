@@ -3231,9 +3231,10 @@ sub _process_quota_headers {
     my $percent_remaining = $quota{rem} || 0.0;
     my $reset_date = $quota{rst} || 'unknown';
     
-    # Calculate used based on entitlement and remaining percentage
-    # SAM formula (Providers.swift:2463): max(0, Int(Double(entitlement) * (1.0 - percentRemaining / 100.0)))
-    # Note: GitHub API provides ent + rem, NOT used directly
+    # Calculate used from percentage - response headers don't include direct 'remaining' count
+    # NOTE: The copilot_internal/user API has the direct remaining count, but response headers
+    # only provide ent (entitlement) and rem (percent remaining), so we must calculate here.
+    # Formula: used = entitlement * (1 - percent_remaining / 100)
     my $used = int($entitlement * (1.0 - $percent_remaining / 100.0));
     $used = 0 if $used < 0;  # max(0, calculated_value)
     

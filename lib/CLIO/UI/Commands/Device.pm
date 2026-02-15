@@ -104,9 +104,9 @@ sub writeline {
     $self->{chat} ? $self->{chat}->writeline(@_) : print "\n";
 }
 
-# Fallback display methods when no chat available
-sub _fallback_header { print "\n$_[0]\n" . ("=" x 60) . "\n" }
-sub _fallback_section { print "$_[0]\n" . ("-" x 60) . "\n" }
+# Fallback display methods when no chat available (uses unicode box-drawing)
+sub _fallback_header { print "\n$_[0]\n" . ("═" x 62) . "\n" }
+sub _fallback_section { print "$_[0]\n" . ("─" x 62) . "\n" }
 sub _fallback_kv { printf "  %-15s %s\n", "$_[0]:", $_[1] }
 sub _fallback_row { printf "  %-25s %s\n", $_[0], $_[1] }
 sub _fallback_item { print "  - $_[0]\n" }
