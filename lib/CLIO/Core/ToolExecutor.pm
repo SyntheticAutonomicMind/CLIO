@@ -10,6 +10,7 @@ use JSON::PP qw(encode_json decode_json);
 use MIME::Base64 qw(encode_base64 decode_base64);
 use CLIO::Session::ToolResultStore;
 use CLIO::Logging::ToolLogger;
+use CLIO::Security::SecretRedactor qw(redact redact_any);
 use Time::HiRes qw(time);
 
 =head1 NAME
@@ -264,6 +265,11 @@ sub execute_tool {
         if (ref($output) eq 'HASH' || ref($output) eq 'ARRAY') {
             $output = encode_json($output);
         }
+        
+        # === SECURITY: Redact secrets and PII from tool output ===
+        # This happens BEFORE sending to AI and logging, ensuring secrets
+        # are never exposed to the LLM or stored in logs
+        $output = redact($output) if defined $output;
         
         # Store the raw output before potential truncation by ToolResultStore
         my $raw_output = $output;
