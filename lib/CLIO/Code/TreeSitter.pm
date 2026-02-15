@@ -3,7 +3,7 @@ package CLIO::Code::TreeSitter;
 use strict;
 use warnings;
 use File::Basename;
-use JSON;
+use JSON::PP;
 
 =head1 NAME
 
