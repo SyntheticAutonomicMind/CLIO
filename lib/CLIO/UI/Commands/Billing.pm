@@ -53,6 +53,8 @@ sub new {
 # Delegate display methods to chat
 sub display_system_message { shift->{chat}->display_system_message(@_) }
 sub display_error_message { shift->{chat}->display_error_message(@_) }
+sub display_command_header { shift->{chat}->display_command_header(@_) }
+sub display_section_header { shift->{chat}->display_section_header(@_) }
 sub writeline { shift->{chat}->writeline(@_) }
 sub colorize { shift->{chat}->colorize(@_) }
 
@@ -77,21 +79,53 @@ sub handle_billing_command {
     
     my $billing = $self->{session}->get_billing_summary();
     
-    $self->writeline("", markdown => 0);
-    $self->writeline($self->colorize("=" x 70, 'DATA'), markdown => 0);
-    $self->writeline($self->colorize("GITHUB COPILOT BILLING", 'DATA'), markdown => 0);
-    $self->writeline($self->colorize("=" x 70, 'DATA'), markdown => 0);
-    $self->writeline("", markdown => 0);
+    # Try to fetch user data from CopilotUserAPI for richer info
+    my $user_data;
+    eval {
+        require CLIO::Core::CopilotUserAPI;
+        my $user_api = CLIO::Core::CopilotUserAPI->new(debug => $self->{debug});
+        $user_data = $user_api->get_cached_user();  # Don't make API call, just use cache
+    };
+    # Ignore errors - $user_data will be undef
     
-    # Get model and multiplier from session
-    my $model = $self->{session}{state}{billing}{model} || 'unknown';
-    my $multiplier = $self->{session}{state}{billing}{multiplier} || 0;
+    # Display header using proper style
+    $self->display_command_header("GITHUB COPILOT BILLING");
+    
+    # Show account info - prefer prepopulated session data, fall back to API cache
+    my $login = undef;
+    my $plan = undef;
+    
+    # Check session-stored user data first (from prepopulation)
+    if ($self->{session}{copilot_user}) {
+        $login = $self->{session}{copilot_user}{login};
+        $plan = $self->{session}{copilot_user}{copilot_plan};
+    }
+    
+    # Fall back to CopilotUserAPI cache
+    if (!$login && $user_data) {
+        $login = $user_data->{login};
+        $plan = $user_data->{copilot_plan};
+    }
+    
+    if ($login || $plan) {
+        $self->display_section_header("Account");
+        $self->writeline(sprintf("  %-25s %s", "Username:", $self->colorize($login || 'unknown', 'DATA')), markdown => 0);
+        $self->writeline(sprintf("  %-25s %s", "Plan:", $self->colorize($plan || 'unknown', 'DATA')), markdown => 0);
+    }
+    
+    # Get model and multiplier from session - check multiple paths
+    my $model = $self->{session}{state}{billing}{model} 
+             || $self->{session}{billing}{model}
+             || 'unknown';
+    my $multiplier = $self->{session}{state}{billing}{multiplier} 
+                  || $self->{session}{billing}{multiplier}
+                  || 0;
     
     # Format multiplier string
     my $multiplier_str = $self->_format_multiplier($multiplier);
     
     # Session summary
-    $self->writeline($self->colorize("Session Summary:", 'LABEL'), markdown => 0);
+    $self->display_section_header("Session Summary");
     $self->writeline(sprintf("  %-25s %s", "Model:", $self->colorize($model, 'DATA')), markdown => 0);
     $self->writeline(sprintf("  %-25s %s", "Billing Rate:", $self->colorize($multiplier_str, 'DATA')), markdown => 0);
     
@@ -102,24 +136,61 @@ sub handle_billing_command {
     $self->writeline(sprintf("  %-25s %s", "API Requests (Total):", $self->colorize($total_api_requests, 'DATA')), markdown => 0);
     $self->writeline(sprintf("  %-25s %s", "Premium Requests Charged:", $self->colorize($total_premium_charged, 'DATA')), markdown => 0);
     
-    # Show quota allotment if available
-    if ($self->{session}{quota}) {
-        my $quota = $self->{session}{quota};
+    # Show quota allotment - check multiple paths (state may be nested differently)
+    my $quota = $self->{session}{quota} 
+             || $self->{session}{state}{quota};
+    
+    if ($quota) {
         my $entitlement = $quota->{entitlement} || 0;
         my $used = $quota->{used} || 0;
+        my $percent_used = $entitlement > 0 ? (100.0 - ($quota->{percent_remaining} || 0)) : 0;
+        my $reset_date = $quota->{reset_date} || '';
         
         if ($entitlement > 0) {
-            $self->writeline(sprintf("  %-25s %s of %s", 
-                "Premium Quota Status:", 
-                $self->colorize("$used used", 'DATA'),
-                $self->colorize("$entitlement total", 'DATA')), markdown => 0);
+            $self->display_section_header("Premium Quota");
+            
+            # Color based on usage percentage
+            my $status_color = 'DATA';
+            if ($percent_used >= 95) {
+                $status_color = 'ERROR';
+            } elsif ($percent_used >= 80) {
+                $status_color = 'WARN';
+            } elsif ($percent_used >= 50) {
+                $status_color = 'LABEL';
+            }
+            
+            my $status_str = sprintf("%d used of %d (%.1f%%)", $used, $entitlement, $percent_used);
+            $self->writeline(sprintf("  %-25s %s", 
+                "Status:", 
+                $self->colorize($status_str, $status_color)), markdown => 0);
+            
+            # Show overage if applicable
+            my $overage = $quota->{overage_used} || 0;
+            if ($overage > 0) {
+                my $overage_str = sprintf("+%d overage", $overage);
+                if ($quota->{overage_permitted}) {
+                    $overage_str .= " (permitted)";
+                }
+                $self->writeline(sprintf("  %-25s %s", "Overage:", 
+                    $self->colorize($overage_str, 'WARN')), markdown => 0);
+            }
+            
+            # Show reset date
+            if ($reset_date && $reset_date ne 'unknown') {
+                my $reset_display = $reset_date;
+                $reset_display =~ s/T.*//;  # Remove time portion
+                $self->writeline(sprintf("  %-25s %s", 
+                    "Resets:", 
+                    $self->colorize($reset_display, 'DIM')), markdown => 0);
+            }
         }
     }
     
+    # Token usage section
+    $self->display_section_header("Token Usage");
     $self->writeline(sprintf("  %-25s %s", "Total Tokens:", $self->colorize($billing->{total_tokens}, 'DATA')), markdown => 0);
-    $self->writeline(sprintf("  %-25s %s tokens", "  - Prompt:", $billing->{total_prompt_tokens}), markdown => 0);
-    $self->writeline(sprintf("  %-25s %s tokens", "  - Completion:", $billing->{total_completion_tokens}), markdown => 0);
-    $self->writeline("", markdown => 0);
+    $self->writeline(sprintf("  %-25s %s tokens", "  Prompt:", $billing->{total_prompt_tokens}), markdown => 0);
+    $self->writeline(sprintf("  %-25s %s tokens", "  Completion:", $billing->{total_completion_tokens}), markdown => 0);
     
     # Premium usage warning if applicable
     $self->_display_premium_warning($multiplier);
@@ -127,10 +198,9 @@ sub handle_billing_command {
     # Recent requests with multipliers
     $self->_display_recent_requests($billing);
     
-    $self->writeline($self->colorize("=" x 70, 'DATA'), markdown => 0);
     $self->writeline("", markdown => 0);
-    $self->writeline($self->colorize("Note: GitHub Copilot uses subscription-based billing.", 'SYSTEM'), markdown => 0);
-    $self->writeline($self->colorize("      Multipliers indicate premium model usage relative to free models.", 'SYSTEM'), markdown => 0);
+    $self->writeline($self->colorize("Note: GitHub Copilot uses subscription-based billing.", 'DIM'), markdown => 0);
+    $self->writeline($self->colorize("      Multipliers indicate premium model usage relative to free models.", 'DIM'), markdown => 0);
     $self->writeline("", markdown => 0);
 }
 

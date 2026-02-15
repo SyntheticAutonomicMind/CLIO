@@ -208,7 +208,7 @@ sub _list_context_files {
     }
     
     $self->writeline("", markdown => 0);
-    $self->writeline("-" x 55, markdown => 0);
+    $self->writeline("─" x 62, markdown => 0);
     printf "Total: %d files, ~%s\n",
         scalar(@files),
         $self->_format_tokens($total_tokens);
@@ -297,9 +297,9 @@ sub _display_memory_stats {
     }
     
     $self->writeline("", markdown => 0);
-    $self->writeline("-" x 55, markdown => 0);
+    $self->writeline("─" x 62, markdown => 0);
     $self->writeline($self->colorize("CONTEXT FILES", 'DATA'), markdown => 0);
-    $self->writeline("-" x 55, markdown => 0);
+    $self->writeline("─" x 62, markdown => 0);
 }
 
 =head2 _clear_context_files()
