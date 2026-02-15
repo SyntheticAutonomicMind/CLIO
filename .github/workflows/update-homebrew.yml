@@ -27,15 +27,19 @@ jobs:
     steps:
       - name: Extract version
         id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_VERSION: ${{ github.event.inputs.version }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            VERSION="$DISPATCH_VERSION"
           else
             # Get the tag from the workflow run
             # The release workflow runs on tag push, so we extract from head_branch
-            VERSION="${{ github.event.workflow_run.head_branch }}"
+            VERSION="$HEAD_BRANCH"
           fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Release version: $VERSION"
 
       - name: Get release tarball URL
