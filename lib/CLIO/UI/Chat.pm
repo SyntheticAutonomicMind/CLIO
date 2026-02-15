@@ -315,6 +315,9 @@ sub run {
     # Display header
     $self->display_header();
     
+    # Prepopulate session data from API (quota, model info)
+    $self->_prepopulate_session_data();
+    
     # Background update check (non-blocking)
     $self->check_for_updates_async();
     
@@ -1158,6 +1161,101 @@ Arguments:
 Returns: Formatted prompt string with theme colors
 
 =cut
+
+=head2 _prepopulate_session_data
+
+Prepopulate session data from APIs before first AI request.
+
+This fetches:
+- GitHub Copilot quota from copilot_internal/user API
+- Model billing information
+- User account info (login, plan)
+
+Called at session start to provide accurate /usage data immediately.
+
+=cut
+
+sub _prepopulate_session_data {
+    my ($self) = @_;
+    
+    return unless $self->{session};
+    
+    my $provider = $self->{config} ? $self->{config}->get('provider') : '';
+    
+    # Only prepopulate for GitHub Copilot provider
+    return unless $provider && $provider eq 'github_copilot';
+    
+    print STDERR "[DEBUG][Chat] Prepopulating session data from CopilotUserAPI\n" if should_log('DEBUG');
+    
+    eval {
+        require CLIO::Core::CopilotUserAPI;
+        my $user_api = CLIO::Core::CopilotUserAPI->new(debug => $self->{debug});
+        
+        # Try cached first, then fetch if no cache
+        my $user_data = $user_api->get_cached_user() || $user_api->fetch_user();
+        
+        return unless $user_data;
+        
+        # Get session state
+        my $state;
+        if ($self->{session}->can('state')) {
+            $state = $self->{session}->state();
+        } else {
+            $state = $self->{session};  # Might be State directly
+        }
+        
+        return unless $state;
+        
+        # Prepopulate quota info
+        my $premium = $user_data->get_premium_quota();
+        if ($premium) {
+            $state->{quota} = {
+                entitlement => $premium->{entitlement},
+                used => $premium->{used},
+                available => $premium->{entitlement} - $premium->{used},
+                percent_remaining => $premium->{percent_remaining},
+                overage_used => $premium->{overage_count} || 0,
+                overage_permitted => $premium->{overage_permitted},
+                reset_date => $user_data->{quota_reset_date_utc} || 'unknown',
+                last_updated => time(),
+            };
+            
+            # Also store user info for display
+            $state->{copilot_user} = {
+                login => $user_data->{login},
+                copilot_plan => $user_data->{copilot_plan},
+                access_type_sku => $user_data->{access_type_sku},
+            };
+            
+            print STDERR "[DEBUG][Chat] Prepopulated quota: " . 
+                "$premium->{used}/$premium->{entitlement} " .
+                "($premium->{percent_remaining}% remaining)\n" if should_log('DEBUG');
+        }
+        
+        # Prepopulate model info from config
+        my $model = $self->{config}->get('model') || 'unknown';
+        if ($model ne 'unknown' && !$state->{billing}{model}) {
+            $state->{billing}{model} = $model;
+            
+            # Get billing multiplier
+            eval {
+                require CLIO::Core::GitHubCopilotModelsAPI;
+                my $models_api = CLIO::Core::GitHubCopilotModelsAPI->new(debug => $self->{debug});
+                my $billing = $models_api->get_model_billing($model);
+                if ($billing && defined $billing->{multiplier}) {
+                    $state->{billing}{multiplier} = $billing->{multiplier};
+                    print STDERR "[DEBUG][Chat] Prepopulated model billing: $model -> " .
+                        "$billing->{multiplier}x\n" if should_log('DEBUG');
+                }
+            };
+            # Ignore errors - just means no multiplier info
+        }
+    };
+    
+    if ($@) {
+        print STDERR "[DEBUG][Chat] Prepopulation failed (non-fatal): $@\n" if should_log('DEBUG');
+    }
+}
 
 sub _build_prompt {
     my ($self, $mode) = @_;

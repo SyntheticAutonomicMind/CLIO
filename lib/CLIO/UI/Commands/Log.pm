@@ -134,9 +134,9 @@ sub display_tool_log_recent {
     }
     
     $self->writeline("", markdown => 0);
-    $self->writeline("-" x 55, markdown => 0);
+    $self->writeline("─" x 62, markdown => 0);
     $self->writeline($self->colorize("TOOL OPERATIONS (last $count)", 'DATA'), markdown => 0);
-    $self->writeline("-" x 55, markdown => 0);
+    $self->writeline("─" x 62, markdown => 0);
     
     for my $entry (@$entries) {
         $self->_display_tool_log_entry($entry);
@@ -161,9 +161,9 @@ sub display_tool_log_filter {
     }
     
     $self->writeline("", markdown => 0);
-    $self->writeline("-" x 55, markdown => 0);
+    $self->writeline("─" x 62, markdown => 0);
     $self->writeline($self->colorize("TOOL OPERATIONS - $tool_name (" . scalar(@$entries) . " found)", 'DATA'), markdown => 0);
-    $self->writeline("-" x 55, markdown => 0);
+    $self->writeline("─" x 62, markdown => 0);
     
     for my $entry (reverse @$entries) {
         $self->_display_tool_log_entry($entry);
@@ -188,9 +188,9 @@ sub display_tool_log_search {
     }
     
     $self->writeline("", markdown => 0);
-    $self->writeline("-" x 55, markdown => 0);
+    $self->writeline("─" x 62, markdown => 0);
     $self->writeline($self->colorize("TOOL OPERATIONS - search '$pattern' (" . scalar(@$entries) . " found)", 'DATA'), markdown => 0);
-    $self->writeline("-" x 55, markdown => 0);
+    $self->writeline("─" x 62, markdown => 0);
     
     for my $entry (reverse @$entries) {
         $self->_display_tool_log_entry($entry);
@@ -216,9 +216,9 @@ sub display_tool_log_session {
     }
     
     $self->writeline("", markdown => 0);
-    $self->writeline("-" x 55, markdown => 0);
+    $self->writeline("─" x 62, markdown => 0);
     $self->writeline($self->colorize("TOOL OPERATIONS - session $session_id (" . scalar(@$entries) . " ops)", 'DATA'), markdown => 0);
-    $self->writeline("-" x 55, markdown => 0);
+    $self->writeline("─" x 62, markdown => 0);
     
     for my $entry (reverse @$entries) {
         $self->_display_tool_log_entry($entry);

@@ -139,6 +139,12 @@ sub handle_api_command {
         return;
     }
     
+    # /api quota - show Copilot quota status
+    if ($action eq 'quota') {
+        $self->handle_quota_command(@args);
+        return;
+    }
+    
     # BACKWARD COMPATIBILITY: Support old syntax during transition
     if ($action eq 'key') {
         $self->display_system_message("Note: Use '/api set key <value>' (new syntax)");
@@ -189,6 +195,7 @@ sub _display_api_help {
     $self->display_command_row("/api models --refresh", "Refresh models (bypass cache)", 40);
     $self->display_command_row("/api login", "Authenticate with GitHub Copilot", 40);
     $self->display_command_row("/api logout", "Sign out from GitHub", 40);
+    $self->display_command_row("/api quota", "Show GitHub Copilot quota status", 40);
     $self->writeline("", markdown => 0);
     
     $self->display_section_header("PROVIDERS");
@@ -923,6 +930,129 @@ sub handle_logout_command {
     
     $self->display_system_message("Signed out from GitHub (was: $username)");
     $self->display_system_message("Use /login to authenticate again");
+}
+
+=head2 handle_quota_command
+
+Handle /api quota command to display GitHub Copilot quota status.
+
+Fetches data from the copilot_internal/user API endpoint to show:
+- User info (login, plan)
+- Premium quota (used/entitlement, percent)
+- Overage status
+- Reset date
+
+=cut
+
+sub handle_quota_command {
+    my ($self, @args) = @_;
+    
+    # Parse --refresh flag to bypass cache
+    my $refresh = 0;
+    @args = grep {
+        if ($_ eq '--refresh') {
+            $refresh = 1;
+            0;
+        } else {
+            1;
+        }
+    } @args;
+    
+    eval { require CLIO::Core::CopilotUserAPI; };
+    if ($@) {
+        $self->display_error_message("CopilotUserAPI not available: $@");
+        return;
+    }
+    
+    my $api = CLIO::Core::CopilotUserAPI->new(
+        debug => $self->{debug},
+        cache_ttl => $refresh ? 0 : 300,  # Bypass cache if --refresh
+    );
+    
+    # Fetch user data (uses cache unless --refresh)
+    my $user;
+    if ($refresh) {
+        $user = $api->fetch_user();
+    } else {
+        $user = $api->get_cached_user() || $api->fetch_user();
+    }
+    
+    unless ($user) {
+        $self->display_error_message("Failed to fetch Copilot quota: $@");
+        $self->display_system_message("Make sure you're authenticated with /api login");
+        return;
+    }
+    
+    # Display header using proper style
+    $self->display_command_header("GITHUB COPILOT QUOTA");
+    
+    # User info
+    $self->display_section_header("Account");
+    $self->writeline(sprintf("  %-20s %s", "Username:", $self->colorize($user->{login} || 'unknown', 'DATA')), markdown => 0);
+    $self->writeline(sprintf("  %-20s %s", "Plan:", $self->colorize($user->{copilot_plan} || 'unknown', 'DATA')), markdown => 0);
+    
+    # Display each quota type
+    my @quotas = $user->get_all_quotas();
+    
+    if (@quotas) {
+        $self->display_section_header("Quotas");
+        
+        for my $quota_name (@quotas) {
+            my $q = $user->get_quota($quota_name);
+            next unless $q;
+            
+            my $display_name = $user->get_display_name($quota_name);
+            
+            if ($q->{unlimited}) {
+                $self->writeline(sprintf("  %-25s %s", 
+                    "$display_name:", 
+                    $self->colorize("Unlimited", 'SYSTEM')), markdown => 0);
+            } else {
+                # Calculate color based on remaining percentage
+                my $percent_used = $q->{percent_used};
+                my $status_color = 'DATA';
+                if ($percent_used >= 95) {
+                    $status_color = 'ERROR';
+                } elsif ($percent_used >= 80) {
+                    $status_color = 'WARN';
+                } elsif ($percent_used >= 50) {
+                    $status_color = 'LABEL';
+                }
+                
+                my $status_str = sprintf("%d / %d (%.1f%% used)", 
+                    $q->{used}, $q->{entitlement}, $percent_used);
+                
+                $self->writeline(sprintf("  %-25s %s", 
+                    "$display_name:", 
+                    $self->colorize($status_str, $status_color)), markdown => 0);
+                
+                # Show overage if applicable
+                if ($q->{overage_count} > 0) {
+                    my $overage_str = sprintf("  + %d overage", $q->{overage_count});
+                    if ($q->{overage_permitted}) {
+                        $overage_str .= " (permitted)";
+                    }
+                    $self->writeline(sprintf("  %-25s %s", "", 
+                        $self->colorize($overage_str, 'WARN')), markdown => 0);
+                }
+            }
+        }
+        $self->writeline("", markdown => 0);
+    }
+    
+    # Reset date
+    if ($user->{quota_reset_date_utc}) {
+        my $reset_str = $user->{quota_reset_date_utc};
+        # Parse and format nicely if possible
+        if ($reset_str =~ /^(\d{4})-(\d{2})-(\d{2})/) {
+            $reset_str = "$1-$2-$3";
+        }
+        $self->writeline(sprintf("  %-20s %s", "Resets:", $self->colorize($reset_str, 'DIM')), markdown => 0);
+    }
+    
+    $self->writeline("", markdown => 0);
+    $self->writeline($self->colorize("Use /api quota --refresh to bypass cache", 'DIM'), markdown => 0);
+    $self->writeline("", markdown => 0);
 }
 
 =head2 handle_models_command
