@@ -88,9 +88,11 @@ AUTHORIZATION:
 -  grep_search - Search file contents with regex
   Parameters: query (required), pattern (optional), is_regex (optional)
   
--  semantic_search - Keyword-based relevance search across codebase
+-  semantic_search - Hybrid keyword + symbol search across codebase
   Parameters: query (required), scope (optional)
-  Note: Extracts keywords from query, searches with grep, ranks files by relevance
+  Note: Extracts keywords from query, searches code files, ranks by relevance.
+        Boosts files containing matching function/class definitions.
+        Good for finding "where is X implemented?" or "files about Y"
 
 -  read_tool_result - Read persisted large tool results in chunks
   
@@ -215,7 +217,7 @@ sub get_additional_parameters {
         # Search parameters
         query => {
             type => "string",
-            description => "Search query or pattern. Used by file_search, grep_search, semantic_search.",
+            description => "Search query or pattern. For semantic_search: use natural language keywords like 'authentication function' or 'error handling'. For grep_search: literal text or regex.",
         },
         pattern => {
             type => "string",
@@ -943,8 +945,16 @@ sub grep_search {
         
         my @files = grep { $_->{type} eq 'file' } @{$file_result->{output}};
         
+        # Sort files to prioritize code files over docs/other files
+        # This ensures important files are searched even with limits
+        @files = sort {
+            my $a_code = ($a->{path} =~ /\.(pm|pl|t|py|js|ts|rb|go|rs|java|c|h|cpp|hpp)$/i) ? 0 : 1;
+            my $b_code = ($b->{path} =~ /\.(pm|pl|t|py|js|ts|rb|go|rs|java|c|h|cpp|hpp)$/i) ? 0 : 1;
+            $a_code <=> $b_code || $a->{path} cmp $b->{path};
+        } @files;
+        
         # Limit files searched to prevent slowdown with large codebases
-        my $max_files_to_search = 100;
+        my $max_files_to_search = 200;  # Increased from 100
         if (scalar(@files) > $max_files_to_search) {
             $search_truncated = 1;
             @files = @files[0..$max_files_to_search-1];
@@ -1040,10 +1050,19 @@ sub semantic_search {
     
     my $query = $params->{query};
     my $scope = $params->{scope} || '.';
+    my $top_k = $params->{max_results} || 20;
     
     return $self->error_result("Missing 'query' parameter") unless $query;
     
     print STDERR "[DEBUG][FileOp] Semantic search for: $query (scope: $scope)\n" if should_log('DEBUG');
+    
+    # Use hybrid keyword + structure search
+    return $self->_semantic_search_hybrid($query, $scope, $top_k, $context);
+}
+
+# Hybrid semantic search: keyword matching + code structure analysis
+sub _semantic_search_hybrid {
+    my ($self, $query, $scope, $top_k, $context) = @_;
     
     # Extract keywords from query (simple word splitting)
     my @keywords = grep { length($_) > 2 } split(/\W+/, lc($query));
@@ -1059,16 +1078,23 @@ sub semantic_search {
     my %file_matches = ();  # file => array of match lines
     
     foreach my $keyword (@keywords) {
+        # Use proper glob pattern
+        my $pattern = ($scope eq '.' || !$scope) ? '**/*' : "$scope/**/*";
+        
         my $grep_result = $self->grep_search({
             query => $keyword,
-            pattern => "$scope/**",
+            pattern => $pattern,
             is_regex => 0,
+            max_results => 200,  # Higher limit for semantic search
         }, $context);
         
-        next unless $grep_result->{success} && $grep_result->{matches};
+        # grep_search returns results in 'output' not 'matches'
+        next unless $grep_result->{success} && $grep_result->{output};
         
-        foreach my $match (@{$grep_result->{matches}}) {
-            my $file = $match->{file};
+        foreach my $match (@{$grep_result->{output}}) {
+            # grep_search returns {path, line, content}
+            my $file = $match->{path};
+            next unless $file;
             
             # Score: number of keyword matches + position bonus
             $file_scores{$file} ||= 0;
@@ -1079,11 +1105,18 @@ sub semantic_search {
                 $file_scores{$file} += 2;
             }
             
-            # Store match details
+            # Store match details (normalize format)
             $file_matches{$file} ||= [];
-            push @{$file_matches{$file}}, $match;
+            push @{$file_matches{$file}}, {
+                file => $file,
+                line => $match->{line},
+                content => $match->{content},
+            };
         }
     }
+    
+    # Apply tree-sitter analysis to boost scores for symbol definitions
+    $self->_enhance_scores_with_symbols(\%file_scores, \%file_matches, \@keywords);
     
     # Sort files by relevance score
     my @ranked_files = sort { $file_scores{$b} <=> $file_scores{$a} } keys %file_scores;
@@ -1096,12 +1129,12 @@ sub semantic_search {
             files => [],
             count => 0,
             keywords => \@keywords,
+            method => 'hybrid',
         );
     }
     
-    # Build result with top N files (limit to 20 for readability)
-    my $max_results = 20;
-    @ranked_files = splice(@ranked_files, 0, $max_results) if @ranked_files > $max_results;
+    # Build result with top N files
+    @ranked_files = splice(@ranked_files, 0, $top_k) if @ranked_files > $top_k;
     
     my @results = ();
     foreach my $file (@ranked_files) {
@@ -1113,12 +1146,12 @@ sub semantic_search {
         };
     }
     
-    my $message = "Found $result_count files matching '$query'";
-    $message .= " (showing top $max_results)" if $result_count > $max_results;
+    my $message = "Found $result_count files matching '$query' (hybrid search)";
+    $message .= " (showing top $top_k)" if $result_count > $top_k;
     
-    my $action_desc = "searching codebase for '$query' ($result_count matches)";
+    my $action_desc = "searching codebase for '$query' ($result_count matches, hybrid keyword+symbols)";
     
-    print STDERR "[DEBUG][FileOp] Semantic search found $result_count files\n" if should_log('DEBUG');
+    print STDERR "[DEBUG][FileOp] Hybrid search found $result_count files\n" if should_log('DEBUG');
     
     return $self->success_result(
         $message,
@@ -1126,7 +1159,83 @@ sub semantic_search {
         files => \@results,
         count => $result_count,
         keywords => \@keywords,
+        method => 'hybrid',
     );
+}
+
+# Enhance scores using tree-sitter symbol analysis
+sub _enhance_scores_with_symbols {
+    my ($self, $file_scores, $file_matches, $keywords) = @_;
+    
+    # Try to load TreeSitter
+    my $ts;
+    eval {
+        require CLIO::Code::TreeSitter;
+        $ts = CLIO::Code::TreeSitter->new(debug => 0);
+    };
+    
+    unless ($ts) {
+        print STDERR "[DEBUG][FileOp] TreeSitter not available, skipping symbol analysis\n" 
+            if should_log('DEBUG');
+        return;
+    }
+    
+    print STDERR "[DEBUG][FileOp] Enhancing scores with symbol analysis\n" if should_log('DEBUG');
+    
+    # Analyze top files (limit to avoid slow performance)
+    my @top_files = sort { $file_scores->{$b} <=> $file_scores->{$a} } keys %$file_scores;
+    @top_files = splice(@top_files, 0, 50) if @top_files > 50;
+    
+    for my $file (@top_files) {
+        # Skip non-code files
+        next unless $file =~ /\.(pm|pl|t|py|js|jsx|ts|tsx)$/i;
+        
+        my $analysis = eval { $ts->analyze_file($file) };
+        next unless $analysis && $analysis->{symbols};
+        
+        # Check each symbol against keywords
+        for my $symbol (@{$analysis->{symbols}}) {
+            my $name = lc($symbol->{name} || '');
+            next unless $name;
+            
+            for my $keyword (@$keywords) {
+                if ($name =~ /\Q$keyword\E/i) {
+                    # Boost based on symbol type
+                    my $boost = 0;
+                    if ($symbol->{type} eq 'function') {
+                        $boost = 5;  # Strong boost for function definitions
+                    } elsif ($symbol->{type} eq 'package') {
+                        $boost = 4;  # Good boost for package/class definitions
+                    } elsif ($symbol->{type} eq 'variable' && $symbol->{scope} eq 'global') {
+                        $boost = 2;  # Moderate boost for global variables
+                    }
+                    
+                    if ($boost > 0) {
+                        $file_scores->{$file} += $boost;
+                        print STDERR "[DEBUG][FileOp] Boosted $file +$boost (symbol: $name, type: $symbol->{type})\n"
+                            if should_log('DEBUG');
+                        
+                        # Add symbol match to file matches
+                        push @{$file_matches->{$file}}, {
+                            file => $file,
+                            line => $symbol->{line},
+                            content => "$symbol->{type} definition: $symbol->{name}",
+                            symbol_type => $symbol->{type},
+                        };
+                    }
+                    last;  # One boost per keyword per file
+                }
+            }
+        }
+    }
+}
+
+# Helper to truncate text
+sub _truncate {
+    my ($text, $max) = @_;
+    return '' unless defined $text;
+    return $text if length($text) <= $max;
+    return substr($text, 0, $max) . '...';
 }
 
 sub read_tool_result {
