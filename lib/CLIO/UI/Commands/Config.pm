@@ -208,6 +208,7 @@ sub _display_config_help {
     $self->display_key_value("workdir", "Working directory path", 25);
     $self->display_key_value("terminal_passthrough", "Force direct terminal access", 25);
     $self->display_key_value("terminal_autodetect", "Auto-detect interactive commands", 25);
+    $self->display_key_value("redact_secrets", "Mask secrets/PII in output", 25);
     $self->writeline("", markdown => 0);
     
     $self->display_section_header("EXAMPLES");
@@ -235,7 +236,7 @@ sub _handle_config_set {
     
     unless ($key) {
         $self->display_error_message("Usage: /config set <key> <value>");
-        $self->writeline("Keys: style, theme, working_directory, terminal_passthrough, terminal_autodetect", markdown => 0);
+        $self->writeline("Keys: style, theme, working_directory, terminal_passthrough, terminal_autodetect, redact_secrets", markdown => 0);
         return;
     }
     
@@ -251,6 +252,7 @@ sub _handle_config_set {
         working_directory => 1,
         terminal_passthrough => 1,
         terminal_autodetect => 1,
+        redact_secrets => 1,
     );
     
     unless ($allowed{$key}) {
@@ -259,8 +261,8 @@ sub _handle_config_set {
         return;
     }
     
-    # Handle boolean values for terminal settings
-    if ($key =~ /^terminal_/) {
+    # Handle boolean values for toggle settings
+    if ($key =~ /^(terminal_|redact_)/) {
         if ($value =~ /^(true|1|yes|on)$/i) {
             $value = 1;
         } elsif ($value =~ /^(false|0|no|off)$/i) {
@@ -284,6 +286,12 @@ sub _handle_config_set {
                 $self->display_info_message("Auto-detect enabled: Interactive commands (git commit, vim, GPG) will use passthrough automatically");
             } else {
                 $self->display_info_message("Auto-detect disabled: All commands will capture output unless terminal_passthrough is true");
+            }
+        } elsif ($key eq 'redact_secrets') {
+            if ($value) {
+                $self->display_info_message("Secret redaction enabled: API keys, tokens, and PII will be automatically masked in tool output");
+            } else {
+                $self->display_info_message("WARNING: Secret redaction disabled - sensitive data may be exposed to the AI and logs");
             }
         }
     }
@@ -405,6 +413,15 @@ sub show_global_config {
     $self->display_key_value("Color Style", $style, 18);
     $self->display_key_value("Output Theme", $theme, 18);
     $self->display_key_value("Log Level", $loglevel, 18);
+    
+    # Security Settings
+    $self->writeline("", markdown => 0);
+    $self->display_section_header("Security");
+    my $redact_secrets = $self->{config}->get('redact_secrets');
+    # Default is enabled if not explicitly set
+    $redact_secrets = 1 unless defined $redact_secrets;
+    my $redact_status = $redact_secrets ? 'enabled' : 'DISABLED';
+    $self->display_key_value("Redact Secrets", $redact_status, 18);
     
     # Paths
     $self->writeline("", markdown => 0);

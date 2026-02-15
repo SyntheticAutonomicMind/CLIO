@@ -269,7 +269,10 @@ sub execute_tool {
         # === SECURITY: Redact secrets and PII from tool output ===
         # This happens BEFORE sending to AI and logging, ensuring secrets
         # are never exposed to the LLM or stored in logs
-        $output = redact($output) if defined $output;
+        # Can be disabled via config: /config set redact_secrets false
+        my $should_redact = !$self->{config} || !defined($self->{config}->get('redact_secrets')) 
+                         || $self->{config}->get('redact_secrets');
+        $output = redact($output) if $should_redact && defined $output;
         
         # Store the raw output before potential truncation by ToolResultStore
         my $raw_output = $output;

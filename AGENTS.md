@@ -412,6 +412,13 @@ Permanent knowledge -> Detailed commit message (committed)
 | Create giant modules (>1000 lines) | Hard to maintain and understand | Split into focused, cohesive modules |
 | Create summary docs in root | Clutters repository, wrong location | Use scratch/ for working documents |
 | Skip collaboration checkpoints | Violates Unbroken Method | Use user_collaboration at key decision points |
+| Technical jargon in action_desc | Users don't care about implementation details | Use user-focused descriptions |
+
+**Technical jargon example:**
+- WRONG: `"searching codebase (hybrid keyword+symbols)"` 
+- RIGHT: `"searching codebase for 'X' (N matches)"`
+
+The `action_description` appears in user-facing tool output. Keep it simple and focused on results, not implementation.
 
 **Remember:** If you find yourself doing any of these, STOP and do it correctly.
 

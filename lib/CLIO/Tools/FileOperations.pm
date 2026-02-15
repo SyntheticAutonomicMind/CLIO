@@ -142,7 +142,7 @@ AUTHORIZATION:
   Returns: Summary of all replacements performed
   
 -  insert_at_line - Insert content at specific line number
-  Parameters: path (required), line_number (required), content (required)
+  Parameters: path (required), line (required), content (required)
   
 -  delete_file - Delete file or directory
   Parameters: path (required), recursive (optional, for directories)
@@ -743,7 +743,9 @@ sub get_file_info {
         executable => -x $path ? 1 : 0,
     };
     
-    my $action_desc = "getting info for $path ($info->{type}, " . $stat[7] . " bytes)";
+    my $type = $info->{type};
+    my $size = $stat[7];
+    my $action_desc = "file info: $path ($type, $size bytes)";
     
     return $self->success_result($info, action_description => $action_desc);
 }
@@ -760,7 +762,7 @@ sub get_errors {
     
     # Only works for Perl files
     unless ($path =~ /\.p[lm]$/) {
-        my $action_desc = "checking syntax of $path (non-Perl, skipped)";
+        my $action_desc = "syntax check skipped (not Perl)";
         return $self->success_result(
             [],
             action_description => $action_desc,
@@ -1022,8 +1024,8 @@ sub grep_search {
                      $files_searched . " files searched\n" if $self->{debug};
         
         my $match_summary = scalar(@matches) . " matches in " . $files_searched . " files";
-        my $truncated_note = $search_truncated ? " (search limited to first 100 files)" : "";
-        my $action_desc = "searching for '$query' in $pattern ($match_summary)$truncated_note";
+        my $truncated_note = ($search_truncated || scalar(@matches) >= $max_results) ? " (results may be truncated)" : "";
+        my $action_desc = "searching for '$query' ($match_summary)$truncated_note";
         
         $result = $self->success_result(
             \@matches,
@@ -1149,7 +1151,7 @@ sub _semantic_search_hybrid {
     my $message = "Found $result_count files matching '$query' (hybrid search)";
     $message .= " (showing top $top_k)" if $result_count > $top_k;
     
-    my $action_desc = "searching codebase for '$query' ($result_count matches, hybrid keyword+symbols)";
+    my $action_desc = "searching codebase for '$query' ($result_count matches)";
     
     print STDERR "[DEBUG][FileOp] Hybrid search found $result_count files\n" if should_log('DEBUG');
     
@@ -1765,11 +1767,12 @@ sub insert_at_line {
     my ($self, $params, $context) = @_;
     
     my $path = $params->{path};
-    my $line_number = $params->{line_number};
+    # Accept both 'line' (schema name) and 'line_number' (legacy/docs)
+    my $line_number = $params->{line} // $params->{line_number};
     my $content = $params->{content};
     
     return $self->error_result("Missing 'path' parameter") unless $path;
-    return $self->error_result("Missing 'line_number' parameter") unless defined $line_number;
+    return $self->error_result("Missing 'line' parameter") unless defined $line_number;
     return $self->error_result("Missing 'content' parameter") unless defined $content;
     
     # Sandbox check
