@@ -70,6 +70,7 @@ sub new {
         spinner => $args{spinner},  # Store spinner for interactive tools (user_collaboration)
         skip_custom => $args{skip_custom} || 0,  # Skip custom instructions (--no-custom-instructions)
         skip_ltm => $args{skip_ltm} || 0,        # Skip LTM injection (--no-ltm)
+        non_interactive => $args{non_interactive} || 0,  # Non-interactive mode (--input flag)
         broker_client => $args{broker_client},   # Broker client for multi-agent coordination
         consecutive_errors => 0,  # Track consecutive identical errors
         last_error => '',         # Track last error message
@@ -1680,6 +1681,14 @@ sub _build_system_prompt {
             if $self->{debug};
     }
     
+    # Add non-interactive mode instruction if running with --input flag
+    if ($self->{non_interactive}) {
+        my $non_interactive_section = $self->_generate_non_interactive_section();
+        $base_prompt .= "\n\n$non_interactive_section";
+        print STDERR "[DEBUG][WorkflowOrchestrator] Added non-interactive mode section to prompt\n"
+            if $self->{debug};
+    }
+    
     print STDERR "[DEBUG][WorkflowOrchestrator] Added dynamic tools section to prompt\n"
         if $self->{debug};
     
@@ -1945,6 +1954,52 @@ sub _generate_ltm_section {
     $section .= "_These patterns are project-specific and should inform your approach to similar tasks._\n";
     
     return $section;
+}
+
+=head2 _generate_non_interactive_section
+
+Generate instruction text for non-interactive mode (--input flag).
+Tells the agent NOT to use user_collaboration since the user is not present.
+
+Returns:
+- Markdown text with non-interactive mode instructions
+
+=cut
+
+sub _generate_non_interactive_section {
+    my ($self) = @_;
+    
+    return q{## Non-Interactive Mode (CRITICAL)
+
+**You are running in non-interactive mode (--input flag).**
+
+This means the user is NOT present to respond to questions. The command will exit after your response.
+
+**CRITICAL RESTRICTIONS:**
+
+1. **DO NOT use user_collaboration tool** - There is no user to respond. Any call to user_collaboration will fail or hang.
+
+2. **DO NOT ask questions** - Complete the task to the best of your ability. If you need information you don't have, explain what you would need and proceed with reasonable assumptions.
+
+3. **DO NOT checkpoint or wait for approval** - Make autonomous decisions. Act on what was asked.
+
+4. **DO complete the task in one response** - You get one chance to respond. Make it count.
+
+**What TO do:**
+
+- Execute the task directly
+- Use all other tools normally (file_operations, version_control, terminal_operations, etc.)
+- Make reasonable assumptions when details are missing
+- Complete the work and report results
+- If you truly cannot proceed, explain why and what's needed
+
+**Example - User asks: "Create a file test.txt with hello world"**
+
+WRONG: Call user_collaboration asking "Should I proceed?"
+RIGHT: Call file_operations to create the file, then report success.
+
+**Remember: Work autonomously. The user will see your response after the fact, not during execution.**
+};
 }
 
 =head2 _trim_conversation_for_api

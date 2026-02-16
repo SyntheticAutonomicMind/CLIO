@@ -114,7 +114,7 @@ run_test(
 # Test 4: list_usages - non-existent symbol
 run_test(
     "list_usages - Non-existent symbol returns empty",
-    { operation => 'list_usages', symbol_name => 'XyZzY_NonExistent_12345' },
+    { operation => 'list_usages', symbol_name => 'ZzYxWv_12345_NoMatchAnywhere_AbCdEf', file_paths => ['lib/'] },
     1,  # Should succeed but with 0 results
     sub {
         my $result = shift;
