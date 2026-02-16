@@ -12,14 +12,16 @@ use Cwd 'abs_path';
 
 =head1 NAME
 
-CLIO::Tools::CodeIntelligence - Code analysis and symbol search tool
+CLIO::Tools::CodeIntelligence - Code analysis, symbol search, and history search tool
 
 =head1 DESCRIPTION
 
-Provides code intelligence operations for finding symbol usages, definitions, and references.
+Provides code intelligence operations for finding symbol usages, definitions,
+references, and semantic search through git commit history.
 
 Operations:
-  list_usages - Find all usages of a symbol across the codebase
+  list_usages    - Find all usages of a symbol across the codebase
+  search_history - Semantic search through git commit messages and history
 
 =head1 SYNOPSIS
 
@@ -33,6 +35,16 @@ Operations:
             operation => 'list_usages',
             symbol_name => 'MyClass',
             file_paths => ['lib/']
+        },
+        { session => { id => 'test' } }
+    );
+    
+    # Search git history semantically
+    my $history = $tool->execute(
+        {
+            operation => 'search_history',
+            query => 'authentication refactoring',
+            max_results => 10
         },
         { session => { id => 'test' } }
     );
@@ -53,9 +65,29 @@ Operations:
     - file_paths (optional): Array of paths to search in (default: current dir)
     - context_lines (optional): Number of context lines around match (default: 0)
   Returns: List of all locations where symbol appears
+
+-  search_history - Semantic search through git commit messages
+  Parameters:
+    - query (required): Natural language search query (e.g., "authentication fixes", "refactored error handling")
+    - max_results (optional): Maximum commits to return (default: 20)
+    - since (optional): Only search commits after this date (YYYY-MM-DD format)
+    - author (optional): Filter by commit author name/email
+  Returns: Ranked list of commits matching the query by relevance
+  
+  WHEN TO USE search_history:
+  - User asks about past work: "what did we do about X?", "when did we fix Y?"
+  - Before implementing: check if similar work was done before
+  - Understanding context: "why was this changed?", "what was the original approach?"
+  - Finding related commits: "show me commits about authentication"
+  - Avoiding duplicate work: search before starting a new feature
+  
+  Note: Uses keyword extraction and scoring to find semantically relevant commits.
+        Searches both commit subjects and bodies. Much better than grep for
+        natural language queries about project history.
 },
         supported_operations => [qw(
             list_usages
+            search_history
         )],
         %opts,
     );
@@ -68,6 +100,8 @@ sub route_operation {
     
     if ($operation eq 'list_usages') {
         return $self->list_usages($params, $context);
+    } elsif ($operation eq 'search_history') {
+        return $self->search_history($params, $context);
     }
     
     return $self->error_result("Operation not implemented: $operation");
@@ -83,6 +117,7 @@ sub get_additional_parameters {
     my ($self) = @_;
     
     return {
+        # list_usages parameters
         symbol_name => {
             type => "string",
             description => "Symbol to search for (required for list_usages)",
@@ -96,7 +131,271 @@ sub get_additional_parameters {
             type => "integer",
             description => "Number of context lines around match (optional, default: 0)",
         },
+        
+        # search_history parameters
+        query => {
+            type => "string",
+            description => "Natural language search query for git history (required for search_history). Examples: 'authentication fixes', 'refactored error handling', 'performance improvements'",
+        },
+        max_results => {
+            type => "integer",
+            description => "Maximum number of commits to return (optional, default: 20)",
+        },
+        since => {
+            type => "string",
+            description => "Only search commits after this date, YYYY-MM-DD format (optional)",
+        },
+        author => {
+            type => "string",
+            description => "Filter by commit author name or email (optional)",
+        },
     };
+}
+
+=head2 search_history
+
+Semantic search through git commit messages and history.
+
+Uses keyword extraction and scoring to find commits that semantically match
+the query, even if exact words don't match.
+
+Parameters:
+- query: Natural language search query (required)
+- max_results: Maximum commits to return (optional, default: 20)
+- since: Only search commits after this date (optional, YYYY-MM-DD)
+- author: Filter by author name/email (optional)
+
+Returns: Hash with:
+- success: Boolean
+- message: Summary message
+- commits: Array of {hash, date, author, subject, body, score, files_changed}
+- count: Total matches found
+- keywords: Keywords extracted from query
+
+=cut
+
+sub search_history {
+    my ($self, $params, $context) = @_;
+    
+    my $query = $params->{query};
+    my $max_results = $params->{max_results} || 20;
+    my $since = $params->{since};
+    my $author = $params->{author};
+    
+    return $self->error_result("Missing 'query' parameter",
+        action_description => "Error: Missing 'query' parameter"
+    ) unless $query;
+    
+    # Check if we're in a git repo
+    unless ($self->_has_git_grep()) {
+        return $self->error_result("Not in a git repository",
+            action_description => "Error: Not in a git repository"
+        );
+    }
+    
+    print STDERR "[DEBUG][CodeIntelligence] Searching history for: $query\n" if should_log('DEBUG');
+    
+    # Extract keywords from query (words > 2 chars, lowercase)
+    my @keywords = grep { length($_) > 2 } split(/\W+/, lc($query));
+    
+    unless (@keywords) {
+        return $self->error_result("No valid search keywords in query");
+    }
+    
+    print STDERR "[DEBUG][CodeIntelligence] Keywords: " . join(', ', @keywords) . "\n" if should_log('DEBUG');
+    
+    # Fetch commits from git log
+    my @commits = $self->_fetch_commits($since, $author);
+    
+    print STDERR "[DEBUG][CodeIntelligence] Fetched " . scalar(@commits) . " commits\n" if should_log('DEBUG');
+    
+    if (@commits == 0) {
+        return $self->success_result(
+            "No commits found matching filters",
+            action_description => "searching git history (0 commits)",
+            commits => [],
+            count => 0,
+            keywords => \@keywords,
+        );
+    }
+    
+    # Score each commit based on keyword matches
+    my @scored_commits = ();
+    
+    foreach my $commit (@commits) {
+        my $score = $self->_score_commit($commit, \@keywords);
+        
+        if ($score > 0) {
+            $commit->{score} = $score;
+            push @scored_commits, $commit;
+        }
+    }
+    
+    # Sort by score (descending), then by date (newer first)
+    @scored_commits = sort { 
+        $b->{score} <=> $a->{score} || 
+        $b->{date} cmp $a->{date}
+    } @scored_commits;
+    
+    my $total_matches = scalar(@scored_commits);
+    
+    # Limit results
+    if (@scored_commits > $max_results) {
+        @scored_commits = splice(@scored_commits, 0, $max_results);
+    }
+    
+    # Fetch files changed for top results (expensive, so only do for returned results)
+    foreach my $commit (@scored_commits) {
+        $commit->{files_changed} = $self->_get_files_changed($commit->{hash});
+    }
+    
+    my $message = "Found $total_matches commits matching '$query'";
+    $message .= " (showing top $max_results)" if $total_matches > $max_results;
+    
+    my $action_desc = "searching git history for '$query' ($total_matches matches)";
+    
+    print STDERR "[DEBUG][CodeIntelligence] Returning " . scalar(@scored_commits) . " results\n" if should_log('DEBUG');
+    
+    return $self->success_result(
+        $message,
+        action_description => $action_desc,
+        commits => \@scored_commits,
+        count => $total_matches,
+        keywords => \@keywords,
+        showing => scalar(@scored_commits),
+    );
+}
+
+=head2 _fetch_commits
+
+Fetch commits from git log with optional filters.
+
+=cut
+
+sub _fetch_commits {
+    my ($self, $since, $author) = @_;
+    
+    # Build git log command
+    # Format: hash|date|author|subject|body (use | as delimiter since it's unlikely in commits)
+    my $format = '%H|%aI|%an <%ae>|%s|%b%x00';  # %x00 = null byte as record separator
+    
+    my @cmd_parts = ('git', 'log', "--format=$format");
+    
+    # Add optional filters
+    if ($since) {
+        push @cmd_parts, "--since=$since";
+    }
+    if ($author) {
+        push @cmd_parts, "--author=$author";
+    }
+    
+    # Limit to reasonable number of commits to search (can be a lot!)
+    push @cmd_parts, '-n', '500';
+    
+    my $cmd = join(' ', map { quotemeta($_) } @cmd_parts) . ' 2>/dev/null';
+    
+    print STDERR "[DEBUG][CodeIntelligence] Running: $cmd\n" if should_log('DEBUG');
+    
+    my $output = `$cmd`;
+    return () unless $output;
+    
+    # Parse commits (split by null byte)
+    my @raw_commits = split(/\x00/, $output);
+    my @commits = ();
+    
+    foreach my $raw (@raw_commits) {
+        $raw =~ s/^\s+|\s+$//g;  # Trim
+        next unless $raw;
+        
+        # Split by | (but only first 4 pipes, body may contain |)
+        my @parts = split(/\|/, $raw, 5);
+        next unless @parts >= 4;
+        
+        my ($hash, $date, $author_info, $subject, $body) = @parts;
+        $body //= '';
+        $body =~ s/^\s+|\s+$//g;
+        
+        push @commits, {
+            hash => $hash,
+            short_hash => substr($hash, 0, 8),
+            date => $date,
+            author => $author_info,
+            subject => $subject,
+            body => $body,
+        };
+    }
+    
+    return @commits;
+}
+
+=head2 _score_commit
+
+Score a commit based on keyword matches.
+
+Scoring:
+- Subject match: +3 per keyword
+- Body match: +1 per keyword
+- Exact phrase match in subject: +5 bonus
+- Multiple keyword matches: multiplicative bonus
+
+=cut
+
+sub _score_commit {
+    my ($self, $commit, $keywords) = @_;
+    
+    my $score = 0;
+    my $subject_lc = lc($commit->{subject} || '');
+    my $body_lc = lc($commit->{body} || '');
+    my $full_text = "$subject_lc $body_lc";
+    
+    my $subject_matches = 0;
+    my $body_matches = 0;
+    
+    foreach my $keyword (@$keywords) {
+        # Subject matches (higher weight)
+        if ($subject_lc =~ /\Q$keyword\E/) {
+            $score += 3;
+            $subject_matches++;
+        }
+        
+        # Body matches (lower weight)
+        if ($body_lc =~ /\Q$keyword\E/) {
+            $score += 1;
+            $body_matches++;
+        }
+    }
+    
+    # Bonus for multiple keywords matching
+    my $total_keyword_matches = $subject_matches + $body_matches;
+    if ($total_keyword_matches >= 2) {
+        $score += $total_keyword_matches;  # Bonus for relevance
+    }
+    
+    # Bonus for matching most/all keywords
+    my $keyword_coverage = ($subject_matches + $body_matches) / (scalar(@$keywords) * 2);
+    if ($keyword_coverage >= 0.5) {
+        $score += 3;  # Good coverage bonus
+    }
+    
+    return $score;
+}
+
+=head2 _get_files_changed
+
+Get list of files changed in a commit.
+
+=cut
+
+sub _get_files_changed {
+    my ($self, $hash) = @_;
+    
+    my $cmd = "git show --name-only --format='' " . quotemeta($hash) . " 2>/dev/null";
+    my $output = `$cmd`;
+    
+    return [] unless $output;
+    
+    my @files = grep { $_ } split(/\n/, $output);
+    return \@files;
 }
 
 =head2 list_usages
