@@ -369,6 +369,7 @@ my $ai_agent = CLIO::Core::SimpleAIAgent->new(
     skip_custom => $skip_custom,
     skip_ltm => $skip_ltm,
     broker_client => $broker_client,  # Pass broker client for coordination
+    non_interactive => $input ? 1 : 0,  # Non-interactive mode when --input is used
 );
 
 if ($debug) {
