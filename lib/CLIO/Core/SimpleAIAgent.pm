@@ -30,6 +30,7 @@ sub new {
         skip_custom => $opts{skip_custom} || 0,  # Skip custom instructions
         skip_ltm => $opts{skip_ltm} || 0,        # Skip LTM injection
         broker_client => $opts{broker_client},   # Broker client for multi-agent coordination
+        non_interactive => $opts{non_interactive} || 0,  # Non-interactive mode (--input flag)
     };
     
     bless $self, $class;
@@ -47,6 +48,7 @@ sub new {
             skip_custom => $self->{skip_custom},
             skip_ltm => $self->{skip_ltm},
             broker_client => $self->{broker_client},  # Pass broker client to orchestrator
+            non_interactive => $self->{non_interactive},  # Pass non-interactive mode
         );
         print STDERR "[DEBUG][SimpleAIAgent] Orchestrator initialized in constructor\n" if should_log('DEBUG');
     };
