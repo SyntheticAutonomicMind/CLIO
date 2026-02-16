@@ -1,0 +1,83 @@
+# CLIO - Command Line Intelligence Orchestrator
+
+> An AI-powered terminal coding assistant built in Perl
+
+## What is CLIO?
+
+CLIO is a terminal-based AI coding assistant that provides:
+- **Tool Calling**: File operations, git, terminal, memory, web search
+- **Long-Term Memory**: Persistent learning across sessions
+- **Multi-Agent Coordination**: Spawn parallel agents for complex tasks
+- **Remote Execution**: Run CLIO on remote systems via SSH
+- **Session Continuity**: Todos, context, and handoffs persist
+
+## Quick Start
+
+```bash
+./clio --new           # Start new session
+./clio                 # Resume last session
+./clio --debug --new   # Debug mode
+```
+
+## Key Files for AI Agents
+
+- `AGENTS.md` - Technical reference (architecture, code style, testing)
+- `.clio/instructions.md` - Project methodology (The Unbroken Method)
+- `docs/ARCHITECTURE.md` - System design overview
+- `docs/DEVELOPER_GUIDE.md` - Contribution guidelines
+
+## Architecture
+
+```
+User Input → Terminal UI (Chat.pm)
+          → AI Agent (APIManager → Provider)
+          → Tool Selection (WorkflowOrchestrator)
+          → Tool Execution (ToolExecutor)
+          → Result Processing → Output
+```
+
+## Directory Structure
+
+| Path | Purpose |
+|------|---------|
+| `lib/CLIO/Core/` | System core (APIs, workflow, config) |
+| `lib/CLIO/Tools/` | AI-callable tools |
+| `lib/CLIO/UI/` | Terminal interface |
+| `lib/CLIO/Session/` | Session management |
+| `lib/CLIO/Memory/` | Context/memory system |
+| `tests/` | Unit and integration tests |
+| `docs/` | Documentation |
+
+## Supported Operations
+
+### File Operations
+read_file, write_file, create_file, delete_file, list_dir, grep_search, semantic_search, file_search
+
+### Version Control
+status, log, diff, branch, commit, push, pull, blame, stash, tag
+
+### Terminal
+exec (with safety validation and timeout)
+
+### Memory
+store, retrieve, search, list, delete, recall_sessions, add_discovery, add_solution, add_pattern
+
+### Multi-Agent
+spawn, list, status, kill, inbox, send, broadcast
+
+## Testing
+
+```bash
+# Syntax check
+find lib -name "*.pm" -exec perl -I./lib -c {} \;
+
+# Run tests
+perl -I./lib tests/unit/test_feature.pl
+
+# Integration
+./clio --input "test query" --exit
+```
+
+## Dependencies
+
+Core Perl 5.32+ with minimal CPAN modules. See `check-deps` for verification.

@@ -30,6 +30,7 @@ Thumbs.db
 scratch/
 reference/
 /*.txt
+!llms.txt
 
 # Logs
 *.log
