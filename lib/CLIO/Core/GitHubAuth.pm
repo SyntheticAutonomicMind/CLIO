@@ -394,7 +394,7 @@ sub get_copilot_token {
         my $config = CLIO::Core::Config->new(debug => $self->{debug});
         $pat = $config->get('github_pat');
     };
-    if ($pat && $pat =~ /^(ghp_|github_pat_)/) {
+    if ($pat && $pat =~ /^(ghp_|ghu_|github_pat_)/) {
         print STDERR "[DEBUG][GitHubAuth] Using PAT from config\n" if should_log('DEBUG');
         return $pat;
     }
@@ -462,7 +462,7 @@ sub is_authenticated {
         my $config = CLIO::Core::Config->new(debug => $self->{debug});
         $pat = $config->get('github_pat');
     };
-    if ($pat && $pat =~ /^(ghp_|github_pat_)/) {
+    if ($pat && $pat =~ /^(ghp_|ghu_|github_pat_)/) {
         return 1;
     }
     
