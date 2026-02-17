@@ -190,6 +190,7 @@ sub _display_api_help {
     $self->display_command_row("/api set provider <name>", "Set provider (anthropic, google, etc.)", 40);
     $self->display_command_row("/api set base <url>", "Set API base URL", 40);
     $self->display_command_row("/api set key <value>", "Set API key (stored per-provider)", 40);
+    $self->display_command_row("/api set github_pat <token>", "Set GitHub PAT for extended models", 40);
     $self->display_command_row("/api providers", "Show available providers", 40);
     $self->display_command_row("/api models", "List available models", 40);
     $self->display_command_row("/api models --refresh", "Refresh models (bypass cache)", 40);
@@ -552,6 +553,30 @@ sub _handle_api_set {
             $self->display_system_message("Search provider set (warning: failed to save)");
         }
     }
+    elsif ($setting eq 'github_pat') {
+        # GitHub Personal Access Token for extended model access
+        if ($session_only) {
+            $self->display_system_message("Note: GitHub PAT is always global (ignoring --session)");
+        }
+        
+        # Validate PAT format (ghp_, ghu_, or github_pat_ prefix)
+        unless ($value && $value =~ /^(ghp_|ghu_|github_pat_)/) {
+            $self->display_error_message("Invalid GitHub PAT format. Must start with 'ghp_', 'ghu_', or 'github_pat_'");
+            return;
+        }
+        
+        $self->{config}->set('github_pat', $value);
+        
+        if ($self->{config}->save()) {
+            my $display_key = substr($value, 0, 8) . '...' . substr($value, -4);
+            $self->display_system_message("GitHub PAT set: $display_key (saved)");
+            $self->display_system_message("Extended model access enabled for GitHub Copilot");
+        } else {
+            $self->display_system_message("GitHub PAT set (warning: failed to save)");
+        }
+        
+        $self->_reinit_api_manager();
+    }
     elsif ($setting eq 'base') {
         # Validate URL format
         my ($valid, $error) = $self->_validate_url($value);
@@ -675,7 +700,7 @@ sub _handle_api_set {
     }
     else {
         $self->display_error_message("Unknown setting: $setting");
-        $self->writeline("Valid settings: model, provider, base, key, serpapi_key, search_engine, search_provider", markdown => 0);
+        $self->writeline("Valid settings: model, provider, base, key, github_pat, serpapi_key, search_engine, search_provider", markdown => 0);
     }
 }
 
