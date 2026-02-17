@@ -1407,6 +1407,7 @@ Returns: (1, '') if valid, (0, error_message) if invalid
 =cut
 
 sub _validate_api_key {
+    my $self = shift;
     my ($key, $min_length) = @_;
     $min_length ||= 1;  # API keys can be very short (like test keys)
     
