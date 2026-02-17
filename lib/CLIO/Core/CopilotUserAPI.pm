@@ -104,7 +104,7 @@ sub fetch_user {
                 require CLIO::Core::Config;
                 my $config = CLIO::Core::Config->new(debug => $self->{debug});
                 my $pat = $config->get('github_pat');
-                $token = $pat if $pat && $pat =~ /^(ghp_|github_pat_)/;
+                $token = $pat if $pat && $pat =~ /^(ghp_|ghu_|github_pat_)/;
             }
         };
         
