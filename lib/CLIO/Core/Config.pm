@@ -141,8 +141,20 @@ sub load {
         if ($provider_config) {
             # Apply provider's api_base unless user explicitly set it
             unless ($self->{user_set}->{api_base}) {
-                $config{api_base} = $provider_config->{api_base};
-                print STDERR "[DEBUG][Config] Using api_base from provider '$config{provider}': $config{api_base}\n" if should_log('DEBUG');
+                # For GitHub Copilot, try to get user-specific API endpoint
+                if ($config{provider} eq 'github_copilot') {
+                    my $user_api_base = $self->_get_copilot_user_api_endpoint();
+                    if ($user_api_base) {
+                        $config{api_base} = $user_api_base;
+                        print STDERR "[DEBUG][Config] Using user-specific GitHub Copilot API: $config{api_base}\n" if should_log('DEBUG');
+                    } else {
+                        $config{api_base} = $provider_config->{api_base};
+                        print STDERR "[DEBUG][Config] Using default GitHub Copilot API: $config{api_base}\n" if should_log('DEBUG');
+                    }
+                } else {
+                    $config{api_base} = $provider_config->{api_base};
+                    print STDERR "[DEBUG][Config] Using api_base from provider '$config{provider}': $config{api_base}\n" if should_log('DEBUG');
+                }
             }
             
             # Apply provider's model unless user explicitly set it
@@ -466,6 +478,40 @@ sub display {
     }
     
     return join("\n", @lines);
+}
+
+=head2 _get_copilot_user_api_endpoint
+
+Get the user-specific GitHub Copilot API endpoint from CopilotUserAPI.
+This ensures we use the correct endpoint (e.g., api.individual.githubcopilot.com)
+instead of the generic api.githubcopilot.com.
+
+Returns:
+- String: User-specific API endpoint URL
+- undef: If unable to fetch or not applicable
+
+=cut
+
+sub _get_copilot_user_api_endpoint {
+    my ($self) = @_;
+    
+    my $endpoint;
+    eval {
+        require CLIO::Core::CopilotUserAPI;
+        my $user_api = CLIO::Core::CopilotUserAPI->new(debug => $self->{debug} || 0);
+        
+        # Try cached data first (no API call), fall back to fresh fetch
+        my $user_data = $user_api->get_cached_user() || $user_api->fetch_user();
+        if ($user_data) {
+            $endpoint = $user_data->get_api_endpoint();
+        }
+    };
+    if ($@) {
+        print STDERR "[DEBUG][Config] Could not get user-specific Copilot endpoint: $@\n"
+            if should_log('DEBUG');
+    }
+    
+    return $endpoint;
 }
 
 1;

@@ -230,6 +230,9 @@ sub _get_api_key {
             
             # get_copilot_token() returns GitHub token if no Copilot token available
             $github_token = $auth->get_copilot_token();
+            
+            # Check if we're using an exchanged token (requires Editor-Version header)
+            $self->{using_exchanged_token} = $auth->{using_exchanged_token} || 0;
         };
         
         if ($@) {
@@ -455,34 +458,54 @@ sub get_model_capabilities {
         return undef;
     }
     
-    # Fetch models
-    my $ua = CLIO::Compat::HTTP->new(timeout => 30);
-    my %headers = (
-        'Authorization' => "Bearer $self->{api_key}",
-    );
-    $headers{'Editor-Version'} = 'CLIO/1.0' if $api_type eq 'github-copilot';
-    
-    my $resp = $ua->get($models_url, headers => \%headers);
-    
-    unless ($resp->is_success) {
-        if (should_log('WARNING')) {
-            print STDERR "[WARNING][APIManager] Failed to fetch models from $models_url\n";
-            print STDERR "[WARNING][APIManager] HTTP " . $resp->code . ": " . $resp->message . "\n";
-            print STDERR "[WARNING][APIManager] Will use fallback token limits\n";
+    # For GitHub Copilot, use GitHubCopilotModelsAPI which includes supplementary models
+    my $models = [];
+    if ($api_type eq 'github-copilot') {
+        eval {
+            require CLIO::Core::GitHubCopilotModelsAPI;
+            my $copilot_api = CLIO::Core::GitHubCopilotModelsAPI->new(
+                api_key => $self->{api_key},
+                debug => $self->{debug}
+            );
+            $models = $copilot_api->get_all_models() || [];
+        };
+        if ($@) {
+            print STDERR "[WARNING][APIManager] GitHubCopilotModelsAPI failed: $@\n" if should_log('WARNING');
+            # Fall through to direct API fetch
+            $models = [];
         }
-        return undef;
     }
     
-    my $data = eval { JSON::PP::decode_json($resp->decoded_content) };
-    if ($@) {
-        if (should_log('WARNING')) {
-            print STDERR "[WARNING][APIManager] Failed to parse models response from $models_url\n";
-            print STDERR "[WARNING][APIManager] JSON error: $@\n";
+    # If we didn't get models from GitHubCopilotModelsAPI, fetch directly
+    unless (@$models) {
+        my $ua = CLIO::Compat::HTTP->new(timeout => 30);
+        my %headers = (
+            'Authorization' => "Bearer $self->{api_key}",
+        );
+        $headers{'Editor-Version'} = 'CLIO/1.0' if $api_type eq 'github-copilot';
+        
+        my $resp = $ua->get($models_url, headers => \%headers);
+        
+        unless ($resp->is_success) {
+            if (should_log('WARNING')) {
+                print STDERR "[WARNING][APIManager] Failed to fetch models from $models_url\n";
+                print STDERR "[WARNING][APIManager] HTTP " . $resp->code . ": " . $resp->message . "\n";
+                print STDERR "[WARNING][APIManager] Will use fallback token limits\n";
+            }
+            return undef;
         }
-        return undef;
+        
+        my $data = eval { JSON::PP::decode_json($resp->decoded_content) };
+        if ($@) {
+            if (should_log('WARNING')) {
+                print STDERR "[WARNING][APIManager] Failed to parse models response from $models_url\n";
+                print STDERR "[WARNING][APIManager] JSON error: $@\n";
+            }
+            return undef;
+        }
+        
+        $models = $data->{data} || [];
     }
-    
-    my $models = $data->{data} || [];
     
     # Find our model
     for my $model_info (@$models) {
@@ -1471,36 +1494,28 @@ sub _build_request {
     
     # Add GitHub Copilot-specific headers
     if ($endpoint_config->{requires_copilot_headers}) {
-        # Generate UUID-like request ID
-        my $uuid = sprintf('%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
-            int(rand(0x10000)), int(rand(0x10000)),
-            int(rand(0x10000)),
-            int(rand(0x10000)) | 0x4000,
-            int(rand(0x10000)) | 0x8000,
-            int(rand(0x10000)), int(rand(0x10000)), int(rand(0x10000))
-        );
-        
-        $req->header('X-Request-Id' => $uuid);
-        # Note: X-Interaction-Type and OpenAI-Intent headers removed
-        # They were causing some models (gpt-4.1) to behave conversationally instead of agentically
-        $req->header('X-GitHub-Api-Version' => '2025-05-01');
-        $req->header('Editor-Version' => 'vscode/1.96.0');
-        $req->header('Editor-Plugin-Version' => 'copilot-chat/0.22.4');
-        $req->header('User-Agent' => 'GitHubCopilotChat/0.22.4');
-        
         # X-Initiator controls premium billing:
         # - 'user' (iteration 1): User-initiated request, charges premium quota
         # - 'agent' (iteration 2+): Tool-calling continuation, no additional charge
-        # Per SAM reference: "iteration 0 = user-initiated, iteration 1+ = agent-initiated"
-        # But CLIO's WorkflowOrchestrator uses 1-indexed iterations, so:
-        # - iteration 1 = first request (user-initiated, charges quota)
-        # - iteration 2+ = tool continuations (agent-initiated, free)
         my $tool_call_iteration = $opts->{tool_call_iteration} || 1;
         my $initiator = $tool_call_iteration <= 1 ? 'user' : 'agent';
-        $req->header('X-Initiator' => $initiator);
+        $req->header('x-initiator' => $initiator);  # lowercase like OpenCode
+        
+        # Use CLIO User-Agent similar to OpenCode's pattern
+        $req->header('User-Agent' => 'CLIO/1.0');
+        
+        # Required for accessing all available models
+        $req->header('Openai-Intent' => 'conversation-edits');
+        
+        # Editor-Version is REQUIRED when using exchanged tokens (PAT -> /v2/token)
+        # Without this, API returns "missing Editor-Version header for IDE auth"
+        if ($self->{using_exchanged_token}) {
+            $req->header('Editor-Version' => 'vscode/1.96.0');
+            print STDERR "[DEBUG] Using Editor-Version header for exchanged token\n" if $self->{debug};
+        }
         
         if ($self->{debug}) {
-            warn "[DEBUG] Added GitHub Copilot headers (X-Request-Id: $uuid, X-Initiator: $initiator, iteration: $tool_call_iteration)\n";
+            warn "[DEBUG] Added GitHub Copilot headers (x-initiator: $initiator, iteration: $tool_call_iteration)\n";
         }
     }
     
