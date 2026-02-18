@@ -435,6 +435,7 @@ if ($input) {
                 print "  /help, /h, /?              Display help\n";
                 print "  /exit, /quit, /q           Exit CLIO\n";
                 print "  /clear, /cls               Clear screen\n";
+                print "  /reset                     Reset terminal state\n";
                 print "  /debug                     Toggle debug mode\n";
                 print "  /session                   Show session ID\n";
                 print "  /config                    Show configuration\n";
@@ -466,6 +467,14 @@ if ($input) {
                 my $args = join(' ', @cmd_args);
                 my $result = $subagent_cmd->handle($subcommand, $args);
                 print "$result\n";
+                next;
+            }
+            elsif ($cmd_name eq 'reset') {
+                # Terminal reset - restore terminal to known-good state
+                # Use full reset since user explicitly requested it
+                require CLIO::Compat::Terminal;
+                CLIO::Compat::Terminal::reset_terminal_full();
+                print "[SYSTEM] Terminal reset complete\n";
                 next;
             }
             else {

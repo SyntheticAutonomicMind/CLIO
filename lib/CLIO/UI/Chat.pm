@@ -1002,6 +1002,14 @@ sub check_for_updates_async {
     
     if ($pid == 0) {
         # Child process - check for updates
+        # CRITICAL: Reset terminal state FIRST, while still connected to parent TTY
+        # This must happen BEFORE closing any file descriptors
+        # Use light reset - no ANSI codes needed since we're about to close output
+        eval {
+            require CLIO::Compat::Terminal;
+            CLIO::Compat::Terminal::reset_terminal_light();  # ReadMode(0) only
+        };
+        
         # Close stdin/stdout/stderr to avoid interfering with parent's terminal
         # The child doesn't need terminal I/O and keeping these open can cause
         # readline issues in the parent process (e.g., Ctrl-D hanging on first input)
@@ -1948,6 +1956,7 @@ sub display_help {
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/help, /h', 'help_command'), 'Display this help');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/exit, /quit, /q', 'help_command'), 'Exit the chat');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/clear', 'help_command'), 'Clear the screen');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/reset', 'help_command'), 'Reset terminal state');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/init', 'help_command'), 'Initialize CLIO for this project');
     push @help_lines, "";
     

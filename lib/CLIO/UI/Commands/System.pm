@@ -81,6 +81,13 @@ sub handle_shell_command {
     
     system($ENV{SHELL} || '/bin/bash');
     
+    # Restore terminal state after shell exits
+    # The shell may have changed terminal settings
+    eval {
+        require CLIO::Compat::Terminal;
+        CLIO::Compat::Terminal::reset_terminal();  # Moderate reset: ReadMode + safe ANSI codes
+    };
+    
     $self->writeline("", markdown => 0);
     $self->display_system_message("Returned to CLIO");
 }

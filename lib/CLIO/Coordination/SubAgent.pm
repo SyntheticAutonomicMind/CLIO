@@ -111,14 +111,16 @@ Runs in the child process. Connects to broker and executes task.
 sub run_subagent {
     my ($self, $agent_id, $task, %options) = @_;
     
-    # CRITICAL: Reset terminal state before detaching
+    # CRITICAL: Reset terminal state FIRST, while still connected to parent TTY
+    # This must happen BEFORE closing STDIN or detaching from terminal
     # The child inherits the parent's terminal settings, which can corrupt the parent's terminal
+    # Use light reset - no ANSI codes needed since we're about to redirect output
     eval {
         require CLIO::Compat::Terminal;
-        CLIO::Compat::Terminal::ReadMode(0);  # Normal mode
+        CLIO::Compat::Terminal::reset_terminal_light();  # ReadMode(0) only
     };
     
-    # Close inherited file descriptors (except STDIN which we'll redirect)
+    # Close inherited file descriptors
     # This prevents the child from interfering with parent's terminal I/O
     close(STDIN) or warn "Cannot close STDIN: $!";
     
