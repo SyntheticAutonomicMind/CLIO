@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use Exporter 'import';
 
-our @EXPORT_OK = qw(GetTerminalSize ReadMode ReadKey ReadLine);
+our @EXPORT_OK = qw(GetTerminalSize ReadMode ReadKey ReadLine reset_terminal reset_terminal_light reset_terminal_full);
 
 =head1 NAME
 
@@ -285,6 +285,126 @@ END {
         alarm(0);  # Cancel alarm
     };
     alarm(0);  # Ensure alarm is cancelled even if eval fails
+}
+
+=head2 reset_terminal_light
+
+Light terminal reset - restores ReadMode only.
+
+Use this for:
+- Child processes before detaching (no ANSI codes needed)
+- After commands that might have changed terminal mode
+
+This does NOT reset colors or cursor visibility - just ReadMode.
+
+Returns: 1 on success
+
+=cut
+
+sub reset_terminal_light {
+    # Skip if not a TTY
+    return 1 unless -t STDIN;
+    
+    # Restore ReadMode to normal with timeout
+    eval {
+        local $SIG{ALRM} = sub { die "ReadMode timeout\n" };
+        alarm(1);
+        ReadMode(0);
+        alarm(0);
+    };
+    alarm(0);  # Ensure alarm is cancelled
+    
+    return 1;
+}
+
+=head2 reset_terminal
+
+Moderate terminal reset - restores ReadMode and safe ANSI attributes.
+
+This function:
+1. Restores ReadMode to normal (0)
+2. Resets ANSI colors/attributes
+3. Shows cursor (in case it was hidden)
+4. Enables line wrap (in case it was disabled)
+
+IMPORTANT: Does NOT use stty sane or reset scroll region (\e[r) as these
+are too aggressive and can cause cursor position issues.
+
+Use this after:
+- Commands that may have corrupted terminal state
+- Returning from interactive shells
+
+Returns: 1 on success
+
+=cut
+
+sub reset_terminal {
+    # Skip if not a TTY
+    return 1 unless -t STDIN && -t STDOUT;
+    
+    # Step 1: Restore ReadMode to normal with timeout
+    eval {
+        local $SIG{ALRM} = sub { die "ReadMode timeout\n" };
+        alarm(1);
+        ReadMode(0);
+        alarm(0);
+    };
+    alarm(0);  # Ensure alarm is cancelled
+    
+    # Step 2: Print safe ANSI escape sequences
+    # \e[0m    - Reset all attributes (colors, bold, etc.)
+    # \e[?25h  - Show cursor (in case it was hidden)
+    # \e[?7h   - Enable line wrap (in case it was disabled)
+    # NOTE: Do NOT use \e[r (reset scroll region) - it moves cursor to home!
+    print STDOUT "\e[0m\e[?25h\e[?7h";
+    
+    # Flush output
+    STDOUT->autoflush(1);
+    STDOUT->flush() if STDOUT->can('flush');
+    
+    return 1;
+}
+
+=head2 reset_terminal_full
+
+Full terminal reset - use only when user explicitly requests it via /reset.
+
+This performs aggressive reset including stty sane.
+WARNING: May cause cursor position changes.
+
+=cut
+
+sub reset_terminal_full {
+    # Skip if not a TTY
+    return 1 unless -t STDIN && -t STDOUT;
+    
+    # Step 1: Restore ReadMode to normal
+    eval {
+        local $SIG{ALRM} = sub { die "ReadMode timeout\n" };
+        alarm(1);
+        ReadMode(0);
+        alarm(0);
+    };
+    alarm(0);
+    
+    # Step 2: Run stty sane for full terminal settings reset
+    eval {
+        local $SIG{ALRM} = sub { die "stty timeout\n" };
+        alarm(1);
+        system('stty', 'sane');
+        alarm(0);
+    };
+    alarm(0);
+    
+    # Step 3: Print ANSI escape sequences
+    # NOTE: Still avoiding \e[r as it moves cursor to home
+    print STDOUT "\e[0m\e[?25h\e[?7h";
+    
+    # Flush output
+    STDOUT->autoflush(1);
+    STDOUT->flush() if STDOUT->can('flush');
+    
+    return 1;
 }
 
 1;

@@ -505,7 +505,19 @@ sub check_for_updates_async {
     }
     
     if ($pid == 0) {
-        # Child process - check for updates
+        # Child process - CRITICAL: Reset terminal state while connected to parent TTY
+        # This must happen BEFORE any file descriptor operations
+        eval {
+            require CLIO::Compat::Terminal;
+            CLIO::Compat::Terminal::reset_terminal();
+        };
+        
+        # Detach from terminal I/O to avoid interfering with parent
+        close(STDIN);
+        close(STDOUT);
+        close(STDERR);
+        
+        # Check for updates
         my $result = $self->check_for_updates();
         
         # Ensure cache dir exists

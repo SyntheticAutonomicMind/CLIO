@@ -229,6 +229,12 @@ sub handle_command {
     elsif ($cmd eq 'clear' || $cmd eq 'cls') {
         $chat->repaint_screen();
     }
+    elsif ($cmd eq 'reset') {
+        # Terminal reset - restore terminal to known-good state
+        require CLIO::Compat::Terminal;
+        CLIO::Compat::Terminal::reset_terminal();
+        $chat->display_system_message("Terminal reset complete");
+    }
     elsif ($cmd eq 'shell' || $cmd eq 'sh') {
         # Use extracted System command module
         $self->{system_cmd}->handle_shell_command();

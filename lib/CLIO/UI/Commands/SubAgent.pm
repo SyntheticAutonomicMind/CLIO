@@ -797,6 +797,13 @@ sub start_broker {
     if ($pid == 0) {
         # Child process - run broker
         
+        # CRITICAL: Reset terminal state FIRST, while still connected to parent TTY
+        # This must happen BEFORE closing STDIN or redirecting output
+        eval {
+            require CLIO::Compat::Terminal;
+            CLIO::Compat::Terminal::reset_terminal();  # Full reset including stty sane
+        };
+        
         # Redirect I/O early so we capture everything
         my $log_path = "/tmp/clio-broker-$session_id.log";
         open(STDERR, '>>', $log_path) or die "Cannot open log: $!";
@@ -805,16 +812,7 @@ sub start_broker {
         autoflush STDOUT 1;
         
         print STDERR "[DEBUG] Broker child process starting, PID=$$\n";
-        
-        # CRITICAL: Reset terminal state before detaching
-        eval {
-            require CLIO::Compat::Terminal;
-            CLIO::Compat::Terminal::ReadMode(0);  # Normal mode
-            print STDERR "[DEBUG] Terminal reset complete\n";
-        };
-        if ($@) {
-            print STDERR "[ERROR] Terminal reset failed: $@\n";
-        }
+        print STDERR "[DEBUG] Terminal reset complete\n";
         
         # Close inherited file descriptors
         close(STDIN) or do { print STDERR "[WARN] Cannot close STDIN: $!\n"; };
