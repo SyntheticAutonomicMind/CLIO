@@ -155,6 +155,10 @@ sub new {
 Fetch model list from GitHub Copilot /models API.
 Uses cached data if available and not expired.
 
+The models returned depend on the token type:
+- Exchanged tokens (from ghu_) return ~43 models including newer models
+- Device flow tokens (gho_) return ~31 models with limited access
+
 Returns:
 - Hashref with model data from API, or undef on error
 
@@ -417,8 +421,6 @@ sub _save_cache {
         if $self->{debug};
 }
 
-
-
 sub _generate_uuid {
     my ($self) = @_;
     
@@ -475,19 +477,10 @@ Cache Strategy:
 - TTL: 1 hour (3600 seconds)
 - Refreshed automatically when expired
 
+Token Types and Model Access:
+- Exchanged tokens (ghu_ -> tid=): Full model access (~43 models)
+- Device flow tokens (gho_): Limited model access (~31 models)
+- The /models API returns only the models available for the token type
+- This ensures users only see models they can actually use
+
 =cut
-
-sub _generate_uuid {
-    my ($self) = @_;
-    
-    # Simple UUID v4 generation (good enough for X-Request-Id)
-    my @chars = ('a'..'f', '0'..'9');
-    my $uuid = '';
-    for my $i (1..32) {
-        $uuid .= $chars[rand @chars];
-        $uuid .= '-' if $i == 8 || $i == 12 || $i == 16 || $i == 20;
-    }
-    return $uuid;
-}
-
-1;

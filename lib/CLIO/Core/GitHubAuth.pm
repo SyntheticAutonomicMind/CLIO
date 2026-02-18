@@ -267,7 +267,8 @@ sub exchange_for_copilot_token {
     
     my $url = 'https://api.github.com/copilot_internal/v2/token';
     
-    my $request = HTTP::Request->new(POST => $url);
+    # Note: This endpoint requires GET, not POST
+    my $request = HTTP::Request->new(GET => $url);
     $request->header('Authorization' => "token $github_token");
     $request->header('Editor-Version' => 'vscode/2.0.0');
     $request->header('User-Agent' => 'GitHubCopilotChat/2.0.0');
@@ -396,6 +397,19 @@ sub get_copilot_token {
     };
     if ($pat && $pat =~ /^(ghp_|ghu_|github_pat_)/) {
         print STDERR "[DEBUG][GitHubAuth] Using PAT from config\n" if should_log('DEBUG');
+        
+        # PAT/ghu_ tokens need to be exchanged for a copilot session token
+        # This gives access to more models (37+ vs 31)
+        my $exchanged = $self->exchange_for_copilot_token($pat);
+        if ($exchanged && $exchanged->{token}) {
+            print STDERR "[DEBUG][GitHubAuth] Exchanged PAT for copilot token (full model access)\n" if should_log('DEBUG');
+            # Store that we're using an exchanged token (requires Editor-Version header)
+            $self->{using_exchanged_token} = 1;
+            return $exchanged->{token};
+        }
+        
+        # If exchange fails, return PAT directly (may have limited access)
+        print STDERR "[WARN][GitHubAuth] PAT exchange failed, using PAT directly\n" if should_log('WARNING');
         return $pat;
     }
     # Ignore config errors, fall through to OAuth tokens
