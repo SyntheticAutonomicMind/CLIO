@@ -356,7 +356,17 @@ sub _execute_parallel {
         }
         
         if ($pid == 0) {
-            # Child process
+            # Child process - CRITICAL: Reset terminal state while connected to parent TTY
+            # Use light reset - no ANSI codes needed since we're about to redirect output
+            eval {
+                require CLIO::Compat::Terminal;
+                CLIO::Compat::Terminal::reset_terminal_light();  # ReadMode(0) only
+            };
+            
+            # Detach from terminal
+            close(STDIN);
+            open(STDIN, '<', '/dev/null');
+            
             my $result = $self->_execute_on_device_with_retry(
                 stage => $stage,
                 device => $device,

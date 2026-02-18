@@ -147,6 +147,11 @@ sub execute_command {
             
             chdir $original_cwd if $working_dir ne '.';
             
+            # NOTE: We do NOT auto-reset terminal after passthrough commands.
+            # This was causing cursor position issues (jumping to top of screen).
+            # Terminal state should be managed by the command itself.
+            # Use /reset command if terminal is corrupted.
+            
             my $status = $exit_code == 0 ? "success" : "exit code $exit_code";
             my $action_desc = "running '$display_cmd' with interactive terminal ($status)";
             
@@ -170,6 +175,13 @@ sub execute_command {
             alarm(0);
             
             chdir $original_cwd if $working_dir ne '.';
+            
+            # Light reset on non-zero exit codes - just restore ReadMode
+            # Commands that fail may leave terminal in bad state
+            # Use light reset to avoid cursor position issues
+            if ($exit_code != 0) {
+                $self->_reset_terminal_state_light();
+            }
             
             my $status = $exit_code == 0 ? "success" : "exit code $exit_code";
             my $action_desc = "running '$display_cmd' ($status)";
@@ -424,6 +436,56 @@ sub _sanitize_terminal_output {
     $output =~ s/\x07//g;
     
     return $output;
+}
+
+=head2 _reset_terminal_state_light
+
+Light terminal reset - just restore ReadMode.
+
+Called after non-zero exit codes in capture mode.
+Does not output ANSI codes which could cause cursor issues.
+
+=cut
+
+sub _reset_terminal_state_light {
+    my ($self) = @_;
+    
+    # Only reset if we have a TTY
+    return unless -t STDIN;
+    
+    # Use light reset - ReadMode(0) only
+    eval {
+        require CLIO::Compat::Terminal;
+        CLIO::Compat::Terminal::reset_terminal_light();
+    };
+    # Silently ignore errors - best effort reset
+    
+    return 1;
+}
+
+=head2 _reset_terminal_state
+
+Moderate terminal reset - restore ReadMode and safe ANSI attributes.
+
+Not currently used automatically - terminal resets are now conservative.
+Available for explicit use if needed.
+
+=cut
+
+sub _reset_terminal_state {
+    my ($self) = @_;
+    
+    # Only reset if we have a TTY
+    return unless -t STDIN && -t STDOUT;
+    
+    # Use moderate reset function from Compat::Terminal
+    eval {
+        require CLIO::Compat::Terminal;
+        CLIO::Compat::Terminal::reset_terminal();
+    };
+    # Silently ignore errors - best effort reset
+    
+    return 1;
 }
 
 1;
