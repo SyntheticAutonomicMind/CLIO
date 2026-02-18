@@ -107,7 +107,14 @@ sub start {
     }
     
     if ($pid == 0) {
-        # Child process - Clear inherited signal handlers
+        # Child process - CRITICAL: Reset terminal state while connected to parent TTY
+        # This must happen BEFORE any I/O operations in child
+        eval {
+            require CLIO::Compat::Terminal;
+            CLIO::Compat::Terminal::reset_terminal();
+        };
+        
+        # Clear inherited signal handlers
         # Parent may have INT/TERM handlers that shouldn't run in child
         # When parent kills child with TERM, we want clean exit, not parent's cleanup
         $SIG{INT} = 'DEFAULT';
