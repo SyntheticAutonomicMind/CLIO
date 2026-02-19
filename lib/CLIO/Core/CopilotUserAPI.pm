@@ -99,13 +99,11 @@ sub fetch_user {
             my $tokens = $auth->load_tokens();
             $token = $tokens->{github_token} if $tokens;
             
-            # Fall back to PAT if available
-            unless ($token) {
-                require CLIO::Core::Config;
-                my $config = CLIO::Core::Config->new(debug => $self->{debug});
-                my $pat = $config->get('github_pat');
-                $token = $pat if $pat && $pat =~ /^(ghp_|ghu_|github_pat_)/;
-            }
+            # Note: We do NOT fall back to Config->get('github_pat') here
+            # because it creates a circular dependency: Config->load() calls
+            # _get_copilot_user_api_endpoint() which calls this method, which
+            # would then call Config->new() again -> infinite recursion.
+            # GitHubAuth is the proper token source.
         };
         
         unless ($token) {
