@@ -408,15 +408,6 @@ sub add_message {
     my ($self, $role, $content, $opts) = @_;
     $content = strip_conversation_tags($content);
     
-    # DEBUG: Log what we received
-    if ($ENV{CLIO_DEBUG} || $self->{debug}) {
-        print STDERR "[DEBUG][State::add_message] Called with role=$role, opts=" . 
-            (defined $opts ? (ref($opts) eq 'HASH' ? 
-                "HASH{" . join(', ', map {"$_=$opts->{$_}"} keys %$opts) . "}" : 
-                ref($opts)) : 
-            'undef') . "\n";
-    }
-    
     # Generate unique turn ID (SAM compatibility)
     my $turn_id = $self->_generate_turn_id();
     

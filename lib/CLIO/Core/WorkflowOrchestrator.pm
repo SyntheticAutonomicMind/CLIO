@@ -307,11 +307,19 @@ sub process_input {
             if $self->{debug};
     }
     
-    # Add current user message
+    # Add current user message to messages array for API call
     push @messages, {
         role => 'user',
         content => $user_input
     };
+    
+    # Save user message to session history NOW (before processing)
+    # This ensures the message is persisted even if processing fails
+    if ($session && $session->can('add_message')) {
+        $session->add_message('user', $user_input);
+        print STDERR "[DEBUG][WorkflowOrchestrator] Saved user message to session history\n"
+            if should_log('DEBUG');
+    }
     
     # Get tool definitions from registry (for API)
     my $tools = $self->{tool_registry}->get_tool_definitions();
