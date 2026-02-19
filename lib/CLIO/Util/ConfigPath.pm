@@ -17,6 +17,9 @@ CLIO::Util::ConfigPath - Platform-aware configuration directory resolution
 Provides platform-aware path resolution for CLIO's configuration and data
 directories. Handles iOS/iPadOS sandboxing where $HOME is not writable.
 
+When PathResolver has been initialized with a custom base_dir (via --config),
+this module uses that directory instead of the default HOME-based paths.
+
 =head1 SYNOPSIS
 
     use CLIO::Util::ConfigPath qw(get_config_dir get_config_file);
@@ -44,6 +47,9 @@ Arguments:
 
 Returns: Full path to writable config directory
 
+If PathResolver has been initialized with a custom base_dir (via --config CLI),
+that directory is used instead of HOME-based detection.
+
 iOS/iPadOS Detection:
 - Checks if Documents exists and HOME is not writable
 - Falls back to HOME/Documents/.clio on iOS
@@ -53,6 +59,20 @@ iOS/iPadOS Detection:
 
 sub get_config_dir {
     my ($type) = @_;
+    
+    # Check if PathResolver has a custom base_dir set (via --config CLI)
+    # This allows isolated testing without polluting user's config
+    eval { require CLIO::Util::PathResolver; };
+    if (!$@ && defined $CLIO::Util::PathResolver::CONFIG_DIR) {
+        my $override = $CLIO::Util::PathResolver::CONFIG_DIR;
+        # If PathResolver was initialized with a non-HOME path, use it directly
+        my $home = $ENV{HOME} || $ENV{USERPROFILE} || '.';
+        if ($override && $override !~ /^\Q$home\E/) {
+            # Custom config directory specified - use it
+            make_path($override) unless -d $override;
+            return $override;
+        }
+    }
     
     my $home = $ENV{HOME} || $ENV{USERPROFILE} || '.';
     
