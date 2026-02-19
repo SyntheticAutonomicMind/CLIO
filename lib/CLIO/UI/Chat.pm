@@ -42,6 +42,9 @@ This is THE ONLY UI module for CLIO.
 sub new {
     my ($class, %args) = @_;
     
+    # Check for NO_COLOR environment variable (standard convention for disabling color)
+    my $use_color_default = ($ENV{NO_COLOR} || $args{no_color}) ? 0 : 1;
+    
     my $self = {
         session => $args{session},
         ai_agent => $args{ai_agent},
@@ -49,8 +52,8 @@ sub new {
         debug => $args{debug} || 0,
         terminal_width => 80,  # Default, will be updated
         terminal_height => 24, # Default rows for pagination
-        use_color => 1,  # Enable colors by default
-        ansi => CLIO::UI::ANSI->new(enabled => 1, debug => $args{debug}),
+        use_color => $use_color_default,  # Enable colors by default, disable with NO_COLOR or --no-color
+        ansi => CLIO::UI::ANSI->new(enabled => $use_color_default, debug => $args{debug}),
         enable_markdown => 1,  # Enable markdown rendering by default
         readline => undef,  # CLIO::Core::ReadLine instance
         completer => undef,  # TabCompletion instance
