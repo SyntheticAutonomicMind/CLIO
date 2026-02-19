@@ -46,7 +46,12 @@ sub init {
     return if defined $BASE_DIR && defined $CONFIG_DIR;
     
     # Priority 1: Explicit base directory (for testing)
-    if ($opts{base_dir} && -d $opts{base_dir}) {
+    if ($opts{base_dir}) {
+        # Create the directory if it doesn't exist
+        if (!-d $opts{base_dir}) {
+            require File::Path;
+            File::Path::make_path($opts{base_dir});
+        }
         $BASE_DIR = $opts{base_dir};
         $CONFIG_DIR = $BASE_DIR;
         return;
