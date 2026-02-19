@@ -18,8 +18,25 @@ use CLIO::UI::Chat;
 use CLIO::Util::PathResolver;
 use CLIO::Core::Logger qw(should_log);
 
-# Initialize path resolver early
-CLIO::Util::PathResolver::init();
+# Parse early CLI options BEFORE module init (--config and --no-color)
+my $config_dir_override;
+my $no_color = 0;
+for (my $i = 0; $i < @ARGV; $i++) {
+    if ($ARGV[$i] eq '--config' && defined $ARGV[$i+1]) {
+        $config_dir_override = $ARGV[$i+1];
+    }
+    if ($ARGV[$i] eq '--no-color') {
+        $no_color = 1;
+        $ENV{NO_COLOR} = 1;  # Standard env var for no-color output
+    }
+}
+
+# Initialize path resolver early (with config override if provided)
+if ($config_dir_override) {
+    CLIO::Util::PathResolver::init(base_dir => $config_dir_override);
+} else {
+    CLIO::Util::PathResolver::init();
+}
 
 # Check for --help flag
 if (grep { $_ eq '--help' || $_ eq '-h' } @ARGV) {
@@ -39,6 +56,8 @@ OPTIONS:
     --exit             Exit after processing (with --input)
     --model <name>     Use specific model (temporary, not persisted)
     --sandbox          Restrict file access to project directory only
+    --config <path>    Use custom config directory (for isolated testing)
+    --no-color         Disable ANSI color output (for CI/workflows)
     --no-custom-instructions  Skip .clio/instructions.md
     --no-ltm           Skip long-term memory pattern injection
     --incognito        Skip both custom instructions AND LTM (fresh audit mode)
@@ -52,6 +71,8 @@ EXAMPLES:
     clio --dir /path/to/project   # Start in specific directory
     clio --model gpt-4.1 --new    # Start with specific model
     clio --incognito --new        # Fresh audit without project knowledge
+    clio --config /tmp/clio-test  # Use isolated config for testing
+    clio --no-color --input "hi"  # Non-interactive without color
 
 SESSIONS:
     Sessions are stored in: .clio/sessions/
@@ -62,7 +83,8 @@ SLASH COMMANDS:
     Type /help in the application for available commands
 
 ENVIRONMENT:
-    None - use --debug flag instead
+    CLIO_HOME          Override CLIO base directory
+    NO_COLOR           Disable color output (same as --no-color)
 
 HELP
     exit 0;
@@ -389,7 +411,8 @@ if ($input) {
         session => $session,
         ai_agent => $ai_agent,
         config => $config,
-        debug => $debug
+        debug => $debug,
+        no_color => $no_color
     );
     $ai_agent->set_ui($cli_ui) if $ai_agent;
     
@@ -568,7 +591,8 @@ my $ui = CLIO::UI::Chat->new(
     session => $session,
     ai_agent => $ai_agent,
     config => $config,
-    debug => $debug
+    debug => $debug,
+    no_color => $no_color
 );
 
 # Set UI on ai_agent so orchestrator can access it for collaboration
