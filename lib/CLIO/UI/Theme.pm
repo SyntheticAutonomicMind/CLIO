@@ -50,9 +50,12 @@ Themes control WHAT gets displayed (templates, separators, layouts).
 sub new {
     my ($class, %opts) = @_;
     
+    # Default ANSI enabled based on NO_COLOR env var
+    my $ansi_enabled = $ENV{NO_COLOR} ? 0 : 1;
+    
     my $self = {
         debug => $opts{debug} || 0,
-        ansi => $opts{ansi} || CLIO::UI::ANSI->new(enabled => 1, debug => $opts{debug}),
+        ansi => $opts{ansi} || CLIO::UI::ANSI->new(enabled => $ansi_enabled, debug => $opts{debug}),
         
         # Current selections
         current_style => $opts{style} || 'default',
