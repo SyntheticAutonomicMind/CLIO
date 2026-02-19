@@ -247,16 +247,16 @@ sub request_input {
     # Store collaboration in session history
     if ($context->{session}) {
         # Add agent message (the request)
-        $context->{session}->add_message({
-            role => 'assistant',
-            content => "[COLLABORATION] $message" . ($user_context ? "\n\nContext: $user_context" : "")
-        });
+        $context->{session}->add_message(
+            'assistant',
+            "[COLLABORATION] $message" . ($user_context ? "\n\nContext: $user_context" : "")
+        );
         
         # Add user response
-        $context->{session}->add_message({
-            role => 'user',
-            content => $user_response
-        });
+        $context->{session}->add_message(
+            'user',
+            $user_response
+        );
     }
     
     return {
@@ -365,14 +365,14 @@ sub _request_via_broker {
     
     # Store in session if available
     if ($context->{session}) {
-        $context->{session}->add_message({
-            role => 'assistant',
-            content => "[BROKER QUESTION] $message"
-        });
-        $context->{session}->add_message({
-            role => 'user', 
-            content => $response
-        });
+        $context->{session}->add_message(
+            'assistant',
+            "[BROKER QUESTION] $message"
+        );
+        $context->{session}->add_message(
+            'user', 
+            $response
+        );
     }
     
     return {
