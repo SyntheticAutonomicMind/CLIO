@@ -84,13 +84,9 @@ sub display_user_message {
     # Add to screen buffer (original text for buffer)
     $chat->add_to_buffer('user', $message);
     
-    # Add to session history for AI context (original, not rendered)
-    if ($chat->{session}) {
-        print STDERR "[DEBUG][Chat] Adding user message to session history\n" if should_log('DEBUG');
-        $chat->{session}->add_message('user', $message);
-    } else {
-        print STDERR "[ERROR][Chat] No session object - cannot store message!\n" if should_log('ERROR');
-    }
+    # NOTE: Session history is managed by WorkflowOrchestrator (WorkflowOrchestrator.pm:318)
+    # Do NOT add message here - that would create duplicates
+    # WorkflowOrchestrator adds the message to session before processing with API
     
     # Render markdown for display only (not for AI)
     my $display_message = $message;
