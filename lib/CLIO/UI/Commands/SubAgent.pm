@@ -797,7 +797,7 @@ sub start_broker {
     if ($pid == 0) {
         # Child process - run broker
         
-        # CRITICAL: Reset terminal state FIRST, while still connected to parent TTY
+        # Reset terminal state first, while still connected to parent TTY
         # This must happen BEFORE closing STDIN or redirecting output
         eval {
             require CLIO::Compat::Terminal;
@@ -873,7 +873,7 @@ sub start_broker {
         );
         print STDERR "[DEBUG] Connected to broker as primary user\n" if should_log('DEBUG');
         
-        # CRITICAL: Also update the main agent's APIManager to use broker coordination
+        # Also update the main agent's APIManager to use broker coordination
         # This ensures ALL API requests (main + sub-agents) go through centralized rate limiting
         if ($self->{chat} && $self->{chat}{ai_agent} && $self->{chat}{ai_agent}{api}) {
             $self->{chat}{ai_agent}{api}{broker_client} = $self->{broker_client};

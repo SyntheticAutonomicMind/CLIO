@@ -57,7 +57,7 @@ sub repair_malformed_json {
     
     my $original = $json_str;
 
-    # CRITICAL FIX 1: Strip embedded XML parameter tags
+    # Strip embedded XML parameter tags
     if ($json_str =~ /<\/?parameter/) {
         print STDERR "[DEBUG][JSONRepair] Cleaning embedded XML tags\n" if $debug;
 
@@ -81,7 +81,7 @@ sub repair_malformed_json {
         print STDERR "[DEBUG][JSONRepair] After cleanup: " . substr($json_str, 0, 200) . "\n" if $debug;
     }
     
-    # CRITICAL FIX: Strip XML-like garbage appended after valid JSON
+    # Strip XML-like garbage appended after valid JSON
     # Pattern: valid JSON followed by </parameter>, </invoke>, or other XML closing tags
     # Example: {"valid":"json"}</parameter>\n</invoke>": ""}
     # This happens when AI mixes JSON and XML formats
@@ -138,7 +138,7 @@ sub repair_malformed_json {
     #   ,        - Comma that indicates missing value
     $json_str =~ s/"(\w+)"\s*:\s*,/"$1":null,/g;
     
-    # CRITICAL FIX: Decimals without leading zero (e.g., .1 -> 0.1, .05 -> 0.05)
+    # Fix decimals without leading zero (.1 -> 0.1)
     # Models sometimes output JavaScript-style decimals which are invalid JSON
     # Pattern: colon followed by optional whitespace, then a decimal point and digits
     # Examples: "progress":.1 -> "progress":0.1

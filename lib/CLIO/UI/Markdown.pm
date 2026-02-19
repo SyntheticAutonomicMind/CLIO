@@ -357,7 +357,7 @@ sub render_table {
             my $visual_len = $self->_visual_length($cell);
             
             # Apply formatting (this adds ANSI codes)
-            # IMPORTANT: Process inline formatting for BOTH headers and data cells
+            # Process inline formatting for both headers and data cells
             # Headers get additional styling (table_header color) on top
             my $formatted;
             if ($row->{is_header}) {
@@ -401,7 +401,7 @@ sub process_inline_formatting {
     my ($self, $text) = @_;
     
     # Code blocks inline (backticks)
-    # IMPORTANT: Content inside backticks should be literal - escape @-codes to prevent
+    # Content inside backticks should be literal - escape @-codes to prevent
     # them from being interpreted as color codes by ANSI.pm
     # We use \x00AT\x00 as a placeholder, which gets restored in Chat.pm after ANSI parsing
     my $code_color = $self->color('markdown_code');
