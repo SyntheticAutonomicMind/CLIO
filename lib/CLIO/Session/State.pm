@@ -73,7 +73,7 @@ sub save {
     }
     
     # Save project-level LTM to .clio/ltm.json (shared across all sessions)
-    # IMPORTANT: Use getcwd() for the LTM path, not stored working_directory
+    # Use getcwd() for the LTM path, not stored working_directory
     # This prevents issues when sessions are shared across different machines
     # where the stored path may not exist (e.g., /Users/... on Linux)
     if ($self->{ltm}) {
@@ -140,7 +140,7 @@ sub load {
     return unless $data;
     
     # Determine working directory for loading project LTM
-    # IMPORTANT: Use getcwd() for cross-platform compatibility
+    # Use getcwd() for cross-platform compatibility
     # The stored working_directory may be from a different machine (e.g., /Users/... on Linux)
     my $working_dir = getcwd();
     

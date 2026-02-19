@@ -234,7 +234,7 @@ sub persistResult {
         die "Failed to create tool_results directory: $error";
     }
     
-    # BUGFIX: Wrap ultra-long lines to prevent AI context/JSON errors
+    # Wrap ultra-long lines to prevent AI context/JSON errors
     # Lines >1000 chars can confuse AI models and cause malformed JSON responses
     # See: session 2683331c-091c-45f3-b196-77d57231be2d failure with 3803-char line
     my $wrapped_content = _wrap_long_lines($content, 1000);
