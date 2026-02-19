@@ -3044,9 +3044,9 @@ sub _prompt_session_learnings {
         print STDERR "[DEBUG][Chat] Stored learning: $learning\n" if $self->{debug};
     }
     
-    # Save LTM
+    # Save LTM - use current working directory for cross-platform compatibility
     eval {
-        my $ltm_file = File::Spec->catfile($self->{session}->{state}->{working_directory}, '.clio', 'ltm.json');
+        my $ltm_file = File::Spec->catfile(Cwd::getcwd(), '.clio', 'ltm.json');
         $ltm->save($ltm_file);
     };
     
