@@ -1421,7 +1421,7 @@ sub _build_payload {
     # Sanitize entire payload to remove problematic UTF-8 characters
     $payload = _sanitize_payload_recursive($payload);
     
-    # DEBUG: Log session continuity fields (CRITICAL for billing tracking)
+    # Log session continuity fields for billing tracking
     if ($self->{debug}) {
         print STDERR "[DEBUG][APIManager] BILLING CONTINUITY CHECK:\n";
         print STDERR "[DEBUG][APIManager]   copilot_thread_id: " . ($payload->{copilot_thread_id} || "NOT SET") . "\n";

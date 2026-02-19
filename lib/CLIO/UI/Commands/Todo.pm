@@ -49,7 +49,7 @@ sub new {
         debug => $args{debug} // 0,
     };
     
-    # Assign object references separately (hash literal assignment bug workaround)
+    # Assign object references separately
     $self->{session} = $args{session};
     $self->{ai_agent} = $args{ai_agent};
     
