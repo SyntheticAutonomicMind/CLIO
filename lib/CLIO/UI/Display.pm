@@ -113,14 +113,9 @@ sub display_assistant_message {
     # Add to screen buffer (display with original emojis)
     $chat->add_to_buffer('assistant', $message);
     
-    # Add to session history for AI context (sanitized to prevent encoding issues)
-    if ($chat->{session}) {
-        print STDERR "[DEBUG][Chat] Adding assistant message to session history\n" if should_log('DEBUG');
-        my $sanitized = sanitize_text($message);
-        $chat->{session}->add_message('assistant', $sanitized);
-    } else {
-        print STDERR "[ERROR][Chat] No session object - cannot store message!\n" if should_log('ERROR');
-    }
+    # NOTE: Session history is managed by WorkflowOrchestrator (WorkflowOrchestrator.pm)
+    # Do NOT add message here - that would create duplicates
+    # WorkflowOrchestrator adds messages to session during workflow processing
     
     # Render markdown if enabled
     my $display_message = $message;
