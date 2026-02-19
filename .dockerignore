@@ -11,6 +11,7 @@
 .clio/cache
 ai-assisted
 scratch
+reference
 
 # Editor files
 *.swp
@@ -23,6 +24,8 @@ scratch
 # OS artifacts
 .DS_Store
 Thumbs.db
+# macOS AppleDouble files (resource forks)
+._*
 
 # Test artifacts
 tests/results
