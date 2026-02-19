@@ -215,8 +215,13 @@ Parse @-codes in text and replace with ANSI escape sequences
 sub parse {
     my ($self, $text) = @_;
     
-    return $text unless $self->{enabled};
     return '' unless defined $text;
+    
+    # If ANSI is disabled (--no-color), strip @-codes instead of converting them
+    unless ($self->{enabled}) {
+        $text =~ s/@[A-Z_]+@//g;
+        return $text;
+    }
     
     my $codes = $self->codes();
     
