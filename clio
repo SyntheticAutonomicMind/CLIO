@@ -550,7 +550,7 @@ if ($input) {
                 use CLIO::UI::Markdown;
                 use CLIO::UI::ANSI;
                 my $md = CLIO::UI::Markdown->new(debug => $debug);
-                my $ansi = CLIO::UI::ANSI->new(enabled => 1, debug => $debug);
+                my $ansi = CLIO::UI::ANSI->new(enabled => !$no_color, debug => $debug);
                 
                 # Render markdown (adds @-codes), then parse @-codes to ANSI
                 my $rendered_response = $md->render($response);
