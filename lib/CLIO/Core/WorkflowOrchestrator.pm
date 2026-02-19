@@ -574,7 +574,7 @@ sub process_input {
                 elsif ($api_response->{error_type} && $api_response->{error_type} eq 'token_limit_exceeded') {
                     # Trim conversation history to fit within model's context window
                     # Remove oldest messages while keeping system prompt, FIRST USER MESSAGE, and recent context
-                    # IMPORTANT: Preserve tool_call/tool_result pairs to avoid orphans
+                    # Preserve tool_call/tool_result pairs to avoid orphans
                     
                     my $system_prompt = undef;
                     my @non_system = ();
@@ -987,7 +987,7 @@ sub process_input {
         my $assistant_msg_pending = undef;  # Will be set if we need delayed save
         
         if ($api_response->{tool_calls} && @{$api_response->{tool_calls}}) {
-            # CRITICAL: Validate tool_calls arguments JSON BEFORE adding to history
+            # Validate tool_calls arguments JSON before adding to history
             # This prevents malformed JSON from contaminating conversation history
             # which would cause API rejection on the next request
             my @validated_tool_calls = ();
@@ -1128,7 +1128,7 @@ sub process_input {
                             print STDERR "[DEBUG][WorkflowOrchestrator] Original arguments (first 300 chars): $preview\n";
                         }
 
-                        # CRITICAL: Check for Anthropic XML format FIRST
+                        # Check for Anthropic XML format first
                         # Claude sometimes uses native XML instead of JSON for tool calls
                         if (is_anthropic_xml_format($json_str)) {
                             print STDERR "[INFO][WorkflowOrchestrator] Detected Anthropic XML format, converting to JSON\n"
@@ -1241,7 +1241,7 @@ sub process_input {
                 }
             }
             
-            # CRITICAL FIX: Separate user_collaboration from other blocking tools
+            # Separate user_collaboration from other blocking tools
             # user_collaboration MUST execute LAST to ensure:
             # 1. All other tool results are available when showing to user
             # 2. User sees correct state before responding

@@ -733,9 +733,6 @@ sub run {
             # Reset line count after streaming completes
             $self->{line_count} = 0;
             
-            # NOTE: Don't add extra newline here - markdown buffer already has proper spacing
-            # print "\n";  # REMOVED: Caused double spacing after responses
-            
             print STDERR "[DEBUG][Chat] first_chunk_received=$first_chunk_received, accumulated_content_len=" . length($accumulated_content) . "\n" if $self->{debug};
             
             # Display metrics in debug mode
@@ -788,7 +785,7 @@ sub run {
                     print STDERR "[DEBUG][Chat] Session saved after error (preserving context)\n" if should_log('DEBUG');
                 }
             } else {
-                # CRITICAL FIX #1: Save session after SUCCESSFUL responses
+                # Save session after successful responses
                 # Without this, if user doesn't call /exit, all work-in-progress is lost
                 # on next session restart. This ensures session continuity even if terminal
                 # is closed abruptly without explicit /exit command.
@@ -1000,7 +997,7 @@ sub check_for_updates_async {
     
     if ($pid == 0) {
         # Child process - check for updates
-        # CRITICAL: Reset terminal state FIRST, while still connected to parent TTY
+                # Reset terminal state first, while still connected to parent TTY
         # This must happen BEFORE closing any file descriptors
         # Use light reset - no ANSI codes needed since we're about to close output
         eval {
@@ -1307,7 +1304,7 @@ sub _build_prompt {
 sub get_input {
     my ($self) = @_;
     
-    # CRITICAL: Stop spinner before ANY input operation
+        # Stop spinner before any input operation
     # The spinner MUST be stopped before readline/input to prevent interference with typing
     if ($self->{spinner} && $self->{spinner}->{running}) {
         $self->{spinner}->stop();
@@ -1583,7 +1580,7 @@ sub request_collaboration {
     
     print STDERR "[DEBUG][Chat] request_collaboration called\n" if should_log('DEBUG');
     
-    # CRITICAL: Stop spinner before displaying collaboration prompt
+    # Stop spinner before displaying collaboration prompt
     # The spinner MUST be stopped and MUST NOT restart until user response is complete
     if ($self->{spinner} && $self->{spinner}->{running}) {
         $self->{spinner}->stop();
