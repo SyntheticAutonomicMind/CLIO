@@ -112,7 +112,8 @@ sub load_styles {
             next;
         };
         
-        my @files = grep { /\.style$/ } readdir($dh);
+        # Filter for .style files but exclude hidden files (like ._* AppleDouble)
+        my @files = grep { /\.style$/ && !/^\./ } readdir($dh);
         closedir($dh);
         
         for my $file (@files) {
@@ -154,7 +155,8 @@ sub load_themes {
             next;
         };
         
-        my @files = grep { /\.theme$/ } readdir($dh);
+        # Filter for .theme files but exclude hidden files (like ._* AppleDouble)
+        my @files = grep { /\.theme$/ && !/^\./ } readdir($dh);
         closedir($dh);
         
         for my $file (@files) {
