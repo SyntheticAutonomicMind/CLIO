@@ -73,8 +73,12 @@ sub save {
     }
     
     # Save project-level LTM to .clio/ltm.json (shared across all sessions)
+    # IMPORTANT: Use getcwd() for the LTM path, not stored working_directory
+    # This prevents issues when sessions are shared across different machines
+    # where the stored path may not exist (e.g., /Users/... on Linux)
     if ($self->{ltm}) {
-        my $ltm_file = File::Spec->catfile($self->{working_directory}, '.clio', 'ltm.json');
+        my $current_dir = getcwd();
+        my $ltm_file = File::Spec->catfile($current_dir, '.clio', 'ltm.json');
         eval { $self->{ltm}->save($ltm_file); };
         if ($@) {
             print STDERR "[WARN][State] Failed to save LTM: $@\n" if should_log('WARNING');
@@ -136,7 +140,9 @@ sub load {
     return unless $data;
     
     # Determine working directory for loading project LTM
-    my $working_dir = $data->{working_directory} || getcwd();
+    # IMPORTANT: Use getcwd() for cross-platform compatibility
+    # The stored working_directory may be from a different machine (e.g., /Users/... on Linux)
+    my $working_dir = getcwd();
     
     # Load project-level LTM from .clio/ltm.json (shared across all sessions)
     my $ltm_file = File::Spec->catfile($working_dir, '.clio', 'ltm.json');
