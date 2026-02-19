@@ -50,7 +50,7 @@ sub new {
         tool_logger => undef,
     };
     
-    # Assign object references separately (hash literal assignment bug workaround)
+    # Assign object references separately
     $self->{session} = $args{session};
     
     bless $self, $class;
