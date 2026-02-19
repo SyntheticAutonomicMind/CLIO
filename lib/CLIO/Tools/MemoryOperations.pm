@@ -2,6 +2,7 @@ package CLIO::Tools::MemoryOperations;
 
 use strict;
 use warnings;
+use Cwd;
 use Carp qw(croak confess);
 use parent 'CLIO::Tools::Tool';
 use CLIO::Util::ConfigPath qw(get_config_dir);
@@ -571,10 +572,9 @@ sub add_discovery {
         # Add discovery to LTM
         $ltm->add_discovery($fact, $confidence, 1);  # verified=1 (user explicitly added)
         
-        # Save LTM - get working_directory from session
-        my $working_dir = ($context->{session} && $context->{session}->can('working_directory')) 
-            ? $context->{session}->working_directory 
-            : '.';
+        # Save LTM - use current working directory for cross-platform compatibility
+        # The stored working_directory may be from a different machine
+        my $working_dir = Cwd::getcwd();
         my $ltm_file = File::Spec->catfile($working_dir, '.clio', 'ltm.json');
         $ltm->save($ltm_file);
         
@@ -623,10 +623,8 @@ sub add_solution {
         # Add solution to LTM
         $ltm->add_problem_solution($error, $solution, $examples);
         
-        # Save LTM - get working_directory from session
-        my $working_dir = ($context->{session} && $context->{session}->can('working_directory')) 
-            ? $context->{session}->working_directory 
-            : '.';
+        # Save LTM - use current working directory for cross-platform compatibility
+        my $working_dir = Cwd::getcwd();
         my $ltm_file = File::Spec->catfile($working_dir, '.clio', 'ltm.json');
         $ltm->save($ltm_file);
         
@@ -675,10 +673,8 @@ sub add_pattern {
         # Add pattern to LTM
         $ltm->add_code_pattern($pattern, $confidence, $examples);
         
-        # Save LTM - get working_directory from session
-        my $working_dir = ($context->{session} && $context->{session}->can('working_directory')) 
-            ? $context->{session}->working_directory 
-            : '.';
+        # Save LTM - use current working directory for cross-platform compatibility
+        my $working_dir = Cwd::getcwd();
         my $ltm_file = File::Spec->catfile($working_dir, '.clio', 'ltm.json');
         $ltm->save($ltm_file);
         
@@ -737,10 +733,8 @@ sub prune_ltm {
         my $total_removed = $removed->{discoveries} + $removed->{solutions} + 
                             $removed->{patterns} + $removed->{workflows} + $removed->{failures};
         
-        # Save LTM
-        my $working_dir = ($context->{session} && $context->{session}->can('working_directory')) 
-            ? $context->{session}->working_directory 
-            : '.';
+        # Save LTM - use current working directory for cross-platform compatibility
+        my $working_dir = Cwd::getcwd();
         my $ltm_file = File::Spec->catfile($working_dir, '.clio', 'ltm.json');
         $ltm->save($ltm_file);
         
