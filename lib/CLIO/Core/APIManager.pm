@@ -1510,7 +1510,7 @@ sub _build_request {
         # Editor-Version is REQUIRED when using exchanged tokens (PAT -> /v2/token)
         # Without this, API returns "missing Editor-Version header for IDE auth"
         if ($self->{using_exchanged_token}) {
-            $req->header('Editor-Version' => 'vscode/1.96.0');
+            $req->header('Editor-Version' => 'vscode/2.0.0');
             print STDERR "[DEBUG] Using Editor-Version header for exchanged token\n" if $self->{debug};
         }
         

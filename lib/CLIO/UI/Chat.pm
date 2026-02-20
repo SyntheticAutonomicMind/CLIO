@@ -318,6 +318,9 @@ sub run {
     # Display header
     $self->display_header();
     
+    # Check for authentication migrations (one-time notices)
+    $self->_check_auth_migration();
+    
     # Prepopulate session data from API (quota, model info)
     $self->_prepopulate_session_data();
     
@@ -1177,6 +1180,31 @@ This fetches:
 Called at session start to provide accurate /usage data immediately.
 
 =cut
+
+=head2 _check_auth_migration
+
+Check if GitHub Copilot authentication needs migration.
+Shows a one-time notice if the stored tokens are from an older auth method.
+
+=cut
+
+sub _check_auth_migration {
+    my ($self) = @_;
+    
+    # Only check for GitHub Copilot provider
+    my $provider = $self->{config} ? $self->{config}->get('api_provider') : '';
+    return unless $provider && $provider eq 'github_copilot';
+    
+    eval {
+        require CLIO::Core::GitHubAuth;
+        my $auth = CLIO::Core::GitHubAuth->new(debug => 0);
+        my $reason = $auth->needs_reauth();
+        if ($reason) {
+            $self->display_system_message($reason);
+        }
+    };
+    # Silently ignore errors - migration check is non-critical
+}
 
 sub _prepopulate_session_data {
     my ($self) = @_;
