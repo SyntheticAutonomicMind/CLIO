@@ -208,18 +208,28 @@ sub _display_config_help {
     $self->display_key_value("workdir", "Working directory path", 25);
     $self->display_key_value("terminal_passthrough", "Force direct terminal access", 25);
     $self->display_key_value("terminal_autodetect", "Auto-detect interactive commands", 25);
-    $self->display_key_value("redact_secrets", "Mask secrets/PII in output", 25);
+    $self->display_key_value("redact_level", "Redaction level: strict|standard|api_permissive|pii|off", 25);
+    $self->writeline("", markdown => 0);
+    
+    $self->display_section_header("REDACTION LEVELS");
+    $self->display_key_value("strict", "Redact all (PII + crypto + API keys + tokens)", 25);
+    $self->display_key_value("standard", "Same as strict", 25);
+    $self->display_key_value("api_permissive", "Allow API keys/tokens (PII + crypto redacted)", 25);
+    $self->display_key_value("pii", "Only redact PII (default)", 25);
+    $self->display_key_value("off", "No redaction (use with caution)", 25);
     $self->writeline("", markdown => 0);
     
     $self->display_section_header("EXAMPLES");
     $self->display_command_row("/config set style dark", "Switch to dark color scheme", 35);
     $self->display_command_row("/config set theme photon", "Use photon theme", 35);
     $self->display_command_row("/config workdir ~/projects", "Change working directory", 35);
+    $self->display_command_row("/config set redact_level api_permissive", "Allow API keys in agent output", 35);
     $self->writeline("", markdown => 0);
     
     $self->display_section_header("TIPS");
     $self->display_tip("For API settings, use /api set");
     $self->display_tip("terminal_autodetect detects vim, nano, GPG, ssh, etc.");
+    $self->display_tip("Use api_permissive when agent needs to work with API tokens");
     $self->writeline("", markdown => 0);
 }
 
@@ -236,7 +246,7 @@ sub _handle_config_set {
     
     unless ($key) {
         $self->display_error_message("Usage: /config set <key> <value>");
-        $self->writeline("Keys: style, theme, working_directory, terminal_passthrough, terminal_autodetect, redact_secrets", markdown => 0);
+        $self->writeline("Keys: style, theme, working_directory, terminal_passthrough, terminal_autodetect, redact_level", markdown => 0);
         return;
     }
     
@@ -252,7 +262,8 @@ sub _handle_config_set {
         working_directory => 1,
         terminal_passthrough => 1,
         terminal_autodetect => 1,
-        redact_secrets => 1,
+        redact_level => 1,
+        redact_secrets => 1,  # Deprecated, for backward compat
     );
     
     unless ($allowed{$key}) {
@@ -261,8 +272,56 @@ sub _handle_config_set {
         return;
     }
     
-    # Handle boolean values for toggle settings
-    if ($key =~ /^(terminal_|redact_)/) {
+    # Handle redact_level (new multi-level system)
+    if ($key eq 'redact_level') {
+        my %valid_levels = map { $_ => 1 } qw(strict standard api_permissive pii off);
+        unless ($valid_levels{$value}) {
+            $self->display_error_message("Invalid redact_level: $value");
+            $self->writeline("Valid levels: strict, standard, api_permissive, pii, off", markdown => 0);
+            return;
+        }
+        
+        $self->{config}->set('redact_level', $value);
+        $self->{config}->save();
+        
+        my %level_desc = (
+            strict => "Redact all: PII, crypto, API keys, tokens",
+            standard => "Redact all: PII, crypto, API keys, tokens",
+            api_permissive => "Allow API keys/tokens (PII and crypto still redacted)",
+            pii => "Only redact PII (SSN, credit cards, phone, email)",
+            off => "No redaction - sensitive data may be exposed",
+        );
+        
+        $self->display_system_message("Redaction level set to: $value");
+        $self->display_info_message($level_desc{$value});
+        
+        if ($value eq 'off') {
+            $self->display_info_message("WARNING: All secrets and PII may be exposed to the AI and logs");
+        }
+        return;
+    }
+    
+    # Handle deprecated redact_secrets -> convert to redact_level
+    if ($key eq 'redact_secrets') {
+        $self->display_info_message("Note: redact_secrets is deprecated. Use redact_level instead.");
+        my $level;
+        if ($value =~ /^(true|1|yes|on)$/i) {
+            $level = 'standard';
+        } elsif ($value =~ /^(false|0|no|off)$/i) {
+            $level = 'off';
+        } else {
+            $self->display_error_message("Invalid boolean value for $key: $value");
+            $self->writeline("Use: true/false, 1/0, yes/no, on/off", markdown => 0);
+            return;
+        }
+        $self->{config}->set('redact_level', $level);
+        $self->{config}->save();
+        $self->display_system_message("Converted to redact_level: $level");
+        return;
+    }
+    
+    # Handle boolean values for terminal toggle settings
+    if ($key =~ /^terminal_/) {
         if ($value =~ /^(true|1|yes|on)$/i) {
             $value = 1;
         } elsif ($value =~ /^(false|0|no|off)$/i) {
@@ -286,12 +345,6 @@ sub _handle_config_set {
                 $self->display_info_message("Auto-detect enabled: Interactive commands (git commit, vim, GPG) will use passthrough automatically");
             } else {
                 $self->display_info_message("Auto-detect disabled: All commands will capture output unless terminal_passthrough is true");
-            }
-        } elsif ($key eq 'redact_secrets') {
-            if ($value) {
-                $self->display_info_message("Secret redaction enabled: API keys, tokens, and PII will be automatically masked in tool output");
-            } else {
-                $self->display_info_message("WARNING: Secret redaction disabled - sensitive data may be exposed to the AI and logs");
             }
         }
     }
@@ -417,11 +470,27 @@ sub show_global_config {
     # Security Settings
     $self->writeline("", markdown => 0);
     $self->display_section_header("Security");
-    my $redact_secrets = $self->{config}->get('redact_secrets');
-    # Default is enabled if not explicitly set
-    $redact_secrets = 1 unless defined $redact_secrets;
-    my $redact_status = $redact_secrets ? 'enabled' : 'DISABLED';
-    $self->display_key_value("Redact Secrets", $redact_status, 18);
+    
+    # Get redact_level (new), fall back to redact_secrets (deprecated)
+    my $redact_level = $self->{config}->get('redact_level');
+    unless ($redact_level) {
+        my $redact_secrets = $self->{config}->get('redact_secrets');
+        if (defined $redact_secrets) {
+            $redact_level = $redact_secrets ? 'standard' : 'off';
+        } else {
+            $redact_level = 'pii';  # Default
+        }
+    }
+    
+    my %level_desc = (
+        strict => '(all: PII + crypto + keys + tokens)',
+        standard => '(all: PII + crypto + keys + tokens)',
+        api_permissive => '(PII + crypto, allows API keys)',
+        pii => '(SSN, credit cards, phone, email only)',
+        off => '(DISABLED - use with caution)',
+    );
+    my $redact_display = "$redact_level " . ($level_desc{$redact_level} || '');
+    $self->display_key_value("Redact Level", $redact_display, 18);
     
     # Paths
     $self->writeline("", markdown => 0);

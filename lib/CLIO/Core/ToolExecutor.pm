@@ -269,10 +269,13 @@ sub execute_tool {
         # === SECURITY: Redact secrets and PII from tool output ===
         # This happens BEFORE sending to AI and logging, ensuring secrets
         # are never exposed to the LLM or stored in logs
-        # Can be disabled via config: /config set redact_secrets false
-        my $should_redact = !$self->{config} || !defined($self->{config}->get('redact_secrets')) 
-                         || $self->{config}->get('redact_secrets');
-        $output = redact($output) if $should_redact && defined $output;
+        # Levels: strict, standard, api_permissive, pii, off
+        # See: /config set redact_level <level>
+        # Backward compat: redact_secrets true -> standard, false -> off
+        my $redact_level = $self->_get_redact_level();
+        if ($redact_level ne 'off' && defined $output) {
+            $output = redact($output, level => $redact_level);
+        }
         
         # Store the raw output before potential truncation by ToolResultStore
         my $raw_output = $output;
@@ -895,6 +898,41 @@ sub _normalize_oneof_params {
     }
     
     return $params;
+}
+
+=head2 _get_redact_level
+
+Get the redaction level from config with backward compatibility.
+
+Returns: 'strict', 'standard', 'api_permissive', 'pii', or 'off'
+
+Backward compatibility:
+  - redact_secrets=true  -> 'standard'
+  - redact_secrets=false -> 'off'
+  - redact_level=<value> -> uses that value
+
+=cut
+
+sub _get_redact_level {
+    my ($self) = @_;
+    
+    return 'pii' unless $self->{config};
+    
+    # Check new redact_level first
+    my $level = $self->{config}->get('redact_level');
+    if (defined $level && $level =~ /^(strict|standard|api_permissive|pii|off)$/) {
+        return $level;
+    }
+    
+    # Backward compatibility: check old redact_secrets boolean
+    my $redact_secrets = $self->{config}->get('redact_secrets');
+    if (defined $redact_secrets) {
+        # If explicitly set, convert to level
+        return $redact_secrets ? 'standard' : 'off';
+    }
+    
+    # Default
+    return 'pii';
 }
 
 1;
