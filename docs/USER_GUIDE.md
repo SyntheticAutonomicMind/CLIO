@@ -1757,7 +1757,46 @@ Variables in `${brackets}` are replaced when the skill is executed.
 
 ## Security & Sandbox Mode
 
-CLIO provides two levels of isolation to protect your system:
+CLIO provides multiple layers of security to protect your system and sensitive data.
+
+### Secret and PII Redaction
+
+CLIO automatically redacts sensitive information from tool output before it's sent to the AI provider. This includes:
+
+- **PII (Personally Identifiable Information):** Email addresses, phone numbers, SSN, credit cards
+- **Cryptographic Material:** Private keys, database connection strings with passwords
+- **API Keys:** AWS, GitHub, Stripe, OpenAI, Anthropic, Slack, Discord, etc.
+- **Authentication Tokens:** JWT, Bearer tokens, Basic auth headers
+
+**Redaction Levels:**
+
+Configure the level of redaction using `/config set redact_level <level>`:
+
+| Level | What Gets Redacted | Use Case |
+|-------|-------------------|----------|
+| `strict` | Everything (PII + crypto + API keys + tokens) | Maximum security |
+| `standard` | Same as strict | Default for production |
+| `api_permissive` | PII + crypto only (API keys/tokens allowed) | When agent needs to work with tokens |
+| `pii` | Only PII (default) | Development with API key usage |
+| `off` | Nothing | Testing only (use with caution) |
+
+**Example:**
+```bash
+# Allow API keys to pass through (for GitHub token work, etc.)
+/config set redact_level api_permissive
+
+# Return to default PII-only protection
+/config set redact_level pii
+
+# Maximum protection
+/config set redact_level strict
+```
+
+**Important Notes:**
+- PII is always redacted unless you set level to `off`
+- At `api_permissive`, database passwords and private keys are still protected
+- Redaction happens before data is sent to the AI provider
+- Git operations use `strict` level by default to prevent accidental commits
 
 ### Soft Sandbox (`--sandbox` flag)
 
