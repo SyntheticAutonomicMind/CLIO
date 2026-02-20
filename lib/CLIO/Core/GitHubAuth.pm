@@ -331,6 +331,16 @@ sub save_tokens {
     # Set restrictive permissions (600 - owner read/write only)
     chmod 0600, $self->{tokens_file};
     
+    # Clear models cache - new tokens may have different model access
+    eval {
+        require CLIO::Core::ConfigPath;
+        my $cache_file = CLIO::Core::ConfigPath::get_config_file('models_cache.json');
+        if ($cache_file && -f $cache_file) {
+            unlink $cache_file;
+            print STDERR "[DEBUG][GitHubAuth] Cleared models cache after token update\n" if should_log('DEBUG');
+        }
+    };
+    
     print STDERR "[DEBUG][GitHubAuth] Tokens saved to $self->{tokens_file}\n" if should_log('DEBUG');
 }
 
@@ -534,6 +544,16 @@ sub clear_tokens {
             or warn "Failed to delete tokens file: $!";
         print STDERR "[INFO][GitHubAuth] Tokens cleared, user signed out\n" if should_log('INFO');
     }
+    
+    # Clear models cache - stale cache would show wrong model list
+    eval {
+        require CLIO::Core::ConfigPath;
+        my $cache_file = CLIO::Core::ConfigPath::get_config_file('models_cache.json');
+        if ($cache_file && -f $cache_file) {
+            unlink $cache_file;
+            print STDERR "[DEBUG][GitHubAuth] Cleared models cache after sign out\n" if should_log('DEBUG');
+        }
+    };
 }
 
 =head2 needs_reauth
