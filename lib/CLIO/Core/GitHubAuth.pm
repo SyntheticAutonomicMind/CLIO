@@ -28,7 +28,7 @@ Flow:
 =head1 SYNOPSIS
 
     my $auth = CLIO::Core::GitHubAuth->new(
-        client_id => 'Ov23lix5mfpW4hHM7y9G',  # SAM's GitHub OAuth app
+        client_id => 'Iv1.b507a08c87ecfe98',  # GitHub Copilot Plugin (official)
         debug => 1
     );
     
@@ -57,9 +57,9 @@ sub new {
     my ($class, %args) = @_;
     
     my $self = {
-        # Use SAM's OAuth App - we control this, it's trustworthy
-        # Users who want more models (37 vs 31) can use /api set github_pat
-        client_id => $args{client_id} || 'Ov23lix5mfpW4hHM7y9G',
+        # Use GitHub's official Copilot Plugin GitHub App
+        # This enables token exchange for full model access (42+ models)
+        client_id => $args{client_id} || 'Iv1.b507a08c87ecfe98',
         debug => $args{debug} || 0,
         ua => CLIO::Compat::HTTP->new(
             agent => 'CLIO/2.0.0',
@@ -102,7 +102,7 @@ sub start_device_flow {
     
     my $body = encode_json({
         client_id => $self->{client_id},
-        scope => 'read:user user:email repo workflow copilot',  # Include copilot scope for model access
+        scope => 'read:user',  # Minimal scope - Copilot access is via token exchange
     });
     
     $request->content($body);
@@ -421,6 +421,9 @@ sub get_copilot_token {
     
     # If we have a Copilot token, use it (with refresh check)
     if ($copilot) {
+        # Exchanged tokens (tid=) require Editor-Version header for API access
+        $self->{using_exchanged_token} = 1;
+        
         # Check if expired (with 5 minute buffer)
         my $now = time();
         if (($copilot->{expires_at} - 300) < $now) {
@@ -435,12 +438,14 @@ sub get_copilot_token {
                 } else {
                     # Exchange failed (404), fall back to GitHub token
                     print STDERR "[INFO][GitHubAuth] Copilot exchange unavailable, using GitHub token\n" if should_log('INFO');
+                    $self->{using_exchanged_token} = 0;
                     return $tokens->{github_token};
                 }
             };
             
             if ($@) {
                 print STDERR "[WARN]GitHubAuth] Token refresh failed: $@, using GitHub token\n" if should_log('WARNING');
+                $self->{using_exchanged_token} = 0;
                 return $tokens->{github_token};
             }
         }
@@ -448,9 +453,19 @@ sub get_copilot_token {
         return $copilot->{token};
     }
     
-    # No Copilot token - fall back to GitHub token
+    # No Copilot token - try to exchange GitHub token first
     if ($tokens->{github_token}) {
-        print STDERR "[DEBUG][GitHubAuth] Using GitHub token (no Copilot token available)\n" if should_log('DEBUG');
+        print STDERR "[INFO][GitHubAuth] No Copilot token, attempting exchange...\n" if should_log('INFO');
+        my $exchanged = eval { $self->exchange_for_copilot_token($tokens->{github_token}) };
+        if ($exchanged && $exchanged->{token}) {
+            print STDERR "[INFO][GitHubAuth] Exchange succeeded, saving Copilot token\n" if should_log('INFO');
+            eval { $self->save_tokens($tokens->{github_token}, $exchanged) };
+            $self->{using_exchanged_token} = 1;
+            return $exchanged->{token};
+        }
+        
+        # Exchange failed - use raw token (limited model access)
+        print STDERR "[DEBUG][GitHubAuth] Exchange failed, using GitHub token directly\n" if should_log('DEBUG');
         return $tokens->{github_token};
     }
     
@@ -519,6 +534,50 @@ sub clear_tokens {
             or warn "Failed to delete tokens file: $!";
         print STDERR "[INFO][GitHubAuth] Tokens cleared, user signed out\n" if should_log('INFO');
     }
+}
+
+=head2 needs_reauth
+
+Check if stored tokens need re-authentication (e.g., from old OAuth App).
+
+Returns: String with reason if re-auth needed, undef if OK.
+
+This is used for one-time migration notices when the authentication
+system changes (e.g., switching OAuth Apps).
+
+=cut
+
+sub needs_reauth {
+    my ($self) = @_;
+    
+    my $tokens = $self->load_tokens();
+    return undef unless $tokens;
+    return undef unless $tokens->{github_token};
+    
+    # Check for old OAuth App tokens (gho_ prefix = OAuth App user token)
+    # New GitHub App tokens use ghu_ prefix
+    if ($tokens->{github_token} =~ /^gho_/) {
+        return "Your GitHub token was created with an older authentication method "
+             . "that provides limited model access. Please run /api logout then "
+             . "/api login to upgrade to the new authentication with full model "
+             . "access (42+ models including Claude, Gemini, and GPT-5).";
+    }
+    
+    # Check for missing copilot_token (exchange may have failed)
+    if (!$tokens->{copilot_token} && $tokens->{github_token} =~ /^ghu_/) {
+        # Try exchanging now
+        my $result = eval { $self->exchange_for_copilot_token($tokens->{github_token}) };
+        if ($result) {
+            # Exchange succeeded - save and clear the warning
+            eval { $self->save_tokens($tokens->{github_token}, $result) };
+            return undef;
+        }
+        # Exchange failed with ghu_ token - something else is wrong
+        return "Your GitHub token could not be exchanged for a Copilot session token. "
+             . "Please run /api logout then /api login to re-authenticate.";
+    }
+    
+    return undef;
 }
 
 1;
