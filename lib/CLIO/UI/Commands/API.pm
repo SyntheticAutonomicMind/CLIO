@@ -598,14 +598,18 @@ sub _handle_api_set {
         if ($value =~ m{^([a-z_-]+)/(.+)$}i) {
             my ($prefix, $suffix) = ($1, $2);
             
-            # Check if prefix is a valid provider
+            # Check if prefix is a valid provider AND we're not on a provider
+            # that uses namespaced model names (e.g., OpenRouter: "deepseek/deepseek-r1")
+            # Only auto-switch if user explicitly wants a provider change
             require CLIO::Providers;
-            if (CLIO::Providers::provider_exists($prefix)) {
+            my $current_provider = $self->{config}->get('provider') || '';
+            my $uses_namespaced_models = ($current_provider eq 'openrouter');
+            
+            if (CLIO::Providers::provider_exists($prefix) && !$uses_namespaced_models) {
                 $target_provider = $prefix;
                 $model_name = $suffix;
                 
                 # Auto-switch provider
-                my $current_provider = $self->{config}->get('provider');
                 if ($current_provider ne $target_provider) {
                     # Switch provider first
                     if ($self->{config}->set_provider($target_provider)) {
@@ -642,12 +646,12 @@ sub _handle_api_set {
         my $registry = CLIO::Core::ModelRegistry->new(%$registry_args);
         my ($valid, $error) = $registry->validate_model($model_name);
         
-        # If validation fails and we have a native provider, skip validation
-        # (native providers may have models not in registry)
-        my $provider_config = CLIO::Providers::get_provider($provider);
-        if (!$valid && $provider_config && $provider_config->{native_api}) {
-            $valid = 1;  # Allow any model name for native providers
-            print STDERR "[DEBUG][API] Skipping model validation for native provider: $provider\n"
+        # Skip validation for providers where we don't have a model registry
+        # Currently only GitHub Copilot has server-side model validation
+        # All other providers (OpenRouter, OpenAI, Anthropic, etc.) accept any model name
+        if (!$valid && $provider ne 'github_copilot') {
+            $valid = 1;
+            print STDERR "[DEBUG][API] Skipping model validation for provider: $provider (no registry)\n"
                 if $self->{debug};
         }
         
