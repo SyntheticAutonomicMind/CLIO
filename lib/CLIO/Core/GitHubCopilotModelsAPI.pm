@@ -91,23 +91,27 @@ sub new {
             require CLIO::Core::GitHubAuth;
             my $auth = CLIO::Core::GitHubAuth->new(debug => $args{debug} || 0);
             $api_key = $auth->get_copilot_token();
-            
-            # Get user-specific API endpoint from CopilotUserAPI
-            require CLIO::Core::CopilotUserAPI;
-            my $user_api = CLIO::Core::CopilotUserAPI->new(debug => $args{debug} || 0);
-            
-            # Try cached data first (no API call), fall back to fresh fetch
-            my $user_data = $user_api->get_cached_user() || $user_api->fetch_user();
-            if ($user_data) {
-                $api_base_url = $user_data->get_api_endpoint();
-                print STDERR "[DEBUG][GitHubCopilotModelsAPI] Using user-specific API: $api_base_url\n"
-                    if $args{debug};
-            }
         };
         if ($@) {
             print STDERR "[WARN][GitHubCopilotModelsAPI] Failed to get GitHub token: $@\n";
         }
     }
+    
+    # Always try to get user-specific API endpoint from CopilotUserAPI
+    # The user-specific endpoint (e.g., api.individual.githubcopilot.com)
+    # returns the full model catalog, while the generic endpoint may not
+    eval {
+        require CLIO::Core::CopilotUserAPI;
+        my $user_api = CLIO::Core::CopilotUserAPI->new(debug => $args{debug} || 0);
+        
+        # Try cached data first (no API call), fall back to fresh fetch
+        my $user_data = $user_api->get_cached_user() || $user_api->fetch_user();
+        if ($user_data) {
+            $api_base_url = $user_data->get_api_endpoint();
+            print STDERR "[DEBUG][GitHubCopilotModelsAPI] Using user-specific API: $api_base_url\n"
+                if $args{debug};
+        }
+    };
     
     # Determine the base URL for /models endpoint
     # Priority: explicit models_base_url arg > user-specific API > default
