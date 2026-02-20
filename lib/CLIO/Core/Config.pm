@@ -52,7 +52,7 @@ use constant DEFAULT_CONFIG => {
     session_auto_prune => 0,    # Enable automatic session pruning on startup (default: off)
     session_prune_days => 30,   # Delete sessions older than this many days (default: 30)
     # Security configuration
-    redact_secrets => 1,        # Automatically redact secrets/PII from tool output (default: on)
+    redact_level => 'pii',      # Redaction level: strict, standard, api_permissive, pii, off (default: pii)
     # GitHub Copilot API version headers (update to match latest vscode-copilot-chat)
     editor_version => 'vscode/2.0.0',  # Editor version for API requests
     plugin_version => 'copilot-chat/0.38.0',  # Plugin version for API requests

@@ -13,34 +13,60 @@ our @EXPORT_OK = qw(redact redact_any get_redactor);
 
 =head1 NAME
 
-CLIO::Security::SecretRedactor - Automatic secret and PII redaction
+CLIO::Security::SecretRedactor - Automatic secret and PII redaction with configurable levels
 
 =head1 DESCRIPTION
 
 Automatically detects and redacts sensitive information from text before
-display or transmission to AI providers. Includes patterns for:
+display or transmission to AI providers. Supports multiple redaction levels:
 
-- API keys (AWS, GitHub, Stripe, Google, etc.)
-- Authentication tokens (JWT, Bearer, OAuth)
-- Database connection strings with credentials
-- PEM-encoded private keys
-- Slack/Discord tokens
-- PII (emails, SSN, phone numbers, credit cards)
+=over 4
+
+=item * B<strict> - Redact everything (PII, crypto, API keys, tokens)
+
+=item * B<standard> - Same as strict (recommended for most use cases)
+
+=item * B<api_permissive> - Allow API keys/tokens to pass through (PII/crypto still redacted)
+
+=item * B<pii> - Only redact PII (SSN, credit cards, phone, email) [DEFAULT]
+
+=item * B<off> - No redaction (use with extreme caution)
+
+=back
+
+Pattern categories:
+
+- B<pii_patterns>: SSN, phone numbers, credit cards, email addresses, UK NI numbers
+- B<crypto_patterns>: Private keys, database connection strings with passwords
+- B<api_key_patterns>: AWS, GitHub, Stripe, Google, OpenAI, Anthropic, Slack, Discord, etc.
+- B<token_patterns>: JWT, Bearer tokens, Basic auth headers
 
 Performance: ~10 MB/s throughput, <1ms for typical 10KB tool output.
-
-Inspired by gokin's SecretRedactor with additional PII patterns.
 
 =head1 SYNOPSIS
 
     use CLIO::Security::SecretRedactor qw(redact redact_any);
     
-    # Simple text redaction
+    # Simple text redaction (uses default level from config or 'pii')
     my $safe = redact("api_key=sk_live_abc123def456");
-    # Returns: "api_key=[REDACTED]"
+    
+    # Redact with specific level
+    my $safe = redact($text, level => 'strict');
     
     # Redact any data structure (for tool results)
-    my $safe_result = redact_any($hash_ref);
+    my $safe_result = redact_any($hash_ref, level => 'standard');
+
+=head1 REDACTION LEVELS
+
+    ┌─────────────────┬────────┬──────────┬───────────────┬─────┬─────┐
+    │ Category        │ strict │ standard │ api_permissive│ pii │ off │
+    ├─────────────────┼────────┼──────────┼───────────────┼─────┼─────┤
+    │ PII             │ redact │ redact   │ redact        │redct│     │
+    │ Private keys    │ redact │ redact   │ redact        │     │     │
+    │ DB passwords    │ redact │ redact   │ redact        │     │     │
+    │ API keys        │ redact │ redact   │ allow         │     │     │
+    │ Tokens          │ redact │ redact   │ allow         │     │     │
+    └─────────────────┴────────┴──────────┴───────────────┴─────┴─────┘
 
 =cut
 
@@ -57,13 +83,61 @@ my %WHITELIST = map { $_ => 1 } qw(
     true false null
 );
 
-# Compiled regex patterns - simple full-match patterns for performance
-# No capture groups needed - we replace entire match
-my @PATTERNS = (
-    #
-    # === API KEYS AND TOKENS ===
-    #
+# Valid redaction levels
+my %VALID_LEVELS = map { $_ => 1 } qw(strict standard api_permissive pii off);
+
+#
+# === PATTERN CATEGORIES ===
+#
+
+# PII (Personally Identifiable Information) - Most critical
+my @PII_PATTERNS = (
+    # Email addresses (greedy match for TLD)
+    qr/\b[a-zA-Z0-9._%+-]+\@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,63}\b/,
     
+    # US Social Security Numbers
+    qr/\b\d{3}-\d{2}-\d{4}\b/,
+    
+    # US Phone numbers (various formats)
+    qr/(?:\+1[-.\s]?)?(?:\(\d{3}\)|\d{3})[-.\s]?\d{3}[-.\s]?\d{4}/,
+    
+    # Credit card numbers (16 digits, various separators)
+    qr/\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/,
+    
+    # UK National Insurance numbers
+    qr/\b[A-CEGHJ-PR-TW-Z]{2}\s?\d{2}\s?\d{2}\s?\d{2}\s?[A-D]\b/i,
+);
+
+# Cryptographic material and database credentials - Very sensitive
+# Note: Some patterns use /s modifier for multi-line matching
+my @CRYPTO_PATTERNS = (
+    # PEM-encoded private keys - FULL BLOCK (multi-line)
+    # Matches from -----BEGIN...PRIVATE KEY----- through -----END...PRIVATE KEY-----
+    # The .*? is non-greedy to match the smallest block
+    qr/-----BEGIN\s+(?:RSA\s+|DSA\s+|EC\s+|OPENSSH\s+|ENCRYPTED\s+)?PRIVATE\s+KEY-----.*?-----END\s+(?:RSA\s+|DSA\s+|EC\s+|OPENSSH\s+|ENCRYPTED\s+)?PRIVATE\s+KEY-----/s,
+    
+    # PostgreSQL connection strings with password
+    qr|postgres(?:ql)?://[^:]+:[^@]+@[^\s/]+|,
+    
+    # MySQL connection strings with password
+    qr|mysql://[^:]+:[^@]+@[^\s/]+|,
+    
+    # MongoDB connection strings with password
+    qr|mongodb(?:\+srv)?://[^:]+:[^@]+@[^\s/]+|,
+    
+    # Redis connection strings with password
+    qr|redis://:[^@]+@[^\s/]+|,
+    qr|redis://[^:]+:[^@]+@[^\s/]+|,
+    
+    # ODBC connection strings with password
+    qr/(?i)(?:Password|Pwd)\s*=\s*[^;'"\s]{8}/,
+    
+    # Password assignments (match entire assignment)
+    qr/(?i)(?:password|passwd|pwd)\s*[:=]\s*["']?[^\s'"]{8}["']?/,
+);
+
+# API Keys - Can be needed for legitimate agent work
+my @API_KEY_PATTERNS = (
     # AWS Access Key ID (always starts with AKIA)
     qr/AKIA[0-9A-Z]{16}/,
     
@@ -106,74 +180,29 @@ my @PATTERNS = (
     qr/AC[a-f0-9]{32}/i,
     qr/SK[a-f0-9]{32}/i,
     
-    #
-    # === AUTHENTICATION TOKENS ===
-    #
-    
-    # JWT tokens (3 base64 segments) - simplified pattern
+    # Generic key=value patterns for common secret names
+    qr/(?i)(?:api[_-]?key|secret[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key)\s*[:=]\s*["']?[a-zA-Z0-9_\-\.]{12}["']?/,
+);
+
+# Authentication tokens - Often needed for API work
+my @TOKEN_PATTERNS = (
+    # JWT tokens (3 base64 segments)
     qr/eyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/,
     
-    # Bearer tokens in headers (match entire header value)
+    # Bearer tokens in headers
     qr/(?i)Bearer\s+[a-zA-Z0-9_\-\.]{20,256}/,
     
     # Authorization: Basic header (base64 encoded user:pass)
     qr/(?i)Authorization:\s*Basic\s+[A-Za-z0-9+\/]{20}={0,2}/,
-    
-    #
-    # === DATABASE AND CONNECTION STRINGS ===
-    #
-    
-    # PostgreSQL connection strings with password
-    qr|postgres(?:ql)?://[^:]+:[^@]+@[^\s/]+|,
-    
-    # MySQL connection strings with password
-    qr|mysql://[^:]+:[^@]+@[^\s/]+|,
-    
-    # MongoDB connection strings with password
-    qr|mongodb(?:\+srv)?://[^:]+:[^@]+@[^\s/]+|,
-    
-    # Redis connection strings with password
-    qr|redis://:[^@]+@[^\s/]+|,
-    qr|redis://[^:]+:[^@]+@[^\s/]+|,
-    
-    # ODBC connection strings with password
-    qr/(?i)(?:Password|Pwd)\s*=\s*[^;'"\s]{8}/,
-    
-    #
-    # === CRYPTOGRAPHIC MATERIAL ===
-    #
-    
-    # PEM-encoded private keys
-    qr/-----BEGIN\s+(?:RSA\s+|DSA\s+|EC\s+|OPENSSH\s+|ENCRYPTED\s+)?PRIVATE\s+KEY-----/,
-    
-    #
-    # === GENERIC SECRET PATTERNS ===
-    #
-    
-    # Generic key=value patterns for common secret names (match entire assignment)
-    qr/(?i)(?:api[_-]?key|secret[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key)\s*[:=]\s*["']?[a-zA-Z0-9_\-\.]{12}["']?/,
-    
-    # Password assignments (match entire assignment)
-    qr/(?i)(?:password|passwd|pwd)\s*[:=]\s*["']?[^\s'"]{8}["']?/,
-    
-    #
-    # === PII (Personally Identifiable Information) ===
-    #
-    
-    # Email addresses (greedy match for TLD)
-    qr/\b[a-zA-Z0-9._%+-]+\@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,63}\b/,
-    
-    # US Social Security Numbers
-    qr/\b\d{3}-\d{2}-\d{4}\b/,
-    
-    # US Phone numbers (various formats) - removed word boundary for better matching
-    qr/(?:\+1[-.\s]?)?(?:\(\d{3}\)|\d{3})[-.\s]?\d{3}[-.\s]?\d{4}/,
-    
-    # Credit card numbers (16 digits, various separators)
-    qr/\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/,
-    
-    # UK National Insurance numbers
-    qr/\b[A-CEGHJ-PR-TW-Z]{2}\s?\d{2}\s?\d{2}\s?\d{2}\s?[A-D]\b/i,
+);
+
+# Level to category mapping
+my %LEVEL_CATEGORIES = (
+    strict => ['pii', 'crypto', 'api_keys', 'tokens'],
+    standard => ['pii', 'crypto', 'api_keys', 'tokens'],
+    api_permissive => ['pii', 'crypto'],  # Allow API keys and tokens
+    pii => ['pii'],  # Only PII
+    off => [],  # Nothing
 );
 
 =head2 new
@@ -183,6 +212,7 @@ Create a new SecretRedactor instance.
     my $redactor = CLIO::Security::SecretRedactor->new(
         debug => 1,              # Enable debug output
         redaction_text => '***', # Custom redaction text (default: [REDACTED])
+        level => 'standard',     # Default redaction level
     );
 
 =cut
@@ -190,11 +220,19 @@ Create a new SecretRedactor instance.
 sub new {
     my ($class, %args) = @_;
     
+    my $level = $args{level} // 'pii';
+    $level = 'pii' unless $VALID_LEVELS{$level};
+    
     my $self = {
         debug           => $args{debug} // 0,
         redaction_text  => $args{redaction_text} // '[REDACTED]',
         whitelist       => { %WHITELIST },
-        patterns        => \@PATTERNS,
+        level           => $level,
+        # Categorized patterns
+        pii_patterns    => \@PII_PATTERNS,
+        crypto_patterns => \@CRYPTO_PATTERNS,
+        api_key_patterns => \@API_KEY_PATTERNS,
+        token_patterns  => \@TOKEN_PATTERNS,
     };
     
     bless $self, $class;
@@ -216,11 +254,89 @@ sub get_redactor {
     return $_instance;
 }
 
+=head2 set_level
+
+Set the redaction level.
+
+    $redactor->set_level('api_permissive');
+
+Valid levels: strict, standard, api_permissive, pii, off
+
+=cut
+
+sub set_level {
+    my ($self, $level) = @_;
+    
+    if ($VALID_LEVELS{$level}) {
+        $self->{level} = $level;
+        print STDERR "[DEBUG][SecretRedactor] Level set to: $level\n" 
+            if $self->{debug} || should_log('DEBUG');
+        return 1;
+    }
+    return 0;
+}
+
+=head2 get_level
+
+Get the current redaction level.
+
+    my $level = $redactor->get_level();
+
+=cut
+
+sub get_level {
+    my ($self) = @_;
+    return $self->{level};
+}
+
+=head2 get_valid_levels
+
+Get list of valid redaction levels.
+
+    my @levels = CLIO::Security::SecretRedactor->get_valid_levels();
+
+=cut
+
+sub get_valid_levels {
+    return sort keys %VALID_LEVELS;
+}
+
+=head2 _get_patterns_for_level
+
+Internal: Get the patterns to apply for a given level.
+
+=cut
+
+sub _get_patterns_for_level {
+    my ($self, $level) = @_;
+    
+    $level //= $self->{level};
+    $level = 'pii' unless $VALID_LEVELS{$level};
+    
+    my @patterns;
+    my $categories = $LEVEL_CATEGORIES{$level} // [];
+    
+    for my $cat (@$categories) {
+        if ($cat eq 'pii') {
+            push @patterns, @{$self->{pii_patterns}};
+        } elsif ($cat eq 'crypto') {
+            push @patterns, @{$self->{crypto_patterns}};
+        } elsif ($cat eq 'api_keys') {
+            push @patterns, @{$self->{api_key_patterns}};
+        } elsif ($cat eq 'tokens') {
+            push @patterns, @{$self->{token_patterns}};
+        }
+    }
+    
+    return @patterns;
+}
+
 =head2 redact
 
 Redact secrets and PII from text. Functional interface.
 
     my $safe = redact($text);
+    my $safe = redact($text, level => 'strict');
     my $safe = redact($text, redaction_text => '***');
 
 =cut
@@ -239,6 +355,7 @@ sub redact {
 Object method to redact text.
 
     my $safe = $redactor->redact_text($text);
+    my $safe = $redactor->redact_text($text, level => 'strict');
 
 =cut
 
@@ -248,10 +365,16 @@ sub redact_text {
     return '' unless defined $text && length($text);
     
     my $redaction = $opts{redaction_text} // $self->{redaction_text};
+    my $level = $opts{level} // $self->{level};
+    
+    # Early return for 'off' level
+    return $text if $level eq 'off';
+    
     my $result = $text;
+    my @patterns = $self->_get_patterns_for_level($level);
     
     # Apply each pattern - simple full-match replacement
-    for my $pattern (@{$self->{patterns}}) {
+    for my $pattern (@patterns) {
         $result =~ s/$pattern/$redaction/g;
     }
     
@@ -264,6 +387,7 @@ Redact secrets from any data structure (hash, array, scalar).
 Useful for tool results that may contain nested structures.
 
     my $safe_result = redact_any($data);
+    my $safe_result = redact_any($data, level => 'strict');
 
 =cut
 
@@ -309,19 +433,26 @@ sub _redact_recursive {
 
 =head2 add_pattern
 
-Add a custom regex pattern to the redactor.
+Add a custom regex pattern to a specific category.
 
-    $redactor->add_pattern(qr/my_company_key_[a-z0-9]+/);
+    $redactor->add_pattern('pii', qr/my_custom_pii_pattern/);
+    $redactor->add_pattern('api_keys', qr/my_company_key_[a-z0-9]+/);
+
+Valid categories: pii, crypto, api_keys, tokens
 
 =cut
 
 sub add_pattern {
-    my ($self, $pattern) = @_;
+    my ($self, $category, $pattern) = @_;
     
-    push @{$self->{patterns}}, $pattern;
-    
-    print STDERR "[DEBUG][SecretRedactor] Added custom pattern\n" 
-        if $self->{debug};
+    my $key = $category . '_patterns';
+    if (exists $self->{$key}) {
+        push @{$self->{$key}}, $pattern;
+        print STDERR "[DEBUG][SecretRedactor] Added pattern to $category\n" 
+            if $self->{debug};
+        return 1;
+    }
+    return 0;
 }
 
 =head2 add_whitelist
@@ -340,13 +471,28 @@ sub add_whitelist {
 
 =head2 pattern_count
 
-Return the number of patterns being checked.
+Return the number of patterns being checked for the current level.
 
 =cut
 
 sub pattern_count {
+    my ($self, $level) = @_;
+    my @patterns = $self->_get_patterns_for_level($level);
+    return scalar @patterns;
+}
+
+=head2 total_pattern_count
+
+Return the total number of patterns across all categories.
+
+=cut
+
+sub total_pattern_count {
     my ($self) = @_;
-    return scalar @{$self->{patterns}};
+    return scalar(@{$self->{pii_patterns}}) + 
+           scalar(@{$self->{crypto_patterns}}) +
+           scalar(@{$self->{api_key_patterns}}) +
+           scalar(@{$self->{token_patterns}});
 }
 
 1;
@@ -361,6 +507,22 @@ This module provides defense-in-depth but is NOT a replacement for:
 False negatives are possible - new secret formats may not be caught.
 False positives are minimized via whitelist, but some legitimate text
 may be redacted (e.g., test data that looks like secrets).
+
+=head1 REDACTION LEVEL GUIDANCE
+
+=over 4
+
+=item B<strict/standard> - Use for most scenarios. Maximum protection.
+
+=item B<api_permissive> - Use when agent needs to work with API keys (e.g., setting up integrations).
+PII and crypto credentials are still protected.
+
+=item B<pii> - Default. Protects personal information. API keys allowed.
+Good balance for development work where API key usage is common.
+
+=item B<off> - Use only when absolutely necessary and you understand the risks.
+
+=back
 
 =head1 AUTHOR
 
