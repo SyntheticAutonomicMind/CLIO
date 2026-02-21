@@ -370,8 +370,39 @@ if ($broker_session && $broker_agent_id) {
     print STDERR "[TRACE][BROKER] No broker env vars, running standalone\n" if should_log('TRACE');
 }
 
+# Migrate model names to provider/model format (backward compatibility)
+# Existing users may have "gpt-4.1" instead of "github_copilot/gpt-4.1"
+{
+    my $current_model = $config->get('model') || '';
+    my $current_provider = $config->get('provider') || '';
+    
+    if ($current_model && $current_provider) {
+        require CLIO::Providers;
+        # Check if model already has a provider prefix
+        my $has_prefix = 0;
+        if ($current_model =~ m{^([a-z][a-z0-9_.-]*)/}i) {
+            $has_prefix = CLIO::Providers::provider_exists($1);
+        }
+        
+        unless ($has_prefix) {
+            my $full_model = "$current_provider/$current_model";
+            $config->set('model', $full_model, 0);
+            print STDERR "[DEBUG] Migrated model to provider/model format: $full_model\n" if $debug;
+        }
+    }
+}
+
 # Apply --model override if specified (temporary, not persisted to config file)
 if ($model_override) {
+    # Auto-prepend current provider if no provider prefix
+    require CLIO::Providers;
+    if ($model_override !~ m{^([a-z][a-z0-9_.-]*)/}i || 
+        !CLIO::Providers::provider_exists($1)) {
+        my $provider = $config->get('provider') || '';
+        if ($provider) {
+            $model_override = "$provider/$model_override";
+        }
+    }
     $config->set('model', $model_override, 0);  # 0 = don't mark as user-set (not persisted)
     print STDERR "[DEBUG] Applied --model override: $model_override\n" if $debug;
     print "[INFO] Using temporary model: $model_override\n";

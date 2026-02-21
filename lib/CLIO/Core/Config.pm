@@ -288,7 +288,10 @@ sub set_provider {
     
     # Apply provider defaults (these are NOT user-set - they come from provider definition)
     $self->{config}->{api_base} = $provider_config->{api_base};
-    $self->{config}->{model} = $provider_config->{model};
+    
+    # Store default model with provider prefix (e.g., "github_copilot/claude-haiku-4.5")
+    my $default_model = $provider_config->{model};
+    $self->{config}->{model} = "$provider/$default_model";
     
     # When switching providers, load the per-provider API key if available
     # This enables seamless switching between providers with stored keys

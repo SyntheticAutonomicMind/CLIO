@@ -421,6 +421,12 @@ sub adapt_request_for_endpoint {
         print STDERR "[DEBUG][APIManager] Added sam_config with bypass_processing=true\n" if $self->{debug};
     }
     
+    # Remove GitHub Copilot-specific fields for non-Copilot endpoints
+    unless ($endpoint_config->{requires_copilot_headers}) {
+        delete $payload->{copilot_thread_id};
+        delete $payload->{previous_response_id};
+    }
+    
     return $payload;
 }
 
@@ -440,14 +446,26 @@ sub get_model_capabilities {
     
     $model ||= $self->get_current_model();
     
-    # Check cache first (cache in object for session lifetime)
+    # Parse provider prefix from model name
+    my ($target_provider, $api_model) = $self->_parse_model_provider($model);
+    
+    # Check cache first (cache by full model name including provider prefix)
     if ($self->{_model_capabilities_cache} && 
         $self->{_model_capabilities_cache}{$model}) {
         return $self->{_model_capabilities_cache}{$model};
     }
     
+    # Determine API base for the model's provider
+    my $api_base;
+    if ($target_provider) {
+        require CLIO::Providers;
+        my $provider_def = CLIO::Providers::get_provider($target_provider);
+        $api_base = $provider_def ? $provider_def->{api_base} : $self->{api_base};
+    } else {
+        $api_base = $self->{api_base};
+    }
+    
     # Detect API type and models endpoint
-    my $api_base = $self->{api_base};
     my ($api_type, $models_url) = $self->_detect_api_type_and_url($api_base);
     
     unless ($models_url) {
@@ -507,9 +525,9 @@ sub get_model_capabilities {
         $models = $data->{data} || [];
     }
     
-    # Find our model
+    # Find our model (use api_model name without CLIO provider prefix)
     for my $model_info (@$models) {
-        if ($model_info->{id} eq $model) {
+        if ($model_info->{id} eq $api_model) {
             my $limits = {};
             
             # Extract limits from capabilities (GitHub Copilot format)
@@ -559,7 +577,7 @@ sub get_model_capabilities {
     }
     
     if (should_log('WARNING')) {
-        print STDERR "[WARNING][APIManager] Model $model not found in /models API response\n";
+        print STDERR "[WARNING][APIManager] Model $api_model not found in /models API response\n";
         print STDERR "[WARNING][APIManager] Available models: " . join(", ", map { $_->{id} || '?' } @$models) . "\n";
         print STDERR "[WARNING][APIManager] Will use fallback token limits\n";
     }
@@ -1304,14 +1322,117 @@ sub _learn_from_api_response {
 sub _prepare_endpoint_config {
     my ($self, %opts) = @_;
     
-    my $endpoint_config = $self->get_endpoint_config();
-    my $endpoint = $self->{api_base};
     my $model = $opts{model} // $self->get_current_model();
+    
+    # Parse provider prefix from model name (e.g., "github_copilot/gpt-4.1")
+    my ($target_provider, $api_model) = $self->_parse_model_provider($model);
+    
+    my $endpoint_config;
+    my $endpoint;
+    
+    if ($target_provider && $target_provider ne ($self->{config}->get('provider') || '')) {
+        # Model specifies a different provider - resolve its config
+        $endpoint_config = $self->_get_endpoint_config_for_provider($target_provider);
+        
+        require CLIO::Providers;
+        my $provider_def = CLIO::Providers::get_provider($target_provider);
+        $endpoint = $provider_def ? $provider_def->{api_base} : $self->{api_base};
+    } else {
+        # Use current provider config
+        $endpoint_config = $self->get_endpoint_config();
+        $endpoint = $self->{api_base};
+    }
     
     return {
         config => $endpoint_config,
         endpoint => $endpoint,
-        model => $model,
+        model => $api_model,
+    };
+}
+
+=head2 _parse_model_provider($model)
+
+Parse provider prefix from a model name.
+
+Handles formats:
+  - "github_copilot/gpt-4.1" -> ("github_copilot", "gpt-4.1")
+  - "openrouter/deepseek/deepseek-r1" -> ("openrouter", "deepseek/deepseek-r1")
+  - "gpt-4.1" -> (undef, "gpt-4.1")
+
+Returns: ($provider, $api_model_name)
+
+=cut
+
+sub _parse_model_provider {
+    my ($self, $model) = @_;
+    
+    return (undef, $model) unless $model;
+    
+    # Check if model starts with a known CLIO provider name
+    require CLIO::Providers;
+    
+    if ($model =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i) {
+        my ($prefix, $rest) = ($1, $2);
+        
+        if (CLIO::Providers::provider_exists($prefix)) {
+            return ($prefix, $rest);
+        }
+    }
+    
+    # No provider prefix found - use current provider
+    return (undef, $model);
+}
+
+=head2 _get_endpoint_config_for_provider($provider_name)
+
+Get endpoint configuration for a specific provider (used for cross-provider routing).
+
+=cut
+
+sub _get_endpoint_config_for_provider {
+    my ($self, $provider_name) = @_;
+    
+    # Resolve API key for the target provider
+    my $api_key = $self->{config}->get_provider_key($provider_name);
+    
+    # For github_copilot, use OAuth token
+    if ($provider_name eq 'github_copilot' && !$api_key) {
+        eval {
+            require CLIO::Core::GitHubAuth;
+            my $auth = CLIO::Core::GitHubAuth->new(debug => $self->{debug});
+            $api_key = $auth->get_copilot_token();
+            # Track if using exchanged token for header requirements
+            $self->{using_exchanged_token} = $auth->{using_exchanged_token};
+        };
+    }
+    
+    $api_key ||= '';
+    
+    # Build endpoint-specific config (same structure as get_endpoint_config)
+    my %configs = (
+        'github_copilot' => {
+            auth_header => 'Authorization',
+            auth_value => "Bearer $api_key",
+            path_suffix => '',
+            temperature_range => [0.0, 1.0],
+            supports_tools => 1,
+            requires_copilot_headers => 1
+        },
+        'openrouter' => {
+            auth_header => 'Authorization',
+            auth_value => "Bearer $api_key",
+            path_suffix => '',
+            temperature_range => [0.0, 2.0],
+            supports_tools => 1
+        },
+    );
+    
+    return $configs{$provider_name} || {
+        auth_header => 'Authorization',
+        auth_value => "Bearer $api_key",
+        path_suffix => '/chat/completions',
+        temperature_range => [0.0, 2.0],
+        supports_tools => 1
     };
 }
 
