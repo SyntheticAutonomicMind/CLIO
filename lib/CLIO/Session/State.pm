@@ -715,10 +715,16 @@ sub record_api_usage {
         # Fetch multiplier from GitHub Copilot API if using GitHub Copilot provider
         # No more hardcoded model name patterns!
         if ($provider && $provider eq 'github_copilot') {
-            # Fetch multiplier from GitHub Copilot API
+            # Strip provider prefix for API lookup: "github_copilot/gpt-4.1" -> "gpt-4.1"
+            my $api_model = $model;
+            require CLIO::Providers;
+            if ($api_model =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i && CLIO::Providers::provider_exists($1)) {
+                $api_model = $2;
+            }
+            
             require CLIO::Core::GitHubCopilotModelsAPI;
             my $api = CLIO::Core::GitHubCopilotModelsAPI->new(debug => $self->{debug});
-            my $billing_info = $api->get_model_billing($model);
+            my $billing_info = $api->get_model_billing($api_model);
             if ($billing_info && defined $billing_info->{multiplier}) {
                 $multiplier = $billing_info->{multiplier};
                 $self->{billing}{multiplier} = $multiplier;
