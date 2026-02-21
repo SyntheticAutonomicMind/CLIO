@@ -590,79 +590,78 @@ sub _handle_api_set {
         $self->_reinit_api_manager();
     }
     elsif ($setting eq 'model') {
-        # Support provider-prefixed model names: provider/model
-        # e.g., anthropic/claude-sonnet-4, google/gemini-2.5-flash
-        my $target_provider;
-        my $model_name = $value;
+        # Multi-provider model format: provider/model
+        # e.g., github_copilot/gpt-4.1, openrouter/deepseek/deepseek-r1-0528
+        # If no provider prefix, auto-prepend current provider
         
-        if ($value =~ m{^([a-z_-]+)/(.+)$}i) {
-            my ($prefix, $suffix) = ($1, $2);
-            
-            # Check if prefix is a valid provider AND we're not on a provider
-            # that uses namespaced model names (e.g., OpenRouter: "deepseek/deepseek-r1")
-            # Only auto-switch if user explicitly wants a provider change
-            require CLIO::Providers;
-            my $current_provider = $self->{config}->get('provider') || '';
-            my $uses_namespaced_models = ($current_provider eq 'openrouter');
-            
-            if (CLIO::Providers::provider_exists($prefix) && !$uses_namespaced_models) {
-                $target_provider = $prefix;
-                $model_name = $suffix;
+        require CLIO::Providers;
+        my $current_provider = $self->{config}->get('provider') || '';
+        my $full_model = $value;
+        my $display_model = $value;
+        
+        # Check if value has a CLIO provider prefix
+        my $has_provider_prefix = 0;
+        if ($value =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i) {
+            my ($prefix, $rest) = ($1, $2);
+            if (CLIO::Providers::provider_exists($prefix)) {
+                $has_provider_prefix = 1;
                 
-                # Auto-switch provider
-                if ($current_provider ne $target_provider) {
-                    # Switch provider first
-                    if ($self->{config}->set_provider($target_provider)) {
-                        $self->display_system_message("Auto-switched to provider: $target_provider");
-                    } else {
-                        $self->display_error_message("Failed to switch to provider: $target_provider");
-                        return;
-                    }
+                # Validate that the provider has an API key configured
+                my $provider_key = $self->{config}->get_provider_key($prefix);
+                my $has_auth = $provider_key 
+                    || $prefix eq 'github_copilot'  # Uses OAuth tokens
+                    || $prefix eq 'sam'              # Local, may not need auth
+                    || $prefix eq 'llama.cpp'        # Local
+                    || $prefix eq 'lmstudio';        # Local
+                
+                unless ($has_auth) {
+                    $self->display_error_message("Provider '$prefix' has no API key configured.");
+                    $self->display_system_message("Set it with: /api set provider $prefix && /api set key <your-key>");
+                    return;
                 }
             }
         }
         
-        # Validate model exists using ModelRegistry with GitHub Copilot API support
-        require CLIO::Core::ModelRegistry;
+        # Auto-prepend current provider if no provider prefix
+        if (!$has_provider_prefix && $current_provider) {
+            $full_model = "$current_provider/$value";
+            $display_model = $full_model;
+        }
         
-        # Get current provider to determine if we need GitHub Copilot API
-        my $provider = $self->{config}->get('provider') || '';
-        my $api_base = $self->{config}->get('api_base') || '';
+        # Extract the API model name (without CLIO provider prefix) for validation
+        my $api_model = $value;
+        my $target_provider = $current_provider;
+        if ($full_model =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i) {
+            my ($prefix, $rest) = ($1, $2);
+            if (CLIO::Providers::provider_exists($prefix)) {
+                $target_provider = $prefix;
+                $api_model = $rest;
+            }
+        }
         
-        my $registry_args = {};
-        
-        # If using GitHub Copilot, fetch models from their API
-        if ($provider eq 'github_copilot' || $api_base =~ /githubcopilot\.com/) {
+        # Validate model for GitHub Copilot (which has a model registry)
+        if ($target_provider eq 'github_copilot') {
+            require CLIO::Core::ModelRegistry;
+            my $registry_args = {};
             eval {
                 require CLIO::Core::GitHubCopilotModelsAPI;
                 my $models_api = CLIO::Core::GitHubCopilotModelsAPI->new(debug => $self->{debug});
                 $registry_args->{github_copilot_api} = $models_api;
             };
-            if ($@) {
-                print STDERR "[WARN][API] Failed to load GitHubCopilotModelsAPI: $@\n" if should_log('DEBUG');
+            
+            my $registry = CLIO::Core::ModelRegistry->new(%$registry_args);
+            my ($valid, $error) = $registry->validate_model($api_model);
+            
+            unless ($valid) {
+                $self->display_error_message($error);
+                return;
             }
         }
+        # Other providers: accept any model name (validated at runtime by the API)
         
-        my $registry = CLIO::Core::ModelRegistry->new(%$registry_args);
-        my ($valid, $error) = $registry->validate_model($model_name);
+        # Store the full provider/model name
+        $self->_set_api_setting('model', $full_model, $session_only);
         
-        # Skip validation for providers where we don't have a model registry
-        # Currently only GitHub Copilot has server-side model validation
-        # All other providers (OpenRouter, OpenAI, Anthropic, etc.) accept any model name
-        if (!$valid && $provider ne 'github_copilot') {
-            $valid = 1;
-            print STDERR "[DEBUG][API] Skipping model validation for provider: $provider (no registry)\n"
-                if $self->{debug};
-        }
-        
-        unless ($valid) {
-            $self->display_error_message($error);
-            return;
-        }
-        
-        $self->_set_api_setting('model', $model_name, $session_only);
-        
-        my $display_model = $target_provider ? "$target_provider/$model_name" : $model_name;
         $self->display_system_message("Model set to: $display_model" . ($session_only ? " (session only)" : " (saved)"));
         $self->_reinit_api_manager();
     }
@@ -1104,85 +1103,217 @@ sub handle_models_command {
         }
     } @args;
     
-    my $provider = $self->{config}->get('provider') || '';
-    my $api_base = $self->{config}->get('api_base');
+    # Collect models from ALL configured providers
+    my @all_models;
     
-    # For GitHub Copilot, use GitHubCopilotModelsAPI
-    if ($provider eq 'github_copilot' || $api_base =~ /githubcopilot\.com/) {
-        print STDERR "[DEBUG][API] Using GitHubCopilotModelsAPI for /models (refresh=$refresh)\n" if should_log('DEBUG');
+    require CLIO::Providers;
+    my @providers = CLIO::Providers::list_providers();
+    
+    for my $provider_name (@providers) {
+        my $provider_def = CLIO::Providers::get_provider($provider_name);
+        next unless $provider_def;
         
-        eval {
-            require CLIO::Core::GitHubCopilotModelsAPI;
-            my $cache_ttl = $refresh ? 0 : undef;  # If refreshing, bypass cache
-            my $models_api = CLIO::Core::GitHubCopilotModelsAPI->new(debug => $self->{debug}, cache_ttl => $cache_ttl);
-            my $data = $models_api->fetch_models();
-            
-            unless ($data) {
-                $self->display_error_message("Failed to fetch models from GitHub Copilot API");
-                return;
-            }
-            
-            my $models = $data->{data} || [];
-            
-            unless (@$models) {
-                $self->display_error_message("No models returned from API");
-                return;
-            }
-            
-            $self->_display_models_list($models, 'https://api.githubcopilot.com');
-        };
+        # Check if provider has authentication configured
+        my $api_key = $self->{config}->get_provider_key($provider_name);
+        my $has_auth = $api_key 
+            || $provider_name eq 'github_copilot'   # Uses OAuth
+            || $provider_name eq 'sam'               # Local
+            || $provider_name eq 'llama.cpp'         # Local
+            || $provider_name eq 'lmstudio';         # Local
         
-        if ($@) {
-            $self->display_error_message("Error using GitHubCopilotModelsAPI: $@");
+        # For GitHub Copilot, check if we have a token
+        if ($provider_name eq 'github_copilot' && !$api_key) {
+            eval {
+                require CLIO::Core::GitHubAuth;
+                my $auth = CLIO::Core::GitHubAuth->new(debug => 0);
+                $api_key = $auth->get_copilot_token();
+                $has_auth = 1 if $api_key;
+            };
+            $has_auth = 0 unless $api_key;
         }
         
+        next unless $has_auth;
+        
+        # Fetch models from this provider
+        my $models = $self->_fetch_provider_models($provider_name, $provider_def, $api_key, $refresh);
+        
+        if ($models && @$models) {
+            # Prefix model IDs with provider name
+            for my $model (@$models) {
+                $model->{_provider} = $provider_name;
+                $model->{_provider_display} = $provider_def->{name} || $provider_name;
+                $model->{_full_id} = "$provider_name/$model->{id}";
+            }
+            push @all_models, @$models;
+        }
+    }
+    
+    unless (@all_models) {
+        $self->display_error_message("No models available from any configured provider");
+        $self->display_system_message("Configure a provider with: /api set provider <name>");
         return;
     }
     
-    # For other providers, use generic API call
-    my $api_key = $self->{config}->get('api_key');
+    $self->_display_multi_provider_models(\@all_models);
+}
+
+=head2 _fetch_provider_models
+
+Fetch models from a specific provider.
+
+=cut
+
+sub _fetch_provider_models {
+    my ($self, $provider_name, $provider_def, $api_key, $refresh) = @_;
     
-    unless ($api_key) {
-        $self->display_error_message("API key not set");
-        $self->display_system_message("Use /api key <value> to set API key");
-        return;
+    my $models = [];
+    
+    if ($provider_name eq 'github_copilot') {
+        eval {
+            require CLIO::Core::GitHubCopilotModelsAPI;
+            my $cache_ttl = $refresh ? 0 : undef;
+            my $models_api = CLIO::Core::GitHubCopilotModelsAPI->new(
+                debug => $self->{debug},
+                cache_ttl => $cache_ttl,
+                api_key => $api_key,
+            );
+            my $data = $models_api->fetch_models();
+            $models = $data->{data} || [] if $data;
+        };
+        if ($@) {
+            print STDERR "[WARN][API] Failed to fetch GitHub Copilot models: $@\n" if should_log('WARN');
+        }
+    } else {
+        # Generic OpenAI-compatible /models endpoint
+        my $api_base = $provider_def->{api_base} || '';
+        
+        # Determine models URL
+        my $models_url;
+        if ($api_base =~ m{openrouter\.ai}i) {
+            $models_url = 'https://openrouter.ai/api/v1/models';
+        } elsif ($api_base =~ m{^(https?://[^/]+)}) {
+            $models_url = "$1/v1/models";
+        }
+        
+        return [] unless $models_url && $api_key;
+        
+        eval {
+            require CLIO::Compat::HTTP;
+            require JSON::PP;
+            my $ua = CLIO::Compat::HTTP->new(timeout => 30);
+            my %headers = ('Authorization' => "Bearer $api_key");
+            my $resp = $ua->get($models_url, headers => \%headers);
+            
+            if ($resp->is_success) {
+                my $data = JSON::PP::decode_json($resp->decoded_content);
+                $models = $data->{data} || [];
+            }
+        };
+        if ($@) {
+            print STDERR "[WARN][API] Failed to fetch models from $provider_name: $@\n" if should_log('WARN');
+        }
     }
     
-    my ($api_type, $models_url) = $self->_detect_api_type($api_base);
+    return $models;
+}
+
+=head2 _display_multi_provider_models
+
+Display models from multiple providers, grouped by provider.
+
+=cut
+
+sub _display_multi_provider_models {
+    my ($self, $all_models) = @_;
     
-    unless ($models_url) {
-        $self->display_error_message("Unable to determine models endpoint for: $api_base");
-        return;
+    # Group models by provider
+    my %by_provider;
+    for my $model (@$all_models) {
+        my $provider = $model->{_provider} || 'unknown';
+        push @{$by_provider{$provider}}, $model;
     }
     
-    print STDERR "[DEBUG][API] Querying models from $models_url (type: $api_type)\n" if should_log('DEBUG');
+    # Sort providers: github_copilot first, then alphabetically
+    my @provider_order = sort {
+        return -1 if $a eq 'github_copilot';
+        return 1 if $b eq 'github_copilot';
+        return $a cmp $b;
+    } keys %by_provider;
     
-    require CLIO::Compat::HTTP;
-    my $ua = CLIO::Compat::HTTP->new(timeout => 30);
-    my %headers = ('Authorization' => "Bearer $api_key");
-    my $resp = $ua->get($models_url, headers => \%headers);
+    $self->refresh_terminal_size();
+    $self->{chat}->{line_count} = 0;
+    $self->{chat}->{pages} = [];
+    $self->{chat}->{current_page} = [];
+    $self->{chat}->{page_index} = 0;
+    $self->{chat}->{pagination_enabled} = 1;  # Enable pagination for model list
     
-    unless ($resp->is_success) {
-        $self->display_error_message("Failed to fetch models: " . $resp->code . " " . $resp->message);
-        print STDERR "[ERROR][API] Response: " . $resp->decoded_content . "\n" if $self->{debug};
-        return;
+    my @lines;
+    my $total_count = scalar @$all_models;
+    
+    push @lines, "";
+    push @lines, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
+    push @lines, $self->colorize("AVAILABLE MODELS", 'DATA') . " (" . scalar(@provider_order) . " providers, $total_count models)";
+    push @lines, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
+    
+    for my $provider_name (@provider_order) {
+        my $models = $by_provider{$provider_name};
+        my $display_name = $models->[0]{_provider_display} || $provider_name;
+        my $count = scalar @$models;
+        
+        push @lines, "";
+        push @lines, $self->colorize("$display_name ($count models)", 'THEME');
+        push @lines, "  " . ("─" x 72);
+        
+        # Sort models by ID
+        my @sorted = sort { $a->{id} cmp $b->{id} } @$models;
+        
+        for my $model (@sorted) {
+            my $full_id = $model->{_full_id} || $model->{id};
+            my $billing_info = '';
+            
+            # Check for billing data (GitHub Copilot)
+            if ($model->{billing} && defined $model->{billing}{multiplier}) {
+                my $mult = $model->{billing}{multiplier};
+                if ($mult == 0) {
+                    $billing_info = 'FREE';
+                } elsif ($mult == int($mult)) {
+                    $billing_info = int($mult) . 'x';
+                } else {
+                    $billing_info = sprintf("%.1fx", $mult);
+                }
+            }
+            
+            # Truncate long model names to fit terminal
+            my $max_name = $billing_info ? 62 : 74;
+            my $display_id = $full_id;
+            if (length($display_id) > $max_name) {
+                $display_id = substr($display_id, 0, $max_name - 3) . "...";
+            }
+            
+            if ($billing_info) {
+                my $colored = $self->colorize($display_id, 'USER');
+                my $pad = $max_name - length($display_id);
+                $pad = 1 if $pad < 1;
+                push @lines, sprintf("  %s%s %10s", $colored, ' ' x $pad, $billing_info);
+            } else {
+                push @lines, "  " . $self->colorize($display_id, 'USER');
+            }
+        }
     }
     
-    require JSON::PP;
-    my $data = eval { JSON::PP::decode_json($resp->decoded_content) };
-    if ($@) {
-        $self->display_error_message("Failed to parse models response: $@");
-        return;
+    push @lines, "";
+    push @lines, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
+    push @lines, sprintf("Total: %d models across %d providers", $total_count, scalar(@provider_order));
+    push @lines, "";
+    push @lines, $self->colorize("Usage: /api set model <provider>/<model>", 'SYSTEM');
+    push @lines, $self->colorize("  e.g.: /api set model github_copilot/gpt-4.1", 'SYSTEM');
+    push @lines, $self->colorize("  e.g.: /api set model openrouter/deepseek/deepseek-r1-0528", 'SYSTEM');
+    push @lines, "";
+    
+    for my $line (@lines) {
+        last unless $self->writeline($line);
     }
-    
-    my $models = $data->{data} || [];
-    
-    unless (@$models) {
-        $self->display_error_message("No models returned from API");
-        return;
-    }
-    
-    $self->_display_models_list($models, $api_base);
+    $self->{chat}->{pagination_enabled} = 0;  # Disable pagination after list
 }
 
 =head2 _display_models_list
@@ -1230,6 +1361,7 @@ sub _display_models_list {
     $self->{chat}->{pages} = [];
     $self->{chat}->{current_page} = [];
     $self->{chat}->{page_index} = 0;
+    $self->{chat}->{pagination_enabled} = 1;  # Enable pagination for model list
     
     my @lines;
     
@@ -1288,10 +1420,10 @@ sub _display_models_list {
     for my $line (@lines) {
         last unless $self->writeline($line);
     }
+    $self->{chat}->{pagination_enabled} = 0;  # Disable pagination after list
 }
 
 =head2 _format_model_for_display
-
 Format a model for display
 
 =cut
