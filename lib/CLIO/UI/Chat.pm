@@ -1114,15 +1114,33 @@ sub display_header {
     my %provider_names = (
         'github_copilot' => 'GitHub Copilot',
         'openai' => 'OpenAI',
+        'openrouter' => 'OpenRouter',
         'claude' => 'Anthropic Claude',
+        'anthropic' => 'Anthropic',
         'qwen' => 'Qwen',
         'deepseek' => 'DeepSeek',
         'gemini' => 'Google Gemini',
+        'google' => 'Google Gemini',
         'grok' => 'xAI Grok',
+        'sam' => 'SAM (Local)',
+        'llama.cpp' => 'llama.cpp (Local)',
+        'lmstudio' => 'LM Studio',
     );
     
     my $provider_display = $provider ? ($provider_names{$provider} || ucfirst($provider)) : 'Unknown';
-    my $model_with_provider = "$model\@$provider_display";
+    
+    # Strip CLIO provider prefix from model name for display
+    # "github_copilot/gpt-4.1" -> "gpt-4.1" (provider shown after @)
+    my $display_model = $model;
+    require CLIO::Providers;
+    if ($display_model =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i && CLIO::Providers::provider_exists($1)) {
+        $display_model = $2;
+        # Also update provider_display from the model prefix if provider wasn't set
+        unless ($provider) {
+            $provider_display = $provider_names{$1} || ucfirst($1);
+        }
+    }
+    my $model_with_provider = "$display_model\@$provider_display";
     
     print "\n";
     
@@ -1268,14 +1286,20 @@ sub _prepopulate_session_data {
         if ($model ne 'unknown' && !$state->{billing}{model}) {
             $state->{billing}{model} = $model;
             
-            # Get billing multiplier
+            # Get billing multiplier (strip provider prefix for API lookup)
             eval {
                 require CLIO::Core::GitHubCopilotModelsAPI;
                 my $models_api = CLIO::Core::GitHubCopilotModelsAPI->new(debug => $self->{debug});
-                my $billing = $models_api->get_model_billing($model);
+                # Strip provider prefix: "github_copilot/gpt-4.1" -> "gpt-4.1"
+                my $api_model = $model;
+                require CLIO::Providers;
+                if ($api_model =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i && CLIO::Providers::provider_exists($1)) {
+                    $api_model = $2;
+                }
+                my $billing = $models_api->get_model_billing($api_model);
                 if ($billing && defined $billing->{multiplier}) {
                     $state->{billing}{multiplier} = $billing->{multiplier};
-                    print STDERR "[DEBUG][Chat] Prepopulated model billing: $model -> " .
+                    print STDERR "[DEBUG][Chat] Prepopulated model billing: $api_model -> " .
                         "$billing->{multiplier}x\n" if should_log('DEBUG');
                 }
             };
@@ -1298,8 +1322,15 @@ sub _build_prompt {
     my $model = 'unknown';
     if ($self->{ai_agent} && $self->{ai_agent}->{api}) {
         $model = $self->{ai_agent}->{api}->get_current_model() || 'unknown';
-        # Abbreviate long model names
-        $model =~ s/-20\d{6}$//;  # Remove date suffix (e.g., -20250219)
+        # Remove date suffix (e.g., -20250219)
+        $model =~ s/-20\d{6}$//;
+        # For prompt display, abbreviate provider prefix
+        # "github_copilot/gpt-4.1" -> "gpt-4.1"
+        # "openrouter/deepseek/deepseek-r1" -> "deepseek/deepseek-r1"
+        require CLIO::Providers;
+        if ($model =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i && CLIO::Providers::provider_exists($1)) {
+            $model = $2;
+        }
     }
     push @parts, $self->colorize("[$model]", 'prompt_model');
     
