@@ -610,21 +610,26 @@ sub run {
             my $on_thinking = sub {
                 my ($content, $signal) = @_;
                 
+                # Check if thinking display is enabled (default: off)
+                my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
+                return unless $show_thinking;
+                
                 # Handle start/end signals from native providers (Anthropic)
                 if (defined $signal) {
                     if ($signal eq 'start') {
                         $thinking_active = 1;
                         # Stop spinner if running and show thinking header
                         $spinner->stop();
-                        print $self->colorize("CLIO: ", 'ASSISTANT');
-                        print $self->colorize("\x{26A1} Reasoning...\n", 'DIM');
+                        print $self->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
+                        print $self->colorize("Thinking", 'DIM');
+                        print $self->colorize("\n", 'DIM');
                         STDOUT->flush() if STDOUT->can('flush');
                         return;
                     }
                     elsif ($signal eq 'end') {
                         $thinking_active = 0;
-                        # Print separator before regular content
-                        print $self->colorize("\x{2500}" x 40 . "\n", 'DIM');
+                        # Print closing box before regular content
+                        print $self->colorize("\n\x{2514}\x{2500}\x{2500}\x{2500}\n", 'DIM');
                         STDOUT->flush() if STDOUT->can('flush');
                         # Reset first_chunk_received so CLIO: prefix prints for actual response
                         $first_chunk_received = 0;
@@ -640,8 +645,9 @@ sub run {
                 if (!$thinking_active) {
                     $thinking_active = 1;
                     $spinner->stop();
-                    print $self->colorize("CLIO: ", 'ASSISTANT');
-                    print $self->colorize("\x{26A1} Reasoning...\n", 'DIM');
+                    print $self->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
+                    print $self->colorize("Thinking", 'DIM');
+                    print $self->colorize("\n", 'DIM');
                     STDOUT->flush() if STDOUT->can('flush');
                 }
                 
