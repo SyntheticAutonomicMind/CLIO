@@ -6,6 +6,7 @@ use utf8;
 use CLIO::Coordination::Broker;
 use CLIO::Coordination::Client;
 use POSIX qw(setsid);
+use Carp qw(croak);
 
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
@@ -25,7 +26,7 @@ sub new {
     my ($class, %args) = @_;
     
     my $session_id = $args{session_id};
-    die "session_id required" unless $session_id;
+    croak "session_id required" unless $session_id;
     
     # Determine temporary directory (use /dev/shm on Linux, /tmp on macOS)
     my $temp_dir = '/dev/shm';
@@ -81,7 +82,7 @@ sub spawn_agent {
     }
     
     my $pid = fork();
-    die "Fork failed: $!" unless defined $pid;
+    croak "Fork failed: $!" unless defined $pid;
     
     if ($pid == 0) {
         # Child process - become sub-agent

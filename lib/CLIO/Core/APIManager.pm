@@ -10,6 +10,7 @@ use CLIO::Providers qw(get_provider list_providers);
 use POSIX ":sys_wait_h"; # For WNOHANG
 use Time::HiRes qw(time sleep);  # High resolution time and sleep
 use CLIO::Util::JSON qw(encode_json decode_json);
+use Carp qw(croak);
 use CLIO::Compat::HTTP;
 BEGIN { require CLIO::Compat::HTTP; CLIO::Compat::HTTP->import(); }
 use Scalar::Util qw(blessed);
@@ -136,7 +137,7 @@ sub new {
     # Config object MUST be provided - it's the authority for all settings
     my $config = $args{config};
     unless ($config && $config->can('get')) {
-        die "[FATAL] APIManager requires Config object\n";
+        croak "APIManager requires Config object";
     }
     
     # Get settings from Config (NOT from ENV vars)
@@ -145,7 +146,7 @@ sub new {
     
     # Validate the URL format
     unless ($api_base && $api_base =~ m{^https?://}) {
-        die "[FATAL] Invalid API base URL from config: " . ($api_base || '(not set)') . " (must start with http:// or https://)\n";
+        croak "Invalid API base URL from config: " . ($api_base || '(not set)') . " (must start with http:// or https://)";
     }
     
     # Print debug info

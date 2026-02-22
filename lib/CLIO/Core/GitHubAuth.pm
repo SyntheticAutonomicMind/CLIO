@@ -8,6 +8,7 @@ use CLIO::Util::ConfigPath qw(get_config_file get_config_dir);
 use CLIO::Util::JSON qw(encode_json decode_json);
 use CLIO::Compat::HTTP;
 use Time::HiRes qw(sleep time);
+use Carp qw(croak);
 use File::Spec;
 
 =head1 NAME
@@ -325,7 +326,7 @@ sub save_tokens {
     my $json = encode_json($data);
     
     open my $fh, '>', $self->{tokens_file}
-        or die "Cannot write tokens file: $!";
+        or croak "Cannot write tokens file: $!";
     print $fh $json;
     close $fh;
     
@@ -366,7 +367,7 @@ sub load_tokens {
     my $data;
     eval {
         open my $fh, '<', $self->{tokens_file}
-            or die "Cannot read tokens file: $!";
+            or croak "Cannot read tokens file: $!";
         my $json = do { local $/; <$fh> };
         close $fh;
         

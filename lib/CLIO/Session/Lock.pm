@@ -3,6 +3,7 @@ package CLIO::Session::Lock;
 use strict;
 use warnings;
 use utf8;
+use Carp qw(croak);
 use CLIO::Core::Logger qw(should_log);
 use CLIO::Util::PathResolver;
 use File::Spec;
@@ -25,7 +26,7 @@ the same session simultaneously. Uses flock() for cross-process locking.
     
     # Acquire lock when resuming session
     my $lock = CLIO::Session::Lock->acquire($session_id);
-    die "Session locked by another process" unless $lock;
+    croak "Session locked by another process" unless $lock;
     
     # Lock is automatically released when $lock goes out of scope
     # or explicitly:
@@ -50,7 +51,7 @@ Returns: Lock object on success, undef on failure
 sub acquire {
     my ($class, $session_id, %options) = @_;
     
-    die "[ERROR] Session ID required for locking\n" unless $session_id;
+    croak "Session ID required for locking" unless $session_id;
     
     my $lock_file = _get_lock_file($session_id);
     my $timeout = $options{timeout} // 0;

@@ -5,6 +5,7 @@ use warnings;
 use CLIO::Core::Logger qw(should_log);
 use JSON::PP;
 use utf8;
+use Carp qw(croak);
 
 =head1 NAME
 
@@ -576,12 +577,12 @@ sub save {
         close $fh;
         
         # Atomic rename (overwrites target file atomically on Unix)
-        rename $temp_file, $file or die "Cannot save LTM (rename failed): $!";
+        rename $temp_file, $file or croak "Cannot save LTM (rename failed): $!";
     };
     if ($@) {
         # Clean up temp file if it exists
         unlink $temp_file if -f $temp_file;
-        die $@;
+        croak $@;
     }
     
     print STDERR "[DEBUG][LTM] Saved to $file\n" if should_log('DEBUG');

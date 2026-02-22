@@ -25,6 +25,7 @@ package CLIO::Memory::ShortTerm;
 use strict;
 use warnings;
 use utf8;
+use Carp qw(croak);
 use CLIO::Core::Logger qw(should_log);
 use CLIO::Util::JSON qw(encode_json decode_json);
 
@@ -143,7 +144,7 @@ sub _prune {
 
 sub save {
     my ($self, $file) = @_;
-    open my $fh, '>', $file or die "Cannot save STM: $!";
+    open my $fh, '>', $file or croak "Cannot save STM: $!";
     print $fh encode_json($self->{history});
     close $fh;
 }

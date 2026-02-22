@@ -3,6 +3,7 @@ package CLIO::Core::AgentLoop;
 use strict;
 use warnings;
 use utf8;
+use Carp qw(croak);
 use Time::HiRes qw(time sleep);
 
 binmode(STDOUT, ':encoding(UTF-8)');
@@ -38,8 +39,8 @@ collaborative team members.
 sub new {
     my ($class, %args) = @_;
     
-    my $client = $args{client} or die "client required";
-    my $on_task = $args{on_task} or die "on_task callback required";
+    my $client = $args{client} or croak "client required";
+    my $on_task = $args{on_task} or croak "on_task callback required";
     
     my $self = {
         client => $client,

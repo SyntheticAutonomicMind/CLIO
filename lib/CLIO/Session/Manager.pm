@@ -6,6 +6,7 @@ package CLIO::Session::Manager;
 use strict;
 use warnings;
 use utf8;
+use Carp qw(croak);
 use CLIO::Core::Logger qw(should_log);
 use CLIO::Session::State;
 use CLIO::Session::Lock;
@@ -250,12 +251,12 @@ sub load {
         my $lock_info = CLIO::Session::Lock->get_lock_info($session_id);
         
         if ($lock_info) {
-            die "[ERROR] Session '$session_id' is locked by another process\n" .
+            croak "Session '$session_id' is locked by another process\n" .
                 "  Process: $lock_info->{pid} on $lock_info->{hostname}\n" .
                 "  Since: " . scalar(localtime($lock_info->{timestamp})) . "\n" .
                 "  Use --force to override (not recommended)\n";
         } else {
-            die "[ERROR] Session '$session_id' is locked by another process\n";
+            croak "Session '$session_id' is locked by another process";
         }
     }
     

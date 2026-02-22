@@ -6,6 +6,7 @@ use utf8;
 use CLIO::Core::Logger qw(should_log);
 use CLIO::Util::ConfigPath qw(get_config_file);
 use CLIO::Util::TextSanitizer qw(sanitize_text);
+use Carp qw(croak);
 use CLIO::Util::JSON qw(encode_json decode_json);
 use File::Spec;
 use File::Path qw(make_path);
@@ -520,7 +521,7 @@ sub _ensure_directories {
     for my $dir ($self->{prompts_dir}, $self->{custom_dir}) {
         unless (-d $dir) {
             make_path($dir) or do {
-                die "[ERROR][PromptManager] Cannot create directory $dir: $!\n";
+                croak "Cannot create prompt directory $dir: $!";
             };
             print STDERR "[DEBUG][PromptManager] Created directory: $dir\n"
                 if $self->{debug};
@@ -642,12 +643,12 @@ sub _write_prompt_file {
     # Ensure parent directory exists
     my $dir = dirname($file);
     unless (-d $dir) {
-        make_path($dir) or die "Cannot create directory $dir: $!\n";
+        make_path($dir) or croak "Cannot create directory $dir: $!";
     }
     
     # Write file
     open(my $fh, '>:encoding(UTF-8)', $file) or do {
-        die "Cannot write to $file: $!\n";
+        croak "Cannot write to $file: $!";
     };
     
     print $fh $content;

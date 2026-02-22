@@ -6,6 +6,7 @@ package CLIO::Session::State;
 use strict;
 use warnings;
 use utf8;
+use Carp qw(croak);
 use CLIO::Core::Logger qw(should_log);
 use CLIO::Util::PathResolver;
 use File::Spec;
@@ -122,12 +123,12 @@ sub save {
     # This prevents corruption if process is killed during write
     # Use process ID in temp filename to prevent race conditions with multiple agents
     my $temp_file = $self->{file} . '.tmp.' . $$;
-    open my $fh, '>', $temp_file or die "Cannot create temp session file: $!";
+    open my $fh, '>', $temp_file or croak "Cannot create temp session file: $!";
     print $fh encode_json($data);
     close $fh;
     
     # Atomic rename (overwrites target file atomically on Unix)
-    rename $temp_file, $self->{file} or die "Cannot save session (rename failed): $!";
+    rename $temp_file, $self->{file} or croak "Cannot save session (rename failed): $!";
 }
 sub load {
     my ($class, $session_id, %args) = @_;

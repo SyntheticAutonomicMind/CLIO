@@ -8,6 +8,7 @@ use IO::Select;
 use CLIO::Util::JSON qw(encode_json decode_json);
 use Time::HiRes qw(time);
 use POSIX qw(strftime);
+use Carp qw(croak);
 use File::Path qw(make_path);
 
 binmode(STDOUT, ':encoding(UTF-8)');
@@ -35,7 +36,7 @@ Based on the proven PhotonMUD broker architecture.
 sub new {
     my ($class, %args) = @_;
     
-    my $session_id = $args{session_id} or die "session_id required";
+    my $session_id = $args{session_id} or croak "session_id required";
     my $socket_dir = $args{socket_dir} || '/dev/shm/clio';
     
     # macOS uses /tmp instead of /dev/shm
