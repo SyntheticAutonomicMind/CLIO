@@ -6,6 +6,7 @@ package CLIO::Util::AnthropicXMLParser;
 use strict;
 use warnings;
 use utf8;
+use CLIO::Core::Logger qw(log_debug log_warning);
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use Exporter 'import';
@@ -105,8 +106,8 @@ sub parse_anthropic_xml_to_json {
     $debug //= 0;
     my %params;
     
-    print STDERR "[DEBUG][AnthropicXMLParser] Parsing Anthropic XML format\n" if $debug;
-    print STDERR "[DEBUG][AnthropicXMLParser] Input: " . substr($text, 0, 200) . "...\n" if $debug;
+    log_debug('AnthropicXMLParser', "Parsing Anthropic XML format");
+    log_debug('AnthropicXMLParser', "Input: " . substr($text, 0, 200) . "...") if $debug;
     
     # Strategy 1: Extract any existing JSON portions first
     # Pattern: Find {..."key":value...} before XML tags interfere
@@ -118,7 +119,7 @@ sub parse_anthropic_xml_to_json {
             # Remove quotes from string values for re-encoding
             $value =~ s/^"(.*)"$/$1/ if ($value =~ /^"/);
             $params{$key} = $value;
-            print STDERR "[DEBUG][AnthropicXMLParser] Extracted from JSON fragment: $key => $value\n" if $debug;
+            log_debug('AnthropicXMLParser', "Extracted from JSON fragment: $key => $value");
         }
     }
     
@@ -143,7 +144,7 @@ sub parse_anthropic_xml_to_json {
             $params{$name} = $value;  # String
         }
         
-        print STDERR "[DEBUG][AnthropicXMLParser] Extracted from XML: $name => $value\n" if $debug;
+        log_debug('AnthropicXMLParser', "Extracted from XML: $name => $value");
     }
     
     # Strategy 3: Handle mixed format with parameter tags as properties
@@ -153,17 +154,17 @@ sub parse_anthropic_xml_to_json {
         $value =~ s/^\s+|\s+$//g;
         $value =~ s/^"(.*)"$/$1/;  # Remove surrounding quotes if present
         $params{$name} = $value unless exists $params{$name};
-        print STDERR "[DEBUG][AnthropicXMLParser] Extracted from hybrid format: $name => $value\n" if $debug;
+        log_debug('AnthropicXMLParser', "Extracted from hybrid format: $name => $value");
     }
     
     if (%params) {
         my $json = encode_json(\%params);
-        print STDERR "[DEBUG][AnthropicXMLParser] Result JSON: $json\n" if $debug;
+        log_debug('AnthropicXMLParser', "Result JSON: $json");
         return $json;
     }
     
     # Fallback: return empty JSON object
-    print STDERR "[WARN][AnthropicXMLParser] No parameters extracted, returning empty object\n" if $debug;
+    log_warning('AnthropicXMLParser', "No parameters extracted, returning empty object");
     return '{}';
 }
 

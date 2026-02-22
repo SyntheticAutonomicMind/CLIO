@@ -5,7 +5,7 @@ use warnings;
 use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
-use CLIO::Core::Logger qw(should_log log_error log_warning);
+use CLIO::Core::Logger qw(should_log log_error log_warning log_debug);
 use CLIO::Util::ConfigPath qw(get_config_dir get_config_file);
 use CLIO::Util::JSON qw(encode_json decode_json);
 use CLIO::Compat::HTTP;
@@ -111,8 +111,7 @@ sub new {
         my $user_data = $user_api->get_cached_user() || $user_api->fetch_user();
         if ($user_data) {
             $api_base_url = $user_data->get_api_endpoint();
-            print STDERR "[DEBUG][GitHubCopilotModelsAPI] Using user-specific API: $api_base_url\n"
-                if $args{debug};
+            log_debug('GitHubCopilotModelsAPI', "Using user-specific API: $api_base_url");
         }
     };
     
@@ -151,7 +150,7 @@ sub new {
     };
     
     if ($self->{debug}) {
-        print STDERR "[DEBUG][GitHubCopilotModelsAPI] Using models base URL: $models_base_url\n";
+        log_debug('GitHubCopilotModelsAPI', "Using models base URL: $models_base_url");
     }
     
     return bless $self, $class;
@@ -176,25 +175,22 @@ sub fetch_models {
     
     # Check if we have an API key
     unless ($self->{api_key}) {
-        print STDERR "[WARN]GitHubCopilotModelsAPI] No API key available, cannot fetch models\n";
+        log_warning('GitHubCopilotModelsAPI', "No API key available, cannot fetch models");
         return undef;
     }
     
     # Check cache first
     if (my $cached = $self->_load_cache()) {
-        print STDERR "[DEBUG][GitHubCopilotModelsAPI] Using cached models data\n" 
-            if $self->{debug};
+        log_debug('GitHubCopilotModelsAPI', "Using cached models data");
         return $cached;
     }
     
-    print STDERR "[DEBUG][GitHubCopilotModelsAPI] Fetching from API\n" 
-        if $self->{debug};
+    log_debug('GitHubCopilotModelsAPI', "Fetching from API");
     
     # Build models endpoint URL
     my $models_url = "$self->{models_base_url}/models";
     
-    print STDERR "[DEBUG][GitHubCopilotModelsAPI] Fetching models from: $models_url\n"
-        if $self->{debug};
+    log_debug('GitHubCopilotModelsAPI', "Fetching models from: $models_url");
     
     # Fetch from API
     my $ua = CLIO::Compat::HTTP->new(timeout => 30);
@@ -210,8 +206,7 @@ sub fetch_models {
     my $resp = $ua->request($req);
     
     unless ($resp->is_success) {
-        print STDERR "[ERROR][GitHubCopilotModelsAPI] Failed to fetch models: " . 
-            $resp->code . " " . $resp->message . "\n" if should_log('ERROR');
+        log_error('GitHubCopilotModelsAPI', "Failed to fetch models: " . $resp->code . " " . $resp->message . "");
         return undef;
     }
     
@@ -224,8 +219,7 @@ sub fetch_models {
     # Cache the response
     $self->_save_cache($data);
     
-    print STDERR "[DEBUG][GitHubCopilotModelsAPI] Fetched " . 
-        scalar(@{$data->{data} || []}) . " models\n" if $self->{debug};
+    log_debug('GitHubCopilotModelsAPI', "Fetched " . scalar(@{$data->{data} || []}) . " models");
     
     return $data;
 }
@@ -255,10 +249,8 @@ sub get_model_billing {
     for my $model (@{$models_data->{data}}) {
         if ($model->{id} eq $model_id) {
             if ($model->{billing}) {
-                print STDERR "[DEBUG][GitHubCopilotModelsAPI] Found billing for $model_id: " .
-                    "premium=" . ($model->{billing}{is_premium} || 0) . ", " .
-                    "multiplier=" . ($model->{billing}{multiplier} || 0) . "\n"
-                    if $self->{debug};
+                log_debug('GitHubCopilotModelsAPI', "Found billing for $model_id: " . "premium=" . ($model->{billing}{is_premium} || 0) . ", " .
+                    "multiplier=" . ($model->{billing}{multiplier} || 0) . "\n");
                 
                 return {
                     is_premium => $model->{billing}{is_premium} || 0,
@@ -267,8 +259,7 @@ sub get_model_billing {
             } else {
                 # Model exists but API doesn't provide billing info
                 # This shouldn't happen with correct headers, but handle gracefully
-                print STDERR "[WARN]GitHubCopilotModelsAPI] Model $model_id has no billing data in API response\n"
-                    if should_log('WARNING');
+                log_warning('GitHubCopilotModelsAPI', "Model $model_id has no billing data in API response");
                 
                 return {is_premium => 0, multiplier => 0};  # Default to free if unknown
             }
@@ -276,8 +267,7 @@ sub get_model_billing {
     }
     
     # Model not found in API response
-    print STDERR "[WARN]GitHubCopilotModelsAPI] Model $model_id not found in API response\n"
-        if should_log('WARNING');
+    log_warning('GitHubCopilotModelsAPI', "Model $model_id not found in API response");
     
     return {is_premium => 0, multiplier => 0};  # Default to free if unknown
 }
@@ -352,10 +342,8 @@ sub get_model_capabilities {
                 $caps->{max_output_tokens} = $limits->{max_output_tokens} || 4096;
                 $caps->{max_context_window_tokens} = $limits->{max_context_window_tokens} || 128000;
                 
-                print STDERR "[DEBUG][GitHubCopilotModelsAPI] Capabilities for $model_id: " .
-                    "max_prompt=" . ($caps->{max_prompt_tokens} || 'N/A') . ", " .
-                    "max_output=" . ($caps->{max_output_tokens} || 'N/A') . "\n"
-                    if $self->{debug};
+                log_debug('GitHubCopilotModelsAPI', "Capabilities for $model_id: " . "max_prompt=" . ($caps->{max_prompt_tokens} || 'N/A') . ", " .
+                    "max_output=" . ($caps->{max_output_tokens} || 'N/A') . "\n");
             }
             
             return $caps;
@@ -382,8 +370,7 @@ sub _load_cache {
     # Check if cache is expired
     my $age = time() - (stat($self->{cache_file}))[9];
     if ($age > $self->{cache_ttl}) {
-        print STDERR "[DEBUG][GitHubCopilotModelsAPI] Cache expired (age: ${age}s, ttl: $self->{cache_ttl}s)\n"
-            if $self->{debug};
+        log_debug('GitHubCopilotModelsAPI', "Cache expired (age: ${age}s, ttl: $self->{cache_ttl}s)");
         return undef;
     }
     
@@ -411,21 +398,20 @@ sub _save_cache {
     my $cache_dir = dirname($self->{cache_file});
     unless (-d $cache_dir) {
         mkdir $cache_dir or do {
-            print STDERR "[WARN]GitHubCopilotModelsAPI] Cannot create cache directory: $!\n";
+            log_warning('GitHubCopilotModelsAPI', "Cannot create cache directory: $!");
             return;
         };
     }
     
     open my $fh, '>', $self->{cache_file} or do {
-        print STDERR "[WARN]GitHubCopilotModelsAPI] Cannot save cache: $!\n";
+        log_warning('GitHubCopilotModelsAPI', "Cannot save cache: $!");
         return;
     };
     
     print $fh encode_json($data);
     close $fh;
     
-    print STDERR "[DEBUG][GitHubCopilotModelsAPI] Saved models cache to $self->{cache_file}\n"
-        if $self->{debug};
+    log_debug('GitHubCopilotModelsAPI', "Saved models cache to $self->{cache_file}");
 }
 
 sub _generate_uuid {

@@ -112,8 +112,7 @@ sub fetch_user {
         }
     }
     
-    print STDERR "[DEBUG][CopilotUserAPI] Fetching user data from $self->{base_url}\n"
-        if $self->{debug};
+    log_debug('CopilotUserAPI', "Fetching user data from $self->{base_url}");
     
     my $req = HTTP::Request->new(GET => $self->{base_url});
     $req->header('Authorization' => "token $token");
@@ -160,8 +159,7 @@ sub fetch_user {
     # Cache the response
     $self->_save_cache($data);
     
-    print STDERR "[DEBUG][CopilotUserAPI] User data fetched: login=$user->{login}, plan=$user->{copilot_plan}\n"
-        if $self->{debug};
+    log_debug('CopilotUserAPI', "User data fetched: login=$user->{login}, plan=$user->{copilot_plan}");
     
     return $user;
 }
@@ -239,13 +237,11 @@ sub _load_cache {
     # Check TTL
     my $age = time() - ($cache->{cached_at} || 0);
     if ($age > $self->{cache_ttl}) {
-        print STDERR "[DEBUG][CopilotUserAPI] Cache expired (age=${age}s, ttl=$self->{cache_ttl}s)\n"
-            if $self->{debug};
+        log_debug('CopilotUserAPI', "Cache expired (age=${age}s, ttl=$self->{cache_ttl}s)");
         return undef;
     }
     
-    print STDERR "[DEBUG][CopilotUserAPI] Using cached user data (age=${age}s)\n"
-        if $self->{debug};
+    log_debug('CopilotUserAPI', "Using cached user data (age=${age}s)");
     
     return $cache->{data};
 }

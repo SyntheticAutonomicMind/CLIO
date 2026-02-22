@@ -6,7 +6,7 @@ use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use CLIO::Util::JSON qw(encode_json decode_json);
-use CLIO::Core::Logger qw(should_log log_debug);
+use CLIO::Core::Logger qw(should_log log_debug log_warning);
 
 =head1 NAME
 
@@ -135,7 +135,7 @@ sub _extract_xml_format {
         # Parse JSON
         my $data = eval { decode_json($json_str) };
         if ($@) {
-            print STDERR "[WARN]ToolCallExtractor] Failed to parse XML tool_call JSON: $@\n";
+            log_warning('ToolCallExtractor', "Failed to parse XML tool_call JSON: $@");
             next;
         }
         
@@ -197,7 +197,7 @@ sub _extract_clio_format {
         # The JSON might already contain the operation, or we need to wrap it
         my $arguments_data = eval { decode_json($json_str) };
         if ($@) {
-            print STDERR "[WARN]ToolCallExtractor] Failed to parse CLIO format JSON: $@\n";
+            log_warning('ToolCallExtractor', "Failed to parse CLIO format JSON: $@");
             next;
         }
         
@@ -258,7 +258,7 @@ sub _extract_call_format {
         # Validate JSON
         my $arguments_data = eval { decode_json($json_str) };
         if ($@) {
-            print STDERR "[WARN]ToolCallExtractor] Failed to parse CALL format JSON: $@\n";
+            log_warning('ToolCallExtractor', "Failed to parse CALL format JSON: $@");
             next;
         }
         

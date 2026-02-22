@@ -302,23 +302,23 @@ sub stop {
 
 sub log_info {
     my ($self, $msg) = @_;
-    print STDERR "[INFO][AgentLoop] $msg\n";
+    CLIO::Core::Logger::log_info('AgentLoop', "$msg");
 }
 
 sub log_debug {
     my ($self, $msg) = @_;
     return unless $self->{debug};
-    print STDERR "[DEBUG][AgentLoop] $msg\n";
+    CLIO::Core::Logger::log_debug('AgentLoop', "$msg");
 }
 
 sub log_warn {
     my ($self, $msg) = @_;
-    print STDERR "[WARNING][AgentLoop] $msg\n";
+    CLIO::Core::Logger::log_warning('AgentLoop', "$msg");
 }
 
 sub log_error {
     my ($self, $msg) = @_;
-    print STDERR "[ERROR][AgentLoop] $msg\n";
+    CLIO::Core::Logger::log_error('AgentLoop', "$msg");
 }
 
 1;

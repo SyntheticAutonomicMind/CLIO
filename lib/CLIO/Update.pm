@@ -12,7 +12,7 @@ use File::Spec;
 use File::Basename qw(dirname);
 use File::Path qw(mkpath rmtree);
 use CLIO::Util::JSON qw(decode_json);
-use CLIO::Core::Logger qw(should_log log_debug log_error);
+use CLIO::Core::Logger qw(should_log log_debug log_error log_warning);
 
 =head1 NAME
 
@@ -121,15 +121,13 @@ sub get_latest_version {
         $self->{github_repo}
     );
     
-    print STDERR "[DEBUG][Update] Fetching latest release from: $api_url\n"
-        if $self->{debug};
+    log_debug('Update', "Fetching latest release from: $api_url");
     
     # Use curl for HTTP request (more reliable than LWP)
     my $response = `curl -s -m $self->{timeout} -H "Accept: application/vnd.github+json" "$api_url" 2>/dev/null`;
     
     if ($? != 0) {
-        print STDERR "[DEBUG][Update] curl failed with exit code: " . ($? >> 8) . "\n"
-            if $self->{debug};
+        log_debug('Update', "curl failed with exit code: " . ($? >> 8));
         return undef;
     }
     
@@ -140,8 +138,7 @@ sub get_latest_version {
     };
     
     if ($@ || !$data) {
-        print STDERR "[DEBUG][Update] Failed to parse JSON response: $@\n"
-            if $self->{debug};
+        log_debug('Update', "Failed to parse JSON response: $@");
         return undef;
     }
     
@@ -190,15 +187,13 @@ sub get_all_releases {
         $page
     );
     
-    print STDERR "[DEBUG][Update] Fetching releases from: $api_url\n"
-        if $self->{debug};
+    log_debug('Update', "Fetching releases from: $api_url");
     
     # Use curl for HTTP request
     my $response = `curl -s -m $self->{timeout} -H "Accept: application/vnd.github+json" "$api_url" 2>/dev/null`;
     
     if ($? != 0) {
-        print STDERR "[DEBUG][Update] curl failed with exit code: " . ($? >> 8) . "\n"
-            if $self->{debug};
+        log_debug('Update', "curl failed with exit code: " . ($? >> 8));
         return undef;
     }
     
@@ -209,8 +204,7 @@ sub get_all_releases {
     };
     
     if ($@ || !$data || ref($data) ne 'ARRAY') {
-        print STDERR "[DEBUG][Update] Failed to parse JSON response: $@\n"
-            if $self->{debug};
+        log_debug('Update', "Failed to parse JSON response: $@");
         return undef;
     }
     
@@ -232,8 +226,7 @@ sub get_all_releases {
         };
     }
     
-    print STDERR "[DEBUG][Update] Found " . scalar(@releases) . " releases\n"
-        if $self->{debug};
+    log_debug('Update', "Found " . scalar(@releases) . " releases");
     
     return \@releases;
 }
@@ -265,8 +258,7 @@ sub get_release_by_version {
             $tag
         );
         
-        print STDERR "[DEBUG][Update] Fetching release by tag: $tag\n"
-            if $self->{debug};
+        log_debug('Update', "Fetching release by tag: $tag");
         
         my $response = `curl -s -m $self->{timeout} -H "Accept: application/vnd.github+json" "$api_url" 2>/dev/null`;
         
@@ -294,8 +286,7 @@ sub get_release_by_version {
         };
     }
     
-    print STDERR "[DEBUG][Update] Version $version not found\n"
-        if $self->{debug};
+    log_debug('Update', "Version $version not found");
     return undef;
 }
 
@@ -328,8 +319,7 @@ sub download_version {
     # Create download directory
     my $download_dir = "/tmp/clio-update-$version";
     if (-d $download_dir) {
-        print STDERR "[DEBUG][Update] Removing existing download dir: $download_dir\n"
-            if $self->{debug};
+        log_debug('Update', "Removing existing download dir: $download_dir");
         rmtree($download_dir);
     }
     
@@ -340,8 +330,7 @@ sub download_version {
     
     # Download tarball
     my $tarball_path = "$download_dir/clio.tar.gz";
-    print STDERR "[DEBUG][Update] Downloading version $version from: $tarball_url\n"
-        if $self->{debug};
+    log_debug('Update', "Downloading version $version from: $tarball_url");
     
     my $curl_result = system("curl", "-sL", "-m", "30", "-o", $tarball_path, $tarball_url);
     
@@ -352,8 +341,7 @@ sub download_version {
     }
     
     # Extract tarball
-    print STDERR "[DEBUG][Update] Extracting tarball\n"
-        if $self->{debug};
+    log_debug('Update', "Extracting tarball");
     
     my $extract_result = system("cd '$download_dir' && tar -xzf clio.tar.gz 2>/dev/null");
     
@@ -383,8 +371,7 @@ sub download_version {
         return undef;
     }
     
-    print STDERR "[DEBUG][Update] Successfully downloaded version $version to: $extracted_dir\n"
-        if $self->{debug};
+    log_debug('Update', "Successfully downloaded version $version to: $extracted_dir");
     
     return $extracted_dir;
 }
@@ -487,14 +474,12 @@ sub check_for_updates_async {
         my $age = time() - $mtime;
         
         if ($age < $self->{cache_duration}) {
-            print STDERR "[DEBUG][Update] Cache is fresh (age: ${age}s), skipping check\n"
-                if $self->{debug};
+            log_debug('Update', "Cache is fresh (age: ${age}s), skipping check");
             return;
         }
     }
     
-    print STDERR "[DEBUG][Update] Starting background update check\n"
-        if $self->{debug};
+    log_debug('Update', "Starting background update check");
     
     # Fork to background
     my $pid = fork();
@@ -502,8 +487,7 @@ sub check_for_updates_async {
     if (!defined $pid) {
         # Fork failures during background update check are not critical
         # Only log in debug mode to avoid alarming users
-        print STDERR "[DEBUG][Update] Failed to fork for background update check\n" 
-            if should_log('DEBUG');
+        log_debug('Update', "Failed to fork for background update check");
         return;
     }
     
@@ -665,8 +649,7 @@ sub detect_install_location {
     } else {
         # Maybe clio is in a bin subdirectory?
         # This shouldn't happen with CLIO's install.sh, but handle it anyway
-        print STDERR "[WARN][Update] Cannot find lib/CLIO in $bin_dir - may be development mode\n"
-            if $self->{debug};
+        log_warning('Update', "Cannot find lib/CLIO in $bin_dir - may be development mode");
     }
     
     # Determine if this is a user install or system install
@@ -690,9 +673,9 @@ sub detect_install_location {
     log_debug('Update', "Path: $clio_path");
     log_debug('Update', "Install dir: $install_dir");
     log_debug('Update', "Type: $type");
-    print STDERR "[DEBUG][Update]   User home: " . ($is_user_home ? 'yes' : 'no') . "\n" if $self->{debug};
-    print STDERR "[DEBUG][Update]   Writable: " . ($writable ? 'yes' : 'no') . "\n" if $self->{debug};
-    print STDERR "[DEBUG][Update]   Needs sudo: " . ($needs_sudo ? 'yes' : 'no') . "\n" if $self->{debug};
+    log_debug('Update', "User home: " . ($is_user_home ? 'yes' : 'no'));
+    log_debug('Update', "Writable: " . ($writable ? 'yes' : 'no'));
+    log_debug('Update', "Needs sudo: " . ($needs_sudo ? 'yes' : 'no'));
     
     return {
         path => $clio_path,
@@ -729,8 +712,7 @@ sub download_latest {
     # Create download directory
     my $download_dir = "/tmp/clio-update-$version";
     if (-d $download_dir) {
-        print STDERR "[DEBUG][Update] Removing existing download dir: $download_dir\n"
-            if $self->{debug};
+        log_debug('Update', "Removing existing download dir: $download_dir");
         rmtree($download_dir);
     }
     
@@ -741,8 +723,7 @@ sub download_latest {
     
     # Download tarball
     my $tarball_path = "$download_dir/clio.tar.gz";
-    print STDERR "[DEBUG][Update] Downloading from: $tarball_url\n"
-        if $self->{debug};
+    log_debug('Update', "Downloading from: $tarball_url");
     
     my $curl_result = system("curl", "-sL", "-m", "30", "-o", $tarball_path, $tarball_url);
     
@@ -753,8 +734,7 @@ sub download_latest {
     }
     
     # Extract tarball
-    print STDERR "[DEBUG][Update] Extracting tarball\n"
-        if $self->{debug};
+    log_debug('Update', "Extracting tarball");
     
     my $extract_result = system("cd '$download_dir' && tar -xzf clio.tar.gz 2>/dev/null");
     
@@ -784,8 +764,7 @@ sub download_latest {
         return undef;
     }
     
-    print STDERR "[DEBUG][Update] Successfully downloaded to: $extracted_dir\n"
-        if $self->{debug};
+    log_debug('Update', "Successfully downloaded to: $extracted_dir");
     
     return $extracted_dir;
 }
@@ -829,8 +808,8 @@ sub install_from_directory {
     
     log_debug('Update', "Installing CLIO update:");
     log_debug('Update', "Current install: $install_dir");
-    print STDERR "[DEBUG][Update]   User home install: " . ($is_user_home ? 'yes' : 'no') . "\n" if $self->{debug};
-    print STDERR "[DEBUG][Update]   Needs sudo: " . ($needs_sudo ? 'yes' : 'no') . "\n" if $self->{debug};
+    log_debug('Update', "User home install: " . ($is_user_home ? 'yes' : 'no'));
+    log_debug('Update', "Needs sudo: " . ($needs_sudo ? 'yes' : 'no'));
     
     # Change to source directory
     my $original_dir = `pwd`;
@@ -853,33 +832,29 @@ sub install_from_directory {
     
     # Special case: if current install is ~/.local/clio, use --user flag
     if ($install_dir eq "$ENV{HOME}/.local/clio") {
-        print STDERR "[DEBUG][Update] Using --user flag for ~/.local/clio install\n"
-            if $self->{debug};
+        log_debug('Update', "Using --user flag for ~/.local/clio install");
         $install_cmd = "bash install.sh --user";
     }
     # Otherwise, explicitly specify the target directory
     else {
         # Determine if we need sudo
         if ($needs_sudo) {
-            print STDERR "[DEBUG][Update] System install to $install_dir (needs sudo)\n"
-                if $self->{debug};
+            log_debug('Update', "System install to $install_dir (needs sudo)");
             $install_cmd = "sudo bash install.sh '$install_dir'";
         } else {
-            print STDERR "[DEBUG][Update] Installing to $install_dir (no sudo needed)\n"
-                if $self->{debug};
+            log_debug('Update', "Installing to $install_dir (no sudo needed)");
             $install_cmd = "bash install.sh '$install_dir'";
         }
     }
     
-    print STDERR "[DEBUG][Update] Running: $install_cmd\n"
-        if $self->{debug};
+    log_debug('Update', "Running: $install_cmd");
     
     my $result = system($install_cmd);
     $success = ($result == 0);
     
     if (!$success) {
         log_error('Update', "Installation command failed: $install_cmd");
-        print STDERR "[ERROR][Update] Exit code: " . ($result >> 8) . "\n" if should_log('ERROR');
+        log_error('Update', "Exit code: " . ($result >> 8));
     }
     
     chdir($original_dir);
