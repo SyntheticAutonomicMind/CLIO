@@ -3,7 +3,7 @@ package CLIO::Session::TodoStore;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug log_error);
 use Carp qw(croak);
 use feature 'say';
 use File::Path qw(make_path);
@@ -89,7 +89,7 @@ sub read {
     my $file = $self->_todos_file();
     
     unless (-e $file) {
-        print STDERR "[DEBUG][TodoStore] No todos file exists: $file\n" if should_log('DEBUG');
+        log_debug('TodoStore', "No todos file exists: $file");
         return [];
     }
     
@@ -105,7 +105,7 @@ sub read {
     };
     
     if ($@) {
-        print STDERR "[ERROR][TodoStore] Failed to read todos: $@\n" if should_log('ERROR');
+        log_error('TodoStore', "Failed to read todos: $@");
         return [];
     }
     
@@ -132,7 +132,7 @@ sub write {
     my $errors = $self->validate($todos);
     if (@$errors) {
         my $error_msg = "Todo list validation failed:\n" . join("\n", map { "  - $_" } @$errors);
-        print STDERR "[ERROR][TodoStore] $error_msg\n" if should_log('ERROR');
+        log_error('TodoStore', "$error_msg");
         return (0, $error_msg);
     }
     
@@ -149,7 +149,7 @@ sub write {
     };
     
     if ($@) {
-        print STDERR "[ERROR][TodoStore] Failed to save todos: $@\n" if should_log('ERROR');
+        log_error('TodoStore', "Failed to save todos: $@");
         return (0, "Failed to save todos: $@");
     }
     
@@ -424,7 +424,7 @@ sub _save {
     # Atomic rename (overwrites target file atomically on Unix)
     rename $temp_file, $file or croak "Cannot save todos (rename failed): $!";
     
-    print STDERR "[DEBUG][TodoStore] Saved to $file\n" if should_log('DEBUG');
+    log_debug('TodoStore', "Saved to $file");
 }
 
 sub _has_circular_dependency {

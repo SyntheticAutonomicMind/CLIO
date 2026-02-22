@@ -3,7 +3,7 @@ package CLIO::Session::ToolResultStore;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug log_error);
 use Carp qw(croak);
 use feature 'say';
 use File::Path qw(make_path remove_tree);
@@ -101,7 +101,7 @@ sub processToolResult {
     
     if ($content_size <= $MAX_INLINE_SIZE) {
         # Small enough to send inline
-        print STDERR "[DEBUG][ToolResultStore] Inline: toolCallId=$toolCallId, size=$content_size bytes\n" if should_log('DEBUG');
+        log_debug('ToolResultStore', "Inline: toolCallId=$toolCallId, size=$content_size bytes");
         return $content;
     }
     
@@ -141,7 +141,7 @@ END_MARKER
     if ($@) {
         # Fallback: If persistence fails, truncate and log warning
         my $error = $@;
-        print STDERR "[ERROR][ToolResultStore] Failed to persist result: $error\n" if should_log('ERROR');
+        log_error('ToolResultStore', "Failed to persist result: $error");
         
         my $truncated = substr($content, 0, $MAX_INLINE_SIZE);
         $marker = <<END_FALLBACK;
@@ -224,7 +224,7 @@ sub persistResult {
     my $tool_results_dir = File::Spec->catdir($session_dir, 'tool_results');
     my $result_file = File::Spec->catfile($tool_results_dir, "$toolCallId.txt");
     
-    print STDERR "[DEBUG][ToolResultStore] Persisting: $toolCallId to $result_file\n" if should_log('DEBUG');
+    log_debug('ToolResultStore', "Persisting: $toolCallId to $result_file");
     
     # Create tool_results directory if needed
     eval {
@@ -232,7 +232,7 @@ sub persistResult {
     };
     if ($@) {
         my $error = $@;
-        print STDERR "[ERROR][ToolResultStore] Failed to create directory: $error\n" if should_log('ERROR');
+        log_error('ToolResultStore', "Failed to create directory: $error");
         croak "Failed to create tool_results directory: $error";
     }
     
@@ -249,7 +249,7 @@ sub persistResult {
     };
     if ($@) {
         my $error = $@;
-        print STDERR "[ERROR][ToolResultStore] Failed to write file: $error\n" if should_log('ERROR');
+        log_error('ToolResultStore', "Failed to write file: $error");
         croak "Failed to write tool result file: $error";
     }
     
@@ -356,7 +356,7 @@ sub retrieveChunk {
     # Enforce maximum chunk size (32KB) - matches SAM's design
     my $max_chunk_size = 32_768;
     if ($length > $max_chunk_size) {
-        print STDERR "[DEBUG][ToolResultStore] Requested length $length exceeds max $max_chunk_size, capping to $max_chunk_size\n" if should_log('DEBUG');
+        log_debug('ToolResultStore', "Requested length $length exceeds max $max_chunk_size, capping to $max_chunk_size");
         $length = $max_chunk_size;
     }
     
@@ -365,7 +365,7 @@ sub retrieveChunk {
     my $tool_results_dir = File::Spec->catdir($session_dir, 'tool_results');
     my $result_file = File::Spec->catfile($tool_results_dir, "$toolCallId.txt");
     
-    print STDERR "[DEBUG][ToolResultStore] Retrieving chunk: toolCallId=$toolCallId, offset=$offset, length=$length\n" if should_log('DEBUG');
+    log_debug('ToolResultStore', "Retrieving chunk: toolCallId=$toolCallId, offset=$offset, length=$length");
     
     # Security check: Verify file exists in session's directory
     # If not found, try fuzzy matching to handle AI hallucination of tool call IDs
@@ -408,7 +408,7 @@ sub retrieveChunk {
     };
     if ($@) {
         my $error = $@;
-        print STDERR "[ERROR][ToolResultStore] Failed to read file: $error\n" if should_log('ERROR');
+        log_error('ToolResultStore', "Failed to read file: $error");
         croak "Failed to read tool result file: $error";
     }
     
@@ -428,7 +428,7 @@ sub retrieveChunk {
     
     my $has_more = $end_offset < $total_length;
     
-    print STDERR "[DEBUG][ToolResultStore] Retrieved: offset=$offset, requested=$length, actual=$actual_length, total=$total_length\n" if should_log('DEBUG');
+    log_debug('ToolResultStore', "Retrieved: offset=$offset, requested=$length, actual=$actual_length, total=$total_length");
     
     return {
         toolCallId => $toolCallId,
@@ -585,11 +585,11 @@ sub deleteResult {
     
     eval {
         unlink $result_file or die "Failed to delete $result_file: $!";
-        print STDERR "[DEBUG][ToolResultStore] Deleted: $toolCallId\n" if should_log('DEBUG');
+        log_debug('ToolResultStore', "Deleted: $toolCallId");
     };
     if ($@) {
         my $error = $@;
-        print STDERR "[ERROR][ToolResultStore] Failed to delete result: $error\n" if should_log('ERROR');
+        log_error('ToolResultStore', "Failed to delete result: $error");
          croak "Failed to delete tool result: $error";
     }
 }
@@ -617,11 +617,11 @@ sub deleteAllResults {
     
     eval {
         remove_tree($tool_results_dir);
-        print STDERR "[DEBUG][ToolResultStore] Deleted all results for session: $session_id\n" if should_log('DEBUG');
+        log_debug('ToolResultStore', "Deleted all results for session: $session_id");
     };
     if ($@) {
         my $error = $@;
-        print STDERR "[ERROR][ToolResultStore] Failed to delete tool results directory: $error\n" if should_log('ERROR');
+        log_error('ToolResultStore', "Failed to delete tool results directory: $error");
          croak "Failed to delete tool results directory: $error";
     }
 }

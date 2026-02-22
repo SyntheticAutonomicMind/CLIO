@@ -3,7 +3,7 @@ package CLIO::Core::InstructionsReader;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_error log_warning);
 use File::Spec;
 use Cwd qw(getcwd);
 
@@ -88,7 +88,7 @@ sub read_instructions {
             print STDERR "[DEBUG][InstructionsReader] Loading custom instructions from: $custom_path\n";
             
             open(my $fh, '<:encoding(UTF-8)', $custom_path) or do {
-                print STDERR "[WARN][InstructionsReader] Cannot read custom instructions file: $!\n";
+                log_warning('InstructionsReader', "Cannot read custom instructions file: $!");
                 # Fall through to normal loading
                 goto NORMAL_LOADING;
             };
@@ -101,7 +101,7 @@ sub read_instructions {
                 return $content;
             }
         } else {
-            print STDERR "[WARN][InstructionsReader] CLIO_CUSTOM_INSTRUCTIONS file does not exist: $custom_path\n";
+            log_warning('InstructionsReader', "CLIO_CUSTOM_INSTRUCTIONS file does not exist: $custom_path");
         }
     }
     
@@ -289,7 +289,7 @@ sub _read_file {
     };
     
     if ($@) {
-        print STDERR "[ERROR][InstructionsReader] Failed to read file $file_path: $@\n" if should_log('ERROR');
+        log_error('InstructionsReader', "Failed to read file $file_path: $@");
         return undef;
     }
     

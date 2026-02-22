@@ -13,7 +13,7 @@ use File::Temp qw(tempdir);
 use File::Spec;
 use File::Path qw(make_path remove_tree);
 use feature 'say';
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug);
 
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
@@ -304,7 +304,7 @@ sub execute_remote {
     my $result;
     eval {
         # 1. Check remote connectivity
-        print STDERR "[DEBUG][RemoteExecution] Checking remote system: $host\n" if $self->{debug};
+        log_debug('RemoteExecution', "Checking remote system: $host");
         my $check_result = $self->check_remote({
             host => $host,
             ssh_key => $ssh_key,
@@ -316,7 +316,7 @@ sub execute_remote {
         }
         
         # 2. Download CLIO on remote
-        print STDERR "[DEBUG][RemoteExecution] Downloading CLIO on remote\n" if $self->{debug};
+        log_debug('RemoteExecution', "Downloading CLIO on remote");
         my $install_result = $self->_copy_local_clio_to_remote(
             host => $host,
             ssh_key => $ssh_key,
@@ -331,7 +331,7 @@ sub execute_remote {
         my $clio_path = $install_result->{clio_path};
         
         # 3. Create minimal config on remote
-        print STDERR "[DEBUG][RemoteExecution] Creating minimal config on remote\n" if $self->{debug};
+        log_debug('RemoteExecution', "Creating minimal config on remote");
         my $config_result = $self->_create_remote_config(
             host => $host,
             ssh_key => $ssh_key,
@@ -347,7 +347,7 @@ sub execute_remote {
         }
         
         # 4. Execute CLIO on remote
-        print STDERR "[DEBUG][RemoteExecution] Executing CLIO on remote: $command\n" if $self->{debug};
+        log_debug('RemoteExecution', "Executing CLIO on remote: $command");
         my $exec_result = $self->_execute_clio_remote(
             host => $host,
             ssh_key => $ssh_key,
@@ -372,7 +372,7 @@ sub execute_remote {
         # 5. Retrieve output files if specified
         my %retrieved_files;
         if (@$output_files) {
-            print STDERR "[DEBUG][RemoteExecution] Retrieving output files\n" if $self->{debug};
+            log_debug('RemoteExecution', "Retrieving output files");
             for my $file (@$output_files) {
                 my $remote_file = "$remote_staging/$file";
                 my $local_file = File::Spec->catfile($local_staging, $file);
@@ -393,7 +393,7 @@ sub execute_remote {
         
         # 6. Cleanup remote (if requested)
         if ($cleanup) {
-            print STDERR "[DEBUG][RemoteExecution] Cleaning up remote system\n" if $self->{debug};
+            log_debug('RemoteExecution', "Cleaning up remote system");
             $self->_ssh_exec(
                 host => $host,
                 ssh_key => $ssh_key,
@@ -490,7 +490,7 @@ sub execute_parallel {
     my @results;
     
     for my $device (@devices) {
-        print STDERR "[DEBUG][RemoteExecution] Executing on: $device->{name} ($device->{host})\n" if $self->{debug};
+        log_debug('RemoteExecution', "Executing on: $device->{name} ($device->{host})");
         
         my $start_time = time();
         

@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use utf8;
 use Carp qw(croak confess);
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_warning);
 use CLIO::UI::Commands::API;
 use CLIO::UI::Commands::Config;
 use CLIO::UI::Commands::Git;
@@ -807,7 +807,7 @@ sub _save_mcp_to_config {
         $chat->display_system_message("Saved '$name' to MCP config") if $chat;
     };
     if ($@) {
-        print STDERR "[WARN][CommandHandler] Failed to save MCP config: $@\n" if should_log('WARNING');
+        log_warning('CommandHandler', "Failed to save MCP config: $@");
     }
 }
 
@@ -823,7 +823,7 @@ sub _remove_mcp_from_config {
         $config->set('mcp', $mcp);
     };
     if ($@) {
-        print STDERR "[WARN][CommandHandler] Failed to update MCP config: $@\n" if should_log('WARNING');
+        log_warning('CommandHandler', "Failed to update MCP config: $@");
     }
 }
 

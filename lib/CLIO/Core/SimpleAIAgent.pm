@@ -3,7 +3,7 @@ package CLIO::Core::SimpleAIAgent;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug log_error);
 use CLIO::Core::HashtagParser;
 use CLIO::Util::JSON qw(encode_json decode_json);
 use MIME::Base64 qw(encode_base64 decode_base64);
@@ -51,10 +51,10 @@ sub new {
             broker_client => $self->{broker_client},  # Pass broker client to orchestrator
             non_interactive => $self->{non_interactive},  # Pass non-interactive mode
         );
-        print STDERR "[DEBUG][SimpleAIAgent] Orchestrator initialized in constructor\n" if should_log('DEBUG');
+        log_debug('SimpleAIAgent', "Orchestrator initialized in constructor");
     };
     if ($@) {
-        print STDERR "[ERROR][SimpleAIAgent] Failed to initialize orchestrator: $@\n" if should_log('ERROR');
+        log_error('SimpleAIAgent', "Failed to initialize orchestrator: $@");
     }
     
     return $self;
@@ -84,7 +84,7 @@ sub set_ui {
         $self->{orchestrator}->{ui} = $ui;
         $self->{orchestrator}->{tool_executor}->{ui} = $ui if $self->{orchestrator}->{tool_executor};
         $self->{orchestrator}->{formatter}->{ui} = $ui if $self->{orchestrator}->{formatter};
-        print STDERR "[DEBUG][SimpleAIAgent] Updated orchestrator, tool_executor, and formatter with UI\n" if should_log('DEBUG');
+        log_debug('SimpleAIAgent', "Updated orchestrator, tool_executor, and formatter with UI");
     }
 }
 
@@ -131,11 +131,11 @@ sub process_user_request {
         processing_time => time()
     };
     
-    print STDERR "[DEBUG][SimpleAIAgent] Processing request: '$user_input'\n" if should_log('DEBUG');
+    log_debug('SimpleAIAgent', "Processing request: '$user_input'");
     
     # Check if it's a direct protocol command
     if ($user_input =~ /^\[([A-Z_]+):/) {
-        print STDERR "[DEBUG][SimpleAIAgent] Direct protocol command detected\n" if should_log('DEBUG');
+        log_debug('SimpleAIAgent', "Direct protocol command detected");
         # Let the protocol manager handle it
         eval {
             require CLIO::Protocols::Manager;
@@ -156,7 +156,7 @@ sub process_user_request {
     }
     
     # Use WorkflowOrchestrator for all natural language requests
-    print STDERR "[DEBUG][SimpleAIAgent] Using WorkflowOrchestrator for natural language request\n" if should_log('DEBUG');
+    log_debug('SimpleAIAgent', "Using WorkflowOrchestrator for natural language request");
     
     # Parse and resolve hashtags BEFORE sending to orchestrator
     my $processed_input = $user_input;
@@ -288,7 +288,7 @@ sub process_user_request {
         push @{$result->{errors}}, "API exception: $@";
         $result->{success} = 0;
         $result->{final_response} = "I'm experiencing technical difficulties. Please try again.";
-        print STDERR "[ERROR][SimpleAIAgent] API error: $@\n" if should_log('ERROR');
+        log_error('SimpleAIAgent', "API error: $@");
     }
     
     # Set processing time

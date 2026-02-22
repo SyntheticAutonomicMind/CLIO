@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use utf8;
 use Carp qw(croak);
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug);
 use CLIO::Util::PathResolver;
 use File::Spec;
 use Fcntl qw(:flock SEEK_SET);
@@ -57,12 +57,12 @@ sub acquire {
     my $timeout = $options{timeout} // 0;
     my $force = $options{force} // 0;
     
-    print STDERR "[DEBUG][SessionLock] Attempting to acquire lock: $lock_file\n" if should_log('DEBUG');
+    log_debug('SessionLock', "Attempting to acquire lock: $lock_file");
     
     # Check for stale lock and force removal if requested
     if ($force && -f $lock_file) {
         if (_is_lock_stale($lock_file)) {
-            print STDERR "[DEBUG][SessionLock] Removing stale lock file\n" if should_log('DEBUG');
+            log_debug('SessionLock', "Removing stale lock file");
             unlink $lock_file;
         }
     }
@@ -77,7 +77,7 @@ sub acquire {
             # Try to get exclusive lock
             if (flock($fh, LOCK_EX | LOCK_NB)) {
                 # Lock acquired successfully
-                print STDERR "[DEBUG][SessionLock] Lock acquired successfully\n" if should_log('DEBUG');
+                log_debug('SessionLock', "Lock acquired successfully");
                 
                 # Write lock metadata
                 my $lock_info = {
@@ -108,7 +108,7 @@ sub acquire {
         
         # Check timeout
         if (time() - $start_time >= $timeout) {
-            print STDERR "[DEBUG][SessionLock] Failed to acquire lock (timeout)\n" if should_log('DEBUG');
+            log_debug('SessionLock', "Failed to acquire lock (timeout)");
             return undef;
         }
         
@@ -131,7 +131,7 @@ sub release {
     
     return unless $self->{fh};
     
-    print STDERR "[DEBUG][SessionLock] Releasing lock: $self->{lock_file}\n" if should_log('DEBUG');
+    log_debug('SessionLock', "Releasing lock: $self->{lock_file}");
     
     # Release flock and close file handle
     flock($self->{fh}, LOCK_UN);
@@ -141,7 +141,7 @@ sub release {
     # Remove lock file
     unlink $self->{lock_file} if -f $self->{lock_file};
     
-    print STDERR "[DEBUG][SessionLock] Lock released\n" if should_log('DEBUG');
+    log_debug('SessionLock', "Lock released");
 }
 
 =head2 is_locked
@@ -243,7 +243,7 @@ sub _is_lock_stale {
     if ($info->{pid}) {
         # On Unix, kill(0, $pid) checks if process exists without sending signal
         unless (kill(0, $info->{pid})) {
-            print STDERR "[DEBUG][SessionLock] Lock is stale (process $info->{pid} not running)\n" if should_log('DEBUG');
+            log_debug('SessionLock', "Lock is stale (process $info->{pid} not running)");
             return 1;
         }
     }
@@ -252,7 +252,7 @@ sub _is_lock_stale {
     if ($info->{timestamp}) {
         my $age = time() - $info->{timestamp};
         if ($age > 86400) {  # 24 hours
-            print STDERR "[DEBUG][SessionLock] Lock is stale (age: ${age}s > 24h)\n" if should_log('DEBUG');
+            log_debug('SessionLock', "Lock is stale (age: ${age}s > 24h)");
             return 1;
         }
     }

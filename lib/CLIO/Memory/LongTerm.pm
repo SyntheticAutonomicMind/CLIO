@@ -2,7 +2,7 @@ package CLIO::Memory::LongTerm;
 
 use strict;
 use warnings;
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug);
 use JSON::PP;
 use utf8;
 use Carp qw(croak);
@@ -136,7 +136,7 @@ sub add_discovery {
     };
     
     $self->{metadata}{last_updated} = time();
-    print STDERR "[DEBUG][LTM] Added discovery: $fact (confidence: $confidence)\n" if should_log('DEBUG');
+    log_debug('LTM', "Added discovery: $fact (confidence: $confidence)");
 }
 
 =head2 add_problem_solution
@@ -177,7 +177,7 @@ sub add_problem_solution {
     };
     
     $self->{metadata}{last_updated} = time();
-    print STDERR "[DEBUG][LTM] Added problem-solution: $error -> $solution\n" if should_log('DEBUG');
+    log_debug('LTM', "Added problem-solution: $error -> $solution");
 }
 
 =head2 add_code_pattern
@@ -218,7 +218,7 @@ sub add_code_pattern {
     };
     
     $self->{metadata}{last_updated} = time();
-    print STDERR "[DEBUG][LTM] Added code pattern: $pattern (confidence: $confidence)\n" if should_log('DEBUG');
+    log_debug('LTM', "Added code pattern: $pattern (confidence: $confidence)");
 }
 
 =head2 add_workflow
@@ -259,7 +259,7 @@ sub add_workflow {
     };
     
     $self->{metadata}{last_updated} = time();
-    print STDERR "[DEBUG][LTM] Added workflow: $seq_key\n" if should_log('DEBUG');
+    log_debug('LTM', "Added workflow: $seq_key");
 }
 
 =head2 add_failure
@@ -292,7 +292,7 @@ sub add_failure {
     };
     
     $self->{metadata}{last_updated} = time();
-    print STDERR "[DEBUG][LTM] Added failure: $what\n" if should_log('DEBUG');
+    log_debug('LTM', "Added failure: $what");
 }
 
 =head2 add_context_rule
@@ -312,7 +312,7 @@ sub add_context_rule {
     unless (grep { $_ eq $rule } @{$self->{patterns}{context_rules}{$context}}) {
         push @{$self->{patterns}{context_rules}{$context}}, $rule;
         $self->{metadata}{last_updated} = time();
-        print STDERR "[DEBUG][LTM] Added context rule for $context: $rule\n" if should_log('DEBUG');
+        log_debug('LTM', "Added context rule for $context: $rule");
     }
 }
 
@@ -585,7 +585,7 @@ sub save {
         croak $@;
     }
     
-    print STDERR "[DEBUG][LTM] Saved to $file\n" if should_log('DEBUG');
+    log_debug('LTM', "Saved to $file");
 }
 
 =head2 load
@@ -602,7 +602,7 @@ sub load {
     return $class->new(%args) unless -e $file;
     
     open my $fh, '<:encoding(UTF-8)', $file or do {
-        print STDERR "[DEBUG][LTM] Cannot load from $file: $!\n" if should_log('DEBUG');
+        log_debug('LTM', "Cannot load from $file: $!");
         return $class->new(%args);
     };
     
@@ -612,7 +612,7 @@ sub load {
     
     my $data = eval { JSON::PP->new->decode($json) };
     if ($@) {
-        print STDERR "[DEBUG][LTM] Failed to parse $file: $@\n" if should_log('DEBUG');
+        log_debug('LTM', "Failed to parse $file: $@");
         return $class->new(%args);
     }
     
@@ -620,7 +620,7 @@ sub load {
     $self->{patterns} = $data->{patterns} if $data->{patterns};
     $self->{metadata} = $data->{metadata} if $data->{metadata};
     
-    print STDERR "[DEBUG][LTM] Loaded from $file\n" if should_log('DEBUG');
+    log_debug('LTM', "Loaded from $file");
     return $self;
 }
 

@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use utf8;
 use CLIO::Util::JSON qw(encode_json decode_json);
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug);
 
 =head1 NAME
 
@@ -67,36 +67,36 @@ sub extract {
         format => 'none'
     } unless $content && $content =~ /\S/;
     
-    print STDERR "[DEBUG][ToolCallExtractor] Analyzing content for tool calls\n" if should_log('DEBUG');
+    log_debug('ToolCallExtractor', "Analyzing content for tool calls");
     
     # Try each format in order of specificity
     
     # 1. XML tag format: <tool_call>...</tool_call>
     if ($content =~ /<tool_call>/) {
-        print STDERR "[DEBUG][ToolCallExtractor] Detected XML tool_call format\n" if should_log('DEBUG');
+        log_debug('ToolCallExtractor', "Detected XML tool_call format");
         return $self->_extract_xml_format($content);
     }
     
     # 2. CLIO format: [tool_name operation]\n{...}
     if ($content =~ /\[(\w+)\s+(\w+)\]/) {
-        print STDERR "[DEBUG][ToolCallExtractor] Detected CLIO [tool_name operation] format\n" if should_log('DEBUG');
+        log_debug('ToolCallExtractor', "Detected CLIO [tool_name operation] format");
         return $self->_extract_clio_format($content);
     }
     
     # 3. CALL format: CALL tool_name: {...}
     if ($content =~ /\bCALL\s+(\w+):/i) {
-        print STDERR "[DEBUG][ToolCallExtractor] Detected CALL tool_name format\n" if should_log('DEBUG');
+        log_debug('ToolCallExtractor', "Detected CALL tool_name format");
         return $self->_extract_call_format($content);
     }
     
     # 4. JSON code block format: ```json\n[{...}]\n```
     if ($content =~ /```(?:json)?\s*\n/) {
-        print STDERR "[DEBUG][ToolCallExtractor] Detected JSON code block format\n" if should_log('DEBUG');
+        log_debug('ToolCallExtractor', "Detected JSON code block format");
         return $self->_extract_json_blocks($content);
     }
     
     # No tool calls detected
-    print STDERR "[DEBUG][ToolCallExtractor] No tool calls detected\n" if should_log('DEBUG');
+    log_debug('ToolCallExtractor', "No tool calls detected");
     return {
         tool_calls => [],
         cleaned_content => $content,
@@ -128,7 +128,7 @@ sub _extract_xml_format {
     while ($content =~ /<tool_call>\s*(.+?)\s*<\/tool_call>/gs) {
         my $json_str = $1;
         
-        print STDERR "[DEBUG][ToolCallExtractor] Found XML tool_call block\n" if should_log('DEBUG');
+        log_debug('ToolCallExtractor', "Found XML tool_call block");
         
         # Parse JSON
         my $data = eval { decode_json($json_str) };
@@ -190,7 +190,7 @@ sub _extract_clio_format {
     while ($content =~ /\[(\w+)\s+(\w+)\]\s*\n?\s*(\{(?:[^{}]|(?3))*\}|\[(?:[^\[\]]|(?3))*\])/gs) {
         my ($tool_name, $operation, $json_str) = ($1, $2, $3);
         
-        print STDERR "[DEBUG][ToolCallExtractor] Found CLIO format: [$tool_name $operation]\n" if should_log('DEBUG');
+        log_debug('ToolCallExtractor', "Found CLIO format: [$tool_name $operation]");
         
         # The JSON might already contain the operation, or we need to wrap it
         my $arguments_data = eval { decode_json($json_str) };
@@ -251,7 +251,7 @@ sub _extract_call_format {
     while ($content =~ /\bCALL\s+(\w+):\s*(\{(?:[^{}]|(?2))*\}|\[(?:[^\[\]]|(?2))*\])/gsi) {
         my ($tool_name, $json_str) = ($1, $2);
         
-        print STDERR "[DEBUG][ToolCallExtractor] Found CALL format: CALL $tool_name\n" if should_log('DEBUG');
+        log_debug('ToolCallExtractor', "Found CALL format: CALL $tool_name");
         
         # Validate JSON
         my $arguments_data = eval { decode_json($json_str) };
@@ -305,12 +305,12 @@ sub _extract_json_blocks {
     while ($content =~ /```(?:json)?\s*\n(.+?)\n```/gs) {
         my $json_str = $1;
         
-        print STDERR "[DEBUG][ToolCallExtractor] Found JSON code block\n" if should_log('DEBUG');
+        log_debug('ToolCallExtractor', "Found JSON code block");
         
         # Parse JSON
         my $data = eval { decode_json($json_str) };
         if ($@) {
-            print STDERR "[DEBUG][ToolCallExtractor] Not a valid JSON block: $@\n" if should_log('DEBUG');
+            log_debug('ToolCallExtractor', "Not a valid JSON block: $@");
             next;
         }
         

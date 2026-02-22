@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use utf8;
 use Encode qw(decode encode);
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug);
 use CLIO::Util::JSONRepair qw(repair_malformed_json);
 use CLIO::Util::JSON qw(encode_json decode_json);
 use MIME::Base64 qw(encode_base64 decode_base64);
@@ -78,7 +78,7 @@ sub new {
             session_id => $args{session}->{session_id},
             debug => $args{debug}
         );
-        print STDERR "[DEBUG][ToolExecutor] Initialized ToolLogger\n" if should_log('DEBUG');
+        log_debug('ToolExecutor', "Initialized ToolLogger");
     }
     
     # Debug: Log if UI is available
@@ -90,7 +90,7 @@ sub new {
         }
     }
     
-    print STDERR "[DEBUG][ToolExecutor] Initialized with ToolResultStore\n" if should_log('DEBUG');
+    log_debug('ToolExecutor', "Initialized with ToolResultStore");
     
     return $self;
 }
@@ -128,7 +128,7 @@ sub execute_tool {
         return $self->_error_result("Missing tool name or arguments");
     }
     
-    print STDERR "[DEBUG][ToolExecutor] Executing tool: $tool_name (id=$tool_call_id)\n" if should_log('DEBUG');
+    log_debug('ToolExecutor', "Executing tool: $tool_name (id=$tool_call_id)");
     
     # Parse arguments with UTF-8 handling
     my $arguments;
@@ -146,7 +146,7 @@ sub execute_tool {
     };
     if ($@) {
         my $error = $@;
-        print STDERR "[DEBUG][ToolExecutor] JSON parse error: $error\n" if should_log('DEBUG');
+        log_debug('ToolExecutor', "JSON parse error: $error");
         
         # Log the error
         $self->_log_tool_operation({
@@ -196,7 +196,7 @@ sub execute_tool {
     if ($tool_name =~ /^mcp_/ && $self->{mcp_manager}) {
         require CLIO::Tools::MCPBridge;
         
-        print STDERR "[DEBUG][ToolExecutor] Executing MCP tool: $tool_name\n" if should_log('DEBUG');
+        log_debug('ToolExecutor', "Executing MCP tool: $tool_name");
         
         my $result = CLIO::Tools::MCPBridge->execute_tool(
             $self->{mcp_manager}, $tool_name, $arguments
@@ -401,7 +401,7 @@ sub _execute_file_operations {
         return $self->_error_result("Missing required parameters: operation, path");
     }
     
-    print STDERR "[DEBUG][ToolExecutor] File operation: $operation on $path\n" if should_log('DEBUG');
+    log_debug('ToolExecutor', "File operation: $operation on $path");
     
     # Build protocol command
     my $protocol_cmd;
@@ -466,7 +466,7 @@ sub _execute_read_tool_result {
     my $offset = $args->{offset} || 0;
     my $length = $args->{length} || 8192;
     
-    print STDERR "[DEBUG][ToolExecutor] Reading tool result: $tool_call_id, offset=$offset, length=$length\n" if should_log('DEBUG');
+    log_debug('ToolExecutor', "Reading tool result: $tool_call_id, offset=$offset, length=$length");
     
     # Retrieve chunk from storage
     my $chunk = eval {
@@ -524,7 +524,7 @@ sub _execute_git_operations {
         return $self->_error_result("Missing required parameter: operation");
     }
     
-    print STDERR "[DEBUG][ToolExecutor] Git operation: $operation\n" if should_log('DEBUG');
+    log_debug('ToolExecutor', "Git operation: $operation");
     
     # Build params for Git protocol
     my $params = {
@@ -566,7 +566,7 @@ sub _execute_url_fetch {
         return $self->_error_result("Missing required parameter: url");
     }
     
-    print STDERR "[DEBUG][ToolExecutor] URL fetch: $url\n" if should_log('DEBUG');
+    log_debug('ToolExecutor', "URL fetch: $url");
     
     # Build protocol command: [URL_FETCH:action=fetch:params=<base64_url>]
     my $protocol_cmd = sprintf('[URL_FETCH:action=fetch:params=%s]',
@@ -591,7 +591,7 @@ Returns:
 sub _execute_protocol {
     my ($self, $protocol_cmd, $tool_call_id) = @_;
     
-    print STDERR "[DEBUG][ToolExecutor] Executing protocol: $protocol_cmd\n" if should_log('DEBUG');
+    log_debug('ToolExecutor', "Executing protocol: $protocol_cmd");
     
     # Execute via Protocol Manager
     my $result = eval {
@@ -600,7 +600,7 @@ sub _execute_protocol {
     };
     
     if ($@) {
-        print STDERR "[DEBUG][ToolExecutor] Protocol execution failed: $@\n" if should_log('DEBUG');
+        log_debug('ToolExecutor', "Protocol execution failed: $@");
         return $self->_error_result("Protocol execution failed: $@");
     }
     
@@ -725,7 +725,7 @@ sub _format_tool_result {
     # Convert to JSON
     my $json = eval { encode_json($tool_result) };
     if ($@) {
-        print STDERR "[DEBUG][ToolExecutor] Failed to encode result: $@\n" if should_log('DEBUG');
+        log_debug('ToolExecutor', "Failed to encode result: $@");
         return encode_json({
             success => 0,
             error => "Failed to encode result: $@"
@@ -760,7 +760,7 @@ sub _log_tool_operation {
         $self->{tool_logger}->log($entry);
     };
     if ($@) {
-        print STDERR "[DEBUG][ToolExecutor] Failed to log tool operation: $@\n" if should_log('DEBUG');
+        log_debug('ToolExecutor', "Failed to log tool operation: $@");
     }
 }
 
@@ -773,7 +773,7 @@ Return a JSON error result.
 sub _error_result {
     my ($self, $error) = @_;
     
-    print STDERR "[DEBUG][ToolExecutor] Error: $error\n" if should_log('DEBUG');
+    log_debug('ToolExecutor', "Error: $error");
     
     return encode_json({
         success => 0,

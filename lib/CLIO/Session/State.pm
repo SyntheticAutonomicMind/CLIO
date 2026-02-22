@@ -7,7 +7,7 @@ use strict;
 use warnings;
 use utf8;
 use Carp qw(croak);
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_error log_warning);
 use CLIO::Util::PathResolver;
 use File::Spec;
 use CLIO::Util::JSON qw(encode_json decode_json);
@@ -83,7 +83,7 @@ sub save {
         my $ltm_file = File::Spec->catfile($current_dir, '.clio', 'ltm.json');
         eval { $self->{ltm}->save($ltm_file); };
         if ($@) {
-            print STDERR "[WARN][State] Failed to save LTM: $@\n" if should_log('WARNING');
+            log_warning('State', "Failed to save LTM: $@");
         }
     }
     
@@ -395,7 +395,7 @@ sub _validate_and_repair_history {
     # Save the repaired session immediately to persist the fix
     eval { $self->save(); };
     if ($@) {
-        print STDERR "[ERROR][State] Failed to save repaired session: $@\n" if should_log('ERROR');
+        log_error('State', "Failed to save repaired session: $@");
     }
     
     # Return user-friendly message instead of just 1 (now this message will be displayed)

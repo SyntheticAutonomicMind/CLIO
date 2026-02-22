@@ -7,7 +7,7 @@ use strict;
 use warnings;
 use utf8;
 use Carp qw(croak confess);
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug log_info);
 use parent 'CLIO::Tools::Tool';
 use File::Spec;
 use File::Basename;
@@ -399,12 +399,12 @@ sub _acquire_file_lock {
     
     return (0, undef) unless $context->{broker_client};
     
-    print STDERR "[INFO][FileOp] Requesting file lock via broker: $path\n" if should_log('INFO');
+    log_info('FileOp', "Requesting file lock via broker: $path");
     
     eval {
         my $lock_result = $context->{broker_client}->request_file_lock([$path], 'write');
         if ($lock_result) {
-            print STDERR "[INFO][FileOp] Lock acquired for: $path\n" if should_log('INFO');
+            log_info('FileOp', "Lock acquired for: $path");
             return (1, undef);
         } else {
             return (0, "File is locked by another agent. Wait for the other agent to finish or coordinate with them.");
@@ -430,7 +430,7 @@ sub _release_file_lock {
     
     eval {
         $context->{broker_client}->release_file_lock([$path]);
-        print STDERR "[INFO][FileOp] Released lock for: $path\n" if should_log('INFO');
+        log_info('FileOp', "Released lock for: $path");
     };
     if ($@) {
         print STDERR "[WARN][FileOp] Failed to release lock: $@\n" if should_log('WARN');
@@ -587,7 +587,7 @@ sub read_file {
         my $content = join('', @lines);
         my $lines_read = scalar(@lines);
         
-        print STDERR "[DEBUG][FileOp] Read $lines_read lines from $path\n" if should_log('DEBUG');
+        log_debug('FileOp', "Read $lines_read lines from $path");
         
         # Format action description for UI feedback
         my $line_range = $end_line ? "lines $start_line-$end_line" : "from line $start_line";
@@ -625,7 +625,7 @@ sub list_dir {
     return $self->error_result("Directory not found: $path") unless -d $path;
     return $self->error_result("Directory not readable: $path") unless -r $path;
     
-    print STDERR "[DEBUG][FileOp] Listing directory: $path (recursive=$recursive)\n" if should_log('DEBUG');
+    log_debug('FileOp', "Listing directory: $path (recursive=$recursive)");
     
     my $result;
     eval {
@@ -699,7 +699,7 @@ sub file_exists {
     my $sandbox_check = $self->_check_sandbox($path, $context);
     return $self->error_result($sandbox_check->{error}) unless $sandbox_check->{allowed};
     
-    print STDERR "[DEBUG][FileOp] Checking existence: $path\n" if should_log('DEBUG');
+    log_debug('FileOp', "Checking existence: $path");
     
     my $exists = -e $path;
     my $type = -d $path ? 'directory' : -f $path ? 'file' : 'unknown';
@@ -728,7 +728,7 @@ sub get_file_info {
     
     return $self->error_result("File not found: $path") unless -e $path;
     
-    print STDERR "[DEBUG][FileOp] Getting file info: $path\n" if should_log('DEBUG');
+    log_debug('FileOp', "Getting file info: $path");
     
     my @stat = stat($path);
     
@@ -759,7 +759,7 @@ sub get_errors {
     return $self->error_result("Missing 'path' parameter") unless $path;
     return $self->error_result("File not found: $path") unless -f $path;
     
-    print STDERR "[DEBUG][FileOp] Checking syntax: $path\n" if should_log('DEBUG');
+    log_debug('FileOp', "Checking syntax: $path");
     
     # Only works for Perl files
     unless ($path =~ /\.p[lm]$/) {
@@ -820,7 +820,7 @@ sub file_search {
     
     return $self->error_result("Directory not found: $directory") unless -d $directory;
     
-    print STDERR "[DEBUG][FileOp] Searching files: pattern=$pattern, dir=$directory\n" if should_log('DEBUG');
+    log_debug('FileOp', "Searching files: pattern=$pattern, dir=$directory");
     
     my $result;
     eval {
@@ -860,7 +860,7 @@ sub file_search {
             
             $regex_pattern = "^$regex_pattern\$";   # Anchor the pattern
             
-            print STDERR "[DEBUG][FileOp] Recursive search, regex: $regex_pattern\n" if should_log('DEBUG');
+            log_debug('FileOp', "Recursive search, regex: $regex_pattern");
             
             File::Find::find(sub {
                 return unless -f $_;  # Only match files
@@ -1057,7 +1057,7 @@ sub semantic_search {
     
     return $self->error_result("Missing 'query' parameter") unless $query;
     
-    print STDERR "[DEBUG][FileOp] Semantic search for: $query (scope: $scope)\n" if should_log('DEBUG');
+    log_debug('FileOp', "Semantic search for: $query (scope: $scope)");
     
     # Use hybrid keyword + structure search
     return $self->_semantic_search_hybrid($query, $scope, $top_k, $context);
@@ -1154,7 +1154,7 @@ sub _semantic_search_hybrid {
     
     my $action_desc = "searching codebase for '$query' ($result_count matches)";
     
-    print STDERR "[DEBUG][FileOp] Hybrid search found $result_count files\n" if should_log('DEBUG');
+    log_debug('FileOp', "Hybrid search found $result_count files");
     
     return $self->success_result(
         $message,
@@ -1183,7 +1183,7 @@ sub _enhance_scores_with_symbols {
         return;
     }
     
-    print STDERR "[DEBUG][FileOp] Enhancing scores with symbol analysis\n" if should_log('DEBUG');
+    log_debug('FileOp', "Enhancing scores with symbol analysis");
     
     # Analyze top files (limit to avoid slow performance)
     my @top_files = sort { $file_scores->{$b} <=> $file_scores->{$a} } keys %$file_scores;
@@ -1262,7 +1262,7 @@ sub read_tool_result {
     # Enforce maximum chunk size (32KB like SAM)
     my $max_chunk_size = 32_768;
     if ($length > $max_chunk_size) {
-        print STDERR "[DEBUG][FileOp] Requested length $length exceeds max $max_chunk_size, capping to $max_chunk_size\n" if should_log('DEBUG');
+        log_debug('FileOp', "Requested length $length exceeds max $max_chunk_size, capping to $max_chunk_size");
         $length = $max_chunk_size;
     }
     
@@ -1395,7 +1395,7 @@ sub create_file {
     my ($lock_acquired, $lock_error) = $self->_acquire_file_lock($path, $context);
     return $self->error_result($lock_error) if $lock_error;
     
-    print STDERR "[DEBUG][FileOp] Creating file: $path (authorized: $auth_result->{reason})\n" if should_log('DEBUG');
+    log_debug('FileOp', "Creating file: $path (authorized: $auth_result->{reason})");
     
     my $result;
     eval {
@@ -1412,7 +1412,7 @@ sub create_file {
         
         my $size = -s $path;
         
-        print STDERR "[DEBUG][FileOp] Created file $path ($size bytes)\n" if should_log('DEBUG');
+        log_debug('FileOp', "Created file $path ($size bytes)");
         
         my $action_desc = "creating $path ($size bytes)";
         
@@ -1465,7 +1465,7 @@ sub write_file {
     my ($lock_acquired, $lock_error) = $self->_acquire_file_lock($path, $context);
     return $self->error_result($lock_error) if $lock_error;
     
-    print STDERR "[DEBUG][FileOp] Writing file: $path (authorized: $auth_result->{reason})\n" if should_log('DEBUG');
+    log_debug('FileOp', "Writing file: $path (authorized: $auth_result->{reason})");
     
     my $result;
     eval {
@@ -1475,7 +1475,7 @@ sub write_file {
         
         my $size = -s $path;
         
-        print STDERR "[DEBUG][FileOp] Wrote file $path ($size bytes)\n" if should_log('DEBUG');
+        log_debug('FileOp', "Wrote file $path ($size bytes)");
         
         my $action_desc = "writing $path ($size bytes)";
         
@@ -1528,7 +1528,7 @@ sub append_file {
     my ($lock_acquired, $lock_error) = $self->_acquire_file_lock($path, $context);
     return $self->error_result($lock_error) if $lock_error;
     
-    print STDERR "[DEBUG][FileOp] Appending to file: $path (authorized: $auth_result->{reason})\n" if should_log('DEBUG');
+    log_debug('FileOp', "Appending to file: $path (authorized: $auth_result->{reason})");
     
     my $result;
     eval {
@@ -1538,7 +1538,7 @@ sub append_file {
         
         my $size = -s $path;
         
-        print STDERR "[DEBUG][FileOp] Appended to file $path (new size: $size bytes)\n" if should_log('DEBUG');
+        log_debug('FileOp', "Appended to file $path (new size: $size bytes)");
         
         my $action_desc = "appending to $path (new size: $size bytes)";
         
@@ -1582,7 +1582,7 @@ sub replace_string {
     my ($lock_acquired, $lock_error) = $self->_acquire_file_lock($path, $context);
     return $self->error_result($lock_error) if $lock_error;
     
-    print STDERR "[DEBUG][FileOp] Replacing string in: $path\n" if should_log('DEBUG');
+    log_debug('FileOp', "Replacing string in: $path");
     
     my $result;
     eval {
@@ -1608,7 +1608,7 @@ sub replace_string {
         print $fh $content;
         close $fh;
         
-        print STDERR "[DEBUG][FileOp] Replaced $count occurrences in $path\n" if should_log('DEBUG');
+        log_debug('FileOp', "Replaced $count occurrences in $path");
         
         my $action_desc = "replacing string in $path ($count occurrences)";
         
@@ -1733,7 +1733,7 @@ sub multi_replace_string {
     my $fail_count = scalar(@failed);
     my $total_count = scalar(@$replacements);
     
-    print STDERR "[DEBUG][FileOp] Completed: $success_count succeeded, $fail_count failed, $total_replacements total replacements\n" if should_log('DEBUG');
+    log_debug('FileOp', "Completed: $success_count succeeded, $fail_count failed, $total_replacements total replacements");
     
     # Build summary message and action description
     my $message = "$success_count of $total_count operations succeeded ($total_replacements replacements)";
@@ -1787,7 +1787,7 @@ sub insert_at_line {
     my ($lock_acquired, $lock_error) = $self->_acquire_file_lock($path, $context);
     return $self->error_result($lock_error) if $lock_error;
     
-    print STDERR "[DEBUG][FileOp] Inserting at line $line_number in: $path\n" if should_log('DEBUG');
+    log_debug('FileOp', "Inserting at line $line_number in: $path");
     
     my $result;
     eval {
@@ -1807,7 +1807,7 @@ sub insert_at_line {
         print $fh @lines;
         close $fh;
         
-        print STDERR "[DEBUG][FileOp] Inserted content at line $line_number in $path\n" if should_log('DEBUG');
+        log_debug('FileOp', "Inserted content at line $line_number in $path");
         
         my $action_desc = "inserting at line $line_number in $path";
         
@@ -1860,7 +1860,7 @@ sub delete_file {
     my ($lock_acquired, $lock_error) = $self->_acquire_file_lock($path, $context);
     return $self->error_result($lock_error) if $lock_error;
     
-    print STDERR "[DEBUG][FileOp] Deleting: $path (recursive=$recursive, authorized: $auth_result->{reason})\n" if should_log('DEBUG');
+    log_debug('FileOp', "Deleting: $path (recursive=$recursive, authorized: $auth_result->{reason})");
     
     my $result;
     eval {
@@ -1875,7 +1875,7 @@ sub delete_file {
             unlink $path or die "Cannot delete file $path: $!";
         }
         
-        print STDERR "[DEBUG][FileOp] Deleted: $path\n" if should_log('DEBUG');
+        log_debug('FileOp', "Deleted: $path");
         
         my $type = -d _ ? 'directory' : 'file';  # Use cached stat from -d check
         my $action_desc = $recursive ? "deleting $path recursively ($type)" : "deleting $path ($type)";
@@ -1934,7 +1934,7 @@ sub rename_file {
     my ($lock_acquired, $lock_error) = $self->_acquire_file_lock($old_path, $context);
     return $self->error_result($lock_error) if $lock_error;
     
-    print STDERR "[DEBUG][FileOp] Renaming: $old_path -> $new_path (authorized)\n" if should_log('DEBUG');
+    log_debug('FileOp', "Renaming: $old_path -> $new_path (authorized)");
     
     my $result;
     eval {
@@ -1946,7 +1946,7 @@ sub rename_file {
         
         rename $old_path, $new_path or die "Cannot rename $old_path to $new_path: $!";
         
-        print STDERR "[DEBUG][FileOp] Renamed: $old_path -> $new_path\n" if should_log('DEBUG');
+        log_debug('FileOp', "Renamed: $old_path -> $new_path");
         
         my $action_desc = "renaming $old_path to $new_path";
         
@@ -1993,13 +1993,13 @@ sub create_directory {
         return $self->error_result("Authorization denied: $auth_result->{reason}");
     }
     
-    print STDERR "[DEBUG][FileOp] Creating directory: $path (authorized: $auth_result->{reason})\n" if should_log('DEBUG');
+    log_debug('FileOp', "Creating directory: $path (authorized: $auth_result->{reason})");
     
     my $result;
     eval {
         make_path($path) or die "Cannot create directory $path: $!";
         
-        print STDERR "[DEBUG][FileOp] Created directory: $path\n" if should_log('DEBUG');
+        log_debug('FileOp', "Created directory: $path");
         
         my $action_desc = "creating directory $path";
         

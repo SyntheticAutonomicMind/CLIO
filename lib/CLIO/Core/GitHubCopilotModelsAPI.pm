@@ -3,7 +3,7 @@ package CLIO::Core::GitHubCopilotModelsAPI;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_error log_warning);
 use CLIO::Util::ConfigPath qw(get_config_dir get_config_file);
 use CLIO::Util::JSON qw(encode_json decode_json);
 use CLIO::Compat::HTTP;
@@ -94,7 +94,7 @@ sub new {
             $api_key = $auth->get_copilot_token();
         };
         if ($@) {
-            print STDERR "[WARN][GitHubCopilotModelsAPI] Failed to get GitHub token: $@\n";
+            log_warning('GitHubCopilotModelsAPI', "Failed to get GitHub token: $@");
         }
     }
     
@@ -215,7 +215,7 @@ sub fetch_models {
     
     my $data = eval { decode_json($resp->decoded_content) };
     if ($@) {
-        print STDERR "[ERROR][GitHubCopilotModelsAPI] Failed to parse JSON: $@\n" if should_log('ERROR');
+        log_error('GitHubCopilotModelsAPI', "Failed to parse JSON: $@");
         return undef;
     }
     

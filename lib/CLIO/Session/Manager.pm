@@ -7,7 +7,7 @@ use strict;
 use warnings;
 use utf8;
 use Carp qw(croak);
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_warning);
 use CLIO::Session::State;
 use CLIO::Session::Lock;
 use CLIO::Memory::ShortTerm;
@@ -306,7 +306,7 @@ sub load {
     };
     if ($@) {
         # Don't fail session load if cleanup fails - just log warning
-        print STDERR "[WARNING][Manager] Tool result cleanup failed: $@\n" if should_log('WARNING');
+        log_warning('Manager', "Tool result cleanup failed: $@");
     }
     
     return $self;

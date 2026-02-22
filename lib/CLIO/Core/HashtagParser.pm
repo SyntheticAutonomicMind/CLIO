@@ -3,6 +3,7 @@ package CLIO::Core::HashtagParser;
 use strict;
 use warnings;
 use utf8;
+use CLIO::Core::Logger qw(log_debug log_error);
 use feature 'say';
 use File::Basename;
 use File::Spec;
@@ -104,7 +105,7 @@ sub parse {
             raw => $&,
             position => pos($input) - length($&)
         };
-        print STDERR "[DEBUG][HashtagParser] Found #file:$1\n" if $self->{debug};
+        log_debug('HashtagParser', "Found #file:$1");
     }
     
     # Parse #folder:path
@@ -115,7 +116,7 @@ sub parse {
             raw => $&,
             position => pos($input) - length($&)
         };
-        print STDERR "[DEBUG][HashtagParser] Found #folder:$1\n" if $self->{debug};
+        log_debug('HashtagParser', "Found #folder:$1");
     }
     
     # Parse #codebase (no argument)
@@ -126,7 +127,7 @@ sub parse {
             raw => '#codebase',
             position => $-[0]
         };
-        print STDERR "[DEBUG][HashtagParser] Found #codebase\n" if $self->{debug};
+        log_debug('HashtagParser', "Found #codebase");
     }
     
     # Parse #selection (no argument)
@@ -137,7 +138,7 @@ sub parse {
             raw => '#selection',
             position => $-[0]
         };
-        print STDERR "[DEBUG][HashtagParser] Found #selection\n" if $self->{debug};
+        log_debug('HashtagParser', "Found #selection");
     }
     
     # Parse #terminalLastCommand (no argument)
@@ -148,7 +149,7 @@ sub parse {
             raw => '#terminalLastCommand',
             position => $-[0]
         };
-        print STDERR "[DEBUG][HashtagParser] Found #terminalLastCommand\n" if $self->{debug};
+        log_debug('HashtagParser', "Found #terminalLastCommand");
     }
     
     # Parse #terminalSelection (no argument)
@@ -159,7 +160,7 @@ sub parse {
             raw => '#terminalSelection',
             position => $-[0]
         };
-        print STDERR "[DEBUG][HashtagParser] Found #terminalSelection\n" if $self->{debug};
+        log_debug('HashtagParser', "Found #terminalSelection");
     }
     
     # Sort by position to maintain order
@@ -201,7 +202,7 @@ sub resolve {
     my $total_size = 0;
     
     for my $tag (@$tags) {
-        print STDERR "[DEBUG][HashtagParser] Resolving $tag->{type}\n" if $self->{debug};
+        log_debug('HashtagParser', "Resolving $tag->{type}");
         
         my $result;
         
@@ -290,7 +291,7 @@ sub resolve {
     }
     
     print STDERR "[DEBUG][HashtagParser] Resolved " . scalar(@context) . " items\n" if $self->{debug};
-    print STDERR "[DEBUG][HashtagParser] Total: $total_size bytes, $self->{total_tokens_used} tokens\n" if $self->{debug};
+    log_debug('HashtagParser', "Total: $total_size bytes, $self->{total_tokens_used} tokens");
     
     if (@{$self->{truncated_items}}) {
         print STDERR "[INFO][HashtagParser] Truncated " . scalar(@{$self->{truncated_items}}) . " items to fit token budget\n";
@@ -436,7 +437,7 @@ sub resolve_file {
         close $fh;
     }
     else {
-        print STDERR "[ERROR][HashtagParser] Failed to read file $path: $!\n" if should_log('ERROR');
+        log_error('HashtagParser', "Failed to read file $path: $!");
         return {
             type => 'file',
             path => $path,
@@ -450,7 +451,7 @@ sub resolve_file {
     my $line_count = ($content =~ tr/\n//) + 1;
     my $basename = basename($path);
     
-    print STDERR "[DEBUG][HashtagParser] Read file: $path ($size bytes, $line_count lines)\n" if $self->{debug};
+    log_debug('HashtagParser', "Read file: $path ($size bytes, $line_count lines)");
     
     return {
         type => 'file',
@@ -575,7 +576,7 @@ sub resolve_codebase {
     # Get working directory
     my $base_dir = $self->{session}->{working_directory} || '.';
     
-    print STDERR "[DEBUG][HashtagParser] Resolving codebase from: $base_dir\n" if $self->{debug};
+    log_debug('HashtagParser', "Resolving codebase from: $base_dir");
     
     # Build a concise codebase summary using RepoMap protocol
     my $content = "Codebase Overview\n";
@@ -732,7 +733,7 @@ sub resolve_terminal_last_command {
             $content .= "Output:\n$last_output\n";
         }
         
-        print STDERR "[DEBUG][HashtagParser] Resolved terminal last command\n" if $self->{debug};
+        log_debug('HashtagParser', "Resolved terminal last command");
         
         return {
             type => 'terminalLastCommand',

@@ -3,6 +3,7 @@ package CLIO::Core::AgentLoop;
 use strict;
 use warnings;
 use utf8;
+use CLIO::Core::Logger qw(should_log);
 use Carp qw(croak);
 use Time::HiRes qw(time sleep);
 
@@ -312,7 +313,7 @@ sub log_debug {
 
 sub log_warn {
     my ($self, $msg) = @_;
-    print STDERR "[WARN][AgentLoop] $msg\n";
+    print STDERR "[WARNING][AgentLoop] $msg\n";
 }
 
 sub log_error {

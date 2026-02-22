@@ -8,7 +8,7 @@ use File::Spec;
 use File::Basename;
 use CLIO::UI::ANSI;
 use CLIO::Util::ConfigPath qw(get_config_dir);
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug log_error);
 
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
@@ -108,7 +108,7 @@ sub load_styles {
         next unless -d $dir;
         
         opendir(my $dh, $dir) or do {
-            print STDERR "[DEBUG][Theme] Cannot open style dir $dir: $!\n" if $self->{debug};
+            log_debug('Theme', "Cannot open style dir $dir: $!");
             next;
         };
         
@@ -121,14 +121,14 @@ sub load_styles {
             my $style = $self->load_style_file($path);
             if ($style && $style->{name}) {
                 $self->{styles}->{$style->{name}} = $style;
-                print STDERR "[DEBUG][Theme] Loaded style: $style->{name}\n" if $self->{debug};
+                log_debug('Theme', "Loaded style: $style->{name}");
             }
         }
     }
     
     # If no styles loaded, create default in memory
     unless (keys %{$self->{styles}}) {
-        print STDERR "[DEBUG][Theme] No styles loaded, using built-in default\n" if $self->{debug};
+        log_debug('Theme', "No styles loaded, using built-in default");
         $self->{styles}->{default} = $self->get_builtin_style();
     }
 }
@@ -151,7 +151,7 @@ sub load_themes {
         next unless -d $dir;
         
         opendir(my $dh, $dir) or do {
-            print STDERR "[DEBUG][Theme] Cannot open theme dir $dir: $!\n" if $self->{debug};
+            log_debug('Theme', "Cannot open theme dir $dir: $!");
             next;
         };
         
@@ -164,14 +164,14 @@ sub load_themes {
             my $theme = $self->load_theme_file($path);
             if ($theme && $theme->{name}) {
                 $self->{themes}->{$theme->{name}} = $theme;
-                print STDERR "[DEBUG][Theme] Loaded theme: $theme->{name}\n" if $self->{debug};
+                log_debug('Theme', "Loaded theme: $theme->{name}");
             }
         }
     }
     
     # If no themes loaded, create default in memory
     unless (keys %{$self->{themes}}) {
-        print STDERR "[DEBUG][Theme] No themes loaded, using built-in default\n" if $self->{debug};
+        log_debug('Theme', "No themes loaded, using built-in default");
         $self->{themes}->{default} = $self->get_builtin_theme();
     }
 }
@@ -188,7 +188,7 @@ sub load_style_file {
     return undef unless -f $path;
     
     open(my $fh, '<:encoding(UTF-8)', $path) or do {
-        print STDERR "[ERROR][Theme] Cannot open style file $path: $!\n" if should_log('ERROR');
+        log_error('Theme', "Cannot open style file $path: $!");
         return undef;
     };
     
@@ -224,7 +224,7 @@ sub load_theme_file {
     return undef unless -f $path;
     
     open(my $fh, '<:encoding(UTF-8)', $path) or do {
-        print STDERR "[ERROR][Theme] Cannot open theme file $path: $!\n" if should_log('ERROR');
+        log_error('Theme', "Cannot open theme file $path: $!");
         return undef;
     };
     
@@ -351,12 +351,12 @@ sub set_style {
     my ($self, $name) = @_;
     
     unless (exists $self->{styles}->{$name}) {
-        print STDERR "[ERROR][Theme] Style '$name' not found\n" if should_log('ERROR');
+        log_error('Theme', "Style '$name' not found");
         return 0;
     }
     
     $self->{current_style} = $name;
-    print STDERR "[DEBUG][Theme] Switched to style: $name\n" if $self->{debug};
+    log_debug('Theme', "Switched to style: $name");
     return 1;
 }
 
@@ -370,12 +370,12 @@ sub set_theme {
     my ($self, $name) = @_;
     
     unless (exists $self->{themes}->{$name}) {
-        print STDERR "[ERROR][Theme] Theme '$name' not found\n" if should_log('ERROR');
+        log_error('Theme', "Theme '$name' not found");
         return 0;
     }
     
     $self->{current_theme} = $name;
-    print STDERR "[DEBUG][Theme] Switched to theme: $name\n" if $self->{debug};
+    log_debug('Theme', "Switched to theme: $name");
     return 1;
 }
 
@@ -510,7 +510,7 @@ sub save_style {
     unless (-d $dir) {
         require File::Path;
         File::Path::make_path($dir) or do {
-            print STDERR "[ERROR][Theme] Cannot create style directory: $!\n" if should_log('ERROR');
+            log_error('Theme', "Cannot create style directory: $!");
             return 0;
         };
     }
@@ -518,7 +518,7 @@ sub save_style {
     my $path = File::Spec->catfile($dir, "$name.style");
     
     open(my $fh, '>:encoding(UTF-8)', $path) or do {
-        print STDERR "[ERROR][Theme] Cannot write style file: $!\n" if should_log('ERROR');
+        log_error('Theme', "Cannot write style file: $!");
         return 0;
     };
     
@@ -533,7 +533,7 @@ sub save_style {
     
     close($fh);
     
-    print STDERR "[DEBUG][Theme] Saved style to: $path\n" if $self->{debug};
+    log_debug('Theme', "Saved style to: $path");
     return 1;
 }
 
@@ -550,7 +550,7 @@ sub save_theme {
     unless (-d $dir) {
         require File::Path;
         File::Path::make_path($dir) or do {
-            print STDERR "[ERROR][Theme] Cannot create theme directory: $!\n" if should_log('ERROR');
+            log_error('Theme', "Cannot create theme directory: $!");
             return 0;
         };
     }
@@ -558,7 +558,7 @@ sub save_theme {
     my $path = File::Spec->catfile($dir, "$name.theme");
     
     open(my $fh, '>:encoding(UTF-8)', $path) or do {
-        print STDERR "[ERROR][Theme] Cannot write theme file: $!\n" if should_log('ERROR');
+        log_error('Theme', "Cannot write theme file: $!");
         return 0;
     };
     
@@ -573,7 +573,7 @@ sub save_theme {
     
     close($fh);
     
-    print STDERR "[DEBUG][Theme] Saved theme to: $path\n" if $self->{debug};
+    log_debug('Theme', "Saved theme to: $path");
     return 1;
 }
 

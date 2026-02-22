@@ -119,7 +119,7 @@ sub new {
         }
     };
     if ($@) {
-        print STDERR "[WARN][WorkflowOrchestrator] MCP initialization failed: $@\n" if should_log('WARNING');
+        log_warning('WorkflowOrchestrator', "MCP initialization failed: $@");
     }
     
     # Initialize snapshot system for file change tracking
@@ -129,14 +129,14 @@ sub new {
             debug => $args{debug},
         );
         if ($self->{snapshot}->is_available()) {
-            print STDERR "[DEBUG][WorkflowOrchestrator] Snapshot system initialized\n" if $self->{debug};
+            log_debug('WorkflowOrchestrator', "Snapshot system initialized");
         } else {
-            print STDERR "[DEBUG][WorkflowOrchestrator] Snapshot system unavailable (git not found)\n" if $self->{debug};
+            log_debug('WorkflowOrchestrator', "Snapshot system unavailable (git not found)");
             $self->{snapshot} = undef;
         }
     };
     if ($@) {
-        print STDERR "[DEBUG][WorkflowOrchestrator] Snapshot system failed to load: $@\n" if $self->{debug};
+        log_debug('WorkflowOrchestrator', "Snapshot system failed to load: $@");
         $self->{snapshot} = undef;
     }
     
@@ -258,7 +258,7 @@ sub _register_default_tools {
             CLIO::Tools::RemoteExecution->new(debug => $self->{debug})
         );
     } else {
-        print STDERR "[DEBUG][WorkflowOrchestrator] Blocked remote_execution for sub-agent\n" if should_log('DEBUG');
+        log_debug('WorkflowOrchestrator', "Blocked remote_execution for sub-agent");
     }
     
     # Register SubAgentOperations tool (blocked for sub-agents to prevent fork bombs)
@@ -268,7 +268,7 @@ sub _register_default_tools {
             CLIO::Tools::SubAgentOperations->new(debug => $self->{debug})
         );
     } else {
-        print STDERR "[DEBUG][WorkflowOrchestrator] Blocked agent_operations for sub-agent\n" if should_log('DEBUG');
+        log_debug('WorkflowOrchestrator', "Blocked agent_operations for sub-agent");
     }
     
     # Register ApplyPatch tool (diff-based file editing)
@@ -277,7 +277,7 @@ sub _register_default_tools {
         CLIO::Tools::ApplyPatch->new(debug => $self->{debug})
     );
     
-    print STDERR "[DEBUG][WorkflowOrchestrator] Registered default tools (subagent=$is_subagent)\n" if should_log('DEBUG');
+    log_debug('WorkflowOrchestrator', "Registered default tools (subagent=$is_subagent)");
 }
 
 =head2 process_input
@@ -332,9 +332,9 @@ sub process_input {
                     splice(@{$state->{snapshot_history}}, 0, @{$state->{snapshot_history}} - 20);
                 }
             }
-            print STDERR "[DEBUG][WorkflowOrchestrator] Pre-turn snapshot: $turn_snapshot\n" if $self->{debug};
+            log_debug('WorkflowOrchestrator', "Pre-turn snapshot: $turn_snapshot");
         } elsif ($@) {
-            print STDERR "[DEBUG][WorkflowOrchestrator] Snapshot failed: $@\n" if $self->{debug};
+            log_debug('WorkflowOrchestrator', "Snapshot failed: $@");
         }
     }
     
@@ -513,7 +513,7 @@ sub process_input {
                 if ($on_tool_call_from_ui) {
                     eval { $on_tool_call_from_ui->($tool_name); };
                     if ($@) {
-                        print STDERR "[DEBUG][WorkflowOrchestrator] UI callback error: $@\n" if should_log('DEBUG');
+                        log_debug('WorkflowOrchestrator', "UI callback error: $@");
                     }
                 }
                 
@@ -567,7 +567,7 @@ sub process_input {
         }
         
         if ($@) {
-            print STDERR "[DEBUG][WorkflowOrchestrator] API error: $@\n" if should_log('DEBUG');
+            log_debug('WorkflowOrchestrator', "API error: $@");
             return {
                 success => 0,
                 error => "API request failed: $@",
@@ -703,7 +703,7 @@ sub process_input {
                         # The agent can recover and try something else
                         $retry_count = 0;
                         
-                        print STDERR "[WARN][WorkflowOrchestrator] Malformed JSON persisted - agent informed, continuing workflow\n";
+                        log_warning('WorkflowOrchestrator', "Malformed JSON persisted - agent informed, continuing workflow");
                         
                         # Don't return error - let the loop continue so AI can recover
                         # Skip the sleep and retry, just continue to next iteration
@@ -844,7 +844,7 @@ sub process_input {
                     
                     # If we've trimmed to minimal context and still failing, give up
                     if ($retry_count > 2 && scalar(@non_system) <= 3) {
-                        print STDERR "[DEBUG][WorkflowOrchestrator] Token limit persists even with minimal context - giving up\n" if should_log('DEBUG');
+                        log_debug('WorkflowOrchestrator', "Token limit persists even with minimal context - giving up");
                         return {
                             success => 0,
                             error => "Token limit exceeded even with minimal conversation history. The request may be too large for this model. Try using a model with a larger context window.",
@@ -904,7 +904,7 @@ sub process_input {
                     eval { $on_system_message->($system_msg); };
                     print STDERR "[DEBUG][WorkflowOrchestrator] UI callback error: $@\n" if should_log('DEBUG') && $@;
                 } else {
-                    print STDERR "[INFO][WorkflowOrchestrator] Retryable $error_type detected, retrying in ${retry_delay}s on next iteration (attempt $retry_count/$max_retries)\n";
+                    log_info('WorkflowOrchestrator', "Retryable $error_type detected, retrying in ${retry_delay}s on next iteration (attempt $retry_count/$max_retries)");
                 }
                 
                 # Enable signal delivery during retry wait
@@ -937,10 +937,10 @@ sub process_input {
             
             # Break infinite loop if same error repeats too many times
             if ($self->{consecutive_errors} >= $self->{max_consecutive_errors}) {
-                print STDERR "[DEBUG][WorkflowOrchestrator] Same error occurred $self->{consecutive_errors} times in a row. Breaking loop.\n" if should_log('DEBUG');
-                print STDERR "[DEBUG][WorkflowOrchestrator] Persistent error: $error\n" if should_log('DEBUG');
-                print STDERR "[DEBUG][WorkflowOrchestrator] This likely indicates a bug in the request construction or API incompatibility.\n" if should_log('DEBUG');
-                print STDERR "[DEBUG][WorkflowOrchestrator] Check /tmp/clio_json_errors.log for details.\n" if should_log('DEBUG');
+                log_debug('WorkflowOrchestrator', "Same error occurred $self->{consecutive_errors} times in a row. Breaking loop.");
+                log_debug('WorkflowOrchestrator', "Persistent error: $error");
+                log_debug('WorkflowOrchestrator', "This likely indicates a bug in the request construction or API incompatibility.");
+                log_debug('WorkflowOrchestrator', "Check /tmp/clio_json_errors.log for details.");
                 
                 # Reset counters and return failure
                 $self->{consecutive_errors} = 0;
@@ -1349,7 +1349,7 @@ sub process_input {
                                     if should_log('DEBUG');
                             };
                             if ($@) {
-                                print STDERR "[DEBUG][WorkflowOrchestrator] Session save error (non-critical): $@\n" if should_log('DEBUG');
+                                log_debug('WorkflowOrchestrator', "Session save error (non-critical): $@");
                             }
                         }
                         
@@ -1643,7 +1643,7 @@ sub process_input {
                             if should_log('DEBUG');
                     };
                     if ($@) {
-                        print STDERR "[WARN][WorkflowOrchestrator] Failed to save tool result: $@\n";
+                        log_warning('WorkflowOrchestrator', "Failed to save tool result: $@");
                     }
                 }
                 
@@ -1693,7 +1693,7 @@ sub process_input {
                         if should_log('DEBUG');
                 };
                 if ($@) {
-                    print STDERR "[WARN][WorkflowOrchestrator] Failed to save session after iteration: $@\n";
+                    log_warning('WorkflowOrchestrator', "Failed to save session after iteration: $@");
                 }
             }
             
@@ -1772,7 +1772,7 @@ sub process_input {
         $elapsed_time
     );
     
-    print STDERR "[DEBUG][WorkflowOrchestrator] $error_msg\n" if should_log('DEBUG');
+    log_debug('WorkflowOrchestrator', "$error_msg");
     print STDERR "[DEBUG][WorkflowOrchestrator] Tool calls made: " . scalar(@tool_calls_made) . "\n" if should_log('DEBUG');
     
     return {
@@ -2075,7 +2075,7 @@ sub _generate_ltm_section {
     # Get LTM from session
     my $ltm = eval { $session->get_long_term_memory() };
     if ($@ || !$ltm) {
-        print STDERR "[DEBUG][WorkflowOrchestrator] No LTM available: $@\n" if $self->{debug};
+        log_debug('WorkflowOrchestrator', "No LTM available: $@");
         return '';
     }
     
@@ -2090,7 +2090,7 @@ sub _generate_ltm_section {
     my $total = @$discoveries + @$solutions + @$patterns + @$workflows + @$failures;
     return '' if $total == 0;
     
-    print STDERR "[DEBUG][WorkflowOrchestrator] Found $total LTM patterns to inject\n" if $self->{debug};
+    log_debug('WorkflowOrchestrator', "Found $total LTM patterns to inject");
     
     # Build LTM section
     my $section = "## Long-Term Memory Patterns\n\n";
@@ -2276,7 +2276,7 @@ sub _trim_conversation_for_api {
     }
     
     if ($self->{debug}) {
-        print STDERR "[WARN][WorkflowOrchestrator::_trim_conversation_for_api] History exceeds safe limit: $current_total tokens (safe: $safe_threshold of $model_context total). Trimming...\n";
+        log_warning('WorkflowOrchestrator::_trim_conversation_for_api', "History exceeds safe limit: $current_total tokens (safe: $safe_threshold of $model_context total). Trimming...");
         print STDERR "[DEBUG]  Model context window: $model_context tokens\n";
         print STDERR "[DEBUG]  Max response: $max_response tokens\n";
         print STDERR "[DEBUG]  Safe trim threshold: " . int($safe_threshold_percent * 100) . "% = $safe_threshold tokens\n";
@@ -2681,7 +2681,7 @@ sub _inject_context_files {
         };
         
         if ($@) {
-            print STDERR "[DEBUG][WorkflowOrchestrator] Failed to read context file $file (skipping): $@\n" if should_log('DEBUG');
+            log_debug('WorkflowOrchestrator', "Failed to read context file $file (skipping): $@");
         }
     }
     

@@ -43,11 +43,14 @@ subtest 'GitHub Tokens' => sub {
 };
 
 subtest 'Stripe Keys' => sub {
-    my $text = "stripe_key: sk_test_" . ('X' x 24)";
+    # Use generated test keys - exactly 24 alphanumeric chars after prefix
+    # Note: These are NOT real keys - format matches our redaction regex
+    my $stripe_suffix = 'X' x 24;  # Generate safe test pattern
+    my $text = "stripe_key: sk_test_${stripe_suffix}";
     my $result = redact($text, level => 'strict');
     like($result, qr/\[REDACTED\]/, 'Stripe secret key redacted');
     
-    $text = "pk_test_" . ('X' x 24)";
+    $text = "pk_test_${stripe_suffix}";
     $result = redact($text, level => 'strict');
     like($result, qr/\[REDACTED\]/, 'Stripe publishable key redacted');
 };
@@ -196,7 +199,7 @@ subtest 'Whitelist' => sub {
 subtest 'Nested Structures' => sub {
     my $data = {
         config => {
-            api_key => "sk_test_" . ('X' x 24)",
+            api_key => "sk_test_" . ('X' x 24),
             name => "Test Config",
         },
         users => [
