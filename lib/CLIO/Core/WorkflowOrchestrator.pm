@@ -104,6 +104,23 @@ sub new {
         debug => $args{debug}
     );
     
+    # Initialize MCP (Model Context Protocol) manager
+    eval {
+        require CLIO::MCP::Manager;
+        $self->{mcp_manager} = CLIO::MCP::Manager->new(
+            config => $args{config},
+            debug  => $args{debug},
+        );
+        my $mcp_connected = $self->{mcp_manager}->start();
+        if ($mcp_connected > 0) {
+            # Pass MCP manager to tool executor for MCP tool calls
+            $self->{tool_executor}{mcp_manager} = $self->{mcp_manager};
+        }
+    };
+    if ($@) {
+        print STDERR "[WARN][WorkflowOrchestrator] MCP initialization failed: $@\n" if should_log('WARNING');
+    }
+    
     # Initialize snapshot system for file change tracking
     eval {
         require CLIO::Session::Snapshot;
@@ -374,6 +391,29 @@ sub process_input {
     
     # Get tool definitions from registry (for API)
     my $tools = $self->{tool_registry}->get_tool_definitions();
+    
+    # Add MCP tool definitions if MCP is active
+    if ($self->{mcp_manager}) {
+        eval {
+            require CLIO::Tools::MCPBridge;
+            my $mcp_defs = CLIO::Tools::MCPBridge->generate_tool_definitions($self->{mcp_manager});
+            if ($mcp_defs && @$mcp_defs) {
+                for my $mcp_def (@$mcp_defs) {
+                    push @$tools, {
+                        type     => 'function',
+                        function => {
+                            name        => $mcp_def->{name},
+                            description => $mcp_def->{description},
+                            parameters  => $mcp_def->{parameters},
+                        },
+                    };
+                }
+                log_debug('WorkflowOrchestrator', "Added " . scalar(@$mcp_defs) . " MCP tool(s) to API definitions");
+            }
+        };
+        print STDERR "[WARN][WorkflowOrchestrator] MCP tool definition error: $@\n" if $@ && should_log('WARNING');
+    }
+    
     print STDERR "[DEBUG][WorkflowOrchestrator] Loaded " . scalar(@$tools) . " tool definitions\n"
         if $self->{debug};
     
@@ -1842,6 +1882,28 @@ sub _generate_tools_section {
     $section .= "2. Include with value: `{\"operation\":\"read_tool_result\",\"offset\":0,\"length\":8192}`\n\n";
     $section .= "**Rule:** EVERY parameter key MUST have a value. No exceptions.\n\n";
     $section .= "**DECIMAL NUMBERS:** Always include leading zero: `0.1` not `.1`, `0.05` not `.05`\n";
+    
+    # Add MCP tools section if any are connected
+    if ($self->{mcp_manager}) {
+        my $mcp_tools = $self->{mcp_manager}->all_tools();
+        if ($mcp_tools && @$mcp_tools) {
+            $section .= "\n\n## MCP (Model Context Protocol) Tools\n\n";
+            $section .= "The following tools are provided by connected MCP servers. ";
+            $section .= "Call them like any other tool using their full name.\n\n";
+            
+            my $current_server = '';
+            for my $entry (@$mcp_tools) {
+                if ($entry->{server} ne $current_server) {
+                    $current_server = $entry->{server};
+                    $section .= "### MCP Server: $current_server\n\n";
+                }
+                my $name = "mcp_$entry->{name}";
+                my $desc = $entry->{tool}{description} || 'No description';
+                $section .= "- **$name** - $desc\n";
+            }
+            $section .= "\n";
+        }
+    }
     
     return $section;
 }

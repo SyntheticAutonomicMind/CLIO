@@ -148,6 +148,40 @@ When you use these tools via CLIO's terminal operations, CLIO automatically enab
 
 **These are not dependencies** - CLIO detects them and adapts behavior accordingly.
 
+### MCP (Model Context Protocol) Support
+
+MCP allows CLIO to connect to external tool servers, extending its capabilities
+with third-party tools (databases, APIs, custom integrations, etc.).
+
+| Command | Purpose | Installation |
+|---------|---------|-------------|
+| `npx` | Run MCP servers from npm packages | Comes with Node.js |
+| `node` | Run local MCP servers | [nodejs.org](https://nodejs.org) |
+| `uvx` | Run Python-based MCP servers | `pip install uv` |
+| `python3` | Run Python MCP servers directly | Usually pre-installed |
+
+**At least one** of these runtimes is needed for MCP support. If none are found,
+MCP is silently disabled and CLIO works normally without it.
+
+**Quick install (Node.js):**
+```bash
+# macOS
+brew install node
+
+# Debian/Ubuntu
+sudo apt install nodejs npm
+
+# RHEL/Fedora
+sudo dnf install nodejs npm
+```
+
+**Verify:**
+```bash
+npx --version
+```
+
+See [docs/MCP.md](MCP.md) for configuration details.
+
 ---
 
 ## Troubleshooting
