@@ -135,29 +135,57 @@ sub start {
             next;
         }
         
-        my $command = $server_config->{command};
-        unless ($command && ref($command) eq 'ARRAY' && @$command) {
-            $self->{status}{$name} = { status => 'failed', error => 'No command configured' };
-            print STDERR "[WARN][MCP] Server '$name' has no command configured\n" if should_log('WARNING');
-            next;
-        }
+        # Determine server type and create appropriate transport
+        my $server_type = $server_config->{type} || 'local';
+        my $client;
         
-        # Check that the command executable exists
-        my $exe = $command->[0];
-        unless ($self->_command_exists($exe)) {
-            $self->{status}{$name} = { status => 'failed', error => "Command not found: $exe" };
-            print STDERR "[WARN][MCP] Server '$name': command '$exe' not found in PATH\n" if should_log('WARNING');
-            next;
+        if ($server_type eq 'remote') {
+            # Remote HTTP/SSE server
+            my $url = $server_config->{url};
+            unless ($url) {
+                $self->{status}{$name} = { status => 'failed', error => 'No url configured for remote server' };
+                print STDERR "[WARN][MCP] Server '$name' has no url configured\n" if should_log('WARNING');
+                next;
+            }
+            
+            require CLIO::MCP::Transport::HTTP;
+            my $transport = CLIO::MCP::Transport::HTTP->new(
+                url     => $url,
+                headers => $server_config->{headers} || {},
+                timeout => $server_config->{timeout} || 30,
+                debug   => $self->{debug},
+            );
+            
+            $client = CLIO::MCP::Client->new(
+                name      => $name,
+                transport => $transport,
+                debug     => $self->{debug},
+            );
+        } else {
+            # Local stdio server (default)
+            my $command = $server_config->{command};
+            unless ($command && ref($command) eq 'ARRAY' && @$command) {
+                $self->{status}{$name} = { status => 'failed', error => 'No command configured' };
+                print STDERR "[WARN][MCP] Server '$name' has no command configured\n" if should_log('WARNING');
+                next;
+            }
+            
+            # Check that the command executable exists
+            my $exe = $command->[0];
+            unless ($self->_command_exists($exe)) {
+                $self->{status}{$name} = { status => 'failed', error => "Command not found: $exe" };
+                print STDERR "[WARN][MCP] Server '$name': command '$exe' not found in PATH\n" if should_log('WARNING');
+                next;
+            }
+            
+            $client = CLIO::MCP::Client->new(
+                name        => $name,
+                command     => $command,
+                environment => $server_config->{environment} || {},
+                timeout     => $server_config->{timeout} || 30,
+                debug       => $self->{debug},
+            );
         }
-        
-        # Create and connect client
-        my $client = CLIO::MCP::Client->new(
-            name        => $name,
-            command     => $command,
-            environment => $server_config->{environment} || {},
-            timeout     => $server_config->{timeout} || 30,
-            debug       => $self->{debug},
-        );
         
         eval {
             if ($client->connect()) {
@@ -316,24 +344,46 @@ sub server_status {
 
 Dynamically add and connect to an MCP server.
 
+Arguments:
+- $name: Server name
+- $command_or_config: Arrayref of command (local) OR hashref { url => ..., headers => {} } (remote)
+
 =cut
 
 sub add_server {
-    my ($self, $name, $command) = @_;
-    
-    unless ($self->is_available()) {
-        return { success => 0, error => 'MCP not available (no compatible runtimes found)' };
-    }
+    my ($self, $name, $command_or_config) = @_;
     
     if ($self->{clients}{$name}) {
         $self->{clients}{$name}->disconnect();
     }
     
-    my $client = CLIO::MCP::Client->new(
-        name    => $name,
-        command => $command,
-        debug   => $self->{debug},
-    );
+    my $client;
+    
+    if (ref($command_or_config) eq 'HASH' && $command_or_config->{url}) {
+        # Remote HTTP server
+        require CLIO::MCP::Transport::HTTP;
+        my $transport = CLIO::MCP::Transport::HTTP->new(
+            url     => $command_or_config->{url},
+            headers => $command_or_config->{headers} || {},
+            timeout => $command_or_config->{timeout} || 30,
+            debug   => $self->{debug},
+        );
+        $client = CLIO::MCP::Client->new(
+            name      => $name,
+            transport => $transport,
+            debug     => $self->{debug},
+        );
+    } else {
+        # Local stdio server
+        unless ($self->is_available()) {
+            return { success => 0, error => 'MCP not available (no compatible runtimes found)' };
+        }
+        $client = CLIO::MCP::Client->new(
+            name    => $name,
+            command => $command_or_config,
+            debug   => $self->{debug},
+        );
+    }
     
     if ($client->connect()) {
         $self->{clients}{$name} = $client;
