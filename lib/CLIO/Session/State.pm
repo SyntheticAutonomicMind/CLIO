@@ -8,7 +8,7 @@ use warnings;
 use CLIO::Core::Logger qw(should_log);
 use CLIO::Util::PathResolver;
 use File::Spec;
-use JSON::PP;
+use CLIO::Util::JSON qw(encode_json decode_json);
 use Cwd qw(getcwd abs_path);
 use POSIX qw(strftime);
 use CLIO::Memory::ShortTerm;

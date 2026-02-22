@@ -11,7 +11,7 @@ use CLIO::Util::JSONRepair qw(repair_malformed_json);
 use CLIO::Util::AnthropicXMLParser qw(is_anthropic_xml_format parse_anthropic_xml_to_json);
 use CLIO::UI::ToolOutputFormatter;
 use CLIO::Core::ToolErrorGuidance;
-use JSON::PP qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json);
 use Encode qw(encode_utf8);  # For handling Unicode in JSON
 use Time::HiRes qw(time);
 use Digest::MD5 qw(md5_hex);
@@ -1154,7 +1154,7 @@ sub process_input {
                 # Handle UTF-8: JSON::PP expects bytes, not Perl's internal UTF-8 strings
                 my $arguments_valid = 0;
                 eval {
-                    use JSON::PP qw(decode_json);
+                    use CLIO::Util::JSON qw(decode_json);
                     use Encode qw(encode_utf8);
                     
                     # Convert to UTF-8 bytes if it's a wide string
@@ -1897,6 +1897,9 @@ Returns:
 sub _generate_tools_section {
     my ($self) = @_;
     
+    # Cache the tools section since tool registrations don't change during a session
+    return $self->{_tools_section_cache} if $self->{_tools_section_cache};
+    
     # Get all registered tool OBJECTS (not just names)
     my $tools = $self->{tool_registry}->get_all_tools();
     my $tool_count = scalar(@$tools);
@@ -1982,6 +1985,9 @@ sub _generate_tools_section {
             $section .= "\n";
         }
     }
+    
+    # Cache the generated section (MCP tools are included)
+    $self->{_tools_section_cache} = $section;
     
     return $section;
 }
@@ -2778,7 +2784,7 @@ sub _repair_tool_call_json {
     
     # Validate that repair worked
     eval {
-        use JSON::PP qw(decode_json);
+        use CLIO::Util::JSON qw(decode_json);
         decode_json($repaired);
     };
     

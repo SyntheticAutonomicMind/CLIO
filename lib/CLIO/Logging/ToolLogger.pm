@@ -6,7 +6,7 @@ package CLIO::Logging::ToolLogger;
 use strict;
 use warnings;
 use feature 'say';
-use JSON::PP qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json);
 use File::Path qw(make_path);
 use File::Spec;
 use POSIX qw(strftime);

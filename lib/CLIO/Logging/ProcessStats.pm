@@ -5,7 +5,7 @@ package CLIO::Logging::ProcessStats;
 
 use strict;
 use warnings;
-use JSON::PP qw(encode_json);
+use CLIO::Util::JSON qw(encode_json);
 use File::Path qw(make_path);
 use File::Spec;
 use POSIX qw(strftime);

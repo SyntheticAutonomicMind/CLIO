@@ -7,7 +7,7 @@ use CLIO::Core::Logger qw(should_log);
 use feature 'say';
 use File::Path qw(make_path);
 use File::Spec;
-use JSON::PP qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json);
 
 =head1 NAME
 

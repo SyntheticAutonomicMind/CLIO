@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use CLIO::Core::Logger qw(should_log);
 use CLIO::Util::ConfigPath qw(get_config_file);
-use JSON::PP qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json);
 use File::Spec;
 use File::Path qw(make_path);
 

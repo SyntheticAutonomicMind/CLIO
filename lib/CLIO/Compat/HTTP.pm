@@ -3,7 +3,7 @@ package CLIO::Compat::HTTP;
 use strict;
 use warnings;
 use HTTP::Tiny;
-use JSON::PP qw(decode_json encode_json);
+use CLIO::Util::JSON qw(decode_json encode_json);
 use CLIO::Core::Logger qw(should_log);
 
 # Check if SSL is available for HTTP::Tiny

@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use utf8;
 use Carp qw(croak);
-use JSON::PP qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json);
 use MIME::Base64;
 use Digest::SHA qw(sha256);
 use File::Spec;

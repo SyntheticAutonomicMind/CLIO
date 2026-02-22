@@ -6,7 +6,7 @@ use Cwd;
 use Carp qw(croak confess);
 use parent 'CLIO::Tools::Tool';
 use CLIO::Util::ConfigPath qw(get_config_dir);
-use JSON::PP qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json);
 use File::Spec;
 use feature 'say';
 

@@ -5,7 +5,7 @@ use warnings;
 use base 'CLIO::Protocols::Handler';
 use MIME::Base64;
 use File::Temp qw(tempfile);
-use JSON::PP;
+use CLIO::Util::JSON qw(encode_json decode_json);
 
 =head1 NAME
 

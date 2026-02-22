@@ -8,6 +8,7 @@ binmode(STDERR, ':encoding(UTF-8)');
 
 use Carp qw(croak);
 use File::Spec;
+use CLIO::Util::JSON qw(decode_json);
 use CLIO::Core::Logger qw(should_log);
 
 =head1 NAME
@@ -452,7 +453,7 @@ sub _search_skills {
     }
     
     require JSON::PP;
-    my $skills = eval { JSON::PP::decode_json($resp->decoded_content) };
+    my $skills = eval { decode_json($resp->decoded_content) };
     if ($@) {
         $self->display_error_message("Failed to parse skills catalog: $@");
         return;

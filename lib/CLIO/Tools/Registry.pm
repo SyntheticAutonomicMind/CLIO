@@ -142,6 +142,9 @@ Returns: Arrayref of tool definition hashrefs in OpenAI format
 sub get_tool_definitions {
     my ($self) = @_;
     
+    # Return cached definitions if available (they don't change during a session)
+    return $self->{_definitions_cache} if $self->{_definitions_cache};
+    
     my @definitions;
     
     for my $name (@{$self->{tool_order}}) {
@@ -165,6 +168,9 @@ sub get_tool_definitions {
     
     print STDERR "[DEBUG][Registry] Generated " . scalar(@definitions) . " tool definitions\n" 
         if $self->{debug};
+    
+    # Cache for subsequent calls
+    $self->{_definitions_cache} = \@definitions;
     
     return \@definitions;
 }

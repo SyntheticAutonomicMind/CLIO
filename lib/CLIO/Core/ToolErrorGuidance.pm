@@ -6,7 +6,7 @@ package CLIO::Core::ToolErrorGuidance;
 use strict;
 use warnings;
 use utf8;
-use JSON::PP qw(encode_json);
+use CLIO::Util::JSON qw(encode_json);
 use CLIO::Core::Logger qw(should_log);
 
 =head1 NAME

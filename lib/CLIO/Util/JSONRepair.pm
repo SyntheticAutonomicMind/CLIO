@@ -29,6 +29,7 @@ and ToolExecutor.
 =cut
 
 use Exporter 'import';
+use CLIO::Util::JSON qw(encode_json);
 our @EXPORT_OK = qw(repair_malformed_json);
 
 =head2 repair_malformed_json($json_str, $debug)
@@ -121,7 +122,7 @@ sub repair_malformed_json {
         
         if (%params) {
             require JSON::PP;
-            $json_str = JSON::PP::encode_json(\%params);
+            $json_str = encode_json(\%params);
             print STDERR "[DEBUG][JSONRepair] Converted XML to JSON: $json_str\n"
                 if $debug;
             return $json_str;

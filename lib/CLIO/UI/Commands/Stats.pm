@@ -8,6 +8,7 @@ binmode(STDERR, ':encoding(UTF-8)');
 
 use Carp qw(croak);
 use CLIO::Core::Logger qw(should_log);
+use CLIO::Util::JSON qw(encode_json decode_json);
 
 =head1 NAME
 
@@ -271,7 +272,7 @@ sub _show_log {
     
     require JSON::PP;
     for my $entry (@recent) {
-        my $json = eval { JSON::PP::encode_json($entry) };
+        my $json = eval { encode_json($entry) };
         $self->writeline("  $json", markdown => 0) if $json;
     }
     
@@ -359,7 +360,7 @@ sub _read_log_entries {
         while (my $line = <$fh>) {
             chomp $line;
             next unless $line =~ /\S/;
-            my $entry = eval { JSON::PP::decode_json($line) };
+            my $entry = eval { decode_json($line) };
             push @entries, $entry if $entry;
         }
         close $fh;

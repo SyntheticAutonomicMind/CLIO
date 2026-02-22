@@ -8,7 +8,7 @@ use warnings;
 use Carp qw(croak confess);
 use parent 'CLIO::Tools::Tool';
 use Cwd 'getcwd';
-use JSON::PP qw(decode_json encode_json);
+use CLIO::Util::JSON qw(decode_json encode_json);
 use feature 'say';
 
 =head1 NAME

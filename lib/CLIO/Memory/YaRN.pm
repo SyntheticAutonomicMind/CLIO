@@ -3,7 +3,7 @@ package CLIO::Memory::YaRN;
 use strict;
 use warnings;
 use CLIO::Core::Logger qw(should_log);
-use JSON::PP;
+use CLIO::Util::JSON qw(decode_json);
 
 =head1 NAME
 
@@ -87,7 +87,7 @@ sub add_to_thread {
     
     # Handle both hashref and JSON string input
     if (defined $msg && !ref $msg && $msg =~ /^\s*\{.*\}\s*$/) {
-        eval { $msg = JSON::PP::decode_json($msg); };
+        eval { $msg = decode_json($msg); };
         if ($@) {
             print STDERR "[WARN][YaRN] Failed to decode JSON message: $@\n" if should_log('WARNING');
             return;

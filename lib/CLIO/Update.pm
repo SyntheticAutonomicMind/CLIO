@@ -8,7 +8,7 @@ use warnings;
 use File::Spec;
 use File::Basename qw(dirname);
 use File::Path qw(mkpath rmtree);
-use JSON::PP qw(decode_json);
+use CLIO::Util::JSON qw(decode_json);
 use CLIO::Core::Logger qw(should_log);
 
 =head1 NAME

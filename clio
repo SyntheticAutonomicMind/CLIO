@@ -13,7 +13,7 @@ use warnings;
 use File::Spec;
 use File::Basename;
 use File::Path qw(make_path);
-use JSON::PP;
+use CLIO::Util::JSON qw(encode_json decode_json);
 use CLIO::UI::Chat;
 use CLIO::Util::PathResolver;
 use CLIO::Core::Logger qw(should_log);
