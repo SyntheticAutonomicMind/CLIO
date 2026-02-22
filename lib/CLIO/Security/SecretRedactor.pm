@@ -6,6 +6,8 @@ package CLIO::Security::SecretRedactor;
 use strict;
 use warnings;
 use utf8;
+binmode(STDOUT, ':encoding(UTF-8)');
+binmode(STDERR, ':encoding(UTF-8)');
 use Exporter 'import';
 use CLIO::Core::Logger qw(should_log);
 
