@@ -183,17 +183,24 @@ sub readline {
                     my $new_row = int($new_total_pos / $term_width);
                     
                     # Check if we're unwrapping (going from row 1 to row 0)
-                    if ($old_row > $new_row) {
-                        # We unwrapped - need full redraw to avoid scroll issues
+                    # Also use full redraw when landing on exact terminal width boundary
+                    # to avoid cursor ambiguity with pending wrap state
+                    if ($old_row > $new_row || ($new_total_pos > 0 && $new_total_pos % $term_width == 0)) {
+                        # Unwrapped or at exact boundary - need full redraw
                         $self->redraw_line(\$input, \$cursor_pos, $prompt);
                     } else {
-                        # Same row - just backspace locally
+                        # Same row, not at boundary - just backspace locally
                         print "\b \b";  # Move back, print space, move back again
                         
                         # Update cursor tracking
                         my $new_col = ($new_total_pos % $term_width) + 1;
                         $self->{last_cursor_row} = $new_row;
                         $self->{last_cursor_col} = $new_col;
+                        
+                        # Update display_lines to match actual content
+                        my $total_chars = $prompt_len + length($input);
+                        my $new_display_lines = $total_chars > 0 ? int(($total_chars - 1) / $term_width) + 1 : 1;
+                        $self->{display_lines} = $new_display_lines;
                     }
                 } else {
                     # Deleting from middle - need full redraw
@@ -902,15 +909,29 @@ sub redraw_line {
     $self->{display_lines} = $new_lines_needed;
     
     # After printing, calculate where cursor is now (at end of what we printed)
-    # After print(), cursor is at the position AFTER the last character.
-    # If we printed exactly term_width characters on a line, cursor is at column term_width
-    # (in "pending wrap" state, not yet wrapped to next line).
+    # When we print exactly N*term_width characters, the terminal enters "pending wrap"
+    # state: cursor is at column term_width of the last row, NOT column 1 of the next row.
+    # The wrap only happens when the next character is printed.
     my $end_pos = $total_chars;
-    my ($end_row, $end_col) = $pos_to_rowcol->($end_pos);
+    my ($end_row, $end_col);
+    if ($end_pos > 0 && $end_pos % $term_width == 0) {
+        # Pending wrap: cursor is at last column of current row
+        $end_row = int($end_pos / $term_width) - 1;
+        $end_col = $term_width;
+    } else {
+        ($end_row, $end_col) = $pos_to_rowcol->($end_pos);
+    }
     
     # Calculate where we WANT the cursor to be
     my $desired_pos = $prompt_len + $$cursor_pos_ref;
-    my ($desired_row, $desired_col) = $pos_to_rowcol->($desired_pos);
+    my ($desired_row, $desired_col);
+    if ($desired_pos > 0 && $desired_pos % $term_width == 0) {
+        # At boundary: place cursor at last column of current row
+        $desired_row = int($desired_pos / $term_width) - 1;
+        $desired_col = $term_width;
+    } else {
+        ($desired_row, $desired_col) = $pos_to_rowcol->($desired_pos);
+    }
     
     if (should_log('DEBUG')) {
         print STDERR "[DEBUG][ReadLine] redraw_line: end position: row=$end_row, col=$end_col\n";
@@ -953,6 +974,10 @@ Add a line to command history
 sub add_to_history {
     my ($self, $line) = @_;
     
+    # Always reset history position, even if duplicate
+    # (prevents stale position after up-arrow -> Enter -> up-arrow)
+    $self->{history_pos} = -1;
+    
     # Don't add if same as last entry
     if (@{$self->{history}} && $self->{history}->[-1] eq $line) {
         return;
@@ -964,9 +989,6 @@ sub add_to_history {
     if (@{$self->{history}} > $self->{max_history}) {
         shift @{$self->{history}};
     }
-    
-    # Reset history position
-    $self->{history_pos} = -1;
 }
 
 1;

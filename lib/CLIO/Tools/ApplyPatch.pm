@@ -376,7 +376,8 @@ sub _parse_patch {
                     next;
                 }
                 
-                # Unrecognized line - treat as context
+                # Unrecognized line - treat as context (may indicate malformed patch)
+                log_debug('ApplyPatch', "Unrecognized line in patch chunk treated as context: '$cl'");
                 push @{$current_chunk->{old_lines}}, $cl;
                 push @{$current_chunk->{new_lines}}, $cl;
                 $i++;
@@ -397,6 +398,28 @@ sub _parse_patch {
         
         # Skip empty or unrecognized lines
         $i++;
+    }
+    
+    # Validate parsed hunks - warn about empty/no-op chunks
+    for my $hunk (@hunks) {
+        if ($hunk->{type} eq 'update' && $hunk->{chunks}) {
+            my @valid_chunks;
+            for my $chunk (@{$hunk->{chunks}}) {
+                my $has_old = $chunk->{old_lines} && @{$chunk->{old_lines}};
+                my $has_new = $chunk->{new_lines} && @{$chunk->{new_lines}};
+                if ($has_old || $has_new) {
+                    push @valid_chunks, $chunk;
+                } else {
+                    log_debug('ApplyPatch', "Skipping empty chunk in update for $hunk->{path}");
+                }
+            }
+            $hunk->{chunks} = \@valid_chunks;
+            
+            # If all chunks were empty, report error
+            if (!@valid_chunks && !$hunk->{move_path}) {
+                return (\@hunks, "Update for '$hunk->{path}' has no changes (no +/- lines found). Check patch format.");
+            }
+        }
     }
     
     return (\@hunks, undef);

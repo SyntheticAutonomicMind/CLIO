@@ -230,6 +230,12 @@ sub update {
     my $summary = scalar(@applied) . " successful";
     $summary .= ", " . scalar(@failed) . " failed" if @failed;
     
+    # If ALL updates failed, return error
+    if (!@applied && @failed) {
+        my $error_msg = "All updates failed:\n" . join("\n", map { "  - $_" } @failed);
+        return (0, $error_msg);
+    }
+    
     return (1, {
         summary => $summary,
         applied => \@applied,
