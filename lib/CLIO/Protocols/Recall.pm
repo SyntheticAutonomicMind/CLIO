@@ -8,7 +8,7 @@ binmode(STDERR, ':encoding(UTF-8)');
 use parent 'CLIO::Protocols::Handler';
 use MIME::Base64 qw(decode_base64 encode_base64);
 use CLIO::Util::JSON qw(encode_json);
-use CLIO::Core::Logger qw(should_log log_debug);
+use CLIO::Core::Logger qw(log_debug);
 use POSIX qw(strftime);
 
 =head1 NAME

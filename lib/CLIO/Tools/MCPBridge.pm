@@ -22,7 +22,7 @@ Tool names are namespaced as: mcp_<servername>_<toolname>
 
 use CLIO::Util::JSON qw(encode_json decode_json);
 
-use CLIO::Core::Logger qw(should_log log_debug);
+use CLIO::Core::Logger qw(log_debug);
 
 =head2 generate_tool_definitions
 

@@ -3,7 +3,6 @@ package CLIO::Core::ModelRegistry;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Logger qw(should_log);
 use JSON::PP;
 
 =head1 NAME

@@ -2,7 +2,7 @@ package CLIO::Memory::LongTerm;
 
 use strict;
 use warnings;
-use CLIO::Core::Logger qw(should_log log_debug);
+use CLIO::Core::Logger qw(log_debug);
 use JSON::PP;
 use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');

@@ -8,7 +8,7 @@ use File::Spec;
 use File::Basename;
 use CLIO::UI::ANSI;
 use CLIO::Util::ConfigPath qw(get_config_dir);
-use CLIO::Core::Logger qw(should_log log_debug log_error);
+use CLIO::Core::Logger qw(log_debug log_error);
 
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');

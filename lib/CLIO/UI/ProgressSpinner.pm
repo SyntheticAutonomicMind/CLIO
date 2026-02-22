@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use utf8;
 use Time::HiRes qw(usleep);
-use CLIO::Core::Logger qw(should_log log_debug);
+use CLIO::Core::Logger qw(log_debug);
 
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
