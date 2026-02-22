@@ -3,6 +3,7 @@ package CLIO::MCP::Client;
 use strict;
 use warnings;
 use utf8;
+use Carp qw(croak);
 
 =head1 NAME
 
@@ -32,7 +33,7 @@ Supported transports:
         transport => $transport,
     );
     
-    $client->connect() or die "Failed";
+    $client->connect() or croak "Failed to connect MCP client";
     my $tools = $client->list_tools();
     my $result = $client->call_tool('read_file', { path => '/tmp/test.txt' });
     $client->disconnect();

@@ -4,6 +4,7 @@ use strict;
 use warnings;
 use utf8;
 use CLIO::Core::Logger qw(should_log);
+use Carp qw(croak);
 use feature 'say';
 use File::Path qw(make_path remove_tree);
 use File::Spec;
@@ -232,7 +233,7 @@ sub persistResult {
     if ($@) {
         my $error = $@;
         print STDERR "[ERROR][ToolResultStore] Failed to create directory: $error\n" if should_log('ERROR');
-        die "Failed to create tool_results directory: $error";
+        croak "Failed to create tool_results directory: $error";
     }
     
     # Wrap ultra-long lines to prevent AI context/JSON errors
@@ -249,7 +250,7 @@ sub persistResult {
     if ($@) {
         my $error = $@;
         print STDERR "[ERROR][ToolResultStore] Failed to write file: $error\n" if should_log('ERROR');
-        die "Failed to write tool result file: $error";
+        croak "Failed to write tool result file: $error";
     }
     
     my $total_length = length($wrapped_content);
@@ -389,11 +390,11 @@ sub retrieveChunk {
         # If multiple close matches, show suggestions and let AI pick
         elsif ($suggestions && @$suggestions > 1) {
             my $suggestion_text = join("\n", map { "  - $_" } @$suggestions);
-            die "Tool result not found: $toolCallId\n\nMultiple similar results found. Did you mean one of these?\n$suggestion_text";
+            croak "Tool result not found: $toolCallId\n\nMultiple similar results found. Did you mean one of these?\n$suggestion_text";
         }
         # No matches at all
         else {
-            die "Tool result not found: $toolCallId";
+            croak "Tool result not found: $toolCallId";
         }
     }
     
@@ -408,14 +409,14 @@ sub retrieveChunk {
     if ($@) {
         my $error = $@;
         print STDERR "[ERROR][ToolResultStore] Failed to read file: $error\n" if should_log('ERROR');
-        die "Failed to read tool result file: $error";
+        croak "Failed to read tool result file: $error";
     }
     
     my $total_length = length($full_content);
     
     # Validate offset
     if ($offset < 0 || $offset >= $total_length) {
-        die "Invalid offset $offset for result with total length $total_length";
+        croak "Invalid offset $offset for result with total length $total_length";
     }
     
     # Calculate chunk bounds
@@ -589,7 +590,7 @@ sub deleteResult {
     if ($@) {
         my $error = $@;
         print STDERR "[ERROR][ToolResultStore] Failed to delete result: $error\n" if should_log('ERROR');
-        die "Failed to delete tool result: $error";
+         croak "Failed to delete tool result: $error";
     }
 }
 
@@ -621,7 +622,7 @@ sub deleteAllResults {
     if ($@) {
         my $error = $@;
         print STDERR "[ERROR][ToolResultStore] Failed to delete tool results directory: $error\n" if should_log('ERROR');
-        die "Failed to delete tool results directory: $error";
+         croak "Failed to delete tool results directory: $error";
     }
 }
 

@@ -6,6 +6,7 @@ use utf8;
 use IO::Socket::UNIX;
 use IO::Select;
 use CLIO::Util::JSON qw(encode_json decode_json);
+use Carp qw(croak);
 use Time::HiRes qw(time sleep);
 
 binmode(STDOUT, ':encoding(UTF-8)');
@@ -25,8 +26,8 @@ coordination broker.
 sub new {
     my ($class, %args) = @_;
     
-    my $session_id = $args{session_id} or die "session_id required";
-    my $agent_id = $args{agent_id} or die "agent_id required";
+    my $session_id = $args{session_id} or croak "session_id required";
+    my $agent_id = $args{agent_id} or croak "agent_id required";
     my $task = $args{task} || "Untitled task";
     my $socket_dir = $args{socket_dir} || '/dev/shm/clio';
     
@@ -58,13 +59,13 @@ sub connect {
     my ($self) = @_;
     
     unless (-e $self->{socket_path}) {
-        die "Broker socket not found: $self->{socket_path}";
+        croak "Broker socket not found: $self->{socket_path}";
     }
     
     my $sock = IO::Socket::UNIX->new(
         Type => SOCK_STREAM,
         Peer => $self->{socket_path},
-    ) or die "Failed to connect to broker: $!";
+    ) or croak "Failed to connect to broker: $!";
     
     $sock->blocking(0);
     $self->{socket} = $sock;
@@ -81,7 +82,7 @@ sub connect {
         return 1;
     }
     
-    die "Failed to register with broker";
+    croak "Failed to register with broker";
 }
 
 sub disconnect {
@@ -222,12 +223,12 @@ sub get_warnings {
 sub send_message {
     my ($self, %args) = @_;
     
-    my $to = $args{to} or die "send_message requires 'to'";
+    my $to = $args{to} or croak "send_message requires 'to'";
     my $content = $args{content};
     my $message_type = $args{message_type} || $args{type} || 'generic';
     
     unless (defined $content) {
-        die "send_message requires 'content'";
+        croak "send_message requires 'content'";
     }
     
     my $result = $self->send_and_wait({
@@ -323,7 +324,7 @@ sub send_question {
     my $question = $args{question} || $args{content};
     
     unless ($question) {
-        die "send_question requires 'question' or 'content'";
+        croak "send_question requires 'question' or 'content'";
     }
     
     return $self->send_message(

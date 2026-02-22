@@ -6,6 +6,7 @@ package CLIO::Util::ConfigPath;
 use strict;
 use warnings;
 use utf8;
+use Carp qw(croak);
 use File::Spec;
 use File::Path qw(make_path);
 
@@ -128,7 +129,7 @@ Example:
 sub get_config_file {
     my ($filename, $type) = @_;
     
-    die "get_config_file: filename required" unless $filename;
+    croak "get_config_file: filename required" unless $filename;
     
     my $dir = get_config_dir($type);
     return File::Spec->catfile($dir, $filename);
