@@ -440,24 +440,28 @@ sub get_copilot_token {
             print STDERR "[INFO][GitHubAuth] Copilot token expired, refreshing...\n" if should_log('INFO');
             
             # Refresh by exchanging GitHub token again
+            # NOTE: Do NOT use 'return' inside eval{} - it returns from eval, not the sub!
+            my $refreshed_token;
             eval {
                 my $new_copilot = $self->exchange_for_copilot_token($tokens->{github_token});
                 if ($new_copilot) {
                     $self->save_tokens($tokens->{github_token}, $new_copilot);
-                    return $new_copilot->{token};
+                    $refreshed_token = $new_copilot->{token};
                 } else {
                     # Exchange failed (404), fall back to GitHub token
                     print STDERR "[INFO][GitHubAuth] Copilot exchange unavailable, using GitHub token\n" if should_log('INFO');
                     $self->{using_exchanged_token} = 0;
-                    return $tokens->{github_token};
+                    $refreshed_token = $tokens->{github_token};
                 }
             };
             
             if ($@) {
-                print STDERR "[WARN]GitHubAuth] Token refresh failed: $@, using GitHub token\n" if should_log('WARNING');
+                print STDERR "[WARN][GitHubAuth] Token refresh failed: $@, using GitHub token\n" if should_log('WARNING');
                 $self->{using_exchanged_token} = 0;
                 return $tokens->{github_token};
             }
+            
+            return $refreshed_token if $refreshed_token;
         }
         
         return $copilot->{token};
@@ -598,6 +602,104 @@ sub needs_reauth {
     }
     
     return undef;
+}
+
+=head2 validate_github_token
+
+Validate that the stored GitHub token is still valid by making a test API call.
+
+Returns: Hashref with:
+- valid: Boolean (true if token works)
+- username: GitHub username if valid
+- error: Error message if invalid
+- status: HTTP status code if request was made
+
+=cut
+
+sub validate_github_token {
+    my ($self) = @_;
+    
+    my $tokens = $self->load_tokens();
+    unless ($tokens && $tokens->{github_token}) {
+        return { valid => 0, error => 'No GitHub token stored' };
+    }
+    
+    my $github_token = $tokens->{github_token};
+    
+    # Validate by hitting GitHub's user endpoint (lightweight)
+    my $url = 'https://api.github.com/user';
+    my $request = HTTP::Request->new(GET => $url);
+    $request->header('Authorization' => "token $github_token");
+    $request->header('User-Agent' => 'CLIO/2.0.0');
+    $request->header('Accept' => 'application/json');
+    
+    my $response = eval { $self->{ua}->request($request) };
+    
+    if ($@) {
+        return { valid => 0, error => "Network error: $@" };
+    }
+    
+    my $status = $response->code;
+    
+    if ($response->is_success) {
+        my $data = eval { decode_json($response->decoded_content) };
+        my $username = $data ? ($data->{login} || 'unknown') : 'unknown';
+        print STDERR "[DEBUG][GitHubAuth] GitHub token validated - user: $username\n" if should_log('DEBUG');
+        return { valid => 1, username => $username, status => $status };
+    }
+    
+    if ($status == 401) {
+        print STDERR "[WARN][GitHubAuth] GitHub token is invalid/expired (401)\n" if should_log('WARNING');
+        return { valid => 0, error => 'Token invalid or expired', status => $status };
+    }
+    
+    if ($status == 403) {
+        print STDERR "[WARN][GitHubAuth] GitHub token lacks permissions (403)\n" if should_log('WARNING');
+        return { valid => 0, error => 'Token lacks required permissions', status => $status };
+    }
+    
+    # Other status - network issue or GitHub outage
+    return { valid => 0, error => "Unexpected HTTP $status", status => $status };
+}
+
+=head2 force_refresh_copilot_token
+
+Force-refresh the Copilot session token using the stored GitHub token.
+Used when APIManager detects auth failures and needs a fresh token.
+
+Returns: Fresh token string, or undef if refresh fails.
+
+=cut
+
+sub force_refresh_copilot_token {
+    my ($self) = @_;
+    
+    my $tokens = $self->load_tokens();
+    unless ($tokens && $tokens->{github_token}) {
+        print STDERR "[WARN][GitHubAuth] Cannot refresh - no GitHub token stored\n" if should_log('WARNING');
+        return undef;
+    }
+    
+    print STDERR "[INFO][GitHubAuth] Force-refreshing Copilot session token\n" if should_log('INFO');
+    
+    my $new_copilot = eval { $self->exchange_for_copilot_token($tokens->{github_token}) };
+    
+    if ($@ || !$new_copilot) {
+        my $error = $@ || 'Exchange returned undef';
+        print STDERR "[WARN][GitHubAuth] Force-refresh failed: $error\n" if should_log('WARNING');
+        return undef;
+    }
+    
+    # Save the refreshed token
+    eval { $self->save_tokens($tokens->{github_token}, $new_copilot) };
+    if ($@) {
+        print STDERR "[WARN][GitHubAuth] Failed to save refreshed token: $@\n" if should_log('WARNING');
+    }
+    
+    $self->{using_exchanged_token} = 1;
+    print STDERR "[INFO][GitHubAuth] Copilot token refreshed successfully\n" if should_log('INFO');
+    
+    return $new_copilot->{token};
 }
 
 1;

@@ -1201,8 +1201,9 @@ Called at session start to provide accurate /usage data immediately.
 
 =head2 _check_auth_migration
 
-Check if GitHub Copilot authentication needs migration.
+Check if GitHub Copilot authentication needs migration or if tokens are invalid.
 Shows a one-time notice if the stored tokens are from an older auth method.
+If tokens are expired/invalid, offers automatic re-authentication.
 
 =cut
 
@@ -1216,12 +1217,57 @@ sub _check_auth_migration {
     eval {
         require CLIO::Core::GitHubAuth;
         my $auth = CLIO::Core::GitHubAuth->new(debug => 0);
+        
+        # Check for migration needs first
         my $reason = $auth->needs_reauth();
         if ($reason) {
             $self->display_system_message($reason);
+            return;
+        }
+        
+        # Validate stored tokens are actually still valid
+        # This catches the case where CLIO hasn't been used in a while
+        # and the GitHub OAuth token has been revoked
+        if ($auth->is_authenticated()) {
+            my $validation = $auth->validate_github_token();
+            
+            if ($validation && !$validation->{valid}) {
+                my $status = $validation->{status} || 'unknown';
+                
+                if ($status == 401 || $status == 403) {
+                    # Token is expired/revoked - offer re-authentication
+                    $self->display_system_message(
+                        "Your GitHub authentication has expired (HTTP $status). "
+                        . "Starting re-authentication..."
+                    );
+                    
+                    # Clear stale tokens
+                    $auth->clear_tokens();
+                    
+                    # Trigger login flow through Command handler
+                    eval {
+                        if ($self->{command_handler} && $self->{command_handler}{api_cmd}) {
+                            $self->{command_handler}{api_cmd}->handle_login_command();
+                        } else {
+                            $self->display_system_message(
+                                "Please run /api login to re-authenticate."
+                            );
+                        }
+                    };
+                    if ($@) {
+                        print STDERR "[WARN][Chat] Auto re-auth failed: $@\n" if should_log('WARNING');
+                        $self->display_system_message(
+                            "Automatic re-authentication failed. Please run /api login manually."
+                        );
+                    }
+                } elsif ($validation->{error} && $validation->{error} =~ /Network/) {
+                    # Network error - silently skip (might be offline)
+                    print STDERR "[DEBUG][Chat] Skipping token validation - network error\n" if should_log('DEBUG');
+                }
+            }
         }
     };
-    # Silently ignore errors - migration check is non-critical
+    # Silently ignore errors - auth check is non-critical
 }
 
 sub _prepopulate_session_data {
