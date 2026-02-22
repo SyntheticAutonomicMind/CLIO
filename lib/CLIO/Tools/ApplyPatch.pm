@@ -65,17 +65,15 @@ Return the tool definition for the API (OpenAI function-calling format).
 
 sub get_tool_definition {
     return {
-        type => 'function',
-        function => {
-            name => 'apply_patch',
-            description => 'Apply a patch to create, modify, or delete files. Uses a lightweight diff format that is more efficient than full file rewrites. Each patch can contain multiple file operations. Prefer this over file_operations write_file/replace_string for multi-file changes.',
-            parameters => {
-                type => 'object',
-                required => ['patch'],
-                properties => {
-                    patch => {
-                        type => 'string',
-                        description => 'The patch text. Format:
+        name => 'apply_patch',
+        description => 'Apply a patch to create, modify, or delete files. Uses a lightweight diff format that is more efficient than full file rewrites. Each patch can contain multiple file operations. Prefer this over file_operations write_file/replace_string for multi-file changes.',
+        parameters => {
+            type => 'object',
+            required => ['patch'],
+            properties => {
+                patch => {
+                    type => 'string',
+                    description => 'The patch text. Format:
 
 *** Begin Patch
 *** Add File: <path>
@@ -94,7 +92,6 @@ Rules:
 - Context (unchanged) lines start with space
 - @@ anchors help locate the change position
 - Multiple @@ sections per file for non-adjacent changes',
-                    },
                 },
             },
         },
@@ -151,30 +148,30 @@ sub _do_apply {
     my $patch_text = $params->{patch} || $params->{patchText} || '';
     
     unless ($patch_text && length($patch_text) > 0) {
-        return encode_json({
+        return {
             success => 0,
             error => 'patch parameter is required',
             action_description => 'apply_patch failed: no patch provided',
-        });
+        };
     }
     
     # Parse the patch
     my ($hunks, $parse_error) = $self->_parse_patch($patch_text);
     
     if ($parse_error) {
-        return encode_json({
+        return {
             success => 0,
             error => "Patch parse error: $parse_error",
             action_description => "apply_patch failed: $parse_error",
-        });
+        };
     }
     
     if (!$hunks || !@$hunks) {
-        return encode_json({
+        return {
             success => 0,
             error => 'No file operations found in patch',
             action_description => 'apply_patch failed: empty patch',
-        });
+        };
     }
     
     # Apply each hunk
@@ -205,22 +202,24 @@ sub _do_apply {
     my $summary = join(', ', @parts) || 'no changes';
     
     if (@errors) {
-        return encode_json({
+        return {
             success => 0,
             error => "Patch partially applied. Errors: " . join('; ', @errors),
             action_description => "apply_patch: $summary (with " . scalar(@errors) . " error(s))",
-            results => \@results,
-        });
+            output => encode_json({ results => \@results }),
+        };
     }
     
-    return encode_json({
+    return {
         success => 1,
         action_description => "apply_patch: $summary",
-        results => \@results,
-        files_created => $files_created,
-        files_modified => $files_modified,
-        files_deleted => $files_deleted,
-    });
+        output => encode_json({
+            results => \@results,
+            files_created => $files_created,
+            files_modified => $files_modified,
+            files_deleted => $files_deleted,
+        }),
+    };
 }
 
 =head2 _parse_patch($text)

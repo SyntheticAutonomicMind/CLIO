@@ -884,8 +884,21 @@ sub process_input {
                 }
             }
             
-            # Check if error is token limit related
-            my $is_token_limit_error = ($error =~ /token|exceed|limit|length/i);
+            # Check if error is token/context limit related
+            # IMPORTANT: Be precise here - we must NOT match:
+            # - Auth errors mentioning "token" (401/403 with "token expired")
+            # - Rate limit errors mentioning "limit" (429)
+            # - Network errors (599 Internal Exception)
+            # We ONLY want to match actual context window exceeded errors
+            my $is_token_limit_error = (
+                $error =~ /context.length.exceeded/i ||
+                $error =~ /maximum.context.length/i ||
+                $error =~ /token.limit.exceeded/i ||
+                $error =~ /too.many.tokens/i ||
+                $error =~ /exceeds?\s+(?:the\s+)?(?:maximum|max)\s+(?:number\s+of\s+)?tokens/i ||
+                $error =~ /input.*too\s+(?:long|large)/i ||
+                $error =~ /reduce.*(?:prompt|input|context)/i
+            );
             
             # Only add error message if it's not a token limit error
             # Token limit errors need more aggressive context trimming, not error messages

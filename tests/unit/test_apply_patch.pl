@@ -25,6 +25,14 @@ sub ok {
     }
 }
 
+# Helper to execute and get result hashref
+sub run_patch {
+    my ($tool, $patch) = @_;
+    my $result = $tool->execute({ operation => 'apply', patch => $patch }, {});
+    # execute returns a hashref from the Tool base class
+    return $result;
+}
+
 # Create temp directory for testing
 my $tmpdir = tempdir(CLEANUP => 1);
 
@@ -41,16 +49,12 @@ my $tool = CLIO::Tools::ApplyPatch->new(
 
 # Test 1: Add File
 print "\n=== Test: Add File ===\n";
-my $result = $tool->execute({
-    operation => 'apply',
-    patch => '*** Begin Patch
+my $data = run_patch($tool, '*** Begin Patch
 *** Add File: new_file.txt
 +Hello World
 +Line 2
-*** End Patch',
-}, {});
+*** End Patch');
 
-my $data = decode_json($result);
 ok($data->{success}, "Add file succeeds");
 ok(-f File::Spec->catfile($tmpdir, 'new_file.txt'), "New file created");
 
@@ -62,9 +66,7 @@ ok($content =~ /Hello World/, "File has correct content");
 
 # Test 2: Update File
 print "\n=== Test: Update File ===\n";
-$result = $tool->execute({
-    operation => 'apply',
-    patch => '*** Begin Patch
+$data = run_patch($tool, '*** Begin Patch
 *** Update File: test.txt
 @@ line 2
 -line 2
@@ -72,10 +74,8 @@ $result = $tool->execute({
 +line 2 (modified)
 +line 3 (modified)
 +line 3.5 (inserted)
-*** End Patch',
-}, {});
+*** End Patch');
 
-$data = decode_json($result);
 ok($data->{success}, "Update file succeeds");
 
 open $fh, '<', $test_file;
@@ -88,14 +88,10 @@ ok($content =~ /line 4/, "Line 4 preserved");
 
 # Test 3: Delete File
 print "\n=== Test: Delete File ===\n";
-$result = $tool->execute({
-    operation => 'apply',
-    patch => '*** Begin Patch
+$data = run_patch($tool, '*** Begin Patch
 *** Delete File: new_file.txt
-*** End Patch',
-}, {});
+*** End Patch');
 
-$data = decode_json($result);
 ok($data->{success}, "Delete file succeeds");
 ok(!-f File::Spec->catfile($tmpdir, 'new_file.txt'), "File deleted");
 
@@ -106,45 +102,35 @@ open $fh, '>', File::Spec->catfile($tmpdir, 'multi1.txt');
 print $fh "alpha\nbeta\ngamma\n";
 close $fh;
 
-$result = $tool->execute({
-    operation => 'apply',
-    patch => '*** Begin Patch
+$data = run_patch($tool, '*** Begin Patch
 *** Add File: multi2.txt
 +created by patch
 *** Update File: multi1.txt
 @@ beta
 -beta
 +BETA
-*** End Patch',
-}, {});
+*** End Patch');
 
-$data = decode_json($result);
 ok($data->{success}, "Multi-file patch succeeds");
-ok($data->{files_created} == 1, "1 file created");
-ok($data->{files_modified} == 1, "1 file modified");
+# Check output JSON for counts
+my $output = eval { decode_json($data->{output} || '{}') } || {};
+ok(($output->{files_created} || 0) == 1, "1 file created");
+ok(($output->{files_modified} || 0) == 1, "1 file modified");
 
 # Test 5: Empty patch
 print "\n=== Test: Empty Patch ===\n";
-$result = $tool->execute({
-    operation => 'apply',
-    patch => '*** Begin Patch
-*** End Patch',
-}, {});
+$data = run_patch($tool, '*** Begin Patch
+*** End Patch');
 
-$data = decode_json($result);
 ok(!$data->{success}, "Empty patch fails correctly");
 
 # Test 6: Patch with subdirectory creation
 print "\n=== Test: Subdirectory Creation ===\n";
-$result = $tool->execute({
-    operation => 'apply',
-    patch => '*** Begin Patch
+$data = run_patch($tool, '*** Begin Patch
 *** Add File: subdir/deep/file.txt
 +deep file content
-*** End Patch',
-}, {});
+*** End Patch');
 
-$data = decode_json($result);
 ok($data->{success}, "Subdirectory file creation succeeds");
 ok(-f File::Spec->catfile($tmpdir, 'subdir', 'deep', 'file.txt'), "Deep file created");
 
