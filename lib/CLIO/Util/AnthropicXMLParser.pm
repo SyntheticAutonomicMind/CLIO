@@ -6,6 +6,8 @@ package CLIO::Util::AnthropicXMLParser;
 use strict;
 use warnings;
 use utf8;
+binmode(STDOUT, ':encoding(UTF-8)');
+binmode(STDERR, ':encoding(UTF-8)');
 use Exporter 'import';
 our @EXPORT_OK = qw(is_anthropic_xml_format parse_anthropic_xml_to_json);
 use CLIO::Util::JSON qw(encode_json decode_json);

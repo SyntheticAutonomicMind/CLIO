@@ -3,6 +3,8 @@ package CLIO::Compat::HTTP;
 use strict;
 use warnings;
 use utf8;
+binmode(STDOUT, ':encoding(UTF-8)');
+binmode(STDERR, ':encoding(UTF-8)');
 use HTTP::Tiny;
 use CLIO::Util::JSON qw(decode_json encode_json);
 use CLIO::Core::Logger qw(should_log);

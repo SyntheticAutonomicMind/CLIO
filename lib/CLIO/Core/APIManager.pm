@@ -1,9 +1,30 @@
 
 package CLIO::Core::APIManager;
 
+=head1 NAME
+
+CLIO::Core::APIManager - AI provider API communication and request orchestration
+
+=head1 DESCRIPTION
+
+Manages communication with AI model providers (GitHub Copilot, Anthropic, Google).
+Handles streaming responses, tool call extraction, retry logic with exponential
+backoff, and token usage tracking. Central hub for all AI API interactions.
+
+=head1 SYNOPSIS
+
+    use CLIO::Core::APIManager;
+    
+    my $api = CLIO::Core::APIManager->new(config => $config);
+    my $response = $api->send_message(\@messages, tools => \@tools);
+
+=cut
+
 use strict;
 use warnings;
 use utf8;
+binmode(STDOUT, ':encoding(UTF-8)');
+binmode(STDERR, ':encoding(UTF-8)');
 use CLIO::Core::Logger qw(should_log log_debug log_error log_info log_warning);
 use CLIO::Util::ConfigPath qw(get_config_dir);
 use CLIO::Providers qw(get_provider list_providers);

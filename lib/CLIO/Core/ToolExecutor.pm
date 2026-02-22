@@ -3,6 +3,8 @@ package CLIO::Core::ToolExecutor;
 use strict;
 use warnings;
 use utf8;
+binmode(STDOUT, ':encoding(UTF-8)');
+binmode(STDERR, ':encoding(UTF-8)');
 use Encode qw(decode encode);
 use CLIO::Core::Logger qw(should_log log_debug);
 use CLIO::Util::JSONRepair qw(repair_malformed_json);

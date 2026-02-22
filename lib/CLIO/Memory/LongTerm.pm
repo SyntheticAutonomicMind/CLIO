@@ -5,6 +5,8 @@ use warnings;
 use CLIO::Core::Logger qw(should_log log_debug);
 use JSON::PP;
 use utf8;
+binmode(STDOUT, ':encoding(UTF-8)');
+binmode(STDERR, ':encoding(UTF-8)');
 use Carp qw(croak);
 
 =head1 NAME
