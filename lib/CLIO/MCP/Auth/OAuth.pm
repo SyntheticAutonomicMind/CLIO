@@ -1,8 +1,36 @@
 package CLIO::MCP::Auth::OAuth;
 
+=head1 NAME
+
+CLIO::MCP::Auth::OAuth - OAuth 2.0 PKCE authentication for MCP servers
+
+=head1 DESCRIPTION
+
+Implements the OAuth 2.0 Authorization Code flow with PKCE (Proof Key for
+Code Exchange) for authenticating with Model Context Protocol (MCP) servers.
+Handles authorization URL generation, token exchange, storage, and refresh.
+
+=head1 SYNOPSIS
+
+    use CLIO::MCP::Auth::OAuth;
+    
+    my $auth = CLIO::MCP::Auth::OAuth->new(
+        server_name       => 'my-server',
+        authorization_url => 'https://example.com/auth',
+        token_url         => 'https://example.com/token',
+        client_id         => 'my-client-id',
+    );
+    
+    my $url = $auth->get_authorization_url();
+    my $token = $auth->exchange_code($code);
+
+=cut
+
 use strict;
 use warnings;
 use utf8;
+binmode(STDOUT, ':encoding(UTF-8)');
+binmode(STDERR, ':encoding(UTF-8)');
 use Carp qw(croak);
 use CLIO::Util::JSON qw(encode_json decode_json);
 use MIME::Base64;

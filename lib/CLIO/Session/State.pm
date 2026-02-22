@@ -3,9 +3,35 @@ if ($ENV{CLIO_DEBUG}) {
 }
 package CLIO::Session::State;
 
+=head1 NAME
+
+CLIO::Session::State - Session state persistence and serialization
+
+=head1 DESCRIPTION
+
+Manages the persistent state of a CLIO session, including conversation history,
+memory modules (STM, LTM, YaRN), billing/usage tracking, and session metadata.
+Handles atomic file saves, state migration from older formats, and session cleanup.
+
+=head1 SYNOPSIS
+
+    use CLIO::Session::State;
+    
+    # Create new state
+    my $state = CLIO::Session::State->new(session_id => $id);
+    $state->add_message('user', 'Hello');
+    $state->save();
+    
+    # Load existing state
+    my $state = CLIO::Session::State->load($session_id);
+
+=cut
+
 use strict;
 use warnings;
 use utf8;
+binmode(STDOUT, ':encoding(UTF-8)');
+binmode(STDERR, ':encoding(UTF-8)');
 use Carp qw(croak);
 use CLIO::Core::Logger qw(should_log log_error log_warning);
 use CLIO::Util::PathResolver;

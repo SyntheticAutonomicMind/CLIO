@@ -3,6 +3,8 @@ package CLIO::Core::SimpleAIAgent;
 use strict;
 use warnings;
 use utf8;
+binmode(STDOUT, ':encoding(UTF-8)');
+binmode(STDERR, ':encoding(UTF-8)');
 use CLIO::Core::Logger qw(should_log log_debug log_error);
 use CLIO::Core::HashtagParser;
 use CLIO::Util::JSON qw(encode_json decode_json);

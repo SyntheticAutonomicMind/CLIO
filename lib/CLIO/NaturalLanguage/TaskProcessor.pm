@@ -5,6 +5,8 @@ package CLIO::NaturalLanguage::TaskProcessor;
 use strict;
 use warnings;
 use utf8;
+binmode(STDOUT, ':encoding(UTF-8)');
+binmode(STDERR, ':encoding(UTF-8)');
 use CLIO::Util::JSON qw(encode_json decode_json);
 
 =head1 NAME

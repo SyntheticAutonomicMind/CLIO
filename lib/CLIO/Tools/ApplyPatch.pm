@@ -3,6 +3,8 @@ package CLIO::Tools::ApplyPatch;
 use strict;
 use warnings;
 use utf8;
+binmode(STDOUT, ':encoding(UTF-8)');
+binmode(STDERR, ':encoding(UTF-8)');
 use File::Spec;
 use File::Path qw(make_path);
 use File::Basename qw(dirname);

@@ -3,6 +3,8 @@ package CLIO::Protocols::Recall;
 use strict;
 use warnings;
 use utf8;
+binmode(STDOUT, ':encoding(UTF-8)');
+binmode(STDERR, ':encoding(UTF-8)');
 use parent 'CLIO::Protocols::Handler';
 use MIME::Base64 qw(decode_base64 encode_base64);
 use CLIO::Util::JSON qw(encode_json);

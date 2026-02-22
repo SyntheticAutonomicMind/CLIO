@@ -3,6 +3,8 @@ package CLIO::Session::Snapshot;
 use strict;
 use warnings;
 use utf8;
+binmode(STDOUT, ':encoding(UTF-8)');
+binmode(STDERR, ':encoding(UTF-8)');
 use File::Spec;
 use File::Path qw(make_path);
 use CLIO::Core::Logger qw(should_log log_debug);

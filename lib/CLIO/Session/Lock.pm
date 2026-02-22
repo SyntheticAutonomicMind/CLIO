@@ -3,6 +3,8 @@ package CLIO::Session::Lock;
 use strict;
 use warnings;
 use utf8;
+binmode(STDOUT, ':encoding(UTF-8)');
+binmode(STDERR, ':encoding(UTF-8)');
 use Carp qw(croak);
 use CLIO::Core::Logger qw(should_log log_debug);
 use CLIO::Util::PathResolver;
