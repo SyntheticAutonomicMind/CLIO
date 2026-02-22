@@ -5,7 +5,7 @@ use warnings;
 use Carp qw(croak confess);
 use parent 'CLIO::Tools::Tool';
 use CLIO::Compat::HTTP;
-use JSON::PP qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json);
 use feature 'say';
 
 =head1 NAME

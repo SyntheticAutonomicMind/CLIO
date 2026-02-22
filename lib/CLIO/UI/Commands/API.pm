@@ -8,6 +8,7 @@ binmode(STDERR, ':encoding(UTF-8)');
 
 use Carp qw(croak);
 use CLIO::Core::Logger qw(should_log);
+use CLIO::Util::JSON qw(decode_json);
 
 =head1 NAME
 
@@ -1214,7 +1215,7 @@ sub _fetch_provider_models {
             my $resp = $ua->get($models_url, headers => \%headers);
             
             if ($resp->is_success) {
-                my $data = JSON::PP::decode_json($resp->decoded_content);
+                my $data = decode_json($resp->decoded_content);
                 $models = $data->{data} || [];
             }
         };

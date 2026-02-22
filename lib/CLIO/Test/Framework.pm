@@ -302,7 +302,7 @@ sub _test_relations {
 package TestRelations;
 use strict;
 use warnings;
-use JSON;
+use CLIO::Util::JSON qw(encode_json decode_json);
 use TestModule;
 
 sub caller_function {

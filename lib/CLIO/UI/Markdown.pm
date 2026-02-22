@@ -35,6 +35,7 @@ sub new {
     my $self = {
         debug => $opts{debug} || 0,
         theme_mgr => $opts{theme_mgr},  # Theme manager for colors
+        _color_cache => {},  # Cache for theme color lookups
         %opts
     };
     
@@ -43,7 +44,8 @@ sub new {
 
 =head2 color
 
-Get a color from theme manager (helper method)
+Get a color from theme manager (helper method).
+Uses per-instance cache to avoid repeated hash lookups.
 
 =cut
 
@@ -51,7 +53,14 @@ sub color {
     my ($self, $key) = @_;
     
     return '' unless $self->{theme_mgr};
-    return $self->{theme_mgr}->get_color($key);
+    
+    # Return cached color if available
+    return $self->{_color_cache}{$key} if exists $self->{_color_cache}{$key};
+    
+    # Fetch and cache
+    my $color = $self->{theme_mgr}->get_color($key) || '';
+    $self->{_color_cache}{$key} = $color;
+    return $color;
 }
 
 =head2 render
@@ -412,11 +421,18 @@ Process inline formatting like bold, italic, code, links
 sub process_inline_formatting {
     my ($self, $text) = @_;
     
+    # Pre-fetch all colors once (cached in color() method)
+    my $code_color = $self->color('markdown_code');
+    my $bold_color = $self->color('markdown_bold');
+    my $italic_color = $self->color('markdown_italic');
+    my $link_text_color = $self->color('markdown_link_text');
+    my $link_url_color = $self->color('markdown_link_url');
+    my $formula_color = $self->color('markdown_formula');
+    
     # Code blocks inline (backticks)
     # Content inside backticks should be literal - escape @-codes to prevent
     # them from being interpreted as color codes by ANSI.pm
     # We use \x00AT\x00 as a placeholder, which gets restored in Chat.pm after ANSI parsing
-    my $code_color = $self->color('markdown_code');
     $text =~ s{`([^`]+)`}{
         my $code_content = $1;
         $code_content =~ s/\@/\x00AT\x00/g;
@@ -428,22 +444,17 @@ sub process_inline_formatting {
     }ge;
     
     # Bold (**text** or __text__)
-    my $bold_color = $self->color('markdown_bold');
-    
     $text =~ s/\*\*([^\*]+)\*\*/${bold_color}$1\@RESET\@/g;
     $text =~ s/__([^_]+)__/${bold_color}$1\@RESET\@/g;
     
     # Italic (*text* or _text_) - must be careful not to match ** or __
     # For underscore italic, require word boundary before to avoid matching filenames
     # This prevents file_name.ext from being interpreted as file + _name_ + .ext
-    my $italic_color = $self->color('markdown_italic');
     $text =~ s/(?<!\*)\*([^\*]+)\*(?!\*)/${italic_color}$1\@RESET\@/g;
     # Match _text_ only when preceded by whitespace/start and followed by whitespace/punct/end
     $text =~ s/(^|[\s\(])_([^_]+)_(?=[\s\)\.\,\!\?\:\;]|$)/$1${italic_color}$2\@RESET\@/g;
     
     # Images ![alt](url) - show as alt text with URL (no emoji, proper markdown)
-    my $link_text_color = $self->color('markdown_link_text');
-    my $link_url_color = $self->color('markdown_link_url');
     $text =~ s/!\[([^\]]*)\]\(([^\)]+)\)/${link_text_color}$1\@RESET\@ → ${link_url_color}$2\@RESET\@/g;
     
     # Links [text](url) - show text with URL more prominently
@@ -452,7 +463,6 @@ sub process_inline_formatting {
     # Formulas - inline math (single $ should NOT match $$)
     # Match $...$ but not $$...$$
     # Process the formula content to convert symbols first, then apply color
-    my $formula_color = $self->color('markdown_formula');
     $text =~ s/(?<!\$)\$([^\$]+)\$(?!\$)/{
         my $formula = $1;
         my $rendered = $self->render_formula_content($formula);

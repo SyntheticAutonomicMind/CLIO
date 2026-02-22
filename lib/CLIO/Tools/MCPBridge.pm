@@ -18,7 +18,7 @@ Tool names are namespaced as: mcp_<servername>_<toolname>
 
 =cut
 
-use JSON::PP qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json);
 
 use CLIO::Core::Logger qw(should_log log_debug);
 

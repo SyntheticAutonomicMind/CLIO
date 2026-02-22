@@ -3,7 +3,7 @@ package CLIO::Core::ProtocolIntegration;
 use strict;
 use warnings;
 use CLIO::Core::Logger qw(should_log);
-use JSON::PP qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json);
 use CLIO::Protocols::Manager;
 
 =head1 NAME

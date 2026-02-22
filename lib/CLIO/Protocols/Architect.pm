@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use base 'CLIO::Protocols::Handler';
 use MIME::Base64;
-use JSON::PP;
+use CLIO::Util::JSON qw(encode_json decode_json);
 use Time::HiRes qw(time);
 
 =head1 NAME

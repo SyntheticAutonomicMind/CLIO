@@ -8,7 +8,7 @@ use CLIO::Util::ConfigPath qw(get_config_dir);
 use CLIO::Providers qw(get_provider list_providers);
 use POSIX ":sys_wait_h"; # For WNOHANG
 use Time::HiRes qw(time sleep);  # High resolution time and sleep
-use JSON::PP;
+use CLIO::Util::JSON qw(encode_json decode_json);
 use CLIO::Compat::HTTP;
 BEGIN { require CLIO::Compat::HTTP; CLIO::Compat::HTTP->import(); }
 use Scalar::Util qw(blessed);
@@ -658,7 +658,7 @@ sub get_model_capabilities {
             return undef;
         }
         
-        my $data = eval { JSON::PP::decode_json($resp->decoded_content) };
+        my $data = eval { decode_json($resp->decoded_content) };
         if ($@) {
             if (should_log('WARNING')) {
                 print STDERR "[WARNING][APIManager] Failed to parse models response from $models_url\n";
@@ -849,7 +849,7 @@ sub validate_and_truncate_messages {
         # Calculate actual token count by measuring the JSON representation
         for my $tool (@$tools) {
             # Encode tool schema to JSON and measure
-            my $tool_json = eval { JSON::PP::encode_json($tool) };
+            my $tool_json = eval { encode_json($tool) };
             if ($tool_json) {
                 # Approximate tokens: characters / 2.5 (conservative estimate for JSON/code)
                 my $chars = length($tool_json);

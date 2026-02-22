@@ -2,7 +2,7 @@ package CLIO::Core::ToolCallExtractor;
 
 use strict;
 use warnings;
-use JSON::PP qw(decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json);
 use CLIO::Core::Logger qw(should_log);
 
 =head1 NAME
@@ -141,7 +141,7 @@ sub _extract_xml_format {
             my $arguments = $data->{arguments};
             if (ref($arguments) eq 'HASH' || ref($arguments) eq 'ARRAY') {
                 require JSON::PP;
-                $arguments = JSON::PP::encode_json($arguments);
+                $arguments = encode_json($arguments);
             }
             
             push @tool_calls, {
@@ -205,7 +205,7 @@ sub _extract_clio_format {
         
         # Re-encode as JSON string
         require JSON::PP;
-        my $arguments_json = JSON::PP::encode_json($arguments_data);
+        my $arguments_json = encode_json($arguments_data);
         
         push @tool_calls, {
             id => $self->_generate_id(),
@@ -323,7 +323,7 @@ sub _extract_json_blocks {
             my $arguments = $call->{arguments};
             if (ref($arguments) eq 'HASH' || ref($arguments) eq 'ARRAY') {
                 require JSON::PP;
-                $arguments = JSON::PP::encode_json($arguments);
+                $arguments = encode_json($arguments);
             }
             
             push @tool_calls, {
