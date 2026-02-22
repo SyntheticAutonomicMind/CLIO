@@ -191,6 +191,45 @@ sub execute_tool {
     );
     
     my $original_tool_name = $tool_name;
+    
+    # Check if this is an MCP tool (prefixed with mcp_)
+    if ($tool_name =~ /^mcp_/ && $self->{mcp_manager}) {
+        require CLIO::Tools::MCPBridge;
+        
+        print STDERR "[DEBUG][ToolExecutor] Executing MCP tool: $tool_name\n" if should_log('DEBUG');
+        
+        my $result = CLIO::Tools::MCPBridge->execute_tool(
+            $self->{mcp_manager}, $tool_name, $arguments
+        );
+        
+        my $execution_time_ms = int((time() - $start_time) * 1000);
+        
+        # Log the MCP tool operation
+        $self->_log_tool_operation({
+            tool_call_id     => $tool_call_id,
+            tool_name        => $tool_name,
+            operation        => 'mcp_call',
+            parameters       => $arguments,
+            output           => { text => $result->{output} || $result->{error} || '' },
+            action_description => $result->{action_description} || "MCP tool: $tool_name",
+            sent_to_ai       => $result->{output} || $result->{error} || '',
+            success          => $result->{success} ? 1 : 0,
+            error            => $result->{error},
+            execution_time_ms => $execution_time_ms,
+        });
+        
+        if ($result->{success}) {
+            my $response = {
+                success            => 1,
+                output             => $result->{output} || '',
+                action_description => $result->{action_description} || "MCP tool: $tool_name",
+            };
+            return encode_json($response);
+        } else {
+            return $self->_error_result($result->{error} || 'MCP tool execution failed');
+        }
+    }
+    
     if (exists $TOOL_ALIASES{$tool_name}) {
         my $alias = $TOOL_ALIASES{$tool_name};
         print STDERR "[DEBUG][ToolExecutor] Aliasing '$tool_name' -> '$alias->{tool}' with operation='$alias->{operation}'\n" 
