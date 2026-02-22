@@ -7,7 +7,7 @@ binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use HTTP::Tiny;
 use CLIO::Util::JSON qw(decode_json encode_json);
-use CLIO::Core::Logger qw(should_log log_debug log_warning);
+use CLIO::Core::Logger qw(log_debug log_warning);
 
 # Check if SSL is available for HTTP::Tiny
 our $HAS_SSL;

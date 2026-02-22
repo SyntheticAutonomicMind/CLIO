@@ -43,7 +43,7 @@ Supported transports:
 =cut
 
 use CLIO::Util::JSON qw(encode_json decode_json);
-use CLIO::Core::Logger qw(should_log log_debug log_error log_warning);
+use CLIO::Core::Logger qw(log_debug log_error log_warning);
 
 sub new {
     my ($class, %args) = @_;

@@ -8,7 +8,6 @@ binmode(STDERR, ':encoding(UTF-8)');
 
 use Carp qw(croak);
 use Cwd;
-use CLIO::Core::Logger qw(should_log);
 
 =head1 NAME
 

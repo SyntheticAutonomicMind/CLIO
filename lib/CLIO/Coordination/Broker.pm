@@ -3,7 +3,6 @@ package CLIO::Coordination::Broker;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Logger qw(should_log);
 use IO::Socket::UNIX;
 use IO::Select;
 use CLIO::Util::JSON qw(encode_json decode_json);

@@ -13,7 +13,7 @@ use File::Path qw(make_path);
 use File::Spec;
 use POSIX qw(strftime);
 use Time::HiRes qw(time);
-use CLIO::Core::Logger qw(should_log log_debug log_error);
+use CLIO::Core::Logger qw(log_debug log_error);
 
 =head1 NAME
 

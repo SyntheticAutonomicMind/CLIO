@@ -5,7 +5,7 @@ use warnings;
 use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
-use CLIO::Core::Logger qw(should_log log_error log_warning log_info log_debug);
+use CLIO::Core::Logger qw(log_error log_warning log_info log_debug);
 use CLIO::Util::TextSanitizer qw(sanitize_text);
 use CLIO::Util::JSONRepair qw(repair_malformed_json);
 use CLIO::Util::AnthropicXMLParser qw(is_anthropic_xml_format parse_anthropic_xml_to_json);
