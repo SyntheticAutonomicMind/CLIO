@@ -5,6 +5,7 @@ package CLIO::Tools::VersionControl;
 
 use strict;
 use warnings;
+use utf8;
 use Carp qw(croak confess);
 use parent 'CLIO::Tools::Tool';
 use Cwd 'getcwd';

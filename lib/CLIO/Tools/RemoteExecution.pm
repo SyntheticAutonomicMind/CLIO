@@ -486,7 +486,7 @@ sub execute_parallel {
     
     # Execute on all devices
     # For simplicity and reliability, execute sequentially for now
-    # TODO: Add true parallel execution with proper IPC when needed
+    # Sequential execution is sufficient; parallel would need fork/IPC coordination
     my @results;
     
     for my $device (@devices) {

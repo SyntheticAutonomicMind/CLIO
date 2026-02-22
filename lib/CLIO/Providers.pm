@@ -2,6 +2,7 @@ package CLIO::Providers;
 
 use strict;
 use warnings;
+use utf8;
 use Exporter 'import';
 
 our @EXPORT_OK = qw(get_provider list_providers provider_exists);

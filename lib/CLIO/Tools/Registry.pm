@@ -5,6 +5,7 @@ package CLIO::Tools::Registry;
 
 use strict;
 use warnings;
+use utf8;
 use Carp qw(croak confess);
 use CLIO::Core::Logger qw(should_log);
 use feature 'say';

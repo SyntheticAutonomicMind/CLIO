@@ -2,6 +2,7 @@ package CLIO::Providers::Google;
 
 use strict;
 use warnings;
+use utf8;
 use parent 'CLIO::Providers::Base';
 use CLIO::Util::JSON qw(encode_json decode_json);
 use CLIO::Core::Logger qw(should_log);

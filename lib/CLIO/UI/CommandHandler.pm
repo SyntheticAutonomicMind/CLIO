@@ -2,6 +2,7 @@ package CLIO::UI::CommandHandler;
 
 use strict;
 use warnings;
+use utf8;
 use Carp qw(croak confess);
 use CLIO::Core::Logger qw(should_log);
 use CLIO::UI::Commands::API;

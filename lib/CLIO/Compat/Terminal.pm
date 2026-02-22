@@ -2,6 +2,7 @@ package CLIO::Compat::Terminal;
 
 use strict;
 use warnings;
+use utf8;
 use Exporter 'import';
 
 our @EXPORT_OK = qw(GetTerminalSize ReadMode ReadKey ReadLine reset_terminal reset_terminal_light reset_terminal_full);

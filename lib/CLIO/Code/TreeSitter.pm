@@ -2,6 +2,7 @@ package CLIO::Code::TreeSitter;
 
 use strict;
 use warnings;
+use utf8;
 use File::Basename;
 use JSON::PP;
 

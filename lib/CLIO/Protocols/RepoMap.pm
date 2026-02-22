@@ -2,6 +2,7 @@ package CLIO::Protocols::RepoMap;
 
 use strict;
 use warnings;
+use utf8;
 use base 'CLIO::Protocols::Handler';
 use MIME::Base64;
 use CLIO::Util::JSON qw(encode_json decode_json);

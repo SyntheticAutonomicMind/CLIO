@@ -2,6 +2,7 @@ package CLIO::Memory::YaRN;
 
 use strict;
 use warnings;
+use utf8;
 use CLIO::Core::Logger qw(should_log);
 use CLIO::Util::JSON qw(decode_json);
 

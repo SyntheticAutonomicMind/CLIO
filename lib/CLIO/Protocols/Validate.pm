@@ -2,6 +2,7 @@ package CLIO::Protocols::Validate;
 
 use strict;
 use warnings;
+use utf8;
 use base 'CLIO::Protocols::Handler';
 use MIME::Base64;
 use File::Temp qw(tempfile);

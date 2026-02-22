@@ -5,6 +5,7 @@ package CLIO::Logging::ProcessStats;
 
 use strict;
 use warnings;
+use utf8;
 use CLIO::Util::JSON qw(encode_json);
 use File::Path qw(make_path);
 use File::Spec;

@@ -2,6 +2,7 @@ package CLIO::Core::InstructionsReader;
 
 use strict;
 use warnings;
+use utf8;
 use CLIO::Core::Logger qw(should_log);
 use File::Spec;
 use Cwd qw(getcwd);

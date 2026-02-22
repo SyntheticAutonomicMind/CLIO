@@ -2,6 +2,7 @@ package CLIO::Core::SimpleAIAgent;
 
 use strict;
 use warnings;
+use utf8;
 use CLIO::Core::Logger qw(should_log);
 use CLIO::Core::HashtagParser;
 use CLIO::Util::JSON qw(encode_json decode_json);

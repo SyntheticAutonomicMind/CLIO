@@ -2,6 +2,7 @@ package CLIO::Core::GitHubCopilotModelsAPI;
 
 use strict;
 use warnings;
+use utf8;
 use CLIO::Core::Logger qw(should_log);
 use CLIO::Util::ConfigPath qw(get_config_dir get_config_file);
 use CLIO::Util::JSON qw(encode_json decode_json);
