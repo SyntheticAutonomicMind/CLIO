@@ -187,6 +187,12 @@ sub handle_session_command {
         return;
     }
     
+    # /session export [filename] - export to HTML
+    if ($action eq 'export') {
+        $self->_export_session(@args);
+        return;
+    }
+    
     # Unknown action
     $self->display_error_message("Unknown action: /session $action");
     $self->_display_session_help();
@@ -211,6 +217,7 @@ sub _display_session_help {
     $self->display_command_row("/session new", "Show how to create new session", 30);
     $self->display_command_row("/session clear", "Clear current session history", 30);
     $self->display_command_row("/session trim [days]", "Remove old sessions (default: 30)", 30);
+    $self->display_command_row("/session export [file]", "Export current session to HTML", 30);
     $self->writeline("", markdown => 0);
     
     $self->display_section_header("EXAMPLES");
@@ -384,6 +391,64 @@ sub _clear_session_history {
 }
 
 =head2 _trim_sessions($days)
+
+=head2 _export_session(@args)
+
+Export current session to HTML file.
+
+Arguments:
+- $filename - Optional output filename (default: session-<id>.html)
+
+=cut
+
+sub _export_session {
+    my ($self, @args) = @_;
+    
+    my $session = $self->{chat}->{session};
+    unless ($session) {
+        $self->display_error_message("No active session to export.");
+        return;
+    }
+    
+    my $state = $session->state();
+    unless ($state && $state->{history} && @{$state->{history}}) {
+        $self->display_error_message("Session has no messages to export.");
+        return;
+    }
+    
+    # Determine output filename
+    my $filename = $args[0] || '';
+    unless ($filename) {
+        my $session_id = $session->{session_id} || 'unknown';
+        my $short_id = substr($session_id, 0, 8);
+        $filename = "session-$short_id.html";
+    }
+    
+    # Ensure .html extension
+    $filename .= '.html' unless $filename =~ /\.html?$/i;
+    
+    eval {
+        require CLIO::Session::Export;
+        my $exporter = CLIO::Session::Export->new(
+            debug => $self->{debug},
+            include_tool_results => 1,
+        );
+        
+        # Ensure session_id is available to the exporter
+        $state->{session_id} ||= $session->{session_id};
+        
+        $exporter->export_to_file($state, $filename);
+    };
+    
+    if ($@) {
+        $self->display_error_message("Export failed: $@");
+        return;
+    }
+    
+    $self->display_system_message("Session exported to: $filename");
+}
+
+=head2 _trim_sessions($days_arg)
 
 Remove sessions older than the specified number of days.
 
