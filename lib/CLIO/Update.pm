@@ -12,7 +12,7 @@ use File::Spec;
 use File::Basename qw(dirname);
 use File::Path qw(mkpath rmtree);
 use CLIO::Util::JSON qw(decode_json);
-use CLIO::Core::Logger qw(should_log log_debug log_error log_warning);
+use CLIO::Core::Logger qw(log_debug log_error log_warning);
 
 =head1 NAME
 

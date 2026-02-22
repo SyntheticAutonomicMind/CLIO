@@ -5,7 +5,7 @@ use warnings;
 use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
-use CLIO::Core::Logger qw(should_log log_error log_warning log_debug);
+use CLIO::Core::Logger qw(log_error log_warning log_debug);
 use File::Spec;
 use Cwd qw(getcwd);
 

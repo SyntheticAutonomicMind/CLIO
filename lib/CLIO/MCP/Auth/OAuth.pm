@@ -36,7 +36,7 @@ use CLIO::Util::JSON qw(encode_json decode_json);
 use MIME::Base64;
 use Digest::SHA qw(sha256);
 use File::Spec;
-use CLIO::Core::Logger qw(should_log log_debug log_error);
+use CLIO::Core::Logger qw(log_debug log_error);
 
 sub new {
     my ($class, %args) = @_;

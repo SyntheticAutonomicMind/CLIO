@@ -3,7 +3,6 @@ package CLIO::Core::AgentLoop;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Logger qw(should_log);
 use Carp qw(croak);
 use Time::HiRes qw(time sleep);
 
