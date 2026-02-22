@@ -657,25 +657,41 @@ sub handle_mcp_command {
     elsif ($subcommand eq 'add') {
         my $name = $args[1];
         unless ($name) {
-            $chat->display_error_message("Usage: /mcp add <name> <command...>");
-            $chat->display_system_message("Example: /mcp add filesystem npx -y \@modelcontextprotocol/server-filesystem /tmp");
+            $chat->display_error_message("Usage: /mcp add <name> <command...> OR /mcp add <name> <url>");
+            $chat->display_system_message("Examples:");
+            $chat->display_system_message("  /mcp add filesystem npx -y \@modelcontextprotocol/server-filesystem /tmp");
+            $chat->display_system_message("  /mcp add remote-tools https://mcp.example.com/api");
             return;
         }
         
-        my @cmd = @args[2..$#args];
-        unless (@cmd) {
-            $chat->display_error_message("No command specified for MCP server '$name'");
+        my @rest = @args[2..$#args];
+        unless (@rest) {
+            $chat->display_error_message("No command or URL specified for MCP server '$name'");
             return;
         }
+        
+        # Detect if this is a URL (remote) or command (local)
+        my $is_url = ($rest[0] =~ m{^https?://});
         
         $chat->display_system_message("Connecting to MCP server '$name'...");
-        my $result = $mcp_manager->add_server($name, \@cmd);
+        my $result;
+        
+        if ($is_url) {
+            # Remote HTTP server
+            $result = $mcp_manager->add_server($name, { url => $rest[0] });
+            if ($result->{success}) {
+                $self->_save_mcp_to_config($name, undef, $rest[0]);
+            }
+        } else {
+            # Local stdio server
+            $result = $mcp_manager->add_server($name, \@rest);
+            if ($result->{success}) {
+                $self->_save_mcp_to_config($name, \@rest);
+            }
+        }
         
         if ($result->{success}) {
             $chat->display_system_message("Connected to '$name' ($result->{tools_count} tools available)");
-            
-            # Also save to config for persistence
-            $self->_save_mcp_to_config($name, \@cmd);
         } else {
             $chat->display_error_message("Failed to connect: $result->{error}");
         }
@@ -700,17 +716,29 @@ sub handle_mcp_command {
 }
 
 sub _save_mcp_to_config {
-    my ($self, $name, $command) = @_;
+    my ($self, $name, $command, $url) = @_;
     
     eval {
         my $config = $self->{config};
-        return unless $config && $config->can('get');
+        return unless $config && ref($config) ne 'HASH' && $config->can('get');
         
         my $mcp = $config->get('mcp') || {};
-        $mcp->{$name} = {
-            command => $command,
-            enabled => JSON::PP::true,
-        };
+        
+        if ($url) {
+            # Remote server
+            $mcp->{$name} = {
+                type    => 'remote',
+                url     => $url,
+                enabled => JSON::PP::true,
+            };
+        } else {
+            # Local server
+            $mcp->{$name} = {
+                command => $command,
+                enabled => JSON::PP::true,
+            };
+        }
+        
         $config->set('mcp', $mcp);
         
         my $chat = $self->{chat};
@@ -726,7 +754,7 @@ sub _remove_mcp_from_config {
     
     eval {
         my $config = $self->{config};
-        return unless $config && $config->can('get');
+        return unless $config && ref($config) ne 'HASH' && $config->can('get');
         
         my $mcp = $config->get('mcp') || {};
         delete $mcp->{$name};

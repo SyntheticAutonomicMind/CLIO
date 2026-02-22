@@ -61,10 +61,43 @@ MCP servers are configured in `~/.clio/config.json` under the `mcp` key:
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `command` | Array | Command and arguments to launch the MCP server |
+| `type` | String | `local` (default, stdio) or `remote` (HTTP/SSE) |
+| `command` | Array | Command and arguments for local servers |
+| `url` | String | URL endpoint for remote servers |
+| `headers` | Object | Custom HTTP headers for remote servers |
 | `enabled` | Boolean | Set to `false` to disable without removing config |
-| `environment` | Object | Extra environment variables for the server process |
+| `environment` | Object | Extra environment variables (local servers only) |
 | `timeout` | Number | Connection/request timeout in seconds (default: 30) |
+
+### Example: Local Server
+
+```json
+{
+  "mcp": {
+    "filesystem": {
+      "command": ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/path/to/dir"],
+      "enabled": true
+    }
+  }
+}
+```
+
+### Example: Remote Server
+
+```json
+{
+  "mcp": {
+    "remote-tools": {
+      "type": "remote",
+      "url": "https://mcp.example.com/api",
+      "headers": {
+        "Authorization": "Bearer your-api-key"
+      },
+      "timeout": 60
+    }
+  }
+}
+```
 
 ### Example: Custom Environment
 
@@ -114,12 +147,16 @@ MCP Tools (14 total):
     mcp_sqlite_list_tables: List all tables in the database
 ```
 
-### `/mcp add <name> <command...>`
+### `/mcp add <name> <command...>` or `/mcp add <name> <url>`
 
 Add and connect to a new MCP server:
 
 ```
+# Local server (stdio)
 /mcp add filesystem npx -y @modelcontextprotocol/server-filesystem /tmp
+
+# Remote server (HTTP/SSE)
+/mcp add remote-tools https://mcp.example.com/api
 ```
 
 This also saves the server to your config for persistence across sessions.
@@ -136,7 +173,9 @@ Disconnect and remove an MCP server:
 
 ## How It Works
 
-1. **Startup:** CLIO reads MCP config and spawns each enabled server as a subprocess
+1. **Startup:** CLIO reads MCP config and creates a transport for each enabled server
+   - **Local servers** (`type: local` or default): Spawned as subprocesses, communicate via stdio
+   - **Remote servers** (`type: remote`): Connected via HTTP POST with SSE streaming support
 2. **Handshake:** Sends `initialize` request (MCP 2025-11-25 protocol), receives capabilities
 3. **Discovery:** Calls `tools/list` to discover what tools the server provides
 4. **Registration:** Each MCP tool is registered as a CLIO tool with the `mcp_` prefix
@@ -215,7 +254,6 @@ Debug output shows all JSON-RPC messages between CLIO and the MCP server.
 
 ## Limitations (v1)
 
-- **Stdio transport only** - HTTP/SSE transport not yet supported
 - **No MCP resources** - Only tools are bridged (resources and prompts planned)
 - **No OAuth** - Remote MCP servers requiring OAuth not yet supported
 - **No sampling** - Server-initiated LLM requests not supported
