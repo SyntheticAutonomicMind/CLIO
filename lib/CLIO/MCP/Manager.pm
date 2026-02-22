@@ -148,10 +148,41 @@ sub start {
                 next;
             }
             
+            my $headers = { %{$server_config->{headers} || {}} };
+            
+            # Handle OAuth authentication
+            if ($server_config->{auth} && $server_config->{auth}{type} eq 'oauth') {
+                my $auth_config = $server_config->{auth};
+                eval {
+                    require CLIO::MCP::Auth::OAuth;
+                    my $oauth = CLIO::MCP::Auth::OAuth->new(
+                        server_name       => $name,
+                        authorization_url => $auth_config->{authorization_url},
+                        token_url         => $auth_config->{token_url},
+                        client_id         => $auth_config->{client_id},
+                        client_secret     => $auth_config->{client_secret},
+                        scopes            => $auth_config->{scopes} || [],
+                        redirect_port     => $auth_config->{redirect_port} || 8912,
+                        debug             => $self->{debug},
+                    );
+                    my $token = $oauth->get_access_token();
+                    if ($token) {
+                        $headers->{'Authorization'} = "Bearer $token";
+                        $self->{_oauth}{$name} = $oauth;  # Cache for token refresh
+                        log_debug('MCP', "OAuth token acquired for '$name'");
+                    } else {
+                        print STDERR "[WARN][MCP] OAuth authentication failed for '$name'\n" if should_log('WARNING');
+                    }
+                };
+                if ($@) {
+                    print STDERR "[WARN][MCP] OAuth setup failed for '$name': $@\n" if should_log('WARNING');
+                }
+            }
+            
             require CLIO::MCP::Transport::HTTP;
             my $transport = CLIO::MCP::Transport::HTTP->new(
                 url     => $url,
-                headers => $server_config->{headers} || {},
+                headers => $headers,
                 timeout => $server_config->{timeout} || 30,
                 debug   => $self->{debug},
             );
@@ -361,10 +392,35 @@ sub add_server {
     
     if (ref($command_or_config) eq 'HASH' && $command_or_config->{url}) {
         # Remote HTTP server
+        my $headers = { %{$command_or_config->{headers} || {}} };
+        
+        # Handle OAuth if configured
+        if ($command_or_config->{auth} && $command_or_config->{auth}{type} eq 'oauth') {
+            eval {
+                require CLIO::MCP::Auth::OAuth;
+                my $ac = $command_or_config->{auth};
+                my $oauth = CLIO::MCP::Auth::OAuth->new(
+                    server_name       => $name,
+                    authorization_url => $ac->{authorization_url},
+                    token_url         => $ac->{token_url},
+                    client_id         => $ac->{client_id},
+                    client_secret     => $ac->{client_secret},
+                    scopes            => $ac->{scopes} || [],
+                    redirect_port     => $ac->{redirect_port} || 8912,
+                    debug             => $self->{debug},
+                );
+                my $token = $oauth->get_access_token();
+                if ($token) {
+                    $headers->{'Authorization'} = "Bearer $token";
+                    $self->{_oauth}{$name} = $oauth;
+                }
+            };
+        }
+        
         require CLIO::MCP::Transport::HTTP;
         my $transport = CLIO::MCP::Transport::HTTP->new(
             url     => $command_or_config->{url},
-            headers => $command_or_config->{headers} || {},
+            headers => $headers,
             timeout => $command_or_config->{timeout} || 30,
             debug   => $self->{debug},
         );
