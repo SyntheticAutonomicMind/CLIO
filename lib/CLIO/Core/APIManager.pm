@@ -507,7 +507,8 @@ sub get_endpoint_config {
             auth_value => "Bearer $self->{api_key}",
             path_suffix => '',  # Path already included in endpoint URL
             temperature_range => [0.0, 2.0],
-            supports_tools => 1
+            supports_tools => 1,
+            openrouter => 1,  # Flag for OpenRouter-specific features (reasoning params, etc.)
         },
         'ollama' => {
             auth_header => 'Authorization',
@@ -560,6 +561,13 @@ sub adapt_request_for_endpoint {
     unless ($endpoint_config->{requires_copilot_headers}) {
         delete $payload->{copilot_thread_id};
         delete $payload->{previous_response_id};
+    }
+    
+    # Add reasoning support for OpenRouter endpoints
+    # OpenRouter requires explicit 'reasoning' parameter to include thinking tokens.
+    # We always enable it - for non-reasoning models it's harmlessly ignored.
+    if ($endpoint_config->{openrouter}) {
+        $payload->{reasoning} = { enabled => \1 };  # JSON true
     }
     
     return $payload;
@@ -1558,7 +1566,8 @@ sub _get_endpoint_config_for_provider {
             auth_value => "Bearer $api_key",
             path_suffix => '',
             temperature_range => [0.0, 2.0],
-            supports_tools => 1
+            supports_tools => 1,
+            openrouter => 1,  # Flag for OpenRouter-specific features (reasoning params, etc.)
         },
     );
     
@@ -2684,6 +2693,12 @@ sub send_request_streaming {
     # Build HTTP request with headers (pass opts for tool_call_iteration)
     my ($req, $final_endpoint) = $self->_build_request($endpoint, $endpoint_config, $json, 1, \%opts);
     
+    # Debug: Log actual target endpoint (visible with should_log)
+    if (should_log('DEBUG')) {
+        print STDERR "[DEBUG][APIManager] Streaming request to: $final_endpoint\n";
+        print STDERR "[DEBUG][APIManager] Streaming model: $model\n";
+    }
+    
     # Request headers available for debugging if needed (use should_log('DEBUG'))
     
     # Initialize metrics tracking
@@ -2810,6 +2825,32 @@ sub send_request_streaming {
                             if ($delta->{reasoning_content} && $on_thinking) {
                                 $reasoning_was_active = 1;
                                 $on_thinking->($delta->{reasoning_content});
+                            }
+                            
+                            # Extract reasoning_details (OpenRouter normalized format)
+                            # OpenRouter streams reasoning as delta.reasoning_details[]
+                            # Each element has type, text/summary/data fields
+                            if ($delta->{reasoning_details} && ref($delta->{reasoning_details}) eq 'ARRAY' && $on_thinking) {
+                                for my $detail (@{$delta->{reasoning_details}}) {
+                                    next unless ref($detail) eq 'HASH';
+                                    my $type = $detail->{type} || '';
+                                    
+                                    if ($type eq 'reasoning.text' && defined $detail->{text}) {
+                                        $reasoning_was_active = 1;
+                                        $on_thinking->($detail->{text});
+                                    }
+                                    elsif ($type eq 'reasoning.summary' && defined $detail->{summary}) {
+                                        $reasoning_was_active = 1;
+                                        $on_thinking->($detail->{summary});
+                                    }
+                                    # reasoning.encrypted - skip display (redacted)
+                                }
+                            }
+                            
+                            # Also check for legacy 'reasoning' field (string, some providers)
+                            if ($delta->{reasoning} && !ref($delta->{reasoning}) && $on_thinking) {
+                                $reasoning_was_active = 1;
+                                $on_thinking->($delta->{reasoning});
                             }
                             
                             # Extract tool_calls delta
