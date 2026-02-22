@@ -198,8 +198,15 @@ sub parse_stream_event {
     
     # Process parts
     for my $part (@{$content->{parts}}) {
-        # Text part
+        # Text part (may be regular text or thought/reasoning)
         if (defined $part->{text}) {
+            # Gemini thinking models return thought summaries with thought: true
+            if ($part->{thought}) {
+                return {
+                    type => 'thinking',
+                    content => $part->{text},
+                };
+            }
             return {
                 type => 'text',
                 content => $part->{text},

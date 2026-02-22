@@ -2502,8 +2502,10 @@ sub send_request_streaming {
     # Extract on_chunk and on_tool_call callbacks
     my $on_chunk = $opts{on_chunk};
     my $on_tool_call = $opts{on_tool_call};
+    my $on_thinking = $opts{on_thinking};
     delete $opts{on_chunk};  # Remove from opts before building payload
     delete $opts{on_tool_call};  # Remove from opts before building payload
+    delete $opts{on_thinking};  # Remove from opts before building payload
     
     # Get endpoint-specific configuration
     my $ep = $self->_prepare_endpoint_config(%opts);
@@ -2524,6 +2526,7 @@ sub send_request_streaming {
             $opts{tools},
             on_chunk => $on_chunk,
             on_tool_call => $on_tool_call,
+            on_thinking => $on_thinking,
             model => $model,
             %opts
         );
@@ -2682,6 +2685,7 @@ sub send_request_streaming {
     my $accumulated_content = '';
     my $buffer = '';  # Buffer for partial SSE lines
     my $tool_calls_accumulator = {};  # Accumulate tool call deltas by index
+    my $reasoning_was_active = 0;  # Track if reasoning_content was being streamed
     
     # Make streaming request with callback
     my $resp;
@@ -2785,6 +2789,19 @@ sub send_request_streaming {
                             # Extract content
                             if ($delta->{content}) {
                                 $content_delta = $delta->{content};
+                                
+                                # If reasoning was active and now regular content starts,
+                                # signal end of thinking
+                                if ($reasoning_was_active && $on_thinking) {
+                                    $on_thinking->(undef, 'end');
+                                    $reasoning_was_active = 0;
+                                }
+                            }
+                            
+                            # Extract reasoning content (DeepSeek R1, o1, QwQ, etc.)
+                            if ($delta->{reasoning_content} && $on_thinking) {
+                                $reasoning_was_active = 1;
+                                $on_thinking->($delta->{reasoning_content});
                             }
                             
                             # Extract tool_calls delta
@@ -2870,6 +2887,13 @@ sub send_request_streaming {
             }
         });
     };
+    
+    # Signal end of reasoning if it was still active when stream ended
+    # (e.g., reasoning followed directly by tool calls with no regular content)
+    if ($reasoning_was_active && $on_thinking) {
+        $on_thinking->(undef, 'end');
+        $reasoning_was_active = 0;
+    }
     
     # Handle request errors
     if ($@) {
@@ -3825,6 +3849,7 @@ sub _send_native_streaming {
     
     my $on_chunk = $opts{on_chunk};
     my $on_tool_call = $opts{on_tool_call};
+    my $on_thinking = $opts{on_thinking};
     
     # Build the request using the native provider
     my $request = $provider->build_request($messages, $tools, {
@@ -3889,6 +3914,18 @@ sub _send_native_streaming {
                     # Call chunk callback
                     if ($on_chunk) {
                         $on_chunk->($event->{content});
+                    }
+                }
+                elsif ($type eq 'thinking_start' || $type eq 'thinking' || $type eq 'thinking_end') {
+                    # Thinking/reasoning content from provider
+                    if ($on_thinking) {
+                        if ($type eq 'thinking') {
+                            $on_thinking->($event->{content});
+                        } elsif ($type eq 'thinking_start') {
+                            $on_thinking->(undef, 'start');
+                        } elsif ($type eq 'thinking_end') {
+                            $on_thinking->(undef, 'end');
+                        }
                     }
                 }
                 elsif ($type eq 'tool_start') {

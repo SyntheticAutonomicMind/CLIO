@@ -60,6 +60,9 @@ sub new {
     $self->{_current_tool_call} = undef;
     $self->{_accumulated_json} = '';
     
+    # Track if we're currently in a thinking block
+    $self->{_in_thinking_block} = 0;
+    
     return $self;
 }
 
@@ -197,6 +200,13 @@ sub parse_stream_event {
             # Text block starting - no action needed
             return undef;
         }
+        elsif ($block_type eq 'thinking') {
+            # Thinking block starting (reasoning model)
+            $self->{_in_thinking_block} = 1;
+            return {
+                type => 'thinking_start',
+            };
+        }
         elsif ($block_type eq 'tool_use') {
             # Tool call starting
             $self->{_current_tool_call} = {
@@ -220,6 +230,17 @@ sub parse_stream_event {
                 type => 'text',
                 content => $delta->{text} // '',
             };
+        }
+        elsif ($delta_type eq 'thinking_delta') {
+            # Thinking content delta (reasoning model)
+            return {
+                type => 'thinking',
+                content => $delta->{thinking} // '',
+            };
+        }
+        elsif ($delta_type eq 'signature_delta') {
+            # Thinking signature delta - ignore for display purposes
+            return undef;
         }
         elsif ($delta_type eq 'input_json_delta') {
             # Accumulate partial JSON for tool arguments
@@ -255,6 +276,15 @@ sub parse_stream_event {
                 arguments => $arguments,
             };
         }
+        
+        # Check if we were in a thinking block
+        if ($self->{_in_thinking_block}) {
+            $self->{_in_thinking_block} = 0;
+            return {
+                type => 'thinking_end',
+            };
+        }
+        
         return undef;
     }
     elsif ($event_type eq 'message_delta') {
