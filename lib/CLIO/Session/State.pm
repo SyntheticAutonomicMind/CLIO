@@ -5,6 +5,7 @@ package CLIO::Session::State;
 
 use strict;
 use warnings;
+use utf8;
 use CLIO::Core::Logger qw(should_log);
 use CLIO::Util::PathResolver;
 use File::Spec;

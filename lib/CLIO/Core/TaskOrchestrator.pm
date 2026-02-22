@@ -2,6 +2,7 @@ package CLIO::Core::TaskOrchestrator;
 
 use strict;
 use warnings;
+use utf8;
 use CLIO::Util::JSON qw(encode_json decode_json);
 use Time::HiRes qw(time);
 use CLIO::Core::Logger qw(should_log);

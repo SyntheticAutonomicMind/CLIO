@@ -5,6 +5,7 @@ package CLIO::Update;
 
 use strict;
 use warnings;
+use utf8;
 use File::Spec;
 use File::Basename qw(dirname);
 use File::Path qw(mkpath rmtree);

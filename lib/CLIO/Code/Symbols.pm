@@ -2,6 +2,7 @@ package CLIO::Code::Symbols;
 
 use strict;
 use warnings;
+use utf8;
 use JSON::PP;
 use File::Basename;
 use File::Spec;

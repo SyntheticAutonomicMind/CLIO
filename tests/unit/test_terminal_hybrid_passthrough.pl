@@ -32,4 +32,3 @@ my $result1 = $tool->execute_command({
 print "Result structure:\n" . Dumper($result1) . "\n";
 
 print "\nAll tests completed.\n";
-EOFTEST 2>&1
