@@ -415,7 +415,7 @@ sub process_input {
                 log_debug('WorkflowOrchestrator', "Added " . scalar(@$mcp_defs) . " MCP tool(s) to API definitions");
             }
         };
-        log_warning('WorkflowOrchestrator', "MCP tool definition error: $@");
+        log_warning('WorkflowOrchestrator', "MCP tool definition error: $@") if $@;
     }
     
     log_debug('WorkflowOrchestrator', "Loaded " . scalar(@$tools) . " tool definitions");
