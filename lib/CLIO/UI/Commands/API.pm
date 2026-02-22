@@ -190,6 +190,7 @@ sub _display_api_help {
     $self->display_command_row("/api set provider <name>", "Set provider (anthropic, google, etc.)", 40);
     $self->display_command_row("/api set base <url>", "Set API base URL", 40);
     $self->display_command_row("/api set key <value>", "Set API key (stored per-provider)", 40);
+    $self->display_command_row("/api set thinking on|off", "Show model reasoning output", 40);
     $self->display_command_row("/api set github_pat <token>", "Set GitHub PAT for extended models", 40);
     $self->display_command_row("/api providers", "Show available providers", 40);
     $self->display_command_row("/api models", "List available models", 40);
@@ -701,9 +702,17 @@ sub _handle_api_set {
         }
         $self->_reinit_api_manager();
     }
+    elsif ($setting eq 'thinking') {
+        # Toggle reasoning/thinking output display
+        my $enabled = ($value =~ /^(on|true|1|yes|enabled)$/i) ? 1 : 0;
+        $self->{config}->set('show_thinking', $enabled);
+        $self->{config}->save();
+        my $state_label = $enabled ? "enabled" : "disabled";
+        $self->display_system_message("Thinking/reasoning display $state_label" . ($session_only ? " (session only)" : " (saved)"));
+    }
     else {
         $self->display_error_message("Unknown setting: $setting");
-        $self->writeline("Valid settings: model, provider, base, key, github_pat, serpapi_key, search_engine, search_provider", markdown => 0);
+        $self->writeline("Valid settings: model, provider, base, key, thinking, github_pat, serpapi_key, search_engine, search_provider", markdown => 0);
     }
 }
 

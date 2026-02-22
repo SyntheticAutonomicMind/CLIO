@@ -564,10 +564,12 @@ sub adapt_request_for_endpoint {
     }
     
     # Add reasoning support for OpenRouter endpoints
-    # OpenRouter requires explicit 'reasoning' parameter to include thinking tokens.
-    # We always enable it - for non-reasoning models it's harmlessly ignored.
+    # Only enable when thinking display is on - reasoning tokens are charged as output tokens
     if ($endpoint_config->{openrouter}) {
-        $payload->{reasoning} = { enabled => \1 };  # JSON true
+        my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
+        if ($show_thinking) {
+            $payload->{reasoning} = { enabled => \1 };  # JSON true
+        }
     }
     
     return $payload;
@@ -2821,34 +2823,40 @@ sub send_request_streaming {
                                 }
                             }
                             
-                            # Extract reasoning content (DeepSeek R1, o1, QwQ, etc.)
-                            if ($delta->{reasoning_content} && $on_thinking) {
+                            # Extract reasoning/thinking content from various formats
+                            # Multiple providers use different fields - only emit once per chunk to prevent duplication
+                            my $reasoning_emitted = 0;
+                            
+                            # 1. reasoning_content (DeepSeek direct API, some OpenAI-compat providers)
+                            if (!$reasoning_emitted && $delta->{reasoning_content} && $on_thinking) {
                                 $reasoning_was_active = 1;
+                                $reasoning_emitted = 1;
                                 $on_thinking->($delta->{reasoning_content});
                             }
                             
-                            # Extract reasoning_details (OpenRouter normalized format)
-                            # OpenRouter streams reasoning as delta.reasoning_details[]
-                            # Each element has type, text/summary/data fields
-                            if ($delta->{reasoning_details} && ref($delta->{reasoning_details}) eq 'ARRAY' && $on_thinking) {
+                            # 2. reasoning_details (OpenRouter normalized format)
+                            # Only check if we didn't already get content from reasoning_content
+                            if (!$reasoning_emitted && $delta->{reasoning_details} && ref($delta->{reasoning_details}) eq 'ARRAY' && $on_thinking) {
                                 for my $detail (@{$delta->{reasoning_details}}) {
                                     next unless ref($detail) eq 'HASH';
                                     my $type = $detail->{type} || '';
                                     
                                     if ($type eq 'reasoning.text' && defined $detail->{text}) {
                                         $reasoning_was_active = 1;
+                                        $reasoning_emitted = 1;
                                         $on_thinking->($detail->{text});
                                     }
                                     elsif ($type eq 'reasoning.summary' && defined $detail->{summary}) {
                                         $reasoning_was_active = 1;
+                                        $reasoning_emitted = 1;
                                         $on_thinking->($detail->{summary});
                                     }
                                     # reasoning.encrypted - skip display (redacted)
                                 }
                             }
                             
-                            # Also check for legacy 'reasoning' field (string, some providers)
-                            if ($delta->{reasoning} && !ref($delta->{reasoning}) && $on_thinking) {
+                            # 3. Legacy 'reasoning' string field (some providers)
+                            if (!$reasoning_emitted && $delta->{reasoning} && !ref($delta->{reasoning}) && $on_thinking) {
                                 $reasoning_was_active = 1;
                                 $on_thinking->($delta->{reasoning});
                             }
