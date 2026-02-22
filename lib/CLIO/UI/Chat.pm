@@ -629,9 +629,8 @@ sub run {
                     }
                     elsif ($signal eq 'end') {
                         $thinking_active = 0;
-                        # Print closing connector matching tool output style
-                        print "\n";
-                        print $self->colorize("\x{2514}\x{2500}\x{2500}\x{2500}\n", 'DIM');
+                        # Blank line to separate thinking from response (matches tool output pattern)
+                        print "\n\n";
                         STDOUT->flush() if STDOUT->can('flush');
                         # Reset first_chunk_received so CLIO: prefix prints for actual response
                         $first_chunk_received = 0;
