@@ -427,6 +427,9 @@ sub _export_session {
     # Ensure .html extension
     $filename .= '.html' unless $filename =~ /\.html?$/i;
     
+    # Expand tilde to home directory
+    $filename =~ s/^~/$ENV{HOME}/;
+    
     eval {
         require CLIO::Session::Export;
         my $exporter = CLIO::Session::Export->new(
