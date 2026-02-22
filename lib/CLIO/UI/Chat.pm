@@ -2094,6 +2094,9 @@ sub display_help {
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/file read <path>', 'help_command'), 'View file');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/git', 'help_command'), 'Git operations');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/git status', 'help_command'), 'Show git status');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/undo', 'help_command'), 'Revert AI changes from last turn');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/undo diff', 'help_command'), 'Show changes since last turn');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/undo list', 'help_command'), 'List recent snapshots');
     push @help_lines, "";
     
     push @help_lines, $self->colorize("TODO", 'command_subheader');
