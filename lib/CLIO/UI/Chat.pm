@@ -604,6 +604,52 @@ sub run {
                 print STDERR "[DEBUG][Chat] Tool called: $tool_name\n" if $self->{debug};
             };
             
+            # Display thinking/reasoning content from reasoning models
+            # Shows content dimmed to distinguish from actual response
+            my $thinking_active = 0;
+            my $on_thinking = sub {
+                my ($content, $signal) = @_;
+                
+                # Handle start/end signals from native providers (Anthropic)
+                if (defined $signal) {
+                    if ($signal eq 'start') {
+                        $thinking_active = 1;
+                        # Stop spinner if running and show thinking header
+                        $spinner->stop();
+                        print $self->colorize("CLIO: ", 'ASSISTANT');
+                        print $self->colorize("\x{26A1} Reasoning...\n", 'DIM');
+                        STDOUT->flush() if STDOUT->can('flush');
+                        return;
+                    }
+                    elsif ($signal eq 'end') {
+                        $thinking_active = 0;
+                        # Print separator before regular content
+                        print $self->colorize("\x{2500}" x 40 . "\n", 'DIM');
+                        STDOUT->flush() if STDOUT->can('flush');
+                        # Reset first_chunk_received so CLIO: prefix prints for actual response
+                        $first_chunk_received = 0;
+                        return;
+                    }
+                }
+                
+                # Thinking content delta
+                return unless defined $content && length($content);
+                
+                # For OpenAI-compatible reasoning_content (no start/end signals),
+                # auto-detect start on first chunk
+                if (!$thinking_active) {
+                    $thinking_active = 1;
+                    $spinner->stop();
+                    print $self->colorize("CLIO: ", 'ASSISTANT');
+                    print $self->colorize("\x{26A1} Reasoning...\n", 'DIM');
+                    STDOUT->flush() if STDOUT->can('flush');
+                }
+                
+                # Print thinking content dimmed
+                print $self->colorize($content, 'DIM');
+                STDOUT->flush() if STDOUT->can('flush');
+            };
+            
             # Display system messages (rate limits, server errors, etc.)
             my $on_system_message = sub {
                 my ($message) = @_;
@@ -680,6 +726,7 @@ sub run {
             my $result = $self->{ai_agent}->process_user_request($input, {
                 on_chunk => $on_chunk,
                 on_tool_call => $on_tool_call,  # Track which tools are being called
+                on_thinking => $on_thinking,  # Display reasoning/thinking content
                 on_system_message => $on_system_message,  # Display system messages
                 conversation_history => $conversation_history,
                 current_file => $self->{session}->{state}->{current_file},

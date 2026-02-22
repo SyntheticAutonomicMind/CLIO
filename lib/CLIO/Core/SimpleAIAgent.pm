@@ -256,7 +256,8 @@ sub process_user_request {
             $self->{session},
             on_chunk => $on_chunk,  # Pass through streaming callback
             on_system_message => $context->{on_system_message},  # Pass through system message callback for rate limits
-            on_tool_call => $context->{on_tool_call}  # Pass through tool call tracker
+            on_tool_call => $context->{on_tool_call},  # Pass through tool call tracker
+            on_thinking => $context->{on_thinking},  # Pass through thinking/reasoning content callback
         );
         
         if ($orchestrator_result && $orchestrator_result->{success}) {

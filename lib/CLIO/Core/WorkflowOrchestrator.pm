@@ -309,6 +309,7 @@ sub process_input {
     my $on_chunk = $opts{on_chunk};
     my $on_system_message = $opts{on_system_message};  # Callback for system messages
     my $on_tool_call_from_ui = $opts{on_tool_call};  # Tool call tracker from UI
+    my $on_thinking = $opts{on_thinking};  # Callback for reasoning/thinking content
     
     # Take a snapshot before processing - captures state before any AI modifications
     my $turn_snapshot;
@@ -546,7 +547,8 @@ sub process_input {
                 tools => $tools,
                 tool_call_iteration => $iteration,  # Track iteration for billing
                 on_chunk => $callback,
-                on_tool_call => $tool_callback
+                on_tool_call => $tool_callback,
+                on_thinking => $on_thinking,
             );
         };
         
