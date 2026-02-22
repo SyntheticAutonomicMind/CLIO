@@ -7,7 +7,7 @@ binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 
 use Carp qw(croak);
-use CLIO::Core::Logger qw(should_log log_info);
+use CLIO::Core::Logger qw(should_log log_info log_debug log_warning);
 
 =head1 NAME
 
@@ -106,8 +106,7 @@ sub auto_prune_sessions {
                 my $lock_file = "$sessions_dir/$session_id.lock";
                 unlink($lock_file) if -f $lock_file;
                 
-                print STDERR "[DEBUG][Session] Auto-pruned old session: $session_id\n" 
-                    if should_log('DEBUG');
+                log_debug('Session', "Auto-pruned old session: $session_id");
             }
         }
     }
@@ -579,7 +578,7 @@ sub _trim_sessions {
             if (unlink($sess->{file})) {
                 $bytes_freed += $sess->{size};
             } else {
-                print STDERR "[WARN] Failed to delete $sess->{file}: $!\n" if should_log('WARNING');
+                log_warning('SessionCmd', "Failed to delete $sess->{file}: $!");
                 $ok = 0;
             }
         }

@@ -467,7 +467,7 @@ sub execute_parallel {
         return $self->error_result("No devices resolved from targets: $targets");
     }
     
-    print STDERR "[DEBUG][RemoteExecution] Parallel execution on " . scalar(@devices) . " device(s)\n" if $self->{debug};
+    log_debug('RemoteExecution', "Parallel execution on " . scalar(@devices) . " device(s)");
     
     # Auto-populate API key if needed
     unless ($api_key) {
@@ -532,17 +532,17 @@ sub execute_parallel {
     my $fail_count = scalar(@results) - $success_count;
     
     if (should_log('DEBUG')) {
-        print STDERR "[DEBUG][RemoteExecution] Parallel execution complete:\n";
-        print STDERR "  Success: $success_count, Failed: $fail_count\n";
+        log_debug('RemoteExecution', "Parallel execution complete:");
+        log_debug('RemoteExecution', "  Success: $success_count, Failed: $fail_count");
         for my $result (@results) {
-            print STDERR "  Device: $result->{device} - " . ($result->{success} ? "OK" : "FAILED") . "\n";
+            log_debug('RemoteExecution', "  Device: $result->{device} - " . ($result->{success} ? "OK" : "FAILED") . "");
             if ($result->{output}) {
                 my $preview = substr($result->{output}, 0, 200);
                 $preview =~ s/\n/ /g;
-                print STDERR "    Output preview: $preview...\n";
+                log_debug('RemoteExecution', "    Output preview: $preview...");
             }
             if ($result->{error}) {
-                print STDERR "    Error: $result->{error}\n";
+                log_debug('RemoteExecution', "    Error: $result->{error}");
             }
         }
     }
@@ -599,7 +599,7 @@ sub _resolve_targets {
     };
     
     if ($@ && $self->{debug}) {
-        print STDERR "[DEBUG][RemoteExecution] Error resolving targets: $@\n";
+        log_debug('RemoteExecution', "Error resolving targets: $@");
     }
     
     return @devices;
@@ -1193,7 +1193,7 @@ sub _copy_local_clio_to_remote {
     my $remote_dir = $args{remote_dir};
     
     if (should_log('DEBUG')) {
-        print STDERR "[DEBUG][RemoteExecution] Copying local CLIO to remote: $host:$remote_dir\n";
+        log_debug('RemoteExecution', "Copying local CLIO to remote: $host:$remote_dir");
     }
     
     # Find the local CLIO directory
@@ -1243,7 +1243,7 @@ sub _copy_local_clio_to_remote {
     $rsync_cmd .= " $host:$remote_dir/";
     
     if (should_log('DEBUG')) {
-        print STDERR "[DEBUG][RemoteExecution] Running rsync: $rsync_cmd\n";
+        log_debug('RemoteExecution', "Running rsync: $rsync_cmd");
     }
     
     my $rsync_output = `$rsync_cmd 2>&1`;
@@ -1252,7 +1252,7 @@ sub _copy_local_clio_to_remote {
     
     if ($rsync_exit != 0) {
         if (should_log('DEBUG')) {
-            print STDERR "[DEBUG][RemoteExecution] rsync failed (exit $rsync_exit): $rsync_output\n";
+            log_debug('RemoteExecution', "rsync failed (exit $rsync_exit): $rsync_output");
         }
         return {
             success => 0,
@@ -1276,7 +1276,7 @@ sub _copy_local_clio_to_remote {
     }
     
     if (should_log('DEBUG')) {
-        print STDERR "[DEBUG][RemoteExecution] Successfully copied CLIO to remote\n";
+        log_debug('RemoteExecution', "Successfully copied CLIO to remote");
     }
     
     return {
@@ -1432,10 +1432,10 @@ SHELL
     my $stdout = $result->{stdout};
     
     if (should_log('DEBUG')) {
-        print STDERR "[DEBUG][RemoteExecution] Raw remote output:\n";
-        print STDERR "--- BEGIN REMOTE OUTPUT ---\n";
-        print STDERR $stdout . "\n";
-        print STDERR "--- END REMOTE OUTPUT ---\n";
+        log_debug('RemoteExecution', "Raw remote output:");
+        log_debug('RemoteExecution', "--- BEGIN REMOTE OUTPUT ---");
+        log_debug('RemoteExecution', $stdout);
+        log_debug('RemoteExecution', "--- END REMOTE OUTPUT ---");
     }
     
     if ($stdout =~ /EXECUTION_TIME=(\d+)/) {

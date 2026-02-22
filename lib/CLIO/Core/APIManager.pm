@@ -70,8 +70,7 @@ BEGIN {
         } else {
             # Only warn if explicitly debugging - this is a system configuration issue
             # most users won't see this anyway since CA bundles are usually available
-            print STDERR "[WARN][APIManager] No CA bundle found in common locations. HTTPS requests may fail.\n"
-                if $ENV{CLIO_DEBUG};
+            log_warning('APIManager', "No CA bundle found in common locations. HTTPS requests may fail.");
         }
     }
 }
@@ -172,9 +171,9 @@ sub new {
     
     # Print debug info
     if ($args{debug}) {
-        print STDERR "[DEBUG][APIManager] Initializing:\n";
-        print STDERR "[DEBUG][APIManager]   api_base: $api_base\n";
-        print STDERR "[DEBUG][APIManager]   model: $model\n";
+        log_debug('APIManager', "Initializing:");
+        log_debug('APIManager', "api_base: $api_base");
+        log_debug('APIManager', "model: $model");
     }
     
     # Initialize async request state
@@ -227,7 +226,7 @@ sub set_session {
         my $sid = $session && $session->can('session_id') 
             ? $session->session_id 
             : (ref($session) eq 'HASH' ? $session->{session_id} : 'unknown');
-        print STDERR "[DEBUG][APIManager] Session set: $sid\n";
+        log_debug('APIManager', "Session set: $sid");
     }
     
     return 1;
@@ -394,7 +393,7 @@ sub _get_api_key {
         };
         
         if ($@) {
-            print STDERR "[WARN]APIManager] Failed to get GitHub token: $@\n" if should_log('WARNING');
+            log_warning('APIManager', "Failed to get GitHub token: $@");
             return '';
         }
         
@@ -404,7 +403,7 @@ sub _get_api_key {
         }
         
         # GitHub Copilot provider requires GitHub authentication
-        print STDERR "[WARN]APIManager] GitHub Copilot not authenticated\n" if should_log('WARNING');
+        log_warning('APIManager', "GitHub Copilot not authenticated");
         return '';
     }
     
@@ -418,7 +417,7 @@ sub _get_api_key {
     }
     
     # No API key available
-    print STDERR "[WARN]APIManager] No API key available (not set in config)\n" if should_log('WARNING');
+    log_warning('APIManager', "No API key available (not set in config)");
     return '';
 }
 
@@ -436,7 +435,7 @@ sub get_current_model {
     }
     
     # Fallback (should never happen if config is properly initialized)
-    print STDERR "[WARN]APIManager] No model in config, using default\n" if should_log('WARNING');
+    log_warning('APIManager', "No model in config, using default");
     return 'gpt-4';
 }
 
@@ -454,7 +453,7 @@ sub get_current_provider {
     }
     
     # Fallback
-    print STDERR "[WARN]APIManager] No provider in config, using default\n" if should_log('WARNING');
+    log_warning('APIManager', "No provider in config, using default");
     return 'openai';
 }
 
@@ -675,7 +674,7 @@ sub get_model_capabilities {
         unless ($resp->is_success) {
             if (should_log('WARNING')) {
                 log_warning('APIManager', "Failed to fetch models from $models_url");
-                print STDERR "[WARNING][APIManager] HTTP " . $resp->code . ": " . $resp->message . "\n";
+                log_warning('APIManager', "HTTP " . $resp->code . ": " . $resp->message);
                 log_warning('APIManager', "Will use fallback token limits");
             }
             return undef;
@@ -735,10 +734,8 @@ sub get_model_capabilities {
             $self->{_model_capabilities_cache} ||= {};
             $self->{_model_capabilities_cache}{$model} = $capabilities;
             
-            print STDERR "[DEBUG][APIManager] Model capabilities for $model: " .
-                "max_prompt=" . $capabilities->{max_prompt_tokens} . ", " .
-                "max_output=" . $capabilities->{max_output_tokens} . "\n"
-                if $self->{debug};
+            log_debug('APIManager', "Model capabilities for $model: " . "max_prompt=" . $capabilities->{max_prompt_tokens} . ", " .
+                "max_output=" . $capabilities->{max_output_tokens} . "\n");
             
             return $capabilities;
         }
@@ -746,7 +743,7 @@ sub get_model_capabilities {
     
     if (should_log('WARNING')) {
         log_warning('APIManager', "Model $api_model not found in /models API response");
-        print STDERR "[WARNING][APIManager] Available models: " . join(", ", map { $_->{id} || '?' } @$models) . "\n";
+        log_warning('APIManager', "Available models: " . join(", ", map { $_->{id} || '?' } @$models));
         log_warning('APIManager', "Will use fallback token limits");
     }
     return undef;
@@ -883,9 +880,8 @@ sub validate_and_truncate_messages {
                 $tool_tokens += 600;  # Typical tool schema size
             }
         }
-        print STDERR "[DEBUG][APIManager] Tool token budget: $tool_tokens tokens for " . scalar(@$tools) . " tools " .
-            "(" . int($tool_tokens / @$tools) . " avg per tool)\n"
-            if $self->{debug};
+        log_debug('APIManager', "Tool token budget: $tool_tokens tokens for " . scalar(@$tools) . " tools " .
+            "(" . int($tool_tokens / @$tools) . " avg per tool)");
     }
     
     # Apply safety margins:
@@ -905,8 +901,7 @@ sub validate_and_truncate_messages {
         $effective_limit = 1000;
     }
     
-    print STDERR "[DEBUG][APIManager] Token budget: max=$max_prompt, tools=$tool_tokens, estimation_margin=$estimation_margin, response_buffer=$response_buffer, effective=$effective_limit\n"
-        if $self->{debug};
+    log_debug('APIManager', "Token budget: max=$max_prompt, tools=$tool_tokens, estimation_margin=$estimation_margin, response_buffer=$response_buffer, effective=$effective_limit");
     
     # Use learned token ratio for estimation (starts at 2.5, adapts from API feedback)
     my $estimated_tokens = 0;
@@ -936,8 +931,7 @@ sub validate_and_truncate_messages {
     if ($estimated_tokens <= $effective_limit) {
         # Within limits - still need to validate for orphaned tool_results
         # This catches corruption where tool_results exist without matching tool_calls
-        print STDERR "[DEBUG][APIManager] Token validation: $estimated_tokens / $effective_limit tokens (OK, validating)\n"
-            if $self->{debug};
+        log_debug('APIManager', "Token validation: $estimated_tokens / $effective_limit tokens (OK, validating)");
         
         # Run bidirectional validation to catch orphaned tool_calls and tool_results
         my $validated = $self->_validate_tool_message_pairs($messages);
@@ -1026,8 +1020,7 @@ sub validate_and_truncate_messages {
                     push @{$units[$parent_unit_idx]{messages}}, $msg;
                     $units[$parent_unit_idx]{tokens} += $msg_tokens;
                     
-                    print STDERR "[DEBUG][APIManager] Merged orphan tool_result back to unit $parent_unit_idx\n"
-                        if $self->{debug};
+                    log_debug('APIManager', "Merged orphan tool_result back to unit $parent_unit_idx");
                 } else {
                     # Shouldn't happen, but treat as standalone
                     warn "[WARNING][APIManager] Tool result orphan recovery failed - treating as standalone\n";
@@ -1044,8 +1037,7 @@ sub validate_and_truncate_messages {
                 # True orphan - no matching tool_call found anywhere
                 # This is a data corruption issue, but we should handle it gracefully
                 # Log at debug level since this is expected during truncation
-                print STDERR "[DEBUG][APIManager] Found tool_result with no matching tool_call: $tool_id (from truncation)\n"
-                    if $self->{debug};
+                log_debug('APIManager', "Found tool_result with no matching tool_call: $tool_id (from truncation)");
                 push @units, {
                     messages => [$msg],
                     tokens => $msg_tokens,
@@ -1078,8 +1070,7 @@ sub validate_and_truncate_messages {
         push @units, $current_unit;
     }
     
-    print STDERR "[DEBUG][APIManager] Grouped " . scalar(@$messages) . " messages into " . scalar(@units) . " units\n"
-        if $self->{debug};
+    log_debug('APIManager', "Grouped " . scalar(@$messages) . " messages into " . scalar(@units) . " units");
     
     # STRATEGY: Build conversation preserving critical messages
     # 1. Keep system message (always first)
@@ -1113,9 +1104,7 @@ sub validate_and_truncate_messages {
                 $first_user_unit = $unit;
                 $first_user_tokens = $unit->{tokens};
                 $start_unit = $i + 1;  # Skip past this unit in remaining processing
-                print STDERR "[DEBUG][APIManager] Preserving first user message (importance=" . 
-                    ($first_msg->{_importance} // 0) . ", tokens=$first_user_tokens)\n"
-                    if $self->{debug};
+                log_debug('APIManager', "Preserving first user message (importance=" . ($first_msg->{_importance} // 0) . ", tokens=$first_user_tokens)");
             }
             last;  # Only looking for FIRST user message
         }
@@ -1134,8 +1123,7 @@ sub validate_and_truncate_messages {
         # Skip orphan tool_result units - they would cause API errors
         # This is expected after truncation, so only log at debug level
         if ($unit->{is_orphan_tool_result}) {
-            print STDERR "[DEBUG][APIManager] Skipping orphan tool_result unit (tool_id: $unit->{orphan_tool_id})\n"
-                if $self->{debug};
+            log_debug('APIManager', "Skipping orphan tool_result unit (tool_id: $unit->{orphan_tool_id})");
             next;
         }
         
@@ -1163,8 +1151,7 @@ sub validate_and_truncate_messages {
             push @dropped_messages, @{$unit->{messages}};
         }
         
-        print STDERR "[DEBUG][APIManager] Compressing " . scalar(@dropped_messages) . " dropped messages\n"
-            if $self->{debug};
+        log_debug('APIManager', "Compressing " . scalar(@dropped_messages) . " dropped messages");
         
         # Use YaRN to compress the dropped messages
         eval {
@@ -1181,10 +1168,8 @@ sub validate_and_truncate_messages {
                 original_task => $original_task
             );
             
-            print STDERR "[DEBUG][APIManager] Compression successful: " . 
-                scalar(@dropped_messages) . " messages compressed to " . 
-                ($compressed_summary->{_metadata}{compressed_tokens} || 0) . " tokens\n"
-                if $self->{debug};
+            log_debug('APIManager', "Compression successful: " . scalar(@dropped_messages) . " messages compressed to " . 
+                ($compressed_summary->{_metadata}{compressed_tokens} || 0) . " tokens\n");
         };
         if ($@) {
             log_warning('APIManager', "Compression failed: $@");
@@ -1296,8 +1281,7 @@ sub _validate_tool_message_pairs {
         unless (exists $tool_result_ids{$tc_id}) {
             my $msg_idx = $tool_call_ids{$tc_id};
             $orphaned_tool_call_msg_indices{$msg_idx} = 1;
-            print STDERR "[WARNING][APIManager] Orphaned tool_call detected: $tc_id at message $msg_idx\n"
-                if should_log('WARNING');
+            log_warning('APIManager', "Orphaned tool_call detected: $tc_id at message $msg_idx");
         }
     }
     
@@ -1307,15 +1291,13 @@ sub _validate_tool_message_pairs {
         unless (exists $tool_call_ids{$tr_id}) {
             my $msg_idx = $tool_result_ids{$tr_id};
             $orphaned_tool_result_indices{$msg_idx} = 1;
-            print STDERR "[WARNING][APIManager] Orphaned tool_result detected: $tr_id at message $msg_idx\n"
-                if should_log('WARNING');
+            log_warning('APIManager', "Orphaned tool_result detected: $tr_id at message $msg_idx");
         }
     }
     
     # If no orphans, return original
     if (!keys %orphaned_tool_call_msg_indices && !keys %orphaned_tool_result_indices) {
-        print STDERR "[DEBUG][APIManager] Tool message validation: all pairs valid\n"
-            if $self->{debug};
+        log_debug('APIManager', "Tool message validation: all pairs valid");
         return $messages;
     }
     
@@ -1326,8 +1308,7 @@ sub _validate_tool_message_pairs {
         
         # Skip orphaned tool_result messages entirely
         if ($orphaned_tool_result_indices{$i}) {
-            print STDERR "[WARNING][APIManager] Removing orphaned tool_result at index $i\n"
-                if should_log('WARNING');
+            log_warning('APIManager', "Removing orphaned tool_result at index $i");
             next;
         }
         
@@ -1339,8 +1320,7 @@ sub _validate_tool_message_pairs {
                 content => $msg->{content} || ''
             };
             push @validated, $fixed_msg;
-            print STDERR "[WARNING][APIManager] Stripped tool_calls from assistant message at index $i\n"
-                if should_log('WARNING');
+            log_warning('APIManager', "Stripped tool_calls from assistant message at index $i");
             next;
         }
         
@@ -1350,8 +1330,7 @@ sub _validate_tool_message_pairs {
     
     my $removed = scalar(@$messages) - scalar(@validated);
     if ($removed > 0) {
-        print STDERR "[INFO][APIManager] Removed/fixed $removed orphaned tool messages\n"
-            if should_log('INFO');
+        log_info('APIManager', "Removed/fixed $removed orphaned tool messages");
     }
     
     return \@validated;
@@ -1659,8 +1638,8 @@ sub _build_payload {
         log_debug('APIManager', "Including copilot_thread_id: $payload->{copilot_thread_id}");
     } else {
         log_warning('APIManager', "NO copilot_thread_id - session will be treated as NEW (charges premium quota!)");
-        print STDERR "[DEBUG][APIManager] session=" . (defined $self->{session} ? "defined" : "undef") . 
-                     ", session_id=" . (defined $self->{session}{session_id} ? $self->{session}{session_id} : "undef") . "\n" if should_log('DEBUG');
+        log_debug('APIManager', "session=" . (defined $self->{session} ? "defined" : "undef") .
+                     ", session_id=" . (defined $self->{session}{session_id} ? $self->{session}{session_id} : "undef"));
     }
     
     # Add previous_response_id for GitHub Copilot billing continuity
@@ -1674,35 +1653,30 @@ sub _build_payload {
     
     if ($previous_response_id) {
         $payload->{previous_response_id} = $previous_response_id;
-        print STDERR "[DEBUG][APIManager] Including previous_response_id (stateful_marker): " . 
-                     substr($previous_response_id, 0, 20) . "...\n" if should_log('DEBUG');
+        log_debug('APIManager', "Including previous_response_id (stateful_marker): " . substr($previous_response_id, 0, 20) . "...");
     } else {
         # FALLBACK: Try old lastGitHubCopilotResponseId if stateful_marker not found
         # This is the expected path for GitHub Copilot (which doesn't return stateful_marker)
         if ($self->{session} && $self->{session}{lastGitHubCopilotResponseId}) {
             $previous_response_id = $self->{session}{lastGitHubCopilotResponseId};
             $payload->{previous_response_id} = $previous_response_id;
-            print STDERR "[DEBUG][APIManager] Using response_id (lastGitHubCopilotResponseId): " . 
-                         substr($previous_response_id, 0, 30) . "...\n" if should_log('DEBUG');
+            log_debug('APIManager', "Using response_id (lastGitHubCopilotResponseId): " . substr($previous_response_id, 0, 30) . "...");
         } else {
             # Only warn if this is NOT the first request AND we have no fallback
             my $is_first_request = scalar(grep { $_->{role} ne 'system' } @$messages) <= 1;
             if (!$is_first_request) {
                 log_warning('APIManager', "NO previous_response_id on turn 2+ - this will be charged as NEW request");
                 # Debug: Why isn't fallback working?
-                print STDERR "[DEBUG][APIManager] FALLBACK not available: session=" .
-                             (defined $self->{session} ? "defined" : "undef") .
+                log_debug('APIManager', "FALLBACK not available: session=" . (defined $self->{session} ? "defined" : "undef") .
                              ", lastGitHubCopilotResponseId=" .
-                             (defined $self->{session}{lastGitHubCopilotResponseId} ? $self->{session}{lastGitHubCopilotResponseId} : "undef") . "\n"
-                    if should_log('DEBUG');
+                             (defined $self->{session}{lastGitHubCopilotResponseId} ? $self->{session}{lastGitHubCopilotResponseId} : "undef") . "\n");
             }
         }
     }
     # Add tools if provided
     if ($opts{tools} && ref($opts{tools}) eq 'ARRAY' && @{$opts{tools}}) {
         $payload->{tools} = $opts{tools};
-        print STDERR "[DEBUG][APIManager] Adding " . scalar(@{$opts{tools}}) . " tools to request\n"
-            if $self->{debug};
+        log_debug('APIManager', "Adding " . scalar(@{$opts{tools}}) . " tools to request");
     }
     
     # Adapt payload for specific endpoint
@@ -1713,13 +1687,12 @@ sub _build_payload {
     
     # Log session continuity fields for billing tracking
     if ($self->{debug}) {
-        print STDERR "[DEBUG][APIManager] BILLING CONTINUITY CHECK:\n";
-        print STDERR "[DEBUG][APIManager]   copilot_thread_id: " . ($payload->{copilot_thread_id} || "NOT SET") . "\n";
-        print STDERR "[DEBUG][APIManager]   previous_response_id: " . ($payload->{previous_response_id} || "NOT SET") . "\n";
+        log_debug('APIManager', "BILLING CONTINUITY CHECK:");
+        log_debug('APIManager', "copilot_thread_id: " . ($payload->{copilot_thread_id} || "NOT SET"));
+        log_debug('APIManager', "previous_response_id: " . ($payload->{previous_response_id} || "NOT SET"));
         if (!$payload->{previous_response_id}) {
-            print STDERR "[DEBUG][APIManager]   session ref: " . (ref($self->{session}) || "NOT AN OBJECT") . "\n";
-            print STDERR "[DEBUG][APIManager]   lastGitHubCopilotResponseId: " . 
-                         ($self->{session} ? ($self->{session}{lastGitHubCopilotResponseId} || "NOT SET") : "NO SESSION") . "\n";
+            log_debug('APIManager', "session ref: " . (ref($self->{session}) || "NOT AN OBJECT"));
+            log_debug('APIManager', "lastGitHubCopilotResponseId: " . ($self->{session} ? ($self->{session}{lastGitHubCopilotResponseId} || "NOT SET") : "NO SESSION"));
         }
     }
     
@@ -1727,20 +1700,20 @@ sub _build_payload {
     if ($self->{debug} && $payload->{messages}) {
         my $msg_count = scalar(@{$payload->{messages}});
         my $stream_label = $stream ? "Streaming" : "Non-streaming";
-        print STDERR "[DEBUG][APIManager] $stream_label: Sending $msg_count messages\n";
+        log_debug('APIManager', "$stream_label: Sending $msg_count messages");
         my $start = $msg_count > 4 ? $msg_count - 4 : 0;
         for (my $i = $start; $i < $msg_count; $i++) {
             my $msg = $payload->{messages}[$i];
             my $preview = substr($msg->{content} || '', 0, 60);
             $preview =~ s/\n/ /g;
-            print STDERR sprintf("  [%d] %s: %s%s\n", 
+            log_debug('APIManager', sprintf("  [%d] %s: %s%s",
                 $i, $msg->{role}, $preview,
-                (length($msg->{content} || '') > 60 ? '...' : ''));
+                (length($msg->{content} || '') > 60 ? '...' : '')));
             if ($msg->{tool_calls}) {
-                print STDERR sprintf("       HAS %d tool_calls\n", scalar(@{$msg->{tool_calls}}));
+                log_debug('APIManager', sprintf("       HAS %d tool_calls", scalar(@{$msg->{tool_calls}})));
             }
             if ($msg->{tool_call_id}) {
-                print STDERR sprintf("       tool_call_id=%s\n", substr($msg->{tool_call_id}, 0, 20));
+                log_debug('APIManager', sprintf("       tool_call_id=%s", substr($msg->{tool_call_id}, 0, 20)));
             }
         }
     }
@@ -1764,7 +1737,7 @@ sub _build_request {
         
         if ($self->{debug}) {
             my $stream_label = $is_streaming ? "streaming" : "non-streaming";
-            print STDERR "[DEBUG][APIManager] GitHub Copilot $stream_label endpoint: $final_endpoint\n";
+            log_debug('APIManager', "GitHub Copilot $stream_label endpoint: $final_endpoint");
         }
     } elsif ($endpoint_config->{path_suffix} && 
              $endpoint !~ m{\Q$endpoint_config->{path_suffix}\E$}) {
@@ -1801,7 +1774,7 @@ sub _build_request {
         # Without this, API returns "missing Editor-Version header for IDE auth"
         if ($self->{using_exchanged_token}) {
             $req->header('Editor-Version' => 'vscode/2.0.0');
-            print STDERR "[DEBUG] Using Editor-Version header for exchanged token\n" if $self->{debug};
+            log_debug('APIManager', "Using Editor-Version header for exchanged token");
         }
         
         if ($self->{debug}) {
@@ -1943,8 +1916,7 @@ sub _handle_error_response {
                 }
                 close $fh;
             }
-            print STDERR "[DEBUG][APIManager] API rejected JSON payload - logged to /tmp/clio_json_errors.log\n"
-                if should_log('DEBUG');
+            log_debug('APIManager', "API rejected JSON payload - logged to /tmp/clio_json_errors.log");
         }
         
         # Try to extract the tool name from the error message or response body
@@ -1976,15 +1948,15 @@ sub _handle_error_response {
         # DEBUG: Show friendly message + technical details for troubleshooting
         log_debug('APIManager', "Retryable error ($status): $error");
         if ($is_streaming && should_log('DEBUG')) {
-            print STDERR "[DEBUG][APIManager] Response body: " . $resp->decoded_content . "\n";
-            print STDERR "[DEBUG][APIManager] Request was: " . substr($json, 0, 500) . "...\n";
+            log_debug('APIManager', "Response body: " . $resp->decoded_content);
+            log_debug('APIManager', "Request was: " . substr($json, 0, 500) . "...");
         }
     } else {
         # ERROR: Log fatal errors with full details
-        print STDERR "[DEBUG][APIManager $error\n" if should_log('DEBUG');
+        log_debug('APIManager', "$error");
         if ($is_streaming) {
-            print STDERR "[DEBUG][APIManager Response body: " . $resp->decoded_content . "\n" if should_log('DEBUG');
-            print STDERR "[DEBUG][APIManager] Request was: " . substr($json, 0, 500) . "...\n" if should_log('DEBUG');
+            log_debug('APIManager', "APIManager Response body: " . $resp->decoded_content);
+            log_debug('APIManager', "Request was: " . substr($json, 0, 500) . "...");
         } elsif ($self->{debug}) {
             warn "[ERROR] $error\n";
         }
@@ -2025,9 +1997,9 @@ sub send_request {
         $broker_request_id = $slot_result->{request_id};
         
         if (!$slot_result->{success}) {
-            print STDERR "[WARN][APIManager] Broker rate limit timeout after $slot_result->{waited}s, proceeding anyway\n" if should_log('WARN');
+            log_warning('APIManager', "Broker rate limit timeout after $slot_result->{waited}s, proceeding anyway");
         } elsif ($slot_result->{waited} > 0) {
-            print STDERR "[DEBUG][APIManager] Broker granted API slot after waiting " . sprintf("%.2f", $slot_result->{waited}) . "s\n" if should_log('DEBUG');
+            log_debug('APIManager', "Broker granted API slot after waiting " . sprintf("%.2f", $slot_result->{waited}) . "s");
         }
     }
     
@@ -2044,7 +2016,7 @@ sub send_request {
         
         if ($elapsed < $min_delay) {
             my $wait = $min_delay - $elapsed;
-            print STDERR "[DEBUG][APIManager] Rate limit prevention: waiting " . sprintf("%.3f", $wait) . "s\n" if should_log('DEBUG');
+            log_debug('APIManager', "Rate limit prevention: waiting " . sprintf("%.3f", $wait) . "s");
             Time::HiRes::sleep($wait);  # High resolution sleep
         }
     }
@@ -2068,11 +2040,11 @@ sub send_request {
         
         # Show countdown for user feedback (only in debug mode)
         for (my $i = $wait; $i > 0; $i--) {
-            print STDERR "\r[DEBUG][APIManager] Retrying in ${i}s..." if should_log('DEBUG') && !($i % 5);  # Update every 5s
+            log_debug('APIManager', "Retrying in ${i}s...") if !($i % 5);  # Update every 5s
             sleep(1);
         }
         alarm(0);  # Disable alarm after wait completes
-        print STDERR "\r[DEBUG][APIManager] Retry limit cleared. Sending request...\n" if should_log('DEBUG');
+        log_debug('APIManager', "Retry limit cleared. Sending request...");
     }
     
     # Get endpoint-specific configuration
@@ -2110,7 +2082,7 @@ sub send_request {
     my $preflight_errors = $self->_preflight_validate_messages($payload->{messages});
     if ($preflight_errors && @$preflight_errors) {
         my $error_summary = join('; ', @$preflight_errors);
-        print STDERR "[DEBUG][APIManager Pre-flight validation failed: $error_summary\n" if should_log('DEBUG');
+        log_debug('APIManager', "Pre-flight validation failed: $error_summary");
         
         # Attempt auto-repair
         $payload->{messages} = $self->_validate_tool_message_pairs($payload->{messages});
@@ -2130,7 +2102,7 @@ sub send_request {
     };
     if ($@) {
         my $error = $@;
-        print STDERR "[DEBUG][APIManager JSON encoding failed: $error\n" if should_log('DEBUG');
+        log_debug('APIManager', "JSON encoding failed: $error");
         # Log the payload structure for debugging
         if (open my $fh, '>>', '/tmp/clio_json_errors.log') {
             use Data::Dumper;
@@ -2150,7 +2122,7 @@ sub send_request {
     };
     if ($@) {
         my $error = $@;
-        print STDERR "[DEBUG][APIManager JSON validation failed: $error\n" if should_log('DEBUG');
+        log_debug('APIManager', "JSON validation failed: $error");
         # Log the actual JSON for inspection
         if (open my $fh, '>>', '/tmp/clio_json_errors.log') {
             print $fh "\n" . "="x80 . "\n";
@@ -2177,13 +2149,13 @@ sub send_request {
     my ($req, $final_endpoint) = $self->_build_request($endpoint, $endpoint_config, $json, 0, \%opts);
 
     # ALWAYS log full request for debugging quota issues
-    print STDERR "\n" . "="x80 . "\n";
-    print STDERR "[REQUEST DEBUG] Endpoint: $final_endpoint\n";
-    print STDERR "[REQUEST DEBUG] Headers:\n";
+    log_debug('APIManager', "=" x 80);
+    log_debug('APIManager', "[REQUEST DEBUG] Endpoint: $final_endpoint");
+    log_debug('APIManager', "[REQUEST DEBUG] Headers:");
     for my $h ($req->headers->header_field_names) {
-        print STDERR "  $h: " . $req->header($h) . "\n";
+        log_debug('APIManager', "  $h: " . $req->header($h) . "");
     }
-    print STDERR "[REQUEST DEBUG] Body:\n";
+    log_debug('APIManager', "[REQUEST DEBUG] Body:");
     # Pretty-print JSON for easier comparison
     my $pretty_json = $json;
     eval {
@@ -2202,8 +2174,8 @@ sub send_request {
         print $fh "\nBody:\n$pretty_json\n";
         close $fh;
     }
-    print STDERR "[First 800 chars]: " . substr($pretty_json, 0, 800) . "...\n";
-    print STDERR "="x80 . "\n\n";
+    log_debug('APIManager', "[First 800 chars]: " . substr($pretty_json, 0, 800) . "...");
+    log_debug('APIManager', "="x80 . "");
 
     if ($self->{debug}) {
         warn "[DEBUG] Making request to final endpoint: $final_endpoint\n";
@@ -2307,19 +2279,18 @@ sub send_request {
     if ($data->{id} && $self->{session}) {
         my $response_id = $data->{id};
         $self->{session}{lastGitHubCopilotResponseId} = $response_id;
-        print STDERR "[INFO][APIManager] ✓ Stored response_id (fallback mechanism): " . substr($response_id, 0, 30) . "...\n" if should_log('INFO');
+        log_info('APIManager', "✓ Stored response_id (fallback mechanism): " . substr($response_id, 0, 30) . "...");
         
         # Persist session immediately to maintain billing continuity
         if (ref($self->{session}) && blessed($self->{session}) && $self->{session}->can('save')) {
             $self->{session}->save();
             log_info('APIManager', "✓ Session saved with response_id");
         } else {
-            print STDERR "[DEBUG][APIManager Session object cannot save! Response ID will be lost!\n" if should_log('DEBUG');
+            log_debug('APIManager', "Session object cannot save! Response ID will be lost!");
         }
     } else {
-        print STDERR "[WARNING][APIManager] Cannot store response_id: " .
-                     "id=" . (defined $data->{id} ? substr($data->{id}, 0, 20) . "..." : "undef") .
-                     ", session=" . (defined $self->{session} ? "defined" : "undef") . "\n" if should_log('WARNING');
+        log_warning('APIManager', "Cannot store response_id: " . "id=" . (defined $data->{id} ? substr($data->{id}, 0, 20) . "..." : "undef") .
+                     ", session=" . (defined $self->{session} ? "defined" : "undef") . "\n");
     }
     
     # Process GitHub Copilot quota headers for premium billing tracking
@@ -2486,9 +2457,9 @@ sub send_request_streaming {
         $broker_request_id = $slot_result->{request_id};
         
         if (!$slot_result->{success}) {
-            print STDERR "[WARN][APIManager] Broker rate limit timeout after $slot_result->{waited}s, proceeding anyway\n" if should_log('WARN');
+            log_warning('APIManager', "Broker rate limit timeout after $slot_result->{waited}s, proceeding anyway");
         } elsif ($slot_result->{waited} > 0) {
-            print STDERR "[DEBUG][APIManager] Broker granted API slot after waiting " . sprintf("%.2f", $slot_result->{waited}) . "s\n" if should_log('DEBUG');
+            log_debug('APIManager', "Broker granted API slot after waiting " . sprintf("%.2f", $slot_result->{waited}) . "s");
         }
     }
     
@@ -2505,8 +2476,7 @@ sub send_request_streaming {
         
         if ($elapsed < $min_delay) {
             my $wait = $min_delay - $elapsed;
-            print STDERR "[DEBUG][APIManager] Waiting " . sprintf("%.3f", $wait) . "s for rate limit\n"
-                if $self->{debug};
+            log_debug('APIManager', "Waiting " . sprintf("%.3f", $wait) . "s for rate limit");
             Time::HiRes::sleep($wait);  # High resolution sleep
         }
     }
@@ -2530,11 +2500,11 @@ sub send_request_streaming {
         
         # Show countdown for user feedback (only in debug mode)
         for (my $i = $wait; $i > 0; $i--) {
-            print STDERR "\r[DEBUG][APIManager] Retrying in ${i}s..." if should_log('DEBUG') && !($i % 5);  # Update every 5s
+            log_debug('APIManager', "Retrying in ${i}s...") if !($i % 5);  # Update every 5s
             sleep(1);
         }
         alarm(0);  # Disable alarm after wait completes
-        print STDERR "\r[DEBUG][APIManager] Retry limit cleared. Sending request...\n" if should_log('DEBUG');
+        log_debug('APIManager', "Retry limit cleared. Sending request...");
     }
     
     # Extract on_chunk and on_tool_call callbacks
@@ -2574,8 +2544,8 @@ sub send_request_streaming {
     
     # Debug logging
     if ($self->{debug}) {
-        print STDERR "[DEBUG][APIManager] Streaming to $endpoint\n";
-        print STDERR "[DEBUG][APIManager] Model: $model\n";
+        log_debug('APIManager', "Streaming to $endpoint");
+        log_debug('APIManager', "Model: $model");
     }
     
     if (!$self->{api_key}) {
@@ -2595,21 +2565,21 @@ sub send_request_streaming {
     # DEBUG: Print EXACT request payload being sent to API
     if ($self->{debug}) {
         require Data::Dumper;
-        print STDERR "[DEBUG][APIManager] ===== REQUEST PAYLOAD =====\n";
-        print STDERR "[DEBUG][APIManager] Endpoint: $endpoint\n";
-        print STDERR "[DEBUG][APIManager] Model: $payload->{model}\n";
-        print STDERR "[DEBUG][APIManager] Messages count: " . scalar(@{$payload->{messages}}) . "\n";
+        log_debug('APIManager', "===== REQUEST PAYLOAD =====");
+        log_debug('APIManager', "Endpoint: $endpoint");
+        log_debug('APIManager', "Model: $payload->{model}");
+        log_debug('APIManager', "Messages count: " . scalar(@{$payload->{messages}}));
         if ($payload->{tools}) {
-            print STDERR "[DEBUG][APIManager] Tools array (" . scalar(@{$payload->{tools}}) . " tools):\n";
+            log_debug('APIManager', "Tools array (" . scalar(@{$payload->{tools}}) . " tools):");
             for my $i (0 .. $#{$payload->{tools}}) {
                 my $tool = $payload->{tools}[$i];
-                print STDERR "[DEBUG][APIManager]   Tool $i: $tool->{function}->{name}\n";
-                print STDERR Data::Dumper->Dump([$tool], ["tool_$i"]);
+                log_debug('APIManager', "Tool $i: $tool->{function}->{name}");
+                log_debug('APIManager', Data::Dumper->Dump([$tool], ["tool_$i"]));
             }
         } else {
-            print STDERR "[DEBUG][APIManager] Tools: NONE\n";
+            log_debug('APIManager', "Tools: NONE");
         }
-        print STDERR "[DEBUG][APIManager] ===== END REQUEST PAYLOAD =====\n";
+        log_debug('APIManager', "===== END REQUEST PAYLOAD =====");
     }
     
     # Clean up tool_calls before encoding
@@ -2628,7 +2598,7 @@ sub send_request_streaming {
     my $preflight_errors = $self->_preflight_validate_messages($payload->{messages});
     if ($preflight_errors && @$preflight_errors) {
         my $error_summary = join('; ', @$preflight_errors);
-        print STDERR "[DEBUG][APIManager Pre-flight validation failed: $error_summary\n" if should_log('DEBUG');
+        log_debug('APIManager', "Pre-flight validation failed: $error_summary");
         
         # Attempt auto-repair via _validate_tool_message_pairs
         log_info('APIManager', "Attempting auto-repair of message structure");
@@ -2651,13 +2621,13 @@ sub send_request_streaming {
     
     # DEBUG: Dump messages with tool_calls AFTER cleanup (only when debug enabled)
     if ($self->{debug}) {
-        print STDERR "[DEBUG][APIManager] POST-CLEANUP CHECK: Dumping messages with tool_calls:\n";
+        log_debug('APIManager', "POST-CLEANUP CHECK: Dumping messages with tool_calls:");
         for my $i (0 .. $#{$payload->{messages}}) {
             my $msg = $payload->{messages}[$i];
             if ($msg->{tool_calls}) {
                 use Data::Dumper;
-                print STDERR "[DEBUG][APIManager]   Message $i has tool_calls:\n";
-                print STDERR Dumper($msg->{tool_calls});
+                log_debug('APIManager', "Message $i has tool_calls:");
+                log_debug('APIManager', Dumper($msg->{tool_calls}));
             }
         }
     }
@@ -2669,7 +2639,7 @@ sub send_request_streaming {
     };
     if ($@) {
         my $error = $@;
-        print STDERR "[DEBUG][APIManager JSON encoding failed (streaming): $error\n" if should_log('DEBUG');
+        log_debug('APIManager', "JSON encoding failed (streaming): $error");
         # Log the payload structure for debugging
         if (open my $fh, '>>', '/tmp/clio_json_errors.log') {
             use Data::Dumper;
@@ -2692,7 +2662,7 @@ sub send_request_streaming {
     };
     if ($@) {
         my $error = $@;
-        print STDERR "[DEBUG][APIManager JSON validation failed (streaming): $error\n" if should_log('DEBUG');
+        log_debug('APIManager', "JSON validation failed (streaming): $error");
         # Log the actual JSON for inspection
         if (open my $fh, '>>', '/tmp/clio_json_errors.log') {
             print $fh "\n" . "="x80 . "\n";
@@ -2720,8 +2690,8 @@ sub send_request_streaming {
     
     # Debug: Log actual target endpoint (visible with should_log)
     if (should_log('DEBUG')) {
-        print STDERR "[DEBUG][APIManager] Streaming request to: $final_endpoint\n";
-        print STDERR "[DEBUG][APIManager] Streaming model: $model\n";
+        log_debug('APIManager', "Streaming request to: $final_endpoint");
+        log_debug('APIManager', "Streaming model: $model");
     }
     
     # Request headers available for debugging if needed (use should_log('DEBUG'))
@@ -2769,16 +2739,16 @@ sub send_request_streaming {
                     # Parse JSON chunk
                     my $data = eval { decode_json($data_json) };
                     if ($@) {
-                        print STDERR "[WARN]APIManager] Failed to parse SSE chunk: $@\n" if $self->{debug};
+                        log_warning('APIManager', "Failed to parse SSE chunk: $@");
                         next;
                     }
                     
                     # DEBUG: Log what fields are in each chunk
                     if (should_log('DEBUG')) {
                         my @fields = keys %$data;
-                        print STDERR "[DEBUG][APIManager] SSE chunk fields: " . join(', ', @fields) . "\n";
+                        log_debug('APIManager', "SSE chunk fields: " . join(', ', @fields));
                         if ($data->{id}) {
-                            print STDERR "[DEBUG][APIManager] Chunk has id: " . substr($data->{id}, 0, 30) . "...\n";
+                            log_debug('APIManager', "Chunk has id: " . substr($data->{id}, 0, 30) . "...");
                         }
                     }
                     
@@ -2795,10 +2765,9 @@ sub send_request_streaming {
                     # This matches SAM's approach: statefulMarker = statefulMarker ?? id
                     if ($data->{id} && $self->{session}) {
                         $self->{session}{lastGitHubCopilotResponseId} = $data->{id};
-                        print STDERR "[INFO][APIManager] ✓ Stored response_id (streaming, fallback): " . 
-                                     substr($data->{id}, 0, 30) . "...\n" if should_log('INFO');
+                        log_info('APIManager', "✓ Stored response_id (streaming, fallback): " . substr($data->{id}, 0, 30) . "...");
                         
-                        print STDERR "[DEBUG][APIManager] Session object type: " . ref($self->{session}) . "\n" if should_log('DEBUG');
+                        log_debug('APIManager', "Session object type: " . ref($self->{session}));
                         
                         # Persist session immediately to maintain billing continuity
                         if (ref($self->{session}) && blessed($self->{session}) && $self->{session}->can('save')) {
@@ -2806,15 +2775,13 @@ sub send_request_streaming {
                             $self->{session}->save();
                             log_info('APIManager', "✓ Session saved with response_id (streaming)");
                         } else {
-                            print STDERR "[DEBUG][APIManager Session object cannot save! Response ID will be lost!\n" if should_log('DEBUG');
+                            log_debug('APIManager', "Session object cannot save! Response ID will be lost!");
                         }
                     } elsif ($data->{id}) {
-                        print STDERR "[WARNING][APIManager] Cannot store response_id (streaming): session is undef\n" 
-                            if should_log('WARNING');
+                        log_warning('APIManager', "Cannot store response_id (streaming): session is undef");
                     } else {
                         # DEBUG: Why no id?
-                        print STDERR "[DEBUG][APIManager] No id in this chunk (session=" . 
-                                     (defined $self->{session} ? "defined" : "undef") . ")\n" if should_log('DEBUG');
+                        log_debug('APIManager', "No id in this chunk (session=" . (defined $self->{session} ? "defined" : "undef") . ")");
                     }
                     
                     # Extract content delta and tool_calls from chunk
@@ -2930,10 +2897,8 @@ sub send_request_streaming {
                                 }
                             }
                             
-                            print STDERR "[DEBUG][APIManager] Tool call delta: index=$index, " .
-                                "name=" . ($tc_delta->{function}{name} // '') . ", " .
-                                "args_chunk=" . (length($tc_delta->{function}{arguments} // 0)) . " bytes\n"
-                                if $self->{debug};
+                            log_debug('APIManager', "Tool call delta: index=$index, " . "name=" . ($tc_delta->{function}{name} // '') . ", " .
+                                "args_chunk=" . (length($tc_delta->{function}{arguments} // 0)) . " bytes\n");
                         }
                     }
                     
@@ -3008,13 +2973,13 @@ sub send_request_streaming {
     
     # Debug metrics
     if ($self->{debug}) {
-        print STDERR sprintf(
+        log_debug('APIManager', sprintf(
             "[DEBUG][APIManager] Streaming complete - TTFT: %.2fs, TPS: %.1f, Tokens: %d, Duration: %.2fs\n",
             $ttft // 0,
             $tps,
             $token_count,
             $total_duration
-        );
+        ));
     }
     
     # Persist session if we got a response_id
@@ -3034,9 +2999,8 @@ sub send_request_streaming {
     }
     
     # Process quota headers for billing tracking (GitHub Copilot only)
-    print STDERR "[DEBUG][APIManager] Checking quota header conditions: requires_copilot_headers=" . 
-        ($endpoint_config->{requires_copilot_headers} ? 'yes' : 'no') . ", has_headers=" . 
-        ($headers_to_use ? 'yes' : 'no') . "\n" if should_log('DEBUG');
+    log_debug('APIManager', "Checking quota header conditions: requires_copilot_headers=" . ($endpoint_config->{requires_copilot_headers} ? 'yes' : 'no') . ", has_headers=" . 
+        ($headers_to_use ? 'yes' : 'no') . "\n");
     
     if ($endpoint_config->{requires_copilot_headers} && $headers_to_use) {
         my $response_id = $self->{session}{lastGitHubCopilotResponseId} || 'unknown';
@@ -3073,8 +3037,7 @@ sub send_request_streaming {
             keys %$tool_calls_accumulator
         ];
         
-        print STDERR "[DEBUG][APIManager] Accumulated " . scalar(@$tool_calls) . " tool calls from streaming\n"
-            if $self->{debug};
+        log_debug('APIManager', "Accumulated " . scalar(@$tool_calls) . " tool calls from streaming");
     }
     
     # Build response with metrics and estimated usage
@@ -3094,8 +3057,8 @@ sub send_request_streaming {
         },
     };
     
-    print STDERR "[DEBUG][APIManager] Streaming complete - accumulated content length: " . length($accumulated_content) . "\n" if should_log('DEBUG');
-    print STDERR "[DEBUG][APIManager] Content: '" . $accumulated_content . "'\n" if should_log('DEBUG');
+    log_debug('APIManager', "Streaming complete - accumulated content length: " . length($accumulated_content));
+    log_debug('APIManager', "Content: '" . $accumulated_content . "'");
     
     # Add tool_calls if present
     if ($tool_calls) {
@@ -3105,15 +3068,15 @@ sub send_request_streaming {
     # DEBUG: Print EXACT response structure being returned
     if ($self->{debug}) {
         require Data::Dumper;
-        print STDERR "[DEBUG][APIManager] ===== API RESPONSE =====\n";
-        print STDERR "[DEBUG][APIManager] Has tool_calls: " . ($response->{tool_calls} ? "YES" : "NO") . "\n";
+        log_debug('APIManager', "===== API RESPONSE =====");
+        log_debug('APIManager', "Has tool_calls: " . ($response->{tool_calls} ? "YES" : "NO"));
         if ($response->{tool_calls}) {
-            print STDERR "[DEBUG][APIManager] Tool calls count: " . scalar(@{$response->{tool_calls}}) . "\n";
-            print STDERR Data::Dumper->Dump([$response->{tool_calls}], ['tool_calls']);
+            log_debug('APIManager', "Tool calls count: " . scalar(@{$response->{tool_calls}}));
+            log_debug('APIManager', Data::Dumper->Dump([$response->{tool_calls}], ['tool_calls']));
         }
-        print STDERR "[DEBUG][APIManager] Content length: " . length($response->{content}) . "\n";
-        print STDERR "[DEBUG][APIManager] Content preview: " . substr($response->{content}, 0, 200) . "...\n";
-        print STDERR "[DEBUG][APIManager] ===== END API RESPONSE =====\n";
+        log_debug('APIManager', "Content length: " . length($response->{content}));
+        log_debug('APIManager', "Content preview: " . substr($response->{content}, 0, 200) . "...");
+        log_debug('APIManager', "===== END API RESPONSE =====");
     }
     
     # Release broker slot on success
@@ -3379,9 +3342,9 @@ sub _process_rate_limit_headers {
     
     # Log rate limit info if debugging
     if (should_log('DEBUG')) {
-        print STDERR "[DEBUG][APIManager] Rate limit headers received:\n";
+        log_debug('APIManager', "Rate limit headers received:");
         for my $key (sort keys %rate_limit) {
-            print STDERR "[DEBUG][APIManager]   $key: $rate_limit{$key}\n";
+            log_debug('APIManager', "$key: $rate_limit{$key}");
         }
     }
     
@@ -3433,10 +3396,10 @@ sub _process_rate_limit_headers {
         if ($new_delay != $old_delay) {
             my $limit = $rate_limit{limit_requests} || 'N/A';
             my $remaining = $rate_limit{remaining_requests} || 'N/A';
-            print STDERR sprintf(
-                "[INFO][APIManager] Quota: %.1f%% remaining. Adjusting delay: %.1fs -> %.1fs\n",
+            log_info('APIManager', sprintf(
+                "Quota: %.1f%% remaining. Adjusting delay: %.1fs -> %.1fs",
                 $percent_remaining, $old_delay, $new_delay
-            ) if should_log('INFO');
+            ));
         }
     }
     
@@ -3461,8 +3424,7 @@ sub _process_rate_limit_headers {
             my $seconds_until_reset = $reset_time - $now;
             $self->{_rate_limit_reset_in} = $seconds_until_reset;
             
-            print STDERR "[DEBUG][APIManager] Rate limit resets in ${seconds_until_reset}s\n" 
-                if should_log('DEBUG');
+            log_debug('APIManager', "Rate limit resets in ${seconds_until_reset}s");
         }
     }
     
@@ -3474,8 +3436,7 @@ sub _process_rate_limit_headers {
         if ($retry_after =~ /^\d+$/) {
             # Already in seconds
             $self->{rate_limit_until} = time() + $retry_after;
-            print STDERR "[INFO][APIManager] Retry-After header: waiting ${retry_after}s before next request\n"
-                if should_log('INFO');
+            log_info('APIManager', "Retry-After header: waiting ${retry_after}s before next request");
         }
     }
 }
@@ -3551,7 +3512,7 @@ sub _release_broker_slot {
         );
     };
     if ($@) {
-        print STDERR "[WARN][APIManager] Failed to release broker slot: $@\n" if should_log('WARN');
+        log_warning('APIManager', "Failed to release broker slot: $@");
     }
     
     # Clear the request ID
@@ -3732,17 +3693,17 @@ sub _process_quota_headers {
     # Log quota information
     my $req_id_short = $response_id ? substr($response_id, 0, 8) : 'unknown';
     log_info('APIManager', "GitHub Copilot Premium Quota [req:$req_id_short]:");
-    print STDERR "[INFO][APIManager]  - Entitlement: " . ($entitlement == -1 ? "Unlimited" : $entitlement) . "\n" if should_log('INFO');
+    log_info('APIManager', "- Entitlement: " . ($entitlement == -1 ? "Unlimited" : $entitlement));
     log_info('APIManager', "- Used: $used");
-    print STDERR "[INFO][APIManager]  - Remaining: " . sprintf("%.1f%%", $percent_remaining) . " ($available available)\n" if should_log('INFO');
-    print STDERR "[INFO][APIManager]  - Overage: " . sprintf("%.1f", $overage_used) . " (permitted: " . ($overage_permitted ? 'yes' : 'no') . ")\n" if should_log('INFO');
+    log_info('APIManager', "- Remaining: " . sprintf("%.1f%%", $percent_remaining) . " ($available available)");
+    log_info('APIManager', "- Overage: " . sprintf("%.1f", $overage_used) . " (permitted: " . ($overage_permitted ? 'yes' : 'no') . ")");
     log_info('APIManager', "- Reset Date: $reset_date");
     
     # Warn if quota is running low
     if ($available < 10 && $available > 0) {
         log_warning('APIManager', "Only $available premium requests remaining!");
     } elsif ($available <= 0 && !$overage_permitted) {
-        print STDERR "[DEBUG][APIManager Premium quota exhausted! Requests may fail.\n" if should_log('DEBUG');
+        log_debug('APIManager', "Premium quota exhausted! Requests may fail.");
     }
 }
 
@@ -3773,14 +3734,13 @@ sub _store_stateful_marker {
     # Only store on first iteration (prevents overwriting during tool-calling)
     $iteration ||= 1;
     if ($iteration > 1) {
-        print STDERR "[DEBUG][APIManager] Skipping stateful_marker storage (iteration $iteration)\n" 
-            if should_log('DEBUG');
+        log_debug('APIManager', "Skipping stateful_marker storage (iteration $iteration)");
         return;
     }
     
     # Debug: Check if session exists
     unless ($self->{session}) {
-        print STDERR "[DEBUG][APIManager Cannot store stateful_marker - no session object!\n" if should_log('DEBUG');
+        log_debug('APIManager', "Cannot store stateful_marker - no session object!");
         return;
     }
     
@@ -3797,16 +3757,15 @@ sub _store_stateful_marker {
     # Keep only last 10 markers (prevent unbounded growth)
     splice(@{$self->{session}{_stateful_markers}}, 10);
     
-    print STDERR "[INFO][APIManager] ✓ Stored stateful_marker for model '$model': " . 
-                 substr($marker, 0, 30) . "... (total markers: " . 
-                 scalar(@{$self->{session}{_stateful_markers}}) . ")\n" if should_log('INFO');
+    log_info('APIManager', "✓ Stored stateful_marker for model '$model': " . substr($marker, 0, 30) . "... (total markers: " . 
+                 scalar(@{$self->{session}{_stateful_markers}}) . ")\n");
     
     # Persist session
     if (ref($self->{session}) && blessed($self->{session}) && $self->{session}->can('save')) {
         $self->{session}->save();
         log_info('APIManager', "✓ Session saved with stateful_marker");
     } else {
-        print STDERR "[DEBUG][APIManager Session object cannot save! stateful_marker will be lost!\n" if should_log('DEBUG');
+        log_debug('APIManager', "Session object cannot save! stateful_marker will be lost!");
     }
 }
 
@@ -3828,41 +3787,37 @@ sub _get_stateful_marker_for_model {
     my ($self, $model) = @_;
     
     unless ($self->{session}) {
-        print STDERR "[DEBUG][APIManager Cannot get stateful_marker - no session object!\n" if should_log('DEBUG');
+        log_debug('APIManager', "Cannot get stateful_marker - no session object!");
         return undef;
     }
     
     # _stateful_markers may be undef (old sessions) or empty (expected for GitHub Copilot)
     # This is normal - we fall back to lastGitHubCopilotResponseId in _build_payload
     unless ($self->{session}{_stateful_markers} && @{$self->{session}{_stateful_markers}}) {
-        print STDERR "[DEBUG][APIManager] No stateful_markers for model '$model' (will use response_id fallback)\n" 
-            if should_log('DEBUG');
+        log_debug('APIManager', "No stateful_markers for model '$model' (will use response_id fallback)");
         return undef;
     }
     
     # Debug: Show what we have
     my $count = scalar(@{$self->{session}{_stateful_markers}});
-    print STDERR "[DEBUG][APIManager] Searching for stateful_marker (model='$model', total markers=$count)\n"
-        if should_log('DEBUG');
+    log_debug('APIManager', "Searching for stateful_marker (model='$model', total markers=$count)");
     
     # Search for most recent marker matching this model
     for my $marker_obj (@{$self->{session}{_stateful_markers}}) {
         if ($marker_obj->{model} eq $model) {
-            print STDERR "[INFO][APIManager] ✓ Found stateful_marker for model '$model': " .
-                         substr($marker_obj->{marker}, 0, 30) . "...\n" if should_log('INFO');
+            log_info('APIManager', "✓ Found stateful_marker for model '$model': " . substr($marker_obj->{marker}, 0, 30) . "...");
             return $marker_obj->{marker};
         }
     }
     
     # No marker found for this specific model - this is normal
     # Different models in the same session will have different markers
-    print STDERR "[DEBUG][APIManager] No stateful_marker for model '$model' (searched $count markers)\n" 
-        if should_log('DEBUG');
+    log_debug('APIManager', "No stateful_marker for model '$model' (searched $count markers)");
     
     # Debug: Show what models we DO have markers for
     if (should_log('DEBUG') && $count > 0) {
         my @models = map { $_->{model} } @{$self->{session}{_stateful_markers}};
-        print STDERR "[DEBUG][APIManager] Available models in markers: " . join(', ', @models) . "\n";
+        log_debug('APIManager', "Available models in markers: " . join(', ', @models));
     }
     
     return undef;
@@ -3893,8 +3848,7 @@ sub _get_native_provider {
     # Load and instantiate the provider module
     eval "require $module";
     if ($@) {
-        print STDERR "[ERROR][APIManager] Failed to load native provider $module: $@\n"
-            if should_log('ERROR');
+        log_error('APIManager', "Failed to load native provider $module: $@");
         return undef;
     }
     

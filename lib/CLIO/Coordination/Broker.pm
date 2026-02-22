@@ -976,21 +976,18 @@ sub _calculate_api_delay {
 
 sub log_info {
     my ($self, $msg) = @_;
-    my $ts = strftime("%Y-%m-%d %H:%M:%S", localtime);
-    print STDERR "[INFO][$ts][Broker] $msg\n";
+    CLIO::Core::Logger::log_info('Broker', $msg);
 }
 
 sub log_warn {
     my ($self, $msg) = @_;
-    my $ts = strftime("%Y-%m-%d %H:%M:%S", localtime);
-    print STDERR "[WARNING][$ts][Broker] $msg\n";
+    CLIO::Core::Logger::log_warning('Broker', $msg);
 }
 
 sub log_debug {
     my ($self, $msg) = @_;
     return unless $self->{debug};
-    my $ts = strftime("%Y-%m-%d %H:%M:%S", localtime);
-    print STDERR "[DEBUG][$ts][Broker] $msg\n";
+    CLIO::Core::Logger::log_debug('Broker', $msg);
 }
 
 1;

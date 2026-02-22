@@ -14,7 +14,7 @@ use File::Path qw(make_path);
 use File::Spec;
 use POSIX qw(strftime);
 use Time::HiRes qw(time);
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug log_error);
 
 =head1 NAME
 
@@ -81,10 +81,10 @@ sub new {
             make_path($self->{log_dir});
         };
         if ($@) {
-            print STDERR "[ERROR][ToolLogger] Failed to create log directory $self->{log_dir}: $@\n" if should_log('ERROR');
+            log_error('ToolLogger', "Failed to create log directory $self->{log_dir}: $@");
             # Continue anyway - logging is not critical to operation
         } else {
-            print STDERR "[DEBUG][ToolLogger] Created log directory: $self->{log_dir}\n" if should_log('DEBUG');
+            log_debug('ToolLogger', "Created log directory: $self->{log_dir}");
         }
     }
     
@@ -116,7 +116,7 @@ sub log {
     my ($self, $entry) = @_;
     
     unless ($entry && ref($entry) eq 'HASH') {
-        print STDERR "[ERROR][ToolLogger] Invalid log entry (not a hashref)\n" if should_log('ERROR');
+        log_error('ToolLogger', "Invalid log entry (not a hashref)");
         return 0;
     }
     
@@ -133,7 +133,7 @@ sub log {
         $json_line = encode_json($entry);
     };
     if ($@) {
-        print STDERR "[ERROR][ToolLogger] Failed to serialize log entry: $@\n" if should_log('ERROR');
+        log_error('ToolLogger', "Failed to serialize log entry: $@");
         return 0;
     }
     
@@ -146,12 +146,11 @@ sub log {
         close $fh;
     };
     if ($@) {
-        print STDERR "[ERROR][ToolLogger] Failed to write log entry: $@\n" if should_log('ERROR');
+        log_error('ToolLogger', "Failed to write log entry: $@");
         return 0;
     }
     
-    print STDERR "[DEBUG][ToolLogger] Logged tool operation: $entry->{tool_name}/$entry->{operation}\n" 
-        if should_log('DEBUG');
+    log_debug('ToolLogger', "Logged tool operation: $entry->{tool_name}/$entry->{operation}");
     
     return 1;
 }
@@ -358,8 +357,7 @@ sub cleanup_old_logs {
         if ($now - $mtime > $max_age_seconds) {
             if (unlink $log_file) {
                 $removed++;
-                print STDERR "[DEBUG][ToolLogger] Removed old log file: $log_file\n" 
-                    if should_log('DEBUG');
+                log_debug('ToolLogger', "Removed old log file: $log_file");
             }
         }
     }

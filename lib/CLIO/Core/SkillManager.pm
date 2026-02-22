@@ -596,8 +596,7 @@ sub _load_skills {
         %{$self->{skills}} = (%{$self->{skills}}, %$session_prompts);
     }
     
-    print STDERR "[DEBUG][SkillManager] Loaded " . scalar(keys %{$self->{skills}}) . " skills\n"
-        if $self->{debug};
+    log_debug('SkillManager', "Loaded " . scalar(keys %{$self->{skills}}) . " skills");
 }
 
 =head2 _read_skills_file
@@ -687,8 +686,7 @@ sub add_skill {
     $self->{skills}{$name} = $prompt;
     $self->_save_skills();
     
-    print STDERR "[DEBUG][SkillManager] Added prompt '$name' with variables: " . 
-        join(", ", @variables) . "\n" if $self->{debug};
+    log_debug('SkillManager', "Added prompt '$name' with variables: " . join(", ", @variables) . "");
     
     return { success => 1, prompt => $prompt };
 }
@@ -911,8 +909,8 @@ sub _save_skills {
     print $fh encode_json($data);
     close $fh;
     
-    print STDERR "[DEBUG][SkillManager] Saved " . scalar(keys %custom_prompts) . 
-        " custom skills to $self->{user_skills_file}\n" if $self->{debug};
+    log_debug('SkillManager', "Saved " . scalar(keys %custom_prompts) .
+        " custom skills to $self->{user_skills_file}");
 }
 
 1;

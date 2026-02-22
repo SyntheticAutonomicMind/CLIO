@@ -86,9 +86,9 @@ sub new {
     # Debug: Log if UI is available
     if (should_log('DEBUG')) {
         if ($self->{ui}) {
-            print STDERR "[DEBUG][ToolExecutor] UI available for tools\n";
+            log_debug('ToolExecutor', "UI available for tools");
         } else {
-            print STDERR "[DEBUG][ToolExecutor] WARNING: UI is undefined - tools won't have collaboration access\n";
+            log_debug('ToolExecutor', "WARNING: UI is undefined - tools won't have collaboration access");
         }
     }
     
@@ -234,8 +234,7 @@ sub execute_tool {
     
     if (exists $TOOL_ALIASES{$tool_name}) {
         my $alias = $TOOL_ALIASES{$tool_name};
-        print STDERR "[DEBUG][ToolExecutor] Aliasing '$tool_name' -> '$alias->{tool}' with operation='$alias->{operation}'\n" 
-            if should_log('DEBUG');
+        log_debug('ToolExecutor', "Aliasing '$tool_name' -> '$alias->{tool}' with operation='$alias->{operation}'");
         $tool_name = $alias->{tool};
         $arguments->{operation} = $alias->{operation};
     }
@@ -262,9 +261,9 @@ sub execute_tool {
     # Execute tool with operation from arguments
     if (should_log('DEBUG') && $tool_name eq 'user_collaboration') {
         if ($self->{ui}) {
-            print STDERR "[DEBUG][ToolExecutor] Executing user_collaboration with UI available\n";
+            log_debug('ToolExecutor', "Executing user_collaboration with UI available");
         } else {
-            print STDERR "[DEBUG][ToolExecutor] ERROR: Executing user_collaboration but UI is undefined!\n";
+            log_debug('ToolExecutor', "ERROR: Executing user_collaboration but UI is undefined!");
         }
     }
     
@@ -734,8 +733,8 @@ sub _format_tool_result {
         });
     }
     
-    print STDERR "[DEBUG][ToolExecutor] Tool result: " . substr($json, 0, 500) . 
-        (length($json) > 500 ? "..." : "") . "\n" if $self->{debug};
+    log_debug('ToolExecutor', "Tool result: " . substr($json, 0, 500) .
+        (length($json) > 500 ? "..." : ""));
     
     return $json;
 }
@@ -816,16 +815,14 @@ sub _normalize_dual_json_params {
             
             # Skip if both _json and base exist (base takes precedence for backward compat)
             if (exists $params->{$base_key}) {
-                print STDERR "[DEBUG][ToolExecutor] Both $key and $base_key exist - using $base_key\n"
-                    if should_log('DEBUG');
+                log_debug('ToolExecutor', "Both $key and $base_key exist - using $base_key");
                 delete $params->{$key};  # Remove _json version
                 next;
             }
             
             # Convert JSON object/array to string
             if (ref($json_value) eq 'HASH' || ref($json_value) eq 'ARRAY') {
-                print STDERR "[DEBUG][ToolExecutor] Normalizing $key -> $base_key (object to string)\n"
-                    if should_log('DEBUG');
+                log_debug('ToolExecutor', "Normalizing $key -> $base_key (object to string)");
                 
                 # Serialize the object/array to JSON string
                 my $json_string = encode_json($json_value);
@@ -834,8 +831,7 @@ sub _normalize_dual_json_params {
             }
             elsif (!ref($json_value)) {
                 # Already a string - just move it to base key
-                print STDERR "[DEBUG][ToolExecutor] Normalizing $key -> $base_key (string to string)\n"
-                    if should_log('DEBUG');
+                log_debug('ToolExecutor', "Normalizing $key -> $base_key (string to string)");
                 $params->{$base_key} = $json_value;
                 delete $params->{$key};
             }
@@ -918,8 +914,7 @@ sub _normalize_oneof_params {
         
         # If it's a HASH or ARRAY, convert to JSON string
         if (ref($param_value) eq 'HASH' || ref($param_value) eq 'ARRAY') {
-            print STDERR "[DEBUG][ToolExecutor] oneOf param '$param_name': object -> string\n"
-                if should_log('DEBUG');
+            log_debug('ToolExecutor', "oneOf param '$param_name': object -> string");
             
             # Serialize to JSON string
             $params->{$param_name} = encode_json($param_value);
@@ -929,11 +924,9 @@ sub _normalize_oneof_params {
             my $parsed = eval { decode_json($param_value) };
             if ($@) {
                 # Not JSON or invalid - that's OK, might be plain text
-                print STDERR "[DEBUG][ToolExecutor] oneOf param '$param_name': plain string (not JSON)\n"
-                    if should_log('DEBUG');
+                log_debug('ToolExecutor', "oneOf param '$param_name': plain string (not JSON)");
             } else {
-                print STDERR "[DEBUG][ToolExecutor] oneOf param '$param_name': valid JSON string (passthrough)\n"
-                    if should_log('DEBUG');
+                log_debug('ToolExecutor', "oneOf param '$param_name': valid JSON string (passthrough)");
             }
         }
     }

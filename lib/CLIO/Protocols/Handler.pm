@@ -5,7 +5,7 @@ use warnings;
 use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug);
 use Time::HiRes qw(time);
 
 =head1 NAME
@@ -80,10 +80,10 @@ Returns: HashRef with success => 0 and error message
 
 sub new {
     my ($class, %args) = @_;
-    print STDERR "[PROTO][DEBUG] Handler::new called for class $class\n" if should_log('DEBUG') || $args{debug};
+    log_debug('ProtocolHandler', "Handler::new called for class $class");
     my $self = { debug => $args{debug} // 0 };
     bless $self, $class;
-    print STDERR "[PROTO][DEBUG] Handler::new returning object of class " . ref($self) . "\n" if should_log('DEBUG') || $args{debug};
+    log_debug('ProtocolHandler', "[PROTO][DEBUG] Handler::new returning object of class " . ref($self) . "");
     return $self;
 }
 
@@ -109,7 +109,7 @@ sub validate_input {
 
 sub process_request {
     my ($self, $input) = @_;
-    print STDERR "[PROTO][DEBUG] Base Handler::process_request called for class " . ref($self) . "\n" if should_log('DEBUG') || $self->{debug};
+    log_debug('ProtocolHandler', "[PROTO][DEBUG] Base Handler::process_request called for class " . ref($self) . "");
     return { success => 1, data => undef };
 }
 

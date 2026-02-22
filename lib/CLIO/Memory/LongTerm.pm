@@ -55,7 +55,7 @@ Storage: Per-project in .clio/ltm.json
 
 =cut
 
-print STDERR "[TRACE] CLIO::Memory::LongTerm loaded\n" if should_log('DEBUG');
+log_debug('LongTerm', "CLIO::Memory::LongTerm loaded");
 
 sub new {
     my ($class, %args) = @_;
@@ -766,7 +766,7 @@ sub prune {
     my $total = $removed{discoveries} + $removed{solutions} + $removed{patterns} + 
                 $removed{workflows} + $removed{failures};
     
-    print STDERR "[DEBUG][LTM] Pruned $total entries\n" if should_log('DEBUG') && $total > 0;
+    log_debug('LTM', "Pruned $total entries");
     
     return \%removed;
 }

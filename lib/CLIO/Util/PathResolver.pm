@@ -3,6 +3,7 @@ package CLIO::Util::PathResolver;
 use strict;
 use warnings;
 use utf8;
+use CLIO::Core::Logger qw(log_info);
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use FindBin;
@@ -89,7 +90,7 @@ sub init {
     # Create config directory if it doesn't exist with secure permissions
     if (!-d $CONFIG_DIR) {
         make_path($CONFIG_DIR, { mode => 0700 }) or croak "Cannot create config directory $CONFIG_DIR: $!";
-        print STDERR "[INFO] Created config directory: $CONFIG_DIR\n";
+        log_info('PathResolver', "[INFO] Created config directory: $CONFIG_DIR");
     }
     
     # In installed mode, BASE_DIR is still the script location (for lib/ access)

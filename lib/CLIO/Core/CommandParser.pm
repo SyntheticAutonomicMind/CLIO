@@ -5,7 +5,7 @@ use warnings;
 use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug);
 
 =head1 NAME
 
@@ -71,7 +71,7 @@ Returns: Previous message content or undef
 
 =cut
 
-print STDERR "[TRACE] CLIO::Core::CommandParser loaded\n" if should_log('DEBUG');
+log_debug('CommandParser', "CLIO::Core::CommandParser loaded");
 
 sub new {
     my ($class, %args) = @_;
@@ -95,7 +95,7 @@ sub parse_commands {
     my $escaped = 0;
     
     if (should_log('DEBUG')) {
-        print STDERR "[CommandParser] parse_commands: input='$input'\n";
+        log_debug('CommandParser', "parse_commands: input='$input'");
     }
     
     for my $i (0 .. length($input) - 1) {
@@ -143,7 +143,7 @@ sub parse_commands {
     push @commands, $trimmed if length($trimmed) > 0;
     
     if (should_log('DEBUG')) {
-        print STDERR "[CommandParser] parsed commands: " . join(' | ', @commands) . "\n";
+        log_debug('CommandParser', "parsed commands: " . join(' | ', @commands) . "");
     }
     
     return \@commands;
@@ -171,7 +171,7 @@ sub extract_recall_context {
     return undef unless $memory && $memory->can('get_last_user_message');
     
     if (should_log('DEBUG')) {
-        print STDERR "[CommandParser] extract_recall_context (DEPRECATED): command='$command'\n";
+        log_debug('CommandParser', "extract_recall_context (DEPRECATED): command='$command'");
     }
     
     # For backward compatibility, just return the last user message
@@ -180,9 +180,9 @@ sub extract_recall_context {
     
     if (should_log('DEBUG')) {
         if ($result) {
-            print STDERR "[CommandParser] Returning last user message for recall\n";
+            log_debug('CommandParser', "Returning last user message for recall");
         } else {
-            print STDERR "[CommandParser] No recall context found\n";
+            log_debug('CommandParser', "No recall context found");
         }
     }
     

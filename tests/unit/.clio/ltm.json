@@ -1,0 +1,15 @@
+{
+   "metadata" : {
+      "created" : 1771801794,
+      "last_updated" : 1771801794,
+      "version" : "1.0"
+   },
+   "patterns" : {
+      "code_patterns" : [],
+      "context_rules" : {},
+      "discoveries" : [],
+      "failures" : [],
+      "problem_solutions" : [],
+      "workflows" : []
+   }
+}

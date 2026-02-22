@@ -5,7 +5,7 @@ use warnings;
 use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
-use CLIO::Core::Logger qw(should_log log_error);
+use CLIO::Core::Logger qw(should_log log_error log_debug log_warning);
 use CLIO::Util::ConfigPath qw(get_config_file);
 use CLIO::Util::TextSanitizer qw(sanitize_text);
 use Carp qw(croak);
@@ -104,8 +104,7 @@ sub get_system_prompt {
     # Get active prompt name from metadata (only if metadata was loaded)
     my $active = $self->{metadata}->{active_prompt} || 'default';
     
-    print STDERR "[DEBUG][PromptManager] Getting system prompt: $active\n"
-        if $self->{debug};
+    log_debug('PromptManager', "Getting system prompt: $active");
     
     my $prompt;
     
@@ -117,8 +116,7 @@ sub get_system_prompt {
             $prompt = $self->_read_prompt_file($active);
         } else {
             # No customization - use embedded default
-            print STDERR "[DEBUG][PromptManager] Using embedded default prompt (no file created)\n"
-                if $self->{debug};
+            log_debug('PromptManager', "Using embedded default prompt (no file created)");
             $prompt = $self->_get_default_prompt_content();
         }
     } else {
@@ -136,35 +134,31 @@ sub get_system_prompt {
     if ($session) {
         my $ltm_section = $self->_format_ltm_patterns($session);
         if ($ltm_section) {
-            print STDERR "[DEBUG][PromptManager] Injecting LTM patterns (early position), length=" . length($ltm_section) . "\n"
-                if $self->{debug};
+            log_debug('PromptManager', "Injecting LTM patterns (early position), length=" . length($ltm_section));
             
             # Find the end of Core Identity section and inject LTM there
             # Look for the "---" separator after Core Identity
             if ($prompt =~ /^## Core Identity\s*\n.*?\n---\s*\n/sm) {
                 # Insert LTM right after Core Identity section
-                print STDERR "[DEBUG][PromptManager] Found Core Identity marker, injecting LTM\n"
-                    if $self->{debug};
+                log_debug('PromptManager', "Found Core Identity marker, injecting LTM");
                 my $before_len = length($prompt);
                 $prompt =~ s/(^## Core Identity\s*\n.*?\n---\s*\n)/$1$ltm_section\n---\n\n/sm;
                 my $after_len = length($prompt);
-                print STDERR "[DEBUG][PromptManager] After injection, prompt length=$after_len (added " . ($after_len - $before_len) . " bytes)\n"
-                    if $self->{debug};
+                log_debug('PromptManager', "After injection, prompt length=$after_len (added " . ($after_len - $before_len) . " bytes)");
                 
                 # DEBUG: Show what was injected
                 if ($self->{debug}) {
                     if ($prompt =~ /(## Long-Term Memory Patterns.*?)(?=\n##)/s) {
-                        print STDERR "[DEBUG][PromptManager] Injected LTM section (first 200 chars): " . substr($1, 0, 200) . "...\n";
+                        log_debug('PromptManager', "Injected LTM section (first 200 chars): " . substr($1, 0, 200) . "...");
                     }
                 }
             } else {
                 # Fallback: inject at the end if pattern not found
-                print STDERR "[WARN][PromptManager] Could not find Core Identity section marker, appending LTM at end\n" if should_log('WARN');
+                log_warning('PromptManager', "Could not find Core Identity section marker, appending LTM at end");
                 $prompt .= "\n\n" . $ltm_section;
             }
         } else {
-            print STDERR "[DEBUG][PromptManager] No LTM patterns to inject (empty section)\n"
-                if $self->{debug};
+            log_debug('PromptManager', "No LTM patterns to inject (empty section)");
         }
     }
     
@@ -172,9 +166,7 @@ sub get_system_prompt {
     if (!$self->{skip_custom}) {
         my $custom = $self->_load_custom_instructions();
         if ($custom) {
-            print STDERR "[DEBUG][PromptManager] Appending custom instructions (" 
-                . length($custom) . " bytes)\n"
-                if $self->{debug};
+            log_debug('PromptManager', "Appending custom instructions (" . length($custom) . " bytes)");
             
             # Sanitize UTF-8 emojis to prevent JSON encoding issues
             $custom = sanitize_text($custom);
@@ -183,11 +175,10 @@ sub get_system_prompt {
             $prompt .= $custom;
             $prompt .= "\n</customInstructions>\n";
         } else {
-            print STDERR "[DEBUG][PromptManager] No custom instructions found (no .clio/instructions.md or AGENTS.md)\n"
-                if $self->{debug};
+            log_debug('PromptManager', "No custom instructions found (no .clio/instructions.md or AGENTS.md)");
         }
     } elsif ($self->{debug}) {
-        print STDERR "[DEBUG][PromptManager] Skipping custom instructions (--no-custom-instructions flag)\n";
+        log_debug('PromptManager', "Skipping custom instructions (--no-custom-instructions flag)");
     }
     
     return $prompt;
@@ -267,8 +258,7 @@ sub set_active_prompt {
     $self->{metadata}->{active_prompt} = $name;
     $self->_save_metadata();
     
-    print STDERR "[DEBUG][PromptManager] Switched to prompt: $name\n"
-        if $self->{debug};
+    log_debug('PromptManager', "Switched to prompt: $name");
     
     return { success => 1 };
 }
@@ -337,8 +327,7 @@ sub save_prompt {
         return { success => 0, error => "Failed to save prompt: $@" };
     }
     
-    print STDERR "[DEBUG][PromptManager] Saved custom prompt: $name\n"
-        if $self->{debug};
+    log_debug('PromptManager', "Saved custom prompt: $name");
     
     return { success => 1 };
 }
@@ -426,8 +415,7 @@ sub edit_prompt {
         $self->_save_metadata();
     }
     
-    print STDERR "[DEBUG][PromptManager] Edited prompt: $name (modified: $modified)\n"
-        if $self->{debug};
+    log_debug('PromptManager', "Edited prompt: $name (modified: $modified)");
     
     return { success => 1, modified => $modified };
 }
@@ -480,8 +468,7 @@ sub delete_prompt {
     
     $self->_save_metadata();
     
-    print STDERR "[DEBUG][PromptManager] Deleted prompt: $name\n"
-        if $self->{debug};
+    log_debug('PromptManager', "Deleted prompt: $name");
     
     return { success => 1 };
 }
@@ -501,8 +488,7 @@ sub reset_to_default {
     $self->{metadata}->{active_prompt} = 'default';
     $self->_save_metadata();
     
-    print STDERR "[DEBUG][PromptManager] Reset to default prompt\n"
-        if $self->{debug};
+    log_debug('PromptManager', "Reset to default prompt");
     
     return { success => 1 };
 }
@@ -525,8 +511,7 @@ sub _ensure_directories {
             make_path($dir) or do {
                 croak "Cannot create prompt directory $dir: $!";
             };
-            print STDERR "[DEBUG][PromptManager] Created directory: $dir\n"
-                if $self->{debug};
+            log_debug('PromptManager', "Created directory: $dir");
         }
     }
 }
@@ -543,8 +528,7 @@ sub _ensure_default_prompt {
     my $default_file = File::Spec->catfile($self->{prompts_dir}, 'default.md');
     
     unless (-f $default_file) {
-        print STDERR "[DEBUG][PromptManager] Creating default prompt\n"
-            if $self->{debug};
+        log_debug('PromptManager', "Creating default prompt");
         
         my $content = $self->_get_default_prompt_content();
         $self->_write_prompt_file($default_file, $content);
@@ -656,8 +640,7 @@ sub _write_prompt_file {
     print $fh $content;
     close($fh);
     
-    print STDERR "[DEBUG][PromptManager] Wrote prompt file: $file\n"
-        if $self->{debug};
+    log_debug('PromptManager', "Wrote prompt file: $file");
 }
 
 =head2 _load_metadata
@@ -713,8 +696,7 @@ sub _save_metadata {
     print $fh $json;
     close($fh);
     
-    print STDERR "[DEBUG][PromptManager] Saved metadata\n"
-        if $self->{debug};
+    log_debug('PromptManager', "Saved metadata");
 }
 
 =head2 _current_timestamp

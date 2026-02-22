@@ -13,7 +13,7 @@ use File::Path qw(make_path);
 use File::Spec;
 use POSIX qw(strftime);
 use Time::HiRes qw(time);
-use CLIO::Core::Logger qw(should_log log_debug);
+use CLIO::Core::Logger qw(should_log log_debug log_error);
 
 =head1 NAME
 
@@ -83,8 +83,7 @@ sub new {
     if (!-d $self->{log_dir}) {
         eval { make_path($self->{log_dir}); };
         if ($@) {
-            print STDERR "[ERROR][ProcessStats] Failed to create log directory: $@\n"
-                if should_log('ERROR');
+            log_error('ProcessStats', "Failed to create log directory: $@");
         }
     }
 
@@ -276,8 +275,7 @@ sub _write_entry {
     };
 
     if ($@) {
-        print STDERR "[ERROR][ProcessStats] Failed to write stats: $@\n"
-            if should_log('ERROR');
+        log_error('ProcessStats', "Failed to write stats: $@");
     }
 }
 

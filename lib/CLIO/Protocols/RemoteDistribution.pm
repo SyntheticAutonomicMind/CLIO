@@ -182,7 +182,7 @@ sub _execute_stage {
     # Determine target devices
     my @target_devices = $self->_resolve_target_devices($target, $devices, $context);
     
-    print STDERR "[DEBUG][RemoteDistribution] Stage '$stage_name' targets: " . join(', ', @target_devices) . "\n" if $self->{debug};
+    log_debug('RemoteDistribution', "Stage '$stage_name' targets: " . join(', ', @target_devices));
     
     unless (@target_devices) {
         return {
@@ -329,7 +329,7 @@ sub _execute_parallel {
     require File::Temp;
     my $result_dir = File::Temp::tempdir(CLEANUP => 1);
     
-    print STDERR "[DEBUG][RemoteDistribution] Parallel execution: " . scalar(@$devices) . " devices, max $max_parallel at a time\n" if $self->{debug};
+    log_debug('RemoteDistribution', "Parallel execution: " . scalar(@$devices) . " devices, max $max_parallel at a time");
     
     for my $i (0 .. $#$devices) {
         my $device = $devices->[$i];
@@ -475,7 +475,7 @@ sub _execute_on_device {
             $api_key = $auth->get_copilot_token();
         };
         if ($@) {
-            print STDERR "[WARN][RemoteDistribution] GitHubAuth failed: $@\n" if $self->{debug};
+            log_warning('RemoteDistribution', "GitHubAuth failed: $@");
         }
     }
     
@@ -818,7 +818,7 @@ sub _resolve_target_devices {
         @resolved_devices = ($target);
     }
     
-    print STDERR "[DEBUG][RemoteDistribution] Resolved target '$target' to: " . join(', ', @resolved_devices) . "\n" if $self->{debug};
+    log_debug('RemoteDistribution', "Resolved target '$target' to: " . join(', ', @resolved_devices));
     
     return @resolved_devices;
 }

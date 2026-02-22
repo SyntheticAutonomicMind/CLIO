@@ -188,14 +188,14 @@ sub poll_for_token {
         
         unless ($response->is_success) {
             # HTTP error (rare - GitHub usually returns 200 with error in body)
-            print STDERR "[WARN]GitHubAuth] HTTP error during polling: " . $response->code . "\n" if should_log('WARNING');
+            log_error('GitHubAuth.pm', "[WARN]GitHubAuth] HTTP error during polling: " . $response->code . "");
             next;  # Will wait at top of loop
         }
         
         my $data = decode_json($response->decoded_content);
         
         # DEBUG: Log the full response
-        print STDERR "[DEBUG][GitHubAuth] Poll response: " . $response->decoded_content . "\n" if should_log('DEBUG');
+        log_debug('GitHubAuth', "Poll response: " . $response->decoded_content);
         
         # Check for errors
         if ($data->{error}) {
@@ -211,7 +211,7 @@ sub poll_for_token {
                 $interval += 5;
                 # Also push back next poll time by the new interval
                 $next_poll_time = time() + $interval;
-                print STDERR "[WARN]GitHubAuth] Polling too fast, increasing interval to ${interval}s\n" if should_log('WARNING');
+                log_warning('GitHubAuth', "Polling too fast, increasing interval to ${interval}s");
                 next;  # Will wait at top of loop
             }
             elsif ($error eq 'expired_token') {
@@ -379,7 +379,7 @@ sub load_tokens {
     };
     
     if ($@) {
-        print STDERR "[WARN]GitHubAuth] Failed to load tokens: $@\n" if should_log('WARNING');
+        log_warning('GitHubAuth', "Failed to load tokens: $@");
         return undef;
     }
     

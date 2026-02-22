@@ -3,6 +3,7 @@ package CLIO::Coordination::Client;
 use strict;
 use warnings;
 use utf8;
+use CLIO::Core::Logger qw(should_log);
 use IO::Socket::UNIX;
 use IO::Select;
 use CLIO::Util::JSON qw(encode_json decode_json);
@@ -539,7 +540,7 @@ sub send_and_wait {
 sub log_debug {
     my ($self, $msg) = @_;
     return unless $self->{debug};
-    print STDERR "[DEBUG][Client][$self->{agent_id}] $msg\n";
+    CLIO::Core::Logger::log_debug('Client', "[$self->{agent_id}] $msg");
 }
 
 1;
