@@ -32,11 +32,12 @@ print "─" x 60 . "\n";
 
 # Test 1.1: Pagination threshold
 my $threshold = $chat->_get_pagination_threshold();
-if ($threshold == 22) {
-    print "[PASS] Pagination threshold calculation\n";
+my $expected_threshold = $chat->{terminal_height} - 2;
+if ($threshold == $expected_threshold) {
+    print "[PASS] Pagination threshold calculation (height=$chat->{terminal_height}, threshold=$threshold)\n";
     $passed++;
 } else {
-    print "[FAIL] Pagination threshold: got $threshold, expected 22\n";
+    print "[FAIL] Pagination threshold: got $threshold, expected $expected_threshold (height=$chat->{terminal_height})\n";
     $failed++;
 }
 
@@ -52,7 +53,8 @@ if ($count == 3) {
 }
 
 # Test 1.3: Pagination trigger logic
-$chat->{line_count} = 23;  # Over threshold
+my $current_threshold = $chat->_get_pagination_threshold();
+$chat->{line_count} = $current_threshold + 1;  # Over threshold
 $chat->{pagination_enabled} = 1;
 $chat->{_tools_invoked_this_request} = 0;
 

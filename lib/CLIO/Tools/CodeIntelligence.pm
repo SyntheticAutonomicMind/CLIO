@@ -5,6 +5,7 @@ package CLIO::Tools::CodeIntelligence;
 
 use strict;
 use warnings;
+use utf8;
 use CLIO::Core::Logger qw(should_log);
 use parent 'CLIO::Tools::Tool';
 use File::Find;

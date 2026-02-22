@@ -2,6 +2,7 @@ package CLIO::Core::Config;
 
 use strict;
 use warnings;
+use utf8;
 use CLIO::Core::Logger qw(should_log);
 use CLIO::Util::ConfigPath qw(get_config_dir);
 use CLIO::Providers qw(get_provider list_providers provider_exists);

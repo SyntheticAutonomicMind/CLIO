@@ -48,8 +48,11 @@ print STDERR "[TEST] Session saved to: " . $session->{state}->{file} . "\n";
 # Verify file exists
 ok(-e $session->{state}->{file}, "Session file exists: " . $session->{state}->{file});
 
-# Cleanup (release lock)
-$session->cleanup();
+# Release lock only (cleanup() would delete the session file)
+if ($session->{lock}) {
+    $session->{lock}->release();
+    delete $session->{lock};
+}
 
 # Load the session (simulating resume)
 print STDERR "[TEST] Attempting to load session: $session_id\n";

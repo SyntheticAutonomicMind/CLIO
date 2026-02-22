@@ -2,6 +2,7 @@ package CLIO::Session::ToolResultStore;
 
 use strict;
 use warnings;
+use utf8;
 use CLIO::Core::Logger qw(should_log);
 use feature 'say';
 use File::Path qw(make_path remove_tree);

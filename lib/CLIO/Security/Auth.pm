@@ -2,6 +2,7 @@ package CLIO::Security::Auth;
 
 use strict;
 use warnings;
+use utf8;
 use Digest::SHA qw(sha256_hex);
 use Time::HiRes qw(time);
 use POSIX qw(strftime);

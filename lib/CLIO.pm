@@ -5,6 +5,7 @@ package CLIO;
 
 use strict;
 use warnings;
+use utf8;
 
 our $VERSION = '20260222.6';
 

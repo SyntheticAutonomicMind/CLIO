@@ -2,6 +2,7 @@ package CLIO::Code::Relations;
 
 use strict;
 use warnings;
+use utf8;
 use JSON::PP;
 
 =head1 NAME

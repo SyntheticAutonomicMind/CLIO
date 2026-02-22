@@ -2,6 +2,7 @@ package CLIO::Tools::WebOperations;
 
 use strict;
 use warnings;
+use utf8;
 use Carp qw(croak confess);
 use parent 'CLIO::Tools::Tool';
 use CLIO::Compat::HTTP;

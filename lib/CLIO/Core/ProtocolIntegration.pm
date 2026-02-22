@@ -2,6 +2,7 @@ package CLIO::Core::ProtocolIntegration;
 
 use strict;
 use warnings;
+use utf8;
 use CLIO::Core::Logger qw(should_log);
 use CLIO::Util::JSON qw(encode_json decode_json);
 use CLIO::Protocols::Manager;
@@ -319,13 +320,6 @@ sub _initialize_protocol_patterns {
             'codebase.*(?:structure|overview|analysis)',
             'project.*(?:structure|overview)'
         ],
-        'TREESIT' => [
-            'parse.*(?:code|syntax|file)',
-            'syntax.*(?:tree|analysis|parsing)',
-            'ast.*(?:analysis|parsing)',
-            'code.*(?:structure|parsing|analysis)',
-            '(?:function|class|method).*(?:structure|analysis)'
-        ],
         'RAG' => [
             'search.*(?:code|documentation|files)',
             'find.*(?:in|code|documentation|files)',
@@ -398,9 +392,9 @@ sub _initialize_protocol_chains {
     
     return {
         'file_creation' => ['ARCHITECT', 'EDITOR', 'VALIDATE'],
-        'code_analysis' => ['TREESIT', 'VALIDATE', 'REPOMAP'],
-        'repository_overview' => ['REPOMAP', 'GIT', 'TREESIT'],
-        'code_modification' => ['TREESIT', 'EDITOR', 'VALIDATE'],
+        'code_analysis' => ['VALIDATE', 'REPOMAP'],
+        'repository_overview' => ['REPOMAP', 'GIT'],
+        'code_modification' => ['EDITOR', 'VALIDATE'],
         'research_task' => ['RAG', 'WEB_SEARCH', 'URL_FETCH']
     };
 }
@@ -476,7 +470,7 @@ sub _determine_execution_priority {
     return 'high' if $analysis->{confidence} > 0.8;
     
     # Aggressive for development/coding contexts
-    return 'aggressive' if grep { $_->{protocol} =~ /^(EDITOR|ARCHITECT|VALIDATE|TREESIT)$/ } 
+    return 'aggressive' if grep { $_->{protocol} =~ /^(EDITOR|ARCHITECT|VALIDATE)$/ } 
                           @{$analysis->{suggested_protocols}};
     
     # Conservative for search operations
