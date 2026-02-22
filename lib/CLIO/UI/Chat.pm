@@ -2165,6 +2165,7 @@ sub display_help {
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/mcp list', 'help_command'), 'List MCP tools');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/mcp add <name> <cmd>', 'help_command'), 'Add MCP server');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/mcp remove <name>', 'help_command'), 'Remove MCP server');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/mcp auth <name>', 'help_command'), 'Trigger OAuth authentication');
     push @help_lines, "";
     
     push @help_lines, $self->colorize("TODO", 'command_subheader');
