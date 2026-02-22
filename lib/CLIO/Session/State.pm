@@ -716,18 +716,26 @@ sub record_api_usage {
         # No more hardcoded model name patterns!
         if ($provider && $provider eq 'github_copilot') {
             # Strip provider prefix for API lookup: "github_copilot/gpt-4.1" -> "gpt-4.1"
+            # But skip if model has a different provider prefix (e.g. openrouter/...)
             my $api_model = $model;
+            my $skip_billing = 0;
             require CLIO::Providers;
             if ($api_model =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i && CLIO::Providers::provider_exists($1)) {
+                if ($1 ne 'github_copilot') {
+                    # Model is routed to a different provider - skip GH billing lookup
+                    $skip_billing = 1;
+                }
                 $api_model = $2;
             }
             
-            require CLIO::Core::GitHubCopilotModelsAPI;
-            my $api = CLIO::Core::GitHubCopilotModelsAPI->new(debug => $self->{debug});
-            my $billing_info = $api->get_model_billing($api_model);
-            if ($billing_info && defined $billing_info->{multiplier}) {
-                $multiplier = $billing_info->{multiplier};
-                $self->{billing}{multiplier} = $multiplier;
+            unless ($skip_billing) {
+                require CLIO::Core::GitHubCopilotModelsAPI;
+                my $api = CLIO::Core::GitHubCopilotModelsAPI->new(debug => $self->{debug});
+                my $billing_info = $api->get_model_billing($api_model);
+                if ($billing_info && defined $billing_info->{multiplier}) {
+                    $multiplier = $billing_info->{multiplier};
+                    $self->{billing}{multiplier} = $multiplier;
+                }
             }
         }
         # For non-GitHub-Copilot providers, multiplier stays 0 (no billing tracking)

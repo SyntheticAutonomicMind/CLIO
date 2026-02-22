@@ -619,17 +619,19 @@ sub run {
                     if ($signal eq 'start') {
                         $thinking_active = 1;
                         # Stop spinner if running and show thinking header
+                        # Style matches tool output: {DIM}connector {ASSISTANT}label
                         $spinner->stop();
                         print $self->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
-                        print $self->colorize("Thinking", 'DIM');
-                        print $self->colorize("\n", 'DIM');
+                        print $self->colorize("THINKING", 'ASSISTANT');
+                        print "\n";
                         STDOUT->flush() if STDOUT->can('flush');
                         return;
                     }
                     elsif ($signal eq 'end') {
                         $thinking_active = 0;
-                        # Print closing box before regular content
-                        print $self->colorize("\n\x{2514}\x{2500}\x{2500}\x{2500}\n", 'DIM');
+                        # Print closing connector matching tool output style
+                        print "\n";
+                        print $self->colorize("\x{2514}\x{2500}\x{2500}\x{2500}\n", 'DIM');
                         STDOUT->flush() if STDOUT->can('flush');
                         # Reset first_chunk_received so CLIO: prefix prints for actual response
                         $first_chunk_received = 0;
@@ -645,14 +647,15 @@ sub run {
                 if (!$thinking_active) {
                     $thinking_active = 1;
                     $spinner->stop();
+                    # Style matches tool output: {DIM}connector {ASSISTANT}label
                     print $self->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
-                    print $self->colorize("Thinking", 'DIM');
-                    print $self->colorize("\n", 'DIM');
+                    print $self->colorize("THINKING", 'ASSISTANT');
+                    print "\n";
                     STDOUT->flush() if STDOUT->can('flush');
                 }
                 
-                # Print thinking content dimmed
-                print $self->colorize($content, 'DIM');
+                # Print thinking content in DATA color (matches tool action detail style)
+                print $self->colorize($content, 'DATA');
                 STDOUT->flush() if STDOUT->can('flush');
             };
             
@@ -1385,24 +1388,33 @@ sub _prepopulate_session_data {
         if ($model ne 'unknown' && !$state->{billing}{model}) {
             $state->{billing}{model} = $model;
             
-            # Get billing multiplier (strip provider prefix for API lookup)
-            eval {
-                require CLIO::Core::GitHubCopilotModelsAPI;
-                my $models_api = CLIO::Core::GitHubCopilotModelsAPI->new(debug => $self->{debug});
-                # Strip provider prefix: "github_copilot/gpt-4.1" -> "gpt-4.1"
-                my $api_model = $model;
-                require CLIO::Providers;
-                if ($api_model =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i && CLIO::Providers::provider_exists($1)) {
-                    $api_model = $2;
-                }
-                my $billing = $models_api->get_model_billing($api_model);
-                if ($billing && defined $billing->{multiplier}) {
-                    $state->{billing}{multiplier} = $billing->{multiplier};
-                    print STDERR "[DEBUG][Chat] Prepopulated model billing: $api_model -> " .
-                        "$billing->{multiplier}x\n" if should_log('DEBUG');
-                }
-            };
-            # Ignore errors - just means no multiplier info
+            # Get billing multiplier only for GitHub Copilot provider
+            # Other providers don't use GitHub's billing API
+            # Also check model prefix - --model openrouter/... overrides routing
+            my $provider = $self->{config}->get('provider') || '';
+            my $model_provider = '';
+            require CLIO::Providers;
+            if ($model =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i && CLIO::Providers::provider_exists($1)) {
+                $model_provider = $1;
+            }
+            if ($provider eq 'github_copilot' && (!$model_provider || $model_provider eq 'github_copilot')) {
+                eval {
+                    require CLIO::Core::GitHubCopilotModelsAPI;
+                    my $models_api = CLIO::Core::GitHubCopilotModelsAPI->new(debug => $self->{debug});
+                    # Strip provider prefix: "github_copilot/gpt-4.1" -> "gpt-4.1"
+                    my $api_model = $model;
+                    if ($api_model =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i && CLIO::Providers::provider_exists($1)) {
+                        $api_model = $2;
+                    }
+                    my $billing = $models_api->get_model_billing($api_model);
+                    if ($billing && defined $billing->{multiplier}) {
+                        $state->{billing}{multiplier} = $billing->{multiplier};
+                        print STDERR "[DEBUG][Chat] Prepopulated model billing: $api_model -> " .
+                            "$billing->{multiplier}x\n" if should_log('DEBUG');
+                    }
+                };
+                # Ignore errors - just means no multiplier info
+            }
         }
     };
     
