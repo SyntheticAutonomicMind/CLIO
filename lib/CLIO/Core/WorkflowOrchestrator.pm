@@ -433,6 +433,9 @@ sub process_input {
     while ($iteration < $self->{max_iterations}) {
         $iteration++;
         
+        # Clear interrupt pending flag at start of each iteration
+        $self->{_interrupt_pending} = 0;
+        
         print STDERR "[DEBUG][WorkflowOrchestrator] Iteration $iteration/$self->{max_iterations}\n"
             if $self->{debug};
         
@@ -469,7 +472,24 @@ sub process_input {
                 if $self->{debug};
             
             # Provide a default no-op callback if none specified
-            my $callback = $on_chunk || sub { };  # No-op callback
+            my $base_callback = $on_chunk || sub { };  # No-op callback
+            
+            # Wrap callback to check for user interrupt during streaming
+            # With true streaming (data_callback), this fires for each SSE chunk
+            # and allows ESC detection within ~1 second during content generation
+            my $callback = sub {
+                my @args = @_;
+                
+                # Check for interrupt on each streaming chunk
+                if (!$self->{_interrupt_pending} && $self->_check_for_user_interrupt($session)) {
+                    $self->{_interrupt_pending} = 1;
+                    print STDERR "[INFO][WorkflowOrchestrator] Interrupt detected during streaming\n"
+                        if should_log('INFO');
+                    # Still deliver this chunk, but the flag will be checked after streaming completes
+                }
+                
+                $base_callback->(@args);
+            };
             
             # Define tool call callback to show tool names as they stream in
             my $tool_callback = sub {
@@ -516,6 +536,20 @@ sub process_input {
                 on_tool_call => $tool_callback
             );
         };
+        
+        # Check for user interrupt after API call completes
+        # The API call can take 30-60+ seconds, so this is a critical check point
+        # Also check if interrupt was detected during streaming (via _interrupt_pending flag)
+        if ($self->{_interrupt_pending} || $self->_check_and_handle_interrupt($session, \@messages)) {
+            # If interrupt was pending from streaming, we still need to handle it
+            if ($self->{_interrupt_pending} && !grep { $_->{content} && $_->{content} =~ /USER INTERRUPT/ } @messages) {
+                $self->_handle_interrupt($session, \@messages);
+            }
+            # Interrupt detected - skip tool execution and go straight to next iteration
+            # which will send the interrupt message to the AI
+            $iteration--;  # Don't count this iteration
+            next;
+        }
         
         if ($@) {
             print STDERR "[DEBUG][WorkflowOrchestrator] API error: $@\n" if should_log('DEBUG');
@@ -1403,6 +1437,14 @@ sub process_input {
             
             # Execute tools in classified order with index tracking
             for my $i (0..$#ordered_tool_calls) {
+                # Check for user interrupt between tool executions
+                # This allows ESC to abort remaining tools mid-iteration
+                if ($self->{_interrupt_pending} || $self->_check_and_handle_interrupt($session, \@messages)) {
+                    print STDERR "[INFO][WorkflowOrchestrator] Interrupt detected between tool executions, skipping remaining tools\n"
+                        if should_log('INFO');
+                    last;  # Break out of tool execution loop
+                }
+                
                 my $tool_call = $ordered_tool_calls[$i];
                 my $tool_name = $tool_call->{function}->{name} || 'unknown';
                 my $tool_display_name = uc($tool_name);
@@ -2858,6 +2900,39 @@ sub _enforce_message_alternation {
         if should_log('DEBUG');
     
     return \@alternating;
+}
+
+
+=head2 _check_and_handle_interrupt
+
+Combined interrupt check + handle for use at multiple points during iteration.
+Checks for ESC key press and if detected, adds interrupt message to conversation
+and sets the _interrupt_pending flag to short-circuit remaining work.
+
+Arguments:
+- $session: Session object
+- $messages_ref: Reference to messages array
+
+Returns:
+- 1 if interrupt detected and handled
+- 0 if no interrupt
+
+=cut
+
+sub _check_and_handle_interrupt {
+    my ($self, $session, $messages_ref) = @_;
+    
+    if ($self->_check_for_user_interrupt($session)) {
+        $self->_handle_interrupt($session, $messages_ref);
+        $self->{_interrupt_pending} = 1;
+        
+        print STDERR "[INFO][WorkflowOrchestrator] Interrupt detected mid-iteration, setting pending flag\n"
+            if should_log('INFO');
+        
+        return 1;
+    }
+    
+    return 0;
 }
 
 
