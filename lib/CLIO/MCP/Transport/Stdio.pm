@@ -18,7 +18,7 @@ allowing the Client to use either transport transparently.
 
 =cut
 
-use JSON::PP qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json);
 use IO::Select;
 use POSIX qw(WNOHANG);
 use CLIO::Core::Logger qw(should_log log_debug);

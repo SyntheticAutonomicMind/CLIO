@@ -6,7 +6,7 @@ use utf8;
 use Encode qw(decode encode);
 use CLIO::Core::Logger qw(should_log);
 use CLIO::Util::JSONRepair qw(repair_malformed_json);
-use JSON::PP qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json);
 use MIME::Base64 qw(encode_base64 decode_base64);
 use CLIO::Session::ToolResultStore;
 use CLIO::Logging::ToolLogger;

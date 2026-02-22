@@ -5,7 +5,7 @@ use warnings;
 use utf8;
 use IO::Socket::UNIX;
 use IO::Select;
-use JSON::PP qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json);
 use Time::HiRes qw(time sleep);
 
 binmode(STDOUT, ':encoding(UTF-8)');

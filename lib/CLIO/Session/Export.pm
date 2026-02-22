@@ -3,7 +3,7 @@ package CLIO::Session::Export;
 use strict;
 use warnings;
 use utf8;
-use JSON::PP qw(decode_json);
+use CLIO::Util::JSON qw(decode_json);
 use File::Spec;
 use POSIX qw(strftime);
 use Carp qw(croak);

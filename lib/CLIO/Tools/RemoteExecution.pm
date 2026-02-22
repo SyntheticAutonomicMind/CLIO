@@ -8,7 +8,7 @@ use warnings;
 use utf8;
 use parent 'CLIO::Tools::Tool';
 use Cwd 'getcwd';
-use JSON::PP qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json);
 use File::Temp qw(tempdir);
 use File::Spec;
 use File::Path qw(make_path remove_tree);
