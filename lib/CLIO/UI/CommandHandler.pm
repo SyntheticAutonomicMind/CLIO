@@ -586,6 +586,7 @@ Usage:
     /mcp list         - List connected servers and their tools
     /mcp add <name> <cmd...> - Add an MCP server
     /mcp remove <name>       - Remove an MCP server
+    /mcp auth <name>         - Trigger OAuth authentication
 
 =cut
 
@@ -719,9 +720,59 @@ sub handle_mcp_command {
         # Also remove from config
         $self->_remove_mcp_from_config($name);
     }
+    elsif ($subcommand eq 'auth') {
+        # /mcp auth <name> - Manually trigger OAuth flow for a server
+        my $name = $args[1];
+        unless ($name) {
+            $chat->display_error_message("Usage: /mcp auth <server-name>");
+            $chat->display_system_message("Trigger OAuth authentication for an MCP server");
+            return;
+        }
+        
+        # Check if server has OAuth config
+        my $config = $self->{config};
+        my $mcp_config = ($config && ref($config) ne 'HASH' && $config->can('get'))
+                       ? $config->get('mcp') : undef;
+        
+        my $server_config = $mcp_config ? $mcp_config->{$name} : undef;
+        unless ($server_config && $server_config->{auth} && $server_config->{auth}{type} eq 'oauth') {
+            $chat->display_error_message("Server '$name' does not have OAuth configured");
+            $chat->display_system_message("Add auth config: { \"auth\": { \"type\": \"oauth\", \"authorization_url\": \"...\", \"token_url\": \"...\", \"client_id\": \"...\" } }");
+            return;
+        }
+        
+        eval {
+            require CLIO::MCP::Auth::OAuth;
+            my $ac = $server_config->{auth};
+            my $oauth = CLIO::MCP::Auth::OAuth->new(
+                server_name       => $name,
+                authorization_url => $ac->{authorization_url},
+                token_url         => $ac->{token_url},
+                client_id         => $ac->{client_id},
+                client_secret     => $ac->{client_secret},
+                scopes            => $ac->{scopes} || [],
+                redirect_port     => $ac->{redirect_port} || 8912,
+                debug             => $self->{debug} || 0,
+            );
+            
+            # Clear existing token to force re-auth
+            $oauth->clear_token();
+            
+            my $token = $oauth->get_access_token();
+            if ($token) {
+                $chat->display_system_message("Authentication successful for '$name'");
+                $chat->display_system_message("Token cached. Reconnect with /mcp remove $name && restart to use.");
+            } else {
+                $chat->display_error_message("Authentication failed for '$name'");
+            }
+        };
+        if ($@) {
+            $chat->display_error_message("OAuth error: $@");
+        }
+    }
     else {
         $chat->display_error_message("Unknown MCP subcommand: $subcommand");
-        $chat->display_system_message("Usage: /mcp [status|list|add|remove]");
+        $chat->display_system_message("Usage: /mcp [status|list|add|remove|auth]");
     }
 }
 
