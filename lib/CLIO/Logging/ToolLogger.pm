@@ -369,6 +369,12 @@ sub cleanup_old_logs {
 sub _get_log_file {
     my ($self) = @_;
     
+    # Ensure log directory exists (create if missing)
+    if (!-d $self->{log_dir}) {
+        require File::Path;
+        File::Path::make_path($self->{log_dir});
+    }
+    
     my $date = strftime("%Y-%m-%d", localtime(time()));
     return File::Spec->catfile($self->{log_dir}, "tool_operations_$date.log");
 }
