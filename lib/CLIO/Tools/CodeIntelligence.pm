@@ -6,7 +6,7 @@ package CLIO::Tools::CodeIntelligence;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug);
 use parent 'CLIO::Tools::Tool';
 use File::Find;
 use Cwd 'abs_path';
@@ -194,7 +194,7 @@ sub search_history {
         );
     }
     
-    print STDERR "[DEBUG][CodeIntelligence] Searching history for: $query\n" if should_log('DEBUG');
+    log_debug('CodeIntelligence', "Searching history for: $query");
     
     # Extract keywords from query (words > 2 chars, lowercase)
     my @keywords = grep { length($_) > 2 } split(/\W+/, lc($query));
@@ -295,7 +295,7 @@ sub _fetch_commits {
     
     my $cmd = join(' ', map { quotemeta($_) } @cmd_parts) . ' 2>/dev/null';
     
-    print STDERR "[DEBUG][CodeIntelligence] Running: $cmd\n" if should_log('DEBUG');
+    log_debug('CodeIntelligence', "Running: $cmd");
     
     my $output = `$cmd`;
     return () unless $output;
@@ -431,7 +431,7 @@ sub list_usages {
     return $self->error_result("'file_paths' must be an array") 
         unless ref($file_paths) eq 'ARRAY';
     
-    print STDERR "[DEBUG][CodeIntelligence] Searching for symbol: $symbol_name\n" if should_log('DEBUG');
+    log_debug('CodeIntelligence', "Searching for symbol: $symbol_name");
     print STDERR "[DEBUG][CodeIntelligence] Search paths: " . join(', ', @$file_paths) . "\n" if should_log('DEBUG');
     
     my @usages = ();
@@ -445,7 +445,7 @@ sub list_usages {
     
     my $count = scalar(@usages);
     
-    print STDERR "[DEBUG][CodeIntelligence] Found $count usages\n" if should_log('DEBUG');
+    log_debug('CodeIntelligence', "Found $count usages");
     
     if ($count == 0) {
         my $action_desc = "searching for symbol '$symbol_name' (found 0 usages)";
@@ -496,7 +496,7 @@ sub _git_grep_search {
     # Use git grep with line numbers and file names
     my $cmd = "git grep -n $context_flag -F " . quotemeta($symbol) . " -- $paths_str 2>/dev/null";
     
-    print STDERR "[DEBUG][CodeIntelligence] Running: $cmd\n" if should_log('DEBUG');
+    log_debug('CodeIntelligence', "Running: $cmd");
     
     open my $fh, '-|', $cmd or return @results;
     

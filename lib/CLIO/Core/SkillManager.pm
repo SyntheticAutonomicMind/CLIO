@@ -3,7 +3,7 @@ package CLIO::Core::SkillManager;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug log_error);
 use CLIO::Util::ConfigPath qw(get_config_file);
 use CLIO::Util::JSON qw(encode_json decode_json);
 use File::Spec;
@@ -618,7 +618,7 @@ sub _read_skills_file {
     
     my $data = eval { decode_json($json) };
     if ($@) {
-        print STDERR "[ERROR][SkillManager] Failed to parse $file: $@\n" if should_log('ERROR');
+        log_error('SkillManager', "Failed to parse $file: $@");
         return {};
     }
     
@@ -722,7 +722,7 @@ sub delete_skill {
     delete $self->{skills}{$name};
     $self->_save_skills();
     
-    print STDERR "[DEBUG][SkillManager] Deleted prompt '$name'\n" if should_log('DEBUG');
+    log_debug('SkillManager', "Deleted prompt '$name'");
     
     return { success => 1 };
 }
@@ -799,7 +799,7 @@ sub execute_skill {
         $self->_save_skills();
     }
     
-    print STDERR "[DEBUG][SkillManager] Executed prompt '$name'\n" if should_log('DEBUG');
+    log_debug('SkillManager', "Executed prompt '$name'");
     
     return {
         success => 1,
@@ -903,7 +903,7 @@ sub _save_skills {
     
     # Write JSON
     open my $fh, '>', $self->{user_skills_file} or do {
-        print STDERR "[ERROR][SkillManager] Cannot write to $self->{user_skills_file}: $!\n" if should_log('ERROR');
+        log_error('SkillManager', "Cannot write to $self->{user_skills_file}: $!");
         return;
     };
     print $fh encode_json($data);

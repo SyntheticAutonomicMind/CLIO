@@ -21,7 +21,7 @@ allowing the Client to use either transport transparently.
 use CLIO::Util::JSON qw(encode_json decode_json);
 use IO::Select;
 use POSIX qw(WNOHANG);
-use CLIO::Core::Logger qw(should_log log_debug);
+use CLIO::Core::Logger qw(should_log log_debug log_error log_warning);
 
 sub new {
     my ($class, %args) = @_;
@@ -56,7 +56,7 @@ sub connect {
     
     my @cmd = @{$self->{command}};
     unless (@cmd) {
-        print STDERR "[ERROR][MCP:$self->{name}] No command specified\n" if should_log('ERROR');
+        log_error('MCP:$self->{name}', "No command specified");
         return 0;
     }
     
@@ -269,7 +269,7 @@ sub _read_response {
         }
     }
     
-    print STDERR "[WARN][MCP:$self->{name}] Timeout waiting for response (id=$expected_id)\n" if should_log('WARNING');
+    log_warning('MCP:$self->{name}', "Timeout waiting for response (id=$expected_id)");
     return undef;
 }
 

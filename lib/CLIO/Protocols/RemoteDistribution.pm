@@ -6,6 +6,7 @@ package CLIO::Protocols::RemoteDistribution;
 use strict;
 use warnings;
 use utf8;
+use CLIO::Core::Logger qw(log_debug log_warning);
 use Carp qw(croak);
 use feature 'say';
 
@@ -81,7 +82,7 @@ Returns: Workflow result with stage results and aggregated output
 sub execute_workflow {
     my ($self, $workflow, $context) = @_;
     
-    print STDERR "[DEBUG][RemoteDistribution] Starting workflow: $workflow->{name}\n" if $self->{debug};
+    log_debug('RemoteDistribution', "Starting workflow: $workflow->{name}");
     
     # Validate workflow
     my $validation = $self->_validate_workflow($workflow);
@@ -102,7 +103,7 @@ sub execute_workflow {
         for my $i (0 .. $#$stages) {
             my $stage = $stages->[$i];
             
-            print STDERR "[DEBUG][RemoteDistribution] Executing stage $i: $stage->{name}\n" if $self->{debug};
+            log_debug('RemoteDistribution', "Executing stage $i: $stage->{name}");
             
             my $stage_result = $self->_execute_stage(
                 stage => $stage,
@@ -120,7 +121,7 @@ sub execute_workflow {
                 if ($fail_fast) {
                     die "Stage $i failed: $stage_result->{error}";
                 } else {
-                    print STDERR "[WARN][RemoteDistribution] Stage $i failed: $stage_result->{error}\n";
+                    log_warning('RemoteDistribution', "Stage $i failed: $stage_result->{error}");
                 }
             }
             
@@ -266,7 +267,7 @@ sub _execute_on_device_with_retry {
     for my $attempt (1 .. ($retry_count + 1)) {
         $attempts = $attempt;
         
-        print STDERR "[DEBUG][RemoteDistribution] Executing stage on device '$device' (attempt $attempt)\n" if $self->{debug};
+        log_debug('RemoteDistribution', "Executing stage on device '$device' (attempt $attempt)");
         
         my $result = $self->_execute_on_device(
             stage => $stage,
@@ -289,7 +290,7 @@ sub _execute_on_device_with_retry {
         $last_error = $result->{error};
         
         if ($attempt < ($retry_count + 1)) {
-            print STDERR "[WARN][RemoteDistribution] Device '$device' attempt $attempt failed: $last_error (retrying...)\n";
+            log_warning('RemoteDistribution', "Device '$device' attempt $attempt failed: $last_error (retrying...)");
             sleep(2 * $attempt);  # Exponential backoff
         }
     }

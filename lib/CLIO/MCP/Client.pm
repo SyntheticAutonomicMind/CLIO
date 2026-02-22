@@ -41,7 +41,7 @@ Supported transports:
 =cut
 
 use CLIO::Util::JSON qw(encode_json decode_json);
-use CLIO::Core::Logger qw(should_log log_debug);
+use CLIO::Core::Logger qw(should_log log_debug log_error log_warning);
 
 sub new {
     my ($class, %args) = @_;
@@ -84,7 +84,7 @@ sub connect {
     
     my $transport = $self->{transport};
     unless ($transport) {
-        print STDERR "[ERROR][MCP:$self->{name}] No transport configured\n" if should_log('ERROR');
+        log_error('MCP:$self->{name}', "No transport configured");
         return 0;
     }
     
@@ -92,7 +92,7 @@ sub connect {
     
     # Connect transport
     unless ($transport->connect()) {
-        print STDERR "[ERROR][MCP:$self->{name}] Transport connection failed\n" if should_log('ERROR');
+        log_error('MCP:$self->{name}', "Transport connection failed");
         return 0;
     }
     
@@ -105,7 +105,7 @@ sub connect {
         $self->_discover_tools();
         return 1;
     } else {
-        print STDERR "[ERROR][MCP:$self->{name}] Initialization handshake failed\n" if should_log('ERROR');
+        log_error('MCP:$self->{name}', "Initialization handshake failed");
         $self->disconnect();
         return 0;
     }
@@ -241,7 +241,7 @@ sub _initialize {
     });
     
     unless ($response && $response->{result}) {
-        print STDERR "[ERROR][MCP:$self->{name}] Initialize failed - no valid response\n" if should_log('ERROR');
+        log_error('MCP:$self->{name}', "Initialize failed - no valid response");
         return 0;
     }
     
@@ -278,7 +278,7 @@ sub _discover_tools {
     my $response = $self->{transport}->send_request('tools/list', {});
     
     unless ($response && $response->{result} && $response->{result}{tools}) {
-        print STDERR "[WARN][MCP:$self->{name}] tools/list returned no tools\n" if should_log('WARNING');
+        log_warning('MCP:$self->{name}', "tools/list returned no tools");
         $self->{tools} = [];
         return;
     }

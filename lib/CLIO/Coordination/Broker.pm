@@ -3,6 +3,7 @@ package CLIO::Coordination::Broker;
 use strict;
 use warnings;
 use utf8;
+use CLIO::Core::Logger qw(should_log);
 use IO::Socket::UNIX;
 use IO::Select;
 use CLIO::Util::JSON qw(encode_json decode_json);
@@ -982,7 +983,7 @@ sub log_info {
 sub log_warn {
     my ($self, $msg) = @_;
     my $ts = strftime("%Y-%m-%d %H:%M:%S", localtime);
-    print STDERR "[WARN][$ts][Broker] $msg\n";
+    print STDERR "[WARNING][$ts][Broker] $msg\n";
 }
 
 sub log_debug {

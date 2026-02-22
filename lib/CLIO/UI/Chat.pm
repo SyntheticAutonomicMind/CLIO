@@ -2,7 +2,7 @@ package CLIO::UI::Chat;
 
 use strict;
 use warnings;
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug log_warning);
 use CLIO::Util::TextSanitizer qw(sanitize_text);
 use CLIO::UI::Markdown;
 use CLIO::UI::ANSI;
@@ -275,13 +275,13 @@ sub show_busy_indicator {
             delay => 100000,
             inline => 1,
         );
-        print STDERR "[DEBUG][Chat] Created spinner in show_busy_indicator\n" if should_log('DEBUG');
+        log_debug('Chat', "Created spinner in show_busy_indicator");
     }
     
     # Only start if not already running
     if (!$self->{spinner}->{running}) {
         $self->{spinner}->start();
-        print STDERR "[DEBUG][Chat] Busy indicator started\n" if should_log('DEBUG');
+        log_debug('Chat', "Busy indicator started");
     }
     
     return 1;
@@ -300,7 +300,7 @@ sub hide_busy_indicator {
     # Stop spinner if it exists and is running
     if ($self->{spinner} && $self->{spinner}->{running}) {
         $self->{spinner}->stop();
-        print STDERR "[DEBUG][Chat] Busy indicator stopped\n" if should_log('DEBUG');
+        log_debug('Chat', "Busy indicator stopped");
     }
     
     return 1;
@@ -386,7 +386,7 @@ sub run {
         
         # Process with AI agent (using streaming)
         if ($self->{ai_agent}) {
-            print STDERR "[DEBUG][Chat] About to process user input with AI agent\n" if should_log('DEBUG');
+            log_debug('Chat', "About to process user input with AI agent");
             
             # Refresh terminal size before output (handle resize)
             $self->refresh_terminal_size();
@@ -404,14 +404,14 @@ sub run {
                     delay => 100000,  # 100ms between frames for smooth block animation
                     inline => 1,      # Inline mode: don't clear entire line, just the spinner
                 );
-                print STDERR "[DEBUG][Chat] Created persistent spinner in inline mode\n" if should_log('DEBUG');
+                log_debug('Chat', "Created persistent spinner in inline mode");
             }
             
             # DON'T print "CLIO: " prefix here - we'll print it in on_chunk when actual content arrives
             # This prevents the prefix from appearing for tool-only responses or system messages
             # Start the inline spinner (will animate until first chunk arrives)
             $self->{spinner}->start();
-            print STDERR "[DEBUG][Chat] Started spinner (will print CLIO: prefix on first content chunk)\n" if should_log('DEBUG');
+            log_debug('Chat', "Started spinner (will print CLIO: prefix on first content chunk)");
             
             # Reference for use in closures below
             my $spinner = $self->{spinner};
@@ -464,24 +464,24 @@ sub run {
                     if ($self->{_prepare_for_next_iteration}) {
                         # This is a continuation after tool execution
                         $self->{_prepare_for_next_iteration} = 0;  # Clear the flag
-                        print STDERR "[DEBUG][Chat] Printed CLIO: prefix for continuation after tools\n" if $self->{debug};
+                        log_debug('Chat', "Printed CLIO: prefix for continuation after tools");
                     }
                     
                     # Enable pagination for text responses (agent is speaking directly)
                     # This will be left enabled unless/until tools are invoked
                     if (!$first_chunk_received) {
                         $self->{pagination_enabled} = 1;
-                        print STDERR "[DEBUG][Chat] Pagination ENABLED for text response\n" if $self->{debug};
+                        log_debug('Chat', "Pagination ENABLED for text response");
                     }
                     
-                    print STDERR "[DEBUG][Chat] First chunk received, printed CLIO: prefix and removed spinner\n" if $self->{debug};
+                    log_debug('Chat', "First chunk received, printed CLIO: prefix and removed spinner");
                     $first_chunk_received = 1;
                 }
                 
                 # Clear the _need_agent_prefix flag if set (no longer needed)
                 if ($self->{_need_agent_prefix}) {
                     $self->{_need_agent_prefix} = 0;  # Clear the flag
-                    print STDERR "[DEBUG][Chat] Cleared _need_agent_prefix flag\n" if $self->{debug};
+                    log_debug('Chat', "Cleared _need_agent_prefix flag");
                 }
                 
                 # Add chunk to line buffer (using $self for access from flush_output_buffer)
@@ -600,8 +600,8 @@ sub run {
                 # Agent streaming output is NOT affected by this flag and remains paginated
                 $self->{_tools_invoked_this_request} = 1;
                 
-                print STDERR "[DEBUG][Chat] Tool execution marked (pagination still enabled for agent text)\n" if $self->{debug};
-                print STDERR "[DEBUG][Chat] Tool called: $tool_name\n" if $self->{debug};
+                log_debug('Chat', "Tool execution marked (pagination still enabled for agent text)");
+                log_debug('Chat', "Tool called: $tool_name");
             };
             
             # Display thinking/reasoning content from reasoning models
@@ -704,7 +704,7 @@ sub run {
                 }
                 $self->{_last_was_system_message} = 1;  # Mark that we just displayed a system message
                 
-                print STDERR "[DEBUG][Chat] System message: $message\n" if $self->{debug};
+                log_debug('Chat', "System message: $message");
             };
             
             # Get conversation history from session
@@ -723,14 +723,14 @@ sub run {
             my $alarm_count = 0;
             my $alarm_handler = sub {
                 $alarm_count++;
-                print STDERR "[DEBUG][Chat] ALRM #$alarm_count - syscall interrupted for signal delivery\n" if should_log('DEBUG');
+                log_debug('Chat', "ALRM #$alarm_count - syscall interrupted for signal delivery");
                 alarm(1);  # Re-arm for next second
             };
             local $SIG{ALRM} = $alarm_handler;
             alarm(1);  # Start periodic interruption
             
             # Process request with streaming callback (match clio script pattern)
-            print STDERR "[DEBUG][Chat] Calling process_user_request...\n" if should_log('DEBUG');
+            log_debug('Chat', "Calling process_user_request...");
             my $result = $self->{ai_agent}->process_user_request($input, {
                 on_chunk => $on_chunk,
                 on_tool_call => $on_tool_call,  # Track which tools are being called
@@ -746,7 +746,7 @@ sub run {
             
             # Disable periodic alarm after streaming completes
             alarm(0);
-            print STDERR "[DEBUG][Chat] Disabled periodic ALRM after streaming ($alarm_count interrupts)\n" if should_log('DEBUG');
+            log_debug('Chat', "Disabled periodic ALRM after streaming ($alarm_count interrupts)");
             
             # Stop spinner in case it's still running (e.g., error before first chunk)
             $spinner->stop();
@@ -811,7 +811,7 @@ sub run {
             # Tool-calling workflows save messages atomically (assistant + tool results together),
             # so we should NOT save another assistant message here to avoid duplicates.
             if ($result && $result->{messages_saved_during_workflow}) {
-                print STDERR "[DEBUG][Chat] Skipping session save - messages already saved during workflow\n" if $self->{debug};
+                log_debug('Chat', "Skipping session save - messages already saved during workflow");
                 # Still add to buffer for display (content was streamed, not saved)
                 $self->add_to_buffer('assistant', $result->{final_response} // '') if $result->{final_response};
             } elsif ($result && $result->{final_response}) {
@@ -830,7 +830,7 @@ sub run {
             # Handle error case - show actual error message to user
             if (!$result || !$result->{success}) {
                 my $error_msg = $result->{error} || $result->{final_response} || "No response received from AI";
-                print STDERR "[DEBUG][Chat] Error occurred: $error_msg\n" if should_log('DEBUG');
+                log_debug('Chat', "Error occurred: $error_msg");
                 $self->display_error_message($error_msg);
                 
                 # Store error in session for context
@@ -840,7 +840,7 @@ sub run {
                     # Save session immediately after error to prevent history loss
                     # This ensures error context is available on next startup
                     $self->{session}->save();
-                    print STDERR "[DEBUG][Chat] Session saved after error (preserving context)\n" if should_log('DEBUG');
+                    log_debug('Chat', "Session saved after error (preserving context)");
                 }
             } else {
                 # Save session after successful responses
@@ -849,7 +849,7 @@ sub run {
                 # is closed abruptly without explicit /exit command.
                 if ($self->{session}) {
                     $self->{session}->save();
-                    print STDERR "[DEBUG][Chat] Session saved after successful response (preserving work-in-progress)\n" if should_log('DEBUG');
+                    log_debug('Chat', "Session saved after successful response (preserving work-in-progress)");
                 }
                 
                 # HYBRID LTM APPROACH: AutoCapture disabled. Agents store discoveries
@@ -874,7 +874,7 @@ sub run {
             # Disable pagination after response completes
             # Will be re-enabled on first chunk of next text response
             $self->{pagination_enabled} = 0;
-            print STDERR "[DEBUG][Chat] Pagination DISABLED after response complete\n" if $self->{debug};
+            log_debug('Chat', "Pagination DISABLED after response complete");
             
             # Ensure spinner is stopped before returning to input prompt
             # This prevents spinner from still running when waiting for user input
@@ -1018,7 +1018,7 @@ sub check_for_updates_async {
     };
     if ($@) {
         # Silently fail if module not available
-        print STDERR "[DEBUG][Chat] Update module not available: $@\n" if should_log('DEBUG');
+        log_debug('Chat', "Update module not available: $@");
         return;
     }
     
@@ -1049,7 +1049,7 @@ sub check_for_updates_async {
     
     if (!defined $pid) {
         # Fork failed - silently continue
-        print STDERR "[WARNING][Chat] Failed to fork update checker: $!\n" if should_log('WARNING');
+        log_warning('Chat', "Failed to fork update checker: $!");
         return;
     }
     
@@ -1310,14 +1310,14 @@ sub _check_auth_migration {
                         }
                     };
                     if ($@) {
-                        print STDERR "[WARN][Chat] Auto re-auth failed: $@\n" if should_log('WARNING');
+                        log_warning('Chat', "Auto re-auth failed: $@");
                         $self->display_system_message(
                             "Automatic re-authentication failed. Please run /api login manually."
                         );
                     }
                 } elsif ($validation->{error} && $validation->{error} =~ /Network/) {
                     # Network error - silently skip (might be offline)
-                    print STDERR "[DEBUG][Chat] Skipping token validation - network error\n" if should_log('DEBUG');
+                    log_debug('Chat', "Skipping token validation - network error");
                 }
             }
         }
@@ -1335,7 +1335,7 @@ sub _prepopulate_session_data {
     # Only prepopulate for GitHub Copilot provider
     return unless $provider && $provider eq 'github_copilot';
     
-    print STDERR "[DEBUG][Chat] Prepopulating session data from CopilotUserAPI\n" if should_log('DEBUG');
+    log_debug('Chat', "Prepopulating session data from CopilotUserAPI");
     
     eval {
         require CLIO::Core::CopilotUserAPI;
@@ -1418,7 +1418,7 @@ sub _prepopulate_session_data {
     };
     
     if ($@) {
-        print STDERR "[DEBUG][Chat] Prepopulation failed (non-fatal): $@\n" if should_log('DEBUG');
+        log_debug('Chat', "Prepopulation failed (non-fatal): $@");
     }
 }
 
@@ -1477,7 +1477,7 @@ sub get_input {
     # The spinner MUST be stopped before readline/input to prevent interference with typing
     if ($self->{spinner} && $self->{spinner}->{running}) {
         $self->{spinner}->stop();
-        print STDERR "[DEBUG][Chat] Spinner stopped at get_input entry\n" if should_log('DEBUG');
+        log_debug('Chat', "Spinner stopped at get_input entry");
     }
     
     # Check if running in --input mode (non-interactive)
@@ -1747,19 +1747,19 @@ Returns: User's response string, or undef if cancelled
 sub request_collaboration {
     my ($self, $message, $context) = @_;
     
-    print STDERR "[DEBUG][Chat] request_collaboration called\n" if should_log('DEBUG');
+    log_debug('Chat', "request_collaboration called");
     
     # Stop spinner before displaying collaboration prompt
     # The spinner MUST be stopped and MUST NOT restart until user response is complete
     if ($self->{spinner} && $self->{spinner}->{running}) {
         $self->{spinner}->stop();
-        print STDERR "[DEBUG][Chat] Spinner stopped at request_collaboration entry\n" if should_log('DEBUG');
+        log_debug('Chat', "Spinner stopped at request_collaboration entry");
     }
     
     # Enable pagination for collaboration responses
     $self->{pagination_enabled} = 1;
     $self->{line_count} = 0;  # Reset line count for pagination
-    print STDERR "[DEBUG][Chat] Pagination ENABLED for collaboration\n" if $self->{debug};
+    log_debug('Chat', "Pagination ENABLED for collaboration");
     
     # Display the agent's message using full markdown rendering (includes @-code to ANSI conversion)
     my $rendered_message = $self->render_markdown($message);
@@ -1853,7 +1853,7 @@ sub request_collaboration {
     
     # Disable pagination after displaying message (user will respond)
     $self->{pagination_enabled} = 0;
-    print STDERR "[DEBUG][Chat] Pagination DISABLED after collaboration message\n" if $self->{debug};
+    log_debug('Chat', "Pagination DISABLED after collaboration message");
     
     # Use the main readline instance (with shared history) if available,
     # otherwise create a new one for basic input
@@ -1886,7 +1886,7 @@ sub request_collaboration {
         
         # Check for slash commands - process them and return to prompt
         if ($response =~ /^\//) {
-            print STDERR "[DEBUG][Chat] Slash command in collaboration: $response\n" if should_log('DEBUG');
+            log_debug('Chat', "Slash command in collaboration: $response");
             
             # Process the command (but don't exit - return to collaboration prompt)
             my ($continue, $ai_prompt) = $self->handle_command($response);
@@ -2590,7 +2590,7 @@ sub setup_tab_completion {
             debug => $self->{debug}
         );
         
-        print STDERR "[DEBUG][CleanChat] Custom readline with tab completion enabled\n" if should_log('DEBUG');
+        log_debug('CleanChat', "Custom readline with tab completion enabled");
     };
     
     if ($@) {
@@ -3220,7 +3220,7 @@ sub _prompt_session_learnings {
         eval {
             $ltm->add_discovery($learning, 0.85, 1);  # confidence=0.85, verified=1
         };
-        print STDERR "[DEBUG][Chat] Stored learning: $learning\n" if $self->{debug};
+        log_debug('Chat', "Stored learning: $learning");
     }
     
     # Save LTM - use current working directory for cross-platform compatibility

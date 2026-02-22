@@ -3,7 +3,7 @@ package CLIO::Core::PerformanceMonitor;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug);
 use feature 'say';
 use Time::HiRes qw(time);
 
@@ -65,7 +65,7 @@ sub record_api_call {
     my $total_tokens = $tokens_in + $tokens_out;
     my $error = $params->{error};
     
-    print STDERR "[DEBUG][PerformanceMonitor] Recording call: endpoint=$endpoint model=$model time=${response_time}s success=$success\n" if should_log('DEBUG');
+    log_debug('PerformanceMonitor', "Recording call: endpoint=$endpoint model=$model time=${response_time}s success=$success");
     
     # Record endpoint metrics
     $self->_update_endpoint_metrics($endpoint, $response_time, $success, $total_tokens, $tokens_out);
@@ -331,7 +331,7 @@ sub reset {
     $MODEL_METRICS = {};
     $CALL_HISTORY = [];
     
-    print STDERR "[DEBUG][PerformanceMonitor] All metrics reset\n" if should_log('DEBUG');
+    log_debug('PerformanceMonitor', "All metrics reset");
 }
 
 1;

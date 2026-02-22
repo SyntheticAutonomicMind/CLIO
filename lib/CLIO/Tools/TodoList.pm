@@ -5,7 +5,7 @@ use warnings;
 use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug);
 use feature 'say';
 use parent 'CLIO::Tools::Tool';
 use CLIO::Session::TodoStore;
@@ -165,7 +165,7 @@ sub route_operation {
     # Get session_id from context
     my $session_id = $context->{session}{session_id} || $context->{session_id} || 'default';
     
-    print STDERR "[DEBUG][TodoList] Operation: $operation for session: $session_id\n" if should_log('DEBUG');
+    log_debug('TodoList', "Operation: $operation for session: $session_id");
     
     my $result;
     if ($operation eq 'read') {
@@ -185,7 +185,7 @@ sub route_operation {
     }
     
     my $execution_time = time() - $start_time;
-    print STDERR "[DEBUG][TodoList] Operation $operation completed in ${execution_time}s\n" if should_log('DEBUG');
+    log_debug('TodoList', "Operation $operation completed in ${execution_time}s");
     
     return $result;
 }

@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use utf8;
 use Carp qw(croak);
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug log_warning);
 use CLIO::Util::JSON qw(decode_json);
 
 =head1 NAME
@@ -67,7 +67,7 @@ Arguments:
 sub create_thread {
     my ($self, $thread_id) = @_;
     
-    print STDERR "[DEBUG][YaRN] Creating thread: $thread_id\n" if should_log('DEBUG');
+    log_debug('YaRN', "Creating thread: $thread_id");
     $self->{threads}{$thread_id} = [];
 }
 
@@ -91,7 +91,7 @@ sub add_to_thread {
     if (defined $msg && !ref $msg && $msg =~ /^\s*\{.*\}\s*$/) {
         eval { $msg = decode_json($msg); };
         if ($@) {
-            print STDERR "[WARN][YaRN] Failed to decode JSON message: $@\n" if should_log('WARNING');
+            log_warning('YaRN', "Failed to decode JSON message: $@");
             return;
         }
     }
@@ -235,7 +235,7 @@ sub compress_messages {
     my $original_task = $opts{original_task} || '';
     my $message_count = scalar(@$messages);
     
-    print STDERR "[DEBUG][YaRN] Compressing $message_count messages\n" if should_log('DEBUG');
+    log_debug('YaRN', "Compressing $message_count messages");
     
     # Extract key events from the conversation
     my @events = ();
@@ -424,7 +424,7 @@ sub compress_messages {
     my $original_task = $opts{original_task} || '';
     my $message_count = scalar(@$messages);
     
-    print STDERR "[DEBUG][YaRN] Compressing $message_count messages\n" if should_log('DEBUG');
+    log_debug('YaRN', "Compressing $message_count messages");
     
     # Extract key events from the conversation
     my @events = ();

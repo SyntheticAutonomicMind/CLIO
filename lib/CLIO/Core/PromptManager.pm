@@ -3,7 +3,7 @@ package CLIO::Core::PromptManager;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_error);
 use CLIO::Util::ConfigPath qw(get_config_file);
 use CLIO::Util::TextSanitizer qw(sanitize_text);
 use Carp qw(croak);
@@ -125,7 +125,7 @@ sub get_system_prompt {
     }
     
     unless ($prompt) {
-        print STDERR "[ERROR][PromptManager] Failed to load active prompt '$active', falling back to embedded default\n" if should_log('ERROR');
+        log_error('PromptManager', "Failed to load active prompt '$active', falling back to embedded default");
         $prompt = $self->_get_default_prompt_content();
     }
     
@@ -212,7 +212,7 @@ sub list_prompts {
     # Find custom prompts
     if (-d $self->{custom_dir}) {
         opendir(my $dh, $self->{custom_dir}) or do {
-            print STDERR "[ERROR][PromptManager] Cannot read custom prompts dir: $!\n" if should_log('ERROR');
+            log_error('PromptManager', "Cannot read custom prompts dir: $!");
             return { builtin => \@builtin, custom => \@custom };
         };
         
@@ -611,13 +611,13 @@ sub _read_prompt_file {
     }
     
     unless (-f $file) {
-        print STDERR "[ERROR][PromptManager] Prompt file not found: $name\n" if should_log('ERROR');
+        log_error('PromptManager', "Prompt file not found: $name");
         return undef;
     }
     
     # Read file
     open(my $fh, '<:encoding(UTF-8)', $file) or do {
-        print STDERR "[ERROR][PromptManager] Cannot read $file: $!\n" if should_log('ERROR');
+        log_error('PromptManager', "Cannot read $file: $!");
         return undef;
     };
     
@@ -669,7 +669,7 @@ sub _load_metadata {
     
     if (-f $self->{metadata_file}) {
         open(my $fh, '<:encoding(UTF-8)', $self->{metadata_file}) or do {
-            print STDERR "[ERROR][PromptManager] Cannot read metadata: $!\n" if should_log('ERROR');
+            log_error('PromptManager', "Cannot read metadata: $!");
             return;
         };
         
@@ -680,7 +680,7 @@ sub _load_metadata {
             $self->{metadata} = decode_json($json);
         };
         if ($@) {
-            print STDERR "[ERROR][PromptManager] Invalid metadata JSON: $@\n" if should_log('ERROR');
+            log_error('PromptManager', "Invalid metadata JSON: $@");
             $self->{metadata} = {};
         }
     } else {
@@ -704,7 +704,7 @@ sub _save_metadata {
     my $json = encode_json($self->{metadata});
     
     open(my $fh, '>:encoding(UTF-8)', $self->{metadata_file}) or do {
-        print STDERR "[ERROR][PromptManager] Cannot write metadata: $!\n" if should_log('ERROR');
+        log_error('PromptManager', "Cannot write metadata: $!");
         return;
     };
     

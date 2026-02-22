@@ -7,7 +7,7 @@ binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 
 use Carp qw(croak);
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug);
 use CLIO::Util::JSON qw(decode_json);
 
 =head1 NAME
@@ -755,7 +755,7 @@ Reinitialize APIManager after config changes
 sub _reinit_api_manager {
     my ($self) = @_;
     
-    print STDERR "[DEBUG][API] Re-initializing APIManager after config change\n" if $self->{debug};
+    log_debug('API', "Re-initializing APIManager after config change");
     
     # Preserve broker_client from existing APIManager if present
     my $broker_client = $self->{ai_agent}->{api} ? $self->{ai_agent}->{api}{broker_client} : undef;
@@ -771,7 +771,7 @@ sub _reinit_api_manager {
     
     if ($self->{ai_agent}->{orchestrator}) {
         $self->{ai_agent}->{orchestrator}->{api_manager} = $new_api;
-        print STDERR "[DEBUG][API] Orchestrator's api_manager updated after config change\n" if $self->{debug};
+        log_debug('API', "Orchestrator's api_manager updated after config change");
     }
 }
 
@@ -941,7 +941,7 @@ sub handle_login_command {
     
     # Reload APIManager
     $self->_reinit_api_manager();
-    print STDERR "[DEBUG][API] APIManager reloaded successfully\n" if $self->{debug};
+    log_debug('API', "APIManager reloaded successfully");
 }
 
 =head2 handle_logout_command

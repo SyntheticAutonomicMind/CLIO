@@ -7,7 +7,7 @@ binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 
 use Carp qw(croak);
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_info);
 
 =head1 NAME
 
@@ -113,7 +113,7 @@ sub auto_prune_sessions {
     }
     
     if ($deleted > 0 && should_log('INFO')) {
-        print STDERR "[INFO][Session] Auto-pruned $deleted old sessions (older than $days days)\n";
+        log_info('Session', "Auto-pruned $deleted old sessions (older than $days days)");
     }
     
     return $deleted;

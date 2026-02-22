@@ -7,7 +7,7 @@ use strict;
 use warnings;
 use utf8;
 use Carp qw(croak confess);
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug);
 use feature 'say';
 
 =head1 NAME
@@ -88,7 +88,7 @@ sub register_tool {
         push @{$self->{tool_order}}, $name;
     }
     
-    print STDERR "[DEBUG][Registry] Registered tool: $name\n" if should_log('DEBUG');
+    log_debug('Registry', "Registered tool: $name");
     
     return 1;
 }
@@ -245,7 +245,7 @@ sub unregister_tool {
     # Remove from order list
     $self->{tool_order} = [grep { $_ ne $name } @{$self->{tool_order}}];
     
-    print STDERR "[DEBUG][Registry] Unregistered tool: $name\n" if should_log('DEBUG');
+    log_debug('Registry', "Unregistered tool: $name");
     
     return 1;
 }
@@ -266,7 +266,7 @@ sub clear {
     $self->{tools} = {};
     $self->{tool_order} = [];
     
-    print STDERR "[DEBUG][Registry] Cleared $count tools\n" if should_log('DEBUG');
+    log_debug('Registry', "Cleared $count tools");
     
     return $count;
 }

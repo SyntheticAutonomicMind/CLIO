@@ -3,7 +3,7 @@ package CLIO::Core::TabCompletion;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug);
 use feature 'say';
 use File::Spec;
 use Cwd;
@@ -81,7 +81,7 @@ Returns: List of completion candidates
 sub complete {
     my ($self, $text, $line, $start) = @_;
     
-    print STDERR "[DEBUG][TabCompletion] text='$text' line='$line' start=$start\n" if should_log('DEBUG');
+    log_debug('TabCompletion', "text='$text' line='$line' start=$start");
     
     # Slash command completion
     if ($start == 0 && $text =~ m{^/}) {
@@ -119,7 +119,7 @@ sub complete_command {
     
     my @matches = grep { /^\Q$text\E/i } @{$self->{commands}};
     
-    print STDERR "[DEBUG][TabCompletion] Command matches: @matches\n" if should_log('DEBUG');
+    log_debug('TabCompletion', "Command matches: @matches");
     
     return @matches;
 }
@@ -135,7 +135,7 @@ sub complete_config_subcommand {
     
     my @matches = grep { /^\Q$text\E/i } @{$self->{config_subcommands}};
     
-    print STDERR "[DEBUG][TabCompletion] Config subcommand matches: @matches\n" if should_log('DEBUG');
+    log_debug('TabCompletion', "Config subcommand matches: @matches");
     
     return @matches;
 }
@@ -186,11 +186,11 @@ sub complete_path {
         $dir = Cwd::getcwd() . '/' . $dir;
     }
     
-    print STDERR "[DEBUG][TabCompletion] Completing in dir='$dir' file='$file'\n" if should_log('DEBUG');
+    log_debug('TabCompletion', "Completing in dir='$dir' file='$file'");
     
     # Read directory
     if (!opendir(my $dh, $dir)) {
-        print STDERR "[DEBUG][TabCompletion] Cannot open directory: $dir\n" if should_log('DEBUG');
+        log_debug('TabCompletion', "Cannot open directory: $dir");
         return ();
     } else {
         my @entries = readdir($dh);
@@ -218,7 +218,7 @@ sub complete_path {
         }
     }
     
-    print STDERR "[DEBUG][TabCompletion] Path matches: @matches\n" if should_log('DEBUG');
+    log_debug('TabCompletion', "Path matches: @matches");
     
     # Return matches with proper prefix
     # If original partial had a directory prefix, preserve it
@@ -248,7 +248,7 @@ sub setup_readline {
     my $has_gnu = eval { require Term::ReadLine::Gnu; 1 };
     
     if ($has_gnu) {
-        print STDERR "[DEBUG][TabCompletion] Using Term::ReadLine::Gnu\n" if should_log('DEBUG');
+        log_debug('TabCompletion', "Using Term::ReadLine::Gnu");
         
         # Set up completion function
         $term->Attribs->{completion_function} = sub {
@@ -260,7 +260,7 @@ sub setup_readline {
         $term->Attribs->{filename_quote_characters} = '"\'';
         $term->Attribs->{completer_quote_characters} = '"\'';
     } else {
-        print STDERR "[DEBUG][TabCompletion] Term::ReadLine::Gnu not available, using basic readline\n" if should_log('DEBUG');
+        log_debug('TabCompletion', "Term::ReadLine::Gnu not available, using basic readline");
         
         # Basic Term::ReadLine doesn't support completion the same way
         # But we can still try to set it up
