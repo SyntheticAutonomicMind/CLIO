@@ -312,6 +312,158 @@ sub _request_via_curl {
     }
 }
 
+=head2 _request_via_curl_streaming
+
+Make an HTTPS request using curl with true streaming output.
+Instead of buffering the entire response, reads curl output incrementally
+and delivers chunks to the callback as they arrive.
+
+Arguments:
+- $method: HTTP method
+- $uri: Request URL
+- $headers: Hash ref of headers
+- $content: Request body
+- $callback: Code ref called with ($chunk, $response_obj, undef)
+
+Returns: Response hash compatible with HTTP::Tiny format
+
+=cut
+
+sub _request_via_curl_streaming {
+    my ($self, $method, $uri, $headers, $content, $callback) = @_;
+    
+    use File::Temp qw(tempfile);
+    
+    # Build curl command - use -N (no-buffer) for streaming and separate headers
+    my @cmd = ('curl', '-s', '-N', '-X', $method);
+    
+    # Write headers to a temp file so we can parse them
+    my ($hdr_fh, $hdr_file) = tempfile(UNLINK => 1);
+    close $hdr_fh;
+    push @cmd, '-D', $hdr_file;  # Dump headers to file
+    
+    # Add timeout
+    push @cmd, '--max-time', $self->{timeout} if $self->{timeout};
+    
+    # Add CA bundle for HTTPS (iOS/a-Shell compatibility)
+    my $ca_bundle = $self->_find_ca_bundle();
+    if ($ca_bundle) {
+        push @cmd, '--cacert', $ca_bundle;
+    }
+    
+    # Add headers
+    for my $header (keys %$headers) {
+        push @cmd, '-H', "$header: $headers->{$header}";
+    }
+    
+    # Add request body
+    my $content_file;
+    if (defined $content && length($content) > 0) {
+        my $content_fh;
+        ($content_fh, $content_file) = tempfile(UNLINK => 1);
+        print $content_fh $content;
+        close $content_fh;
+        push @cmd, '--data-binary', "\@$content_file";
+    }
+    
+    # Add URL
+    push @cmd, $uri;
+    
+    if ($ENV{CLIO_DEBUG}) {
+        print STDERR "[DEBUG][HTTP::curl_streaming] Starting streaming curl request\n";
+    }
+    
+    # Open curl as a pipe for streaming reads
+    my $curl_pid = open(my $curl_fh, '-|', @cmd);
+    
+    if (!$curl_pid) {
+        return {
+            success => 0,
+            status => 599,
+            reason => 'Internal Exception',
+            headers => {},
+            content => "Failed to execute curl for streaming: $!",
+        };
+    }
+    
+    # Read and deliver chunks incrementally
+    my $accumulated_content = '';
+    my $resp_obj;
+    my $read_buf;
+    my $chunk_size = 4096;  # Read in 4KB chunks for responsive streaming
+    
+    # sysread on the pipe will block until data arrives or be interrupted by signals
+    # The ALRM signal handler (set by Chat.pm) fires every second, causing EINTR
+    # which we handle below - this allows ESC interrupt detection during streaming
+    
+    while (1) {
+        my $bytes = sysread($curl_fh, $read_buf, $chunk_size);
+        
+        if (!defined $bytes) {
+            # sysread error - likely EINTR from signal
+            use POSIX qw(:errno_h);
+            next if $! == EINTR;  # Retry on signal interrupt
+            last;  # Real error
+        }
+        
+        last if $bytes == 0;  # EOF
+        
+        $accumulated_content .= $read_buf;
+        
+        # Create response object lazily (we don't have headers yet from pipe mode)
+        if (!$resp_obj) {
+            $resp_obj = bless {
+                success => 1,  # Assume success, will verify later
+                status => 200,
+                reason => 'OK',
+                content => '',
+                headers => {},
+            }, 'CLIO::Compat::HTTP::Response';
+        }
+        
+        # Deliver chunk to callback
+        eval { $callback->($read_buf, $resp_obj, undef); };
+        if ($@) {
+            print STDERR "[WARN][HTTP::curl_streaming] Callback error: $@\n" if $ENV{CLIO_DEBUG};
+        }
+    }
+    
+    close($curl_fh);
+    my $exit_code = $? >> 8;
+    
+    # Parse headers from the header dump file
+    my $status = 200;
+    my $reason = 'OK';
+    my %resp_headers;
+    
+    if (open(my $hfh, '<', $hdr_file)) {
+        while (my $line = <$hfh>) {
+            chomp $line;
+            $line =~ s/\r$//;
+            if ($line =~ /^HTTP\/[\d.]+\s+(\d+)\s+(.*)$/) {
+                $status = $1;
+                $reason = $2;
+            } elsif ($line =~ /^([^:]+):\s*(.+)$/) {
+                $resp_headers{lc($1)} = $2;
+            }
+        }
+        close $hfh;
+    }
+    
+    if ($ENV{CLIO_DEBUG}) {
+        print STDERR "[DEBUG][HTTP::curl_streaming] Streaming complete: status=$status, " . 
+            length($accumulated_content) . " bytes, exit_code=$exit_code\n";
+    }
+    
+    return {
+        success => ($status >= 200 && $status < 300),
+        status => $status,
+        reason => $reason,
+        headers => \%resp_headers,
+        content => $accumulated_content,
+    };
+}
+
 =head2 request
 
 Perform HTTP request with HTTP::Request-like object or parameters.
@@ -322,8 +474,10 @@ Arguments:
 
 Returns: Response object compatible with LWP::UserAgent
 
-Note: HTTP::Tiny doesn't support true streaming, so callbacks are called
-with the full response content split into chunks to simulate streaming.
+Streaming: When a callback is provided, uses true streaming:
+- HTTP::Tiny: native data_callback for real-time chunk delivery
+- curl: pipe-based streaming with incremental reads
+This allows interrupt detection during long API calls.
 
 =cut
 
@@ -347,6 +501,9 @@ sub request {
         # Decide whether to use curl for HTTPS
         my $use_curl = $self->{use_curl_for_https} && $uri =~ /^https:/i;
         
+        # Determine if we have a streaming callback
+        my $has_callback = ref($url_or_callback) eq 'CODE';
+        
         # DEBUG: Print what we're about to send
         if ($ENV{CLIO_DEBUG}) {
             print STDERR "\n[DEBUG][HTTP] Request details:\n";
@@ -354,42 +511,64 @@ sub request {
             print STDERR "  Method: $method\n";
             print STDERR "  URI: $uri\n";
             print STDERR "  Content length: " . length($content) . " bytes\n";
+            print STDERR "  Streaming: " . ($has_callback ? "true" : "false") . "\n";
         }
         
         my $response;
         if ($use_curl) {
-            # Use curl for HTTPS when IO::Socket::SSL is not available
-            $response = $self->_request_via_curl($method, $uri, \%headers, $content);
+            if ($has_callback) {
+                # Use curl with true streaming via pipe
+                $response = $self->_request_via_curl_streaming($method, $uri, \%headers, $content, $url_or_callback);
+            } else {
+                # Use curl with buffered response
+                $response = $self->_request_via_curl($method, $uri, \%headers, $content);
+            }
         } else {
             # Use HTTP::Tiny
             my %options = (
                 headers => \%headers,
             );
             $options{content} = $content if defined $content && length($content) > 0;
-            $response = $self->{http}->request($method, $uri, \%options);
+            
+            if ($has_callback) {
+                # True streaming: Use HTTP::Tiny's data_callback for real-time chunk delivery
+                # Each chunk from the server triggers the callback immediately
+                my $resp_obj_ref;  # Will hold response object once headers arrive
+                my $accumulated_content = '';
+                
+                $options{data_callback} = sub {
+                    my ($chunk, $response) = @_;
+                    $accumulated_content .= $chunk;
+                    
+                    # Create response object on first chunk (headers are available)
+                    if (!$resp_obj_ref) {
+                        $resp_obj_ref = $self->_convert_response({
+                            success => ($response->{status} >= 200 && $response->{status} < 300),
+                            status => $response->{status},
+                            reason => $response->{reason},
+                            headers => $response->{headers} || {},
+                            content => '',  # Content delivered via callback
+                        });
+                    }
+                    
+                    # Deliver chunk to caller's callback
+                    $url_or_callback->($chunk, $resp_obj_ref, undef);
+                };
+                
+                $response = $self->{http}->request($method, $uri, \%options);
+                # Note: with data_callback, $response->{content} is empty
+                # Store accumulated content on the response for post-processing
+                $response->{content} = $accumulated_content;
+                
+                if ($ENV{CLIO_DEBUG}) {
+                    print STDERR "[DEBUG][HTTP] True streaming complete: " . length($accumulated_content) . " bytes delivered via callback\n";
+                }
+            } else {
+                $response = $self->{http}->request($method, $uri, \%options);
+            }
         }
         
         my $resp_obj = $self->_convert_response($response);
-        
-        # Handle streaming callback (simulate with chunked delivery)
-        if (ref($url_or_callback) eq 'CODE') {
-            my $callback = $url_or_callback;
-            my $body = $response->{content} || '';
-            
-            if ($ENV{CLIO_DEBUG}) {
-                print STDERR "[DEBUG][HTTP] Simulating streaming with " . length($body) . " byte response\n";
-            }
-            
-            # Split response into chunks and call callback
-            # Use 8KB chunks to simulate streaming
-            my $chunk_size = 8192;
-            my $offset = 0;
-            while ($offset < length($body)) {
-                my $chunk = substr($body, $offset, $chunk_size);
-                $callback->($chunk, $resp_obj, undef);
-                $offset += $chunk_size;
-            }
-        }
         
         return $resp_obj;
     }
