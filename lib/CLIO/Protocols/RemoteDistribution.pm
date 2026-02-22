@@ -6,6 +6,7 @@ package CLIO::Protocols::RemoteDistribution;
 use strict;
 use warnings;
 use utf8;
+use Carp qw(croak);
 use feature 'say';
 
 binmode(STDOUT, ':encoding(UTF-8)');
@@ -379,7 +380,7 @@ sub _execute_parallel {
             # Write result to temp file
             require JSON::PP;
             my $result_file = "$result_dir/device_${i}.json";
-            open my $fh, '>:encoding(UTF-8)', $result_file or die "Cannot write $result_file: $!";
+            open my $fh, '>:encoding(UTF-8)', $result_file or croak "Cannot write $result_file: $!";
             print $fh JSON::PP->new->utf8->pretty->encode({
                 device => $device,
                 %$result,

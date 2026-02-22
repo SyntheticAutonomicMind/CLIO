@@ -4,6 +4,7 @@ use strict;
 use warnings;
 use utf8;
 use FindBin;
+use Carp qw(croak);
 use File::Spec;
 use File::Path qw(make_path);
 
@@ -78,14 +79,14 @@ sub init {
     # Priority 4: Installed mode - use ~/.clio
     my $home_dir = $ENV{HOME} || $ENV{USERPROFILE};
     if (!$home_dir) {
-        die "[ERROR] Cannot determine home directory (HOME/USERPROFILE not set)\n";
+        croak "Cannot determine home directory (HOME/USERPROFILE not set)";
     }
     
     $CONFIG_DIR = File::Spec->catdir($home_dir, '.clio');
     
     # Create config directory if it doesn't exist with secure permissions
     if (!-d $CONFIG_DIR) {
-        make_path($CONFIG_DIR, { mode => 0700 }) or die "[ERROR] Cannot create config directory $CONFIG_DIR: $!\n";
+        make_path($CONFIG_DIR, { mode => 0700 }) or croak "Cannot create config directory $CONFIG_DIR: $!";
         print STDERR "[INFO] Created config directory: $CONFIG_DIR\n";
     }
     
@@ -138,7 +139,7 @@ sub get_sessions_dir {
     
     # Create if doesn't exist with secure permissions (0700 = owner only)
     if (!-d $sessions_dir) {
-        make_path($sessions_dir, { mode => 0700 }) or die "[ERROR] Cannot create sessions directory: $!\n";
+        make_path($sessions_dir, { mode => 0700 }) or croak "Cannot create sessions directory: $!";
     }
     
     return $sessions_dir;
@@ -158,7 +159,7 @@ Returns: Absolute path to session file
 sub get_session_file {
     my ($session_id) = @_;
     
-    die "[ERROR] Session ID required\n" unless $session_id;
+    croak "Session ID required" unless $session_id;
     
     my $sessions_dir = get_sessions_dir();
     return File::Spec->catfile($sessions_dir, "$session_id.json");

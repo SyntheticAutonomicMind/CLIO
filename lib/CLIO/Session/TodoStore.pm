@@ -4,6 +4,7 @@ use strict;
 use warnings;
 use utf8;
 use CLIO::Core::Logger qw(should_log);
+use Carp qw(croak);
 use feature 'say';
 use File::Path qw(make_path);
 use File::Spec;
@@ -55,7 +56,7 @@ Returns: New TodoStore instance
 sub new {
     my ($class, %opts) = @_;
     
-    die "session_id required" unless $opts{session_id};
+    croak "session_id required" unless $opts{session_id};
     
     my $self = {
         session_id => $opts{session_id},
@@ -68,7 +69,7 @@ sub new {
     # Ensure session directory exists
     my $session_dir = $self->_session_dir();
     unless (-d $session_dir) {
-        make_path($session_dir) or die "Cannot create session directory $session_dir: $!";
+        make_path($session_dir) or croak "Cannot create session directory $session_dir: $!";
     }
     
     return $self;
@@ -94,7 +95,7 @@ sub read {
     
     my $todos;
     eval {
-        open my $fh, '<:encoding(UTF-8)', $file or die "Cannot read todos file: $!";
+        open my $fh, '<:encoding(UTF-8)', $file or croak "Cannot read todos file: $!";
         local $/;
         my $json = <$fh>;
         close $fh;
@@ -416,12 +417,12 @@ sub _save {
     # Atomic write: write to temp file, then rename
     # This prevents corruption if process is killed during write
     my $temp_file = $file . '.tmp';
-    open my $fh, '>:encoding(UTF-8)', $temp_file or die "Cannot create temp todos file: $!";
+    open my $fh, '>:encoding(UTF-8)', $temp_file or croak "Cannot create temp todos file: $!";
     print $fh $json;
     close $fh;
     
     # Atomic rename (overwrites target file atomically on Unix)
-    rename $temp_file, $file or die "Cannot save todos (rename failed): $!";
+    rename $temp_file, $file or croak "Cannot save todos (rename failed): $!";
     
     print STDERR "[DEBUG][TodoStore] Saved to $file\n" if should_log('DEBUG');
 }

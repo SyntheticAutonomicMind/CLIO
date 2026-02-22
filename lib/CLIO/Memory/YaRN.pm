@@ -3,6 +3,7 @@ package CLIO::Memory::YaRN;
 use strict;
 use warnings;
 use utf8;
+use Carp qw(croak);
 use CLIO::Core::Logger qw(should_log);
 use CLIO::Util::JSON qw(decode_json);
 
@@ -176,7 +177,7 @@ Arguments:
 
 sub save {
     my ($self, $file) = @_;
-    open my $fh, '>', $file or die "Cannot save YaRN: $!";
+    open my $fh, '>', $file or croak "Cannot save YaRN: $!";
     print $fh encode_json($self->{threads});
     close $fh;
 }

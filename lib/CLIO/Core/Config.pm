@@ -3,6 +3,7 @@ package CLIO::Core::Config;
 use strict;
 use warnings;
 use utf8;
+use Carp qw(croak);
 use CLIO::Core::Logger qw(should_log);
 use CLIO::Util::ConfigPath qw(get_config_dir);
 use CLIO::Providers qw(get_provider list_providers provider_exists);
@@ -199,7 +200,7 @@ sub save {
     
     # Ensure config directory exists
     unless (-d $self->{config_dir}) {
-        make_path($self->{config_dir}) or die "Cannot create config dir: $!";
+        make_path($self->{config_dir}) or croak "Cannot create config dir: $!";
     }
     
     # Build config to save - ONLY user-explicitly-set values
