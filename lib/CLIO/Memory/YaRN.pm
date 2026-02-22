@@ -45,7 +45,7 @@ This enables:
 
 =cut
 
-print STDERR "[TRACE] CLIO::Memory::YaRN loaded\n" if should_log('DEBUG');
+log_debug('YaRN', "CLIO::Memory::YaRN loaded");
 
 sub new {
     my ($class, %args) = @_;
@@ -100,9 +100,7 @@ sub add_to_thread {
     
     push @{$self->{threads}{$thread_id}}, $msg;
     
-    print STDERR "[DEBUG][YaRN] Added message to thread $thread_id (total: " . 
-                 scalar(@{$self->{threads}{$thread_id}}) . " messages)\n" 
-        if should_log('DEBUG');
+    log_debug('YaRN', "Added message to thread $thread_id (total: " . scalar(@{$self->{threads}{$thread_id}}) . " messages)");
 }
 
 =head2 get_thread
@@ -122,9 +120,7 @@ sub get_thread {
     my $thread = $self->{threads}{$thread_id};
     $thread = [] unless defined $thread;
     
-    print STDERR "[DEBUG][YaRN] Retrieved thread $thread_id (" . 
-                 scalar(@$thread) . " messages)\n" 
-        if should_log('DEBUG');
+    log_debug('YaRN', "Retrieved thread $thread_id (" . scalar(@$thread) . " messages)");
     
     return $thread;
 }
@@ -141,8 +137,7 @@ sub list_threads {
     my ($self) = @_;
     my @keys = sort keys %{$self->{threads}};
     
-    print STDERR "[DEBUG][YaRN] Listing threads: " . scalar(@keys) . " total\n" 
-        if should_log('DEBUG');
+    log_debug('YaRN', "Listing threads: " . scalar(@keys) . " total");
     
     return \@keys;
 }
@@ -347,9 +342,7 @@ sub compress_messages {
     }
     my $compressed_tokens = int(length($summary_content) / 2.5);
     
-    print STDERR "[DEBUG][YaRN] Compression: $original_tokens tokens -> $compressed_tokens tokens (" . 
-        sprintf("%.1f", 100 * ($original_tokens - $compressed_tokens) / $original_tokens) . "% reduction)\n"
-        if should_log('DEBUG');
+    log_debug('YaRN', "Compression: $original_tokens tokens -> $compressed_tokens tokens (" . sprintf("%.1f", 100 * ($original_tokens - $compressed_tokens) / $original_tokens) . "% reduction)");
     
     return {
         role => 'system',
@@ -536,9 +529,7 @@ sub compress_messages {
     }
     my $compressed_tokens = int(length($summary_content) / 2.5);
     
-    print STDERR "[DEBUG][YaRN] Compression: $original_tokens tokens -> $compressed_tokens tokens (" . 
-        sprintf("%.1f", 100 * ($original_tokens - $compressed_tokens) / $original_tokens) . "% reduction)\n"
-        if should_log('DEBUG');
+    log_debug('YaRN', "Compression: $original_tokens tokens -> $compressed_tokens tokens (" . sprintf("%.1f", 100 * ($original_tokens - $compressed_tokens) / $original_tokens) . "% reduction)");
     
     return {
         role => 'system',

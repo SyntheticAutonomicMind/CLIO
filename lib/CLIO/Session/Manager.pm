@@ -1,5 +1,5 @@
 if ($ENV{CLIO_DEBUG}) {
-    print STDERR "[TRACE] CLIO::Session::Manager loaded\n";
+    log_debug('SessionManager', "CLIO::Session::Manager loaded");
 }
 package CLIO::Session::Manager;
 
@@ -9,7 +9,7 @@ use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use Carp qw(croak);
-use CLIO::Core::Logger qw(should_log log_warning);
+use CLIO::Core::Logger qw(should_log log_warning log_debug log_info);
 use CLIO::Session::State;
 use CLIO::Session::Lock;
 use CLIO::Memory::ShortTerm;
@@ -164,8 +164,8 @@ Returns: HashRef with usage statistics
 sub new {
     my ($class, %args) = @_;
     if ($ENV{CLIO_DEBUG} || $args{debug}) {
-        print STDERR "[TRACE] Entered Manager::new\n";
-        print STDERR "[DEBUG][Manager::new] called with args: " . join(", ", map { "$_=$args{$_}" } keys %args) . "\n";
+        log_debug('SessionManager', "Entered Manager::new");
+        log_debug('SessionManager', "Manager::new] called with args: " . join(", ", map { "$_=$args{$_}" } keys %args));
     }
     
     # Determine working directory for loading project LTM
@@ -199,8 +199,8 @@ sub new {
         yarn       => $yarn,
     );
     if ($ENV{CLIO_DEBUG} || $self->{debug}) {
-        print STDERR "[MANAGER] yarn object ref: $self->{yarn}\n";
-        print STDERR "[DEBUG][Manager::new] returning self: $self\n";
+        log_debug('SessionManager', "[MANAGER] yarn object ref: $self->{yarn}");
+        log_debug('Manager::new', "returning self: $self");
     }
     return $self;
 }
@@ -232,12 +232,12 @@ sub _generate_id {
 sub create {
     my ($class, %args) = @_;
     if ($ENV{CLIO_DEBUG} || $args{debug}) {
-        print STDERR "[TRACE] Entered Manager::create\n";
-        print STDERR "[DEBUG][Manager::create] called with args: " . join(", ", map { "$_=$args{$_}" } keys %args) . "\n";
+        log_debug('SessionManager', "Entered Manager::create");
+        log_debug('SessionManager', "Manager::create] called with args: " . join(", ", map { "$_=$args{$_}" } keys %args));
     }
     my $obj = $class->new(%args);
     if ($ENV{CLIO_DEBUG} || $obj->{debug}) {
-        print STDERR "[DEBUG][Manager::create] returning: $obj\n";
+        log_debug('Manager::create', "returning: $obj");
     }
     return $obj;
 }
@@ -291,7 +291,7 @@ sub load {
     $state->{stm}  = $stm;
     $state->{ltm}  = $ltm;
     $state->{yarn} = $yarn;
-    print STDERR "[MANAGER] yarn object ref (load): $self->{yarn}\n" if $self->{debug} || $ENV{CLIO_DEBUG};
+    log_debug('SessionManager', "yarn object ref (load): $self->{yarn}");
     
     # Cleanup old tool results (older than 24 hours) to prevent disk bloat
     # This runs once when session is resumed - non-critical if it fails
@@ -302,8 +302,7 @@ sub load {
         
         if ($cleanup_result->{deleted_count} > 0) {
             my $mb_reclaimed = sprintf("%.2f", $cleanup_result->{reclaimed_bytes} / 1_048_576);
-            print STDERR "[INFO][Manager] Cleaned up $cleanup_result->{deleted_count} old tool results (${mb_reclaimed}MB reclaimed)\n"
-                if should_log('INFO');
+            log_info('Manager', "Cleaned up $cleanup_result->{deleted_count} old tool results (${mb_reclaimed}MB reclaimed)");
         }
     };
     if ($@) {
@@ -348,17 +347,17 @@ sub get_history {
 
 sub get_conversation_history {
     my ($self) = @_;
-    print STDERR "[DEBUG][Session::Manager] get_conversation_history called, count: " . scalar(@{$self->{state}->{history}}) . "\n" if $self->{debug};
+    log_debug('SessionManager', "Session::Manager] get_conversation_history called, count: " . scalar(@{$self->{state}->{history}}));
     return $self->{state}->{history} || [];
 }
 
 sub add_message {
     my ($self, $role, $content, $opts) = @_;
-    print STDERR "[DEBUG][Session::Manager] add_message called: role=$role, content_len=" . length($content) . 
-        ", opts=" . (defined $opts ? "HASH" : "undef") . "\n" if $self->{debug};
+    log_debug('SessionManager', "add_message called: role=$role, content_len=" . length($content) .
+        ", opts=" . (defined $opts ? "HASH" : "undef"));
     $self->{state}->add_message($role, $content, $opts);
     $self->{stm}->add_message($role, $content); # Keep STM in sync with session history
-    print STDERR "[DEBUG][Session::Manager] History count after add: " . scalar(@{$self->{state}->{history}}) . "\n" if $self->{debug};
+    log_debug('SessionManager', "Session::Manager] History count after add: " . scalar(@{$self->{state}->{history}}));
 }
 
 # Forward billing methods to State

@@ -5,7 +5,7 @@ use warnings;
 use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
-use CLIO::Core::Logger qw(should_log log_error log_warning);
+use CLIO::Core::Logger qw(should_log log_error log_warning log_debug);
 use File::Spec;
 use Cwd qw(getcwd);
 
@@ -84,10 +84,10 @@ sub read_instructions {
     # Check for environment variable override (used by sub-agents)
     my $custom_path = $ENV{CLIO_CUSTOM_INSTRUCTIONS};
     if ($custom_path) {
-        print STDERR "[DEBUG][InstructionsReader] Found CLIO_CUSTOM_INSTRUCTIONS env var: $custom_path\n";
+        log_debug('InstructionsReader', "Found CLIO_CUSTOM_INSTRUCTIONS env var: $custom_path");
         
         if (-f $custom_path) {
-            print STDERR "[DEBUG][InstructionsReader] Loading custom instructions from: $custom_path\n";
+            log_debug('InstructionsReader', "Loading custom instructions from: $custom_path");
             
             open(my $fh, '<:encoding(UTF-8)', $custom_path) or do {
                 log_warning('InstructionsReader', "Cannot read custom instructions file: $!");
@@ -99,7 +99,7 @@ sub read_instructions {
             close($fh);
             
             if ($content) {
-                print STDERR "[DEBUG][InstructionsReader] Loaded " . length($content) . " bytes from custom instructions\n";
+                log_debug('InstructionsReader', "Loaded " . length($content) . " bytes from custom instructions");
                 return $content;
             }
         } else {
@@ -118,9 +118,7 @@ sub read_instructions {
     my $clio_instructions = $self->_read_clio_instructions($workspace_path);
     if ($clio_instructions) {
         push @parts, $clio_instructions;
-        print STDERR "[DEBUG][InstructionsReader] Loaded .clio/instructions.md (" 
-            . length($clio_instructions) . " bytes)\n"
-            if $self->{debug};
+        log_debug('InstructionsReader', "Loaded .clio/instructions.md (" . length($clio_instructions) . " bytes)");
     }
     
     # 2. Load AGENTS.md (project-level context)
@@ -128,22 +126,17 @@ sub read_instructions {
     my $agents_md = $self->_find_and_read_agents_md($workspace_path);
     if ($agents_md) {
         push @parts, $agents_md;
-        print STDERR "[DEBUG][InstructionsReader] Loaded AGENTS.md (" 
-            . length($agents_md) . " bytes)\n"
-            if $self->{debug};
+        log_debug('InstructionsReader', "Loaded AGENTS.md (" . length($agents_md) . " bytes)");
     }
     
     # Combine both sources (if any)
     if (@parts) {
         my $combined = join("\n\n---\n\n", @parts);
-        print STDERR "[DEBUG][InstructionsReader] Combined instructions: " 
-            . length($combined) . " bytes total\n"
-            if $self->{debug};
+        log_debug('InstructionsReader', "Combined instructions: " . length($combined) . " bytes total");
         return $combined;
     }
     
-    print STDERR "[DEBUG][InstructionsReader] No custom instructions found\n"
-        if $self->{debug};
+    log_debug('InstructionsReader', "No custom instructions found");
     
     return undef;
 }
@@ -193,8 +186,7 @@ sub _read_clio_instructions {
         'instructions.md'
     );
     
-    print STDERR "[DEBUG][InstructionsReader] Checking for .clio/instructions.md at: $instructions_file\n"
-        if $self->{debug};
+    log_debug('InstructionsReader', "Checking for .clio/instructions.md at: $instructions_file");
     
     return $self->_read_file($instructions_file);
 }
@@ -231,12 +223,10 @@ sub _find_and_read_agents_md {
     while ($depth < $max_depth) {
         my $agents_file = File::Spec->catfile($current_dir, 'AGENTS.md');
         
-        print STDERR "[DEBUG][InstructionsReader] Checking for AGENTS.md at: $agents_file\n"
-            if $self->{debug};
+        log_debug('InstructionsReader', "Checking for AGENTS.md at: $agents_file");
         
         if (-f $agents_file) {
-            print STDERR "[DEBUG][InstructionsReader] Found AGENTS.md at: $agents_file\n"
-                if $self->{debug};
+            log_debug('InstructionsReader', "Found AGENTS.md at: $agents_file");
             return $self->_read_file($agents_file);
         }
         
@@ -252,8 +242,7 @@ sub _find_and_read_agents_md {
         $depth++;
     }
     
-    print STDERR "[DEBUG][InstructionsReader] No AGENTS.md found in directory tree\n"
-        if $self->{debug};
+    log_debug('InstructionsReader', "No AGENTS.md found in directory tree");
     
     return undef;
 }
@@ -299,8 +288,7 @@ sub _read_file {
     $content =~ s/^\s+|\s+$//g if defined $content;
     
     if (!$content || length($content) == 0) {
-        print STDERR "[DEBUG][InstructionsReader] File is empty: $file_path\n"
-            if $self->{debug};
+        log_debug('InstructionsReader', "File is empty: $file_path");
         return undef;
     }
     

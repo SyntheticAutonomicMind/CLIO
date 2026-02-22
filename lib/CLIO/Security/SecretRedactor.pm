@@ -9,7 +9,7 @@ use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use Exporter 'import';
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug);
 
 our @EXPORT_OK = qw(redact redact_any get_redactor);
 
@@ -271,8 +271,7 @@ sub set_level {
     
     if ($VALID_LEVELS{$level}) {
         $self->{level} = $level;
-        print STDERR "[DEBUG][SecretRedactor] Level set to: $level\n" 
-            if $self->{debug} || should_log('DEBUG');
+        log_debug('SecretRedactor', "Level set to: $level");
         return 1;
     }
     return 0;
@@ -450,8 +449,7 @@ sub add_pattern {
     my $key = $category . '_patterns';
     if (exists $self->{$key}) {
         push @{$self->{$key}}, $pattern;
-        print STDERR "[DEBUG][SecretRedactor] Added pattern to $category\n" 
-            if $self->{debug};
+        log_debug('SecretRedactor', "Added pattern to $category");
         return 1;
     }
     return 0;

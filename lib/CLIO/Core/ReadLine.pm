@@ -240,7 +240,7 @@ sub readline {
                 }
             }
             
-            print STDERR "[DEBUG][ReadLine] Raw escape sequence bytes: " . join(' ', map { sprintf('0x%02X', ord($_)) } split //, $seq) . "\n" if should_log('DEBUG');
+            log_debug('ReadLine', "Raw escape sequence bytes: " . join(' ', map { sprintf('0x%02X', ord($_)) } split //, $seq));
             
             $self->handle_escape_sequence($seq, \$input, \$cursor_pos, $prompt);
             next;
@@ -284,8 +284,8 @@ sub readline {
         if ($ord >= 32 || ($ord >= 128)) {
             # This is either ASCII printable or the start of a UTF-8 multi-byte sequence
             if (should_log('DEBUG')) {
-                print STDERR "[DEBUG][ReadLine] Inserting '$char' at cursor_pos=$cursor_pos, input_len=" . length($input) . "\n";
-                print STDERR "[DEBUG][ReadLine] Input before: '$input'\n";
+                log_debug('ReadLine', "Inserting '$char' at cursor_pos=$cursor_pos, input_len=" . length($input));
+                log_debug('ReadLine', "Input before: '$input'");
             }
             
             my $input_len = length($input);
@@ -295,7 +295,7 @@ sub readline {
             $cursor_pos += length($char);  # Increment by actual character length
             
             if (should_log('DEBUG')) {
-                print STDERR "[DEBUG][ReadLine] Input after: '$input', new cursor_pos=$cursor_pos\n";
+                log_debug('ReadLine', "Input after: '$input', new cursor_pos=$cursor_pos");
             }
             
             if ($inserting_at_end) {
@@ -377,7 +377,7 @@ sub handle_tab {
         
         $state->{candidates} = \@candidates;
         
-        print STDERR "[DEBUG][ReadLine] Found " . scalar(@candidates) . " candidates: @candidates\n" if $self->{debug};
+        log_debug('ReadLine', "Found " . scalar(@candidates) . " candidates: @candidates");
         
         # No candidates - beep or do nothing
         return unless @candidates;
@@ -438,7 +438,7 @@ Terminal.app can send different sequences depending on settings, so we handle mu
 sub handle_escape_sequence {
     my ($self, $seq, $input_ref, $cursor_pos_ref, $prompt) = @_;
     
-    print STDERR "[DEBUG][ReadLine] Escape sequence: " . join(' ', map { sprintf('%02X', ord($_)) } split //, $seq) . " = '$seq'\n" if should_log('DEBUG');
+    log_debug('ReadLine', "Escape sequence: " . join(' ', map { sprintf('%02X', ord($_)) } split //, $seq) . " = '$seq'");
     
     # Arrow keys: ESC [ A/B/C/D
     if ($seq =~ /^\e\[([ABCD])$/) {
@@ -730,9 +730,9 @@ sub reposition_cursor {
     my $new_col = ($new_total_pos % $term_width) + 1;
     
     if (should_log('DEBUG')) {
-        print STDERR "[DEBUG][ReadLine] reposition_cursor: old_pos=$$old_pos_ref, new_pos=$$new_pos_ref\n";
-        print STDERR "[DEBUG][ReadLine] reposition_cursor: old_total=$old_total_pos, new_total=$new_total_pos\n";
-        print STDERR "[DEBUG][ReadLine] reposition_cursor: from ($old_row,$old_col) to ($new_row,$new_col)\n";
+        log_debug('ReadLine', "reposition_cursor: old_pos=$$old_pos_ref, new_pos=$$new_pos_ref");
+        log_debug('ReadLine', "reposition_cursor: old_total=$old_total_pos, new_total=$new_total_pos");
+        log_debug('ReadLine', "reposition_cursor: from ($old_row,$old_col) to ($new_row,$new_col)");
     }
     
     # Currently at old position (old_row, old_col)
@@ -775,7 +775,7 @@ sub reposition_cursor {
     $self->{last_cursor_col} = $new_col;
     
     if (should_log('DEBUG')) {
-        print STDERR "[DEBUG][ReadLine] reposition_cursor: saved last_cursor=($new_row,$new_col)\n";
+        log_debug('ReadLine', "reposition_cursor: saved last_cursor=($new_row,$new_col)");
     }
 }
 
@@ -885,10 +885,10 @@ sub redraw_line {
     my $max_lines = $old_display_lines > $new_lines_needed ? $old_display_lines : $new_lines_needed;
     
     if (should_log('DEBUG')) {
-        print STDERR "[DEBUG][ReadLine] redraw_line: input_len=$input_len, prompt_len=$prompt_len, total_chars=$total_chars\n";
-        print STDERR "[DEBUG][ReadLine] redraw_line: term_width=$term_width, new_lines_needed=$new_lines_needed\n";
-        print STDERR "[DEBUG][ReadLine] redraw_line: old_display_lines=$old_display_lines, max_lines=$max_lines\n";
-        print STDERR "[DEBUG][ReadLine] redraw_line: last cursor was at row=$self->{last_cursor_row}, col=$self->{last_cursor_col}\n";
+        log_debug('ReadLine', "redraw_line: input_len=$input_len, prompt_len=$prompt_len, total_chars=$total_chars");
+        log_debug('ReadLine', "redraw_line: term_width=$term_width, new_lines_needed=$new_lines_needed");
+        log_debug('ReadLine', "redraw_line: old_display_lines=$old_display_lines, max_lines=$max_lines");
+        log_debug('ReadLine', "redraw_line: last cursor was at row=$self->{last_cursor_row}, col=$self->{last_cursor_col}");
     }
     
     # Move to column 1 of current line
@@ -937,8 +937,8 @@ sub redraw_line {
     }
     
     if (should_log('DEBUG')) {
-        print STDERR "[DEBUG][ReadLine] redraw_line: end position: row=$end_row, col=$end_col\n";
-        print STDERR "[DEBUG][ReadLine] redraw_line: desired cursor: row=$desired_row, col=$desired_col\n";
+        log_debug('ReadLine', "redraw_line: end position: row=$end_row, col=$end_col");
+        log_debug('ReadLine', "redraw_line: desired cursor: row=$desired_row, col=$desired_col");
     }
     
     # Only reposition if we're not already at the correct position

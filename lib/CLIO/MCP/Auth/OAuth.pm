@@ -36,7 +36,7 @@ use CLIO::Util::JSON qw(encode_json decode_json);
 use MIME::Base64;
 use Digest::SHA qw(sha256);
 use File::Spec;
-use CLIO::Core::Logger qw(should_log log_debug);
+use CLIO::Core::Logger qw(should_log log_debug log_error);
 
 sub new {
     my ($class, %args) = @_;
@@ -175,8 +175,7 @@ sub _token_request {
         content => $body,
     });
     unless ($r->{success}) {
-        print STDERR '[ERROR][MCP:OAuth] Token request failed: ' . $r->{status} . ' ' . $r->{reason} . "
-" if should_log('ERROR');
+        log_error('OAuth', 'Token request failed: ' . $r->{status} . ' ' . $r->{reason});
         return undef;
     }
     my $d = eval { decode_json($r->{content}) };

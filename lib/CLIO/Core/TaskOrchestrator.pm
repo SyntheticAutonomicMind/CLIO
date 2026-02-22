@@ -7,7 +7,7 @@ binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use CLIO::Util::JSON qw(encode_json decode_json);
 use Time::HiRes qw(time);
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug);
 
 =head1 NAME
 
@@ -111,7 +111,7 @@ sub new {
 sub analyze_and_decompose_task {
     my ($self, $user_input, $context) = @_;
     
-    print STDERR "[ORCHESTRATOR] Analyzing complex task: $user_input\n" if $self->{debug};
+    log_debug('TaskOrchestrator', "Analyzing complex task: $user_input");
     
     my $task_analysis = {
         original_input => $user_input,
@@ -136,9 +136,7 @@ sub analyze_and_decompose_task {
     # Calculate dependencies between protocols
     $task_analysis->{dependencies} = $self->_calculate_protocol_dependencies($protocol_chain);
     
-    print STDERR "[DEBUG][TaskOrchestrator] Task analysis complete: " . 
-                 scalar(@{$task_analysis->{execution_plan}}) . " protocols identified\n" 
-        if should_log('DEBUG');
+    log_debug('TaskOrchestrator', "Task analysis complete: " . scalar(@{$task_analysis->{execution_plan}}) . " protocols identified");
     
     return $task_analysis;
 }
@@ -157,7 +155,7 @@ sub execute_complex_task {
         performance_metrics => {}
     };
     
-    print STDERR "[ORCHESTRATOR] Starting complex task execution (Task ID: $execution_result->{task_id})\n" if $self->{debug};
+    log_debug('TaskOrchestrator', "Starting complex task execution (Task ID: $execution_result->{task_id})");
     
     # Initialize context stack for MCP compliance
     $self->_push_context($context, $task_analysis);
@@ -202,7 +200,7 @@ sub execute_complex_task {
             error => $@,
             timestamp => time()
         };
-        print STDERR "[ORCHESTRATOR] Task execution failed: $@\n" if $self->{debug};
+        log_debug('TaskOrchestrator', "Task execution failed: $@");
     }
     
     $execution_result->{end_time} = time();
@@ -214,9 +212,7 @@ sub execute_complex_task {
     # Log execution for analysis
     push @{$self->{execution_log}}, $execution_result;
     
-    print STDERR "[DEBUG][TaskOrchestrator] Task execution complete: $execution_result->{status} " . 
-                 "(Duration: " . sprintf("%.2f", $execution_result->{total_duration}) . "s)\n" 
-        if should_log('DEBUG');
+    log_debug('TaskOrchestrator', "Task execution complete: $execution_result->{status} " . "(Duration: " . sprintf("%.2f", $execution_result->{total_duration}) . "s)");
     
     return $execution_result;
 }
@@ -454,7 +450,7 @@ sub _execute_protocol_step {
     my $protocol = $step->{protocol};
     my $start_time = time();
     
-    print STDERR "[ORCHESTRATOR] Executing protocol: $protocol\n" if $self->{debug};
+    log_debug('TaskOrchestrator', "Executing protocol: $protocol");
     
     # Prepare protocol context from execution context
     my $protocol_context = $self->_prepare_protocol_context($step, $execution_context);
@@ -486,9 +482,7 @@ sub _execute_protocol_step {
     
     $result->{execution_time} = time() - $start_time;
     
-    print STDERR "[DEBUG][TaskOrchestrator] Protocol $protocol completed in " . 
-                 sprintf("%.3f", $result->{execution_time}) . "s\n" 
-        if should_log('DEBUG');
+    log_debug('TaskOrchestrator', "Protocol $protocol completed in " . sprintf("%.3f", $result->{execution_time}) . "s");
     
     return $result;
 }

@@ -155,7 +155,7 @@ sub write {
         return (0, "Failed to save todos: $@");
     }
     
-    print STDERR "[DEBUG][TodoStore] Wrote " . scalar(@$todos) . " todos for session $self->{session_id}\n" if $self->{debug};
+    log_debug('TodoStore', "Wrote " . scalar(@$todos) . " todos for session $self->{session_id}");
     return (1, undef);
 }
 
@@ -301,7 +301,7 @@ sub add {
         return (0, "Failed to save todos: $@");
     }
     
-    print STDERR "[DEBUG][TodoStore] Added " . scalar(@$new_todos) . " new todos\n" if $self->{debug};
+    log_debug('TodoStore', "Added " . scalar(@$new_todos) . " new todos");
     return (1, undef);
 }
 

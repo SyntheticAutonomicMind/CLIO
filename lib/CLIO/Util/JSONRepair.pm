@@ -3,6 +3,7 @@ package CLIO::Util::JSONRepair;
 use strict;
 use warnings;
 use utf8;
+use CLIO::Core::Logger qw(log_debug);
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 
@@ -62,7 +63,7 @@ sub repair_malformed_json {
 
     # Strip embedded XML parameter tags
     if ($json_str =~ /<\/?parameter/) {
-        print STDERR "[DEBUG][JSONRepair] Cleaning embedded XML tags\n" if $debug;
+        log_debug('JSONRepair', "Cleaning embedded XML tags");
 
         # Remove closing tags
         $json_str =~ s/<\/parameter>//g;
@@ -81,7 +82,7 @@ sub repair_malformed_json {
             }
         }
 
-        print STDERR "[DEBUG][JSONRepair] After cleanup: " . substr($json_str, 0, 200) . "\n" if $debug;
+        log_debug('JSONRepair', "After cleanup: " . substr($json_str, 0, 200)) if $debug;
     }
     
     # Strip XML-like garbage appended after valid JSON
@@ -91,16 +92,14 @@ sub repair_malformed_json {
     if ($json_str =~ m/^(\{.*\}|\[.*\])(<\/\w+>|":\s*"")/) {
         my $clean_json = $1;
         my $garbage = substr($json_str, length($clean_json));
-        print STDERR "[DEBUG][JSONRepair] Stripped XML garbage after valid JSON: " . substr($garbage, 0, 50) . "...\n"
-            if $debug;
+        log_debug('JSONRepair', "Stripped XML garbage after valid JSON: " . substr($garbage, 0, 50) . "...") if $debug;
         $json_str = $clean_json;
     }
     
     # Check if this is Anthropic/Claude XML parameter format: <parameter name="...">value</parameter>
     # This happens when the model uses XML-style tool calling instead of JSON
     if ($json_str =~ /<parameter|<\/parameter>/) {
-        print STDERR "[DEBUG][JSONRepair] Detected XML parameter format, converting to JSON\n"
-            if $debug;
+        log_debug('JSONRepair', "Detected XML parameter format, converting to JSON");
         
         # Extract parameters from XML format
         my %params;
@@ -125,8 +124,7 @@ sub repair_malformed_json {
         if (%params) {
             require JSON::PP;
             $json_str = encode_json(\%params);
-            print STDERR "[DEBUG][JSONRepair] Converted XML to JSON: $json_str\n"
-                if $debug;
+            log_debug('JSONRepair', "Converted XML to JSON: $json_str");
             return $json_str;
         }
     }
@@ -165,9 +163,9 @@ sub repair_malformed_json {
     $json_str =~ s/"\s*,\s*"/","/g;  # Normalize quote-comma-quote spacing
     
     if ($json_str ne $original && $debug) {
-        print STDERR "[DEBUG][JSONRepair] Repaired malformed JSON\n";
+        log_debug('JSONRepair', "Repaired malformed JSON");
         my $details = $original ne $json_str ? " (made changes)" : " (no changes)";
-        print STDERR "[DEBUG][JSONRepair] Repair result$details\n";
+        log_debug('JSONRepair', "Repair result$details");
     }
     
     return $json_str;

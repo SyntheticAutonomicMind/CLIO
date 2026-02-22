@@ -6,7 +6,7 @@ use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use Carp qw(croak);
-use CLIO::Core::Logger qw(should_log log_debug log_error);
+use CLIO::Core::Logger qw(should_log log_debug log_error log_warning);
 use CLIO::Util::ConfigPath qw(get_config_dir);
 use CLIO::Providers qw(get_provider list_providers provider_exists);
 use CLIO::Util::JSON qw(encode_json decode_json);
@@ -131,11 +131,11 @@ sub load {
             }
             
             log_debug('Config', "Loaded user config from $self->{config_file}");
-            print STDERR "[DEBUG][Config] User-set keys: " . join(', ', sort keys %{$self->{user_set}}) . "\n" if should_log('DEBUG') && %{$self->{user_set}};
+            log_debug('Config', "User-set keys: " . join(', ', sort keys %{$self->{user_set}}));
         };
         
         if ($@) {
-            print STDERR "[WARN]Config] Failed to load config file: $@\n";
+            log_warning('Config', "Failed to load config file: $@");
         }
     } else {
         log_debug('Config', "No config file found at $self->{config_file}");
@@ -169,7 +169,7 @@ sub load {
                 log_debug('Config', "Using model from provider '$config{provider}': $config{model}");
             }
         } else {
-            print STDERR "[WARN]Config] Unknown provider '$config{provider}', using defaults\n" if should_log('WARNING');
+            log_warning('Config', "Unknown provider '$config{provider}', using defaults");
         }
     } else {
         # No provider set - use openai defaults
@@ -213,7 +213,7 @@ sub save {
     
     # Log what we're saving
     if (should_log('DEBUG')) {
-        print STDERR "[DEBUG][Config] Saving user-set values: " . join(', ', sort keys %config_to_save) . "\n";
+        log_debug('Config', "Saving user-set values: " . join(', ', sort keys %config_to_save));
     }
     
     # Save config
@@ -283,7 +283,7 @@ sub set_provider {
     # Check if provider exists in Providers.pm
     unless (provider_exists($provider)) {
         log_error('Config', "Unknown provider: $provider");
-        print STDERR "[ERROR][Config] Available providers: " . join(', ', list_providers()) . "\n" if should_log('ERROR');
+        log_error('Config', "Available providers: " . join(', ', list_providers()));
         return 0;
     }
     
@@ -516,8 +516,7 @@ sub _get_copilot_user_api_endpoint {
         }
     };
     if ($@) {
-        print STDERR "[DEBUG][Config] Could not get user-specific Copilot endpoint: $@\n"
-            if should_log('DEBUG');
+        log_debug('Config', "Could not get user-specific Copilot endpoint: $@");
     }
     
     return $endpoint;
