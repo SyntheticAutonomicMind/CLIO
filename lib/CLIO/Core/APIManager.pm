@@ -2063,7 +2063,11 @@ sub send_request {
     }
     
     # Validate and truncate messages against model token limits (pass tools for accurate budget)
-    $messages = $self->validate_and_truncate_messages($messages, $model, $opts{tools});
+    # Use full model name (with CLIO provider prefix) so get_model_capabilities correctly
+    # identifies the provider. Without this, model names like 'deepseek/deepseek-r1' (from
+    # OpenRouter) get misinterpreted as 'deepseek' provider + 'deepseek-r1' model.
+    my $full_model_for_caps = $self->get_current_model();
+    $messages = $self->validate_and_truncate_messages($messages, $full_model_for_caps, $opts{tools});
     
     # Build request payload (non-streaming)
     my $payload = $self->_build_payload($messages, $model, $endpoint_config, %opts, stream => 0);
@@ -2545,7 +2549,11 @@ sub send_request_streaming {
     }
     
     # Validate and truncate messages against model token limits (pass tools for accurate budget)
-    $messages = $self->validate_and_truncate_messages($messages, $model, $opts{tools});
+    # Use full model name (with CLIO provider prefix) so get_model_capabilities correctly
+    # identifies the provider. Without this, model names like 'deepseek/deepseek-r1' (from
+    # OpenRouter) get misinterpreted as 'deepseek' provider + 'deepseek-r1' model.
+    my $full_model_for_caps = $self->get_current_model();
+    $messages = $self->validate_and_truncate_messages($messages, $full_model_for_caps, $opts{tools});
     
     # Build request payload (streaming enabled)
     my $payload = $self->_build_payload($messages, $model, $endpoint_config, %opts, stream => 1);

@@ -1181,11 +1181,11 @@ sub display_header {
     my $display_model = $model;
     require CLIO::Providers;
     if ($display_model =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i && CLIO::Providers::provider_exists($1)) {
+        my $model_provider = $1;
         $display_model = $2;
-        # Also update provider_display from the model prefix if provider wasn't set
-        unless ($provider) {
-            $provider_display = $provider_names{$1} || ucfirst($1);
-        }
+        # Always update provider_display from the model prefix for cross-provider routing
+        # e.g., "openrouter/deepseek/deepseek-r1" shows "@OpenRouter" not "@GitHub Copilot"
+        $provider_display = $provider_names{$model_provider} || ucfirst($model_provider);
     }
     my $model_with_provider = "$display_model\@$provider_display";
     
