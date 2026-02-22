@@ -210,6 +210,141 @@ sub set_session {
     return 1;
 }
 
+=head2 refresh_api_key
+
+Re-fetch the API key from the auth system. Called when:
+- Token appears expired (401/403 from API)
+- Copilot session token needs rotation (~30 min TTL)
+- GitHub token has been re-authenticated
+
+Returns: 1 if key was refreshed successfully, 0 if no new key available.
+
+=cut
+
+sub refresh_api_key {
+    my ($self) = @_;
+    
+    my $old_key = $self->{api_key} || '';
+    my $old_key_prefix = substr($old_key, 0, 10) . '...';
+    
+    print STDERR "[INFO][APIManager] Refreshing API key (current: $old_key_prefix)\n" if should_log('INFO');
+    
+    my $new_key = $self->_get_api_key();
+    
+    if ($new_key && $new_key ne $old_key) {
+        $self->{api_key} = $new_key;
+        my $new_key_prefix = substr($new_key, 0, 10) . '...';
+        print STDERR "[INFO][APIManager] API key refreshed successfully ($old_key_prefix -> $new_key_prefix)\n" if should_log('INFO');
+        return 1;
+    }
+    
+    if ($new_key) {
+        # Same key returned - no change needed but still valid
+        print STDERR "[DEBUG][APIManager] API key unchanged after refresh\n" if should_log('DEBUG');
+        return 1;
+    }
+    
+    # No key available at all
+    print STDERR "[WARN][APIManager] API key refresh failed - no key available\n" if should_log('WARNING');
+    return 0;
+}
+
+=head2 set_reauth_callback($callback)
+
+Set a callback function that will be called when automatic re-authentication
+is needed (e.g., GitHub token expired/revoked). The callback should initiate
+the login flow and return 1 on success, 0 on failure.
+
+Arguments:
+- $callback: Code reference that handles re-authentication
+
+=cut
+
+sub set_reauth_callback {
+    my ($self, $callback) = @_;
+    $self->{reauth_callback} = $callback;
+}
+
+=head2 _attempt_token_recovery
+
+Attempt to recover from an authentication failure:
+1. Try refreshing the Copilot session token
+2. Try force-refreshing via GitHubAuth
+3. If all else fails, invoke the reauth callback (interactive login)
+
+Returns: 1 if recovery succeeded, 0 if failed.
+
+=cut
+
+sub _attempt_token_recovery {
+    my ($self) = @_;
+    
+    # Prevent re-entrant recovery attempts
+    return 0 if $self->{_recovering_token};
+    $self->{_recovering_token} = 1;
+    
+    print STDERR "[INFO][APIManager] Attempting token recovery after auth failure\n" if should_log('INFO');
+    
+    # Step 1: Try a simple refresh (re-exchange existing GitHub token)
+    if ($self->{api_base} && $self->{api_base} =~ /githubcopilot\.com/) {
+        my $step1_success = 0;
+        eval {
+            require CLIO::Core::GitHubAuth;
+            my $auth = CLIO::Core::GitHubAuth->new(debug => $self->{debug});
+            
+            my $fresh_token = $auth->force_refresh_copilot_token();
+            if ($fresh_token) {
+                $self->{api_key} = $fresh_token;
+                $self->{using_exchanged_token} = $auth->{using_exchanged_token} || 0;
+                print STDERR "[INFO][APIManager] Token recovery succeeded via Copilot refresh\n" if should_log('INFO');
+                $step1_success = 1;
+            }
+        };
+        if ($step1_success) {
+            $self->{_recovering_token} = 0;
+            return 1;
+        }
+        # If force refresh failed, the GitHub token itself may be invalid
+        if ($@) {
+            print STDERR "[WARN][APIManager] Copilot refresh failed: $@\n" if should_log('WARNING');
+        }
+        
+        # Step 2: Validate the underlying GitHub token and try re-auth
+        my $step2_success = 0;
+        eval {
+            require CLIO::Core::GitHubAuth;
+            my $auth = CLIO::Core::GitHubAuth->new(debug => $self->{debug});
+            my $validation = $auth->validate_github_token();
+            
+            if (!$validation->{valid}) {
+                print STDERR "[WARN][APIManager] GitHub token invalid: $validation->{error}\n" if should_log('WARNING');
+                
+                # GitHub token is bad - need full re-authentication
+                if ($self->{reauth_callback}) {
+                    print STDERR "[INFO][APIManager] Invoking re-authentication callback\n" if should_log('INFO');
+                    my $result = eval { $self->{reauth_callback}->() };
+                    if ($result) {
+                        # Callback succeeded - refresh our key
+                        $self->{api_key} = $self->_get_api_key();
+                        print STDERR "[INFO][APIManager] Token recovery succeeded via re-authentication\n" if should_log('INFO');
+                        $step2_success = 1;
+                    }
+                }
+            }
+        };
+        if ($step2_success) {
+            $self->{_recovering_token} = 0;
+            return 1;
+        }
+    }
+    
+    # Step 3: Last resort - try generic key refresh
+    my $refreshed = $self->refresh_api_key();
+    $self->{_recovering_token} = 0;
+    
+    return $refreshed ? 1 : 0;
+}
+
 =head2 _get_api_key
 
 Get API key with priority: GitHub Copilot token > Config api_key
@@ -1698,6 +1833,31 @@ sub _handle_error_response {
             $retry_after
         );
         $error = $retry_info;
+    }
+    # Handle authentication failures (401, 403) - attempt automatic token recovery
+    elsif ($status == 401 || $status == 403) {
+        # Token may have expired (Copilot session tokens expire ~30 min)
+        # or been revoked. Try automatic recovery before failing.
+        print STDERR "[INFO][APIManager] Authentication error ($status), attempting token recovery\n" if should_log('INFO');
+        
+        my $recovered = $self->_attempt_token_recovery();
+        
+        if ($recovered) {
+            # Token was refreshed - mark as retryable so we retry the request
+            $is_retryable_error = 1;
+            $retryable = 1;
+            $retry_after = 1;  # Quick retry with new token
+            $error_type = 'auth_recovered';
+            
+            $retry_info = "Authentication token refreshed. Retrying request...";
+            $error = $retry_info;
+        } else {
+            # Recovery failed - this is a fatal auth error
+            # Provide helpful message about re-authentication
+            $error = "Authentication failed (HTTP $status). Your token may have expired or been revoked. "
+                   . "Please run /api logout then /api login to re-authenticate.";
+            $error_type = 'auth_failed';
+        }
     }
     # Handle transient server errors (502, 503) - these can be retried with exponential backoff
     elsif ($status == 502 || $status == 503) {

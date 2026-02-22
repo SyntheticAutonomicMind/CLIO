@@ -629,6 +629,78 @@ my $ui = CLIO::UI::Chat->new(
 # Set UI on ai_agent so orchestrator can access it for collaboration
 $ai_agent->set_ui($ui) if $ai_agent;
 
+# Wire up automatic re-authentication callback on APIManager
+# When token expires/is revoked, this triggers the interactive login flow
+if ($api && $api->can('set_reauth_callback')) {
+    $api->set_reauth_callback(sub {
+        print STDERR "[INFO] Token expired/revoked, triggering re-authentication\n" if should_log('INFO');
+        
+        # Display message to user
+        if ($ui && $ui->can('display_system_message')) {
+            $ui->display_system_message("Authentication token expired. Re-authenticating...");
+        }
+        
+        # Run the login flow
+        eval {
+            require CLIO::Core::GitHubAuth;
+            my $auth = CLIO::Core::GitHubAuth->new(debug => $debug);
+            
+            # Start device flow
+            my $device_data = $auth->start_device_flow();
+            
+            if ($ui && $ui->can('display_system_message') && $ui->can('writeline')) {
+                $ui->writeline("", markdown => 0);
+                $ui->display_system_message("Your session token has expired. Please re-authorize:");
+                $ui->writeline("  Visit: " . ($device_data->{verification_uri} || 'https://github.com/login/device'), markdown => 0);
+                $ui->writeline("  Code:  " . ($device_data->{user_code} || '(unknown)'), markdown => 0);
+                $ui->writeline("", markdown => 0);
+                $ui->display_system_message("Waiting for authorization...");
+            } else {
+                print "\n[SYSTEM] Token expired. Please re-authorize:\n";
+                print "  Visit: " . ($device_data->{verification_uri} || 'https://github.com/login/device') . "\n";
+                print "  Code:  " . ($device_data->{user_code} || '(unknown)') . "\n";
+                print "[SYSTEM] Waiting for authorization...\n";
+            }
+            
+            # Poll for token
+            my $github_token = $auth->poll_for_token(
+                $device_data->{device_code},
+                $device_data->{interval}
+            );
+            
+            unless ($github_token) {
+                if ($ui && $ui->can('display_error_message')) {
+                    $ui->display_error_message("Re-authentication timed out");
+                }
+                return 0;
+            }
+            
+            # Exchange for Copilot token
+            my $copilot_token = $auth->exchange_for_copilot_token($github_token);
+            
+            # Save tokens
+            $auth->save_tokens($github_token, $copilot_token);
+            
+            if ($ui && $ui->can('display_system_message')) {
+                my $username = ($copilot_token && $copilot_token->{username}) || 'unknown';
+                $ui->display_system_message("Re-authenticated successfully as: $username");
+            }
+            
+            return 1;
+        };
+        
+        if ($@) {
+            print STDERR "[ERROR] Re-authentication failed: $@\n" if should_log('ERROR');
+            if ($ui && $ui->can('display_error_message')) {
+                $ui->display_error_message("Re-authentication failed: $@");
+            }
+            return 0;
+        }
+        
+        return 1;
+    });
+}
+
 # Display repair notification if session history was cleaned up on resume
 # This provides user-friendly feedback instead of raw debug warnings
 if ($session && $session->can('state') && $session->state()) {
