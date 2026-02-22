@@ -22,6 +22,7 @@ use CLIO::UI::Commands::Prompt;
 use CLIO::UI::Commands::Project;
 use CLIO::UI::Commands::Device;
 use CLIO::UI::Commands::SubAgent;
+use CLIO::UI::Commands::Stats;
 
 =head1 NAME
 
@@ -190,6 +191,12 @@ sub new {
     
     $self->{subagent_cmd} = CLIO::UI::Commands::SubAgent->new(
         chat => $self->{chat},
+        debug => $self->{debug},
+    );
+    
+    $self->{stats_cmd} = CLIO::UI::Commands::Stats->new(
+        chat => $self->{chat},
+        session => $self->{session},
         debug => $self->{debug},
     );
     
@@ -431,6 +438,9 @@ sub handle_command {
     }
     elsif ($cmd eq 'mcp') {
         $self->handle_mcp_command(@args);
+    }
+    elsif ($cmd eq 'stats') {
+        $self->{stats_cmd}->handle_stats_command(@args);
     }
     else {
         $chat->display_error_message("Unknown command: /$cmd (type /help for help)");
