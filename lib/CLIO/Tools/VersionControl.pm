@@ -6,6 +6,7 @@ package CLIO::Tools::VersionControl;
 use strict;
 use warnings;
 use utf8;
+use CLIO::Core::Logger qw(log_info);
 use Carp qw(croak confess);
 use parent 'CLIO::Tools::Tool';
 use Cwd 'getcwd';
@@ -298,12 +299,12 @@ sub commit {
     # Multi-agent coordination: Request git lock via broker
     my $lock_acquired = 0;
     if ($context->{broker_client}) {
-        print STDERR "[INFO][VersionControl] Requesting git lock via broker\n" if should_log('INFO');
+        log_info('VersionControl', "Requesting git lock via broker");
         eval {
             my $lock_result = $context->{broker_client}->request_git_lock();
             if ($lock_result) {
                 $lock_acquired = 1;
-                print STDERR "[INFO][VersionControl] Git lock acquired\n" if should_log('INFO');
+                log_info('VersionControl', "Git lock acquired");
             } else {
                 return $self->error_result(
                     "Git is locked by another agent.\n" .
@@ -342,7 +343,7 @@ sub commit {
     if ($lock_acquired && $context->{broker_client}) {
         eval {
             $context->{broker_client}->release_git_lock();
-            print STDERR "[INFO][VersionControl] Git lock released\n" if should_log('INFO');
+            log_info('VersionControl', "Git lock released");
         };
         if ($@) {
             print STDERR "[WARN][VersionControl] Failed to release git lock: $@\n" if should_log('WARN');

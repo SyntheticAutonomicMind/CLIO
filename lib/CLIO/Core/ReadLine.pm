@@ -3,7 +3,7 @@ package CLIO::Core::ReadLine;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug log_warning);
 
 # Ensure STDOUT is autoflushed for immediate terminal response
 $| = 1;
@@ -103,7 +103,7 @@ sub readline {
         
         my $ord = ord($char);
         
-        print STDERR "[DEBUG][ReadLine] char='$char' ord=$ord pos=$cursor_pos input='$input'\n" if should_log('DEBUG');
+        log_debug('ReadLine', "char='$char' ord=$ord pos=$cursor_pos input='$input'");
         
         # Tab key (completion)
         if ($ord == 9) {
@@ -343,7 +343,7 @@ sub handle_tab {
     
     my $current_input = $$input_ref;
     
-    print STDERR "[DEBUG][ReadLine] Tab pressed, input='$current_input'\n" if should_log('DEBUG');
+    log_debug('ReadLine', "Tab pressed, input='$current_input'");
     
     # First tab - initialize completion
     unless ($state->{active}) {
@@ -358,7 +358,7 @@ sub handle_tab {
         if ($current_input =~ m{^(/edit\s+)(.*)$}) {
             $prefix = $1;
             $completion_text = $2;
-            print STDERR "[DEBUG][ReadLine] /edit detected, completing: '$completion_text'\n" if should_log('DEBUG');
+            log_debug('ReadLine', "/edit detected, completing: '$completion_text'");
         }
         
         # Get completion candidates
@@ -386,7 +386,7 @@ sub handle_tab {
             $$cursor_pos_ref = length($$input_ref);
             $self->redraw_line($input_ref, $cursor_pos_ref, $self->{prompt});
             $state->{active} = 0;  # Done
-            print STDERR "[DEBUG][ReadLine] Single match, completed to: '$$input_ref'\n" if should_log('DEBUG');
+            log_debug('ReadLine', "Single match, completed to: '$$input_ref'");
             return;
         }
         
@@ -394,7 +394,7 @@ sub handle_tab {
         $$input_ref = $candidates[0];
         $$cursor_pos_ref = length($$input_ref);
         $self->redraw_line($input_ref, $cursor_pos_ref, $self->{prompt});
-        print STDERR "[DEBUG][ReadLine] Multiple matches, showing first: '$$input_ref'\n" if should_log('DEBUG');
+        log_debug('ReadLine', "Multiple matches, showing first: '$$input_ref'");
         
     } else {
         # Subsequent tabs - cycle through candidates
@@ -405,10 +405,10 @@ sub handle_tab {
             # Back to original
             $state->{index} = -1;
             $$input_ref = $state->{original_input};
-            print STDERR "[DEBUG][ReadLine] Wrapped to original\n" if should_log('DEBUG');
+            log_debug('ReadLine', "Wrapped to original");
         } else {
             $$input_ref = $state->{candidates}->[$state->{index}];
-            print STDERR "[DEBUG][ReadLine] Cycling to: '$$input_ref'\n" if should_log('DEBUG');
+            log_debug('ReadLine', "Cycling to: '$$input_ref'");
         }
         
         $$cursor_pos_ref = length($$input_ref);
@@ -636,7 +636,7 @@ sub history_prev {
     
     # Safety: bounds check before array access
     if ($self->{history_pos} < 0 || $self->{history_pos} >= scalar(@{$self->{history}})) {
-        print STDERR "[WARN][ReadLine] History position out of bounds: $self->{history_pos}\n";
+        log_warning('ReadLine', "History position out of bounds: $self->{history_pos}");
         $self->{history_pos} = -1;
         return;
     }
@@ -669,7 +669,7 @@ sub history_next {
     } else {
         # Safety: bounds check before array access
         if ($self->{history_pos} < 0 || $self->{history_pos} >= scalar(@{$self->{history}})) {
-            print STDERR "[WARN][ReadLine] History position out of bounds: $self->{history_pos}\n";
+            log_warning('ReadLine', "History position out of bounds: $self->{history_pos}");
             $$input_ref = $self->{current_input} // '';
             $self->{history_pos} = -1;
         } else {
@@ -801,10 +801,10 @@ sub redraw_line {
     # Safety: clamp cursor position to valid range (0 to length of input)
     my $input_len = length($$input_ref);
     if ($$cursor_pos_ref < 0) {
-        print STDERR "[WARN][ReadLine] Cursor position was negative ($$cursor_pos_ref), clamping to 0\n";
+        log_warning('ReadLine', "Cursor position was negative ($$cursor_pos_ref), clamping to 0");
         $$cursor_pos_ref = 0;
     } elsif ($$cursor_pos_ref > $input_len) {
-        print STDERR "[WARN][ReadLine] Cursor position exceeded input length ($$cursor_pos_ref > $input_len), clamping to $input_len\n";
+        log_warning('ReadLine', "Cursor position exceeded input length ($$cursor_pos_ref > $input_len), clamping to $input_len");
         $$cursor_pos_ref = $input_len;
     }
     

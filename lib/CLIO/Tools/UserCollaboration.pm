@@ -6,7 +6,7 @@ package CLIO::Tools::UserCollaboration;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug log_error log_info);
 use parent 'CLIO::Tools::Tool';
 use feature 'say';
 
@@ -176,12 +176,12 @@ sub request_input {
     my $message = $params->{message};
     my $user_context = $params->{context} || '';
     
-    print STDERR "[DEBUG][UserCollaboration] Requesting user input\n" if should_log('DEBUG');
-    print STDERR "[DEBUG][UserCollaboration] Message: $message\n" if should_log('DEBUG');
+    log_debug('UserCollaboration', "Requesting user input");
+    log_debug('UserCollaboration', "Message: $message");
     
     # === SUB-AGENT MODE: Route to broker instead of interactive UI ===
     if ($context->{broker_client}) {
-        print STDERR "[DEBUG][UserCollaboration] Sub-agent mode detected - routing to broker\n" if should_log('DEBUG');
+        log_debug('UserCollaboration', "Sub-agent mode detected - routing to broker");
         return $self->_request_via_broker($params, $context);
     }
     
@@ -208,9 +208,9 @@ sub request_input {
     }
     
     if ($spinner && $spinner->can('stop')) {
-        print STDERR "[DEBUG][UserCollaboration] Stopping busy spinner before collaboration prompt\n" if should_log('DEBUG');
+        log_debug('UserCollaboration', "Stopping busy spinner before collaboration prompt");
         $spinner->stop();
-        print STDERR "[DEBUG][UserCollaboration] Spinner stopped successfully\n" if should_log('DEBUG');
+        log_debug('UserCollaboration', "Spinner stopped successfully");
     } elsif (should_log('DEBUG')) {
         print STDERR "[DEBUG][UserCollaboration] Spinner not available or not running - skipping stop\n";
     }
@@ -243,7 +243,7 @@ sub request_input {
         };
     }
     
-    print STDERR "[DEBUG][UserCollaboration] User responded: $user_response\n" if should_log('DEBUG');
+    log_debug('UserCollaboration', "User responded: $user_response");
     
     # Store collaboration in session history
     if ($context->{session}) {
@@ -295,7 +295,7 @@ sub _request_via_broker {
     my $message = $params->{message};
     my $user_context = $params->{context} || '';
     
-    print STDERR "[DEBUG][UserCollaboration] Sending question to broker for user\n" if should_log('DEBUG');
+    log_debug('UserCollaboration', "Sending question to broker for user");
     
     # Build full message with context
     my $full_message = $message;
@@ -310,14 +310,14 @@ sub _request_via_broker {
     );
     
     unless ($msg_id) {
-        print STDERR "[ERROR][UserCollaboration] Failed to send question to broker\n" if should_log('ERROR');
+        log_error('UserCollaboration', "Failed to send question to broker");
         return {
             success => 0,
             error => "Failed to send question to broker"
         };
     }
     
-    print STDERR "[DEBUG][UserCollaboration] Question sent (id: $msg_id), polling for response...\n" if should_log('DEBUG');
+    log_debug('UserCollaboration', "Question sent (id: $msg_id), polling for response...");
     
     # Poll for response with timeout
     my $timeout = 300;  # 5 minutes max wait
@@ -337,7 +337,7 @@ sub _request_via_broker {
             # Accept clarification or guidance as response
             if ($type eq 'clarification' || $type eq 'guidance' || $type eq 'response') {
                 $response = ref($msg->{content}) ? $msg->{content} : $msg->{content};
-                print STDERR "[INFO][UserCollaboration] Received response: $response\n" if should_log('INFO');
+                log_info('UserCollaboration', "Received response: $response");
                 last;
             }
             

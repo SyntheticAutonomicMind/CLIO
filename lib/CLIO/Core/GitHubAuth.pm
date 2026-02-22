@@ -3,7 +3,7 @@ package CLIO::Core::GitHubAuth;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug log_error log_info log_warning);
 use CLIO::Util::ConfigPath qw(get_config_file get_config_dir);
 use CLIO::Util::JSON qw(encode_json decode_json);
 use CLIO::Compat::HTTP;
@@ -94,7 +94,7 @@ Returns hashref with:
 sub start_device_flow {
     my ($self) = @_;
     
-    print STDERR "[INFO][GitHubAuth] Starting GitHub device authorization flow\n" if should_log('INFO');
+    log_info('GitHubAuth', "Starting GitHub device authorization flow");
     
     my $url = 'https://github.com/login/device/code';
     
@@ -114,13 +114,13 @@ sub start_device_flow {
     unless ($response->is_success) {
         my $status = $response->code;
         my $error = $response->decoded_content || 'Unknown error';
-        print STDERR "[ERROR][GitHubAuth] Device code request failed: HTTP $status - $error\n" if should_log('ERROR');
+        log_error('GitHubAuth', "Device code request failed: HTTP $status - $error");
         die "Device code request failed: HTTP $status";
     }
     
     my $data = decode_json($response->decoded_content);
     
-    print STDERR "[DEBUG][GitHubAuth] Device code obtained: $data->{user_code}\n" if should_log('DEBUG');
+    log_debug('GitHubAuth', "Device code obtained: $data->{user_code}");
     
     return {
         device_code => $data->{device_code},
@@ -154,7 +154,7 @@ sub poll_for_token {
     my $url = 'https://github.com/login/oauth/access_token';
     my $timeout = time() + 900;  # 15 minutes (GitHub device codes expire after 15 min)
     
-    print STDERR "[INFO][GitHubAuth] Polling for access token (15min timeout)...\n" if should_log('INFO');
+    log_info('GitHubAuth', "Polling for access token (15min timeout)...");
     
     # Track next poll time to avoid polling too fast
     my $next_poll_time = time();
@@ -201,7 +201,7 @@ sub poll_for_token {
             
             if ($error eq 'authorization_pending') {
                 # User hasn't authorized yet, keep polling
-                print STDERR "[DEBUG][GitHubAuth] Authorization pending...\n" if should_log('DEBUG');
+                log_debug('GitHubAuth', "Authorization pending...");
                 next;  # Will wait at top of loop
             }
             elsif ($error eq 'slow_down') {
@@ -214,33 +214,33 @@ sub poll_for_token {
             }
             elsif ($error eq 'expired_token') {
                 # Device code expired
-                print STDERR "[ERROR][GitHubAuth] Device code expired\n" if should_log('ERROR');
+                log_error('GitHubAuth', "Device code expired");
                 die "Device code expired. Please try again.";
             }
             elsif ($error eq 'access_denied') {
                 # User denied authorization
-                print STDERR "[ERROR][GitHubAuth] User denied authorization\n" if should_log('ERROR');
+                log_error('GitHubAuth', "User denied authorization");
                 die "Authorization denied by user";
             }
             else {
                 # Unknown error
-                print STDERR "[ERROR][GitHubAuth] Token poll error: $error\n" if should_log('ERROR');
+                log_error('GitHubAuth', "Token poll error: $error");
                 die "Token poll error: $error";
             }
         }
         
         # Success! We have the access token
         if ($data->{access_token}) {
-            print STDERR "[INFO][GitHubAuth] Access token obtained successfully\n" if should_log('INFO');
+            log_info('GitHubAuth', "Access token obtained successfully");
             return $data->{access_token};
         }
         
         # No error and no token - unusual, keep polling
-        print STDERR "[DEBUG][GitHubAuth] No error and no token in response, continuing...\n" if should_log('DEBUG');
+        log_debug('GitHubAuth', "No error and no token in response, continuing...");
     }
     
     # Timeout reached
-    print STDERR "[ERROR][GitHubAuth] Authorization timed out after 15 minutes\n" if should_log('ERROR');
+    log_error('GitHubAuth', "Authorization timed out after 15 minutes");
     die "Authorization timed out after 15 minutes. Please try again.";
 }
 
@@ -265,7 +265,7 @@ Returns: Hashref with Copilot token data, or undef if exchange unavailable:
 sub exchange_for_copilot_token {
     my ($self, $github_token) = @_;
     
-    print STDERR "[INFO][GitHubAuth] Exchanging GitHub token for Copilot token\n" if should_log('INFO');
+    log_info('GitHubAuth', "Exchanging GitHub token for Copilot token");
     
     my $url = 'https://api.github.com/copilot_internal/v2/token';
     
@@ -283,18 +283,18 @@ sub exchange_for_copilot_token {
         
         # 404 means endpoint not available - this is OK, we'll use GitHub token directly
         if ($status == 404) {
-            print STDERR "[INFO][GitHubAuth] Copilot token endpoint not available (404), will use GitHub token directly\n" if should_log('INFO');
+            log_info('GitHubAuth', "Copilot token endpoint not available (404), will use GitHub token directly");
             return undef;
         }
         
         # Other errors are real failures
-        print STDERR "[ERROR][GitHubAuth] Copilot token exchange failed: HTTP $status - $error\n" if should_log('ERROR');
+        log_error('GitHubAuth', "Copilot token exchange failed: HTTP $status - $error");
         die "Copilot token exchange failed: HTTP $status - $error";
     }
     
     my $data = decode_json($response->decoded_content);
     
-    print STDERR "[INFO][GitHubAuth] Copilot token obtained, expires in $data->{refresh_in}s\n" if should_log('INFO');
+    log_info('GitHubAuth', "Copilot token obtained, expires in $data->{refresh_in}s");
     
     return {
         token => $data->{token},
@@ -339,11 +339,11 @@ sub save_tokens {
         my $cache_file = CLIO::Core::ConfigPath::get_config_file('models_cache.json');
         if ($cache_file && -f $cache_file) {
             unlink $cache_file;
-            print STDERR "[DEBUG][GitHubAuth] Cleared models cache after token update\n" if should_log('DEBUG');
+            log_debug('GitHubAuth', "Cleared models cache after token update");
         }
     };
     
-    print STDERR "[DEBUG][GitHubAuth] Tokens saved to $self->{tokens_file}\n" if should_log('DEBUG');
+    log_debug('GitHubAuth', "Tokens saved to $self->{tokens_file}");
 }
 
 =head2 load_tokens
@@ -373,7 +373,7 @@ sub load_tokens {
         
         $data = decode_json($json);
         
-        print STDERR "[DEBUG][GitHubAuth] Tokens loaded from $self->{tokens_file}\n" if should_log('DEBUG');
+        log_debug('GitHubAuth', "Tokens loaded from $self->{tokens_file}");
     };
     
     if ($@) {
@@ -408,20 +408,20 @@ sub get_copilot_token {
         $pat = $config->get('github_pat');
     };
     if ($pat && $pat =~ /^(ghp_|ghu_|github_pat_)/) {
-        print STDERR "[DEBUG][GitHubAuth] Using PAT from config\n" if should_log('DEBUG');
+        log_debug('GitHubAuth', "Using PAT from config");
         
         # PAT/ghu_ tokens need to be exchanged for a copilot session token
         # This gives access to more models (37+ vs 31)
         my $exchanged = $self->exchange_for_copilot_token($pat);
         if ($exchanged && $exchanged->{token}) {
-            print STDERR "[DEBUG][GitHubAuth] Exchanged PAT for copilot token (full model access)\n" if should_log('DEBUG');
+            log_debug('GitHubAuth', "Exchanged PAT for copilot token (full model access)");
             # Store that we're using an exchanged token (requires Editor-Version header)
             $self->{using_exchanged_token} = 1;
             return $exchanged->{token};
         }
         
         # If exchange fails, return PAT directly (may have limited access)
-        print STDERR "[WARN][GitHubAuth] PAT exchange failed, using PAT directly\n" if should_log('WARNING');
+        log_warning('GitHubAuth', "PAT exchange failed, using PAT directly");
         return $pat;
     }
     # Ignore config errors, fall through to OAuth tokens
@@ -439,7 +439,7 @@ sub get_copilot_token {
         # Check if expired (with 5 minute buffer)
         my $now = time();
         if (($copilot->{expires_at} - 300) < $now) {
-            print STDERR "[INFO][GitHubAuth] Copilot token expired, refreshing...\n" if should_log('INFO');
+            log_info('GitHubAuth', "Copilot token expired, refreshing...");
             
             # Refresh by exchanging GitHub token again
             # NOTE: Do NOT use 'return' inside eval{} - it returns from eval, not the sub!
@@ -451,14 +451,14 @@ sub get_copilot_token {
                     $refreshed_token = $new_copilot->{token};
                 } else {
                     # Exchange failed (404), fall back to GitHub token
-                    print STDERR "[INFO][GitHubAuth] Copilot exchange unavailable, using GitHub token\n" if should_log('INFO');
+                    log_info('GitHubAuth', "Copilot exchange unavailable, using GitHub token");
                     $self->{using_exchanged_token} = 0;
                     $refreshed_token = $tokens->{github_token};
                 }
             };
             
             if ($@) {
-                print STDERR "[WARN][GitHubAuth] Token refresh failed: $@, using GitHub token\n" if should_log('WARNING');
+                log_warning('GitHubAuth', "Token refresh failed: $@, using GitHub token");
                 $self->{using_exchanged_token} = 0;
                 return $tokens->{github_token};
             }
@@ -471,17 +471,17 @@ sub get_copilot_token {
     
     # No Copilot token - try to exchange GitHub token first
     if ($tokens->{github_token}) {
-        print STDERR "[INFO][GitHubAuth] No Copilot token, attempting exchange...\n" if should_log('INFO');
+        log_info('GitHubAuth', "No Copilot token, attempting exchange...");
         my $exchanged = eval { $self->exchange_for_copilot_token($tokens->{github_token}) };
         if ($exchanged && $exchanged->{token}) {
-            print STDERR "[INFO][GitHubAuth] Exchange succeeded, saving Copilot token\n" if should_log('INFO');
+            log_info('GitHubAuth', "Exchange succeeded, saving Copilot token");
             eval { $self->save_tokens($tokens->{github_token}, $exchanged) };
             $self->{using_exchanged_token} = 1;
             return $exchanged->{token};
         }
         
         # Exchange failed - use raw token (limited model access)
-        print STDERR "[DEBUG][GitHubAuth] Exchange failed, using GitHub token directly\n" if should_log('DEBUG');
+        log_debug('GitHubAuth', "Exchange failed, using GitHub token directly");
         return $tokens->{github_token};
     }
     
@@ -548,7 +548,7 @@ sub clear_tokens {
     if (-f $self->{tokens_file}) {
         unlink $self->{tokens_file}
             or warn "Failed to delete tokens file: $!";
-        print STDERR "[INFO][GitHubAuth] Tokens cleared, user signed out\n" if should_log('INFO');
+        log_info('GitHubAuth', "Tokens cleared, user signed out");
     }
     
     # Clear models cache - stale cache would show wrong model list
@@ -557,7 +557,7 @@ sub clear_tokens {
         my $cache_file = CLIO::Core::ConfigPath::get_config_file('models_cache.json');
         if ($cache_file && -f $cache_file) {
             unlink $cache_file;
-            print STDERR "[DEBUG][GitHubAuth] Cleared models cache after sign out\n" if should_log('DEBUG');
+            log_debug('GitHubAuth', "Cleared models cache after sign out");
         }
     };
 }
@@ -646,17 +646,17 @@ sub validate_github_token {
     if ($response->is_success) {
         my $data = eval { decode_json($response->decoded_content) };
         my $username = $data ? ($data->{login} || 'unknown') : 'unknown';
-        print STDERR "[DEBUG][GitHubAuth] GitHub token validated - user: $username\n" if should_log('DEBUG');
+        log_debug('GitHubAuth', "GitHub token validated - user: $username");
         return { valid => 1, username => $username, status => $status };
     }
     
     if ($status == 401) {
-        print STDERR "[WARN][GitHubAuth] GitHub token is invalid/expired (401)\n" if should_log('WARNING');
+        log_warning('GitHubAuth', "GitHub token is invalid/expired (401)");
         return { valid => 0, error => 'Token invalid or expired', status => $status };
     }
     
     if ($status == 403) {
-        print STDERR "[WARN][GitHubAuth] GitHub token lacks permissions (403)\n" if should_log('WARNING');
+        log_warning('GitHubAuth', "GitHub token lacks permissions (403)");
         return { valid => 0, error => 'Token lacks required permissions', status => $status };
     }
     
@@ -678,28 +678,28 @@ sub force_refresh_copilot_token {
     
     my $tokens = $self->load_tokens();
     unless ($tokens && $tokens->{github_token}) {
-        print STDERR "[WARN][GitHubAuth] Cannot refresh - no GitHub token stored\n" if should_log('WARNING');
+        log_warning('GitHubAuth', "Cannot refresh - no GitHub token stored");
         return undef;
     }
     
-    print STDERR "[INFO][GitHubAuth] Force-refreshing Copilot session token\n" if should_log('INFO');
+    log_info('GitHubAuth', "Force-refreshing Copilot session token");
     
     my $new_copilot = eval { $self->exchange_for_copilot_token($tokens->{github_token}) };
     
     if ($@ || !$new_copilot) {
         my $error = $@ || 'Exchange returned undef';
-        print STDERR "[WARN][GitHubAuth] Force-refresh failed: $error\n" if should_log('WARNING');
+        log_warning('GitHubAuth', "Force-refresh failed: $error");
         return undef;
     }
     
     # Save the refreshed token
     eval { $self->save_tokens($tokens->{github_token}, $new_copilot) };
     if ($@) {
-        print STDERR "[WARN][GitHubAuth] Failed to save refreshed token: $@\n" if should_log('WARNING');
+        log_warning('GitHubAuth', "Failed to save refreshed token: $@");
     }
     
     $self->{using_exchanged_token} = 1;
-    print STDERR "[INFO][GitHubAuth] Copilot token refreshed successfully\n" if should_log('INFO');
+    log_info('GitHubAuth', "Copilot token refreshed successfully");
     
     return $new_copilot->{token};
 }
