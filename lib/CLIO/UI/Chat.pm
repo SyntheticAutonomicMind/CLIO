@@ -2,7 +2,7 @@ package CLIO::UI::Chat;
 
 use strict;
 use warnings;
-use CLIO::Core::Logger qw(should_log log_debug log_warning);
+use CLIO::Core::Logger qw(log_debug log_warning);
 use CLIO::Util::TextSanitizer qw(sanitize_text);
 use CLIO::UI::Markdown;
 use CLIO::UI::ANSI;

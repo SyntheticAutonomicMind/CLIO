@@ -7,7 +7,6 @@ binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 
 use Carp qw(croak);
-use CLIO::Core::Logger qw(should_log);
 use CLIO::Util::JSON qw(encode_json decode_json);
 
 =head1 NAME

@@ -7,7 +7,6 @@ use strict;
 use warnings;
 use utf8;
 use CLIO::Util::JSON qw(encode_json);
-use CLIO::Core::Logger qw(should_log);
 
 =head1 NAME
 

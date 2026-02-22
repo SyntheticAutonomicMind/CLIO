@@ -6,7 +6,7 @@ use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use Carp qw(croak);
-use CLIO::Core::Logger qw(should_log log_debug);
+use CLIO::Core::Logger qw(log_debug);
 use CLIO::Util::PathResolver;
 use File::Spec;
 use Fcntl qw(:flock SEEK_SET);

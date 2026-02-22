@@ -11,7 +11,6 @@ binmode(STDERR, ':encoding(UTF-8)');
 
 use Carp qw(croak);
 use Scalar::Util qw(blessed);
-use CLIO::Core::Logger qw(should_log);
 use parent 'CLIO::Tools::Tool';
 
 =head1 NAME
