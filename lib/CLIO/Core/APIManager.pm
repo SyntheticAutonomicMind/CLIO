@@ -2214,7 +2214,14 @@ sub send_request {
         # Release broker slot before returning
         $self->_release_broker_slot(undef, 599);  # 599 = network error
         
-        return $self->_error($error);
+        # Network/timeout errors are transient and should be retried
+        return { 
+            success => 0, 
+            error => $error, 
+            retryable => 1,
+            retry_after => 2,
+            error_type => 'server_error',
+        };
     }
     
     if (!$resp->is_success) {
@@ -2867,12 +2874,19 @@ sub send_request_streaming {
     # Handle request errors
     if ($@) {
         my $error = "Streaming request failed: $@";
-        print STDERR "[DEBUG][APIManager $error\n" if should_log('DEBUG');
+        print STDERR "[DEBUG][APIManager] $error\n" if should_log('DEBUG');
         
         # Release broker slot on error
         $self->_release_broker_slot(undef, 599);  # 599 = network error
         
-        return { success => 0, error => $error };
+        # Network/timeout errors (599) are transient and should be retried
+        return { 
+            success => 0, 
+            error => $error, 
+            retryable => 1, 
+            retry_after => 2,
+            error_type => 'server_error',
+        };
     }
     
     if (!$resp->is_success) {
