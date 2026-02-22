@@ -116,7 +116,8 @@ sub new {
 
 =head2 codes
 
-Get hash reference of all ANSI codes
+Get hash reference of all ANSI codes.
+Returns a cached hash reference for performance (built once per instance).
 
 =cut
 
@@ -125,7 +126,10 @@ sub codes {
     
     return {} unless $self->{enabled};
     
-    return {
+    # Return cached codes hash if already built
+    return $self->{_codes_cache} if $self->{_codes_cache};
+    
+    $self->{_codes_cache} = {
         # Cursor movement
         CURSOR_UP       => CURSOR_UP,
         CURSOR_DOWN     => CURSOR_DOWN,
@@ -201,6 +205,8 @@ sub codes {
         BG_BRIGHT_CYAN    => BG_BRIGHT_CYAN,
         BG_BRIGHT_WHITE   => BG_BRIGHT_WHITE,
     };
+    
+    return $self->{_codes_cache};
 }
 
 =head2 parse
@@ -277,11 +283,13 @@ Enable or disable ANSI code output
 sub enable {
     my ($self) = @_;
     $self->{enabled} = 1;
+    delete $self->{_codes_cache};  # Invalidate cache
 }
 
 sub disable {
     my ($self) = @_;
     $self->{enabled} = 0;
+    delete $self->{_codes_cache};  # Invalidate cache
 }
 
 =head2 is_enabled

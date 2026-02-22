@@ -2,7 +2,7 @@ package CLIO::Core::AIAgent;
 
 use strict;
 use warnings;
-use JSON::PP qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json);
 use CLIO::Core::ProtocolIntegration;
 use CLIO::Core::TaskOrchestrator;
 use CLIO::NaturalLanguage::TaskProcessor;

@@ -8,7 +8,7 @@ use warnings;
 use utf8;
 use Exporter 'import';
 our @EXPORT_OK = qw(is_anthropic_xml_format parse_anthropic_xml_to_json);
-use JSON::PP qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json);
 
 =head1 NAME
 

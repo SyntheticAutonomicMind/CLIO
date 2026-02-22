@@ -6,7 +6,7 @@ package CLIO::Core::DeviceRegistry;
 use strict;
 use warnings;
 use utf8;
-use JSON::PP qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json);
 use File::Spec;
 use File::Path qw(make_path);
 

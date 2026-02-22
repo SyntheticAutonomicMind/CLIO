@@ -3,7 +3,7 @@ package CLIO::Providers::Anthropic;
 use strict;
 use warnings;
 use parent 'CLIO::Providers::Base';
-use JSON::PP qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json);
 use CLIO::Core::Logger qw(should_log);
 
 =head1 NAME

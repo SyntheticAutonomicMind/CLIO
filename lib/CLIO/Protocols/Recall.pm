@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use parent 'CLIO::Protocols::Handler';
 use MIME::Base64 qw(decode_base64 encode_base64);
-use JSON::PP qw(encode_json);
+use CLIO::Util::JSON qw(encode_json);
 use CLIO::Core::Logger qw(should_log);
 use POSIX qw(strftime);
 

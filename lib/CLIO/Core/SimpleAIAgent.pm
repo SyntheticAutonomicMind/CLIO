@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use CLIO::Core::Logger qw(should_log);
 use CLIO::Core::HashtagParser;
-use JSON::PP qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json);
 use MIME::Base64 qw(encode_base64 decode_base64);
 
 =head1 NAME

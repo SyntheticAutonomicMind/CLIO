@@ -5,7 +5,7 @@ use warnings;
 use CLIO::Core::Logger qw(should_log);
 use CLIO::Util::ConfigPath qw(get_config_file);
 use CLIO::Util::TextSanitizer qw(sanitize_text);
-use JSON::PP qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json);
 use File::Spec;
 use File::Path qw(make_path);
 use File::Basename qw(dirname);

@@ -25,7 +25,7 @@ package CLIO::Memory::ShortTerm;
 use strict;
 use warnings;
 use CLIO::Core::Logger qw(should_log);
-use JSON::PP;
+use CLIO::Util::JSON qw(encode_json decode_json);
 
 print STDERR "[TRACE] CLIO::Memory::ShortTerm loaded\n" if should_log('DEBUG');
 
