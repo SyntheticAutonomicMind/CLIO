@@ -5,7 +5,7 @@ use warnings;
 use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug);
 use CLIO::Util::JSON qw(encode_json decode_json);
 use CLIO::Protocols::Manager;
 
@@ -141,7 +141,7 @@ sub execute_protocol_chain {
         # Skip low-confidence protocols unless explicitly requested
         next if $confidence < 0.3 && $analysis->{execution_priority} ne 'aggressive';
         
-        print STDERR "[DEBUG] Executing protocol $protocol (confidence: $confidence)\n" if should_log('DEBUG');
+        log_debug('ProtocolIntegration', "Executing protocol $protocol (confidence: $confidence)");
         
         eval {
             my $protocol_input = $self->_prepare_protocol_input($protocol, $user_input, $analysis);
@@ -155,14 +155,14 @@ sub execute_protocol_chain {
                     confidence => $confidence
                 };
                 
-                print STDERR "[DEBUG] Protocol $protocol executed successfully\n" if should_log('DEBUG');
+                log_debug('ProtocolIntegration', "Protocol $protocol executed successfully");
             } else {
                 my $error_msg = $response->{error} || "Unknown protocol error";
                 push @{$results->{errors}}, {
                     protocol => $protocol,
                     error => $error_msg
                 };
-                print STDERR "[DEBUG] Protocol $protocol failed: $error_msg\n" if should_log('DEBUG');
+                log_debug('ProtocolIntegration', "Protocol $protocol failed: $error_msg");
             }
         };
         
@@ -172,12 +172,12 @@ sub execute_protocol_chain {
                 error => "Exception: $@"
             };
             $results->{success} = 0;
-            print STDERR "[ERROR] Protocol $protocol exception: $@\n" if should_log('ERROR');
+            log_error('ProtocolIntegration', "Protocol $protocol exception: $@");
         }
         
         # Break early if we have a high-confidence successful result
         if (@{$results->{responses}} && $confidence > 0.8) {
-            print STDERR "[DEBUG] High-confidence result achieved, stopping chain\n" if should_log('DEBUG');
+            log_debug('ProtocolIntegration', "High-confidence result achieved, stopping chain");
             last;
         }
     }

@@ -9,7 +9,7 @@ use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use Carp qw(croak confess);
-use CLIO::Core::Logger qw(should_log log_debug log_info);
+use CLIO::Core::Logger qw(should_log log_debug log_info log_warning);
 use parent 'CLIO::Tools::Tool';
 use File::Spec;
 use File::Basename;
@@ -413,8 +413,8 @@ sub _acquire_file_lock {
         }
     };
     if ($@) {
-        print STDERR "[WARN][FileOp] Failed to acquire lock (broker error): $@\n" if should_log('WARN');
-        print STDERR "[WARN][FileOp] Continuing without lock\n" if should_log('WARN');
+        log_warning('FileOp', "Failed to acquire lock (broker error): $@");
+        log_warning('FileOp', "Continuing without lock");
         return (0, undef);  # Continue without lock on broker errors
     }
 }
@@ -435,7 +435,7 @@ sub _release_file_lock {
         log_info('FileOp', "Released lock for: $path");
     };
     if ($@) {
-        print STDERR "[WARN][FileOp] Failed to release lock: $@\n" if should_log('WARN');
+        log_warning('FileOp', "Failed to release lock: $@");
     }
 }
 
@@ -504,13 +504,11 @@ sub _check_sandbox {
                     ($resolved_path =~ /^\Q$project_dir\E\//);
     
     if ($is_inside) {
-        print STDERR "[DEBUG][FileOp] Sandbox: allowed path $resolved_path (inside $project_dir)\n" 
-            if should_log('DEBUG');
+        log_debug('FileOp', "Sandbox: allowed path $resolved_path (inside $project_dir)");
         return { allowed => 1 };
     }
     
-    print STDERR "[INFO][FileOp] Sandbox: BLOCKED path $resolved_path (outside $project_dir)\n" 
-        if should_log('INFO');
+    log_info('FileOp', "Sandbox: BLOCKED path $resolved_path (outside $project_dir)");
     
     return {
         allowed => 0,
@@ -539,8 +537,7 @@ sub read_file {
     return $self->error_result("File not found: $path") unless -f $path;
     return $self->error_result("File not readable: $path") unless -r $path;
     
-    print STDERR "[DEBUG][FileOp] Reading file: $path (lines $start_line-" . ($end_line || 'EOF') . ")\n" 
-        if $self->{debug};
+    log_debug('FileOperations', "Reading file: $path (lines $start_line-" . ($end_line || 'EOF') . ")");
     
     # Read file
     my $result;
@@ -606,7 +603,7 @@ sub read_file {
     };
     
     if ($@) {
-        print STDERR "[DEBUG][FileOp Failed to read $path: $@\n" if should_log('ERROR');
+        log_debug('FileOp', "Failed to read $path: $@");
         return $self->error_result("Failed to read file: $@");
     }
     
@@ -666,7 +663,7 @@ sub list_dir {
             || ($a->{name} cmp $b->{name})
         } @entries;
         
-        print STDERR "[DEBUG][FileOp] Listed " . scalar(@entries) . " entries\n" if $self->{debug};
+        log_debug('FileOperations', "Listed " . scalar(@entries) . " entries");
         
         # Count files and directories for action description
         my $file_count = grep { $_->{type} eq 'file' } @entries;
@@ -683,7 +680,7 @@ sub list_dir {
     };
     
     if ($@) {
-        print STDERR "[DEBUG][FileOp Failed to list directory $path: $@\n" if should_log('ERROR');
+        log_debug('FileOp', "Failed to list directory $path: $@");
         return $self->error_result("Failed to list directory: $@");
     }
     
@@ -901,7 +898,7 @@ sub file_search {
             }
         }
         
-        print STDERR "[DEBUG][FileOp] Found " . scalar(@matches) . " matches\n" if $self->{debug};
+        log_debug('FileOperations', "Found " . scalar(@matches) . " matches");
         
         my $action_desc = "searching for '$pattern' in $directory (" . scalar(@matches) . " matches)";
         
@@ -915,7 +912,7 @@ sub file_search {
     };
     
     if ($@) {
-        print STDERR "[DEBUG][FileOp File search failed: $@\n" if should_log('ERROR');
+        log_debug('FileOp', "File search failed: $@");
         return $self->error_result("File search failed: $@");
     }
     
@@ -932,8 +929,7 @@ sub grep_search {
     
     return $self->error_result("Missing 'query' parameter") unless $query;
     
-    print STDERR "[DEBUG][FileOp] Grep search: query=$query, pattern=$pattern, regex=$is_regex, max_results=$max_results\n" 
-        if $self->{debug};
+    log_debug('FileOp', "Grep search: query=$query, pattern=$pattern, regex=$is_regex, max_results=$max_results");
     
     my $result;
     eval {
@@ -995,7 +991,7 @@ sub grep_search {
             # Open in raw mode and let Perl handle encoding gracefully
             my $fh;
             unless (open $fh, '<', $path) {
-                print STDERR "[WARN]FileOp] Cannot open $path: $!\n" if $self->{debug};
+                log_warning('FileOp', "Cannot open $path: $!");
                 next;
             }
             
@@ -1023,8 +1019,8 @@ sub grep_search {
             last if scalar(@matches) >= $max_results;
         }
         
-        print STDERR "[DEBUG][FileOp] Found " . scalar(@matches) . " matches (limited to $max_results) across " . 
-                     $files_searched . " files searched\n" if $self->{debug};
+        log_debug('FileOperations', "Found " . scalar(@matches) . " matches (limited to $max_results) across " .
+                     $files_searched . " files searched");
         
         my $match_summary = scalar(@matches) . " matches in " . $files_searched . " files";
         my $truncated_note = ($search_truncated || scalar(@matches) >= $max_results) ? " (results may be truncated)" : "";
@@ -1043,7 +1039,7 @@ sub grep_search {
     };
     
     if ($@) {
-        print STDERR "[DEBUG][FileOp Grep search failed: $@\n" if should_log('ERROR');
+        log_debug('FileOp', "Grep search failed: $@");
         return $self->error_result("Grep search failed: $@");
     }
     
@@ -1076,7 +1072,7 @@ sub _semantic_search_hybrid {
         return $self->error_result("No valid search keywords in query");
     }
     
-    print STDERR "[DEBUG][FileOp] Keywords: " . join(', ', @keywords) . "\n" if should_log('DEBUG');
+    log_debug('FileOperations', "Keywords: " . join(', ', @keywords));
     
     # Use grep_search for each keyword
     my %file_scores = ();  # file => score
@@ -1180,8 +1176,7 @@ sub _enhance_scores_with_symbols {
     };
     
     unless ($ts) {
-        print STDERR "[DEBUG][FileOp] TreeSitter not available, skipping symbol analysis\n" 
-            if should_log('DEBUG');
+        log_debug('FileOp', "TreeSitter not available, skipping symbol analysis");
         return;
     }
     
@@ -1217,8 +1212,7 @@ sub _enhance_scores_with_symbols {
                     
                     if ($boost > 0) {
                         $file_scores->{$file} += $boost;
-                        print STDERR "[DEBUG][FileOp] Boosted $file +$boost (symbol: $name, type: $symbol->{type})\n"
-                            if should_log('DEBUG');
+                        log_debug('FileOp', "Boosted $file +$boost (symbol: $name, type: $symbol->{type})");
                         
                         # Add symbol match to file matches
                         push @{$file_matches->{$file}}, {
@@ -1275,8 +1269,7 @@ sub read_tool_result {
         return $self->error_result("No session ID in context. Cannot retrieve tool result.");
     }
     
-    print STDERR "[DEBUG][FileOp] Reading tool result: toolCallId=$toolCallId, offset=$offset, length=$length\n" 
-        if $self->{debug};
+    log_debug('FileOp', "Reading tool result: toolCallId=$toolCallId, offset=$offset, length=$length");
     
     # Load ToolResultStore (lazy load to avoid circular dependencies)
     require CLIO::Session::ToolResultStore;
@@ -1321,8 +1314,7 @@ sub read_tool_result {
         }
     }
     
-    print STDERR "[DEBUG][FileOp] Retrieved chunk: offset=$chunk->{offset}, length=$chunk->{length}, hasMore=$chunk->{hasMore}\n" 
-        if $self->{debug};
+    log_debug('FileOp', "Retrieved chunk: offset=$chunk->{offset}, length=$chunk->{length}, hasMore=$chunk->{hasMore}");
     
     # Format response
     my @lines;
@@ -1430,7 +1422,7 @@ sub create_file {
     $self->_release_file_lock($path, $context) if $lock_acquired;
     
     if ($@) {
-        print STDERR "[DEBUG][FileOp Failed to create file: $@\n" if should_log('ERROR');
+        log_debug('FileOp', "Failed to create file: $@");
         return $self->error_result("Failed to create file: $@");
     }
     
@@ -1493,7 +1485,7 @@ sub write_file {
     $self->_release_file_lock($path, $context) if $lock_acquired;
     
     if ($@) {
-        print STDERR "[DEBUG][FileOp Failed to write file: $@\n" if should_log('ERROR');
+        log_debug('FileOp', "Failed to write file: $@");
         return $self->error_result("Failed to write file: $@");
     }
     
@@ -1556,7 +1548,7 @@ sub append_file {
     $self->_release_file_lock($path, $context) if $lock_acquired;
     
     if ($@) {
-        print STDERR "[DEBUG][FileOp Failed to append to file: $@\n" if should_log('ERROR');
+        log_debug('FileOp', "Failed to append to file: $@");
         return $self->error_result("Failed to append to file: $@");
     }
     
@@ -1626,7 +1618,7 @@ sub replace_string {
     $self->_release_file_lock($path, $context) if $lock_acquired;
     
     if ($@) {
-        print STDERR "[DEBUG][FileOp Failed to replace string: $@\n" if should_log('ERROR');
+        log_debug('FileOp', "Failed to replace string: $@");
         return $self->error_result("Failed to replace string: $@");
     }
     
@@ -1657,7 +1649,7 @@ sub multi_replace_string {
     return $self->error_result("'replacements' must be an array") unless ref($replacements) eq 'ARRAY';
     return $self->error_result("'replacements' array is empty") unless @$replacements > 0;
     
-    print STDERR "[DEBUG][FileOp] Processing " . scalar(@$replacements) . " replacement operations\n" if should_log('DEBUG');
+    log_debug('FileOperations', "Processing " . scalar(@$replacements) . " replacement operations");
     
     my @successful = ();
     my @failed = ();
@@ -1826,7 +1818,7 @@ sub insert_at_line {
     $self->_release_file_lock($path, $context) if $lock_acquired;
     
     if ($@) {
-        print STDERR "[DEBUG][FileOp Failed to insert at line: $@\n" if should_log('ERROR');
+        log_debug('FileOp', "Failed to insert at line: $@");
         return $self->error_result("Failed to insert at line: $@");
     }
     
@@ -1894,7 +1886,7 @@ sub delete_file {
     $self->_release_file_lock($path, $context) if $lock_acquired;
     
     if ($@) {
-        print STDERR "[DEBUG][FileOp Failed to delete: $@\n" if should_log('ERROR');
+        log_debug('FileOp', "Failed to delete: $@");
         return $self->error_result("Failed to delete: $@");
     }
     
@@ -1964,7 +1956,7 @@ sub rename_file {
     $self->_release_file_lock($old_path, $context) if $lock_acquired;
     
     if ($@) {
-        print STDERR "[DEBUG][FileOp Failed to rename: $@\n" if should_log('ERROR');
+        log_debug('FileOp', "Failed to rename: $@");
         return $self->error_result("Failed to rename: $@");
     }
     
@@ -2013,7 +2005,7 @@ sub create_directory {
     };
     
     if ($@) {
-        print STDERR "[DEBUG][FileOp Failed to create directory: $@\n" if should_log('ERROR');
+        log_debug('FileOp', "Failed to create directory: $@");
         return $self->error_result("Failed to create directory: $@");
     }
     

@@ -7,7 +7,7 @@ binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 
 use Carp qw(croak);
-use CLIO::Core::Logger qw(should_log log_debug);
+use CLIO::Core::Logger qw(should_log log_debug log_warning);
 use CLIO::Util::JSON qw(decode_json);
 
 =head1 NAME
@@ -1191,7 +1191,7 @@ sub _fetch_provider_models {
             $models = $data->{data} || [] if $data;
         };
         if ($@) {
-            print STDERR "[WARN][API] Failed to fetch GitHub Copilot models: $@\n" if should_log('WARN');
+            log_warning('API', "Failed to fetch GitHub Copilot models: $@");
         }
     } else {
         # Generic OpenAI-compatible /models endpoint
@@ -1220,7 +1220,7 @@ sub _fetch_provider_models {
             }
         };
         if ($@) {
-            print STDERR "[WARN][API] Failed to fetch models from $provider_name: $@\n" if should_log('WARN');
+            log_warning('API', "Failed to fetch models from $provider_name: $@");
         }
     }
     

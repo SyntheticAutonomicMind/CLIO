@@ -8,7 +8,7 @@ use warnings;
 use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
-use CLIO::Core::Logger qw(log_info);
+use CLIO::Core::Logger qw(log_info log_warning);
 use Carp qw(croak confess);
 use parent 'CLIO::Tools::Tool';
 use Cwd 'getcwd';
@@ -315,8 +315,8 @@ sub commit {
             }
         };
         if ($@) {
-            print STDERR "[WARN][VersionControl] Failed to acquire git lock: $@\n" if should_log('WARN');
-            print STDERR "[WARN][VersionControl] Continuing without lock\n" if should_log('WARN');
+            log_warning('VersionControl', "Failed to acquire git lock: $@");
+            log_warning('VersionControl', "Continuing without lock");
         }
     }
     
@@ -348,7 +348,7 @@ sub commit {
             log_info('VersionControl', "Git lock released");
         };
         if ($@) {
-            print STDERR "[WARN][VersionControl] Failed to release git lock: $@\n" if should_log('WARN');
+            log_warning('VersionControl', "Failed to release git lock: $@");
         }
     }
     

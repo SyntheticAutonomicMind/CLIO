@@ -5,7 +5,7 @@ use warnings;
 use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
-use CLIO::Core::Logger qw(should_log log_debug);
+use CLIO::Core::Logger qw(should_log log_debug log_warning);
 use feature 'say';
 use File::Spec;
 use Cwd qw(abs_path realpath);
@@ -326,7 +326,7 @@ sub setAutoApprove {
     
     if ($enabled) {
         $self->{auto_approve_conversations}->{$conversation_id} = 1;
-        print STDERR "[WARN]PathAuthorizer] Auto-approve ENABLED - all operations authorized without user permission: conversation=$conversation_id\n";
+        log_warning('PathAuthorizer', "Auto-approve ENABLED - all operations authorized without user permission: conversation=$conversation_id");
     } else {
         delete $self->{auto_approve_conversations}->{$conversation_id};
         log_debug('PathAuthorizer', "Auto-approve disabled: conversation=$conversation_id");

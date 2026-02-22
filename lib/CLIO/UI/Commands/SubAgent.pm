@@ -10,7 +10,7 @@ binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 
 use Carp qw(croak);
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug log_error log_info log_warning);
 
 =head1 NAME
 
@@ -812,50 +812,50 @@ sub start_broker {
         autoflush STDERR 1;
         autoflush STDOUT 1;
         
-        print STDERR "[DEBUG] Broker child process starting, PID=$$\n";
-        print STDERR "[DEBUG] Terminal reset complete\n";
+        log_debug('SubAgent', "Broker child process starting, PID=$$");
+        log_debug('SubAgent', "Terminal reset complete");
         
         # Close inherited file descriptors
-        close(STDIN) or do { print STDERR "[WARN] Cannot close STDIN: $!\n"; };
-        print STDERR "[DEBUG] STDIN closed\n";
+        close(STDIN) or do { CLIO::Core::Logger::log_warning('SubAgent', "Cannot close STDIN: $!"); };
+        log_debug('SubAgent', "STDIN closed");
         
         # Detach from terminal
-        print STDERR "[DEBUG] Calling setsid()...\n";
+        log_debug('SubAgent', "Calling setsid()...");
         setsid() or do {
-            print STDERR "[ERROR] setsid() failed: $!\n";
+            log_error('SubAgent', "[ERROR] setsid() failed: $!");
             exit 1;
         };
-        print STDERR "[DEBUG] setsid() complete\n";
+        log_debug('SubAgent', "setsid() complete");
         
         # Redirect STDIN from /dev/null
         open(STDIN, '<', '/dev/null') or do {
-            print STDERR "[ERROR] Cannot redirect STDIN: $!\n";
+            log_error('SubAgent', "[ERROR] Cannot redirect STDIN: $!");
             exit 1;
         };
-        print STDERR "[DEBUG] STDIN redirected from /dev/null\n";
+        log_debug('SubAgent', "STDIN redirected from /dev/null");
         
         # Now run broker
-        print STDERR "[DEBUG] About to create Broker object\n";
+        log_debug('SubAgent', "About to create Broker object");
         
         eval {
             require CLIO::Coordination::Broker;
-            print STDERR "[DEBUG] Broker module loaded\n";
+            log_debug('SubAgent', "Broker module loaded");
             
             my $broker = CLIO::Coordination::Broker->new(
                 session_id => $session_id,
                 debug => 1,
             );
             
-            print STDERR "[DEBUG] Broker object created, calling run()\n";
+            log_debug('SubAgent', "Broker object created, calling run()");
             $broker->run();
-            print STDERR "[INFO] Broker run() returned (should not happen)\n";
+            log_info('SubAgent', "[INFO] Broker run() returned (should not happen)");
         };
         
         if ($@) {
-            print STDERR "[ERROR] Broker died: $@\n";
+            log_error('SubAgent', "[ERROR] Broker died: $@");
         }
         
-        print STDERR "[DEBUG] Broker child exiting\n";
+        log_debug('SubAgent', "Broker child exiting");
         exit 0;
     }
     
@@ -872,20 +872,20 @@ sub start_broker {
             agent_id => 'user',  # Primary user connection
             task => 'Primary user session',
         );
-        print STDERR "[DEBUG] Connected to broker as primary user\n" if should_log('DEBUG');
+        log_debug('SubAgent', "Connected to broker as primary user");
         
         # Also update the main agent's APIManager to use broker coordination
         # This ensures ALL API requests (main + sub-agents) go through centralized rate limiting
         if ($self->{chat} && $self->{chat}{ai_agent} && $self->{chat}{ai_agent}{api}) {
             $self->{chat}{ai_agent}{api}{broker_client} = $self->{broker_client};
-            print STDERR "[INFO] Main agent's APIManager now using broker for rate limit coordination\n" if should_log('INFO');
+            log_info('SubAgent', "Main agent's APIManager now using broker for rate limit coordination");
         }
     };
     if ($@) {
-        print STDERR "[WARN] Could not connect to broker: $@\n" if should_log('WARN');
+        log_warning('SubAgent', "Could not connect to broker: $@");
     }
     
-    print STDERR "[INFO] Broker started with PID: $pid for session: $session_id\n" if should_log('INFO');
+    log_info('SubAgent', "Broker started with PID: $pid for session: $session_id");
 }
 
 1;

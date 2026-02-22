@@ -205,12 +205,12 @@ sub search_history {
         return $self->error_result("No valid search keywords in query");
     }
     
-    print STDERR "[DEBUG][CodeIntelligence] Keywords: " . join(', ', @keywords) . "\n" if should_log('DEBUG');
+    log_debug('CodeIntelligence', "Keywords: " . join(', ', @keywords));
     
     # Fetch commits from git log
     my @commits = $self->_fetch_commits($since, $author);
     
-    print STDERR "[DEBUG][CodeIntelligence] Fetched " . scalar(@commits) . " commits\n" if should_log('DEBUG');
+    log_debug('CodeIntelligence', "Fetched " . scalar(@commits) . " commits");
     
     if (@commits == 0) {
         return $self->success_result(
@@ -257,7 +257,7 @@ sub search_history {
     
     my $action_desc = "searching git history for '$query' ($total_matches matches)";
     
-    print STDERR "[DEBUG][CodeIntelligence] Returning " . scalar(@scored_commits) . " results\n" if should_log('DEBUG');
+    log_debug('CodeIntelligence', "Returning " . scalar(@scored_commits) . " results");
     
     return $self->success_result(
         $message,
@@ -434,7 +434,7 @@ sub list_usages {
         unless ref($file_paths) eq 'ARRAY';
     
     log_debug('CodeIntelligence', "Searching for symbol: $symbol_name");
-    print STDERR "[DEBUG][CodeIntelligence] Search paths: " . join(', ', @$file_paths) . "\n" if should_log('DEBUG');
+    log_debug('CodeIntelligence', "Search paths: " . join(', ', @$file_paths));
     
     my @usages = ();
     
@@ -549,7 +549,7 @@ sub _file_grep_search {
         }
     }
     
-    print STDERR "[DEBUG][CodeIntelligence] Searching " . scalar(@files_to_search) . " files\n" if should_log('DEBUG');
+    log_debug('CodeIntelligence', "Searching " . scalar(@files_to_search) . " files");
     
     # Search each file
     foreach my $file (@files_to_search) {

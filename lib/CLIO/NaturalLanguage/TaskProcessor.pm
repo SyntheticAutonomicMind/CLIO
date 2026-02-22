@@ -5,6 +5,7 @@ package CLIO::NaturalLanguage::TaskProcessor;
 use strict;
 use warnings;
 use utf8;
+use CLIO::Core::Logger qw(log_debug log_warning);
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use CLIO::Util::JSON qw(encode_json decode_json);
@@ -141,7 +142,7 @@ sub initialize_task_templates {
 sub process_natural_language {
     my ($self, $input, $context) = @_;
     
-    print STDERR "[NL] Processing: $input\n" if $self->{debug};
+    log_debug('TaskProcessor', "Processing: $input");
     
     # Normalize input
     $input = $self->normalize_input($input);
@@ -155,7 +156,7 @@ sub process_natural_language {
     my $task_analysis = $self->analyze_task($input);
     
     if (!$task_analysis->{confidence} || $task_analysis->{confidence} < $self->{confidence_threshold}) {
-        print STDERR "[NL] Low confidence: " . $task_analysis->{confidence} . "\n" if $self->{debug};
+        log_debug('TaskProcessor', "[NL] Low confidence: " . $task_analysis->{confidence} . "");
         return $self->fallback_processing($input, $context);
     }
     
@@ -188,7 +189,7 @@ sub detect_compound_tasks {
     for my $pattern (@{$compound_template->{patterns}}) {
         if ($input =~ /$pattern/) {
             my @parts = ($1, $2);
-            print STDERR "[NL] Detected compound task: " . join(" -> ", @parts) . "\n" if $self->{debug};
+            log_debug('TaskProcessor', "[NL] Detected compound task: " . join(" -> ", @parts) . "");
             return \@parts;
         }   
     }
@@ -197,7 +198,7 @@ sub detect_compound_tasks {
     if ($input =~ /[;,]/ && $input !~ /^(https?|git@|ftp):/i) {
         my @parts = split /[;,]\s*/, $input;
         if (@parts > 1) {
-            print STDERR "[NL] Detected separated compound task: " . join(" -> ", @parts) . "\n" if $self->{debug};
+            log_debug('TaskProcessor', "[NL] Detected separated compound task: " . join(" -> ", @parts) . "");
             return \@parts;
         }
     }
@@ -395,7 +396,7 @@ sub execute_single_task {
         
         eval "require $protocol_class";
         if ($@) {
-            print STDERR "[NL] Warning: Could not load $protocol_class: $@\n" if $self->{debug};
+            log_warning('TaskProcessor', "Could not load $protocol_class: $@");
             next;
         }
         
@@ -427,7 +428,7 @@ sub execute_compound_plan {
     my $current_context = { %$context };
     
     for my $step (@{$plan->{steps}}) {
-        print STDERR "[NL] Executing step " . $step->{step_number} . ": " . $step->{task} . "\n" if $self->{debug};
+        log_debug('TaskProcessor', "[NL] Executing step " . $step->{step_number} . ": " . $step->{task} . "");
         
         my $step_result = $self->execute_single_task($step, $current_context);
         push @results, $step_result;
@@ -478,7 +479,7 @@ sub execute_protocol_chain {
             original_input => $task_analysis->{original_input},
         };
         
-        print STDERR "[NL] Executing protocol: " . $protocol_info->{name} . "\n" if $self->{debug};
+        log_debug('TaskProcessor', "[NL] Executing protocol: " . $protocol_info->{name} . "");
         
         my $result = $protocol->execute($execution_params);
         push @results, {

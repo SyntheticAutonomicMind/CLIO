@@ -5,7 +5,7 @@ use warnings;
 use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
-use CLIO::Core::Logger qw(should_log log_debug log_error);
+use CLIO::Core::Logger qw(should_log log_debug log_error log_info);
 use Carp qw(croak);
 use feature 'say';
 use File::Path qw(make_path remove_tree);
@@ -137,7 +137,7 @@ To read the full result, use:
 file_operations(operation: "read_tool_result", toolCallId: "$toolCallId", offset: 0, length: 8192)
 END_MARKER
         
-        print STDERR "[INFO][ToolResultStore] Persisted: toolCallId=$toolCallId, totalSize=$content_size bytes, preview=$PREVIEW_SIZE bytes, path=$metadata->{filePath}\n" if $self->{debug};
+        log_info('ToolResultStore', "Persisted: toolCallId=$toolCallId, totalSize=$content_size bytes, preview=$PREVIEW_SIZE bytes, path=$metadata->{filePath}");
     };
     
     if ($@) {
@@ -373,8 +373,7 @@ sub retrieveChunk {
     # If not found, try fuzzy matching to handle AI hallucination of tool call IDs
     unless (-f $result_file) {
         # Only log the "not found" warning in debug mode - if we auto-correct, user doesn't need to know
-        print STDERR "[DEBUG][ToolResultStore] Result not found: $toolCallId in session $session_id (trying fuzzy match)\n" 
-            if should_log('DEBUG');
+        log_debug('ToolResultStore', "Result not found: $toolCallId in session $session_id (trying fuzzy match)");
         
         # Try to find similar files (handles AI hallucination of IDs)
         my $suggestions = $self->findSimilarResults($toolCallId, $session_id);
@@ -384,8 +383,7 @@ sub retrieveChunk {
         if ($suggestions && @$suggestions == 1) {
             my $corrected_id = $suggestions->[0];
             # Only log auto-correction in debug mode - silent recovery is the goal
-            print STDERR "[DEBUG][ToolResultStore] Auto-corrected toolCallId: $toolCallId -> $corrected_id\n"
-                if should_log('DEBUG');
+            log_debug('ToolResultStore', "Auto-corrected toolCallId: $toolCallId -> $corrected_id");
             $toolCallId = $corrected_id;
             $result_file = File::Spec->catfile($tool_results_dir, "$toolCallId.txt");
         }
@@ -667,8 +665,7 @@ sub cleanupOldResults {
     # Calculate cutoff time (current time - max_age_hours)
     my $cutoff_time = time() - ($max_age_hours * 3600);
     
-    print STDERR "[DEBUG][ToolResultStore] Cleaning up tool results older than $max_age_hours hours (cutoff: $cutoff_time) in session $session_id\n"
-        if should_log('DEBUG');
+    log_debug('ToolResultStore', "Cleaning up tool results older than $max_age_hours hours (cutoff: $cutoff_time) in session $session_id");
     
     # Scan tool results directory
     opendir(my $dh, $tool_results_dir) or do {
@@ -706,8 +703,7 @@ sub cleanupOldResults {
             $reclaimed_bytes += $size;
             
             my $age_hours = int((time() - $mtime) / 3600);
-            print STDERR "[DEBUG][ToolResultStore] Deleted old result: $filename (age: ${age_hours}h, size: $size bytes)\n"
-                if should_log('DEBUG');
+            log_debug('ToolResultStore', "Deleted old result: $filename (age: ${age_hours}h, size: $size bytes)");
         } else {
             push @errors, "Failed to delete $filename: $!";
         }
@@ -716,10 +712,9 @@ sub cleanupOldResults {
     # Log summary
     if ($deleted_count > 0) {
         my $reclaimed_mb = sprintf("%.2f", $reclaimed_bytes / 1_048_576);
-        print STDERR "[INFO][ToolResultStore] Cleanup completed: deleted $deleted_count old tool results, reclaimed ${reclaimed_mb}MB in session $session_id\n"
-            if should_log('INFO');
+        log_info('ToolResultStore', "Cleanup completed: deleted $deleted_count old tool results, reclaimed ${reclaimed_mb}MB in session $session_id");
     } elsif ($self->{debug}) {
-        print STDERR "[DEBUG][ToolResultStore] Cleanup: no old results to delete in session $session_id\n";
+        log_debug('ToolResultStore', "Cleanup: no old results to delete in session $session_id");
     }
     
     return {

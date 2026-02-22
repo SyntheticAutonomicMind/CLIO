@@ -7,7 +7,7 @@ binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use HTTP::Tiny;
 use CLIO::Util::JSON qw(decode_json encode_json);
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug log_warning);
 
 # Check if SSL is available for HTTP::Tiny
 our $HAS_SSL;
@@ -75,8 +75,7 @@ sub new {
         $http_tiny_opts{verify_SSL} = $verify;
     } elsif (!$HAS_CURL) {
         # Only warn if neither SSL nor curl is available - this is a real problem
-        print STDERR "[WARN][HTTP] Neither IO::Socket::SSL nor curl available - HTTPS will not work!\n"
-            if should_log('WARNING');
+        log_warning('HTTP', "Neither IO::Socket::SSL nor curl available - HTTPS will not work!");
     }
     
     # Always create HTTP::Tiny instance (needed for HTTP URLs even with curl for HTTPS)
@@ -253,7 +252,7 @@ sub _request_via_curl {
     push @cmd, $uri;
     
     if ($ENV{CLIO_DEBUG}) {
-        print STDERR "[DEBUG][HTTP::curl] Running curl with " . scalar(@cmd) . " args\n";
+        log_debug('HTTP', "Running curl with " . scalar(@cmd) . " args");
     }
     
     # Execute curl using safe pipe open
@@ -292,8 +291,8 @@ sub _request_via_curl {
         }
         
         if ($ENV{CLIO_DEBUG}) {
-            print STDERR "[DEBUG][HTTP::curl] Status: $status $reason\n";
-            print STDERR "[DEBUG][HTTP::curl] Body length: " . length($body) . "\n";
+            log_debug('HTTP::curl', "Status: $status $reason");
+            log_debug('HTTP', "Body length: " . length($body));
         }
         
         return {
@@ -373,7 +372,7 @@ sub _request_via_curl_streaming {
     push @cmd, $uri;
     
     if ($ENV{CLIO_DEBUG}) {
-        print STDERR "[DEBUG][HTTP::curl_streaming] Starting streaming curl request\n";
+        log_debug('HTTP::curl_streaming', "Starting streaming curl request");
     }
     
     # Open curl as a pipe for streaming reads
@@ -427,7 +426,7 @@ sub _request_via_curl_streaming {
         # Deliver chunk to callback
         eval { $callback->($read_buf, $resp_obj, undef); };
         if ($@) {
-            print STDERR "[WARN][HTTP::curl_streaming] Callback error: $@\n" if $ENV{CLIO_DEBUG};
+            log_warning('HTTP::curl_streaming', "Callback error: $@");
         }
     }
     
@@ -454,8 +453,7 @@ sub _request_via_curl_streaming {
     }
     
     if ($ENV{CLIO_DEBUG}) {
-        print STDERR "[DEBUG][HTTP::curl_streaming] Streaming complete: status=$status, " . 
-            length($accumulated_content) . " bytes, exit_code=$exit_code\n";
+        log_debug('HTTP', "Streaming complete: status=$status, " . length($accumulated_content) . " bytes, exit_code=$exit_code");
     }
     
     return {
@@ -509,12 +507,12 @@ sub request {
         
         # DEBUG: Print what we're about to send
         if ($ENV{CLIO_DEBUG}) {
-            print STDERR "\n[DEBUG][HTTP] Request details:\n";
-            print STDERR "  Backend: " . ($use_curl ? "curl" : "HTTP::Tiny") . "\n";
-            print STDERR "  Method: $method\n";
-            print STDERR "  URI: $uri\n";
-            print STDERR "  Content length: " . length($content) . " bytes\n";
-            print STDERR "  Streaming: " . ($has_callback ? "true" : "false") . "\n";
+            log_debug('HTTP', "Request details:");
+            log_debug('HTTP', "  Backend: " . ($use_curl ? "curl" : "HTTP::Tiny") . "");
+            log_debug('HTTP', "  Method: $method");
+            log_debug('HTTP', "  URI: $uri");
+            log_debug('HTTP', "  Content length: " . length($content) . " bytes");
+            log_debug('HTTP', "  Streaming: " . ($has_callback ? "true" : "false") . "");
         }
         
         my $response;
@@ -564,7 +562,7 @@ sub request {
                 $response->{content} = $accumulated_content;
                 
                 if ($ENV{CLIO_DEBUG}) {
-                    print STDERR "[DEBUG][HTTP] True streaming complete: " . length($accumulated_content) . " bytes delivered via callback\n";
+                    log_debug('HTTP', "True streaming complete: " . length($accumulated_content) . " bytes delivered via callback");
                 }
             } else {
                 $response = $self->{http}->request($method, $uri, \%options);

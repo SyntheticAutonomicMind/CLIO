@@ -9,7 +9,7 @@ use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use Carp qw(croak confess);
-use CLIO::Core::Logger qw(should_log log_debug);
+use CLIO::Core::Logger qw(should_log log_debug log_warning);
 use feature 'say';
 
 =head1 NAME
@@ -80,7 +80,7 @@ sub register_tool {
     
     # Check for duplicate
     if (exists $self->{tools}{$name}) {
-        print STDERR "[WARN]Registry] Tool '$name' already registered, replacing\n";
+        log_warning('Registry', "Tool '$name' already registered, replacing");
     }
     
     $self->{tools}{$name} = $tool;
@@ -112,7 +112,7 @@ sub get_tool {
     my $tool = $self->{tools}{$name};
     
     unless ($tool) {
-        print STDERR "[WARN]Registry] Tool not found: $name\n" if $self->{debug};
+        log_warning('Registry', "Tool not found: $name");
     }
     
     return $tool;
@@ -169,8 +169,7 @@ sub get_tool_definitions {
         push @definitions, $definition;
     }
     
-    print STDERR "[DEBUG][Registry] Generated " . scalar(@definitions) . " tool definitions\n" 
-        if $self->{debug};
+    log_debug('Registry', "Generated " . scalar(@definitions) . " tool definitions");
     
     # Cache for subsequent calls
     $self->{_definitions_cache} = \@definitions;
@@ -238,7 +237,7 @@ sub unregister_tool {
     my ($self, $name) = @_;
     
     unless (exists $self->{tools}{$name}) {
-        print STDERR "[WARN]Registry] Cannot unregister unknown tool: $name\n" if $self->{debug};
+        log_warning('Registry', "Cannot unregister unknown tool: $name");
         return 0;
     }
     

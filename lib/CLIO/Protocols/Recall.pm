@@ -8,7 +8,7 @@ binmode(STDERR, ':encoding(UTF-8)');
 use parent 'CLIO::Protocols::Handler';
 use MIME::Base64 qw(decode_base64 encode_base64);
 use CLIO::Util::JSON qw(encode_json);
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug);
 use POSIX qw(strftime);
 
 =head1 NAME
@@ -38,7 +38,7 @@ Protocol format: [RECALL:query=<base64>:limit=<num>]
 sub process_request {
     my ($self, $input, $session) = @_;
     
-    print STDERR "[RECALL] Processing request\n" if should_log('DEBUG');
+    log_debug('Recall', "Processing request");
     
     # Validate input
     unless ($self->validate_input($input)) {

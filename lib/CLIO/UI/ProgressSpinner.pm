@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use utf8;
 use Time::HiRes qw(usleep);
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug);
 
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
@@ -101,8 +101,7 @@ sub start {
     if (!defined $pid) {
         # Fork failures can happen legitimately (e.g., resource limits)
         # Only log in debug mode to avoid alarming users
-        print STDERR "[DEBUG][ProgressSpinner] Failed to fork progress spinner: $!\n" 
-            if should_log('DEBUG');
+        log_debug('ProgressSpinner', "Failed to fork progress spinner: $!");
         return;
     }
     

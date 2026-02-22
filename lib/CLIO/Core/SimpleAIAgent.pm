@@ -5,7 +5,7 @@ use warnings;
 use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
-use CLIO::Core::Logger qw(should_log log_debug log_error);
+use CLIO::Core::Logger qw(should_log log_debug log_error log_warning);
 use CLIO::Core::HashtagParser;
 use CLIO::Util::JSON qw(encode_json decode_json);
 use MIME::Base64 qw(encode_base64 decode_base64);
@@ -75,7 +75,7 @@ Arguments:
 sub set_ui {
     my ($self, $ui) = @_;
     
-    print STDERR "[DEBUG][SimpleAIAgent] set_ui() called, ui=" . (defined $ui ? "YES" : "NO") . ", orchestrator=" . (defined $self->{orchestrator} ? "YES" : "NO") . "\n" if should_log('DEBUG');
+    log_debug('SimpleAIAgent', "set_ui() called, ui=" . (defined $ui ? "YES" : "NO") . ", orchestrator=" . (defined $self->{orchestrator} ? "YES" : "NO"));
     
     return unless $ui;
     
@@ -172,7 +172,7 @@ sub process_user_request {
         my $tags = $parser->parse($user_input);
         
         if ($tags && @$tags) {
-            print STDERR "[DEBUG][SimpleAIAgent] Found " . scalar(@$tags) . " hashtags\n" if should_log('DEBUG');
+            log_debug('SimpleAIAgent', "Found " . scalar(@$tags) . " hashtags");
             
             # Resolve hashtags to context
             my $context_data = $parser->resolve($tags);
@@ -184,12 +184,12 @@ sub process_user_request {
                 # Inject context into user input
                 $processed_input = $formatted_context . $user_input;
                 
-                print STDERR "[DEBUG][SimpleAIAgent] Injected " . length($formatted_context) . " bytes of context\n" if should_log('DEBUG');
+                log_debug('SimpleAIAgent', "Injected " . length($formatted_context) . " bytes of context");
             }
         }
     };
     if ($@) {
-        print STDERR "[WARN]SimpleAIAgent] Hashtag parsing failed: $@\n";
+        log_warning('SimpleAIAgent', "Hashtag parsing failed: $@");
         # Continue with original input if hashtag parsing fails
     }
     
@@ -271,8 +271,8 @@ sub process_user_request {
             # Propagate flag to prevent Chat.pm from saving duplicate messages
             $result->{messages_saved_during_workflow} = $orchestrator_result->{messages_saved_during_workflow};
             
-            print STDERR "[DEBUG][SimpleAIAgent] Orchestrator returned content length: " . length($orchestrator_result->{content} || '') . "\n" if should_log('DEBUG');
-            print STDERR "[DEBUG][SimpleAIAgent] Content: '" . ($orchestrator_result->{content} || 'UNDEF') . "'\n" if should_log('DEBUG');
+            log_debug('SimpleAIAgent', "Orchestrator returned content length: " . length($orchestrator_result->{content} || ''));
+            log_debug('SimpleAIAgent', "Content: '" . ($orchestrator_result->{content} || 'UNDEF') . "'");
             
             # Include metrics if streaming was used
             if ($orchestrator_result->{metrics}) {
@@ -296,7 +296,7 @@ sub process_user_request {
     # Set processing time
     $result->{processing_time} = time() - $result->{processing_time};
     
-    print STDERR "[DEBUG][SimpleAIAgent] Processing complete in " . $result->{processing_time} . "s\n" if $self->{debug};
+    log_debug('SimpleAIAgent', "Processing complete in " . $result->{processing_time} . "s");
     
     return $result;
 }

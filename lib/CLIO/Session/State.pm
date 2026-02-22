@@ -1,5 +1,5 @@
 if ($ENV{CLIO_DEBUG}) {
-    print STDERR "[TRACE] CLIO::Session::State loaded\n";
+    log_debug('SessionState', "CLIO::Session::State loaded");
 }
 package CLIO::Session::State;
 
@@ -33,7 +33,7 @@ use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use Carp qw(croak);
-use CLIO::Core::Logger qw(should_log log_error log_warning);
+use CLIO::Core::Logger qw(should_log log_error log_warning log_debug log_info);
 use CLIO::Util::PathResolver;
 use File::Spec;
 use CLIO::Util::JSON qw(encode_json decode_json);
@@ -47,7 +47,7 @@ use CLIO::Memory::TokenEstimator;
 sub new {
     my ($class, %args) = @_;
     if ($ENV{CLIO_DEBUG} || $args{debug}) {
-        print STDERR "[DEBUG][State::new] called with args: ", join(", ", map { "$_=$args{$_}" } keys %args), "\n";
+        log_debug('State::new', "called with args: " . join(", ", map { "$_=$args{$_}" } keys %args));
     }
     my $self = {
         session_id => $args{session_id},
@@ -83,8 +83,8 @@ sub new {
     };
     bless $self, $class;
     if ($ENV{CLIO_DEBUG} || $self->{debug}) {
-        print STDERR "[STATE] yarn object ref: $self->{yarn}\n";
-        print STDERR "[DEBUG][State::new] returning self: $self\n";
+        log_debug('SessionState', "[STATE] yarn object ref: $self->{yarn}");
+        log_debug('State::new', "returning self: $self");
     }
     return $self;
 }
@@ -132,7 +132,7 @@ sub save {
     };
     use Data::Dumper;
     if ($ENV{CLIO_DEBUG} || $self->{debug}) {
-        print STDERR "[STATE][DEBUG] Data to save: " . Dumper($data) . "\n";
+        log_debug('SessionState', "[STATE][DEBUG] Data to save: " . Dumper($data) . "");
     }
     
     # Ensure session directory exists before writing
@@ -159,12 +159,12 @@ sub save {
 sub load {
     my ($class, $session_id, %args) = @_;
     my $file = _session_file($session_id);
-    print STDERR "[DEBUG][State::load] called for session_id: $session_id, file: $file\n" if $args{debug} || $ENV{CLIO_DEBUG};
+    log_debug('State::load', "called for session_id: $session_id, file: $file");
     return unless -e $file;
     open my $fh, '<', $file or return;
     local $/; my $json = <$fh>; close $fh;
     my $data = eval { decode_json($json) };
-    print STDERR "[DEBUG][State::load] loaded data: ", (defined $data ? 'ok' : 'undef'), "\n" if $args{debug} || $ENV{CLIO_DEBUG};
+    log_debug('SessionState', "State::load loaded data: " . (defined $data ? 'ok' : 'undef'));
     return unless $data;
     
     # Determine working directory for loading project LTM
@@ -178,7 +178,7 @@ sub load {
     
     # Fallback: If old session has ltm->{store} data, migrate it
     if (!-e $ltm_file && $data->{ltm} && ref($data->{ltm}) eq 'HASH') {
-        print STDERR "[INFO][State] Migrating legacy LTM data to new format\n" if $args{debug} || $ENV{CLIO_DEBUG};
+        log_info('State', "Migrating legacy LTM data to new format");
         $ltm = CLIO::Memory::LongTerm->new(debug => $args{debug});
         # Convert old store format to discoveries
         for my $key (keys %{$data->{ltm}}) {
@@ -268,12 +268,12 @@ sub load {
         $self->{repair_notification} = $repaired;
     }
     
-    print STDERR "[DEBUG][State::load] returning self: $self\n" if $args{debug} || $ENV{CLIO_DEBUG};
+    log_debug('State::load', "returning self: $self");
     
     # Restore model to ENV if one was saved (so it persists across resume)
     if ($self->{selected_model}) {
         $ENV{OPENAI_MODEL} = $self->{selected_model};
-        print STDERR "[INFO][State::load] Restored model from session: $self->{selected_model}\n" if $args{debug} || $ENV{CLIO_DEBUG};
+        log_info('State::load', "Restored model from session: $self->{selected_model}");
     }
     
     return $self;
@@ -358,14 +358,12 @@ sub _validate_and_repair_history {
                 $orphan_indices{$i} = 1;
                 
                 # Log to debug only (not to user - suppressing raw [WARNING] messages)
-                print STDERR "[DEBUG][State] Found orphaned tool_calls at index $i: " . 
-                             join(', ', @missing_ids) . "\n" if $ENV{CLIO_DEBUG};
+                log_debug('SessionState', "Found orphaned tool_calls at index $i: " . join(', ', @missing_ids));
                 
                 # Also mark the preceding user message (if any) since they form a unit
                 if ($i > 0 && $history[$i-1]{role} && $history[$i-1]{role} eq 'user') {
                     $orphan_indices{$i-1} = 1;
-                    print STDERR "[DEBUG][State] Removing associated user message at index " . ($i-1) . "\n"
-                        if $ENV{CLIO_DEBUG};
+                    log_debug('SessionState', "Removing associated user message at index " . ($i-1));
                 }
                 
                 # Also remove any partial tool results for THIS assistant's tool_calls
@@ -394,8 +392,7 @@ sub _validate_and_repair_history {
         if ($msg->{role} && $msg->{role} eq 'tool' && $msg->{tool_call_id}) {
             unless (exists $tool_call_ids{$msg->{tool_call_id}}) {
                 $orphan_indices{$i} = 1;
-                print STDERR "[DEBUG][State] Found orphaned tool_result at index $i: " . 
-                             $msg->{tool_call_id} . " (no matching tool_call)\n" if $ENV{CLIO_DEBUG};
+                log_debug('SessionState', "Found orphaned tool_result at index $i: " . $msg->{tool_call_id} . " (no matching tool_call)");
             }
         }
     }
@@ -415,8 +412,7 @@ sub _validate_and_repair_history {
     $self->{history} = \@cleaned_history;
     
     # Log to debug only (not to user - suppressing raw [WARNING] messages)
-    print STDERR "[DEBUG][State] Removed $removed_count messages with incomplete tool execution\n"
-        if $ENV{CLIO_DEBUG};
+    log_debug('State', "Removed $removed_count messages with incomplete tool execution");
     
     # Save the repaired session immediately to persist the fix
     eval { $self->save(); };
@@ -461,15 +457,13 @@ sub add_message {
     # Add tool_calls if provided (for assistant messages with tool execution)
     if ($opts && $opts->{tool_calls}) {
         $message->{tool_calls} = $opts->{tool_calls};
-        print STDERR "[DEBUG][State::add_message] Added tool_calls to message\n" 
-            if $ENV{CLIO_DEBUG} || $self->{debug};
+        log_debug('State::add_message', "Added tool_calls to message");
     }
     
     # Add tool_call_id if provided (for tool result messages)
     if ($opts && $opts->{tool_call_id}) {
         $message->{tool_call_id} = $opts->{tool_call_id};
-        print STDERR "[DEBUG][State::add_message] Added tool_call_id=$opts->{tool_call_id} to message\n" 
-            if $ENV{CLIO_DEBUG} || $self->{debug};
+        log_debug('State::add_message', "Added tool_call_id=$opts->{tool_call_id} to message");
     }
     
     # Add provider response ID if available (for assistant messages)
@@ -484,10 +478,9 @@ sub add_message {
     
     # DEBUG: Log final message structure
     if (($ENV{CLIO_DEBUG} || $self->{debug}) && $role eq 'tool') {
-        print STDERR "[DEBUG][State::add_message] Final tool message structure: " .
-            "role=$message->{role}, " .
+        log_debug('SessionState', "State::add_message] Final tool message structure: " . "role=$message->{role}, " .
             "has_tool_call_id=" . (exists $message->{tool_call_id} ? 'YES' : 'NO') . ", " .
-            "tool_call_id=" . ($message->{tool_call_id} // 'MISSING') . "\n";
+            "tool_call_id=" . ($message->{tool_call_id} // 'MISSING'));
     }
     
     # Add to active conversation history
@@ -510,7 +503,7 @@ sub add_message {
     
     if ($current_size > $trim_threshold) {
         if ($ENV{CLIO_DEBUG} || $self->{debug}) {
-            print STDERR "[STATE] Context size ($current_size tokens) exceeds safe threshold ($trim_threshold of $max_tokens max), trimming...\n";
+            log_debug('SessionState', "[STATE] Context size ($current_size tokens) exceeds safe threshold ($trim_threshold of $max_tokens max), trimming...");
         }
         $self->trim_context();
     }
@@ -691,9 +684,9 @@ sub trim_context {
         use CLIO::Memory::TokenEstimator;
         my $before_tokens = CLIO::Memory::TokenEstimator::estimate_messages_tokens(\@messages);
         my $after_tokens = CLIO::Memory::TokenEstimator::estimate_messages_tokens(\@trimmed);
-        print STDERR "[STATE] Aggressive trim: $before -> $after messages ($before_tokens -> $after_tokens tokens, " . 
-                     int(($after_tokens / $before_tokens) * 100) . "% retained)\n";
-        print STDERR "[STATE] Trim notification injected - agent notified of archived context\n";
+        log_info('SessionState', "Aggressive trim: $before -> $after messages ($before_tokens -> $after_tokens tokens, " .
+                     int(($after_tokens / $before_tokens) * 100) . "% retained)");
+        log_debug('SessionState', "[STATE] Trim notification injected - agent notified of archived context");
     }
     
     # Update history (trimmed messages already in YaRN from add_message)
@@ -780,10 +773,9 @@ sub record_api_usage {
     };
     
     if ($ENV{CLIO_DEBUG} || $self->{debug}) {
-        print STDERR "[DEBUG][State] Recorded API usage: " .
-            "model=" . ($model || 'unknown') . ", " .
+        log_debug('SessionState', "Recorded API usage: " . "model=" . ($model || 'unknown') . ", " .
             "multiplier=${multiplier}x, " .
-            "tokens=$total_tokens\n";
+            "tokens=$total_tokens\n");
     }
 }
 

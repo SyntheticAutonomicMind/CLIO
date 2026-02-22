@@ -210,8 +210,7 @@ sub flush_output_buffer {
     STDOUT->flush() if STDOUT->can('flush');
     $| = 1;
     
-    print STDERR "[DEBUG][Chat] Buffer flushed for tool execution handshake (printed=$printed_content)\n" 
-        if $self->{debug};
+    log_debug('Chat', "Buffer flushed for tool execution handshake (printed=$printed_content)");
     
     return 1;
 }
@@ -233,8 +232,7 @@ sub reset_streaming_state {
     # Mark that we need a new CLIO: prefix on next chunk
     $self->{_need_agent_prefix} = 1;
     
-    print STDERR "[DEBUG][Chat] Streaming state reset - next chunk will get CLIO: prefix\n" 
-        if $self->{debug};
+    log_debug('Chat', "Streaming state reset - next chunk will get CLIO: prefix");
     
     return 1;
 }
@@ -364,7 +362,7 @@ sub run {
             
             # If command returned a prompt, use it as the next user input
             if ($ai_prompt) {
-                print STDERR "[DEBUG][Chat] Command returned ai_prompt, length=" . length($ai_prompt) . "\n" if should_log('DEBUG');
+                log_debug('Chat', "Command returned ai_prompt, length=" . length($ai_prompt));
                 $input = $ai_prompt;
                 # Fall through to AI processing below
             } else {
@@ -374,9 +372,9 @@ sub run {
         
         # Display user message (if not already from a command)
         # Note: After multiline command, $input contains the content, not the /command
-        print STDERR "[DEBUG][Chat] Before display check: input starts with /? " . ($input =~ /^\// ? "YES" : "NO") . "\n" if should_log('DEBUG');
+        log_debug('Chat', "Before display check: input starts with /? " . ($input =~ /^\// ? "YES" : "NO"));
         unless ($input =~ /^\//) {
-            print STDERR "[DEBUG][Chat] Calling display_user_message with input length=" . length($input) . "\n" if should_log('DEBUG');
+            log_debug('Chat', "Calling display_user_message with input length=" . length($input));
             $self->display_user_message($input);
         }
         
@@ -445,7 +443,7 @@ sub run {
             my $on_chunk = sub {
                 my ($chunk, $metrics) = @_;
                 
-                print STDERR "[DEBUG][Chat] Received chunk: " . substr($chunk, 0, 50) . "...\n" if $self->{debug};
+                log_debug('Chat', "Received chunk: " . substr($chunk, 0, 50) . "...");
                 
                 # Reset system message flag when we start outputting text
                 $self->{_last_was_system_message} = 0;
@@ -536,8 +534,8 @@ sub run {
                     
                     if ($should_flush) {
                         # Render accumulated markdown buffer
-                        print STDERR "[DEBUG][Chat] Periodic flush of markdown_buffer (" . length($self->{_streaming_markdown_buffer}) . " bytes, $markdown_line_count lines)\n" if $self->{debug};
-                        print STDERR "[DEBUG][Chat] Buffer ends with: " . substr($self->{_streaming_markdown_buffer}, -80) . "\n" if $self->{debug};
+                        log_debug('Chat', "Periodic flush of markdown_buffer (" . length($self->{_streaming_markdown_buffer}) . " bytes, $markdown_line_count lines)");
+                        log_debug('Chat', "Buffer ends with: " . substr($self->{_streaming_markdown_buffer}, -80));
                         my $output = $self->{_streaming_markdown_buffer};
                         if ($self->{enable_markdown}) {
                             $output = $self->render_markdown($self->{_streaming_markdown_buffer});
@@ -711,7 +709,7 @@ sub run {
             my $conversation_history = [];
             if ($self->{session} && $self->{session}->can('get_conversation_history')) {
                 $conversation_history = $self->{session}->get_conversation_history() || [];
-                print STDERR "[DEBUG][Chat] Loaded " . scalar(@$conversation_history) . " messages from session history\n" if $self->{debug};
+                log_debug('Chat', "Loaded " . scalar(@$conversation_history) . " messages from session history");
             }
             
             # Enable periodic signal delivery during streaming
@@ -742,7 +740,7 @@ sub run {
                 ui => $self,  # Pass UI object for user_collaboration tool
                 spinner => $spinner  # Pass spinner for interactive tools to stop
             });
-            print STDERR "[DEBUG][Chat] process_user_request returned, success=" . ($result->{success} ? "yes" : "no") . "\n" if $self->{debug};
+            log_debug('Chat', "process_user_request returned, success=" . ($result->{success} ? "yes" : "no"));
             
             # Disable periodic alarm after streaming completes
             alarm(0);
@@ -753,17 +751,17 @@ sub run {
             
             # DEBUG: Check buffer states before flush
             if ($self->{debug}) {
-                print STDERR "[DEBUG][Chat] AFTER streaming - markdown_buffer length=" . length($self->{_streaming_markdown_buffer} // '') . "\n";
-                print STDERR "[DEBUG][Chat] AFTER streaming - line_buffer length=" . length($self->{_streaming_line_buffer} // '') . "\n";
-                print STDERR "[DEBUG][Chat] AFTER streaming - first_chunk_received=$first_chunk_received\n";
+                log_debug('Chat', "AFTER streaming - markdown_buffer length=" . length($self->{_streaming_markdown_buffer} // ''));
+                log_debug('Chat', "AFTER streaming - line_buffer length=" . length($self->{_streaming_line_buffer} // ''));
+                log_debug('Chat', "AFTER streaming - first_chunk_received=$first_chunk_received");
             }
             
             # Flush any remaining content in buffers after streaming completes
             
             # 1. Flush markdown buffer if it has content
             if ($self->{_streaming_markdown_buffer} && $self->{_streaming_markdown_buffer} =~ /\S/) {
-                print STDERR "[DEBUG][Chat] Flushing markdown_buffer (" . length($self->{_streaming_markdown_buffer}) . " bytes): " . 
-                             substr($self->{_streaming_markdown_buffer}, -50) . "\n" if $self->{debug};
+                log_debug('Chat', "Flushing markdown_buffer (" . length($self->{_streaming_markdown_buffer}) . " bytes): " .
+                             substr($self->{_streaming_markdown_buffer}, -50));
                 my $output = $self->{_streaming_markdown_buffer};
                 if ($self->{enable_markdown}) {
                     $output = $self->render_markdown($self->{_streaming_markdown_buffer});
@@ -774,8 +772,8 @@ sub run {
             
             # 2. Flush line buffer if it has content (incomplete final line)
             if ($self->{_streaming_line_buffer} && $self->{_streaming_line_buffer} =~ /\S/) {
-                print STDERR "[DEBUG][Chat] Flushing line_buffer (" . length($self->{_streaming_line_buffer}) . " bytes): " . 
-                             substr($self->{_streaming_line_buffer}, -50) . "\n" if $self->{debug};
+                log_debug('Chat', "Flushing line_buffer (" . length($self->{_streaming_line_buffer}) . " bytes): " .
+                             substr($self->{_streaming_line_buffer}, -50));
                 my $output = $self->{_streaming_line_buffer};
                 if ($self->{enable_markdown}) {
                     $output = $self->render_markdown($self->{_streaming_line_buffer});
@@ -791,18 +789,18 @@ sub run {
             # Reset line count after streaming completes
             $self->{line_count} = 0;
             
-            print STDERR "[DEBUG][Chat] first_chunk_received=$first_chunk_received, accumulated_content_len=" . length($accumulated_content) . "\n" if $self->{debug};
+            log_debug('Chat', "first_chunk_received=$first_chunk_received, accumulated_content_len=" . length($accumulated_content));
             
             # Display metrics in debug mode
             if ($self->{debug} && $result->{metrics}) {
                 my $m = $result->{metrics};
-                print STDERR sprintf(
+                log_debug('Chat', sprintf(
                     "[METRICS] TTFT: %.2fs | TPS: %.1f | Tokens: %d | Duration: %.2fs\n",
                     $m->{ttft} // 0,
                     $m->{tps} // 0,
                     $m->{tokens} // 0,
                     $m->{duration} // 0
-                );
+                ));
             }
             
             # Store complete message in session history
@@ -815,12 +813,12 @@ sub run {
                 # Still add to buffer for display (content was streamed, not saved)
                 $self->add_to_buffer('assistant', $result->{final_response} // '') if $result->{final_response};
             } elsif ($result && $result->{final_response}) {
-                print STDERR "[DEBUG][Chat] Storing final_response in session (length=" . length($result->{final_response}) . ")\n" if $self->{debug};
+                log_debug('Chat', "Storing final_response in session (length=" . length($result->{final_response}) . ")");
                 my $sanitized = sanitize_text($result->{final_response});
                 $self->{session}->add_message('assistant', $sanitized);
                 $self->add_to_buffer('assistant', $result->{final_response});  # Display original with emojis
             } elsif ($accumulated_content) {
-                print STDERR "[DEBUG][Chat] Storing accumulated_content in session (length=" . length($accumulated_content) . ")\n" if $self->{debug};
+                log_debug('Chat', "Storing accumulated_content in session (length=" . length($accumulated_content) . ")");
                 # Fallback: use accumulated content
                 my $sanitized = sanitize_text($accumulated_content);
                 $self->{session}->add_message('assistant', $sanitized);
@@ -906,7 +904,7 @@ sub check_agent_messages {
     
     # Handle errors gracefully
     if ($@) {
-        print STDERR "[WARN][Chat] Failed to poll agent inbox: $@\n" if $self->{debug};
+        log_warning('Chat', "Failed to poll agent inbox: $@");
         return;
     }
     
@@ -1039,8 +1037,7 @@ sub check_for_updates_async {
     my $cache_file = File::Spec->catfile('.clio', 'update_check_cache');
     if (-f $cache_file) {
         $self->{_update_cache_mtime} = (stat($cache_file))[9];
-        print STDERR "[DEBUG][Chat] Tracking update cache mtime: $self->{_update_cache_mtime}\n" 
-            if should_log('DEBUG');
+        log_debug('Chat', "Tracking update cache mtime: $self->{_update_cache_mtime}");
     }
     
     # Fork background process to check for updates
@@ -1120,8 +1117,7 @@ sub check_for_update_notification {
     return if $current_mtime <= $last_known_mtime;
     
     # Cache file has been updated - check if there's a new update available
-    print STDERR "[DEBUG][Chat] Update cache modified, checking for new updates\n"
-        if should_log('DEBUG');
+    log_debug('Chat', "Update cache modified, checking for new updates");
     
     my $updater = CLIO::Update->new(debug => $self->{debug});
     my $update_info = $updater->get_available_update();
@@ -1377,9 +1373,8 @@ sub _prepopulate_session_data {
                 access_type_sku => $user_data->{access_type_sku},
             };
             
-            print STDERR "[DEBUG][Chat] Prepopulated quota: " . 
-                "$premium->{used}/$premium->{entitlement} " .
-                "($premium->{percent_remaining}% remaining)\n" if should_log('DEBUG');
+            log_debug('Chat', "Prepopulated quota: " . "$premium->{used}/$premium->{entitlement} " .
+                "($premium->{percent_remaining}% remaining)\n");
         }
         
         # Prepopulate model info from config
@@ -1408,8 +1403,7 @@ sub _prepopulate_session_data {
                     my $billing = $models_api->get_model_billing($api_model);
                     if ($billing && defined $billing->{multiplier}) {
                         $state->{billing}{multiplier} = $billing->{multiplier};
-                        print STDERR "[DEBUG][Chat] Prepopulated model billing: $api_model -> " .
-                            "$billing->{multiplier}x\n" if should_log('DEBUG');
+                        log_debug('Chat', "Prepopulated model billing: $api_model -> " . "$billing->{multiplier}x");
                     }
                 };
                 # Ignore errors - just means no multiplier info
@@ -2594,7 +2588,7 @@ sub setup_tab_completion {
     };
     
     if ($@) {
-        print STDERR "[WARN][CleanChat] Tab completion setup failed: $@\n" if $self->{debug};
+        log_warning('CleanChat', "Tab completion setup failed: $@");
         $self->{readline} = undef;
         $self->{completer} = undef;
     }
@@ -2835,8 +2829,8 @@ sub render_markdown {
         
         # DEBUG: Check if @-codes are in rendered text
         if ($self->{debug} && defined $rendered && $rendered =~ /\@[A-Z_]+\@/) {
-            print STDERR "[DEBUG][Chat] render_markdown: Found @-codes in rendered text\n";
-            print STDERR "[DEBUG][Chat] Sample: ", substr($rendered, 0, 100), "\n";
+            log_debug('Chat', "render_markdown: Found @-codes in rendered text");
+            log_debug('Chat', "Sample: " . substr($rendered, 0, 100));
         }
         
         # Parse @COLOR@ markers to actual ANSI escape sequences
@@ -2848,16 +2842,15 @@ sub render_markdown {
         
         # DEBUG: Verify @-codes were converted
         if ($self->{debug} && defined $rendered && $rendered =~ /\@[A-Z_]+\@/) {
-            print STDERR "[DEBUG][Chat] WARNING: @-codes still present after ANSI parse!\n";
-            print STDERR "[DEBUG][Chat] Sample: ", substr($rendered, 0, 100), "\n";
+            log_debug('Chat', "WARNING: @-codes still present after ANSI parse!");
+            log_debug('Chat', "Sample: " . substr($rendered, 0, 100));
         }
     };
     
     # If rendering failed or returned undef/empty, fall back to original text
     if ($@ || !defined $rendered || $rendered eq '') {
-        print STDERR "[DEBUG][Chat] Markdown rendering issue (falling back to raw): $@\n" if $@;
-        print STDERR "[DEBUG][Chat] Markdown render returned empty/undef, using raw text\n" 
-            if !$@ && (!defined $rendered || $rendered eq '');
+        log_debug('Chat', "Markdown rendering issue (falling back to raw): $@");
+        log_debug('Chat', "Markdown render returned empty/undef, using raw text");
         return $text;  # Fallback to raw text rather than breaking output
     }
     

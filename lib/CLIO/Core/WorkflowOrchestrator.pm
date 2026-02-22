@@ -148,12 +148,10 @@ sub new {
     );
     $self->{process_stats}->capture('session_start');
     
-    print STDERR "[DEBUG][WorkflowOrchestrator] Initialized with max_iterations=$self->{max_iterations}\n" 
-        if $self->{debug};
+    log_debug('WorkflowOrchestrator', "Initialized with max_iterations=$self->{max_iterations}");
     
     if ($self->{skip_custom} || $self->{skip_ltm}) {
-        print STDERR "[DEBUG][WorkflowOrchestrator] Incognito flags: skip_custom=$self->{skip_custom}, skip_ltm=$self->{skip_ltm}\n"
-            if $self->{debug};
+        log_debug('WorkflowOrchestrator', "Incognito flags: skip_custom=$self->{skip_custom}, skip_ltm=$self->{skip_ltm}");
     }
     
     return $self;
@@ -338,8 +336,7 @@ sub process_input {
         }
     }
     
-    print STDERR "[DEBUG][WorkflowOrchestrator] Processing input: '$user_input'\n" 
-        if $self->{debug};
+    log_debug('WorkflowOrchestrator', "Processing input: '$user_input'");
     
     # Build initial messages array
     my @messages = ();
@@ -352,8 +349,7 @@ sub process_input {
         content => $system_prompt
     };
     
-    print STDERR "[DEBUG][WorkflowOrchestrator] Added system prompt with tools (" . length($system_prompt) . " chars)\n"
-        if $self->{debug};
+    log_debug('WorkflowOrchestrator', "Added system prompt with tools (" . length($system_prompt) . " chars)");
     
     # Inject context files from session
     $self->_inject_context_files($session, \@messages);
@@ -381,8 +377,7 @@ sub process_input {
     
     if ($history && @$history) {
         push @messages, @$history;
-        print STDERR "[DEBUG][WorkflowOrchestrator] Loaded " . scalar(@$history) . " messages from history (after pre-flight trim)\n"
-            if $self->{debug};
+        log_debug('WorkflowOrchestrator', "Loaded " . scalar(@$history) . " messages from history (after pre-flight trim)");
     }
     
     # Add current user message to messages array for API call
@@ -395,8 +390,7 @@ sub process_input {
     # This ensures the message is persisted even if processing fails
     if ($session && $session->can('add_message')) {
         $session->add_message('user', $user_input);
-        print STDERR "[DEBUG][WorkflowOrchestrator] Saved user message to session history\n"
-            if should_log('DEBUG');
+        log_debug('WorkflowOrchestrator', "Saved user message to session history");
     }
     
     # Get tool definitions from registry (for API)
@@ -421,11 +415,10 @@ sub process_input {
                 log_debug('WorkflowOrchestrator', "Added " . scalar(@$mcp_defs) . " MCP tool(s) to API definitions");
             }
         };
-        print STDERR "[WARN][WorkflowOrchestrator] MCP tool definition error: $@\n" if $@ && should_log('WARNING');
+        log_warning('WorkflowOrchestrator', "MCP tool definition error: $@");
     }
     
-    print STDERR "[DEBUG][WorkflowOrchestrator] Loaded " . scalar(@$tools) . " tool definitions\n"
-        if $self->{debug};
+    log_debug('WorkflowOrchestrator', "Loaded " . scalar(@$tools) . " tool definitions");
     
     # Main workflow loop
     my $iteration = 0;
@@ -450,8 +443,7 @@ sub process_input {
         $self->{process_stats}->capture('iteration_start', { iteration => $iteration })
             if $self->{process_stats};
         
-        print STDERR "[DEBUG][WorkflowOrchestrator] Iteration $iteration/$self->{max_iterations}\n"
-            if $self->{debug};
+        log_debug('WorkflowOrchestrator', "Iteration $iteration/$self->{max_iterations}");
         
         # Check for user interrupt (ESC key press)
         if ($self->_check_for_user_interrupt($session)) {
@@ -473,8 +465,7 @@ sub process_input {
             # If there's content, the streaming callback will print "CLIO: " before it
             if ($self->{ui}->can('show_busy_indicator')) {
                 $self->{ui}->show_busy_indicator();
-                print STDERR "[DEBUG][WorkflowOrchestrator] Showing busy indicator before API iteration $iteration\n"
-                    if $self->{debug};
+                log_debug('WorkflowOrchestrator', "Showing busy indicator before API iteration $iteration");
             }
         }
         
@@ -482,8 +473,7 @@ sub process_input {
         my $api_response = eval {
             # Use streaming mode always (GitHub Copilot requires stream:true for real quota data)
             # If no callback provided, use a no-op callback
-            print STDERR "[DEBUG][WorkflowOrchestrator] Using streaming mode (iteration $iteration)\n"
-                if $self->{debug};
+            log_debug('WorkflowOrchestrator', "Using streaming mode (iteration $iteration)");
             
             # Provide a default no-op callback if none specified
             my $base_callback = $on_chunk || sub { };  # No-op callback
@@ -497,8 +487,7 @@ sub process_input {
                 # Check for interrupt on each streaming chunk
                 if (!$self->{_interrupt_pending} && $self->_check_for_user_interrupt($session)) {
                     $self->{_interrupt_pending} = 1;
-                    print STDERR "[INFO][WorkflowOrchestrator] Interrupt detected during streaming\n"
-                        if should_log('INFO');
+                    log_info('WorkflowOrchestrator', "Interrupt detected during streaming");
                     # Still deliver this chunk, but the flag will be checked after streaming completes
                 }
                 
@@ -518,26 +507,25 @@ sub process_input {
                 }
                 
                 # Also show in orchestrator context
-                print STDERR "[DEBUG][WorkflowOrchestrator] Tool called: $tool_name\n"
-                    if $self->{debug};
+                log_debug('WorkflowOrchestrator', "Tool called: $tool_name");
             };
             
             # DEBUG: Log messages being sent to API when debug mode is enabled
             if ($self->{debug}) {
-                print STDERR "[DEBUG][WorkflowOrchestrator] Sending to API: " . scalar(@$alternated_messages) . " messages\n";
+                log_debug('WorkflowOrchestrator', "Sending to API: " . scalar(@$alternated_messages) . " messages");
                 for my $i (0 .. $#{$alternated_messages}) {
                     my $msg = $alternated_messages->[$i];
-                    print STDERR "[DEBUG][WorkflowOrchestrator]   API Message $i: role=" . $msg->{role};
+                    log_debug('WorkflowOrchestrator', "API Message $i: role=" . $msg->{role});
                     if ($msg->{tool_calls}) {
-                        print STDERR ", tool_calls=" . scalar(@{$msg->{tool_calls}});
+                        log_debug('WorkflowOrchestrator', ", tool_calls=" . scalar(@{$msg->{tool_calls}}));
                         for my $tc (@{$msg->{tool_calls}}) {
-                            print STDERR ", tc_id=" . (defined $tc->{id} ? $tc->{id} : "**MISSING**");
+                            log_debug('WorkflowOrchestrator', ", tc_id=" . (defined $tc->{id} ? $tc->{id} : "**MISSING**"));
                         }
                     }
                     if ($msg->{role} eq 'tool') {
-                        print STDERR ", tool_call_id=" . (defined $msg->{tool_call_id} ? $msg->{tool_call_id} : "**MISSING**");
+                        log_debug('WorkflowOrchestrator', ", tool_call_id=" . (defined $msg->{tool_call_id} ? $msg->{tool_call_id} : "**MISSING**"));
                     }
-                    print STDERR "\n";
+                    log_debug('WorkflowOrchestrator', "");
                 }
             }
             
@@ -632,8 +620,7 @@ sub process_input {
                         # Remove the malformed assistant message from history
                         if (@messages && $messages[-1]->{role} eq 'assistant') {
                             my $removed_msg = pop @messages;
-                            print STDERR "[INFO][WorkflowOrchestrator] Removed malformed assistant message from history\n"
-                                if should_log('INFO');
+                            log_info('WorkflowOrchestrator', "Removed malformed assistant message from history");
                         }
                         
                         # Extract the tool name from error if available to provide specific schema
@@ -675,16 +662,14 @@ sub process_input {
                         $error_type = "malformed tool JSON";
                         $system_msg = "AI generated invalid JSON parameters. Removed bad message, adding guidance and retrying... (attempt $retry_count/$max_retries)";
                         
-                        print STDERR "[INFO][WorkflowOrchestrator] Added JSON formatting guidance for tool: $failed_tool_name\n"
-                            if should_log('INFO');
+                        log_info('WorkflowOrchestrator', "Added JSON formatting guidance for tool: $failed_tool_name");
                     }
                     else {
                         # Second attempt failed: DON'T give up - let agent continue with error context
                         # Remove the failed assistant message again
                         if (@messages && $messages[-1]->{role} eq 'assistant') {
                             pop @messages;
-                            print STDERR "[INFO][WorkflowOrchestrator] Removed second malformed assistant message\n"
-                                if should_log('INFO');
+                            log_info('WorkflowOrchestrator', "Removed second malformed assistant message");
                         }
                         
                         # Add a recovery message that preserves context
@@ -839,8 +824,7 @@ sub process_input {
                     my $preserved_info = $first_user_msg ? " (first user message preserved)" : "";
                     $system_msg = "Token limit exceeded. Trimmed $trimmed_count messages from conversation history and retrying$preserved_info... (attempt $retry_count/$max_retries)";
                     
-                    print STDERR "[INFO][WorkflowOrchestrator] Trimmed $trimmed_count messages due to token limit (kept " . scalar(@non_system) . " messages, first_user=" . ($first_user_msg ? 'YES' : 'NO') . ")\n"
-                        if should_log('INFO');
+                    log_info('WorkflowOrchestrator', "Trimmed $trimmed_count messages due to token limit (kept " . scalar(@non_system) . " messages, first_user=" . ($first_user_msg ? 'YES' : 'NO') . ")");
                     
                     # If we've trimmed to minimal context and still failing, give up
                     if ($retry_count > 2 && scalar(@non_system) <= 3) {
@@ -861,8 +845,7 @@ sub process_input {
                     $error_type = "server error";
                     $system_msg = "Server temporarily unavailable. Retrying in ${retry_delay}s with exponential backoff... (attempt $retry_count/$max_server_retries)";
                     
-                    print STDERR "[INFO][WorkflowOrchestrator] Applying exponential backoff for server error: ${retry_delay}s delay\n"
-                        if should_log('INFO');
+                    log_info('WorkflowOrchestrator', "Applying exponential backoff for server error: ${retry_delay}s delay");
                 }
                 # Special handling for rate limit errors
                 elsif ($api_response->{error_type} && $api_response->{error_type} eq 'rate_limit') {
@@ -892,8 +875,7 @@ sub process_input {
                         push @messages, $current_user_msg if $current_user_msg && 
                             (!@$fresh_history || $fresh_history->[-1]->{content} ne $current_user_msg->{content});
                         
-                        print STDERR "[INFO][WorkflowOrchestrator] Rebuilt messages from session history (" . 
-                            scalar(@messages) . " messages)\n" if should_log('INFO');
+                        log_info('WorkflowOrchestrator', "Rebuilt messages from session history (" . scalar(@messages) . " messages)");
                     }
                     
                     $retry_delay = 0;  # Instant retry after rebuild
@@ -902,7 +884,7 @@ sub process_input {
                 # Call system message callback if provided
                 if ($on_system_message) {
                     eval { $on_system_message->($system_msg); };
-                    print STDERR "[DEBUG][WorkflowOrchestrator] UI callback error: $@\n" if should_log('DEBUG') && $@;
+                    log_debug('WorkflowOrchestrator', "UI callback error: $@");
                 } else {
                     log_info('WorkflowOrchestrator', "Retryable $error_type detected, retrying in ${retry_delay}s on next iteration (attempt $retry_count/$max_retries)");
                 }
@@ -928,8 +910,7 @@ sub process_input {
             # Track consecutive identical errors to prevent infinite loops
             if ($error eq $self->{last_error}) {
                 $self->{consecutive_errors}++;
-                print STDERR "[WARN][WorkflowOrchestrator] Consecutive error count: $self->{consecutive_errors}/$self->{max_consecutive_errors}\n"
-                    if should_log('WARNING');
+                log_warning('WorkflowOrchestrator', "Consecutive error count: $self->{consecutive_errors}/$self->{max_consecutive_errors}");
             } else {
                 $self->{consecutive_errors} = 1;
                 $self->{last_error} = $error;
@@ -959,16 +940,14 @@ sub process_input {
             # The AI will see the error message and try a different approach
             if (@messages && $messages[-1]->{role} eq 'assistant') {
                 my $removed_msg = pop @messages;
-                print STDERR "[WARN][WorkflowOrchestrator] Removed bad assistant message due to API error: $error\n"
-                    if should_log('WARNING');
+                log_warning('WorkflowOrchestrator', "Removed bad assistant message due to API error: $error");
                 
                 # Show what was removed for debugging
                 if ($self->{debug}) {
                     my $content_preview = substr($removed_msg->{content} // '', 0, 100);
-                    print STDERR "[DEBUG][WorkflowOrchestrator] Removed message content: $content_preview...\n";
+                    log_debug('WorkflowOrchestrator', "Removed message content: $content_preview...");
                     if ($removed_msg->{tool_calls}) {
-                        print STDERR "[DEBUG][WorkflowOrchestrator] Removed message had " . 
-                            scalar(@{$removed_msg->{tool_calls}}) . " tool_calls\n";
+                        log_debug('WorkflowOrchestrator', "Removed message had " . scalar(@{$removed_msg->{tool_calls}}) . " tool_calls");
                     }
                 }
             }
@@ -1002,12 +981,10 @@ sub process_input {
                                "Please try a different approach. Avoid repeating the same action that caused this error."
                 };
                 
-                print STDERR "[INFO][WorkflowOrchestrator] Added error message to conversation, continuing workflow\n"
-                    if should_log('INFO');
+                log_info('WorkflowOrchestrator', "Added error message to conversation, continuing workflow");
             } else {
                 # Token limit error - trim messages instead of adding error
-                print STDERR "[WARN][WorkflowOrchestrator] Token limit error detected. Using smart context trimming...\n"
-                    if should_log('WARNING');
+                log_warning('WorkflowOrchestrator', "Token limit error detected. Using smart context trimming...");
                 
                 # Smart trim: Keep system message + recent complete message groups
                 # A "message group" is either:
@@ -1077,9 +1054,7 @@ sub process_input {
                 }
                 
                 my $removed_groups = scalar(@groups) - $keep_count;
-                print STDERR "[INFO][WorkflowOrchestrator] Smart trim: kept $keep_count of " . 
-                    scalar(@groups) . " message groups (removed $removed_groups)\n"
-                    if should_log('INFO');
+                log_info('WorkflowOrchestrator', "Smart trim: kept $keep_count of " . scalar(@groups) . " message groups (removed $removed_groups)");
             }
             
             # Continue to next iteration - let AI try again with the error context
@@ -1100,19 +1075,17 @@ sub process_input {
                 my $model = $self->{api_manager}->get_current_model();
                 my $provider = $self->{api_manager}->get_current_provider();
                 $session->record_api_usage($api_response->{usage}, $model, $provider);
-                print STDERR "[DEBUG][WorkflowOrchestrator] Recorded API usage: model=$model, provider=$provider\n"
-                    if should_log('DEBUG');
+                log_debug('WorkflowOrchestrator', "Recorded API usage: model=$model, provider=$provider");
             }
         }
         
         # Debug: Log API response structure
         if ($self->{debug}) {
-            print STDERR "[DEBUG][WorkflowOrchestrator] API response received\n";
+            log_debug('WorkflowOrchestrator', "API response received");
             if ($api_response->{tool_calls}) {
-                print STDERR "[DEBUG][WorkflowOrchestrator] Tool calls detected: " . 
-                    scalar(@{$api_response->{tool_calls}}) . "\n";
+                log_debug('WorkflowOrchestrator', "Tool calls detected: " . scalar(@{$api_response->{tool_calls}}));
             } else {
-                print STDERR "[DEBUG][WorkflowOrchestrator] No structured tool calls in response\n";
+                log_debug('WorkflowOrchestrator', "No structured tool calls in response");
             }
         }
         
@@ -1125,9 +1098,7 @@ sub process_input {
             my $result = $extractor->extract($api_response->{content});
             
             if (@{$result->{tool_calls}}) {
-                print STDERR "[DEBUG][WorkflowOrchestrator] Extracted " . 
-                    scalar(@{$result->{tool_calls}}) . " text-based tool calls (format: $result->{format})\n"
-                    if $self->{debug};
+                log_debug('WorkflowOrchestrator', "Extracted " . scalar(@{$result->{tool_calls}}) . " text-based tool calls (format: $result->{format})");
                 
                 # Update response to include extracted tool calls
                 $api_response->{tool_calls} = $result->{tool_calls};
@@ -1212,10 +1183,8 @@ sub process_input {
                 next;
             }
             
-            print STDERR "[DEBUG][WorkflowOrchestrator] Processing " . 
-                scalar(@validated_tool_calls) . " validated tool calls" .
-                ($had_validation_errors ? " (some were rejected/repaired)" : "") . "\n"
-                if $self->{debug};
+            log_debug('WorkflowOrchestrator', "Processing " . scalar(@validated_tool_calls) . " validated tool calls" .
+                ($had_validation_errors ? " (some were rejected/repaired)" : "") . "\n");
             
             # Add assistant's message with VALIDATED tool_calls to conversation
             push @messages, {
@@ -1249,8 +1218,7 @@ sub process_input {
                 tool_calls => \@validated_tool_calls  # Use validated version
             };
             
-            print STDERR "[DEBUG][WorkflowOrchestrator] Delaying save of assistant message with tool_calls until first tool result completes\n"
-                if should_log('DEBUG');
+            log_debug('WorkflowOrchestrator', "Delaying save of assistant message with tool_calls until first tool result completes");
             
             # Classify tools by execution requirements (SAM pattern + CLIO enhancements)
             # - BLOCKING: Must complete before workflow continues (interactive tools)
@@ -1278,17 +1246,15 @@ sub process_input {
                         # Debug: Show original arguments before any processing
                         if ($self->{debug}) {
                             my $preview = substr($json_str, 0, 300);
-                            print STDERR "[DEBUG][WorkflowOrchestrator] Original arguments (first 300 chars): $preview\n";
+                            log_debug('WorkflowOrchestrator', "Original arguments (first 300 chars): $preview");
                         }
 
                         # Check for Anthropic XML format first
                         # Claude sometimes uses native XML instead of JSON for tool calls
                         if (is_anthropic_xml_format($json_str)) {
-                            print STDERR "[INFO][WorkflowOrchestrator] Detected Anthropic XML format, converting to JSON\n"
-                                if should_log('INFO');
+                            log_info('WorkflowOrchestrator', "Detected Anthropic XML format, converting to JSON");
                             $json_str = parse_anthropic_xml_to_json($json_str, $self->{debug});
-                            print STDERR "[DEBUG][WorkflowOrchestrator] Converted XML to JSON: " . substr($json_str, 0, 300) . "\n"
-                                if $self->{debug};
+                            log_debug('WorkflowOrchestrator', "Converted XML to JSON: " . substr($json_str, 0, 300));
                         } else {
                             # Standard JSON path - try repair if needed
                             $json_str = repair_malformed_json($json_str, $self->{debug});
@@ -1296,7 +1262,7 @@ sub process_input {
                             # Debug: Show repaired JSON
                             if ($self->{debug}) {
                                 my $preview = substr($json_str, 0, 300);
-                                print STDERR "[DEBUG][WorkflowOrchestrator] Repaired JSON arguments (first 300 chars): $preview\n";
+                                log_debug('WorkflowOrchestrator', "Repaired JSON arguments (first 300 chars): $preview");
                             }
                         }
                         
@@ -1334,8 +1300,7 @@ sub process_input {
                                         $assistant_msg_pending->{content},
                                         { tool_calls => $assistant_msg_pending->{tool_calls} }
                                     );
-                                    print STDERR "[DEBUG][WorkflowOrchestrator] Saved assistant message with tool_calls to session (on error result)\n"
-                                        if should_log('DEBUG');
+                                    log_debug('WorkflowOrchestrator', "Saved assistant message with tool_calls to session (on error result)");
                                     $assistant_msg_pending = undef;
                                 }
                                 
@@ -1345,8 +1310,7 @@ sub process_input {
                                     $error_message,
                                     { tool_call_id => $tool_call->{id} }
                                 );
-                                print STDERR "[DEBUG][WorkflowOrchestrator] Saved error tool result to session\n"
-                                    if should_log('DEBUG');
+                                log_debug('WorkflowOrchestrator', "Saved error tool result to session");
                             };
                             if ($@) {
                                 log_debug('WorkflowOrchestrator', "Session save error (non-critical): $@");
@@ -1362,12 +1326,10 @@ sub process_input {
                 my $is_interactive = 0;
                 if (exists $params->{isInteractive}) {
                     $is_interactive = $params->{isInteractive} ? 1 : 0;
-                    print STDERR "[DEBUG][WorkflowOrchestrator] Tool $tool_name isInteractive parameter: $is_interactive\n"
-                        if $self->{debug};
+                    log_debug('WorkflowOrchestrator', "Tool $tool_name isInteractive parameter: $is_interactive");
                 } elsif ($tool && $tool->{is_interactive}) {
                     $is_interactive = 1;
-                    print STDERR "[DEBUG][WorkflowOrchestrator] Tool $tool_name default is_interactive: $is_interactive\n"
-                        if $self->{debug};
+                    log_debug('WorkflowOrchestrator', "Tool $tool_name default is_interactive: $is_interactive");
                 }
                 
                 # Interactive tools are BLOCKING (must wait for user I/O)
@@ -1376,21 +1338,18 @@ sub process_input {
                 if ($tool) {
                     if ($requires_blocking) {
                         push @blocking_tools, $tool_call;
-                        print STDERR "[DEBUG][WorkflowOrchestrator] Classified $tool_name as BLOCKING (interactive=$is_interactive)\n"
-                            if $self->{debug};
+                        log_debug('WorkflowOrchestrator', "Classified $tool_name as BLOCKING (interactive=$is_interactive)");
                     } elsif ($tool->{requires_serial}) {
                         push @serial_tools, $tool_call;
-                        print STDERR "[DEBUG][WorkflowOrchestrator] Classified $tool_name as SERIAL\n"
-                            if $self->{debug};
+                        log_debug('WorkflowOrchestrator', "Classified $tool_name as SERIAL");
                     } else {
                         push @parallel_tools, $tool_call;
-                        print STDERR "[DEBUG][WorkflowOrchestrator] Classified $tool_name as PARALLEL\n"
-                            if $self->{debug};
+                        log_debug('WorkflowOrchestrator', "Classified $tool_name as PARALLEL");
                     }
                 } else {
                     # Unknown tool - treat as parallel (will fail safely)
                     push @parallel_tools, $tool_call;
-                    print STDERR "[WARN]WorkflowOrchestrator] Unknown tool $tool_name, treating as PARALLEL\n";
+                    log_warning('WorkflowOrchestrator', "Unknown tool $tool_name, treating as PARALLEL");
                 }
             }
             
@@ -1418,18 +1377,16 @@ sub process_input {
             # 4. user_collaboration tools (ALWAYS LAST)
             my @ordered_tool_calls = (@other_blocking_tools, @serial_tools, @parallel_tools, @user_collaboration_tools);
             
-            print STDERR "[DEBUG][WorkflowOrchestrator] Execution order: " .
-                scalar(@other_blocking_tools) . " other blocking, " .
+            log_debug('WorkflowOrchestrator', "Execution order: " . scalar(@other_blocking_tools) . " other blocking, " .
                 scalar(@serial_tools) . " serial, " .
                 scalar(@parallel_tools) . " parallel, " .
-                scalar(@user_collaboration_tools) . " user_collaboration (LAST)\n" if $self->{debug};
+                scalar(@user_collaboration_tools) . " user_collaboration (LAST)\n");
             
             # Flush UI streaming buffer BEFORE executing any tools
             # This ensures agent text appears BEFORE tool execution output
             # Part of the handshake mechanism to fix message ordering (Bug 1 & 3)
             if ($self->{ui} && $self->{ui}->can('flush_output_buffer')) {
-                print STDERR "[DEBUG][WorkflowOrchestrator] Flushing UI buffer before tool execution\n"
-                    if $self->{debug};
+                log_debug('WorkflowOrchestrator', "Flushing UI buffer before tool execution");
                 $self->{ui}->flush_output_buffer();
             }
             # Also flush STDOUT directly as a fallback
@@ -1455,8 +1412,7 @@ sub process_input {
                 # Check for user interrupt between tool executions
                 # This allows ESC to abort remaining tools mid-iteration
                 if ($self->{_interrupt_pending} || $self->_check_and_handle_interrupt($session, \@messages)) {
-                    print STDERR "[INFO][WorkflowOrchestrator] Interrupt detected between tool executions, skipping remaining tools\n"
-                        if should_log('INFO');
+                    log_info('WorkflowOrchestrator', "Interrupt detected between tool executions, skipping remaining tools");
                     last;  # Break out of tool execution loop
                 }
                 
@@ -1465,8 +1421,7 @@ sub process_input {
                 my $tool_display_name = uc($tool_name);
                 $tool_display_name =~ s/_/ /g;
                 
-                print STDERR "[DEBUG][WorkflowOrchestrator] Executing tool: $tool_name\n"
-                    if $self->{debug};
+                log_debug('WorkflowOrchestrator', "Executing tool: $tool_name");
                 
                 # Handle first tool call: ensure proper line separation from agent content
                 # The streaming callback prints "CLIO: " immediately on first chunk
@@ -1477,13 +1432,11 @@ sub process_input {
                     # from appearing in the output
                     if ($self->{spinner} && $self->{spinner}->can('stop')) {
                         $self->{spinner}->stop();
-                        print STDERR "[DEBUG][WorkflowOrchestrator] Stopped spinner before tool output\n"
-                            if $self->{debug};
+                        log_debug('WorkflowOrchestrator', "Stopped spinner before tool output");
                     }
                     
                     my $content = $api_response->{content} // '';
-                    print STDERR "[DEBUG][WorkflowOrchestrator] First tool call - content: '" . substr($content, 0, 100) . "'\n"
-                        if $self->{debug};
+                    log_debug('WorkflowOrchestrator', "First tool call - content: '" . substr($content, 0, 100) . "'");
                     
                     # No need to clear anything - "CLIO: " prefix is only printed when there's actual content
                     # If this is a tool-only response, no prefix was printed, so nothing to clear
@@ -1549,8 +1502,7 @@ sub process_input {
                                 attempted_params => $attempted_params
                             );
                             
-                            print STDERR "[DEBUG][WorkflowOrchestrator] Enhanced error for AI: " . substr($enhanced_error_for_ai, 0, 100) . "...\n"
-                                if should_log('DEBUG');
+                            log_debug('WorkflowOrchestrator', "Enhanced error for AI: " . substr($enhanced_error_for_ai, 0, 100) . "...");
                         } elsif ($result_data->{action_description}) {
                             $action_detail = $result_data->{action_description};
                         } elsif ($result_data->{metadata} && ref($result_data->{metadata}) eq 'HASH' && 
@@ -1628,8 +1580,7 @@ sub process_input {
                                 $assistant_msg_pending->{content},
                                 { tool_calls => $assistant_msg_pending->{tool_calls} }
                             );
-                            print STDERR "[DEBUG][WorkflowOrchestrator] Saved assistant message with tool_calls to session (on first tool result)\n"
-                                if should_log('DEBUG');
+                            log_debug('WorkflowOrchestrator', "Saved assistant message with tool_calls to session (on first tool result)");
                             $assistant_msg_pending = undef;  # Mark as saved
                         }
                         
@@ -1639,16 +1590,14 @@ sub process_input {
                             $sanitized_content,
                             { tool_call_id => $tool_call->{id} }
                         );
-                        print STDERR "[DEBUG][WorkflowOrchestrator] Saved tool result to session (tool_call_id=" . $tool_call->{id} . ")\n"
-                            if should_log('DEBUG');
+                        log_debug('WorkflowOrchestrator', "Saved tool result to session (tool_call_id=" . $tool_call->{id} . ")");
                     };
                     if ($@) {
                         log_warning('WorkflowOrchestrator', "Failed to save tool result: $@");
                     }
                 }
                 
-                print STDERR "[DEBUG][WorkflowOrchestrator] Tool result added to conversation (sanitized)\n"
-                    if $self->{debug};
+                log_debug('WorkflowOrchestrator', "Tool result added to conversation (sanitized)");
             }
             
             # Clear flag that prevented UI pagination from clearing tool headers
@@ -1663,8 +1612,7 @@ sub process_input {
             # Reset UI streaming state so next iteration shows new CLIO: prefix
             # This ensures proper message formatting after tool execution
             if ($self->{ui} && $self->{ui}->can('reset_streaming_state')) {
-                print STDERR "[DEBUG][WorkflowOrchestrator] Resetting UI streaming state for next iteration\n"
-                    if $self->{debug};
+                log_debug('WorkflowOrchestrator', "Resetting UI streaming state for next iteration");
                 $self->{ui}->reset_streaming_state();
             }
             
@@ -1675,8 +1623,7 @@ sub process_input {
             if ($self->{ui}) {
                 # Set flag so on_chunk callback knows to stop spinner on next chunk
                 $self->{ui}->{_prepare_for_next_iteration} = 1;
-                print STDERR "[DEBUG][WorkflowOrchestrator] Set _prepare_for_next_iteration flag for next API call\n"
-                    if $self->{debug};
+                log_debug('WorkflowOrchestrator', "Set _prepare_for_next_iteration flag for next API call");
             }
             
             # Save session after each iteration to prevent data loss
@@ -1689,8 +1636,7 @@ sub process_input {
             if ($session && $session->can('save')) {
                 eval {
                     $session->save();
-                    print STDERR "[DEBUG][WorkflowOrchestrator] Session saved after iteration $iteration (preserving tool execution history)\n"
-                        if should_log('DEBUG');
+                    log_debug('WorkflowOrchestrator', "Session saved after iteration $iteration (preserving tool execution history)");
                 };
                 if ($@) {
                     log_warning('WorkflowOrchestrator', "Failed to save session after iteration: $@");
@@ -1710,8 +1656,7 @@ sub process_input {
         # No tool calls - AI has final answer
         my $elapsed_time = time() - $start_time;
         
-        print STDERR "[DEBUG][WorkflowOrchestrator] Workflow complete after $iteration iterations (${elapsed_time}s)\n"
-            if $self->{debug};
+        log_debug('WorkflowOrchestrator', "Workflow complete after $iteration iterations (${elapsed_time}s)");
         
         # Capture final process stats
         $self->{process_stats}->capture('session_end', {
@@ -1773,7 +1718,7 @@ sub process_input {
     );
     
     log_debug('WorkflowOrchestrator', "$error_msg");
-    print STDERR "[DEBUG][WorkflowOrchestrator] Tool calls made: " . scalar(@tool_calls_made) . "\n" if should_log('DEBUG');
+    log_debug('WorkflowOrchestrator', "Tool calls made: " . scalar(@tool_calls_made));
     
     return {
         success => 0,
@@ -1830,12 +1775,10 @@ sub _build_system_prompt {
     );
     
     if ($self->{skip_custom}) {
-        print STDERR "[DEBUG][WorkflowOrchestrator] Skipping custom instructions (--no-custom-instructions or --incognito)\n"
-            if $self->{debug};
+        log_debug('WorkflowOrchestrator', "Skipping custom instructions (--no-custom-instructions or --incognito)");
     }
     
-    print STDERR "[DEBUG][WorkflowOrchestrator] Loading system prompt from PromptManager\n"
-        if $self->{debug};
+    log_debug('WorkflowOrchestrator', "Loading system prompt from PromptManager");
     
     my $base_prompt = $pm->get_system_prompt();
     
@@ -1851,8 +1794,7 @@ sub _build_system_prompt {
     if ($session && !$self->{skip_ltm}) {
         $ltm_section = $self->_generate_ltm_section($session);
     } elsif ($self->{skip_ltm}) {
-        print STDERR "[DEBUG][WorkflowOrchestrator] Skipping LTM injection (--no-ltm or --incognito)\n"
-            if $self->{debug};
+        log_debug('WorkflowOrchestrator', "Skipping LTM injection (--no-ltm or --incognito)");
     }
     
     # Insert tools section after "## Core Instructions" or append if not found
@@ -1867,20 +1809,17 @@ sub _build_system_prompt {
     # Insert LTM section after tools section if available
     if ($ltm_section) {
         $base_prompt .= "\n\n$ltm_section";
-        print STDERR "[DEBUG][WorkflowOrchestrator] Added LTM context section to prompt\n"
-            if $self->{debug};
+        log_debug('WorkflowOrchestrator', "Added LTM context section to prompt");
     }
     
     # Add non-interactive mode instruction if running with --input flag
     if ($self->{non_interactive}) {
         my $non_interactive_section = $self->_generate_non_interactive_section();
         $base_prompt .= "\n\n$non_interactive_section";
-        print STDERR "[DEBUG][WorkflowOrchestrator] Added non-interactive mode section to prompt\n"
-            if $self->{debug};
+        log_debug('WorkflowOrchestrator', "Added non-interactive mode section to prompt");
     }
     
-    print STDERR "[DEBUG][WorkflowOrchestrator] Added dynamic tools section to prompt\n"
-        if $self->{debug};
+    log_debug('WorkflowOrchestrator', "Added dynamic tools section to prompt");
     
     return $base_prompt;
 }
@@ -1904,8 +1843,7 @@ sub _generate_tools_section {
     my $tools = $self->{tool_registry}->get_all_tools();
     my $tool_count = scalar(@$tools);
     
-    print STDERR "[DEBUG][WorkflowOrchestrator] Generating tools section for $tool_count tools\n"
-        if $self->{debug};
+    log_debug('WorkflowOrchestrator', "Generating tools section for $tool_count tools");
     
     my $section = "## Available Tools - READ THIS CAREFULLY\n\n";
     $section .= "You have access to exactly $tool_count function calling tools. ";
@@ -2270,19 +2208,19 @@ sub _trim_conversation_for_api {
     
     if ($current_total <= $safe_threshold) {
         if ($self->{debug}) {
-            print STDERR "[DEBUG][WorkflowOrchestrator::_trim_conversation_for_api] History OK: $history_tokens tokens (total: $current_total of $safe_threshold safe limit, model context: $model_context)\n";
+            log_debug('WorkflowOrchestrator::_trim_conversation_for_api', "History OK: $history_tokens tokens (total: $current_total of $safe_threshold safe limit, model context: $model_context)");
         }
         return $history;  # No trimming needed
     }
     
     if ($self->{debug}) {
         log_warning('WorkflowOrchestrator::_trim_conversation_for_api', "History exceeds safe limit: $current_total tokens (safe: $safe_threshold of $model_context total). Trimming...");
-        print STDERR "[DEBUG]  Model context window: $model_context tokens\n";
-        print STDERR "[DEBUG]  Max response: $max_response tokens\n";
-        print STDERR "[DEBUG]  Safe trim threshold: " . int($safe_threshold_percent * 100) . "% = $safe_threshold tokens\n";
-        print STDERR "[DEBUG]  System prompt: $system_tokens tokens\n";
-        print STDERR "[DEBUG]  History: $history_tokens tokens\n";
-        print STDERR "[DEBUG]  Messages in history: " . scalar(@$history) . "\n";
+        log_debug('WorkflowOrchestrator', "Model context window: $model_context tokens");
+        log_debug('WorkflowOrchestrator', "Max response: $max_response tokens");
+        log_debug('WorkflowOrchestrator', "Safe trim threshold: " . int($safe_threshold_percent * 100) . "% = $safe_threshold tokens");
+        log_debug('WorkflowOrchestrator', "System prompt: $system_tokens tokens");
+        log_debug('WorkflowOrchestrator', "History: $history_tokens tokens");
+        log_debug('WorkflowOrchestrator', "Messages in history: " . scalar(@$history) . "");
     }
     
     my @messages = @$history;
@@ -2299,8 +2237,7 @@ sub _trim_conversation_for_api {
     # Ensure target_tokens is reasonable (minimum 5000 tokens for conversation)
     if ($target_tokens < 5000) {
         $target_tokens = 5000;
-        print STDERR "[WARN][WorkflowOrchestrator::_trim_conversation_for_api] Target tokens very low ($target_tokens), system prompt may be too large\n"
-            if $self->{debug};
+        log_warning('WorkflowOrchestrator::_trim_conversation_for_api', "Target tokens very low ($target_tokens), system prompt may be too large");
     }
     
     my $keep_recent = 10;      # Always keep at least last 10 messages
@@ -2320,9 +2257,7 @@ sub _trim_conversation_for_api {
                 $first_user_msg = $msg;
                 $first_user_tokens = CLIO::Memory::TokenEstimator::estimate_tokens($msg->{content} // '');
                 $first_user_idx = $i;
-                print STDERR "[DEBUG][WorkflowOrchestrator::_trim_conversation_for_api] Preserving first user message (importance=" . 
-                    ($msg->{_importance} // 0) . ", tokens=$first_user_tokens)\n"
-                    if $self->{debug};
+                log_debug('WorkflowOrchestrator', "Preserving first user message (importance=" . ($msg->{_importance} // 0) . ", tokens=$first_user_tokens)");
             }
             last;  # Only looking for FIRST user message
         }
@@ -2396,12 +2331,11 @@ sub _trim_conversation_for_api {
         
         my $final_tokens = $reserved_tokens + $trimmed_tokens;
         if ($self->{debug}) {
-            print STDERR "[DEBUG][WorkflowOrchestrator::_trim_conversation_for_api] Trimmed: " . 
-                         scalar(@messages) . " -> " . scalar(@trimmed) . " messages\n";
-            print STDERR "[DEBUG]  First user preserved: " . ($first_user_msg ? 'YES' : 'NO') . 
-                         ($first_user_msg ? " ($first_user_tokens tokens)" : "") . "\n";
-            print STDERR "[DEBUG]  Token reduction: $history_tokens -> $final_tokens tokens\n";
-            print STDERR "[DEBUG]  Final total with system: " . ($system_tokens + $final_tokens) . " of $safe_threshold safe limit\n";
+            log_debug('WorkflowOrchestrator', "Trimmed: " . scalar(@messages) . " -> " . scalar(@trimmed) . " messages");
+            log_debug('WorkflowOrchestrator', "First user preserved: " . ($first_user_msg ? 'YES' : 'NO') .
+                         ($first_user_msg ? " ($first_user_tokens tokens)" : ""));
+            log_debug('WorkflowOrchestrator', "Token reduction: $history_tokens -> $final_tokens tokens");
+            log_debug('WorkflowOrchestrator', "Final total with system: " . ($system_tokens + $final_tokens) . " of $safe_threshold safe limit");
         }
         
         return \@trimmed;
@@ -2451,8 +2385,7 @@ sub _load_conversation_history {
     #     $history = [@{$history}[$start_idx .. $#{$history}]];
     # }
     
-    print STDERR "[DEBUG][WorkflowOrchestrator] Raw history from session has " . scalar(@$history) . " messages\n"
-        if $self->{debug};
+    log_debug('WorkflowOrchestrator', "Raw history from session has " . scalar(@$history) . " messages");
     
     # DEBUG: Dump first assistant message (when debug enabled)
     if ($self->{debug}) {
@@ -2460,22 +2393,20 @@ sub _load_conversation_history {
             my $msg = $history->[$i];
             if ($msg->{role} eq 'assistant') {
                 use Data::Dumper;
-                print STDERR "[DEBUG][WorkflowOrchestrator] First assistant message structure:\n";
-                print STDERR Dumper($msg);
+                log_debug('WorkflowOrchestrator', "First assistant message structure:");
+                log_debug('WorkflowOrchestrator', Dumper($msg));
                 last;
             }
         }
     }
     
-    print STDERR "[DEBUG][WorkflowOrchestrator] Loaded " . scalar(@$history) . " messages from session\n"
-        if $self->{debug};
+    log_debug('WorkflowOrchestrator', "Loaded " . scalar(@$history) . " messages from session");
     
     # Validate and filter messages
     # Skip system messages from history - we always build fresh with dynamic tools
     my @valid_messages = ();
     
-    print STDERR "[DEBUG][WorkflowOrchestrator] _load_conversation_history: Processing " . scalar(@$history) . " messages\n"
-        if $self->{debug};
+    log_debug('WorkflowOrchestrator', "_load_conversation_history: Processing " . scalar(@$history) . " messages");
     
     for my $msg (@$history) {
         next unless $msg && ref($msg) eq 'HASH';
@@ -2484,8 +2415,8 @@ sub _load_conversation_history {
         if ($self->{debug}) {
             my $has_tool_calls = exists $msg->{tool_calls} ? 'YES' : 'NO';
             my $tc_count = $msg->{tool_calls} ? scalar(@{$msg->{tool_calls}}) : 0;
-            print STDERR "[DEBUG][WorkflowOrchestrator]   Message role=" . $msg->{role} . 
-                ", has_tool_calls=$has_tool_calls, count=$tc_count\n";
+            log_debug('WorkflowOrchestrator', "  Message role=" . $msg->{role} .
+                ", has_tool_calls=$has_tool_calls, count=$tc_count");
         }
         
         # Skip system messages - we build fresh system prompt in process_input
@@ -2496,8 +2427,7 @@ sub _load_conversation_history {
         # If missing, API returns "tool call must have a tool call ID" error
         if ($msg->{role} eq 'tool' && !$msg->{tool_call_id}) {
             if ($self->{debug}) {
-                print STDERR "[WARN][WorkflowOrchestrator] Skipping tool message without tool_call_id " .
-                    "(content: " . substr($msg->{content} // '', 0, 50) . "...)\n";
+                log_warning('WorkflowOrchestrator', "Skipping tool message without tool_call_id " . "(content: " . substr($msg->{content} // '', 0, 50) . "...)");
             }
             next;
         }
@@ -2516,13 +2446,10 @@ sub _load_conversation_history {
                 content => $msg->{content} || '',
                 tool_call_id => $msg->{tool_call_id}
             };
-            print STDERR "[DEBUG][WorkflowOrchestrator]   Preserving tool message with tool_call_id=$msg->{tool_call_id}\n"
-                if $self->{debug};
+            log_debug('WorkflowOrchestrator', "Preserving tool message with tool_call_id=$msg->{tool_call_id}");
         } elsif ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
             # Assistant message with tool_calls - KEEP the tool_calls for API correlation
-            print STDERR "[DEBUG][WorkflowOrchestrator]   Preserving assistant message with " . 
-                scalar(@{$msg->{tool_calls}}) . " tool_calls for API correlation\n"
-                if $self->{debug};
+            log_debug('WorkflowOrchestrator', "Preserving assistant message with " . scalar(@{$msg->{tool_calls}}) . " tool_calls for API correlation");
             
             push @valid_messages, {
                 role => $msg->{role},
@@ -2571,16 +2498,14 @@ sub _load_conversation_history {
             for my $id (keys %expected_tool_ids) {
                 unless ($found_tool_ids{$id}) {
                     # This is normal after context trimming - log at DEBUG level only
-                    print STDERR "[DEBUG][WorkflowOrchestrator] Orphaned tool_call detected: $id (missing tool_result - normal after context trim)\n"
-                        if should_log('DEBUG');
+                    log_debug('WorkflowOrchestrator', "Orphaned tool_call detected: $id (missing tool_result - normal after context trim)");
                     $missing_results++;
                 }
             }
             
             if ($missing_results > 0) {
                 # Remove tool_calls to prevent API error "tool_use ids were found without tool_result blocks"
-                print STDERR "[DEBUG][WorkflowOrchestrator] Removing tool_calls from loaded assistant message ($missing_results missing results - normal after context trim)\n"
-                    if should_log("DEBUG");
+                log_debug('WorkflowOrchestrator', "Removing tool_calls from loaded assistant message ($missing_results missing results - normal after context trim)");
                 
                 my $fixed_msg = {
                     role => $msg->{role},
@@ -2617,8 +2542,7 @@ sub _load_conversation_history {
     for my $msg (@validated_messages) {
         if ($msg->{role} && $msg->{role} eq 'tool' && $msg->{tool_call_id}) {
             unless ($all_tool_call_ids{$msg->{tool_call_id}}) {
-                print STDERR "[WARN][WorkflowOrchestrator] Removing orphaned tool_result: $msg->{tool_call_id} (no matching tool_call)\n"
-                    if should_log("WARN");
+                log_warning('WorkflowOrchestrator', "Removing orphaned tool_result: $msg->{tool_call_id} (no matching tool_call)");
                 next;  # Skip this orphaned tool_result
             }
         }
@@ -2649,15 +2573,14 @@ sub _inject_context_files {
     my @context_files = @{$session->{context_files}};
     return unless @context_files;
     
-    print STDERR "[DEBUG][WorkflowOrchestrator] Injecting " . scalar(@context_files) . " context file(s)\n"
-        if $self->{debug};
+    log_debug('WorkflowOrchestrator', "Injecting " . scalar(@context_files) . " context file(s)");
     
     my $context_content = "";
     my $total_tokens = 0;
     
     for my $file (@context_files) {
         unless (-f $file) {
-            print STDERR "[WARN]WorkflowOrchestrator] Context file not found: $file\n";
+            log_warning('WorkflowOrchestrator', "Context file not found: $file");
             next;
         }
         
@@ -2676,8 +2599,7 @@ sub _inject_context_files {
             $context_content .= $content;
             $context_content .= "\n</context_file>\n";
             
-            print STDERR "[DEBUG][WorkflowOrchestrator] Injected context file: $file (~$tokens tokens)\n"
-                if $self->{debug};
+            log_debug('WorkflowOrchestrator', "Injected context file: $file (~$tokens tokens)");
         };
         
         if ($@) {
@@ -2699,8 +2621,7 @@ sub _inject_context_files {
         
         push @$messages, $context_message;
         
-        print STDERR "[DEBUG][WorkflowOrchestrator] Context injection complete (~$total_tokens tokens)\n"
-            if $self->{debug};
+        log_debug('WorkflowOrchestrator', "Context injection complete (~$total_tokens tokens)");
     }
 }
 
@@ -2823,8 +2744,7 @@ sub _enforce_message_alternation {
     
     return $messages unless $messages && @$messages;
     
-    print STDERR "[DEBUG][WorkflowOrchestrator] Enforcing message alternation (Claude compatibility)\n"
-        if should_log('DEBUG');
+    log_debug('WorkflowOrchestrator', "Enforcing message alternation (Claude compatibility)");
     
     my @alternating = ();
     my $last_role = undef;
@@ -2854,8 +2774,7 @@ sub _enforce_message_alternation {
                 content => "Tool Result (ID: $tool_id):\n$tool_content"
             };
             
-            print STDERR "[DEBUG][WorkflowOrchestrator] Converted tool message to user message\n"
-                if should_log('DEBUG');
+            log_debug('WorkflowOrchestrator', "Converted tool message to user message");
         }
         
         # Check if same role as previous (needs merging)
@@ -2872,8 +2791,7 @@ sub _enforce_message_alternation {
                 push @$accumulated_tool_calls, @{$msg->{tool_calls}};
             }
             
-            print STDERR "[DEBUG][WorkflowOrchestrator] Merged consecutive $role message\n"
-                if should_log('DEBUG');
+            log_debug('WorkflowOrchestrator', "Merged consecutive $role message");
         } else {
             # Different role - flush accumulated message if any
             if (defined $last_role) {
@@ -2932,14 +2850,11 @@ sub _enforce_message_alternation {
         for my $msg (@alternating) {
             if ($msg->{role} eq 'assistant' && $msg->{tool_calls}) {
                 delete $msg->{tool_calls};
-                print STDERR "[DEBUG][WorkflowOrchestrator] Stripped tool_calls from assistant message (provider doesn't support role=tool)\n"
-                    if should_log('DEBUG');
+                log_debug('WorkflowOrchestrator', "Stripped tool_calls from assistant message (provider doesn't support role=tool)");
             }
         }
     }
-    print STDERR "[DEBUG][WorkflowOrchestrator] Alternation complete: " . 
-        scalar(@$messages) . " → " . scalar(@alternating) . " messages\n"
-        if should_log('DEBUG');
+    log_debug('WorkflowOrchestrator', "Alternation complete: " . scalar(@$messages) . " → " . scalar(@alternating) . " messages");
     
     return \@alternating;
 }
@@ -2968,8 +2883,7 @@ sub _check_and_handle_interrupt {
         $self->_handle_interrupt($session, $messages_ref);
         $self->{_interrupt_pending} = 1;
         
-        print STDERR "[INFO][WorkflowOrchestrator] Interrupt detected mid-iteration, setting pending flag\n"
-            if should_log('INFO');
+        log_info('WorkflowOrchestrator', "Interrupt detected mid-iteration, setting pending flag");
         
         return 1;
     }
@@ -3019,15 +2933,13 @@ sub _check_for_user_interrupt {
     ReadMode(0);
     
     if ($@) {
-        print STDERR "[WARN][WorkflowOrchestrator] Error checking for interrupt: $@\n"
-            if should_log('WARNING');
+        log_warning('WorkflowOrchestrator', "Error checking for interrupt: $@");
         return 0;
     }
     
     # Check for ESC key (character code 27 = 0x1b)
     if (defined $key && ord($key) == 27) {
-        print STDERR "[INFO][WorkflowOrchestrator] User interrupt detected (ESC key pressed)\n"
-            if should_log('INFO');
+        log_info('WorkflowOrchestrator', "User interrupt detected (ESC key pressed)");
         
         # Set interrupt flag in session
         if ($session && $session->state()) {
@@ -3038,8 +2950,7 @@ sub _check_for_user_interrupt {
             };
             
             if ($@) {
-                print STDERR "[WARN][WorkflowOrchestrator] Failed to save interrupt flag to session: $@\n"
-                    if should_log('WARNING');
+                log_warning('WorkflowOrchestrator', "Failed to save interrupt flag to session: $@");
             }
         }
         
@@ -3067,8 +2978,7 @@ Returns: Nothing (modifies messages array in place)
 sub _handle_interrupt {
     my ($self, $session, $messages_ref) = @_;
     
-    print STDERR "[INFO][WorkflowOrchestrator] Handling user interrupt\n"
-        if should_log('INFO');
+    log_info('WorkflowOrchestrator', "Handling user interrupt");
     
     # Clear interrupt flag (it's been handled)
     if ($session && $session->state()) {
@@ -3104,13 +3014,11 @@ sub _handle_interrupt {
         };
         
         if ($@) {
-            print STDERR "[WARN][WorkflowOrchestrator] Failed to save interrupt message to session: $@\n"
-                if should_log('WARNING');
+            log_warning('WorkflowOrchestrator', "Failed to save interrupt message to session: $@");
         }
     }
     
-    print STDERR "[INFO][WorkflowOrchestrator] Interrupt message added to conversation\n"
-        if should_log('INFO');
+    log_info('WorkflowOrchestrator', "Interrupt message added to conversation");
 }
 
 1;

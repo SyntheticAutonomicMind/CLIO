@@ -28,10 +28,10 @@ use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use Carp qw(croak);
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug);
 use CLIO::Util::JSON qw(encode_json decode_json);
 
-print STDERR "[TRACE] CLIO::Memory::ShortTerm loaded\n" if should_log('DEBUG');
+log_debug('ShortTerm', "CLIO::Memory::ShortTerm loaded");
 
 sub new {
     my ($class, %args) = @_;

@@ -8,7 +8,7 @@ use warnings;
 use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
-use CLIO::Core::Logger qw(should_log log_debug log_error log_info);
+use CLIO::Core::Logger qw(should_log log_debug log_error log_info log_warning);
 use parent 'CLIO::Tools::Tool';
 use feature 'say';
 
@@ -195,17 +195,17 @@ sub request_input {
     
     # Add detailed logging for spinner reference validation
     if (should_log('DEBUG')) {
-        print STDERR "[DEBUG][UserCollaboration] UI reference: " . (defined $ui ? "DEFINED" : "UNDEFINED") . "\n";
-        print STDERR "[DEBUG][UserCollaboration] Spinner reference from UI: " . (defined $spinner ? ref($spinner) : "UNDEFINED") . "\n";
+        log_debug('UserCollaboration', "UI reference: " . (defined $ui ? "DEFINED" : "UNDEFINED"));
+        log_debug('UserCollaboration', "Spinner reference from UI: " . (defined $spinner ? ref($spinner) : "UNDEFINED"));
         if ($spinner) {
             if (ref($spinner) eq 'CLIO::UI::ProgressSpinner') {
-                print STDERR "[DEBUG][UserCollaboration] Spinner object: valid ProgressSpinner instance\n";
-                print STDERR "[DEBUG][UserCollaboration] Spinner running state: " . ($spinner->{running} ? "YES" : "NO") . "\n";
+                log_debug('UserCollaboration', "Spinner object: valid ProgressSpinner instance");
+                log_debug('UserCollaboration', "Spinner running state: " . ($spinner->{running} ? "YES" : "NO"));
             } else {
-                print STDERR "[DEBUG][UserCollaboration] ERROR - not a ProgressSpinner!\n";
+                log_debug('UserCollaboration', "ERROR - not a ProgressSpinner!");
             }
         } else {
-            print STDERR "[DEBUG][UserCollaboration] Spinner is undefined (may not have been started yet)\n";
+            log_debug('UserCollaboration', "Spinner is undefined (may not have been started yet)");
         }
     }
     
@@ -214,7 +214,7 @@ sub request_input {
         $spinner->stop();
         log_debug('UserCollaboration', "Spinner stopped successfully");
     } elsif (should_log('DEBUG')) {
-        print STDERR "[DEBUG][UserCollaboration] Spinner not available or not running - skipping stop\n";
+        log_debug('UserCollaboration', "Spinner not available or not running - skipping stop");
     }
     
     # Get UI object from context
@@ -334,7 +334,7 @@ sub _request_via_broker {
         for my $msg (@$messages) {
             my $type = $msg->{type} || '';
             
-            print STDERR "[TRACE][UserCollaboration] Polled message: type='$type' from='$msg->{from}'\n" if should_log('TRACE');
+            log_debug('UserCollaboration', "Polled message: type='$type' from='$msg->{from}'");
             
             # Accept clarification or guidance as response
             if ($type eq 'clarification' || $type eq 'guidance' || $type eq 'response') {
@@ -359,7 +359,7 @@ sub _request_via_broker {
     }
     
     unless (defined $response) {
-        print STDERR "[WARN][UserCollaboration] Timeout waiting for response from user\n" if should_log('WARN');
+        log_warning('UserCollaboration', "Timeout waiting for response from user");
         return {
             success => 0,
             error => "Timeout waiting for user response via broker (waited ${timeout}s)"

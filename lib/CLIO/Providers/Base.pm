@@ -3,6 +3,7 @@ package CLIO::Providers::Base;
 use strict;
 use warnings;
 use utf8;
+use CLIO::Core::Logger qw(log_debug);
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use Carp qw(croak);
@@ -244,7 +245,7 @@ Log a debug message if debug mode is enabled.
 sub debug {
     my ($self, $message) = @_;
     if ($self->{debug}) {
-        print STDERR "[DEBUG][" . ref($self) . "] $message\n";
+        log_debug('" . ref($self) . "', "$message");
     }
 }
 
