@@ -2155,6 +2155,8 @@ sub display_help {
     push @help_lines, $self->colorize("OTHER", 'command_subheader');
     push @help_lines, $self->colorize("─" x 62, 'dim');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/billing', 'help_command'), 'API usage stats');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/stats', 'help_command'), 'Process memory stats');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/stats history', 'help_command'), 'Memory usage timeline');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/context', 'help_command'), 'Manage context files');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/exec <cmd>', 'help_command'), 'Run shell command');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/style, /theme', 'help_command'), 'Appearance settings');
