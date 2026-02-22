@@ -482,11 +482,11 @@ sub stash {
         } elsif ($action eq 'list') {
             $output = `git stash list 2>&1`;
         } elsif ($action eq 'apply') {
-            my $index = $params->{index} || 0;
-            $output = `git stash apply stash@{$index} 2>&1`;
+            my $index = $params->{index} // 0;
+            $output = `git stash apply stash\@{$index} 2>&1`;
         } elsif ($action eq 'drop') {
-            my $index = $params->{index} || 0;
-            $output = `git stash drop stash@{$index} 2>&1`;
+            my $index = $params->{index} // 0;
+            $output = `git stash drop stash\@{$index} 2>&1`;
         } elsif ($action eq 'clear') {
             $output = `git stash clear 2>&1`;
         } else {
