@@ -104,6 +104,24 @@ sub new {
         debug => $args{debug}
     );
     
+    # Initialize snapshot system for file change tracking
+    eval {
+        require CLIO::Session::Snapshot;
+        $self->{snapshot} = CLIO::Session::Snapshot->new(
+            debug => $args{debug},
+        );
+        if ($self->{snapshot}->is_available()) {
+            print STDERR "[DEBUG][WorkflowOrchestrator] Snapshot system initialized\n" if $self->{debug};
+        } else {
+            print STDERR "[DEBUG][WorkflowOrchestrator] Snapshot system unavailable (git not found)\n" if $self->{debug};
+            $self->{snapshot} = undef;
+        }
+    };
+    if ($@) {
+        print STDERR "[DEBUG][WorkflowOrchestrator] Snapshot system failed to load: $@\n" if $self->{debug};
+        $self->{snapshot} = undef;
+    }
+    
     print STDERR "[DEBUG][WorkflowOrchestrator] Initialized with max_iterations=$self->{max_iterations}\n" 
         if $self->{debug};
     
@@ -227,6 +245,12 @@ sub _register_default_tools {
         print STDERR "[DEBUG][WorkflowOrchestrator] Blocked agent_operations for sub-agent\n" if should_log('DEBUG');
     }
     
+    # Register ApplyPatch tool (diff-based file editing)
+    require CLIO::Tools::ApplyPatch;
+    $self->{tool_registry}->register_tool(
+        CLIO::Tools::ApplyPatch->new(debug => $self->{debug})
+    );
+    
     print STDERR "[DEBUG][WorkflowOrchestrator] Registered default tools (subagent=$is_subagent)\n" if should_log('DEBUG');
 }
 
@@ -259,6 +283,33 @@ sub process_input {
     my $on_chunk = $opts{on_chunk};
     my $on_system_message = $opts{on_system_message};  # Callback for system messages
     my $on_tool_call_from_ui = $opts{on_tool_call};  # Tool call tracker from UI
+    
+    # Take a snapshot before processing - captures state before any AI modifications
+    my $turn_snapshot;
+    if ($self->{snapshot}) {
+        $turn_snapshot = eval { $self->{snapshot}->take() };
+        if ($turn_snapshot) {
+            # Store on session for /undo access
+            if ($session && ref($session) && $session->can('state')) {
+                my $state = $session->state();
+                $state->{last_snapshot} = $turn_snapshot;
+                # Keep a history of recent snapshots (last 20 turns)
+                $state->{snapshot_history} ||= [];
+                push @{$state->{snapshot_history}}, {
+                    hash => $turn_snapshot,
+                    timestamp => time(),
+                    user_input => substr($user_input, 0, 100),  # Truncated for storage
+                };
+                # Trim to last 20
+                if (@{$state->{snapshot_history}} > 20) {
+                    splice(@{$state->{snapshot_history}}, 0, @{$state->{snapshot_history}} - 20);
+                }
+            }
+            print STDERR "[DEBUG][WorkflowOrchestrator] Pre-turn snapshot: $turn_snapshot\n" if $self->{debug};
+        } elsif ($@) {
+            print STDERR "[DEBUG][WorkflowOrchestrator] Snapshot failed: $@\n" if $self->{debug};
+        }
+    }
     
     print STDERR "[DEBUG][WorkflowOrchestrator] Processing input: '$user_input'\n" 
         if $self->{debug};
