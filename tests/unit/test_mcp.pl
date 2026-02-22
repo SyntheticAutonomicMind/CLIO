@@ -1,5 +1,5 @@
 #!/usr/bin/env perl
-# Unit tests for CLIO::MCP::Client and CLIO::MCP::Manager
+# Unit tests for CLIO MCP modules (Client, Manager, Transports, Bridge)
 
 use strict;
 use warnings;
@@ -33,200 +33,182 @@ sub is {
 
 print "# Testing CLIO::MCP modules\n";
 
-# ===== Test MCP::Client module loads =====
+# ===== Module loading =====
 eval { require CLIO::MCP::Client; };
-ok(!$@, "CLIO::MCP::Client loads without error");
+ok(!$@, "CLIO::MCP::Client loads");
 
-# ===== Test Client constructor =====
-{
-    my $client = CLIO::MCP::Client->new(
-        name    => 'test-server',
-        command => ['echo', 'hello'],
-        timeout => 5,
-    );
-    ok(defined $client, "Client constructor returns object");
-    is($client->name(), 'test-server', "Client name accessor works");
-    ok(!$client->is_connected(), "New client is not connected");
-    is(ref($client->list_tools()), 'ARRAY', "list_tools returns arrayref");
-    is(scalar @{$client->list_tools()}, 0, "list_tools returns empty array for unconnected client");
-}
-
-# ===== Test Client with empty command =====
-{
-    my $client = CLIO::MCP::Client->new(
-        name    => 'empty',
-        command => [],
-    );
-    my $result = $client->connect();
-    ok(!$result, "Client connect fails with empty command");
-}
-
-# ===== Test Client call_tool when not connected =====
-{
-    my $client = CLIO::MCP::Client->new(
-        name    => 'offline',
-        command => ['true'],
-    );
-    my $result = $client->call_tool('some_tool', { arg => 'value' });
-    ok(defined $result, "call_tool returns result when not connected");
-    ok($result->{error}, "call_tool returns error when not connected");
-}
-
-# ===== Test MCP::Manager module loads =====
 eval { require CLIO::MCP::Manager; };
-ok(!$@, "CLIO::MCP::Manager loads without error");
+ok(!$@, "CLIO::MCP::Manager loads");
 
-# ===== Test Manager constructor =====
+eval { require CLIO::MCP::Transport::Stdio; };
+ok(!$@, "CLIO::MCP::Transport::Stdio loads");
+
+eval { require CLIO::MCP::Transport::HTTP; };
+ok(!$@, "CLIO::MCP::Transport::HTTP loads");
+
+eval { require CLIO::Tools::MCPBridge; };
+ok(!$@, "CLIO::Tools::MCPBridge loads");
+
+# ===== Transport::Stdio =====
 {
-    my $mgr = CLIO::MCP::Manager->new(
-        config => { mcp => {} },
-        debug  => 0,
-    );
-    ok(defined $mgr, "Manager constructor returns object");
-    ok(defined CLIO::MCP::Manager->instance(), "Manager singleton is set");
+    my $t = CLIO::MCP::Transport::Stdio->new(name => 'test', command => ['echo', 'hi'], timeout => 2);
+    ok(defined $t, "Stdio transport constructor");
+    ok(!$t->is_connected(), "Stdio not connected before connect()");
 }
 
-# ===== Test Manager is_available =====
 {
-    my $mgr = CLIO::MCP::Manager->new(
-        config => {},
-        debug  => 0,
-    );
-    # This will return 1 or 0 depending on the system
-    my $available = $mgr->is_available();
-    ok(defined $available, "is_available returns defined value");
-    ok($available == 0 || $available == 1, "is_available returns 0 or 1");
+    my $t = CLIO::MCP::Transport::Stdio->new(name => 'empty', command => []);
+    ok(!$t->connect(), "Stdio connect fails with empty command");
 }
 
-# ===== Test Manager _which helper =====
+# ===== Transport::HTTP =====
 {
-    # Test finding 'perl' which should always exist
-    my $perl_path = CLIO::MCP::Manager::_which('perl');
-    ok(defined $perl_path, "_which finds 'perl' in PATH");
-    ok(-x $perl_path, "_which returns executable path") if $perl_path;
-    
-    # Test not finding nonsense
-    my $fake = CLIO::MCP::Manager::_which('this_command_definitely_does_not_exist_xyz');
-    ok(!defined $fake, "_which returns undef for nonexistent command");
+    my $t = CLIO::MCP::Transport::HTTP->new(url => 'https://example.com/mcp', timeout => 5);
+    ok(defined $t, "HTTP transport constructor");
+    ok($t->connect(), "HTTP connect (optimistic)");
+    ok($t->is_connected(), "HTTP reports connected");
+    ok(!defined $t->session_id(), "HTTP no session before init");
+    $t->disconnect();
+    ok(!$t->is_connected(), "HTTP disconnected");
 }
 
-# ===== Test Manager start with no config =====
 {
-    my $mgr = CLIO::MCP::Manager->new(
-        config => {},
-        debug  => 0,
-    );
-    my $count = $mgr->start();
-    is($count, 0, "start() returns 0 with no MCP config");
+    eval { CLIO::MCP::Transport::HTTP->new() };
+    ok($@, "HTTP dies without url");
 }
 
-# ===== Test Manager start with empty MCP config =====
+# ===== Client =====
 {
-    my $mgr = CLIO::MCP::Manager->new(
-        config => { mcp => {} },
-        debug  => 0,
-    );
-    my $count = $mgr->start();
-    is($count, 0, "start() returns 0 with empty MCP config");
+    my $c = CLIO::MCP::Client->new(name => 'test', command => ['echo', 'hi']);
+    ok(defined $c, "Client legacy command mode");
+    is($c->name(), 'test', "Client name");
+    ok(!$c->is_connected(), "Client not connected");
+    is(ref($c->list_tools()), 'ARRAY', "list_tools arrayref");
+    is(scalar @{$c->list_tools()}, 0, "list_tools empty");
 }
 
-# ===== Test Manager all_tools with no clients =====
 {
-    my $mgr = CLIO::MCP::Manager->new(
-        config => {},
-        debug  => 0,
-    );
-    my $tools = $mgr->all_tools();
-    ok(ref($tools) eq 'ARRAY', "all_tools returns arrayref");
-    is(scalar @$tools, 0, "all_tools returns empty array with no clients");
+    my $transport = CLIO::MCP::Transport::Stdio->new(name => 'x', command => []);
+    my $c = CLIO::MCP::Client->new(name => 'explicit', transport => $transport);
+    ok(defined $c, "Client with explicit transport");
+    is($c->name(), 'explicit', "Client explicit name");
 }
 
-# ===== Test Manager call_tool with no clients =====
 {
-    my $mgr = CLIO::MCP::Manager->new(
-        config => {},
-        debug  => 0,
-    );
-    my $result = $mgr->call_tool('filesystem_read_file', { path => '/tmp/test' });
-    ok($result->{error}, "call_tool returns error with no matching server");
+    my $c = CLIO::MCP::Client->new(name => 'empty');
+    ok(!$c->connect(), "Client connect fails no transport");
 }
 
-# ===== Test Manager server_status =====
 {
-    my $mgr = CLIO::MCP::Manager->new(
-        config => {},
-        debug  => 0,
-    );
-    my $status = $mgr->server_status();
-    ok(ref($status) eq 'HASH', "server_status returns hashref");
+    my $c = CLIO::MCP::Client->new(name => 'offline', command => ['true']);
+    my $r = $c->call_tool('tool', { arg => 1 });
+    ok($r->{error}, "call_tool error when disconnected");
 }
 
-# ===== Test Manager tool name qualification =====
+# ===== Manager =====
 {
-    my $mgr = CLIO::MCP::Manager->new(config => {}, debug => 0);
-    my $name = $mgr->_qualify_tool_name('my-server', 'read_file');
-    is($name, 'my-server_read_file', "qualify_tool_name namespaces correctly");
-    
-    # Test with special characters
-    my $name2 = $mgr->_qualify_tool_name('server.with.dots', 'tool name');
-    is($name2, 'server_with_dots_tool_name', "qualify_tool_name sanitizes special chars");
+    my $m = CLIO::MCP::Manager->new(config => { mcp => {} }, debug => 0);
+    ok(defined $m, "Manager constructor");
+    ok(defined CLIO::MCP::Manager->instance(), "Manager singleton");
 }
 
-# ===== Test Manager add/remove server (will fail to connect but tests flow) =====
 {
-    my $mgr = CLIO::MCP::Manager->new(config => {}, debug => 0);
-    
-    # Remove should always succeed even for non-existent server
-    my $rm = $mgr->remove_server('nonexistent');
-    ok($rm->{success}, "remove_server succeeds for nonexistent server");
-    
-    # Skip add_server test - requires a real MCP server and would hang on timeout
-    ok(1, "SKIP: add_server (requires real MCP server)");
+    my $m = CLIO::MCP::Manager->new(config => {}, debug => 0);
+    my $a = $m->is_available();
+    ok(defined $a, "is_available defined");
+    ok($a == 0 || $a == 1, "is_available boolean");
 }
 
-# ===== Test Manager disabled server config =====
 {
-    my $mgr = CLIO::MCP::Manager->new(
-        config => {
-            mcp => {
-                disabled_server => {
-                    command => ['node', 'some-server.js'],
-                    enabled => 0,
-                },
-            },
-        },
+    my $p = CLIO::MCP::Manager::_which('perl');
+    ok(defined $p, "_which finds perl");
+    ok(-x $p, "_which executable") if $p;
+    ok(!defined CLIO::MCP::Manager::_which('fake_cmd_xyz'), "_which undef missing");
+}
+
+{
+    my $m = CLIO::MCP::Manager->new(config => {}, debug => 0);
+    is($m->start(), 0, "start() 0 no config");
+}
+
+{
+    my $m = CLIO::MCP::Manager->new(config => { mcp => {} }, debug => 0);
+    is($m->start(), 0, "start() 0 empty config");
+}
+
+{
+    my $m = CLIO::MCP::Manager->new(config => {}, debug => 0);
+    is(ref($m->all_tools()), 'ARRAY', "all_tools arrayref");
+    is(scalar @{$m->all_tools()}, 0, "all_tools empty");
+}
+
+{
+    my $m = CLIO::MCP::Manager->new(config => {}, debug => 0);
+    ok($m->call_tool('x_y', {})->{error}, "call_tool error no servers");
+}
+
+{
+    my $m = CLIO::MCP::Manager->new(config => {}, debug => 0);
+    ok(ref($m->server_status()) eq 'HASH', "server_status hashref");
+}
+
+{
+    my $m = CLIO::MCP::Manager->new(config => {}, debug => 0);
+    is($m->_qualify_tool_name('srv', 'tool'), 'srv_tool', "qualify basic");
+    is($m->_qualify_tool_name('a.b', 'c d'), 'a_b_c_d', "qualify sanitizes");
+}
+
+{
+    my $m = CLIO::MCP::Manager->new(config => {}, debug => 0);
+    ok($m->remove_server('nope')->{success}, "remove nonexistent ok");
+}
+
+{
+    my $m = CLIO::MCP::Manager->new(
+        config => { mcp => { off => { command => ['node'], enabled => 0 } } },
         debug => 0,
     );
-    my $count = $mgr->start();
-    is($count, 0, "Disabled servers are not connected");
-    my $status = $mgr->server_status();
-    is($status->{disabled_server}{status}, 'disabled', "Disabled server shows disabled status");
+    is($m->start(), 0, "Disabled not connected");
+    is($m->server_status()->{off}{status}, 'disabled', "Disabled status");
 }
 
-# ===== Test MCPBridge module loads =====
-eval { require CLIO::Tools::MCPBridge; };
-ok(!$@, "CLIO::Tools::MCPBridge loads without error");
-
-# ===== Test MCPBridge is_mcp_tool =====
 {
-    ok(CLIO::Tools::MCPBridge->is_mcp_tool('mcp_filesystem_read_file'), "is_mcp_tool detects MCP tool name");
-    ok(!CLIO::Tools::MCPBridge->is_mcp_tool('file_operations'), "is_mcp_tool rejects non-MCP tool name");
-    ok(!CLIO::Tools::MCPBridge->is_mcp_tool(undef), "is_mcp_tool handles undef");
-    ok(!CLIO::Tools::MCPBridge->is_mcp_tool(''), "is_mcp_tool handles empty string");
+    my $m = CLIO::MCP::Manager->new(
+        config => { mcp => { rmt => { type => 'remote', url => 'https://mcp.example.com/api', enabled => 1 } } },
+        debug => 0,
+    );
+    is($m->start(), 0, "Remote unreachable no crash");
+    ok(defined $m->server_status()->{rmt}, "Remote in status");
+    is($m->server_status()->{rmt}{status}, 'failed', "Remote shows failed");
 }
 
-# ===== Test MCPBridge generate_tool_definitions with no manager =====
 {
-    my $defs = CLIO::Tools::MCPBridge->generate_tool_definitions(undef);
-    ok(ref($defs) eq 'ARRAY', "generate_tool_definitions returns arrayref with undef manager");
-    is(scalar @$defs, 0, "generate_tool_definitions returns empty array with undef manager");
+    my $m = CLIO::MCP::Manager->new(
+        config => { mcp => { bad => { command => ['nonexistent_mcp_cmd_xyz'] } } },
+        debug => 0,
+    );
+    is($m->start(), 0, "Missing cmd no crash");
+    is($m->server_status()->{bad}{status}, 'failed', "Missing cmd failed");
 }
 
-# ===== Test MCPBridge execute_tool with no manager =====
+# ===== MCPBridge =====
 {
-    my $result = CLIO::Tools::MCPBridge->execute_tool(undef, 'mcp_test_tool', {});
-    ok(!$result->{success}, "execute_tool fails with no manager");
-    ok($result->{error}, "execute_tool returns error with no manager");
+    ok(CLIO::Tools::MCPBridge->is_mcp_tool('mcp_fs_read'), "is_mcp positive");
+    ok(!CLIO::Tools::MCPBridge->is_mcp_tool('file_ops'), "is_mcp negative");
+    ok(!CLIO::Tools::MCPBridge->is_mcp_tool(undef), "is_mcp undef");
+    ok(!CLIO::Tools::MCPBridge->is_mcp_tool(''), "is_mcp empty");
+}
+
+{
+    my $d = CLIO::Tools::MCPBridge->generate_tool_definitions(undef);
+    is(ref($d), 'ARRAY', "gen_defs arrayref");
+    is(scalar @$d, 0, "gen_defs empty");
+}
+
+{
+    my $r = CLIO::Tools::MCPBridge->execute_tool(undef, 'mcp_t', {});
+    ok(!$r->{success}, "execute fails no mgr");
+    ok($r->{error}, "execute error no mgr");
 }
 
 # Summary
