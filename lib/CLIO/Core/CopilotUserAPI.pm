@@ -6,7 +6,7 @@ use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug log_error log_warning);
 use CLIO::Util::ConfigPath qw(get_config_file);
 use CLIO::Util::JSON qw(encode_json decode_json);
 use CLIO::Compat::HTTP;
@@ -136,7 +136,7 @@ sub fetch_user {
             $@ = "copilot_user: unexpected status code $status";
         }
         
-        print STDERR "[ERROR][CopilotUserAPI] $@\n" if should_log('ERROR');
+        log_error('CopilotUserAPI', "$@");
         return undef;
     }
     
@@ -206,7 +206,7 @@ sub _save_cache {
     };
     
     if ($@) {
-        print STDERR "[WARN][CopilotUserAPI] Failed to save cache: $@\n" if should_log('WARNING');
+        log_warning('CopilotUserAPI', "Failed to save cache: $@");
     }
 }
 
@@ -261,7 +261,7 @@ sub clear_cache {
     
     if (-f $self->{cache_file}) {
         unlink $self->{cache_file};
-        print STDERR "[DEBUG][CopilotUserAPI] Cache cleared\n" if $self->{debug};
+        log_debug('CopilotUserAPI', "Cache cleared");
     }
 }
 

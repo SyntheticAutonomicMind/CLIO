@@ -10,7 +10,7 @@ use File::Spec;
 use File::Basename qw(dirname);
 use File::Path qw(mkpath rmtree);
 use CLIO::Util::JSON qw(decode_json);
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug log_error);
 
 =head1 NAME
 
@@ -317,7 +317,7 @@ sub download_version {
     # Get release info for this version
     my $release = $self->get_release_by_version($version);
     unless ($release && $release->{tarball_url}) {
-        print STDERR "[ERROR][Update] Cannot find release for version: $version\n" if should_log('ERROR');
+        log_error('Update', "Cannot find release for version: $version");
         return undef;
     }
     
@@ -332,7 +332,7 @@ sub download_version {
     }
     
     mkpath($download_dir) or do {
-        print STDERR "[ERROR][Update] Cannot create download dir: $!\n" if should_log('ERROR');
+        log_error('Update', "Cannot create download dir: $!");
         return undef;
     };
     
@@ -344,7 +344,7 @@ sub download_version {
     my $curl_result = system("curl", "-sL", "-m", "30", "-o", $tarball_path, $tarball_url);
     
     if ($curl_result != 0) {
-        print STDERR "[ERROR][Update] Download failed\n" if should_log('ERROR');
+        log_error('Update', "Download failed");
         rmtree($download_dir);
         return undef;
     }
@@ -356,7 +356,7 @@ sub download_version {
     my $extract_result = system("cd '$download_dir' && tar -xzf clio.tar.gz 2>/dev/null");
     
     if ($extract_result != 0) {
-        print STDERR "[ERROR][Update] Extraction failed\n" if should_log('ERROR');
+        log_error('Update', "Extraction failed");
         rmtree($download_dir);
         return undef;
     }
@@ -367,7 +367,7 @@ sub download_version {
     closedir($dh);
     
     unless (@subdirs) {
-        print STDERR "[ERROR][Update] No extracted directory found\n" if should_log('ERROR');
+        log_error('Update', "No extracted directory found");
         rmtree($download_dir);
         return undef;
     }
@@ -376,7 +376,7 @@ sub download_version {
     
     # Verify it looks like CLIO
     unless (-f "$extracted_dir/clio") {
-        print STDERR "[ERROR][Update] Downloaded directory doesn't look like CLIO (no ./clio executable)\n" if should_log('ERROR');
+        log_error('Update', "Downloaded directory doesn't look like CLIO (no ./clio executable)");
         rmtree($download_dir);
         return undef;
     }
@@ -684,10 +684,10 @@ sub detect_install_location {
     # Determine if we need sudo
     my $needs_sudo = (!$is_user_home && !$writable);
     
-    print STDERR "[DEBUG][Update] Detected install location:\n" if $self->{debug};
-    print STDERR "[DEBUG][Update]   Path: $clio_path\n" if $self->{debug};
-    print STDERR "[DEBUG][Update]   Install dir: $install_dir\n" if $self->{debug};
-    print STDERR "[DEBUG][Update]   Type: $type\n" if $self->{debug};
+    log_debug('Update', "Detected install location:");
+    log_debug('Update', "Path: $clio_path");
+    log_debug('Update', "Install dir: $install_dir");
+    log_debug('Update', "Type: $type");
     print STDERR "[DEBUG][Update]   User home: " . ($is_user_home ? 'yes' : 'no') . "\n" if $self->{debug};
     print STDERR "[DEBUG][Update]   Writable: " . ($writable ? 'yes' : 'no') . "\n" if $self->{debug};
     print STDERR "[DEBUG][Update]   Needs sudo: " . ($needs_sudo ? 'yes' : 'no') . "\n" if $self->{debug};
@@ -717,7 +717,7 @@ sub download_latest {
     # Get latest release info
     my $release = $self->get_latest_version();
     unless ($release && $release->{tarball_url}) {
-        print STDERR "[ERROR][Update] Cannot get latest release info\n" if should_log('ERROR');
+        log_error('Update', "Cannot get latest release info");
         return undef;
     }
     
@@ -733,7 +733,7 @@ sub download_latest {
     }
     
     mkpath($download_dir) or do {
-        print STDERR "[ERROR][Update] Cannot create download dir: $!\n" if should_log('ERROR');
+        log_error('Update', "Cannot create download dir: $!");
         return undef;
     };
     
@@ -745,7 +745,7 @@ sub download_latest {
     my $curl_result = system("curl", "-sL", "-m", "30", "-o", $tarball_path, $tarball_url);
     
     if ($curl_result != 0) {
-        print STDERR "[ERROR][Update] Download failed\n" if should_log('ERROR');
+        log_error('Update', "Download failed");
         rmtree($download_dir);
         return undef;
     }
@@ -757,7 +757,7 @@ sub download_latest {
     my $extract_result = system("cd '$download_dir' && tar -xzf clio.tar.gz 2>/dev/null");
     
     if ($extract_result != 0) {
-        print STDERR "[ERROR][Update] Extraction failed\n" if should_log('ERROR');
+        log_error('Update', "Extraction failed");
         rmtree($download_dir);
         return undef;
     }
@@ -768,7 +768,7 @@ sub download_latest {
     closedir($dh);
     
     unless (@subdirs) {
-        print STDERR "[ERROR][Update] No extracted directory found\n" if should_log('ERROR');
+        log_error('Update', "No extracted directory found");
         rmtree($download_dir);
         return undef;
     }
@@ -777,7 +777,7 @@ sub download_latest {
     
     # Verify it looks like CLIO (has ./clio executable)
     unless (-f "$extracted_dir/clio") {
-        print STDERR "[ERROR][Update] Downloaded directory doesn't look like CLIO (no ./clio executable)\n" if should_log('ERROR');
+        log_error('Update', "Downloaded directory doesn't look like CLIO (no ./clio executable)");
         rmtree($download_dir);
         return undef;
     }
@@ -804,20 +804,20 @@ sub install_from_directory {
     my ($self, $source_dir) = @_;
     
     unless (-d $source_dir && -f "$source_dir/clio") {
-        print STDERR "[ERROR][Update] Invalid source directory: $source_dir\n" if should_log('ERROR');
+        log_error('Update', "Invalid source directory: $source_dir");
         return 0;
     }
     
     # Verify install.sh exists
     unless (-f "$source_dir/install.sh") {
-        print STDERR "[ERROR][Update] install.sh not found in source directory\n" if should_log('ERROR');
+        log_error('Update', "install.sh not found in source directory");
         return 0;
     }
     
     # Detect current installation location
     my $install_info = $self->detect_install_location();
     unless ($install_info) {
-        print STDERR "[ERROR][Update] Cannot detect CLIO installation location\n" if should_log('ERROR');
+        log_error('Update', "Cannot detect CLIO installation location");
         return 0;
     }
     
@@ -825,8 +825,8 @@ sub install_from_directory {
     my $is_user_home = $install_info->{is_user_home};
     my $needs_sudo = $install_info->{needs_sudo};
     
-    print STDERR "[DEBUG][Update] Installing CLIO update:\n" if $self->{debug};
-    print STDERR "[DEBUG][Update]   Current install: $install_dir\n" if $self->{debug};
+    log_debug('Update', "Installing CLIO update:");
+    log_debug('Update', "Current install: $install_dir");
     print STDERR "[DEBUG][Update]   User home install: " . ($is_user_home ? 'yes' : 'no') . "\n" if $self->{debug};
     print STDERR "[DEBUG][Update]   Needs sudo: " . ($needs_sudo ? 'yes' : 'no') . "\n" if $self->{debug};
     
@@ -835,7 +835,7 @@ sub install_from_directory {
     chomp $original_dir;
     
     chdir($source_dir) or do {
-        print STDERR "[ERROR][Update] Cannot cd to $source_dir: $!\n" if should_log('ERROR');
+        log_error('Update', "Cannot cd to $source_dir: $!");
         return 0;
     };
     
@@ -876,7 +876,7 @@ sub install_from_directory {
     $success = ($result == 0);
     
     if (!$success) {
-        print STDERR "[ERROR][Update] Installation command failed: $install_cmd\n" if should_log('ERROR');
+        log_error('Update', "Installation command failed: $install_cmd");
         print STDERR "[ERROR][Update] Exit code: " . ($result >> 8) . "\n" if should_log('ERROR');
     }
     

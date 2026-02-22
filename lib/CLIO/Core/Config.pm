@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use utf8;
 use Carp qw(croak);
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug log_error);
 use CLIO::Util::ConfigPath qw(get_config_dir);
 use CLIO::Providers qw(get_provider list_providers provider_exists);
 use CLIO::Util::JSON qw(encode_json decode_json);
@@ -128,7 +128,7 @@ sub load {
                 $self->{user_set}->{$key} = 1;  # Mark as user-explicitly-set
             }
             
-            print STDERR "[DEBUG][Config] Loaded user config from $self->{config_file}\n" if should_log('DEBUG');
+            log_debug('Config', "Loaded user config from $self->{config_file}");
             print STDERR "[DEBUG][Config] User-set keys: " . join(', ', sort keys %{$self->{user_set}}) . "\n" if should_log('DEBUG') && %{$self->{user_set}};
         };
         
@@ -136,7 +136,7 @@ sub load {
             print STDERR "[WARN]Config] Failed to load config file: $@\n";
         }
     } else {
-        print STDERR "[DEBUG][Config] No config file found at $self->{config_file}\n" if should_log('DEBUG');
+        log_debug('Config', "No config file found at $self->{config_file}");
     }
     
     # Apply provider defaults if provider is set and user hasn't overridden
@@ -150,21 +150,21 @@ sub load {
                     my $user_api_base = $self->_get_copilot_user_api_endpoint();
                     if ($user_api_base) {
                         $config{api_base} = $user_api_base;
-                        print STDERR "[DEBUG][Config] Using user-specific GitHub Copilot API: $config{api_base}\n" if should_log('DEBUG');
+                        log_debug('Config', "Using user-specific GitHub Copilot API: $config{api_base}");
                     } else {
                         $config{api_base} = $provider_config->{api_base};
-                        print STDERR "[DEBUG][Config] Using default GitHub Copilot API: $config{api_base}\n" if should_log('DEBUG');
+                        log_debug('Config', "Using default GitHub Copilot API: $config{api_base}");
                     }
                 } else {
                     $config{api_base} = $provider_config->{api_base};
-                    print STDERR "[DEBUG][Config] Using api_base from provider '$config{provider}': $config{api_base}\n" if should_log('DEBUG');
+                    log_debug('Config', "Using api_base from provider '$config{provider}': $config{api_base}");
                 }
             }
             
             # Apply provider's model unless user explicitly set it
             unless ($self->{user_set}->{model}) {
                 $config{model} = $provider_config->{model};
-                print STDERR "[DEBUG][Config] Using model from provider '$config{provider}': $config{model}\n" if should_log('DEBUG');
+                log_debug('Config', "Using model from provider '$config{provider}': $config{model}");
             }
         } else {
             print STDERR "[WARN]Config] Unknown provider '$config{provider}', using defaults\n" if should_log('WARNING');
@@ -220,11 +220,11 @@ sub save {
         print $fh encode_json(\%config_to_save);
         close $fh;
         
-        print STDERR "[DEBUG][Config] Saved to $self->{config_file}\n" if should_log('DEBUG');
+        log_debug('Config', "Saved to $self->{config_file}");
     };
     
     if ($@) {
-        print STDERR "[ERROR][Config] Failed to save config: $@\n" if should_log('ERROR');
+        log_error('Config', "Failed to save config: $@");
         return 0;
     }
     
@@ -259,7 +259,7 @@ sub set {
     # Mark as user-set unless explicitly told not to (default: mark as user-set)
     if (!defined $mark_user_set || $mark_user_set) {
         $self->{user_set}->{$key} = 1;
-        print STDERR "[DEBUG][Config] Marked '$key' as user-set\n" if should_log('DEBUG');
+        log_debug('Config', "Marked '$key' as user-set");
     }
     
     return 1;
@@ -280,7 +280,7 @@ sub set_provider {
     
     # Check if provider exists in Providers.pm
     unless (provider_exists($provider)) {
-        print STDERR "[ERROR][Config] Unknown provider: $provider\n" if should_log('ERROR');
+        log_error('Config', "Unknown provider: $provider");
         print STDERR "[ERROR][Config] Available providers: " . join(', ', list_providers()) . "\n" if should_log('ERROR');
         return 0;
     }
@@ -302,14 +302,14 @@ sub set_provider {
     my $provider_key = $self->get_provider_key($provider);
     if ($provider_key) {
         $self->{config}->{api_key} = $provider_key;
-        print STDERR "[DEBUG][Config] Loaded API key for provider '$provider' from api_keys\n" if should_log('DEBUG');
+        log_debug('Config', "Loaded API key for provider '$provider' from api_keys");
     } else {
         # Clear old API key when switching providers (no stored key)
         # Each provider has its own authentication mechanism
         # (SAM uses api_key, GitHub Copilot uses OAuth tokens, etc.)
         delete $self->{config}->{api_key};
         delete $self->{user_set}->{api_key};
-        print STDERR "[DEBUG][Config] No stored API key for provider '$provider'\n" if should_log('DEBUG');
+        log_debug('Config', "No stored API key for provider '$provider'");
     }
     
     # Remove api_base and model from user_set if they were there
@@ -317,9 +317,9 @@ sub set_provider {
     delete $self->{user_set}->{api_base};
     delete $self->{user_set}->{model};
     
-    print STDERR "[DEBUG][Config] Switched to provider: $provider\n" if should_log('DEBUG');
-    print STDERR "[DEBUG][Config]   api_base: $provider_config->{api_base} (from provider)\n" if should_log('DEBUG');
-    print STDERR "[DEBUG][Config]   model: $provider_config->{model} (from provider)\n" if should_log('DEBUG');
+    log_debug('Config', "Switched to provider: $provider");
+    log_debug('Config', "api_base: $provider_config->{api_base} (from provider)");
+    log_debug('Config', "model: $provider_config->{model} (from provider)");
     
     return 1;
 }
@@ -375,7 +375,7 @@ sub set_provider_key {
         $self->{user_set}->{api_key} = 1;
     }
     
-    print STDERR "[DEBUG][Config] Stored API key for provider '$provider'\n" if should_log('DEBUG');
+    log_debug('Config', "Stored API key for provider '$provider'");
     
     # Save config (keys are sensitive, save immediately)
     $self->save();

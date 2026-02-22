@@ -3,7 +3,7 @@ package CLIO::Security::PathAuthorizer;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug);
 use feature 'say';
 use File::Spec;
 use Cwd qw(abs_path realpath);
@@ -74,7 +74,7 @@ sub checkPathAuthorization {
     
     # User-initiated operations always allowed
     if ($is_user_initiated) {
-        print STDERR "[DEBUG][PathAuthorizer] Operation allowed - user initiated\n" if should_log('DEBUG');
+        log_debug('PathAuthorizer', "Operation allowed - user initiated");
         return {
             status => 'allowed',
             reason => 'User-initiated operation',
@@ -83,7 +83,7 @@ sub checkPathAuthorization {
     
     # Check auto-approve first (bypasses all security)
     if ($conversation_id && $self->{auto_approve_conversations}->{$conversation_id}) {
-        print STDERR "[DEBUG][PathAuthorizer] Auto-approve enabled - bypassing authorization\n" if should_log('DEBUG');
+        log_debug('PathAuthorizer', "Auto-approve enabled - bypassing authorization");
         return {
             status => 'allowed',
             reason => 'Auto-approve enabled for conversation',
@@ -95,7 +95,7 @@ sub checkPathAuthorization {
     
     # If no working directory configured, require authorization
     unless ($working_directory) {
-        print STDERR "[DEBUG][PathAuthorizer] Authorization required - no working directory\n" if should_log('DEBUG');
+        log_debug('PathAuthorizer', "Authorization required - no working directory");
         return {
             status => 'requires_authorization',
             reason => 'No working directory configured for this conversation',
@@ -111,11 +111,11 @@ sub checkPathAuthorization {
     my $is_inside_working_directory = ($normalized_path eq $working_dir_path) ||
                                        ($normalized_path =~ /^\Q$working_dir_path\E\//);
     
-    print STDERR "[DEBUG][PathAuthorizer] Authorization check: path=$normalized_path, workingDir=$working_dir_path, inside=$is_inside_working_directory\n" if should_log('DEBUG');
+    log_debug('PathAuthorizer', "Authorization check: path=$normalized_path, workingDir=$working_dir_path, inside=$is_inside_working_directory");
     
     if ($is_inside_working_directory) {
         # Path is inside working directory - ALLOW unrestricted access
-        print STDERR "[DEBUG][PathAuthorizer] Operation allowed - inside working directory\n" if should_log('DEBUG');
+        log_debug('PathAuthorizer', "Operation allowed - inside working directory");
         return {
             status => 'allowed',
             reason => 'Path is inside working directory',
@@ -124,7 +124,7 @@ sub checkPathAuthorization {
     
     # Path is outside working directory - check if authorized
     if ($conversation_id && $self->isAuthorized($conversation_id, $operation)) {
-        print STDERR "[DEBUG][PathAuthorizer] Operation allowed - previously authorized\n" if should_log('DEBUG');
+        log_debug('PathAuthorizer', "Operation allowed - previously authorized");
         return {
             status => 'allowed',
             reason => 'User previously authorized this operation',
@@ -132,7 +132,7 @@ sub checkPathAuthorization {
     }
     
     # Require authorization for operations outside working directory
-    print STDERR "[DEBUG][PathAuthorizer] Authorization required - outside working directory\n" if should_log('DEBUG');
+    log_debug('PathAuthorizer', "Authorization required - outside working directory");
     return {
         status => 'requires_authorization',
         reason => "Path '$normalized_path' is outside working directory '$working_dir_path'",
@@ -230,7 +230,7 @@ sub grantAuthorization {
         consumed => 0,
     };
     
-    print STDERR "[DEBUG][PathAuthorizer] Authorization granted: conversation=$conversation_id, operation=$operation, oneTime=$one_time_use\n" if should_log('DEBUG');
+    log_debug('PathAuthorizer', "Authorization granted: conversation=$conversation_id, operation=$operation, oneTime=$one_time_use");
 }
 
 =head2 isAuthorized
@@ -258,7 +258,7 @@ sub isAuthorized {
     # Consume if one-time use
     if ($grant->{one_time_use}) {
         $grant->{consumed} = 1;
-        print STDERR "[DEBUG][PathAuthorizer] Authorization consumed: conversation=$conversation_id, operation=$operation\n" if should_log('DEBUG');
+        log_debug('PathAuthorizer', "Authorization consumed: conversation=$conversation_id, operation=$operation");
     }
     
     return 1;
@@ -282,7 +282,7 @@ sub revokeAuthorization {
     
     delete $self->{grants}->{$conversation_id}->{$operation};
     
-    print STDERR "[DEBUG][PathAuthorizer] Authorization revoked: conversation=$conversation_id, operation=$operation\n" if should_log('DEBUG');
+    log_debug('PathAuthorizer', "Authorization revoked: conversation=$conversation_id, operation=$operation");
 }
 
 =head2 revokeAllForConversation
@@ -302,7 +302,7 @@ sub revokeAllForConversation {
     my $count = $self->{grants}->{$conversation_id} ? scalar(keys %{$self->{grants}->{$conversation_id}}) : 0;
     delete $self->{grants}->{$conversation_id};
     
-    print STDERR "[DEBUG][PathAuthorizer] All authorizations revoked: conversation=$conversation_id, count=$count\n" if should_log('DEBUG');
+    log_debug('PathAuthorizer', "All authorizations revoked: conversation=$conversation_id, count=$count");
 }
 
 =head2 setAutoApprove
@@ -327,7 +327,7 @@ sub setAutoApprove {
         print STDERR "[WARN]PathAuthorizer] Auto-approve ENABLED - all operations authorized without user permission: conversation=$conversation_id\n";
     } else {
         delete $self->{auto_approve_conversations}->{$conversation_id};
-        print STDERR "[DEBUG][PathAuthorizer] Auto-approve disabled: conversation=$conversation_id\n" if should_log('DEBUG');
+        log_debug('PathAuthorizer', "Auto-approve disabled: conversation=$conversation_id");
     }
 }
 

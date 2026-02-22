@@ -7,7 +7,7 @@ use strict;
 use warnings;
 use utf8;
 use Carp qw(croak confess);
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug);
 use feature 'say';
 
 =head1 NAME
@@ -86,25 +86,25 @@ Returns: Hashref with success, output/error, metadata
 sub execute {
     my ($self, $params, $context) = @_;
     
-    print STDERR "[DEBUG][Tool:$self->{name}] Execute called\n" if should_log('DEBUG');
+    log_debug('Tool:$self->{name}', "Execute called");
     
     # Extract operation parameter
     my $operation = $params->{operation};
     unless ($operation) {
         my $available = join(', ', @{$self->{supported_operations}});
-        print STDERR "[DEBUG][Tool:$self->{name}] Missing 'operation' parameter. Available: $available\n" if should_log('DEBUG');
+        log_debug('Tool:$self->{name}', "Missing 'operation' parameter. Available: $available");
         return $self->operation_error("Missing 'operation' parameter");
     }
     
     # Validate operation
     unless ($self->validate_operation($operation)) {
         my $available = join(', ', @{$self->{supported_operations}});
-        print STDERR "[DEBUG][Tool:$self->{name}] Unknown operation: '$operation'. Available: $available\n" if should_log('DEBUG');
+        log_debug('Tool:$self->{name}', "Unknown operation: '$operation'. Available: $available");
         return $self->operation_error("Unknown operation: $operation");
     }
     
     # Route to operation handler
-    print STDERR "[DEBUG][Tool:$self->{name}] Routing to operation: $operation\n" if should_log('DEBUG');
+    log_debug('Tool:$self->{name}', "Routing to operation: $operation");
     
     return $self->route_operation($operation, $params, $context);
 }

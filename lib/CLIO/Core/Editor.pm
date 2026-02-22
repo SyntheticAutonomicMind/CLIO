@@ -3,7 +3,7 @@ package CLIO::Core::Editor;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_debug);
 use feature 'say';
 use File::Temp qw(tempfile);
 use File::Spec;
@@ -37,7 +37,7 @@ sub new {
         debug => $args{debug} || 0,
     };
     
-    print STDERR "[DEBUG][Editor] Using editor: $self->{editor}\n" if should_log('DEBUG');
+    log_debug('Editor', "Using editor: $self->{editor}");
     
     return bless $self, $class;
 }
@@ -70,7 +70,7 @@ sub edit_file {
         return { success => 0, error => "File not readable/writable: $filepath" };
     }
     
-    print STDERR "[DEBUG][Editor] Opening file: $filepath\n" if should_log('DEBUG');
+    log_debug('Editor', "Opening file: $filepath");
     
     # Open editor - use system() to wait for completion
     my $cmd = "$self->{editor} " . quotemeta($filepath);
@@ -81,7 +81,7 @@ sub edit_file {
         return { success => 0, error => "Editor exited with code: $exit_code" };
     }
     
-    print STDERR "[DEBUG][Editor] File editing complete\n" if should_log('DEBUG');
+    log_debug('Editor', "File editing complete");
     
     return { success => 1, filepath => $filepath };
 }
@@ -126,7 +126,7 @@ sub edit_multiline {
     }
     close $fh;
     
-    print STDERR "[DEBUG][Editor] Created temp file: $filename\n" if should_log('DEBUG');
+    log_debug('Editor', "Created temp file: $filename");
     
     # Open editor
     my $cmd = "$self->{editor} " . quotemeta($filename);
@@ -151,7 +151,7 @@ sub edit_multiline {
     # Clean up temp file
     unlink $filename;
     
-    print STDERR "[DEBUG][Editor] Multi-line editing complete\n" if should_log('DEBUG');
+    log_debug('Editor', "Multi-line editing complete");
     
     # Check if content is empty or only comments
     my $has_content = 0;
