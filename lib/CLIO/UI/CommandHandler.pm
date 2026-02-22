@@ -429,6 +429,9 @@ sub handle_command {
     elsif ($cmd eq 'undo') {
         $self->handle_undo_command(@args);
     }
+    elsif ($cmd eq 'mcp') {
+        $self->handle_mcp_command(@args);
+    }
     else {
         $chat->display_error_message("Unknown command: /$cmd (type /help for help)");
     }
@@ -564,14 +567,197 @@ The following methods will be gradually extracted from Chat.pm to this module:
 - handle_api_command
 - handle_config_command
 - handle_file_command
-- handle_git_command
-- handle_todo_command
-- handle_billing_command
-- handle_memory_command
-- handle_models_command
-- handle_session_command
-- handle_skills_command
-- And 25+ more...
+=head2 handle_mcp_command
+
+Manage MCP (Model Context Protocol) server connections.
+
+Usage:
+    /mcp              - Show MCP server status
+    /mcp list         - List connected servers and their tools
+    /mcp add <name> <cmd...> - Add an MCP server
+    /mcp remove <name>       - Remove an MCP server
+
+=cut
+
+sub handle_mcp_command {
+    my ($self, @args) = @_;
+    
+    my $chat = $self->{chat};
+    my $subcommand = $args[0] || '';
+    
+    # Get MCP manager from orchestrator
+    my $mcp_manager = $self->{ai_agent} && $self->{ai_agent}->{orchestrator}
+                    ? $self->{ai_agent}->{orchestrator}{mcp_manager}
+                    : undef;
+    
+    unless ($mcp_manager) {
+        $chat->display_system_message("MCP not initialized. Check that a compatible runtime (npx, node, python) is installed.");
+        return;
+    }
+    
+    unless ($mcp_manager->is_available()) {
+        $chat->display_system_message("MCP disabled: no compatible runtime found (npx, node, uvx, or python).");
+        $chat->display_system_message("Install Node.js (https://nodejs.org) to enable MCP support.");
+        return;
+    }
+    
+    if ($subcommand eq '' || $subcommand eq 'status') {
+        # Show status of all servers
+        my $status = $mcp_manager->server_status();
+        
+        unless ($status && keys %$status) {
+            $chat->display_system_message("No MCP servers configured.");
+            $chat->display_system_message("Add servers in ~/.clio/config.json under the \"mcp\" key, or use /mcp add <name> <command...>");
+            return;
+        }
+        
+        $chat->display_system_message("MCP Server Status:");
+        $chat->display_system_message("");
+        
+        for my $name (sort keys %$status) {
+            my $info = $status->{$name};
+            my $indicator;
+            if ($info->{status} eq 'connected') {
+                my $tools = $info->{tools_count} || 0;
+                my $server_name = $info->{server_info} ? ($info->{server_info}{name} || $name) : $name;
+                $indicator = "  \x{2713} $name ($server_name) - $tools tool(s)";
+            } elsif ($info->{status} eq 'disabled') {
+                $indicator = "  \x{2212} $name (disabled)";
+            } else {
+                my $err = $info->{error} || 'unknown error';
+                $indicator = "  \x{2717} $name (failed: $err)";
+            }
+            $chat->display_system_message($indicator);
+        }
+    }
+    elsif ($subcommand eq 'list') {
+        # List all tools from all connected servers
+        my $all_tools = $mcp_manager->all_tools();
+        
+        unless ($all_tools && @$all_tools) {
+            $chat->display_system_message("No MCP tools available. Check /mcp status for server connections.");
+            return;
+        }
+        
+        $chat->display_system_message("MCP Tools (" . scalar(@$all_tools) . " total):");
+        $chat->display_system_message("");
+        
+        my $current_server = '';
+        for my $entry (@$all_tools) {
+            if ($entry->{server} ne $current_server) {
+                $current_server = $entry->{server};
+                $chat->display_system_message("  [$current_server]");
+            }
+            my $desc = $entry->{tool}{description} || 'no description';
+            # Truncate long descriptions
+            $desc = substr($desc, 0, 60) . '...' if length($desc) > 63;
+            $chat->display_system_message("    mcp_$entry->{name}: $desc");
+        }
+    }
+    elsif ($subcommand eq 'add') {
+        my $name = $args[1];
+        unless ($name) {
+            $chat->display_error_message("Usage: /mcp add <name> <command...>");
+            $chat->display_system_message("Example: /mcp add filesystem npx -y \@modelcontextprotocol/server-filesystem /tmp");
+            return;
+        }
+        
+        my @cmd = @args[2..$#args];
+        unless (@cmd) {
+            $chat->display_error_message("No command specified for MCP server '$name'");
+            return;
+        }
+        
+        $chat->display_system_message("Connecting to MCP server '$name'...");
+        my $result = $mcp_manager->add_server($name, \@cmd);
+        
+        if ($result->{success}) {
+            $chat->display_system_message("Connected to '$name' ($result->{tools_count} tools available)");
+            
+            # Also save to config for persistence
+            $self->_save_mcp_to_config($name, \@cmd);
+        } else {
+            $chat->display_error_message("Failed to connect: $result->{error}");
+        }
+    }
+    elsif ($subcommand eq 'remove') {
+        my $name = $args[1];
+        unless ($name) {
+            $chat->display_error_message("Usage: /mcp remove <name>");
+            return;
+        }
+        
+        $mcp_manager->remove_server($name);
+        $chat->display_system_message("Removed MCP server '$name'");
+        
+        # Also remove from config
+        $self->_remove_mcp_from_config($name);
+    }
+    else {
+        $chat->display_error_message("Unknown MCP subcommand: $subcommand");
+        $chat->display_system_message("Usage: /mcp [status|list|add|remove]");
+    }
+}
+
+sub _save_mcp_to_config {
+    my ($self, $name, $command) = @_;
+    
+    eval {
+        my $config = $self->{config};
+        return unless $config && $config->can('get');
+        
+        my $mcp = $config->get('mcp') || {};
+        $mcp->{$name} = {
+            command => $command,
+            enabled => JSON::PP::true,
+        };
+        $config->set('mcp', $mcp);
+        
+        my $chat = $self->{chat};
+        $chat->display_system_message("Saved '$name' to MCP config") if $chat;
+    };
+    if ($@) {
+        print STDERR "[WARN][CommandHandler] Failed to save MCP config: $@\n" if should_log('WARNING');
+    }
+}
+
+sub _remove_mcp_from_config {
+    my ($self, $name) = @_;
+    
+    eval {
+        my $config = $self->{config};
+        return unless $config && $config->can('get');
+        
+        my $mcp = $config->get('mcp') || {};
+        delete $mcp->{$name};
+        $config->set('mcp', $mcp);
+    };
+    if ($@) {
+        print STDERR "[WARN][CommandHandler] Failed to update MCP config: $@\n" if should_log('WARNING');
+    }
+}
+
+=head1 REMAINING EXTRACTIONS
+
+=over 4
+
+=item handle_git_command
+
+=item handle_todo_command
+
+=item handle_billing_command
+
+=item handle_memory_command
+
+=item handle_models_command
+
+=item handle_session_command
+
+=item handle_skills_command
+
+=item And 25+ more...
+
+=back
 
 Each extraction will be tested before proceeding to the next.
 
