@@ -16,6 +16,7 @@ use Encode qw(encode_utf8);  # For handling Unicode in JSON
 use Time::HiRes qw(time);
 use Digest::MD5 qw(md5_hex);
 use CLIO::Compat::Terminal qw(ReadKey ReadMode);  # For interrupt detection
+use CLIO::Logging::ProcessStats;
 
 # ANSI color codes for terminal output - FALLBACK only when UI is unavailable
 # The preferred approach is using $self->{ui}->colorize() which respects theme settings
@@ -138,6 +139,14 @@ sub new {
         print STDERR "[DEBUG][WorkflowOrchestrator] Snapshot system failed to load: $@\n" if $self->{debug};
         $self->{snapshot} = undef;
     }
+    
+    # Initialize process stats tracker
+    $self->{process_stats} = CLIO::Logging::ProcessStats->new(
+        session_id => ($args{session} && $args{session}->can('session_id'))
+            ? $args{session}->session_id() : 'unknown',
+        debug => $args{debug},
+    );
+    $self->{process_stats}->capture('session_start');
     
     print STDERR "[DEBUG][WorkflowOrchestrator] Initialized with max_iterations=$self->{max_iterations}\n" 
         if $self->{debug};
@@ -435,6 +444,10 @@ sub process_input {
         
         # Clear interrupt pending flag at start of each iteration
         $self->{_interrupt_pending} = 0;
+        
+        # Capture process stats at iteration boundary
+        $self->{process_stats}->capture('iteration_start', { iteration => $iteration })
+            if $self->{process_stats};
         
         print STDERR "[DEBUG][WorkflowOrchestrator] Iteration $iteration/$self->{max_iterations}\n"
             if $self->{debug};
@@ -1639,6 +1652,12 @@ sub process_input {
             # Clear flag that prevented UI pagination from clearing tool headers
             $self->{ui}->{_in_tool_execution} = 0 if $self->{ui};
             
+            # Capture process stats after tool execution phase
+            $self->{process_stats}->capture('after_tools', {
+                iteration => $iteration,
+                tool_count => scalar(@ordered_tool_calls),
+            }) if $self->{process_stats};
+            
             # Reset UI streaming state so next iteration shows new CLIO: prefix
             # This ensures proper message formatting after tool execution
             if ($self->{ui} && $self->{ui}->can('reset_streaming_state')) {
@@ -1692,6 +1711,13 @@ sub process_input {
         print STDERR "[DEBUG][WorkflowOrchestrator] Workflow complete after $iteration iterations (${elapsed_time}s)\n"
             if $self->{debug};
         
+        # Capture final process stats
+        $self->{process_stats}->capture('session_end', {
+            iterations => $iteration,
+            elapsed_time => sprintf("%.1f", $elapsed_time),
+            tool_calls => scalar(@tool_calls_made),
+        }) if $self->{process_stats};
+        
         # Clean up response content
         my $final_content = $api_response->{content} || '';
         
@@ -1728,6 +1754,14 @@ sub process_input {
     
     # Hit iteration limit
     my $elapsed_time = time() - $start_time;
+    
+    # Capture final process stats
+    $self->{process_stats}->capture('session_end', {
+        iterations => $iteration,
+        elapsed_time => sprintf("%.1f", $elapsed_time),
+        tool_calls => scalar(@tool_calls_made),
+        hit_limit => 1,
+    }) if $self->{process_stats};
     
     my $error_msg = sprintf(
         "Maximum iterations (%d) reached after %.1fs. " .
