@@ -2,6 +2,7 @@ package CLIO::Memory::TokenEstimator;
 
 use strict;
 use warnings;
+use utf8;
 use POSIX qw(ceil);
 
 =head1 NAME

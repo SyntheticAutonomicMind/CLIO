@@ -2,6 +2,7 @@ package CLIO::Test::Framework;
 
 use strict;
 use warnings;
+use utf8;
 use Time::HiRes qw(time);
 use File::Basename;
 
@@ -145,6 +146,7 @@ sub _test_tree_sitter {
 package Test::Module;
 use strict;
 use warnings;
+use utf8;
 
 my $variable = 42;
 our $global = "test";
@@ -302,6 +304,7 @@ sub _test_relations {
 package TestRelations;
 use strict;
 use warnings;
+use utf8;
 use CLIO::Util::JSON qw(encode_json decode_json);
 use TestModule;
 

@@ -5,6 +5,7 @@ package CLIO::Tools::FileOperations;
 
 use strict;
 use warnings;
+use utf8;
 use Carp qw(croak confess);
 use CLIO::Core::Logger qw(should_log);
 use parent 'CLIO::Tools::Tool';

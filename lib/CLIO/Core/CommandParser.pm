@@ -2,6 +2,7 @@ package CLIO::Core::CommandParser;
 
 use strict;
 use warnings;
+use utf8;
 use CLIO::Core::Logger qw(should_log);
 
 =head1 NAME

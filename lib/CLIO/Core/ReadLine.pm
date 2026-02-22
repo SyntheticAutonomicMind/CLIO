@@ -2,6 +2,7 @@ package CLIO::Core::ReadLine;
 
 use strict;
 use warnings;
+use utf8;
 use CLIO::Core::Logger qw(should_log);
 
 # Ensure STDOUT is autoflushed for immediate terminal response

@@ -2,6 +2,7 @@ package CLIO::Compat::HTTP;
 
 use strict;
 use warnings;
+use utf8;
 use HTTP::Tiny;
 use CLIO::Util::JSON qw(decode_json encode_json);
 use CLIO::Core::Logger qw(should_log);
@@ -617,6 +618,7 @@ package CLIO::Compat::HTTP::Response;
 
 use strict;
 use warnings;
+use utf8;
 
 sub new {
     my ($class, %args) = @_;
@@ -672,6 +674,7 @@ package CLIO::Compat::HTTP::Request;
 
 use strict;
 use warnings;
+use utf8;
 
 =head1 NAME
 

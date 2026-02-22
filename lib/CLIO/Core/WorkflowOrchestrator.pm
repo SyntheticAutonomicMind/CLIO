@@ -2780,7 +2780,7 @@ sub _repair_tool_call_json {
     
     # Fix 3: Unescaped quotes in string values (simple cases only)
     # This is more complex and risky - only fix obvious cases
-    # TODO: Implement more sophisticated quote escaping if needed
+    # More sophisticated quote escaping is possible but risks over-correction
     
     # Validate that repair worked
     eval {

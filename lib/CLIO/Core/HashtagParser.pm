@@ -2,6 +2,7 @@ package CLIO::Core::HashtagParser;
 
 use strict;
 use warnings;
+use utf8;
 use feature 'say';
 use File::Basename;
 use File::Spec;

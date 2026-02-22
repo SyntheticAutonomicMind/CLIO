@@ -5,6 +5,7 @@ package CLIO::Logging::ToolLogger;
 
 use strict;
 use warnings;
+use utf8;
 use feature 'say';
 use CLIO::Util::JSON qw(encode_json decode_json);
 use File::Path qw(make_path);

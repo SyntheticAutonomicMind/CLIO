@@ -4,6 +4,7 @@ package CLIO::NaturalLanguage::TaskProcessor;
 
 use strict;
 use warnings;
+use utf8;
 use CLIO::Util::JSON qw(encode_json decode_json);
 
 =head1 NAME

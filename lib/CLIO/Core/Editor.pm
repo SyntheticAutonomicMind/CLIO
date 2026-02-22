@@ -2,6 +2,7 @@ package CLIO::Core::Editor;
 
 use strict;
 use warnings;
+use utf8;
 use CLIO::Core::Logger qw(should_log);
 use feature 'say';
 use File::Temp qw(tempfile);

@@ -2,6 +2,7 @@ package CLIO::Security::Manager;
 
 use strict;
 use warnings;
+use utf8;
 use CLIO::Security::Auth;
 use CLIO::Security::Authz;
 

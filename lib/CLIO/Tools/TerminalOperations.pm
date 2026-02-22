@@ -2,6 +2,7 @@ package CLIO::Tools::TerminalOperations;
 
 use strict;
 use warnings;
+use utf8;
 use parent 'CLIO::Tools::Tool';
 use Cwd 'getcwd';
 use feature 'say';
