@@ -3,6 +3,7 @@ package CLIO::MCP::Transport::HTTP;
 use strict;
 use warnings;
 use utf8;
+use Carp qw(croak);
 
 =head1 NAME
 
@@ -31,7 +32,7 @@ Supports:
         timeout => 30,
     );
     
-    $transport->connect() or die "Failed";
+    $transport->connect() or croak "Failed to connect MCP HTTP transport";
     my $response = $transport->send_request('initialize', { ... });
     $transport->disconnect();
 
@@ -44,7 +45,7 @@ sub new {
     my ($class, %args) = @_;
     
     my $self = bless {
-        url              => $args{url} || die("MCP HTTP transport requires 'url'\n"),
+        url              => $args{url} || croak("MCP HTTP transport requires 'url'"),
         headers          => $args{headers} || {},
         timeout          => $args{timeout} || 30,
         debug            => $args{debug} || 0,

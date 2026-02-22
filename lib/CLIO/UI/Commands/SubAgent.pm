@@ -4,6 +4,7 @@ use strict;
 use warnings;
 use utf8;
 use POSIX qw(setsid);
+use Carp qw(croak);
 
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
@@ -792,7 +793,7 @@ sub start_broker {
     require CLIO::Coordination::Broker;
     
     my $pid = fork();
-    die "Cannot fork broker: $!" unless defined $pid;
+    croak "Cannot fork broker: $!" unless defined $pid;
     
     if ($pid == 0) {
         # Child process - run broker

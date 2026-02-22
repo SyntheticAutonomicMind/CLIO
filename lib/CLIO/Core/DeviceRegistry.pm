@@ -6,6 +6,7 @@ package CLIO::Core::DeviceRegistry;
 use strict;
 use warnings;
 use utf8;
+use Carp qw(croak);
 use CLIO::Util::JSON qw(encode_json decode_json);
 use File::Spec;
 use File::Path qw(make_path);
@@ -103,7 +104,7 @@ sub _save_registry {
             updated_at => time(),
         };
         
-        open my $fh, '>:encoding(UTF-8)', $file or die "Cannot write $file: $!";
+        open my $fh, '>:encoding(UTF-8)', $file or croak "Cannot write $file: $!";
         print $fh encode_json($data);
         close $fh;
     };
