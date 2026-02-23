@@ -9,12 +9,19 @@
 CLIO provides comprehensive tooling across multiple categories. Every tool operation displays an **action description** showing exactly what it's doing in real-time.
 
 **Tool Categories:**
-1. [File Operations](#file-operations) - 14 operations
+1. [File Operations](#file-operations) - 18 operations
 2. [Version Control](#version-control) - 10 operations
 3. [Terminal](#terminal-operations) - 2 operations
-4. [Memory](#memory-operations) - 5 operations
+4. [Memory](#memory-operations) - 11 operations (session + LTM)
 5. [Todo Lists](#todo-list-operations) - 4 operations (CRUD)
-6. [Web](#web-operations) - 1 operation
+6. [Web](#web-operations) - 2 operations
+7. Code Intelligence - 2 operations (list_usages, search_history)
+8. User Collaboration - 1 operation (request_input)
+9. Sub-Agent Operations - 10 operations (spawn, list, status, kill, etc.)
+10. Remote Execution - 7 operations (execute_remote, execute_parallel, etc.)
+11. Apply Patch - 1 operation (patch application)
+
+> **Note:** This document covers the original core tools in detail. For complete tool schemas including newer tools (code intelligence, user collaboration, sub-agents, remote execution, apply patch, MCP bridge), see the system prompt or `docs/DEVELOPER_GUIDE.md`.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

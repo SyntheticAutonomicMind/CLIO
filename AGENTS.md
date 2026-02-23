@@ -20,9 +20,7 @@
 
 ```bash
 # Install dependencies
-cpanm --installdeps .
-
-# Run CLIO
+# Run CLIO (no dependencies to install - pure core Perl)
 ./clio --new
 
 # Debug mode

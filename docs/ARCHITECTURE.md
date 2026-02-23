@@ -1,6 +1,6 @@
 # CLIO Architecture
 
-**Last Updated:** January 2025
+**Last Updated:** February 2026
 
 ---------------------------------------------------
 
@@ -59,7 +59,6 @@ Terminal Output
 |-----------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------|
 | API Manager | `APIManager.pm` | AI provider integration |
 | Simple AI Agent | `SimpleAIAgent.pm` | Handles AI requests/responses |
-| AI Agent | `AIAgent.pm` | Advanced AI agent capabilities |
 | Workflow Orchestrator | `WorkflowOrchestrator.pm` | Complex multi-step workflows |
 | Task Orchestrator | `TaskOrchestrator.pm` | Task management and orchestration |
 | Tool Executor | `ToolExecutor.pm` | Invokes tools |
@@ -96,10 +95,13 @@ Terminal Output
 | Terminal | `TerminalOperations.pm` | exec - run shell commands |
 | Memory | `MemoryOperations.pm` | store, retrieve, search, list, delete |
 | Todo | `TodoList.pm` | create, update, complete, list, track tasks |
-| Code Intelligence | `CodeIntelligence.pm` | list_usages - find symbol references |
+| Code Intelligence | `CodeIntelligence.pm` | list_usages, search_history |
 | Web | `WebOperations.pm` | fetch_url, search_web |
 | User Collaboration | `UserCollaboration.pm` | request_input - checkpoint prompts |
-| Result Storage | `ResultStorage.pm` | Store and retrieve tool results |
+| Sub-Agent Operations | `SubAgentOperations.pm` | Spawn and manage parallel agents |
+| Remote Execution | `RemoteExecution.pm` | Execute AI tasks on remote systems |
+| Apply Patch | `ApplyPatch.pm` | Apply lightweight diff patches |
+| MCP Bridge | `MCPBridge.pm` | Bridge to MCP tool servers |
 | Base Tool | `Tool.pm` | Abstract base class for all tools |
 | Registry | `Registry.pm` | Tool registration and lookup |
 
@@ -108,7 +110,7 @@ Terminal Output
 - Each tool extends Tool.pm and implements execute()
 - `Registry.pm` maintains tool registry and handles lookup
 - `ToolExecutor.pm` (in Core) invokes tools and manages execution
-- `ResultStorage.pm` caches large tool outputs for efficiency
+- `ToolResultStore.pm` (in Session) caches large tool outputs for efficiency
 
 ### 4. Session Management
 **Files:** `lib/CLIO/Session/`
@@ -194,10 +196,9 @@ Terminal Output
 | Architect | `Architect.pm` | Problem-solving design |
 | Editor | `Editor.pm` | Code modification format |
 | Validate | `Validate.pm` | Code validation |
-| Tree-sitter | `TreeSit.pm` | AST integration |
 | RepoMap | `RepoMap.pm` | Repository mapping |
 | Recall | `Recall.pm` | Memory recall |
-| Model | `Model.pm` | AI model management protocol |
+| RemoteDistribution | `RemoteDistribution.pm` | Remote task distribution |
 | Handler | `Handler.pm` | Protocol base class |
 | Manager | `Manager.pm` | Protocol registry |
 
@@ -323,7 +324,7 @@ clio --new           # First run
 
 ### External Tools Required
 - System `git` (for version control operations)
-- System `perl` 5.20+ (for script execution)
+- System `perl` 5.32+ (for script execution)
 
 ### NOT Used
 - ❌ CPAN modules (except optional Text::Diff with fallback)
@@ -393,23 +394,32 @@ clio --new           # First run
 ```
 lib/CLIO/
   Providers.pm             # AI provider registry (SAM, GitHub Copilot, etc.)
+  Update.pm                # Self-update system
   UI/                      # Terminal interface
       Chat.pm              # Main interactive loop
       Markdown.pm          # Markdown to ANSI
       ANSI.pm              # Color codes
       Theme.pm             # Color themes
+      Display.pm           # Display utilities
+      ToolOutputFormatter.pm # Tool output formatting
+      CommandHandler.pm    # Slash command routing
+      ProgressSpinner.pm   # Progress indicators
+      Commands/            # Slash command handlers (AI, API, Config, etc.)
   Core/                    # Core AI functionality
       APIManager.pm        # AI provider integration
       SimpleAIAgent.pm     # AI request/response
-      AIAgent.pm           # Advanced AI agent
       PromptManager.pm     # System prompts
+      PromptBuilder.pm     # Prompt construction
       InstructionsReader.pm # Custom instructions
       WorkflowOrchestrator.pm # Multi-step workflows
       TaskOrchestrator.pm  # Task orchestration
       ToolExecutor.pm      # Tool invocation
       ToolCallExtractor.pm # Extract tool calls
+      ToolErrorGuidance.pm # Tool error assistance
       ProtocolIntegration.pm # Protocol integration
+      ConversationManager.pm # Conversation management
       Config.pm            # Configuration
+      ModelRegistry.pm     # Model management
       ReadLine.pm          # Command history
       CommandParser.pm     # Command parsing
       Editor.pm            # Core editing
@@ -418,51 +428,88 @@ lib/CLIO/
       SkillManager.pm      # AI skills
       GitHubAuth.pm        # OAuth
       GitHubCopilotModelsAPI.pm # Copilot models
+      CopilotUserAPI.pm    # Copilot user API
+      DeviceRegistry.pm    # Device management
+      AgentLoop.pm         # Persistent agent loop
       PerformanceMonitor.pm # Performance tracking
       Logger.pm            # Logging
   Tools/                   # Tool implementations
       Tool.pm              # Base class
       Registry.pm          # Tool registry
-      ResultStorage.pm     # Result caching
-      FileOperations.pm    # File I/O
-      VersionControl.pm    # Git
+      FileOperations.pm    # File I/O (18 operations)
+      VersionControl.pm    # Git (10 operations)
       TerminalOperations.pm # Shell execution
       MemoryOperations.pm  # Memory operations
       TodoList.pm          # Todo tracking
       CodeIntelligence.pm  # Code analysis
       UserCollaboration.pm # User checkpoints
+      SubAgentOperations.pm # Multi-agent management
+      RemoteExecution.pm   # Remote SSH execution
+      ApplyPatch.pm        # Patch application
+      MCPBridge.pm         # MCP tool bridge
       WebOperations.pm     # Web operations
   Session/                 # Session management
       Manager.pm           # Session CRUD
       State.pm             # Conversation state
       TodoStore.pm         # Todo persistence
-      ToolResultStore.pm   # Result caching
+      ToolResultStore.pm   # Large result storage
+      Snapshot.pm          # Session snapshots
+      Export.pm            # Session export
+      Lock.pm              # Session locking
   Memory/                  # Memory systems
       ShortTerm.pm         # Session context
       LongTerm.pm          # Persistent storage
-      YaRN.pm              # Conversation threading
+      YaRN.pm              # Context windowing
       TokenEstimator.pm    # Token counting
   Code/                    # Code analysis
       TreeSitter.pm        # AST parsing
       Symbols.pm           # Symbol extraction
       Relations.pm         # Symbol relationships
+  Coordination/            # Multi-agent coordination
+      Broker.pm            # Coordination server
+      Client.pm            # Broker connection API
+      SubAgent.pm          # Process spawning
   Protocols/               # Protocol handlers
       Manager.pm           # Protocol registry
       Handler.pm           # Base class
       Architect.pm         # Design protocol
       Editor.pm            # Code editing protocol
       Validate.pm          # Validation protocol
-      TreeSit.pm           # Tree-sitter protocol
       RepoMap.pm           # Repository mapping
       Recall.pm            # Memory recall
-      Model.pm             # Model management
+      RemoteDistribution.pm # Remote task distribution
+  Providers/               # Native API provider modules
+      Base.pm              # Provider base class
+      Anthropic.pm         # Anthropic native API
+      Google.pm            # Google Gemini native API
+  MCP/                     # Model Context Protocol
+      Manager.pm           # MCP server management
+      Client.pm            # MCP JSON-RPC client
+      Auth/OAuth.pm        # MCP OAuth support
+      Transport/Stdio.pm   # Stdio transport
+      Transport/HTTP.pm    # HTTP/SSE transport
   Security/                # Security & auth
       Auth.pm              # OAuth
       Authz.pm             # Authorization
       PathAuthorizer.pm    # File access control
+      SecretRedactor.pm    # PII/secret redaction
       Manager.pm           # Security manager
   Logging/                 # Logging system
       ToolLogger.pm        # Tool operation logging
+      ProcessStats.pm      # Process statistics
+  NaturalLanguage/         # NLP processing
+      TaskProcessor.pm     # Natural language task processing
+  Compat/                  # Compatibility layers
+      HTTP.pm              # HTTP compatibility
+      Terminal.pm          # Terminal compatibility
+  Util/                    # Utilities
+      PathResolver.pm      # Path resolution
+      TextSanitizer.pm     # Text sanitization
+      JSONRepair.pm        # JSON repair
+      JSON.pm              # JSON module selection
+      ConfigPath.pm        # Config path resolution
+      InputHelpers.pm      # Input helpers
+      AnthropicXMLParser.pm # Anthropic XML parsing
   Test/                    # Testing framework
       Framework.pm         # Test utilities
   Util/                    # Utility modules
@@ -481,21 +528,21 @@ lib/CLIO/
 
 ### Getting Started
 1. **Read:** `docs/CUSTOM_INSTRUCTIONS.md` - How projects customize CLIO
-2. **Read:** `docs/FEATURE_COMPLETENESS.md` - What's complete vs partial
-3. **Check:** `ai-assisted/THE_UNBROKEN_METHOD.md` - Development methodology
-4. **Explore:** Individual module POD docs
+2. **Read:** `docs/DEVELOPER_GUIDE.md` - Development guide and conventions
+3. **Explore:** Individual module POD docs
 
 ### Understanding Code
 - Start with `clio` script entry point
 - Follow to `Chat.pm` for UI loop
-- Check `SimpleAIAgent.pm` for AI interaction
+- Check `SimpleAIAgent.pm` for AI agent logic
+- See `WorkflowOrchestrator.pm` for tool orchestration
 - See `ToolExecutor.pm` for tool invocation
 
 ### Adding Features
-1. Follow The Unbroken Method (see ai-assisted/)
-2. Check FEATURE_COMPLETENESS.md for status
-3. Implement in appropriate module
-4. Add tests
+1. Implement in appropriate module
+2. Add tests in `tests/`
+3. Run `perl -I./lib -c` on all changed modules
+4. Test with `./clio --debug --input "test" --exit`
 5. Update relevant docs
 
 ### Common Tasks

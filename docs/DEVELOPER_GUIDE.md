@@ -95,16 +95,18 @@ graph TD
 - Handles session resumption
 
 **5. UI Components** (`lib/CLIO/UI/*.pm`)
-- SimpleChat: Chat interface
+- Chat: Chat interface and main interactive loop
 - Markdown: Markdown rendering
 - ANSI: ANSI escape code management
 - Theme: Color schemes and templates
+- Display: Display utilities
+- ToolOutputFormatter: Tool output formatting
 
 ### Data Flow
 
 **User Input Flow:**
 ```
-User Input → SimpleChat → SimpleAIAgent → APIManager → AI Provider
+User Input → Chat → SimpleAIAgent → APIManager → AI Provider
                                      ↓
                               Tool Selection
                                      ↓
@@ -139,40 +141,88 @@ AI Request → Tool Registry → Route to Tool → Execute Operation
 ```
 clio/
   clio                      # Main executable
-  install.sh / uninstall.sh # Installation scripts
+  install.sh                # Installation script
+  check-deps                # Dependency checker
   lib/CLIO/                 # Core library
       Core/                 # Core components
           SimpleAIAgent.pm  # AI agent
           APIManager.pm     # API abstraction
+          WorkflowOrchestrator.pm  # Tool orchestration
+          ToolExecutor.pm   # Tool invocation
+          Config.pm         # Configuration management
           Logger.pm         # Logging utilities
+          PromptManager.pm  # System prompt management
+          InstructionsReader.pm  # Custom instructions
       Tools/                # Tool implementations
           Tool.pm           # Base tool class
           Registry.pm       # Tool registry
-          FileOperations.pm # File tools
-          VersionControl.pm # Git tools
+          FileOperations.pm # File tools (18 operations)
+          VersionControl.pm # Git tools (10 operations)
           TerminalOperations.pm
           MemoryOperations.pm
           TodoList.pm
           WebOperations.pm
+          CodeIntelligence.pm   # Code analysis
+          UserCollaboration.pm  # User interaction
+          SubAgentOperations.pm # Multi-agent
+          RemoteExecution.pm    # Remote SSH execution
+          ApplyPatch.pm         # Patch application
+          MCPBridge.pm          # MCP tool bridge
       UI/                   # User interface
-          Chat.pm           # Chat interface (deprecated)
-          SimpleChat.pm     # Current chat (deprecated)
+          Chat.pm           # Chat interface
           Markdown.pm       # Markdown renderer
           ANSI.pm           # ANSI codes
           Theme.pm          # Theming system
+          Display.pm        # Display utilities
+          ToolOutputFormatter.pm  # Tool output formatting
+          Commands/         # Slash command handlers
       Session/              # Session management
           Manager.pm        # Session manager
+          State.pm          # Session state
           TodoStore.pm      # Todo persistence
+          ToolResultStore.pm # Large result storage
+          Snapshot.pm       # Session snapshots
+          Export.pm         # Session export
+          Lock.pm           # Session locking
+      Coordination/         # Multi-agent coordination
+          Broker.pm         # Coordination server
+          Client.pm         # Broker connection API
+          SubAgent.pm       # Process spawning
+      Protocols/            # Complex workflows
+          Architect.pm      # Architecture analysis
+          Editor.pm         # Code editing
+          Validate.pm       # Validation
+          RepoMap.pm        # Repository mapping
+          RemoteDistribution.pm  # Remote distribution
+      Security/             # Auth/authz
+          Auth.pm           # Authentication
+          Authz.pm          # Authorization
+          Manager.pm        # Security management
+          SecretRedactor.pm # PII/secret redaction
+      Memory/               # Context/memory
+          ShortTerm.pm      # Conversation context
+          LongTerm.pm       # Persistent memory
+          YaRN.pm           # Context windowing
+          TokenEstimator.pm # Token counting
+      Providers/            # Native API providers
+          Anthropic.pm      # Anthropic native API
+          Google.pm         # Google Gemini native API
+      MCP/                  # Model Context Protocol
+          Manager.pm        # MCP server management
+          Client.pm         # MCP client
+      Code/                 # Code intelligence
+          TreeSitter.pm     # Tree-sitter integration
+          Symbols.pm        # Symbol extraction
+          Relations.pm      # Code relations
+      Util/                 # Utilities
+          PathResolver.pm
+          TextSanitizer.pm
+          JSONRepair.pm
+          JSON.pm           # JSON module selection
   docs/                     # User documentation
-      USER_GUIDE.md
-      INSTALLATION.md
-      SPECS/
-          ARCHITECTURE.md
-          TOOLS.md
-          PROTOCOLS.md
-  docs-internal/            # Development specs
-  sessions/                 # Saved sessions
-  scripts/                  # Utility scripts
+  styles/                   # Color style files (25 themes)
+  tests/                    # Test suites
+  sessions/                 # Saved sessions (gitignored)
 ```
 
 ### Module Naming Conventions
@@ -181,6 +231,14 @@ clio/
 - **Tools**: `CLIO::Tools::*` - Tool implementations
 - **UI**: `CLIO::UI::*` - User interface components
 - **Session**: `CLIO::Session::*` - Session management
+- **Coordination**: `CLIO::Coordination::*` - Multi-agent coordination
+- **Protocols**: `CLIO::Protocols::*` - Complex AI workflows
+- **Security**: `CLIO::Security::*` - Authentication and authorization
+- **Memory**: `CLIO::Memory::*` - Context and memory system
+- **Providers**: `CLIO::Providers::*` - Native API provider modules
+- **MCP**: `CLIO::MCP::*` - Model Context Protocol integration
+- **Code**: `CLIO::Code::*` - Code intelligence and analysis
+- **Util**: `CLIO::Util::*` - Utilities
 
 ### File Naming
 
@@ -537,7 +595,7 @@ package CLIO::Core::Providers::MyProvider;
 use strict;
 use warnings;
 use HTTP::Tiny;
-use JSON;
+use JSON::PP;
 
 sub new {
     my ($class, %opts) = @_;
@@ -566,7 +624,7 @@ sub send_request {
         model => 'myprovider-model',
         messages => $messages,
         tools => $tools,
-        stream => JSON::true,
+        stream => JSON::PP::true,
     };
     
     my $response = $http->post(
@@ -785,7 +843,7 @@ print STDERR "[TRACE][Module] Detail\n" if should_log('DEBUG');
 
 ```perl
 # ✅ Use core modules
-use JSON;          # Core since 5.14
+use JSON::PP;      # Core since 5.14
 use HTTP::Tiny;    # Core since 5.14
 use File::Spec;    # Core
 
@@ -937,10 +995,16 @@ Then open a Pull Request on GitHub.
 
 ## Resources
 
-**Internal Documentation:**
-- `docs-internal/` - Development specifications
-- `SYSTEM_DESIGN.md` - Architecture overview
-- `PROJECT_PLAN.md` - Implementation roadmap
+**Documentation:**
+- `docs/SPECS/` - Technical specifications (Architecture, Tools, Protocols)
+- `docs/ARCHITECTURE.md` - Architecture overview
+- `docs/ARCHITECTURE_REMOTE_EXECUTION.md` - Remote execution design spec
+- `docs/COMMAND_OUTPUT_STANDARDS.md` - Command output styling standards
+- `docs/DEVELOPER_DOCUMENTATION_GUIDE.md` - Developer documentation standards
+- `docs/DOCUMENTATION_GUIDE.md` - User-facing documentation standards
+- `docs/PERFORMANCE.md` - Performance benchmarks and optimization
+- `docs/FORMULA_RENDERING.md` - Mathematical formula rendering
+- `docs/STYLE_GUIDE.md` / `docs/STYLE_QUICKREF.md` - Color theme reference
 
 **Code Examples:**
 - `lib/CLIO/Tools/FileOperations.pm` - Comprehensive tool example

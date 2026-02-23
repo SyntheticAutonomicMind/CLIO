@@ -421,7 +421,7 @@ Follow The Unbroken Method (see ai-assisted/THE_UNBROKEN_METHOD.md):
 
 ## Code Standards
 
-- Perl 5.20+ (use strict, warnings, feature 'say')
+- Perl 5.32+ (use strict, warnings)
 - Pod documentation for all modules
 - 4-space indentation, never tabs
 - Guard debug: if $self->{debug}
