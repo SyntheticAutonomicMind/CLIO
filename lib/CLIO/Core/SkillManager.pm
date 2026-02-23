@@ -403,6 +403,7 @@ Ensure `.gitignore` includes CLIO-specific entries:
 .clio/logs/
 .clio/sessions/
 .clio/memory/
+.clio/snapshots/
 .clio/*json
 ```
 
@@ -507,8 +508,12 @@ scratch/
 reference/
 ai-assisted/
 *.txt
+!llms.txt
 .clio/*.json
 .clio/sessions/
+.clio/memory/
+.clio/snapshots/
+.clio/logs/
 ```
 
 ### 6. Initialize or Update Git
