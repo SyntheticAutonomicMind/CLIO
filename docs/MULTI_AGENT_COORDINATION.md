@@ -15,36 +15,23 @@ This system enables:
 
 ## Architecture
 
-```
-┌────────────────────────────────────────────────────────────┐
-│                    Main CLIO Session                        │
-│  - User interface                                          │
-│  - Primary AI agent                                        │
-│  - Auto-polls inbox for agent messages                    │
-└─────────────┬──────────────────────────────────────────────┘
-              │
-              v
-   ┌──────────────────────┐
-   │   Coordination       │
-   │   Broker             │◄──────────────┐
-   │  (Unix Socket)       │               │
-   │                      │               │
-   │  - Message bus       │               │
-   │  - File locking      │               │
-   │  - Git coordination  │               │
-   │  - Discovery sharing │               │
-   └──────┬───────────────┘               │
-          │                               │
-          v                               │
-┌─────────────────┐              ┌────────┴────────┐
-│  Sub-Agent 1    │              │  Sub-Agent 2    │
-│  (Persistent)   │              │  (Persistent)   │
-│                 │              │                 │
-│  - Polls inbox  │              │  - Polls inbox  │
-│  - Sends msgs   │              │  - Sends msgs   │
-│  - File locks   │              │  - File locks   │
-│  - AI-powered   │              │  - AI-powered   │
-└─────────────────┘              └─────────────────┘
+```mermaid
+graph TD
+    Main["Main CLIO Session<br/>- User interface<br/>- Primary AI agent<br/>- Auto-polls inbox for agent messages"]
+    Broker["Coordination Broker<br/>(Unix Socket)<br/>- Message bus<br/>- File locking<br/>- Git coordination<br/>- Discovery sharing"]
+    Agent1["Sub-Agent 1<br/>(Persistent)<br/>- Polls inbox<br/>- Sends messages<br/>- File locks<br/>- AI-powered"]
+    Agent2["Sub-Agent 2<br/>(Persistent)<br/>- Polls inbox<br/>- Sends messages<br/>- File locks<br/>- AI-powered"]
+    
+    Main --> Broker
+    Broker --> Agent1
+    Broker --> Agent2
+    Agent1 -.->|messages| Broker
+    Agent2 -.->|messages| Broker
+    
+    style Main fill:#e1f5ff
+    style Broker fill:#fff3e0
+    style Agent1 fill:#e8f5e9
+    style Agent2 fill:#e8f5e9
 ```
 
 ---

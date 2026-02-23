@@ -426,7 +426,7 @@ CHANGES:
 
 ### Document Structure
 
-Technical specifications in `docs-internal/` should follow this structure:
+Technical specifications in `docs/SPECS/` should follow this structure:
 
 ```markdown
 # Module/Feature Specification

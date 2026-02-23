@@ -19,7 +19,7 @@ CLIO uses **only core Perl modules** (standard library). No CPAN dependencies re
 **Rationale:** Simplifies installation, reduces maintenance burden, ensures portability.
 
 **Core modules used:**
-- `JSON` - JSON parsing (core since 5.14)
+- `JSON::PP` - JSON parsing (core since 5.14)
 - `HTTP::Tiny` - HTTP client (core since 5.14)
 - `MIME::Base64` - Encoding (core)
 - `File::Spec`, `File::Path` - File operations (core)
@@ -74,7 +74,7 @@ Professional terminal UI with markdown rendering, syntax highlighting, and color
 
 ```mermaid
 graph TD
-    UI[User Interface<br/>SimpleChat, Markdown, ANSI] --> Agent[Core AI Agent<br/>SimpleAIAgent, APIManager]
+    UI[User Interface<br/>Chat, Markdown, ANSI] --> Agent[Core AI Agent<br/>SimpleAIAgent, APIManager]
     
     Agent --> Registry[Tool Registry<br/>Tool Executor]
     Agent --> Session[Session Manager<br/>State Persistence]
@@ -87,6 +87,12 @@ graph TD
     Tools --> Memory[MemoryOperations]
     Tools --> Todo[TodoList]
     Tools --> Web[WebOperations]
+    Tools --> CodeIntel[CodeIntelligence]
+    Tools --> UserCollab[UserCollaboration]
+    Tools --> SubAgent[SubAgentOperations]
+    Tools --> Remote[RemoteExecution]
+    Tools --> Patch[ApplyPatch]
+    Tools --> MCP[MCPBridge]
     
     style UI fill:#e1f5ff
     style Agent fill:#fff4e1
@@ -240,7 +246,7 @@ Create → Add Messages → Execute Tools → Save → [Resume] → Continue
 
 #### 5. UI Components
 
-**SimpleChat** (`lib/CLIO/UI/SimpleChat.pm` - deprecated, functionality moved to core)
+**Chat** (`lib/CLIO/UI/Chat.pm`)
 - Chat interface
 - Input handling
 - Output formatting
@@ -269,7 +275,7 @@ Create → Add Messages → Execute Tools → Save → [Resume] → Continue
 
 ```mermaid
 flowchart TD
-    A[User Input] --> B[SimpleChat - Read Input]
+    A[User Input] --> B[Chat - Read Input]
     B --> C[SimpleAIAgent - Process Message]
     C --> D[APIManager - Send to AI Provider]
     D --> E[AI Provider - Select Tools]
@@ -510,15 +516,18 @@ while (my $chunk = read_stream()) {
 flowchart TD
     clio[clio entry point]
     clio --> Agent[CLIO::Core::SimpleAIAgent]
-    clio --> Chat[CLIO::UI::SimpleChat deprecated]
+    clio --> Chat[CLIO::UI::Chat]
     clio --> ANSI[CLIO::UI::ANSI]
     clio --> Theme[CLIO::UI::Theme]
     clio --> Session[CLIO::Session::Manager]
     clio --> Logger[CLIO::Core::Logger]
     
     Agent --> API[CLIO::Core::APIManager]
-    Agent --> Registry[CLIO::Tools::Registry]
+    Agent --> WO[CLIO::Core::WorkflowOrchestrator]
     Agent --> Markdown[CLIO::UI::Markdown]
+    
+    WO --> Registry[CLIO::Tools::Registry]
+    WO --> TE[CLIO::Core::ToolExecutor]
     
     API --> HTTP[HTTP::Tiny core]
     
@@ -528,6 +537,12 @@ flowchart TD
     Registry --> Mem[CLIO::Tools::MemoryOperations]
     Registry --> Todo[CLIO::Tools::TodoList]
     Registry --> Web[CLIO::Tools::WebOperations]
+    Registry --> CodeIntel[CLIO::Tools::CodeIntelligence]
+    Registry --> UserCollab[CLIO::Tools::UserCollaboration]
+    Registry --> SubAgent[CLIO::Tools::SubAgentOperations]
+    Registry --> Remote[CLIO::Tools::RemoteExecution]
+    Registry --> Patch[CLIO::Tools::ApplyPatch]
+    Registry --> MCPBridge[CLIO::Tools::MCPBridge]
     
     style clio fill:#e1f5ff
     style Agent fill:#fff4e1
@@ -535,8 +550,7 @@ flowchart TD
     style Chat fill:#ffebee
 ```
 
-**Core module count:** ~20 active modules  
-**Deprecated modules:** ~10 (in lib/CLIO/UI/deprecated/)
+**Module count:** 113 `.pm` files across 17 module families
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

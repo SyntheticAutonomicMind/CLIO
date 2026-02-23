@@ -121,9 +121,9 @@ normal=@WHITE@
 muted=@DIM@@WHITE@
 ```
 
-## Available Styles (24)
+## Available Styles (25)
 
-**Modern:** default, greyscale, light, dark, slate, solarized-dark, 
+**Modern:** console, default, greyscale, light, dark, slate, solarized-dark, 
 solarized-light, nord, dracula
 
 **Retro:** amber-terminal, apple-ii, bbs-bright, commodore-64, dos-blue, 
