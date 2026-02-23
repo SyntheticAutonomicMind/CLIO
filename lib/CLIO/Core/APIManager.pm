@@ -41,6 +41,7 @@ use CLIO::Core::API::MessageValidator qw(
     validate_tool_message_pairs
     preflight_validate
 );
+use CLIO::Core::API::ResponseHandler;
 use CLIO::Util::TextSanitizer qw(sanitize_text);
 
 # Define request states
@@ -203,6 +204,13 @@ sub new {
     };
     bless $self, $class;
     
+    # Initialize response handler for rate limiting, error handling, quota tracking
+    $self->{response_handler} = CLIO::Core::API::ResponseHandler->new(
+        session       => $args{session},
+        broker_client => $args{broker_client},
+        debug         => $args{debug} // 0,
+    );
+    
     # Initialize API key (check GitHub auth first, then config)
 
     $self->{api_key} = $self->_get_api_key();
@@ -223,6 +231,11 @@ sub set_session {
     my ($self, $session) = @_;
     
     $self->{session} = $session;
+    
+    # Propagate to response handler
+    if ($self->{response_handler}) {
+        $self->{response_handler}->set_session($session);
+    }
     
     # Clear the "warned once" flag so we log the first session association
     delete $self->{_warned_no_session_streaming};
@@ -1093,7 +1106,7 @@ sub _build_payload {
     #   - Continued conversations
     #   - Tool-calling iterations
     #   - Follow-up questions in same session
-    my $previous_response_id = $self->_get_stateful_marker_for_model($model);
+    my $previous_response_id = $self->{response_handler}->get_stateful_marker_for_model($model);
     
     if ($previous_response_id) {
         $payload->{previous_response_id} = $previous_response_id;
@@ -1237,199 +1250,6 @@ sub _build_request {
     
     return ($req, $final_endpoint);
 }
-
-# Helper: Handle error response
-sub _handle_error_response {
-    my ($self, $resp, $json, $is_streaming) = @_;
-    
-    my $status = $resp->code;
-    my $error_prefix = $is_streaming ? "Streaming request failed" : "Request failed";
-    my $error = "$error_prefix: " . $resp->status_line;
-    
-    # Try to extract detailed error from response body
-    my $content = eval { decode_json($resp->decoded_content) };
-    if ($content && $content->{error}) {
-        $error = $content->{error}{message} || $content->{error} || $error;
-    }
-    
-    # Determine if error is retryable (check before logging so we can suppress prints for retryable errors)
-    my $retryable = 0;
-    my $retry_after = undef;
-    my $retry_info = '';
-    my $is_retryable_error = 0;
-    my $error_type = undef; # For specialized retry handling
-    
-    # Handle rate limiting (429) - parse retry delay from error response
-    if ($status == 429) {
-        $is_retryable_error = 1;
-        $retryable = 1;
-        $retry_after = 60;  # Default fallback
-        $error_type = 'rate_limit';  # Flag for specialized handling if needed
-        
-        # Try to parse retry delay from error message (SAM pattern)
-        # Message format: "Please retry in XX.XXs" or "retry in XX seconds"
-        if ($error =~ /retry in ([\d.]+)\s*s(?:econds?)?/i) {
-            $retry_after = int($1) + 1;  # Add 1 second buffer
-        }
-        # Try Retry-After header as fallback
-        elsif (my $header_value = $resp->header('Retry-After')) {
-            $retry_after = $header_value;
-        }
-        
-        $self->{rate_limit_until} = time() + $retry_after;
-        
-        # Provide friendly error message (will be sent via system message callback)
-        $retry_info = sprintf(
-            "API rate limit exceeded. Retrying in %d seconds.",
-            $retry_after
-        );
-        $error = $retry_info;
-    }
-    # Handle authentication failures (401, 403) - attempt automatic token recovery
-    elsif ($status == 401 || $status == 403) {
-        # Token may have expired (Copilot session tokens expire ~30 min)
-        # or been revoked. Try automatic recovery before failing.
-        log_info('APIManager', "Authentication error ($status), attempting token recovery");
-        
-        my $recovered = $self->_attempt_token_recovery();
-        
-        if ($recovered) {
-            # Token was refreshed - mark as retryable so we retry the request
-            $is_retryable_error = 1;
-            $retryable = 1;
-            $retry_after = 1;  # Quick retry with new token
-            $error_type = 'auth_recovered';
-            
-            $retry_info = "Authentication token refreshed. Retrying request...";
-            $error = $retry_info;
-        } else {
-            # Recovery failed - this is a fatal auth error
-            # Provide helpful message about re-authentication
-            $error = "Authentication failed (HTTP $status). Your token may have expired or been revoked. "
-                   . "Please run /api logout then /api login to re-authenticate.";
-            $error_type = 'auth_failed';
-        }
-    }
-    # Handle transient server errors (502, 503) - these can be retried with exponential backoff
-    elsif ($status == 502 || $status == 503) {
-        $is_retryable_error = 1;
-        $retryable = 1;
-        $retry_after = 2;  # Start with 2 second delay for server errors
-        $error_type = 'server_error';  # Flag for WorkflowOrchestrator to apply exponential backoff
-        
-        # Provide friendly error message (will be sent via system message callback)
-        $retry_info = "Server temporarily unavailable ($status). Retrying...";
-        $error = $retry_info;
-    }
-    # Handle token limit exceeded (400) - MAKE RETRYABLE with intelligent trimming
-    # Token limit errors CAN be fixed by trimming conversation history and retrying
-    # Error patterns: "model_max_prompt_tokens_exceeded", "context_length_exceeded", "prompt token count exceeds"
-    elsif ($status == 400 && $error =~ /model_max_prompt_tokens_exceeded|context_length_exceeded|prompt token count.*exceeds/i) {
-        $is_retryable_error = 1;
-        $retryable = 1;
-        $retry_after = 0;  # Instant retry after trimming
-        $error_type = 'token_limit_exceeded';  # Flag for WorkflowOrchestrator to trim conversation
-        
-        # Provide clear error message explaining the issue
-        $error = "Token limit exceeded: The conversation history is too long for the model's context window. " .
-                 "Will attempt to trim conversation history and retry.";
-        
-        log_info('APIManager', "Token limit exceeded - will retry after trimming");
-    }
-    # Handle malformed tool call JSON (400) - the AI generated bad JSON, so retry to give it another chance
-    # This prevents wasting a premium request on a transient AI JSON generation error
-    # Also catch generic "invalid JSON" errors from the API
-    elsif ($status == 400 && ($error =~ /invalid.*json.*tool.*call|tool.*call.*invalid.*json/i ||
-                               $error =~ /request body is not valid json|invalid.*json|json.*parse|malformed.*json/i)) {
-        $is_retryable_error = 1;
-        $retryable = 1;
-        $retry_after = 1;  # Quick retry - no server cooldown needed
-        $error_type = 'malformed_tool_json';  # Flag for WorkflowOrchestrator to add guidance
-        
-        # Log the rejected JSON payload for debugging
-        if ($json) {
-            if (open my $fh, '>>', '/tmp/clio_json_errors.log') {
-                print $fh "\n" . "="x80 . "\n";
-                print $fh "[" . scalar(localtime) . "] API Rejected JSON\n";
-                print $fh "HTTP Status: $status\n";
-                print $fh "Error: $error\n";
-                print $fh "Payload (first 5000 chars):\n";
-                print $fh substr($json, 0, 5000) . "\n";
-                if (length($json) > 5000) {
-                    print $fh "... (truncated, total length: " . length($json) . " bytes)\n";
-                }
-                close $fh;
-            }
-            log_debug('APIManager', "API rejected JSON payload - logged to /tmp/clio_json_errors.log");
-        }
-        
-        # Try to extract the tool name from the error message or response body
-        my $failed_tool = undef;
-        my $response_body = $resp->decoded_content;
-        
-        # Try to parse the error response to get tool name
-        # Common patterns: "tool_use" blocks, "name": "tool_name", etc.
-        if ($response_body =~ /"name":\s*"([^"]+)"/ || $response_body =~ /tool[_\s]name['":\s]+([a-zA-Z_]+)/) {
-            $failed_tool = $1;
-            log_debug('APIManager', "Extracted failed tool name: $failed_tool");
-        }
-        
-        # Provide friendly error message
-        $retry_info = "AI generated malformed tool call JSON. Retrying request...";
-        $error = $retry_info;
-        
-        log_info('APIManager', "Detected malformed tool JSON error - will retry");
-        
-        # Store failed tool name for WorkflowOrchestrator
-        $self->{last_failed_tool} = $failed_tool;
-    }
-    
-    # Log error details
-    # For retryable errors: Only log at DEBUG level (suppressed by default)
-    # This prevents user-visible noise; WorkflowOrchestrator will handle via system message callback
-    # For fatal errors: Always log at ERROR level so user knows what went wrong
-    if ($is_retryable_error) {
-        # DEBUG: Show friendly message + technical details for troubleshooting
-        log_debug('APIManager', "Retryable error ($status): $error");
-        if ($is_streaming && should_log('DEBUG')) {
-            log_debug('APIManager', "Response body: " . $resp->decoded_content);
-            log_debug('APIManager', "Request was: " . substr($json, 0, 500) . "...");
-        }
-    } else {
-        # ERROR: Log fatal errors with full details
-        log_debug('APIManager', "$error");
-        if ($is_streaming) {
-            log_debug('APIManager', "APIManager Response body: " . $resp->decoded_content);
-            log_debug('APIManager', "Request was: " . substr($json, 0, 500) . "...");
-        } elsif ($self->{debug}) {
-            warn "[ERROR] $error\n";
-        }
-    }
-    
-    # Return appropriate format based on streaming vs non-streaming
-    my $result;
-    if ($is_streaming) {
-        $result = { success => 0, error => $error };
-    } else {
-        $result = $self->_error($error);
-    }
-    
-    # Add retry information if applicable
-    if ($retryable) {
-        $result->{retryable} = 1;
-        $result->{retry_after} = $retry_after if $retry_after;
-        $result->{error_type} = $error_type if $error_type;  # Pass error type for specialized handling
-        
-        # Include failed tool name if we detected it (for malformed_tool_json errors)
-        if ($self->{last_failed_tool}) {
-            $result->{failed_tool} = $self->{last_failed_tool};
-            delete $self->{last_failed_tool};  # Clear after use
-        }
-    }
-    
-    return $result;
-}
-
 sub send_request {
     my ($self, $input, %opts) = @_;
     
@@ -1456,7 +1276,7 @@ sub send_request {
         my $elapsed = $now - $self->{last_request_time};
         # Use dynamic delay if set by rate limit headers, otherwise default to 1.0s
         # Base delay of 1.0s is more conservative to prevent rate limits during heavy use
-        my $min_delay = $self->{_dynamic_min_delay} // 1.0;
+        my $min_delay = $self->{response_handler}{_dynamic_min_delay} // 1.0;
         
         if ($elapsed < $min_delay) {
             my $wait = $min_delay - $elapsed;
@@ -1469,12 +1289,12 @@ sub send_request {
     $self->{last_request_time} = Time::HiRes::time();
     
     # Store broker_request_id for later release
-    $self->{_current_broker_request_id} = $broker_request_id;
+    $self->{response_handler}->set_broker_request_id($broker_request_id);
     
     # Local rate limit cooldown check (only when NOT using broker)
     # When broker is active, it handles all rate limit delays centrally
-    if (!$self->{broker_client} && time() < $self->{rate_limit_until}) {
-        my $wait = int($self->{rate_limit_until} - time()) + 1;
+    if (!$self->{broker_client} && time() < ($self->{response_handler}{rate_limit_until} // 0)) {
+        my $wait = int($self->{response_handler}{rate_limit_until} - time()) + 1;
         log_debug('APIManager', "Rate limited. Waiting ${wait}s before retry...");
         
         # Enable periodic signal delivery during rate limit wait
@@ -1666,7 +1486,7 @@ sub send_request {
         );
         
         # Release broker slot before returning
-        $self->_release_broker_slot(undef, 599);  # 599 = network error
+        $self->{response_handler}->release_broker_slot(undef, 599);  # 599 = network error
         
         # Network/timeout errors are transient and should be retried
         return { 
@@ -1680,13 +1500,14 @@ sub send_request {
     
     if (!$resp->is_success) {
         # Release broker slot with response info before returning
-        $self->_release_broker_slot($resp, $resp->code);
+        $self->{response_handler}->release_broker_slot($resp, $resp->code);
         
-        return $self->_handle_error_response($resp, $json, 0);
+        return $self->{response_handler}->handle_error_response($resp, $json, 0,
+            attempt_token_recovery => sub { $self->_attempt_token_recovery() });
     }
     
     # Process rate limit headers from ALL successful responses (proactive throttling)
-    $self->_process_rate_limit_headers($resp->headers);
+    $self->{response_handler}->process_rate_limit_headers($resp->headers);
     
     # Log raw response for debugging
     warn "[DEBUG] Raw response: " . $resp->decoded_content . "\n" if $self->{debug};
@@ -1707,7 +1528,7 @@ sub send_request {
     # to signal session continuation and prevent duplicate premium charges
     if ($data->{stateful_marker}) {
         my $iteration = $opts{tool_call_iteration} || 1;
-        $self->_store_stateful_marker($data->{stateful_marker}, $model, $iteration);
+        $self->{response_handler}->store_stateful_marker($data->{stateful_marker}, $model, $iteration);
     }
     
     # Check for stateful_marker in message as well (SAM approach)
@@ -1715,7 +1536,7 @@ sub send_request {
         $data->{choices}[0]{message} && 
         $data->{choices}[0]{message}{stateful_marker}) {
         my $iteration = $opts{tool_call_iteration} || 1;
-        $self->_store_stateful_marker($data->{choices}[0]{message}{stateful_marker}, $model, $iteration);
+        $self->{response_handler}->store_stateful_marker($data->{choices}[0]{message}{stateful_marker}, $model, $iteration);
     }
     
     # FALLBACK: Store response_id for debugging and as fallback if stateful_marker is unavailable
@@ -1738,7 +1559,7 @@ sub send_request {
     }
     
     # Process GitHub Copilot quota headers for premium billing tracking
-    $self->_process_quota_headers($resp->headers, $data->{id}) if $endpoint_config->{requires_copilot_headers};
+    $self->{response_handler}->process_quota_headers($resp->headers, $data->{id}) if $endpoint_config->{requires_copilot_headers};
     
     # Extract and validate the message content
     my $content = '';
@@ -1832,7 +1653,7 @@ sub send_request {
             }
         }
         # Release broker slot on success
-        $self->_release_broker_slot($resp, 200);
+        $self->{response_handler}->release_broker_slot($resp, 200);
         
         return $result;
     }
@@ -1844,7 +1665,7 @@ sub send_request {
         }
         
         # Release broker slot on success
-        $self->_release_broker_slot($resp, 200);
+        $self->{response_handler}->release_broker_slot($resp, 200);
         
         return {
             content => '',  # Empty content when only tool_calls
@@ -1857,7 +1678,7 @@ sub send_request {
     warn "[ERROR] No message content in response\n" if $self->{debug};
     
     # Release broker slot before returning error
-    $self->_release_broker_slot($resp, 200);  # Response was successful but content invalid
+    $self->{response_handler}->release_broker_slot($resp, 200);  # Response was successful but content invalid
     
     return $self->_error("No message content in response");
 }
@@ -1916,7 +1737,7 @@ sub send_request_streaming {
         my $elapsed = $now - $self->{last_request_time};
         # Use dynamic delay if set by rate limit headers, otherwise default to 1.0s
         # Base delay of 1.0s is more conservative to prevent rate limits during heavy use
-        my $min_delay = $self->{_dynamic_min_delay} // 1.0;
+        my $min_delay = $self->{response_handler}{_dynamic_min_delay} // 1.0;
         
         if ($elapsed < $min_delay) {
             my $wait = $min_delay - $elapsed;
@@ -1929,12 +1750,12 @@ sub send_request_streaming {
     $self->{last_request_time} = Time::HiRes::time();
     
     # Store broker_request_id for later release
-    $self->{_current_broker_request_id} = $broker_request_id;
+    $self->{response_handler}->set_broker_request_id($broker_request_id);
     
     # Local rate limit cooldown check (only when NOT using broker)
     # When broker is active, it handles all rate limit delays centrally
-    if (!$self->{broker_client} && time() < $self->{rate_limit_until}) {
-        my $wait = int($self->{rate_limit_until} - time()) + 1;
+    if (!$self->{broker_client} && time() < ($self->{response_handler}{rate_limit_until} // 0)) {
+        my $wait = int($self->{response_handler}{rate_limit_until} - time()) + 1;
         log_debug('APIManager', "Rate limited. Waiting ${wait}s before retry...");
         
         # Enable periodic signal delivery during rate limit wait
@@ -2202,7 +2023,7 @@ sub send_request_streaming {
                     # to signal session continuation and prevent duplicate premium charges
                     if ($data->{stateful_marker}) {
                         my $iteration = $opts{tool_call_iteration} || 1;
-                        $self->_store_stateful_marker($data->{stateful_marker}, $model, $iteration);
+                        $self->{response_handler}->store_stateful_marker($data->{stateful_marker}, $model, $iteration);
                     }
                     
                     # FALLBACK: Store response 'id' if no stateful_marker (GitHub Copilot doesn't return stateful_marker)
@@ -2242,7 +2063,7 @@ sub send_request_streaming {
                             # (SAM implementation suggests it might be in message)
                             if ($delta->{stateful_marker}) {
                                 my $iteration = $opts{tool_call_iteration} || 1;
-                                $self->_store_stateful_marker($delta->{stateful_marker}, $model, $iteration);
+                                $self->{response_handler}->store_stateful_marker($delta->{stateful_marker}, $model, $iteration);
                             }
                             
                             # Extract content
@@ -2390,7 +2211,7 @@ sub send_request_streaming {
         log_debug('APIManager', "$error");
         
         # Release broker slot on error
-        $self->_release_broker_slot(undef, 599);  # 599 = network error
+        $self->{response_handler}->release_broker_slot(undef, 599);  # 599 = network error
         
         # Network/timeout errors (599) are transient and should be retried
         return { 
@@ -2404,9 +2225,10 @@ sub send_request_streaming {
     
     if (!$resp->is_success) {
         # Release broker slot with response info before returning
-        $self->_release_broker_slot($resp, $resp->code);
+        $self->{response_handler}->release_broker_slot($resp, $resp->code);
         
-        return $self->_handle_error_response($resp, $json, 1);
+        return $self->{response_handler}->handle_error_response($resp, $json, 1,
+            attempt_token_recovery => sub { $self->_attempt_token_recovery() });
     }
     
     # Calculate final metrics
@@ -2439,7 +2261,7 @@ sub send_request_streaming {
     
     # Always process rate limit headers regardless of endpoint type
     if ($headers_to_use) {
-        $self->_process_rate_limit_headers($headers_to_use);
+        $self->{response_handler}->process_rate_limit_headers($headers_to_use);
     }
     
     # Process quota headers for billing tracking (GitHub Copilot only)
@@ -2450,7 +2272,7 @@ sub send_request_streaming {
         my $response_id = $self->{session}{lastGitHubCopilotResponseId} || 'unknown';
         
         log_debug('APIManager', "Calling _process_quota_headers with response_id=$response_id");
-        $self->_process_quota_headers($headers_to_use, $response_id);
+        $self->{response_handler}->process_quota_headers($headers_to_use, $response_id);
     } else {
         log_debug('APIManager', "Skipping quota header processing");
     }
@@ -2524,7 +2346,7 @@ sub send_request_streaming {
     }
     
     # Release broker slot on success
-    $self->_release_broker_slot($resp, 200);
+    $self->{response_handler}->release_broker_slot($resp, 200);
     
     return $response;
 }
@@ -2676,595 +2498,6 @@ sub _error {
     my ($self, $msg) = @_;
     warn "[APIManager] $msg\n" if $self->{debug};
     return { error => 1, message => $msg };
-}
-
-=head2 _process_rate_limit_headers
-
-Process rate limit headers from API response for adaptive throttling.
-
-Extracts rate limit information from standard HTTP headers:
-- X-RateLimit-Limit-Requests: Maximum requests per period
-- X-RateLimit-Remaining-Requests: Requests remaining in current period
-- X-RateLimit-Reset-Requests: Unix timestamp when quota resets
-- X-RateLimit-Limit-Tokens: Maximum tokens per period
-- X-RateLimit-Remaining-Tokens: Tokens remaining in current period
-- X-RateLimit-Reset-Tokens: Unix timestamp when token quota resets
-- Retry-After: Seconds to wait before retrying (typically on 429)
-
-Based on remaining quota, adjusts the dynamic delay between requests:
-- > 50% remaining: Use minimum delay (0.5s)
-- 20-50% remaining: Double the delay (1.0s)
-- 10-20% remaining: Triple the delay (1.5s)
-- < 10% remaining: Maximum delay (2.5s)
-
-This proactive approach prevents hitting rate limits by slowing down
-as we approach the limit, rather than only reacting after a 429 error.
-
-Arguments:
-- $headers: HTTP::Headers object from response
-
-=cut
-
-sub _process_rate_limit_headers {
-    my ($self, $headers) = @_;
-    
-    return unless $headers;
-    
-    # Extract rate limit headers using scan() to handle case variations
-    # Supports both standard X-RateLimit-* headers AND GitHub Copilot quota headers
-    my %rate_limit = ();
-    my $copilot_quota_header = undef;
-    
-    $headers->scan(sub {
-        my ($name, $value) = @_;
-        my $lc_name = lc($name);
-        
-        # Standard rate limit headers (OpenAI, Anthropic, etc.)
-        if ($lc_name eq 'x-ratelimit-limit-requests') {
-            $rate_limit{limit_requests} = $value;
-        }
-        elsif ($lc_name eq 'x-ratelimit-remaining-requests') {
-            $rate_limit{remaining_requests} = $value;
-        }
-        elsif ($lc_name eq 'x-ratelimit-reset-requests') {
-            $rate_limit{reset_requests} = $value;
-        }
-        elsif ($lc_name eq 'x-ratelimit-limit-tokens') {
-            $rate_limit{limit_tokens} = $value;
-        }
-        elsif ($lc_name eq 'x-ratelimit-remaining-tokens') {
-            $rate_limit{remaining_tokens} = $value;
-        }
-        elsif ($lc_name eq 'x-ratelimit-reset-tokens') {
-            $rate_limit{reset_tokens} = $value;
-        }
-        elsif ($lc_name eq 'retry-after') {
-            $rate_limit{retry_after} = $value;
-        }
-        # GitHub Copilot quota headers (extract for rate limiting)
-        elsif ($lc_name eq 'x-quota-snapshot-premium_interactions' || 
-               $lc_name eq 'x-quota-snapshot-premium_models') {
-            $copilot_quota_header = $value;
-        }
-    });
-    
-    # If we have GitHub Copilot quota header, extract rate limiting info from it
-    # Format: "ent=100&ov=0.0&ovPerm=true&rem=75.5&rst=2025-11-01T00:00:00Z"
-    if ($copilot_quota_header && !$rate_limit{limit_requests}) {
-        for my $pair (split /&/, $copilot_quota_header) {
-            my ($key, $value) = split /=/, $pair, 2;
-            next unless defined $value;
-            
-            # URL decode the value
-            $value =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/eg;
-            
-            if ($key eq 'ent') {
-                # Entitlement = limit (treat -1 as unlimited)
-                $rate_limit{limit_requests} = $value unless $value == -1;
-            }
-            elsif ($key eq 'rem') {
-                # rem is percentage remaining (0-100)
-                # Calculate remaining count from percentage
-                if (defined $rate_limit{limit_requests} && $rate_limit{limit_requests} > 0) {
-                    $rate_limit{remaining_requests} = int($rate_limit{limit_requests} * $value / 100);
-                }
-                # Also store the percentage directly for adaptive throttling
-                $rate_limit{_copilot_percent_remaining} = $value;
-            }
-            elsif ($key eq 'rst') {
-                # Reset time
-                $rate_limit{reset_requests} = $value;
-            }
-        }
-    }
-    
-    # If no rate limit headers found, nothing to process
-    return unless keys %rate_limit;
-    
-    # Store rate limit info in session for debugging/monitoring
-    $self->{_rate_limit_info} = \%rate_limit;
-    
-    # Log rate limit info if debugging
-    if (should_log('DEBUG')) {
-        log_debug('APIManager', "Rate limit headers received:");
-        for my $key (sort keys %rate_limit) {
-            log_debug('APIManager', "$key: $rate_limit{$key}");
-        }
-    }
-    
-    # Calculate dynamic delay based on remaining requests/quota
-    # Check for GitHub Copilot percentage first (more accurate), then standard headers
-    my $percent_remaining;
-    
-    if (defined $rate_limit{_copilot_percent_remaining}) {
-        # GitHub Copilot provides percentage directly
-        $percent_remaining = $rate_limit{_copilot_percent_remaining};
-    }
-    elsif (defined $rate_limit{limit_requests} && defined $rate_limit{remaining_requests}) {
-        # Calculate percentage from standard headers
-        my $limit = $rate_limit{limit_requests};
-        my $remaining = $rate_limit{remaining_requests};
-        
-        if ($limit > 0) {
-            $percent_remaining = ($remaining / $limit) * 100;
-        }
-    }
-    
-    # Apply adaptive throttling if we have percentage remaining
-    if (defined $percent_remaining) {
-        # Adjust delay based on remaining percentage
-        # This proactively slows down before hitting rate limits
-        # Base delay is 1.0s, scaling up to 2.5s when quota is critically low
-        my $new_delay;
-        if ($percent_remaining > 50) {
-            # Plenty of quota - use base delay
-            $new_delay = 1.0;
-        }
-        elsif ($percent_remaining > 20) {
-            # Getting lower - increase delay by 50%
-            $new_delay = 1.5;
-        }
-        elsif ($percent_remaining > 10) {
-            # Running low - double the delay
-            $new_delay = 2.0;
-        }
-        else {
-            # Critical - use maximum delay
-            $new_delay = 2.5;
-        }
-        
-        # Store dynamic delay (will be used in send_request/send_request_streaming)
-        my $old_delay = $self->{_dynamic_min_delay} // 1.0;
-        $self->{_dynamic_min_delay} = $new_delay;
-        
-        if ($new_delay != $old_delay) {
-            my $limit = $rate_limit{limit_requests} || 'N/A';
-            my $remaining = $rate_limit{remaining_requests} || 'N/A';
-            log_info('APIManager', sprintf(
-                "Quota: %.1f%% remaining. Adjusting delay: %.1fs -> %.1fs",
-                $percent_remaining, $old_delay, $new_delay
-            ));
-        }
-    }
-    
-    # If we have a reset timestamp for requests, calculate time until reset
-    if ($rate_limit{reset_requests}) {
-        my $reset_time = $rate_limit{reset_requests};
-        my $now = time();
-        
-        # Handle both Unix timestamp and ISO 8601 format
-        if ($reset_time =~ /^\d+$/) {
-            # Already a Unix timestamp
-        }
-        elsif ($reset_time =~ /(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/) {
-            # ISO 8601 format - convert to Unix timestamp
-            eval {
-                require Time::Local;
-                $reset_time = Time::Local::timegm($6, $5, $4, $3, $2-1, $1);
-            };
-        }
-        
-        if ($reset_time =~ /^\d+$/ && $reset_time > $now) {
-            my $seconds_until_reset = $reset_time - $now;
-            $self->{_rate_limit_reset_in} = $seconds_until_reset;
-            
-            log_debug('APIManager', "Rate limit resets in ${seconds_until_reset}s");
-        }
-    }
-    
-    # Handle explicit Retry-After header (usually from 429 responses)
-    if ($rate_limit{retry_after}) {
-        my $retry_after = $rate_limit{retry_after};
-        
-        # Retry-After can be seconds or HTTP-date
-        if ($retry_after =~ /^\d+$/) {
-            # Already in seconds
-            $self->{rate_limit_until} = time() + $retry_after;
-            log_info('APIManager', "Retry-After header: waiting ${retry_after}s before next request");
-        }
-    }
-}
-
-=head2 _release_broker_slot
-
-Release the API slot back to the broker after request completes.
-Also reports rate limit headers for centralized tracking.
-
-Arguments:
-- $resp: HTTP::Response object (optional)
-- $status: HTTP status code (optional, defaults to 200)
-
-=cut
-
-sub _release_broker_slot {
-    my ($self, $resp, $status) = @_;
-    
-    return unless $self->{broker_client};
-    return unless $self->{_current_broker_request_id};
-    
-    $status ||= 200;
-    
-    # Extract relevant headers for broker
-    my %headers;
-    if ($resp && $resp->can('headers')) {
-        my $h = $resp->headers;
-        $h->scan(sub {
-            my ($name, $value) = @_;
-            my $lc_name = lc($name);
-            
-            # Rate limit headers
-            if ($lc_name eq 'x-ratelimit-remaining') {
-                $headers{'x-ratelimit-remaining'} = $value;
-            }
-            elsif ($lc_name eq 'x-ratelimit-reset') {
-                $headers{'x-ratelimit-reset'} = $value;
-            }
-            elsif ($lc_name eq 'retry-after') {
-                $headers{'retry-after'} = $value;
-            }
-            elsif ($lc_name eq 'x-github-total-quota-used') {
-                $headers{'x-github-total-quota-used'} = $value;
-            }
-            # GitHub Copilot quota headers - extract percentage remaining
-            elsif ($lc_name =~ /^x-quota-snapshot-/) {
-                if ($value =~ /rem=([\d.]+)/) {
-                    $headers{'x-github-total-quota-used'} = 100 - $1;  # Convert remaining to used
-                }
-            }
-        });
-    }
-    
-    # Calculate retry_after from response if 429
-    my $retry_after;
-    if ($status == 429) {
-        $retry_after = $headers{'retry-after'};
-        if (!$retry_after && $resp && $resp->can('decoded_content')) {
-            my $content = eval { decode_json($resp->decoded_content) };
-            if ($content && $content->{message} && $content->{message} =~ /retry in ([\d.]+)\s*s/i) {
-                $retry_after = int($1) + 1;
-            }
-        }
-        $retry_after ||= 60;  # Default fallback
-    }
-    
-    eval {
-        $self->{broker_client}->release_api_slot(
-            request_id => $self->{_current_broker_request_id},
-            status => $status,
-            retry_after => $retry_after,
-            headers => \%headers,
-        );
-    };
-    if ($@) {
-        log_warning('APIManager', "Failed to release broker slot: $@");
-    }
-    
-    # Clear the request ID
-    delete $self->{_current_broker_request_id};
-}
-
-=head2 _process_quota_headers
-
-Process GitHub Copilot quota headers from API response.
-
-Extracts premium model usage information to track session billing continuity.
-Headers examined:
-- x-quota-snapshot-premium_models
-- x-quota-snapshot-premium_interactions
-- x-quota-snapshot-chat
-
-Header format (URL-encoded key=value pairs):
-"ent=100&ov=0.0&ovPerm=true&rem=75.5&rst=2025-11-01T00:00:00Z"
-
-Fields:
-- ent: Entitlement (total quota limit for billing period)
-- rem: Remaining quota (percentage)
-- ov: Overage used (beyond entitlement)
-- ovPerm: Overage permitted (can user go over limit?)
-- rst: Reset time (when quota resets)
-
-Arguments:
-- $headers: HTTP::Headers object from response
-- $response_id: GitHub Copilot response ID (for logging)
-
-=cut
-
-sub _process_quota_headers {
-    my ($self, $headers, $response_id) = @_;
-    
-    return unless $self->{session};
-    
-    # NOTE: Rate limit headers are now processed separately in the main request methods
-    # (send_request and send_request_streaming) to ensure they're processed for ALL 
-    # endpoints, not just GitHub Copilot. This method focuses only on quota tracking.
-    
-    # WORKAROUND: header() accessor returns empty for quota headers in streaming callback,
-    # but scan() DOES see them! So we extract quota values directly from scan() instead.
-    my $premium_models;
-    my $premium_interactions;
-    my $chat_quota;
-    
-    # Scan all headers and extract quota headers by name matching
-    $headers->scan(sub {
-        my ($name, $value) = @_;
-        
-        # Match quota headers (case-insensitive)
-        if ($name =~ /^x-quota-snapshot-premium_models$/i) {
-            $premium_models = $value;
-        }
-        elsif ($name =~ /^x-quota-snapshot-premium_interactions$/i) {
-            $premium_interactions = $value;
-        }
-        elsif ($name =~ /^x-quota-snapshot-chat$/i) {
-            $chat_quota = $value;
-        }
-    });
-    
-    # Quota headers available: premium_models, premium_interactions, chat
-    
-    # Select quota header in priority order (prefer chat for free models)
-    my $quota_header = $premium_models || $premium_interactions || $chat_quota;
-    my $quota_source;
-    
-    if ($premium_models) {
-        $quota_source = 'x-quota-snapshot-premium_models';
-    } elsif ($premium_interactions) {
-        $quota_source = 'x-quota-snapshot-premium_interactions';
-    } elsif ($chat_quota) {
-        $quota_source = 'x-quota-snapshot-chat';
-    }
-    
-    # Return if no quota header found
-    unless ($quota_header) {
-        log_debug('APIManager', "No quota header in response");
-        return;
-    }
-    
-    log_debug('APIManager', "Using quota from: $quota_source");
-    
-    # Parse URL-encoded string into key-value pairs
-    # Format: "ent=100&ov=0.0&ovPerm=true&rem=75.5&rst=2025-11-01T00:00:00Z"
-    my %quota;
-    for my $pair (split /&/, $quota_header) {
-        my ($key, $value) = split /=/, $pair, 2;
-        $quota{$key} = $value if defined $value;
-    }
-    
-    # Extract quota values from API header
-    my $entitlement = int($quota{ent} || 0);
-    my $overage_used = $quota{ov} || 0.0;
-    my $overage_permitted = ($quota{ovPerm} || '') eq 'true';
-    my $percent_remaining = $quota{rem} || 0.0;
-    my $reset_date = $quota{rst} || 'unknown';
-    
-    # Calculate used from percentage - response headers don't include direct 'remaining' count
-    # NOTE: The copilot_internal/user API has the direct remaining count, but response headers
-    # only provide ent (entitlement) and rem (percent remaining), so we must calculate here.
-    # Formula: used = entitlement * (1 - percent_remaining / 100)
-    my $used = int($entitlement * (1.0 - $percent_remaining / 100.0));
-    $used = 0 if $used < 0;  # max(0, calculated_value)
-    
-    # Calculate available
-    my $available = $entitlement - $used;
-    
-    # Store quota info in session
-    $self->{session}{quota} = {
-        entitlement => $entitlement,
-        used => $used,
-        available => $available,
-        percent_remaining => $percent_remaining,
-        overage_used => $overage_used,
-        overage_permitted => $overage_permitted,
-        reset_date => $reset_date,
-        last_updated => time(),
-    };
-    
-    # Calculate delta (change from last request) for premium quota tracking
-    my $delta = undef;  # undefined for first request
-    
-    # In APIManager, $self->{session} IS the State object (not Manager)
-    my $state = $self->{session};
-    
-    if ($state && defined $state->{_last_premium_used}) {
-        $delta = $used - $state->{_last_premium_used};
-        
-        log_debug('APIManager', "Calculated delta: $delta");
-        
-        if ($delta > 0) {
-            # Premium request(s) charged - store message for Chat to display
-            my $percent_used = 100.0 - $percent_remaining;
-            my $charge_msg = sprintf("+%d premium request%s charged (%d/%s - %.1f%% used)",
-                $delta,
-                $delta > 1 ? "s" : "",
-                $used,
-                $entitlement == -1 ? "unlimited" : $entitlement,
-                $percent_used);
-            
-            # Store in session state for UI to display
-            $state->{_premium_charge_message} = $charge_msg;
-            
-            log_info('APIManager', "$charge_msg");
-        } elsif ($delta < 0) {
-            # Quota decreased (shouldn't happen)
-            log_warning('APIManager', "Quota decreased by $delta (unexpected)");
-        } else {
-            # No charge - session continuity working!
-            log_info('APIManager', "+0 premium requests (session continuity working)");
-        }
-    } else {
-        # First request - delta is undefined, will be charged
-        log_info('APIManager', "Initial request - establishing baseline");
-    }
-    
-    # Update last known premium quota (state already retrieved above)
-    return unless $state;  # Can't track quota without session state
-    $state->{_last_premium_used} = $used;
-    $state->{_last_quota_delta} = $delta;
-    
-    # Track total premium requests charged in billing summary
-    if (defined $delta && $delta > 0) {
-        # Increment premium request counter in session billing
-        if (exists $state->{billing}{total_premium_requests}) {
-            $state->{billing}{total_premium_requests} += $delta;
-        }
-    }
-    
-    # Persist session to save quota tracking (if session is an object with save method)
-    if ($self->{session} && ref($self->{session}) && blessed($self->{session}) && $self->{session}->can('save')) {
-        $self->{session}->save();
-    }
-    
-    # Log quota information
-    my $req_id_short = $response_id ? substr($response_id, 0, 8) : 'unknown';
-    log_info('APIManager', "GitHub Copilot Premium Quota [req:$req_id_short]:");
-    log_info('APIManager', "- Entitlement: " . ($entitlement == -1 ? "Unlimited" : $entitlement));
-    log_info('APIManager', "- Used: $used");
-    log_info('APIManager', "- Remaining: " . sprintf("%.1f%%", $percent_remaining) . " ($available available)");
-    log_info('APIManager', "- Overage: " . sprintf("%.1f", $overage_used) . " (permitted: " . ($overage_permitted ? 'yes' : 'no') . ")");
-    log_info('APIManager', "- Reset Date: $reset_date");
-    
-    # Warn if quota is running low
-    if ($available < 10 && $available > 0) {
-        log_warning('APIManager', "Only $available premium requests remaining!");
-    } elsif ($available <= 0 && !$overage_permitted) {
-        log_debug('APIManager', "Premium quota exhausted! Requests may fail.");
-    }
-}
-
-=head2 _store_stateful_marker
-
-Store stateful_marker for session continuation and billing optimization.
-
-This implements the GitHub Copilot session continuation mechanism correctly
-by storing the 'stateful_marker' field (not the 'id' field!) from API responses.
-
-The stateful_marker is used as 'previous_response_id' in subsequent requests
-to signal session continuation, which prevents multiple premium charges for
-the same conversation thread (especially during tool-calling iterations).
-
-Arguments:
-- $marker: The stateful_marker string from the API response
-- $model: The model ID this marker is associated with
-- $iteration: Tool-calling iteration number (only store on iteration 1)
-
-=cut
-
-sub _store_stateful_marker {
-    my ($self, $marker, $model, $iteration) = @_;
-    
-    return unless $self->{session};
-    return unless defined $marker && $marker ne '';
-    
-    # Only store on first iteration (prevents overwriting during tool-calling)
-    $iteration ||= 1;
-    if ($iteration > 1) {
-        log_debug('APIManager', "Skipping stateful_marker storage (iteration $iteration)");
-        return;
-    }
-    
-    # Debug: Check if session exists
-    unless ($self->{session}) {
-        log_debug('APIManager', "Cannot store stateful_marker - no session object!");
-        return;
-    }
-    
-    # Initialize markers array if needed
-    $self->{session}{_stateful_markers} ||= [];
-    
-    # Add marker to front (most recent first)
-    unshift @{$self->{session}{_stateful_markers}}, {
-        model => $model,
-        marker => $marker,
-        timestamp => time()
-    };
-    
-    # Keep only last 10 markers (prevent unbounded growth)
-    splice(@{$self->{session}{_stateful_markers}}, 10);
-    
-    log_info('APIManager', "✓ Stored stateful_marker for model '$model': " . substr($marker, 0, 30) . "... (total markers: " . 
-                 scalar(@{$self->{session}{_stateful_markers}}) . ")\n");
-    
-    # Persist session
-    if (ref($self->{session}) && blessed($self->{session}) && $self->{session}->can('save')) {
-        $self->{session}->save();
-        log_info('APIManager', "✓ Session saved with stateful_marker");
-    } else {
-        log_debug('APIManager', "Session object cannot save! stateful_marker will be lost!");
-    }
-}
-
-=head2 _get_stateful_marker_for_model
-
-Retrieve the most recent stateful_marker for a given model.
-
-Searches the session's stored markers and returns the most recent one
-that matches the specified model ID.
-
-Arguments:
-- $model: The model ID to search for
-
-Returns: stateful_marker string or undef if none found
-
-=cut
-
-sub _get_stateful_marker_for_model {
-    my ($self, $model) = @_;
-    
-    unless ($self->{session}) {
-        log_debug('APIManager', "Cannot get stateful_marker - no session object!");
-        return undef;
-    }
-    
-    # _stateful_markers may be undef (old sessions) or empty (expected for GitHub Copilot)
-    # This is normal - we fall back to lastGitHubCopilotResponseId in _build_payload
-    unless ($self->{session}{_stateful_markers} && @{$self->{session}{_stateful_markers}}) {
-        log_debug('APIManager', "No stateful_markers for model '$model' (will use response_id fallback)");
-        return undef;
-    }
-    
-    # Debug: Show what we have
-    my $count = scalar(@{$self->{session}{_stateful_markers}});
-    log_debug('APIManager', "Searching for stateful_marker (model='$model', total markers=$count)");
-    
-    # Search for most recent marker matching this model
-    for my $marker_obj (@{$self->{session}{_stateful_markers}}) {
-        if ($marker_obj->{model} eq $model) {
-            log_info('APIManager', "✓ Found stateful_marker for model '$model': " . substr($marker_obj->{marker}, 0, 30) . "...");
-            return $marker_obj->{marker};
-        }
-    }
-    
-    # No marker found for this specific model - this is normal
-    # Different models in the same session will have different markers
-    log_debug('APIManager', "No stateful_marker for model '$model' (searched $count markers)");
-    
-    # Debug: Show what models we DO have markers for
-    if (should_log('DEBUG') && $count > 0) {
-        my @models = map { $_->{model} } @{$self->{session}{_stateful_markers}};
-        log_debug('APIManager', "Available models in markers: " . join(', ', @models));
-    }
-    
-    return undef;
 }
 
 =head2 _get_native_provider()
