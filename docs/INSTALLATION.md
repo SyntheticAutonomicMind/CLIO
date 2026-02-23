@@ -32,7 +32,7 @@
 ### Required Software
 
 **Perl:**
-- Version 5.20 or higher
+- Version 5.32 or higher
 - Standard Perl installation (usually pre-installed on macOS and Linux)
 
 **Check your Perl version:**
@@ -59,7 +59,7 @@ git --version
 
 CLIO uses only **core Perl modules** (no CPAN dependencies required):
 
-- `JSON` - JSON parsing (core since 5.14)
+- `JSON::PP` - JSON parsing (core since 5.14)
 - `HTTP::Tiny` - HTTP client (core since 5.14)
 - `MIME::Base64` - Base64 encoding (core)
 - `File::Spec` - Path manipulation (core)
@@ -75,22 +75,41 @@ You need **one of the following**:
 **GitHub Copilot** (Default & Recommended)
 - GitHub Copilot subscription (Individual ~$10/month or Business ~$19/month)
 - API token from GitHub Copilot settings
-- Provides access to: GPT-4o, Claude 3.5 Sonnet, o1 models
+- Provides access to: GPT-4.1, Claude Sonnet 4, o3 models, and more
 
 **OpenAI**
 - OpenAI API account
 - API key from OpenAI platform
 - Pay-as-you-go pricing
 
+**Anthropic** (Experimental - Native API)
+- Anthropic API account
+- API key from Anthropic console
+- Direct access to Claude models
+
+**Google Gemini** (Experimental - Native API)
+- Google AI Studio API key
+- Access to Gemini models
+
 **DeepSeek**
 - DeepSeek API account
 - API key from DeepSeek platform
 - Cost-effective code-focused AI
 
+**OpenRouter**
+- OpenRouter API account
+- API key from OpenRouter
+- Access to many models via single key
+
 **llama.cpp** (Local)
 - llama.cpp server running locally
 - No API key required
 - Fully local inference
+
+**LM Studio** (Local)
+- LM Studio running locally
+- No API key required
+- GUI-based local model management
 
 **SAM** (Local)
 - SAM local installation
@@ -426,7 +445,7 @@ OPTIONS:
 
 **3. Verify Perl modules:**
 ```bash
-perl -MJSON -e 'print "JSON OK\n"'
+perl -MJSON::PP -e 'print "JSON::PP OK\n"'
 perl -MHTTP::Tiny -e 'print "HTTP::Tiny OK\n"'
 perl -MMIME::Base64 -e 'print "MIME::Base64 OK\n"'
 ```
@@ -455,17 +474,6 @@ Should print your token/key (not empty).
 ---------------------------------------------------
 
 ## Uninstallation
-
-### Using Uninstall Script
-
-```bash
-sudo ./uninstall.sh
-```
-
-This removes:
-- Installation directory (e.g., `/opt/clio`)
-- Symlink at `/usr/local/bin/clio`
-- Does NOT remove sessions or user data
 
 ### Manual Uninstallation
 
@@ -565,7 +573,7 @@ sudo apt-get install git
 sudo dnf install git
 ```
 
-#### Problem: "Can't locate JSON.pm in @INC"
+#### Problem: "Can't locate JSON/PP.pm in @INC"
 
 **Cause:** Perl core modules not installed (unusual but possible).
 
@@ -573,14 +581,14 @@ sudo dnf install git
 
 **Ubuntu/Debian:**
 ```bash
-sudo apt-get install perl-modules-5.* libjson-perl
+sudo apt-get install perl-modules-5.*
 ```
 
 **macOS:**
 ```bash
-# JSON should be in core Perl
-# If missing, install via cpanm:
-cpan JSON
+# JSON::PP is a core Perl module included since Perl 5.14
+# If missing, your Perl installation may be incomplete
+# Reinstall Perl: brew install perl
 ```
 
 ### Path Issues

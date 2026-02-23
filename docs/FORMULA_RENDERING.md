@@ -188,6 +188,5 @@ Possible improvements for future versions:
 
 ## Related Documentation
 
-- @BOLD@Markdown Rendering@RESET@ - `docs/MARKDOWN_SUPPORT.md`
+- @BOLD@Markdown Rendering@RESET@ - `lib/CLIO/UI/Markdown.pm` POD
 - @BOLD@Theme System@RESET@ - `lib/CLIO/UI/Theme.pm` POD
-- @BOLD@Markdown Parser@RESET@ - `lib/CLIO/UI/Markdown.pm` POD
