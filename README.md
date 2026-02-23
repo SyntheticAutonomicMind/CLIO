@@ -17,6 +17,7 @@ CLIO is part of the [Synthetic Autonomic Mind (SAM)](https://github.com/Syntheti
 ## What Makes CLIO Different
 
 - **Terminal-First Experience:** Runs entirely in your terminal with professional markdown rendering, color themes, and streaming output
+- **Light & Nimble:** Uses less than 100MB of RAM while active. Runs on everything from a ClockworkPi uConsole R01 to an M4-powered Mac - designed to be friendly to low-power and portable devices.
 - **Portable & Minimal:** Works with standard Unix tools (git, curl, etc.) - no heavy frameworks or package managers required. See [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) for details.
 - **Tool-Powered:** Real file, git, and terminal operations with real-time action descriptions
 - **Privacy & Control:** Your code stays on your machine - only minimum context sent to AI providers
