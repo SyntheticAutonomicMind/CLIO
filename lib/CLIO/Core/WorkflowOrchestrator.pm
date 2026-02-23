@@ -772,6 +772,12 @@ sub process_input {
                         my $start_idx = $original_count - $keep_count;
                         $start_idx = 0 if $start_idx < 0;
                         
+                        # Collect dropped messages for compression BEFORE trimming
+                        my @dropped_messages;
+                        if ($start_idx > 0) {
+                            @dropped_messages = @non_system[0..($start_idx - 1)];
+                        }
+                        
                         # Find any tool_results in the kept range that need their tool_calls
                         my @must_include = ();
                         
@@ -808,20 +814,60 @@ sub process_input {
                         } else {
                             @non_system = @non_system[$start_idx..-1];
                         }
+                        
+                        # Compress dropped messages into a summary using YaRN
+                        if (@dropped_messages) {
+                            my $compressed = _compress_dropped_for_recovery(\@dropped_messages, $first_user_msg, $session);
+                            if ($compressed) {
+                                # Insert compressed summary right after first user message (or at start)
+                                unshift @non_system, $compressed;
+                                log_info('WorkflowOrchestrator', "Injected compression summary for " . scalar(@dropped_messages) . " dropped messages");
+                            }
+                        }
                     } elsif ($retry_count == 2) {
                         # Second retry: Keep last 25% of messages + first user message
                         my $keep_count = int($original_count / 4);
                         $keep_count = 5 if $keep_count < 5 && $original_count >= 5;  # Keep at least 5
                         
-                        my @kept = @non_system[-$keep_count..-1] if $keep_count > 0;
+                        # Collect dropped messages for compression
+                        my $drop_count = $original_count - $keep_count;
+                        my @dropped_messages;
+                        if ($drop_count > 0) {
+                            @dropped_messages = @non_system[0..($drop_count - 1)];
+                        }
+                        
+                        my @kept;
+                        if ($keep_count > 0) {
+                            @kept = @non_system[-$keep_count..-1];
+                        }
                         
                         # Ensure first user message is preserved
                         if ($first_user_msg && !grep { $_ == $first_user_msg } @kept) {
                             unshift @kept, $first_user_msg;
                         }
                         @non_system = @kept;
+                        
+                        # Compress dropped messages
+                        if (@dropped_messages) {
+                            my $compressed = _compress_dropped_for_recovery(\@dropped_messages, $first_user_msg, $session);
+                            if ($compressed) {
+                                # Insert after first user message
+                                my $insert_pos = 0;
+                                for my $i (0..$#non_system) {
+                                    if ($non_system[$i] == $first_user_msg) {
+                                        $insert_pos = $i + 1;
+                                        last;
+                                    }
+                                }
+                                splice(@non_system, $insert_pos, 0, $compressed);
+                                log_info('WorkflowOrchestrator', "Injected compression summary for " . scalar(@dropped_messages) . " dropped messages (retry 2)");
+                            }
+                        }
                     } else {
                         # Third retry: Keep first user message + last 2 messages (minimal context)
+                        # Collect ALL messages for compression (most aggressive)
+                        my @dropped_messages = @non_system;
+                        
                         my @kept = ();
                         push @kept, $first_user_msg if $first_user_msg;
                         
@@ -832,6 +878,16 @@ sub process_input {
                             push @kept, $msg;
                         }
                         @non_system = @kept;
+                        
+                        # Compress dropped messages - especially important for minimal context
+                        if (@dropped_messages > 2) {
+                            my $compressed = _compress_dropped_for_recovery(\@dropped_messages, $first_user_msg, $session);
+                            if ($compressed) {
+                                my $insert_pos = $first_user_msg ? 1 : 0;
+                                splice(@non_system, $insert_pos, 0, $compressed);
+                                log_info('WorkflowOrchestrator', "Injected compression summary for " . scalar(@dropped_messages) . " dropped messages (retry 3 - minimal)");
+                            }
+                        }
                     }
                     
                     my $trimmed_count = $original_count - scalar(@non_system);
@@ -843,7 +899,8 @@ sub process_input {
                     
                     $error_type = "token limit exceeded";
                     my $preserved_info = $first_user_msg ? " (first user message preserved)" : "";
-                    $system_msg = "Token limit exceeded. Trimmed $trimmed_count messages from conversation history and retrying$preserved_info... (attempt $retry_count/$max_retries)";
+                    my $recovery_info = ($trimmed_count > 0 && $retry_count <= 2) ? " Context summary injected." : "";
+                    $system_msg = "Token limit exceeded. Trimmed $trimmed_count messages from conversation history and retrying$preserved_info...$recovery_info (attempt $retry_count/$max_retries)";
                     
                     log_info('WorkflowOrchestrator', "Trimmed $trimmed_count messages due to token limit (kept " . scalar(@non_system) . " messages, first_user=" . ($first_user_msg ? 'YES' : 'NO') . ")");
                     
@@ -1934,6 +1991,163 @@ sub _handle_interrupt {
     }
     
     log_info('WorkflowOrchestrator', "Interrupt message added to conversation");
+}
+
+=head2 _compress_dropped_for_recovery
+
+Creates a compressed summary of dropped messages for context recovery after
+reactive trimming due to token limit exceeded errors.
+
+This prevents the AI from losing context of what it was working on when
+aggressive trimming is needed. It uses YaRN compression to create a
+thread_summary and optionally includes current task state from todos.
+
+Arguments:
+- $dropped_messages: Arrayref of message hashes that were dropped
+- $first_user_msg: The first user message (for original task context)
+- $session: Session object (optional, for todo state)
+
+Returns: Message hashref with role 'system' containing compressed summary,
+         or undef if compression fails
+
+=cut
+
+sub _compress_dropped_for_recovery {
+    my ($dropped_messages, $first_user_msg, $session) = @_;
+    
+    return undef unless $dropped_messages && @$dropped_messages;
+    
+    my $compressed;
+    eval {
+        require CLIO::Memory::YaRN;
+        my $yarn = CLIO::Memory::YaRN->new();
+        
+        # Get original task from first user message
+        my $original_task = '';
+        if ($first_user_msg && ref($first_user_msg) eq 'HASH') {
+            $original_task = $first_user_msg->{content} || '';
+        }
+        
+        $compressed = $yarn->compress_messages($dropped_messages,
+            original_task => $original_task
+        );
+    };
+    if ($@) {
+        log_warning('WorkflowOrchestrator', "YaRN compression failed: $@");
+    }
+    
+    # Build recovery context
+    my @recovery_parts = ();
+    
+    if ($compressed && $compressed->{content}) {
+        push @recovery_parts, $compressed->{content};
+    }
+    
+    # Add current todo/task state if session is available
+    if ($session) {
+        my $todo_context = _get_todo_recovery_context($session);
+        if ($todo_context) {
+            push @recovery_parts, "";
+            push @recovery_parts, "<task_recovery>";
+            push @recovery_parts, $todo_context;
+            push @recovery_parts, "</task_recovery>";
+        }
+    }
+    
+    # Extract the last few user requests from dropped messages for better context
+    my @recent_user_msgs = ();
+    for my $msg (reverse @$dropped_messages) {
+        last if @recent_user_msgs >= 3;
+        if ($msg->{role} && $msg->{role} eq 'user' && $msg->{content}) {
+            my $summary = substr($msg->{content}, 0, 300);
+            $summary .= '...' if length($msg->{content}) > 300;
+            unshift @recent_user_msgs, $summary;
+        }
+    }
+    if (@recent_user_msgs) {
+        push @recovery_parts, "";
+        push @recovery_parts, "<recent_context>";
+        push @recovery_parts, "Most recent user requests before trimming:";
+        for my $i (0..$#recent_user_msgs) {
+            push @recovery_parts, ($i + 1) . ". " . $recent_user_msgs[$i];
+        }
+        push @recovery_parts, "</recent_context>";
+    }
+    
+    return undef unless @recovery_parts;
+    
+    my $recovery_content = join("\n", @recovery_parts);
+    
+    log_debug('WorkflowOrchestrator', "Recovery context created: " . length($recovery_content) . " chars from " . scalar(@$dropped_messages) . " dropped messages");
+    
+    return {
+        role => 'system',
+        content => $recovery_content,
+    };
+}
+
+=head2 _get_todo_recovery_context
+
+Extracts current task/todo state from session for context recovery.
+This allows the AI to resume its current task after aggressive trimming.
+
+Arguments:
+- $session: Session object
+
+Returns: String with todo context, or undef if no todos
+
+=cut
+
+sub _get_todo_recovery_context {
+    my ($session) = @_;
+    
+    return undef unless $session;
+    
+    my $todo_context;
+    eval {
+        require CLIO::Session::TodoStore;
+        my $session_id = $session->can('session_id') ? $session->session_id() : undef;
+        return undef unless $session_id;
+        
+        my $store = CLIO::Session::TodoStore->new(session_id => $session_id);
+        my $todos = $store->read();
+        
+        return undef unless $todos && ref($todos) eq 'HASH' && $todos->{todoList} && @{$todos->{todoList}};
+        
+        my @parts = ("Current task list:");
+        my $in_progress;
+        
+        for my $todo (@{$todos->{todoList}}) {
+            my $status = $todo->{status} || 'not-started';
+            my $title = $todo->{title} || 'Untitled';
+            my $desc = $todo->{description} || '';
+            
+            my $marker = $status eq 'completed' ? '[x]' :
+                         $status eq 'in-progress' ? '[>]' :
+                         $status eq 'blocked' ? '[!]' : '[ ]';
+            
+            push @parts, "$marker #$todo->{id}: $title" . ($desc ? " - $desc" : "");
+            
+            if ($status eq 'in-progress') {
+                $in_progress = $todo;
+            }
+        }
+        
+        if ($in_progress) {
+            push @parts, "";
+            push @parts, "CURRENTLY WORKING ON: #$in_progress->{id} - $in_progress->{title}";
+            if ($in_progress->{description}) {
+                push @parts, "Details: $in_progress->{description}";
+            }
+        }
+        
+        $todo_context = join("\n", @parts);
+    };
+    if ($@) {
+        log_debug('WorkflowOrchestrator', "Could not retrieve todo state for recovery: $@");
+    }
+    
+    return $todo_context;
 }
 
 1;
