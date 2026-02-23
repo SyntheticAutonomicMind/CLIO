@@ -8,11 +8,8 @@ use strict;
 use warnings;
 use lib './lib';
 use Test::More;
-use CLIO::Core::WorkflowOrchestrator;
+use CLIO::Core::ConversationManager qw(trim_conversation_for_api);
 use CLIO::Memory::TokenEstimator;
-
-# Create a mock orchestrator
-my $orchestrator = CLIO::Core::WorkflowOrchestrator->new(debug => 0);
 
 # Test 1: First user message should be preserved even when budget is tight
 subtest 'First user message preserved in tight budget' => sub {
@@ -34,10 +31,10 @@ subtest 'First user message preserved in tight budget' => sub {
     my $system_prompt = "You are a helpful assistant. " x 100;  # ~1000 tokens
     
     # Call the trimming function with small model context
-    my $trimmed = $orchestrator->_trim_conversation_for_api(
+    my $trimmed = trim_conversation_for_api(
         \@history,
         $system_prompt,
-        model_context_window => 20000,  # Small context to force trimming (only ~8000 tokens for history)
+        model_context_window => 20000,  # Small context to force trimming
         max_response_tokens => 4000,
     );
     
@@ -68,13 +65,13 @@ subtest 'First user message at start preserved' => sub {
     
     # Add lots of messages
     for my $i (1..50) {
-        push @history, { role => 'assistant', content => "Response $i " x 20 };  # Large responses
+        push @history, { role => 'assistant', content => "Response $i " x 20 };
         push @history, { role => 'user', content => "Query $i" };
     }
     
     my $system_prompt = "System prompt " x 100;
     
-    my $trimmed = $orchestrator->_trim_conversation_for_api(
+    my $trimmed = trim_conversation_for_api(
         \@history,
         $system_prompt,
         model_context_window => 30000,
@@ -97,7 +94,7 @@ subtest 'No duplication when first user message is recent' => sub {
     
     my $system_prompt = "Short system prompt";
     
-    my $trimmed = $orchestrator->_trim_conversation_for_api(
+    my $trimmed = trim_conversation_for_api(
         \@history,
         $system_prompt,
         model_context_window => 128000,
@@ -120,12 +117,12 @@ subtest 'Minimum token floor prevents negative budget' => sub {
     );
     
     # Very large system prompt that would exceed safe threshold
-    my $system_prompt = "A" x 100000;  # Huge system prompt
+    my $system_prompt = "A" x 100000;
     
-    my $trimmed = $orchestrator->_trim_conversation_for_api(
+    my $trimmed = trim_conversation_for_api(
         \@history,
         $system_prompt,
-        model_context_window => 50000,  # Smaller than system prompt effectively
+        model_context_window => 50000,
         max_response_tokens => 4000,
     );
     
