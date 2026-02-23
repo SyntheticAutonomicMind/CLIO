@@ -38,7 +38,7 @@ CLIO is part of the [Synthetic Autonomic Mind (SAM)](https://github.com/Syntheti
 | **Todos** | Manage tasks within your workflow |
 | **Web** | Fetch and analyze web content |
 | **MCP** | Connect to external tool servers via [Model Context Protocol](docs/MCP.md) |
-| **AI Providers** | GitHub Copilot, OpenAI, DeepSeek, OpenRouter, llama.cpp, SAM |
+| **AI Providers** | GitHub Copilot, OpenAI, Anthropic, Google Gemini, DeepSeek, OpenRouter, llama.cpp, LM Studio, SAM |
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -171,7 +171,7 @@ For more examples, see [docs/USER_GUIDE.md](docs/USER_GUIDE.md#usage-examples).
 ## Requirements
 
 - **macOS 10.14+** or **Linux** (any modern distribution)
-- **Perl 5.20+** (included with most systems)
+- **Perl 5.32+** (included with most systems)
 - **Git** (for version control operations)
 - **ANSI-compatible terminal**
 
@@ -183,12 +183,17 @@ For more examples, see [docs/USER_GUIDE.md](docs/USER_GUIDE.md#usage-examples).
 |----------|-------------|
 | [User Guide](docs/USER_GUIDE.md) | Complete usage guide with examples |
 | [Installation](docs/INSTALLATION.md) | Detailed installation instructions |
+| [Dependencies](docs/DEPENDENCIES.md) | System requirements and verification |
 | [Sandbox Mode](docs/SANDBOX.md) | Security isolation options |
 | [Architecture](docs/ARCHITECTURE.md) | System design and internals |
 | [Developer Guide](docs/DEVELOPER_GUIDE.md) | Contributing and extending CLIO |
 | [Remote Execution](docs/REMOTE_EXECUTION.md) | Distributed AI workflows |
 | [Multi-Agent](docs/MULTI_AGENT_COORDINATION.md) | Parallel agent coordination |
+| [MCP Integration](docs/MCP.md) | Model Context Protocol support |
 | [Custom Instructions](docs/CUSTOM_INSTRUCTIONS.md) | Per-project AI customization |
+| [GitHub Actions](docs/GITHUB_ACTIONS.md) | CI/CD integration for issue triage and PR review |
+| [Style Guide](docs/STYLE_GUIDE.md) | Color themes and customization |
+| [Performance](docs/PERFORMANCE.md) | Benchmarks and optimization |
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

@@ -6,15 +6,11 @@
 
 ## Overview
 
-**Current Status:** CLIO currently uses a **tool-based architecture**. The protocol layer described here is planned for future implementation.
+**Current Status:** The protocol layer is **implemented and active**. CLIO uses protocols for higher-level AI-driven workflows including architecture analysis, code editing, validation, and repository mapping.
 
 **What Are Protocols?**
 
-Protocols are higher-level abstractions over tools, providing semantic grouping and simplified interfaces for related operations.
-
-**Example:**
-- **Tool-based:** `file_operations(operation="read", path="file.txt")`
-- **Protocol-based:** `[FILE_OP:action=read:path=ZmlsZS50eHQ=]`
+Protocols are higher-level abstractions over tools, providing semantic grouping and simplified interfaces for related operations. They enable the AI to perform complex multi-step operations through structured commands.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

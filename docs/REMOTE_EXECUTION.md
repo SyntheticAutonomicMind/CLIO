@@ -474,17 +474,22 @@ This shows:
 
 ### How It Works
 
-```
-┌─────────────────┐         SSH          ┌──────────────────┐
-│   Local CLIO    │ ───────────────────► │   Remote System  │
-│                 │                       │                  │
-│  1. Check host  │                       │  1. Verify reqs  │
-│  2. Download    │ ──── Base64 ───────► │  2. Install CLIO │
-│  3. Configure   │      Scripts          │  3. Create config│
-│  4. Execute     │                       │  4. Run task     │
-│  5. Get results │ ◄─────────────────── │  5. Return output│
-│  6. Cleanup     │                       │  6. Delete files │
-└─────────────────┘                       └──────────────────┘
+```mermaid
+sequenceDiagram
+    participant Local as Local CLIO
+    participant SSH as SSH Connection
+    participant Remote as Remote System
+
+    Local->>SSH: 1. Check host connectivity
+    SSH->>Remote: 2. Verify requirements (Perl, etc.)
+    Local->>SSH: 3. Transfer CLIO (rsync/base64 scripts)
+    SSH->>Remote: 4. Install CLIO & create config
+    Local->>SSH: 5. Execute task command
+    SSH->>Remote: 6. Run CLIO with AI task
+    Remote-->>SSH: 7. Return output & results
+    SSH-->>Local: 8. Retrieve files
+    Local->>SSH: 9. Cleanup remote files
+    SSH->>Remote: 10. Delete CLIO installation
 ```
 
 ### Key Design Decisions

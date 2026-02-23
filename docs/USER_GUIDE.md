@@ -61,7 +61,7 @@ CLIO is a terminal-based AI code assistant that brings powerful AI capabilities 
 
 **System Requirements:**
 - macOS 10.14+ or Linux (any modern distribution)
-- Perl 5.20 or higher
+- Perl 5.32 or higher
 - Git (for version control operations)
 - ANSI-compatible terminal emulator
 
@@ -1177,20 +1177,23 @@ CLIO: Here's an overview of the codebase:
 This is CLIO, a Perl-based AI code assistant. The structure is:
 
 - `lib/CLIO/` - Core implementation
-  - `Core/` - Main system components (AIAgent, APIManager, etc.)
+  - `Core/` - Main system components (SimpleAIAgent, APIManager, WorkflowOrchestrator, etc.)
   - `Tools/` - Tool implementations (FileOperations, VersionControl, etc.)
-  - `UI/` - Terminal user interface (SimpleChat, Theme, ANSI)
+  - `UI/` - Terminal user interface (Chat, Theme, Markdown, ANSI)
   - `Session/` - Session management
+  - `Coordination/` - Multi-agent coordination
+  - `Protocols/` - AI workflow protocols
+  - `Security/` - Authentication and authorization
+  - `Memory/` - Context and memory systems
   
-- `scripts/` - Utility scripts
+- `styles/` - Color style files (25 themes)
 - `sessions/` - Saved conversation sessions
 - `docs/` - User-facing documentation
-- `docs-internal/` - Development specifications
 
 **Key Components:**
 - `clio` - Main executable (entry point)
 - `lib/CLIO/Core/SimpleAIAgent.pm` - AI agent implementation
-- `lib/CLIO/UI/SimpleChat.pm` - Chat interface
+- `lib/CLIO/UI/Chat.pm` - Chat interface
 - `lib/CLIO/Tools/Registry.pm` - Tool management
 
 Would you like me to explain any specific component in detail?
