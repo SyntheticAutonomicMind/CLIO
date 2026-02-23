@@ -7,7 +7,7 @@ use strict;
 use warnings;
 use FindBin qw($RealBin);
 use lib "$RealBin/../../lib";
-use Test::More tests => 4;
+use Test::More;
 use File::Temp qw(tempdir);
 use Cwd qw(getcwd abs_path);
 
@@ -25,11 +25,11 @@ my $current_pwd = getcwd();
 print "# Test directory: $current_pwd\n";
 
 # Load required modules
-require CLIO::Core::WorkflowOrchestrator;
+require CLIO::Core::PromptBuilder;
 
-# Create minimal object just for testing the method
-my $minimal = bless {debug => 0}, 'CLIO::Core::WorkflowOrchestrator';
-my $section = eval { $minimal->_generate_datetime_section() };
+# Create PromptBuilder for testing the datetime section
+my $builder = CLIO::Core::PromptBuilder->new(debug => 0);
+my $section = eval { $builder->generate_datetime_section() };
 
 ok(defined $section, "Generated datetime section");
 
@@ -37,7 +37,7 @@ if ($section) {
     ok($section =~ /Working Directory/i, "Section includes 'Working Directory' heading");
     ok($section =~ /\Q$current_pwd\E/, "Section includes actual PWD: $current_pwd");
     ok($section =~ /CRITICAL PATH RULES/i, "Section includes path usage rules");
-    
+
     print "# Sample from section:\n";
     my @lines = split /\n/, $section;
     for my $line (grep { /Working Directory|CRITICAL|pwd/ } @lines[0..15]) {
