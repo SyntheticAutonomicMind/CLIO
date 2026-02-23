@@ -164,7 +164,7 @@ sub validate_and_truncate {
     for my $msg (@conversation) {
         my $is_tool_result = $msg->{tool_call_id} || ($msg->{role} && $msg->{role} eq 'tool');
         if ($is_tool_result && $msg->{tool_call_id} && !$included_tool_ids{$msg->{tool_call_id}}) {
-            log_warning('MessageValidator', "Dropping orphaned tool_result after truncation");
+            log_debug('MessageValidator', "Dropping orphaned tool_result after truncation");
             next;
         }
         push @validated, $msg;
@@ -230,7 +230,7 @@ sub validate_tool_message_pairs {
     for my $tc_id (keys %tool_call_ids) {
         unless (exists $tool_result_ids{$tc_id}) {
             $orphaned_call_indices{$tool_call_ids{$tc_id}} = 1;
-            log_warning('MessageValidator', "Orphaned tool_call: $tc_id at message $tool_call_ids{$tc_id}");
+            log_debug('MessageValidator', "Orphaned tool_call: $tc_id at message $tool_call_ids{$tc_id}");
         }
     }
     
@@ -238,7 +238,7 @@ sub validate_tool_message_pairs {
     for my $tr_id (keys %tool_result_ids) {
         unless (exists $tool_call_ids{$tr_id}) {
             $orphaned_result_indices{$tool_result_ids{$tr_id}} = 1;
-            log_warning('MessageValidator', "Orphaned tool_result: $tr_id at message $tool_result_ids{$tr_id}");
+            log_debug('MessageValidator', "Orphaned tool_result: $tr_id at message $tool_result_ids{$tr_id}");
         }
     }
     
@@ -254,13 +254,13 @@ sub validate_tool_message_pairs {
         my $msg = $messages->[$i];
         
         if ($orphaned_result_indices{$i}) {
-            log_warning('MessageValidator', "Removing orphaned tool_result at index $i");
+            log_debug('MessageValidator', "Removing orphaned tool_result at index $i");
             next;
         }
         
         if ($orphaned_call_indices{$i}) {
             push @validated, { role => $msg->{role}, content => $msg->{content} || '' };
-            log_warning('MessageValidator', "Stripped tool_calls from assistant at index $i");
+            log_debug('MessageValidator', "Stripped tool_calls from assistant at index $i");
             next;
         }
         

@@ -231,7 +231,7 @@ sub load_conversation_history {
     for my $msg (@validated_messages) {
         if ($msg->{role} && $msg->{role} eq 'tool' && $msg->{tool_call_id}) {
             unless ($all_tool_call_ids{$msg->{tool_call_id}}) {
-                log_warning('ConversationManager', "Removing orphaned tool_result: $msg->{tool_call_id} (no matching tool_call)");
+                log_debug('ConversationManager', "Removing orphaned tool_result: $msg->{tool_call_id} (no matching tool_call)");
                 next;
             }
         }
