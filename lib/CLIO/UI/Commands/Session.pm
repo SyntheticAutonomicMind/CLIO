@@ -270,9 +270,9 @@ sub _display_session_info {
         $self->writeline("", markdown => 0);
         $self->display_section_header("SESSION USAGE");
         my $billing = $state->{billing};
-        $self->display_key_value("Requests", $billing->{request_count} || 0);
-        $self->display_key_value("Input tokens", $billing->{input_tokens} || 0);
-        $self->display_key_value("Output tokens", $billing->{output_tokens} || 0);
+        $self->display_key_value("Requests", $billing->{total_requests} || 0);
+        $self->display_key_value("Input tokens", $billing->{total_prompt_tokens} || 0);
+        $self->display_key_value("Output tokens", $billing->{total_completion_tokens} || 0);
     }
     
     $self->writeline("", markdown => 0);

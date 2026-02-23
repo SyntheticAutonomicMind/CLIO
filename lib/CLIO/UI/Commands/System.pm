@@ -142,16 +142,16 @@ sub handle_performance_command {
         my $state = $self->{session}->state();
         my $billing = $state->{billing} || {};
         
-        $self->display_key_value("Total Requests", $billing->{request_count} || 0);
-        $self->display_key_value("Input Tokens", $billing->{input_tokens} || 0);
-        $self->display_key_value("Output Tokens", $billing->{output_tokens} || 0);
-        
-        my $total = ($billing->{input_tokens} || 0) + ($billing->{output_tokens} || 0);
+        $self->display_key_value("Total Requests", $billing->{total_requests} || 0);
+        $self->display_key_value("Input Tokens", $billing->{total_prompt_tokens} || 0);
+        $self->display_key_value("Output Tokens", $billing->{total_completion_tokens} || 0);
+
+        my $total = ($billing->{total_prompt_tokens} || 0) + ($billing->{total_completion_tokens} || 0);
         $self->display_key_value("Total Tokens", $total);
-        
+
         # Calculate average if we have requests
-        if ($billing->{request_count} && $billing->{request_count} > 0) {
-            my $avg = int($total / $billing->{request_count});
+        if ($billing->{total_requests} && $billing->{total_requests} > 0) {
+            my $avg = int($total / $billing->{total_requests});
             $self->display_key_value("Avg Tokens/Request", $avg);
         }
     } else {
