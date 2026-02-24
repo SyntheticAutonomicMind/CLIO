@@ -919,6 +919,12 @@ sub _learn_from_api_response {
     
     $self->{learned_token_ratio} = $new_ratio;
     
+    # Propagate learned ratio to TokenEstimator so ALL token estimation
+    # across the codebase (ConversationManager trim, State trim, etc.)
+    # benefits from the API feedback, not just MessageValidator
+    require CLIO::Memory::TokenEstimator;
+    CLIO::Memory::TokenEstimator::set_learned_ratio($new_ratio);
+    
     return $new_ratio;
 }
 

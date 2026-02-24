@@ -78,8 +78,6 @@ sub new {
         context_files => [],
         # Context management configuration
         max_tokens => $args{max_tokens} // 128000,           # API hard limit
-        summarize_threshold => $args{summarize_threshold} // 102400,  # 80% of max
-        compression_threshold => $args{compression_threshold} // 51200, # 40% of max
     };
     bless $self, $class;
     if ($ENV{CLIO_DEBUG} || $self->{debug}) {
@@ -124,6 +122,7 @@ sub save {
         lastGitHubCopilotResponseId => $self->{lastGitHubCopilotResponseId},
         _stateful_markers => $self->{_stateful_markers} || [],  # GitHub Copilot session continuation
         billing => $self->{billing},  # Save billing data
+        quota => $self->{quota},  # Save quota snapshot (from GitHub Copilot headers)
         context_files => $self->{context_files} || [],  # Save context files
         selected_model => $self->{selected_model},  # Save currently selected model
         api_config => $self->{api_config} || {},  # Save API config (from /api set --session)
@@ -243,6 +242,8 @@ sub load {
         },
         # Load context files or initialize if not present
         context_files => $data->{context_files} || [],
+        # Load quota snapshot (from GitHub Copilot headers)
+        quota => $data->{quota},
         # Load selected model or default to undef
         selected_model => $data->{selected_model},
         # Load API config (from /api set --session)
@@ -254,8 +255,6 @@ sub load {
         _stateful_markers => $data->{_stateful_markers} || [],
         # Context management configuration
         max_tokens => $args{max_tokens} // 128000,
-        summarize_threshold => $args{summarize_threshold} // 102400,
-        compression_threshold => $args{compression_threshold} // 51200,
     };
     bless $self, $class;
     
@@ -496,10 +495,10 @@ sub add_message {
     my $current_size = $self->get_conversation_size();
     
     # Dynamic threshold based on max_tokens (model context window):
-    # Trim at 58% of max context to provide 42% safety margin
-    # This accounts for max response (typically 12-16% of context) and other overhead
+    # Trim at SAFE_CONTEXT_PERCENT of max context to provide safety margin
+    # This accounts for max response (typically 12-16% of context) and estimation error
     my $max_tokens = $self->{max_tokens} // 128000;  # Default to 128k if not set
-    my $trim_threshold = int($max_tokens * 0.58);
+    my $trim_threshold = int($max_tokens * CLIO::Memory::TokenEstimator::SAFE_CONTEXT_PERCENT);
     
     if ($current_size > $trim_threshold) {
         if ($ENV{CLIO_DEBUG} || $self->{debug}) {
@@ -771,6 +770,12 @@ sub record_api_usage {
         completion_tokens => $completion_tokens,
         total_tokens => $total_tokens,
     };
+    
+    # Count premium requests based on multiplier (reliable, doesn't depend on quota headers)
+    # The multiplier is fetched from GitHub Copilot Models API which is always available
+    if ($multiplier > 0) {
+        $self->{billing}{total_premium_requests}++;
+    }
     
     if ($ENV{CLIO_DEBUG} || $self->{debug}) {
         log_debug('SessionState', "Recorded API usage: " . "model=" . ($model || 'unknown') . ", " .
