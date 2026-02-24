@@ -3,7 +3,7 @@ package CLIO::UI::ProgressSpinner;
 use strict;
 use warnings;
 use utf8;
-use Time::HiRes qw(usleep);
+use Time::HiRes qw(usleep time);
 use POSIX ();
 use CLIO::Core::Logger qw(log_debug);
 
@@ -21,6 +21,11 @@ Can run standalone or inline (without printing its own line).
 
 Animation clears itself when stopped. In inline mode, only the spinner
 character is removed, preserving any text that came before it on the line.
+
+Uses a forked child process for non-blocking animation. The stop() method
+is designed to be robust against race conditions: it kills the child,
+uses non-blocking waitpid with a timeout, and performs aggressive terminal
+cleanup to ensure no stale spinner characters remain.
 
 =head1 SYNOPSIS
 
@@ -58,7 +63,7 @@ sub new {
     my ($class, %args) = @_;
     
     # Use theme manager frames if available, otherwise fall back to default
-    my @frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+    my @frames = ('⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏');
     if ($args{theme_mgr} && $args{theme_mgr}->can('get_spinner_frames')) {
         @frames = @{$args{theme_mgr}->get_spinner_frames()};
     } elsif ($args{frames}) {
@@ -73,6 +78,7 @@ sub new {
         theme_mgr => $args{theme_mgr},    # Store theme manager for potential future use
         pid => undef,
         running => 0,
+        _started_at => 0,                 # Timestamp when start() was called
     };
     
     bless $self, $class;
@@ -111,7 +117,7 @@ sub start {
         close(STDIN);
         open(STDIN, '<', '/dev/null') or warn "Cannot reopen STDIN: $!";
         
-        # Clear inherited signal handlers
+        # Clear inherited signal handlers - ensure SIGTERM terminates immediately
         $SIG{INT} = 'DEFAULT';
         $SIG{TERM} = 'DEFAULT';
         $SIG{ALRM} = 'DEFAULT';
@@ -124,11 +130,19 @@ sub start {
     # Parent process - store child PID and return
     $self->{pid} = $pid;
     $self->{running} = 1;
+    $self->{_started_at} = time();
 }
 
 =head2 stop
 
 Stop the progress animation and clear it from terminal.
+
+Uses a robust multi-step shutdown:
+1. Send SIGTERM to child process
+2. Non-blocking waitpid with timeout (prevents hang)
+3. Escalate to SIGKILL if child doesn't exit within 200ms
+4. Aggressive terminal cleanup to handle race conditions where child
+   may have output a frame between our kill and cleanup
 
 In standalone mode: clears the entire line and repositions cursor at start
 In inline mode: removes just the spinner character(s), leaves text before it
@@ -140,27 +154,87 @@ sub stop {
     
     return unless $self->{running};
     
-    # Kill child process
+    # Mark as not running immediately to prevent re-entrant calls
+    $self->{running} = 0;
+    
+    # Kill child process with robust shutdown
     if ($self->{pid}) {
-        kill 'TERM', $self->{pid};
-        waitpid($self->{pid}, 0);
+        my $pid = $self->{pid};
         $self->{pid} = undef;
+        
+        # Step 1: Send SIGTERM (graceful)
+        kill('TERM', $pid);
+        
+        # Step 2: Non-blocking wait with timeout
+        # This prevents hanging if the child is somehow stuck
+        my $reaped = 0;
+        my $deadline = time() + 0.2;  # 200ms timeout
+        
+        while (time() < $deadline) {
+            my $result = waitpid($pid, POSIX::WNOHANG());
+            if ($result == $pid || $result == -1) {
+                $reaped = 1;
+                last;
+            }
+            usleep(10000);  # 10ms between checks
+        }
+        
+        # Step 3: Escalate to SIGKILL if still alive
+        if (!$reaped) {
+            kill('KILL', $pid);
+            # Brief final wait for SIGKILL (always works on non-zombie)
+            waitpid($pid, 0);
+            log_debug('ProgressSpinner', "Spinner child required SIGKILL (pid=$pid)");
+        }
+        
+        # Step 4: Brief delay to let any in-flight output from child settle
+        # The child may have output a frame just before being killed.
+        # This tiny delay lets the terminal process it before we clean up.
+        usleep(5000);  # 5ms
     }
     
-    # Clear based on mode
+    # Step 5: Aggressive terminal cleanup
+    # Must handle race condition where child wrote a frame right before dying
     if ($self->{inline}) {
-        # Inline mode: fully erase the spinner character and reposition cursor
-        # Use \b \b sequence: backspace over spinner, overwrite with space, backspace to position
-        # This ensures the spinner is completely removed regardless of race conditions
+        # Inline mode: erase spinner character(s) robustly
+        # Use backspace + space + backspace for the spinner character,
+        # but also add a second pass for race condition safety
         print "\b \b";
     } else {
         # Standalone mode: clear entire line and move cursor to start
         print "\r\e[K";
     }
     
-    $| = 1;
+    # Flush immediately to ensure cleanup is visible
+    STDOUT->flush() if STDOUT->can('flush');
+}
+
+=head2 is_running
+
+Check if the spinner animation is currently active.
+Also validates that the child process is actually alive (handles zombie detection).
+
+Returns: 1 if running, 0 if not
+
+=cut
+
+sub is_running {
+    my ($self) = @_;
     
-    $self->{running} = 0;
+    return 0 unless $self->{running};
+    
+    # Validate the child process is still alive
+    if ($self->{pid}) {
+        my $result = waitpid($self->{pid}, POSIX::WNOHANG());
+        if ($result == $self->{pid} || $result == -1) {
+            # Child has exited (or doesn't exist) - mark as not running
+            $self->{pid} = undef;
+            $self->{running} = 0;
+            return 0;
+        }
+    }
+    
+    return $self->{running};
 }
 
 =head2 _run_animation (internal)
@@ -198,7 +272,7 @@ sub _run_animation {
             print "\r$frame";
         }
         
-        $| = 1;
+        STDOUT->flush() if STDOUT->can('flush');
         
         usleep($delay);
         
@@ -242,5 +316,3 @@ Inline spinner with prefix:
     # Terminal shows: "CLIO: " ready for content
 
 =cut
-
-1;

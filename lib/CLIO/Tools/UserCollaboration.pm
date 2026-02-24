@@ -200,7 +200,7 @@ sub request_input {
         if ($spinner) {
             if (ref($spinner) eq 'CLIO::UI::ProgressSpinner') {
                 log_debug('UserCollaboration', "Spinner object: valid ProgressSpinner instance");
-                log_debug('UserCollaboration', "Spinner running state: " . ($spinner->{running} ? "YES" : "NO"));
+                log_debug('UserCollaboration', "Spinner running state: " . ($spinner->is_running() ? "YES" : "NO"));
             } else {
                 log_debug('UserCollaboration', "ERROR - not a ProgressSpinner!");
             }
