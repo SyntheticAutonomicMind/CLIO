@@ -12,10 +12,13 @@ CLIO::Memory::TokenEstimator - Utility for estimating token counts in text
 =head1 DESCRIPTION
 
 Provides token estimation for context management.
-Uses a simple heuristic: 1 token ≈ 4 characters (conservative estimate for English text).
-This is faster than actual tokenization and sufficient for preventing context window overflows.
+Uses a heuristic based on characters-per-token ratio. The default ratio is 4.0
+(conservative estimate for English text), but this can be improved at runtime
+by feeding back actual token counts from API responses via set_learned_ratio().
 
-Based on SAM's TokenEstimator.swift implementation.
+When a learned ratio is available, all estimation functions automatically use it
+for more accurate token counting. This affects trim decisions in both
+ConversationManager and Session::State.
 
 =head1 SYNOPSIS
 
@@ -23,20 +26,81 @@ Based on SAM's TokenEstimator.swift implementation.
     
     my $tokens = CLIO::Memory::TokenEstimator::estimate_tokens($text);
     
-    if (CLIO::Memory::TokenEstimator::exceeds_limit($text, 128000)) {
-        my $truncated = CLIO::Memory::TokenEstimator::truncate($text, 128000);
-    }
+    # After receiving API response with actual token counts:
+    CLIO::Memory::TokenEstimator::set_learned_ratio(3.2);
     
-    my @chunks = CLIO::Memory::TokenEstimator::split_into_chunks($text, 4096);
+    # Subsequent estimates use the learned ratio
+    my $better_estimate = CLIO::Memory::TokenEstimator::estimate_tokens($text);
 
 =cut
 
-# Characters per token (conservative estimate)
-use constant CHARS_PER_TOKEN => 4.0;
+# Default characters per token (conservative estimate)
+use constant DEFAULT_CHARS_PER_TOKEN => 4.0;
+
+# Per-message overhead constants (from OpenAI/Anthropic tokenizer analysis)
+# Every message costs additional tokens for role framing
+use constant TOKENS_PER_MESSAGE    => 3;   # role + delimiters
+use constant TOKENS_PER_NAME       => 1;   # tool_call_id or name field
+use constant TOKENS_PER_COMPLETION => 3;   # response priming overhead
+use constant TOOL_CALL_OVERHEAD    => 10;  # JSON structure of a tool_call
+
+# Context management threshold: trim at this percentage of max context
+# Leaves (1 - SAFE_CONTEXT_PERCENT) as safety margin for response + estimation error
+use constant SAFE_CONTEXT_PERCENT  => 0.58;
+
+# Package-level learned ratio - updated from API response feedback
+# When undef, falls back to DEFAULT_CHARS_PER_TOKEN
+my $learned_ratio;
+
+=head2 set_learned_ratio
+
+Set the learned characters-per-token ratio from API response feedback.
+Called by APIManager after observing actual prompt_tokens from API responses.
+Propagates to ALL subsequent estimate_tokens calls across the codebase.
+
+Arguments:
+- $ratio: Characters per token (typically 2.0-4.0, clamped to [1.5, 5.0])
+
+=cut
+
+sub set_learned_ratio {
+    my ($ratio) = @_;
+    return unless defined $ratio && $ratio > 0;
+    
+    # Clamp to reasonable bounds
+    $ratio = 1.5 if $ratio < 1.5;
+    $ratio = 5.0 if $ratio > 5.0;
+    
+    $learned_ratio = $ratio;
+}
+
+=head2 get_effective_ratio
+
+Returns the currently active characters-per-token ratio.
+Uses learned ratio if available, otherwise the default.
+
+Returns: Current ratio (float)
+
+=cut
+
+sub get_effective_ratio {
+    return $learned_ratio // DEFAULT_CHARS_PER_TOKEN;
+}
+
+=head2 has_learned_ratio
+
+Returns true if a learned ratio has been set from API feedback.
+
+=cut
+
+sub has_learned_ratio {
+    return defined $learned_ratio;
+}
 
 =head2 estimate_tokens
 
 Estimate token count for a string.
+Uses learned ratio from API feedback when available, otherwise DEFAULT_CHARS_PER_TOKEN.
 
 Arguments:
 - $text: The text to estimate tokens for
@@ -49,8 +113,9 @@ sub estimate_tokens {
     my ($text) = @_;
     return 0 unless defined $text && length($text) > 0;
     
+    my $ratio = get_effective_ratio();
     my $char_count = length($text);
-    return int(ceil($char_count / CHARS_PER_TOKEN));
+    return int(ceil($char_count / $ratio));
 }
 
 =head2 exceeds_limit
@@ -89,8 +154,9 @@ sub truncate {
     
     return $text unless $estimated_tokens > $limit;
     
-    # Calculate character limit (with some buffer)
-    my $max_chars = int($limit * CHARS_PER_TOKEN * 0.95);
+    # Calculate character limit using current ratio (with some buffer)
+    my $ratio = get_effective_ratio();
+    my $max_chars = int($limit * $ratio * 0.95);
     
     return $text unless length($text) > $max_chars;
     
@@ -149,6 +215,7 @@ sub split_into_chunks {
 =head2 estimate_messages_tokens
 
 Estimate total token count for an array of messages.
+Includes per-message overhead constants and uses learned ratio when available.
 
 Arguments:
 - $messages: Array reference of message hashes with 'role' and 'content'
@@ -161,18 +228,21 @@ sub estimate_messages_tokens {
     my ($messages) = @_;
     return 0 unless ref $messages eq 'ARRAY';
     
-    my $total = 0;
+    my $total = TOKENS_PER_COMPLETION;  # Response priming overhead
     
     for my $msg (@$messages) {
         next unless ref $msg eq 'HASH';
         
-        # Role overhead (typically 1-2 tokens per message)
-        $total += 3;
+        # Per-message overhead (role + delimiters)
+        $total += TOKENS_PER_MESSAGE;
         
         # Content tokens
         if (defined $msg->{content}) {
             $total += estimate_tokens($msg->{content});
         }
+        
+        # Name/tool_call_id overhead
+        $total += TOKENS_PER_NAME if $msg->{tool_call_id} || $msg->{name};
         
         # Tool call tokens (if present)
         if ($msg->{tool_calls} && ref $msg->{tool_calls} eq 'ARRAY') {
@@ -180,7 +250,7 @@ sub estimate_messages_tokens {
                 my $tool_text = ($tool_call->{function}->{name} // '') . 
                                ($tool_call->{function}->{arguments} // '');
                 $total += estimate_tokens($tool_text);
-                $total += 10;  # Tool call structure overhead
+                $total += TOOL_CALL_OVERHEAD;  # JSON structure overhead
             }
         }
     }
@@ -199,5 +269,3 @@ CLIO Project
 GPL-3.0
 
 =cut
-
-1;

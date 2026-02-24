@@ -273,8 +273,8 @@ sub trim_conversation_for_api {
     my $max_response = $opts{max_response_tokens} // 16000;
 
     # Calculate dynamic safe threshold based on model's context window
-    # Start trimming at 58% of max context (leaves 42% safety margin)
-    my $safe_threshold_percent = 0.58;
+    # Uses shared constant from TokenEstimator for consistency with State::add_message trim
+    my $safe_threshold_percent = CLIO::Memory::TokenEstimator::SAFE_CONTEXT_PERCENT;
     my $safe_threshold = int($model_context * $safe_threshold_percent);
 
     # Estimate current size

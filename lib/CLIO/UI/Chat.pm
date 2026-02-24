@@ -263,7 +263,7 @@ sub show_busy_indicator {
         if ($current_frames ne $new_frames) {
             $needs_recreation = 1;
             # Stop old spinner before recreating
-            $self->{spinner}->stop() if $self->{spinner}->{running};
+            $self->{spinner}->stop() if $self->{spinner}->is_running();
         }
     }
     
@@ -277,7 +277,7 @@ sub show_busy_indicator {
     }
     
     # Only start if not already running
-    if (!$self->{spinner}->{running}) {
+    if (!$self->{spinner}->is_running()) {
         $self->{spinner}->start();
         log_debug('Chat', "Busy indicator started");
     }
@@ -296,7 +296,8 @@ sub hide_busy_indicator {
     my ($self) = @_;
     
     # Stop spinner if it exists and is running
-    if ($self->{spinner} && $self->{spinner}->{running}) {
+    # Use is_running() for robust check (validates child process is alive)
+    if ($self->{spinner} && $self->{spinner}->is_running()) {
         $self->{spinner}->stop();
         log_debug('Chat', "Busy indicator stopped");
     }
@@ -1469,7 +1470,7 @@ sub get_input {
     
         # Stop spinner before any input operation
     # The spinner MUST be stopped before readline/input to prevent interference with typing
-    if ($self->{spinner} && $self->{spinner}->{running}) {
+    if ($self->{spinner} && $self->{spinner}->is_running()) {
         $self->{spinner}->stop();
         log_debug('Chat', "Spinner stopped at get_input entry");
     }
@@ -1745,7 +1746,7 @@ sub request_collaboration {
     
     # Stop spinner before displaying collaboration prompt
     # The spinner MUST be stopped and MUST NOT restart until user response is complete
-    if ($self->{spinner} && $self->{spinner}->{running}) {
+    if ($self->{spinner} && $self->{spinner}->is_running()) {
         $self->{spinner}->stop();
         log_debug('Chat', "Spinner stopped at request_collaboration entry");
     }

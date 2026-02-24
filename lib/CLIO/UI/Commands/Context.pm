@@ -241,7 +241,10 @@ sub _display_memory_stats {
         }
     }
     
-    my $threshold = $state->{summarize_threshold} || int($max_tokens * 0.8);
+    # Trim threshold uses the same SAFE_CONTEXT_PERCENT as State and ConversationManager
+    require CLIO::Memory::TokenEstimator;
+    my $safe_pct = CLIO::Memory::TokenEstimator->SAFE_CONTEXT_PERCENT;
+    my $threshold = int($max_tokens * $safe_pct);
     my $usage_pct = sprintf("%.1f%%", ($active_tokens / $max_tokens) * 100);
     
     # Get YaRN stats
@@ -259,14 +262,15 @@ sub _display_memory_stats {
     my $archived_messages = $yarn_messages > $active_messages ? $yarn_messages - $active_messages : 0;
     my $archived_tokens = $yarn_tokens > $active_tokens ? $yarn_tokens - $active_tokens : 0;
     
-    # Determine status
+    # Determine status based on actual trim threshold (58% of max context)
     my $status;
+    my $threshold_pct = int($safe_pct * 100);
     if ($active_tokens > $threshold) {
-        $status = $self->colorize("TRIMMING ACTIVE (over 80%)", 'WARN');
-    } elsif ($active_tokens > $threshold * 0.6) {
-        $status = $self->colorize("Approaching limit (60-80%)", 'THEME');
+        $status = $self->colorize("TRIMMING ACTIVE (over ${threshold_pct}%)", 'WARN');
+    } elsif ($active_tokens > $threshold * 0.75) {
+        $status = $self->colorize("Approaching limit", 'THEME');
     } else {
-        $status = $self->colorize("Healthy (below 60%)", 'SUCCESS');
+        $status = $self->colorize("Healthy", 'SUCCESS');
     }
     
     printf "\n%-24s %d messages (~%s)\n",
