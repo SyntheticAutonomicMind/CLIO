@@ -74,8 +74,8 @@ CLIO is a terminal-based AI code assistant that brings powerful AI capabilities 
 **1. Clone the Repository**
 
 ```bash
-git clone https://github.com/fewtarius/clio.git
-cd clio
+git clone https://github.com/SyntheticAutonomicMind/CLIO.git
+cd CLIO
 ```
 
 **2. Run the Installer**
@@ -2352,8 +2352,8 @@ CLIO automatically detects which provider to use based on available credentials.
 - [Tools Reference](SPECS/TOOLS.md) - Complete tool documentation
 
 **Get Help:**
-- [GitHub Issues](https://github.com/fewtarius/clio/issues)
-- [GitHub Discussions](https://github.com/fewtarius/clio/discussions)
+- [GitHub Issues](https://github.com/SyntheticAutonomicMind/CLIO/issues)
+- [GitHub Discussions](https://github.com/SyntheticAutonomicMind/CLIO/discussions)
 
 **Contribute:**
 See [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md) for contribution guidelines.

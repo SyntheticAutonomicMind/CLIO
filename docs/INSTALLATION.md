@@ -124,8 +124,8 @@ You need **one of the following**:
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/fewtarius/clio.git
-cd clio
+git clone https://github.com/SyntheticAutonomicMind/CLIO.git
+cd CLIO
 
 # 2. Run installer with sudo
 sudo ./install.sh
@@ -169,7 +169,7 @@ For convenience, CLIO provides a `clio-container` wrapper:
 ```bash
 # Clone the repo to get the wrapper script
 git clone https://github.com/SyntheticAutonomicMind/CLIO.git
-cd clio
+cd CLIO
 
 # Run sandboxed in any project
 ./clio-container ~/projects/myapp
@@ -725,8 +725,8 @@ CLIO works on both WSL1 and WSL2, but WSL2 is recommended for better performance
 **Installation:**
 ```bash
 # In WSL terminal
-git clone https://github.com/fewtarius/clio.git
-cd clio
+git clone https://github.com/SyntheticAutonomicMind/CLIO.git
+cd CLIO
 ./install.sh --user
 ```
 
@@ -748,7 +748,7 @@ After installation:
 1. **Read the User Guide**: [docs/USER_GUIDE.md](USER_GUIDE.md)
 2. **Try the Quick Start**: Run `clio --new` and explore
 3. **Configure advanced settings**: Edit `~/.clio/config.yaml`
-4. **Join the community**: [GitHub Discussions](https://github.com/fewtarius/clio/discussions)
+4. **Join the community**: [GitHub Discussions](https://github.com/SyntheticAutonomicMind/CLIO/discussions)
 
 ---------------------------------------------------
 
@@ -758,7 +758,7 @@ After installation:
 
 1. Check this troubleshooting section
 2. Run with debug mode: `clio --debug --new`
-3. Search [GitHub Issues](https://github.com/fewtarius/clio/issues)
+3. Search [GitHub Issues](https://github.com/SyntheticAutonomicMind/CLIO/issues)
 4. Create a new issue with:
    - Your OS and version
    - Perl version (`perl --version`)
