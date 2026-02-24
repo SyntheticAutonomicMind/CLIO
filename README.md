@@ -95,7 +95,7 @@ docker run -it --rm \
 **Manual**
 ```bash
 git clone https://github.com/SyntheticAutonomicMind/CLIO.git
-cd clio && sudo ./install.sh
+cd CLIO && sudo ./install.sh
 ```
 
 For detailed options, see [docs/INSTALLATION.md](docs/INSTALLATION.md).
@@ -222,7 +222,7 @@ Contributions welcome! See [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md) fo
 ```bash
 # Fork and clone
 git clone https://github.com/YOUR_USERNAME/CLIO.git
-cd clio
+cd CLIO
 
 # Run tests
 find lib -name "*.pm" -exec perl -I./lib -c {} \;
