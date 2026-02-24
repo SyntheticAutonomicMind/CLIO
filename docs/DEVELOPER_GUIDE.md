@@ -254,8 +254,8 @@ clio/
 
 ```bash
 # Clone repository
-git clone https://github.com/fewtarius/clio.git
-cd clio
+git clone https://github.com/SyntheticAutonomicMind/CLIO.git
+cd CLIO
 
 # Install for development (user mode, no sudo)
 ./install.sh --user
@@ -913,9 +913,9 @@ my $count = 0;  # Track number of failed retries for exponential backoff
 
 ```bash
 # Fork on GitHub, then:
-git clone https://github.com/YOUR_USERNAME/clio.git
-cd clio
-git remote add upstream https://github.com/fewtarius/clio.git
+git clone https://github.com/YOUR_USERNAME/CLIO.git
+cd CLIO
+git remote add upstream https://github.com/SyntheticAutonomicMind/CLIO.git
 ```
 
 **2. Create Feature Branch:**
@@ -1012,8 +1012,8 @@ Then open a Pull Request on GitHub.
 - `lib/CLIO/UI/Markdown.pm` - UI component example
 
 **Community:**
-- [GitHub Issues](https://github.com/fewtarius/clio/issues)
-- [GitHub Discussions](https://github.com/fewtarius/clio/discussions)
+- [GitHub Issues](https://github.com/SyntheticAutonomicMind/CLIO/issues)
+- [GitHub Discussions](https://github.com/SyntheticAutonomicMind/CLIO/discussions)
 
 ---------------------------------------------------
 
