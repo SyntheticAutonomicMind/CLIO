@@ -4,6 +4,7 @@ use strict;
 use warnings;
 use utf8;
 use Time::HiRes qw(usleep);
+use POSIX ();
 use CLIO::Core::Logger qw(log_debug);
 
 binmode(STDOUT, ':encoding(UTF-8)');
@@ -106,23 +107,18 @@ sub start {
     }
     
     if ($pid == 0) {
-        # Child process - CRITICAL: Reset terminal state while connected to parent TTY
-        # This must happen BEFORE any I/O operations in child
-        eval {
-            require CLIO::Compat::Terminal;
-            CLIO::Compat::Terminal::reset_terminal();
-        };
+        # Child process - detach from parent's terminal input
+        close(STDIN);
+        open(STDIN, '<', '/dev/null') or warn "Cannot reopen STDIN: $!";
         
         # Clear inherited signal handlers
-        # Parent may have INT/TERM handlers that shouldn't run in child
-        # When parent kills child with TERM, we want clean exit, not parent's cleanup
         $SIG{INT} = 'DEFAULT';
         $SIG{TERM} = 'DEFAULT';
         $SIG{ALRM} = 'DEFAULT';
         
-        # Child process - run animation loop
+        # Run animation loop
         $self->_run_animation();
-        exit 0;
+        POSIX::_exit(0);
     }
     
     # Parent process - store child PID and return
