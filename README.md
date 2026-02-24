@@ -187,6 +187,7 @@ For more examples, see [docs/USER_GUIDE.md](docs/USER_GUIDE.md#usage-examples).
 | Document | Description |
 |----------|-------------|
 | [User Guide](docs/USER_GUIDE.md) | Complete usage guide with examples |
+| [Feature Guide](docs/FEATURES.md) | Every feature explained in detail |
 | [Installation](docs/INSTALLATION.md) | Detailed installation instructions |
 | [Dependencies](docs/DEPENDENCIES.md) | System requirements and verification |
 | [Sandbox Mode](docs/SANDBOX.md) | Security isolation options |
