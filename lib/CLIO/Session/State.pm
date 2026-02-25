@@ -63,6 +63,8 @@ sub new {
         _stateful_markers => [],
         # Session creation timestamp (for proper resume ordering)
         created_at => $args{created_at} // time(),
+        # Human-friendly session name (auto-generated or user-set)
+        session_name => $args{session_name} // undef,
         # Billing tracking fields
         billing    => {
             total_prompt_tokens => 0,
@@ -128,6 +130,7 @@ sub save {
         api_config => $self->{api_config} || {},  # Save API config (from /api set --session)
         style => $self->{style},  # Save current color style
         theme => $self->{theme},  # Save current output theme
+        session_name => $self->{session_name},  # Human-friendly session name
     };
     use Data::Dumper;
     if ($ENV{CLIO_DEBUG} || $self->{debug}) {
@@ -255,6 +258,8 @@ sub load {
         _stateful_markers => $data->{_stateful_markers} || [],
         # Context management configuration
         max_tokens => $args{max_tokens} // 128000,
+        # Human-friendly session name
+        session_name => $data->{session_name} // undef,
     };
     bless $self, $class;
     
@@ -285,6 +290,13 @@ sub yarn { $_[0]->{yarn} }
 
 # Get repair notification if session history was repaired on load
 sub repair_notification { $_[0]->{repair_notification} }
+sub session_name {
+    my ($self, $name) = @_;
+    if (defined $name) {
+        $self->{session_name} = $name;
+    }
+    return $self->{session_name};
+}
 
 =head2 _validate_and_repair_history
 
