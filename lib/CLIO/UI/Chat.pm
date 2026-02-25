@@ -842,6 +842,12 @@ sub run {
                     log_debug('Chat', "Session saved after error (preserving context)");
                 }
             } else {
+                # Auto-generate session name from first user message if not set
+                # Must happen BEFORE save so the name is persisted to disk
+                if ($self->{session} && !$self->{session}->session_name()) {
+                    $self->_auto_name_session();
+                }
+                
                 # Save session after successful responses
                 # Without this, if user doesn't call /exit, all work-in-progress is lost
                 # on next session restart. This ensures session continuity even if terminal
@@ -1196,6 +1202,17 @@ sub display_header {
     
     print "\n";
     
+    # Build session display: include friendly name if set
+    my $session_name = $self->{session} ? $self->{session}->session_name() : undef;
+    # Build the session name banner line (empty string if no name - line will be skipped)
+    my $session_name_line = '';
+    if ($session_name) {
+        my $label_color = $self->{theme_mgr}->get_color('banner_label') || '';
+        my $data_color = $self->{theme_mgr}->get_color('data') || '';
+        my $reset = $self->{ansi}->parse('@RESET@');
+        $session_name_line = "${label_color}Session:    ${data_color}${session_name}${reset}";
+    }
+    
     # Dynamically render all banner lines (themes can have variable number)
     my $line_num = 1;
     while (1) {
@@ -1207,11 +1224,21 @@ sub display_header {
         
         my $rendered = $self->{theme_mgr}->render($template_key, {
             session_id => $session_id,
+            session_name => $session_name,
+            session_name_line => $session_name_line,
             model => $model_with_provider,
         });
         
-        print $rendered, "\n";
         $line_num++;
+        
+        # Skip lines that rendered to empty (e.g., conditional session_name line)
+        my $stripped = $rendered;
+        $stripped =~ s/\e\[[0-9;]*m//g;  # Strip ANSI codes
+        $stripped =~ s/^\s+//;
+        $stripped =~ s/\s+$//;
+        next unless length($stripped) > 0;
+        
+        print $rendered, "\n";
     }
     
     print "\n";
@@ -3267,6 +3294,87 @@ sub colorize {
     return $self->{ansi}->parse($color . $text . '@RESET@');
 }
 
+
+=head2 _auto_name_session
+
+Auto-generate a human-friendly session name from the first user message.
+Called after the first successful AI response if no name is set.
+
+Extracts a concise title from the user's first non-system message,
+truncating to ~50 characters at a word boundary.
+
+=cut
+
+sub _auto_name_session {
+    my ($self) = @_;
+    
+    my $session = $self->{session};
+    return unless $session;
+    
+    my $state = $session->state();
+    return unless $state && $state->{history};
+    
+    # Find the first user message in history
+    my $first_user_msg;
+    for my $msg (@{$state->{history}}) {
+        next unless ref($msg) eq 'HASH';
+        next unless ($msg->{role} || '') eq 'user';
+        $first_user_msg = $msg->{content} || '';
+        last;
+    }
+    
+    return unless $first_user_msg && length($first_user_msg) > 0;
+    
+    # Generate a name from the first user message
+    my $name = _generate_session_name($first_user_msg);
+    
+    if ($name && length($name) > 0) {
+        $session->session_name($name);
+        log_debug('Chat', "Auto-generated session name: $name");
+    }
+}
+
+=head2 _generate_session_name($text)
+
+Generate a concise session name from user input text.
+Returns a string of up to 50 characters, truncated at word boundary.
+
+=cut
+
+sub _generate_session_name {
+    my ($text) = @_;
+    
+    return unless defined $text && length($text) > 0;
+    
+    # Clean up the text
+    my $name = $text;
+    
+    # Remove leading/trailing whitespace
+    $name =~ s/^\s+//;
+    $name =~ s/\s+$//;
+    
+    # Collapse multiple whitespace to single space
+    $name =~ s/\s+/ /g;
+    
+    # Remove common filler phrases at the start
+    $name =~ s/^(?:hey|hi|hello|please|can you|could you|i want to|i need to|i'd like to|let's)\s+//i;
+    
+    # Capitalize first letter
+    $name = ucfirst($name);
+    
+    # Truncate to ~50 chars at a word boundary
+    if (length($name) > 50) {
+        $name = substr($name, 0, 50);
+        # Cut at the last word boundary
+        $name =~ s/\s+\S*$//;
+        $name .= '...' if length($name) > 0;
+    }
+    
+    # Final sanity check - must have some meaningful content
+    return undef if length($name) < 3;
+    
+    return $name;
+}
 
 =head1 AUTHOR
 

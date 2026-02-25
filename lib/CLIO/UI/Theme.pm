@@ -682,8 +682,9 @@ sub get_builtin_theme {
         # Banner (displayed at session start)
         banner_line1 => '{style.app_title}CLIO@RESET@ {style.app_subtitle}- Command Line Intelligence Orchestrator@RESET@',
         banner_line2 => '{style.banner_label}Session ID: {style.data}{var.session_id}@RESET@',
-        banner_line3 => '{style.banner_label}You are connected to {style.data}{var.model}@RESET@',
-        banner_line4 => '{style.banner_label}Type "{style.data}/help{style.banner_label}" for a list of commands.@RESET@',
+        banner_line3 => '{var.session_name_line}',
+        banner_line4 => '{style.banner_label}You are connected to {style.data}{var.model}@RESET@',
+        banner_line5 => '{style.banner_label}Type "{style.data}/help{style.banner_label}" for a list of commands.@RESET@',
         
         # Help system
         help_header => '{style.data}{var.title}@RESET@',
@@ -774,6 +775,7 @@ sub get_required_theme_keys {
         banner_line2
         banner_line3
         banner_line4
+        banner_line5
         help_header
         help_section
         help_command

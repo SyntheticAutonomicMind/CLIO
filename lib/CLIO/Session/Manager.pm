@@ -319,6 +319,10 @@ sub ltm  { $_[0]->{ltm} }
 sub yarn { $_[0]->{yarn} }
 sub state { $_[0]->{state} }
 sub working_directory { $_[0]->{state}->{working_directory} }
+sub session_name {
+    my ($self, $name) = @_;
+    return $self->{state}->session_name($name);
+}
 
 # Alias for consistency with Chat.pm
 sub get_long_term_memory { $_[0]->{ltm} }
