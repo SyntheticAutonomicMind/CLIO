@@ -167,6 +167,12 @@ sub handle_session_command {
         return;
     }
     
+    # /session name [name] - set or show session name
+    if ($action eq 'name') {
+        $self->_handle_name_command(@args);
+        return;
+    }
+    
     # /session new - create new session (guidance)
     if ($action eq 'new') {
         $self->display_system_message("To create a new session, exit and run:");
@@ -213,6 +219,7 @@ sub _display_session_help {
     $self->display_command_row("/session list", "List all available sessions", 30);
     $self->display_command_row("/session switch", "Interactive session picker", 30);
     $self->display_command_row("/session switch <id>", "Switch to specific session", 30);
+    $self->display_command_row("/session name [name]", "Show or set session name", 30);
     $self->display_command_row("/session new", "Show how to create new session", 30);
     $self->display_command_row("/session clear", "Clear current session history", 30);
     $self->display_command_row("/session trim [days]", "Remove old sessions (default: 30)", 30);
@@ -223,6 +230,7 @@ sub _display_session_help {
     $self->display_command_row("/session show", "See current session", 35);
     $self->display_command_row("/session list", "See all sessions", 35);
     $self->display_command_row("/session switch abc123", "Switch by ID", 35);
+    $self->display_command_row("/session name \"My project\"", "Set friendly name", 35);
     $self->writeline("", markdown => 0);
 }
 
@@ -241,6 +249,12 @@ sub _display_session_info {
     $self->display_command_header("SESSION INFORMATION");
     
     $self->display_key_value("Session ID", $session_id);
+    
+    # Session name
+    my $session_name = $self->{session} ? $self->{session}->session_name() : undef;
+    if ($session_name) {
+        $self->display_key_value("Name", $session_name);
+    }
     
     # Working directory
     my $workdir = $state->{working_directory} || '.';
@@ -306,7 +320,7 @@ sub _list_sessions {
         return;
     }
     
-    # Get session info
+    # Get session info including friendly names
     my @session_info;
     for my $session_file (@sessions) {
         my $id = $session_file;
@@ -316,10 +330,26 @@ sub _list_sessions {
         my $mtime = (stat($filepath))[9] || 0;
         my $size = (stat($filepath))[7] || 0;
         
+        # Read session name from file
+        my $name = undef;
+        my $msg_count = 0;
+        eval {
+            open my $fh, '<', $filepath or die;
+            local $/;
+            my $json = <$fh>;
+            close $fh;
+            require CLIO::Util::JSON;
+            my $data = CLIO::Util::JSON::decode_json($json);
+            $name = $data->{session_name} if $data->{session_name};
+            $msg_count = scalar(@{$data->{history} || []});
+        };
+        
         push @session_info, {
             id => $id,
+            name => $name,
             mtime => $mtime,
             size => $size,
+            msg_count => $msg_count,
             is_current => ($self->{session} && $self->{session}->{session_id} eq $id),
         };
     }
@@ -333,9 +363,10 @@ sub _list_sessions {
         my $sess = $session_info[$i];
         my $marker = $sess->{is_current} ? ' (current)' : '';
         my $time = _format_relative_time($sess->{mtime});
+        my $display = $sess->{name} || substr($sess->{id}, 0, 20) . '...';
         
-        push @items, sprintf("%3d) %s [%s]%s", 
-            $i + 1, $sess->{id}, $time, $marker);
+        push @items, sprintf("%3d) %-40s [%s, %d msgs]%s", 
+            $i + 1, $display, $time, $sess->{msg_count}, $marker);
     }
     
     # Use standard pagination
@@ -347,7 +378,7 @@ sub _list_sessions {
     $self->display_paginated_list("AVAILABLE SESSIONS", \@items, $formatter);
     
     $self->writeline("", markdown => 0);
-    $self->display_system_message("Use '/session switch <number>' or '/session switch <id>' to switch");
+    $self->display_system_message("Use '/session switch <number>' or '/session switch <name>' to switch");
 }
 
 =head2 _clear_session_history
@@ -603,6 +634,42 @@ sub _trim_sessions {
     }
 }
 
+=head2 _handle_name_command(@args)
+
+Set or display the current session's friendly name.
+
+=cut
+
+sub _handle_name_command {
+    my ($self, @args) = @_;
+    
+    unless ($self->{session}) {
+        $self->display_error_message("No active session");
+        return;
+    }
+    
+    my $name = join(' ', @args);
+    $name =~ s/^\s+//;
+    $name =~ s/\s+$//;
+    
+    if (length($name) == 0) {
+        # Show current name
+        my $current_name = $self->{session}->session_name();
+        if ($current_name) {
+            $self->display_key_value("Session name", $current_name);
+        } else {
+            $self->display_system_message("No session name set. Use '/session name <name>' to set one.");
+        }
+        return;
+    }
+    
+    # Set the name
+    $self->{session}->session_name($name);
+    $self->{session}->save();
+    
+    $self->display_success_message("Session name set: $name");
+}
+
 # Helper to format bytes in human-readable form
 sub _format_bytes {
     my ($bytes) = @_;
@@ -651,13 +718,26 @@ sub handle_switch_command {
         return;
     }
     
-    # Extract session IDs and get info
+    # Extract session IDs and get info including friendly names
     my @sessions = map { 
         my $id = $_;
         $id =~ s/\.json$//;
         my $file = "$sessions_dir/$_";
         my $mtime = (stat($file))[9];
-        { id => $id, file => $file, mtime => $mtime }
+        
+        # Read session name
+        my $name = undef;
+        eval {
+            open my $fh, '<', $file or die;
+            local $/;
+            my $json = <$fh>;
+            close $fh;
+            require CLIO::Util::JSON;
+            my $data = CLIO::Util::JSON::decode_json($json);
+            $name = $data->{session_name} if $data->{session_name};
+        };
+        
+        { id => $id, file => $file, mtime => $mtime, name => $name }
     } @session_files;
     
     # Sort by most recent first
@@ -667,23 +747,56 @@ sub handle_switch_command {
     
     # If session ID provided as argument, use it
     if (@args && $args[0]) {
-        $target_session_id = $args[0];
+        my $identifier = join(' ', @args);  # Support multi-word names
         
         # Check if it's a number (selecting from list)
-        if ($target_session_id =~ /^\d+$/) {
-            my $idx = $target_session_id - 1;
+        if ($identifier =~ /^\d+$/) {
+            my $idx = $identifier - 1;
             if ($idx >= 0 && $idx < @sessions) {
                 $target_session_id = $sessions[$idx]{id};
             } else {
-                $self->display_error_message("Invalid session number: $args[0] (valid: 1-" . scalar(@sessions) . ")");
+                $self->display_error_message("Invalid session number: $identifier (valid: 1-" . scalar(@sessions) . ")");
                 return;
             }
         }
         
-        # Verify session exists
-        my ($found) = grep { $_->{id} eq $target_session_id } @sessions;
-        unless ($found) {
-            $self->display_error_message("Session not found: $target_session_id");
+        # Try exact UUID match
+        if (!$target_session_id) {
+            my ($found) = grep { $_->{id} eq $identifier } @sessions;
+            $target_session_id = $found->{id} if $found;
+        }
+        
+        # Try UUID prefix match
+        if (!$target_session_id) {
+            my @matches = grep { index($_->{id}, $identifier) == 0 } @sessions;
+            if (@matches == 1) {
+                $target_session_id = $matches[0]->{id};
+            }
+        }
+        
+        # Try exact name match (case-insensitive)
+        if (!$target_session_id) {
+            my ($found) = grep { $_->{name} && lc($_->{name}) eq lc($identifier) } @sessions;
+            $target_session_id = $found->{id} if $found;
+        }
+        
+        # Try name prefix/substring match (case-insensitive)
+        if (!$target_session_id) {
+            my $lc_id = lc($identifier);
+            my @matches = grep { $_->{name} && index(lc($_->{name}), $lc_id) >= 0 } @sessions;
+            if (@matches == 1) {
+                $target_session_id = $matches[0]->{id};
+            } elsif (@matches > 1) {
+                $self->display_error_message("Ambiguous name '$identifier'. Matches:");
+                for my $m (@matches) {
+                    $self->display_list_item("$m->{name} (" . substr($m->{id}, 0, 12) . ")");
+                }
+                return;
+            }
+        }
+        
+        unless ($target_session_id) {
+            $self->display_error_message("Session not found: $identifier");
             return;
         }
     } else {
@@ -698,17 +811,18 @@ sub handle_switch_command {
             my $s = $sessions[$i];
             my $current = ($s->{id} eq $current_id) ? ' @BOLD@(current)@RESET@' : "";
             my $time = _format_relative_time($s->{mtime});
-            printf "  %d) %s %s%s\n", 
+            my $display = $s->{name} || substr($s->{id}, 0, 20) . "...";
+            printf "  %d) %-40s %s%s\n", 
                 $i + 1, 
-                substr($s->{id}, 0, 20) . "...",
+                $display,
                 $self->colorize("[$time]", 'dim'),
                 $chat->{ansi}->parse($current);
         }
         
         $self->writeline("", markdown => 0);
-        $self->display_system_message("Enter session number or ID to switch:");
+        $self->display_system_message("Enter session number or name to switch:");
         $self->display_system_message("  /session switch 1");
-        $self->display_system_message("  /session switch abc123-def456...");
+        $self->display_system_message("  /session switch \"my session name\"");
         return;
     }
     
@@ -763,13 +877,17 @@ sub handle_switch_command {
     }
     
     # 5. Success
+    my $display_name = $new_session->session_name() || $target_session_id;
     $self->writeline("", markdown => 0);
-    $self->display_success_message("Switched to session: $target_session_id");
+    $self->display_success_message("Switched to session: $display_name");
     
     # Show session info
     my $history_count = $state->{history} ? scalar(@{$state->{history}}) : 0;
     $self->display_system_message("  Messages in history: $history_count");
     $self->display_system_message("  Working directory: " . ($state->{working_directory} || '.'));
+    if ($new_session->session_name()) {
+        $self->display_system_message("  Session ID: " . substr($target_session_id, 0, 12) . "...");
+    }
 }
 
 # Helper to format relative time

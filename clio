@@ -50,6 +50,7 @@ USAGE:
 OPTIONS:
     --new              Start a new session
     --resume [ID]      Resume a session (most recent if no ID provided)
+    --sessions         List all sessions with friendly names
     --debug            Enable debug output
     --dir <path>       Set working directory for session
     --input <text>     Process input and exit
@@ -67,6 +68,8 @@ EXAMPLES:
     clio --new                    # Start new session
     clio --resume                 # Resume most recent session
     clio --resume <session_id>    # Resume specific session
+    clio --resume "my session"    # Resume by friendly name
+    clio --sessions               # List all sessions
     clio --debug --new            # Start with debug logging
     clio --dir /path/to/project   # Start in specific directory
     clio --model gpt-4.1 --new    # Start with specific model
@@ -77,6 +80,7 @@ EXAMPLES:
 SESSIONS:
     Sessions are stored in: .clio/sessions/
     Each session has a unique UUID identifier
+    Sessions can have human-friendly names (auto-generated or set via /session name)
     Use /switch command to list and switch between sessions
 
 SLASH COMMANDS:
@@ -188,6 +192,9 @@ for (my $i = 0; $i < @ARGV; $i++) {
     if ($ARGV[$i] eq '--model' && defined $ARGV[$i+1]) {
         $model_override = $ARGV[$i+1];
     }
+    if ($ARGV[$i] eq '--sessions') {
+        $mode = 'list_sessions';
+    }
 }
 
 # If no --input flag was provided but STDIN is piped (not a TTY), read from STDIN
@@ -212,6 +219,78 @@ print STDERR "[TRACE] Mode before session creation: $mode\n" if $debug;
 if ($sandbox_mode) {
     $config->set('sandbox', 1, 0);  # 0 = don't mark as user-set (not persisted)
     print STDERR "[INFO] Sandbox mode enabled - file access restricted to project directory\n";
+}
+
+# Handle --sessions mode (list and exit)
+if ($mode eq 'list_sessions') {
+    my $sessions_dir = CLIO::Util::PathResolver::get_sessions_dir();
+    
+    unless (-d $sessions_dir) {
+        print "No sessions directory found.\n";
+        exit 0;
+    }
+    
+    opendir(my $dh, $sessions_dir) or die "Cannot open sessions dir: $!";
+    my @json_files = grep { /\.json$/ } readdir($dh);
+    closedir($dh);
+    
+    unless (@json_files) {
+        print "No sessions found.\n";
+        exit 0;
+    }
+    
+    # Collect session info
+    my @sessions_info;
+    for my $json_file (@json_files) {
+        my $sid = $json_file;
+        $sid =~ s/\.json$//;
+        my $file_path = "$sessions_dir/$json_file";
+        my @stat = stat($file_path);
+        my $mtime = $stat[9] // 0;
+        my $size = $stat[7] // 0;
+        
+        # Read session data to get friendly name and message count
+        my $name = undef;
+        my $msg_count = 0;
+        eval {
+            open my $fh, '<', $file_path or die;
+            local $/;
+            my $json = <$fh>;
+            close $fh;
+            my $data = decode_json($json);
+            $name = $data->{session_name} if $data->{session_name};
+            $msg_count = scalar(@{$data->{history} || []});
+        };
+        
+        push @sessions_info, {
+            id => $sid,
+            name => $name,
+            mtime => $mtime,
+            size => $size,
+            msg_count => $msg_count,
+        };
+    }
+    
+    # Sort by modification time (most recent first)
+    @sessions_info = sort { $b->{mtime} <=> $a->{mtime} } @sessions_info;
+    
+    # Display
+    printf "%-4s %-50s %-20s %s\n", "#", "SESSION", "LAST ACTIVE", "MSGS";
+    printf "%-4s %-50s %-20s %s\n", "-" x 3, "-" x 48, "-" x 18, "-" x 4;
+    
+    for my $i (0 .. $#sessions_info) {
+        my $s = $sessions_info[$i];
+        my $display_name = $s->{name} || substr($s->{id}, 0, 36);
+        my $time_str = _format_relative_time_cli($s->{mtime});
+        printf "%3d) %-50s %-20s %4d\n", $i + 1, $display_name, $time_str, $s->{msg_count};
+    }
+    
+    print "\nResume a session:\n";
+    print "  clio --resume <number>       # by list number\n";
+    print "  clio --resume <name>         # by friendly name\n";
+    print "  clio --resume <uuid>         # by session ID\n";
+    
+    exit 0;
 }
 
 # Create or load session
@@ -245,14 +324,22 @@ if ($mode eq 'new') {
 } elsif ($mode eq 'resume') {
     my $eval_err;
     if ($session_id) {
-        eval {
-            $session = CLIO::Session::Manager->load($session_id, debug => $debug);
-        };
-        $eval_err = $@;
-        print STDERR "[TRACE][EVAL] Error during load by id: $eval_err\n" if $debug;
-        print STDERR "[TRACE] After load by id: session defined? ", (defined $session ? 'yes' : 'no'), "\n" if $debug;
-        if (!$session) {
-            print "[ERROR] Failed to load session $session_id\n";
+        # Resolve session identifier: can be UUID, friendly name, or list number
+        my $resolved_id = _resolve_session_id($session_id, $debug);
+        if ($resolved_id) {
+            $session_id = $resolved_id;
+            eval {
+                $session = CLIO::Session::Manager->load($session_id, debug => $debug);
+            };
+            $eval_err = $@;
+            print STDERR "[TRACE][EVAL] Error during load by id: $eval_err\n" if $debug;
+            print STDERR "[TRACE] After load by id: session defined? ", (defined $session ? 'yes' : 'no'), "\n" if $debug;
+            if (!$session) {
+                print "[ERROR] Failed to load session $session_id\n";
+            }
+        } else {
+            print "[ERROR] No session found matching: $session_id\n";
+            print "Use 'clio --sessions' to list available sessions.\n";
         }
     } else {
         # Resume most recent session if no ID provided
@@ -818,5 +905,124 @@ if ($ui && $ui->can('display_system_messages')) {
     }
 }
 print "[DEBUG] Session saved after interactive mode\n" if $debug;
+
+# Resolve session identifier: UUID, friendly name, or list number
+# Returns the actual session UUID, or undef if not found
+sub _resolve_session_id {
+    my ($identifier, $debug) = @_;
+    
+    my $sessions_dir = CLIO::Util::PathResolver::get_sessions_dir();
+    return undef unless -d $sessions_dir;
+    
+    opendir(my $dh, $sessions_dir) or return undef;
+    my @json_files = grep { /\.json$/ } readdir($dh);
+    closedir($dh);
+    
+    # Build session list sorted by mtime (for list number resolution)
+    my @sessions;
+    for my $json_file (@json_files) {
+        my $sid = $json_file;
+        $sid =~ s/\.json$//;
+        my $file_path = "$sessions_dir/$json_file";
+        my @stat = stat($file_path);
+        my $mtime = $stat[9] // 0;
+        
+        # Read session name from file
+        my $name = undef;
+        eval {
+            open my $fh, '<', $file_path or die;
+            local $/;
+            my $json = <$fh>;
+            close $fh;
+            my $data = decode_json($json);
+            $name = $data->{session_name} if $data->{session_name};
+        };
+        
+        push @sessions, { id => $sid, name => $name, mtime => $mtime };
+    }
+    
+    @sessions = sort { $b->{mtime} <=> $a->{mtime} } @sessions;
+    
+    # 1. Exact UUID match
+    for my $s (@sessions) {
+        return $s->{id} if $s->{id} eq $identifier;
+    }
+    
+    # 2. UUID prefix match
+    my @uuid_matches = grep { index($_->{id}, $identifier) == 0 } @sessions;
+    if (@uuid_matches == 1) {
+        print STDERR "[DEBUG] Resolved UUID prefix '$identifier' -> $uuid_matches[0]->{id}\n" if $debug;
+        return $uuid_matches[0]->{id};
+    }
+    
+    # 3. List number (from --sessions output)
+    if ($identifier =~ /^\d+$/) {
+        my $idx = $identifier - 1;
+        if ($idx >= 0 && $idx < @sessions) {
+            print STDERR "[DEBUG] Resolved list number $identifier -> $sessions[$idx]->{id}\n" if $debug;
+            return $sessions[$idx]->{id};
+        }
+    }
+    
+    # 4. Exact friendly name match (case-insensitive)
+    for my $s (@sessions) {
+        next unless $s->{name};
+        if (lc($s->{name}) eq lc($identifier)) {
+            print STDERR "[DEBUG] Resolved name '$identifier' -> $s->{id}\n" if $debug;
+            return $s->{id};
+        }
+    }
+    
+    # 5. Friendly name prefix match (case-insensitive)
+    my $lc_id = lc($identifier);
+    my @name_matches = grep { $_->{name} && index(lc($_->{name}), $lc_id) == 0 } @sessions;
+    if (@name_matches == 1) {
+        print STDERR "[DEBUG] Resolved name prefix '$identifier' -> $name_matches[0]->{id}\n" if $debug;
+        return $name_matches[0]->{id};
+    }
+    
+    # 6. Friendly name substring match (case-insensitive)
+    my @substr_matches = grep { $_->{name} && index(lc($_->{name}), $lc_id) >= 0 } @sessions;
+    if (@substr_matches == 1) {
+        print STDERR "[DEBUG] Resolved name substring '$identifier' -> $substr_matches[0]->{id}\n" if $debug;
+        return $substr_matches[0]->{id};
+    }
+    
+    # Multiple matches - report ambiguity
+    if (@uuid_matches > 1 || @name_matches > 1 || @substr_matches > 1) {
+        my @all_matches = @uuid_matches > 1 ? @uuid_matches : @name_matches > 1 ? @name_matches : @substr_matches;
+        print "[WARN] Ambiguous session identifier '$identifier'. Matches:\n";
+        for my $m (@all_matches) {
+            my $display = $m->{name} || $m->{id};
+            printf "  - %s (%s)\n", $display, substr($m->{id}, 0, 12);
+        }
+        return undef;
+    }
+    
+    return undef;
+}
+
+# Helper function for --sessions CLI display
+sub _format_relative_time_cli {
+    my ($timestamp) = @_;
+    return 'unknown' unless $timestamp;
+    my $now = time();
+    my $diff = $now - $timestamp;
+    if ($diff < 60) {
+        return "just now";
+    } elsif ($diff < 3600) {
+        my $mins = int($diff / 60);
+        return "$mins min ago";
+    } elsif ($diff < 86400) {
+        my $hours = int($diff / 3600);
+        return "$hours hr ago";
+    } elsif ($diff < 604800) {
+        my $days = int($diff / 86400);
+        return "$days day" . ($days > 1 ? "s" : "") . " ago";
+    } else {
+        my @t = localtime($timestamp);
+        return sprintf("%04d-%02d-%02d", $t[5]+1900, $t[4]+1, $t[3]);
+    }
+}
 
 exit 0;
