@@ -932,6 +932,14 @@ sub process_input {
                     $error_type = "rate limit";
                     # system_msg already set above
                 }
+                # Special handling for auth recovery (token refreshed silently)
+                elsif ($api_response->{error_type} && $api_response->{error_type} eq 'auth_recovered') {
+                    # Token was refreshed successfully - retry silently without alarming the user
+                    $error_type = "auth recovery";
+                    $system_msg = undef;  # Suppress system message - user doesn't need to know
+                    $retry_delay = 0;     # Instant retry since token is already refreshed
+                    log_info('WorkflowOrchestrator', "Auth token refreshed, retrying request silently");
+                }
                 # Special handling for message structure errors (auto-repair attempted but failed)
                 elsif ($api_response->{error_type} && $api_response->{error_type} eq 'message_structure_error') {
                     # Message structure was corrupted and couldn't be repaired
@@ -960,10 +968,10 @@ sub process_input {
                 }
                 
                 # Call system message callback if provided
-                if ($on_system_message) {
+                if ($system_msg && $on_system_message) {
                     eval { $on_system_message->($system_msg); };
                     log_debug('WorkflowOrchestrator', "UI callback error: $@");
-                } else {
+                } elsif ($system_msg) {
                     log_info('WorkflowOrchestrator', "Retryable $error_type detected, retrying in ${retry_delay}s on next iteration (attempt $retry_count/$max_retries)");
                 }
                 
