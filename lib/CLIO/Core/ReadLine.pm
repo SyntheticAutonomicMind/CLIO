@@ -353,27 +353,12 @@ sub handle_tab {
         $state->{active} = 1;
         $state->{index} = 0;
         
-        # For /edit commands, extract just the filename part for completion
-        my $completion_text = $current_input;
-        my $prefix = '';
-        
-        if ($current_input =~ m{^(/edit\s+)(.*)$}) {
-            $prefix = $1;
-            $completion_text = $2;
-            log_debug('ReadLine', "/edit detected, completing: '$completion_text'");
-        }
-        
-        # Get completion candidates
+        # Pass full line to completer - it handles all context parsing
         my @candidates = $self->{completer}->complete(
-            $completion_text,   # text being completed
+            $current_input,     # text being completed (full line)
             $current_input,     # full line
-            length($prefix)     # start position of text
+            0                   # start position
         );
-        
-        # Add prefix back to candidates
-        if ($prefix) {
-            @candidates = map { $prefix . $_ } @candidates;
-        }
         
         $state->{candidates} = \@candidates;
         
