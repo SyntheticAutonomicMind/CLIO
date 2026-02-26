@@ -114,6 +114,11 @@ Categorize the error to provide targeted guidance.
 sub _categorize_error {
     my ($self, $error, $tool_name) = @_;
     
+    # Edit/patch content mismatch errors (must check BEFORE generic file_not_found)
+    return 'edit_content_mismatch' if $error =~ /string not found in file|old_?string not found/i;
+    return 'edit_content_mismatch' if $error =~ /cannot find match position for chunk/i;
+    return 'edit_ambiguous_match' if $error =~ /old_?string found multiple times|multiple matches/i;
+    
     return 'missing_required' if $error =~ /missing required parameter/i;
     return 'invalid_operation' if $error =~ /unknown operation|unsupported.*operation/i;
     return 'invalid_json' if $error =~ /json|parse error/i;
@@ -135,6 +140,26 @@ sub _get_category_guidance {
     my ($self, $category, $tool_name, $error, $attempted, $tool_def) = @_;
     
     my %guidance = (
+        edit_content_mismatch => sub {
+            return "WHAT WENT WRONG: Your edit failed because the text you're trying to replace does not match the file's current content.\n" .
+                   "Your assumption about what the file contains is WRONG.\n\n" .
+                   "IMMEDIATE ACTION REQUIRED:\n" .
+                   "1. READ the file NOW to see its ACTUAL current content\n" .
+                   "2. FIND the real text you want to change\n" .
+                   "3. RETRY with the correct old_string that exactly matches the file\n\n" .
+                   "DO NOT retry the same edit without reading the file first.";
+        },
+        
+        edit_ambiguous_match => sub {
+            return "WHAT WENT WRONG: The text you're trying to replace appears MULTIPLE TIMES in the file.\n" .
+                   "The replacement would be ambiguous.\n\n" .
+                   "IMMEDIATE ACTION REQUIRED:\n" .
+                   "1. READ the file to see ALL occurrences of the text\n" .
+                   "2. Include MORE surrounding context in old_string to uniquely identify the target\n" .
+                   "3. RETRY with a longer, unique old_string that matches exactly ONE location\n\n" .
+                   "TIP: Include 2-3 surrounding lines in old_string to make the match unique.";
+        },
+        
         missing_required => sub {
             my @missing = $error =~ /parameter[s]?:\s*([a-z_]+)/gi;
             my $params_str = join(', ', @missing);

@@ -96,7 +96,7 @@ sub new {
             $api_key = $auth->get_copilot_token();
         };
         if ($@) {
-            log_warning('GitHubCopilotModelsAPI', "Failed to get GitHub token: $@");
+            log_debug('GitHubCopilotModelsAPI', "Failed to get GitHub token: $@");
         }
     }
     
@@ -175,7 +175,7 @@ sub fetch_models {
     
     # Check if we have an API key
     unless ($self->{api_key}) {
-        log_warning('GitHubCopilotModelsAPI', "No API key available, cannot fetch models");
+        log_debug('GitHubCopilotModelsAPI', "No API key available, cannot fetch models");
         return undef;
     }
     
@@ -330,6 +330,9 @@ sub get_model_capabilities {
         if ($model->{id} eq $model_id) {
             my $caps = {
                 family => $model->{capabilities}{family} || undef,
+                # Include supported_endpoints from the API response
+                # This is used to determine whether to use /chat/completions or /responses
+                supported_endpoints => $model->{supported_endpoints} || [],
             };
             
             if ($model->{capabilities} && $model->{capabilities}{limits}) {
@@ -343,7 +346,8 @@ sub get_model_capabilities {
                 $caps->{max_context_window_tokens} = $limits->{max_context_window_tokens} || 128000;
                 
                 log_debug('GitHubCopilotModelsAPI', "Capabilities for $model_id: " . "max_prompt=" . ($caps->{max_prompt_tokens} || 'N/A') . ", " .
-                    "max_output=" . ($caps->{max_output_tokens} || 'N/A') . "\n");
+                    "max_output=" . ($caps->{max_output_tokens} || 'N/A') . ", " .
+                    "endpoints=" . join(',', @{$caps->{supported_endpoints}}) . "\n");
             }
             
             return $caps;
@@ -351,6 +355,53 @@ sub get_model_capabilities {
     }
     
     return undef;
+}
+
+=head2 model_uses_responses_api
+
+Determine if a model should use the Responses API (/responses) instead of
+Chat Completions API (/chat/completions).
+
+The GitHub Copilot /models endpoint returns a supported_endpoints array for each model.
+Models like gpt-5.x-codex only support ["/responses"], while older models may have
+empty arrays (default to /chat/completions) or support both.
+
+Logic (matches vscode-copilot-chat reference implementation):
+- If supported_endpoints includes /responses AND does NOT include /chat/completions: use /responses
+- If supported_endpoints includes both: prefer /responses (newer API, better features)
+- Otherwise: use /chat/completions (default)
+
+Arguments:
+- $model_id: Model identifier
+
+Returns:
+- 1 if model should use Responses API
+- 0 if model should use Chat Completions API
+
+=cut
+
+sub model_uses_responses_api {
+    my ($self, $model_id) = @_;
+    
+    return 0 unless $model_id;
+    
+    my $caps = $self->get_model_capabilities($model_id);
+    return 0 unless $caps && $caps->{supported_endpoints};
+    
+    my @endpoints = @{$caps->{supported_endpoints}};
+    return 0 unless @endpoints;
+    
+    my $has_responses = grep { $_ eq '/responses' } @endpoints;
+    my $has_completions = grep { $_ eq '/chat/completions' } @endpoints;
+    
+    # If model supports /responses (regardless of whether it also supports /chat/completions)
+    # use the Responses API. This matches the vscode-copilot-chat behavior.
+    if ($has_responses) {
+        log_debug('GitHubCopilotModelsAPI', "Model $model_id uses Responses API (endpoints: " . join(', ', @endpoints) . ")");
+        return 1;
+    }
+    
+    return 0;
 }
 
 =head2 _load_cache

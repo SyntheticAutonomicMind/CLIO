@@ -928,6 +928,220 @@ sub _learn_from_api_response {
     return $new_ratio;
 }
 
+=head2 _model_uses_responses_api($model)
+
+Check if a model should use the OpenAI Responses API (/responses) instead of
+Chat Completions API (/chat/completions).
+
+Uses the supported_endpoints data from the GitHub Copilot /models API.
+Results are cached for efficiency.
+
+Returns 1 if model uses Responses API, 0 otherwise.
+
+=cut
+
+sub _model_uses_responses_api {
+    my ($self, $model) = @_;
+    return 0 unless $model;
+    
+    # Only applies to GitHub Copilot provider
+    my $provider = $self->{config} ? $self->{config}->get('provider') : '';
+    return 0 unless $provider && $provider eq 'github_copilot';
+    
+    # Cache the result per model to avoid repeated API lookups
+    $self->{_responses_api_cache} ||= {};
+    if (exists $self->{_responses_api_cache}{$model}) {
+        return $self->{_responses_api_cache}{$model};
+    }
+    
+    my $result = 0;
+    eval {
+        require CLIO::Core::GitHubCopilotModelsAPI;
+        # Cache the models API instance for efficiency
+        $self->{_copilot_models_api} ||= CLIO::Core::GitHubCopilotModelsAPI->new(
+            api_key => $self->{api_key},
+            debug => $self->{debug}
+        );
+        $result = $self->{_copilot_models_api}->model_uses_responses_api($model) ? 1 : 0;
+    };
+    if ($@) {
+        log_warning('APIManager', "Failed to check Responses API support for $model: $@");
+        $result = 0;
+    }
+    
+    $self->{_responses_api_cache}{$model} = $result;
+    log_debug('APIManager', "Model $model uses " . ($result ? "Responses" : "Chat Completions") . " API");
+    return $result;
+}
+
+=head2 _build_responses_api_payload($messages, $model, $endpoint_config, %opts)
+
+Build a payload for the OpenAI Responses API format.
+This is fundamentally different from the Chat Completions API:
+- Uses 'input' array instead of 'messages'
+- System messages become role 'developer'
+- Tool results use 'function_call_output' type
+- Assistant tool calls use 'function_call' type
+- Uses max_output_tokens instead of max_tokens
+- Includes reasoning, truncation, store, include fields
+
+=cut
+
+sub _build_responses_api_payload {
+    my ($self, $messages, $model, $endpoint_config, %opts) = @_;
+    
+    my $stream = $opts{stream} || 0;
+    
+    # Convert messages to Responses API input format
+    my @input = ();
+    my @pending_tool_calls = ();
+    
+    for my $msg (@$messages) {
+        my $role = $msg->{role} || 'user';
+        my $content = $msg->{content} || '';
+        
+        if ($role eq 'system') {
+            # System messages become developer role in Responses API
+            push @input, {
+                role => 'developer',
+                content => [{ type => 'input_text', text => $content }],
+            };
+        }
+        elsif ($role eq 'user') {
+            push @input, {
+                role => 'user',
+                content => [{ type => 'input_text', text => $content }],
+            };
+        }
+        elsif ($role eq 'assistant') {
+            # Flush any pending tool calls first
+            if (@pending_tool_calls) {
+                for my $tc (@pending_tool_calls) {
+                    push @input, {
+                        type => 'function_call',
+                        name => $tc->{function}{name},
+                        arguments => $tc->{function}{arguments} || '{}',
+                        call_id => $tc->{id},
+                    };
+                }
+                @pending_tool_calls = ();
+            }
+            
+            # If assistant message has tool_calls, queue them
+            if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
+                @pending_tool_calls = @{$msg->{tool_calls}};
+                
+                # Also add the text content if present
+                if (defined $content && length($content)) {
+                    push @input, {
+                        role => 'assistant',
+                        content => [{ type => 'output_text', text => $content, annotations => [] }],
+                        id => 'msg_placeholder',
+                        status => 'completed',
+                        type => 'message',
+                    };
+                }
+            }
+            else {
+                # Plain assistant text message
+                if (defined $content && length($content)) {
+                    push @input, {
+                        role => 'assistant',
+                        content => [{ type => 'output_text', text => $content, annotations => [] }],
+                        id => 'msg_placeholder',
+                        status => 'completed',
+                        type => 'message',
+                    };
+                }
+            }
+        }
+        elsif ($role eq 'tool') {
+            # Flush pending tool calls before tool result
+            if (@pending_tool_calls) {
+                for my $tc (@pending_tool_calls) {
+                    push @input, {
+                        type => 'function_call',
+                        name => $tc->{function}{name},
+                        arguments => $tc->{function}{arguments} || '{}',
+                        call_id => $tc->{id},
+                    };
+                }
+                @pending_tool_calls = ();
+            }
+            
+            # Tool results become function_call_output
+            push @input, {
+                type => 'function_call_output',
+                call_id => $msg->{tool_call_id} || '',
+                output => $content,
+            };
+        }
+    }
+    
+    # Flush any remaining pending tool calls
+    if (@pending_tool_calls) {
+        for my $tc (@pending_tool_calls) {
+            push @input, {
+                type => 'function_call',
+                name => $tc->{function}{name},
+                arguments => $tc->{function}{arguments} || '{}',
+                call_id => $tc->{id},
+            };
+        }
+    }
+    
+    # Build the Responses API payload
+    my $payload = {
+        model => $model,
+        input => \@input,
+        stream => $stream ? \1 : \0,
+        max_output_tokens => $opts{max_output_tokens} || 16384,
+        store => \0,
+        truncation => 'disabled',
+        include => ['reasoning.encrypted_content'],
+    };
+    
+    # Configure reasoning based on show_thinking setting
+    my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
+    my $reasoning_config = { effort => 'medium' };
+    if ($show_thinking) {
+        # Request reasoning summary text when thinking display is enabled
+        # This provides readable thinking content via response.reasoning_summary_text.delta events
+        $reasoning_config->{summary} = 'auto';
+    }
+    $payload->{reasoning} = $reasoning_config;
+    
+    # Add tools if provided - convert to Responses API format
+    if ($opts{tools} && ref($opts{tools}) eq 'ARRAY' && @{$opts{tools}}) {
+        my @resp_tools = ();
+        for my $tool (@{$opts{tools}}) {
+            if ($tool->{type} eq 'function') {
+                push @resp_tools, {
+                    type => 'function',
+                    name => $tool->{function}{name},
+                    description => $tool->{function}{description},
+                    strict => \0,
+                    parameters => $tool->{function}{parameters} || {},
+                };
+            }
+        }
+        $payload->{tools} = \@resp_tools if @resp_tools;
+        log_debug('APIManager', "Responses API: Adding " . scalar(@resp_tools) . " tools");
+    }
+    
+    # NOTE: The Responses API does NOT support copilot_thread_id or previous_response_id
+    # These are Chat Completions API specific fields. The Responses API uses its own
+    # mechanisms for session continuity and billing. Including them causes:
+    # "previous_response_id is not supported" error
+    
+    # Sanitize the payload
+    $payload = _sanitize_payload_recursive($payload);
+    
+    log_debug('APIManager', "Responses API payload: model=$model, input_items=" . scalar(@input) . ", stream=$stream");
+    
+    return $payload;
+}
+
 # Helper: Prepare endpoint configuration and model
 sub _prepare_endpoint_config {
     my ($self, %opts) = @_;
@@ -1192,15 +1406,18 @@ sub _build_request {
     # Construct final endpoint URL
     my $final_endpoint = $endpoint;
     
-    # GitHub Copilot: Use /chat/completions for all models
+    # GitHub Copilot: Route to correct API endpoint based on model capabilities
     if ($endpoint_config->{requires_copilot_headers}) {
-        my $path = '/chat/completions';
+        # Check if model uses Responses API (codex models, etc.)
+        my $use_responses = $self->{_current_request_uses_responses} || 0;
+        my $path = $use_responses ? '/responses' : '/chat/completions';
         $final_endpoint =~ s{/$}{};
         $final_endpoint .= $path;
         
         if ($self->{debug}) {
             my $stream_label = $is_streaming ? "streaming" : "non-streaming";
-            log_debug('APIManager', "GitHub Copilot $stream_label endpoint: $final_endpoint");
+            my $api_type = $use_responses ? "Responses API" : "Chat Completions";
+            log_debug('APIManager', "GitHub Copilot $stream_label $api_type endpoint: $final_endpoint");
         }
     } elsif ($endpoint_config->{path_suffix} && 
              $endpoint !~ m{\Q$endpoint_config->{path_suffix}\E$}) {
@@ -1345,11 +1562,22 @@ sub send_request {
     my $full_model_for_caps = $self->get_current_model();
     $messages = $self->validate_and_truncate_messages($messages, $full_model_for_caps, $opts{tools});
     
-    # Build request payload (non-streaming)
-    my $payload = $self->_build_payload($messages, $model, $endpoint_config, %opts, stream => 0);
+    # Check if model uses Responses API (codex models, etc.)
+    my $use_responses_api = $self->_model_uses_responses_api($model);
+    $self->{_current_request_uses_responses} = $use_responses_api;
+    
+    # Build request payload - use Responses API format when needed
+    my $payload;
+    if ($use_responses_api) {
+        log_info('APIManager', "Using Responses API for model: $model");
+        $payload = $self->_build_responses_api_payload($messages, $model, $endpoint_config, %opts, stream => 0);
+    } else {
+        $payload = $self->_build_payload($messages, $model, $endpoint_config, %opts, stream => 0);
+    }
     
     # PRE-FLIGHT VALIDATION: Final check for message structure integrity
-    my $preflight_errors = $self->_preflight_validate_messages($payload->{messages});
+    # (Only applies to Chat Completions API which uses 'messages')
+    my $preflight_errors = $use_responses_api ? undef : $self->_preflight_validate_messages($payload->{messages});
     if ($preflight_errors && @$preflight_errors) {
         my $error_summary = join('; ', @$preflight_errors);
         log_debug('APIManager', "Pre-flight validation failed: $error_summary");
@@ -1573,8 +1801,60 @@ sub send_request {
     
     # Try to extract content based on different API response formats
     if (ref $data eq 'HASH') {
-        # OpenAI/GitHub Copilot format
-        if ($data->{choices} && @{$data->{choices}} && $data->{choices}[0]{message}) {
+        # Responses API format (codex models, etc.)
+        # Response has 'output' array with items of type 'message', 'function_call', 'reasoning'
+        if ($use_responses_api && $data->{output} && ref($data->{output}) eq 'ARRAY') {
+            log_debug('APIManager', "Parsing Responses API format (output items: " . scalar(@{$data->{output}}) . ")");
+            
+            my @text_parts = ();
+            my @resp_tool_calls = ();
+            
+            for my $item (@{$data->{output}}) {
+                my $type = $item->{type} || '';
+                
+                if ($type eq 'message' && $item->{content} && ref($item->{content}) eq 'ARRAY') {
+                    # Extract text content from message output
+                    for my $part (@{$item->{content}}) {
+                        if (($part->{type} || '') eq 'output_text' && defined $part->{text}) {
+                            push @text_parts, $part->{text};
+                        }
+                    }
+                }
+                elsif ($type eq 'function_call') {
+                    # Convert Responses API function_call to Chat Completions tool_call format
+                    push @resp_tool_calls, {
+                        id => $item->{call_id} || '',
+                        type => 'function',
+                        function => {
+                            name => $item->{name} || '',
+                            arguments => $item->{arguments} || '{}',
+                        },
+                    };
+                }
+                # 'reasoning' type is ignored for content extraction
+            }
+            
+            $content = join('', @text_parts) if @text_parts;
+            $tool_calls = \@resp_tool_calls if @resp_tool_calls;
+            
+            # Store response ID for billing continuity
+            if ($data->{id} && $self->{session}) {
+                $self->{session}{lastGitHubCopilotResponseId} = $data->{id};
+                if (ref($self->{session}) && blessed($self->{session}) && $self->{session}->can('save')) {
+                    $self->{session}->save();
+                }
+            }
+            
+            # Extract usage - Responses API uses input_tokens/output_tokens
+            if ($data->{usage}) {
+                $tokens_in = $data->{usage}{input_tokens} || 0;
+                $tokens_out = $data->{usage}{output_tokens} || 0;
+            }
+            
+            log_debug('APIManager', "Responses API: content=" . length($content) . " chars, tool_calls=" . scalar(@{$tool_calls || []}));
+        }
+        # OpenAI/GitHub Copilot format (Chat Completions)
+        elsif ($data->{choices} && @{$data->{choices}} && $data->{choices}[0]{message}) {
             my $message = $data->{choices}[0]{message};
             $content = $message->{content};
             
@@ -1624,8 +1904,9 @@ sub send_request {
         
         # Extract token usage for performance tracking
         if ($data->{usage}) {
-            $tokens_in = $data->{usage}{prompt_tokens} || 0;
-            $tokens_out = $data->{usage}{completion_tokens} || 0;
+            # Responses API uses input_tokens/output_tokens, Chat Completions uses prompt_tokens/completion_tokens
+            $tokens_in ||= $data->{usage}{prompt_tokens} || $data->{usage}{input_tokens} || 0;
+            $tokens_out ||= $data->{usage}{completion_tokens} || $data->{usage}{output_tokens} || 0;
             
             # Strategy #5: Learn from actual API response to improve estimation
             $self->_learn_from_api_response($data->{usage}, $messages);
@@ -1830,8 +2111,18 @@ sub send_request_streaming {
     my $full_model_for_caps = $self->get_current_model();
     $messages = $self->validate_and_truncate_messages($messages, $full_model_for_caps, $opts{tools});
     
-    # Build request payload (streaming enabled)
-    my $payload = $self->_build_payload($messages, $model, $endpoint_config, %opts, stream => 1);
+    # Check if model uses Responses API (codex models, etc.)
+    my $use_responses_api = $self->_model_uses_responses_api($model);
+    $self->{_current_request_uses_responses} = $use_responses_api;
+    
+    # Build request payload - use Responses API format when needed
+    my $payload;
+    if ($use_responses_api) {
+        log_info('APIManager', "Streaming: Using Responses API for model: $model");
+        $payload = $self->_build_responses_api_payload($messages, $model, $endpoint_config, %opts, stream => 1);
+    } else {
+        $payload = $self->_build_payload($messages, $model, $endpoint_config, %opts, stream => 1);
+    }
     
     # DEBUG: Print EXACT request payload being sent to API
     if ($self->{debug}) {
@@ -1839,13 +2130,18 @@ sub send_request_streaming {
         log_debug('APIManager', "===== REQUEST PAYLOAD =====");
         log_debug('APIManager', "Endpoint: $endpoint");
         log_debug('APIManager', "Model: $payload->{model}");
-        log_debug('APIManager', "Messages count: " . scalar(@{$payload->{messages}}));
+        log_debug('APIManager', "API: " . ($use_responses_api ? "Responses" : "Chat Completions"));
+        if ($use_responses_api) {
+            log_debug('APIManager', "Input items: " . scalar(@{$payload->{input} || []}));
+        } else {
+            log_debug('APIManager', "Messages count: " . scalar(@{$payload->{messages} || []}));
+        }
         if ($payload->{tools}) {
             log_debug('APIManager', "Tools array (" . scalar(@{$payload->{tools}}) . " tools):");
             for my $i (0 .. $#{$payload->{tools}}) {
                 my $tool = $payload->{tools}[$i];
-                log_debug('APIManager', "Tool $i: $tool->{function}->{name}");
-                log_debug('APIManager', Data::Dumper->Dump([$tool], ["tool_$i"]));
+                my $tool_name = $tool->{function} ? $tool->{function}{name} : ($tool->{name} || '?');
+                log_debug('APIManager', "Tool $i: $tool_name");
             }
         } else {
             log_debug('APIManager', "Tools: NONE");
@@ -1853,15 +2149,17 @@ sub send_request_streaming {
         log_debug('APIManager', "===== END REQUEST PAYLOAD =====");
     }
     
-    # Clean up tool_calls before encoding
+    # Clean up tool_calls before encoding (only for Chat Completions format)
     # Remove internal metadata fields (_name_complete, etc) that were added during streaming
     # GitHub Copilot API rejects requests with unknown fields in tool_calls
+    if (!$use_responses_api && $payload->{messages}) {
     for my $msg (@{$payload->{messages}}) {
         if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
             for my $tc (@{$msg->{tool_calls}}) {
                 delete $tc->{_name_complete} if exists $tc->{_name_complete};
             }
         }
+    }
     }
     
     # PRE-FLIGHT VALIDATION: Final check for message structure integrity
@@ -1999,8 +2297,16 @@ sub send_request_streaming {
                 # Skip empty lines
                 next unless $sse_chunk =~ /\S/;
                 
-                # Parse SSE format: "data: {...}\n"
+                # Parse SSE format
+                # Chat Completions: "data: {...}\n"
+                # Responses API: "event: <type>\ndata: {...}\n"
+                my $event_type = '';
                 for my $line (split /\n/, $sse_chunk) {
+                    # Capture event type (Responses API uses event: lines)
+                    if ($line =~ /^event:\s*(.+)$/) {
+                        $event_type = $1;
+                        next;
+                    }
                     next unless $line =~ /^data:\s*(.+)$/;
                     my $data_json = $1;
                     
@@ -2012,6 +2318,12 @@ sub send_request_streaming {
                     if ($@) {
                         log_warning('APIManager', "Failed to parse SSE chunk: $@");
                         next;
+                    }
+                    
+                    # Infer event type from data if not set by event: line
+                    # Responses API always has a 'type' field in the data
+                    if (!$event_type && $data->{type}) {
+                        $event_type = $data->{type};
                     }
                     
                     # DEBUG: Log what fields are in each chunk
@@ -2059,8 +2371,127 @@ sub send_request_streaming {
                     my $content_delta = undef;
                     my $tool_calls_delta = undef;
                     
-                    # OpenAI/GitHub Copilot streaming format
-                    if ($data->{choices} && @{$data->{choices}}) {
+                    # ==========================================
+                    # Responses API streaming events (codex models, etc.)
+                    # Event types: response.output_text.delta, response.function_call_arguments.delta,
+                    #              response.output_item.added, response.output_item.done, response.completed
+                    # ==========================================
+                    if ($use_responses_api && $event_type) {
+                        if ($event_type eq 'response.output_text.delta') {
+                            # Text content delta
+                            $content_delta = $data->{delta} if defined $data->{delta};
+                            
+                            # End reasoning if it was active
+                            if ($reasoning_was_active && $on_thinking) {
+                                $on_thinking->(undef, 'end');
+                                $reasoning_was_active = 0;
+                            }
+                        }
+                        elsif ($event_type eq 'response.output_item.added') {
+                            my $item = $data->{item} || {};
+                            my $item_type = $item->{type} || '';
+                            
+                            if ($item_type eq 'function_call') {
+                                # Tool call starting - initialize accumulator
+                                my $output_index = $data->{output_index} // 0;
+                                $tool_calls_accumulator->{$output_index} = {
+                                    id => $item->{call_id} || '',
+                                    type => 'function',
+                                    function => {
+                                        name => $item->{name} || '',
+                                        arguments => '',
+                                    },
+                                    _name_complete => 0,
+                                };
+                                
+                                # Signal tool name to callback
+                                if ($on_tool_call && $item->{name}) {
+                                    $tool_calls_accumulator->{$output_index}{_name_complete} = 1;
+                                    $on_tool_call->($item->{name});
+                                }
+                                
+                                log_debug('APIManager', "Responses API: function_call started: " . ($item->{name} || '?'));
+                            }
+                            elsif ($item_type eq 'reasoning') {
+                                # Reasoning started - but don't open THINKING box yet
+                                # Wait until actual reasoning summary text arrives
+                                # (handled by response.reasoning_summary_text.delta)
+                                $reasoning_was_active = 1;
+                                log_debug('APIManager', "Responses API: reasoning started (waiting for summary text)");
+                            }
+                        }
+                        elsif ($event_type eq 'response.function_call_arguments.delta') {
+                            # Accumulate function arguments
+                            my $output_index = $data->{output_index} // 0;
+                            if ($tool_calls_accumulator->{$output_index}) {
+                                $tool_calls_accumulator->{$output_index}{function}{arguments} .= ($data->{delta} || '');
+                                log_debug('APIManager', "Responses API: function_call args delta: " . length($data->{delta} || '') . " chars");
+                            }
+                        }
+                        elsif ($event_type eq 'response.output_item.done') {
+                            my $item = $data->{item} || {};
+                            my $item_type = $item->{type} || '';
+                            
+                            if ($item_type eq 'function_call') {
+                                # Tool call complete - finalize accumulator entry
+                                my $output_index = $data->{output_index} // 0;
+                                if ($tool_calls_accumulator->{$output_index}) {
+                                    # Use final values from the item
+                                    $tool_calls_accumulator->{$output_index}{id} = $item->{call_id} || $tool_calls_accumulator->{$output_index}{id};
+                                    $tool_calls_accumulator->{$output_index}{function}{name} = $item->{name} || $tool_calls_accumulator->{$output_index}{function}{name};
+                                    $tool_calls_accumulator->{$output_index}{function}{arguments} = $item->{arguments} || $tool_calls_accumulator->{$output_index}{function}{arguments};
+                                }
+                                log_debug('APIManager', "Responses API: function_call completed: " . ($item->{name} || '?'));
+                            }
+                            elsif ($item_type eq 'reasoning') {
+                                # Reasoning done - only signal end if thinking was displayed
+                                if ($on_thinking && $reasoning_was_active) {
+                                    $on_thinking->(undef, 'end');
+                                }
+                                $reasoning_was_active = 0;
+                            }
+                        }
+                        elsif ($event_type eq 'response.reasoning_summary_text.delta') {
+                            # Reasoning summary text - show as thinking
+                            if ($on_thinking && defined $data->{delta}) {
+                                $reasoning_was_active = 1;
+                                $on_thinking->($data->{delta});
+                            }
+                        }
+                        elsif ($event_type eq 'response.completed') {
+                            # Response complete - extract usage and store response ID
+                            my $resp_data = $data->{response} || {};
+                            
+                            if ($resp_data->{id} && $self->{session}) {
+                                $self->{session}{lastGitHubCopilotResponseId} = $resp_data->{id};
+                                if (ref($self->{session}) && blessed($self->{session}) && $self->{session}->can('save')) {
+                                    $self->{session}->save();
+                                    log_info('APIManager', "Responses API: Stored response_id for billing continuity");
+                                }
+                            }
+                            
+                            # Extract usage from completed response
+                            if ($resp_data->{usage}) {
+                                log_debug('APIManager', "Responses API usage: " .
+                                    "input=" . ($resp_data->{usage}{input_tokens} || 0) . ", " .
+                                    "output=" . ($resp_data->{usage}{output_tokens} || 0));
+                            }
+                            
+                            log_debug('APIManager', "Responses API: stream completed, status=" . ($resp_data->{status} || '?'));
+                        }
+                        elsif ($event_type eq 'error') {
+                            # Error event from Responses API
+                            my $error_msg = $data->{message} || 'Unknown error';
+                            my $error_code = $data->{code} || 'unknown';
+                            log_warning('APIManager', "Responses API error: [$error_code] $error_msg");
+                        }
+                        # else: response.created, response.in_progress, response.content_part.added,
+                        #       response.content_part.done, response.output_text.done - skip silently
+                    }
+                    # ==========================================
+                    # OpenAI/GitHub Copilot Chat Completions streaming format
+                    # ==========================================
+                    elsif ($data->{choices} && @{$data->{choices}}) {
                         my $choice = $data->{choices}[0];
                         my $delta = $choice->{delta};
                         
