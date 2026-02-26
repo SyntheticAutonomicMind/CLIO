@@ -155,20 +155,24 @@ sub edit_multiline {
     
     log_debug('Editor', "Multi-line editing complete");
     
-    # Check if content is empty or only comments
-    my $has_content = 0;
+    # Strip comment lines (starting with #) and check if real content remains
+    my @content_lines;
     for my $line (split /\n/, $content) {
-        next if $line =~ /^\s*#/;  # Skip comments
-        next if $line =~ /^\s*$/;   # Skip empty lines
-        $has_content = 1;
-        last;
+        next if $line =~ /^\s*#/;  # Strip comment lines
+        push @content_lines, $line;
     }
     
-    unless ($has_content) {
+    # Remove leading/trailing blank lines
+    shift @content_lines while @content_lines && $content_lines[0] =~ /^\s*$/;
+    pop @content_lines while @content_lines && $content_lines[-1] =~ /^\s*$/;
+    
+    unless (@content_lines) {
         return { success => 0, error => "No content entered" };
     }
     
-    return { success => 1, content => $content };
+    my $clean_content = join("\n", @content_lines);
+    
+    return { success => 1, content => $clean_content };
 }
 
 =head2 check_editor_available
