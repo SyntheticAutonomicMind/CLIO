@@ -63,7 +63,7 @@ sub new {
 
             # System
             '/exec', '/shell', '/sh',
-            '/multi-line', '/multiline', '/ml',
+            '/multi-line', '/multiline', '/multi', '/ml',
             '/performance', '/perf',
 
             # Tools & features

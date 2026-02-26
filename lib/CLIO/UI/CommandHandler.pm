@@ -300,7 +300,7 @@ sub handle_command {
         $chat->display_system_message("Note: Use '/file edit <path>' (new syntax)");
         $self->{file_cmd}->handle_edit_command(join(' ', @args));
     }
-    elsif ($cmd eq 'multi-line' || $cmd eq 'multiline' || $cmd eq 'ml') {
+    elsif ($cmd eq 'multi-line' || $cmd eq 'multiline' || $cmd eq 'multi' || $cmd eq 'ml') {
         # Use extracted System command module
         my $content = $self->{system_cmd}->handle_multiline_command();
         return (1, $content) if $content;  # Return content as AI prompt
