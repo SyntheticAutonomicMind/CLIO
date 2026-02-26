@@ -289,8 +289,15 @@ sub exchange_for_copilot_token {
             return undef;
         }
         
-        # Other errors are real failures
-        log_error('GitHubAuth', "Copilot token exchange failed: HTTP $status - $error");
+        # Transient errors (timeouts, server errors) - return undef so callers can fall back gracefully
+        # HTTP 599 = curl timeout, 502/503 = server unavailable, 500 = server error
+        if ($status >= 500 || $status == 0) {
+            log_debug('GitHubAuth', "Copilot token exchange transient failure: HTTP $status - $error");
+            return undef;
+        }
+        
+        # Other errors (4xx except 404) are real failures worth reporting
+        log_warning('GitHubAuth', "Copilot token exchange failed: HTTP $status - $error");
         die "Copilot token exchange failed: HTTP $status - $error";
     }
     

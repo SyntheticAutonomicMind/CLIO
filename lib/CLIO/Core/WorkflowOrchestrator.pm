@@ -446,6 +446,8 @@ sub process_input {
     my $start_time = time();
     my $retry_count = 0;  # Track retries per iteration (prevents infinite loops)
     my $max_retries = 3;  # Maximum retries for API errors (malformed JSON, etc.)
+    my $premature_stop_retries = 0;  # Track retries for premature workflow stops
+    my $max_premature_stop_retries = 2;  # Max auto-retries for premature stops
     my $max_server_retries = 20;  # Higher limit for server/network errors (502, 503, 599)
     
     # Session-level error budget: Limit total errors across all iterations
@@ -1739,7 +1741,63 @@ sub process_input {
             next;
         }
         
-        # No tool calls - AI has final answer
+        # No tool calls - check for premature workflow stop
+        # 
+        # PROBLEM: Upstream APIs sometimes return finish_reason=stop with empty or
+        # minimal content when the model is mid-workflow (actively using tools).
+        # This causes the workflow loop to exit prematurely, leaving work incomplete.
+        # The user then has to spend another premium request to say "continue".
+        #
+        # DETECTION: If previous iterations executed tool calls (workflow was active)
+        # and the current response has no tool calls AND empty/minimal content,
+        # this is likely a premature stop - not a genuine final answer.
+        #
+        # RECOVERY: Inject a continuation nudge and retry, up to a limit.
+        if (@tool_calls_made > 0 && $premature_stop_retries < $max_premature_stop_retries) {
+            my $content = $api_response->{content} // '';
+            my $content_length = length($content);
+            
+            # Heuristic: A genuine final answer after tool use typically has substance.
+            # An empty or very short response after active tool calling is suspicious.
+            # Also detect responses that end mid-sentence (no terminal punctuation).
+            my $looks_premature = 0;
+            
+            if ($content_length == 0) {
+                # Completely empty response after tool calls - definitely premature
+                $looks_premature = 1;
+                log_info('WorkflowOrchestrator', "Premature stop detected: empty response after " . scalar(@tool_calls_made) . " tool calls");
+            }
+            
+            if ($looks_premature) {
+                $premature_stop_retries++;
+                log_warning('WorkflowOrchestrator', "Premature workflow stop detected (retry $premature_stop_retries/$max_premature_stop_retries). Nudging model to continue.");
+                
+                # Save any partial content as assistant message
+                if ($content_length > 0) {
+                    push @messages, {
+                        role => 'assistant',
+                        content => $content,
+                    };
+                }
+                
+                # Inject a system-level continuation nudge
+                push @messages, {
+                    role => 'user',
+                    content => "[SYSTEM: Your previous response ended without completing your work. " .
+                               "You were actively using tools and appear to have stopped mid-workflow. " .
+                               "Please continue where you left off - review your recent tool results and proceed with your plan.]"
+                };
+                
+                # Don't count this as a full iteration
+                $iteration--;
+                next;
+            }
+        }
+        
+        # Reset premature stop counter on genuine completion
+        $premature_stop_retries = 0;
+        
+        # AI has final answer
         my $elapsed_time = time() - $start_time;
         
         log_debug('WorkflowOrchestrator', "Workflow complete after $iteration iterations (${elapsed_time}s)");
