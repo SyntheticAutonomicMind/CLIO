@@ -690,7 +690,7 @@ sub force_refresh_copilot_token {
     
     if ($@ || !$new_copilot) {
         my $error = $@ || 'Exchange returned undef';
-        log_warning('GitHubAuth', "Force-refresh failed: $error");
+        log_debug('GitHubAuth', "Force-refresh failed: $error (caller will try fallback)");
         return undef;
     }
     
