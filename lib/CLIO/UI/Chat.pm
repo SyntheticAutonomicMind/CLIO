@@ -627,10 +627,13 @@ sub run {
                         return;
                     }
                     elsif ($signal eq 'end') {
+                        if ($thinking_active) {
+                            # Only close the thinking box if it was actually opened
+                            # Blank line to separate thinking from response (matches tool output pattern)
+                            print "\n\n";
+                            STDOUT->flush() if STDOUT->can('flush');
+                        }
                         $thinking_active = 0;
-                        # Blank line to separate thinking from response (matches tool output pattern)
-                        print "\n\n";
-                        STDOUT->flush() if STDOUT->can('flush');
                         # Reset first_chunk_received so CLIO: prefix prints for actual response
                         $first_chunk_received = 0;
                         return;
