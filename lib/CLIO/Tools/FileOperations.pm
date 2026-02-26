@@ -1590,7 +1590,10 @@ sub replace_string {
         $count++ while $content =~ /\Q$old_string\E/g;
         
         if ($count == 0) {
-            $result = $self->error_result("String not found in file");
+            $result = $self->error_result(
+                "String not found in file. The old_string you provided does not match " .
+                "any text in '$path'. Read the file to see its actual content before retrying."
+            );
             return;
         }
         
