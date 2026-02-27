@@ -9,6 +9,7 @@ url_cache/
 .clio/logs/
 .clio/sessions/
 .clio/memory/
+.clio/vault/
 .clio/snapshots/
 .clio/*json
 

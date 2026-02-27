@@ -843,15 +843,38 @@ Protocols are invoked automatically when the AI determines they're needed, or ca
 
 ## 17. Undo System
 
-CLIO takes snapshots of your working directory before the AI makes changes. If something goes wrong, you can revert:
+CLIO automatically tracks every file change made by the AI agent, giving you instant undo capability at any time.
+
+### How It Works
+
+Before the AI modifies any file through its tools (file operations, apply_patch), CLIO silently backs up the original content. These backups are targeted - only the specific files being changed are captured, making undo fast and lightweight regardless of project size.
+
+### Commands
 
 ```
-/undo              # Revert all changes from the last AI turn
-/undo list         # Show available snapshots
-/undo diff         # Preview what would be reverted
+/undo              # Revert all file changes from the last AI turn
+/undo list         # Show recent turns with file change counts
+/undo diff         # Preview what would be reverted (unified diff)
 ```
 
-The undo system uses git stash under the hood, so it works with your existing version control.
+### What's Covered
+
+The undo system tracks changes made through CLIO's file tools:
+- **File writes** - `write_file`, `create_file`, `append_file`
+- **Text edits** - `replace_string`, `multi_replace_string`, `insert_at_line`
+- **File management** - `delete_file`, `rename_file`
+- **Patches** - `apply_patch` (create, update, delete operations)
+
+### What's Not Covered
+
+Changes made by **shell commands** (`terminal_operations`) are not tracked. If the AI runs a shell command that modifies files (e.g., `sed`, `mv`, `rm`), those changes cannot be undone with `/undo`. Use version control (`git`) for those cases.
+
+### Key Behaviors
+
+- **Per-turn granularity** - Each AI response is one "turn". `/undo` reverts everything from the last turn.
+- **Multi-undo** - You can undo multiple turns in sequence (up to 20 recent turns).
+- **Safe for repeated edits** - If the AI modifies the same file multiple times in one turn, undo restores the original pre-turn state, not an intermediate version.
+- **Always available** - Unlike the previous git-based system, undo works from any directory (home, project, anywhere) with no dependencies.
 
 ---
 
@@ -906,7 +929,7 @@ CLIO's power comes from how these components integrate. Here's what happens duri
 - **Compression** preserves a summary of trimmed messages
 - **Task recovery** injects current todo state if trimming is aggressive
 - **Memory** stores important discoveries for future sessions
-- **Snapshots** protect your files with undo capability
+- **File backups** protect your files with automatic undo capability
 
 ### Across Sessions
 
