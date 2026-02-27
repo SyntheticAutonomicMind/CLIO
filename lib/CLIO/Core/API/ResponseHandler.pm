@@ -541,7 +541,17 @@ sub process_quota_headers {
 
     if (defined $delta && $delta > 0) {
         if (exists $state->{billing}{total_premium_requests}) {
-            $state->{billing}{total_premium_requests} += $delta;
+            # Check if we need to reconcile the initial upfront charge
+            if (delete $state->{billing}{_initial_premium_charged}) {
+                # First non-zero delta: the upfront charge already covers this,
+                # so skip this delta to avoid double-counting.
+                # After this, all future deltas are tracked normally.
+                log_info('ResponseHandler', "Reconciled initial premium charge with first quota delta ($delta)");
+            } else {
+                # Normal operation: increment by actual charge from quota headers
+                $state->{billing}{total_premium_requests} += $delta;
+                log_info('ResponseHandler', "+$delta premium request(s) charged from quota headers");
+            }
         }
     }
 
