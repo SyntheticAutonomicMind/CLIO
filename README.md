@@ -253,6 +253,24 @@ CLIO is built around these principles:
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+## Part of the Ecosystem
+
+CLIO is part of [Synthetic Autonomic Mind](https://github.com/SyntheticAutonomicMind) - a family of open source AI tools:
+
+- **[SAM](https://github.com/SyntheticAutonomicMind/SAM)** - Native macOS AI assistant with voice control, document analysis, and image generation
+- **[ALICE](https://github.com/SyntheticAutonomicMind/ALICE)** - Local Stable Diffusion server with web interface and OpenAI-compatible API
+- **[SAM-Web](https://github.com/SyntheticAutonomicMind/SAM-web)** - Access SAM from iPad, iPhone, or any browser
+
+CLIO can use SAM as an AI provider. All three tools share the same commitment to privacy and local-first operation.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## Spread the Word
+
+CLIO is a small open source project with no marketing budget. If it's been useful to you, the best way to help is to tell someone about it - a blog post, a tweet, a recommendation to a colleague, or a star on GitHub. Word of mouth is how projects like this grow.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 ## Contributing
 
 Contributions welcome! See [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md) for guidelines.
@@ -275,6 +293,10 @@ git push origin your-feature-branch
 
 GPL-3.0 - See [LICENSE](LICENSE) for details.
 
+**Created by:** Andrew Wyatt (Fewtarius)
+**Website:** [syntheticautonomicmind.org](https://www.syntheticautonomicmind.org)
+**Repository:** [github.com/SyntheticAutonomicMind/CLIO](https://github.com/SyntheticAutonomicMind/CLIO)
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Support
@@ -282,8 +304,3 @@ GPL-3.0 - See [LICENSE](LICENSE) for details.
 - **Discussions**: [Join the conversation](https://github.com/orgs/SyntheticAutonomicMind/discussions)
 - **GitHub Issues**: [Report bugs or request features](https://github.com/SyntheticAutonomicMind/CLIO/issues)
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-## Spread the Word
-
-CLIO is a small open-source project with no marketing budget. If it's been useful to you, the best way to help is to tell someone about it - a blog post, a tweet, a recommendation to a colleague, or a ⭐ on GitHub. Word of mouth is how projects like this grow.
