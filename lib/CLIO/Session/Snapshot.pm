@@ -10,6 +10,17 @@ use File::Path qw(make_path);
 use CLIO::Core::Logger qw(should_log log_debug);
 use Cwd qw(getcwd);
 
+=head1 CONSTANTS
+
+=cut
+
+# Maximum seconds for any single git operation (prevents hanging on huge work trees)
+use constant GIT_TIMEOUT => 10;
+
+# Maximum number of files we'll allow in a work tree for snapshots
+# Above this threshold, git add -A becomes too slow
+use constant MAX_SAFE_FILE_COUNT => 50000;
+
 =head1 NAME
 
 CLIO::Session::Snapshot - Git-based file change snapshots and revert
@@ -54,6 +65,9 @@ sub new {
     
     my $work_tree = $args{work_tree} || getcwd();
     
+    # Safety check: refuse to operate on dangerous directories
+    my $safe = _is_safe_work_tree($work_tree);
+    
     # Store snapshot git directory inside .clio/snapshots/
     # This is project-local (not in ~/.clio) so it tracks the right files
     my $git_dir = File::Spec->catdir($work_tree, '.clio', 'snapshots');
@@ -63,9 +77,15 @@ sub new {
         git_dir   => $git_dir,
         debug     => $args{debug} || 0,
         initialized => 0,
+        safe      => $safe,
     };
     
     bless $self, $class;
+    
+    if (!$safe) {
+        log_debug('Snapshot', "Snapshot disabled: work tree '$work_tree' is too broad (home dir, root, etc.)");
+    }
+    
     return $self;
 }
 
@@ -148,7 +168,22 @@ sub _git {
     
     log_debug('Snapshot', "Running: $cmd") if should_log('DEBUG');
     
-    my $output = `$cmd 2>/dev/null`;
+    # Use timeout to prevent hanging on large work trees
+    my $timeout = GIT_TIMEOUT;
+    my $output;
+    eval {
+        local $SIG{ALRM} = sub { die "git_timeout\n" };
+        alarm($timeout);
+        $output = `$cmd 2>/dev/null`;
+        alarm(0);
+    };
+    alarm(0);  # Ensure alarm is always cleared
+    
+    if ($@ && $@ =~ /git_timeout/) {
+        log_debug('Snapshot', "Git command timed out after ${timeout}s: " . join(' ', @args));
+        return undef;
+    }
+    
     my $exit_code = $? >> 8;
     
     if ($exit_code != 0) {
@@ -178,6 +213,9 @@ Returns: Tree hash string on success, undef on failure.
 
 sub take {
     my ($self) = @_;
+    
+    # Safety: refuse to snapshot unsafe work trees
+    return undef unless $self->{safe};
     
     return undef unless $self->_ensure_init();
     
@@ -213,6 +251,7 @@ sub changed_files {
     my ($self, $snapshot_hash) = @_;
     
     return { hash => $snapshot_hash, files => [] } unless $snapshot_hash;
+    return { hash => $snapshot_hash, files => [] } unless $self->{safe};
     return { hash => $snapshot_hash, files => [] } unless $self->_ensure_init();
     
     # Stage current state to compare
@@ -250,6 +289,7 @@ sub diff {
     my ($self, $snapshot_hash) = @_;
     
     return '' unless $snapshot_hash;
+    return '' unless $self->{safe};
     return '' unless $self->_ensure_init();
     
     # Stage current state
@@ -280,6 +320,7 @@ sub revert {
     my ($self, $snapshot_hash) = @_;
     
     return 0 unless $snapshot_hash;
+    return 0 unless $self->{safe};
     return 0 unless $self->_ensure_init();
     
     log_debug('Snapshot', "Reverting all files to snapshot: $snapshot_hash") if should_log('DEBUG');
@@ -339,6 +380,7 @@ sub revert_files {
     my ($self, $snapshot_hash, $files) = @_;
     
     return 0 unless $snapshot_hash && $files && @$files;
+    return 0 unless $self->{safe};
     return 0 unless $self->_ensure_init();
     
     my $count = 0;
@@ -404,9 +446,66 @@ Returns: 1 if available, 0 if not.
 sub is_available {
     my ($self) = @_;
     
+    # Not available if work tree is unsafe
+    return 0 unless $self->{safe};
+    
     # Check if git is available
     my $version = `git --version 2>/dev/null`;
     return ($? == 0 && defined $version && $version =~ /git version/) ? 1 : 0;
+}
+
+
+=head2 _is_safe_work_tree($path)
+
+Check if a directory is safe to use as a snapshot work tree.
+Rejects home directories, filesystem root, and other overly broad paths
+where running `git add -A` would index too many files and hang.
+
+Arguments:
+- $path: Absolute path to check
+
+Returns: 1 if safe, 0 if dangerous
+
+=cut
+
+sub _is_safe_work_tree {
+    my ($path) = @_;
+    
+    # Normalize the path (resolve . and ..)
+    $path = File::Spec->rel2abs($path);
+    # Remove trailing slash for consistent comparison
+    $path =~ s{/+$}{} unless $path eq '/';
+    
+    # Reject filesystem root
+    if ($path eq '/' || $path eq '') {
+        return 0;
+    }
+    
+    # Reject home directory (exact match)
+    my $home = $ENV{HOME} || $ENV{USERPROFILE} || '';
+    $home =~ s{/+$}{} if $home;
+    if ($home && $path eq $home) {
+        return 0;
+    }
+    
+    # Reject common system directories
+    my @dangerous = qw(/tmp /var /etc /usr /opt /System /Library /Windows);
+    for my $dir (@dangerous) {
+        if ($path eq $dir) {
+            return 0;
+        }
+    }
+    
+    # Reject paths with only one component after root (e.g., /Users, /home)
+    # These are typically top-level system directories
+    my @parts = File::Spec->splitdir($path);
+    # Remove empty leading element from absolute paths
+    shift @parts if @parts && $parts[0] eq '';
+    if (@parts <= 1) {
+        return 0;
+    }
+    
+    return 1;
 }
 
 1;
