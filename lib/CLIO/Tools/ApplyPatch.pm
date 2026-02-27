@@ -183,7 +183,31 @@ sub _do_apply {
     my $files_created = 0;
     my $files_deleted = 0;
     
+    # Get vault from context for undo tracking
+    my $vault = $context->{file_vault};
+    my $turn_id = $context->{vault_turn_id};
+    
     for my $hunk (@$hunks) {
+        # Vault: capture files before modification for undo support
+        if ($vault && $turn_id) {
+            my $hunk_path = $hunk->{path};
+            my $hunk_type = $hunk->{type};
+            eval {
+                if ($hunk_type eq 'update') {
+                    $vault->capture_before($hunk_path, $turn_id);
+                }
+                elsif ($hunk_type eq 'add') {
+                    $vault->record_creation($hunk_path, $turn_id);
+                }
+                elsif ($hunk_type eq 'delete') {
+                    $vault->record_deletion($hunk_path, $turn_id);
+                }
+            };
+            if ($@) {
+                log_debug('ApplyPatch', "Vault capture failed (non-fatal): $@");
+            }
+        }
+        
         my $result = $self->_apply_hunk($hunk);
         push @results, $result;
         
