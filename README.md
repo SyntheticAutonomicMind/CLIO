@@ -293,8 +293,8 @@ git push origin your-feature-branch
 
 GPL-3.0 - See [LICENSE](LICENSE) for details.
 
-**Created by:** Andrew Wyatt (Fewtarius)
-**Website:** [syntheticautonomicmind.org](https://www.syntheticautonomicmind.org)
+**Created by:** Andrew Wyatt (Fewtarius)  
+**Website:** [syntheticautonomicmind.org](https://www.syntheticautonomicmind.org)  
 **Repository:** [github.com/SyntheticAutonomicMind/CLIO](https://github.com/SyntheticAutonomicMind/CLIO)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
