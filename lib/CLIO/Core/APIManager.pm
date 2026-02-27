@@ -434,7 +434,17 @@ sub _get_api_key {
         }
     }
     
-    # No API key available
+    # No API key available - only warn if provider actually requires one
+    my $provider = ($self->{config} && $self->{config}->can('get'))
+        ? ($self->{config}->get('provider') || '') : '';
+    if ($provider) {
+        require CLIO::Providers;
+        my $provider_def = CLIO::Providers::get_provider($provider);
+        if ($provider_def && (!$provider_def->{requires_auth} || $provider_def->{requires_auth} eq 'none')) {
+            log_debug('APIManager', "No API key set (provider '$provider' does not require auth)");
+            return '';
+        }
+    }
     log_warning('APIManager', "No API key available (not set in config)");
     return '';
 }
@@ -643,9 +653,16 @@ sub get_model_capabilities {
     # Determine API base for the model's provider
     my $api_base;
     if ($target_provider) {
-        require CLIO::Providers;
-        my $provider_def = CLIO::Providers::get_provider($target_provider);
-        $api_base = $provider_def ? $provider_def->{api_base} : $self->{api_base};
+        my $current_provider = $self->{config} ? ($self->{config}->get('provider') || '') : '';
+        if ($target_provider eq $current_provider) {
+            # Same provider as currently configured - use user's api_base (may be overridden)
+            $api_base = $self->{api_base};
+        } else {
+            # Different provider - look up its default api_base
+            require CLIO::Providers;
+            my $provider_def = CLIO::Providers::get_provider($target_provider);
+            $api_base = $provider_def ? $provider_def->{api_base} : $self->{api_base};
+        }
     } else {
         $api_base = $self->{api_base};
     }
@@ -654,10 +671,7 @@ sub get_model_capabilities {
     my ($api_type, $models_url) = $self->_detect_api_type_and_url($api_base);
     
     unless ($models_url) {
-        if (should_log('WARNING')) {
-            log_warning('APIManager', "Unable to determine models endpoint for: $api_base");
-            log_warning('APIManager', "This will use fallback token limits instead of actual model capabilities");
-        }
+        log_debug('APIManager', "Unable to determine models endpoint for: $api_base (using fallback token limits)");
         return undef;
     }
     
@@ -690,11 +704,25 @@ sub get_model_capabilities {
         my $resp = $ua->get($models_url, headers => \%headers);
         
         unless ($resp->is_success) {
-            if (should_log('WARNING')) {
-                log_warning('APIManager', "Failed to fetch models from $models_url");
-                log_warning('APIManager', "HTTP " . $resp->code . ": " . $resp->message);
-                log_warning('APIManager', "Will use fallback token limits");
+            # For local/generic providers, use provider-level fallback silently
+            my $effective_provider = $target_provider || ($self->{config} ? ($self->{config}->get('provider') || '') : '');
+            if ($effective_provider) {
+                require CLIO::Providers;
+                my $pdef = CLIO::Providers::get_provider($effective_provider);
+                if ($pdef && $pdef->{max_context_tokens}) {
+                    my $ctx = $pdef->{max_context_tokens};
+                    my $capabilities = {
+                        max_prompt_tokens          => $ctx,
+                        max_output_tokens          => 4096,
+                        max_context_window_tokens  => $ctx,
+                    };
+                    $self->{_model_capabilities_cache} ||= {};
+                    $self->{_model_capabilities_cache}{$model} = $capabilities;
+                    log_debug('APIManager', "Using provider fallback for $model: context=$ctx (models endpoint unavailable)");
+                    return $capabilities;
+                }
             }
+            log_info('APIManager', "Models endpoint unavailable ($models_url), using fallback token limits");
             return undef;
         }
         
@@ -759,11 +787,7 @@ sub get_model_capabilities {
         }
     }
     
-    if (should_log('WARNING')) {
-        log_warning('APIManager', "Model $api_model not found in /models API response");
-        log_warning('APIManager', "Available models: " . join(", ", map { $_->{id} || '?' } @$models));
-        log_warning('APIManager', "Will use fallback token limits");
-    }
+    log_debug('APIManager', "Model $api_model not found in /models response (using fallback token limits)");
     return undef;
 }
 
@@ -816,6 +840,9 @@ sub _detect_api_type_and_url {
     if ($api_base =~ m{^https?://}) {
         my $models_url = $api_base;
         $models_url =~ s{/+$}{};
+        # Strip known chat/completions suffixes to get the base
+        $models_url =~ s{/chat/completions$}{};
+        $models_url =~ s{/completions$}{};
         if ($models_url =~ m{/v1$}) {
             $models_url .= "/models";
         } elsif ($models_url !~ m{/models$}) {
