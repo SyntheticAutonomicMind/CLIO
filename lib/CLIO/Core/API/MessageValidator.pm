@@ -93,10 +93,7 @@ sub validate_and_truncate {
             $max_prompt = 128000;
         }
         
-        if (should_log('WARNING')) {
-            log_warning('MessageValidator', "Model capabilities unavailable for $model");
-            log_warning('MessageValidator', "Using fallback token limit: $max_prompt");
-        }
+        log_debug('MessageValidator', "Using fallback token limit for $model: $max_prompt");
     }
     
     # Calculate tool token budget
