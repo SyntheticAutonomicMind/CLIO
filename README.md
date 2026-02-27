@@ -17,7 +17,7 @@ CLIO is part of the [Synthetic Autonomic Mind (SAM)](https://github.com/Syntheti
 ## What Makes CLIO Different
 
 - **Terminal-First Experience:** Runs entirely in your terminal with professional markdown rendering, color themes, and streaming output
-- **Light & Nimble:** Uses less than 100MB of RAM while active. Runs on everything from a ClockworkPi uConsole R01 to an M4-powered Mac - designed to be friendly to low-power and portable devices.
+- **Light & Nimble:** Uses ~50 MB of RAM. Works on everything from a ClockworkPi uConsole R01 to an M4-powered Mac.
 - **Portable & Minimal:** Works with standard Unix tools (git, curl, etc.) - no heavy frameworks or package managers required. See [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) for details.
 - **Actually Autonomous:** CLIO doesn't just suggest code - it reads, writes, tests, commits, and iterates. Give it a task and it works through it end-to-end.
 - **Tool-Powered:** Real file, git, and terminal operations with real-time action descriptions
@@ -27,6 +27,7 @@ CLIO is part of the [Synthetic Autonomic Mind (SAM)](https://github.com/Syntheti
 - **Remote Execution:** SSH into any machine, deploy CLIO, run an AI task, and get results back - across your entire fleet in parallel
 - **Multi-Agent Coordination:** Spawn parallel agents with file locks, git locks, and coordinated API rate limiting for safe collaboration
 - **Long-Term Memory:** Discoveries, solutions, and patterns persist across your project history and are automatically injected into every conversation
+- **Interrupt Anytime:** Press Escape to stop the agent mid-task. CLIO pauses, asks what you need, and adapts - like tapping your pair programmer on the shoulder
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -61,6 +62,43 @@ CLIO is part of the [Synthetic Autonomic Mind (SAM)](https://github.com/Syntheti
     </td>
   </tr>
 </table>
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## Real-World Performance
+
+CLIO is built to run for hours without breaking a sweat. These are stats from real development sessions:
+
+```
+Session 1 - Game development (pair programming):
+  Uptime: 29h 43m | RSS: 10.7 MB | Tool calls: 502
+
+Session 2 - CLIO development (light use):
+  Uptime: 27h 27m | RSS: 10.8 MB | Tool calls: 58
+
+Session 3 - CLIO development (active):
+  Uptime: 3h 5m  | RSS: 50.6 MB | Tool calls: 507
+```
+
+Long-running sessions settle to ~11 MB. Active sessions hover around the ~44 MB startup baseline. No memory leaks, no degradation, no restart needed.
+
+### Billing Awareness
+
+CLIO tracks your API usage in real time with `/usage`:
+
+```
+Premium Quota
+──────────────────────────────────────────────────────────────
+  Status:                   891 used of 1500 (59.3%)
+  Resets:                   2026-03-01
+Token Usage
+──────────────────────────────────────────────────────────────
+  Total Tokens:             13,428,981
+    Prompt:                 13,422,054 tokens
+    Completion:             6,927 tokens
+```
+
+No surprises at the end of the month. See your quota consumption, billing multipliers for premium models, per-request token counts, and reset dates. CLIO warns you when premium models cost extra (e.g., Claude Opus at 3x) so you can make informed choices.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -241,5 +279,11 @@ GPL-3.0 - See [LICENSE](LICENSE) for details.
 
 ## Support
 
+- **Discussions**: [Join the conversation](https://github.com/orgs/SyntheticAutonomicMind/discussions)
 - **GitHub Issues**: [Report bugs or request features](https://github.com/SyntheticAutonomicMind/CLIO/issues)
-- **Discussions**: [Join the community](https://github.com/SyntheticAutonomicMind/CLIO/discussions)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## Spread the Word
+
+CLIO is a small open-source project with no marketing budget. If it's been useful to you, the best way to help is to tell someone about it - a blog post, a tweet, a recommendation to a colleague, or a ⭐ on GitHub. Word of mouth is how projects like this grow.
