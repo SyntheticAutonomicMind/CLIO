@@ -6,13 +6,6 @@ sessions/
 url_cache/
 
 # CLIO
-.clio/logs/
-.clio/sessions/
-.clio/memory/
-.clio/vault/
-.clio/snapshots/
-.clio/*json
-
 # Editor files
 *.swp
 *.bak
@@ -51,3 +44,7 @@ tmp/
 # Test output files
 test_task.txt
 t/calculator.t
+
+# CLIO (managed automatically)
+.clio/*
+!.clio/instructions.md
