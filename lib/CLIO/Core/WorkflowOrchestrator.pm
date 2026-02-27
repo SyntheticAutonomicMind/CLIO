@@ -141,22 +141,17 @@ sub new {
         mcp_manager     => $self->{mcp_manager},
     );
     
-    # Initialize snapshot system for file change tracking
+    # Initialize FileVault for targeted file backup and undo support
     eval {
-        require CLIO::Session::Snapshot;
-        $self->{snapshot} = CLIO::Session::Snapshot->new(
+        require CLIO::Session::FileVault;
+        $self->{file_vault} = CLIO::Session::FileVault->new(
             debug => $args{debug},
         );
-        if ($self->{snapshot}->is_available()) {
-            log_debug('WorkflowOrchestrator', "Snapshot system initialized");
-        } else {
-            log_debug('WorkflowOrchestrator', "Snapshot system unavailable (git not found)");
-            $self->{snapshot} = undef;
-        }
+        log_debug('WorkflowOrchestrator', "FileVault initialized - undo always available");
     };
     if ($@) {
-        log_debug('WorkflowOrchestrator', "Snapshot system failed to load: $@");
-        $self->{snapshot} = undef;
+        log_debug('WorkflowOrchestrator', "FileVault failed to load: $@");
+        $self->{file_vault} = undef;
     }
     
     # Initialize process stats tracker
@@ -328,30 +323,33 @@ sub process_input {
     my $on_tool_call_from_ui = $opts{on_tool_call};  # Tool call tracker from UI
     my $on_thinking = $opts{on_thinking};  # Callback for reasoning/thinking content
     
-    # Take a snapshot before processing - captures state before any AI modifications
+    # Start a new vault turn before processing - file changes during this turn will be tracked
     my $turn_snapshot;
-    if ($self->{snapshot}) {
-        $turn_snapshot = eval { $self->{snapshot}->take() };
+    if ($self->{file_vault}) {
+        $turn_snapshot = eval { $self->{file_vault}->start_turn($user_input) };
         if ($turn_snapshot) {
             # Store on session for /undo access
             if ($session && ref($session) && $session->can('state')) {
                 my $state = $session->state();
-                $state->{last_snapshot} = $turn_snapshot;
-                # Keep a history of recent snapshots (last 20 turns)
-                $state->{snapshot_history} ||= [];
-                push @{$state->{snapshot_history}}, {
-                    hash => $turn_snapshot,
+                $state->{last_turn_id} = $turn_snapshot;
+                # Keep a history of recent turns (last 20)
+                $state->{turn_history} ||= [];
+                push @{$state->{turn_history}}, {
+                    turn_id => $turn_snapshot,
                     timestamp => time(),
                     user_input => substr($user_input, 0, 100),  # Truncated for storage
                 };
                 # Trim to last 20
-                if (@{$state->{snapshot_history}} > 20) {
-                    splice(@{$state->{snapshot_history}}, 0, @{$state->{snapshot_history}} - 20);
+                if (@{$state->{turn_history}} > 20) {
+                    splice(@{$state->{turn_history}}, 0, @{$state->{turn_history}} - 20);
                 }
             }
-            log_debug('WorkflowOrchestrator', "Pre-turn snapshot: $turn_snapshot");
+            # Pass vault and turn ID to tool executor so tools can capture files
+            $self->{tool_executor}{file_vault} = $self->{file_vault};
+            $self->{tool_executor}{vault_turn_id} = $turn_snapshot;
+            log_debug('WorkflowOrchestrator', "FileVault turn started: $turn_snapshot");
         } elsif ($@) {
-            log_debug('WorkflowOrchestrator', "Snapshot failed: $@");
+            log_debug('WorkflowOrchestrator', "FileVault turn start failed: $@");
         }
     }
     

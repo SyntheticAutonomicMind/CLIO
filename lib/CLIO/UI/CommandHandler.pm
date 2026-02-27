@@ -455,11 +455,13 @@ sub handle_command {
 
 =head2 handle_undo_command
 
-Revert file changes from the last AI turn using the snapshot system.
+Revert file changes from the last AI turn using the FileVault system.
+FileVault tracks only the specific files CLIO modified, making undo fast
+and available regardless of work tree size.
 
 Usage:
     /undo          - Revert all changes from last turn
-    /undo list     - Show recent snapshots
+    /undo list     - Show recent turns with file changes
     /undo diff     - Show what would be reverted
 
 =cut
@@ -470,78 +472,84 @@ sub handle_undo_command {
     my $chat = $self->{chat};
     my $subcommand = $args[0] || '';
     
-    # Get snapshot from session state
+    # Get session state
     my $session = $self->{session};
     unless ($session && $session->can('state')) {
-        $chat->display_error_message("No session available for undo");
+        $chat->display_error_message("No session available for undo.");
         return;
     }
     
     my $state = $session->state();
     
-    # Get orchestrator's snapshot object
-    my $snapshot = $self->{ai_agent} && $self->{ai_agent}->{orchestrator} 
-                 ? $self->{ai_agent}->{orchestrator}{snapshot} 
-                 : undef;
+    # Get orchestrator's FileVault object
+    my $vault = $self->{ai_agent} && $self->{ai_agent}->{orchestrator} 
+              ? $self->{ai_agent}->{orchestrator}{file_vault} 
+              : undef;
     
-    unless ($snapshot) {
-        $chat->display_error_message("Snapshot system not available. Git may not be installed.");
+    unless ($vault) {
+        $chat->display_error_message("Undo system not available. This is unexpected - please report this as a bug.");
         return;
     }
     
     if ($subcommand eq 'list') {
-        # Show snapshot history
-        my $history = $state->{snapshot_history} || [];
+        # Show turn history
+        my $history = $state->{turn_history} || [];
         if (!@$history) {
-            $chat->display_system_message("No snapshots available yet.");
+            $chat->display_system_message("No undo history yet. History is created when the AI modifies files.");
             return;
         }
         
         $chat->writeline("", markdown => 0);
-        $chat->display_system_message("Recent snapshots (" . scalar(@$history) . "):");
+        $chat->display_system_message("Recent turns (" . scalar(@$history) . "):");
         for my $i (reverse 0..$#$history) {
-            my $snap = $history->[$i];
-            my $ago = int((time() - $snap->{timestamp}) / 60);
+            my $turn = $history->[$i];
+            my $ago = int((time() - $turn->{timestamp}) / 60);
             my $time_str = $ago < 1 ? "just now" : "${ago}m ago";
-            my $hash_short = substr($snap->{hash}, 0, 8);
-            my $input = $snap->{user_input} || '(no input)';
+            my $turn_id = $turn->{turn_id};
+            my $input = $turn->{user_input} || '(no input)';
             $input =~ s/\n/ /g;
             $input = substr($input, 0, 60) . '...' if length($input) > 60;
-            $chat->writeline("  [$hash_short] $time_str - $input", markdown => 0);
+            
+            # Get file count for this turn
+            my $changes = eval { $vault->changed_files($turn_id) };
+            my $file_count = ($changes && $changes->{files}) ? scalar(@{$changes->{files}}) : 0;
+            my $file_str = $file_count > 0 ? " ($file_count file" . ($file_count == 1 ? "" : "s") . ")" : "";
+            
+            $chat->writeline("  [$turn_id] $time_str$file_str - $input", markdown => 0);
         }
         return;
     }
     
     if ($subcommand eq 'diff') {
         # Show what would be reverted
-        my $last = $state->{last_snapshot};
+        my $last = $state->{last_turn_id};
         unless ($last) {
-            $chat->display_system_message("No snapshot to diff against.");
+            $chat->display_system_message("No changes to diff. The AI hasn't modified any files yet.");
             return;
         }
         
-        my $diff = eval { $snapshot->diff($last) };
+        my $diff = eval { $vault->diff($last) };
         if ($diff && length($diff) > 0) {
             $chat->writeline("", markdown => 0);
-            $chat->display_system_message("Changes since last snapshot:");
+            $chat->display_system_message("Changes from last AI turn:");
             $chat->writeline("```diff\n$diff\n```", markdown => 1);
         } else {
-            $chat->display_system_message("No changes detected since last snapshot.");
+            $chat->display_system_message("No file changes detected in the last turn.");
         }
         return;
     }
     
     # Default: undo last turn
-    my $last = $state->{last_snapshot};
+    my $last = $state->{last_turn_id};
     unless ($last) {
-        $chat->display_error_message("No snapshot available. Undo is only available after the AI makes file changes.");
+        $chat->display_error_message("Nothing to undo. The AI hasn't modified any files yet.");
         return;
     }
     
     # Check if there are actually changes to revert
-    my $changes = eval { $snapshot->changed_files($last) };
+    my $changes = eval { $vault->changed_files($last) };
     if (!$changes || !$changes->{files} || !@{$changes->{files}}) {
-        $chat->display_system_message("No file changes to undo.");
+        $chat->display_system_message("No file changes to undo in the last turn.");
         return;
     }
     
@@ -551,21 +559,28 @@ sub handle_undo_command {
     
     $chat->display_system_message("Reverting $file_count file(s): $file_list");
     
-    my $success = eval { $snapshot->revert($last) };
-    if ($success) {
-        $chat->display_system_message("Undo complete. Files reverted to state before last AI turn.");
+    my $result = eval { $vault->undo_turn($last) };
+    if ($result && $result->{success}) {
+        $chat->display_system_message(
+            "Undo complete. Reverted $result->{reverted} file(s) to their state before the last AI turn."
+        );
         
-        # Remove the used snapshot so we don't undo twice
-        # Pop the last entry from history
-        if ($state->{snapshot_history} && @{$state->{snapshot_history}}) {
-            pop @{$state->{snapshot_history}};
+        # Remove the used turn from vault and history
+        $vault->remove_turn($last);
+        
+        if ($state->{turn_history} && @{$state->{turn_history}}) {
+            pop @{$state->{turn_history}};
         }
-        # Set last_snapshot to the previous one if available
-        if ($state->{snapshot_history} && @{$state->{snapshot_history}}) {
-            $state->{last_snapshot} = $state->{snapshot_history}[-1]{hash};
+        # Set last_turn_id to the previous one if available
+        if ($state->{turn_history} && @{$state->{turn_history}}) {
+            $state->{last_turn_id} = $state->{turn_history}[-1]{turn_id};
         } else {
-            delete $state->{last_snapshot};
+            delete $state->{last_turn_id};
         }
+    } elsif ($result && $result->{errors} && @{$result->{errors}}) {
+        my $err_msg = "Undo partially completed ($result->{reverted} reverted). Errors:\n";
+        $err_msg .= join("\n", map { "  - $_" } @{$result->{errors}});
+        $chat->display_error_message($err_msg);
     } else {
         my $err = $@ || 'unknown error';
         $chat->display_error_message("Undo failed: $err");

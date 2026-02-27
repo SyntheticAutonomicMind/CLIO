@@ -439,6 +439,45 @@ sub _release_file_lock {
     }
 }
 
+=head2 _vault_capture($path, $type, $context, $old_path)
+
+Capture a file in the FileVault before modification for undo support.
+Silently no-ops if vault is not available (never blocks file operations).
+
+Arguments:
+- $path: Path being modified/created/deleted
+- $type: Operation type ('modify', 'create', 'delete', 'rename')
+- $context: Tool execution context (contains file_vault and vault_turn_id)
+- $old_path: Original path for rename operations (optional)
+
+=cut
+
+sub _vault_capture {
+    my ($self, $path, $type, $context, $old_path) = @_;
+    
+    my $vault = $context->{file_vault};
+    my $turn_id = $context->{vault_turn_id};
+    return unless $vault && $turn_id;
+    
+    eval {
+        if ($type eq 'modify') {
+            $vault->capture_before($path, $turn_id);
+        }
+        elsif ($type eq 'create') {
+            $vault->record_creation($path, $turn_id);
+        }
+        elsif ($type eq 'delete') {
+            $vault->record_deletion($path, $turn_id);
+        }
+        elsif ($type eq 'rename') {
+            $vault->record_rename($old_path, $path, $turn_id);
+        }
+    };
+    if ($@) {
+        log_debug('FileOp', "Vault capture failed (non-fatal): $@");
+    }
+}
+
 =head2 _check_sandbox
 
 Check if a path is allowed under sandbox mode.
@@ -1391,6 +1430,9 @@ sub create_file {
     
     log_debug('FileOp', "Creating file: $path (authorized: $auth_result->{reason})");
     
+    # Vault: record creation for undo support
+    $self->_vault_capture($path, 'create', $context);
+    
     my $result;
     eval {
         # Create parent directories if needed
@@ -1461,6 +1503,9 @@ sub write_file {
     
     log_debug('FileOp', "Writing file: $path (authorized: $auth_result->{reason})");
     
+    # Vault: capture original content for undo support
+    $self->_vault_capture($path, 'modify', $context);
+    
     my $result;
     eval {
         open my $fh, '>:utf8', $path or croak "Cannot write $path: $!";
@@ -1524,6 +1569,9 @@ sub append_file {
     
     log_debug('FileOp', "Appending to file: $path (authorized: $auth_result->{reason})");
     
+    # Vault: capture original content for undo support
+    $self->_vault_capture($path, 'modify', $context);
+    
     my $result;
     eval {
         open my $fh, '>>:utf8', $path or croak "Cannot append to $path: $!";
@@ -1577,6 +1625,9 @@ sub replace_string {
     return $self->error_result($lock_error) if $lock_error;
     
     log_debug('FileOp', "Replacing string in: $path");
+    
+    # Vault: capture original content for undo support
+    $self->_vault_capture($path, 'modify', $context);
     
     my $result;
     eval {
@@ -1786,6 +1837,9 @@ sub insert_at_line {
     
     log_debug('FileOp', "Inserting at line $line_number in: $path");
     
+    # Vault: capture original content for undo support
+    $self->_vault_capture($path, 'modify', $context);
+    
     my $result;
     eval {
         # Read file
@@ -1858,6 +1912,9 @@ sub delete_file {
     return $self->error_result($lock_error) if $lock_error;
     
     log_debug('FileOp', "Deleting: $path (recursive=$recursive, authorized: $auth_result->{reason})");
+    
+    # Vault: record deletion for undo support (backs up file content)
+    $self->_vault_capture($path, 'delete', $context);
     
     my $result;
     eval {
@@ -1932,6 +1989,9 @@ sub rename_file {
     return $self->error_result($lock_error) if $lock_error;
     
     log_debug('FileOp', "Renaming: $old_path -> $new_path (authorized)");
+    
+    # Vault: record rename for undo support
+    $self->_vault_capture($new_path, 'rename', $context, $old_path);
     
     my $result;
     eval {
