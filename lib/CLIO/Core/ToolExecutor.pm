@@ -274,6 +274,8 @@ sub execute_tool {
         ui => $self->{ui},  # Provide UI for user_collaboration
         spinner => $self->{spinner},  # Provide spinner for interactive tools
         broker_client => $self->{broker_client},  # Provide broker for coordination
+        file_vault => $self->{file_vault},  # FileVault for undo tracking
+        vault_turn_id => $self->{vault_turn_id},  # Current turn ID for vault
     });
     
     my $execution_time_ms = int((time() - $start_time) * 1000);

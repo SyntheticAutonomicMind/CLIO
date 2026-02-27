@@ -403,6 +403,7 @@ Ensure `.gitignore` includes CLIO-specific entries:
 .clio/logs/
 .clio/sessions/
 .clio/memory/
+.clio/vault/
 .clio/snapshots/
 .clio/*json
 ```
@@ -512,6 +513,7 @@ ai-assisted/
 .clio/*.json
 .clio/sessions/
 .clio/memory/
+.clio/vault/
 .clio/snapshots/
 .clio/logs/
 ```

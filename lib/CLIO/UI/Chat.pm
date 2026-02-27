@@ -2185,7 +2185,7 @@ sub display_help {
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/git status', 'help_command'), 'Show git status');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/undo', 'help_command'), 'Revert AI changes from last turn');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/undo diff', 'help_command'), 'Show changes since last turn');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/undo list', 'help_command'), 'List recent snapshots');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/undo list', 'help_command'), 'List recent turns with file changes');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/mcp', 'help_command'), 'MCP server status');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/mcp list', 'help_command'), 'List MCP tools');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/mcp add <name> <cmd>', 'help_command'), 'Add MCP server');
