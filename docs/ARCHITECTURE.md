@@ -453,7 +453,6 @@ lib/CLIO/
       State.pm             # Conversation state
       TodoStore.pm         # Todo persistence
       ToolResultStore.pm   # Large result storage
-      Snapshot.pm          # (deprecated - replaced by FileVault)
       FileVault.pm         # Targeted file backup for undo
       Export.pm            # Session export
       Lock.pm              # Session locking
