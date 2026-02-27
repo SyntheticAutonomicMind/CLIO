@@ -395,18 +395,16 @@ Most projects should use CLIO's instructions.md unchanged.
 - If it's about WHAT to build (commands, syntax, architecture) -> `AGENTS.md`
 - When in doubt: Technical = AGENTS.md, Process = instructions.md
 
-### 4. Set Up .gitignore
+### 4. Verify .gitignore
 
-Ensure `.gitignore` includes CLIO-specific entries:
+CLIO automatically manages .gitignore for the .clio/ directory on startup.
+Verify that .gitignore contains these entries (add them if missing):
 ```
-# CLIO
-.clio/logs/
-.clio/sessions/
-.clio/memory/
-.clio/vault/
-.clio/snapshots/
-.clio/*json
+.clio/*
+!.clio/instructions.md
 ```
+This ignores all CLIO internals while keeping the project instructions committed.
+Do NOT add individual .clio/ subdirectories - the wildcard handles everything.
 
 ### 5. Initialize or Update Git
 
@@ -501,22 +499,16 @@ Most projects should use CLIO's instructions.md unchanged.
 - If it's about WHAT to build (commands, syntax, architecture) -> `AGENTS.md`
 - When in doubt: Technical = AGENTS.md, Process = instructions.md
 
-### 5. Set Up .gitignore
+### 5. Verify .gitignore
 
-Ensure `.gitignore` includes CLIO-specific entries:
+CLIO automatically manages .gitignore for the .clio/ directory on startup.
+Verify that .gitignore contains these entries (add them if missing):
 ```
-scratch/
-reference/
-ai-assisted/
-*.txt
-!llms.txt
-.clio/*.json
-.clio/sessions/
-.clio/memory/
-.clio/vault/
-.clio/snapshots/
-.clio/logs/
+.clio/*
+!.clio/instructions.md
 ```
+This ignores all CLIO internals while keeping the project instructions committed.
+Do NOT add individual .clio/ subdirectories - the wildcard handles everything.
 
 ### 6. Initialize or Update Git
 
