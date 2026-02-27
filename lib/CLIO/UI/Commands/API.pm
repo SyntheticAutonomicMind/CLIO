@@ -1550,6 +1550,7 @@ Returns: (1, '') if valid, (0, error_message) if invalid
 =cut
 
 sub _validate_url {
+    my $self = shift;
     my ($url) = @_;
     
     unless (defined $url && length($url)) {
