@@ -128,6 +128,14 @@ sub handle_init_command {
     my $prd_path = "$clio_dir/PRD.md";
     my $has_prd = -f $prd_path;
     
+    # Ensure .gitignore is set up correctly for .clio/
+    eval {
+        require CLIO::Util::GitIgnore;
+        if (CLIO::Util::GitIgnore::ensure_clio_ignored($cwd)) {
+            $self->display_system_message("Updated .gitignore for .clio/ directory.");
+        }
+    };
+    
     $self->display_system_message("Starting project initialization...");
     if ($has_prd) {
         $self->display_system_message("Found PRD - will incorporate into instructions.");
