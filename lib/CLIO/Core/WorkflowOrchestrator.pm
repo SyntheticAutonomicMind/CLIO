@@ -154,6 +154,13 @@ sub new {
         $self->{file_vault} = undef;
     }
     
+    # Ensure .gitignore is set up correctly for .clio/ (if in a git repo)
+    eval {
+        require CLIO::Util::GitIgnore;
+        CLIO::Util::GitIgnore::ensure_clio_ignored();
+    };
+    log_debug('WorkflowOrchestrator', "GitIgnore check failed: $@") if $@;
+    
     # Initialize process stats tracker
     $self->{process_stats} = CLIO::Logging::ProcessStats->new(
         session_id => ($args{session} && $args{session}->can('session_id'))
