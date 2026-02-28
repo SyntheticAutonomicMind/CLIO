@@ -29,11 +29,12 @@ CLIO::UI::Commands::Stats - Process statistics commands for CLIO
 
 =head1 DESCRIPTION
 
-Displays process memory and resource statistics. Shows current RSS/VSZ,
-baseline comparison, and session history from ProcessStats log data.
+Displays process statistics, memory usage, and AI performance metrics.
+Shows current RSS/VSZ, baseline comparison, and session performance data
+including TTFT (time to first token), tokens per second, and token counts.
 
 Commands:
-  /stats          - Current memory snapshot with baseline comparison
+  /stats          - Current memory + performance snapshot
   /stats history  - Per-iteration memory history for this session
   /stats log      - Raw log entries from today's stats log
 
@@ -168,6 +169,9 @@ sub _show_current {
             markdown => 0);
     }
     
+    # Performance metrics
+    $self->_show_performance();
+    
     $self->writeline("", markdown => 0);
 }
 
@@ -286,10 +290,16 @@ sub _show_help {
     $self->writeline("", markdown => 0);
     $self->display_system_message("Usage: /stats [subcommand]");
     $self->writeline("", markdown => 0);
-    $self->writeline("  /stats              Current memory snapshot", markdown => 0);
+    $self->writeline("  /stats              Memory + performance snapshot", markdown => 0);
     $self->writeline("  /stats history      Per-iteration memory timeline", markdown => 0);
     $self->writeline("  /stats log [N]      Raw log entries (last N, default 20)", markdown => 0);
     $self->writeline("  /stats help         This help message", markdown => 0);
+    $self->writeline("", markdown => 0);
+    $self->display_system_message("Performance metrics include:");
+    $self->writeline("  - Time to first token (TTFT)", markdown => 0);
+    $self->writeline("  - Tokens per second (TPS)", markdown => 0);
+    $self->writeline("  - Token counts (input/output)", markdown => 0);
+    $self->writeline("  - Turn duration and averages", markdown => 0);
     $self->writeline("", markdown => 0);
 }
 
@@ -338,6 +348,156 @@ sub _get_process_stats {
     return undef unless $orchestrator;
     
     return $orchestrator->{process_stats};
+}
+
+# Get orchestrator instance
+sub _get_orchestrator {
+    my ($self) = @_;
+    
+    my $chat = $self->{chat};
+    return undef unless $chat;
+    
+    my $ai_agent = $chat->{ai_agent};
+    return undef unless $ai_agent;
+    
+    return $ai_agent->{orchestrator};
+}
+
+sub _show_performance {
+    my ($self) = @_;
+    
+    my $orchestrator = $self->_get_orchestrator();
+    return unless $orchestrator && $orchestrator->can('get_performance_summary');
+    
+    my $perf = $orchestrator->get_performance_summary();
+    return unless $perf;
+    
+    my $sep = "\x{2500}" x 40;
+    
+    # Session averages
+    $self->writeline("", markdown => 0);
+    $self->writeline($self->colorize("  Session Performance", 'command_subheader'), markdown => 0);
+    $self->writeline($self->colorize("  $sep", 'dim'), markdown => 0);
+    
+    # Average TTFT
+    if (defined $perf->{avg_ttft}) {
+        my $ttft_str = sprintf("%.2fs", $perf->{avg_ttft});
+        my $color = $perf->{avg_ttft} > 5 ? 'error' : $perf->{avg_ttft} > 2 ? 'WARNING' : 'success';
+        $self->writeline(sprintf("  %-24s %s",
+            "Avg time to first token:",
+            $self->colorize($ttft_str, $color)),
+            markdown => 0);
+    }
+    
+    # Average TPS
+    if (defined $perf->{avg_tps}) {
+        my $tps_str = sprintf("%.1f tok/s", $perf->{avg_tps});
+        my $color = $perf->{avg_tps} < 10 ? 'error' : $perf->{avg_tps} < 30 ? 'WARNING' : 'success';
+        $self->writeline(sprintf("  %-24s %s",
+            "Avg tokens/sec:",
+            $self->colorize($tps_str, $color)),
+            markdown => 0);
+    }
+    
+    # Average duration
+    if (defined $perf->{avg_duration}) {
+        $self->writeline(sprintf("  %-24s %s",
+            "Avg turn duration:",
+            _format_duration($perf->{avg_duration})),
+            markdown => 0);
+    }
+    
+    # Totals
+    $self->writeline(sprintf("  %-24s %s",
+        "Total turns:",
+        $perf->{total_turns}),
+        markdown => 0);
+    
+    $self->writeline(sprintf("  %-24s %s",
+        "Total tokens:",
+        _format_tokens($perf->{total_tokens}) . 
+        sprintf(" (%s in, %s out)", _format_tokens($perf->{total_tokens_in}), _format_tokens($perf->{total_tokens_out}))),
+        markdown => 0);
+    
+    if ($perf->{total_duration}) {
+        $self->writeline(sprintf("  %-24s %s",
+            "Total API time:",
+            _format_duration($perf->{total_duration})),
+            markdown => 0);
+    }
+    
+    # Last iteration
+    if (my $last = $perf->{last}) {
+        $self->writeline("", markdown => 0);
+        $self->writeline($self->colorize("  Last Iteration", 'command_subheader'), markdown => 0);
+        $self->writeline($self->colorize("  $sep", 'dim'), markdown => 0);
+        
+        if (defined $last->{ttft}) {
+            my $ttft_str = sprintf("%.2fs", $last->{ttft});
+            my $color = $last->{ttft} > 5 ? 'error' : $last->{ttft} > 2 ? 'WARNING' : 'success';
+            $self->writeline(sprintf("  %-24s %s",
+                "Time to first token:",
+                $self->colorize($ttft_str, $color)),
+                markdown => 0);
+        }
+        
+        if (defined $last->{tps}) {
+            my $tps_str = sprintf("%.1f tok/s", $last->{tps});
+            my $color = $last->{tps} < 10 ? 'error' : $last->{tps} < 30 ? 'WARNING' : 'success';
+            $self->writeline(sprintf("  %-24s %s",
+                "Tokens/sec:",
+                $self->colorize($tps_str, $color)),
+                markdown => 0);
+        }
+        
+        if (defined $last->{duration}) {
+            $self->writeline(sprintf("  %-24s %s",
+                "Duration:",
+                _format_duration($last->{duration})),
+                markdown => 0);
+        }
+        
+        my $tokens_str = _format_tokens($last->{tokens_in} + $last->{tokens_out});
+        $tokens_str .= sprintf(" (%s in, %s out)", 
+            _format_tokens($last->{tokens_in}), 
+            _format_tokens($last->{tokens_out}));
+        $self->writeline(sprintf("  %-24s %s",
+            "Tokens:",
+            $tokens_str),
+            markdown => 0);
+        
+        if ($last->{tool_calls}) {
+            $self->writeline(sprintf("  %-24s %s",
+                "Tool calls:",
+                $last->{tool_calls}),
+                markdown => 0);
+        }
+    }
+}
+
+# Format a token count with K/M suffixes for readability
+sub _format_tokens {
+    my ($count) = @_;
+    return '0' unless $count;
+    if ($count >= 1_000_000) {
+        return sprintf("%.1fM", $count / 1_000_000);
+    } elsif ($count >= 1_000) {
+        return sprintf("%.1fK", $count / 1_000);
+    }
+    return "$count";
+}
+
+# Format seconds into a readable duration
+sub _format_duration {
+    my ($seconds) = @_;
+    return '0s' unless $seconds;
+    if ($seconds < 60) {
+        return sprintf("%.1fs", $seconds);
+    } elsif ($seconds < 3600) {
+        return sprintf("%dm %ds", int($seconds / 60), int($seconds) % 60);
+    } else {
+        return sprintf("%dh %dm", int($seconds / 3600), int(($seconds % 3600) / 60));
+    }
 }
 
 # Read JSONL log entries from today's stats file
