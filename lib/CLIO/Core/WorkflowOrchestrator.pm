@@ -1172,6 +1172,9 @@ sub process_input {
             }
         }
         
+        # Accumulate performance metrics for /stats
+        $self->_record_turn_metrics($api_response, $session);
+        
         # Debug: Log API response structure
         if ($self->{debug}) {
             log_debug('WorkflowOrchestrator', "API response received");
@@ -2219,6 +2222,115 @@ sub _get_todo_recovery_context {
     }
     
     return $todo_context;
+}
+
+=head2 _record_turn_metrics($api_response, $session)
+
+Record performance metrics from an API response into session state.
+Tracks per-iteration TTFT, TPS, tokens, and duration. Maintains
+running averages and stores the last iteration's metrics for /stats.
+
+=cut
+
+sub _record_turn_metrics {
+    my ($self, $api_response, $session) = @_;
+    return unless $api_response && $session;
+
+    my $metrics = $api_response->{metrics} || {};
+    my $usage = $api_response->{usage} || {};
+
+    # Extract what we have
+    my $ttft = $metrics->{ttft};
+    my $tps = $metrics->{tps};
+    my $duration = $metrics->{duration};
+    my $output_tokens = $metrics->{tokens} || $usage->{completion_tokens} || 0;
+    my $input_tokens = $usage->{prompt_tokens} || 0;
+    my $tool_calls_count = $api_response->{tool_calls} ? scalar(@{$api_response->{tool_calls}}) : 0;
+
+    # Get or initialize session performance state
+    my $state = $session->can('state') ? $session->state() : undef;
+    return unless $state;
+
+    $state->{perf} ||= {
+        total_turns     => 0,
+        total_duration  => 0,
+        total_tokens_in => 0,
+        total_tokens_out => 0,
+        total_ttft      => 0,
+        ttft_count      => 0,   # Only count turns that had TTFT data
+        total_tps       => 0,
+        tps_count       => 0,   # Only count turns that had TPS data
+    };
+
+    my $perf = $state->{perf};
+
+    # Update totals
+    $perf->{total_turns}++;
+    $perf->{total_duration} += ($duration || 0);
+    $perf->{total_tokens_in} += $input_tokens;
+    $perf->{total_tokens_out} += $output_tokens;
+
+    if (defined $ttft && $ttft > 0) {
+        $perf->{total_ttft} += $ttft;
+        $perf->{ttft_count}++;
+    }
+
+    if (defined $tps && $tps > 0) {
+        $perf->{total_tps} += $tps;
+        $perf->{tps_count}++;
+    }
+
+    # Store last iteration metrics (overwritten each turn)
+    $perf->{last} = {
+        ttft         => $ttft,
+        tps          => $tps,
+        duration     => $duration,
+        tokens_in    => $input_tokens,
+        tokens_out   => $output_tokens,
+        tool_calls   => $tool_calls_count,
+        timestamp    => time(),
+    };
+
+    log_debug('WorkflowOrchestrator', sprintf(
+        "Turn metrics: TTFT=%.2fs TPS=%.1f tokens_in=%d tokens_out=%d duration=%.1fs tools=%d",
+        $ttft // 0, $tps // 0, $input_tokens, $output_tokens, $duration // 0, $tool_calls_count
+    ));
+}
+
+=head2 get_performance_summary
+
+Get a summary of session performance metrics for /stats display.
+
+Returns: Hashref with averages, totals, and last iteration data.
+
+=cut
+
+sub get_performance_summary {
+    my ($self) = @_;
+
+    my $session = $self->{session};
+    return undef unless $session && $session->can('state');
+
+    my $state = $session->state();
+    my $perf = $state->{perf};
+    return undef unless $perf && $perf->{total_turns};
+
+    return {
+        # Averages
+        avg_ttft     => $perf->{ttft_count} > 0 ? ($perf->{total_ttft} / $perf->{ttft_count}) : undef,
+        avg_tps      => $perf->{tps_count} > 0 ? ($perf->{total_tps} / $perf->{tps_count}) : undef,
+        avg_duration => $perf->{total_turns} > 0 ? ($perf->{total_duration} / $perf->{total_turns}) : undef,
+
+        # Totals
+        total_turns      => $perf->{total_turns},
+        total_duration   => $perf->{total_duration},
+        total_tokens_in  => $perf->{total_tokens_in},
+        total_tokens_out => $perf->{total_tokens_out},
+        total_tokens     => $perf->{total_tokens_in} + $perf->{total_tokens_out},
+
+        # Last iteration
+        last => $perf->{last},
+    };
 }
 
 1;
