@@ -735,11 +735,41 @@ See [docs/SANDBOX.md](SANDBOX.md) for details.
 
 ### Secret Redaction
 
-CLIO detects and redacts secrets (API keys, tokens, passwords) in output. Configurable levels:
-- **Off** - No redaction
-- **Low** - Redact obvious secrets (long hex strings, JWT tokens)
-- **Medium** - Redact patterns matching common secret formats
-- **High** - Aggressive redaction of anything that looks sensitive
+CLIO automatically detects and redacts sensitive information from tool output before it's displayed or sent to AI providers. The `SecretRedactor` intercepts all tool results at the `ToolExecutor` level, so secrets are caught regardless of which tool produced them.
+
+#### Redaction Levels
+
+| Level | PII | Private Keys | DB Passwords | API Keys | Tokens |
+|-------|-----|-------------|-------------|----------|--------|
+| **strict** | Redact | Redact | Redact | Redact | Redact |
+| **standard** | Redact | Redact | Redact | Redact | Redact |
+| **api_permissive** | Redact | Redact | Redact | Allow | Allow |
+| **pii** (default) | Redact | - | - | - | - |
+| **off** | - | - | - | - | - |
+
+- **strict / standard** - Redact everything: PII, cryptographic material, API keys, and tokens. Recommended for most use cases.
+- **api_permissive** - Allow API keys and tokens through (useful when the AI legitimately needs to work with them), but still redact PII and cryptographic material.
+- **pii** (default) - Only redact personally identifiable information: SSN, credit cards, phone numbers, email addresses, UK National Insurance numbers.
+- **off** - No redaction. Use with caution.
+
+#### What's Detected
+
+Four pattern categories, each with multiple specific patterns:
+
+- **PII** - Email addresses, US Social Security numbers, US phone numbers, credit card numbers, UK National Insurance numbers
+- **Cryptographic material** - PEM-encoded private keys (RSA, DSA, EC, OpenSSH), database connection strings with passwords (PostgreSQL, MySQL, MongoDB, Redis, ODBC), password assignments
+- **API keys** - AWS access keys and secrets, GitHub tokens (PAT, OAuth, fine-grained), Stripe keys, Google Cloud API keys, OpenAI keys, Anthropic keys, Slack tokens/webhooks, Discord tokens/webhooks, Twilio SIDs, and generic key/secret assignment patterns
+- **Tokens** - JWT tokens, Bearer authorization headers, Basic auth headers
+
+#### Configuration
+
+```
+/config set redact_level standard    # Redact everything
+/config set redact_level pii         # Only PII (default)
+/config set redact_level off         # Disable redaction
+```
+
+A built-in whitelist prevents false positives on common safe values like `localhost`, `127.0.0.1`, `true`, `false`, `example`, `test`, etc.
 
 ### Authentication
 

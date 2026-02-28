@@ -66,6 +66,29 @@ CLIO implements a path authorization system:
 - Session files stored in `.clio/sessions/` with restricted permissions
 - Lock files prevent concurrent session access
 
+#### Secret Redaction
+
+CLIO automatically detects and redacts sensitive information from tool output before it is displayed or transmitted to AI providers. This is handled by `SecretRedactor.pm` with five configurable levels:
+
+| Level | What's Redacted |
+|-------|----------------|
+| **strict** | Everything - PII, private keys, database passwords, API keys, tokens |
+| **standard** | Same as strict (recommended for most use cases) |
+| **api_permissive** | PII and cryptographic material only - API keys/tokens pass through |
+| **pii** (default) | Only PII - SSN, credit cards, phone numbers, email addresses |
+| **off** | No redaction (use with caution) |
+
+Pattern categories detected:
+- **PII**: Social Security numbers, credit card numbers, phone numbers, email addresses, UK National Insurance numbers
+- **Cryptographic material**: PEM private keys, database connection strings with passwords (PostgreSQL, MySQL, MongoDB, Redis)
+- **API keys**: AWS, GitHub, Stripe, Google Cloud, OpenAI, Anthropic, Slack, Discord, Twilio, and generic key/secret patterns
+- **Tokens**: JWT tokens, Bearer tokens, Basic auth headers
+
+Configure via:
+```
+/config set redact_level standard
+```
+
 #### Input Sanitization
 
 - AI outputs are sanitized to remove potentially dangerous content
