@@ -73,6 +73,15 @@ Terminal Output
 | Hashtag Parser | `HashtagParser.pm` | Parse hashtag commands |
 | Tab Completion | `TabCompletion.pm` | Tab completion support |
 | Skill Manager | `SkillManager.pm` | Manage AI skills |
+| Copilot User API | `CopilotUserAPI.pm` | GitHub Copilot user management |
+| Device Registry | `DeviceRegistry.pm` | Named devices and groups for remote execution |
+| Agent Loop | `AgentLoop.pm` | Persistent agent execution loop |
+| Conversation Manager | `ConversationManager.pm` | Conversation history management |
+| Model Registry | `ModelRegistry.pm` | AI model metadata and management |
+| Prompt Builder | `PromptBuilder.pm` | Prompt construction utilities |
+| Tool Error Guidance | `ToolErrorGuidance.pm` | Contextual error recovery hints |
+| Message Validator | `API/MessageValidator.pm` | Validate message format for AI providers |
+| Response Handler | `API/ResponseHandler.pm` | Parse and process AI provider responses |
 | GitHub Auth | `GitHubAuth.pm` | GitHub OAuth authentication |
 | GitHub Copilot Models API | `GitHubCopilotModelsAPI.pm` | Access GitHub Copilot models |
 | Performance Monitor | `PerformanceMonitor.pm` | Track performance metrics |
@@ -121,6 +130,9 @@ Terminal Output
 | Session State | `State.pm` | Conversation history, metadata |
 | Todo Store | `TodoStore.pm` | Persist todos across sessions |
 | Tool Result Store | `ToolResultStore.pm` | Cache tool results for large output |
+| File Vault | `FileVault.pm` | Targeted file backup for undo/revert |
+| Session Export | `Export.pm` | Export sessions to self-contained HTML |
+| Session Lock | `Lock.pm` | Lock files to prevent concurrent access |
 
 **How it works:**
 1. New session: Create `sessions/UUID.json`
@@ -166,13 +178,15 @@ Terminal Output
 | Auth | `Auth.pm` | GitHub OAuth, token storage |
 | Authz | `Authz.pm` | Check file access permissions |
 | Path Authorizer | `PathAuthorizer.pm` | Control file access |
+| Secret Redactor | `SecretRedactor.pm` | PII and secret redaction from tool output |
 | Manager | `Manager.pm` | Overall security |
 
 **How it works:**
 1. User runs `/login` → GitHub device flow
 2. Token stored securely in `~/.clio/`
 3. File operations check PathAuthorizer
-4. Audit logging of all operations
+4. Tool output passes through SecretRedactor before display/AI transmission
+5. Audit logging of all operations
 
 ### 8. Logging & Monitoring
 **Files:** `lib/CLIO/Logging/`, `lib/CLIO/Core/`
@@ -182,6 +196,7 @@ Terminal Output
 | Logger | `Core/Logger.pm` | Debug/trace output |
 | Tool Logger | `Logging/ToolLogger.pm` | Log tool operations |
 | Performance Monitor | `Core/PerformanceMonitor.pm` | Track timing |
+| Process Stats | `Logging/ProcessStats.pm` | RSS/VSZ memory and resource tracking |
 
 **How it works:**
 - Debug mode: `clio --debug`
@@ -208,6 +223,49 @@ Terminal Output
 3. Manager looks up protocol handler
 4. Handler executes the protocol
 5. Results sent back to AI
+
+### 10. Multi-Agent Coordination
+**Files:** `lib/CLIO/Coordination/`
+
+| Component | File | Purpose |
+|-----------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Broker | `Broker.pm` | Unix socket coordination server for agent communication |
+| Client | `Client.pm` | Broker connection API |
+| SubAgent | `SubAgent.pm` | Process spawning and lifecycle management |
+
+**How it works:**
+1. Main session spawns sub-agents as separate processes
+2. Broker provides coordination via Unix socket (file locks, git locks, message bus)
+3. Agents communicate through the broker (questions, status updates, completions)
+4. API rate limiting is shared across all agents
+
+### 11. AI Providers
+**Files:** `lib/CLIO/Providers/`
+
+| Component | File | Purpose |
+|-----------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Provider Registry | `Providers.pm` | AI provider registration and lookup |
+| Base | `Base.pm` | Abstract base class for providers |
+| Anthropic | `Anthropic.pm` | Native Anthropic API (Claude) |
+| Google | `Google.pm` | Native Google Gemini API |
+
+**How it works:**
+- Base.pm defines the provider interface
+- Each provider implements native API communication
+- Providers register via Providers.pm for runtime selection
+- GitHub Copilot and OpenAI-compatible providers are handled directly by APIManager
+
+### 12. Natural Language Processing
+**Files:** `lib/CLIO/NaturalLanguage/`
+
+| Component | File | Purpose |
+|-----------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Task Processor | `TaskProcessor.pm` | Natural language task decomposition into protocol chains |
+
+**How it works:**
+- Parses complex natural language requests (e.g., "Clone this repo and analyze the code")
+- Breaks them into executable protocol chains with confidence scoring
+- Routes to appropriate protocol handlers
 
 ---------------------------------------------------
 

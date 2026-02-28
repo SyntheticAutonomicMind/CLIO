@@ -21,7 +21,7 @@ CLIO is part of the [Synthetic Autonomic Mind (SAM)](https://github.com/Syntheti
 - **Portable & Minimal:** Works with standard Unix tools (git, curl, etc.) - no heavy frameworks or package managers required. See [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) for details.
 - **Actually Autonomous:** CLIO doesn't just suggest code - it reads, writes, tests, commits, and iterates. Give it a task and it works through it end-to-end.
 - **Tool-Powered:** Real file, git, and terminal operations with real-time action descriptions
-- **Privacy & Control:** Your code stays on your machine - only minimum context sent to AI providers
+- **Privacy & Control:** Your code stays on your machine - only minimum context sent to AI providers. Built-in secret redaction catches API keys, tokens, PII, and credentials before they reach the AI.
 - **Persistent Sessions:** Pick up exactly where you left off with full conversation history
 - **Scriptable & Extensible:** Fits into your workflow, not the other way around
 - **Remote Execution:** SSH into any machine, deploy CLIO, run an AI task, and get results back - across your entire fleet in parallel
