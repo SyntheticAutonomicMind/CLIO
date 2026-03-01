@@ -444,6 +444,9 @@ sub run {
             my $on_chunk = sub {
                 my ($chunk, $metrics) = @_;
                 
+                # If user pressed Q to stop streaming, silently drop remaining chunks
+                return if $self->{stop_streaming};
+                
                 log_debug('Chat', "Received chunk: " . substr($chunk, 0, 50) . "...");
                 
                 # Reset system message flag when we start outputting text
