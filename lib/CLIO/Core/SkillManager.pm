@@ -807,6 +807,125 @@ sub execute_skill {
     };
 }
 
+=head2 load_skill
+
+Load a skill into the session's system prompt. The skill content is merged
+into the system prompt for the duration of the session.
+
+Arguments:
+- $name: Skill name
+- $session_state: Session::State object (stores loaded_skills)
+
+Returns: { success => 1 } or { success => 0, error => $msg }
+
+=cut
+
+sub load_skill {
+    my ($self, $name, $session_state) = @_;
+    
+    unless ($session_state) {
+        return { success => 0, error => "No session state available" };
+    }
+    
+    my $skill = $self->get_skill($name);
+    unless ($skill) {
+        return { success => 0, error => "Skill '$name' not found" };
+    }
+    
+    # Check if already loaded
+    my $loaded = $session_state->{loaded_skills} || [];
+    for my $ls (@$loaded) {
+        if ($ls->{name} eq $name) {
+            return { success => 0, error => "Skill '$name' is already loaded" };
+        }
+    }
+    
+    # Extract the skill content (strip frontmatter for cleaner prompt injection)
+    my $content = $skill->{prompt} || '';
+    $content = _strip_frontmatter($content);
+    
+    # Add to loaded skills
+    push @{$session_state->{loaded_skills}}, {
+        name => $name,
+        description => $skill->{description} || '',
+        content => $content,
+        loaded_at => time(),
+    };
+    
+    log_debug('SkillManager', "Loaded skill '$name' into session prompt (" . length($content) . " bytes)");
+    
+    return { success => 1 };
+}
+
+=head2 unload_skill
+
+Remove a loaded skill from the session's system prompt.
+
+Arguments:
+- $name: Skill name
+- $session_state: Session::State object
+
+Returns: { success => 1 } or { success => 0, error => $msg }
+
+=cut
+
+sub unload_skill {
+    my ($self, $name, $session_state) = @_;
+    
+    unless ($session_state) {
+        return { success => 0, error => "No session state available" };
+    }
+    
+    my $loaded = $session_state->{loaded_skills} || [];
+    my $initial_count = scalar @$loaded;
+    
+    @{$session_state->{loaded_skills}} = grep { $_->{name} ne $name } @$loaded;
+    
+    my $removed = $initial_count - scalar(@{$session_state->{loaded_skills}});
+    
+    if ($removed > 0) {
+        log_debug('SkillManager', "Unloaded skill '$name' from session prompt");
+        return { success => 1 };
+    }
+    
+    return { success => 0, error => "Skill '$name' is not currently loaded" };
+}
+
+=head2 get_loaded_skills
+
+Get all skills currently loaded into the session's system prompt.
+
+Arguments:
+- $session_state: Session::State object
+
+Returns: Arrayref of loaded skill records
+
+=cut
+
+sub get_loaded_skills {
+    my ($self, $session_state) = @_;
+    
+    return [] unless $session_state;
+    return $session_state->{loaded_skills} || [];
+}
+
+=head2 _strip_frontmatter
+
+Remove YAML frontmatter from skill content for cleaner prompt injection.
+
+=cut
+
+sub _strip_frontmatter {
+    my ($content) = @_;
+    
+    # Strip YAML frontmatter (--- ... ---)
+    if ($content =~ /\A---\s*\n.*?\n---\s*\n(.*)\z/s) {
+        return $1;
+    }
+    
+    return $content;
+}
+
 =head2 _substitute_variables
 
 Substitute ${variables} in template with context values.
