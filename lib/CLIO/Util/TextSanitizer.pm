@@ -4,15 +4,21 @@ use strict;
 use warnings;
 use utf8;  # Source code contains UTF-8
 use Encode qw(decode encode);  # For proper UTF-8 handling
+use CLIO::Security::InvisibleCharFilter qw(filter_invisible_chars has_invisible_chars describe_invisible_chars);
+use CLIO::Core::Logger qw(log_warning log_debug);
 
 =head1 NAME
 
-CLIO::Util::TextSanitizer - Universal text sanitization for API compatibility
+CLIO::Util::TextSanitizer - Universal text sanitization for API and security compatibility
 
 =head1 DESCRIPTION
 
 Provides text sanitization to prevent JSON encoding issues when sending
 content to AI APIs. Handles UTF-8 emojis and other problematic characters.
+
+Also provides defense against invisible Unicode character injection attacks
+via L<CLIO::Security::InvisibleCharFilter>. This runs on every sanitize_text()
+call, covering all points where text enters the AI pipeline.
 
 =head1 SYNOPSIS
 
@@ -24,6 +30,8 @@ content to AI APIs. Handles UTF-8 emojis and other problematic characters.
 
 use Exporter 'import';
 our @EXPORT_OK = qw(sanitize_text);
+# Re-export InvisibleCharFilter helpers for callers that want raw detection
+push @EXPORT_OK, qw(filter_invisible_chars has_invisible_chars describe_invisible_chars);
 
 =head2 sanitize_text
 
@@ -44,6 +52,23 @@ sub sanitize_text {
     
     return $text unless defined $text;
     
+    # --- Invisible character injection defense ---
+    # Must run BEFORE any other processing so that hidden chars cannot
+    # bypass emoji/pattern filters by hiding between zero-width characters.
+    if (has_invisible_chars($text)) {
+        my $report = describe_invisible_chars($text);
+        # Only warn for HIGH severity detections (BiDi overrides, Tag block, null byte).
+        # LOW/MEDIUM detections (variation selectors, soft hyphen, unusual whitespace)
+        # appear legitimately in CLIO's own UI strings and tool output, so log at DEBUG.
+        my @high = grep { $_->{severity} eq 'HIGH' } @{$report->{detections}};
+        if (@high) {
+            log_warning('TextSanitizer', "Invisible character injection attempt detected: $report->{summary}");
+        } else {
+            log_debug('TextSanitizer', "Stripping invisible Unicode chars: $report->{summary}");
+        }
+        $text = filter_invisible_chars($text);
+    }
+
     # Don't sanitize numbers - return them as-is to preserve numeric type
     # This prevents 0.2 from becoming "0.2" when JSON-encoded
     if ($text =~ /^-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/) {

@@ -3,6 +3,7 @@ package CLIO::UI::Chat;
 use strict;
 use warnings;
 use CLIO::Core::Logger qw(log_debug log_warning);
+use CLIO::Security::InvisibleCharFilter qw(filter_invisible_chars has_invisible_chars);
 use CLIO::Util::TextSanitizer qw(sanitize_text);
 use CLIO::UI::Markdown;
 use CLIO::UI::ANSI;
@@ -1498,6 +1499,28 @@ sub _build_prompt {
     return $prompt_text;
 }
 
+# Strip invisible and dangerous Unicode characters from raw user input.
+# This is the first security gate in the pipeline - runs before command
+# handling and AI dispatch. Logs a warning if an injection attempt is detected.
+sub _sanitize_user_input {
+    my ($input) = @_;
+    return $input unless defined $input;
+    return $input if $input =~ /^\//;  # Pass slash-commands through unmodified
+
+    if (has_invisible_chars($input)) {
+        use CLIO::Security::InvisibleCharFilter qw(describe_invisible_chars);
+        my $report = describe_invisible_chars($input);
+        my @high = grep { $_->{severity} eq 'HIGH' } @{$report->{detections}};
+        if (@high) {
+            log_warning('Chat', "Invisible character injection attempt detected in user input - stripping: $report->{summary}");
+        } else {
+            log_debug('Chat', "Stripping invisible Unicode chars from user input: $report->{summary}");
+        }
+        $input = filter_invisible_chars($input);
+    }
+    return $input;
+}
+
 sub get_input {
     my ($self) = @_;
     
@@ -1521,7 +1544,7 @@ sub get_input {
         }
         
         chomp $input;
-        return $input;
+        return _sanitize_user_input($input);
     }
     
     # Interactive mode with our custom readline and tab completion
@@ -1536,7 +1559,7 @@ sub get_input {
         }
         
         chomp $input;
-        return $input;
+        return _sanitize_user_input($input);
     }
     
     # Fallback to basic input if readline not available
@@ -1551,7 +1574,7 @@ sub get_input {
     }
     
     chomp $input;
-    return $input;
+    return _sanitize_user_input($input);
 }
 
 =head2 display_user_message
