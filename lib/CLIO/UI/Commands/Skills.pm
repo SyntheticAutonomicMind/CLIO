@@ -108,6 +108,15 @@ sub handle_skills_command {
     elsif ($action eq 'use' || $action eq 'exec') {
         return $self->_use_skill($sm, @args);
     }
+    elsif ($action eq 'load') {
+        $self->_load_skill($sm, @args);
+    }
+    elsif ($action eq 'unload') {
+        $self->_unload_skill($sm, @args);
+    }
+    elsif ($action eq 'loaded') {
+        $self->_show_loaded_skills($sm);
+    }
     elsif ($action eq 'show') {
         $self->_show_skill($sm, @args);
     }
@@ -144,7 +153,10 @@ sub _show_help {
     
     $self->display_section_header("COMMANDS");
     $self->{chat}->display_command_row("/skills", "List all skills", 35);
-    $self->{chat}->display_command_row("/skills use <name> [file]", "Execute skill", 35);
+    $self->{chat}->display_command_row("/skills use <name> [file]", "Execute skill as user input", 35);
+    $self->{chat}->display_command_row("/skills load <name>", "Load skill into system prompt", 35);
+    $self->{chat}->display_command_row("/skills unload <name>", "Remove skill from system prompt", 35);
+    $self->{chat}->display_command_row("/skills loaded", "Show loaded skills", 35);
     $self->{chat}->display_command_row("/skills show <name>", "Display skill details", 35);
     $self->{chat}->display_command_row("/skills add <name> \"<text>\"", "Add custom skill", 35);
     $self->{chat}->display_command_row("/skills delete <name>", "Delete custom skill", 35);
@@ -153,6 +165,11 @@ sub _show_help {
     $self->display_section_header("CATALOG");
     $self->{chat}->display_command_row("/skills search [query]", "Search skills catalog", 35);
     $self->{chat}->display_command_row("/skills install <name>", "Install skill from catalog", 35);
+    $self->writeline("", markdown => 0);
+    
+    $self->display_section_header("MODES");
+    $self->writeline("  use   - Send skill prompt as next message (immediate execution)", markdown => 0);
+    $self->writeline("  load  - Merge skill into system prompt (persistent for session)", markdown => 0);
     $self->writeline("", markdown => 0);
 }
 
@@ -197,7 +214,24 @@ sub _list_skills {
     
     my $skills = $sm->list_skills();
     
+    # Check for loaded skills
+    my $state = $self->_get_session_state();
+    my $loaded = $state ? ($state->{loaded_skills} || []) : [];
+    my %loaded_names = map { $_->{name} => 1 } @$loaded;
+    
     $self->display_command_header("SKILLS");
+    
+    # Loaded skills section (show first if any are loaded)
+    if (@$loaded) {
+        $self->display_section_header("LOADED (IN SYSTEM PROMPT)");
+        for my $ls (@$loaded) {
+            my $name = $ls->{name} || 'unknown';
+            my $desc = $ls->{description} || '';
+            my $size = length($ls->{content} || '');
+            $self->display_key_value($name, $desc . " (${size}b)", 16);
+        }
+        $self->writeline("", markdown => 0);
+    }
     
     # Custom skills section
     $self->display_section_header("CUSTOM SKILLS");
@@ -206,7 +240,8 @@ sub _list_skills {
         for my $name (sort @{$skills->{custom}}) {
             my $s = $sm->get_skill($name);
             my $desc = $s->{description} || '(no description)';
-            $self->display_key_value($name, $desc, 16);
+            my $indicator = $loaded_names{$name} ? ' [loaded]' : '';
+            $self->display_key_value($name, $desc . $indicator, 16);
         }
     } else {
         $self->writeline("  " . $self->colorize("(none)", 'DIM'), markdown => 0);
@@ -219,24 +254,29 @@ sub _list_skills {
     for my $name (sort @{$skills->{builtin}}) {
         my $s = $sm->get_skill($name);
         my $desc = $s->{description} || '(no description)';
-        $self->display_key_value($name, $desc, 16);
+        my $indicator = $loaded_names{$name} ? ' [loaded]' : '';
+        $self->display_key_value($name, $desc . $indicator, 16);
     }
     
-    # Summary (with blank line before for separation)
+    # Summary
     print "\n";
     my $custom_count = scalar(@{$skills->{custom}});
     my $builtin_count = scalar(@{$skills->{builtin}});
+    my $loaded_count = scalar(@$loaded);
     my $total = $custom_count + $builtin_count;
     
     my $summary = $self->colorize("Total: ", 'LABEL') .
                   $self->colorize("$custom_count", 'DATA') . " custom, " .
                   $self->colorize("$builtin_count", 'DATA') . " built-in" .
                   " (" . $self->colorize("$total", 'SUCCESS') . " total)";
+    $summary .= " | " . $self->colorize("$loaded_count", 'DATA') . " loaded" if $loaded_count > 0;
     $self->writeline($summary, markdown => 0);
     
     # Management commands
     $self->display_section_header("COMMANDS");
-    $self->{chat}->display_command_row("/skills use <name> [file]", "Execute skill", 35);
+    $self->{chat}->display_command_row("/skills use <name> [file]", "Execute skill as user input", 35);
+    $self->{chat}->display_command_row("/skills load <name>", "Load skill into system prompt", 35);
+    $self->{chat}->display_command_row("/skills unload <name>", "Remove from system prompt", 35);
     $self->{chat}->display_command_row("/skills show <name>", "Display skill details", 35);
     $self->{chat}->display_command_row("/skills add <name> \"<text>\"", "Add custom skill", 35);
     $self->{chat}->display_command_row("/skills delete <name>", "Delete custom skill", 35);
@@ -246,6 +286,141 @@ sub _list_skills {
     $self->{chat}->display_command_row("/skills search [query]", "Search skills catalog", 35);
     $self->{chat}->display_command_row("/skills install <name>", "Install skill from catalog", 35);
     $self->writeline("", markdown => 0);
+}
+
+=head2 _load_skill($sm, @args)
+
+Load a skill into the system prompt for the duration of the session.
+
+=cut
+
+sub _load_skill {
+    my ($self, $sm, @args) = @_;
+    
+    my $name = shift @args;
+    
+    unless ($name) {
+        $self->display_error_message("Usage: /skills load <name>");
+        return;
+    }
+    
+    # Get session state
+    my $state = $self->_get_session_state();
+    unless ($state) {
+        $self->display_error_message("No active session");
+        return;
+    }
+    
+    my $result = $sm->load_skill($name, $state);
+    
+    if ($result->{success}) {
+        $self->display_success_message("Skill '$name' loaded into system prompt");
+        $self->writeline("  The skill will be active for the rest of this session.", markdown => 0);
+        $self->writeline("  Use /skills unload $name to remove it.", markdown => 0);
+        
+        # Save session to persist loaded skills
+        if ($self->{session} && $self->{session}->can('save')) {
+            $self->{session}->save();
+        }
+    } else {
+        $self->display_error_message($result->{error});
+    }
+}
+
+=head2 _unload_skill($sm, @args)
+
+Remove a loaded skill from the system prompt.
+
+=cut
+
+sub _unload_skill {
+    my ($self, $sm, @args) = @_;
+    
+    my $name = shift @args;
+    
+    unless ($name) {
+        $self->display_error_message("Usage: /skills unload <name>");
+        return;
+    }
+    
+    my $state = $self->_get_session_state();
+    unless ($state) {
+        $self->display_error_message("No active session");
+        return;
+    }
+    
+    my $result = $sm->unload_skill($name, $state);
+    
+    if ($result->{success}) {
+        $self->display_success_message("Skill '$name' unloaded from system prompt");
+        
+        # Save session to persist change
+        if ($self->{session} && $self->{session}->can('save')) {
+            $self->{session}->save();
+        }
+    } else {
+        $self->display_error_message($result->{error});
+    }
+}
+
+=head2 _show_loaded_skills($sm)
+
+Display skills currently loaded into the system prompt.
+
+=cut
+
+sub _show_loaded_skills {
+    my ($self, $sm) = @_;
+    
+    my $state = $self->_get_session_state();
+    unless ($state) {
+        $self->display_error_message("No active session");
+        return;
+    }
+    
+    my $loaded = $sm->get_loaded_skills($state);
+    
+    $self->display_command_header("LOADED SKILLS");
+    
+    if (!$loaded || !@$loaded) {
+        $self->writeline("  No skills loaded into system prompt.", markdown => 0);
+        $self->writeline("  Use /skills load <name> to load one.", markdown => 0);
+        $self->writeline("", markdown => 0);
+        return;
+    }
+    
+    for my $skill (@$loaded) {
+        my $name = $skill->{name} || 'unknown';
+        my $desc = $skill->{description} || '';
+        my $size = length($skill->{content} || '');
+        
+        $self->display_key_value("Skill", $name, 15);
+        $self->display_key_value("Description", $desc, 15) if $desc;
+        $self->display_key_value("Size", "${size} bytes", 15);
+        $self->writeline("", markdown => 0);
+    }
+}
+
+=head2 _get_session_state
+
+Get the session state object for loaded skills storage.
+
+=cut
+
+sub _get_session_state {
+    my ($self) = @_;
+    
+    # session is the Session::Manager object
+    if ($self->{session} && $self->{session}->can('state')) {
+        return $self->{session}->state();
+    }
+    
+    # Direct hash access (legacy or test)
+    if ($self->{session} && ref($self->{session}) eq 'HASH' && $self->{session}{state}) {
+        return $self->{session}{state};
+    }
+    
+    return undef;
 }
 
 =head2 _use_skill($sm, @args)

@@ -181,6 +181,25 @@ sub get_system_prompt {
         log_debug('PromptManager', "Skipping custom instructions (--no-custom-instructions flag)");
     }
     
+    # Append loaded skills to system prompt (if any are loaded in the session)
+    if ($session && $session->{loaded_skills} && @{$session->{loaded_skills}}) {
+        my @loaded = @{$session->{loaded_skills}};
+        my $count = scalar @loaded;
+        log_debug('PromptManager', "Injecting $count loaded skill(s) into system prompt");
+        
+        for my $skill (@loaded) {
+            my $name = $skill->{name} || 'unknown';
+            my $content = $skill->{content} || '';
+            next unless length($content) > 0;
+            
+            $prompt .= "\n\n<loadedSkill name=\"$name\">\n";
+            $prompt .= $content;
+            $prompt .= "\n</loadedSkill>\n";
+            
+            log_debug('PromptManager', "Injected loaded skill '$name' (" . length($content) . " bytes)");
+        }
+    }
+    
     return $prompt;
 }
 

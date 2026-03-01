@@ -84,7 +84,8 @@ sub build_system_prompt {
 
     log_debug('PromptBuilder', "Loading system prompt from PromptManager");
 
-    my $base_prompt = $pm->get_system_prompt();
+    my $session_state = ($session && $session->can('state')) ? $session->state() : undef;
+    my $base_prompt = $pm->get_system_prompt($session_state);
 
     # Add current date/time and context management note at the beginning
     my $datetime_section = $self->generate_datetime_section();
