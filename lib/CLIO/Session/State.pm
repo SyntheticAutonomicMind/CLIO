@@ -59,6 +59,8 @@ sub new {
         yarn       => $args{yarn} // CLIO::Memory::YaRN->new(debug => $args{debug}),
         # Working directory
         working_directory => $args{working_directory} || getcwd(),
+        # Loaded skills (merged into system prompt)
+        loaded_skills => [],
         # GitHub Copilot session continuation
         _stateful_markers => [],
         # Session creation timestamp (for proper resume ordering)
@@ -131,6 +133,7 @@ sub save {
         style => $self->{style},  # Save current color style
         theme => $self->{theme},  # Save current output theme
         session_name => $self->{session_name},  # Human-friendly session name
+        loaded_skills => $self->{loaded_skills} || [],  # Skills merged into system prompt
     };
     use Data::Dumper;
     if ($ENV{CLIO_DEBUG} || $self->{debug}) {
@@ -260,6 +263,8 @@ sub load {
         max_tokens => $args{max_tokens} // 128000,
         # Human-friendly session name
         session_name => $data->{session_name} // undef,
+        # Loaded skills (merged into system prompt)
+        loaded_skills => $data->{loaded_skills} || [],
     };
     bless $self, $class;
     
