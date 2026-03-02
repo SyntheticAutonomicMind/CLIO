@@ -271,10 +271,16 @@ sub readline {
                     # Use full redraw when:
                     # - row changes (unwrap across line boundary)
                     # - landing on an exact boundary (pending wrap ambiguity)
-                    # - the deleted character was wide (>1 col) - simple \b \b won't cover it
+                    # - the deleted character was wide (>1 col)
+                    # - the remaining input contains any wide chars (CJK, emoji, etc.)
+                    #   The fast-path \b \b sequence moves the cursor exactly 1 column.
+                    #   When wide characters are present, the cursor may land inside a
+                    #   2-column cell, which terminals handle inconsistently and can
+                    #   leave visual ghost characters on screen.
                     if ($old_row > $new_row ||
                         ($new_total_pos > 0 && $new_total_pos % $term_width == 0) ||
-                        $deleted_width > 1)
+                        $deleted_width > 1 ||
+                        _display_width($input) != length($input))
                     {
                         $self->redraw_line(\$input, \$cursor_pos, $prompt);
                     } else {

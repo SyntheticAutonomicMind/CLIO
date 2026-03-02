@@ -216,7 +216,50 @@ sub _install_update {
         $self->writeline("", markdown => 0);
         $self->display_info_message("Please restart CLIO to use the new version");
         $self->writeline("", markdown => 0);
-        $self->writeline("Run: " . $self->colorize('./clio', 'command'), markdown => 0);
+
+        # Show the correct restart command using the actual installed binary path.
+        # Detect where we installed so we can give the user the right command.
+        my $install_info = eval { $updater->detect_install_location() };
+        my $restart_cmd;
+
+        if ($install_info) {
+            my $installed_path = $install_info->{path};
+            my $running_path   = $install_info->{running_path};
+            my $which_path     = $install_info->{which_path};
+            my $path_mismatch  = $install_info->{path_mismatch};
+
+            # If 'clio' in PATH resolves to the install location, just say 'clio'
+            # Otherwise show the full absolute path
+            if ($which_path && $which_path eq ($installed_path || '')) {
+                $restart_cmd = 'clio';
+            } else {
+                $restart_cmd = $installed_path || 'clio';
+            }
+
+            # Warn when the binary the user is currently running differs from
+            # what 'clio' resolves to in their PATH.  This is the exact scenario
+            # that caught out the user who ran ~/CLIO/clio after a global install.
+            if ($path_mismatch && $running_path) {
+                $self->writeline("", markdown => 0);
+                $self->display_info_message(
+                    "NOTE: You are running CLIO from: $running_path"
+                );
+                $self->writeline(
+                    "      This differs from '" . ($which_path || 'clio') .
+                    "' in your PATH.",
+                    markdown => 0
+                );
+                $self->writeline(
+                    "      After exiting, run the updated binary: " .
+                    $self->colorize($restart_cmd, 'command'),
+                    markdown => 0
+                );
+            } else {
+                $self->writeline("Run: " . $self->colorize($restart_cmd, 'command'), markdown => 0);
+            }
+        } else {
+            $self->writeline("Run: " . $self->colorize('clio', 'command'), markdown => 0);
+        }
     } else {
         $self->display_error_message("Update installation failed: " . ($result->{error} || 'Unknown error'));
         $self->writeline("", markdown => 0);
