@@ -25,6 +25,7 @@ use CLIO::UI::Commands::Prompt;
 use CLIO::UI::Commands::Project;
 use CLIO::UI::Commands::Device;
 use CLIO::UI::Commands::SubAgent;
+use CLIO::UI::Commands::Mux;
 use CLIO::UI::Commands::Stats;
 
 =head1 NAME
@@ -194,6 +195,12 @@ sub new {
     
     $self->{subagent_cmd} = CLIO::UI::Commands::SubAgent->new(
         chat => $self->{chat},
+        debug => $self->{debug},
+    );
+    
+    $self->{mux_cmd} = CLIO::UI::Commands::Mux->new(
+        chat => $self->{chat},
+        subagent_cmd => $self->{subagent_cmd},
         debug => $self->{debug},
     );
     
@@ -416,6 +423,12 @@ sub handle_command {
         # Multi-agent coordination
         my $subcommand = shift @args || 'help';
         my $result = $self->{subagent_cmd}->handle($subcommand, join(' ', @args));
+        print "$result\n" if $result;
+    }
+    elsif ($cmd eq 'mux' || $cmd eq 'multiplexer') {
+        # Terminal multiplexer integration
+        my $subcommand = shift @args || 'help';
+        my $result = $self->{mux_cmd}->handle($subcommand, join(' ', @args));
         print "$result\n" if $result;
     }
     elsif ($cmd eq 'init') {

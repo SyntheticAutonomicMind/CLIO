@@ -171,11 +171,22 @@ sub cmd_spawn {
     
     my $mode_str = $persistent ? 'persistent' : 'oneshot';
     
+    # Auto-create multiplexer pane for agent output
+    my $mux_pane_id;
+    if ($self->_multiplexer() && $self->_multiplexer()->auto_pane()) {
+        $mux_pane_id = $self->_multiplexer()->create_agent_pane($agent_id);
+    }
+    
     # Display formatted output following CLIO style
     $self->display_section_header("SUB-AGENT SPAWNED");
     $self->display_key_value("Agent ID", $self->colorize($agent_id, 'BOLD'));
     $self->display_key_value("Mode", $self->colorize($mode_str, $persistent ? 'YELLOW' : 'CYAN'));
     $self->display_key_value("Model", $model);
+    
+    if ($mux_pane_id) {
+        my $mux_type = $self->_multiplexer()->type();
+        $self->display_key_value("Output", $self->colorize("$mux_type pane (live)", 'GREEN'));
+    }
     
     # Truncate long tasks for display
     my $display_task = length($task) > 60 ? substr($task, 0, 57) . '...' : $task;
@@ -775,6 +786,50 @@ sub cmd_help {
     $self->{chat}{pagination_enabled} = 0;
     
     return "";  # Already displayed
+}
+
+=head2 _multiplexer()
+
+Lazy-initialize and return the Multiplexer instance. Returns undef if
+no multiplexer is detected.
+
+=cut
+
+sub _multiplexer {
+    my ($self) = @_;
+
+    # Return cached instance or undef
+    return $self->{_multiplexer} if exists $self->{_multiplexer};
+
+    # Try to load and detect multiplexer
+    eval {
+        require CLIO::UI::Multiplexer;
+        $self->{_multiplexer} = CLIO::UI::Multiplexer->new(
+            debug => $self->{debug},
+        );
+    };
+    if ($@) {
+        log_warning('SubAgent', "Failed to load Multiplexer: $@");
+        $self->{_multiplexer} = undef;
+    }
+
+    # If no multiplexer detected, cache undef to avoid re-checking
+    unless ($self->{_multiplexer} && $self->{_multiplexer}->available()) {
+        $self->{_multiplexer} = undef;
+    }
+
+    return $self->{_multiplexer};
+}
+
+=head2 multiplexer()
+
+Public accessor for the Multiplexer instance (used by /mux commands).
+
+=cut
+
+sub multiplexer {
+    my ($self) = @_;
+    return $self->_multiplexer();
 }
 
 =head2 start_broker()
