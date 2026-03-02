@@ -26,6 +26,7 @@ CLIO is part of the [Synthetic Autonomic Mind (SAM)](https://github.com/Syntheti
 - **Scriptable & Extensible:** Fits into your workflow, not the other way around
 - **Remote Execution:** SSH into any machine, deploy CLIO, run an AI task, and get results back - across your entire fleet in parallel
 - **Multi-Agent Coordination:** Spawn parallel agents with file locks, git locks, and coordinated API rate limiting for safe collaboration
+- **Multiplexer Integration:** When running inside tmux, GNU Screen, or Zellij, sub-agent output streams live in separate panes
 - **Long-Term Memory:** Discoveries, solutions, and patterns persist across your project history and are automatically injected into every conversation
 - **Interrupt Anytime:** Press Escape to stop the agent mid-task. CLIO pauses, asks what you need, and adapts - like tapping your pair programmer on the shoulder
 
@@ -40,6 +41,7 @@ CLIO is part of the [Synthetic Autonomic Mind (SAM)](https://github.com/Syntheti
 | **Terminal** | Execute commands and scripts directly |
 | **Remote** | Run AI tasks on remote systems via SSH |
 | **Multi-Agent** | Spawn parallel agents for complex work |
+| **Multiplexer** | Live agent output panes via tmux, GNU Screen, or Zellij |
 | **Memory** | Store and recall information across sessions |
 | **Todos** | Manage tasks within your workflow |
 | **Web** | Fetch and analyze web content |
@@ -170,14 +172,22 @@ For detailed options, see [docs/INSTALLATION.md](docs/INSTALLATION.md).
 | Command | Description |
 |---------|-------------|
 | `/help` | Show available commands |
-| `/api` | Configure AI providers |
+| `/api` | Configure AI providers and models |
 | `/config` | View/edit configuration |
 | `/session` | Session management |
 | `/file` | File operations |
 | `/git` | Git operations |
-| `/memory` | Memory system |
+| `/undo` | Revert AI changes from last turn |
+| `/memory` | Long-term memory system |
 | `/todo` | Task management |
+| `/agent` | Spawn and manage sub-agents |
+| `/mux` | Terminal multiplexer panes (tmux/screen/Zellij) |
+| `/mcp` | Model Context Protocol servers |
 | `/skill` | Custom skill system |
+| `/update` | Check for and install updates |
+| `/usage` | API billing and quota tracking |
+| `/stats` | Memory and performance stats |
+| `/device` | Remote device management |
 | `/theme` | Change color theme |
 | `/clear` | Clear screen |
 | `/exit` | Exit CLIO |
