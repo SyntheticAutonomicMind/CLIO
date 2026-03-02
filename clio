@@ -12,7 +12,6 @@ use strict;
 use warnings;
 use File::Spec;
 use File::Basename;
-use File::Path qw(make_path);
 use CLIO::Util::JSON qw(encode_json decode_json);
 use CLIO::UI::Chat;
 use CLIO::Util::PathResolver;
@@ -108,19 +107,6 @@ my $session_id = '';
 my $mode = '';
 my $working_dir = '';
 my $session;
-
-# Validate and create required directories
-my $base_dir = $FindBin::Bin;
-my @required_dirs = (
-    File::Spec->catdir($base_dir, '.clio/sessions'),
-);
-
-for my $dir (@required_dirs) {
-    unless (-d $dir) {
-        print STDERR "Creating directory: $dir\n" if $debug;
-        make_path($dir) or die "Failed to create directory $dir: $!";
-    }
-}
 
 # Load required modules
 use CLIO::Core::APIManager;
