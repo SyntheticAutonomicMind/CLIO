@@ -118,6 +118,10 @@ Based on what the issue describes:
 
 After investigating, write your analysis to `triage.json`.
 
+**For bugs:** Your investigation should identify the root cause - which code path fails and why.
+
+**For feature requests:** Your investigation should identify where the feature would integrate - which existing modules are relevant, what infrastructure already exists, and whether the request is architecturally feasible. Do NOT ask the reporter for implementation details. Assess this yourself based on the codebase.
+
 ## Classification Options
 
 - `bug` - Something is broken (you found evidence in the code)
@@ -135,9 +139,11 @@ After investigating, write your analysis to `triage.json`.
 ## Recommendation
 
 - `close` - Invalid, spam, duplicate (set close_reason)
-- `needs-info` - Missing required information to investigate further (set missing_info)
-- `ready-for-review` - Complete issue with root cause analysis
+- `needs-info` - The issue **cannot be investigated** because critical information is missing (e.g., no steps to reproduce a bug, no description of expected behavior, unclear what feature is being requested). Do NOT use this for implementation details - those are the developer's job, not the reporter's
+- `ready-for-review` - Complete issue with root cause analysis (or architectural fit analysis for features)
 - `already-addressed` - Issue has been addressed by linked commits
+
+**IMPORTANT:** For feature requests, do NOT ask the reporter for implementation design decisions (protocol choices, fallback strategies, architecture patterns). Instead, investigate what already exists in the codebase, assess architectural fit, and recommend `ready-for-review` with your findings. Implementation details are decided by the development team, not issue reporters.
 
 ## Output - WRITE TO FILE
 
