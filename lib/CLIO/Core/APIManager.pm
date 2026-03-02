@@ -1328,6 +1328,7 @@ sub _build_payload {
     # Add stream flag if streaming
     if ($stream) {
         $payload->{stream} = \1;  # JSON true
+        $payload->{stream_options} = { include_usage => \1 };
     }
     
     # Save currently used model to session for persistence
@@ -2300,6 +2301,7 @@ sub send_request_streaming {
     my $buffer = '';  # Buffer for partial SSE lines
     my $tool_calls_accumulator = {};  # Accumulate tool call deltas by index
     my $reasoning_was_active = 0;  # Track if reasoning_content was being streamed
+    my $streaming_usage = undef;  # Capture real usage from final streaming chunk
     
     # Make streaming request with callback
     my $resp;
@@ -2392,6 +2394,19 @@ sub send_request_streaming {
                     } else {
                         # DEBUG: Why no id?
                         log_debug('APIManager', "No id in this chunk (session=" . (defined $self->{session} ? "defined" : "undef") . ")");
+                    }
+                    
+                    # Capture real usage from final streaming chunk
+                    # When stream_options.include_usage is true, the API sends a
+                    # final chunk with usage data (prompt_tokens, completion_tokens)
+                    if ($data->{usage}) {
+                        $streaming_usage = {
+                            prompt_tokens => $data->{usage}{prompt_tokens} || $data->{usage}{input_tokens} || 0,
+                            completion_tokens => $data->{usage}{completion_tokens} || $data->{usage}{output_tokens} || 0,
+                            total_tokens => $data->{usage}{total_tokens} || 0,
+                        };
+                        $streaming_usage->{total_tokens} ||= $streaming_usage->{prompt_tokens} + $streaming_usage->{completion_tokens};
+                        log_debug('APIManager', "Streaming usage captured: prompt=$streaming_usage->{prompt_tokens}, completion=$streaming_usage->{completion_tokens}");
                     }
                     
                     # Extract content delta and tool_calls from chunk
@@ -2499,6 +2514,12 @@ sub send_request_streaming {
                             
                             # Extract usage from completed response
                             if ($resp_data->{usage}) {
+                                # Store real usage for accurate billing
+                                $streaming_usage = {
+                                    prompt_tokens => $resp_data->{usage}{input_tokens} || 0,
+                                    completion_tokens => $resp_data->{usage}{output_tokens} || 0,
+                                    total_tokens => ($resp_data->{usage}{input_tokens} || 0) + ($resp_data->{usage}{output_tokens} || 0),
+                                };
                                 log_debug('APIManager', "Responses API usage: " .
                                     "input=" . ($resp_data->{usage}{input_tokens} || 0) . ", " .
                                     "output=" . ($resp_data->{usage}{output_tokens} || 0));
@@ -2742,20 +2763,30 @@ sub send_request_streaming {
     }
     
     # Estimate usage for billing (streaming doesn't provide usage data)
-    # Token estimates: accumulated_content ~= completion_tokens
-    # Estimate prompt_tokens from messages array
-    my $estimated_completion_tokens = $token_count;
-    my $estimated_prompt_tokens = 0;
-    
-    # Estimate prompt tokens from messages
-    if ($messages && ref($messages) eq 'ARRAY') {
-        for my $msg (@$messages) {
-            if ($msg->{content}) {
-                $estimated_prompt_tokens += int(length($msg->{content}) / 4);
+    # Use real usage from stream_options if available, fall back to estimates
+    my $final_usage;
+    if ($streaming_usage) {
+        $final_usage = $streaming_usage;
+        log_debug('APIManager', "Using real streaming usage: prompt=$final_usage->{prompt_tokens}, completion=$final_usage->{completion_tokens}");
+    } else {
+        # Fallback: estimate tokens (inaccurate - doesn't count tool call tokens)
+        my $estimated_completion_tokens = $token_count;
+        my $estimated_prompt_tokens = 0;
+        if ($messages && ref($messages) eq 'ARRAY') {
+            for my $msg (@$messages) {
+                if ($msg->{content}) {
+                    $estimated_prompt_tokens += int(length($msg->{content}) / 4);
+                }
             }
+        } elsif ($input) {
+            $estimated_prompt_tokens = int(length($input) / 4);
         }
-    } elsif ($input) {
-        $estimated_prompt_tokens = int(length($input) / 4);
+        $final_usage = {
+            prompt_tokens => $estimated_prompt_tokens,
+            completion_tokens => $estimated_completion_tokens,
+            total_tokens => $estimated_prompt_tokens + $estimated_completion_tokens,
+        };
+        log_debug('APIManager', "Using estimated streaming usage (no real data available)");
     }
     
     # Convert accumulated tool_calls to array
@@ -2780,11 +2811,7 @@ sub send_request_streaming {
             tokens => $token_count,
             duration => $total_duration,
         },
-        usage => {
-            prompt_tokens => $estimated_prompt_tokens,
-            completion_tokens => $estimated_completion_tokens,
-            total_tokens => $estimated_prompt_tokens + $estimated_completion_tokens,
-        },
+        usage => $final_usage,
     };
     
     log_debug('APIManager', "Streaming complete - accumulated content length: " . length($accumulated_content));
@@ -3182,6 +3209,13 @@ sub _send_native_streaming {
             tokens => $token_count,
             duration => $duration,
         },
+    };
+    
+    # Add estimated usage (native providers may not provide real usage)
+    $result->{usage} = {
+        prompt_tokens => 0,
+        completion_tokens => $token_count,
+        total_tokens => $token_count,
     };
     
     # Add tool calls if present
