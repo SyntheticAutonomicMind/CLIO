@@ -21,7 +21,14 @@ jobs:
     runs-on: ubuntu-latest
     
     if: |
-      (github.event_name == 'issues' && github.event.issue.user.type != 'Bot') ||
+      (github.event_name == 'issues' && 
+       github.event.issue.user.type != 'Bot' &&
+       (github.event.action != 'reopened' || 
+        !contains(github.event.issue.labels.*.name, 'bug') &&
+        !contains(github.event.issue.labels.*.name, 'feature') &&
+        !contains(github.event.issue.labels.*.name, 'question') &&
+        !contains(github.event.issue.labels.*.name, 'documentation') &&
+        !contains(github.event.issue.labels.*.name, 'enhancement'))) ||
       (github.event_name == 'issue_comment' && 
        !github.event.issue.pull_request && 
        github.event.comment.user.type != 'Bot' &&
@@ -81,6 +88,13 @@ jobs:
           
           COMMENT_COUNT=$(gh api "repos/${{ github.repository }}/issues/${ISSUE_NUMBER}/comments" --jq 'length' 2>/dev/null || echo "0")
           
+          # Fetch issue timeline events (linked commits, cross-references, close/reopen history)
+          gh api "repos/${{ github.repository }}/issues/${ISSUE_NUMBER}/timeline" \
+            --jq '.[] | select(.event == "referenced" or .event == "closed" or .event == "reopened" or .event == "cross-referenced") | "- \(.event) by \(.actor.login // "unknown") at \(.created_at // "?") \(if .commit_id then "(commit: " + .commit_id[0:8] + ")" else "" end) \(if .source then "(ref: " + (.source.issue.title // "") + ")" else "" end)"' \
+            > /tmp/clio-workspace/ISSUE_EVENTS.md 2>/dev/null || echo "" > /tmp/clio-workspace/ISSUE_EVENTS.md
+          
+          EVENT_COUNT=$(wc -l < /tmp/clio-workspace/ISSUE_EVENTS.md | tr -d ' ')
+          
           # Parse labels from env var (safely)
           CURRENT_LABELS=$(echo "$ISSUE_LABELS_JSON" | jq -r '.[].name' 2>/dev/null | paste -sd ',' - || echo "none")
           
@@ -91,11 +105,17 @@ jobs:
             echo "**Title:** ${ISSUE_TITLE}"
             echo "**Author:** ${ISSUE_AUTHOR}"
             echo "**Current Labels:** ${CURRENT_LABELS}"
-            echo "**Event:** ${EVENT_NAME} (comments: ${COMMENT_COUNT})"
+            echo "**Event:** ${EVENT_NAME} (comments: ${COMMENT_COUNT}, timeline events: ${EVENT_COUNT})"
             echo ""
             echo "## Body"
             echo ""
             echo "See ISSUE_BODY.md"
+            if [ "$EVENT_COUNT" -gt 0 ] 2>/dev/null; then
+              echo ""
+              echo "## Timeline Events"
+              echo ""
+              echo "See ISSUE_EVENTS.md for linked commits, close/reopen history."
+            fi
           } > /tmp/clio-workspace/ISSUE_INFO.md
           
           echo "Issue info prepared"
@@ -114,7 +134,8 @@ jobs:
           1. Read .github/clio-prompts/issue-triage.md for instructions
           2. Read ISSUE_INFO.md and ISSUE_BODY.md for issue details
           3. Read ISSUE_COMMENTS.md if there are comments
-          4. WRITE your triage JSON to triage.json using file_operations
+          4. Read ISSUE_EVENTS.md if it exists for linked commits and close/reopen history
+          5. WRITE your triage JSON to triage.json using file_operations
 
           CRITICAL: 
           - DO NOT use user_collaboration (it will hang forever)
@@ -265,6 +286,24 @@ jobs:
           gh issue edit "$ISSUE_NUMBER" --add-label "needs-info" 2>/dev/null || \
           (gh label create "needs-info" --color "d876e3" --description "Awaiting more information from reporter" 2>/dev/null; gh issue edit "$ISSUE_NUMBER" --add-label "needs-info") || true
       
+      - name: Handle already-addressed recommendation
+        if: steps.parse.outputs.recommendation == 'already-addressed'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          ANALYSIS=$(cat /tmp/clio-workspace/analysis.json)
+          
+          {
+            echo "## Already Addressed"
+            echo ""
+            echo "$(echo "$ANALYSIS" | jq -r '.summary // "This issue appears to have been addressed by recent commits."')"
+            echo ""
+            echo "_This is an automated analysis. Please reopen if the issue persists._"
+          } > /tmp/clio-workspace/addressed_comment.md
+          
+          gh issue comment "$ISSUE_NUMBER" --body-file /tmp/clio-workspace/addressed_comment.md
+      
       - name: Post triage summary
         if: steps.parse.outputs.recommendation == 'ready-for-review'
         env:
@@ -303,5 +342,6 @@ jobs:
             /tmp/clio-workspace/analysis.json
             /tmp/clio-workspace/ISSUE_INFO.md
             /tmp/clio-workspace/ISSUE_BODY.md
+            /tmp/clio-workspace/ISSUE_EVENTS.md
             /tmp/clio-workspace/*.md
           retention-days: 7
