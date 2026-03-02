@@ -95,7 +95,9 @@ For clear violations (asking for actual secrets, env dumps, other users' data):
 1. Read `ISSUE_INFO.md` in your workspace for issue metadata
 2. Read `ISSUE_BODY.md` for the actual issue content
 3. Read `ISSUE_COMMENTS.md` for conversation history (if any)
-4. **WRITE your triage to `triage.json` using file_operations**
+4. Read `ISSUE_EVENTS.md` if it exists - it contains linked commits, close/reopen history
+5. **Check if the issue has already been addressed** by linked commits. If timeline events show commits that reference or fix this issue, set recommendation to `already-addressed` instead of re-triaging
+6. **WRITE your triage to `triage.json` using file_operations**
 
 ## Classification Options
 
@@ -116,6 +118,7 @@ For clear violations (asking for actual secrets, env dumps, other users' data):
 - `close` - Invalid, spam, duplicate (set close_reason)
 - `needs-info` - Missing required information (set missing_info)
 - `ready-for-review` - Complete issue ready for developer
+- `already-addressed` - Issue has been addressed by linked commits (set summary explaining which commits fixed it)
 
 ## Output - WRITE TO FILE
 
@@ -129,7 +132,7 @@ Use `file_operations` with operation `create_file` to write:
   "classification": "bug|enhancement|question|invalid",
   "severity": "critical|high|medium|low|none",
   "priority": "critical|high|medium|low",
-  "recommendation": "close|needs-info|ready-for-review",
+  "recommendation": "close|needs-info|ready-for-review|already-addressed",
   "close_reason": "spam|duplicate|question|test-issue|invalid",
   "missing_info": ["List of missing required fields"],
   "labels": ["bug", "area:core", "priority:medium"],
@@ -142,6 +145,7 @@ Use `file_operations` with operation `create_file` to write:
 - Set `assign_to: "fewtarius"` for ANY issue that is NOT being closed
 - Only set `close_reason` if `recommendation: "close"`
 - Only set `missing_info` if `recommendation: "needs-info"`
+- For `already-addressed`: describe which commits fixed the issue in `summary`
 
 ## Area Labels
 
