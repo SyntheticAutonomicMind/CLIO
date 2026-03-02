@@ -114,11 +114,11 @@ jobs:
           1. Read .github/clio-prompts/issue-triage.md for instructions
           2. Read ISSUE_INFO.md and ISSUE_BODY.md for issue details
           3. Read ISSUE_COMMENTS.md if there are comments
-          4. WRITE your triage JSON to /workspace/triage.json using file_operations
+          4. WRITE your triage JSON to triage.json using file_operations
 
           CRITICAL: 
           - DO NOT use user_collaboration (it will hang forever)
-          - Write JSON to /workspace/triage.json using file_operations create_file"
+          - Write JSON to triage.json using file_operations create_file"
           
           echo "=== Starting CLIO Issue Triage ==="
           
@@ -126,6 +126,7 @@ jobs:
             -v "/tmp/clio-workspace":/workspace:rw \
             -v "/tmp/clio-config":/root/.clio:rw \
             -w /workspace \
+            -e CLIO_HOME=/root/.clio \
             -e CLIO_LOG_LEVEL=WARNING \
             -e GH_TOKEN="${GH_TOKEN}" \
             ghcr.io/syntheticautonomicmind/clio:latest \

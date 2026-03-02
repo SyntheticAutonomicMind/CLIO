@@ -102,11 +102,11 @@ jobs:
           1. Read .github/clio-prompts/pr-review.md for instructions
           2. Read PR_INFO.md, PR_DIFF.txt, PR_FILES.txt
           3. Check AGENTS.md and docs/STYLE_GUIDE.md if needed
-          4. WRITE your review JSON to /workspace/review.json using file_operations
+          4. WRITE your review JSON to review.json using file_operations
 
           CRITICAL: 
           - DO NOT use user_collaboration (it will hang forever)
-          - Write JSON to /workspace/review.json using file_operations create_file"
+          - Write JSON to review.json using file_operations create_file"
           
           echo "=== Starting CLIO PR Review ==="
           
@@ -114,6 +114,7 @@ jobs:
             -v "/tmp/clio-workspace":/workspace:rw \
             -v "/tmp/clio-config":/root/.clio:rw \
             -w /workspace \
+            -e CLIO_HOME=/root/.clio \
             -e CLIO_LOG_LEVEL=WARNING \
             -e GH_TOKEN="${GH_TOKEN}" \
             ghcr.io/syntheticautonomicmind/clio:latest \
