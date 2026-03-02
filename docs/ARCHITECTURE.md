@@ -239,7 +239,26 @@ Terminal Output
 3. Agents communicate through the broker (questions, status updates, completions)
 4. API rate limiting is shared across all agents
 
-### 11. AI Providers
+### 11. Terminal Multiplexer Integration
+**Files:** `lib/CLIO/UI/Multiplexer.pm`, `lib/CLIO/UI/Multiplexer/`
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| Multiplexer | `Multiplexer.pm` | Detection, driver abstraction, pane lifecycle management |
+| Tmux Driver | `Multiplexer/Tmux.pm` | tmux pane operations via CLI (split-window, kill-pane) |
+| Screen Driver | `Multiplexer/Screen.pm` | GNU Screen window operations via CLI (-X commands) |
+| Zellij Driver | `Multiplexer/Zellij.pm` | Zellij pane operations via action commands |
+| Mux Commands | `Commands/Mux.pm` | `/mux` slash commands (status, agent, close, auto) |
+
+**How it works:**
+1. On initialization, detects multiplexer via environment variables (`$TMUX`, `$STY`, `$ZELLIJ`)
+2. Detection priority: tmux > GNU Screen > Zellij
+3. When `/agent spawn` is called inside a multiplexer, auto-opens a pane with `tail -f` of the agent's log
+4. All operations are graceful no-ops when no multiplexer is detected
+5. Each driver translates CLIO's pane API to multiplexer-specific CLI commands
+6. Managed panes are tracked and can be listed/closed via `/mux` commands
+
+### 12. AI Providers
 **Files:** `lib/CLIO/Providers/`
 
 | Component | File | Purpose |
@@ -255,7 +274,7 @@ Terminal Output
 - Providers register via Providers.pm for runtime selection
 - GitHub Copilot and OpenAI-compatible providers are handled directly by APIManager
 
-### 12. Natural Language Processing
+### 13. Natural Language Processing
 **Files:** `lib/CLIO/NaturalLanguage/`
 
 | Component | File | Purpose |
@@ -463,6 +482,11 @@ lib/CLIO/
       CommandHandler.pm    # Slash command routing
       ProgressSpinner.pm   # Progress indicators
       Commands/            # Slash command handlers (AI, API, Config, etc.)
+      Multiplexer.pm       # Terminal multiplexer detection and abstraction
+      Multiplexer/         # Multiplexer drivers
+          Tmux.pm          # tmux driver
+          Screen.pm        # GNU Screen driver
+          Zellij.pm        # Zellij driver
   Core/                    # Core AI functionality
       APIManager.pm        # AI provider integration
       SimpleAIAgent.pm     # AI request/response

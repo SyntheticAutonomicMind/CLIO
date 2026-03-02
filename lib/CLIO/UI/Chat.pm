@@ -2268,6 +2268,16 @@ sub display_help {
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/group add <name> <devs...>', 'help_command'), 'Create group');
     push @help_lines, "";
     
+    push @help_lines, $self->colorize("MULTI-AGENT", 'command_subheader');
+    push @help_lines, $self->colorize("─" x 62, 'dim');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/agent spawn <task>', 'help_command'), 'Spawn a sub-agent');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/agent list', 'help_command'), 'List sub-agents');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/agent inbox', 'help_command'), 'Check messages from agents');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/mux status', 'help_command'), 'Multiplexer status (tmux/screen)');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/mux agent <id>', 'help_command'), 'Open agent output pane');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/mux close all', 'help_command'), 'Close all managed panes');
+    push @help_lines, "";
+    
     push @help_lines, $self->colorize("OTHER", 'command_subheader');
     push @help_lines, $self->colorize("─" x 62, 'dim');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/billing', 'help_command'), 'API usage stats');
