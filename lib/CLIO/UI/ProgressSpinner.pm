@@ -70,6 +70,12 @@ sub new {
         @frames = @{$args{frames}};
     }
     
+    # If frames contain braille characters but locale doesn't support Unicode,
+    # fall back to ASCII spinner to avoid rendering as empty/garbled output
+    if (_has_braille_chars(\@frames) && !_locale_supports_utf8()) {
+        @frames = ('-', '\\', '|', '/');
+    }
+    
     my $self = {
         # Frames from theme or explicit argument or default braille pattern
         frames => \@frames,
@@ -278,6 +284,35 @@ sub _run_animation {
         
         $frame_index = ($frame_index + 1) % scalar(@$frames);
     }
+}
+
+=head2 _has_braille_chars (internal)
+
+Check if any spinner frames contain Unicode braille characters (U+2800-U+28FF).
+
+=cut
+
+sub _has_braille_chars {
+    my ($frames) = @_;
+    for my $frame (@$frames) {
+        return 1 if $frame =~ /[\x{2800}-\x{28FF}]/;
+    }
+    return 0;
+}
+
+=head2 _locale_supports_utf8 (internal)
+
+Check if the current locale indicates UTF-8 support by examining
+LC_ALL, LC_CTYPE, and LANG environment variables.
+
+=cut
+
+sub _locale_supports_utf8 {
+    for my $var ($ENV{LC_ALL}, $ENV{LC_CTYPE}, $ENV{LANG}) {
+        next unless defined $var;
+        return 1 if $var =~ /UTF-?8/i;
+    }
+    return 0;
 }
 
 sub DESTROY {

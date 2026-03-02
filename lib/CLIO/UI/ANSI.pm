@@ -268,8 +268,11 @@ sub strip_ansi {
     
     return '' unless defined $text;
     
-    # Remove ANSI escape sequences
+    # Remove ANSI CSI sequences (colors, cursor movement, etc.)
     $text =~ s/\e\[[0-9;]*[A-Za-z]//g;
+    
+    # Remove OSC 8 hyperlinks: \e]8;;URL\e\\text\e]8;;\e\\ -> text
+    $text =~ s/\e\]8;;[^\e]*\e\\//g;
     
     return $text;
 }
