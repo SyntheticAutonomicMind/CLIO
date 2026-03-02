@@ -11,6 +11,7 @@ use CLIO::Core::Logger qw(should_log log_debug log_warning);
 $| = 1;
 use feature 'say';
 use CLIO::Compat::Terminal qw(ReadMode ReadKey GetTerminalSize);
+use Encode ();
 
 =head1 NAME
 
@@ -26,6 +27,81 @@ CPAN modules. Provides:
 - Portable terminal control using stty
 
 =cut
+
+=head2 _display_width
+
+Compute the number of terminal columns a string occupies.
+
+ASCII characters are 1 column wide. CJK (Chinese/Japanese/Korean) and other
+fullwidth Unicode characters are 2 columns wide. This is needed for correct
+cursor positioning when wide characters are present in the input.
+
+Uses Unicode::GCString if available (most accurate), otherwise falls back
+to a regex-based range check covering the common East Asian wide blocks.
+
+=cut
+
+{
+    # Cache Unicode::GCString availability check
+    my $HAS_UNICODE_GCSTRING;
+    sub _check_gcstring {
+        unless (defined $HAS_UNICODE_GCSTRING) {
+            $HAS_UNICODE_GCSTRING = eval { require Unicode::GCString; 1 } ? 1 : 0;
+        }
+        return $HAS_UNICODE_GCSTRING;
+    }
+}
+
+sub _display_width {
+    my ($str) = @_;
+    return 0 unless defined $str && length($str);
+
+    # Use Unicode::GCString for accurate width if available
+    if (_check_gcstring()) {
+        return Unicode::GCString->new($str)->columns();
+    }
+
+    # Fallback: count codepoints, adding 1 extra column for each wide character.
+    # Wide characters are those in the East Asian Wide (W) and Fullwidth (F) categories.
+    # This covers CJK Unified Ideographs, Hiragana, Katakana, Hangul, and common
+    # fullwidth forms used in Chinese/Japanese/Korean text.
+    my $width = 0;
+    for my $ch (split //, $str) {
+        my $cp = ord($ch);
+        if (
+            # CJK Unified Ideographs and extensions
+            ($cp >= 0x4E00  && $cp <= 0x9FFF)   ||
+            ($cp >= 0x3400  && $cp <= 0x4DBF)   ||
+            ($cp >= 0x20000 && $cp <= 0x2A6DF)  ||
+            ($cp >= 0x2A700 && $cp <= 0x2CEAF)  ||
+            ($cp >= 0xF900  && $cp <= 0xFAFF)   ||
+            ($cp >= 0x2F800 && $cp <= 0x2FA1F)  ||
+            # CJK Compatibility and Radicals
+            ($cp >= 0x2E80  && $cp <= 0x2EFF)   ||
+            ($cp >= 0x2F00  && $cp <= 0x2FDF)   ||
+            ($cp >= 0x31C0  && $cp <= 0x31EF)   ||
+            # Hiragana, Katakana, Bopomofo
+            ($cp >= 0x3040  && $cp <= 0x30FF)   ||
+            ($cp >= 0x3100  && $cp <= 0x312F)   ||
+            ($cp >= 0x31A0  && $cp <= 0x31BF)   ||
+            # Enclosed CJK, CJK Compatibility
+            ($cp >= 0x3200  && $cp <= 0x32FF)   ||
+            ($cp >= 0x3300  && $cp <= 0x33FF)   ||
+            # Hangul Syllables
+            ($cp >= 0xAC00  && $cp <= 0xD7AF)   ||
+            # Halfwidth and Fullwidth Forms
+            ($cp >= 0xFF01  && $cp <= 0xFF60)   ||
+            ($cp >= 0xFFE0  && $cp <= 0xFFE6)   ||
+            # Wide miscellaneous symbols
+            ($cp >= 0x1F300 && $cp <= 0x1F9FF)
+        ) {
+            $width += 2;
+        } else {
+            $width += 1;
+        }
+    }
+    return $width;
+}
 
 sub new {
     my ($class, %args) = @_;
@@ -161,48 +237,59 @@ sub readline {
                 # Check if we're deleting from the end
                 my $input_len = length($input);
                 my $deleting_at_end = ($cursor_pos == $input_len);
-                
-                # Remove character before cursor
+
+                # Capture the character being deleted BEFORE removing it,
+                # so we can calculate its display width for the fast-path erase.
+                my $deleted_char = substr($input, $cursor_pos - 1, 1);
+                my $deleted_width = _display_width($deleted_char);
+
+                # Remove the character before cursor (one Perl codepoint = one character)
                 substr($input, $cursor_pos - 1, 1, '');
                 $cursor_pos--;
-                
+
                 if ($deleting_at_end) {
                     # Optimization: if deleting from end, we can handle it locally
-                    # This avoids full redraw and prevents scroll issues when unwrapping
-                    
+                    # This avoids full redraw and prevents scroll issues when unwrapping.
+
                     my ($term_width, $term_height) = GetTerminalSize();
                     $term_width ||= 80;
-                    
-                    # Calculate visible prompt length
+
+                    # Calculate visible prompt length and display widths
                     my $visible_prompt = $prompt;
                     $visible_prompt =~ s/\e\[[0-9;]*m//g;
-                    my $prompt_len = length($visible_prompt);
-                    
-                    # Calculate old and new cursor positions
-                    my $old_total_pos = $prompt_len + $cursor_pos + 1;  # +1 because we already decremented cursor_pos
-                    my $new_total_pos = $prompt_len + $cursor_pos;
-                    
+                    my $prompt_disp  = _display_width($visible_prompt);
+                    my $input_before = substr($input, 0, $cursor_pos);  # after decrement
+                    my $cursor_disp  = _display_width($input_before);
+
+                    # Display-column positions of old and new cursor
+                    my $old_total_pos = $prompt_disp + $cursor_disp + $deleted_width;
+                    my $new_total_pos = $prompt_disp + $cursor_disp;
+
                     my $old_row = int($old_total_pos / $term_width);
                     my $new_row = int($new_total_pos / $term_width);
-                    
-                    # Check if we're unwrapping (going from row 1 to row 0)
-                    # Also use full redraw when landing on exact terminal width boundary
-                    # to avoid cursor ambiguity with pending wrap state
-                    if ($old_row > $new_row || ($new_total_pos > 0 && $new_total_pos % $term_width == 0)) {
-                        # Unwrapped or at exact boundary - need full redraw
+
+                    # Use full redraw when:
+                    # - row changes (unwrap across line boundary)
+                    # - landing on an exact boundary (pending wrap ambiguity)
+                    # - the deleted character was wide (>1 col) - simple \b \b won't cover it
+                    if ($old_row > $new_row ||
+                        ($new_total_pos > 0 && $new_total_pos % $term_width == 0) ||
+                        $deleted_width > 1)
+                    {
                         $self->redraw_line(\$input, \$cursor_pos, $prompt);
                     } else {
-                        # Same row, not at boundary - just backspace locally
-                        print "\b \b";  # Move back, print space, move back again
-                        
+                        # Fast path: single-column ASCII character at end of line.
+                        # Move back, overwrite with space, move back again.
+                        print "\b \b";
+
                         # Update cursor tracking
                         my $new_col = ($new_total_pos % $term_width) + 1;
                         $self->{last_cursor_row} = $new_row;
                         $self->{last_cursor_col} = $new_col;
-                        
+
                         # Update display_lines to match actual content
-                        my $total_chars = $prompt_len + length($input);
-                        my $new_display_lines = $total_chars > 0 ? int(($total_chars - 1) / $term_width) + 1 : 1;
+                        my $total_disp = $prompt_disp + _display_width($input);
+                        my $new_display_lines = $total_disp > 0 ? int(($total_disp - 1) / $term_width) + 1 : 1;
                         $self->{display_lines} = $new_display_lines;
                     }
                 } else {
@@ -279,49 +366,47 @@ sub readline {
         
         # Regular printable character (including multi-byte UTF-8)
         # Allow any character not caught by special handlers above
-        # For multi-byte UTF-8 chars, $ord will be >= 128 (first byte of sequence)
-        # For single-byte ASCII, $ord will be >= 32
+        # For multi-byte UTF-8 chars, ReadKey already assembled the full codepoint.
+        # For single-byte ASCII, $ord will be >= 32.
         if ($ord >= 32 || ($ord >= 128)) {
-            # This is either ASCII printable or the start of a UTF-8 multi-byte sequence
             if (should_log('DEBUG')) {
                 log_debug('ReadLine', "Inserting '$char' at cursor_pos=$cursor_pos, input_len=" . length($input));
                 log_debug('ReadLine', "Input before: '$input'");
             }
-            
+
             my $input_len = length($input);
             my $inserting_at_end = ($cursor_pos == $input_len);
-            
+
             substr($input, $cursor_pos, 0, $char);
-            $cursor_pos += length($char);  # Increment by actual character length
-            
+            $cursor_pos++;  # Advance by 1 character (codepoint), not byte count
+
             if (should_log('DEBUG')) {
                 log_debug('ReadLine', "Input after: '$input', new cursor_pos=$cursor_pos");
             }
-            
+
             if ($inserting_at_end) {
-                # Optimization: if inserting at end, just print the character
-                # This avoids full redraw and prevents scroll issues when wrapping
+                # Optimization: if inserting at end, just print the character.
+                # This avoids full redraw and prevents scroll issues when wrapping.
                 print $char;
-                
-                # Update cursor tracking
+
+                # Update cursor tracking using display-column widths, not codepoint counts.
                 my ($term_width, $term_height) = GetTerminalSize();
                 $term_width ||= 80;
-                
-                # Calculate visible prompt length
+
                 my $visible_prompt = $prompt;
                 $visible_prompt =~ s/\e\[[0-9;]*m//g;
-                my $prompt_len = length($visible_prompt);
-                
-                # Calculate new cursor position
-                my $total_pos = $prompt_len + $cursor_pos;
+                my $prompt_disp   = _display_width($visible_prompt);
+                my $input_so_far  = substr($input, 0, $cursor_pos);
+                my $total_pos     = $prompt_disp + _display_width($input_so_far);
+
                 my $new_row = int($total_pos / $term_width);
                 my $new_col = ($total_pos % $term_width) + 1;
-                
+
                 # Update display lines if we wrapped to a new line
                 if ($new_row >= $self->{display_lines}) {
                     $self->{display_lines} = $new_row + 1;
                 }
-                
+
                 $self->{last_cursor_row} = $new_row;
                 $self->{last_cursor_col} = $new_col;
             } else {
@@ -685,51 +770,51 @@ Arguments:
 
 sub reposition_cursor {
     my ($self, $old_pos_ref, $new_pos_ref, $input_ref, $prompt) = @_;
-    
+
     $prompt //= '';
-    
+
     # Get terminal width
     my ($term_width, $term_height) = GetTerminalSize();
     $term_width ||= 80;
     $term_width = 80 if $term_width < 10;
-    
-    # Calculate visible prompt length (strip ANSI codes)
+
+    # Calculate visible prompt display width (strip ANSI codes, measure columns)
     my $visible_prompt = $prompt;
     $visible_prompt =~ s/\e\[[0-9;]*m//g;
-    my $prompt_len = length($visible_prompt);
-    
-    # Calculate old and new positions (including prompt)
-    my $old_total_pos = $prompt_len + $$old_pos_ref;
-    my $new_total_pos = $prompt_len + $$new_pos_ref;
-    
+    my $prompt_disp = _display_width($visible_prompt);
+
+    # Calculate display-column positions of old and new cursor.
+    # $$old_pos_ref and $$new_pos_ref are codepoint offsets into $$input_ref.
+    # We need to convert them to display columns by measuring the display width
+    # of the prefix up to each offset.
+    my $old_prefix_disp = _display_width(substr($$input_ref, 0, $$old_pos_ref));
+    my $new_prefix_disp = _display_width(substr($$input_ref, 0, $$new_pos_ref));
+
+    my $old_total_pos = $prompt_disp + $old_prefix_disp;
+    my $new_total_pos = $prompt_disp + $new_prefix_disp;
+
     # Calculate row and column for both positions
-    # Position represents "cursor is after this many characters have been printed"
-    # So pos=0 means cursor at column 1 (before first char)
-    # pos=1 means cursor at column 2 (after first char)
-    # pos=80 means cursor at column 81 -> but terminal wraps, so row 1, column 1
     # Formula: row = pos / width, col = (pos % width) + 1
     my $old_row = int($old_total_pos / $term_width);
     my $old_col = ($old_total_pos % $term_width) + 1;
-    
+
     my $new_row = int($new_total_pos / $term_width);
     my $new_col = ($new_total_pos % $term_width) + 1;
-    
+
     if (should_log('DEBUG')) {
         log_debug('ReadLine', "reposition_cursor: old_pos=$$old_pos_ref, new_pos=$$new_pos_ref");
         log_debug('ReadLine', "reposition_cursor: old_total=$old_total_pos, new_total=$new_total_pos");
         log_debug('ReadLine', "reposition_cursor: from ($old_row,$old_col) to ($new_row,$new_col)");
     }
-    
+
     # Currently at old position (old_row, old_col)
     # Need to move to new position (new_row, new_col)
-    
+
     if ($new_row < $old_row) {
         # Moving UP to an earlier line (e.g., scrolling left past line boundary)
         my $rows_up = $old_row - $new_row;
         print "\e[${rows_up}A";
-        # After moving up, we're at column old_col on the target row
-        # After moving up, use absolute column positioning to avoid
-        # issues with VT100 pending wrap state
+        # Use absolute column positioning to avoid VT100 pending wrap state issues
         print "\r";  # Go to column 1
         if ($new_col > 1) {
             my $cols_right = $new_col - 1;
@@ -739,7 +824,7 @@ sub reposition_cursor {
         # Moving DOWN to a later line (e.g., scrolling right past line boundary)
         my $rows_down = $new_row - $old_row;
         print "\e[${rows_down}B";
-        # After moving down, use absolute column positioning
+        # Use absolute column positioning
         print "\r";  # Go to column 1
         if ($new_col > 1) {
             my $cols_right = $new_col - 1;
@@ -781,10 +866,10 @@ before redrawing, avoiding artifacts from cursor movement.
 
 sub redraw_line {
     my ($self, $input_ref, $cursor_pos_ref, $prompt) = @_;
-    
+
     # Defensive: ensure prompt is defined (should never happen, but prevents warnings)
     $prompt //= '';
-    
+
     # Safety: clamp cursor position to valid range (0 to length of input)
     my $input_len = length($$input_ref);
     if ($$cursor_pos_ref < 0) {
@@ -794,113 +879,62 @@ sub redraw_line {
         log_warning('ReadLine', "Cursor position exceeded input length ($$cursor_pos_ref > $input_len), clamping to $input_len");
         $$cursor_pos_ref = $input_len;
     }
-    
+
     # Get terminal width for proper wrapping
     my ($term_width, $term_height) = GetTerminalSize();
     $term_width ||= 80;
     $term_height ||= 24;
     $term_width = 80 if $term_width < 10;
-    
-    # Calculate visible prompt length (strip ANSI codes)
+
+    # Calculate visible prompt display width (strip ANSI codes, measure columns)
     my $visible_prompt = $prompt;
     $visible_prompt =~ s/\e\[[0-9;]*m//g;
-    my $prompt_len = length($visible_prompt);
-    
-    # Helper function to convert character position to (row, col)
-    # Position means "cursor is before the character at this index"
-    # Position 0 = cursor before first char = column prompt_len+1
-    # Position 1 = cursor after first char = column prompt_len+2
-    # ...but we're computing position INCLUDING prompt, so:
-    # pos=1 means "after first character printed" = column 2
-    # pos=N means "after Nth character printed" = column N+1
-    #
-    # WAIT: Actually terminals are 1-indexed. If we print "abc":
-    # 'a' goes to column 1, 'b' to column 2, 'c' to column 3
-    # Cursor ends up at column 4 (after 'c')
-    # So: after printing N characters, cursor is at column N+1
-    # 
-    # For row calculation: if width=80, after printing 80 chars,
-    # cursor is at column 81 which wraps to column 1 of next row.
-    # Actually in VT100, it's "pending wrap" at column 80, then wraps when next char comes.
-    # But for our purposes, let's say: after printing 80 chars, cursor is at col 80 (or pending wrap).
-    # After printing 81 chars, cursor is at col 1 of row 1.
-    #
-    # Position N (0-indexed chars printed) -> cursor is after Nth char
-    # So pos=0 means nothing printed, cursor at col 1 of row 0
-    # pos=1 means 1 char printed, cursor at col 2 of row 0
-    # pos=80 means 80 chars printed, cursor at col 81 -> but that wraps to col 1 of row 1?
-    # 
-    # Let's think differently:
-    # pos=0: cursor at column 1, row 0
-    # pos=N: cursor at column ((N-1) % width) + 2, row = (N-1) / width (if N > 0)
-    #        OR: column (N % width) + 1 if N % width != 0, else column = width and might wrap
-    #
-    # Simpler: 
-    # pos 0 -> col 1, row 0
-    # pos 1 -> col 2, row 0
-    # ...
-    # pos 79 -> col 80, row 0 (but this is the "pending wrap" position!)
-    # pos 80 -> col 1, row 1 (first char of second line)
-    # pos 81 -> col 2, row 1
-    # ...
-    #
-    # So: row = pos / width, col = (pos % width) + 1
+    my $prompt_disp = _display_width($visible_prompt);
+
+    # Calculate total display columns occupied by prompt + full input
+    my $input_disp  = _display_width($$input_ref);
+    my $total_disp  = $prompt_disp + $input_disp;
+
+    # Calculate how many terminal lines the new content occupies
+    my $new_lines_needed = $total_disp > 0 ? int(($total_disp - 1) / $term_width) + 1 : 1;
+
+    # Helper: convert a display-column position to (row, col)
+    # row = pos / width, col = (pos % width) + 1
     my $pos_to_rowcol = sub {
         my ($pos) = @_;
-        
         my $row = int($pos / $term_width);
         my $col = ($pos % $term_width) + 1;
-        
         return ($row, $col);
     };
-    
-    # Calculate how many lines the NEW input will use
-    my $total_chars = $prompt_len + $input_len;
-    my $new_lines_needed = $total_chars > 0 ? int(($total_chars - 1) / $term_width) + 1 : 1;
-    
-    # We need to move to the start of our input area to clear and redraw.
-    # We don't know exactly where the cursor is right now, but we know:
-    #  - The previous redraw used $self->{display_lines} lines
-    #  - The cursor is somewhere within that area (probably)
-    # 
-    # Strategy: Move to column 0, then move up by enough lines to reach the start.
-    # We'll use the maximum of old_display_lines and new_lines_needed to be safe.
-    
+
     my $old_display_lines = $self->{display_lines} || 1;
     my $max_lines = $old_display_lines > $new_lines_needed ? $old_display_lines : $new_lines_needed;
-    
+
     if (should_log('DEBUG')) {
-        log_debug('ReadLine', "redraw_line: input_len=$input_len, prompt_len=$prompt_len, total_chars=$total_chars");
+        log_debug('ReadLine', "redraw_line: input_len=$input_len, prompt_disp=$prompt_disp, input_disp=$input_disp, total_disp=$total_disp");
         log_debug('ReadLine', "redraw_line: term_width=$term_width, new_lines_needed=$new_lines_needed");
         log_debug('ReadLine', "redraw_line: old_display_lines=$old_display_lines, max_lines=$max_lines");
         log_debug('ReadLine', "redraw_line: last cursor was at row=$self->{last_cursor_row}, col=$self->{last_cursor_col}");
     }
-    
-    # Move to column 1 of current line
+
+    # Move to column 1 of current line, then back to row 0 of our input area
     print "\r";
-    
-    # Move up from the last cursor position to row 0
-    # We know exactly where the cursor was from the previous redraw
     my $lines_to_move_up = $self->{last_cursor_row};
     if ($lines_to_move_up > 0) {
         print "\e[${lines_to_move_up}A";
     }
-    
-    # Now we're at column 1 of row 0 (first line of our input)
-    # Clear from here to end of screen
+
+    # Clear from here to end of screen, then redraw prompt + input
     print "\e[J";
-    
-    # Print prompt and input (terminal wraps naturally)
     print $prompt, $$input_ref;
-    
+
     # Update display_lines for next redraw
     $self->{display_lines} = $new_lines_needed;
-    
-    # After printing, calculate where cursor is now (at end of what we printed)
-    # When we print exactly N*term_width characters, the terminal enters "pending wrap"
-    # state: cursor is at column term_width of the last row, NOT column 1 of the next row.
-    # The wrap only happens when the next character is printed.
-    my $end_pos = $total_chars;
+
+    # After printing, calculate the cursor's current position (end of output).
+    # When we print exactly N*term_width display columns, the terminal enters
+    # "pending wrap" state: cursor sits at column term_width of the last row.
+    my $end_pos = $total_disp;
     my ($end_row, $end_col);
     if ($end_pos > 0 && $end_pos % $term_width == 0) {
         # Pending wrap: cursor is at last column of current row
@@ -909,46 +943,43 @@ sub redraw_line {
     } else {
         ($end_row, $end_col) = $pos_to_rowcol->($end_pos);
     }
-    
-    # Calculate where we WANT the cursor to be
-    my $desired_pos = $prompt_len + $$cursor_pos_ref;
+
+    # Calculate where we WANT the cursor to be (at $$cursor_pos_ref codepoints into input)
+    my $cursor_prefix_disp = _display_width(substr($$input_ref, 0, $$cursor_pos_ref));
+    my $desired_pos = $prompt_disp + $cursor_prefix_disp;
     my ($desired_row, $desired_col);
     if ($desired_pos > 0 && $desired_pos % $term_width == 0) {
-        # At boundary: place cursor at last column of current row
+        # At boundary: cursor at last column of current row
         $desired_row = int($desired_pos / $term_width) - 1;
         $desired_col = $term_width;
     } else {
         ($desired_row, $desired_col) = $pos_to_rowcol->($desired_pos);
     }
-    
+
     if (should_log('DEBUG')) {
         log_debug('ReadLine', "redraw_line: end position: row=$end_row, col=$end_col");
         log_debug('ReadLine', "redraw_line: desired cursor: row=$desired_row, col=$desired_col");
     }
-    
-    # Only reposition if we're not already at the correct position
+
+    # Reposition cursor to desired location if necessary
     if ($desired_row != $end_row || $desired_col != $end_col) {
-        # Move from end position to desired cursor position
         if ($desired_row < $end_row) {
-            # Need to move up
             my $rows_up = $end_row - $desired_row;
             print "\e[${rows_up}A";
         } elsif ($desired_row > $end_row) {
-            # Need to move down (shouldn't normally happen)
             my $rows_down = $desired_row - $end_row;
             print "\e[${rows_down}B";
         }
-        
-        # Now position to correct column using absolute positioning
-        # This avoids any issues with pending wrap state at column term_width
+
+        # Absolute column positioning avoids pending-wrap ambiguity
         print "\r";  # Go to column 1
         if ($desired_col > 1) {
             my $cols_right = $desired_col - 1;
             print "\e[${cols_right}C";
         }
     }
-    
-    # Save the final cursor position for the next redraw
+
+    # Save final cursor position for next redraw
     $self->{last_cursor_row} = $desired_row;
     $self->{last_cursor_col} = $desired_col;
 }
