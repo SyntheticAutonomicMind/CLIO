@@ -280,6 +280,9 @@ sub _visual_length {
     # Now strip any ANSI escape codes
     $clean =~ s/\e\[[0-9;]*m//g;
     
+    # Strip OSC 8 hyperlink wrappers (keep the visible text)
+    $clean =~ s/\e\]8;;[^\e]*\e\\//g;
+    
     # Strip @-codes that are OUTSIDE code blocks (these are color markers)
     $clean =~ s/@[A-Z_]+@//g;
     
@@ -453,11 +456,19 @@ sub process_inline_formatting {
     # Match _text_ only when preceded by whitespace/start and followed by whitespace/punct/end
     $text =~ s/(^|[\s\(])_([^_]+)_(?=[\s\)\.\,\!\?\:\;]|$)/$1${italic_color}$2\@RESET\@/g;
     
-    # Images ![alt](url) - show as alt text with URL (no emoji, proper markdown)
-    $text =~ s/!\[([^\]]*)\]\(([^\)]+)\)/${link_text_color}$1\@RESET\@ → ${link_url_color}$2\@RESET\@/g;
+    # Images ![alt](url) - show as alt text with clickable URL
+    $text =~ s{!\[([^\]]*)\]\(([^\)]+)\)}{
+        my ($alt, $url) = ($1, $2);
+        my $linked_url = $self->_make_hyperlink($url, $url);
+        "${link_text_color}${alt}\@RESET\@ → ${link_url_color}${linked_url}\@RESET\@"
+    }ge;
     
-    # Links [text](url) - show text with URL more prominently
-    $text =~ s/\[([^\]]+)\]\(([^\)]+)\)/${link_text_color}$1\@RESET\@ → ${link_url_color}$2\@RESET\@/g;
+    # Links [text](url) - show text as clickable hyperlink
+    $text =~ s{\[([^\]]+)\]\(([^\)]+)\)}{
+        my ($link_text, $url) = ($1, $2);
+        my $linked_text = $self->_make_hyperlink($url, $link_text);
+        "${link_text_color}${linked_text}\@RESET\@ → ${link_url_color}${url}\@RESET\@"
+    }ge;
     
     # Formulas - inline math (single $ should NOT match $$)
     # Match $...$ but not $$...$$
@@ -475,6 +486,30 @@ sub process_inline_formatting {
     $text =~ s/\x00RBRACK\x00/]/g;
     
     return $text;
+}
+
+=head2 _make_hyperlink
+
+Wrap text in an OSC 8 terminal hyperlink escape sequence.
+In terminals that support it (iTerm2, Kitty, WezTerm, GNOME Terminal 3.26+,
+Windows Terminal), the text becomes clickable. In others, only the text shows.
+
+Arguments:
+- $url: The URL target for the hyperlink
+- $text: The visible text to display
+
+Returns: Text wrapped in OSC 8 hyperlink sequences
+
+=cut
+
+sub _make_hyperlink {
+    my ($self, $url, $text) = @_;
+    
+    return $text unless defined $url && length($url);
+    
+    # OSC 8 hyperlink: ESC ] 8 ; ; URL ST text ESC ] 8 ; ; ST
+    # ST (String Terminator) = ESC backslash - more compatible than BEL
+    return "\e]8;;${url}\e\\${text}\e]8;;\e\\";
 }
 
 =head2 strip_markdown
