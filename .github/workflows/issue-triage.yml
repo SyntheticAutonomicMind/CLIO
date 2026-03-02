@@ -326,6 +326,46 @@ jobs:
             echo ""
             echo "**Analysis:** $(echo "$ANALYSIS" | jq -r '.summary // "Issue triaged successfully."')"
             echo ""
+            
+            # Root cause analysis (if present)
+            HAS_ROOT_CAUSE=$(echo "$ANALYSIS" | jq -r '.root_cause.hypothesis // empty' 2>/dev/null)
+            if [ -n "$HAS_ROOT_CAUSE" ]; then
+              ROOT_CONFIDENCE=$(echo "$ANALYSIS" | jq -r '.root_cause.confidence // "unknown"')
+              echo "### Root Cause Analysis"
+              echo ""
+              echo "**Confidence:** \`${ROOT_CONFIDENCE}\`"
+              echo ""
+              
+              # List affected files
+              FILE_COUNT=$(echo "$ANALYSIS" | jq -r '(.root_cause.files // []) | length')
+              if [ "$FILE_COUNT" -gt 0 ]; then
+                echo "**Relevant files:**"
+                echo "$ANALYSIS" | jq -r '(.root_cause.files // [])[] | "- `" + . + "`"'
+                echo ""
+              fi
+              
+              # List affected functions
+              FUNC_COUNT=$(echo "$ANALYSIS" | jq -r '(.root_cause.functions // []) | length')
+              if [ "$FUNC_COUNT" -gt 0 ]; then
+                echo "**Relevant functions:**"
+                echo "$ANALYSIS" | jq -r '(.root_cause.functions // [])[] | "- `" + . + "`"'
+                echo ""
+              fi
+              
+              echo "$HAS_ROOT_CAUSE"
+              echo ""
+            fi
+            
+            # Affected areas (if present)
+            AREA_COUNT=$(echo "$ANALYSIS" | jq -r '(.affected_areas // []) | length')
+            if [ "$AREA_COUNT" -gt 0 ]; then
+              echo "### Affected Areas"
+              echo ""
+              echo "$ANALYSIS" | jq -r '(.affected_areas // [])[] | "- " + .'
+              echo ""
+            fi
+            
+            echo "---"
             echo "_This is an automated analysis. A maintainer will review shortly._"
           } > /tmp/clio-workspace/triage_comment.md
           
