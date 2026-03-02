@@ -615,77 +615,94 @@ Returns:
 
 sub detect_install_location {
     my ($self) = @_;
-    
-    # Find CLIO executable location
-    my $clio_path = `which clio 2>/dev/null`;
-    chomp $clio_path if $clio_path;
-    
-    unless ($clio_path && -f $clio_path) {
-        # Maybe we're running from source
-        $clio_path = './clio' if -f './clio';
-    }
-    
-    return undef unless $clio_path;
-    
-    # Resolve symlinks using Perl's Cwd::realpath (cross-platform, works on macOS)
-    # readlink -f is Linux-only and fails silently on macOS
+
     require Cwd;
-    my $resolved_path = Cwd::realpath($clio_path);
-    $clio_path = $resolved_path if $resolved_path && -f $resolved_path;
-    
+
+    # Use $0 (the actually-running script) as the primary source.
+    # This is always correct: it tells us exactly which binary is executing right
+    # now, regardless of what 'which clio' might return from the user's PATH.
+    my $running_path = Cwd::realpath($0) || $0;
+    $running_path = undef unless defined($running_path) && -f $running_path;
+
+    # Secondary: 'which clio' - what the user's PATH resolves to.
+    my $which_path = `which clio 2>/dev/null`;
+    chomp $which_path if $which_path;
+    $which_path = undef unless $which_path && -f $which_path;
+    if ($which_path) {
+        my $resolved = Cwd::realpath($which_path);
+        $which_path = $resolved if $resolved && -f $resolved;
+    }
+
+    # Prefer running path; fall back to which, then ./clio (development mode).
+    my $clio_path = $running_path
+                 || $which_path
+                 || (-f './clio' ? (Cwd::realpath('./clio') || './clio') : undef);
+
+    return undef unless $clio_path;
+
     # Get the directory containing the clio executable
     my $bin_dir = dirname($clio_path);
-    
-    # The install directory is typically the parent of the bin directory
+
+    # The install directory is typically the parent of the bin directory.
     # CLIO installs to: $INSTALL_DIR/clio (executable)
-    #                  $INSTALL_DIR/lib/  (modules)
-    # So if we found /opt/clio/clio, install_dir is /opt/clio
-    # If we found /usr/local/bin/clio (symlink -> /opt/clio/clio), install_dir is /opt/clio
-    
+    #                   $INSTALL_DIR/lib/  (modules)
+    # So if we found /opt/clio/clio, install_dir is /opt/clio.
+    # If we found /usr/local/bin/clio (symlink -> /opt/clio/clio), install_dir is /opt/clio.
+
     my $install_dir = $bin_dir;
-    
+
     # Check if this is actually the install directory (has lib/CLIO subdirectory)
     if (-d "$bin_dir/lib/CLIO") {
-        # Good - this is the install directory
         $install_dir = $bin_dir;
     } else {
-        # Maybe clio is in a bin subdirectory?
-        # This shouldn't happen with CLIO's install.sh, but handle it anyway
         log_warning('Update', "Cannot find lib/CLIO in $bin_dir - may be development mode");
     }
-    
+
     # Determine if this is a user install or system install
-    # User install: anywhere under $HOME
-    # System install: anywhere else (typically /opt, /usr, /srv, etc.)
-    my $type = 'system';  # Default to system
+    my $type = 'system';
     my $is_user_home = 0;
-    
+
     if ($install_dir =~ m{^\Q$ENV{HOME}\E(/|$)}) {
         $type = 'user';
         $is_user_home = 1;
     }
-    
+
     # Check if the install directory is writable
     my $writable = -w $install_dir;
-    
+
     # Determine if we need sudo
     my $needs_sudo = (!$is_user_home && !$writable);
-    
+
+    # Detect mismatch: user may be running a different binary than what's in PATH.
+    # This happens when someone runs ~/CLIO/clio (git clone) while a system install
+    # exists at /opt/clio.  After update they need to run the system clio, not theirs.
+    my $path_mismatch = 0;
+    if ($running_path && $which_path) {
+        my $r = Cwd::realpath($running_path) || $running_path;
+        my $w = Cwd::realpath($which_path)   || $which_path;
+        $path_mismatch = ($r ne $w) ? 1 : 0;
+    }
+
     log_debug('Update', "Detected install location:");
-    log_debug('Update', "Path: $clio_path");
-    log_debug('Update', "Install dir: $install_dir");
+    log_debug('Update', "Running path: " . ($running_path || 'unknown'));
+    log_debug('Update', "Which path:   " . ($which_path   || 'unknown'));
+    log_debug('Update', "Install dir:  $install_dir");
     log_debug('Update', "Type: $type");
     log_debug('Update', "User home: " . ($is_user_home ? 'yes' : 'no'));
     log_debug('Update', "Writable: " . ($writable ? 'yes' : 'no'));
     log_debug('Update', "Needs sudo: " . ($needs_sudo ? 'yes' : 'no'));
-    
+    log_debug('Update', "Path mismatch: " . ($path_mismatch ? 'yes' : 'no'));
+
     return {
-        path => $clio_path,
-        install_dir => $install_dir,
-        type => $type,
-        is_user_home => $is_user_home,
-        writable => $writable,
-        needs_sudo => $needs_sudo,
+        path          => $clio_path,
+        running_path  => $running_path,
+        which_path    => $which_path,
+        install_dir   => $install_dir,
+        type          => $type,
+        is_user_home  => $is_user_home,
+        writable      => $writable,
+        needs_sudo    => $needs_sudo,
+        path_mismatch => $path_mismatch,
     };
 }
 
