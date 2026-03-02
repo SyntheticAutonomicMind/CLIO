@@ -627,9 +627,11 @@ sub detect_install_location {
     
     return undef unless $clio_path;
     
-    # Resolve symlinks to find actual location
-    $clio_path = `readlink -f "$clio_path" 2>/dev/null` || $clio_path;
-    chomp $clio_path;
+    # Resolve symlinks using Perl's Cwd::realpath (cross-platform, works on macOS)
+    # readlink -f is Linux-only and fails silently on macOS
+    require Cwd;
+    my $resolved_path = Cwd::realpath($clio_path);
+    $clio_path = $resolved_path if $resolved_path && -f $resolved_path;
     
     # Get the directory containing the clio executable
     my $bin_dir = dirname($clio_path);
