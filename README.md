@@ -245,7 +245,7 @@ For more examples, see [docs/USER_GUIDE.md](docs/USER_GUIDE.md#usage-examples).
 | [Multi-Agent](docs/MULTI_AGENT_COORDINATION.md) | Parallel agent coordination |
 | [MCP Integration](docs/MCP.md) | Model Context Protocol support |
 | [Custom Instructions](docs/CUSTOM_INSTRUCTIONS.md) | Per-project AI customization |
-| [GitHub Actions](docs/GITHUB_ACTIONS.md) | CI/CD integration for issue triage and PR review |
+| [Automation](docs/AUTOMATION.md) | CLIO-helper daemon and CI/CD integration |
 | [Style Guide](docs/STYLE_GUIDE.md) | Color themes and customization |
 | [Performance](docs/PERFORMANCE.md) | Benchmarks and optimization |
 
