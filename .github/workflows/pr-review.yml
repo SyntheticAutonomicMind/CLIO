@@ -178,6 +178,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_ACTION: ${{ github.event.action }}
         run: |
           ANALYSIS=$(cat /tmp/clio-workspace/analysis.json)
           RECOMMENDATION=$(echo "$ANALYSIS" | jq -r '.recommendation // "needs-review"')
@@ -191,9 +192,14 @@ jobs:
             *) EMOJI="INFO"; VERDICT="Needs Review" ;;
           esac
           
-          # Build comment body to a file using jq to safely handle content
+          # Mark updated reviews
+          REVIEW_HEADER="CLIO Automated Review"
+          if [ "$PR_ACTION" = "synchronize" ]; then
+            REVIEW_HEADER="CLIO Automated Review (Updated)"
+          fi
+          
           {
-            echo "## ${EMOJI} CLIO Automated Review: ${VERDICT}"
+            echo "## ${EMOJI} ${REVIEW_HEADER}: ${VERDICT}"
             echo ""
             echo "**Summary:** $(echo "$ANALYSIS" | jq -r '.summary // "Analysis complete."')"
             echo ""
@@ -206,25 +212,57 @@ jobs:
             # Security concerns
             SEC_COUNT=$(echo "$ANALYSIS" | jq -r '(.security_concerns // []) | length')
             if [ "$SEC_COUNT" -gt 0 ]; then
-              echo "## Security Concerns"
+              echo "### :lock: Security Concerns"
               echo ""
-              echo "$ANALYSIS" | jq -r '(.security_concerns // [])[] | "- " + .'
+              echo "$ANALYSIS" | jq -r '(.security_concerns // [])[] | ":warning: " + .'
               echo ""
             fi
             
-            # Style issues
+            # File-level findings (new structured format)
+            FILE_COUNT=$(echo "$ANALYSIS" | jq -r '(.file_comments // []) | length')
+            if [ "$FILE_COUNT" -gt 0 ]; then
+              echo "### File Review"
+              echo ""
+              
+              # Iterate over each file's comments
+              echo "$ANALYSIS" | jq -r '
+                (.file_comments // [])[] |
+                "#### `" + .file + "`\n" +
+                ((.findings // [])[] |
+                  (if .severity == "error" then ":x: **Error** - "
+                   elif .severity == "warning" then ":warning: **Warning** - "
+                   elif .severity == "suggestion" then ":bulb: **Suggestion** - "
+                   else ":memo: **Note** - " end) +
+                  .description +
+                  (if .context then "\n  > _" + .context + "_" else "" end) +
+                  "\n"
+                )
+              '
+              echo ""
+            fi
+            
+            # Style issues (if any not covered by file_comments)
             STYLE_COUNT=$(echo "$ANALYSIS" | jq -r '(.style_issues // []) | length')
             if [ "$STYLE_COUNT" -gt 0 ]; then
-              echo "## Style Issues"
+              echo "### Style Issues"
               echo ""
               echo "$ANALYSIS" | jq -r '(.style_issues // [])[] | "- " + .'
+              echo ""
+            fi
+            
+            # Documentation issues
+            DOC_COUNT=$(echo "$ANALYSIS" | jq -r '(.documentation_issues // []) | length')
+            if [ "$DOC_COUNT" -gt 0 ]; then
+              echo "### Documentation"
+              echo ""
+              echo "$ANALYSIS" | jq -r '(.documentation_issues // [])[] | "- " + .'
               echo ""
             fi
             
             # Detailed feedback
             FB_COUNT=$(echo "$ANALYSIS" | jq -r '(.detailed_feedback // []) | length')
             if [ "$FB_COUNT" -gt 0 ]; then
-              echo "## Detailed Feedback"
+              echo "### Overall Feedback"
               echo ""
               echo "$ANALYSIS" | jq -r '(.detailed_feedback // [])[] | "- " + .'
               echo ""
