@@ -6,6 +6,7 @@ use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use CLIO::Core::Logger qw(log_error log_warning log_info log_debug);
+use CLIO::Core::ErrorContext qw(classify_error format_error);
 use CLIO::Util::TextSanitizer qw(sanitize_text);
 use CLIO::Util::JSONRepair qw(repair_malformed_json);
 use CLIO::Util::AnthropicXMLParser qw(is_anthropic_xml_format parse_anthropic_xml_to_json);
@@ -583,10 +584,12 @@ sub process_input {
         }
         
         if ($@) {
-            log_debug('WorkflowOrchestrator', "API error: $@");
+            my $error_class = classify_error($@);
+            log_debug('WorkflowOrchestrator', "API error ($error_class): $@");
             return {
                 success => 0,
-                error => "API request failed: $@",
+                error => format_error($@, 'API request'),
+                error_class => $error_class,
                 iterations => $iteration,
                 tool_calls_made => \@tool_calls_made
             };

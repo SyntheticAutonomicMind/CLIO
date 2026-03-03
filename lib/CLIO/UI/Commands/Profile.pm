@@ -249,22 +249,32 @@ You are helping the user $update_word their CLIO personality profile. This profi
 **Communication Style Indicators:**
 $style_summary
 
+**Statistical Summary:**
+$draft
+
 **Sample User Messages (for qualitative analysis):**
 $samples
 
-**Auto-generated Draft:**
-$draft
-
 ## Your Task
 
-Use the user_collaboration tool to present the draft profile and refine it with the user. The profile should be:
+Analyze the data above to identify the user's communication style, working preferences, technical focus, and collaboration patterns. Then use the user_collaboration tool to walk through your findings with the user.
+
+The profile should be:
 
 1. **Concise** - 400-800 tokens max. This goes into every system prompt.
 2. **Actionable** - Each line should change AI behavior, not just describe the user.
 3. **Accurate** - Based on real data, not assumptions. The user validates everything.
-4. **Formatted** as markdown with clear sections.
+4. **Formatted** as markdown with bold section headers.
 
-Walk through the draft with the user:
+Suggested sections (adapt based on what the data shows):
+- **Communication:** How they communicate (direct? collaborative? terse?)
+- **Working style:** How they assign and manage work
+- **Preferences:** What they care about (code style, git workflow, testing, etc.)
+- **Technical focus:** Languages, platforms, domains
+- **What works:** Behaviors that earn positive feedback
+- **What doesn't work:** Behaviors that trigger corrections
+
+Walk through your draft with the user:
 - Show what the analysis found
 - Ask if each section feels accurate
 - Let them add, remove, or modify anything

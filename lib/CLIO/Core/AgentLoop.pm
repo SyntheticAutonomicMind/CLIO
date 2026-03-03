@@ -5,6 +5,7 @@ use warnings;
 use utf8;
 use Carp qw(croak);
 use Time::HiRes qw(time sleep);
+require CLIO::Core::Logger;
 
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');

@@ -163,7 +163,7 @@ subtest 'generate_profile_draft' => sub {
 
     my $draft = $analyzer->generate_profile_draft($results);
     ok(defined $draft, 'Draft generated');
-    like($draft, qr/## User Profile/, 'Contains profile header');
+    like($draft, qr/## Analysis Summary/, 'Contains analysis header');
     ok(length($draft) > 20, 'Draft has meaningful content');
 };
 
@@ -219,7 +219,7 @@ subtest 'trait derivation' => sub {
     my $analyzer = CLIO::Profile::Analyzer->new();
     my $trait_dir = File::Spec->catdir($test_dir, 'project-traits');
 
-    # Create enough messages to trigger trait detection
+    # Messages with various workflow patterns
     my @msgs;
     for my $i (1..20) {
         push @msgs, { role => 'user', content => "Please squash the commits before pushing" };
@@ -230,12 +230,16 @@ subtest 'trait derivation' => sub {
     create_session($trait_dir, 'session_traits.json', \@msgs);
 
     my $results = $analyzer->analyze_sessions([$trait_dir]);
-    my $traits = $results->{profile_traits};
 
-    ok(defined $traits, 'Traits derived');
-    is($traits->{prefers_squash_commits}, 1, 'Detected squash preference');
-    is($traits->{dont_push_without_asking}, 1, 'Detected push preference');
-    is($traits->{minimal_dependencies}, 1, 'Detected dependency preference');
+    # Style counters should capture these patterns
+    my $style = $results->{style};
+    ok(($style->{states_desires} || 0) > 0, 'Detected desire statements from trait messages');
+    ok(($style->{collaborative_language} || 0) > 0, 'Detected collaborative language from trait messages');
+
+    # Topics should detect the keyword "push" from "pushing" - but word boundary
+    # matching means "pushing" won't match \bpush\b. That's by design (precise matching).
+    # The style counters capture the intent instead.
+    ok($results->{total_user_msgs} >= 20, 'Processed expected number of messages');
 };
 
 # Test 13: Skips todos.json

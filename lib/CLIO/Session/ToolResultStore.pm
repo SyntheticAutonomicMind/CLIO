@@ -115,10 +115,13 @@ sub processToolResult {
     eval {
         my $metadata = $self->persistResult($toolCallId, $content, $session_id);
         
+        # Use actual stored length (may differ from input due to line wrapping)
+        my $stored_length = $metadata->{totalLength};
+        
         # Generate preview chunk
         my $preview = substr($content, 0, $PREVIEW_SIZE);
         
-        my $remaining = $content_size - $PREVIEW_SIZE;
+        my $remaining = $stored_length - $PREVIEW_SIZE;
         
         # Build marker with optional warnings
         my $warning_text = '';
@@ -131,13 +134,13 @@ sub processToolResult {
 
 $preview
 
-[TOOL_RESULT_STORED: toolCallId=$toolCallId, totalLength=$content_size, remaining=$remaining bytes]
+[TOOL_RESULT_STORED: toolCallId=$toolCallId, totalLength=$stored_length, remaining=$remaining bytes]
 
 To read the full result, use:
 file_operations(operation: "read_tool_result", toolCallId: "$toolCallId", offset: 0, length: 8192)
 END_MARKER
         
-        log_info('ToolResultStore', "Persisted: toolCallId=$toolCallId, totalSize=$content_size bytes, preview=$PREVIEW_SIZE bytes, path=$metadata->{filePath}");
+        log_info('ToolResultStore', "Persisted: toolCallId=$toolCallId, totalSize=$stored_length bytes, preview=$PREVIEW_SIZE bytes, path=$metadata->{filePath}");
     };
     
     if ($@) {

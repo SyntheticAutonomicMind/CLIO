@@ -8,6 +8,7 @@ use IO::Select;
 use CLIO::Util::JSON qw(encode_json decode_json);
 use Carp qw(croak);
 use Time::HiRes qw(time sleep);
+require CLIO::Core::Logger;
 
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
