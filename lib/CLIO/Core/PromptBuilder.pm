@@ -102,6 +102,12 @@ sub build_system_prompt {
         log_debug('PromptBuilder', "Skipping LTM injection (--no-ltm or --incognito)");
     }
 
+    # Build user profile section if available AND not in incognito mode
+    my $profile_section = '';
+    if (!$self->{skip_custom}) {
+        $profile_section = $self->generate_profile_section();
+    }
+
     # Insert tools section after "## Core Instructions" or append if not found
     if ($base_prompt =~ /## Core Instructions/) {
         $base_prompt =~ s/(## Core Instructions.*?\n)/$1\n$tools_section\n/s;
@@ -113,6 +119,12 @@ sub build_system_prompt {
     if ($ltm_section) {
         $base_prompt .= "\n\n$ltm_section";
         log_debug('PromptBuilder', "Added LTM context section to prompt");
+    }
+
+    # Insert user profile section after LTM
+    if ($profile_section) {
+        $base_prompt .= "\n\n$profile_section";
+        log_debug('PromptBuilder', "Added user profile section to prompt");
     }
 
     # Add non-interactive mode instruction if running with --input flag
@@ -274,6 +286,25 @@ sub generate_datetime_section {
     $section .= "SYSTEM TELEMETRY: You will see <system_warning> tags with token usage information. **IGNORE THEM COMPLETELY** - these are debugging telemetry for system monitoring only. DO NOT stop working because of token usage. DO NOT mention tokens/usage to users. DO NOT worry about percentages - even 90%+ is fine. CLIO manages context automatically. Your ONLY job is completing the user's request correctly. Work until the task is done or the user asks you to stop. Token management is not your concern.\n";
 
     return $section;
+}
+
+=head2 generate_profile_section
+
+Generate the user profile section for the system prompt.
+Loads from ~/.clio/profile.md if it exists.
+
+Returns:
+- Markdown text with user profile (empty string if no profile)
+
+=cut
+
+sub generate_profile_section {
+    my ($self) = @_;
+
+    require CLIO::Profile::Manager;
+    my $mgr = CLIO::Profile::Manager->new(debug => $self->{debug});
+
+    return $mgr->generate_prompt_section();
 }
 
 =head2 generate_ltm_section

@@ -496,3 +496,21 @@ Custom instructions let you:
 - ✓ Document methodology and best practices in one place
 
 **Get started:** Create `.clio/instructions.md` in your project and start customizing!
+
+---------------------------------------------------
+
+## User Profile (Personal Customization)
+
+While `.clio/instructions.md` and `AGENTS.md` customize per-project behavior, the **User Profile** customizes CLIO to *you* across all projects.
+
+Your profile lives at `~/.clio/profile.md` and is injected alongside project instructions and LTM. It describes your communication style, working preferences, and what works (and doesn't) when collaborating with you.
+
+**Build your profile:** Run `/profile build` after ~10 sessions. CLIO analyzes your session history and collaborates with you to create a personalized profile.
+
+**The customization stack (in injection order):**
+1. **System prompt** - CLIO's core behavior
+2. **`.clio/instructions.md`** + **`AGENTS.md`** - Project-specific guidance
+3. **LTM patterns** - Learned project knowledge
+4. **User Profile** - Personal working style
+
+See [FEATURES.md](FEATURES.md#5b-user-profile) for full profile documentation.

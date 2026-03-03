@@ -156,6 +156,20 @@ Terminal Output
 - YaRN manages conversation threading and context windows
 - Token estimator prevents context overflow
 
+### 5b. User Profile
+**Files:** `lib/CLIO/Profile/`
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| Analyzer | `Analyzer.pm` | Scan session history for personality patterns |
+| Manager | `Manager.pm` | Load/save/inject profile into prompts |
+
+**How it works:**
+- Profile stored at `~/.clio/profile.md` (global, never in git)
+- Analyzer scans `.clio/sessions/` across sibling projects
+- Manager injects profile into system prompt via PromptBuilder
+- `/profile build` triggers analysis + AI-assisted collaborative refinement
+
 ### 6. Code Analysis
 **Files:** `lib/CLIO/Code/`
 

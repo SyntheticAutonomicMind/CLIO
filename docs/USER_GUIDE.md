@@ -423,6 +423,19 @@ CLIO provides 35+ powerful slash commands. Type `/help` in any session to see th
 | `/memory prune [days]` | Remove old/low-confidence entries |
 | `/memory clear` | Clear all patterns |
 
+### User Profile
+
+| Command | Purpose |
+|---------|---------|
+| `/profile` | View profile status |
+| `/profile build` | Analyze session history and build profile (AI-assisted) |
+| `/profile show` | Display current profile |
+| `/profile edit` | Open profile in your editor |
+| `/profile clear` | Remove profile |
+| `/profile path` | Show profile file location |
+
+Your profile lives at `~/.clio/profile.md` and is never stored in any git repo. It personalizes how CLIO interacts with you across all projects and sessions. Run `/profile build` after ~10 sessions to generate a profile from your interaction history.
+
 ### Developer Tools
 
 | Command | Purpose |

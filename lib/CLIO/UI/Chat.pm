@@ -2234,6 +2234,15 @@ sub display_help {
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory clear', 'help_command'), 'Clear all patterns');
     push @help_lines, "";
     
+    push @help_lines, $self->colorize("PROFILE", 'command_subheader');
+    push @help_lines, $self->colorize("─" x 62, 'dim');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/profile', 'help_command'), 'View profile status');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/profile build', 'help_command'), 'Build profile from session history');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/profile show', 'help_command'), 'Display current profile');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/profile edit', 'help_command'), 'Open profile in editor');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/profile clear', 'help_command'), 'Remove profile');
+    push @help_lines, "";
+    
     push @help_lines, $self->colorize("UPDATES", 'command_subheader');
     push @help_lines, $self->colorize("─" x 62, 'dim');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/update', 'help_command'), 'Show update status and help');

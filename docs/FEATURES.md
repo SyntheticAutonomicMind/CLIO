@@ -15,6 +15,7 @@ This guide covers every feature, how the components work together, and how to ge
 3. [AI Providers](#3-ai-providers)
 4. [Session Management](#4-session-management)
 5. [Memory System](#5-memory-system)
+5b. [User Profile](#5b-user-profile)
 6. [Context Management](#6-context-management)
 7. [Slash Commands](#7-slash-commands)
 8. [Hashtag Context Injection](#8-hashtag-context-injection)
@@ -333,6 +334,52 @@ This finds relevant conversations from past sessions, even if the current sessio
 /memory stats            # LTM statistics
 /memory prune            # Clean up old/low-confidence entries
 ```
+
+---
+
+## 5b. User Profile
+
+CLIO can learn your working style and personalize collaboration across all projects and sessions.
+
+### How It Works
+
+Your profile is stored at `~/.clio/profile.md` (global, never in any git repo) and is automatically injected into the system prompt of every session. It tells the AI how you communicate, what you prefer, and how to work with you effectively.
+
+### Building Your Profile
+
+Run `/profile build` after you've accumulated some session history (~10+ sessions). CLIO will:
+
+1. Scan session history across all your projects
+2. Extract communication patterns, preferences, and working style
+3. Generate a draft profile
+4. Walk through it with you for review and refinement
+5. Save the result to `~/.clio/profile.md`
+
+### Profile Commands
+
+| Command | What It Does |
+|---------|-------------|
+| `/profile` | Show profile status |
+| `/profile build` | Analyze sessions and build/refine profile (AI-assisted) |
+| `/profile show` | Display current profile content |
+| `/profile edit` | Open profile in your editor |
+| `/profile clear` | Remove the profile |
+| `/profile path` | Show the profile file location |
+
+### What's in a Profile
+
+A typical profile includes:
+- **Communication style** - How you give feedback, approve work, and course-correct
+- **Working style** - How you assign tasks, iterate, and provide context
+- **Preferences** - Git workflow, code style, dependency philosophy
+- **Technical focus** - Languages, platforms, and domains you work in
+
+### Privacy
+
+- Your profile lives at `~/.clio/profile.md` in your home directory
+- It's never committed to any git repository
+- It's skipped when running with `--incognito` mode
+- You control exactly what's in it via `/profile edit`
 
 ---
 
