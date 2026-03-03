@@ -7,6 +7,7 @@ binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use Encode qw(decode encode);
 use CLIO::Core::Logger qw(should_log log_debug);
+use CLIO::Core::ErrorContext qw(classify_error format_error);
 use CLIO::Util::JSONRepair qw(repair_malformed_json);
 use CLIO::Util::JSON qw(encode_json decode_json);
 use MIME::Base64 qw(encode_base64 decode_base64);
@@ -603,8 +604,8 @@ sub _execute_protocol {
     };
     
     if ($@) {
-        log_debug('ToolExecutor', "Protocol execution failed: $@");
-        return $self->_error_result("Protocol execution failed: $@");
+        log_debug('ToolExecutor', format_error($@, 'Protocol execution'));
+        return $self->_error_result(format_error($@, 'Protocol execution'));
     }
     
     # Convert protocol result to tool result format

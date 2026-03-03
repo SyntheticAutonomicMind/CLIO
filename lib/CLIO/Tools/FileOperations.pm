@@ -66,7 +66,7 @@ sub new {
 
 AUTHORIZATION:
 -  Inside session directory: AUTO-APPROVED
--  Outside session directory: Currently allowed (authorization system planned)
+-  Outside session directory: Requires authorization (path security policy)
 
 ━━━━━━━━━━━━━━━━━━━━━━━ READ (5 operations) ━━━━━━━━━━━━━━━━━━━━━━━
 -  read_file - Read file content with optional line range

@@ -18,7 +18,13 @@ CLIO::Profile::Analyzer - Analyze session history to build user personality prof
 
 Scans CLIO session history across all projects to extract communication
 patterns, working preferences, and interaction style. Used by /profile build
-to generate a draft profile that the user can review and refine.
+to feed statistical data and sample messages to the AI for collaborative
+profile generation.
+
+The Analyzer collects quantitative data (style counters, topic frequencies)
+and qualitative data (sample messages). It does NOT attempt to synthesize
+these into profile text - that's the AI's job during the interactive
+/profile build flow.
 
 =cut
 
@@ -35,10 +41,16 @@ Scan all available session files and extract user interaction patterns.
 
 Arguments:
 - $search_paths: Arrayref of paths to search for .clio/sessions/ directories
-                 Defaults to current directory and home .clio/
+                 Defaults to current directory, sibling repos, and home .clio/
 
 Returns:
-- Hashref with analysis results
+- Hashref with analysis results:
+  - total_sessions: number of session files processed
+  - total_user_msgs: number of user messages analyzed
+  - projects: { name => { sessions, user_msgs } }
+  - style: { pattern_name => count }
+  - topics: { keyword => count }
+  - user_messages: sample messages (capped at 200)
 
 =cut
 
@@ -64,127 +76,94 @@ sub analyze_sessions {
         $self->_analyze_session_file($file, \%results);
     }
 
-    # Derive profile traits from raw data
-    $results{profile_traits} = $self->_derive_traits(\%results);
-
     return \%results;
 }
 
 =head2 generate_profile_draft
 
-Generate a markdown profile from analysis results.
+Generate a statistical summary from analysis results for AI consumption.
+
+This produces a data-oriented summary, not a finished profile. The AI uses
+this alongside sample messages to collaboratively build the actual profile
+with the user.
 
 Arguments:
 - $analysis: Hashref from analyze_sessions()
 
 Returns:
-- String containing draft profile markdown
+- String containing formatted analysis summary
 
 =cut
 
 sub generate_profile_draft {
     my ($self, $analysis) = @_;
 
-    my $traits = $analysis->{profile_traits} || {};
     my $style = $analysis->{style} || {};
     my $total = $analysis->{total_user_msgs} || 1;
 
     my @sections;
 
-    # Communication style
-    my @comm;
-    if (($style->{collaborative_language} || 0) / $total > 0.3) {
-        push @comm, 'Uses collaborative language (we/us/our/let\'s)';
+    # Communication patterns with percentages
+    my @comm_stats;
+    my @comm_keys = qw(
+        collaborative_language short_messages medium_messages
+        long_detailed_messages concise_approvals states_desires
+        corrections_redirects positive_feedback asks_questions
+        provides_context
+    );
+    for my $key (@comm_keys) {
+        my $count = $style->{$key} || 0;
+        next unless $count > 0;
+        my $pct = sprintf("%.0f%%", 100 * $count / $total);
+        (my $label = $key) =~ s/_/ /g;
+        push @comm_stats, "$label: $count ($pct)";
     }
-    if (($style->{short_messages} || 0) / $total > 0.3) {
-        push @comm, 'Prefers short, direct messages';
-    } elsif (($style->{long_detailed_messages} || 0) / $total > 0.3) {
-        push @comm, 'Provides detailed context in messages';
-    }
-    if (($style->{corrections_redirects} || 0) / $total > 0.1) {
-        push @comm, 'Frequently course-corrects and gives direct feedback';
-    }
-    if (($style->{positive_feedback} || 0) / $total > 0.05) {
-        push @comm, 'Gives positive feedback when work is good';
-    }
-    if (($style->{concise_approvals} || 0) / $total > 0.03) {
-        push @comm, 'Uses concise approvals (proceed, yes, go ahead)';
-    }
-    if (($style->{states_desires} || 0) / $total > 0.1) {
-        push @comm, 'States desires explicitly (I want, I need, I\'d like)';
+    if (@comm_stats) {
+        push @sections, "**Communication patterns:** " . join(', ', @comm_stats);
     }
 
-    push @sections, "**Communication:** " . join('. ', @comm) . '.' if @comm;
-
-    # Working style
-    my @work;
-    if (($style->{bug_reports} || 0) / $total > 0.08) {
-        push @work, 'Provides detailed bug reports with logs and context';
+    # Working style patterns
+    my @work_stats;
+    my @work_keys = qw(
+        bug_reports includes_code shares_urls strategic_thinking
+        adds_requirements_iteratively references_past_work
+    );
+    for my $key (@work_keys) {
+        my $count = $style->{$key} || 0;
+        next unless $count > 0;
+        my $pct = sprintf("%.0f%%", 100 * $count / $total);
+        (my $label = $key) =~ s/_/ /g;
+        push @work_stats, "$label: $count ($pct)";
     }
-    if (($style->{includes_code} || 0) / $total > 0.1) {
-        push @work, 'Includes code snippets and error output in messages';
-    }
-    if (($style->{shares_urls} || 0) / $total > 0.05) {
-        push @work, 'Shares URLs for reference and context';
-    }
-    if (($style->{strategic_thinking} || 0) / $total > 0.05) {
-        push @work, 'Thinks strategically about architecture and design';
-    }
-    if (($style->{adds_requirements_iteratively} || 0) / $total > 0.05) {
-        push @work, 'Adds requirements iteratively during work';
-    }
-    if (($style->{references_past_work} || 0) / $total > 0.05) {
-        push @work, 'References past work and previous sessions';
+    if (@work_stats) {
+        push @sections, "**Working style indicators:** " . join(', ', @work_stats);
     }
 
-    push @sections, "**Working style:** " . join('. ', @work) . '.' if @work;
-
-    # Detected preferences from message content
-    my @prefs;
-    if ($traits->{prefers_squash_commits}) {
-        push @prefs, 'Squash commits before pushing';
-    }
-    if ($traits->{dont_push_without_asking}) {
-        push @prefs, 'Don\'t push without asking';
-    }
-    if ($traits->{tests_on_real_hardware}) {
-        push @prefs, 'Tests on real hardware before release';
-    }
-    if ($traits->{values_privacy}) {
-        push @prefs, 'Privacy-first approach';
-    }
-    if ($traits->{minimal_dependencies}) {
-        push @prefs, 'Minimal dependencies';
-    }
-    if ($traits->{clean_code_comments}) {
-        push @prefs, 'Brief code comments (what, not why)';
-    }
-
-    push @sections, "**Preferences:** " . join('. ', @prefs) . '.' if @prefs;
-
-    # Technology focus
+    # Technology topics (sorted by frequency)
     my @techs;
     my $topics = $analysis->{topics} || {};
     for my $tech (sort { ($topics->{$b} || 0) <=> ($topics->{$a} || 0) } keys %$topics) {
-        last if @techs >= 8;
-        next if ($topics->{$tech} || 0) < 3;
-        push @techs, $tech;
+        last if @techs >= 15;
+        next if ($topics->{$tech} || 0) < 2;
+        push @techs, "$tech ($topics->{$tech})";
     }
-
-    push @sections, "**Technical focus:** " . join(', ', @techs) . '.' if @techs;
+    if (@techs) {
+        push @sections, "**Technologies mentioned:** " . join(', ', @techs);
+    }
 
     # Active projects
     my @projects;
     my $proj_data = $analysis->{projects} || {};
     for my $p (sort { ($proj_data->{$b}{user_msgs} || 0) <=> ($proj_data->{$a}{user_msgs} || 0) } keys %$proj_data) {
-        last if @projects >= 6;
-        next if ($proj_data->{$p}{user_msgs} || 0) < 3;
+        last if @projects >= 8;
+        next if ($proj_data->{$p}{user_msgs} || 0) < 2;
         push @projects, "$p ($proj_data->{$p}{user_msgs} msgs)";
     }
+    if (@projects) {
+        push @sections, "**Active projects:** " . join(', ', @projects);
+    }
 
-    push @sections, "**Active projects:** " . join(', ', @projects) . '.' if @projects;
-
-    my $draft = "## User Profile\n\n";
+    my $draft = "## Analysis Summary\n\n";
     $draft .= join("\n\n", @sections);
     $draft .= "\n";
 
@@ -306,7 +285,6 @@ sub _default_search_paths {
     my $home = $ENV{HOME} || '';
     my $home_sessions = File::Spec->catdir($home, '.clio', 'sessions');
     if (-d $home_sessions && !grep { $_ eq $home } @paths) {
-        # Add just the home dir for its .clio/sessions/ - no recursive scan
         push @paths, $home;
     }
 
@@ -392,7 +370,7 @@ sub _analyze_session_file {
 
         my $style = $results->{style};
 
-        # Message length
+        # Message length distribution
         if (length($stripped) < 50) {
             $style->{short_messages}++;
         } elsif (length($stripped) < 200) {
@@ -402,7 +380,7 @@ sub _analyze_session_file {
         }
 
         # Concise approvals
-        if ($stripped =~ /^(yes|no|ok|okay|sure|go ahead|do it|proceed|looks good|lgtm|ship it|commit|push|yep|nope|perfect|great|thanks)\s*[.!]?$/i) {
+        if ($stripped =~ /^(yes|no|ok|okay|sure|go ahead|do it|proceed|looks good|lgtm|ship it|commit|push|yep|nope|perfect|great|thanks|approved|done|next)\s*[.!]?$/i) {
             $style->{concise_approvals}++;
         }
 
@@ -410,46 +388,73 @@ sub _analyze_session_file {
         $style->{collaborative_language}++ if $stripped =~ /\b(we|us|our|let's|together)\b/i;
 
         # States desires
-        $style->{states_desires}++ if $stripped =~ /\b(I want|I need|I'd like|I would like)\b/i;
+        $style->{states_desires}++ if $stripped =~ /\b(I want|I need|I'd like|I would like|I prefer|please)\b/i;
 
-        # Corrections
-        $style->{corrections_redirects}++ if $stripped =~ /\b(wrong|no |nope|incorrect|bad|not what|that's not|don't|stop|undo)\b/i;
+        # Corrections and redirects
+        $style->{corrections_redirects}++ if $stripped =~ /\b(wrong|no |nope|incorrect|bad|not what|that's not|don't|stop|undo|revert|actually)\b/i;
 
         # Positive feedback
-        $style->{positive_feedback}++ if $stripped =~ /\b(good|great|perfect|nice|thanks|thank you|awesome|excellent|love it|well done)\b/i;
+        $style->{positive_feedback}++ if $stripped =~ /\b(good|great|perfect|nice|thanks|thank you|awesome|excellent|love it|well done|looks good|amazing|beautiful)\b/i;
 
-        # Bug reports
-        $style->{bug_reports}++ if $stripped =~ /\b(bug|error|crash|broken|fails?|issue|problem|not working|doesn.t work)\b/i;
+        # Bug reports with context
+        $style->{bug_reports}++ if $stripped =~ /\b(bug|error|crash|broken|fails?|issue|problem|not working|doesn.t work|exception|stack trace|traceback)\b/i;
 
-        # Includes code
+        # Includes code or error output
         $style->{includes_code}++ if $stripped =~ /```|`[^`]+`/;
 
         # Shares URLs
         $style->{shares_urls}++ if $stripped =~ /https?:\/\//;
 
-        # Strategic thinking
-        $style->{strategic_thinking}++ if $stripped =~ /\b(architecture|design|pattern|approach|strategy|philosophy|vision|goal|roadmap)\b/i;
+        # Strategic/architectural thinking
+        $style->{strategic_thinking}++ if $stripped =~ /\b(architecture|design|pattern|approach|strategy|philosophy|vision|goal|roadmap|plan|tradeoff)\b/i;
 
-        # Provides context
-        $style->{provides_context}++ if $stripped =~ /\b(because|since|the reason|context|background|note that|keep in mind)\b/i;
+        # Provides context/reasoning
+        $style->{provides_context}++ if $stripped =~ /\b(because|since|the reason|context|background|note that|keep in mind|for context)\b/i;
 
-        # Adds iteratively
-        $style->{adds_requirements_iteratively}++ if $stripped =~ /\b(also|and also|another thing|one more|additionally|while you.re at it)\b/i;
+        # Adds requirements iteratively
+        $style->{adds_requirements_iteratively}++ if $stripped =~ /\b(also|and also|another thing|one more|additionally|while you.re at it|oh and)\b/i;
 
         # References past work
-        $style->{references_past_work}++ if $stripped =~ /\b(before|previously|last time|earlier|we did|remember|like we)\b/i;
+        $style->{references_past_work}++ if $stripped =~ /\b(before|previously|last time|earlier|we did|remember|like we|as we discussed)\b/i;
 
         # Questions
         $style->{asks_questions}++ if $stripped =~ /\?/;
 
-        # Topic/technology keywords
+        # Emoji/emoticon usage
+        $style->{uses_emoji}++ if $stripped =~ /[:;][)D(P]|:\)|:\(|:D|;\)|[^\w]\p{Emoji_Presentation}/;
+
+        # Topic/technology keywords (broad coverage)
         my $topics = $results->{topics};
-        for my $kw (qw(perl swift python bash shell javascript html css json yaml git commit branch merge push pull docker container test debug deploy build release install configure)) {
-            $topics->{$kw}++ if $stripped =~ /\b$kw\b/i;
+        my @tech_keywords = qw(
+            perl python ruby javascript typescript java kotlin swift
+            go rust c cpp csharp php bash shell zsh powershell
+            html css json yaml toml xml sql graphql
+            git docker kubernetes terraform ansible
+            react vue angular svelte node npm yarn
+            flask django rails spring express
+            api rest grpc websocket
+            linux macos windows android ios
+            aws gcp azure cloudflare vercel
+            postgres mysql sqlite redis mongodb
+            test debug deploy build release install configure
+            ci cd pipeline workflow
+        );
+        for my $kw (@tech_keywords) {
+            if ($kw eq 'c') {
+                # Avoid matching 'c' as a standalone word too broadly
+                $topics->{$kw}++ if $stripped =~ /\bC\b(?!\+\+|#)/;
+            } elsif ($kw eq 'cpp') {
+                $topics->{'c++'}++ if $stripped =~ /\bc\+\+\b/i;
+            } elsif ($kw eq 'csharp') {
+                $topics->{'c#'}++ if $stripped =~ /\bc#\b/i;
+            } else {
+                $topics->{$kw}++ if $stripped =~ /\b\Q$kw\E\b/i;
+            }
         }
-        for my $kw (qw(API UI interface frontend backend database server)) {
-            $topics->{$kw}++ if $stripped =~ /\b$kw\b/i;
-        }
+        # Additional multi-word or case-sensitive topics
+        $topics->{API}++ if $stripped =~ /\bAPI\b/;
+        $topics->{UI}++ if $stripped =~ /\bUI\b/;
+        $topics->{'machine learning'}++ if $stripped =~ /\b(machine learning|ML|deep learning|neural net)\b/i;
 
         # Store sample messages (cap at 200)
         if (@{$results->{user_messages}} < 200) {
@@ -461,35 +466,32 @@ sub _analyze_session_file {
     }
 }
 
-sub _derive_traits {
-    my ($self, $results) = @_;
-
-    my %traits;
-    my $msgs = $results->{user_messages} || [];
-
-    for my $msg (@$msgs) {
-        my $c = $msg->{content} || '';
-
-        # Git workflow preferences
-        $traits{prefers_squash_commits}++ if $c =~ /squash/i;
-        $traits{dont_push_without_asking}++ if $c =~ /don't push|do not push|but don't push|commit but/i;
-        $traits{tests_on_real_hardware}++ if $c =~ /deploy.*to|test.*on|ssh\s+\w+@/i;
-
-        # Code quality preferences
-        $traits{clean_code_comments}++ if $c =~ /comment|annotation|dramatic|slop/i;
-        $traits{minimal_dependencies}++ if $c =~ /dependen|minimal|lightweight|no.*(node|npm|yarn)/i;
-        $traits{values_privacy}++ if $c =~ /privacy|telemetry|local.first|no.account/i;
-    }
-
-    # Normalize: flag is true if pattern appeared in >1% of messages
-    my $threshold = @$msgs * 0.01;
-    $threshold = 1 if $threshold < 1;
-
-    for my $k (keys %traits) {
-        $traits{$k} = ($traits{$k} >= $threshold) ? 1 : 0;
-    }
-
-    return \%traits;
-}
-
 1;
+
+__END__
+
+=head1 PROFILE ANALYSIS FLOW
+
+The profile building flow works in two stages:
+
+=over 4
+
+=item 1. Statistical Analysis (this module)
+
+Scans session history to extract quantitative data (style counters, topic
+frequencies) and qualitative data (sample messages). This data is objective
+and user-independent.
+
+=item 2. AI-Assisted Synthesis (via /profile build)
+
+The analysis data and sample messages are sent to the AI, which collaborates
+with the user to synthesize a personalized profile. The AI can identify
+patterns, ask clarifying questions, and adapt to any user's workflow.
+
+=back
+
+This separation ensures the Analyzer doesn't embed assumptions about any
+specific user's preferences. The AI handles synthesis; the Analyzer handles
+data collection.
+
+=cut
