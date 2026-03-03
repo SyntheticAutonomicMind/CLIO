@@ -43,6 +43,7 @@ CLIO is part of the [Synthetic Autonomic Mind (SAM)](https://github.com/Syntheti
 | **Multi-Agent** | Spawn parallel agents for complex work |
 | **Multiplexer** | Live agent output panes via tmux, GNU Screen, or Zellij |
 | **Memory** | Store and recall information across sessions |
+| **Profile** | Learns your working style and personalizes collaboration |
 | **Todos** | Manage tasks within your workflow |
 | **Web** | Fetch and analyze web content |
 | **MCP** | Connect to external tool servers via [Model Context Protocol](docs/MCP.md) |
@@ -179,6 +180,7 @@ For detailed options, see [docs/INSTALLATION.md](docs/INSTALLATION.md).
 | `/git` | Git operations |
 | `/undo` | Revert AI changes from last turn |
 | `/memory` | Long-term memory system |
+| `/profile` | Build and manage user personality profile |
 | `/todo` | Task management |
 | `/agent` | Spawn and manage sub-agents |
 | `/mux` | Terminal multiplexer panes (tmux/screen/Zellij) |

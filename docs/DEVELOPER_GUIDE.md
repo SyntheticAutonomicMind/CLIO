@@ -204,6 +204,9 @@ clio/
           LongTerm.pm       # Persistent memory
           YaRN.pm           # Context windowing
           TokenEstimator.pm # Token counting
+      Profile/              # User personality profile
+          Analyzer.pm       # Session history analysis
+          Manager.pm        # Profile storage and injection
       Providers/            # Native API providers
           Anthropic.pm      # Anthropic native API
           Google.pm         # Google Gemini native API

@@ -79,6 +79,7 @@ Terminal Output (with color/theme)
 | `lib/CLIO/UI/` | Terminal UI (Chat, Markdown, Theme) |
 | `lib/CLIO/Session/` | Session management |
 | `lib/CLIO/Memory/` | Context/memory system |
+| `lib/CLIO/Profile/` | User personality profile (Analyzer, Manager) |
 | `lib/CLIO/Protocols/` | Complex workflows |
 | `lib/CLIO/Security/` | Auth/authz |
 | `lib/CLIO/Util/` | Utilities (PathResolver, TextSanitizer) |
