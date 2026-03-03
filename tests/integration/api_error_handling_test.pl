@@ -27,9 +27,7 @@ use lib "$FindBin::Bin/../lib";
 use TestHelpers qw(assert_true assert_equals assert_contains);
 use CLIO::Core::APIManager;
 use CLIO::Core::Config;
-use HTTP::Response;
-use HTTP::Headers;
-use JSON::PP qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json);
 
 my $tests_run = 0;
 my $tests_passed = 0;
@@ -51,27 +49,7 @@ my $config = CLIO::Core::Config->new();
         debug => 0,
     );
     
-    # Mock a 429 response
-    my $mock_429_response = HTTP::Response->new(
-        429,
-        'Too Many Requests',
-        HTTP::Headers->new(
-            'Content-Type' => 'application/json',
-            'Retry-After' => '5',  # Wait 5 seconds
-        ),
-        encode_json({
-            error => {
-                message => "Rate limit exceeded. Please review our Terms of Service.",
-                code => "rate_limited"
-            }
-        })
-    );
-    
     $tests_run++;
-    
-    # Verify rate_limit_until is set correctly
-    # Note: We can't easily mock LWP::UserAgent responses, so this test documents
-    # the expected behavior
     
     print "  ✓ Test documents expected 429 behavior\n";
     print "    - Sets rate_limit_until to current time + Retry-After seconds\n";

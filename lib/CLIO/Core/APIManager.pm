@@ -26,6 +26,7 @@ use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use CLIO::Core::Logger qw(should_log log_debug log_error log_info log_warning);
+use CLIO::Core::ErrorContext qw(classify_error format_error);
 use CLIO::Util::ConfigPath qw(get_config_dir);
 use CLIO::Providers qw(get_provider list_providers);
 use POSIX ":sys_wait_h"; # For WNOHANG

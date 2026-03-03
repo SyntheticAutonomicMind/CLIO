@@ -300,6 +300,7 @@ sub execute_remote {
     # Create temporary directory for staging
     my $local_staging = tempdir(CLEANUP => 1);
     my $remote_staging = "$working_dir/clio-exec-$$-" . time();
+    my $q_remote_staging = $self->_shell_quote($remote_staging);
     
     my $result;
     eval {
@@ -398,7 +399,7 @@ sub execute_remote {
                 host => $host,
                 ssh_key => $ssh_key,
                 ssh_port => $ssh_port,
-                command => "rm -rf $remote_staging",
+                command => "rm -rf $q_remote_staging",
             );
         }
         
@@ -421,7 +422,7 @@ sub execute_remote {
                 host => $host,
                 ssh_key => $ssh_key,
                 ssh_port => $ssh_port,
-                command => "rm -rf $remote_staging",
+                command => "rm -rf $q_remote_staging",
             ) if $cleanup;
         };
         
@@ -680,7 +681,7 @@ sub cleanup_remote {
             host => $host,
             ssh_key => $ssh_key,
             ssh_port => $ssh_port,
-            command => "rm -rf $install_dir",
+            command => "rm -rf " . $self->_shell_quote($install_dir),
         );
         
         unless ($ssh_result->{success}) {
@@ -951,6 +952,38 @@ sub retrieve_files {
 # PRIVATE HELPER METHODS
 # ============================================================================
 
+# --------------------------------------------------------------------------
+# Input validation and shell quoting helpers (security hardening)
+# --------------------------------------------------------------------------
+
+sub _shell_quote {
+    my ($self, $str) = @_;
+    $str =~ s/'/'\\''/g;
+    return "'$str'";
+}
+
+sub _validate_host {
+    my ($self, $host) = @_;
+    return 0 unless defined $host && length $host;
+    # Allow user@host, user@host.domain, IPv4, IPv6 in brackets
+    # Reject shell metacharacters: spaces, semicolons, backticks, $(), pipes, etc.
+    return $host =~ /\A[\w.\-\@\[\]:]+\z/;
+}
+
+sub _validate_port {
+    my ($self, $port) = @_;
+    return 0 unless defined $port;
+    return $port =~ /\A\d+\z/ && $port > 0 && $port <= 65535;
+}
+
+sub _validate_path {
+    my ($self, $path) = @_;
+    return 0 unless defined $path && length $path;
+    # Reject null bytes
+    return 0 if $path =~ /\0/;
+    return 1;
+}
+
 sub _validate_execute_params {
     my ($self, $params) = @_;
     
@@ -984,6 +1017,17 @@ sub _validate_ssh_setup {
     my $host = $args{host};
     my $ssh_key = $args{ssh_key};
     my $ssh_port = $args{ssh_port} || 22;
+    
+    # Validate inputs before building shell commands
+    unless ($self->_validate_host($host)) {
+        return $self->error_result("Invalid host: contains disallowed characters");
+    }
+    unless ($self->_validate_port($ssh_port)) {
+        return $self->error_result("Invalid SSH port: must be numeric 1-65535");
+    }
+    if ($ssh_key && !$self->_validate_path($ssh_key)) {
+        return $self->error_result("Invalid SSH key path");
+    }
     
     # Check if ssh-agent is running (only if no explicit key provided)
     unless ($ssh_key) {
@@ -1022,8 +1066,8 @@ sub _validate_ssh_setup {
     # Test passwordless connection
     my $ssh_cmd = 'ssh -o BatchMode=yes -o ConnectTimeout=5';
     $ssh_cmd .= " -p $ssh_port" if $ssh_port != 22;
-    $ssh_cmd .= " -i $ssh_key" if $ssh_key;
-    $ssh_cmd .= " $host exit 2>&1";
+    $ssh_cmd .= " -i " . $self->_shell_quote($ssh_key) if $ssh_key;
+    $ssh_cmd .= " " . $self->_shell_quote($host) . " exit 2>&1";
     
     my $test_output = `$ssh_cmd`;
     my $test_exit = $? >> 8;
@@ -1081,10 +1125,23 @@ sub _ssh_exec {
     my $ssh_port = $args{ssh_port} || 22;
     my $command = $args{command};
     
+    # Validate inputs before building shell commands
+    unless ($self->_validate_host($host)) {
+        return { success => 0, error => "Invalid host: contains disallowed characters", exit_code => 1 };
+    }
+    unless ($self->_validate_port($ssh_port)) {
+        return { success => 0, error => "Invalid SSH port: must be numeric 1-65535", exit_code => 1 };
+    }
+    if ($ssh_key && !$self->_validate_path($ssh_key)) {
+        return { success => 0, error => "Invalid SSH key path", exit_code => 1 };
+    }
+    
+    my $quoted_host = $self->_shell_quote($host);
+    
     # Build SSH command base
     my $ssh_cmd = 'ssh';
     $ssh_cmd .= " -p $ssh_port" if $ssh_port != 22;
-    $ssh_cmd .= " -i $ssh_key" if $ssh_key;
+    $ssh_cmd .= " -i " . $self->_shell_quote($ssh_key) if $ssh_key;
     
     # For multi-line scripts or scripts with special chars, use base64 encoding
     # This prevents shell quoting issues entirely
@@ -1092,10 +1149,10 @@ sub _ssh_exec {
         # Base64 encode the command
         require MIME::Base64;
         my $encoded = MIME::Base64::encode_base64($command, '');
-        $ssh_cmd .= " $host \"echo '$encoded' | base64 -d | bash\"";
+        $ssh_cmd .= " $quoted_host \"echo '$encoded' | base64 -d | bash\"";
     } else {
         # Simple command - direct execution
-        $ssh_cmd .= " $host '$command'";
+        $ssh_cmd .= " $quoted_host '$command'";
     }
     
     my $output = `$ssh_cmd 2>&1`;
@@ -1129,10 +1186,24 @@ sub _scp_to_remote {
     my $local_path = $args{local_path};
     my $remote_path = $args{remote_path};
     
+    # Validate inputs before building shell commands
+    unless ($self->_validate_host($host)) {
+        return { success => 0, error => "Invalid host: contains disallowed characters", exit_code => 1 };
+    }
+    unless ($self->_validate_port($ssh_port)) {
+        return { success => 0, error => "Invalid SSH port: must be numeric 1-65535", exit_code => 1 };
+    }
+    if ($ssh_key && !$self->_validate_path($ssh_key)) {
+        return { success => 0, error => "Invalid SSH key path", exit_code => 1 };
+    }
+    unless ($self->_validate_path($local_path) && $self->_validate_path($remote_path)) {
+        return { success => 0, error => "Invalid file path", exit_code => 1 };
+    }
+    
     my $scp_cmd = 'scp -r';
     $scp_cmd .= " -P $ssh_port" if $ssh_port != 22;
-    $scp_cmd .= " -i $ssh_key" if $ssh_key;
-    $scp_cmd .= " '$local_path' '$host:$remote_path'";
+    $scp_cmd .= " -i " . $self->_shell_quote($ssh_key) if $ssh_key;
+    $scp_cmd .= " " . $self->_shell_quote($local_path) . " " . $self->_shell_quote("$host:$remote_path");
     
     my $output = `$scp_cmd 2>&1`;
     my $exit_code = $? >> 8;
@@ -1161,10 +1232,24 @@ sub _scp_from_remote {
     my $remote_path = $args{remote_path};
     my $local_path = $args{local_path};
     
+    # Validate inputs before building shell commands
+    unless ($self->_validate_host($host)) {
+        return { success => 0, error => "Invalid host: contains disallowed characters", exit_code => 1 };
+    }
+    unless ($self->_validate_port($ssh_port)) {
+        return { success => 0, error => "Invalid SSH port: must be numeric 1-65535", exit_code => 1 };
+    }
+    if ($ssh_key && !$self->_validate_path($ssh_key)) {
+        return { success => 0, error => "Invalid SSH key path", exit_code => 1 };
+    }
+    unless ($self->_validate_path($remote_path) && $self->_validate_path($local_path)) {
+        return { success => 0, error => "Invalid file path", exit_code => 1 };
+    }
+    
     my $scp_cmd = 'scp -r';
     $scp_cmd .= " -P $ssh_port" if $ssh_port != 22;
-    $scp_cmd .= " -i $ssh_key" if $ssh_key;
-    $scp_cmd .= " '$host:$remote_path' '$local_path'";
+    $scp_cmd .= " -i " . $self->_shell_quote($ssh_key) if $ssh_key;
+    $scp_cmd .= " " . $self->_shell_quote("$host:$remote_path") . " " . $self->_shell_quote($local_path);
     
     my $output = `$scp_cmd 2>&1`;
     my $exit_code = $? >> 8;
@@ -1192,6 +1277,20 @@ sub _copy_local_clio_to_remote {
     my $ssh_port = $args{ssh_port} || 22;
     my $remote_dir = $args{remote_dir};
     
+    # Validate inputs before building shell commands
+    unless ($self->_validate_host($host)) {
+        return { success => 0, error => "Invalid host: contains disallowed characters" };
+    }
+    unless ($self->_validate_port($ssh_port)) {
+        return { success => 0, error => "Invalid SSH port: must be numeric 1-65535" };
+    }
+    if ($ssh_key && !$self->_validate_path($ssh_key)) {
+        return { success => 0, error => "Invalid SSH key path" };
+    }
+    unless ($self->_validate_path($remote_dir)) {
+        return { success => 0, error => "Invalid remote directory path" };
+    }
+    
     if (should_log('DEBUG')) {
         log_debug('RemoteExecution', "Copying local CLIO to remote: $host:$remote_dir");
     }
@@ -1208,12 +1307,14 @@ sub _copy_local_clio_to_remote {
         };
     }
     
-    # Create remote directory
+    my $quoted_remote_dir = $self->_shell_quote($remote_dir);
+    
+    # Create remote directory (command goes through _ssh_exec which validates host)
     my $mkdir_result = $self->_ssh_exec(
         host => $host,
         ssh_key => $ssh_key,
         ssh_port => $ssh_port,
-        command => "mkdir -p $remote_dir",
+        command => "mkdir -p $quoted_remote_dir",
     );
     
     unless ($mkdir_result->{success}) {
@@ -1224,23 +1325,25 @@ sub _copy_local_clio_to_remote {
     }
     
     # Use rsync to copy CLIO to remote
-    # rsync is faster and more efficient than tar+scp
-    my $rsync_cmd = 'rsync -az --delete';
-    $rsync_cmd .= " -e 'ssh -p $ssh_port" . ($ssh_key ? " -i $ssh_key" : "") . "'";
+    my $quoted_host = $self->_shell_quote($host);
+    my $ssh_opts = "ssh -p $ssh_port";
+    $ssh_opts .= " -i " . $self->_shell_quote($ssh_key) if $ssh_key;
+    
+    my $rsync_cmd = "rsync -az --delete -e " . $self->_shell_quote($ssh_opts);
     $rsync_cmd .= " --exclude='.git'";
     $rsync_cmd .= " --exclude='.clio/sessions'";
     $rsync_cmd .= " --exclude='ai-assisted'";
     $rsync_cmd .= " --exclude='scratch'";
     $rsync_cmd .= " --exclude='*.log'";
     
-    # Build list of files to copy
+    # Build list of files to copy (local paths from getcwd, safe)
     my @files_to_copy = ("$local_clio_dir/clio", "$local_clio_dir/lib");
     if (-f "$local_clio_dir/cpanfile") {
         push @files_to_copy, "$local_clio_dir/cpanfile";
     }
     
-    $rsync_cmd .= " " . join(" ", @files_to_copy);
-    $rsync_cmd .= " $host:$remote_dir/";
+    $rsync_cmd .= " " . join(" ", map { $self->_shell_quote($_) } @files_to_copy);
+    $rsync_cmd .= " " . $self->_shell_quote("$host:$remote_dir/");
     
     if (should_log('DEBUG')) {
         log_debug('RemoteExecution', "Running rsync: $rsync_cmd");
@@ -1265,7 +1368,7 @@ sub _copy_local_clio_to_remote {
         host => $host,
         ssh_key => $ssh_key,
         ssh_port => $ssh_port,
-        command => "chmod +x $remote_dir/clio",
+        command => "chmod +x $quoted_remote_dir/clio",
     );
     
     unless ($chmod_result->{success}) {
@@ -1299,6 +1402,7 @@ sub _create_remote_config {
     
     # Create minimal config directory
     my $config_dir = "$remote_dir/.clio";
+    my $q_config_dir = $self->_shell_quote($config_dir);
     
     # Escape api_key for JSON
     my $escaped_api_key = $api_key;
@@ -1313,16 +1417,16 @@ sub _create_remote_config {
         # Create both config.json and github_tokens.json for GitHub Copilot
         $config_script = <<"SCRIPT";
 set -e
-mkdir -p $config_dir
+mkdir -p $q_config_dir
 
-cat > $config_dir/config.json << 'CONFEOF'
+cat > $q_config_dir/config.json << 'CONFEOF'
 {
     "provider": "$api_provider",
     "model": "$model"
 }
 CONFEOF
 
-cat > $config_dir/github_tokens.json << 'TOKEOF'
+cat > $q_config_dir/github_tokens.json << 'TOKEOF'
 {
     "github_token": "$escaped_api_key",
     "copilot_token": null,
@@ -1336,9 +1440,9 @@ SCRIPT
         # Standard config with api_key
         $config_script = <<"SCRIPT";
 set -e
-mkdir -p $config_dir
+mkdir -p $q_config_dir
 
-cat > $config_dir/config.json << 'CONFEOF'
+cat > $q_config_dir/config.json << 'CONFEOF'
 {
     "api_key": "$escaped_api_key",
     "provider": "$api_provider",
@@ -1384,22 +1488,33 @@ sub _execute_clio_remote {
     my $remote_dir = $args{remote_dir};
     my $model = $args{model};
     
-    # Escape command for shell
+    # Validate paths used in shell script
+    for my $path ($clio_path, $config_dir, $remote_dir) {
+        unless ($self->_validate_path($path)) {
+            return { success => 0, error => "Invalid path in remote execution parameters" };
+        }
+    }
+    
+    # Shell-quote all values embedded in the script
+    my $q_remote_dir = $self->_shell_quote($remote_dir);
+    my $q_config_dir = $self->_shell_quote($config_dir);
+    my $q_clio_path  = $self->_shell_quote($clio_path);
+    my $q_model      = $self->_shell_quote($model);
+    
+    # Escape command for shell single-quote embedding
     $command =~ s/'/'\\''/g;
     
-    # Build execution script
-    # CLIO reads credentials from $CLIO_HOME/config.json and $CLIO_HOME/github_tokens.json
-    # which were created by _create_remote_config
+    # Build execution script with quoted values
     my $exec_script = <<"SHELL";
 #!/bin/bash
 set -e
-export HOME=$remote_dir
-export CLIO_HOME=$config_dir
+export HOME=$q_remote_dir
+export CLIO_HOME=$q_config_dir
 
-cd $remote_dir
+cd $q_remote_dir
 
 START=\$(date +%s)
-$clio_path --model "$model" --input '$command' --exit 2>&1
+$q_clio_path --model $q_model --input '$command' --exit 2>&1
 EXIT_CODE=\$?
 END=\$(date +%s)
 DURATION=\$((END - START))
