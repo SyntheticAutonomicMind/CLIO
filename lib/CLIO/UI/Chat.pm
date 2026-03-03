@@ -1847,10 +1847,10 @@ sub request_collaboration {
         }
     }
     
-    # Display context if provided
-    if ($context && length($context) > 0) {
-        # Context is rendered markdown, need pagination support
-        my $rendered_context = $self->render_markdown($context);
+    # Always display context indicator so users can identify collaboration tool usage
+    my $context_text = ($context && length($context) > 0) ? $context : '(user_collaboration)';
+    {
+        my $rendered_context = $self->render_markdown($context_text);
         my @context_lines = split /\n/, $rendered_context;
         
         # Display context header with color
