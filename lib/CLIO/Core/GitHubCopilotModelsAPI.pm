@@ -394,10 +394,15 @@ sub model_uses_responses_api {
     my $has_responses = grep { $_ eq '/responses' } @endpoints;
     my $has_completions = grep { $_ eq '/chat/completions' } @endpoints;
     
-    # If model supports /responses (regardless of whether it also supports /chat/completions)
-    # use the Responses API. This matches the vscode-copilot-chat behavior.
+    # Use Chat Completions whenever available - it's the stable, well-tested path
+    # Only fall back to Responses API when model ONLY supports /responses
+    if ($has_completions) {
+        log_debug('GitHubCopilotModelsAPI', "Model $model_id: using Chat Completions API (endpoints: " . join(', ', @endpoints) . ")");
+        return 0;
+    }
+    
     if ($has_responses) {
-        log_debug('GitHubCopilotModelsAPI', "Model $model_id uses Responses API (endpoints: " . join(', ', @endpoints) . ")");
+        log_debug('GitHubCopilotModelsAPI', "Model $model_id: only supports Responses API");
         return 1;
     }
     
