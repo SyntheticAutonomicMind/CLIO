@@ -84,6 +84,20 @@ BEGIN {
 
 # No external dependencies, only core Perl
 
+# Generate a UUID v4 for request tracking headers
+sub _generate_uuid {
+    my @hex = ('0'..'9', 'a'..'f');
+    my $uuid = '';
+    for my $i (1..32) {
+        $uuid .= $hex[int(rand(16))];
+        $uuid .= '-' if $i == 8 || $i == 12 || $i == 16 || $i == 20;
+    }
+    # Set version (4) and variant (8, 9, a, or b)
+    substr($uuid, 14, 1) = '4';
+    substr($uuid, 19, 1) = $hex[8 + int(rand(4))];
+    return $uuid;
+}
+
 # Recursive sanitization of data structures before JSON encoding
 # Removes problematic UTF-8 characters (emojis, bullets, etc.) that cause API 400 errors
 sub _sanitize_payload_recursive {
@@ -1002,6 +1016,13 @@ sub _model_uses_responses_api {
     return $result;
 }
 
+# Get max output tokens for a model from capabilities, with sensible fallback
+sub _get_max_output_tokens {
+    my ($self, $model) = @_;
+    my $caps = $self->get_model_capabilities($model);
+    return ($caps && $caps->{max_output_tokens}) ? $caps->{max_output_tokens} : 16384;
+}
+
 =head2 _build_responses_api_payload($messages, $model, $endpoint_config, %opts)
 
 Build a payload for the OpenAI Responses API format.
@@ -1123,7 +1144,7 @@ sub _build_responses_api_payload {
         model => $model,
         input => \@input,
         stream => $stream ? \1 : \0,
-        max_output_tokens => $opts{max_output_tokens} || 16384,
+        max_output_tokens => $opts{max_output_tokens} || $self->_get_max_output_tokens($model),
         store => \0,
         truncation => 'disabled',
         include => ['reasoning.encrypted_content'],
@@ -1157,10 +1178,19 @@ sub _build_responses_api_payload {
         log_debug('APIManager', "Responses API: Adding " . scalar(@resp_tools) . " tools");
     }
     
-    # NOTE: The Responses API does NOT support copilot_thread_id or previous_response_id
-    # These are Chat Completions API specific fields. The Responses API uses its own
-    # mechanisms for session continuity and billing. Including them causes:
-    # "previous_response_id is not supported" error
+    # Responses API uses previous_response_id from the stateful marker (response.id)
+    # This enables billing continuity - subsequent turns in same conversation are not re-charged
+    # Skip if model has rejected previous_response_id (flagged by ResponseHandler)
+    if (!$self->{response_handler}{_no_previous_response_id}) {
+        my $prev_resp_id = $self->{response_handler}->get_stateful_marker_for_model($model);
+        if (!$prev_resp_id && $self->{session} && $self->{session}{lastGitHubCopilotResponseId}) {
+            $prev_resp_id = $self->{session}{lastGitHubCopilotResponseId};
+        }
+        if ($prev_resp_id) {
+            $payload->{previous_response_id} = $prev_resp_id;
+            log_debug('APIManager', "Responses API: previous_response_id=" . substr($prev_resp_id, 0, 30) . "...");
+        }
+    }
     
     # Sanitize the payload
     $payload = _sanitize_payload_recursive($payload);
@@ -1349,33 +1379,28 @@ sub _build_payload {
     }
     
     # Add previous_response_id for GitHub Copilot billing continuity
-    # Use stateful_marker (not response 'id'!) for session continuation
-    # This is the CORRECT implementation per VS Code Copilot Chat and SAM reference code
-    # Using stateful_marker prevents duplicate premium charges for:
-    #   - Continued conversations
-    #   - Tool-calling iterations
-    #   - Follow-up questions in same session
-    my $previous_response_id = $self->{response_handler}->get_stateful_marker_for_model($model);
-    
-    if ($previous_response_id) {
-        $payload->{previous_response_id} = $previous_response_id;
-        log_debug('APIManager', "Including previous_response_id (stateful_marker): " . substr($previous_response_id, 0, 20) . "...");
-    } else {
-        # FALLBACK: Try old lastGitHubCopilotResponseId if stateful_marker not found
-        # This is the expected path for GitHub Copilot (which doesn't return stateful_marker)
-        if ($self->{session} && $self->{session}{lastGitHubCopilotResponseId}) {
-            $previous_response_id = $self->{session}{lastGitHubCopilotResponseId};
+    # Skip if model has rejected previous_response_id (flagged by ResponseHandler)
+    if (!$self->{response_handler}{_no_previous_response_id}) {
+        my $previous_response_id = $self->{response_handler}->get_stateful_marker_for_model($model);
+        
+        if ($previous_response_id) {
             $payload->{previous_response_id} = $previous_response_id;
-            log_debug('APIManager', "Using response_id (lastGitHubCopilotResponseId): " . substr($previous_response_id, 0, 30) . "...");
+            log_debug('APIManager', "Including previous_response_id (stateful_marker): " . substr($previous_response_id, 0, 20) . "...");
         } else {
-            # Only warn if this is NOT the first request AND we have no fallback
-            my $is_first_request = scalar(grep { $_->{role} ne 'system' } @$messages) <= 1;
-            if (!$is_first_request) {
-                log_warning('APIManager', "NO previous_response_id on turn 2+ - this will be charged as NEW request");
-                # Debug: Why isn't fallback working?
-                log_debug('APIManager', "FALLBACK not available: session=" . (defined $self->{session} ? "defined" : "undef") .
-                             ", lastGitHubCopilotResponseId=" .
-                             (defined $self->{session}{lastGitHubCopilotResponseId} ? $self->{session}{lastGitHubCopilotResponseId} : "undef") . "\n");
+            # FALLBACK: Try old lastGitHubCopilotResponseId if stateful_marker not found
+            if ($self->{session} && $self->{session}{lastGitHubCopilotResponseId}) {
+                $previous_response_id = $self->{session}{lastGitHubCopilotResponseId};
+                $payload->{previous_response_id} = $previous_response_id;
+                log_debug('APIManager', "Using response_id (lastGitHubCopilotResponseId): " . substr($previous_response_id, 0, 30) . "...");
+            } else {
+                # Only warn if this is NOT the first request AND we have no fallback
+                my $is_first_request = scalar(grep { $_->{role} ne 'system' } @$messages) <= 1;
+                if (!$is_first_request) {
+                    log_warning('APIManager', "NO previous_response_id on turn 2+ - this will be charged as NEW request");
+                    log_debug('APIManager', "FALLBACK not available: session=" . (defined $self->{session} ? "defined" : "undef") .
+                                 ", lastGitHubCopilotResponseId=" .
+                                 (defined $self->{session}{lastGitHubCopilotResponseId} ? $self->{session}{lastGitHubCopilotResponseId} : "undef") . "\n");
+                }
             }
         }
     }
@@ -1466,29 +1491,25 @@ sub _build_request {
     
     # Add GitHub Copilot-specific headers
     if ($endpoint_config->{requires_copilot_headers}) {
-        # X-Initiator controls premium billing:
-        # - 'user' (iteration 1): User-initiated request, charges premium quota
-        # - 'agent' (iteration 2+): Tool-calling continuation, no additional charge
         my $tool_call_iteration = $opts->{tool_call_iteration} || 1;
         my $initiator = $tool_call_iteration <= 1 ? 'user' : 'agent';
-        $req->header('x-initiator' => $initiator);  # lowercase like OpenCode
+        $req->header('x-initiator' => $initiator);
         
-        # Use CLIO User-Agent similar to OpenCode's pattern
-        $req->header('User-Agent' => 'CLIO/1.0');
+        # Generate per-request UUID for tracking
+        my $request_id = _generate_uuid();
         
-        # Required for accessing all available models
-        $req->header('Openai-Intent' => 'conversation-edits');
+        # Required headers per VS Code Copilot Chat reference
+        $req->header('X-GitHub-Api-Version' => '2025-05-01');
+        $req->header('X-Request-Id' => $request_id);
+        $req->header('User-Agent' => 'GitHubCopilotChat/0.38.0');
+        $req->header('OpenAI-Intent' => 'conversation-agent');
+        $req->header('X-Interaction-Type' => 'conversation-agent');
+        $req->header('X-Agent-Task-Id' => $request_id);
         
-        # Editor-Version is REQUIRED when using exchanged tokens (PAT -> /v2/token)
-        # Without this, API returns "missing Editor-Version header for IDE auth"
-        if ($self->{using_exchanged_token}) {
-            $req->header('Editor-Version' => 'vscode/2.0.0');
-            log_debug('APIManager', "Using Editor-Version header for exchanged token");
-        }
+        # Editor-Version is REQUIRED for exchanged tokens
+        $req->header('Editor-Version' => 'vscode/2.0.0') if $self->{using_exchanged_token};
         
-        if ($self->{debug}) {
-            warn "[DEBUG] Added GitHub Copilot headers (x-initiator: $initiator, iteration: $tool_call_iteration)\n";
-        }
+        log_debug('APIManager', "Copilot headers: initiator=$initiator, request_id=$request_id");
     }
     
     # Add OpenRouter-specific headers
@@ -1802,25 +1823,11 @@ sub send_request {
         $self->{response_handler}->store_stateful_marker($data->{choices}[0]{message}{stateful_marker}, $model, $iteration);
     }
     
-    # FALLBACK: Store response_id for debugging and as fallback if stateful_marker is unavailable
-    # Note: stateful_marker is the preferred method (used above), this is legacy support
+    # Fallback: Store response_id if stateful_marker unavailable
     if ($data->{id} && $self->{session}) {
-        my $response_id = $data->{id};
-        $self->{session}{lastGitHubCopilotResponseId} = $response_id;
-        log_info('APIManager', "✓ Stored response_id (fallback mechanism): " . substr($response_id, 0, 30) . "...");
-        
-        # Persist session immediately to maintain billing continuity
-        if (ref($self->{session}) && blessed($self->{session}) && $self->{session}->can('save')) {
-            $self->{session}->save();
-            log_info('APIManager', "✓ Session saved with response_id");
-        } else {
-            log_debug('APIManager', "Session object cannot save! Response ID will be lost!");
-        }
-    } else {
-        log_warning('APIManager', "Cannot store response_id: " . "id=" . (defined $data->{id} ? substr($data->{id}, 0, 20) . "..." : "undef") .
-                     ", session=" . (defined $self->{session} ? "defined" : "undef") . "\n");
+        $self->{session}{lastGitHubCopilotResponseId} = $data->{id};
+        log_debug('APIManager', "Stored response_id fallback: " . substr($data->{id}, 0, 30) . "...");
     }
-    
     # Process GitHub Copilot quota headers for premium billing tracking
     $self->{response_handler}->process_quota_headers($resp->headers, $data->{id}) if $endpoint_config->{requires_copilot_headers};
     
@@ -1866,12 +1873,11 @@ sub send_request {
             $content = join('', @text_parts) if @text_parts;
             $tool_calls = \@resp_tool_calls if @resp_tool_calls;
             
-            # Store response ID for billing continuity
+            # Store response.id as stateful marker for billing continuity
             if ($data->{id} && $self->{session}) {
+                my $iteration = $opts{tool_call_iteration} || 1;
+                $self->{response_handler}->store_stateful_marker($data->{id}, $model, $iteration);
                 $self->{session}{lastGitHubCopilotResponseId} = $data->{id};
-                if (ref($self->{session}) && blessed($self->{session}) && $self->{session}->can('save')) {
-                    $self->{session}->save();
-                }
             }
             
             # Extract usage - Responses API uses input_tokens/output_tokens
@@ -2374,27 +2380,10 @@ sub send_request_streaming {
                         $self->{response_handler}->store_stateful_marker($data->{stateful_marker}, $model, $iteration);
                     }
                     
-                    # FALLBACK: Store response 'id' if no stateful_marker (GitHub Copilot doesn't return stateful_marker)
-                    # This matches SAM's approach: statefulMarker = statefulMarker ?? id
+                    # Fallback: Store response id for models without stateful_marker
                     if ($data->{id} && $self->{session}) {
                         $self->{session}{lastGitHubCopilotResponseId} = $data->{id};
-                        log_info('APIManager', "✓ Stored response_id (streaming, fallback): " . substr($data->{id}, 0, 30) . "...");
-                        
-                        log_debug('APIManager', "Session object type: " . ref($self->{session}));
-                        
-                        # Persist session immediately to maintain billing continuity
-                        if (ref($self->{session}) && blessed($self->{session}) && $self->{session}->can('save')) {
-                            log_debug('APIManager', "Calling session->save()...");
-                            $self->{session}->save();
-                            log_info('APIManager', "✓ Session saved with response_id (streaming)");
-                        } else {
-                            log_debug('APIManager', "Session object cannot save! Response ID will be lost!");
-                        }
-                    } elsif ($data->{id}) {
-                        log_warning('APIManager', "Cannot store response_id (streaming): session is undef");
-                    } else {
-                        # DEBUG: Why no id?
-                        log_debug('APIManager', "No id in this chunk (session=" . (defined $self->{session} ? "defined" : "undef") . ")");
+                        log_debug('APIManager', "Stored response_id fallback: " . substr($data->{id}, 0, 30) . "...");
                     }
                     
                     # Capture real usage from final streaming chunk
@@ -2502,15 +2491,14 @@ sub send_request_streaming {
                             }
                         }
                         elsif ($event_type eq 'response.completed') {
-                            # Response complete - extract usage and store response ID
                             my $resp_data = $data->{response} || {};
                             
+                            # Store response.id as stateful marker for billing continuity
                             if ($resp_data->{id} && $self->{session}) {
+                                my $iteration = $opts{tool_call_iteration} || 1;
+                                $self->{response_handler}->store_stateful_marker($resp_data->{id}, $model, $iteration);
                                 $self->{session}{lastGitHubCopilotResponseId} = $resp_data->{id};
-                                if (ref($self->{session}) && blessed($self->{session}) && $self->{session}->can('save')) {
-                                    $self->{session}->save();
-                                    log_info('APIManager', "Responses API: Stored response_id for billing continuity");
-                                }
+                                log_info('APIManager', "Responses API: Stored stateful marker for billing continuity");
                             }
                             
                             # Extract usage from completed response

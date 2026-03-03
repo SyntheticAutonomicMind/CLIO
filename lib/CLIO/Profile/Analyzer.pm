@@ -109,7 +109,7 @@ sub generate_profile_draft {
         collaborative_language short_messages medium_messages
         long_detailed_messages concise_approvals states_desires
         corrections_redirects positive_feedback asks_questions
-        provides_context
+        provides_context uses_humor frustration_signals
     );
     for my $key (@comm_keys) {
         my $count = $style->{$key} || 0;
@@ -126,7 +126,9 @@ sub generate_profile_draft {
     my @work_stats;
     my @work_keys = qw(
         bug_reports includes_code shares_urls strategic_thinking
+        tactical_directives delegates_high_level micromanages_details
         adds_requirements_iteratively references_past_work
+        learning_exploring
     );
     for my $key (@work_keys) {
         my $count = $style->{$key} || 0;
@@ -137,6 +139,22 @@ sub generate_profile_draft {
     }
     if (@work_stats) {
         push @sections, "**Working style indicators:** " . join(', ', @work_stats);
+    }
+
+    # Behavioral signals
+    my @behavior_stats;
+    my @behavior_keys = qw(
+        urgency_signals patience_signals quality_focus grants_autonomy
+    );
+    for my $key (@behavior_keys) {
+        my $count = $style->{$key} || 0;
+        next unless $count > 0;
+        my $pct = sprintf("%.0f%%", 100 * $count / $total);
+        (my $label = $key) =~ s/_/ /g;
+        push @behavior_stats, "$label: $count ($pct)";
+    }
+    if (@behavior_stats) {
+        push @sections, "**Behavioral signals:** " . join(', ', @behavior_stats);
     }
 
     # Technology topics (sorted by frequency)
@@ -420,8 +438,39 @@ sub _analyze_session_file {
         # Questions
         $style->{asks_questions}++ if $stripped =~ /\?/;
 
-        # Emoji/emoticon usage
-        $style->{uses_emoji}++ if $stripped =~ /[:;][)D(P]|:\)|:\(|:D|;\)|[^\w]\p{Emoji_Presentation}/;
+        # Humor and personality (lol, haha, emoticons, :D, etc.)
+        $style->{uses_humor}++ if $stripped =~ /\b(lol|lmao|haha|heh|rofl)\b|[:;][)D(P]|:\)|:\(|:D|;\)|xD/i;
+
+        # Tactical directives (specific, hands-on instructions)
+        $style->{tactical_directives}++ if $stripped =~ /\b(run this|change this|fix this|add .+ to|remove .+ from|replace .+ with|move .+ to|rename|delete this|update this)\b/i;
+
+        # Delegates high-level (trusts agent to figure out details)
+        $style->{delegates_high_level}++ if $stripped =~ /\b(implement|create|build|set up|handle|take care of|figure out|make it work|get .+ working)\b/i;
+
+        # Micromanages details (provides very specific implementation instructions)
+        $style->{micromanages_details}++ if $stripped =~ /\b(on line \d|in function|in method|in file|use exactly|change .+ to .+|set .+ to .+|at line)\b/i;
+
+        # Urgency signals
+        $style->{urgency_signals}++ if $stripped =~ /\b(quickly|asap|urgent|important|priority|right away|immediately|hurry|rush|critical)\b/i;
+
+        # Patience signals
+        $style->{patience_signals}++ if $stripped =~ /\b(take your time|no rush|no hurry|when you get to it|whenever|at your pace|no pressure)\b/i;
+
+        # Quality focus (verification, testing, correctness)
+        $style->{quality_focus}++ if $stripped =~ /\b(test it|verify|make sure|double.check|confirm|validate|check that|ensure|regression|coverage)\b/i;
+
+        # Learning/exploring (seeking understanding)
+        $style->{learning_exploring}++ if $stripped =~ /\b(explain|how does|teach me|why does|what is|help me understand|what.s the difference|can you show|walk me through)\b/i;
+
+        # Grants autonomy (trusts agent's judgment)
+        $style->{grants_autonomy}++ if $stripped =~ /\b(you decide|your call|up to you|whatever you think|use your judgment|your choice|however you want|I trust)\b/i;
+
+        # Frustration signals (repeated corrections, emphasis)
+        if ($stripped =~ /\b(I already said|I told you|again|still not|still wrong|not what I asked)\b/i
+            || ($stripped =~ /[A-Z]{3}/ && $stripped =~ /[a-z]/)  # Mixed case with caps emphasis
+            || $stripped =~ /!{2}/) {  # Multiple exclamation marks
+            $style->{frustration_signals}++;
+        }
 
         # Topic/technology keywords (broad coverage)
         my $topics = $results->{topics};

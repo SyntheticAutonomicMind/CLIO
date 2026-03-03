@@ -17,7 +17,7 @@ CLIO is part of the [Synthetic Autonomic Mind (SAM)](https://github.com/Syntheti
 ## What Makes CLIO Different
 
 - **Terminal-First Experience:** Runs entirely in your terminal with professional markdown rendering, color themes, and streaming output
-- **Light & Nimble:** Uses ~50 MB of RAM. Works on everything from a ClockworkPi uConsole R01 to an M4-powered Mac.
+- **Light & Nimble:** ~50 MB at startup, grows moderately with session activity. Works on everything from a ClockworkPi uConsole R01 to an M4-powered Mac.
 - **Portable & Minimal:** Works with standard Unix tools (git, curl, etc.) - no heavy frameworks or package managers required. See [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) for details.
 - **Actually Autonomous:** CLIO doesn't just suggest code - it reads, writes, tests, commits, and iterates. Give it a task and it works through it end-to-end.
 - **Tool-Powered:** Real file, git, and terminal operations with real-time action descriptions
@@ -74,17 +74,14 @@ CLIO is part of the [Synthetic Autonomic Mind (SAM)](https://github.com/Syntheti
 CLIO is built to run for hours without breaking a sweat. These are stats from real development sessions:
 
 ```
-Session 1 - Game development (pair programming):
-  Uptime: 29h 43m | RSS: 10.7 MB | Tool calls: 502
+Session 1 - Active development (1h, 244 turns):
+  Baseline: 46 MB | RSS: 73 MB | Tool calls: 244
 
-Session 2 - CLIO development (light use):
-  Uptime: 27h 27m | RSS: 10.8 MB | Tool calls: 58
-
-Session 3 - CLIO development (active):
-  Uptime: 3h 5m  | RSS: 50.6 MB | Tool calls: 507
+Session 2 - Heavy multi-hour session:
+  Typical range: 50-100 MB depending on context size
 ```
 
-Long-running sessions settle to ~11 MB. Active sessions hover around the ~44 MB startup baseline. No memory leaks, no degradation, no restart needed.
+CLIO starts at ~50 MB and grows gradually as session context accumulates. Multi-hour sessions with hundreds of tool calls typically stay under 100 MB. No memory leaks, no degradation, no restart needed.
 
 ### Billing Awareness
 
