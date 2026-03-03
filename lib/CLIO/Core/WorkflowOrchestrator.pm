@@ -642,9 +642,17 @@ sub process_input {
                 my $error_type = $error =~ /rate limit/i ? "rate limit" : "server error";
                 my $system_msg = "Temporary $error_type detected. Retrying in ${retry_delay}s... (attempt $retry_count/$retry_limit)";
                 
+                # Unsupported parameter (e.g. previous_response_id) - silent instant retry
+                # ResponseHandler already cleared the offending parameter
+                if ($api_response->{error_type} && $api_response->{error_type} eq 'unsupported_param') {
+                    $error_type = "unsupported parameter";
+                    $system_msg = undef;  # Silent retry - user doesn't need to know
+                    $retry_delay = 0;
+                    log_info('WorkflowOrchestrator', "Retrying without unsupported parameter");
+                }
                 # Special handling for malformed tool JSON errors
                 # ONE RETRY ONLY: Remove bad message, add guidance with tool schema, let AI fix it
-                if ($api_response->{error_type} && $api_response->{error_type} eq 'malformed_tool_json') {
+                elsif ($api_response->{error_type} && $api_response->{error_type} eq 'malformed_tool_json') {
                     if ($retry_count == 1) {
                         # First attempt: Remove bad message and provide detailed guidance
                         

@@ -107,6 +107,58 @@ subtest 'style detection' => sub {
     ok(($style->{references_past_work} || 0) > 0, 'Detected past work references');
 };
 
+# Test 4b: Behavioral pattern detection (expanded patterns)
+subtest 'behavioral pattern detection' => sub {
+    my $analyzer = CLIO::Profile::Analyzer->new();
+    my $behav_dir = File::Spec->catdir($test_dir, 'project-behavioral');
+
+    create_session($behav_dir, 'session_behavioral.json', [
+        # Tactical directives
+        { role => 'user', content => "Run this command and fix this file for me" },
+        { role => 'user', content => "Change this line to use the new API" },
+        # Delegation
+        { role => 'user', content => "Implement a caching layer for the database queries" },
+        { role => 'user', content => "Build a test suite for the auth module" },
+        # Micromanaging
+        { role => 'user', content => "On line 42 in function process_input, change the return value" },
+        { role => 'user', content => "In file lib/Core.pm use exactly this format" },
+        # Urgency
+        { role => 'user', content => "This is urgent, we need to fix it quickly" },
+        { role => 'user', content => "ASAP please, this is a priority" },
+        # Patience
+        { role => 'user', content => "Take your time, no rush on this one" },
+        # Quality focus
+        { role => 'user', content => "Make sure to test it and verify the output is correct" },
+        { role => 'user', content => "Double check that it handles edge cases" },
+        # Learning
+        { role => 'user', content => "Explain how does the event loop work?" },
+        { role => 'user', content => "Help me understand why this pattern is better" },
+        # Autonomy
+        { role => 'user', content => "You decide the best approach, your call" },
+        { role => 'user', content => "Whatever you think is best, I trust your judgment" },
+        # Humor
+        { role => 'user', content => "That's hilarious lol, nice one :D" },
+        # Frustration
+        { role => 'user', content => "I already said NOT to do that!!" },
+        { role => 'user', content => "Still wrong, I told you to use the OTHER format" },
+    ]);
+
+    my $results = $analyzer->analyze_sessions([$behav_dir]);
+    my $style = $results->{style};
+
+    ok(($style->{tactical_directives} || 0) > 0, 'Detected tactical directives');
+    ok(($style->{delegates_high_level} || 0) > 0, 'Detected high-level delegation');
+    ok(($style->{micromanages_details} || 0) > 0, 'Detected micromanaging');
+    ok(($style->{urgency_signals} || 0) > 0, 'Detected urgency signals');
+    ok(($style->{patience_signals} || 0) > 0, 'Detected patience signals');
+    ok(($style->{quality_focus} || 0) > 0, 'Detected quality focus');
+    ok(($style->{learning_exploring} || 0) > 0, 'Detected learning/exploring');
+    ok(($style->{grants_autonomy} || 0) > 0, 'Detected autonomy grants');
+    ok(($style->{uses_humor} || 0) > 0, 'Detected humor');
+    ok(($style->{frustration_signals} || 0) > 0, 'Detected frustration signals');
+};
+
+
 # Test 5: Topic detection
 subtest 'topic detection' => sub {
     my $analyzer = CLIO::Profile::Analyzer->new();

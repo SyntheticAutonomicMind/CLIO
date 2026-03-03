@@ -230,6 +230,23 @@ sub handle_error_response {
         log_info('ResponseHandler', "Detected malformed tool JSON error - will retry");
         $self->{last_failed_tool} = $failed_tool;
     }
+    # Handle previous_response_id not supported (400)
+    # Some models report Responses API support but don't accept previous_response_id
+    elsif ($status == 400 && $error =~ /previous_response_id.*not supported/i) {
+        $is_retryable_error = 1;
+        $retryable = 1;
+        $retry_after = 0;
+        $error_type = 'unsupported_param';
+
+        # Clear the stateful marker so it won't be sent again
+        $self->clear_stateful_markers();
+        # Flag that this model doesn't support previous_response_id
+        $self->{_no_previous_response_id} = 1;
+
+        $retry_info = "Model doesn't support previous_response_id. Retrying without it.";
+        $error = $retry_info;
+        log_info('ResponseHandler', "Cleared stateful markers - model rejects previous_response_id");
+    }
 
     # Log error details
     if ($is_retryable_error) {
@@ -710,6 +727,25 @@ sub get_stateful_marker_for_model {
     }
 
     return undef;
+}
+
+=head2 clear_stateful_markers
+
+Clear all stored stateful markers. Called when a model rejects
+previous_response_id to prevent re-sending on retry.
+
+=cut
+
+sub clear_stateful_markers {
+    my ($self) = @_;
+    if ($self->{session} && $self->{session}{_stateful_markers}) {
+        $self->{session}{_stateful_markers} = [];
+        log_debug('ResponseHandler', "Cleared all stateful markers");
+    }
+    # Also clear session-level fallback
+    if ($self->{session}) {
+        delete $self->{session}{lastGitHubCopilotResponseId};
+    }
 }
 
 1;
