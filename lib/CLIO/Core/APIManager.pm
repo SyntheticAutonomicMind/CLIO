@@ -618,7 +618,17 @@ sub adapt_request_for_endpoint {
     # Remove tools if not supported
     if (!$endpoint_config->{supports_tools} && exists $payload->{tools}) {
         delete $payload->{tools};
-        warn "[DEBUG] Removed tools for endpoint that doesn't support them\n" if $self->{debug};
+        log_debug('APIManager', "Removed tools: endpoint doesn't support them");
+    }
+    
+    # Per-model tool support check (more granular than provider-level)
+    if (exists $payload->{tools} && $payload->{model}) {
+        my $model = $payload->{model};
+        my $caps = $self->{_model_capabilities_cache}{$model} if $self->{_model_capabilities_cache};
+        if ($caps && defined $caps->{supports_tools} && !$caps->{supports_tools}) {
+            delete $payload->{tools};
+            log_info('APIManager', "Removed tools: model '$model' does not support function calling");
+        }
     }
     
     # Add SAM config if required (for bypass_processing support)
@@ -657,6 +667,26 @@ Returns:
 - Returns undef if unable to fetch or model not found
 
 =cut
+
+sub model_supports_tools {
+    my ($self, $model) = @_;
+    $model ||= $self->get_current_model();
+    
+    # Check cached capabilities first
+    if ($self->{_model_capabilities_cache} && $self->{_model_capabilities_cache}{$model}) {
+        my $caps = $self->{_model_capabilities_cache}{$model};
+        return $caps->{supports_tools} if defined $caps->{supports_tools};
+    }
+    
+    # Fetch capabilities (will populate cache)
+    my $caps = $self->get_model_capabilities($model);
+    if ($caps && defined $caps->{supports_tools}) {
+        return $caps->{supports_tools};
+    }
+    
+    # Default: assume tools are supported (don't break existing behavior)
+    return 1;
+}
 
 sub get_model_capabilities {
     my ($self, $model) = @_;
@@ -819,6 +849,17 @@ sub get_model_capabilities {
                                               $limits->{context_window} ||
                                               $fallback_context,
             };
+            
+            # Extract per-model tool support (GitHub Copilot provides this)
+            if ($model_info->{capabilities} && $model_info->{capabilities}{supports}) {
+                $capabilities->{supports_tools} = $model_info->{capabilities}{supports}{tool_calls} ? 1 : 0;
+            }
+            
+            # Google models: check supportedGenerationMethods
+            if ($api_type eq 'google' && $model_info->{supportedGenerationMethods}) {
+                my @methods = @{$model_info->{supportedGenerationMethods}};
+                $capabilities->{supports_tools} = (grep { $_ eq 'generateContent' } @methods) ? 1 : 0;
+            }
             
             # Cache the result
             $self->{_model_capabilities_cache} ||= {};

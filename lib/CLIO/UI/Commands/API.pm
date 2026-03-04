@@ -676,13 +676,22 @@ sub _handle_api_set {
                 return;
             }
         }
-        # Other providers: accept any model name (validated at runtime by the API)
         
         # Store the full provider/model name
         $self->_set_api_setting('model', $full_model, $session_only);
         
         $self->display_system_message("Model set to: $display_model" . ($session_only ? " (session only)" : " (saved)"));
         $self->_reinit_api_manager();
+        
+        # Post-set validation: check model capabilities (non-blocking)
+        if ($self->{api_manager}) {
+            eval {
+                my $caps = $self->{api_manager}->get_model_capabilities($full_model);
+                if ($caps && defined $caps->{supports_tools} && !$caps->{supports_tools}) {
+                    $self->display_system_message("Note: Model '$api_model' does not support function calling. CLIO tools will be disabled.");
+                }
+            };
+        }
     }
     elsif ($setting eq 'provider') {
         # Validate provider exists
@@ -1369,14 +1378,16 @@ sub _fetch_provider_models {
                 my $data = decode_json($resp->decoded_content);
                 # Google returns { models: [...] } where each has { name: "models/gemini-2.5-flash", ... }
                 for my $m (@{$data->{models} || []}) {
-                    # Only include generative models (skip embedding, etc.)
-                    next unless $m->{name} && $m->{name} =~ /gemini/i;
+                    # Only include models that support content generation (skip embedding models)
+                    my @methods = @{$m->{supportedGenerationMethods} || []};
+                    next unless grep { $_ eq 'generateContent' } @methods;
                     # Strip "models/" prefix to get bare model ID
                     (my $model_id = $m->{name}) =~ s{^models/}{};
                     push @$models, {
                         id => $model_id,
                         name => $m->{displayName} || $model_id,
                         description => $m->{description} || '',
+                        _supports_tools => (grep { $_ eq 'generateContent' } @methods) ? 1 : 0,
                     };
                 }
             } else {
