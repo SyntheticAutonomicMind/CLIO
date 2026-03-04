@@ -1254,11 +1254,11 @@ sub process_input {
                         $tool_call->{function}->{arguments} = $repaired;
                         push @validated_tool_calls, $tool_call;
                     } else {
-                        # Repair failed - NOW log the error at ERROR level
+                        # Repair failed - log at DEBUG level (recoverable: error fed back to AI for retry)
                         $had_validation_errors = 1;
-                        log_error('WorkflowOrchestrator', "Invalid JSON in tool call arguments for '$tool_name': $error");
-                        log_error('WorkflowOrchestrator', "Malformed arguments: " . substr($arguments_str, 0, 200));
-                        log_error('WorkflowOrchestrator', "Could not repair JSON for tool '$tool_name' - tool call will be skipped");
+                        log_debug('WorkflowOrchestrator', "Invalid JSON in tool call arguments for '$tool_name': $error");
+                        log_debug('WorkflowOrchestrator', "Malformed arguments: " . substr($arguments_str, 0, 200));
+                        log_debug('WorkflowOrchestrator', "Could not repair JSON for tool '$tool_name' - tool call will be skipped");
                         
                         # Add an error message to conversation explaining what happened
                         push @messages, {
@@ -1279,7 +1279,7 @@ sub process_input {
             
             # If all tool calls were rejected, skip tool execution entirely
             if (@validated_tool_calls == 0) {
-                log_error('WorkflowOrchestrator', "All tool calls were rejected due to invalid JSON - skipping tool execution");
+                log_debug('WorkflowOrchestrator', "All tool calls were rejected due to invalid JSON - skipping tool execution");
                 
                 # Add simple text response to continue conversation
                 push @messages, {
