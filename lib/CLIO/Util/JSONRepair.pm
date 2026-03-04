@@ -152,6 +152,53 @@ sub repair_malformed_json {
     $json_str =~ s/,\s*}/}/g;
     $json_str =~ s/,\s*\]/]/g;
     
+    # Fix concatenated JSON objects: {...}{...} -> take the first valid one
+    # This happens when models (especially Google Gemini) pack multiple tool calls
+    # into a single arguments string instead of separate tool_calls entries
+    if ($json_str =~ /^\s*\{.*\}\s*\{/) {
+        # Find the end of the first balanced JSON object
+        my $depth = 0;
+        my $in_string = 0;
+        my $escape = 0;
+        my $end_pos;
+        
+        for my $i (0 .. length($json_str) - 1) {
+            my $ch = substr($json_str, $i, 1);
+            
+            if ($escape) {
+                $escape = 0;
+                next;
+            }
+            
+            if ($ch eq '\\' && $in_string) {
+                $escape = 1;
+                next;
+            }
+            
+            if ($ch eq '"') {
+                $in_string = !$in_string;
+                next;
+            }
+            
+            next if $in_string;
+            
+            if ($ch eq '{') {
+                $depth++;
+            } elsif ($ch eq '}') {
+                $depth--;
+                if ($depth == 0) {
+                    $end_pos = $i;
+                    last;
+                }
+            }
+        }
+        
+        if (defined $end_pos && $end_pos < length($json_str) - 1) {
+            log_debug('JSONRepair', "Detected concatenated JSON objects, extracting first object");
+            $json_str = substr($json_str, 0, $end_pos + 1);
+        }
+    }
+    
     # Fix unescaped quotes inside string values (but not property names)
     # Pattern: "key": "value with " unescaped quote"
     # This is tricky - we need to escape quotes that are inside string values
