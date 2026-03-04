@@ -2193,6 +2193,8 @@ sub display_help {
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/api', 'help_command'), 'API settings (model, provider, login)');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/api set model <name>', 'help_command'), 'Set AI model');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/api models', 'help_command'), 'List available models');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/model <name>', 'help_command'), 'Quick model switch (alias-aware)');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api alias <name> <model>', 'help_command'), 'Create model alias');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/config', 'help_command'), 'Global configuration');
     push @help_lines, "";
     
