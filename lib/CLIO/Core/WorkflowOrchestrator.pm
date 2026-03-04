@@ -1014,7 +1014,7 @@ sub process_input {
             # Track consecutive identical errors to prevent infinite loops
             if ($error eq $self->{last_error}) {
                 $self->{consecutive_errors}++;
-                log_warning('WorkflowOrchestrator', "Consecutive error count: $self->{consecutive_errors}/$self->{max_consecutive_errors}");
+                log_debug('WorkflowOrchestrator', "Consecutive error count: $self->{consecutive_errors}/$self->{max_consecutive_errors}");
             } else {
                 $self->{consecutive_errors} = 1;
                 $self->{last_error} = $error;
@@ -1031,11 +1031,11 @@ sub process_input {
                 $self->{consecutive_errors} = 0;
                 $self->{last_error} = '';
                 return {
-                    role => 'assistant',
-                    content => "I encountered a persistent error that I cannot resolve:\n\n$error\n\n" .
-                              "This error occurred $self->{consecutive_errors} times consecutively. " .
-                              "There may be a bug in the system or an API incompatibility. " .
-                              "Please check the error logs for more details."
+                    success => 0,
+                    error => $error,
+                    content => '',
+                    iterations => $iteration,
+                    tool_calls_made => \@tool_calls_made
                 };
             }
             
