@@ -331,6 +331,10 @@ sub handle_command {
         # Use extracted Billing command module
         $self->{billing_cmd}->handle_billing_command(@args);
     }
+    elsif ($cmd eq 'model') {
+        # Quick model switching with alias support
+        $self->{api_cmd}->handle_model_command(@args);
+    }
     elsif ($cmd eq 'models') {
         # Backward compatibility - redirect to /api models
         $chat->display_system_message("Note: Use '/api models' (new syntax)");
