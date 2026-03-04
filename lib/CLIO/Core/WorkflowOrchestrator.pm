@@ -1264,6 +1264,7 @@ sub process_input {
                         push @messages, {
                             role => 'tool',
                             tool_call_id => $tool_call->{id},
+                            name => $tool_name,
                             content => "ERROR: Tool call rejected due to invalid JSON in arguments. The AI generated malformed parameters that could not be parsed. Please retry with valid JSON."
                         };
                     }
@@ -1394,6 +1395,7 @@ sub process_input {
                         push @messages, {
                             role => 'tool',
                             tool_call_id => $tool_call->{id},
+                            name => $tool_name,
                             content => $error_message
                         };
                         
@@ -1668,6 +1670,7 @@ sub process_input {
                 push @messages, {
                     role => 'tool',
                     tool_call_id => $tool_call->{id},
+                    name => $tool_name,
                     content => $sanitized_content
                 };
                 
@@ -1789,7 +1792,7 @@ sub process_input {
             
             if ($looks_premature) {
                 $premature_stop_retries++;
-                log_warning('WorkflowOrchestrator', "Premature workflow stop detected (retry $premature_stop_retries/$max_premature_stop_retries). Nudging model to continue.");
+                log_debug('WorkflowOrchestrator', "Premature workflow stop detected (retry $premature_stop_retries/$max_premature_stop_retries). Nudging model to continue.");
                 
                 # Save any partial content as assistant message
                 if ($content_length > 0) {
