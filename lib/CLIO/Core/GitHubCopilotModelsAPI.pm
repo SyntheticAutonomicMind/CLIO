@@ -335,6 +335,14 @@ sub get_model_capabilities {
                 supported_endpoints => $model->{supported_endpoints} || [],
             };
             
+            # Extract per-model feature support flags
+            if ($model->{capabilities} && $model->{capabilities}{supports}) {
+                my $supports = $model->{capabilities}{supports};
+                $caps->{supports_tools} = $supports->{tool_calls} ? 1 : 0;
+                $caps->{supports_streaming} = $supports->{streaming} ? 1 : 0;
+                $caps->{supports_vision} = $supports->{vision} ? 1 : 0;
+            }
+            
             if ($model->{capabilities} && $model->{capabilities}{limits}) {
                 my $limits = $model->{capabilities}{limits};
                 
