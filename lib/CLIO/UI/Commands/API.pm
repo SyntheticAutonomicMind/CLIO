@@ -1353,6 +1353,39 @@ sub _fetch_provider_models {
         if ($@) {
             log_warning('API', "Failed to fetch GitHub Copilot models: $@");
         }
+    } elsif ($provider_def->{native_api} && $provider_name eq 'google') {
+        # Google uses its own REST API: GET /v1beta/models?key=API_KEY
+        # Returns { models: [{ name, displayName, description, ... }] }
+        my $api_base = $provider_def->{api_base} || 'https://generativelanguage.googleapis.com/v1beta';
+        $api_base =~ s{/+$}{};
+        my $models_url = "$api_base/models?key=$api_key";
+
+        eval {
+            require CLIO::Compat::HTTP;
+            my $ua = CLIO::Compat::HTTP->new(timeout => 30);
+            my $resp = $ua->get($models_url, headers => { 'Accept' => 'application/json' });
+
+            if ($resp->is_success) {
+                my $data = decode_json($resp->decoded_content);
+                # Google returns { models: [...] } where each has { name: "models/gemini-2.5-flash", ... }
+                for my $m (@{$data->{models} || []}) {
+                    # Only include generative models (skip embedding, etc.)
+                    next unless $m->{name} && $m->{name} =~ /gemini/i;
+                    # Strip "models/" prefix to get bare model ID
+                    (my $model_id = $m->{name}) =~ s{^models/}{};
+                    push @$models, {
+                        id => $model_id,
+                        name => $m->{displayName} || $model_id,
+                        description => $m->{description} || '',
+                    };
+                }
+            } else {
+                log_warning('API', "Failed to fetch Google models: HTTP " . $resp->code . " " . ($resp->decoded_content // ''));
+            }
+        };
+        if ($@) {
+            log_warning('API', "Failed to fetch Google models: $@");
+        }
     } else {
         # Generic OpenAI-compatible /models endpoint
         my $api_base = $provider_def->{api_base} || '';

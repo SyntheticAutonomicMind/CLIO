@@ -582,6 +582,13 @@ sub get_endpoint_config {
             temperature_range => [0.0, 2.0],
             supports_tools => 0
         },
+        'google' => {
+            auth_header => 'Authorization',
+            auth_value => "Bearer $self->{api_key}",
+            path_suffix => '/openai/chat/completions',  # Google OpenAI-compatible endpoint
+            temperature_range => [0.0, 2.0],
+            supports_tools => 1
+        },
     );
     
     # Return config for current provider, or generic config
@@ -716,6 +723,12 @@ sub get_model_capabilities {
         );
         $headers{'Editor-Version'} = 'CLIO/1.0' if $api_type eq 'github-copilot';
         
+        # Google native models endpoint uses API key as URL parameter
+        if ($api_type eq 'google') {
+            $models_url .= "?key=$self->{api_key}";
+            delete $headers{'Authorization'};
+        }
+        
         my $resp = $ua->get($models_url, headers => \%headers);
         
         unless ($resp->is_success) {
@@ -750,7 +763,23 @@ sub get_model_capabilities {
             return undef;
         }
         
-        $models = $data->{data} || [];
+        # Google native API returns { models: [{name: "models/gemini-2.5-flash", ...}] }
+        # OpenAI-compatible APIs return { data: [{id: "model-name", ...}] }
+        if ($api_type eq 'google' && $data->{models}) {
+            # Normalize Google format to OpenAI format
+            $models = [ map {
+                my $name = $_->{name} || '';
+                $name =~ s{^models/}{};  # Strip "models/" prefix
+                {
+                    id => $name,
+                    context_window => $_->{inputTokenLimit},
+                    max_completion_tokens => $_->{outputTokenLimit},
+                    %$_,
+                }
+            } @{$data->{models}} ];
+        } else {
+            $models = $data->{data} || [];
+        }
     }
     
     # Find our model (use api_model name without CLIO provider prefix)
@@ -836,6 +865,9 @@ sub _detect_api_type_and_url {
         return ('github-copilot', 'https://api.githubcopilot.com/models');
     } elsif ($api_base =~ m{openai\.com}i) {
         return ('openai', 'https://api.openai.com/v1/models');
+    } elsif ($api_base =~ m{generativelanguage\.googleapis\.com}i) {
+        # Google Gemini: models endpoint uses the native API format with API key as URL param
+        return ('google', 'https://generativelanguage.googleapis.com/v1beta/models');
     } elsif ($api_base =~ m{openrouter\.ai}i) {
         return ('openrouter', 'https://openrouter.ai/api/v1/models');
     } elsif ($api_base =~ m{localhost:1234}i || $api_base =~ m{127\.0\.0\.1:1234}i) {
@@ -1307,6 +1339,13 @@ sub _get_endpoint_config_for_provider {
             temperature_range => [0.0, 2.0],
             supports_tools => 1,
             openrouter => 1,  # Flag for OpenRouter-specific features (reasoning params, etc.)
+        },
+        'google' => {
+            auth_header => 'Authorization',
+            auth_value => "Bearer $api_key",
+            path_suffix => '/openai/chat/completions',  # Google OpenAI-compatible endpoint
+            temperature_range => [0.0, 2.0],
+            supports_tools => 1
         },
     );
     
@@ -1897,6 +1936,13 @@ sub send_request {
             if ($message->{tool_calls} && ref($message->{tool_calls}) eq 'ARRAY') {
                 $tool_calls = $message->{tool_calls};
                 
+                # Normalize non-OpenAI tool call IDs (e.g. Google 'function-call-NNNN')
+                for my $tc (@$tool_calls) {
+                    if ($tc->{id} && $tc->{id} =~ /^function-call-(\d+)$/) {
+                        $tc->{id} = 'call_' . substr($1, -24);
+                    }
+                }
+                
                 if ($self->{debug}) {
                     warn "[DEBUG] Extracted " . scalar(@$tool_calls) . " tool_calls from response\n";
                 }
@@ -2129,6 +2175,13 @@ sub send_request_streaming {
     
     # Continue with OpenAI-compatible implementation...
     
+    # Strip non-standard fields from tool result messages before sending to OpenAI-compatible endpoints.
+    # The 'name' field is stored internally so native providers (e.g. Google) can build
+    # functionResponse.name, but OpenAI-spec endpoints reject it on role=tool messages.
+    for my $msg (@$messages) {
+        delete $msg->{name} if $msg->{role} && $msg->{role} eq 'tool' && exists $msg->{name};
+    }
+
     # Debug logging
     if ($self->{debug}) {
         log_debug('APIManager', "Streaming to $endpoint");
@@ -2145,6 +2198,12 @@ sub send_request_streaming {
     # OpenRouter) get misinterpreted as 'deepseek' provider + 'deepseek-r1' model.
     my $full_model_for_caps = $self->get_current_model();
     $messages = $self->validate_and_truncate_messages($messages, $full_model_for_caps, $opts{tools});
+
+    # Strip non-standard fields before building OpenAI-compatible payload.
+    # The 'name' field on role=tool messages is for native providers only.
+    for my $msg (@$messages) {
+        delete $msg->{name} if $msg->{role} && $msg->{role} eq 'tool' && exists $msg->{name};
+    }
     
     # Check if model uses Responses API (codex models, etc.)
     my $use_responses_api = $self->_model_uses_responses_api($model);
@@ -2321,6 +2380,7 @@ sub send_request_streaming {
             if (!$streaming_headers && $response) {
                 $streaming_headers = $response->headers->clone;
                 log_debug('APIManager', "Captured headers from streaming response");
+                log_debug('APIManager', "Streaming response HTTP status: " . $response->code . " " . ($response->message // ''));
             }
             
             # Append chunk to buffer
@@ -2603,9 +2663,17 @@ sub send_request_streaming {
                             my $index = $tc_delta->{index} // 0;
                             
                             # Initialize accumulator for this index if needed
-                            if (!$tool_calls_accumulator->{$index}) {
+                           if (!$tool_calls_accumulator->{$index}) {
+                                # Normalize non-OpenAI tool call IDs to OpenAI format.
+                                # The Copilot proxy returns Google-style IDs ('function-call-NNNN')
+                                # when routing to Gemini, but then rejects them on the next turn
+                                # when they appear in role=tool messages. Convert to 'call_XXXXX'.
+                                my $raw_id = $tc_delta->{id} // '';
+                                my $norm_id = ($raw_id =~ /^function-call-(\d+)$/)
+                                    ? 'call_' . substr($1, -24)
+                                    : $raw_id;
                                 $tool_calls_accumulator->{$index} = {
-                                    id => $tc_delta->{id} // '',
+                                    id => $norm_id,
                                     type => $tc_delta->{type} // 'function',
                                     function => {
                                         name => '',
@@ -2701,6 +2769,12 @@ sub send_request_streaming {
         # Release broker slot with response info before returning
         $self->{response_handler}->release_broker_slot($resp, $resp->code);
         
+        # Log the full response body so we can see what error the API returned
+        if (should_log('DEBUG')) {
+            my $body = $resp->decoded_content // $buffer // '';
+            log_debug('APIManager', "Streaming error response body: " . substr($body, 0, 2000));
+        }
+
         return $self->{response_handler}->handle_error_response($resp, $json, 1,
             attempt_token_recovery => sub { $self->_attempt_token_recovery() });
     }
@@ -3135,20 +3209,33 @@ sub _send_native_streaming {
                     }
                 }
                 elsif ($type eq 'tool_end') {
+                    # Google sends complete tool calls as a single tool_end event (no preceding tool_start).
+                    # Other providers stream tool args and send tool_end to finalize.
+                    if (!$current_tool_call && $event->{name}) {
+                        # Complete tool call in one event (Google-style)
+                        $current_tool_call = {
+                            id => $event->{id},
+                            type => 'function',
+                            function => {
+                                name => $event->{name},
+                                arguments => '',
+                            },
+                        };
+                    }
+
                     if ($current_tool_call) {
-                        # Parse arguments JSON
+                        # Parse arguments - either from event or already in current_tool_call
                         if ($event->{arguments}) {
-                            $current_tool_call->{function}{arguments} = 
+                            $current_tool_call->{function}{arguments} =
                                 encode_json($event->{arguments});
                         }
-                        
+
                         push @tool_calls, $current_tool_call;
-                        
-                        # Call tool callback
+
                         if ($on_tool_call) {
                             $on_tool_call->($current_tool_call);
                         }
-                        
+
                         $current_tool_call = undef;
                     }
                 }

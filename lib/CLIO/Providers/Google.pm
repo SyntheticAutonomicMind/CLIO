@@ -186,48 +186,45 @@ sub parse_stream_event {
     my $candidate = $candidates->[0];
     my $content = $candidate->{content};
     
-    # Check for finish reason
+    # Process content parts first (finishReason may appear alongside parts in same chunk)
+    if ($content && $content->{parts}) {
+        for my $part (@{$content->{parts}}) {
+            # Text part (may be regular text or thought/reasoning)
+            if (defined $part->{text}) {
+                if ($part->{thought}) {
+                    return {
+                        type => 'thinking',
+                        content => $part->{text},
+                    };
+                }
+                return {
+                    type => 'text',
+                    content => $part->{text},
+                };
+            }
+
+            # Function call part
+            if ($part->{functionCall}) {
+                my $fc = $part->{functionCall};
+                my $id = $fc->{id} // "call_" . (++$self->{_tool_call_counter}) . "_" . time();
+                return {
+                    type => 'tool_end',
+                    id => $id,
+                    name => $fc->{name},
+                    arguments => $fc->{args} // {},
+                };
+            }
+        }
+    }
+
+    # Check for finish reason (after processing parts)
     if ($candidate->{finishReason}) {
         return {
             type => 'stop',
             stop_reason => $self->_map_stop_reason($candidate->{finishReason}),
         };
     }
-    
-    return undef unless $content && $content->{parts};
-    
-    # Process parts
-    for my $part (@{$content->{parts}}) {
-        # Text part (may be regular text or thought/reasoning)
-        if (defined $part->{text}) {
-            # Gemini thinking models return thought summaries with thought: true
-            if ($part->{thought}) {
-                return {
-                    type => 'thinking',
-                    content => $part->{text},
-                };
-            }
-            return {
-                type => 'text',
-                content => $part->{text},
-            };
-        }
-        
-        # Function call part
-        if ($part->{functionCall}) {
-            my $fc = $part->{functionCall};
-            # Generate unique ID (Google doesn't always provide one)
-            my $id = $fc->{id} // "call_" . (++$self->{_tool_call_counter}) . "_" . time();
-            
-            return {
-                type => 'tool_end',  # Google sends complete tool calls, not streamed
-                id => $id,
-                name => $fc->{name},
-                arguments => $fc->{args} // {},
-            };
-        }
-    }
-    
+
     # Usage metadata
     if ($data->{usageMetadata}) {
         return {
@@ -440,9 +437,9 @@ sub _convert_tool_result_message {
     # OpenAI format: { role => 'tool', tool_call_id => '...', content => '...' }
     # Google format: { role => 'user', parts => [{ functionResponse => {...} }] }
     
-    # Try to extract the function name from tool_call_id
-    # Format is usually "call_123_timestamp" or similar
-    my $name = $msg->{name} // $msg->{tool_call_id};
+    # Google functionResponse.name must be the actual function name, not the tool call ID.
+    # WorkflowOrchestrator stores function name in $msg->{name} for native providers.
+    my $name = $msg->{name} // $msg->{tool_call_id} // '';
     
     return {
         role => 'user',

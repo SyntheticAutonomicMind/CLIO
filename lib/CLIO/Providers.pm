@@ -130,6 +130,7 @@ my %PROVIDERS = (
         native_api => 1,
         provider_module => 'CLIO::Providers::Google',
         experimental => 1,  # Native API support is experimental
+        max_context_tokens => 1048576,  # Gemini 2.5 Flash: 1M token context window
     },
 );
 
