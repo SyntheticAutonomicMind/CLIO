@@ -2727,7 +2727,10 @@ sub send_request_streaming {
                             # Accumulate function name and arguments
                             if ($tc_delta->{function}) {
                                 if ($tc_delta->{function}{name}) {
-                                    $tool_calls_accumulator->{$index}{function}{name} .= $tc_delta->{function}{name};
+                                    # Set name (don't concatenate - some providers send it in every delta)
+                                    if (!$tool_calls_accumulator->{$index}{function}{name}) {
+                                        $tool_calls_accumulator->{$index}{function}{name} = $tc_delta->{function}{name};
+                                    }
                                     
                                     # If name just became complete and we haven't shown it yet, call tool name callback
                                     if (!$tool_calls_accumulator->{$index}{_name_complete} && 
