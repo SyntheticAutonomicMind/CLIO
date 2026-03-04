@@ -2823,6 +2823,38 @@ sub send_request_streaming {
             attempt_token_recovery => sub { $self->_attempt_token_recovery() });
     }
     
+    # Check for API errors returned as non-SSE body with HTTP 200
+    # Some providers (Google) return JSON error arrays/objects with 200 status
+    if (!$accumulated_content && !keys(%$tool_calls_accumulator) && $buffer) {
+        my $remaining = $buffer;
+        $remaining =~ s/^\s+|\s+$//g;
+        if ($remaining) {
+            # Try to parse as JSON error
+            my $error_msg;
+            eval {
+                my $body = decode_json($remaining);
+                # Handle array-wrapped errors: [{"error": {...}}]
+                if (ref($body) eq 'ARRAY' && @$body && $body->[0]{error}) {
+                    $error_msg = $body->[0]{error}{message} || $body->[0]{error};
+                }
+                # Handle object errors: {"error": {...}}
+                elsif (ref($body) eq 'HASH' && $body->{error}) {
+                    $error_msg = $body->{error}{message} || $body->{error};
+                }
+            };
+            
+            if ($error_msg) {
+                log_debug('APIManager', "Detected error in 200 response body: $error_msg");
+                $self->{response_handler}->release_broker_slot($resp, 200);
+                return {
+                    success => 0,
+                    error => $error_msg,
+                    retryable => 0,
+                };
+            }
+        }
+    }
+    
     # Calculate final metrics
     my $end_time = time();
     my $total_duration = $end_time - $start_time;
