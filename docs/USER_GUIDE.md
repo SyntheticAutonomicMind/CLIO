@@ -367,6 +367,11 @@ CLIO provides 35+ powerful slash commands. Type `/help` in any session to see th
 | `/api set model <name>` | Set AI model |
 | `/api set key <value>` | Set API key |
 | `/api models` | List available models |
+| `/api alias <name> <model>` | Create a model alias |
+| `/api alias` | List all model aliases |
+| `/api alias <name> --delete` | Remove a model alias |
+| `/model <name>` | Quick model switch (resolves aliases) |
+| `/model` | Show current model and aliases |
 | `/api login` | Authenticate with GitHub Copilot |
 | `/api logout` | Sign out from GitHub |
 | `/config save` | Save configuration to file |

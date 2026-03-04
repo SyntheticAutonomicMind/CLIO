@@ -80,6 +80,9 @@ sub new {
             '/billing', '/bill', '/usage',
             '/models',
 
+            # Model switching
+            '/model',
+
             # Project
             '/init', '/design',
 
@@ -101,9 +104,10 @@ sub new {
         # Nested: command -> { subcmd -> [sub-subcommands] }
         subcommands => {
             '/api' => {
-                _subs => [qw(show set models providers login logout quota key base model provider help)],
+                _subs => [qw(show set models providers login logout quota alias key base model provider help)],
                 'set' => [qw(key serpapi_key search_engine search_provider github_pat base model provider thinking)],
             },
+            '/model' => [qw(list alias)],
             '/session' => [qw(show list switch name new clear trim prune export help)],
             '/git' => {
                 _subs => [qw(status diff log commit branch switch push pull blame stash tag help)],

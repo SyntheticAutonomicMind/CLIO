@@ -400,6 +400,65 @@ sub list_provider_keys {
     return sort keys %$api_keys;
 }
 
+=head2 get_model_alias($name)
+
+Get the model value for a given alias name. Returns undef if not found.
+
+=cut
+
+sub get_model_alias {
+    my ($self, $name) = @_;
+    
+    my $aliases = $self->{config}->{model_aliases} || {};
+    return $aliases->{lc($name)};
+}
+
+=head2 set_model_alias($name, $model)
+
+Set a model alias. Stores in config and marks for saving.
+
+=cut
+
+sub set_model_alias {
+    my ($self, $name, $model) = @_;
+    
+    $self->{config}->{model_aliases} ||= {};
+    $self->{config}->{model_aliases}{lc($name)} = $model;
+    $self->{user_set}->{model_aliases} = 1;
+    
+    return 1;
+}
+
+=head2 delete_model_alias($name)
+
+Remove a model alias. Returns 1 if deleted, 0 if not found.
+
+=cut
+
+sub delete_model_alias {
+    my ($self, $name) = @_;
+    
+    my $aliases = $self->{config}->{model_aliases} || {};
+    return 0 unless exists $aliases->{lc($name)};
+    
+    delete $aliases->{lc($name)};
+    $self->{user_set}->{model_aliases} = 1;
+    
+    return 1;
+}
+
+=head2 list_model_aliases
+
+Return hash of all model aliases (name => model).
+
+=cut
+
+sub list_model_aliases {
+    my ($self) = @_;
+    
+    return %{$self->{config}->{model_aliases} || {}};
+}
+
 =head2 get_all
 
 Get the entire configuration hash

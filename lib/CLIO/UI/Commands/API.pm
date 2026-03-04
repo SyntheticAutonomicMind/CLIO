@@ -146,6 +146,12 @@ sub handle_api_command {
         return;
     }
     
+    # /api alias - manage model aliases
+    if ($action eq 'alias') {
+        $self->_handle_api_alias(@args);
+        return;
+    }
+    
     # BACKWARD COMPATIBILITY: Support old syntax during transition
     if ($action eq 'key') {
         $self->display_system_message("Note: Use '/api set key <value>' (new syntax)");
@@ -199,6 +205,9 @@ sub _display_api_help {
     $self->display_command_row("/api login", "Authenticate with GitHub Copilot", 40);
     $self->display_command_row("/api logout", "Sign out from GitHub", 40);
     $self->display_command_row("/api quota", "Show GitHub Copilot quota status", 40);
+    $self->display_command_row("/api alias", "List model aliases", 40);
+    $self->display_command_row("/api alias <name> <model>", "Create model alias", 40);
+    $self->display_command_row("/api alias <name> --delete", "Remove alias", 40);
     $self->writeline("", markdown => 0);
     
     $self->display_section_header("PROVIDERS");
@@ -219,6 +228,7 @@ sub _display_api_help {
     $self->display_command_row("/api set model google/gemini-2.5-flash", "Switch to Google + model", 45);
     $self->display_command_row("/api set provider anthropic", "Switch provider only", 45);
     $self->display_command_row("/api set key sk-ant-...", "Set key for current provider", 45);
+    $self->display_command_row("/model fast", "Quick switch (uses alias if set)", 45);
     $self->writeline("", markdown => 0);
 }
 
@@ -596,6 +606,13 @@ sub _handle_api_set {
         # e.g., github_copilot/gpt-4.1, openrouter/deepseek/deepseek-r1-0528
         # If no provider prefix, auto-prepend current provider
         
+        # Resolve model aliases first
+        my $resolved = $self->{config}->get_model_alias($value);
+        if ($resolved) {
+            $self->display_system_message("Alias '$value' -> $resolved");
+            $value = $resolved;
+        }
+        
         require CLIO::Providers;
         my $current_provider = $self->{config}->get('provider') || '';
         my $full_model = $value;
@@ -773,6 +790,149 @@ sub _reinit_api_manager {
         $self->{ai_agent}->{orchestrator}->{api_manager} = $new_api;
         log_debug('API', "Orchestrator's api_manager updated after config change");
     }
+}
+
+=head2 _handle_api_alias(@args)
+
+Handle /api alias commands for managing model aliases.
+
+  /api alias                       - list all aliases
+  /api alias <name> <model>        - create/update alias
+  /api alias <name> --delete       - remove alias
+
+=cut
+
+sub _handle_api_alias {
+    my ($self, @args) = @_;
+    
+    my $name = shift @args;
+    
+    # /api alias - list all aliases
+    unless ($name) {
+        my %aliases = $self->{config}->list_model_aliases();
+        
+        unless (%aliases) {
+            $self->display_system_message("No model aliases defined");
+            $self->writeline("", markdown => 0);
+            $self->display_system_message("Create one: /api alias <name> <model>");
+            $self->display_system_message("Example:    /api alias fast gpt-5-mini");
+            return;
+        }
+        
+        $self->display_command_header("MODEL ALIASES");
+        
+        my $max_name_len = 0;
+        for my $n (keys %aliases) {
+            $max_name_len = length($n) if length($n) > $max_name_len;
+        }
+        $max_name_len = 12 if $max_name_len < 12;
+        
+        for my $n (sort keys %aliases) {
+            $self->display_command_row($n, $aliases{$n}, $max_name_len + 4);
+        }
+        $self->writeline("", markdown => 0);
+        return;
+    }
+    
+    # Validate alias name
+    unless ($name =~ /^[a-zA-Z][a-zA-Z0-9_-]*$/) {
+        $self->display_error_message("Invalid alias name: '$name'");
+        $self->display_system_message("Alias names must start with a letter and contain only letters, numbers, hyphens, underscores");
+        return;
+    }
+    
+    my $value = shift @args;
+    
+    # /api alias <name> --delete
+    if ($value && $value eq '--delete') {
+        if ($self->{config}->delete_model_alias($name)) {
+            $self->{config}->save();
+            $self->display_system_message("Alias '$name' removed");
+        } else {
+            $self->display_error_message("Alias '$name' not found");
+        }
+        return;
+    }
+    
+    # /api alias <name> (no value) - show single alias
+    unless (defined $value && $value ne '') {
+        my $existing = $self->{config}->get_model_alias($name);
+        if ($existing) {
+            $self->display_system_message("$name -> $existing");
+        } else {
+            $self->display_error_message("Alias '$name' not found");
+            $self->display_system_message("Create it: /api alias $name <model>");
+        }
+        return;
+    }
+    
+    # /api alias <name> <model> - create/update
+    $self->{config}->set_model_alias($name, $value);
+    $self->{config}->save();
+    $self->display_system_message("Alias set: $name -> $value");
+}
+
+=head2 handle_model_command(@args)
+
+Handle /model command for quick model switching.
+
+  /model              - show current model
+  /model <name>       - switch model (resolves aliases)
+  /model list         - list aliases
+
+=cut
+
+sub handle_model_command {
+    my ($self, @args) = @_;
+    
+    # Parse --session flag
+    my $session_only = 0;
+    @args = grep {
+        if ($_ eq '--session') {
+            $session_only = 1;
+            0;
+        } else {
+            1;
+        }
+    } @args;
+    
+    my $action = shift @args;
+    
+    # /model - show current model
+    unless ($action) {
+        my $current = $self->{config}->get('model') || '(not set)';
+        $self->display_system_message("Current model: $current");
+        
+        my %aliases = $self->{config}->list_model_aliases();
+        if (%aliases) {
+            $self->writeline("", markdown => 0);
+            $self->display_section_header("ALIASES");
+            my $max_len = 12;
+            for my $n (keys %aliases) {
+                $max_len = length($n) if length($n) > $max_len;
+            }
+            for my $n (sort keys %aliases) {
+                $self->display_command_row($n, $aliases{$n}, $max_len + 4);
+            }
+        }
+        $self->writeline("", markdown => 0);
+        return;
+    }
+    
+    # /model list - list aliases
+    if ($action eq 'list') {
+        $self->_handle_api_alias();
+        return;
+    }
+    
+    # /model alias ... - delegate to /api alias
+    if ($action eq 'alias') {
+        $self->_handle_api_alias(@args);
+        return;
+    }
+    
+    # /model <name> - switch model (with alias resolution)
+    $self->_handle_api_set('model', $action, $session_only);
 }
 
 =head2 _check_github_auth
