@@ -282,7 +282,8 @@ sub process_user_request {
             my $error = $orchestrator_result->{error} || "Unknown error in workflow orchestration";
             push @{$result->{errors}}, $error;
             $result->{success} = 0;
-            $result->{final_response} = "I'm sorry, I didn't receive a proper response. Please try rephrasing your question.";
+            # Include the actual error so users can diagnose issues
+            $result->{final_response} = "I'm sorry, I encountered an error: $error";
         }
     };
     
