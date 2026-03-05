@@ -98,6 +98,21 @@ sub _generate_uuid {
     return $uuid;
 }
 
+# Check if a model is known to support reasoning/thinking parameters
+# Only these models should receive reasoning: { enabled: true } on OpenRouter
+sub _model_supports_reasoning {
+    my ($model) = @_;
+    return 0 unless $model;
+    my $m = lc($model);
+    return 1 if $m =~ /deepseek-r1/;
+    return 1 if $m =~ /\bqwq\b/;
+    return 1 if $m =~ /\bo[13]-/;       # o1-*, o3-*
+    return 1 if $m =~ /\bo[13]$/;       # o1, o3
+    return 1 if $m =~ /\bo[13]-mini/;
+    return 1 if $m =~ /\bo[13]-pro/;
+    return 0;
+}
+
 # Recursive sanitization of data structures before JSON encoding
 # Removes problematic UTF-8 characters (emojis, bullets, etc.) that cause API 400 errors
 sub _sanitize_payload_recursive {
@@ -647,9 +662,11 @@ sub adapt_request_for_endpoint {
     
     # Add reasoning support for OpenRouter endpoints
     # Only enable when thinking display is on - reasoning tokens are charged as output tokens
+    # Only for models known to support reasoning (deepseek-r1, qwq, etc.)
+    # Adding reasoning to non-thinking models causes provider errors (e.g. Google Vertex AI)
     if ($endpoint_config->{openrouter}) {
         my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
-        if ($show_thinking) {
+        if ($show_thinking && $payload->{model} && _model_supports_reasoning($payload->{model})) {
             $payload->{reasoning} = { enabled => \1 };  # JSON true
         }
     }
@@ -2409,6 +2426,7 @@ sub send_request_streaming {
     my $tool_calls_accumulator = {};  # Accumulate tool call deltas by index
     my $reasoning_was_active = 0;  # Track if reasoning_content was being streamed
     my $streaming_usage = undef;  # Capture real usage from final streaming chunk
+    my $raw_response_body = '';  # Preserve full response body for error detection
     
     # Make streaming request with callback
     my $resp;
@@ -2423,6 +2441,9 @@ sub send_request_streaming {
                 log_debug('APIManager', "Captured headers from streaming response");
                 log_debug('APIManager', "Streaming response HTTP status: " . $response->code . " " . ($response->message // ''));
             }
+            
+            # Preserve raw body for post-streaming error detection
+            $raw_response_body .= $chunk;
             
             # Append chunk to buffer
             $buffer .= $chunk;
@@ -2813,10 +2834,21 @@ sub send_request_streaming {
         # Release broker slot with response info before returning
         $self->{response_handler}->release_broker_slot($resp, $resp->code);
         
+        # Use raw_response_body as fallback when decoded_content is empty
+        # (SSE parser may have consumed buffer, HTTP::Tiny may not store body for callbacks)
+        my $body = $resp->decoded_content;
+        if (!$body || $body !~ /\S/) {
+            $body = $raw_response_body // $buffer // '';
+        }
+        
         # Log the full response body so we can see what error the API returned
         if (should_log('DEBUG')) {
-            my $body = $resp->decoded_content // $buffer // '';
             log_debug('APIManager', "Streaming error response body: " . substr($body, 0, 2000));
+        }
+
+        # Inject raw body into response object so handle_error_response can parse it
+        if ($body && $body =~ /\S/ && (!$resp->decoded_content || $resp->decoded_content !~ /\S/)) {
+            $resp->{content} = $body;
         }
 
         return $self->{response_handler}->handle_error_response($resp, $json, 1,
@@ -2824,9 +2856,11 @@ sub send_request_streaming {
     }
     
     # Check for API errors returned as non-SSE body with HTTP 200
-    # Some providers (Google) return JSON error arrays/objects with 200 status
-    if (!$accumulated_content && !keys(%$tool_calls_accumulator) && $buffer) {
-        my $remaining = $buffer;
+    # Some providers (Google, OpenRouter) return JSON errors with 200 status
+    # Use raw_response_body since SSE parser may have consumed $buffer
+    my $check_body = $raw_response_body || $buffer || '';
+    if (!$accumulated_content && !keys(%$tool_calls_accumulator) && $check_body =~ /\S/) {
+        my $remaining = $check_body;
         $remaining =~ s/^\s+|\s+$//g;
         if ($remaining) {
             # Try to parse as JSON error

@@ -123,9 +123,41 @@ sub handle_error_response {
     my $error = "$error_prefix: " . $resp->status_line;
 
     # Try to extract detailed error from response body
+    # Providers return errors in different formats:
+    #   OpenAI/OpenRouter: {"error": {"message": "...", "code": 400}}
+    #   Google native:     [{"error": {"message": "...", "code": 429, "status": "RESOURCE_EXHAUSTED"}}]
     my $content = eval { decode_json($resp->decoded_content) };
-    if ($content && $content->{error}) {
-        $error = $content->{error}{message} || $content->{error} || $error;
+    my $error_obj;
+    if ($content) {
+        if (ref($content) eq 'HASH' && $content->{error}) {
+            $error_obj = $content->{error};
+        } elsif (ref($content) eq 'ARRAY' && @$content && ref($content->[0]) eq 'HASH' && $content->[0]{error}) {
+            $error_obj = $content->[0]{error};
+        }
+    }
+    if ($error_obj) {
+        $error = $error_obj->{message} || $error_obj || $error;
+        # Extract detailed error from OpenRouter metadata.raw for better user messages
+        if ($error_obj->{metadata} && $error_obj->{metadata}{raw}) {
+            my $raw = eval { decode_json($error_obj->{metadata}{raw}) };
+            if ($raw) {
+                my $inner_error;
+                if (ref($raw) eq 'ARRAY' && @$raw && ref($raw->[0]) eq 'HASH' && $raw->[0]{error}) {
+                    $inner_error = $raw->[0]{error};
+                } elsif (ref($raw) eq 'HASH' && $raw->{error}) {
+                    $inner_error = $raw->{error};
+                }
+                if ($inner_error && $inner_error->{message}) {
+                    $error = $inner_error->{message};
+                    log_debug('ResponseHandler', "Extracted inner error from provider metadata: $error");
+                }
+            }
+        }
+        # Use embedded error code when HTTP status is uninformative (200 or 599)
+        if (($status == 200 || $status >= 500) && $error_obj->{code} && $error_obj->{code} =~ /^\d+$/) {
+            $status = int($error_obj->{code});
+            log_debug('ResponseHandler', "Using embedded error code $status from response body");
+        }
     }
 
     my $retryable = 0;
