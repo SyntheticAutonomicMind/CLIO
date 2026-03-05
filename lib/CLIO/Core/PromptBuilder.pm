@@ -134,6 +134,15 @@ sub build_system_prompt {
         log_debug('PromptBuilder', "Added non-interactive mode section to prompt");
     }
 
+    # Add session naming instruction for new unnamed sessions
+    # Only injected on the first exchange - once the session has a name,
+    # this instruction is never sent again (saves ~150 tokens per turn)
+    if ($session && $session->can('session_name') && !$session->session_name()) {
+        my $naming_section = generate_session_naming_section();
+        $base_prompt .= "\n\n$naming_section";
+        log_debug('PromptBuilder', "Added session naming instruction (new unnamed session)");
+    }
+
     log_debug('PromptBuilder', "Added dynamic tools section to prompt");
 
     return $base_prompt;
@@ -453,6 +462,37 @@ WRONG: Call user_collaboration asking "Should I proceed?"
 RIGHT: Call file_operations to create the file, then report success.
 
 **Remember: Work autonomously. The user will see your response after the fact, not during execution.**
+};
+}
+
+
+=head2 generate_session_naming_section
+
+Generate a one-time instruction asking the AI to include a session title
+marker in its first response. The marker uses HTML comment syntax so it's
+invisible if it leaks to markdown rendering.
+
+Only called when the session has no name yet. Once extracted, the
+instruction is never sent again.
+
+Returns:
+- Instruction text for the session naming marker
+
+=cut
+
+sub generate_session_naming_section {
+    return q{## Session Title (First Response Only)
+
+This is a NEW conversation with no title yet. Include the following marker at the very END of your response (after all other content, on its own line):
+
+<!--session:{"title":"your 3-6 word summary here"}-->
+
+Rules:
+- Title must be 3-6 words summarizing the conversation topic
+- Use lowercase except proper nouns
+- Be specific: "fix session naming bug" not "help with code"
+- Include this marker ONLY in your FIRST response, never again
+- Place it as the LAST line of your response
 };
 }
 

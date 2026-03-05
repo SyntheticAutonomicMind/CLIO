@@ -196,6 +196,10 @@ sub flush_output_buffer {
     
     # Flush the line buffer if it has content (partial line)
     if ($self->{_streaming_line_buffer} && $self->{_streaming_line_buffer} =~ /\S/) {
+        # Strip session naming markers before flushing
+        $self->{_streaming_line_buffer} =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;
+    }
+    if ($self->{_streaming_line_buffer} && $self->{_streaming_line_buffer} =~ /\S/) {
         my $output = $self->{_streaming_line_buffer};
         if ($self->{enable_markdown}) {
             $output = $self->render_markdown($self->{_streaming_line_buffer});
@@ -496,6 +500,13 @@ sub run {
                     my $line = substr($self->{_streaming_line_buffer}, 0, $pos);
                     $self->{_streaming_line_buffer} = substr($self->{_streaming_line_buffer}, $pos + 1);
                     
+                    # Suppress session naming markers from display
+                    # The marker is extracted later from accumulated_content
+                    if ($line =~ /^\s*<!--session:\{.*\}-->\s*$/) {
+                        log_debug('Chat', "Suppressed session naming marker from display");
+                        next;
+                    }
+
                     # Update markdown context state
                     if ($line =~ /^```/) {
                         $in_code_block = !$in_code_block;
@@ -768,6 +779,10 @@ sub run {
             
             # 1. Flush markdown buffer if it has content
             if ($self->{_streaming_markdown_buffer} && $self->{_streaming_markdown_buffer} =~ /\S/) {
+                # Strip session naming markers before display
+                $self->{_streaming_markdown_buffer} =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;
+            }
+            if ($self->{_streaming_markdown_buffer} && $self->{_streaming_markdown_buffer} =~ /\S/) {
                 log_debug('Chat', "Flushing markdown_buffer (" . length($self->{_streaming_markdown_buffer}) . " bytes): " .
                              substr($self->{_streaming_markdown_buffer}, -50));
                 my $output = $self->{_streaming_markdown_buffer};
@@ -779,6 +794,10 @@ sub run {
             }
             
             # 2. Flush line buffer if it has content (incomplete final line)
+            if ($self->{_streaming_line_buffer} && $self->{_streaming_line_buffer} =~ /\S/) {
+                # Strip session naming markers before display
+                $self->{_streaming_line_buffer} =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;
+            }
             if ($self->{_streaming_line_buffer} && $self->{_streaming_line_buffer} =~ /\S/) {
                 log_debug('Chat', "Flushing line_buffer (" . length($self->{_streaming_line_buffer}) . " bytes): " .
                              substr($self->{_streaming_line_buffer}, -50));
@@ -816,6 +835,14 @@ sub run {
             # BUT only if messages weren't already saved during the workflow execution.
             # Tool-calling workflows save messages atomically (assistant + tool results together),
             # so we should NOT save another assistant message here to avoid duplicates.
+
+            # Strip session naming markers from content before saving to history
+            # The marker was already extracted by WorkflowOrchestrator, but accumulated_content
+            # is built independently from streaming chunks and may still contain it
+            if ($accumulated_content) {
+                $accumulated_content =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;
+            }
+
             if ($result && $result->{messages_saved_during_workflow}) {
                 log_debug('Chat', "Skipping session save - messages already saved during workflow");
                 # Still add to buffer for display (content was streamed, not saved)
@@ -834,6 +861,12 @@ sub run {
             }
             
             # Handle error case - show actual error message to user
+            # Ensure session has a name - AI marker is primary, text-truncation is fallback
+            # This runs regardless of success/error so no session stays as a UUID
+            if ($self->{session} && !$self->{session}->session_name()) {
+                $self->_auto_name_session();
+            }
+
             if (!$result || !$result->{success}) {
                 my $error_msg = $result->{error} || $result->{final_response} || "No response received from AI";
                 log_debug('Chat', "Error occurred: $error_msg");
@@ -849,12 +882,6 @@ sub run {
                     log_debug('Chat', "Session saved after error (preserving context)");
                 }
             } else {
-                # Auto-generate session name from first user message if not set
-                # Must happen BEFORE save so the name is persisted to disk
-                if ($self->{session} && !$self->{session}->session_name()) {
-                    $self->_auto_name_session();
-                }
-                
                 # Save session after successful responses
                 # Without this, if user doesn't call /exit, all work-in-progress is lost
                 # on next session restart. This ensures session continuity even if terminal
