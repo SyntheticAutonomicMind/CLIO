@@ -30,6 +30,7 @@ This guide covers every feature, how the components work together, and how to ge
 17. [Undo System](#17-undo-system)
 18. [Billing and Usage Tracking](#18-billing-and-usage-tracking)
 19. [How It All Comes Together](#19-how-it-all-comes-together)
+20. [OpenSpec Integration](#20-openspec-integration)
 
 ---
 
@@ -496,6 +497,7 @@ These send structured prompts to the AI:
 | `/init` | Initialize project instructions |
 | `/design` | Start a design/PRD session |
 | `/skills` | Manage reusable prompt templates |
+| `/spec` | OpenSpec spec-driven development |
 
 ### Other Commands
 
@@ -514,6 +516,7 @@ These send structured prompts to the AI:
 | `/mcp` | MCP server management |
 | `/prompt` | View/edit system prompt |
 | `/performance` | Performance stats |
+| `/spec` | OpenSpec spec management |
 
 ---
 
@@ -1063,4 +1066,107 @@ The result is an AI assistant that gets smarter with every session, works autono
 **For technical details:**
 - [Architecture](ARCHITECTURE.md) - System design internals
 - [Developer Guide](DEVELOPER_GUIDE.md) - Contributing to CLIO
+
+---
+
+## 20. OpenSpec Integration
+
+CLIO has native support for [OpenSpec](https://github.com/Fission-AI/OpenSpec), a spec-driven development framework that helps you and the AI agree on what to build before any code is written.
+
+### What It Does
+
+OpenSpec adds a lightweight spec layer to your project. Instead of jumping straight from idea to code, you create structured artifacts - a proposal (why), specs (what), design (how), and tasks (checklist) - then implement against them. This produces more predictable results because both you and the AI are aligned on the goal before writing starts.
+
+CLIO's integration is file-format compatible with the OpenSpec Node.js CLI. You can use either tool interchangeably on the same project - they read and write the same `openspec/` directory structure.
+
+### The Workflow
+
+```
+/spec init               Set up openspec/ directory
+    |
+/spec propose <name>     Create a change + AI generates planning artifacts
+    |
+  (proposal.md -> specs/ -> design.md -> tasks.md)
+    |
+  Implement against tasks.md using normal CLIO workflow
+    |
+/spec archive <name>     Archive the completed change
+```
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `/spec` | Show spec overview (specs + active changes) |
+| `/spec init` | Initialize `openspec/` directory |
+| `/spec list` | List all specs and active changes |
+| `/spec show <domain>` | Display a spec's contents |
+| `/spec new <name>` | Create a new change (directory scaffold only) |
+| `/spec propose <name>` | Create change + AI generates all planning artifacts |
+| `/spec status [name]` | Show which artifacts are done, ready, or blocked |
+| `/spec tasks [name]` | Show tasks from `tasks.md` with completion status |
+| `/spec archive <name>` | Archive a completed change |
+| `/spec help` | Show command help |
+
+### How `/spec propose` Works
+
+The `/spec propose <name>` command is the quick-start path. It creates the change directory, then sends a structured prompt to the AI that instructs it to generate all planning artifacts (proposal, specs, design, tasks) using CLIO's file_operations tools. After the AI finishes, you review the artifacts and implement against them.
+
+This is different from `/design`, which creates a single monolithic PRD at `.clio/PRD.md`. `/spec propose` creates multiple focused artifacts in `openspec/changes/<name>/`, following the OpenSpec structure where each document has a clear purpose and dependency chain.
+
+### Directory Structure
+
+```
+openspec/
+  config.yaml              Project config (schema, context, rules)
+  specs/                   Source of truth - how your system currently works
+    auth/spec.md
+    payments/spec.md
+  changes/                 Proposed changes (one folder per change)
+    add-dark-mode/
+      .openspec.yaml       Change metadata
+      proposal.md          Why: motivation and scope
+      design.md            How: technical approach
+      tasks.md             Checklist: implementation steps
+      specs/               What: delta specs (added/modified/removed requirements)
+        ui/spec.md
+    archive/               Completed changes
+      2026-03-05-fix-auth/
+```
+
+### System Prompt Integration
+
+When CLIO detects an `openspec/` directory in the project root, it automatically injects spec context into the system prompt. The AI sees which specs exist, which changes are active, and their artifact completion status - so it can reference requirements during implementation without you having to explain them.
+
+### When to Use What
+
+| Scenario | Use |
+|----------|-----|
+| Quick PRD for a new project from scratch | `/design` |
+| Structured change to an existing codebase | `/spec propose` |
+| Team project with multiple parallel changes | `/spec new` per change |
+| Need interop with OpenSpec Node CLI users | `/spec` (fully compatible) |
+
+### Configuration
+
+The `openspec/config.yaml` file lets you customize the experience:
+
+```yaml
+schema: spec-driven
+
+context: |
+  Tech stack: Perl 5.32+, core modules only
+  Testing: TAP format, tests/unit/
+  Style: 4 spaces, strict + warnings + utf8
+
+rules:
+  specs:
+    - Use Given/When/Then format for scenarios
+  design:
+    - Document cross-platform considerations
+  tasks:
+    - Each task should be completable in one session
+```
+
+The `context` is injected into every artifact's creation instructions. The `rules` are per-artifact additional guidance.
 - [User Guide](USER_GUIDE.md) - Detailed usage instructions
