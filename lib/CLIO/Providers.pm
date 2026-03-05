@@ -5,7 +5,11 @@ use warnings;
 use utf8;
 use Exporter 'import';
 
-our @EXPORT_OK = qw(get_provider list_providers provider_exists);
+our @EXPORT_OK = qw(get_provider list_providers provider_exists build_endpoint_config DEFAULT_MODEL);
+
+# Fallback model when no model is configured anywhere.
+# This should rarely be reached - Config and provider defaults take priority.
+use constant DEFAULT_MODEL => 'gpt-4.1';
 
 =head1 NAME
 
@@ -47,26 +51,43 @@ my %PROVIDERS = (
         requires_auth => 'apikey',
         supports_tools => 1,
         supports_streaming => 1,
-        max_context_tokens => 32000,  # Local models typically have smaller context
+        max_context_tokens => 32000,
+        endpoint => {
+            path_suffix => '',
+            temperature_range => [0.0, 2.0],
+            supports_tools => 1,
+            requires_sam_config => 1,
+        },
     },
     
     github_copilot => {
         name => 'GitHub Copilot',
         api_base => 'https://api.githubcopilot.com',
         model => 'claude-haiku-4.5',
-        requires_auth => 'copilot',  # Uses GitHub OAuth flow
+        requires_auth => 'copilot',
         supports_tools => 1,
         supports_streaming => 1,
         chat_endpoint_suffix => '/chat/completions',
+        endpoint => {
+            path_suffix => '',
+            temperature_range => [0.0, 1.0],
+            supports_tools => 1,
+            requires_copilot_headers => 1,
+        },
     },
     
     openai => {
         name => 'OpenAI',
         api_base => 'https://api.openai.com/v1/chat/completions',
-        model => 'gpt-4',
+        model => 'gpt-4.1',
         requires_auth => 'apikey',
         supports_tools => 1,
         supports_streaming => 1,
+        endpoint => {
+            path_suffix => '/chat/completions',
+            temperature_range => [0.0, 2.0],
+            supports_tools => 1,
+        },
     },
     
     deepseek => {
@@ -77,6 +98,11 @@ my %PROVIDERS = (
         supports_tools => 1,
         supports_streaming => 1,
         chat_endpoint_suffix => '/chat/completions',
+        endpoint => {
+            path_suffix => '/chat/completions',
+            temperature_range => [0.0, 2.0],
+            supports_tools => 1,
+        },
     },
     
     'llama.cpp' => {
@@ -84,9 +110,14 @@ my %PROVIDERS = (
         api_base => 'http://localhost:8080/v1/chat/completions',
         model => 'local-model',
         requires_auth => 'none',
-        supports_tools => 1,  # llama.cpp supports OpenAI-compatible function calling
+        supports_tools => 1,
         supports_streaming => 1,
-        max_context_tokens => 32000,  # Local models typically have smaller context
+        max_context_tokens => 32000,
+        endpoint => {
+            path_suffix => '',
+            temperature_range => [0.0, 2.0],
+            supports_tools => 1,
+        },
     },
     
     lmstudio => {
@@ -94,9 +125,14 @@ my %PROVIDERS = (
         api_base => 'http://localhost:1234/v1/chat/completions',
         model => 'local-model',
         requires_auth => 'none',
-        supports_tools => 1,  # LM Studio supports OpenAI-compatible function calling
+        supports_tools => 1,
         supports_streaming => 1,
-        max_context_tokens => 32000,  # Local models typically have smaller context
+        max_context_tokens => 32000,
+        endpoint => {
+            path_suffix => '',
+            temperature_range => [0.0, 2.0],
+            supports_tools => 1,
+        },
     },
     
     openrouter => {
@@ -106,6 +142,12 @@ my %PROVIDERS = (
         requires_auth => 'apikey',
         supports_tools => 1,
         supports_streaming => 1,
+        endpoint => {
+            path_suffix => '',
+            temperature_range => [0.0, 2.0],
+            supports_tools => 1,
+            openrouter => 1,
+        },
     },
     
     anthropic => {
@@ -115,9 +157,14 @@ my %PROVIDERS = (
         requires_auth => 'apikey',
         supports_tools => 1,
         supports_streaming => 1,
-        native_api => 1,  # Uses native provider module, not OpenAI-compatible
+        native_api => 1,
         provider_module => 'CLIO::Providers::Anthropic',
-        experimental => 1,  # Native API support is experimental
+        experimental => 1,
+        endpoint => {
+            path_suffix => '/messages',
+            temperature_range => [0.0, 1.0],
+            supports_tools => 1,
+        },
     },
     
     google => {
@@ -129,8 +176,13 @@ my %PROVIDERS = (
         supports_streaming => 1,
         native_api => 1,
         provider_module => 'CLIO::Providers::Google',
-        experimental => 1,  # Native API support is experimental
-        max_context_tokens => 1048576,  # Gemini 2.5 Flash: 1M token context window
+        experimental => 1,
+        max_context_tokens => 1048576,
+        endpoint => {
+            path_suffix => '/openai/chat/completions',
+            temperature_range => [0.0, 2.0],
+            supports_tools => 1,
+        },
     },
 );
 
@@ -187,6 +239,48 @@ sub provider_exists {
     
     return 0 unless defined $name;
     return exists $PROVIDERS{$name} ? 1 : 0;
+}
+
+=head2 build_endpoint_config($provider_name, $api_key)
+
+Build endpoint configuration for a provider with the given API key.
+
+Combines the static endpoint config from the provider registry with
+the dynamic auth value. This is the single source of truth for endpoint
+config - APIManager delegates here instead of maintaining its own hashes.
+
+Arguments:
+  $provider_name - Provider name (e.g. 'google', 'openrouter')
+  $api_key       - API key/token to use for auth
+
+Returns:
+  Hashref with: auth_header, auth_value, path_suffix, temperature_range,
+  supports_tools, and any provider-specific flags (openrouter, requires_copilot_headers, etc.)
+
+=cut
+
+sub build_endpoint_config {
+    my ($provider_name, $api_key) = @_;
+    $api_key //= '';
+
+    my $provider = $PROVIDERS{$provider_name};
+
+    # Default config for unknown providers
+    my $defaults = {
+        path_suffix => '/chat/completions',
+        temperature_range => [0.0, 2.0],
+        supports_tools => 1,
+    };
+
+    my $endpoint = ($provider && $provider->{endpoint})
+        ? { %{$provider->{endpoint}} }
+        : { %$defaults };
+
+    # Add dynamic auth
+    $endpoint->{auth_header} = 'Authorization';
+    $endpoint->{auth_value}  = "Bearer $api_key";
+
+    return $endpoint;
 }
 
 =head2 validate_provider

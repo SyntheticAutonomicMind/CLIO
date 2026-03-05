@@ -1202,29 +1202,24 @@ sub display_header {
         }
     }
     
-    # Map provider names to display names
-    my %provider_names = (
-        'github_copilot' => 'GitHub Copilot',
-        'openai' => 'OpenAI',
-        'openrouter' => 'OpenRouter',
-        'claude' => 'Anthropic Claude',
-        'anthropic' => 'Anthropic',
-        'qwen' => 'Qwen',
-        'deepseek' => 'DeepSeek',
-        'gemini' => 'Google Gemini',
-        'google' => 'Google Gemini',
-        'grok' => 'xAI Grok',
-        'sam' => 'SAM (Local)',
-        'llama.cpp' => 'llama.cpp (Local)',
-        'lmstudio' => 'LM Studio',
-    );
+    # Map provider names to display names from Providers registry
+    require CLIO::Providers;
+    my %provider_names;
+    for my $pname (CLIO::Providers::list_providers()) {
+        my $pdef = CLIO::Providers::get_provider($pname);
+        $provider_names{$pname} = $pdef->{name} if $pdef && $pdef->{name};
+    }
+    # Legacy aliases not in the registry
+    $provider_names{'claude'}  //= 'Anthropic Claude';
+    $provider_names{'gemini'}  //= 'Google Gemini';
+    $provider_names{'qwen'}    //= 'Qwen';
+    $provider_names{'grok'}    //= 'xAI Grok';
     
     my $provider_display = $provider ? ($provider_names{$provider} || ucfirst($provider)) : 'Unknown';
     
     # Strip CLIO provider prefix from model name for display
     # "github_copilot/gpt-4.1" -> "gpt-4.1" (provider shown after @)
     my $display_model = $model;
-    require CLIO::Providers;
     if ($display_model =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i && CLIO::Providers::provider_exists($1)) {
         my $model_provider = $1;
         $display_model = $2;
@@ -2369,7 +2364,8 @@ sub show_global_config {
     }
     $provider ||= 'unknown';
     
-    my $model = $self->{config}->get('model') || 'gpt-4';
+    require CLIO::Providers;
+    my $model = $self->{config}->get('model') || CLIO::Providers::DEFAULT_MODEL();
     my $api_key = $self->{config}->get('api_key');
     my $api_base = $self->{config}->get('api_base');
     
@@ -2475,7 +2471,8 @@ sub show_session_config {
     
     print "\n", $self->colorize("Model:", 'SYSTEM'), "\n";
     # Fall back to global config if not set in session (typical for new sessions)
-    my $session_model = $state->{selected_model} || $self->{config}->get('model') || 'gpt-4';
+    require CLIO::Providers;
+    my $session_model = $state->{selected_model} || $self->{config}->get('model') || CLIO::Providers::DEFAULT_MODEL();
     printf "  Selected:     %s%s\n", $session_model, ($state->{selected_model} ? '' : ' (from global)');
     
     print "\n";

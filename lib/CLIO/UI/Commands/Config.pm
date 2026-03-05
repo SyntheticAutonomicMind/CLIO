@@ -424,7 +424,8 @@ sub show_global_config {
     }
     $provider ||= 'unknown';
     
-    my $model = $self->{config}->get('model') || 'gpt-4';
+    require CLIO::Providers;
+    my $model = $self->{config}->get('model') || CLIO::Providers::DEFAULT_MODEL();
     my $api_key = $self->{config}->get('api_key');
     my $api_base = $self->{config}->get('api_base');
     
@@ -540,7 +541,8 @@ sub show_session_config {
     
     $self->writeline("", markdown => 0);
     $self->writeline($self->colorize("Model:", 'SYSTEM'), markdown => 0);
-    my $session_model = $state->{selected_model} || $self->{config}->get('model') || 'gpt-4';
+    require CLIO::Providers;
+    my $session_model = $state->{selected_model} || $self->{config}->get('model') || CLIO::Providers::DEFAULT_MODEL();
     $self->writeline(sprintf("  Selected:     %s%s", $session_model, ($state->{selected_model} ? '' : ' (from global)')), markdown => 0);
     
     $self->writeline("", markdown => 0);
