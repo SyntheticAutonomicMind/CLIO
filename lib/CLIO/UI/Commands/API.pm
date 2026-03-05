@@ -1767,7 +1767,11 @@ sub _validate_url {
     }
     
     # Also allow other schemes like ws://, wss://
-    if ($url =~ m{^[a-z][a-z0-9+\-.]*://[^\s]+$}) {
+    if ($url =~ m{^[a-z][a-z0-9+\-.]*://[^\s]+$}i) {
+        # Warn about insecure WebSocket connections
+        if ($url =~ m{^ws://}i) {
+            log_debug('API', "Warning: Using insecure WebSocket (ws://). Consider using wss:// instead.");
+        }
         return (1, '');
     }
     

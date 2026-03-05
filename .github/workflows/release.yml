@@ -34,9 +34,12 @@ jobs:
       
       - name: Extract version from tag
         id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            VERSION="$INPUT_VERSION"
           else
             VERSION=${GITHUB_REF#refs/tags/}
           fi
@@ -44,8 +47,9 @@ jobs:
           echo "Building version: $VERSION"
       
       - name: Verify version consistency
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
-          VERSION=${{ steps.version.outputs.VERSION }}
           echo "Checking if VERSION file matches tag: $VERSION"
           
           # Read current VERSION file
@@ -115,8 +119,9 @@ jobs:
       # Note: Skipping test suite - tests require API keys not available in CI
       
       - name: Create distribution packages
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
-          VERSION=${{ steps.version.outputs.VERSION }}
           PACKAGE_NAME="clio-${VERSION}"
           
           echo "Creating release package: ${PACKAGE_NAME}"
@@ -157,9 +162,9 @@ jobs:
       
       - name: Generate changelog
         id: changelog
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
-          VERSION=${{ steps.version.outputs.VERSION }}
-          
           # Get commits since last tag
           LAST_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
           
