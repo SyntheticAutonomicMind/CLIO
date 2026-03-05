@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: Copyright (c) 2026 Andrew Wyatt (Fewtarius)
+
 package CLIO::Memory::YaRN;
 
 use strict;
@@ -384,6 +387,6 @@ CLIO Development Team
 
 =head1 LICENSE
 
-Same terms as Perl itself.
+GPL-3.0-only
 
 =cut

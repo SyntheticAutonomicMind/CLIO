@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: Copyright (c) 2026 Andrew Wyatt (Fewtarius)
+
 if ($ENV{CLIO_DEBUG}) {
     log_debug('SessionManager', "CLIO::Session::Manager loaded");
 }

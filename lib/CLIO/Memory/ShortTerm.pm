@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: Copyright (c) 2026 Andrew Wyatt (Fewtarius)
+
 =head1 NAME
 
 CLIO::Memory::ShortTerm - Short-term conversation memory (sliding window)
@@ -170,7 +173,7 @@ CLIO Development Team
 
 =head1 LICENSE
 
-Same terms as Perl itself.
+GPL-3.0-only
 
 =cut
 
