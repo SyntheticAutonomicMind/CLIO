@@ -357,6 +357,11 @@ CLIO provides 35+ powerful slash commands. Type `/help` in any session to see th
 | `/design` | Collaborative PRD development with AI architect |
 | `/init` | Initialize project with custom instructions |
 | `/init --force` | Re-initialize project (updates instructions from PRD) |
+| `/spec` | OpenSpec spec-driven development (see below) |
+| `/spec init` | Initialize `openspec/` directory |
+| `/spec propose <name>` | Create change + AI generates planning artifacts |
+| `/spec status [name]` | Show artifact completion status |
+| `/spec archive <name>` | Archive completed change |
 
 ### API & Configuration
 
@@ -440,6 +445,23 @@ CLIO provides 35+ powerful slash commands. Type `/help` in any session to see th
 | `/profile path` | Show profile file location |
 
 Your profile lives at `~/.clio/profile.md` and is never stored in any git repo. It personalizes how CLIO interacts with you across all projects and sessions. Run `/profile build` after ~10 sessions to generate a profile from your interaction history.
+
+### Specs (OpenSpec)
+
+| Command | Purpose |
+|---------|---------|
+| `/spec` | Show spec overview (specs + active changes) |
+| `/spec init` | Initialize `openspec/` directory structure |
+| `/spec list` | List all specs and active changes |
+| `/spec show <domain>` | Display a spec |
+| `/spec new <name>` | Create a new change scaffold |
+| `/spec propose <name>` | Create change + AI generates all artifacts |
+| `/spec status [name]` | Show which artifacts are done/ready/blocked |
+| `/spec tasks [name]` | Show tasks with completion status |
+| `/spec archive <name>` | Archive a completed change |
+| `/spec help` | Show command help |
+
+OpenSpec integration lets you define structured requirements (proposal, specs, design, tasks) before implementation. The AI sees spec context automatically and implements against the agreed plan. See [FEATURES.md](FEATURES.md#20-openspec-integration) for the full guide.
 
 ### Developer Tools
 

@@ -82,7 +82,8 @@ Terminal Output (with color/theme)
 | `lib/CLIO/Profile/` | User personality profile (Analyzer, Manager) |
 | `lib/CLIO/Protocols/` | Complex workflows |
 | `lib/CLIO/Security/` | Auth/authz |
-| `lib/CLIO/Util/` | Utilities (PathResolver, TextSanitizer) |
+| `lib/CLIO/Util/` | Utilities (PathResolver, TextSanitizer, YAML) |
+| `lib/CLIO/Spec/` | OpenSpec integration (spec lifecycle management) |
 | `docs/` | User/dev documentation |
 | `tests/unit/` | Single module tests |
 | `tests/integration/` | Cross-module tests |
@@ -170,7 +171,8 @@ if (should_log('DEBUG')) {
 | `CLIO::Memory::` | Context/memory | ShortTerm, LongTerm, YaRN, TokenEstimator |
 | `CLIO::Protocols::` | Complex workflows | Architect, Editor, Validate |
 | `CLIO::Security::` | Auth/authz | Auth, Authz, Manager |
-| `CLIO::Util::` | Utilities | PathResolver, TextSanitizer, JSONRepair |
+| `CLIO::Util::` | Utilities | PathResolver, TextSanitizer, JSONRepair, YAML |
+| `CLIO::Spec::` | OpenSpec integration | Manager (spec lifecycle management) |
 | `CLIO::Compat::` | Compatibility | Terminal (ReadKey, ReadMode) |
 
 ---
