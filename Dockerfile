@@ -70,12 +70,18 @@ COPY . /opt/clio
 RUN chmod +x /opt/clio/clio && \
     ln -s /opt/clio/clio /usr/local/bin/clio
 
-# Create .clio directory for config persistence
+# Create non-root user for security
+RUN groupadd -r clio && useradd -r -g clio -m -s /bin/bash clio
+
+# Create .clio directory for config persistence (owned by clio user)
 # This directory should be mounted as a volume for auth persistence
-RUN mkdir -p /root/.clio
+RUN mkdir -p /home/clio/.clio && chown -R clio:clio /home/clio/.clio
 
 # Default working directory is mounted project
 WORKDIR /workspace
+
+# Run as non-root user
+USER clio
 
 # Default: run CLIO interactively
 # Override with your own args: docker run ... ghcr.io/.../clio --new
