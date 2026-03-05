@@ -203,6 +203,22 @@ sub get_system_prompt {
         }
     }
     
+    # Inject OpenSpec context if openspec/ directory exists in project
+    eval {
+        require CLIO::Spec::Manager;
+        my $spec_mgr = CLIO::Spec::Manager->new(project_root => '.');
+        if ($spec_mgr->is_initialized()) {
+            my $spec_context = $spec_mgr->get_spec_context();
+            if ($spec_context && length($spec_context) > 0) {
+                $prompt .= "\n\n<openSpecContext>\n";
+                $prompt .= $spec_context;
+                $prompt .= "</openSpecContext>\n";
+                log_debug('PromptManager', "Injected OpenSpec context (" . length($spec_context) . " bytes)");
+            }
+        }
+    };
+    log_debug('PromptManager', "OpenSpec context check: $@") if $@;
+    
     return $prompt;
 }
 

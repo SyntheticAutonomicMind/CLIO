@@ -30,6 +30,7 @@ use CLIO::UI::Commands::Device;
 use CLIO::UI::Commands::SubAgent;
 use CLIO::UI::Commands::Mux;
 use CLIO::UI::Commands::Profile;
+use CLIO::UI::Commands::Spec;
 use CLIO::UI::Commands::Stats;
 
 =head1 NAME
@@ -215,6 +216,12 @@ sub new {
     );
     
     $self->{profile_cmd} = CLIO::UI::Commands::Profile->new(
+        chat => $self->{chat},
+        session => $self->{session},
+        debug => $self->{debug},
+    );
+    
+    $self->{spec_cmd} = CLIO::UI::Commands::Spec->new(
         chat => $self->{chat},
         session => $self->{session},
         debug => $self->{debug},
@@ -475,6 +482,10 @@ sub handle_command {
     elsif ($cmd eq 'profile') {
         my @result = $self->{profile_cmd}->handle_profile_command(@args);
         return @result if @result > 1;  # Return (1, $prompt) for build command
+    }
+    elsif ($cmd eq 'spec' || $cmd eq 'specs') {
+        my @result = $self->{spec_cmd}->handle_spec_command(@args);
+        return @result if @result > 1;  # Return (1, $prompt) for propose command
     }
     else {
         $chat->display_error_message("Unknown command: /$cmd (type /help for help)");
