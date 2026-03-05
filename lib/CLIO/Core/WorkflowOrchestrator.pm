@@ -2024,20 +2024,9 @@ sub _check_for_user_interrupt {
     }
     
     # Non-blocking keyboard check
-    my $key;
-    eval {
-        # Set cbreak mode (no echo, immediate input)
-        ReadMode(1);
-        
-        # Non-blocking read (-1 = return immediately if no input)
-        $key = ReadKey(-1);
-        
-        # Restore normal mode
-        ReadMode(0);
-    };
-    
-    # Ensure terminal mode restored even on error
-    ReadMode(0);
+    # Terminal is already in cbreak mode (set by Chat.pm before agent execution)
+    # so keypresses are immediately available without needing ReadMode switching
+    my $key = eval { ReadKey(-1) };
     
     if ($@) {
         log_warning('WorkflowOrchestrator', "Error checking for interrupt: $@");
@@ -2052,12 +2041,7 @@ sub _check_for_user_interrupt {
         log_info('WorkflowOrchestrator', "User interrupt detected ($key_desc key pressed)");
         
         # Drain any remaining buffered input (e.g. escape sequences)
-        eval {
-            ReadMode(1);
-            while (defined(my $extra = ReadKey(-1))) { }
-            ReadMode(0);
-        };
-        ReadMode(0);
+        while (defined(eval { ReadKey(-1) })) { }
         
         # Set interrupt flag in session
         if ($session && $session->state()) {
