@@ -300,6 +300,24 @@ Terminal Output
 - Breaks them into executable protocol chains with confidence scoring
 - Routes to appropriate protocol handlers
 
+### 14. OpenSpec Integration
+**Files:** `lib/CLIO/Spec/`, `lib/CLIO/Util/YAML.pm`, `lib/CLIO/UI/Commands/Spec.pm`
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| Spec Manager | `Spec/Manager.pm` | Spec and change lifecycle management |
+| YAML Parser | `Util/YAML.pm` | Lightweight YAML parser for OpenSpec config/schema files |
+| Spec Commands | `UI/Commands/Spec.pm` | `/spec` slash command handler |
+
+**How it works:**
+1. User runs `/spec init` to create `openspec/` directory structure
+2. `/spec propose <name>` creates a change and sends structured prompt to AI
+3. AI generates planning artifacts (proposal, specs, design, tasks) via file_operations
+4. User implements against tasks.md using normal CLIO workflow
+5. `/spec archive` moves completed change to archive
+6. PromptManager auto-injects spec context into system prompt when `openspec/` exists
+7. File format is 100% compatible with the OpenSpec Node.js CLI
+
 ---------------------------------------------------
 
 ## Data Flow
@@ -606,6 +624,9 @@ lib/CLIO/
       ConfigPath.pm        # Config path resolution
       InputHelpers.pm      # Input helpers
       AnthropicXMLParser.pm # Anthropic XML parsing
+      YAML.pm              # Lightweight YAML parser (OpenSpec support)
+  Spec/                    # OpenSpec integration
+      Manager.pm           # Spec lifecycle management
   Test/                    # Testing framework
       Framework.pm         # Test utilities
   Util/                    # Utility modules
