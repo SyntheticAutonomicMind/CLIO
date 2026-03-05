@@ -26,7 +26,7 @@ use CLIO::Core::ConversationManager qw(
 use CLIO::Core::PromptBuilder;
 use CLIO::Util::JSON qw(encode_json decode_json);
 use Encode qw(encode_utf8);  # For handling Unicode in JSON
-use Time::HiRes qw(time);
+use Time::HiRes qw(time sleep);
 use Digest::MD5 qw(md5_hex);
 use CLIO::Compat::Terminal qw(ReadKey ReadMode);  # For interrupt detection
 use CLIO::Logging::ProcessStats;
@@ -996,14 +996,19 @@ sub process_input {
                     log_info('WorkflowOrchestrator', "Retryable $error_type detected, retrying in ${retry_delay}s on next iteration (attempt $retry_count/$max_retries)");
                 }
                 
-                # Enable signal delivery during retry wait
-                local $SIG{ALRM} = sub { alarm(1); };
-                alarm(1);
-                
-                # Wait before retrying
-                sleep($retry_delay);
-                
-                alarm(0);  # Disable alarm after retry completes
+                # Wait the full retry_delay duration before retrying
+                # Use a countdown loop because alarm(1) interrupts sleep() early
+                # (SIGALRM is set for Ctrl-C interruptibility during long waits)
+                if ($retry_delay > 0) {
+                    log_debug('WorkflowOrchestrator', "Waiting ${retry_delay}s before retry...");
+                    my $remaining = $retry_delay;
+                    while ($remaining > 0) {
+                        my $chunk = ($remaining > 1) ? 1 : $remaining;
+                        sleep($chunk);
+                        $remaining -= $chunk;
+                    }
+                    log_debug('WorkflowOrchestrator', "Retry delay complete, sending request...");
+                }
                 
                 # Don't increment iteration counter - this failed attempt doesn't count
                 $iteration--;
