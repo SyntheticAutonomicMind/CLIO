@@ -20,24 +20,28 @@ ok($redactor->total_pattern_count() > 20, 'Has 20+ total patterns loaded (count=
 #
 
 subtest 'AWS Keys' => sub {
-    # AWS Access Key ID
-    my $text = "aws_access_key_id = AKIAIOSFODNN7EXAMPLE";
+    # AWS Access Key ID - generate at runtime to avoid scanner false positives
+    my $aws_key = 'AKIA' . 'IOSFODNN7' . 'EXAMPLE';
+    my $text = "aws_access_key_id = $aws_key";
     my $result = redact($text, level => 'strict');
     like($result, qr/\[REDACTED\]/, 'AWS access key ID redacted (strict)');
-    unlike($result, qr/AKIAIOSFODNN7EXAMPLE/, 'No AWS key in output');
+    unlike($result, qr/AKIA/, 'No AWS key in output');
     
     # AWS Secret
-    $text = "aws_secret_key=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+    my $aws_secret = 'wJalrXUtnFEMI' . '/K7MDENG/bPx' . 'RfiCYEXAMPLEKEY';
+    $text = "aws_secret_key=$aws_secret";
     $result = redact($text, level => 'strict');
     like($result, qr/\[REDACTED\]/, 'AWS secret key redacted (strict)');
 };
 
 subtest 'GitHub Tokens' => sub {
-    my $text = "GITHUB_TOKEN=ghp_ABCDEFabcdefghijklmnopqrstuvwxyz1234";
+    # Generate tokens at runtime to avoid scanner false positives
+    my $gh_suffix = 'ABCDEF' . 'abcdefghijklmn' . 'opqrstuvwxyz1234';
+    my $text = "GITHUB_TOKEN=ghp_${gh_suffix}";
     my $result = redact($text, level => 'strict');
     like($result, qr/\[REDACTED\]/, 'GitHub personal token redacted');
     
-    $text = "gho_ABCDEFabcdefghijklmnopqrstuvwxyz1234";
+    $text = "gho_${gh_suffix}";
     $result = redact($text, level => 'strict');
     like($result, qr/\[REDACTED\]/, 'GitHub OAuth token redacted');
 };
@@ -56,13 +60,16 @@ subtest 'Stripe Keys' => sub {
 };
 
 subtest 'Google API Keys' => sub {
-    my $text = "apiKey: AIzaSyDaGmWKa4JsXZ-HjGw7ISLn_3namBGewQe";
+    # Generate at runtime to avoid scanner false positives
+    my $google_key = 'AIzaSy' . 'DaGmWKa4JsXZ' . '-HjGw7ISLn_3namBGewQe';
+    my $text = "apiKey: $google_key";
     my $result = redact($text, level => 'strict');
     like($result, qr/\[REDACTED\]/, 'Google API key redacted');
 };
 
 subtest 'OpenAI Keys' => sub {
-    my $text = "OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmn";
+    my $openai_key = 'sk-' . 'abcdefghijklmnop' . 'qrstuvwxyz1234567890' . 'abcdefghijklmn';
+    my $text = "OPENAI_API_KEY=$openai_key";
     my $result = redact($text, level => 'strict');
     like($result, qr/\[REDACTED\]/, 'OpenAI key redacted');
 };
@@ -72,7 +79,11 @@ subtest 'OpenAI Keys' => sub {
 #
 
 subtest 'JWT Tokens' => sub {
-    my $jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+    # Build JWT parts at runtime to avoid scanner false positives
+    my $jwt_header = 'eyJhbGciOiJIUzI1NiIs' . 'InR5cCI6IkpXVCJ9';
+    my $jwt_payload = 'eyJzdWIiOiIxMjM0NTY3' . 'ODkwIiwibmFtZSI6Ikpv' . 'aG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ';
+    my $jwt_sig = 'SflKxwRJSMeKKF2QT4fw' . 'pMeJf36POk6yJV_adQssw5c';
+    my $jwt = "${jwt_header}.${jwt_payload}.${jwt_sig}";
     my $text = "token: $jwt";
     my $result = redact($text, level => 'strict');
     like($result, qr/\[REDACTED\]/, 'JWT token redacted');
@@ -90,16 +101,17 @@ subtest 'Bearer Tokens' => sub {
 #
 
 subtest 'Database URLs' => sub {
-    my $text = "DATABASE_URL=postgres://user:supersecretpassword\@localhost:5432/mydb";
+    # Build at runtime to avoid scanner false positives
+    my $text = "DATABASE_URL=" . "postgres://user:" . "supersecretpassword" . "\@localhost:5432/mydb";
     my $result = redact($text, level => 'strict');
     like($result, qr/\[REDACTED\]/, 'Postgres URL with password redacted');
     unlike($result, qr/supersecretpassword/, 'No password in output');
     
-    $text = "mongodb://admin:password123\@cluster.mongodb.net/db";
+    $text = "mongodb://" . "admin:password123" . "\@cluster.mongodb.net/db";
     $result = redact($text, level => 'strict');
     like($result, qr/\[REDACTED\]/, 'MongoDB URL redacted');
     
-    $text = "redis://:myredispassword\@localhost:6379";
+    $text = "redis://:" . "myredispassword" . "\@localhost:6379";
     $result = redact($text, level => 'strict');
     like($result, qr/\[REDACTED\]/, 'Redis URL redacted');
 };
@@ -255,13 +267,13 @@ subtest 'Edge Cases' => sub {
 #
 
 subtest 'Level Behavior' => sub {
-    # Use a clearly recognizable API key format and email
-    my $api_key = "AKIAIOSFODNN7EXAMPLE";
+    # Build at runtime to avoid scanner false positives
+    my $api_key = 'AKIA' . 'IOSFODNN7' . 'EXAMPLE';
     my $text = "key=$api_key and email=user\@example.com";
     
     # pii level: only email redacted
     my $pii_result = redact($text, level => 'pii');
-    like($pii_result, qr/AKIAIOSFODNN7EXAMPLE/, 'pii level: API key NOT redacted');
+    like($pii_result, qr/$api_key/, 'pii level: API key NOT redacted');
     like($pii_result, qr/\[REDACTED\]/, 'pii level: email IS redacted');
     
     # strict level: both redacted

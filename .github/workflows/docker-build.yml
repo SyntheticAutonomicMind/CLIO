@@ -30,9 +30,12 @@ jobs:
       
       - name: Extract version from tag
         id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            VERSION="$INPUT_VERSION"
           else
             VERSION=${GITHUB_REF#refs/tags/}
           fi
@@ -80,14 +83,17 @@ jobs:
           cache-to: type=gha,mode=max
       
       - name: Generate image summary
+        env:
+          IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
         run: |
           echo "## Container Image Published" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Registry:** ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Registry:** $IMAGE_REF" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Tags:**" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+          echo "$IMAGE_TAGS" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Architectures:** linux/amd64, linux/arm64" >> $GITHUB_STEP_SUMMARY
@@ -97,6 +103,6 @@ jobs:
           echo 'docker run -it --rm \' >> $GITHUB_STEP_SUMMARY
           echo '    -v "$(pwd)":/workspace \' >> $GITHUB_STEP_SUMMARY
           echo '    -w /workspace \' >> $GITHUB_STEP_SUMMARY
-          echo "    ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \\" >> $GITHUB_STEP_SUMMARY
+          echo "    ${IMAGE_REF}:latest \\" >> $GITHUB_STEP_SUMMARY
           echo '    --new' >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
