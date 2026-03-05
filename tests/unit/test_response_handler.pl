@@ -238,4 +238,44 @@ subtest 'release_broker_slot - no request id' => sub {
     ok(1, 'No crash without request id');
 };
 
+# =============================================================================
+# Error parsing improvements tests
+# =============================================================================
+
+subtest 'handle_error_response - Google array-wrapped error' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 599,
+        status_line => '599 Internal Exception',
+        content => '[{"error":{"code":429,"message":"You exceeded your current quota, please retry in 35.228042346s.","status":"RESOURCE_EXHAUSTED"}}]',
+    );
+    my $result = $handler->handle_error_response($resp, '{}', 1);
+    is($result->{retryable}, 1, 'Rate limit is retryable (embedded 429)');
+    is($result->{error_type}, 'rate_limit', 'Error type is rate_limit');
+    ok($result->{retry_after} && $result->{retry_after} > 0, 'Has retry_after value');
+};
+
+subtest 'handle_error_response - OpenRouter provider error with metadata.raw' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 599,
+        status_line => '599 Internal Exception',
+        content => '{"error":{"message":"Provider returned error","code":400,"metadata":{"raw":"[{\"error\":{\"code\":400,\"message\":\"thinking is not supported by this model\",\"status\":\"INVALID_ARGUMENT\"}}]"}}}',
+    );
+    my $result = $handler->handle_error_response($resp, '{}', 1);
+    like($result->{error}, qr/thinking is not supported/i, 'Extracted inner error from OpenRouter metadata.raw');
+};
+
+subtest 'handle_error_response - embedded 429 overrides HTTP 200' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 200,
+        status_line => '200 OK',
+        content => '{"error":{"message":"Rate limit exceeded","code":429}}',
+    );
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{retryable}, 1, 'Embedded 429 treated as rate limit');
+    like($result->{error}, qr/rate limit/i, 'Error message from embedded error');
+};
+
 done_testing();
