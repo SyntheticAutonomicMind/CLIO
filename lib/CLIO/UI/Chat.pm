@@ -2253,6 +2253,17 @@ sub display_help {
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo done <id>', 'help_command'), 'Complete todo');
     push @help_lines, "";
     
+    push @help_lines, $self->colorize("SPECS (OpenSpec)", 'command_subheader');
+    push @help_lines, $self->colorize("─" x 62, 'dim');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/spec', 'help_command'), 'Show spec overview');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/spec init', 'help_command'), 'Initialize openspec/ directory');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/spec list', 'help_command'), 'List specs and changes');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/spec new <name>', 'help_command'), 'Create a new change');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/spec propose <name>', 'help_command'), 'Create change + AI generates artifacts');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/spec status [name]', 'help_command'), 'Show artifact status');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/spec archive <name>', 'help_command'), 'Archive completed change');
+    push @help_lines, "";
+    
     push @help_lines, $self->colorize("MEMORY", 'command_subheader');
     push @help_lines, $self->colorize("─" x 62, 'dim');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory', 'help_command'), 'View long-term memory patterns');
