@@ -98,18 +98,25 @@ sub _generate_uuid {
     return $uuid;
 }
 
-# Check if a model is known to support reasoning/thinking parameters
-# Only these models should receive reasoning: { enabled: true } on OpenRouter
+# Check if a model supports reasoning/thinking parameters via models API
+# Falls back to pattern matching if API data unavailable
 sub _model_supports_reasoning {
-    my ($model) = @_;
+    my ($self, $model) = @_;
     return 0 unless $model;
-    my $m = lc($model);
-    return 1 if $m =~ /deepseek-r1/;
-    return 1 if $m =~ /\bqwq\b/;
-    return 1 if $m =~ /\bo[13]-/;       # o1-*, o3-*
-    return 1 if $m =~ /\bo[13]$/;       # o1, o3
-    return 1 if $m =~ /\bo[13]-mini/;
-    return 1 if $m =~ /\bo[13]-pro/;
+
+    # Check cached capabilities from models API (authoritative source)
+    if ($self->{_model_capabilities_cache} && $self->{_model_capabilities_cache}{$model}) {
+        my $caps = $self->{_model_capabilities_cache}{$model};
+        return $caps->{supports_reasoning} if defined $caps->{supports_reasoning};
+    }
+
+    # Fetch capabilities (will populate cache with supports_reasoning if available)
+    my $caps = $self->get_model_capabilities($model);
+    if ($caps && defined $caps->{supports_reasoning}) {
+        return $caps->{supports_reasoning};
+    }
+
+    # Default: don't send reasoning params for unknown models
     return 0;
 }
 
@@ -666,7 +673,7 @@ sub adapt_request_for_endpoint {
     # Adding reasoning to non-thinking models causes provider errors (e.g. Google Vertex AI)
     if ($endpoint_config->{openrouter}) {
         my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
-        if ($show_thinking && $payload->{model} && _model_supports_reasoning($payload->{model})) {
+        if ($show_thinking && $payload->{model} && $self->_model_supports_reasoning($payload->{model})) {
             $payload->{reasoning} = { enabled => \1 };  # JSON true
         }
     }
@@ -876,6 +883,11 @@ sub get_model_capabilities {
             if ($api_type eq 'google' && $model_info->{supportedGenerationMethods}) {
                 my @methods = @{$model_info->{supportedGenerationMethods}};
                 $capabilities->{supports_tools} = (grep { $_ eq 'generateContent' } @methods) ? 1 : 0;
+            }
+            
+            # OpenRouter models: check supported_parameters for reasoning support
+            if ($model_info->{supported_parameters} && ref($model_info->{supported_parameters}) eq 'ARRAY') {
+                $capabilities->{supports_reasoning} = (grep { $_ eq 'reasoning' } @{$model_info->{supported_parameters}}) ? 1 : 0;
             }
             
             # Cache the result
