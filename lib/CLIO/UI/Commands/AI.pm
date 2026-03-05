@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: Copyright (c) 2026 Andrew Wyatt (Fewtarius)
+
 package CLIO::UI::Commands::AI;
 
 use strict;

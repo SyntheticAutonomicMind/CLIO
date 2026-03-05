@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: Copyright (c) 2025 Andrew Wyatt (Fewtarius)
+
 package CLIO::Core::ProtocolIntegration;
 
 use strict;
@@ -702,12 +705,9 @@ __END__
 
 Fewtarius
 
-=head1 COPYRIGHT AND LICENSE
+=head1 LICENSE
 
-Copyright (C) 2024 CLIO
-
-This library is free software; you can redistribute it and/or modify
-it under the same terms as Perl itself.
+GPL-3.0-only
 
 =cut
 

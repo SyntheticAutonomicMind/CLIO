@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: Copyright (c) 2026 Andrew Wyatt (Fewtarius)
+
 package CLIO::Core::ToolExecutor;
 
 use strict;
@@ -1025,8 +1028,7 @@ Fewtarius
 
 =head1 LICENSE
 
-This is free software; you can redistribute it and/or modify it under
-the same terms as Perl itself.
+GPL-3.0-only
 
 =cut
 
