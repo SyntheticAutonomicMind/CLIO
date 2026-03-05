@@ -2208,8 +2208,8 @@ sub display_help {
     push @help_lines, sprintf("  %-30s %s", $self->colorize('Ctrl+E / End', 'help_command'), 'Move to end of line');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('Up/Down', 'help_command'), 'Navigate command history');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('Tab', 'help_command'), 'Auto-complete commands/paths');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('Escape', 'help_command'), 'Interrupt the agent');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('Ctrl+C', 'help_command'), 'Cancel input or interrupt');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('Any key', 'help_command'), 'Interrupt the agent');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('Ctrl+C', 'help_command'), 'Cancel input or exit');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('Ctrl+D', 'help_command'), 'Exit (on empty line)');
     push @help_lines, "";
     
