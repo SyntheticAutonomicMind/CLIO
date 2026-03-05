@@ -749,20 +749,37 @@ sub run {
             local $SIG{ALRM} = $alarm_handler;
             alarm(1);  # Start periodic interruption
             
+            # Set cbreak mode for interrupt detection during agent execution
+            # In normal/canonical mode, keypresses are buffered until Enter and
+            # sysread() (used by ReadKey) can't see them. Cbreak mode makes each
+            # keypress immediately available so _check_for_user_interrupt works.
+            # ReadLine (for user_collaboration) manages its own mode internally.
+            ReadMode(1);
+            
             # Process request with streaming callback (match clio script pattern)
             log_debug('Chat', "Calling process_user_request...");
-            my $result = $self->{ai_agent}->process_user_request($input, {
-                on_chunk => $on_chunk,
-                on_tool_call => $on_tool_call,  # Track which tools are being called
-                on_thinking => $on_thinking,  # Display reasoning/thinking content
-                on_system_message => $on_system_message,  # Display system messages
-                conversation_history => $conversation_history,
-                current_file => $self->{session}->{state}->{current_file},
-                working_directory => $self->{session}->{state}->{working_directory},
-                ui => $self,  # Pass UI object for user_collaboration tool
-                spinner => $spinner  # Pass spinner for interactive tools to stop
-            });
-            log_debug('Chat', "process_user_request returned, success=" . ($result->{success} ? "yes" : "no"));
+            my $result;
+            eval {
+                $result = $self->{ai_agent}->process_user_request($input, {
+                    on_chunk => $on_chunk,
+                    on_tool_call => $on_tool_call,  # Track which tools are being called
+                    on_thinking => $on_thinking,  # Display reasoning/thinking content
+                    on_system_message => $on_system_message,  # Display system messages
+                    conversation_history => $conversation_history,
+                    current_file => $self->{session}->{state}->{current_file},
+                    working_directory => $self->{session}->{state}->{working_directory},
+                    ui => $self,  # Pass UI object for user_collaboration tool
+                    spinner => $spinner  # Pass spinner for interactive tools to stop
+                });
+            };
+            my $process_error = $@;
+            
+            # ALWAYS restore normal terminal mode, even on exception
+            ReadMode(0);
+            log_debug('Chat', "process_user_request returned, success=" . ($result ? ($result->{success} ? "yes" : "no") : "exception"));
+            
+            # Re-throw if process_user_request died
+            die $process_error if $process_error;
             
             # Disable periodic alarm after streaming completes
             alarm(0);
@@ -1947,7 +1964,11 @@ sub request_collaboration {
     
     # Loop to handle multiple inputs (slash commands return to prompt)
     while (1) {
+        # ReadLine sets raw mode internally and restores to normal on exit.
+        # Since we're in cbreak mode for agent interrupt detection, we need
+        # to re-enter cbreak after each readline call.
         my $response = $readline->readline($collab_prompt);
+        ReadMode(1);  # Re-enter cbreak for interrupt detection
         
         unless (defined $response) {
             print "\n";
@@ -2844,9 +2865,10 @@ sub pause {
         my $prompt = $self->{theme_mgr}->get_pagination_prompt($current, 1, 0);
         print $prompt;
         
-        ReadMode('cbreak');
+        # ReadKey handles cbreak mode internally if not already set
+        # Don't explicitly set/restore mode here - that breaks cbreak mode
+        # maintained by the agent execution loop for interrupt detection
         my $key = ReadKey(0);
-        ReadMode('normal');
         
         # Always clear pagination prompt lines (even during tool execution)
         # The _in_tool_execution flag should not prevent clearing user prompts
@@ -2877,15 +2899,13 @@ sub pause {
         my $prompt = $self->{theme_mgr}->get_pagination_prompt($current, $total_pages, ($total_pages > 1));
         print $prompt;
         
-        # Wait for keypress
-        ReadMode('cbreak');
+        # Wait for keypress - ReadKey handles cbreak mode internally
         my $key = ReadKey(0);
         
         # Handle arrow keys (escape sequences)
         if ($key eq "\e") {
-            # Read the rest of the escape sequence (still in cbreak mode)
+            # Read the rest of the escape sequence
             my $seq = ReadKey(0) . ReadKey(0);
-            ReadMode('normal');  # Restore normal mode after reading sequence
             
             # Clear prompt line
             print "\e[2K\e[" . $self->{terminal_width} . "D";
@@ -2907,11 +2927,7 @@ sub pause {
             # Unrecognized escape sequence - continue output
         }
         
-        # Regular key handling - restore normal mode first
-        ReadMode('normal');
-        
-        # Always clear pagination prompt lines (even during tool execution)
-        # The _in_tool_execution flag should not prevent clearing user prompts
+        # Clear pagination prompt lines
         if ($hint_was_shown) {
             print "\e[2K";  # Clear prompt line
             print "\e[" . $self->{terminal_width} . "D";  # Move to start of prompt line
