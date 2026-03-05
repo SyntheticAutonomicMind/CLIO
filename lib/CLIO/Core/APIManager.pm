@@ -1559,18 +1559,13 @@ sub send_request {
         my $wait = int($self->{response_handler}{rate_limit_until} - time()) + 1;
         log_debug('APIManager', "Rate limited. Waiting ${wait}s before retry...");
         
-        # Enable periodic signal delivery during rate limit wait
-        # Allow Ctrl-C to interrupt wait and save session
-        local $SIG{ALRM} = sub { alarm(1); };
-        alarm(1);
-        
-        # Show countdown for user feedback (only in debug mode)
+        # Countdown loop - each 1s sleep survives signal interruption
+        # (alarm/SIGALRM can interrupt sleep(), so we loop in 1s chunks)
         for (my $i = $wait; $i > 0; $i--) {
             log_debug('APIManager', "Retrying in ${i}s...") if !($i % 5);  # Update every 5s
             sleep(1);
         }
-        alarm(0);  # Disable alarm after wait completes
-        log_debug('APIManager', "Retry limit cleared. Sending request...");
+        log_debug('APIManager', "Rate limit cleared. Sending request...");
     }
     
     # Get endpoint-specific configuration
@@ -2076,18 +2071,13 @@ sub send_request_streaming {
         my $wait = int($self->{response_handler}{rate_limit_until} - time()) + 1;
         log_debug('APIManager', "Rate limited. Waiting ${wait}s before retry...");
         
-        # Enable periodic signal delivery during rate limit wait
-        # Allow Ctrl-C to interrupt wait and save session
-        local $SIG{ALRM} = sub { alarm(1); };
-        alarm(1);
-        
-        # Show countdown for user feedback (only in debug mode)
+        # Countdown loop - each 1s sleep survives signal interruption
+        # (alarm/SIGALRM can interrupt sleep(), so we loop in 1s chunks)
         for (my $i = $wait; $i > 0; $i--) {
             log_debug('APIManager', "Retrying in ${i}s...") if !($i % 5);  # Update every 5s
             sleep(1);
         }
-        alarm(0);  # Disable alarm after wait completes
-        log_debug('APIManager', "Retry limit cleared. Sending request...");
+        log_debug('APIManager', "Rate limit cleared. Sending request...");
     }
     
     # Extract on_chunk and on_tool_call callbacks
