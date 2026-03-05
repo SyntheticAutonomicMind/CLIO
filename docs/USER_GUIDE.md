@@ -214,7 +214,7 @@ YOU:
 | `q` / `Q` | Quit pagination, return to prompt |
 | `↑` / `↓` (Arrows) | Navigate pages (non-streaming mode) |
 | `Ctrl+D` or `Ctrl+C` | Exit CLIO |
-| `ESC` | Interrupt workflow, return to prompt |
+| Any key | Interrupt workflow, return to prompt |
 
 **In Text Input:**
 

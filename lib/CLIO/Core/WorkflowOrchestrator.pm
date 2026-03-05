@@ -475,8 +475,8 @@ sub process_input {
             if $self->{process_stats};
         
         log_debug('WorkflowOrchestrator', "Iteration $iteration/$self->{max_iterations}");
-        
-        # Check for user interrupt (ESC key press)
+
+        # Check for user interrupt (any keypress)
         if ($self->_check_for_user_interrupt($session)) {
             $self->_handle_interrupt($session, \@messages);
             # Don't count this iteration - interrupt handling is free
@@ -512,7 +512,7 @@ sub process_input {
             
             # Wrap callback to check for user interrupt during streaming
             # With true streaming (data_callback), this fires for each SSE chunk
-            # and allows ESC detection within ~1 second during content generation
+            # and allows interrupt detection within ~1 second during content generation
             my $callback = sub {
                 my @args = @_;
                 
@@ -997,8 +997,8 @@ sub process_input {
                 }
                 
                 # Wait the full retry_delay duration before retrying
-                # Use a countdown loop because alarm(1) interrupts sleep() early
-                # (SIGALRM is set for Ctrl-C interruptibility during long waits)
+                # Use a countdown loop that sleeps in 1s chunks and checks
+                # for user interrupt between each chunk
                 if ($retry_delay > 0) {
                     log_debug('WorkflowOrchestrator', "Waiting ${retry_delay}s before retry...");
                     my $remaining = $retry_delay;
@@ -1006,6 +1006,13 @@ sub process_input {
                         my $chunk = ($remaining > 1) ? 1 : $remaining;
                         sleep($chunk);
                         $remaining -= $chunk;
+                        
+                        # Check for user interrupt between sleep chunks
+                        if ($self->_check_for_user_interrupt($session)) {
+                            log_info('WorkflowOrchestrator', "Retry wait interrupted by user");
+                            $self->_handle_interrupt($session, \@messages);
+                            last;
+                        }
                     }
                     log_debug('WorkflowOrchestrator', "Retry delay complete, sending request...");
                 }
@@ -1542,7 +1549,7 @@ sub process_input {
             # Execute tools in classified order with index tracking
             for my $i (0..$#ordered_tool_calls) {
                 # Check for user interrupt between tool executions
-                # This allows ESC to abort remaining tools mid-iteration
+                # This allows any keypress to abort remaining tools mid-iteration
                 if ($self->{_interrupt_pending} || $self->_check_and_handle_interrupt($session, \@messages)) {
                     log_info('WorkflowOrchestrator', "Interrupt detected between tool executions, skipping remaining tools");
                     last;  # Break out of tool execution loop
@@ -1959,7 +1966,7 @@ sub _execute_tool {
 =head2 _check_and_handle_interrupt
 
 Combined interrupt check + handle for use at multiple points during iteration.
-Checks for ESC key press and if detected, adds interrupt message to conversation
+Checks for any keypress and if detected, adds interrupt message to conversation
 and sets the _interrupt_pending flag to short-circuit remaining work.
 
 Arguments:
@@ -1990,7 +1997,11 @@ sub _check_and_handle_interrupt {
 
 =head2 _check_for_user_interrupt
 
-Check for ESC key press (user interrupt) non-blocking.
+Check for any keypress (user interrupt) non-blocking.
+
+Any keypress during agent execution triggers an interrupt. This is more
+reliable than ESC-only detection since terminal escape sequences can be
+ambiguous and ESC may be consumed by the terminal multiplexer.
 
 Arguments:
 - $session: Session object (to check and set interrupt flag)
@@ -2033,9 +2044,20 @@ sub _check_for_user_interrupt {
         return 0;
     }
     
-    # Check for ESC key (character code 27 = 0x1b)
-    if (defined $key && ord($key) == 27) {
-        log_info('WorkflowOrchestrator', "User interrupt detected (ESC key pressed)");
+    # Any keypress triggers an interrupt
+    if (defined $key) {
+        my $key_desc = (ord($key) == 27) ? 'ESC' : 
+                       (ord($key) < 32)  ? sprintf('Ctrl+%c', ord($key) + 64) :
+                       "'$key'";
+        log_info('WorkflowOrchestrator', "User interrupt detected ($key_desc key pressed)");
+        
+        # Drain any remaining buffered input (e.g. escape sequences)
+        eval {
+            ReadMode(1);
+            while (defined(my $extra = ReadKey(-1))) { }
+            ReadMode(0);
+        };
+        ReadMode(0);
         
         # Set interrupt flag in session
         if ($session && $session->state()) {
