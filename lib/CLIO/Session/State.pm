@@ -116,6 +116,24 @@ sub save {
     }
     
     # Prepare data to save
+    # Safety net: ensure session has a name if it has user messages
+    # This catches edge cases where AI marker wasn't included and
+    # the Chat.pm fallback didn't fire (e.g., interrupted sessions)
+    if (!$self->{session_name} && $self->{history} && @{$self->{history}}) {
+        for my $msg (@{$self->{history}}) {
+            next unless ref($msg) eq 'HASH';
+            next unless ($msg->{role} || '') eq 'user';
+            my $text = $msg->{content} || '';
+            next unless length($text) > 0;
+            my $name = _generate_fallback_name($text);
+            if ($name) {
+                $self->{session_name} = $name;
+                log_debug('State', "Generated fallback session name: $name");
+            }
+            last;
+        }
+    }
+
     my $data = {
         history => $self->{history},
         stm     => $self->{stm}->{history},
@@ -825,6 +843,42 @@ sub get_billing_summary {
         total_tokens => $self->{billing}{total_tokens},
         requests => $self->{billing}{requests},
     };
+}
+
+
+=head2 _generate_fallback_name($text)
+
+Generate a concise session name from user input text using simple truncation.
+Used as a safety net when the AI doesn't provide a session title marker.
+
+Returns a string of up to 50 characters, truncated at a word boundary.
+
+=cut
+
+sub _generate_fallback_name {
+    my ($text) = @_;
+    
+    return undef unless defined $text && length($text) > 0;
+    
+    my $name = $text;
+    $name =~ s/^\s+//;
+    $name =~ s/\s+$//;
+    $name =~ s/\s+/ /g;
+    
+    # Strip common filler phrases
+    $name =~ s/^(?:hey|hi|hello|please|can you|could you|i want to|i need to|i'd like to|let's)\s+//i;
+    
+    $name = ucfirst($name);
+    
+    # Truncate to ~50 chars at word boundary
+    if (length($name) > 50) {
+        $name = substr($name, 0, 50);
+        $name =~ s/\s+\S*$//;
+        $name .= '...' if length($name) > 0;
+    }
+    
+    return undef if !defined($name) || length($name) < 3;
+    return $name;
 }
 
 1;

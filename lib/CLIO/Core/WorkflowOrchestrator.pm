@@ -1217,6 +1217,21 @@ sub process_input {
         # Check if AI requested tool calls (structured or text-based)
         my $assistant_msg_pending = undef;  # Will be set if we need delayed save
         
+        # Extract session naming marker from response content (regardless of tool calls)
+        # The AI may include the marker in its first response alongside tool calls
+        if ($session && $session->can('session_name') && !$session->session_name()) {
+            my $content = $api_response->{content} // '';
+            if ($content =~ s/\s*<!--session:\{[^}]*"title"\s*:\s*"([^"]{3,80})"[^}]*\}-->\s*//s) {
+                my $title = $1;
+                $title =~ s/^\s+|\s+$//g;
+                if (length($title) >= 3) {
+                    $session->session_name($title);
+                    $api_response->{content} = $content;
+                    log_info('WorkflowOrchestrator', "Session named by AI: $title");
+                }
+            }
+        }
+
         if ($api_response->{tool_calls} && @{$api_response->{tool_calls}}) {
             # Validate tool_calls arguments JSON before adding to history
             # This prevents malformed JSON from contaminating conversation history
@@ -1834,6 +1849,19 @@ sub process_input {
         # Clean up response content
         my $final_content = $api_response->{content} || '';
         
+        # Extract session naming marker before any other cleanup
+        # The AI includes <!--session:{"title":"..."}-->  in its first response
+        if ($session && $session->can('session_name') && !$session->session_name()) {
+            if ($final_content =~ s/\s*<!--session:\{[^}]*"title"\s*:\s*"([^"]{3,80})"[^}]*\}-->\s*//s) {
+                my $title = $1;
+                $title =~ s/^\s+|\s+$//g;
+                if (length($title) >= 3) {
+                    $session->session_name($title);
+                    log_info('WorkflowOrchestrator', "Session named by AI: $title");
+                }
+            }
+        }
+
         # Remove conversation tags if present
         $final_content =~ s/^\[conversation\]//;
         $final_content =~ s/\[\/conversation\]$//;
