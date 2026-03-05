@@ -501,7 +501,8 @@ sub get_current_model {
     
     # Fallback (should never happen if config is properly initialized)
     log_warning('APIManager', "No model in config, using default");
-    return 'gpt-4';
+    require CLIO::Providers;
+    return CLIO::Providers::DEFAULT_MODEL();
 }
 
 # Get current provider - reads from Config (PUBLIC method)
@@ -526,101 +527,10 @@ sub get_current_provider {
 sub get_endpoint_config {
     my ($self) = @_;
     
-    # Get provider name from config
     my $provider_name = $self->{config}->get('provider') || 'openai';
     
-    # Endpoint-specific configurations
-    my %endpoint_configs = (
-        'openai' => {
-            auth_header => 'Authorization',
-            auth_value => "Bearer $self->{api_key}",
-            path_suffix => '/chat/completions',
-            temperature_range => [0.0, 2.0],
-            supports_tools => 1
-        },
-        'github_copilot' => {
-            auth_header => 'Authorization',
-            auth_value => "Bearer $self->{api_key}",
-            path_suffix => '',  # Endpoint selected dynamically based on model
-            temperature_range => [0.0, 1.0],
-            supports_tools => 1,
-            requires_copilot_headers => 1
-        },
-        'dashscope-cn' => {
-            auth_header => 'Authorization',
-            auth_value => "Bearer $self->{api_key}",
-            path_suffix => '/chat/completions',
-            temperature_range => [0.0, 2.0],
-            supports_tools => 1
-        },
-        'qwen' => {
-            auth_header => 'Authorization',
-            auth_value => "Bearer $self->{api_key}",
-            path_suffix => '/chat/completions',
-            temperature_range => [0.0, 2.0],
-            supports_tools => 1
-        },
-        'dashscope-intl' => {
-            auth_header => 'Authorization',
-            auth_value => "Bearer $self->{api_key}",
-            path_suffix => '/chat/completions',
-            temperature_range => [0.0, 2.0],
-            supports_tools => 1
-        },
-        'sam' => {
-            auth_header => 'Authorization',
-            auth_value => "Bearer $self->{api_key}",
-            path_suffix => '',  # Path already included in endpoint URL
-            temperature_range => [0.0, 2.0],
-            supports_tools => 1,
-            requires_sam_config => 1
-        },
-        'claude' => {
-            auth_header => 'Authorization',
-            auth_value => "Bearer $self->{api_key}",
-            path_suffix => '/messages',
-            temperature_range => [0.0, 1.0],
-            supports_tools => 1
-        },
-        'deepseek' => {
-            auth_header => 'Authorization',
-            auth_value => "Bearer $self->{api_key}",
-            path_suffix => '/chat/completions',
-            temperature_range => [0.0, 2.0],
-            supports_tools => 1
-        },
-        'openrouter' => {
-            auth_header => 'Authorization',
-            auth_value => "Bearer $self->{api_key}",
-            path_suffix => '',  # Path already included in endpoint URL
-            temperature_range => [0.0, 2.0],
-            supports_tools => 1,
-            openrouter => 1,  # Flag for OpenRouter-specific features (reasoning params, etc.)
-        },
-        'ollama' => {
-            auth_header => 'Authorization',
-            auth_value => "Bearer $self->{api_key}",
-            path_suffix => '',  # Path already in URL
-            temperature_range => [0.0, 2.0],
-            supports_tools => 0
-        },
-        'google' => {
-            auth_header => 'Authorization',
-            auth_value => "Bearer $self->{api_key}",
-            path_suffix => '/openai/chat/completions',  # Google OpenAI-compatible endpoint
-            temperature_range => [0.0, 2.0],
-            supports_tools => 1
-        },
-    );
-    
-    # Return config for current provider, or generic config
-    return $endpoint_configs{$provider_name} || {
-        auth_header => 'Authorization',
-        auth_value => "Bearer $self->{api_key}",
-        path_suffix => '/chat/completions',
-        temperature_range => [0.0, 2.0],
-        supports_tools => 1
-    };
+    require CLIO::Providers;
+    return CLIO::Providers::build_endpoint_config($provider_name, $self->{api_key});
 }
 
 # Validate and adapt request parameters for specific endpoints
@@ -1392,40 +1302,8 @@ sub _get_endpoint_config_for_provider {
     
     $api_key ||= '';
     
-    # Build endpoint-specific config (same structure as get_endpoint_config)
-    my %configs = (
-        'github_copilot' => {
-            auth_header => 'Authorization',
-            auth_value => "Bearer $api_key",
-            path_suffix => '',
-            temperature_range => [0.0, 1.0],
-            supports_tools => 1,
-            requires_copilot_headers => 1
-        },
-        'openrouter' => {
-            auth_header => 'Authorization',
-            auth_value => "Bearer $api_key",
-            path_suffix => '',
-            temperature_range => [0.0, 2.0],
-            supports_tools => 1,
-            openrouter => 1,  # Flag for OpenRouter-specific features (reasoning params, etc.)
-        },
-        'google' => {
-            auth_header => 'Authorization',
-            auth_value => "Bearer $api_key",
-            path_suffix => '/openai/chat/completions',  # Google OpenAI-compatible endpoint
-            temperature_range => [0.0, 2.0],
-            supports_tools => 1
-        },
-    );
-    
-    return $configs{$provider_name} || {
-        auth_header => 'Authorization',
-        auth_value => "Bearer $api_key",
-        path_suffix => '/chat/completions',
-        temperature_range => [0.0, 2.0],
-        supports_tools => 1
-    };
+    require CLIO::Providers;
+    return CLIO::Providers::build_endpoint_config($provider_name, $api_key);
 }
 
 # Helper: Prepare and trim messages
