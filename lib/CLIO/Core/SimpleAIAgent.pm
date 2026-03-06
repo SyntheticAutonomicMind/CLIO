@@ -55,6 +55,7 @@ sub new {
             skip_ltm => $self->{skip_ltm},
             broker_client => $self->{broker_client},  # Pass broker client to orchestrator
             non_interactive => $self->{non_interactive},  # Pass non-interactive mode
+            max_iterations => $self->{api}->{config}->get('max_iterations'),
         );
         log_debug('SimpleAIAgent', "Orchestrator initialized in constructor");
     };
@@ -209,6 +210,7 @@ sub process_user_request {
                 spinner => $context->{spinner},  # Forward spinner for interactive tools
                 skip_custom => $self->{skip_custom},
                 skip_ltm => $self->{skip_ltm},
+                max_iterations => $self->{api}->{config}->get('max_iterations'),
             );
         }
         

@@ -78,7 +78,7 @@ sub new {
     my $self = {
         api_manager => $args{api_manager},
         session => $args{session},
-        max_iterations => $args{max_iterations} || 500,  # Increased from 10 to support complex coding tasks
+        max_iterations => $args{max_iterations} // 0,  # 0 = unlimited; set via /api set max_iterations N
         debug => $args{debug} || 0,
         ui => $args{ui},  # Store UI reference for buffer flushing
         spinner => $args{spinner},  # Store spinner for interactive tools (user_collaboration)
@@ -464,7 +464,8 @@ sub process_input {
     my $session_error_count = $session->{_error_count} // 0;
     my $max_session_errors = 10;  # Hard limit per request processing
     
-    while ($iteration < $self->{max_iterations}) {
+    my $max_iter = $self->{max_iterations};
+    while (!$max_iter || $iteration < $max_iter) {
         $iteration++;
         
         # Clear interrupt pending flag at start of each iteration
@@ -1938,8 +1939,8 @@ sub process_input {
     }) if $self->{process_stats};
     
     my $error_msg = sprintf(
-        "Maximum iterations (%d) reached after %.1fs. " .
-        "The task may require more iterations - you can increase the limit in config or try breaking the task into smaller steps.",
+        "Iteration limit (%d) reached after %.1fs. " .
+        "To remove the limit, run: /api set max_iterations 0",
         $self->{max_iterations},
         $elapsed_time
     );
