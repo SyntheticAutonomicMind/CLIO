@@ -7,6 +7,7 @@ use strict;
 use warnings;
 use utf8;
 use CLIO::Core::Logger qw(should_log log_debug log_info log_warning);
+use CLIO::Memory::TokenEstimator qw(estimate_tokens);
 
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
@@ -108,7 +109,7 @@ sub validate_and_truncate {
     log_debug('MessageValidator', "Token budget: max=$max_prompt, tools=$tool_tokens, effective=$effective_limit");
     
     # Estimate token usage
-    my $estimated_tokens = _estimate_tokens($messages, $token_ratio);
+    my $estimated_tokens = _estimate_tokens($messages);
     
     if ($estimated_tokens <= $effective_limit) {
         log_debug('MessageValidator', "Token validation: $estimated_tokens / $effective_limit tokens (OK)");
@@ -175,7 +176,7 @@ sub validate_and_truncate {
     push @truncated, @validated;
     
     if (should_log('DEBUG')) {
-        my $final_tokens = _estimate_tokens(\@truncated, 2.5);
+        my $final_tokens = _estimate_tokens(\@truncated);
         log_debug('MessageValidator', "Truncated: " . scalar(@$messages) . " -> " . scalar(@truncated) . 
             " messages, $final_tokens tokens");
     }
@@ -339,16 +340,15 @@ sub _calculate_tool_tokens {
 }
 
 sub _estimate_tokens {
-    my ($messages, $ratio) = @_;
-    $ratio ||= 2.5;
-    
+    my ($messages) = @_;
+
     my $total = 0;
     for my $msg (@$messages) {
-        $total += int(length($msg->{content} || '') / $ratio);
+        $total += estimate_tokens($msg->{content} || '');
         if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
             for my $tc (@{$msg->{tool_calls}}) {
-                my $json = eval { require JSON::PP; JSON::PP::encode_json($tc) };
-                $total += int(length($json || '') / $ratio);
+                my $json = eval { encode_json($tc) };
+                $total += estimate_tokens($json || '');
             }
         }
         $total += 50 if $msg->{role} && $msg->{role} eq 'tool';

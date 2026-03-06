@@ -7,6 +7,9 @@ use strict;
 use warnings;
 use utf8;
 use POSIX qw(ceil);
+use Exporter 'import';
+
+our @EXPORT_OK = qw(estimate_tokens);
 
 =head1 NAME
 
