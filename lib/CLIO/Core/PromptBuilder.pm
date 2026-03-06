@@ -417,6 +417,7 @@ sub generate_ltm_section {
     }
 
     $section .= "_These patterns are project-specific and should inform your approach to similar tasks._\n";
+    $section .= "\n_After context trimming, use these patterns plus `memory_operations(recall_sessions)` to recover context instead of reading handoff documents._\n";
 
     return $section;
 }

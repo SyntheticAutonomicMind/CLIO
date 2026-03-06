@@ -705,9 +705,13 @@ sub trim_context {
         role => 'system',
         content => "[CONTEXT TRIM: $dropped_count messages archived]\n" .
                    "Token limit approached. Older messages moved to YaRN archive.\n" .
-                   "Recent $keep_recent messages preserved. To recover archived context:\n" .
-                   "  memory_operations(operation: 'recall_sessions', query: '...')\n" .
-                   "All work preserved in session history file.",
+                   "Recent $keep_recent messages preserved.\n\n" .
+                   "To recover context, use these in order:\n" .
+                   "1. Your LTM patterns (already in system prompt) have project knowledge\n" .
+                   "2. memory_operations(operation: 'retrieve', key: 'session_progress') for recent progress\n" .
+                   "3. memory_operations(operation: 'recall_sessions', query: '<keywords>') for session history\n" .
+                   "4. git log and todo_operations(operation: 'read') to verify current state\n" .
+                   "DO NOT read handoff documents in ai-assisted/ - use the tools above instead.",
         _importance => 0.5,  # Medium importance - should be retained in next trim
     };
     

@@ -444,16 +444,19 @@ sub recall_sessions {
     my $result;
     eval {
         # Find sessions directory - ALWAYS use project-local .clio/sessions
-        # Sessions are project-scoped, not global
         my $sessions_dir = '.clio/sessions';
         
         return $self->error_result("Sessions directory not found") unless -d $sessions_dir;
+        
+        # Extract keywords from query for fuzzy matching
+        my @keywords = _extract_keywords($query);
+        my $query_lc = lc($query);
         
         # Get all session files sorted by modification time (newest first)
         opendir my $dh, $sessions_dir or croak "Cannot open $sessions_dir: $!";
         my @session_files = 
             map { $_->[0] }
-            sort { $b->[1] <=> $a->[1] }  # Sort by mtime descending (newest first)
+            sort { $b->[1] <=> $a->[1] }
             map { 
                 my $path = File::Spec->catfile($sessions_dir, $_);
                 [$path, (stat($path))[9] || 0]
@@ -462,22 +465,17 @@ sub recall_sessions {
             readdir($dh);
         closedir $dh;
         
-        # Limit number of sessions to search
         @session_files = @session_files[0 .. ($max_sessions - 1)] 
             if @session_files > $max_sessions;
         
-        my @matches;
+        my @scored_matches;
         my $sessions_searched = 0;
         
         SESSION: for my $session_path (@session_files) {
-            last if @matches >= $max_results;
-            
-            # Extract session ID from path
             my $session_id = $session_path;
-            $session_id =~ s/.*[\/\\]//;  # Remove directory
-            $session_id =~ s/\.json$//;    # Remove extension
+            $session_id =~ s/.*[\/\\]//;
+            $session_id =~ s/\.json$//;
             
-            # Read session file
             my $json;
             eval {
                 open my $fh, '<', $session_path or croak "Cannot read: $!";
@@ -487,57 +485,105 @@ sub recall_sessions {
             };
             next SESSION if $@;
             
-            # Parse JSON
             my $session_data = eval { decode_json($json) };
             next SESSION unless $session_data && $session_data->{history};
             
             $sessions_searched++;
             
-            # Search through history
+            # Check session title/metadata for matches (boost)
+            my $session_title = $session_data->{title} || '';
+            my $title_boost = 0;
+            if ($session_title) {
+                my $title_lc = lc($session_title);
+                $title_boost = 2.0 if $title_lc =~ /\Q$query_lc\E/;
+                if (!$title_boost) {
+                    for my $kw (@keywords) {
+                        $title_boost += 0.5 if $title_lc =~ /\Q$kw\E/;
+                    }
+                }
+            }
+            
             for my $i (0 .. $#{$session_data->{history}}) {
-                last SESSION if @matches >= $max_results;
-                
                 my $msg = $session_data->{history}[$i];
                 next unless $msg && $msg->{content};
                 
-                # Skip if content is too short or is a system message
                 my $role = $msg->{role};
-                $role = $role->{role} if ref($role) eq 'HASH';  # Handle nested role
+                $role = $role->{role} if ref($role) eq 'HASH';
                 next if $role && $role eq 'system';
                 
                 my $content = $msg->{content};
-                $content = '' if ref($content);  # Skip non-string content
+                $content = '' if ref($content);
+                next unless length($content) > 10;
                 
-                # Check if query matches
-                if ($content =~ /\Q$query\E/i) {
-                    # Extract context around the match
-                    my $match_pos = index(lc($content), lc($query));
-                    my $start = $match_pos > 100 ? $match_pos - 100 : 0;
-                    my $context_text = substr($content, $start, 500);
-                    $context_text = "..." . $context_text if $start > 0;
-                    $context_text .= "..." if length($content) > $start + 500;
-                    
-                    push @matches, {
-                        session_id => $session_id,
-                        role => $role || 'unknown',
-                        message_index => $i,
-                        preview => $context_text,
-                        match_query => $query,
-                    };
+                my $content_lc = lc($content);
+                
+                # Score this message
+                my $score = 0;
+                
+                # Exact phrase match (highest value)
+                if ($content_lc =~ /\Q$query_lc\E/) {
+                    $score += 3.0;
                 }
+                
+                # Keyword matching - count how many keywords hit
+                my $keyword_hits = 0;
+                for my $kw (@keywords) {
+                    if ($content_lc =~ /\Q$kw\E/) {
+                        $keyword_hits++;
+                        $score += 1.0;
+                    }
+                }
+                
+                # Bonus for high keyword density (most keywords matched)
+                if (@keywords > 1 && $keyword_hits >= @keywords * 0.7) {
+                    $score += 1.5;  # Most keywords found together
+                }
+                
+                # Add title boost
+                $score += $title_boost;
+                
+                # Boost assistant messages with tool results (more informative)
+                $score += 0.3 if $role && $role eq 'assistant';
+                
+                # Boost user messages (contain intent)
+                $score += 0.2 if $role && $role eq 'user';
+                
+                next unless $score > 0;
+                
+                # Extract best context snippet around the match
+                my $snippet = _extract_best_snippet($content, $query_lc, \@keywords, 600);
+                
+                push @scored_matches, {
+                    session_id => $session_id,
+                    session_title => $session_title || undef,
+                    role => $role || 'unknown',
+                    message_index => $i,
+                    preview => $snippet,
+                    score => $score,
+                    keyword_hits => $keyword_hits,
+                    match_query => $query,
+                };
             }
         }
         
+        # Sort by score descending, take top N
+        @scored_matches = sort { $b->{score} <=> $a->{score} } @scored_matches;
+        my @top_matches = @scored_matches > $max_results 
+            ? @scored_matches[0 .. ($max_results - 1)] 
+            : @scored_matches;
+        
         my $action_desc = "searched $sessions_searched sessions for '$query' (" . 
-                          scalar(@matches) . " matches)";
+                          scalar(@top_matches) . " matches, " . 
+                          scalar(@scored_matches) . " total candidates)";
         
         $result = $self->success_result(
-            \@matches,
+            \@top_matches,
             action_description => $action_desc,
             query => $query,
+            keywords => \@keywords,
             sessions_searched => $sessions_searched,
             total_sessions => scalar(@session_files),
-            matches_found => scalar(@matches),
+            matches_found => scalar(@top_matches),
         );
     };
     
@@ -546,6 +592,81 @@ sub recall_sessions {
     }
     
     return $result;
+}
+
+=head2 _extract_keywords
+
+Extract meaningful keywords from a search query, filtering stop words.
+
+=cut
+
+sub _extract_keywords {
+    my ($query) = @_;
+    
+    my %stop_words = map { $_ => 1 } qw(
+        a an the is are was were be been being
+        in on at to for of by with from as
+        and or but not no nor so yet
+        it its this that these those
+        i me my we us our you your he she they them
+        do does did have has had will would should could
+        what where when how why which who whom
+        all any some each every
+        very much more most just also too
+    );
+    
+    # Split on non-word characters, lowercase, filter
+    my @words = grep { 
+        length($_) >= 2 && !$stop_words{$_} 
+    } map { lc($_) } split(/[\s\-_.,;:!?()\[\]{}'"\/\\]+/, $query);
+    
+    # Deduplicate preserving order
+    my %seen;
+    @words = grep { !$seen{$_}++ } @words;
+    
+    return @words;
+}
+
+=head2 _extract_best_snippet
+
+Extract the most relevant context snippet from content around keyword matches.
+
+=cut
+
+sub _extract_best_snippet {
+    my ($content, $query_lc, $keywords, $max_len) = @_;
+    
+    $max_len ||= 600;
+    my $content_lc = lc($content);
+    
+    # Try exact query match position first
+    my $best_pos = index($content_lc, $query_lc);
+    
+    # If no exact match, find the position with the densest keyword cluster
+    if ($best_pos < 0 && $keywords && @$keywords) {
+        my @positions;
+        for my $kw (@$keywords) {
+            my $pos = index($content_lc, $kw);
+            push @positions, $pos if $pos >= 0;
+        }
+        
+        if (@positions) {
+            # Use median position as center
+            @positions = sort { $a <=> $b } @positions;
+            $best_pos = $positions[int(@positions / 2)];
+        }
+    }
+    
+    $best_pos = 0 if $best_pos < 0;
+    
+    # Center snippet around best position
+    my $half = int($max_len / 2);
+    my $start = $best_pos > $half ? $best_pos - $half : 0;
+    my $snippet = substr($content, $start, $max_len);
+    $snippet = "..." . $snippet if $start > 0;
+    $snippet .= "..." if length($content) > $start + $max_len;
+    
+    return $snippet;
 }
 
 =head2 add_discovery
