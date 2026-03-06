@@ -62,6 +62,8 @@ use constant DEFAULT_CONFIG => {
     redact_level => 'pii',      # Redaction level: strict, standard, api_permissive, pii, off (default: pii)
     # Reasoning/thinking display
     show_thinking => 0,         # Show model's reasoning/thinking output (default: off)
+    # Agent iteration limit (0 = unlimited)
+    max_iterations => 0,
     # GitHub Copilot API version headers (update to match latest vscode-copilot-chat)
     editor_version => 'vscode/2.0.0',  # Editor version for API requests
     plugin_version => 'copilot-chat/0.38.0',  # Plugin version for API requests
