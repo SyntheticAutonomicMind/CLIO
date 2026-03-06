@@ -26,7 +26,7 @@ for my $test (@tests) {
     print "\nRunning: $test\n";
     print "-" x 60 . "\n";
     
-    my $result = system("perl $test_path");
+    my $result = system("perl -I$RealBin/../../lib $test_path");
     
     if ($result == 0) {
         print "\n[OK] $test PASSED\n";
