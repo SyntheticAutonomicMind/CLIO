@@ -13,6 +13,9 @@ use FindBin;
 use Carp qw(croak);
 use File::Spec;
 use File::Path qw(make_path);
+use Exporter 'import';
+
+our @EXPORT_OK = qw(expand_tilde);
 
 =head1 NAME
 
@@ -216,6 +219,24 @@ Returns: Absolute path to styles directory
 sub get_styles_dir {
     my $base = get_base_dir();
     return File::Spec->catdir($base, 'styles');
+}
+
+=head2 expand_tilde($path)
+
+Expand a leading tilde in a path to the user's home directory.
+
+Arguments:
+- $path: Path that may start with ~/
+
+Returns: Path with ~ replaced by $ENV{HOME}
+
+=cut
+
+sub expand_tilde {
+    my ($path) = @_;
+    return $path unless defined $path;
+    $path =~ s{^~/}{$ENV{HOME}/} if $ENV{HOME};
+    return $path;
 }
 
 =head2 get_themes_dir

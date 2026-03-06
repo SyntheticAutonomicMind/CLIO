@@ -12,6 +12,7 @@ use CLIO::Core::Logger qw(log_debug log_warning);
 use feature 'say';
 use File::Spec;
 use Cwd qw(abs_path realpath);
+use CLIO::Util::PathResolver qw(expand_tilde);
 
 =head1 NAME
 
@@ -162,11 +163,11 @@ sub resolvePath {
     my ($self, $path, $working_directory) = @_;
     
     # Expand tilde first
-    $path =~ s/^~/$ENV{HOME}/;
+    $path = expand_tilde($path);
     
     # If relative path with working directory, resolve first
     if ($working_directory && $path !~ m{^/}) {
-        $working_directory =~ s/^~/$ENV{HOME}/;
+        $working_directory = expand_tilde($working_directory);
         $path = File::Spec->rel2abs($path, $working_directory);
     }
     

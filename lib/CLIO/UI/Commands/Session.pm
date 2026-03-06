@@ -11,6 +11,7 @@ binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 
 use Carp qw(croak);
+use CLIO::Util::PathResolver qw(expand_tilde);
 use CLIO::Core::Logger qw(should_log log_info log_debug log_warning);
 
 =head1 NAME
@@ -450,7 +451,7 @@ sub _export_session {
     $filename .= '.html' unless $filename =~ /\.html?$/i;
     
     # Expand tilde to home directory
-    $filename =~ s/^~/$ENV{HOME}/;
+    $filename = expand_tilde($filename);
     
     eval {
         require CLIO::Session::Export;

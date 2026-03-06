@@ -12,6 +12,7 @@ binmode(STDERR, ':encoding(UTF-8)');
 
 use Carp qw(croak);
 use File::Spec;
+use CLIO::Util::PathResolver qw(expand_tilde);
 
 =head1 NAME
 
@@ -132,7 +133,7 @@ sub handle_config_command {
         if ($arg1) {
             # Set working directory
             my $dir = $arg1;
-            $dir =~ s/^~/$ENV{HOME}/;  # Expand tilde
+            $dir = expand_tilde($dir);
             
             unless (-d $dir) {
                 $self->display_error_message("Directory does not exist: $dir");

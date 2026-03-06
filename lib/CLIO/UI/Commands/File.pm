@@ -12,6 +12,7 @@ binmode(STDERR, ':encoding(UTF-8)');
 
 use Carp qw(croak);
 use File::Spec;
+use CLIO::Util::PathResolver qw(expand_tilde);
 
 =head1 NAME
 
@@ -289,7 +290,7 @@ sub handle_edit_command {
     }
     
     # Expand tilde to home directory
-    $filepath =~ s/^~/$ENV{HOME}/;
+    $filepath = expand_tilde($filepath);
     
     # Make relative paths absolute if needed
     unless ($filepath =~ m{^/}) {
