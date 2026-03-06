@@ -13,7 +13,8 @@ use Carp qw(croak);
 use feature 'say';
 use File::Path qw(make_path);
 use File::Spec;
-use JSON::PP;
+use CLIO::Util::JSON qw(decode_json);
+use JSON::PP ();
 
 =head1 NAME
 

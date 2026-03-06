@@ -13,7 +13,7 @@ use File::Spec;
 use File::Path qw(make_path remove_tree);
 use File::Copy qw(copy);
 use File::Basename qw(dirname);
-use JSON::PP qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json);
 use Cwd qw(getcwd abs_path);
 use CLIO::Core::Logger qw(should_log log_debug);
 

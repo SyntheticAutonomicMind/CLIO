@@ -360,7 +360,7 @@ sub _cache_analysis {
     
     eval {
         open my $fh, '>', $cache_file;
-        print $fh JSON->new->pretty->encode($analysis);
+        print $fh JSON::PP->new->pretty->encode($analysis);
         close $fh;
     };
     

@@ -416,7 +416,7 @@ sub export_graph {
     $format ||= 'json';
     
     if ($format eq 'json') {
-        return JSON->new->pretty->encode({
+        return JSON::PP->new->pretty->encode({
             dependencies => $self->{dependencies},
             dependents => $self->{dependents},
             call_graph => $self->{call_graph},
