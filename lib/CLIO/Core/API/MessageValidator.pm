@@ -137,13 +137,21 @@ sub validate_and_truncate {
     
     my @remaining = @units[$start_unit .. $#units];
     
+    # Post-trim target: keep context at 50% of max to give headroom for the next burst
+    # of work before hitting the ceiling again. Using effective_limit (83% of max) caused
+    # immediate re-saturation on the very next large file read post-trim.
+    my $post_trim_keep_limit = int($max_prompt * 0.50);
+    $post_trim_keep_limit = $effective_limit if $post_trim_keep_limit < $effective_limit * 0.5;
+    $post_trim_keep_limit = 32000 if $post_trim_keep_limit < 32000;
+    log_debug('MessageValidator', "Post-trim keep target: $post_trim_keep_limit tokens (50% of $max_prompt)");
+
     for my $unit (reverse @remaining) {
         if ($unit->{is_orphan_tool_result}) {
             log_debug('MessageValidator', "Skipping orphan tool_result unit (tool_id: $unit->{orphan_tool_id})");
             next;
         }
         
-        if ($current_tokens + $unit->{tokens} <= $effective_limit) {
+        if ($current_tokens + $unit->{tokens} <= $post_trim_keep_limit) {
             unshift @conversation, @{$unit->{messages}};
             $current_tokens += $unit->{tokens};
             for my $id (keys %{$unit->{tool_call_ids} || {}}) {

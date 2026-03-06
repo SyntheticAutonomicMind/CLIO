@@ -229,132 +229,144 @@ Returns: Hashref with compressed summary message
 
 sub compress_messages {
     my ($self, $messages, %opts) = @_;
-    
+
     return undef unless $messages && ref($messages) eq 'ARRAY' && @$messages;
-    
+
     my $original_task = $opts{original_task} || '';
     my $message_count = scalar(@$messages);
-    
+
     log_debug('YaRN', "Compressing $message_count messages");
-    
-    # Extract key events from the conversation
-    my @events = ();
-    my @tool_operations = ();
-    my @decisions = ();
-    my @user_requests = ();
-    
+
+    # Extraction buckets
+    my @user_requests;
+    my @commits;
+    my @files_touched;
+    my @decisions;
+    my %tool_counts;
+
     for my $msg (@$messages) {
-        my $role = $msg->{role} || '';
+        my $role    = $msg->{role}    || '';
         my $content = $msg->{content} || '';
-        
-        # Extract user requests
+
         if ($role eq 'user') {
-            # Keep user messages concise but preserve intent
-            my $summary = substr($content, 0, 200);
-            $summary .= '...' if length($content) > 200;
+            my $summary = substr($content, 0, 300);
+            $summary .= '...' if length($content) > 300;
             push @user_requests, $summary;
         }
-        
-        # Extract agent actions
         elsif ($role eq 'assistant') {
-            # Summarize assistant responses
+            # Collaboration/decision messages
+            if ($content =~ /\[COLLABORATION\](.{1,300})/s) {
+                my $dec = $1;
+                $dec =~ s/\s+/ /g;
+                push @decisions, substr($dec, 0, 250);
+            }
+
+            # Tool calls - extract meaningful path/operation details
             if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
-                # Tool invocations
                 for my $tc (@{$msg->{tool_calls}}) {
-                    my $tool_name = $tc->{function}->{name} || 'unknown';
-                    push @tool_operations, "Used $tool_name";
+                    my $name     = $tc->{function}{name}      || 'unknown';
+                    my $args_str = $tc->{function}{arguments} || '{}';
+                    $tool_counts{$name}++;
+
+                    # Capture file paths for file_operations and apply_patch
+                    if ($name =~ /^(file_operations|apply_patch)$/) {
+                        while ($args_str =~ /"(?:path|new_path|old_path)"\s*:\s*"([^"]+)"/g) {
+                            push @files_touched, $1 unless $1 =~ /^\./;
+                        }
+                    }
                 }
-            } elsif (length($content) > 0) {
-                # Text responses - extract first sentence or key point
-                my $summary = $content;
-                if ($summary =~ /^(.{1,150}[.!?])/) {
-                    $summary = $1;
-                } else {
-                    $summary = substr($summary, 0, 150) . '...';
-                }
-                push @events, "Agent: $summary";
             }
         }
-        
-        # Extract tool results (keep very brief)
         elsif ($role eq 'tool') {
-            # Tool results usually contain data - just note that they completed
-            # Don't include actual results (too verbose)
-            push @tool_operations, "received result";
+            # Git commit results: [abc1234] Commit subject line
+            while ($content =~ /^\[([a-f0-9]{7,12})\]\s+(.{1,100})/mg) {
+                push @commits, "$1: $2";
+            }
+            # git log --oneline output
+            while ($content =~ /^([a-f0-9]{7,12})\s+(.{1,100})/mg) {
+                my $entry = "$1: $2";
+                push @commits, $entry unless grep { $_ eq $entry } @commits;
+            }
         }
     }
-    
-    # Build compressed summary
-    my @summary_parts = ();
-    
-    # Add compression metadata
-    push @summary_parts, "<thread_summary>";
-    push @summary_parts, "(Compressed $message_count previous messages to preserve context space)";
-    push @summary_parts, "";
-    
-    # Add original task if provided
+
+    # Deduplicate and limit
+    my %seen;
+    @files_touched = grep { !$seen{$_}++ } @files_touched;
+    @files_touched = @files_touched[0..29] if @files_touched > 30;
+    @commits       = do { my %s; grep { !$s{$_}++ } reverse @commits };
+    @commits       = @commits[0..14] if @commits > 15;
+    @user_requests = @user_requests[-5..-1] if @user_requests > 5;
+    @decisions     = @decisions[-3..-1]     if @decisions > 3;
+
+    # Build summary
+    my @parts;
+    push @parts, "<thread_summary>";
+    push @parts, "(Compressed $message_count messages to free context space)";
+    push @parts, "";
+
     if ($original_task) {
-        push @summary_parts, "Original task: $original_task";
-        push @summary_parts, "";
+        push @parts, "Original task: " . substr($original_task, 0, 300);
+        push @parts, "";
     }
-    
-    # Add user requests
+
     if (@user_requests) {
-        push @summary_parts, "User requests:";
-        for my $req (@user_requests) {
-            push @summary_parts, "- $req";
-        }
-        push @summary_parts, "";
+        push @parts, "Recent user requests:";
+        push @parts, "- $_" for @user_requests;
+        push @parts, "";
     }
-    
-    # Add tool operations summary
-    if (@tool_operations) {
-        # Deduplicate and count
-        my %tool_counts = ();
-        for my $op (@tool_operations) {
-            $tool_counts{$op}++;
-        }
-        
-        push @summary_parts, "Tools used:";
-        for my $tool (sort keys %tool_counts) {
-            my $count = $tool_counts{$tool};
-            push @summary_parts, "- $tool" . ($count > 1 ? " ($count times)" : "");
-        }
-        push @summary_parts, "";
+
+    if (@commits) {
+        push @parts, "Git commits made during compressed period:";
+        push @parts, "- $_" for @commits;
+        push @parts, "";
     }
-    
-    # Add key events
-    if (@events) {
-        push @summary_parts, "Key events:";
-        # Keep only most recent events (up to 5)
-        my @recent_events = @events > 5 ? @events[-5..-1] : @events;
-        for my $event (@recent_events) {
-            push @summary_parts, "- $event";
-        }
-        push @summary_parts, "";
+
+    if (@files_touched) {
+        push @parts, "Files created/modified:";
+        push @parts, "- $_" for @files_touched;
+        push @parts, "";
     }
-    
-    push @summary_parts, "</thread_summary>";
-    
-    my $summary_content = join("\n", @summary_parts);
-    
-    # Estimate tokens (rough approximation: chars / 2.5)
+
+    if (@decisions) {
+        push @parts, "Key decisions:";
+        push @parts, "- $_" for @decisions;
+        push @parts, "";
+    }
+
+    if (%tool_counts) {
+        push @parts, "Tool usage:";
+        for my $t (sort { $tool_counts{$b} <=> $tool_counts{$a} } keys %tool_counts) {
+            push @parts, "- $t: $tool_counts{$t} calls";
+        }
+        push @parts, "";
+    }
+
+    push @parts, "</thread_summary>";
+
+    my $summary_content = join("\n", @parts);
+
+    # Estimate token counts
     my $original_tokens = 0;
     for my $msg (@$messages) {
         $original_tokens += int(length($msg->{content} || '') / 2.5);
     }
     my $compressed_tokens = int(length($summary_content) / 2.5);
-    
-    log_debug('YaRN', "Compression: $original_tokens tokens -> $compressed_tokens tokens (" . sprintf("%.1f", 100 * ($original_tokens - $compressed_tokens) / $original_tokens) . "% reduction)");
-    
+
+    if ($original_tokens > 0) {
+        log_debug('YaRN', "Compression: $original_tokens -> $compressed_tokens tokens (" .
+            sprintf("%.1f", 100 * ($original_tokens - $compressed_tokens) / $original_tokens) . "% reduction)");
+    }
+
     return {
-        role => 'system',
+        role    => 'system',
         content => $summary_content,
         _metadata => {
-            compressed_count => $message_count,
-            original_tokens => $original_tokens,
-            compressed_tokens => $compressed_tokens,
-            compression_ratio => $compressed_tokens / $original_tokens,
+            compressed_count   => $message_count,
+            original_tokens    => $original_tokens,
+            compressed_tokens  => $compressed_tokens,
+            compression_ratio  => $original_tokens > 0
+                ? $compressed_tokens / $original_tokens : 0,
         },
     };
 }
