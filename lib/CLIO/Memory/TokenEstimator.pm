@@ -52,7 +52,10 @@ use constant TOOL_CALL_OVERHEAD    => 10;  # JSON structure of a tool_call
 
 # Context management threshold: trim at this percentage of max context
 # Leaves (1 - SAFE_CONTEXT_PERCENT) as safety margin for response + estimation error
-use constant SAFE_CONTEXT_PERCENT  => 0.58;
+# 0.75: proactive trim fires at 75% of max context (e.g., 150K of 200K).
+# Closes the gap with the reactive trim threshold (~83% effective), reducing
+# full-reset events. Tested against 107M-token session data (see scratch/CLIO_OPTIMIZATION_PLAN.md).
+use constant SAFE_CONTEXT_PERCENT  => 0.75;
 
 # Package-level learned ratio - updated from API response feedback
 # When undef, falls back to DEFAULT_CHARS_PER_TOKEN
