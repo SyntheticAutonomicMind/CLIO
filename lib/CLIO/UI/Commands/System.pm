@@ -75,13 +75,20 @@ sub handle_shell_command {
     $self->display_system_message("Type 'exit' to return to CLIO");
     $self->writeline("", markdown => 0);
     
-    system($ENV{SHELL} || '/bin/bash');
-    
-    # Restore terminal state after shell exits
-    # The shell may have changed terminal settings
+    # Reset terminal to normal mode before launching shell.
+    # ReadLine may have left it in raw mode - the shell must inherit
+    # normal mode so Ctrl-C sends SIGINT rather than literal bytes.
     eval {
         require CLIO::Compat::Terminal;
-        CLIO::Compat::Terminal::reset_terminal();  # Moderate reset: ReadMode + safe ANSI codes
+        CLIO::Compat::Terminal::ReadMode(0);
+    };
+    
+    system($ENV{SHELL} || '/bin/bash');
+    
+    # Restore terminal state after shell exits (shell may have changed settings)
+    eval {
+        require CLIO::Compat::Terminal;
+        CLIO::Compat::Terminal::reset_terminal();
     };
     
     $self->writeline("", markdown => 0);
