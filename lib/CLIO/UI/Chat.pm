@@ -1985,8 +1985,11 @@ sub request_collaboration {
         if ($response =~ /^\//) {
             log_debug('Chat', "Slash command in collaboration: $response");
             
-            # Process the command (but don't exit - return to collaboration prompt)
+            # Drop cbreak mode before running the command - interactive commands
+            # like /shell, /exec, /multiline need normal terminal input to work.
+            ReadMode(0);
             my ($continue, $ai_prompt) = $self->handle_command($response);
+            ReadMode(1);  # Re-enter cbreak for interrupt detection
             
             # If command requested exit, cancel collaboration
             if (!$continue) {
