@@ -6,6 +6,7 @@ package CLIO::UI::Commands::Session;
 use strict;
 use warnings;
 use utf8;
+use parent 'CLIO::UI::Commands::Base';
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 
@@ -121,18 +122,6 @@ sub auto_prune_sessions {
     return $deleted;
 }
 
-# Delegate display methods to chat
-sub display_command_header { shift->{chat}->display_command_header(@_) }
-sub display_section_header { shift->{chat}->display_section_header(@_) }
-sub display_key_value { shift->{chat}->display_key_value(@_) }
-sub display_command_row { shift->{chat}->display_command_row(@_) }
-sub display_list_item { shift->{chat}->display_list_item(@_) }
-sub display_system_message { shift->{chat}->display_system_message(@_) }
-sub display_error_message { shift->{chat}->display_error_message(@_) }
-sub writeline { shift->{chat}->writeline(@_) }
-sub display_success_message { shift->{chat}->display_success_message(@_) }
-sub display_paginated_list { shift->{chat}->display_paginated_list(@_) }
-sub colorize { shift->{chat}->colorize(@_) }
 
 =head2 handle_session_command($action, @args)
 
