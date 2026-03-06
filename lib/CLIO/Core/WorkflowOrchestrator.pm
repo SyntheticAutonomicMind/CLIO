@@ -785,12 +785,30 @@ sub process_input {
                     }
                     
                     if ($retry_count == 1) {
-                        # First retry: Keep last 50% of messages + first user message
-                        my $keep_count = int($original_count / 2);
-                        $keep_count = 10 if $keep_count < 10 && $original_count >= 10;  # Keep at least 10
-                        
-                        # Calculate starting index
-                        my $start_idx = $original_count - $keep_count;
+                        # First retry: Keep recent messages that fit in 40% of model context.
+                        # Token-budget based (not message-count) so a session that ran for
+                        # an hour past a handoff keeps the RECENT work, not the stale old work.
+                        my $_retry_caps = $self->{api_manager}
+                            ? ($self->{api_manager}->get_model_capabilities() || {}) : {};
+                        my $max_ctx = $_retry_caps->{max_prompt_tokens} || 128000;
+                        my $keep_budget = int($max_ctx * 0.40);   # 40% of context for recent work
+                        $keep_budget = 40000 if $keep_budget < 40000;
+
+                        # Walk messages from newest to oldest, count tokens, stop at budget
+                        my $kept_tokens = 0;
+                        my $start_idx = $original_count;  # start from end, walk backwards
+                        for (my $i = $original_count - 1; $i >= 0; $i--) {
+                            my $msg_tokens = int(length($non_system[$i]{content} || '') / 2.5) + 10;
+                            if ($kept_tokens + $msg_tokens <= $keep_budget) {
+                                $kept_tokens += $msg_tokens;
+                                $start_idx = $i;
+                            } else {
+                                last;
+                            }
+                        }
+                        # Always keep at least the last 10 messages
+                        my $min_start = $original_count - 10;
+                        $start_idx = $min_start if $start_idx > $min_start && $min_start >= 0;
                         $start_idx = 0 if $start_idx < 0;
                         
                         # Collect dropped messages for compression BEFORE trimming
@@ -2203,6 +2221,16 @@ sub _compress_dropped_for_recovery {
         }
         push @recovery_parts, "</recent_context>";
     }
+
+    # Add lightweight git context so agent knows what was committed/modified
+    # without needing to read handoff documentation
+    my $git_context = _get_git_recovery_context($session);
+    if ($git_context) {
+        push @recovery_parts, "";
+        push @recovery_parts, "<git_recovery>";
+        push @recovery_parts, $git_context;
+        push @recovery_parts, "</git_recovery>";
+    }
     
     return undef unless @recovery_parts;
     
@@ -2278,6 +2306,68 @@ sub _get_todo_recovery_context {
     }
     
     return $todo_context;
+}
+
+=head2 _record_turn_metrics($api_response, $session)
+
+=head2 _get_git_recovery_context
+
+Gets lightweight git state for recovery injection: recent commits and current
+working tree status. This prevents the agent from needing to read handoff
+documentation after a context trim to understand what was already committed.
+
+Arguments:
+- $session: Session object (used to find working directory)
+
+Returns: String with git context, or undef if not a git repo or git unavailable
+
+=cut
+
+sub _get_git_recovery_context {
+    my ($session) = @_;
+
+    my $working_dir;
+    eval {
+        $working_dir = $session->{working_directory} if ref($session);
+    };
+    $working_dir ||= '.';
+
+    my @parts = ();
+
+    # Recent commits (last 5) - tells agent what was completed
+    my $log = eval {
+        my $out = '';
+        open my $fh, '-|', 'git', '-C', $working_dir, 'log', '--oneline', '-5', '2>/dev/null'
+            or return undef;
+        while (<$fh>) { $out .= $_ }
+        close $fh;
+        $out;
+    };
+    if ($log && length($log) > 5) {
+        push @parts, "Recent commits:";
+        push @parts, $log;
+    }
+
+    # Working tree status - tells agent what's modified/staged
+    my $status = eval {
+        my $out = '';
+        open my $fh, '-|', 'git', '-C', $working_dir, 'status', '--short', '2>/dev/null'
+            or return undef;
+        while (<$fh>) { $out .= $_ }
+        close $fh;
+        $out;
+    };
+    if (defined $status) {
+        if (length($status) > 2) {
+            push @parts, "Modified/staged files:";
+            push @parts, $status;
+        } else {
+            push @parts, "Working tree: clean";
+        }
+    }
+
+    return undef unless @parts;
+    return join("\n", @parts);
 }
 
 =head2 _record_turn_metrics($api_response, $session)
