@@ -8,7 +8,8 @@ use warnings;
 use utf8;
 use base 'CLIO::Protocols::Handler';
 use MIME::Base64;
-use JSON::PP;
+use CLIO::Util::JSON qw(encode_json decode_json);
+use JSON::PP ();
 use File::Temp qw(tempfile);
 
 =head1 NAME

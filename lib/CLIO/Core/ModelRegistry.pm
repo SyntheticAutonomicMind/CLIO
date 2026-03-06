@@ -6,7 +6,6 @@ package CLIO::Core::ModelRegistry;
 use strict;
 use warnings;
 use utf8;
-use JSON::PP;
 
 =head1 NAME
 

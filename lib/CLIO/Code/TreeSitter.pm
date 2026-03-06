@@ -7,7 +7,6 @@ use strict;
 use warnings;
 use utf8;
 use File::Basename;
-use JSON::PP;
 
 =head1 NAME
 
