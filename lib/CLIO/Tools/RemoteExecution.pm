@@ -1661,7 +1661,6 @@ Key design decisions:
 
 =head1 SEE ALSO
 
-- CLIO::Protocols::RemoteDistribution - Multi-stage remote workflows
 - CLIO::Tools::Tool - Base tool class
 - ai-assisted/REMOTE_EXECUTION_DESIGN.md - Architecture documentation
 
