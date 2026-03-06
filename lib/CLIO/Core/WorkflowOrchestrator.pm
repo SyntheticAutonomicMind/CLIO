@@ -740,6 +740,10 @@ sub process_input {
                 }
                 # Special handling for token limit exceeded errors
                 elsif ($api_response->{error_type} && $api_response->{error_type} eq 'token_limit_exceeded') {
+                    # Checkpoint progress before trimming - creates recovery anchor
+                    _checkpoint_session_progress($session, \@tool_calls_made, $iteration)
+                        if $session;
+                    
                     # Trim conversation history to fit within model's context window
                     # Remove oldest messages while keeping system prompt, FIRST USER MESSAGE, and recent context
                     # Preserve tool_call/tool_result pairs to avoid orphans
@@ -1788,10 +1792,6 @@ sub process_input {
             # Save session after each iteration to prevent data loss
             # This ensures tool execution history is preserved even if process crashes mid-workflow
             # Performance impact: ~2-5ms per iteration (negligible vs multi-second AI response times)
-            # Benefits:
-            # - Long workflows: Preserve partial progress on crash/Ctrl-C
-            # - Batch operations: Never lose completed items in the batch
-            # - Complex tasks: Full history available for debugging/resume
             if ($session && $session->can('save')) {
                 eval {
                     $session->save();
@@ -1800,6 +1800,12 @@ sub process_input {
                 if ($@) {
                     log_warning('WorkflowOrchestrator', "Failed to save session after iteration: $@");
                 }
+            }
+            
+            # Checkpoint session progress to memory every 15 iterations
+            # This creates a recovery anchor the agent can use after context trim
+            if ($iteration % 15 == 0 && $session) {
+                _checkpoint_session_progress($session, \@tool_calls_made, $iteration);
             }
             
             # Print newline to separate tool output from next iteration
@@ -2232,7 +2238,35 @@ sub _compress_dropped_for_recovery {
         push @recovery_parts, $git_context;
         push @recovery_parts, "</git_recovery>";
     }
-    
+
+    # Add recovery session progress if stored in memory
+    my $progress_context = _get_memory_recovery_context($session);
+    if ($progress_context) {
+        push @recovery_parts, "";
+        push @recovery_parts, "<session_progress>";
+        push @recovery_parts, $progress_context;
+        push @recovery_parts, "</session_progress>";
+    }
+
+    # Add directive recovery guidance - tells the agent HOW to recover
+    push @recovery_parts, "";
+    push @recovery_parts, "<recovery_instructions>";
+    push @recovery_parts, "CONTEXT WAS TRIMMED - Your conversation history was compressed to free space.";
+    push @recovery_parts, "The summary above contains your prior work. To recover additional context:";
+    push @recovery_parts, "";
+    push @recovery_parts, "1. CHECK YOUR LTM PATTERNS (already injected in system prompt) - they contain";
+    push @recovery_parts, "   project-specific knowledge from all previous sessions";
+    push @recovery_parts, "2. USE memory_operations(operation: 'recall_sessions', query: '<keywords>')";
+    push @recovery_parts, "   to search past session history for specific details you need";
+    push @recovery_parts, "3. USE memory_operations(operation: 'retrieve', key: 'session_progress')";
+    push @recovery_parts, "   for the most recent session progress checkpoint";
+    push @recovery_parts, "4. USE git log, git diff, and todo_operations(operation: 'read') to verify state";
+    push @recovery_parts, "";
+    push @recovery_parts, "DO NOT read handoff documents in ai-assisted/ - that context is stale.";
+    push @recovery_parts, "The recovery data above plus your LTM patterns have current state.";
+    push @recovery_parts, "Resume your current task using the context provided.";
+    push @recovery_parts, "</recovery_instructions>";
+
     return undef unless @recovery_parts;
     
     my $recovery_content = join("\n", @recovery_parts);
@@ -2309,7 +2343,140 @@ sub _get_todo_recovery_context {
     return $todo_context;
 }
 
+=head2 _checkpoint_session_progress
+
+Saves a lightweight progress snapshot to .clio/memory/session_progress.md.
+Called periodically during long sessions and before context trim events.
+This creates a recovery anchor the agent can retrieve after context is trimmed.
+
+Arguments:
+- $session: Session object
+- $tool_calls_made: Arrayref of tool calls executed so far
+- $iteration: Current iteration number
+
+=cut
+
+sub _checkpoint_session_progress {
+    my ($session, $tool_calls_made, $iteration) = @_;
+
+    eval {
+        my $memory_dir = '.clio/memory';
+        unless (-d $memory_dir) {
+            require File::Path;
+            File::Path::make_path($memory_dir);
+        }
+
+        my @parts = ();
+        push @parts, "# Session Progress Checkpoint";
+        push @parts, "Updated: " . localtime();
+        push @parts, "Iteration: $iteration";
+        push @parts, "";
+
+        # Summarize tool calls made
+        if ($tool_calls_made && @$tool_calls_made) {
+            my %tool_summary;
+            my @recent_files;
+            for my $tc (@$tool_calls_made) {
+                $tool_summary{$tc->{tool} || 'unknown'}++;
+                if ($tc->{tool} && $tc->{tool} =~ /file_operations|apply_patch/ && $tc->{args}) {
+                    my $path = $tc->{args}{path} || '';
+                    push @recent_files, $path if $path && $path !~ /^\./;
+                }
+            }
+            push @parts, "## Tool Activity";
+            push @parts, "Total tool calls: " . scalar(@$tool_calls_made);
+            for my $t (sort { $tool_summary{$b} <=> $tool_summary{$a} } keys %tool_summary) {
+                push @parts, "- $t: $tool_summary{$t} calls";
+            }
+            push @parts, "";
+
+            # Recent files touched (deduplicated)
+            if (@recent_files) {
+                my %seen;
+                @recent_files = grep { !$seen{$_}++ } reverse @recent_files;
+                @recent_files = @recent_files[0..19] if @recent_files > 20;
+                push @parts, "## Files Touched";
+                push @parts, "- $_" for @recent_files;
+                push @parts, "";
+            }
+        }
+
+        # Include todo state
+        my $todo_ctx = _get_todo_recovery_context($session);
+        if ($todo_ctx) {
+            push @parts, "## Task State";
+            push @parts, $todo_ctx;
+            push @parts, "";
+        }
+
+        # Include git state
+        my $git_ctx = _get_git_recovery_context($session);
+        if ($git_ctx) {
+            push @parts, "## Git State";
+            push @parts, $git_ctx;
+            push @parts, "";
+        }
+
+        my $content = join("\n", @parts);
+
+        # Atomic write
+        my $file = "$memory_dir/session_progress.md";
+        my $temp = "$file.tmp.$$";
+        open my $fh, '>:encoding(UTF-8)', $temp or die "Cannot write: $!";
+        print $fh $content;
+        close $fh;
+        rename $temp, $file or die "Cannot rename: $!";
+
+        log_debug('WorkflowOrchestrator', "Session progress checkpoint saved (iteration $iteration, " . length($content) . " chars)");
+    };
+    if ($@) {
+        log_debug('WorkflowOrchestrator', "Failed to checkpoint session progress: $@");
+    }
+}
+
 =head2 _record_turn_metrics($api_response, $session)
+
+=head2 _get_memory_recovery_context
+
+Retrieves stored session progress from memory for context recovery.
+If the orchestrator has been checkpointing progress to session memory,
+this returns the most recent checkpoint.
+
+Arguments:
+- $session: Session object
+
+Returns: String with progress context, or undef if none stored
+
+=cut
+
+sub _get_memory_recovery_context {
+    my ($session) = @_;
+
+    return undef unless $session;
+
+    my $content;
+    eval {
+        my $memory_dir = '.clio/memory';
+        my $progress_file = "$memory_dir/session_progress.md";
+        if (-f $progress_file) {
+            open my $fh, '<:encoding(UTF-8)', $progress_file or return undef;
+            local $/;
+            $content = <$fh>;
+            close $fh;
+            # Only return if not stale (within last 2 hours)
+            my $mtime = (stat($progress_file))[9];
+            if (time() - $mtime > 7200) {
+                log_debug('WorkflowOrchestrator', "Session progress file is stale (> 2h old), skipping");
+                $content = undef;
+            }
+        }
+    };
+    if ($@) {
+        log_debug('WorkflowOrchestrator', "Could not read session progress for recovery: $@");
+    }
+
+    return $content;
+}
 
 =head2 _get_git_recovery_context
 
@@ -2338,7 +2505,7 @@ sub _get_git_recovery_context {
     # Recent commits (last 5) - tells agent what was completed
     my $log = eval {
         my $out = '';
-        open my $fh, '-|', 'git', '-C', $working_dir, 'log', '--oneline', '-5', '2>/dev/null'
+        open my $fh, '-|', "git -C \Q$working_dir\E log --oneline -5 2>/dev/null"
             or return undef;
         while (<$fh>) { $out .= $_ }
         close $fh;
@@ -2352,7 +2519,7 @@ sub _get_git_recovery_context {
     # Working tree status - tells agent what's modified/staged
     my $status = eval {
         my $out = '';
-        open my $fh, '-|', 'git', '-C', $working_dir, 'status', '--short', '2>/dev/null'
+        open my $fh, '-|', "git -C \Q$working_dir\E status --short 2>/dev/null"
             or return undef;
         while (<$fh>) { $out .= $_ }
         close $fh;
