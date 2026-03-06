@@ -13,6 +13,7 @@ use CLIO::Core::Logger qw(log_debug log_info log_warning);
 use parent 'CLIO::Tools::Tool';
 use File::Spec;
 use File::Basename;
+use CLIO::Util::PathResolver qw(expand_tilde);
 use File::Path qw(make_path);
 use Cwd 'abs_path';
 use Encode qw(decode);
@@ -519,7 +520,7 @@ sub _check_sandbox {
     $project_dir = realpath($project_dir) || abs_path($project_dir) || $project_dir;
     
     # Expand tilde in path
-    $path =~ s/^~/$ENV{HOME}/;
+    $path = expand_tilde($path);
     
     # Resolve path to absolute - handle relative paths
     my $resolved_path;

@@ -12,6 +12,7 @@ use CLIO::Core::Logger qw(log_info log_warning);
 use Carp qw(croak confess);
 use parent 'CLIO::Tools::Tool';
 use Cwd 'getcwd';
+use CLIO::Util::PathResolver qw(expand_tilde);
 use CLIO::Util::JSON qw(decode_json encode_json);
 use feature 'say';
 
@@ -583,7 +584,7 @@ sub _check_sandbox_path {
     $project_dir = realpath($project_dir) || abs_path($project_dir) || $project_dir;
     
     # Expand tilde
-    $path =~ s/^~/$ENV{HOME}/;
+    $path = expand_tilde($path);
     
     # Resolve path
     my $resolved_path;
