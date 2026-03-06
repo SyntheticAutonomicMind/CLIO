@@ -6,6 +6,7 @@ package CLIO::UI::Commands::Update;
 use strict;
 use warnings;
 use utf8;
+use parent 'CLIO::UI::Commands::Base';
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 
@@ -54,16 +55,6 @@ sub new {
     return $self;
 }
 
-# Delegate display methods to chat
-sub display_command_header { shift->{chat}->display_command_header(@_) }
-sub display_section_header { shift->{chat}->display_section_header(@_) }
-sub display_command_row { shift->{chat}->display_command_row(@_) }
-sub display_info_message { shift->{chat}->display_info_message(@_) }
-sub display_success_message { shift->{chat}->display_success_message(@_) }
-sub display_error_message { shift->{chat}->display_error_message(@_) }
-sub writeline { shift->{chat}->writeline(@_) }
-sub display_list_item { shift->{chat}->display_list_item(@_) }
-sub colorize { shift->{chat}->colorize(@_) }
 
 =head2 _get_updater()
 
