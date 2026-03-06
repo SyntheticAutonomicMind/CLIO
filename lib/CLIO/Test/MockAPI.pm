@@ -7,6 +7,7 @@ use strict;
 use warnings;
 use utf8;
 use CLIO::Core::Logger qw(log_debug);
+use CLIO::Memory::TokenEstimator qw(estimate_tokens);
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 
@@ -334,15 +335,12 @@ sub reset {
 # Private helper: estimate token count (very rough)
 sub _estimate_tokens {
     my ($messages) = @_;
-    
-    my $total_chars = 0;
+
+    my $total = 0;
     for my $msg (@$messages) {
-        my $content = $msg->{content} // '';
-        $total_chars += length($content);
+        $total += estimate_tokens($msg->{content} // '');
     }
-    
-    # Rough estimate: ~4 chars per token
-    return int($total_chars / 4) || 1;
+    return $total || 1;
 }
 
 1;
