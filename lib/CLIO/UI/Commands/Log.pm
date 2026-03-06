@@ -6,6 +6,7 @@ package CLIO::UI::Commands::Log;
 use strict;
 use warnings;
 use utf8;
+use parent 'CLIO::UI::Commands::Base';
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 
@@ -59,10 +60,6 @@ sub new {
     return $self;
 }
 
-# Delegate display methods to chat
-sub display_system_message { shift->{chat}->display_system_message(@_) }
-sub colorize { shift->{chat}->colorize(@_) }
-sub writeline { shift->{chat}->writeline(@_) }
 
 =head2 _get_tool_logger()
 

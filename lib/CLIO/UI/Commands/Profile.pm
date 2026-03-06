@@ -6,6 +6,7 @@ package CLIO::UI::Commands::Profile;
 use strict;
 use warnings;
 use utf8;
+use parent 'CLIO::UI::Commands::Base';
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use CLIO::Core::Logger qw(log_debug log_warning);
@@ -46,15 +47,6 @@ sub new {
 }
 
 # Display delegate methods
-sub display_command_header  { shift->{chat}->display_command_header(@_) }
-sub display_section_header  { shift->{chat}->display_section_header(@_) }
-sub display_key_value       { shift->{chat}->display_key_value(@_) }
-sub display_system_message  { shift->{chat}->display_system_message(@_) }
-sub display_error_message   { shift->{chat}->display_error_message(@_) }
-sub display_success_message { shift->{chat}->display_success_message(@_) }
-sub display_list_item       { shift->{chat}->display_list_item(@_) }
-sub writeline               { shift->{chat}->writeline(@_) }
-sub colorize                { shift->{chat}->colorize(@_) }
 
 =head2 handle_profile_command($action, @args)
 
