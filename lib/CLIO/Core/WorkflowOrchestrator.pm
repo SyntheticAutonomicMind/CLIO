@@ -900,7 +900,7 @@ sub process_input {
                                 # Insert after first user message
                                 my $insert_pos = 0;
                                 for my $i (0..$#non_system) {
-                                    if ($non_system[$i] == $first_user_msg) {
+                                    if ($first_user_msg && $non_system[$i] == $first_user_msg) {
                                         $insert_pos = $i + 1;
                                         last;
                                     }
@@ -2238,29 +2238,10 @@ sub _compress_dropped_for_recovery {
         }
     }
     
-    # Extract the last few user requests from dropped messages for better context
-    # Prioritize collaboration tool results (user responses to agent questions)
-    my @recent_collab_results = ();
+    # Extract recent user messages and collaboration responses from dropped messages
+    # These provide additional context beyond what YaRN compression captures
     my @recent_user_msgs = ();
     for my $msg (reverse @$dropped_messages) {
-        # Capture user_collaboration tool results (user's actual responses)
-        if ($msg->{role} && $msg->{role} eq 'tool' && $msg->{content}) {
-            # Check if this is a collaboration response by looking at nearby context
-            # Tool results from user_collaboration contain the user's actual words
-            my $content = $msg->{content} || '';
-            # Simple heuristic: collaboration responses are typically shorter text
-            # without JSON structure or file content patterns
-            if ($msg->{_collaboration_response} ||
-                (length($content) < 2000 && $content !~ /^\s*[\[{]/ && 
-                 $content !~ /^(?:Created|Modified|Deleted|Error|Success)/)) {
-                if (@recent_collab_results < 5) {
-                    my $summary = substr($content, 0, 1000);
-                    $summary .= '...' if length($content) > 1000;
-                    unshift @recent_collab_results, $summary;
-                }
-            }
-        }
-
         last if @recent_user_msgs >= 5;
         if ($msg->{role} && $msg->{role} eq 'user' && $msg->{content}) {
             my $summary = substr($msg->{content}, 0, 1000);
@@ -2271,7 +2252,7 @@ sub _compress_dropped_for_recovery {
     if (@recent_user_msgs) {
         push @recovery_parts, "";
         push @recovery_parts, "<recent_context>";
-        push @recovery_parts, "Most recent user requests before trimming:";
+        push @recovery_parts, "Most recent user messages before trimming:";
         for my $i (0..$#recent_user_msgs) {
             push @recovery_parts, ($i + 1) . ". " . $recent_user_msgs[$i];
         }
@@ -2302,18 +2283,21 @@ sub _compress_dropped_for_recovery {
     push @recovery_parts, "<recovery_instructions>";
     push @recovery_parts, "CONTEXT WAS TRIMMED - Your conversation history was compressed to free space.";
     push @recovery_parts, "";
-    push @recovery_parts, "CRITICAL: You were in the MIDDLE of a conversation. The <current_topic> section above";
-    push @recovery_parts, "shows what you and the user were actively discussing. RESUME THAT DISCUSSION.";
-    push @recovery_parts, "Do NOT ask 'What would you like to work on?' - you already know from the context above.";
+    push @recovery_parts, "YOUR IMMEDIATE NEXT ACTION: Continue the conversation from where it left off.";
+    push @recovery_parts, "The <current_topic> section above captures what you and the user were actively";
+    push @recovery_parts, "discussing when context was trimmed. Read it carefully and continue that work.";
     push @recovery_parts, "";
-    push @recovery_parts, "To recover additional details:";
-    push @recovery_parts, "1. CHECK YOUR LTM PATTERNS (already injected in system prompt)";
-    push @recovery_parts, "2. USE memory_operations(operation: 'recall_sessions', query: '<keywords>')";
-    push @recovery_parts, "3. USE memory_operations(operation: 'retrieve', key: 'session_progress')";
-    push @recovery_parts, "4. USE git log, git diff, and todo_operations to verify state";
+    push @recovery_parts, "DO NOT:";
+    push @recovery_parts, "- Ask 'What would you like to work on?' (you already know)";
+    push @recovery_parts, "- Ask 'How can I help?' (you were in the middle of helping)";
+    push @recovery_parts, "- Read handoff documents in ai-assisted/ (stale context)";
+    push @recovery_parts, "- Start a new task (resume the existing one)";
     push @recovery_parts, "";
-    push @recovery_parts, "DO NOT read handoff documents in ai-assisted/ - that context is stale.";
-    push @recovery_parts, "RESUME your current work using the recovery context provided above.";
+    push @recovery_parts, "DO:";
+    push @recovery_parts, "- Resume the discussion/work described in <current_topic>";
+    push @recovery_parts, "- Reference the collaboration exchanges to maintain continuity";
+    push @recovery_parts, "- If the user's last response was an answer to your question, act on it";
+    push @recovery_parts, "- Use todo_operations, git tools, and memory if you need more detail";
     push @recovery_parts, "</recovery_instructions>";
 
     return undef unless @recovery_parts;
@@ -2394,7 +2378,10 @@ sub _extract_conversation_topic {
                             $q =~ s/\\"/"/g;
                             $q =~ s/\\\\/\\/g;
                             $pending_collab_ids{$tc->{id}} = $q;
-                            push @collab_questions, substr($q, 0, 500);
+                            # Keep up to 2000 chars to capture design discussions
+                            my $truncated = substr($q, 0, 2000);
+                            $truncated .= '...' if length($q) > 2000;
+                            push @collab_questions, $truncated;
                         }
                     }
                 }
@@ -2402,20 +2389,24 @@ sub _extract_conversation_topic {
 
             # Non-empty assistant content (could be mid-conversation text)
             if ($content && length($content) > 10) {
-                my $snippet = substr($content, 0, 500);
-                $snippet .= '...' if length($content) > 500;
+                my $snippet = substr($content, 0, 1500);
+                $snippet .= '...' if length($content) > 1500;
                 push @assistant_snippets, $snippet;
             }
         }
         elsif ($role eq 'tool') {
             # Match collaboration responses
             if ($msg->{tool_call_id} && exists $pending_collab_ids{$msg->{tool_call_id}}) {
-                push @collab_responses, substr($content, 0, 500);
+                my $truncated = substr($content, 0, 2000);
+                $truncated .= '...' if length($content) > 2000;
+                push @collab_responses, $truncated;
                 delete $pending_collab_ids{$msg->{tool_call_id}};
             }
         }
         elsif ($role eq 'user') {
-            push @user_messages, substr($content, 0, 500) if $content;
+            my $truncated = substr($content, 0, 1000);
+            $truncated .= '...' if length($content) > 1000;
+            push @user_messages, $truncated if $content;
         }
     }
 
@@ -2424,9 +2415,8 @@ sub _extract_conversation_topic {
     # Collaboration is highest priority - it represents active discussion
     if (@collab_questions || @collab_responses) {
         push @topic_parts, "ACTIVE DISCUSSION when context was trimmed:";
-        # Show last 3 exchanges
-        my $q_start = @collab_questions > 3 ? @collab_questions - 3 : 0;
-        my $r_start = @collab_responses > 3 ? @collab_responses - 3 : 0;
+        # Show last 5 exchanges to capture full design discussions
+        my $q_start = @collab_questions > 5 ? @collab_questions - 5 : 0;
 
         for my $i ($q_start .. $#collab_questions) {
             push @topic_parts, "Agent asked: " . $collab_questions[$i];
@@ -2435,9 +2425,17 @@ sub _extract_conversation_topic {
             }
         }
     }
-    elsif (@user_messages) {
-        push @topic_parts, "Last user messages when context was trimmed:";
+
+    # Always include recent user messages (even if we have collaboration)
+    if (@user_messages) {
         my $start_at = @user_messages > 3 ? @user_messages - 3 : 0;
+        if (@collab_questions || @collab_responses) {
+            # Separate section when we also have collaboration
+            push @topic_parts, "";
+            push @topic_parts, "Recent user messages:";
+        } else {
+            push @topic_parts, "Last user messages when context was trimmed:";
+        }
         for my $i ($start_at .. $#user_messages) {
             push @topic_parts, "- " . $user_messages[$i];
         }
