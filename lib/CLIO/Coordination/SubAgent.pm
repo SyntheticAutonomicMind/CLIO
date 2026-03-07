@@ -168,12 +168,14 @@ sub run_oneshot_agent {
     
     # Build CLIO command
     my $model = $options{model} || 'gpt-5-mini';
+    my $debug = $options{debug} || 0;
     my @cmd = (
         $clio_path,
         '--model', $model,
         '--input', $task,
         '--exit',
     );
+    push @cmd, '--debug' if $debug;
     
     print "Model: $model\n";
     print "Command: " . join(' ', @cmd) . "\n";

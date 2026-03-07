@@ -78,7 +78,7 @@ sub new {
     my $self = {
         api_manager => $args{api_manager},
         session => $args{session},
-        max_iterations => $args{max_iterations} // 0,  # 0 = unlimited; set via /api set max_iterations N
+        max_iterations => $args{max_iterations} // 0,  # 0 = unlimited (interactive); overridden below for non-interactive
         debug => $args{debug} || 0,
         ui => $args{ui},  # Store UI reference for buffer flushing
         spinner => $args{spinner},  # Store spinner for interactive tools (user_collaboration)
@@ -92,6 +92,13 @@ sub new {
     };
     
     bless $self, $class;
+    
+    # Apply default iteration limit for non-interactive mode
+    # Prevents runaway oneshot agents that loop indefinitely
+    if ($self->{non_interactive} && !$self->{max_iterations}) {
+        $self->{max_iterations} = 75;  # Generous limit for complex tasks
+        log_debug('WorkflowOrchestrator', "Non-interactive mode: defaulting max_iterations to $self->{max_iterations}");
+    }
     
     # Initialize tool output formatter
     $self->{formatter} = CLIO::UI::ToolOutputFormatter->new(ui => $args{ui});
@@ -464,12 +471,27 @@ sub process_input {
     my $session_error_count = $session->{_error_count} // 0;
     my $max_session_errors = 10;  # Hard limit per request processing
     
+    # Wall-clock timeout for sub-agents (10 minutes)
+    # Prevents sub-agents from running indefinitely on stuck API calls
+    my $max_wall_time = $self->{broker_client} ? 600 : 0;  # 0 = no limit for interactive
+    
     my $max_iter = $self->{max_iterations};
     while (!$max_iter || $iteration < $max_iter) {
         $iteration++;
         
         # Clear interrupt pending flag at start of each iteration
         $self->{_interrupt_pending} = 0;
+        
+        # Check wall-clock timeout (sub-agents only)
+        if ($max_wall_time && (time() - $start_time) > $max_wall_time) {
+            log_warning('WorkflowOrchestrator', "Wall-clock timeout reached (" . int((time() - $start_time)) . "s). Forcing exit.");
+            return {
+                success => 0,
+                error => "Execution time limit reached (${max_wall_time}s). Partial results may be available.",
+                iterations => $iteration,
+                tool_calls_made => \@tool_calls_made
+            };
+        }
         
         # Capture process stats at iteration boundary
         $self->{process_stats}->capture('iteration_start', { iteration => $iteration })
