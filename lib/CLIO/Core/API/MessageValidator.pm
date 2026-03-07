@@ -454,20 +454,20 @@ sub _extract_preserved_units {
         $start_unit = 1;
     }
     
-    # Extract first user message (importance >= 10.0)
+    # Extract first user message
+    # Uses _importance >= 10.0 (set by Session::State) if available, otherwise
+    # falls back to the first user-role message found after system messages
     for my $i ($start_unit .. $#$units) {
         my $unit = $units->[$i];
         next unless $unit && $unit->{messages} && @{$unit->{messages}};
         
         my $first_msg = $unit->{messages}[0];
         if ($first_msg->{role} && $first_msg->{role} eq 'user') {
-            if (($first_msg->{_importance} // 0) >= 10.0) {
-                $first_user_unit = $unit;
-                $first_user_tokens = $unit->{tokens};
-                $start_unit = $i + 1;
-                log_debug('MessageValidator', "Preserving first user message (importance=" . 
-                    ($first_msg->{_importance} // 0) . ", tokens=$first_user_tokens)");
-            }
+            $first_user_unit = $unit;
+            $first_user_tokens = $unit->{tokens};
+            $start_unit = $i + 1;
+            log_debug('MessageValidator', "Preserving first user message (importance=" . 
+                ($first_msg->{_importance} // 'n/a') . ", tokens=$first_user_tokens)");
             last;
         }
     }
