@@ -161,6 +161,7 @@ sub cmd_spawn {
     my $agent_id = $self->{manager}->spawn_agent($task, 
         model => $model,
         persistent => $persistent,
+        debug => $self->{debug},
     );
     
     my $mode_str = $persistent ? 'persistent' : 'oneshot';
@@ -923,12 +924,10 @@ sub start_broker {
         );
         log_debug('SubAgent', "Connected to broker as primary user");
         
-        # Also update the main agent's APIManager to use broker coordination
-        # This ensures ALL API requests (main + sub-agents) go through centralized rate limiting
-        if ($self->{chat} && $self->{chat}{ai_agent} && $self->{chat}{ai_agent}{api}) {
-            $self->{chat}{ai_agent}{api}{broker_client} = $self->{broker_client};
-            log_info('SubAgent', "Main agent's APIManager now using broker for rate limit coordination");
-        }
+        # Note: We do NOT inject broker_client into the primary agent's APIManager.
+        # The broker rate limiter is for sub-agent coordination only. The primary
+        # agent uses its own local rate limiter. Injecting it here would cause the
+        # primary agent to block on broker API slots while sub-agents are working.
     };
     if ($@) {
         log_warning('SubAgent', "Could not connect to broker: $@");
