@@ -282,9 +282,11 @@ print "\n--- install_from_directory() end-to-end ---\n";
 {
     my $src    = File::Spec->catdir($RealBin, 'tmp_src_e2e');
     my $target = File::Spec->catdir($RealBin, 'tmp_install_e2e');
-    remove_tree($src, $target);
+    my $fake_home = File::Spec->catdir($RealBin, 'tmp_home_e2e');
+    remove_tree($src, $target, $fake_home);
     create_fake_clio_source($src);
     make_path($target . '/lib/CLIO');  # Pre-create as "existing install"
+    make_path($fake_home);
 
     # Write a fake existing clio at $target/clio so detect_install_location
     # thinks $target is the install (via $0 override)
@@ -295,8 +297,11 @@ print "\n--- install_from_directory() end-to-end ---\n";
 
     my $updater = CLIO::Update->new(debug => 0);
 
-    # Override $0 to make detect_install_location think we're running from $target
+    # Override $0 and HOME to prevent install.sh from touching real user dirs.
+    # Without this, the fake install.sh creates a symlink at ~/.local/bin/clio
+    # pointing to the temp target, which breaks the real CLIO installation.
     local $0 = "$target/clio";
+    local $ENV{HOME} = $fake_home;
 
     my $result = $updater->install_from_directory($src);
     ok($result, "install_from_directory() returns true on success");
@@ -311,7 +316,11 @@ print "\n--- install_from_directory() end-to-end ---\n";
         ok(0, "VERSION file not found in target");
     }
 
-    remove_tree($src, $target);
+    # Verify symlink was created in fake home, not real home
+    my $fake_symlink = File::Spec->catfile($fake_home, '.local', 'bin', 'clio');
+    ok(-l $fake_symlink, "Symlink created in fake HOME, not real HOME");
+
+    remove_tree($src, $target, $fake_home);
 }
 
 # ---------------------------------------------------------------------------
