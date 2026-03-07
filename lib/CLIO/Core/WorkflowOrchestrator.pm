@@ -741,7 +741,7 @@ sub process_input {
                 # Special handling for token limit exceeded errors
                 elsif ($api_response->{error_type} && $api_response->{error_type} eq 'token_limit_exceeded') {
                     # Checkpoint progress before trimming - creates recovery anchor
-                    _checkpoint_session_progress($session, \@tool_calls_made, $iteration)
+                    _checkpoint_session_progress($session, \@tool_calls_made, $iteration, \@messages)
                         if $session;
                     
                     # Trim conversation history to fit within model's context window
@@ -861,7 +861,7 @@ sub process_input {
                         
                         # Compress dropped messages into a summary using YaRN
                         if (@dropped_messages) {
-                            my $compressed = _compress_dropped_for_recovery(\@dropped_messages, $first_user_msg, $session);
+                            my $compressed = _compress_dropped_for_recovery(\@dropped_messages, $first_user_msg, $session, \@messages);
                             if ($compressed) {
                                 # Insert compressed summary right after first user message (or at start)
                                 unshift @non_system, $compressed;
@@ -893,7 +893,7 @@ sub process_input {
                         
                         # Compress dropped messages
                         if (@dropped_messages) {
-                            my $compressed = _compress_dropped_for_recovery(\@dropped_messages, $first_user_msg, $session);
+                            my $compressed = _compress_dropped_for_recovery(\@dropped_messages, $first_user_msg, $session, \@messages);
                             if ($compressed) {
                                 # Insert after first user message
                                 my $insert_pos = 0;
@@ -925,7 +925,7 @@ sub process_input {
                         
                         # Compress dropped messages - especially important for minimal context
                         if (@dropped_messages > 2) {
-                            my $compressed = _compress_dropped_for_recovery(\@dropped_messages, $first_user_msg, $session);
+                            my $compressed = _compress_dropped_for_recovery(\@dropped_messages, $first_user_msg, $session, \@messages);
                             if ($compressed) {
                                 my $insert_pos = $first_user_msg ? 1 : 0;
                                 splice(@non_system, $insert_pos, 0, $compressed);
@@ -1805,7 +1805,7 @@ sub process_input {
             # Checkpoint session progress to memory every 15 iterations
             # This creates a recovery anchor the agent can use after context trim
             if ($iteration % 15 == 0 && $session) {
-                _checkpoint_session_progress($session, \@tool_calls_made, $iteration);
+                _checkpoint_session_progress($session, \@tool_calls_made, $iteration, \@messages);
             }
             
             # Print newline to separate tool output from next iteration
@@ -2155,12 +2155,14 @@ reactive trimming due to token limit exceeded errors.
 
 This prevents the AI from losing context of what it was working on when
 aggressive trimming is needed. It uses YaRN compression to create a
-thread_summary and optionally includes current task state from todos.
+thread_summary, extracts the current conversation topic, and optionally
+includes current task state from todos.
 
 Arguments:
 - $dropped_messages: Arrayref of message hashes that were dropped
 - $first_user_msg: The first user message (for original task context)
 - $session: Session object (optional, for todo state)
+- $all_messages: Arrayref of ALL messages before trimming (for topic extraction)
 
 Returns: Message hashref with role 'system' containing compressed summary,
          or undef if compression fails
@@ -2168,7 +2170,7 @@ Returns: Message hashref with role 'system' containing compressed summary,
 =cut
 
 sub _compress_dropped_for_recovery {
-    my ($dropped_messages, $first_user_msg, $session) = @_;
+    my ($dropped_messages, $first_user_msg, $session, $all_messages) = @_;
     
     return undef unless $dropped_messages && @$dropped_messages;
     
@@ -2193,6 +2195,16 @@ sub _compress_dropped_for_recovery {
     
     # Build recovery context
     my @recovery_parts = ();
+
+    # FIRST: Extract and inject the current conversation topic
+    # This is the most critical piece - tells the agent exactly what was being discussed
+    my $topic = _extract_conversation_topic($all_messages || $dropped_messages);
+    if ($topic) {
+        push @recovery_parts, "<current_topic>";
+        push @recovery_parts, $topic;
+        push @recovery_parts, "</current_topic>";
+        push @recovery_parts, "";
+    }
     
     if ($compressed && $compressed->{content}) {
         push @recovery_parts, $compressed->{content};
@@ -2210,12 +2222,32 @@ sub _compress_dropped_for_recovery {
     }
     
     # Extract the last few user requests from dropped messages for better context
+    # Prioritize collaboration tool results (user responses to agent questions)
+    my @recent_collab_results = ();
     my @recent_user_msgs = ();
     for my $msg (reverse @$dropped_messages) {
-        last if @recent_user_msgs >= 3;
+        # Capture user_collaboration tool results (user's actual responses)
+        if ($msg->{role} && $msg->{role} eq 'tool' && $msg->{content}) {
+            # Check if this is a collaboration response by looking at nearby context
+            # Tool results from user_collaboration contain the user's actual words
+            my $content = $msg->{content} || '';
+            # Simple heuristic: collaboration responses are typically shorter text
+            # without JSON structure or file content patterns
+            if ($msg->{_collaboration_response} ||
+                (length($content) < 2000 && $content !~ /^\s*[\[{]/ && 
+                 $content !~ /^(?:Created|Modified|Deleted|Error|Success)/)) {
+                if (@recent_collab_results < 5) {
+                    my $summary = substr($content, 0, 1000);
+                    $summary .= '...' if length($content) > 1000;
+                    unshift @recent_collab_results, $summary;
+                }
+            }
+        }
+
+        last if @recent_user_msgs >= 5;
         if ($msg->{role} && $msg->{role} eq 'user' && $msg->{content}) {
-            my $summary = substr($msg->{content}, 0, 300);
-            $summary .= '...' if length($msg->{content}) > 300;
+            my $summary = substr($msg->{content}, 0, 1000);
+            $summary .= '...' if length($msg->{content}) > 1000;
             unshift @recent_user_msgs, $summary;
         }
     }
@@ -2252,19 +2284,19 @@ sub _compress_dropped_for_recovery {
     push @recovery_parts, "";
     push @recovery_parts, "<recovery_instructions>";
     push @recovery_parts, "CONTEXT WAS TRIMMED - Your conversation history was compressed to free space.";
-    push @recovery_parts, "The summary above contains your prior work. To recover additional context:";
     push @recovery_parts, "";
-    push @recovery_parts, "1. CHECK YOUR LTM PATTERNS (already injected in system prompt) - they contain";
-    push @recovery_parts, "   project-specific knowledge from all previous sessions";
+    push @recovery_parts, "CRITICAL: You were in the MIDDLE of a conversation. The <current_topic> section above";
+    push @recovery_parts, "shows what you and the user were actively discussing. RESUME THAT DISCUSSION.";
+    push @recovery_parts, "Do NOT ask 'What would you like to work on?' - you already know from the context above.";
+    push @recovery_parts, "";
+    push @recovery_parts, "To recover additional details:";
+    push @recovery_parts, "1. CHECK YOUR LTM PATTERNS (already injected in system prompt)";
     push @recovery_parts, "2. USE memory_operations(operation: 'recall_sessions', query: '<keywords>')";
-    push @recovery_parts, "   to search past session history for specific details you need";
     push @recovery_parts, "3. USE memory_operations(operation: 'retrieve', key: 'session_progress')";
-    push @recovery_parts, "   for the most recent session progress checkpoint";
-    push @recovery_parts, "4. USE git log, git diff, and todo_operations(operation: 'read') to verify state";
+    push @recovery_parts, "4. USE git log, git diff, and todo_operations to verify state";
     push @recovery_parts, "";
     push @recovery_parts, "DO NOT read handoff documents in ai-assisted/ - that context is stale.";
-    push @recovery_parts, "The recovery data above plus your LTM patterns have current state.";
-    push @recovery_parts, "Resume your current task using the context provided.";
+    push @recovery_parts, "RESUME your current work using the recovery context provided above.";
     push @recovery_parts, "</recovery_instructions>";
 
     return undef unless @recovery_parts;
@@ -2290,6 +2322,120 @@ Arguments:
 Returns: String with todo context, or undef if no todos
 
 =cut
+
+=head2 _extract_conversation_topic
+
+Extracts the current conversation topic from the last N messages in the
+message array. This captures what the agent and user were actively discussing
+right before context trimming occurred.
+
+Looks for:
+- Collaboration exchanges (highest priority - active design discussions)
+- Recent assistant content (what the agent was saying/presenting)
+- Recent user content (what the user was asking/responding)
+
+Arguments:
+- $messages: Arrayref of messages (the full message list before trimming)
+- $max_messages: How many messages to look back (default: 20)
+
+Returns: String describing the current conversation topic, or undef
+
+=cut
+
+sub _extract_conversation_topic {
+    my ($messages, $max_messages) = @_;
+
+    return undef unless $messages && @$messages;
+    $max_messages ||= 20;
+
+    my $start = @$messages > $max_messages ? @$messages - $max_messages : 0;
+    my @recent = @{$messages}[$start .. $#$messages];
+
+    # Look for collaboration exchanges in the last messages
+    my @collab_questions;
+    my @collab_responses;
+    my @user_messages;
+    my @assistant_snippets;
+
+    # Track tool_call IDs for user_collaboration
+    my %pending_collab_ids;
+
+    for my $msg (@recent) {
+        my $role = $msg->{role} || '';
+        my $content = $msg->{content} || '';
+
+        if ($role eq 'assistant') {
+            # Check for collaboration tool calls
+            if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
+                for my $tc (@{$msg->{tool_calls}}) {
+                    my $name = $tc->{function}{name} || '';
+                    if ($name eq 'user_collaboration' && $tc->{id}) {
+                        my $args_str = $tc->{function}{arguments} || '{}';
+                        if ($args_str =~ /"message"\s*:\s*"((?:[^"\\]|\\.)*)"/s) {
+                            my $q = $1;
+                            $q =~ s/\\n/\n/g;
+                            $q =~ s/\\"/"/g;
+                            $q =~ s/\\\\/\\/g;
+                            $pending_collab_ids{$tc->{id}} = $q;
+                            push @collab_questions, substr($q, 0, 500);
+                        }
+                    }
+                }
+            }
+
+            # Non-empty assistant content (could be mid-conversation text)
+            if ($content && length($content) > 10) {
+                my $snippet = substr($content, 0, 500);
+                $snippet .= '...' if length($content) > 500;
+                push @assistant_snippets, $snippet;
+            }
+        }
+        elsif ($role eq 'tool') {
+            # Match collaboration responses
+            if ($msg->{tool_call_id} && exists $pending_collab_ids{$msg->{tool_call_id}}) {
+                push @collab_responses, substr($content, 0, 500);
+                delete $pending_collab_ids{$msg->{tool_call_id}};
+            }
+        }
+        elsif ($role eq 'user') {
+            push @user_messages, substr($content, 0, 500) if $content;
+        }
+    }
+
+    my @topic_parts;
+
+    # Collaboration is highest priority - it represents active discussion
+    if (@collab_questions || @collab_responses) {
+        push @topic_parts, "ACTIVE DISCUSSION when context was trimmed:";
+        # Show last 3 exchanges
+        my $q_start = @collab_questions > 3 ? @collab_questions - 3 : 0;
+        my $r_start = @collab_responses > 3 ? @collab_responses - 3 : 0;
+
+        for my $i ($q_start .. $#collab_questions) {
+            push @topic_parts, "Agent asked: " . $collab_questions[$i];
+            if ($collab_responses[$i]) {
+                push @topic_parts, "User replied: " . $collab_responses[$i];
+            }
+        }
+    }
+    elsif (@user_messages) {
+        push @topic_parts, "Last user messages when context was trimmed:";
+        my $start_at = @user_messages > 3 ? @user_messages - 3 : 0;
+        for my $i ($start_at .. $#user_messages) {
+            push @topic_parts, "- " . $user_messages[$i];
+        }
+    }
+
+    # Also show what the agent was doing/saying
+    if (@assistant_snippets && @assistant_snippets > 0) {
+        my $last_snippet = $assistant_snippets[-1];
+        push @topic_parts, "";
+        push @topic_parts, "Agent's last message: " . $last_snippet;
+    }
+
+    return undef unless @topic_parts;
+    return join("\n", @topic_parts);
+}
 
 sub _get_todo_recovery_context {
     my ($session) = @_;
@@ -2353,11 +2499,12 @@ Arguments:
 - $session: Session object
 - $tool_calls_made: Arrayref of tool calls executed so far
 - $iteration: Current iteration number
+- $messages: Arrayref of current message history (for conversation topic)
 
 =cut
 
 sub _checkpoint_session_progress {
-    my ($session, $tool_calls_made, $iteration) = @_;
+    my ($session, $tool_calls_made, $iteration, $messages) = @_;
 
     eval {
         my $memory_dir = '.clio/memory';
@@ -2415,6 +2562,16 @@ sub _checkpoint_session_progress {
             push @parts, "## Git State";
             push @parts, $git_ctx;
             push @parts, "";
+        }
+
+        # Include current conversation topic
+        if ($messages && @$messages) {
+            my $topic = _extract_conversation_topic($messages);
+            if ($topic) {
+                push @parts, "## Current Discussion";
+                push @parts, $topic;
+                push @parts, "";
+            }
         }
 
         my $content = join("\n", @parts);
