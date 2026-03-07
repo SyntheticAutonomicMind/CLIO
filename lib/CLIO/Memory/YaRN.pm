@@ -242,7 +242,11 @@ sub compress_messages {
     my @commits;
     my @files_touched;
     my @decisions;
+    my @collaboration_exchanges;  # Agent question + user response pairs
     my %tool_counts;
+
+    # Track collaboration tool_call IDs so we can pair them with responses
+    my %collab_tool_calls;  # tool_call_id => agent's question text
 
     for my $msg (@$messages) {
         my $role    = $msg->{role}    || '';
@@ -254,7 +258,7 @@ sub compress_messages {
             push @user_requests, $summary;
         }
         elsif ($role eq 'assistant') {
-            # Collaboration/decision messages
+            # Collaboration/decision messages (from session add_message)
             if ($content =~ /\[COLLABORATION\](.{1,300})/s) {
                 my $dec = $1;
                 $dec =~ s/\s+/ /g;
@@ -268,6 +272,18 @@ sub compress_messages {
                     my $args_str = $tc->{function}{arguments} || '{}';
                     $tool_counts{$name}++;
 
+                    # Track user_collaboration calls to pair with responses
+                    if ($name eq 'user_collaboration' && $tc->{id}) {
+                        my $question = '';
+                        if ($args_str =~ /"message"\s*:\s*"((?:[^"\\]|\\.)*)"/s) {
+                            $question = $1;
+                            $question =~ s/\\n/\n/g;
+                            $question =~ s/\\"/"/g;
+                            $question =~ s/\\\\/\\/g;
+                        }
+                        $collab_tool_calls{$tc->{id}} = $question;
+                    }
+
                     # Capture file paths for file_operations and apply_patch
                     if ($name =~ /^(file_operations|apply_patch)$/) {
                         while ($args_str =~ /"(?:path|new_path|old_path)"\s*:\s*"([^"]+)"/g) {
@@ -278,6 +294,20 @@ sub compress_messages {
             }
         }
         elsif ($role eq 'tool') {
+            # Pair collaboration responses with their questions
+            if ($msg->{tool_call_id} && exists $collab_tool_calls{$msg->{tool_call_id}}) {
+                my $question = $collab_tool_calls{$msg->{tool_call_id}};
+                my $response = $content;
+                # Keep more content for collaboration exchanges (1000 chars each)
+                $question = substr($question, 0, 1000) . '...' if length($question) > 1000;
+                $response = substr($response, 0, 1000) . '...' if length($response) > 1000;
+                push @collaboration_exchanges, {
+                    question => $question,
+                    response => $response,
+                };
+                delete $collab_tool_calls{$msg->{tool_call_id}};
+            }
+
             # Git commit results: [abc1234] Commit subject line
             while ($content =~ /^\[([a-f0-9]{7,12})\]\s+(.{1,100})/mg) {
                 push @commits, "$1: $2";
@@ -298,6 +328,9 @@ sub compress_messages {
     @commits       = @commits[0..14] if @commits > 15;
     @user_requests = @user_requests[-5..-1] if @user_requests > 5;
     @decisions     = @decisions[-3..-1]     if @decisions > 3;
+    # Keep last 5 collaboration exchanges (most recent are most relevant)
+    @collaboration_exchanges = @collaboration_exchanges[-5..-1]
+        if @collaboration_exchanges > 5;
 
     # Build summary
     my @parts;
@@ -307,6 +340,19 @@ sub compress_messages {
 
     if ($original_task) {
         push @parts, "Original task: " . substr($original_task, 0, 300);
+        push @parts, "";
+    }
+
+    # Collaboration exchanges go FIRST - they represent active design discussions
+    # that the agent was in the middle of when context was trimmed
+    if (@collaboration_exchanges) {
+        push @parts, "Active discussion (agent-user collaboration exchanges):";
+        for my $i (0..$#collaboration_exchanges) {
+            my $ex = $collaboration_exchanges[$i];
+            push @parts, "  Agent asked: " . $ex->{question};
+            push @parts, "  User replied: " . $ex->{response};
+            push @parts, "" if $i < $#collaboration_exchanges;
+        }
         push @parts, "";
     }
 
