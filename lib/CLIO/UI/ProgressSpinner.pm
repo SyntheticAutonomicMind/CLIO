@@ -320,7 +320,16 @@ sub _locale_supports_utf8 {
 
 sub DESTROY {
     my ($self) = @_;
-    $self->stop() if $self->{running};
+    # Safety net: ensure child process is cleaned up on object destruction.
+    # Handles both normal case (running=1) and edge cases where pid is set
+    # but running flag was cleared (e.g., partial stop() or exception).
+    if ($self->{running}) {
+        $self->stop();
+    } elsif ($self->{pid}) {
+        kill('KILL', $self->{pid});
+        waitpid($self->{pid}, POSIX::WNOHANG());
+        $self->{pid} = undef;
+    }
 }
 
 1;

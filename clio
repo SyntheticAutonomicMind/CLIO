@@ -509,6 +509,8 @@ if ($debug) {
 
 # Handle command line input if provided
 if ($input) {
+    my $last_response = '';  # Track last response for broker completion
+    
     # Create UI for tool output formatting even in --input mode
     require CLIO::UI::Chat;
     my $cli_ui = CLIO::UI::Chat->new(
@@ -648,6 +650,7 @@ if ($input) {
                 $response =~ s/\[\/conversation\]$//;
                 $response =~ s/^\s+|\s+$//g;
                 
+                $last_response = $response;
                 $session->add_message('assistant', $response);
                 
                 # Render markdown for --input mode
@@ -670,6 +673,7 @@ if ($input) {
                 }
             } else {
                 my $error_msg = "[ERROR] " . join("; ", @{$result->{errors}});
+                $last_response = $error_msg;
                 $session->add_message('system', $error_msg);
                 print "$error_msg\n";
             }
@@ -681,6 +685,24 @@ if ($input) {
     
     # Exit if --exit flag was provided
     if ($should_exit) {
+        # Send completion result to broker if running as sub-agent
+        if ($broker_client) {
+            eval {
+                # Truncate to 8KB for broker delivery; full output is in agent log
+                my $broker_response = $last_response || 'Task completed (no output)';
+                if (length($broker_response) > 8192) {
+                    $broker_response = substr($broker_response, 0, 8192) . "\n\n[truncated - see agent log for full output]";
+                }
+                $broker_client->send_complete($broker_response);
+                $broker_client->disconnect();
+            };
+            # Silently ignore broker errors on exit
+        }
+        
+        # Stop any spinner that might still be running (safety net)
+        if ($cli_ui && $cli_ui->{spinner}) {
+            $cli_ui->{spinner}->stop();
+        }
         exit 0;
     }
 }

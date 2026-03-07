@@ -257,6 +257,10 @@ This ensures users always see visual feedback when the system is working.
 sub show_busy_indicator {
     my ($self) = @_;
     
+    # Skip spinner in non-interactive mode (--input, sub-agents)
+    # No human is watching, and the forked spinner child can orphan
+    return 0 unless -t STDOUT;
+    
     # Ensure spinner is initialized or recreate if theme changed
     # Check if spinner needs to be recreated due to theme change
     my $spinner_frames = $self->{theme_mgr}->get_spinner_frames();

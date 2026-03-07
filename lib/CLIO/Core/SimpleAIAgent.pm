@@ -211,6 +211,8 @@ sub process_user_request {
                 skip_custom => $self->{skip_custom},
                 skip_ltm => $self->{skip_ltm},
                 max_iterations => $self->{api}->{config}->get('max_iterations'),
+                non_interactive => $self->{non_interactive},
+                broker_client => $self->{broker_client},
             );
         }
         
