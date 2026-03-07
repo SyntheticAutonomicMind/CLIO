@@ -759,9 +759,11 @@ sub process_input {
                             $system_prompt = $msg;
                         } else {
                             push @non_system, $msg;
-                            # Track first user message (critical for context)
-                            if (!$first_user_msg && $msg->{role} && $msg->{role} eq 'user' &&
-                                ($msg->{_importance} // 0) >= 10.0) {
+                            # Track first user message (critical for context preservation)
+                            # Uses the first user-role message found (previously required
+                            # _importance >= 10.0, but that field is lost after proactive
+                            # trim sync since enforce_message_alternation creates new hashes)
+                            if (!$first_user_msg && $msg->{role} && $msg->{role} eq 'user') {
                                 $first_user_msg = $msg;
                                 $first_user_idx = $#non_system;
                             }
@@ -1209,6 +1211,21 @@ sub process_input {
         $self->{last_error} = '';
         $session_error_count = 0;  # Reset on success to allow future errors
         delete $session->{_error_count} if $session;
+        
+        # Sync orchestrator @messages with proactively trimmed version
+        # APIManager trims messages before each API call but only modifies a local copy.
+        # Without this sync, @messages grows unbounded and when reactive trimming finally
+        # hits (token_limit_exceeded), it has to drop hundreds of messages at once.
+        # By syncing here, we keep @messages at a managed size and reactive trims
+        # (if they occur due to estimation error) only need to drop a few messages.
+        if ($self->{api_manager}) {
+            my $trimmed = $self->{api_manager}->get_last_trimmed_messages();
+            if ($trimmed) {
+                my $before = scalar(@messages);
+                @messages = @$trimmed;
+                log_info('WorkflowOrchestrator', "Synced messages with proactive trim: $before -> " . scalar(@messages));
+            }
+        }
         
         # Record API usage for billing tracking
         if ($api_response->{usage} && $session) {

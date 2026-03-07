@@ -908,6 +908,20 @@ sub validate_and_truncate_messages {
     );
 }
 
+=head2 get_last_trimmed_messages
+
+Returns the messages array from the most recent proactive trim, or undef
+if no trimming occurred on the last API call. Used by WorkflowOrchestrator
+to sync its @messages array with the trimmed version, preventing unbounded
+growth that leads to aggressive reactive trimming.
+
+=cut
+
+sub get_last_trimmed_messages {
+    my ($self) = @_;
+    return $self->{_last_trimmed_messages};
+}
+
 =head2 _validate_tool_message_pairs
 
 Validates tool call/result pairing. Delegates to MessageValidator.
@@ -1594,7 +1608,19 @@ sub send_request {
     # identifies the provider. Without this, model names like 'deepseek/deepseek-r1' (from
     # OpenRouter) get misinterpreted as 'deepseek' provider + 'deepseek-r1' model.
     my $full_model_for_caps = $self->get_current_model();
+    my $pre_trim_count = scalar(@$messages);
     $messages = $self->validate_and_truncate_messages($messages, $full_model_for_caps, $opts{tools});
+    
+    # Store trimmed messages for orchestrator sync
+    # When proactive trimming occurs, the orchestrator should update its @messages
+    # to match, preventing unbounded growth and reducing reactive trim severity
+    my $post_trim_count = scalar(@$messages);
+    if ($post_trim_count < $pre_trim_count) {
+        $self->{_last_trimmed_messages} = $messages;
+        log_info('APIManager', "Proactive trim: $pre_trim_count -> $post_trim_count messages");
+    } else {
+        $self->{_last_trimmed_messages} = undef;
+    }
     
     # Check if model uses Responses API (codex models, etc.)
     my $use_responses_api = $self->_model_uses_responses_api($model);
@@ -2137,7 +2163,19 @@ sub send_request_streaming {
     # identifies the provider. Without this, model names like 'deepseek/deepseek-r1' (from
     # OpenRouter) get misinterpreted as 'deepseek' provider + 'deepseek-r1' model.
     my $full_model_for_caps = $self->get_current_model();
+    my $pre_trim_count = scalar(@$messages);
     $messages = $self->validate_and_truncate_messages($messages, $full_model_for_caps, $opts{tools});
+    
+    # Store trimmed messages for orchestrator sync
+    # When proactive trimming occurs, the orchestrator should update its @messages
+    # to match, preventing unbounded growth and reducing reactive trim severity
+    my $post_trim_count = scalar(@$messages);
+    if ($post_trim_count < $pre_trim_count) {
+        $self->{_last_trimmed_messages} = $messages;
+        log_info('APIManager', "Proactive trim: $pre_trim_count -> $post_trim_count messages");
+    } else {
+        $self->{_last_trimmed_messages} = undef;
+    }
 
     # Strip non-standard fields before building OpenAI-compatible payload.
     # The 'name' field on role=tool messages is for native providers only.
