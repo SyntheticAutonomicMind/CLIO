@@ -100,8 +100,9 @@ sub validate_and_truncate {
     # Calculate tool token budget
     my $tool_tokens = _calculate_tool_tokens($tools);
     
-    # Safety margins
-    my $estimation_margin = int($max_prompt * 0.10);
+    # Safety margins - account for estimation error, per-message overhead not captured,
+    # and API-specific formatting tokens that aren't in our character count
+    my $estimation_margin = int($max_prompt * 0.15);
     my $response_buffer = 8000;
     my $effective_limit = $max_prompt - $tool_tokens - ($estimation_margin + $response_buffer);
     $effective_limit = 1000 if $effective_limit < 1000;
@@ -352,6 +353,12 @@ sub _estimate_tokens {
 
     my $total = 0;
     for my $msg (@$messages) {
+        # Per-message overhead: role field, message separators, formatting tokens
+        # Every message has role + boundary tokens (~4)
+        # Tool messages have additional name + tool_call_id fields (~8)
+        $total += 4;                                                      # base overhead
+        $total += 8 if $msg->{role} && $msg->{role} eq 'tool';           # tool-specific fields
+
         $total += estimate_tokens($msg->{content} || '');
         if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
             for my $tc (@{$msg->{tool_calls}}) {
@@ -359,21 +366,20 @@ sub _estimate_tokens {
                 $total += estimate_tokens($json || '');
             }
         }
-        $total += 50 if $msg->{role} && $msg->{role} eq 'tool';
     }
     return $total;
 }
 
 sub _group_into_units {
     my ($messages) = @_;
-    
+
     my @units;
     my $current_unit;
     my %pending_tool_ids;
     my %tool_call_id_to_unit_idx;
-    
+
     for my $msg (@$messages) {
-        my $msg_tokens = int(length($msg->{content} || '') / 2.5);
+        my $msg_tokens = estimate_tokens($msg->{content} || '') + 4;
         my $has_tool_calls = $msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY' && @{$msg->{tool_calls}};
         my $is_tool_result = $msg->{tool_call_id} || ($msg->{role} && $msg->{role} eq 'tool');
         
