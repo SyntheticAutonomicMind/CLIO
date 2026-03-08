@@ -280,6 +280,22 @@ sub handle_error_response {
         log_info('ResponseHandler', "Cleared stateful markers - model rejects previous_response_id");
     }
 
+    # Handle reasoning/thinking not supported (400)
+    # Some models reject the reasoning parameter (e.g. Claude via Copilot Responses API)
+    elsif ($status == 400 && $error =~ /(?:thinking|reasoning)\s+is\s+not\s+supported/i) {
+        $is_retryable_error = 1;
+        $retryable = 1;
+        $retry_after = 0;
+        $error_type = 'unsupported_param';
+
+        # Flag that this model doesn't support reasoning parameters
+        $self->{_no_reasoning} = 1;
+
+        $retry_info = "Model doesn't support reasoning/thinking. Retrying without it.";
+        $error = $retry_info;
+        log_info('ResponseHandler', "Flagged model as not supporting reasoning - will strip from future requests");
+    }
+
     # Handle generic 400 (transient backend error, content encoding issue, etc.)
     # These arrive with no recognizable error string - treat as retryable with short backoff.
     # The raw response body is logged to /tmp/clio_api_400.log for diagnosis.
