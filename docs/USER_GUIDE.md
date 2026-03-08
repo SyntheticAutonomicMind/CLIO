@@ -114,14 +114,14 @@ No environment variables needed! Just start CLIO and login:
 
 ```bash
 ./clio
-: /login
+: /api login
 # Follow browser prompts to authorize with GitHub
 # Tokens are saved automatically to ~/.clio/github_tokens.json
 ```
 
 **Want More AI Models?**
 
-The default OAuth authentication provides access to ~31 models. To unlock all ~37 models (including latest preview models), you can use a Personal Access Token (PAT):
+The default OAuth authentication provides access to dozens of models. To unlock additional preview models, you can use a Personal Access Token (PAT):
 
 1. **Create a PAT at GitHub:**
    - Go to https://github.com/settings/tokens
@@ -138,7 +138,7 @@ The default OAuth authentication provides access to ~31 models. To unlock all ~3
 3. **Verify you have more models:**
    ```bash
    : /api models
-   # Should show ~37 models including:
+   # Should show additional preview models including:
    # - claude-opus-4.6
    # - gemini-3-flash-preview
    # - gemini-3-pro-preview
@@ -478,14 +478,16 @@ OpenSpec integration lets you define structured requirements (proposal, specs, d
 | Command | Purpose |
 |---------|---------|
 | `/skill` | Show skill system help |
-| `/skill list` | List available skills |
-| `/skill new <name>` | Create new skill |
-| `/skill edit <name>` | Edit existing skill |
-| `/skill delete <name>` | Delete skill |
-| `/skill show <name>` | Show skill contents |
-| `/skill test <name>` | Test skill with query |
-| `/skill import <path>` | Import skill from file |
-| `/skill export <name>` | Export skill to file |
+| `/skills list` | List all available skills |
+| `/skills add <name> "<text>"` | Create a new skill |
+| `/skills delete <name>` | Delete a skill |
+| `/skills show <name>` | Display skill contents |
+| `/skills use <name> [file]` | Execute skill as user message |
+| `/skills load <name>` | Load skill into system prompt (session-wide) |
+| `/skills unload <name>` | Remove loaded skill from system prompt |
+| `/skills loaded` | Show currently loaded skills |
+| `/skills search [query]` | Search the skills catalog |
+| `/skills install <name>` | Install skill from catalog |
 
 ### Execution & Utilities
 
@@ -497,6 +499,27 @@ OpenSpec integration lets you define structured requirements (proposal, specs, d
 | `/subagent list` | List active sub-agents |
 | `/subagent inbox` | View messages from sub-agents |
 | `/subagent send <id> <msg>` | Send message to sub-agent |
+
+### Stats & Performance
+
+| Command | Purpose |
+|---------|---------|
+| `/stats` | Memory and performance snapshot (TTFT, TPS, token counts) |
+| `/stats history` | Per-iteration memory and token timeline |
+| `/stats log [N]` | Raw log entries (last N, default 20) |
+| `/stats help` | Show stats command help |
+
+### Multiplexer Integration
+
+When running inside tmux, GNU Screen, or Zellij, CLIO can manage panes for sub-agent output:
+
+| Command | Purpose |
+|---------|---------|
+| `/mux status` | Show multiplexer type and managed panes |
+| `/mux agent <id>` | Open a pane tailing a specific agent's log |
+| `/mux close <id>` | Close a specific managed pane |
+| `/mux close all` | Close all CLIO-managed panes |
+| `/mux auto [on\|off]` | Toggle automatic pane creation on agent spawn |
 
 ---------------------------------------------------
 
@@ -879,7 +902,7 @@ Remote execution enables powerful distributed workflows - run analysis on server
 /subagent kill <agent-id>                   # Terminate agent
 /subagent killall                           # Terminate all agents
 
-# Communication (NEW!)
+# Communication
 /subagent inbox                             # Check messages from agents
 /subagent send <agent-id> <message>         # Send guidance to agent
 /subagent reply <agent-id> <response>       # Reply to agent question
@@ -1475,7 +1498,7 @@ CLIO is designed to be configured **interactively** using slash commands:
 
 ```bash
 ./clio
-: /login
+: /api login
 # Browser opens → Authorize → Done!
 ```
 
@@ -2132,7 +2155,7 @@ GitHub Copilot authentication failed or not configured.
 ```bash
 # Start CLIO and login
 ./clio
-: /login
+: /api login
 # Follow browser prompts
 
 # Or check if you have saved tokens
@@ -2376,7 +2399,7 @@ A: Use `/api` commands:
 
 # Switch back to GitHub Copilot
 : /api provider github_copilot
-# (uses saved token from /login)
+# (uses saved token from /api login)
 unset GITHUB_COPILOT_TOKEN
 ```
 
