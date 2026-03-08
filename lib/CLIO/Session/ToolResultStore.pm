@@ -304,29 +304,31 @@ sub _wrap_long_lines {
             push @output_lines, $line;
         } else {
             # Line is too long - wrap it at word boundaries
-            my $remaining = $line;
-            
-            while (length($remaining) > $max_length) {
-                # Try to find a space near the max_length boundary
-                my $chunk = substr($remaining, 0, $max_length);
-                
-                # Look for last space in the chunk
-                if ($chunk =~ /^(.+)\s+(\S*)$/) {
-                    # Found a space - break there
-                    my $before_space = $1;
-                    my $partial_word = $2;
-                    
-                    push @output_lines, $before_space;
-                    $remaining = substr($remaining, length($before_space) + 1);  # +1 to skip the space
+            # Use index-based approach (O(n)) to avoid O(n²) string copies.
+            my $len = length($line);
+            my $pos = 0;
+
+            while ($pos < $len) {
+                my $remaining = $len - $pos;
+                if ($remaining <= $max_length) {
+                    # Remainder fits - take it as-is
+                    push @output_lines, substr($line, $pos);
+                    $pos = $len;
                 } else {
-                    # No spaces found - hard break at max_length
-                    push @output_lines, $chunk;
-                    $remaining = substr($remaining, $max_length);
+                    # Look for last space within the next $max_length chars
+                    my $chunk = substr($line, $pos, $max_length);
+                    my $space_pos = rindex($chunk, ' ');
+                    if ($space_pos > 0) {
+                        # Break at last space
+                        push @output_lines, substr($chunk, 0, $space_pos);
+                        $pos += $space_pos + 1;  # +1 skips the space
+                    } else {
+                        # No space found - hard break at max_length
+                        push @output_lines, $chunk;
+                        $pos += $max_length;
+                    }
                 }
             }
-            
-            # Add the final piece
-            push @output_lines, $remaining if length($remaining) > 0;
         }
     }
     
