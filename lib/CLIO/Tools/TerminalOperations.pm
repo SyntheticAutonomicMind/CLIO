@@ -18,10 +18,10 @@ CLIO::Tools::TerminalOperations - Shell/terminal command execution
 =head1 DESCRIPTION
 
 Provides safe terminal command execution with timeout and validation.
-All commands run in passthrough mode - visible and interactive to the user.
-When a terminal multiplexer (tmux/screen/zellij) is available, commands
-run in a separate pane. Otherwise, CLIO suspends its input handling and
-gives full TTY control to the command.
+Commands run in captured mode by default (output redirected to file,
+no pty created). When passthrough mode is requested, the user gets
+interactive TTY access with output captured via tee. Multiplexer panes
+are used when available for isolated execution.
 
 =cut
 
@@ -88,6 +88,7 @@ sub execute_command {
     
     my $command = $params->{command};
     my $timeout = $params->{timeout} || 30;
+    my $passthrough = $params->{passthrough} || 0;
     
     # Get working directory from params first, then from session context, then default to '.'
     my $working_dir = $params->{working_directory};
@@ -123,10 +124,12 @@ sub execute_command {
         my $original_cwd = getcwd();
         chdir $working_dir if $working_dir ne '.';
         
-        if ($mux && $mux->available()) {
+        if ($passthrough) {
+            $result = $self->_execute_passthrough($command, $timeout, $display_cmd, $working_dir);
+        } elsif ($mux && $mux->available()) {
             $result = $self->_execute_in_mux_pane($command, $timeout, $display_cmd, $mux, $working_dir);
         } else {
-            $result = $self->_execute_with_tty_handoff($command, $timeout, $display_cmd, $working_dir);
+            $result = $self->_execute_captured($command, $timeout, $display_cmd, $working_dir);
         }
         
         chdir $original_cwd if $working_dir ne '.';
@@ -160,11 +163,11 @@ sub _execute_in_mux_pane {
     my $done_marker = "/tmp/clio_terminal_done_$$";
     unlink $done_marker if -f $done_marker;
     
-    my $script_cmd = $self->_get_script_command($command, $log_file);
-    
-    # Wrap with working directory and done marker
+    # Wrap with working directory, output capture, and done marker
+    # No script/pty - just subshell with redirect
     my $pane_cmd = "cd " . _shell_escape($working_dir) . " && "
-                 . "$script_cmd; echo \$? > " . _shell_escape($done_marker);
+                 . "($command) > " . _shell_escape($log_file) . " 2>&1"
+                 . "; echo \$? > " . _shell_escape($done_marker);
     
     log_debug('TerminalOps', "Multiplexer execution: $pane_cmd");
     
@@ -177,7 +180,7 @@ sub _execute_in_mux_pane {
     unless ($pane_id) {
         # Mux pane creation failed, fall back to direct TTY
         log_warning('TerminalOps', "Multiplexer pane creation failed, falling back to TTY handoff");
-        return $self->_execute_with_tty_handoff($command, $timeout, $display_cmd, $working_dir);
+        return $self->_execute_captured($command, $timeout, $display_cmd, $working_dir);
     }
     
     # Wait for command to complete (poll for done marker)
@@ -200,15 +203,65 @@ sub _execute_in_mux_pane {
     );
 }
 
-=head2 _execute_with_tty_handoff
+=head2 _execute_captured
 
-Execute a command with full TTY handoff. CLIO suspends its input handling
-(ReadMode), gives the terminal to the command via system(), then resumes.
-Output is captured via the script command for the agent.
+Execute a command in a subshell with output captured to a file.
+No pty, no script command, no TTY handoff. Safe for all non-interactive
+commands (grep, cat, ls, perl, git, etc).
 
 =cut
 
-sub _execute_with_tty_handoff {
+sub _execute_captured {
+    my ($self, $command, $timeout, $display_cmd, $working_dir) = @_;
+    
+    my $log_file = "/tmp/clio_terminal_$$.log";
+    unlink $log_file if -f $log_file;
+    
+    my $exit_code;
+    
+    eval {
+        local $SIG{ALRM} = sub { die "Command timeout after ${timeout}s\n" };
+        alarm($timeout);
+        
+        # Run in subshell with stdout+stderr captured to file
+        # No pty, no script command - prevents terminal corruption
+        $exit_code = system("($command) > \Q$log_file\E 2>&1");
+        $exit_code = $exit_code >> 8;
+        
+        alarm(0);
+    };
+    
+    if ($@) {
+        alarm(0);
+        if ($@ =~ /timeout/) {
+            $exit_code = 124;
+        } else {
+            die $@;
+        }
+    }
+    
+    # Read captured output
+    my $output = $self->_read_and_cleanup_log($log_file);
+    
+    return $self->success_result(
+        $output,
+        pre_action_description => $display_cmd,
+        exit_code => $exit_code,
+        command => $command,
+        timeout => $timeout,
+    );
+}
+
+=head2 _execute_passthrough
+
+Execute a command with interactive TTY access. The user can interact with
+the command (signing, prompts, etc). Output is captured via tee so the
+agent can still see results. Falls back to plain system() if tee would
+interfere with the command.
+
+=cut
+
+sub _execute_passthrough {
     my ($self, $command, $timeout, $display_cmd, $working_dir) = @_;
     
     my $log_file = "/tmp/clio_terminal_$$.log";
@@ -218,17 +271,14 @@ sub _execute_with_tty_handoff {
     $self->_suspend_clio_input();
     
     my $exit_code;
-    my $timed_out = 0;
     
     eval {
-        # Build the script command for output capture
-        my $script_cmd = $self->_get_script_command($command, $log_file);
-        
         local $SIG{ALRM} = sub { die "Command timeout after ${timeout}s\n" };
         alarm($timeout);
         
-        # system() gives the child process full TTY access
-        $exit_code = system($script_cmd);
+        # Use tee to capture output while preserving interactive access
+        # The command still reads from the user's STDIN
+        $exit_code = system("$command 2>&1 | tee \Q$log_file\E");
         $exit_code = $exit_code >> 8;
         
         alarm(0);
@@ -237,13 +287,9 @@ sub _execute_with_tty_handoff {
     if ($@) {
         alarm(0);
         if ($@ =~ /timeout/) {
-            $timed_out = 1;
-            $exit_code = 124;  # Standard timeout exit code
-        } else {
-            # Resume input before returning error
-            $self->_resume_clio_input();
-            die $@;
+            $exit_code = 124;
         }
+        # Don't re-throw - still need to resume input
     }
     
     # Resume CLIO's terminal input handling
@@ -283,6 +329,8 @@ sub _suspend_clio_input {
 =head2 _resume_clio_input
 
 Resume CLIO's ReadKey-based input handling after a child process completes.
+Restores terminal to pristine state first, which Chat.pm will then set
+to cbreak mode for interrupt detection.
 
 =cut
 
@@ -291,11 +339,11 @@ sub _resume_clio_input {
     
     eval {
         require CLIO::Compat::Terminal;
-        # Restore to normal mode first (cooked)
-        CLIO::Compat::Terminal::ReadMode(0, *STDIN);
+        # Force full restoration to pristine state
+        CLIO::Compat::Terminal::reset_terminal();
     };
     if ($@) {
-        log_debug('TerminalOps', "Could not resume ReadMode: $@");
+        log_debug('TerminalOps', "Could not resume terminal: $@");
     }
 }
 
@@ -453,40 +501,6 @@ sub get_additional_parameters {
             description => "Force passthrough mode (direct terminal access, no output capture). Overrides config settings.",
         },
     };
-}
-
-=head2 _get_script_command
-
-Generate platform-specific script command for terminal recording.
-
-macOS and Linux have different script command syntax:
-- macOS: script -q <logfile> <command>
-- Linux: script -qc "<command>" <logfile>
-
-Arguments:
-- $command: Command to execute
-- $log_file: Path to output log file
-
-Returns: Complete script command string
-
-=cut
-
-sub _get_script_command {
-    my ($self, $command, $log_file) = @_;
-    
-    # Detect platform by checking uname
-    my $platform = `uname -s 2>/dev/null` || '';
-    chomp $platform;
-    
-    # Escape command for shell
-    my $escaped_cmd = $command;
-    $escaped_cmd =~ s/'/'\\''/g;
-    
-    if ($platform eq 'Darwin') {
-        return "script -q '$log_file' sh -c '$escaped_cmd'";
-    } else {
-        return "script -qc '$escaped_cmd' '$log_file'";
-    }
 }
 
 =head2 _read_and_cleanup_log
