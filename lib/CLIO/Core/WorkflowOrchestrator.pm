@@ -24,6 +24,7 @@ use CLIO::Core::ConversationManager qw(
     repair_tool_call_json
 );
 use CLIO::Core::API::MessageValidator qw(validate_and_truncate);
+use CLIO::Memory::TokenEstimator qw(estimate_tokens);
 use CLIO::Core::PromptBuilder;
 use CLIO::Util::JSON qw(encode_json decode_json);
 use Encode qw(encode_utf8);  # For handling Unicode in JSON
@@ -860,7 +861,7 @@ sub process_input {
                         my $kept_tokens = 0;
                         my $start_idx = $original_count;  # start from end, walk backwards
                         for (my $i = $original_count - 1; $i >= 0; $i--) {
-                            my $msg_tokens = int(length($non_system[$i]{content} || '') / 2.5) + 10;
+                            my $msg_tokens = estimate_tokens($non_system[$i]{content} || '') + 10;
                             if ($kept_tokens + $msg_tokens <= $keep_budget) {
                                 $kept_tokens += $msg_tokens;
                                 $start_idx = $i;
