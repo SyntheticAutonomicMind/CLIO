@@ -72,6 +72,11 @@ sub new {
         warnings => [],
         next_lock_id => 1,
         
+        # Idle tracking: exit if no clients connect for this many seconds after startup
+        idle_timeout => $args{idle_timeout} || 300,  # 5 minutes
+        first_client_seen => 0,  # Set to 1 on first client connect
+        last_client_time => time(),  # Updated on each connect/disconnect
+        
         # Message bus (Phase 2)
         agent_inboxes => {},  # agent_id => [@messages]
         user_inbox => [],     # Messages for user (unread)
@@ -202,6 +207,10 @@ sub accept_client {
         buffer => '',
     };
     
+    # Update idle tracking
+    $self->{first_client_seen} = 1;
+    $self->{last_client_time} = time();
+    
     $self->log_debug("New connection: fd=$fd");
 }
 
@@ -263,6 +272,9 @@ sub handle_disconnect {
     $self->{select}->remove($client_info->{socket});
     $client_info->{socket}->close();
     delete $self->{clients}{$fd};
+    
+    # Update idle tracking on disconnect
+    $self->{last_client_time} = time();
 }
 
 
@@ -761,14 +773,25 @@ sub do_maintenance {
     my ($self) = @_;
     
     my $now = time();
-    my $timeout = 120;
+    my $client_timeout = 120;
     
     for my $fd (keys %{$self->{clients}}) {
         my $client = $self->{clients}{$fd};
-        if ($now - $client->{last_activity} > $timeout) {
+        if ($now - $client->{last_activity} > $client_timeout) {
             $self->log_warn("Client timeout: fd=$fd");
             $self->handle_disconnect($fd);
         }
+    }
+    
+    # Exit if idle: no connected clients and no registered agents for idle_timeout seconds.
+    # We only check after the first client has connected, to give agents time to start up.
+    if ($self->{first_client_seen}
+        && !%{$self->{clients}}
+        && !%{$self->{agent_status}}
+        && ($now - $self->{last_client_time}) > $self->{idle_timeout})
+    {
+        $self->log_info("Broker idle timeout - no clients for $self->{idle_timeout}s, exiting");
+        exit 0;
     }
 }
 

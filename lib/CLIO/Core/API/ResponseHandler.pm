@@ -654,13 +654,14 @@ sub release_broker_slot {
         });
     }
 
-    eval {
-        $self->{broker_client}->release_api_slot(
-            $self->{_current_broker_request_id},
-            $status,
-            \%headers,
-        );
-        log_debug('ResponseHandler', "Released broker slot (request_id=$self->{_current_broker_request_id}, status=$status)");
+    my $request_id = $self->{_current_broker_request_id};
+   eval {
+       $self->{broker_client}->release_api_slot(
+           request_id => $request_id,
+           status     => $status,
+           headers    => \%headers,
+       );
+        log_debug('ResponseHandler', "Released broker slot (request_id=$request_id, status=$status)");
     };
     if ($@) {
         log_warning('ResponseHandler', "Failed to release broker slot: $@");
