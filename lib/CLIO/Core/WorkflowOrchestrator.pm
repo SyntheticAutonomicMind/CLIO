@@ -674,9 +674,9 @@ sub process_input {
                 $retry_count++;
                 
                 # Determine which retry limit to use based on error type
-                # Rate limits and server errors get more retries (transient issues)
+                # Rate limits, server errors, and transient 400s get more retries
                 my $error_type_for_limit = $api_response->{error_type} || '';
-                my $retry_limit = ($error_type_for_limit eq 'server_error' || $error_type_for_limit eq 'rate_limit') 
+                my $retry_limit = ($error_type_for_limit eq 'server_error' || $error_type_for_limit eq 'rate_limit' || $error_type_for_limit eq 'bad_request') 
                     ? $max_server_retries 
                     : $max_retries;
                 

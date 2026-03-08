@@ -1178,15 +1178,16 @@ sub _build_responses_api_payload {
         include => ['reasoning.encrypted_content'],
     };
     
-    # Configure reasoning based on show_thinking setting
-    my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
-    my $reasoning_config = { effort => 'medium' };
-    if ($show_thinking) {
-        # Request reasoning summary text when thinking display is enabled
-        # This provides readable thinking content via response.reasoning_summary_text.delta events
-        $reasoning_config->{summary} = 'auto';
+    # Configure reasoning - only for models that support it
+    # ResponseHandler flags _no_reasoning when model rejects reasoning params
+    if (!$self->{response_handler}{_no_reasoning}) {
+        my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
+        my $reasoning_config = { effort => 'medium' };
+        if ($show_thinking) {
+            $reasoning_config->{summary} = 'auto';
+        }
+        $payload->{reasoning} = $reasoning_config;
     }
-    $payload->{reasoning} = $reasoning_config;
     
     # Add tools if provided - convert to Responses API format
     if ($opts{tools} && ref($opts{tools}) eq 'ARRAY' && @{$opts{tools}}) {

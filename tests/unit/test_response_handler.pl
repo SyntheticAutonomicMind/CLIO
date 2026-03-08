@@ -263,7 +263,9 @@ subtest 'handle_error_response - OpenRouter provider error with metadata.raw' =>
         content => '{"error":{"message":"Provider returned error","code":400,"metadata":{"raw":"[{\"error\":{\"code\":400,\"message\":\"thinking is not supported by this model\",\"status\":\"INVALID_ARGUMENT\"}}]"}}}',
     );
     my $result = $handler->handle_error_response($resp, '{}', 1);
-    like($result->{error}, qr/thinking is not supported/i, 'Extracted inner error from OpenRouter metadata.raw');
+    is($result->{retryable}, 1, 'Reasoning not supported is retryable');
+    is($result->{error_type}, 'unsupported_param', 'Error type is unsupported_param');
+    is($handler->{_no_reasoning}, 1, 'Model flagged as not supporting reasoning');
 };
 
 subtest 'handle_error_response - embedded 429 overrides HTTP 200' => sub {
