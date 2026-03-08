@@ -299,6 +299,12 @@ These tools work but coordinate through the broker:
 - AgentLoop reconnects automatically after broker errors
 - Chat.pm polling handles errors gracefully
 
+### Broker Lifecycle
+
+The broker starts automatically when you spawn a sub-agent. It runs as a separate background process connected via Unix socket.
+
+**Idle timeout:** After all agents disconnect, the broker waits 5 minutes (300 seconds) for a new connection. If no clients reconnect, it exits cleanly. This prevents orphaned broker processes from accumulating after CLIO sessions end.
+
 ### Agent Crash
 
 - Broker auto-releases all locks when agent disconnects
@@ -327,9 +333,18 @@ These tools work but coordinate through the broker:
 1. Use file locks for all write operations
 2. Serialize git commits (use git lock)
 3. Share discoveries so agents learn from each other
-4. Use persistent mode for complex multi-step work
-5. Monitor `/subagent inbox` for questions
-6. Broadcast important updates to all agents
+4. Use oneshot mode (default) for focused single tasks; persistent mode for long-running agents
+5. Monitor `/subagent inbox` for questions - agents send messages when they need decisions
+6. Broadcast important updates to all agents with `/subagent broadcast <message>`
+
+### Oneshot Agent Behavior
+
+When you use `/subagent spawn <task>`, agents run in oneshot mode by default: they receive the task via `--input`, complete it, send a completion message to the broker, then exit. Key characteristics:
+
+- **Iteration limit:** 75 iterations maximum (non-interactive mode default)
+- **Completion message:** Agent sends a message to the parent's inbox when done
+- **Model:** Defaults to `gpt-5-mini` unless `--model` is specified
+- **No terminal:** Agent runs headless with no TTY; spinner is disabled
 
 ---
 

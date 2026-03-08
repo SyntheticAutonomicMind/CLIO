@@ -77,7 +77,7 @@ Responses stream in real-time, token by token. You see the AI "thinking" as it t
 
 ### Iteration and Error Recovery
 
-When something goes wrong - a syntax error, a failed test, an unexpected file structure - CLIO doesn't stop. It reads the error, adjusts its approach, and tries again. This continues for up to 500 iterations per request (configurable), ensuring complex tasks can be completed without manual intervention.
+When something goes wrong - a syntax error, a failed test, an unexpected file structure - CLIO doesn't stop. It reads the error, adjusts its approach, and tries again. In interactive mode CLIO has no iteration limit. In non-interactive mode (scripting, sub-agents) a default of 75 iterations applies. Both are configurable.
 
 ---
 
@@ -132,7 +132,11 @@ A dedicated git tool with 10 operations - not just "run git via shell" but struc
 
 Execute shell commands with safety validation and timeout protection. CLIO can run build commands, test suites, linters, or any other shell command your workflow requires.
 
-Commands are validated before execution. Output is captured and returned to the AI for analysis.
+Commands are validated before execution. CLIO shows the command text before running it, then executes using one of three modes:
+
+- **Captured mode** (default) - Command runs in a subshell with output redirected to a log file. No pty is created, preventing terminal corruption. Safe for all non-interactive commands.
+- **Passthrough mode** - User gets interactive TTY access (for SSH, editors, etc.). Output is captured via `tee`. CLIO suspends its input handling while the command owns the terminal, then restores terminal state cleanly.
+- **Multiplexer pane** - When running inside tmux, GNU Screen, or Zellij, commands open in a new pane. Output is captured via log file while the pane stays live.
 
 ### Apply Patch
 
@@ -235,6 +239,20 @@ Each provider offers multiple models. CLIO automatically queries available model
 /api set model gpt-4.1   # Switch to a specific model
 ```
 
+### Model Aliases and Quick Switch
+
+Create short aliases for frequently-used models:
+
+```
+/api alias fast gpt-4.1-mini    # Create alias 'fast'
+/api alias                      # List all aliases
+/model fast                     # Quick switch to 'fast' model (resolves alias)
+/model gpt-4.1                  # Quick switch to any model by name
+/model                          # Show current model and aliases
+```
+
+The `/model` command is a shortcut for model switching that resolves aliases. It's faster than `/api set model` for frequent switches during a session.
+
 ### Local Models
 
 For complete privacy, use local providers (llama.cpp, LM Studio, SAM). Your data never leaves your machine. Local models work with smaller context windows, so CLIO automatically adjusts its trimming thresholds.
@@ -270,6 +288,10 @@ Sessions persist:
 - Complete conversation history (every message, tool call, and result)
 - Todo list state
 - Session metadata (creation time, model used, message count)
+
+### AI Session Naming
+
+When you start a conversation, CLIO automatically asks the AI to generate a short descriptive name (3-6 words) for the session based on your first message. This name appears in session lists and makes it easier to find past sessions. You can always rename a session manually with `/session rename <name>`.
 
 ### Session State Repair
 
@@ -390,7 +412,7 @@ CLIO manages a limited context window (the amount of conversation the AI can "se
 
 ### Three-Layer Trimming
 
-1. **Proactive trimming** - Before each API call, CLIO estimates token usage and trims older messages if approaching 58% of the model's context window. This preserves the most recent and most important messages.
+1. **Proactive trimming** - Before each API call, CLIO estimates token usage and trims older messages if approaching 75% of the model's context window. This preserves the most recent and most important messages.
 
 2. **Validation trimming** - Just before sending to the API, messages are validated for token limits with smart unit-based truncation. Dropped messages are compressed into a summary.
 
@@ -459,6 +481,11 @@ These send structured prompts to the AI:
 | `/api set key <key>` | Set API key |
 | `/api models` | List available models |
 | `/api status` | Show current provider status |
+| `/api alias <name> <model>` | Create a model alias |
+| `/api alias` | List all model aliases |
+| `/api alias <name> --delete` | Remove a model alias |
+| `/model <name>` | Quick model switch (resolves aliases) |
+| `/model` | Show current model and aliases |
 
 ### Session Commands
 
@@ -507,16 +534,25 @@ These send structured prompts to the AI:
 | `/billing` | Token usage and costs |
 | `/memory` | Memory system management |
 | `/context` | Context window info |
-| `/stats` | Session statistics |
+| `/stats` | Memory and performance snapshot |
+| `/stats history` | Per-iteration memory timeline |
+| `/stats log [N]` | Raw log entries (last N, default 20) |
 | `/undo` | Revert last AI changes |
 | `/update` | Check for CLIO updates |
 | `/log` | View session log |
 | `/device` | Manage remote devices |
-| `/agent` | Multi-agent commands |
+| `/subagent spawn <task>` | Spawn a sub-agent |
+| `/subagent list` | List all sub-agents |
+| `/subagent inbox` | View messages from sub-agents |
+| `/subagent send <id> <msg>` | Send message to a sub-agent |
+| `/mux status` | Show multiplexer status and managed panes |
+| `/mux agent <id>` | Open a pane tailing an agent's log |
+| `/mux close <id\|all>` | Close managed pane(s) |
+| `/mux auto [on\|off]` | Toggle auto-pane on agent spawn |
 | `/mcp` | MCP server management |
 | `/prompt` | View/edit system prompt |
-| `/performance` | Performance stats |
-| `/spec` | OpenSpec spec management |
+| `/profile build` | Analyze sessions and build user profile |
+| `/profile show` | Display current profile |
 
 ---
 
@@ -604,8 +640,21 @@ Skills are reusable prompt templates. Instead of typing the same complex instruc
 /skills list             # Show all skills
 /skills add              # Create a new skill
 /skills delete <name>    # Remove a skill
-/skills run <name>       # Execute a skill
+/skills use <name> [file] # Execute a skill as a user message (with optional file context)
+/skills show <name>      # Display skill contents
+/skills load <name>      # Load a skill into the system prompt (persistent for session)
+/skills unload <name>    # Remove a loaded skill from the system prompt
+/skills loaded           # Show currently loaded skills
+/skills search [query]   # Search the skills catalog
+/skills install <name>   # Install a skill from the catalog
 ```
+
+### Skill Loading vs Execution
+
+Skills can be used in two ways:
+
+- **Execute** (`/skills use <name>`) - Runs the skill as a one-shot user message to the AI
+- **Load** (`/skills load <name>`) - Injects the skill into the system prompt for the rest of the session, giving the AI persistent instructions or persona
 
 ### Variable Substitution
 
@@ -621,7 +670,7 @@ Review {{file}} for:
 Provide fixes for each issue found.
 ```
 
-When you run `/skills run code-review`, CLIO prompts you for `{{file}}` and substitutes your answer.
+When you run `/skills use code-review`, CLIO prompts you for `{{file}}` and substitutes your answer.
 
 ### Built-in vs Custom
 
@@ -830,6 +879,12 @@ For API key providers, keys are stored in CLIO's config file. Use environment va
 ### Role-Based Access
 
 CLIO supports roles (admin, user, guest) with configurable permissions and an audit log of security-relevant actions.
+
+### Invisible Character Defense
+
+CLIO automatically detects and strips invisible Unicode characters from user input. This defends against prompt injection attacks that use zero-width characters, bidirectional text overrides, and other invisible Unicode sequences to hide malicious instructions.
+
+When invisible characters are detected, CLIO reports which characters were found (by Unicode name), strips them from the input, and proceeds with the cleaned text. This protection applies to all user input before it reaches the AI.
 
 ---
 

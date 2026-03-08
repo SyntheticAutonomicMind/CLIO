@@ -1,6 +1,6 @@
 # CLIO Architecture
 
-**Last Updated:** February 2026
+**Last Updated:** March 2026
 
 ---------------------------------------------------
 
@@ -15,7 +15,7 @@ User Input
    ↓
 Terminal UI (Chat.pm)
    ↓
-AI Agent (SimpleAIAgent.pm)
+AI Agent (WorkflowOrchestrator.pm)
    ↓
 Tool Selection & Execution
      - File Operations (FileOperations.pm)
@@ -44,6 +44,12 @@ Terminal Output
 | Markdown Renderer | `Markdown.pm` | Convert markdown to ANSI |
 | Color/ANSI | `ANSI.pm` | ANSI escape sequences |
 | Themes | `Theme.pm` | Color themes and styling |
+| Display | `Display.pm` | Display utilities (writeline, colors) |
+| Tool Output Formatter | `ToolOutputFormatter.pm` | Format tool operation output |
+| Command Handler | `CommandHandler.pm` | Route slash commands to handler modules |
+| Progress Spinner | `ProgressSpinner.pm` | Animated busy indicator |
+| Multiplexer | `Multiplexer.pm` | Terminal multiplexer detection and pane management |
+| Commands Base | `Commands/Base.pm` | Base class providing display delegation for all slash command modules |
 
 **How it works:**
 1. User types message
@@ -57,16 +63,15 @@ Terminal Output
 
 | Component | File | Purpose |
 |-----------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------|
-| API Manager | `APIManager.pm` | AI provider integration |
-| Simple AI Agent | `SimpleAIAgent.pm` | Handles AI requests/responses |
-| Workflow Orchestrator | `WorkflowOrchestrator.pm` | Complex multi-step workflows |
-| Task Orchestrator | `TaskOrchestrator.pm` | Task management and orchestration |
-| Tool Executor | `ToolExecutor.pm` | Invokes tools |
+| API Manager | `APIManager.pm` | AI provider integration, token management |
+| Workflow Orchestrator | `WorkflowOrchestrator.pm` | Main agent loop, tool orchestration |
+| Simple AI Agent | `SimpleAIAgent.pm` | Lightweight AI agent for internal tasks |
+| Tool Executor | `ToolExecutor.pm` | Invokes tools, applies secret redaction |
 | Tool Call Extractor | `ToolCallExtractor.pm` | Extract tool calls from AI responses |
 | Prompt Manager | `PromptManager.pm` | System prompts + custom instructions |
-| Instructions Reader | `InstructionsReader.pm` | Reads `.clio/instructions.md` |
-| Protocol Integration | `ProtocolIntegration.pm` | Integrate protocol handlers |
-| Config | `Config.pm` | API keys, provider selection |
+| Prompt Builder | `PromptBuilder.pm` | Prompt construction utilities |
+| Instructions Reader | `InstructionsReader.pm` | Reads `.clio/instructions.md` and `AGENTS.md` |
+| Config | `Config.pm` | API keys, provider selection, model aliases |
 | ReadLine | `ReadLine.pm` | Command history & editing |
 | Command Parser | `CommandParser.pm` | Parse user commands |
 | Editor | `Editor.pm` | Core editing functionality |
@@ -78,13 +83,13 @@ Terminal Output
 | Agent Loop | `AgentLoop.pm` | Persistent agent execution loop |
 | Conversation Manager | `ConversationManager.pm` | Conversation history management |
 | Model Registry | `ModelRegistry.pm` | AI model metadata and management |
-| Prompt Builder | `PromptBuilder.pm` | Prompt construction utilities |
 | Tool Error Guidance | `ToolErrorGuidance.pm` | Contextual error recovery hints |
-| Message Validator | `API/MessageValidator.pm` | Validate message format for AI providers |
+| Error Context | `ErrorContext.pm` | Error taxonomy and structured error context |
+| Message Validator | `API/MessageValidator.pm` | Validate and proactively trim messages for AI providers |
 | Response Handler | `API/ResponseHandler.pm` | Parse and process AI provider responses |
 | GitHub Auth | `GitHubAuth.pm` | GitHub OAuth authentication |
 | GitHub Copilot Models API | `GitHubCopilotModelsAPI.pm` | Access GitHub Copilot models |
-| Performance Monitor | `PerformanceMonitor.pm` | Track performance metrics |
+| Performance Monitor | `PerformanceMonitor.pm` | Track timing metrics |
 | Logger | `Logger.pm` | Debug and trace output |
 
 **How it works:**
@@ -193,10 +198,11 @@ Terminal Output
 | Authz | `Authz.pm` | Check file access permissions |
 | Path Authorizer | `PathAuthorizer.pm` | Control file access |
 | Secret Redactor | `SecretRedactor.pm` | PII and secret redaction from tool output |
-| Manager | `Manager.pm` | Overall security |
+| Manager | `Manager.pm` | Security management and coordination |
+| Invisible Char Filter | `InvisibleCharFilter.pm` | Detect and strip invisible Unicode characters from user input |
 
 **How it works:**
-1. User runs `/login` → GitHub device flow
+1. User runs `/api login` → GitHub device flow
 2. Token stored securely in `~/.clio/`
 3. File operations check PathAuthorizer
 4. Tool output passes through SecretRedactor before display/AI transmission
@@ -211,6 +217,22 @@ Terminal Output
 | Tool Logger | `Logging/ToolLogger.pm` | Log tool operations |
 | Performance Monitor | `Core/PerformanceMonitor.pm` | Track timing |
 | Process Stats | `Logging/ProcessStats.pm` | RSS/VSZ memory and resource tracking |
+
+---------------------------------------------------
+
+### 15. Utilities
+**Files:** `lib/CLIO/Util/`
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| Path Resolver | `PathResolver.pm` | Tilde expansion, path canonicalization |
+| Text Sanitizer | `TextSanitizer.pm` | Sanitize text for safe display |
+| JSON | `JSON.pm` | Opportunistic fast JSON (JSON::XS > Cpanel::JSON::XS > JSON::PP) |
+| JSON Repair | `JSONRepair.pm` | Repair malformed JSON from AI responses |
+| Git Ignore | `GitIgnore.pm` | Auto-manage `.clio/` entries in `.gitignore` |
+| Input Helpers | `InputHelpers.pm` | Terminal input utilities |
+| Anthropic XML Parser | `AnthropicXMLParser.pm` | Parse Anthropic tool call XML format |
+| YAML | `YAML.pm` | Lightweight YAML parser (no CPAN required) |
 
 **How it works:**
 - Debug mode: `clio --debug`
@@ -227,13 +249,12 @@ Terminal Output
 | Validate | `Validate.pm` | Code validation |
 | RepoMap | `RepoMap.pm` | Repository mapping |
 | Recall | `Recall.pm` | Memory recall |
-| RemoteDistribution | `RemoteDistribution.pm` | Remote task distribution |
 | Handler | `Handler.pm` | Protocol base class |
 | Manager | `Manager.pm` | Protocol registry |
 
 **How it works:**
 1. AI returns natural language protocol commands
-2. ProtocolIntegration.pm parses them
+2. Protocol handlers are invoked directly by the AI agent
 3. Manager looks up protocol handler
 4. Handler executes the protocol
 5. Results sent back to AI
@@ -288,19 +309,7 @@ Terminal Output
 - Providers register via Providers.pm for runtime selection
 - GitHub Copilot and OpenAI-compatible providers are handled directly by APIManager
 
-### 13. Natural Language Processing
-**Files:** `lib/CLIO/NaturalLanguage/`
-
-| Component | File | Purpose |
-|-----------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Task Processor | `TaskProcessor.pm` | Natural language task decomposition into protocol chains |
-
-**How it works:**
-- Parses complex natural language requests (e.g., "Clone this repo and analyze the code")
-- Breaks them into executable protocol chains with confidence scoring
-- Routes to appropriate protocol handlers
-
-### 14. OpenSpec Integration
+### 13. OpenSpec Integration
 **Files:** `lib/CLIO/Spec/`, `lib/CLIO/Util/YAML.pm`, `lib/CLIO/UI/Commands/Spec.pm`
 
 | Component | File | Purpose |
@@ -403,7 +412,7 @@ graph TD
 ### Setup Process
 ```bash
 clio --new           # First run
-: /login            # Authorize with GitHub Copilot
+: /api login        # Authorize with GitHub Copilot
 : /config show      # View config
 : /api provider     # Check current provider
 ```
@@ -513,7 +522,30 @@ lib/CLIO/
       ToolOutputFormatter.pm # Tool output formatting
       CommandHandler.pm    # Slash command routing
       ProgressSpinner.pm   # Progress indicators
-      Commands/            # Slash command handlers (AI, API, Config, etc.)
+      Commands/            # Slash command handlers
+          Base.pm          # Base class with display delegation for all command modules
+          AI.pm            # AI-powered commands (/explain, /review, /doc)
+          API.pm           # API/provider commands (/api, /model)
+          Billing.pm       # Billing/usage commands (/billing, /usage)
+          Config.pm        # Configuration commands (/config, /theme)
+          Context.pm       # Context window commands (/context)
+          Device.pm        # Device management commands (/device)
+          File.pm          # File commands (/file, /read, /edit)
+          Git.pm           # Git commands (/git, /status, /diff)
+          Log.pm           # Log commands (/log)
+          Memory.pm        # Memory commands (/memory)
+          Mux.pm           # Multiplexer commands (/mux)
+          Profile.pm       # User profile commands (/profile)
+          Project.pm       # Project setup commands (/design, /init)
+          Prompt.pm        # Prompt commands (/prompt)
+          Session.pm       # Session management commands (/session)
+          Skills.pm        # Skill system commands (/skill)
+          Spec.pm          # OpenSpec commands (/spec)
+          Stats.pm         # Stats commands (/stats)
+          SubAgent.pm      # Sub-agent commands (/subagent)
+          System.pm        # System commands (/clear, /exit, /shell)
+          Todo.pm          # Todo commands (/todo)
+          Update.pm        # Update commands (/update)
       Multiplexer.pm       # Terminal multiplexer detection and abstraction
       Multiplexer/         # Multiplexer drivers
           Tmux.pm          # tmux driver
@@ -526,11 +558,9 @@ lib/CLIO/
       PromptBuilder.pm     # Prompt construction
       InstructionsReader.pm # Custom instructions
       WorkflowOrchestrator.pm # Multi-step workflows
-      TaskOrchestrator.pm  # Task orchestration
       ToolExecutor.pm      # Tool invocation
       ToolCallExtractor.pm # Extract tool calls
       ToolErrorGuidance.pm # Tool error assistance
-      ProtocolIntegration.pm # Protocol integration
       ConversationManager.pm # Conversation management
       Config.pm            # Configuration
       ModelRegistry.pm     # Model management
@@ -547,10 +577,14 @@ lib/CLIO/
       AgentLoop.pm         # Persistent agent loop
       PerformanceMonitor.pm # Performance tracking
       Logger.pm            # Logging
+      API/                 # API sub-modules
+          MessageValidator.pm # Message format validation and proactive trimming
+          ResponseHandler.pm  # AI provider response parsing
+      ErrorContext.pm      # Error taxonomy and structured context
   Tools/                   # Tool implementations
       Tool.pm              # Base class
       Registry.pm          # Tool registry
-      FileOperations.pm    # File I/O (18 operations)
+      FileOperations.pm    # File I/O (17 operations)
       VersionControl.pm    # Git (10 operations)
       TerminalOperations.pm # Shell execution
       MemoryOperations.pm  # Memory operations
@@ -591,7 +625,6 @@ lib/CLIO/
       Validate.pm          # Validation protocol
       RepoMap.pm           # Repository mapping
       Recall.pm            # Memory recall
-      RemoteDistribution.pm # Remote task distribution
   Providers/               # Native API provider modules
       Base.pm              # Provider base class
       Anthropic.pm         # Anthropic native API
@@ -608,11 +641,10 @@ lib/CLIO/
       PathAuthorizer.pm    # File access control
       SecretRedactor.pm    # PII/secret redaction
       Manager.pm           # Security manager
+      InvisibleCharFilter.pm # Invisible Unicode character defense
   Logging/                 # Logging system
       ToolLogger.pm        # Tool operation logging
       ProcessStats.pm      # Process statistics
-  NaturalLanguage/         # NLP processing
-      TaskProcessor.pm     # Natural language task processing
   Compat/                  # Compatibility layers
       HTTP.pm              # HTTP compatibility
       Terminal.pm          # Terminal compatibility
@@ -625,10 +657,14 @@ lib/CLIO/
       InputHelpers.pm      # Input helpers
       AnthropicXMLParser.pm # Anthropic XML parsing
       YAML.pm              # Lightweight YAML parser (OpenSpec support)
+      GitIgnore.pm         # Auto-manage .clio/ entries in .gitignore
   Spec/                    # OpenSpec integration
       Manager.pm           # Spec lifecycle management
-  Test/                    # Testing framework
-      Framework.pm         # Test utilities
+  Test/                    # Testing utilities
+      MockAPI.pm           # Mock API for tests
+  Profile/                 # User personality profile
+      Analyzer.pm          # Session history analysis
+      Manager.pm           # Profile storage and injection
   Util/                    # Utility modules
       PathResolver.pm      # Path resolution
       TextSanitizer.pm     # Text sanitization
@@ -651,8 +687,8 @@ lib/CLIO/
 ### Understanding Code
 - Start with `clio` script entry point
 - Follow to `Chat.pm` for UI loop
-- Check `SimpleAIAgent.pm` for AI agent logic
-- See `WorkflowOrchestrator.pm` for tool orchestration
+- Check `WorkflowOrchestrator.pm` for main agent loop and tool orchestration
+- See `SimpleAIAgent.pm` for the lightweight internal agent used in session naming and internal tasks
 - See `ToolExecutor.pm` for tool invocation
 
 ### Adding Features

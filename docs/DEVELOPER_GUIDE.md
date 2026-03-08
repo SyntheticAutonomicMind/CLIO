@@ -72,11 +72,11 @@ graph TD
 
 ### Core Components
 
-**1. SimpleAIAgent** (`lib/CLIO/Core/SimpleAIAgent.pm`)
-- Manages conversation flow
-- Orchestrates tool execution
-- Handles streaming responses
-- Coordinates with API manager
+**1. WorkflowOrchestrator** (`lib/CLIO/Core/WorkflowOrchestrator.pm`)
+- Main agent loop for interactive and non-interactive operation
+- Orchestrates the full turn cycle: message building, API calls, tool execution
+- Handles proactive context trimming before each API call
+- Manages streaming responses and keypress interrupt detection
 
 **2. APIManager** (`lib/CLIO/Core/APIManager.pm`)
 - Abstracts AI provider APIs
@@ -106,7 +106,7 @@ graph TD
 
 **User Input Flow:**
 ```
-User Input → Chat → SimpleAIAgent → APIManager → AI Provider
+User Input → Chat → WorkflowOrchestrator → APIManager → AI Provider
                                      ↓
                               Tool Selection
                                      ↓
@@ -145,18 +145,34 @@ clio/
   check-deps                # Dependency checker
   lib/CLIO/                 # Core library
       Core/                 # Core components
-          SimpleAIAgent.pm  # AI agent
-          APIManager.pm     # API abstraction
-          WorkflowOrchestrator.pm  # Tool orchestration
-          ToolExecutor.pm   # Tool invocation
+          APIManager.pm     # AI provider integration, token management
+          WorkflowOrchestrator.pm  # Main agent loop and tool orchestration
+          SimpleAIAgent.pm  # Lightweight AI agent for internal tasks
+          ToolExecutor.pm   # Tool invocation and secret redaction
           Config.pm         # Configuration management
           Logger.pm         # Logging utilities
           PromptManager.pm  # System prompt management
-          InstructionsReader.pm  # Custom instructions
+          PromptBuilder.pm  # Prompt construction utilities
+          InstructionsReader.pm  # Custom instructions reader
+          ConversationManager.pm  # Conversation history management
+          ModelRegistry.pm  # AI model metadata and management
+          ToolCallExtractor.pm  # Extract tool calls from AI responses
+          ToolErrorGuidance.pm  # Contextual error recovery hints
+          ErrorContext.pm   # Error taxonomy and structured context
+          AgentLoop.pm      # Persistent agent execution loop
+          DeviceRegistry.pm # Named devices for remote execution
+          SkillManager.pm   # AI skill management
+          PerformanceMonitor.pm  # Performance tracking
+          API/              # API sub-modules
+              MessageValidator.pm  # Message validation and proactive trimming
+              ResponseHandler.pm   # AI provider response parsing
+          ReadLine.pm  CommandParser.pm  Editor.pm
+          HashtagParser.pm  TabCompletion.pm
+          GitHubAuth.pm  GitHubCopilotModelsAPI.pm  CopilotUserAPI.pm
       Tools/                # Tool implementations
           Tool.pm           # Base tool class
           Registry.pm       # Tool registry
-          FileOperations.pm # File tools (18 operations)
+          FileOperations.pm # File tools (17 operations)
           VersionControl.pm # Git tools (10 operations)
           TerminalOperations.pm
           MemoryOperations.pm
@@ -175,30 +191,45 @@ clio/
           Theme.pm          # Theming system
           Display.pm        # Display utilities
           ToolOutputFormatter.pm  # Tool output formatting
+          CommandHandler.pm # Slash command routing
+          ProgressSpinner.pm  # Animated busy indicator
+          Multiplexer.pm    # Multiplexer detection and pane management
+          Multiplexer/      # Multiplexer drivers
+              Tmux.pm  Screen.pm  Zellij.pm
           Commands/         # Slash command handlers
+              Base.pm       # Base class with display delegation for all command modules
+              AI.pm  API.pm  Billing.pm  Config.pm  Context.pm
+              Device.pm  File.pm  Git.pm  Log.pm  Memory.pm
+              Mux.pm  Profile.pm  Project.pm  Prompt.pm
+              Session.pm  Skills.pm  Spec.pm  Stats.pm
+              SubAgent.pm  System.pm  Todo.pm  Update.pm
       Session/              # Session management
           Manager.pm        # Session manager
           State.pm          # Session state
           TodoStore.pm      # Todo persistence
           ToolResultStore.pm # Large result storage
           FileVault.pm      # Targeted file backup for undo
-          Export.pm         # Session export
+          Export.pm         # Session export to HTML
           Lock.pm           # Session locking
       Coordination/         # Multi-agent coordination
-          Broker.pm         # Coordination server
+          Broker.pm         # Coordination server (auto-exits after 5 min idle)
           Client.pm         # Broker connection API
           SubAgent.pm       # Process spawning
       Protocols/            # Complex workflows
+          Handler.pm        # Protocol base class
+          Manager.pm        # Protocol registry
           Architect.pm      # Architecture analysis
           Editor.pm         # Code editing
           Validate.pm       # Validation
           RepoMap.pm        # Repository mapping
-          RemoteDistribution.pm  # Remote distribution
+          Recall.pm         # Memory recall
       Security/             # Auth/authz
           Auth.pm           # Authentication
           Authz.pm          # Authorization
+          PathAuthorizer.pm # File access control
           Manager.pm        # Security management
           SecretRedactor.pm # PII/secret redaction
+          InvisibleCharFilter.pm  # Invisible Unicode character defense
       Memory/               # Context/memory
           ShortTerm.pm      # Conversation context
           LongTerm.pm       # Persistent memory
@@ -208,20 +239,37 @@ clio/
           Analyzer.pm       # Session history analysis
           Manager.pm        # Profile storage and injection
       Providers/            # Native API providers
+          Base.pm           # Provider base class
           Anthropic.pm      # Anthropic native API
           Google.pm         # Google Gemini native API
       MCP/                  # Model Context Protocol
           Manager.pm        # MCP server management
           Client.pm         # MCP client
+          Auth/OAuth.pm     # MCP OAuth 2.0 support
+          Transport/Stdio.pm  Transport/HTTP.pm
       Code/                 # Code intelligence
           TreeSitter.pm     # Tree-sitter integration
           Symbols.pm        # Symbol extraction
           Relations.pm      # Code relations
+      Logging/              # Logging system
+          ToolLogger.pm     # Tool operation logging
+          ProcessStats.pm   # Process statistics
       Util/                 # Utilities
-          PathResolver.pm
-          TextSanitizer.pm
-          JSONRepair.pm
-          JSON.pm           # JSON module selection
+          PathResolver.pm   # Path resolution and tilde expansion
+          TextSanitizer.pm  # Text sanitization
+          JSONRepair.pm     # JSON repair for malformed AI output
+          JSON.pm           # JSON module selection (XS > PP fallback)
+          GitIgnore.pm      # Auto-manage .clio/ in .gitignore
+          InputHelpers.pm   # Terminal input utilities
+          AnthropicXMLParser.pm  # Anthropic XML tool call parsing
+          YAML.pm           # Lightweight YAML parser
+          ConfigPath.pm     # Config path resolution
+      Spec/                 # OpenSpec integration
+          Manager.pm        # Spec lifecycle management
+      Test/                 # Testing utilities
+          MockAPI.pm        # Mock API for tests
+      Compat/               # Compatibility layers
+          HTTP.pm  Terminal.pm
   docs/                     # User documentation
   styles/                   # Color style files (25 themes)
   tests/                    # Test suites
@@ -476,7 +524,7 @@ eval {
 };
 if ($@) {
     my $error = $@;
-    print STDERR "[ERROR][MyNewTool] $error\n";
+    log_error('MyNewTool', "Operation failed: $error");
     return $self->operation_error($error);
 }
 ```
@@ -822,24 +870,26 @@ eval {
 };
 if ($@) {
     my $error = $@;
-    print STDERR "[ERROR] $error\n";
-    # Handle error
+    log_error('MyModule', "Operation failed: $error");
+    # handle error
 }
 ```
 
 **Logging:**
 
 ```perl
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(log_debug log_info log_warning log_error should_log);
 
-# Debug logging
-print STDERR "[DEBUG][Module] Message\n" if should_log('DEBUG');
+# Debug logging (only emitted when --debug flag is set)
+log_debug('MyModule', 'Processing request');
 
-# Error logging
-print STDERR "[ERROR][Module] Error message\n";
+# Info, warning, error logging
+log_info('MyModule', 'Starting operation');
+log_warning('MyModule', 'Retrying after failure');
+log_error('MyModule', "Fatal: $@");
 
-# Trace logging (automatic when --debug is used)
-print STDERR "[TRACE][Module] Detail\n" if should_log('DEBUG');
+# Conditional guard (use when constructing an expensive message)
+log_debug('MyModule', 'Details: ' . $detail) if should_log('DEBUG');
 ```
 
 **No CPAN Dependencies:**

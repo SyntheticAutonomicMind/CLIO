@@ -29,7 +29,7 @@ CLIO is part of the [Synthetic Autonomic Mind (SAM)](https://github.com/Syntheti
 - **Multiplexer Integration:** When running inside tmux, GNU Screen, or Zellij, sub-agent output streams live in separate panes
 - **Long-Term Memory:** Discoveries, solutions, and patterns persist across your project history and are automatically injected into every conversation
 - **User Profile:** CLIO learns your communication style, preferences, and working patterns from session history and personalizes every interaction
-- **Interrupt Anytime:** Press Escape to stop the agent mid-task. CLIO pauses, asks what you need, and adapts - like tapping your pair programmer on the shoulder
+- **Interrupt Anytime:** Press any key to stop the agent mid-task. CLIO pauses, asks what you need, and adapts - like tapping your pair programmer on the shoulder
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
