@@ -55,6 +55,12 @@ ok(ref($broker->{agent_status}) eq 'HASH', 'Agent status hash initialized');
 ok(ref($broker->{discoveries}) eq 'ARRAY', 'Discoveries array initialized');
 ok(ref($broker->{warnings}) eq 'ARRAY', 'Warnings array initialized');
 
+# Test 5a: Idle timeout fields initialized
+ok(defined $broker->{idle_timeout}, 'Idle timeout is set');
+ok($broker->{idle_timeout} == 300, 'Default idle timeout is 300s');
+ok($broker->{first_client_seen} == 0, 'first_client_seen starts at 0');
+ok($broker->{last_client_time} > 0, 'last_client_time initialized to current time');
+
 # Test 5: Methods exist
 can_ok($broker, qw(run init event_loop));
 can_ok($broker, qw(handle_register handle_heartbeat));
