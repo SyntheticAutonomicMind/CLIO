@@ -190,11 +190,8 @@ sub _execute_in_mux_pane {
     # Clean up the pane
     eval { $mux->kill_pane($pane_id) };
     
-    my $status = $exit_code == 0 ? "success" : "exit code $exit_code";
-
     return $self->success_result(
         $output,
-        action_description => $status,
         pre_action_description => $display_cmd,
         exit_code => $exit_code,
         command => $command,
@@ -255,18 +252,8 @@ sub _execute_with_tty_handoff {
     # Read captured output
     my $output = $self->_read_and_cleanup_log($log_file);
     
-    my $status;
-    if ($timed_out) {
-        $status = "timed out after ${timeout}s";
-    } elsif ($exit_code == 0) {
-        $status = "success";
-    } else {
-        $status = "exit code $exit_code";
-    }
-
     return $self->success_result(
         $output,
-        action_description => $status,
         pre_action_description => $display_cmd,
         exit_code => $exit_code,
         command => $command,
