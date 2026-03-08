@@ -23,6 +23,7 @@ use CLIO::Core::ConversationManager qw(
     generate_tool_call_id
     repair_tool_call_json
 );
+use CLIO::Core::API::MessageValidator qw(validate_and_truncate);
 use CLIO::Core::PromptBuilder;
 use CLIO::Util::JSON qw(encode_json decode_json);
 use Encode qw(encode_utf8);  # For handling Unicode in JSON
@@ -506,6 +507,33 @@ sub process_input {
             $iteration--;
         }
         
+        # Proactive trim: keep @messages within context budget BEFORE API call.
+        # This is the single authoritative trim point. Previously, trimming only happened
+        # inside APIManager on a copy, and the sync back to @messages only happened on
+        # successful API calls. That meant @messages grew unbounded during tool execution
+        # iterations, and when the API finally rejected with token_limit_exceeded, the
+        # reactive trim had to drop hundreds of messages at once (e.g., 434).
+        # Now @messages stays trim every iteration, so reactive trims are small.
+        if ($self->{api_manager} && $iteration > 1) {
+            my $pre_count = scalar(@messages);
+            my $model = $self->{api_manager}->get_current_model();
+            my $caps = $self->{api_manager}->get_model_capabilities($model);
+            my $trimmed = validate_and_truncate(
+                messages           => \@messages,
+                model_capabilities => $caps,
+                tools              => $tools,
+                token_ratio        => $self->{api_manager}{learned_token_ratio},
+                config             => $self->{api_manager}{config},
+                api_base           => $self->{api_manager}{api_base},
+                debug              => $self->{debug},
+                model              => $model,
+            );
+            if ($trimmed && scalar(@$trimmed) < $pre_count) {
+                @messages = @$trimmed;
+                log_info('WorkflowOrchestrator', "Proactive trim (pre-API): $pre_count -> " . scalar(@messages) . " messages");
+            }
+        }
+
         # Enforce message alternation for Claude compatibility
         # Must be done before EVERY API call, as messages array is modified during tool calling
         my $provider = $self->{api_manager}->get_current_provider() || 'github_copilot';
@@ -1233,21 +1261,6 @@ sub process_input {
         $self->{last_error} = '';
         $session_error_count = 0;  # Reset on success to allow future errors
         delete $session->{_error_count} if $session;
-        
-        # Sync orchestrator @messages with proactively trimmed version
-        # APIManager trims messages before each API call but only modifies a local copy.
-        # Without this sync, @messages grows unbounded and when reactive trimming finally
-        # hits (token_limit_exceeded), it has to drop hundreds of messages at once.
-        # By syncing here, we keep @messages at a managed size and reactive trims
-        # (if they occur due to estimation error) only need to drop a few messages.
-        if ($self->{api_manager}) {
-            my $trimmed = $self->{api_manager}->get_last_trimmed_messages();
-            if ($trimmed) {
-                my $before = scalar(@messages);
-                @messages = @$trimmed;
-                log_info('WorkflowOrchestrator', "Synced messages with proactive trim: $before -> " . scalar(@messages));
-            }
-        }
         
         # Record API usage for billing tracking
         if ($api_response->{usage} && $session) {
