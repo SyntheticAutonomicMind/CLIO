@@ -920,8 +920,11 @@ sub process_input {
                         if (@dropped_messages) {
                             my $compressed = _compress_dropped_for_recovery(\@dropped_messages, $first_user_msg, $session, \@messages);
                             if ($compressed) {
-                                # Insert compressed summary right after first user message (or at start)
-                                unshift @non_system, $compressed;
+                                # Append recovery as the LAST message so the agent sees it as
+                                # the most recent input and must respond to it. Previously this
+                                # was unshifted at the start as a system message, where it got
+                                # merged into the system prompt and ignored.
+                                push @non_system, $compressed;
                                 log_info('WorkflowOrchestrator', "Injected compression summary for " . scalar(@dropped_messages) . " dropped messages");
                             }
                         }
@@ -952,15 +955,8 @@ sub process_input {
                         if (@dropped_messages) {
                             my $compressed = _compress_dropped_for_recovery(\@dropped_messages, $first_user_msg, $session, \@messages);
                             if ($compressed) {
-                                # Insert after first user message
-                                my $insert_pos = 0;
-                                for my $i (0..$#non_system) {
-                                    if ($first_user_msg && $non_system[$i] == $first_user_msg) {
-                                        $insert_pos = $i + 1;
-                                        last;
-                                    }
-                                }
-                                splice(@non_system, $insert_pos, 0, $compressed);
+                                # Append recovery as the last message
+                                push @non_system, $compressed;
                                 log_info('WorkflowOrchestrator', "Injected compression summary for " . scalar(@dropped_messages) . " dropped messages (retry 2)");
                             }
                         }
@@ -984,8 +980,8 @@ sub process_input {
                         if (@dropped_messages > 2) {
                             my $compressed = _compress_dropped_for_recovery(\@dropped_messages, $first_user_msg, $session, \@messages);
                             if ($compressed) {
-                                my $insert_pos = $first_user_msg ? 1 : 0;
-                                splice(@non_system, $insert_pos, 0, $compressed);
+                                # Append recovery as the last message
+                                push @non_system, $compressed;
                                 log_info('WorkflowOrchestrator', "Injected compression summary for " . scalar(@dropped_messages) . " dropped messages (retry 3 - minimal)");
                             }
                         }
@@ -1000,7 +996,7 @@ sub process_input {
                     
                     $error_type = "token limit exceeded";
                     my $preserved_info = $first_user_msg ? " (first user message preserved)" : "";
-                    my $recovery_info = ($trimmed_count > 0 && $retry_count <= 2) ? " Context summary injected." : "";
+                    my $recovery_info = ($trimmed_count > 0) ? " Context summary injected." : "";
                     $system_msg = "Token limit exceeded. Trimmed $trimmed_count messages from conversation history and retrying$preserved_info...$recovery_info (attempt $retry_count/$max_retries)";
                     
                     log_info('WorkflowOrchestrator', "Trimmed $trimmed_count messages due to token limit (kept " . scalar(@non_system) . " messages, first_user=" . ($first_user_msg ? 'YES' : 'NO') . ")");
@@ -2331,36 +2327,29 @@ sub _compress_dropped_for_recovery {
         push @recovery_parts, "</session_progress>";
     }
 
-    # Add directive recovery guidance - tells the agent HOW to recover
-    push @recovery_parts, "";
-    push @recovery_parts, "<recovery_instructions>";
-    push @recovery_parts, "CONTEXT WAS TRIMMED - Your conversation history was compressed to free space.";
-    push @recovery_parts, "";
-    push @recovery_parts, "YOUR IMMEDIATE NEXT ACTION: Continue the conversation from where it left off.";
-    push @recovery_parts, "The <current_topic> section above captures what you and the user were actively";
-    push @recovery_parts, "discussing when context was trimmed. Read it carefully and continue that work.";
-    push @recovery_parts, "";
-    push @recovery_parts, "DO NOT:";
-    push @recovery_parts, "- Ask 'What would you like to work on?' (you already know)";
-    push @recovery_parts, "- Ask 'How can I help?' (you were in the middle of helping)";
-    push @recovery_parts, "- Read handoff documents in ai-assisted/ (stale context)";
-    push @recovery_parts, "- Start a new task (resume the existing one)";
-    push @recovery_parts, "";
-    push @recovery_parts, "DO:";
-    push @recovery_parts, "- Resume the discussion/work described in <current_topic>";
-    push @recovery_parts, "- Reference the collaboration exchanges to maintain continuity";
-    push @recovery_parts, "- If the user's last response was an answer to your question, act on it";
-    push @recovery_parts, "- Use todo_operations, git tools, and memory if you need more detail";
-    push @recovery_parts, "</recovery_instructions>";
-
     return undef unless @recovery_parts;
-    
-    my $recovery_content = join("\n", @recovery_parts);
-    
+
+    # Build the recovery content as a user message so it won't get merged into
+    # the system prompt by enforce_message_alternation (which merges consecutive
+    # system messages). As a user message, the agent MUST respond to it.
+    my @final_parts = ();
+    push @final_parts, "[CONTEXT RECOVERY] Your conversation history was trimmed to free space.";
+    push @final_parts, "Below is everything recovered from the trimmed context.";
+    push @final_parts, "Resume your work from where you left off - do NOT ask what to work on.";
+    push @final_parts, "";
+    push @final_parts, @recovery_parts;
+    push @final_parts, "";
+    push @final_parts, "INSTRUCTIONS: Continue the work described above. Do NOT ask 'What would you";
+    push @final_parts, "like to work on?' or 'How can I help?' - you were in the middle of working.";
+    push @final_parts, "If you had a task in progress, resume it. If the user answered a question,";
+    push @final_parts, "act on their answer. Use todo_operations and git tools if you need more detail.";
+
+    my $recovery_content = join("\n", @final_parts);
+
     log_debug('WorkflowOrchestrator', "Recovery context created: " . length($recovery_content) . " chars from " . scalar(@$dropped_messages) . " dropped messages");
-    
+
     return {
-        role => 'system',
+        role => 'user',
         content => $recovery_content,
     };
 }
