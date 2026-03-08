@@ -70,16 +70,17 @@ my $error = "Streaming request failed: 502 Bad Gateway";
     ok($retry_after == 60, "429 error has default retry delay");
 }
 
-# Test non-retryable 400 error
+# Test retryable 400 error (generic bad request)
 {
     my $status = 400;
     my $retryable = 0;
-    
-    if ($status == 502 || $status == 503 || $status == 429) {
+
+    # ResponseHandler now treats generic 400 as retryable (transient backend issue)
+    if ($status == 502 || $status == 503 || $status == 429 || $status == 400) {
         $retryable = 1;
     }
-    
-    ok(!$retryable, "400 error is not marked as retryable");
+
+    ok($retryable, "400 error is marked as retryable (generic bad request)");
 }
 
 # Test non-retryable 401 error
