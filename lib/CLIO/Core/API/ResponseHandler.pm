@@ -280,18 +280,49 @@ sub handle_error_response {
         log_info('ResponseHandler', "Cleared stateful markers - model rejects previous_response_id");
     }
 
+    # Handle generic 400 (transient backend error, content encoding issue, etc.)
+    # These arrive with no recognizable error string - treat as retryable with short backoff.
+    # The raw response body is logged to /tmp/clio_api_400.log for diagnosis.
+    elsif ($status == 400) {
+        $is_retryable_error = 1;
+        $retryable = 1;
+        $retry_after = 2;
+        $error_type = 'bad_request';
+
+        # Capture response body for diagnosis (body may be in raw_response_body or decoded_content)
+        my $body = eval { $resp->decoded_content } // '';
+        if (!$body || $body !~ /\S/) {
+            # Try injected raw body (APIManager sets $resp->{content} as fallback for streaming)
+            $body = $resp->{content} // '';
+        }
+        if ($body && $body =~ /\S/) {
+            log_info('ResponseHandler', "API 400 response body: " . substr($body, 0, 500));
+            if (open my $fh, '>>', '/tmp/clio_api_400.log') {
+                print $fh "\n" . "=" x 80 . "\n";
+                print $fh "[" . scalar(localtime) . "] API 400 Bad Request\n";
+                print $fh "Error: $error\n";
+                print $fh "Response body:\n$body\n";
+                close $fh;
+            }
+        } else {
+            log_info('ResponseHandler', "API 400 Bad Request (empty response body)");
+        }
+
+        $retry_info = "API 400 Bad Request - retrying after short delay...";
+        # Don't overwrite $error if it was already set from JSON body extraction above
+        # (e.g., OpenRouter metadata errors, Anthropic error messages)
+        $error = $retry_info unless $error_obj;
+    }
+
     # Log error details
     if ($is_retryable_error) {
         log_debug('ResponseHandler', "Retryable error ($status): $error");
-        if ($is_streaming && should_log('DEBUG')) {
-            log_debug('ResponseHandler', "Response body: " . $resp->decoded_content);
-            log_debug('ResponseHandler', "Request was: " . substr($json, 0, 500) . "...");
-        }
     } else {
         log_debug('ResponseHandler', "$error");
         if ($is_streaming) {
-            log_debug('ResponseHandler', "Response body: " . $resp->decoded_content);
-            log_debug('ResponseHandler', "Request was: " . substr($json, 0, 500) . "...");
+            my $body = eval { $resp->decoded_content } // '';
+            log_debug('ResponseHandler', "Response body: $body");
+            log_debug('ResponseHandler', "Request was: " . substr($json // '', 0, 500) . "...");
         } elsif ($self->{debug}) {
             warn "[ERROR] $error\n";
         }

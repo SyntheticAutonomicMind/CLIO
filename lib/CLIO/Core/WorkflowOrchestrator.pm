@@ -704,6 +704,11 @@ sub process_input {
                     $retry_delay = 0;
                     log_info('WorkflowOrchestrator', "Retrying without unsupported parameter");
                 }
+                # Handle generic 400 - silent retry, no message needed
+                elsif ($api_response->{error_type} && $api_response->{error_type} eq 'bad_request') {
+                    $system_msg = undef;  # Silent retry
+                    log_info('WorkflowOrchestrator', "API 400 Bad Request - retrying silently");
+                }
                 # Special handling for malformed tool JSON errors
                 # ONE RETRY ONLY: Remove bad message, add guidance with tool schema, let AI fix it
                 elsif ($api_response->{error_type} && $api_response->{error_type} eq 'malformed_tool_json') {

@@ -136,6 +136,18 @@ sub sanitize_text {
     $text =~ s/[\x{1F900}-\x{1F9FF}]//g;  # Supplemental Symbols and Pictographs
     $text =~ s/[\x{2300}-\x{23FF}]//g;    # Miscellaneous Technical
     $text =~ s/[\x{2B50}-\x{2BFF}]//g;    # Additional symbols
+
+    # Remove Unicode replacement character (U+FFFD).
+    # Appears when Perl reads CP437/Latin-1 encoded BBS files as UTF-8.
+    # Anthropic's API rejects requests containing this character.
+    $text =~ s/\x{FFFD}//g;
+
+    # Remove block-shade characters used in BBS/ANSI art (HP bars, maps, etc.).
+    # These come from handoff docs and BBS game files.
+    # Block Elements (0x2580-0x259F): █▀▄░▒▓ - solid and shaded blocks.
+    # NOT removing Box Drawing (0x2500-0x257F: ─│├└ etc.) - those appear in
+    # CLIO's own instructions/docs and are handled fine by Anthropic.
+    $text =~ s/[\x{2580}-\x{259F}]//g;    # Block Elements (█▀▄░▒▓ etc.)
     
     # Return as character string (JSON::PP will handle UTF-8 encoding)
     return $text;
