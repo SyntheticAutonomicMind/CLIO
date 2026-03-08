@@ -1,5 +1,5 @@
 #!/usr/bin/env perl
-# Integration test for terminal passthrough
+# Integration test for terminal operations
 # Tests actual command execution with passthrough mode
 
 use strict;
@@ -11,7 +11,7 @@ use CLIO::Core::Config;
 use CLIO::Tools::TerminalOperations;
 use File::Temp qw(tempfile tempdir);
 
-print "\n=== Terminal Passthrough Integration Tests ===\n\n";
+print "\n=== Terminal Operations Integration Tests ===\n\n";
 
 my $test_count = 0;
 my $pass_count = 0;
@@ -36,8 +36,8 @@ my $config = CLIO::Core::Config->new();
 my $tool = CLIO::Tools::TerminalOperations->new();
 my $context = { config => $config };
 
-# Test 1: Non-interactive command with capture mode (default)
-test("Non-interactive command captures output", sub {
+# Test 1: Simple command captures output
+test("Simple command captures output", sub {
     my $result = $tool->execute_command(
         { command => 'echo "Hello World"' },
         $context
@@ -49,89 +49,34 @@ test("Non-interactive command captures output", sub {
     die "Exit code not 0" unless $result->{exit_code} == 0;
 });
 
-# Test 2: Interactive command with auto-detect (should use passthrough)
-test("Interactive command detected (git commit)", sub {
-    # Create temp git repo
-    my $tmpdir = tempdir(CLEANUP => 1);
-    my $orig_dir = `pwd`;
-    chomp($orig_dir);
-    
-    chdir $tmpdir;
-    system('git init > /dev/null 2>&1');
-    system('git config user.name "Test" 2>&1');
-    system('git config user.email "test@example.com" 2>&1');
-    
-    # Create a file
-    open my $fh, '>', 'test.txt';
-    print $fh "test content\n";
-    close $fh;
-    
-    system('git add test.txt 2>&1');
-    
-    # This should detect git commit as interactive
-    # Since we can't actually open an editor in test, we'll just verify detection
-    my $is_interactive = $tool->_is_interactive_command('git commit');
-    
-    chdir $orig_dir;
-    
-    die "Should detect git commit as interactive" unless $is_interactive;
-});
-
-# Test 3: Force passthrough with parameter override
-test("Per-command passthrough override", sub {
+# Test 2: All commands use passthrough mode
+test("All commands use passthrough mode", sub {
     my $result = $tool->execute_command(
-        { 
-            command => 'echo "Passthrough Test"',
-            passthrough => 1  # Force passthrough
-        },
+        { command => 'echo "passthrough check"' },
         $context
     );
     
     die "Command failed" unless $result->{success};
     die "Should indicate passthrough" unless $result->{passthrough};
-    die "Output should indicate direct terminal access" 
-        unless $result->{output} =~ /direct terminal access/i;
 });
 
-# Test 4: Disable auto-detect
-test("Disable auto-detect for interactive command", sub {
-    $config->set('terminal_autodetect', 0);
-    
-    # Even though vim is interactive, with autodetect off it should NOT use passthrough
-    # (unless terminal_passthrough is globally enabled)
-    my $use_passthrough = $tool->_should_use_passthrough(
-        'vim file.txt',
-        {},
-        $config
-    );
-    
-    $config->set('terminal_autodetect', 1);  # Reset
-    
-    die "Should not use passthrough when autodetect disabled" if $use_passthrough;
-});
-
-# Test 5: Enable global passthrough
-test("Global passthrough for all commands", sub {
-    $config->set('terminal_passthrough', 1);
-    
+# Test 3: Pre-action description populated
+test("Pre-action description is set", sub {
     my $result = $tool->execute_command(
-        { command => 'echo "Global Passthrough"' },
+        { command => 'echo "pre-action check"' },
         $context
     );
     
-    $config->set('terminal_passthrough', 0);  # Reset
-    
     die "Command failed" unless $result->{success};
-    die "Should use passthrough" unless $result->{passthrough};
+    die "Missing pre_action_description" unless $result->{pre_action_description};
+    die "pre_action_description should contain command" 
+        unless $result->{pre_action_description} =~ /echo/;
 });
 
-# Test 6: Exit code capture in passthrough mode
-test("Exit codes captured in passthrough", sub {
+# Test 4: Exit code capture
+test("Non-zero exit codes captured", sub {
     my $result = $tool->execute_command(
-        { 
-            command => 'sh -c "exit 42"',  # Fixed: use sh -c to run exit properly
-            passthrough => 1
-        },
+        { command => 'sh -c "exit 42"' },
         $context
     );
     
@@ -140,8 +85,8 @@ test("Exit codes captured in passthrough", sub {
         unless $result->{exit_code} == 42;
 });
 
-# Test 7: Working directory with passthrough
-test("Working directory respected in passthrough", sub {
+# Test 5: Working directory respected
+test("Working directory respected", sub {
     my $tmpdir = tempdir(CLEANUP => 1);
     
     # Create a marker file
@@ -151,15 +96,48 @@ test("Working directory respected in passthrough", sub {
     
     my $result = $tool->execute_command(
         { 
-            command => 'test -f marker.txt',
+            command => 'test -f marker.txt && echo "found"',
             working_directory => $tmpdir,
-            passthrough => 0  # Use capture to verify
         },
         $context
     );
     
-    die "Command failed - marker file should exist" unless $result->{success};
+    die "Command failed" unless $result->{success};
     die "Exit code should be 0" unless $result->{exit_code} == 0;
+    die "Should find marker file" unless $result->{output} =~ /found/;
+});
+
+# Test 6: Multi-line output captured
+test("Multi-line output captured correctly", sub {
+    my $result = $tool->execute_command(
+        { command => 'echo "line1"; echo "line2"; echo "line3"' },
+        $context
+    );
+    
+    die "Command failed" unless $result->{success};
+    die "Missing line1" unless $result->{output} =~ /line1/;
+    die "Missing line2" unless $result->{output} =~ /line2/;
+    die "Missing line3" unless $result->{output} =~ /line3/;
+});
+
+# Test 7: Action description format
+test("Action description shows result status", sub {
+    my $result = $tool->execute_command(
+        { command => 'echo "test"' },
+        $context
+    );
+    
+    die "Command failed" unless $result->{success};
+    die "action_description should indicate success" 
+        unless $result->{action_description} =~ /success/;
+});
+
+# Test 8: Multiplexer detection (should be available or not - either is fine)
+test("Multiplexer detection doesn't crash", sub {
+    my $mux = $tool->_get_multiplexer($context);
+    # mux can be undef or an object - both are fine
+    # Just verify it doesn't crash
+    1;
 });
 
 # Summary
@@ -169,10 +147,10 @@ print "Passed: $pass_count\n";
 print "Failed: " . ($test_count - $pass_count) . "\n";
 
 if ($pass_count == $test_count) {
-    print "\n✓ All integration tests passed!\n\n";
+    print "\n All integration tests passed!\n\n";
     exit 0;
 } else {
-    print "\n✗ Some tests failed\n\n";
+    print "\n Some tests failed\n\n";
     exit 1;
 }
 
@@ -180,19 +158,23 @@ __END__
 
 =head1 NAME
 
-test_terminal_passthrough_integration.pl - Integration tests for terminal passthrough
+test_terminal_passthrough_integration.pl - Integration tests for terminal operations
 
 =head1 DESCRIPTION
 
-Tests actual command execution with passthrough feature:
+Tests actual command execution:
 
-1. Non-interactive commands capture output correctly
-2. Interactive commands detected by auto-detect
-3. Per-command passthrough override works
-4. Config settings (auto-detect, global passthrough) respected
-5. Exit codes captured in both modes
-6. Working directory context preserved
+1. Output capture works
+2. All commands use passthrough mode
+3. Pre-action description populated
+4. Exit codes captured
+5. Working directory respected
+6. Multi-line output captured
+7. Action description format correct
+8. Multiplexer detection doesn't crash
 
 =head1 USAGE
 
     perl -I./lib tests/integration/test_terminal_passthrough_integration.pl
+
+=cut

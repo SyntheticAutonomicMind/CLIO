@@ -1671,6 +1671,19 @@ sub process_input {
                     $current_tool = $tool_name;
                 }
                 
+                # For terminal_operations: show the command BEFORE execution
+                # so the user can see what's about to run
+                if ($tool_name eq 'terminal_operations') {
+                    my $tool_args = eval { decode_json($tool_call->{function}->{arguments} || '{}') };
+                    my $cmd_preview = ($tool_args && $tool_args->{command}) ? $tool_args->{command} : undef;
+                    if ($cmd_preview) {
+                        # Show the command text directly (connector provided by formatter)
+                        $self->{formatter}->display_action_detail(
+                            $cmd_preview, 0, 1
+                        );
+                    }
+                }
+                
                 # Execute tool to get the result
                 my $tool_result = $self->_execute_tool($tool_call);
                 

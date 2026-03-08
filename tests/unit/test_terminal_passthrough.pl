@@ -1,96 +1,81 @@
 #!/usr/bin/env perl
-# Test terminal passthrough functionality
-# Feature: Terminal Output Isolation
-# Branch: feature/terminal-passthrough-and-interrupt
+# Test terminal operations - passthrough execution behavior
+# All commands execute with full TTY visibility
 
 use strict;
 use warnings;
 use FindBin;
 use lib "$FindBin::Bin/../../lib";
 
-use Test::More tests => 15;
-use CLIO::Core::Config;
+use Test::More tests => 10;
 use CLIO::Tools::TerminalOperations;
 
-print "\n=== Terminal Passthrough Tests ===\n\n";
+print "\n=== Terminal Operations Tests ===\n\n";
 
-# Test 1: Config defaults
+# Test 1: Tool construction
 {
-    my $config = CLIO::Core::Config->new();
-    
-    is($config->get('terminal_passthrough'), 0, 
-        "Default terminal_passthrough is 0 (false)");
-    is($config->get('terminal_autodetect'), 1, 
-        "Default terminal_autodetect is 1 (true)");
-    
-    print "[OK] Config defaults are correct\n";
+    my $tool = CLIO::Tools::TerminalOperations->new();
+    ok(defined $tool, "TerminalOperations can be constructed");
+    is($tool->{name}, 'terminal_operations', "Tool name is correct");
+    print "[OK] Tool construction\n";
 }
 
-# Test 2: Interactive command detection
+# Test 2: Validate safe commands
 {
     my $tool = CLIO::Tools::TerminalOperations->new();
     
-    # Test known interactive commands
-    ok($tool->_is_interactive_command('vim file.txt'), 
-        "Detects vim as interactive");
-    ok($tool->_is_interactive_command('nano README.md'), 
-        "Detects nano as interactive");
-    ok($tool->_is_interactive_command('less output.log'), 
-        "Detects less as interactive");
-    ok($tool->_is_interactive_command('git commit'), 
-        "Detects git commit (no -m) as interactive");
-    ok($tool->_is_interactive_command('git commit -S'), 
-        "Detects git commit with GPG as interactive");
-    ok($tool->_is_interactive_command('gpg --sign file.txt'), 
-        "Detects gpg as interactive");
-    ok($tool->_is_interactive_command('ssh user@example.com'), 
-        "Detects ssh as interactive");
+    my $result = $tool->validate_command({ command => 'ls -la' });
+    ok($result->{success}, "ls -la validates as safe");
     
-    # Test non-interactive commands
-    ok(!$tool->_is_interactive_command('ls -la'), 
-        "Detects ls as non-interactive");
-    ok(!$tool->_is_interactive_command('git commit -m "message"'), 
-        "Detects git commit -m as non-interactive");
-    ok(!$tool->_is_interactive_command('cat file.txt'), 
-        "Detects cat as non-interactive");
+    $result = $tool->validate_command({ command => 'git status' });
+    ok($result->{success}, "git status validates as safe");
     
-    print "[OK] Interactive command detection works\n";
+    print "[OK] Safe command validation\n";
 }
 
-# Test 3: Passthrough decision logic
+# Test 3: Validate dangerous commands rejected
 {
-    my $config = CLIO::Core::Config->new();
     my $tool = CLIO::Tools::TerminalOperations->new();
     
-    # Test with auto-detect enabled (default)
-    my $use_passthrough = $tool->_should_use_passthrough(
-        'vim file.txt', 
-        {}, 
-        $config
-    );
-    ok($use_passthrough, 
-        "Auto-detect enables passthrough for vim");
+    my $result = $tool->validate_command({ command => 'rm -rf /' });
+    ok(!$result->{success}, "rm -rf rejected");
     
-    # Test with per-command override
-    $use_passthrough = $tool->_should_use_passthrough(
-        'ls -la',
-        { passthrough => 1 },  # Force passthrough
-        $config
-    );
-    ok($use_passthrough, 
-        "Per-command override forces passthrough");
+    $result = $tool->validate_command({ command => 'shutdown now' });
+    ok(!$result->{success}, "shutdown rejected");
     
-    # Test with global passthrough enabled
-    $config->set('terminal_passthrough', 1);
-    $use_passthrough = $tool->_should_use_passthrough(
-        'cat file.txt',
-        {},
-        $config
-    );
-    ok($use_passthrough, 
-        "Global passthrough enables it for all commands");
+    print "[OK] Dangerous command rejection\n";
+}
+
+# Test 4: Missing command parameter
+{
+    my $tool = CLIO::Tools::TerminalOperations->new();
     
-    print "[OK] Passthrough decision logic correct\n";
+    my $result = $tool->execute_command({}, {});
+    ok(!$result->{success}, "Missing command returns error");
+    
+    $result = $tool->execute_command({ command => '' }, {});
+    ok(!$result->{success}, "Empty command returns error");
+    
+    print "[OK] Missing command handling\n";
+}
+
+# Test 5: Multiplexer detection method exists
+{
+    my $tool = CLIO::Tools::TerminalOperations->new();
+    ok($tool->can('_get_multiplexer'), "Has _get_multiplexer method");
+    
+    print "[OK] Multiplexer integration method exists\n";
+}
+
+# Test 6: Tool definition includes required params
+{
+    my $tool = CLIO::Tools::TerminalOperations->new();
+    my $def = $tool->get_tool_definition();
+    
+    ok(exists $def->{parameters}{properties}{command}, 
+        "Tool definition includes command parameter");
+    
+    print "[OK] Tool definition correct\n";
 }
 
 print "\n=== All Tests Passed ===\n\n";
@@ -99,24 +84,21 @@ __END__
 
 =head1 NAME
 
-test_terminal_passthrough.pl - Test terminal passthrough functionality
+test_terminal_passthrough.pl - Test terminal operations
 
 =head1 DESCRIPTION
 
-Tests the terminal passthrough feature implementation:
+Tests terminal operations tool:
 
-1. Config defaults (terminal_passthrough=0, terminal_autodetect=1)
-2. Interactive command detection (vim, git commit, GPG, etc.)
-3. Passthrough decision logic (per-command, global, auto-detect)
+1. Tool construction
+2. Safe command validation
+3. Dangerous command rejection
+4. Missing command handling
+5. Multiplexer integration
+6. Tool definition
 
 =head1 USAGE
 
     perl -I./lib tests/unit/test_terminal_passthrough.pl
 
-=head1 EXPECTED OUTPUT
-
-All 15 tests should pass:
-- Config defaults correct
-- Interactive commands detected
-- Non-interactive commands not detected
-- Passthrough logic respects priorities
+=cut

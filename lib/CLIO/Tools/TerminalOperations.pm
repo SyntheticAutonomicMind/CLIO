@@ -9,6 +9,7 @@ use utf8;
 use parent 'CLIO::Tools::Tool';
 use Cwd 'getcwd';
 use feature 'say';
+use CLIO::Core::Logger qw(log_debug log_info log_warning);
 
 =head1 NAME
 
@@ -17,6 +18,10 @@ CLIO::Tools::TerminalOperations - Shell/terminal command execution
 =head1 DESCRIPTION
 
 Provides safe terminal command execution with timeout and validation.
+All commands run in passthrough mode - visible and interactive to the user.
+When a terminal multiplexer (tmux/screen/zellij) is available, commands
+run in a separate pane. Otherwise, CLIO suspends its input handling and
+gives full TTY control to the command.
 
 =cut
 
@@ -103,101 +108,28 @@ sub execute_command {
         return $validation;
     }
     
-    # Determine if passthrough mode should be used
-    my $config = $context->{config};
-    my $use_passthrough = $self->_should_use_passthrough($command, $params, $config);
+    # Display the command BEFORE execution so user can see what's about to run
+    my $display_cmd = length($command) > 120
+        ? substr($command, 0, 117) . "..."
+        : $command;
+    
+    # Pre-execution display handled via pre_action_description
+    # The WorkflowOrchestrator will display this before execution
+    
+    # Try multiplexer path first, fall back to direct TTY handoff
+    my $mux = $self->_get_multiplexer($context);
     
     eval {
         my $original_cwd = getcwd();
         chdir $working_dir if $working_dir ne '.';
         
-        # Truncate command for display if very long
-        my $display_cmd = length($command) > 60 
-            ? substr($command, 0, 57) . "..."
-            : $command;
-        
-        if ($use_passthrough) {
-            # Hybrid passthrough mode: Execute with direct TTY access while capturing output
-            # User can interact (editor, GPG prompts, etc.)
-            # Agent gets both output AND exit code
-            
-            # Create temporary log file for output capture
-            my $log_file = "/tmp/clio_terminal_$$.log";
-            
-            # Detect platform for script command syntax
-            my $script_cmd = $self->_get_script_command($command, $log_file);
-            
-            local $SIG{ALRM} = sub { die "Command timeout after ${timeout}s\n" };
-            alarm($timeout);
-            
-            my $exit_code = system($script_cmd);
-            $exit_code = $exit_code >> 8;
-            
-            alarm(0);
-            
-            # Read captured output
-            my $output = '';
-            if (-f $log_file) {
-                open my $fh, '<:encoding(UTF-8)', $log_file or warn "Cannot read log: $!";
-                if ($fh) {
-                    $output = do { local $/; <$fh> };
-                    close $fh;
-                }
-                unlink $log_file;  # Clean up temp file
-            }
-            
-            # Sanitize output (remove terminal escape sequences for cleaner agent consumption)
-            $output = $self->_sanitize_terminal_output($output);
-            
-            chdir $original_cwd if $working_dir ne '.';
-            
-            # NOTE: We do NOT auto-reset terminal after passthrough commands.
-            # This was causing cursor position issues (jumping to top of screen).
-            # Terminal state should be managed by the command itself.
-            # Use /reset command if terminal is corrupted.
-            
-            my $status = $exit_code == 0 ? "success" : "exit code $exit_code";
-            my $action_desc = "running '$display_cmd' with interactive terminal ($status)";
-            
-            $result = $self->success_result(
-                $output,
-                action_description => $action_desc,
-                exit_code => $exit_code,
-                command => $command,
-                timeout => $timeout,
-                passthrough => 1,
-            );
+        if ($mux && $mux->available()) {
+            $result = $self->_execute_in_mux_pane($command, $timeout, $display_cmd, $mux, $working_dir);
         } else {
-            # Capture mode: Execute and capture output for agent
-            
-            local $SIG{ALRM} = sub { die "Command timeout after ${timeout}s\n" };
-            alarm($timeout);
-            
-            my $output = `$command 2>&1`;
-            my $exit_code = $? >> 8;
-            
-            alarm(0);
-            
-            chdir $original_cwd if $working_dir ne '.';
-            
-            # Light reset on non-zero exit codes - just restore ReadMode
-            # Commands that fail may leave terminal in bad state
-            # Use light reset to avoid cursor position issues
-            if ($exit_code != 0) {
-                $self->_reset_terminal_state_light();
-            }
-            
-            my $status = $exit_code == 0 ? "success" : "exit code $exit_code";
-            my $action_desc = "running '$display_cmd' ($status)";
-            
-            $result = $self->success_result(
-                $output,
-                action_description => $action_desc,
-                exit_code => $exit_code,
-                command => $command,
-                timeout => $timeout,
-            );
+            $result = $self->_execute_with_tty_handoff($command, $timeout, $display_cmd, $working_dir);
         }
+        
+        chdir $original_cwd if $working_dir ne '.';
     };
     
     if ($@) {
@@ -205,6 +137,260 @@ sub execute_command {
     }
     
     return $result;
+}
+
+=head2 _execute_in_mux_pane
+
+Execute a command in a multiplexer pane. The command runs in a new pane
+where the user can see and interact with it. Output is captured via a
+log file for the agent.
+
+=cut
+
+sub _execute_in_mux_pane {
+    my ($self, $command, $timeout, $display_cmd, $mux, $working_dir) = @_;
+    
+    my $log_file = "/tmp/clio_terminal_$$.log";
+    unlink $log_file if -f $log_file;
+    
+    # Build the command to run in the pane:
+    # 1. cd to working directory
+    # 2. Run command, capturing output via script
+    # 3. Touch a done marker when complete
+    my $done_marker = "/tmp/clio_terminal_done_$$";
+    unlink $done_marker if -f $done_marker;
+    
+    my $script_cmd = $self->_get_script_command($command, $log_file);
+    
+    # Wrap with working directory and done marker
+    my $pane_cmd = "cd " . _shell_escape($working_dir) . " && "
+                 . "$script_cmd; echo \$? > " . _shell_escape($done_marker);
+    
+    log_debug('TerminalOps', "Multiplexer execution: $pane_cmd");
+    
+    my $pane_id = $mux->create_pane(
+        name    => "cmd-$$",
+        command => $pane_cmd,
+        size    => 40,
+    );
+    
+    unless ($pane_id) {
+        # Mux pane creation failed, fall back to direct TTY
+        log_warning('TerminalOps', "Multiplexer pane creation failed, falling back to TTY handoff");
+        return $self->_execute_with_tty_handoff($command, $timeout, $display_cmd, $working_dir);
+    }
+    
+    # Wait for command to complete (poll for done marker)
+    my $exit_code = $self->_wait_for_pane_completion($done_marker, $timeout, $mux, $pane_id);
+    
+    # Read captured output
+    my $output = $self->_read_and_cleanup_log($log_file);
+    unlink $done_marker if -f $done_marker;
+    
+    # Clean up the pane
+    eval { $mux->kill_pane($pane_id) };
+    
+    my $status = $exit_code == 0 ? "success" : "exit code $exit_code";
+
+    return $self->success_result(
+        $output,
+        action_description => $status,
+        pre_action_description => $display_cmd,
+        exit_code => $exit_code,
+        command => $command,
+        timeout => $timeout,
+        passthrough => 1,
+    );
+}
+
+=head2 _execute_with_tty_handoff
+
+Execute a command with full TTY handoff. CLIO suspends its input handling
+(ReadMode), gives the terminal to the command via system(), then resumes.
+Output is captured via the script command for the agent.
+
+=cut
+
+sub _execute_with_tty_handoff {
+    my ($self, $command, $timeout, $display_cmd, $working_dir) = @_;
+    
+    my $log_file = "/tmp/clio_terminal_$$.log";
+    unlink $log_file if -f $log_file;
+    
+    # Suspend CLIO's terminal input handling so the command owns the TTY
+    $self->_suspend_clio_input();
+    
+    my $exit_code;
+    my $timed_out = 0;
+    
+    eval {
+        # Build the script command for output capture
+        my $script_cmd = $self->_get_script_command($command, $log_file);
+        
+        local $SIG{ALRM} = sub { die "Command timeout after ${timeout}s\n" };
+        alarm($timeout);
+        
+        # system() gives the child process full TTY access
+        $exit_code = system($script_cmd);
+        $exit_code = $exit_code >> 8;
+        
+        alarm(0);
+    };
+    
+    if ($@) {
+        alarm(0);
+        if ($@ =~ /timeout/) {
+            $timed_out = 1;
+            $exit_code = 124;  # Standard timeout exit code
+        } else {
+            # Resume input before returning error
+            $self->_resume_clio_input();
+            die $@;
+        }
+    }
+    
+    # Resume CLIO's terminal input handling
+    $self->_resume_clio_input();
+    
+    # Read captured output
+    my $output = $self->_read_and_cleanup_log($log_file);
+    
+    my $status;
+    if ($timed_out) {
+        $status = "timed out after ${timeout}s";
+    } elsif ($exit_code == 0) {
+        $status = "success";
+    } else {
+        $status = "exit code $exit_code";
+    }
+
+    return $self->success_result(
+        $output,
+        action_description => $status,
+        pre_action_description => $display_cmd,
+        exit_code => $exit_code,
+        command => $command,
+        timeout => $timeout,
+        passthrough => 1,
+    );
+}
+
+=head2 _suspend_clio_input
+
+Suspend CLIO's ReadKey-based input handling so a child process can own the TTY.
+
+=cut
+
+sub _suspend_clio_input {
+    my ($self) = @_;
+    
+    eval {
+        require CLIO::Compat::Terminal;
+        CLIO::Compat::Terminal::ReadMode(0, *STDIN);
+    };
+    if ($@) {
+        log_debug('TerminalOps', "Could not suspend ReadMode: $@");
+    }
+}
+
+=head2 _resume_clio_input
+
+Resume CLIO's ReadKey-based input handling after a child process completes.
+
+=cut
+
+sub _resume_clio_input {
+    my ($self) = @_;
+    
+    eval {
+        require CLIO::Compat::Terminal;
+        # Restore to normal mode first (cooked)
+        CLIO::Compat::Terminal::ReadMode(0, *STDIN);
+    };
+    if ($@) {
+        log_debug('TerminalOps', "Could not resume ReadMode: $@");
+    }
+}
+
+=head2 _wait_for_pane_completion
+
+Wait for a multiplexer pane command to complete by polling for a done marker file.
+
+=cut
+
+sub _wait_for_pane_completion {
+    my ($self, $done_marker, $timeout, $mux, $pane_id) = @_;
+    
+    my $start = time();
+    my $exit_code = -1;
+    
+    while (time() - $start < $timeout) {
+        if (-f $done_marker) {
+            # Read exit code from marker
+            if (open my $fh, '<', $done_marker) {
+                my $code = <$fh>;
+                close $fh;
+                chomp $code if defined $code;
+                $exit_code = ($code =~ /^\d+$/) ? int($code) : -1;
+            }
+            last;
+        }
+        
+        # Check if the pane still exists (command may have been killed)
+        if ($mux->{driver} && $mux->{driver}->can('pane_exists')) {
+            unless ($mux->{driver}->pane_exists($pane_id)) {
+                log_debug('TerminalOps', "Multiplexer pane disappeared, command may have completed");
+                # Give a moment for the done marker to be written
+                select(undef, undef, undef, 0.5);
+                if (-f $done_marker) {
+                    if (open my $fh, '<', $done_marker) {
+                        my $code = <$fh>;
+                        close $fh;
+                        chomp $code if defined $code;
+                        $exit_code = ($code =~ /^\d+$/) ? int($code) : -1;
+                    }
+                }
+                last;
+            }
+        }
+        
+        select(undef, undef, undef, 0.5);  # Poll every 500ms
+    }
+    
+    if ($exit_code == -1 && time() - $start >= $timeout) {
+        log_warning('TerminalOps', "Command timed out after ${timeout}s");
+        $exit_code = 124;
+    }
+    
+    return $exit_code;
+}
+
+=head2 _get_multiplexer
+
+Get or create a Multiplexer instance from context.
+
+=cut
+
+sub _get_multiplexer {
+    my ($self, $context) = @_;
+    
+    # Check if multiplexer is available in context
+    if ($context && $context->{multiplexer}) {
+        return $context->{multiplexer};
+    }
+    
+    # Try to detect and create one
+    my $mux;
+    eval {
+        require CLIO::UI::Multiplexer;
+        $mux = CLIO::UI::Multiplexer->new();
+    };
+    if ($@) {
+        log_debug('TerminalOps', "Could not load Multiplexer: $@");
+        return undef;
+    }
+    
+    return ($mux && $mux->available()) ? $mux : undef;
 }
 
 sub validate_command {
@@ -215,14 +401,12 @@ sub validate_command {
     return $self->error_result("Missing 'command' parameter") unless $command;
     
     # Extract the actual command being executed (before pipes, redirects, or &&)
-    # This excludes arguments and data like git commit messages
     my $executable = $command;
     
     # For git commands, only check the git subcommand, not arguments
     if ($command =~ /^\s*(?:git\s+(\w+)|(.+?))\s/) {
         my $git_cmd = $1;
         if ($git_cmd) {
-            # For git, just check that it's git - don't check commit message content
             $executable = "git $git_cmd";
         }
     }
@@ -284,84 +468,6 @@ sub get_additional_parameters {
     };
 }
 
-=head2 _should_use_passthrough
-
-Determine if passthrough mode should be used for a command.
-
-Checks (in priority order):
-1. Per-command passthrough parameter override
-2. Global terminal_passthrough config setting
-3. Auto-detection (if terminal_autodetect enabled)
-
-Arguments:
-- $command: Command string to execute
-- $params: Parameters hash (may contain passthrough override)
-- $config: Config object
-
-Returns: Boolean (1 = use passthrough, 0 = use capture)
-
-=cut
-
-sub _should_use_passthrough {
-    my ($self, $command, $params, $config) = @_;
-    
-    # 1. Per-command override (highest priority)
-    if (defined $params->{passthrough}) {
-        return $params->{passthrough} ? 1 : 0;
-    }
-    
-    # 2. Global passthrough setting
-    if ($config && $config->get('terminal_passthrough')) {
-        return 1;
-    }
-    
-    # 3. Auto-detection (if enabled)
-    if ($config && $config->get('terminal_autodetect')) {
-        return $self->_is_interactive_command($command);
-    }
-    
-    # Default: capture mode
-    return 0;
-}
-
-=head2 _is_interactive_command
-
-Detect if a command is likely to be interactive (needs TTY access).
-
-Arguments:
-- $command: Command string to analyze
-
-Returns: Boolean (1 = interactive, 0 = non-interactive)
-
-=cut
-
-sub _is_interactive_command {
-    my ($self, $command) = @_;
-    
-    # Known interactive editors and pagers
-    return 1 if $command =~ /\b(vim|vi|nvim|nano|emacs|less|more|man)\b/;
-    
-    # Git commit without message flag (will open editor)
-    return 1 if $command =~ /git\s+commit(?!\s+.*(?:-m|--message))/;
-    
-    # Git commands with GPG signing (needs passphrase prompt)
-    return 1 if $command =~ /git\s+.*(?:--gpg-sign|-S)\b/;
-    
-    # GPG operations (likely need passphrase)
-    return 1 if $command =~ /\bgpg\b/;
-    
-    # Interactive shells (if command is just a shell invocation)
-    return 1 if $command =~ /^\s*(bash|sh|zsh|fish|tcsh|csh)\s*$/;
-    
-    # SSH connections (interactive by default)
-    return 1 if $command =~ /^\s*ssh\s+/;
-    
-    # Interactive python/ruby/node REPLs (no script argument)
-    return 1 if $command =~ /^\s*(python|ruby|irb|node)\s*$/;
-    
-    return 0;
-}
-
 =head2 _get_script_command
 
 Generate platform-specific script command for terminal recording.
@@ -385,34 +491,41 @@ sub _get_script_command {
     my $platform = `uname -s 2>/dev/null` || '';
     chomp $platform;
     
-    # Escape command for shell (simple escaping - wraps in single quotes and escapes existing single quotes)
+    # Escape command for shell
     my $escaped_cmd = $command;
-    $escaped_cmd =~ s/'/'\\''/g;  # Replace ' with '\''
+    $escaped_cmd =~ s/'/'\\''/g;
     
     if ($platform eq 'Darwin') {
-        # macOS syntax: script -q <logfile> <shell> -c '<command>'
         return "script -q '$log_file' sh -c '$escaped_cmd'";
     } else {
-        # Linux/BSD syntax: script -qc '<command>' <logfile>
         return "script -qc '$escaped_cmd' '$log_file'";
     }
+}
+
+=head2 _read_and_cleanup_log
+
+Read output from the script log file, sanitize it, and clean up.
+
+=cut
+
+sub _read_and_cleanup_log {
+    my ($self, $log_file) = @_;
+    
+    my $output = '';
+    if (-f $log_file) {
+        if (open my $fh, '<:encoding(UTF-8)', $log_file) {
+            $output = do { local $/; <$fh> };
+            close $fh;
+        }
+        unlink $log_file;
+    }
+    
+    return $self->_sanitize_terminal_output($output);
 }
 
 =head2 _sanitize_terminal_output
 
 Remove terminal control sequences from captured output.
-
-The script command captures raw terminal output including:
-- ANSI color codes (ESC[...m)
-- Cursor positioning (ESC[...H, ESC[...A, etc.)
-- Other control sequences
-
-This method strips these for cleaner agent consumption while preserving actual text.
-
-Arguments:
-- $output: Raw terminal output
-
-Returns: Sanitized output string
 
 =cut
 
@@ -420,74 +533,72 @@ sub _sanitize_terminal_output {
     my ($self, $output) = @_;
     
     # Remove ANSI escape sequences
-    # Pattern matches: ESC [ <params> <letter>
     $output =~ s/\x1b\[[0-9;]*[a-zA-Z]//g;
     
     # Remove other common escape sequences
-    $output =~ s/\x1b[(\)][AB012]//g;  # Character set selection
-    $output =~ s/\x1b\][0-9];[^\x07]*\x07//g;  # OSC sequences (title setting, etc.)
-    $output =~ s/\x1b[=>]//g;  # Application keypad mode
+    $output =~ s/\x1b[(\)][AB012]//g;
+    $output =~ s/\x1b\][0-9];[^\x07]*\x07//g;
+    $output =~ s/\x1b[=>]//g;
     
-    # Remove carriage returns that are just for terminal formatting
-    # Keep newlines, but remove CR that appear mid-line (used for progress bars, etc.)
-    $output =~ s/\r+\n/\n/g;  # CRLF -> LF
-    $output =~ s/\r(?!\n)//g;  # CR not followed by LF (overwriting same line)
+    # Clean up line endings
+    $output =~ s/\r+\n/\n/g;
+    $output =~ s/\r(?!\n)//g;
     
-    # Remove backspace characters and the character they delete
-    while ($output =~ s/.\x08//g) {}  # Loop until no more backspaces
+    # Remove backspace characters
+    while ($output =~ s/.\x08//g) {}
     
-    # Remove BEL (bell) characters
+    # Remove BEL characters
     $output =~ s/\x07//g;
     
     return $output;
+}
+
+=head2 _shell_escape
+
+Escape a string for safe use in a shell command.
+
+=cut
+
+sub _shell_escape {
+    my ($str) = @_;
+    $str =~ s/'/'\\''/g;
+    return "'$str'";
 }
 
 =head2 _reset_terminal_state_light
 
 Light terminal reset - just restore ReadMode.
 
-Called after non-zero exit codes in capture mode.
-Does not output ANSI codes which could cause cursor issues.
-
 =cut
 
 sub _reset_terminal_state_light {
     my ($self) = @_;
     
-    # Only reset if we have a TTY
     return unless -t STDIN;
     
-    # Use light reset - ReadMode(0) only
     eval {
         require CLIO::Compat::Terminal;
         CLIO::Compat::Terminal::reset_terminal_light();
     };
-    # Silently ignore errors - best effort reset
     
     return 1;
 }
 
 =head2 _reset_terminal_state
 
-Moderate terminal reset - restore ReadMode and safe ANSI attributes.
-
-Not currently used automatically - terminal resets are now conservative.
-Available for explicit use if needed.
+Moderate terminal reset.
 
 =cut
 
 sub _reset_terminal_state {
     my ($self) = @_;
     
-    # Only reset if we have a TTY
     return unless -t STDIN && -t STDOUT;
     
-    # Use moderate reset function from Compat::Terminal
     eval {
         require CLIO::Compat::Terminal;
         CLIO::Compat::Terminal::reset_terminal();
     };
-    # Silently ignore errors - best effort reset
     
     return 1;
 }
