@@ -11,6 +11,7 @@ binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 
 use Carp qw(croak);
+use File::Spec ();
 
 =head1 NAME
 
@@ -62,6 +63,14 @@ History/Utility:
 - /git tag - List tags
 - /git tag <name> - Create tag
 - /git tag -d <name> - Delete tag
+
+Worktree Operations:
+- /git worktree - List worktrees
+- /git worktree list - List worktrees
+- /git worktree add <path> [branch] - Add a worktree
+- /git worktree remove <path> - Remove a worktree
+- /git worktree prune - Prune stale worktrees
+- /git worktree merge <path> - Merge a worktree's branch into current branch
 
 Extracted from Chat.pm to improve maintainability.
 
@@ -166,6 +175,12 @@ sub handle_git_command {
         $self->handle_tag_command(@args);
         return;
     }
+
+    # /git worktree [list|add|remove|prune|merge]
+    if ($action eq 'worktree') {
+        $self->handle_worktree_command(@args);
+        return;
+    }
     
     # Unknown action
     $self->display_error_message("Unknown action: /git $action");
@@ -200,7 +215,7 @@ sub _display_git_help {
     $self->display_command_row("/git push [remote] [branch]", "Push changes (default: origin, current)", 30);
     $self->display_command_row("/git pull [remote] [branch]", "Pull changes (default: origin, current)", 30);
     $self->writeline("", markdown => 0);
-    
+
     $self->display_section_header("COMMIT OPERATIONS");
     $self->display_command_row("/git commit [msg]", "Stage and commit changes", 30);
     $self->writeline("", markdown => 0);
@@ -216,6 +231,15 @@ sub _display_git_help {
     $self->display_command_row("/git tag -d <name>", "Delete tag", 30);
     $self->writeline("", markdown => 0);
     
+    $self->display_section_header("WORKTREE OPERATIONS");
+    $self->display_command_row("/git worktree", "List all worktrees", 30);
+    $self->display_command_row("/git worktree add <path>", "Add a worktree", 30);
+    $self->display_command_row("/git worktree add <path> <branch>", "Add a worktree on a branch", 30);
+    $self->display_command_row("/git worktree remove <path>", "Remove a worktree", 30);
+    $self->display_command_row("/git worktree prune", "Prune stale worktrees", 30);
+    $self->display_command_row("/git worktree merge <path>", "Merge a worktree's branch into current", 30);
+    $self->writeline("", markdown => 0);
+    
     $self->display_section_header("EXAMPLES");
     $self->display_command_row("/git status", "See changes", 35);
     $self->display_command_row("/git diff lib/CLIO.pm", "Diff specific file", 35);
@@ -225,6 +249,7 @@ sub _display_git_help {
     $self->display_command_row("/git push", "Push to origin/current branch", 35);
     $self->display_command_row("/git stash save \"WIP\"", "Stash with message", 35);
     $self->display_command_row("/git tag v1.0.0", "Create version tag", 35);
+    $self->display_command_row("/git worktree add ../feature feat", "Worktree for feature branch", 35);
     $self->writeline("", markdown => 0);
 }
 
@@ -734,6 +759,159 @@ sub handle_tag_command {
     }
     
     $self->display_success_message("Tag '$tag' created");
+}
+
+=head2 handle_worktree_command
+
+Worktree operations: list, add, remove, prune, merge
+
+=cut
+
+sub handle_worktree_command {
+    my ($self, @args) = @_;
+    
+    my $action = $args[0] || 'list';
+    $action = lc($action);
+    
+    # /git worktree (no args) or /git worktree list - list worktrees
+    if ($action eq 'list' || !@args) {
+        my $output = `git worktree list 2>&1`;
+        my $exit_code = $? >> 8;
+        
+        if ($exit_code != 0) {
+            $self->display_error_message("Worktree list failed: $output");
+            return;
+        }
+        
+        $self->display_command_header("GIT WORKTREES");
+        for my $line (split /\n/, $output) {
+            $self->writeline($line, markdown => 0);
+        }
+        $self->writeline("", markdown => 0);
+        return;
+    }
+    
+    # /git worktree add <path> [branch]
+    if ($action eq 'add') {
+        unless ($args[1]) {
+            $self->display_error_message("Path required: /git worktree add <path> [branch]");
+            return;
+        }
+        
+        my $path   = $args[1];
+        my $branch = $args[2] || '';
+        
+        my $cmd = "git worktree add '$path'";
+        $cmd .= " '$branch'" if $branch;
+        $cmd .= " 2>&1";
+        
+        my $output = `$cmd`;
+        my $exit_code = $? >> 8;
+        
+        if ($exit_code != 0) {
+            $self->display_error_message("Worktree add failed: $output");
+            return;
+        }
+        
+        $self->display_command_header("GIT WORKTREE ADD");
+        for my $line (split /\n/, $output) {
+            $self->writeline($line, markdown => 0);
+        }
+        $self->writeline("", markdown => 0);
+        
+        my $target = $branch ? "'$path' on branch '$branch'" : "'$path'";
+        $self->display_success_message("Worktree added at $target");
+        return;
+    }
+    
+    # /git worktree remove <path>
+    if ($action eq 'remove' || $action eq 'rm') {
+        unless ($args[1]) {
+            $self->display_error_message("Path required: /git worktree remove <path>");
+            return;
+        }
+        
+        my $path = $args[1];
+        my $output = `git worktree remove '$path' 2>&1`;
+        my $exit_code = $? >> 8;
+        
+        if ($exit_code != 0) {
+            $self->display_error_message("Worktree remove failed: $output");
+            return;
+        }
+        
+        $self->display_success_message("Worktree '$path' removed");
+        return;
+    }
+    
+    # /git worktree prune
+    if ($action eq 'prune') {
+        my $output = `git worktree prune 2>&1`;
+        my $exit_code = $? >> 8;
+        
+        if ($exit_code != 0) {
+            $self->display_error_message("Worktree prune failed: $output");
+            return;
+        }
+        
+        $self->display_success_message("Stale worktrees pruned");
+        return;
+    }
+    
+    # /git worktree merge <path>
+    if ($action eq 'merge') {
+        unless ($args[1]) {
+            $self->display_error_message("Path required: /git worktree merge <path>");
+            return;
+        }
+
+        my $path = $args[1];
+
+        # Find the branch checked out at this worktree path
+        my $list_output = `git worktree list --porcelain 2>&1`;
+        my $list_exit = $? >> 8;
+        if ($list_exit != 0) {
+            $self->display_error_message("Worktree list failed: $list_output");
+            return;
+        }
+
+        my $branch;
+        my $in_target = 0;
+        my $current_path = '';
+        for my $line (split /\n/, $list_output) {
+            if ($line =~ /^worktree (.+)$/) {
+                $current_path = $1;
+                $in_target = ($current_path eq $path || $current_path eq File::Spec->rel2abs($path));
+            }
+            elsif ($in_target && $line =~ /^branch refs\/heads\/(.+)$/) {
+                $branch = $1;
+                last;
+            }
+        }
+
+        unless ($branch) {
+            $self->display_error_message("No branch found for worktree '$path' (detached HEAD or path not found)");
+            return;
+        }
+
+        my $output = `git merge '$branch' 2>&1`;
+        my $exit_code = $? >> 8;
+
+        if ($exit_code != 0) {
+            $self->display_error_message("Worktree merge failed: $output");
+            return;
+        }
+
+        $self->display_command_header("GIT WORKTREE MERGE");
+        for my $line (split /\n/, $output) {
+            $self->writeline($line, markdown => 0);
+        }
+        $self->writeline("", markdown => 0);
+        $self->display_success_message("Merged branch '$branch' from worktree '$path'");
+        return;
+    }
+
+    $self->display_error_message("Unknown worktree action: $action (use: list, add, remove, prune, merge)");
 }
 
 1;
