@@ -173,7 +173,7 @@ clio/
           Tool.pm           # Base tool class
           Registry.pm       # Tool registry
           FileOperations.pm # File tools (17 operations)
-          VersionControl.pm # Git tools (10 operations)
+          VersionControl.pm # Git tools (11 operations)
           TerminalOperations.pm
           MemoryOperations.pm
           TodoList.pm
