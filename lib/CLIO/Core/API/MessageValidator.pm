@@ -8,6 +8,7 @@ use warnings;
 use utf8;
 use CLIO::Core::Logger qw(should_log log_debug log_info log_warning);
 use CLIO::Memory::TokenEstimator qw(estimate_tokens);
+use POSIX qw(strftime);
 
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
@@ -119,6 +120,28 @@ sub validate_and_truncate {
     
     # Exceeds limit - need to truncate
     log_debug('MessageValidator', "Messages exceed token limit: $estimated_tokens > $effective_limit, truncating");
+
+    # DIAGNOSTIC: Dump MessageValidator internal thresholds to /tmp
+    eval {
+        my $ts = POSIX::strftime('%Y%m%d_%H%M%S', localtime);
+        my $diag_file = "/tmp/clio_trim_validator_${ts}_$$.log";
+        if (open my $dfh, '>:encoding(UTF-8)', $diag_file) {
+            print $dfh "MessageValidator TRUNCATION TRIGGERED\n";
+            print $dfh "=" x 60, "\n";
+            print $dfh "Timestamp: ", scalar(localtime), "\n";
+            print $dfh "Model: $model\n";
+            print $dfh "max_prompt (from caps): $max_prompt\n";
+            print $dfh "tool_tokens: $tool_tokens\n";
+            print $dfh "estimation_margin (15%): $estimation_margin\n";
+            print $dfh "response_buffer: $response_buffer\n";
+            print $dfh "effective_limit: $effective_limit\n";
+            print $dfh "estimated_tokens: $estimated_tokens\n";
+            print $dfh "overage: " . ($estimated_tokens - $effective_limit) . "\n";
+            print $dfh "message_count: " . scalar(@$messages) . "\n";
+            close $dfh;
+            log_info('MessageValidator', "Validator thresholds dumped to $diag_file");
+        }
+    };
     
     # Group messages into units
     my ($units_ref, $tool_id_map) = _group_into_units($messages);
@@ -145,6 +168,24 @@ sub validate_and_truncate {
     $post_trim_keep_limit = $effective_limit if $post_trim_keep_limit < $effective_limit * 0.5;
     $post_trim_keep_limit = 32000 if $post_trim_keep_limit < 32000;
     log_debug('MessageValidator', "Post-trim keep target: $post_trim_keep_limit tokens (50% of $max_prompt)");
+
+    # DIAGNOSTIC: Append post_trim_keep_limit to the validator diagnostic
+    eval {
+        my $ts = POSIX::strftime('%Y%m%d_%H%M%S', localtime);
+        # Append to the most recent validator log
+        my @logs = glob("/tmp/clio_trim_validator_*_$$.log");
+        if (@logs) {
+            my $latest = $logs[-1];
+            if (open my $dfh, '>>:encoding(UTF-8)', $latest) {
+                print $dfh "post_trim_keep_limit: $post_trim_keep_limit\n";
+                print $dfh "system_tokens: $system_tokens\n";
+                print $dfh "first_user_tokens: $first_user_tokens\n";
+                print $dfh "units_count: " . scalar(@units) . "\n";
+                print $dfh "remaining_units: " . scalar(@remaining) . "\n";
+                close $dfh;
+            }
+        }
+    };
 
     for my $unit (reverse @remaining) {
         if ($unit->{is_orphan_tool_result}) {
