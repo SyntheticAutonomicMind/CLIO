@@ -121,7 +121,8 @@ sub validate_and_truncate {
     # Exceeds limit - need to truncate
     log_debug('MessageValidator', "Messages exceed token limit: $estimated_tokens > $effective_limit, truncating");
 
-    # DIAGNOSTIC: Dump MessageValidator internal thresholds to /tmp
+    # DIAGNOSTIC: Dump MessageValidator internal thresholds to /tmp (CLIO_TRIM_DIAG=1 to enable)
+    if ($ENV{CLIO_TRIM_DIAG}) {
     eval {
         my $ts = POSIX::strftime('%Y%m%d_%H%M%S', localtime);
         my $diag_file = "/tmp/clio_trim_validator_${ts}_$$.log";
@@ -142,6 +143,7 @@ sub validate_and_truncate {
             log_info('MessageValidator', "Validator thresholds dumped to $diag_file");
         }
     };
+    }
     
     # Group messages into units
     my ($units_ref, $tool_id_map) = _group_into_units($messages);
@@ -169,7 +171,8 @@ sub validate_and_truncate {
     $post_trim_keep_limit = 32000 if $post_trim_keep_limit < 32000;
     log_debug('MessageValidator', "Post-trim keep target: $post_trim_keep_limit tokens (50% of $max_prompt)");
 
-    # DIAGNOSTIC: Append post_trim_keep_limit to the validator diagnostic
+    # DIAGNOSTIC: Append post_trim_keep_limit to the validator diagnostic (CLIO_TRIM_DIAG=1 to enable)
+    if ($ENV{CLIO_TRIM_DIAG}) {
     eval {
         my $ts = POSIX::strftime('%Y%m%d_%H%M%S', localtime);
         # Append to the most recent validator log
@@ -186,6 +189,7 @@ sub validate_and_truncate {
             }
         }
     };
+    }
 
     for my $unit (reverse @remaining) {
         if ($unit->{is_orphan_tool_result}) {

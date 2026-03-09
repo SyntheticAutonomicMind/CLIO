@@ -531,7 +531,7 @@ sub process_input {
                 model              => $model,
             );
             if ($trimmed && scalar(@$trimmed) < $pre_count) {
-                # DIAGNOSTIC: Dump state before and after proactive trim
+                # DIAGNOSTIC: Dump state before and after proactive trim (CLIO_TRIM_DIAG=1 to enable)
                 _dump_trim_diagnostic(
                     phase       => 'before',
                     trigger     => 'proactive',
@@ -542,7 +542,7 @@ sub process_input {
                     extra       => {
                         max_prompt_tokens => ($caps && $caps->{max_prompt_tokens}) || 'unknown',
                     },
-                );
+                ) if $ENV{CLIO_TRIM_DIAG};
                 @messages = @$trimmed;
                 _dump_trim_diagnostic(
                     phase       => 'after',
@@ -555,7 +555,7 @@ sub process_input {
                         original_count => $pre_count,
                         trimmed_to     => scalar(@messages),
                     },
-                );
+                ) if $ENV{CLIO_TRIM_DIAG};
                 log_info('WorkflowOrchestrator', "Proactive trim (pre-API): $pre_count -> " . scalar(@messages) . " messages");
             }
         }
@@ -821,7 +821,7 @@ sub process_input {
                 }
                 # Special handling for token limit exceeded errors
                 elsif ($api_response->{error_type} && $api_response->{error_type} eq 'token_limit_exceeded') {
-                    # DIAGNOSTIC: Dump full state BEFORE reactive trim
+                    # DIAGNOSTIC: Dump full state BEFORE reactive trim (CLIO_TRIM_DIAG=1 to enable)
                     _dump_trim_diagnostic(
                         phase       => 'before',
                         trigger     => 'reactive',
@@ -834,7 +834,7 @@ sub process_input {
                             max_server_retries => $max_server_retries,
                             error_message      => $error || '',
                         },
-                    );
+                    ) if $ENV{CLIO_TRIM_DIAG};
 
                     # Checkpoint progress before trimming - creates recovery anchor
                     _checkpoint_session_progress($session, \@tool_calls_made, $iteration, \@messages)
@@ -1035,7 +1035,7 @@ sub process_input {
                     push @messages, $system_prompt if $system_prompt;
                     push @messages, @non_system;
                     
-                    # DIAGNOSTIC: Dump full state AFTER reactive trim
+                    # DIAGNOSTIC: Dump full state AFTER reactive trim (CLIO_TRIM_DIAG=1 to enable)
                     _dump_trim_diagnostic(
                         phase       => 'after',
                         trigger     => 'reactive',
@@ -1049,7 +1049,7 @@ sub process_input {
                             kept_count     => scalar(@non_system),
                             first_user_preserved => ($first_user_msg ? 'YES' : 'NO'),
                         },
-                    );
+                    ) if $ENV{CLIO_TRIM_DIAG};
 
                     $error_type = "token limit exceeded";
                     my $preserved_info = $first_user_msg ? " (first user message preserved)" : "";
