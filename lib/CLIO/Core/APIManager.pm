@@ -254,6 +254,13 @@ sub new {
 
     $self->{api_key} = $self->_get_api_key();
     
+    # Sync initial token ratio to the global TokenEstimator so ALL estimation
+    # (MessageValidator, ConversationManager, etc.) uses the same ratio from the start.
+    # Without this, TokenEstimator defaults to 4.0 chars/token while APIManager starts
+    # at 2.5 - causing proactive trim to underestimate by ~40%.
+    require CLIO::Memory::TokenEstimator;
+    CLIO::Memory::TokenEstimator::set_learned_ratio($self->{learned_token_ratio});
+    
     return $self;
 }
 
@@ -2862,6 +2869,9 @@ sub send_request_streaming {
     if ($streaming_usage) {
         $final_usage = $streaming_usage;
         log_debug('APIManager', "Using real streaming usage: prompt=$final_usage->{prompt_tokens}, completion=$final_usage->{completion_tokens}");
+        
+        # Learn from streaming usage to improve token estimation accuracy
+        $self->_learn_from_api_response($final_usage, $messages);
     } else {
         # Fallback: estimate tokens (inaccurate - doesn't count tool call tokens)
         my $estimated_completion_tokens = $token_count;
