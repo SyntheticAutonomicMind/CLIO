@@ -152,13 +152,19 @@ sub validate_and_truncate {
     log_debug('MessageValidator', "Grouped " . scalar(@$messages) . " messages into " . scalar(@units) . " units");
     
     # Extract system message and first user message
-    my ($system_msg, $first_user_unit, $start_unit, $system_tokens, $first_user_tokens) = 
+    my ($system_msg, $first_user_unit, $start_unit, $system_tokens, $first_user_tokens,
+        $summary_unit, $summary_tokens, $gap_units) = 
         _extract_preserved_units(\@units);
     
     # Build conversation from newest to oldest
     my @conversation;
-    my $current_tokens = $system_tokens + $first_user_tokens;
+    my $current_tokens = $system_tokens + $first_user_tokens + $summary_tokens;
     my %included_tool_ids;
+    # Extract previous summary content for merging into new compression
+    my $previous_summary_content = '';
+    if ($summary_unit && $summary_unit->{messages} && @{$summary_unit->{messages}}) {
+        $previous_summary_content = $summary_unit->{messages}[0]{content} || '';
+    }
     my @dropped_units;
     
     my @remaining = @units[$start_unit .. $#units];
@@ -183,6 +189,7 @@ sub validate_and_truncate {
                 print $dfh "post_trim_keep_limit: $post_trim_keep_limit\n";
                 print $dfh "system_tokens: $system_tokens\n";
                 print $dfh "first_user_tokens: $first_user_tokens\n";
+                print $dfh "summary_tokens: $summary_tokens\n";
                 print $dfh "units_count: " . scalar(@units) . "\n";
                 print $dfh "remaining_units: " . scalar(@remaining) . "\n";
                 close $dfh;
@@ -209,7 +216,17 @@ sub validate_and_truncate {
     }
     
     # Compress dropped units
-    my $compressed = _compress_dropped(\@dropped_units, $first_user_unit, $debug);
+    # Create merged summary only if there are dropped messages to compress.
+    # If nothing was dropped, preserve the existing summary as-is.
+    my $summary_to_use;
+    if (@dropped_units) {
+        my $compressed = _compress_dropped(\@dropped_units, $first_user_unit, $debug, $previous_summary_content);
+        $summary_to_use = $compressed;
+    } elsif ($summary_unit && $summary_unit->{messages} && @{$summary_unit->{messages}}) {
+        # No new drops - keep the existing summary intact
+        $summary_to_use = $summary_unit->{messages}[0];
+        log_debug('MessageValidator', "No dropped messages - preserving existing thread_summary");
+    }
     
     # Post-truncation validation
     my @validated;
@@ -225,7 +242,7 @@ sub validate_and_truncate {
     # Combine: system + compressed + first user + validated
     my @truncated;
     push @truncated, $system_msg if $system_msg;
-    push @truncated, $compressed if $compressed;
+    push @truncated, $summary_to_use if $summary_to_use;
     push @truncated, @{$first_user_unit->{messages}} if $first_user_unit;
     push @truncated, @validated;
     
@@ -497,6 +514,9 @@ sub _extract_preserved_units {
     my $start_unit = 0;
     my $system_tokens = 0;
     my $first_user_tokens = 0;
+    my $summary_unit;         # Previous thread_summary (preserved across trims)
+    my $summary_tokens = 0;
+    my @gap_units;            # Other units between system msg and first user
     
     # Extract system message
     if (@$units && @{$units->[0]{messages}} && $units->[0]{messages}[0]{role} eq 'system') {
@@ -520,14 +540,26 @@ sub _extract_preserved_units {
             log_debug('MessageValidator', "Preserving first user message (importance=" . 
                 ($first_msg->{_importance} // 'n/a') . ", tokens=$first_user_tokens)");
             last;
-        }
+        } else {
+            # Check if this is an old thread_summary - preserve it separately
+            my $content = $first_msg->{content} || '';
+            if ($content =~ /<thread_summary>/) {
+                $summary_unit = $unit;
+                $summary_tokens = $unit->{tokens};
+                log_debug('MessageValidator', "Preserving thread_summary ($summary_tokens tokens)");
+            } else {
+                push @gap_units, $unit;
+                log_debug('MessageValidator', "Collected gap unit (role=$first_msg->{role}, tokens=$unit->{tokens})");
+            }
+         }
     }
     
-    return ($system_msg, $first_user_unit, $start_unit, $system_tokens, $first_user_tokens);
+    return ($system_msg, $first_user_unit, $start_unit, $system_tokens, $first_user_tokens,
+            $summary_unit, $summary_tokens, \@gap_units);
 }
 
 sub _compress_dropped {
-    my ($dropped_units, $first_user_unit, $debug) = @_;
+    my ($dropped_units, $first_user_unit, $debug, $previous_summary) = @_;
     
     return undef unless $dropped_units && @$dropped_units;
     
@@ -549,7 +581,8 @@ sub _compress_dropped {
         }
         
         $compressed = $yarn->compress_messages(\@dropped_messages,
-            original_task => $original_task
+            original_task    => $original_task,
+            previous_summary => $previous_summary,
         );
         
         log_debug('MessageValidator', "Compression successful: " . scalar(@dropped_messages) . 

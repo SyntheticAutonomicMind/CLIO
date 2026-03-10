@@ -2297,6 +2297,23 @@ sub _compress_dropped_for_recovery {
     
     return undef unless $dropped_messages && @$dropped_messages;
     
+    # Extract previous thread_summary from dropped messages (system-role messages
+    # containing <thread_summary> tags). These are ignored by YaRN's role-based
+    # extraction, so we pass them explicitly to preserve accumulated history.
+    my $previous_summary = '';
+    my @actual_messages;
+    for my $msg (@$dropped_messages) {
+        my $content = $msg->{content} || '';
+        if ($msg->{role} && $msg->{role} eq 'system' && $content =~ /<thread_summary>/) {
+            $previous_summary = $content;
+        } else {
+            push @actual_messages, $msg;
+        }
+    }
+    
+    # Use filtered messages (without old summary) for extraction
+    my $messages_to_compress = @actual_messages ? \@actual_messages : $dropped_messages;
+    
     my $compressed;
     eval {
         require CLIO::Memory::YaRN;
@@ -2308,8 +2325,9 @@ sub _compress_dropped_for_recovery {
             $original_task = $first_user_msg->{content} || '';
         }
         
-        $compressed = $yarn->compress_messages($dropped_messages,
-            original_task => $original_task
+        $compressed = $yarn->compress_messages($messages_to_compress,
+            original_task    => $original_task,
+            previous_summary => $previous_summary,
         );
     };
     if ($@) {
