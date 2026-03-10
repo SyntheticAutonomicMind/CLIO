@@ -240,6 +240,7 @@ For more examples, see [docs/USER_GUIDE.md](docs/USER_GUIDE.md#usage-examples).
 | [Dependencies](docs/DEPENDENCIES.md) | System requirements and verification |
 | [Sandbox Mode](docs/SANDBOX.md) | Security isolation options |
 | [Architecture](docs/ARCHITECTURE.md) | System design and internals |
+| [Memory Architecture](docs/MEMORY.md) | How CLIO remembers and learns across sessions |
 | [Developer Guide](docs/DEVELOPER_GUIDE.md) | Contributing and extending CLIO |
 | [Remote Execution](docs/REMOTE_EXECUTION.md) | Distributed AI workflows |
 | [Multi-Agent](docs/MULTI_AGENT_COORDINATION.md) | Parallel agent coordination |

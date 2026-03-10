@@ -312,7 +312,7 @@ Todos have statuses (not-started, in-progress, completed, blocked), priorities (
 
 ## 5. Memory System
 
-CLIO has a three-tier memory system that gives it continuity across sessions.
+CLIO has a three-tier memory system that gives it continuity across sessions. For the full technical deep-dive, see [Memory Architecture](MEMORY.md).
 
 ### Short-Term Memory
 
@@ -408,7 +408,7 @@ A typical profile includes:
 
 ## 6. Context Management
 
-CLIO manages a limited context window (the amount of conversation the AI can "see" at once). This is critical for long sessions.
+CLIO manages a limited context window (the amount of conversation the AI can "see" at once). This is critical for long sessions. For the full technical details, see [Memory Architecture](MEMORY.md).
 
 ### Three-Layer Trimming
 
