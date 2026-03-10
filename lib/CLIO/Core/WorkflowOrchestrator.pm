@@ -679,24 +679,25 @@ sub process_input {
         if (!$api_response || $api_response->{error}) {
             my $error = $api_response->{error} || "Unknown API error";
             
-            # Track session-level errors for budget enforcement
-            $session_error_count++;
-            $session->{_error_count} = $session_error_count;
-            
-            # Check if we've exceeded session error budget
-            if ($session_error_count > $max_session_errors) {
-                log_error('WorkflowOrchestrator', "Session error budget exhausted ($session_error_count errors). Stopping to prevent cascading failures.");
-                return {
-                    success => 0,
-                    error => "Session error limit reached ($max_session_errors errors). Please start a new request or session. Last error: $error",
-                    iterations => $iteration,
-                    tool_calls_made => \@tool_calls_made
-                };
-            }
+            # Track session-level errors for budget enforcement.
+            # Only count once per distinct error event (not per retry attempt).
+            # Retryable errors count when retries exhaust; non-retryable count immediately.
             
             # Check if this is a retryable error (rate limit or server error)
             if ($api_response->{retryable}) {
                 $retry_count++;
+                
+                # Escalate repeated bare 400s to context trim. When the API returns
+                # "Bad Request" with no details after multiple retries, it's likely a
+                # context overflow that the token estimator missed.
+                my $error_type_check = $api_response->{error_type} || '';
+                if ($error_type_check eq 'bad_request' && $retry_count >= 3) {
+                    log_warning('WorkflowOrchestrator', "Repeated 400 Bad Request ($retry_count attempts) - escalating to context trim");
+                    $api_response->{error_type} = 'token_limit_exceeded';
+                    # Reset retry_count so the trim handler starts with its gentle
+                    # 40% trim (retry 1), not the nuclear option (retry 3)
+                    $retry_count = 1;
+                }
                 
                 # Determine which retry limit to use based on error type
                 # Rate limits, server errors, and transient 400s get more retries
@@ -733,7 +734,7 @@ sub process_input {
                 # Handle generic 400 - silent retry, no message needed
                 elsif ($api_response->{error_type} && $api_response->{error_type} eq 'bad_request') {
                     $system_msg = undef;  # Silent retry
-                    log_info('WorkflowOrchestrator', "API 400 Bad Request - retrying silently");
+                    log_info('WorkflowOrchestrator', "API 400 Bad Request - retrying silently (attempt $retry_count)");
                 }
                 # Special handling for malformed tool JSON errors
                 # ONE RETRY ONLY: Remove bad message, add guidance with tool schema, let AI fix it
@@ -1158,6 +1159,19 @@ sub process_input {
             
             # Non-retryable error - reset retry counter for next iteration
             $retry_count = 0;
+            
+            # Count non-retryable errors against session budget
+            $session_error_count++;
+            $session->{_error_count} = $session_error_count;
+            if ($session_error_count > $max_session_errors) {
+                log_error('WorkflowOrchestrator', "Session error budget exhausted ($session_error_count errors). Stopping to prevent cascading failures.");
+                return {
+                    success => 0,
+                    error => "Session error limit reached ($max_session_errors errors). Please start a new request or session. Last error: $error",
+                    iterations => $iteration,
+                    tool_calls_made => \@tool_calls_made
+                };
+            }
             
             # Track consecutive identical errors to prevent infinite loops
             if ($error eq $self->{last_error}) {
