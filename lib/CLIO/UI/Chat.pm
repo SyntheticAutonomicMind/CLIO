@@ -2224,7 +2224,7 @@ sub display_help {
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/help, /h', 'help_command'), 'Display this help');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/exit, /quit, /q', 'help_command'), 'Exit the chat');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/clear', 'help_command'), 'Clear the screen');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/reset', 'help_command'), 'Reset terminal state');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/reset', 'help_command'), 'Reset terminal and kill stale processes');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/init', 'help_command'), 'Initialize CLIO for this project');
     push @help_lines, "";
     
