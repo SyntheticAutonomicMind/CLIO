@@ -274,71 +274,97 @@ sub validate_tool_message_pairs {
     
     return [] unless $messages && @$messages;
     
-    # Collect tool_call IDs
-    my %tool_call_ids;
+    # Build bidirectional maps: tool_call_id -> assistant index, tool_call_id -> result index
+    my %tc_id_to_assistant_idx;   # tool_call_id -> message index of assistant
+    my %tr_id_to_result_idx;      # tool_call_id -> message index of tool result
+    
     for (my $i = 0; $i < @$messages; $i++) {
         my $msg = $messages->[$i];
         if ($msg->{role} && $msg->{role} eq 'assistant' && 
             $msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
             for my $tc (@{$msg->{tool_calls}}) {
-                $tool_call_ids{$tc->{id}} = $i if $tc->{id};
+                $tc_id_to_assistant_idx{$tc->{id}} = $i if $tc->{id};
             }
         }
-    }
-    
-    # Collect tool_result IDs
-    my %tool_result_ids;
-    for (my $i = 0; $i < @$messages; $i++) {
-        my $msg = $messages->[$i];
         if ($msg->{role} && $msg->{role} eq 'tool' && $msg->{tool_call_id}) {
-            $tool_result_ids{$msg->{tool_call_id}} = $i;
+            $tr_id_to_result_idx{$msg->{tool_call_id}} = $i;
         }
     }
     
-    # Find orphans
-    my %orphaned_call_indices;
-    for my $tc_id (keys %tool_call_ids) {
-        unless (exists $tool_result_ids{$tc_id}) {
-            $orphaned_call_indices{$tool_call_ids{$tc_id}} = 1;
-            log_debug('MessageValidator', "Orphaned tool_call: $tc_id at message $tool_call_ids{$tc_id}");
+    # Identify orphaned tool_call IDs (no matching result) and orphaned result IDs (no matching call)
+    my %orphaned_tc_ids;
+    for my $tc_id (keys %tc_id_to_assistant_idx) {
+        unless (exists $tr_id_to_result_idx{$tc_id}) {
+            $orphaned_tc_ids{$tc_id} = 1;
+            log_debug('MessageValidator', "Orphaned tool_call: $tc_id at message $tc_id_to_assistant_idx{$tc_id}");
         }
     }
     
     my %orphaned_result_indices;
-    for my $tr_id (keys %tool_result_ids) {
-        unless (exists $tool_call_ids{$tr_id}) {
-            $orphaned_result_indices{$tool_result_ids{$tr_id}} = 1;
-            log_debug('MessageValidator', "Orphaned tool_result: $tr_id at message $tool_result_ids{$tr_id}");
+    for my $tr_id (keys %tr_id_to_result_idx) {
+        unless (exists $tc_id_to_assistant_idx{$tr_id}) {
+            $orphaned_result_indices{$tr_id_to_result_idx{$tr_id}} = 1;
+            log_debug('MessageValidator', "Orphaned tool_result: $tr_id at message $tr_id_to_result_idx{$tr_id}");
         }
     }
     
     # If no orphans, return original
-    if (!keys %orphaned_call_indices && !keys %orphaned_result_indices) {
+    if (!keys %orphaned_tc_ids && !keys %orphaned_result_indices) {
         log_debug('MessageValidator', "Tool message validation: all pairs valid");
         return $messages;
     }
     
-    # Rebuild without orphans
+    # Rebuild: remove orphaned results entirely, selectively strip orphaned tool_calls
     my @validated;
+    my $fixes = 0;
     for (my $i = 0; $i < @$messages; $i++) {
         my $msg = $messages->[$i];
         
+        # Drop orphaned tool results
         if ($orphaned_result_indices{$i}) {
             log_debug('MessageValidator', "Removing orphaned tool_result at index $i");
+            $fixes++;
             next;
         }
         
-        if ($orphaned_call_indices{$i}) {
-            push @validated, { role => $msg->{role}, content => $msg->{content} || '' };
-            log_debug('MessageValidator', "Stripped tool_calls from assistant at index $i");
-            next;
+        # For assistant messages with tool_calls, strip only the orphaned ones
+        if ($msg->{role} && $msg->{role} eq 'assistant' &&
+            $msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
+            
+            my @kept_calls;
+            my @dropped_calls;
+            for my $tc (@{$msg->{tool_calls}}) {
+                if ($tc->{id} && $orphaned_tc_ids{$tc->{id}}) {
+                    push @dropped_calls, $tc->{id};
+                } else {
+                    push @kept_calls, $tc;
+                }
+            }
+            
+            if (@dropped_calls) {
+                $fixes += scalar(@dropped_calls);
+                log_debug('MessageValidator', "Stripped " . scalar(@dropped_calls) .
+                    " orphaned tool_calls from assistant at index $i" .
+                    " (kept " . scalar(@kept_calls) . ")");
+                
+                if (@kept_calls) {
+                    # Keep assistant with remaining matched tool_calls
+                    push @validated, {
+                        %$msg,
+                        tool_calls => \@kept_calls,
+                    };
+                } else {
+                    # All tool_calls orphaned - keep as plain assistant
+                    push @validated, { role => $msg->{role}, content => $msg->{content} || '' };
+                }
+                next;
+            }
         }
         
         push @validated, $msg;
     }
     
-    my $removed = scalar(@$messages) - scalar(@validated);
-    log_info('MessageValidator', "Removed/fixed $removed orphaned tool messages") if $removed > 0;
+    log_info('MessageValidator', "Fixed $fixes orphaned tool messages") if $fixes > 0;
     
     return \@validated;
 }

@@ -9,6 +9,8 @@ use utf8;
 use parent 'CLIO::Tools::Tool';
 use Cwd 'getcwd';
 use feature 'say';
+use POSIX qw(WNOHANG);
+use Time::HiRes ();
 use CLIO::Core::Logger qw(log_debug log_info log_warning);
 
 =head1 NAME
@@ -117,6 +119,14 @@ sub execute_command {
     # Pre-execution display handled via pre_action_description
     # The WorkflowOrchestrator will display this before execution
     
+    # Extract session for interrupt checking during execution
+    my $session;
+    if ($context && $context->{session}) {
+        $session = $context->{session};
+    } elsif ($context && $context->{ui} && $context->{ui}->{session}) {
+        $session = $context->{ui}->{session};
+    }
+    
     # Try multiplexer path first, fall back to direct TTY handoff
     my $mux = $self->_get_multiplexer($context);
     
@@ -125,11 +135,11 @@ sub execute_command {
         chdir $working_dir if $working_dir ne '.';
         
         if ($passthrough) {
-            $result = $self->_execute_passthrough($command, $timeout, $display_cmd, $working_dir);
+            $result = $self->_execute_passthrough($command, $timeout, $display_cmd, $working_dir, $session);
         } elsif ($mux && $mux->available()) {
             $result = $self->_execute_in_mux_pane($command, $timeout, $display_cmd, $mux, $working_dir);
         } else {
-            $result = $self->_execute_captured($command, $timeout, $display_cmd, $working_dir);
+            $result = $self->_execute_captured($command, $timeout, $display_cmd, $working_dir, $session);
         }
         
         chdir $original_cwd if $working_dir ne '.';
@@ -212,27 +222,93 @@ commands (grep, cat, ls, perl, git, etc).
 =cut
 
 sub _execute_captured {
-    my ($self, $command, $timeout, $display_cmd, $working_dir) = @_;
+    my ($self, $command, $timeout, $display_cmd, $working_dir, $session) = @_;
     
     my $log_file = "/tmp/clio_terminal_$$.log";
     unlink $log_file if -f $log_file;
     
     my $exit_code;
+    my $interrupted = 0;
     
+    # Use fork+waitpid instead of system() so we can:
+    # 1. Poll for user interrupts during command execution
+    # 2. Kill children cleanly on timeout or interrupt
+    # We intentionally do NOT touch $SIG{ALRM} or alarm() here - Chat.pm's
+    # 1-second ALRM handler must keep firing for interrupt detection.
     eval {
-        local $SIG{ALRM} = sub { die "Command timeout after ${timeout}s\n" };
-        alarm($timeout);
+        my $pid = fork();
+        if (!defined $pid) {
+            die "Fork failed: $!\n";
+        }
         
-        # Run in subshell with stdout+stderr captured to file
-        # No pty, no script command - prevents terminal corruption
-        $exit_code = system("($command) > \Q$log_file\E 2>&1");
-        $exit_code = $exit_code >> 8;
+        if ($pid == 0) {
+            # Child: create new process group so we can kill the entire tree
+            POSIX::setpgid(0, 0);
+            exec("/bin/sh", "-c", "($command) > \Q$log_file\E 2>&1")
+                or POSIX::_exit(127);  # exec failed
+        }
         
-        alarm(0);
+        # Parent: set child's process group (race-safe with child's setpgid)
+        eval { POSIX::setpgid($pid, $pid) };
+        
+        # Wait for child with timeout, polling for completion and interrupts
+        my $start = Time::HiRes::time();
+        my $timed_out = 0;
+        
+        while (1) {
+            my $waited = waitpid($pid, POSIX::WNOHANG());
+            if ($waited > 0) {
+                $exit_code = $? >> 8;
+                last;
+            }
+            
+            # Check for user interrupt (set by Chat.pm ALRM handler)
+            if ($session && $session->state() && $session->state()->{user_interrupted}) {
+                log_info('TerminalOps', "User interrupt during command execution, killing child process group $pid");
+                $interrupted = 1;
+                kill('-TERM', $pid);  # Kill entire process group
+                # Give it a moment to clean up
+                my $wait_start = Time::HiRes::time();
+                while (Time::HiRes::time() - $wait_start < 2) {
+                    last if waitpid($pid, POSIX::WNOHANG()) > 0;
+                    Time::HiRes::usleep(50_000);
+                }
+                # Force kill if still alive
+                if (waitpid($pid, POSIX::WNOHANG()) <= 0) {
+                    kill('-KILL', $pid);
+                    waitpid($pid, 0);
+                }
+                $exit_code = 130;  # Standard exit code for interrupt
+                last;
+            }
+            
+            if (Time::HiRes::time() - $start > $timeout) {
+                $timed_out = 1;
+                log_warning('TerminalOps', "Command timeout after ${timeout}s, killing child process group $pid");
+                kill('-TERM', $pid);  # Kill entire process group
+                my $wait_start = Time::HiRes::time();
+                while (Time::HiRes::time() - $wait_start < 2) {
+                    last if waitpid($pid, POSIX::WNOHANG()) > 0;
+                    Time::HiRes::usleep(50_000);
+                }
+                if (waitpid($pid, POSIX::WNOHANG()) <= 0) {
+                    kill('-KILL', $pid);
+                    waitpid($pid, 0);
+                }
+                last;
+            }
+            
+            # Brief sleep to avoid busy-waiting (100ms)
+            # ALRM may interrupt this sleep - that's fine
+            Time::HiRes::usleep(100_000);
+        }
+        
+        if ($timed_out) {
+            die "Command timeout after ${timeout}s\n";
+        }
     };
     
     if ($@) {
-        alarm(0);
         if ($@ =~ /timeout/) {
             $exit_code = 124;
         } else {
@@ -262,7 +338,7 @@ interfere with the command.
 =cut
 
 sub _execute_passthrough {
-    my ($self, $command, $timeout, $display_cmd, $working_dir) = @_;
+    my ($self, $command, $timeout, $display_cmd, $working_dir, $session) = @_;
     
     my $log_file = "/tmp/clio_terminal_$$.log";
     unlink $log_file if -f $log_file;
@@ -270,23 +346,64 @@ sub _execute_passthrough {
     # Suspend CLIO's terminal input handling so the command owns the TTY
     $self->_suspend_clio_input();
     
+    # Save caller's ALRM handler and remaining alarm time
+    my $saved_alrm = $SIG{ALRM};
+    my $saved_alarm_remaining = alarm(0);
+    
     my $exit_code;
+    my $child_pid;
     
     eval {
+        # Fork to get a child PID we can manage with process groups
+        $child_pid = fork();
+        if (!defined $child_pid) {
+            die "Fork failed: $!\n";
+        }
+        
+        if ($child_pid == 0) {
+            # Child: create new process group for clean cleanup
+            POSIX::setpgid(0, 0);
+            # Exec the command with tee for output capture
+            exec("/bin/sh", "-c", "$command 2>&1 | tee \Q$log_file\E")
+                or POSIX::_exit(127);
+        }
+        
+        # Parent: set child's process group (race-safe)
+        eval { POSIX::setpgid($child_pid, $child_pid) };
+        
+        # Wait for child with timeout
         local $SIG{ALRM} = sub { die "Command timeout after ${timeout}s\n" };
         alarm($timeout);
         
-        # Use tee to capture output while preserving interactive access
-        # The command still reads from the user's STDIN
-        $exit_code = system("$command 2>&1 | tee \Q$log_file\E");
-        $exit_code = $exit_code >> 8;
+        waitpid($child_pid, 0);
+        $exit_code = $? >> 8;
         
         alarm(0);
     };
     
-    if ($@) {
-        alarm(0);
-        if ($@ =~ /timeout/) {
+    my $err = $@;
+    
+    # On timeout, kill the entire process group
+    if ($err && $err =~ /timeout/ && $child_pid && $child_pid > 0) {
+        log_warning('TerminalOps', "Passthrough command timeout, killing process group $child_pid");
+        kill('-TERM', $child_pid);
+        my $wait_start = Time::HiRes::time();
+        while (Time::HiRes::time() - $wait_start < 2) {
+            last if waitpid($child_pid, POSIX::WNOHANG()) > 0;
+            Time::HiRes::usleep(50_000);
+        }
+        if (waitpid($child_pid, POSIX::WNOHANG()) <= 0) {
+            kill('-KILL', $child_pid);
+            waitpid($child_pid, 0);
+        }
+    }
+    
+    # Restore caller's ALRM handler and re-arm their alarm
+    $SIG{ALRM} = $saved_alrm || 'DEFAULT';
+    alarm($saved_alarm_remaining) if $saved_alarm_remaining;
+    
+    if ($err) {
+        if ($err =~ /timeout/) {
             $exit_code = 124;
         }
         # Don't re-throw - still need to resume input

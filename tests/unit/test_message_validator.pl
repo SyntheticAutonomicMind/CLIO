@@ -88,6 +88,27 @@ use_ok('CLIO::Core::API::MessageValidator');
     ok(!$validated->[1]{tool_calls}, "tool_calls stripped from orphaned assistant message");
 }
 
+# Test validate_tool_message_pairs - selective stripping (mixed matched/orphaned)
+{
+    my $messages = [
+        { role => 'user', content => 'Hello' },
+        { role => 'assistant', content => 'I will help',
+          tool_calls => [
+              { id => 'tc_matched', type => 'function', function => { name => 'test1', arguments => '{}' } },
+              { id => 'tc_orphan', type => 'function', function => { name => 'test2', arguments => '{}' } },
+          ] },
+        { role => 'tool', tool_call_id => 'tc_matched', content => 'result1' },
+        # tc_orphan has no matching result
+        { role => 'user', content => 'Next' },
+    ];
+    
+    my $validated = CLIO::Core::API::MessageValidator::validate_tool_message_pairs($messages);
+    is(scalar @$validated, 4, "Selective strip: message count preserved");
+    ok($validated->[1]{tool_calls}, "Selective strip: tool_calls still present");
+    is(scalar @{$validated->[1]{tool_calls}}, 1, "Selective strip: only matched tool_call kept");
+    is($validated->[1]{tool_calls}[0]{id}, 'tc_matched', "Selective strip: correct tool_call retained");
+}
+
 # Test validate_and_truncate - within limits
 {
     my $messages = [

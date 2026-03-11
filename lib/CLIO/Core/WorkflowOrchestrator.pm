@@ -485,6 +485,15 @@ sub process_input {
         # Clear interrupt pending flag at start of each iteration
         $self->{_interrupt_pending} = 0;
         
+        # Clear any stale user_interrupted session flag from a previous iteration.
+        # This prevents the flag from being left over if an interrupt was partially
+        # handled in a previous cycle (e.g. detected during streaming but the
+        # _handle_interrupt path was skipped due to error recovery).
+        if ($session && $session->state() && $session->state()->{user_interrupted}) {
+            log_debug('WorkflowOrchestrator', "Clearing stale user_interrupted flag from previous iteration");
+            $session->state()->{user_interrupted} = 0;
+        }
+        
         # Check wall-clock timeout (sub-agents only)
         if ($max_wall_time && (time() - $start_time) > $max_wall_time) {
             log_warning('WorkflowOrchestrator', "Wall-clock timeout reached (" . int((time() - $start_time)) . "s). Forcing exit.");
@@ -532,9 +541,9 @@ sub process_input {
             );
             if ($trimmed && scalar(@$trimmed) < $pre_count) {
                 # DIAGNOSTIC: Dump state before and after proactive trim (CLIO_TRIM_DIAG=1 to enable)
-                _dump_trim_diagnostic(
-                    phase       => 'before',
-                    trigger     => 'proactive',
+                _dump_diagnostic(
+                    trigger     => 'trim',
+                    phase       => 'proactive_before',
                     messages    => \@messages,
                     api_manager => $self->{api_manager},
                     iteration   => $iteration,
@@ -544,9 +553,9 @@ sub process_input {
                     },
                 ) if $ENV{CLIO_TRIM_DIAG};
                 @messages = @$trimmed;
-                _dump_trim_diagnostic(
-                    phase       => 'after',
-                    trigger     => 'proactive',
+                _dump_diagnostic(
+                    trigger     => 'trim',
+                    phase       => 'proactive_after',
                     messages    => \@messages,
                     api_manager => $self->{api_manager},
                     iteration   => $iteration,
@@ -688,23 +697,59 @@ sub process_input {
                 $retry_count++;
                 
                 # Escalate repeated bare 400s to context trim. When the API returns
-                # "Bad Request" with no details after multiple retries, it's likely a
-                # context overflow that the token estimator missed.
+                # "Bad Request" with no details after multiple retries, it may be a
+                # context overflow that the token estimator missed. But if trimming
+                # doesn't help, stop escalating - the problem is something else.
                 my $error_type_check = $api_response->{error_type} || '';
-                if ($error_type_check eq 'bad_request' && $retry_count >= 3) {
-                    log_warning('WorkflowOrchestrator', "Repeated 400 Bad Request ($retry_count attempts) - escalating to context trim");
-                    $api_response->{error_type} = 'token_limit_exceeded';
-                    # Reset retry_count so the trim handler starts with its gentle
-                    # 40% trim (retry 1), not the nuclear option (retry 3)
-                    $retry_count = 1;
+                if ($error_type_check eq 'bad_request' && $retry_count >= 2) {
+                    $self->{_bad_request_escalations} = ($self->{_bad_request_escalations} || 0) + 1;
+                    
+                    if ($self->{_bad_request_escalations} <= 1) {
+                        # First escalation: try context trim (might be token limit)
+                        log_warning('WorkflowOrchestrator', "Repeated 400 Bad Request ($retry_count attempts) - escalating to context trim (escalation #$self->{_bad_request_escalations})");
+                        $api_response->{error_type} = 'token_limit_exceeded';
+                    } else {
+                        # Already escalated and trimmed but 400s persist. This isn't a
+                        # context size issue. Dump diagnostic state and bail out.
+                        log_error('WorkflowOrchestrator', "Persistent 400 Bad Request after $self->{_bad_request_escalations} context trim attempts ($retry_count total retries). Giving up.");
+                        
+                        _dump_diagnostic(
+                            trigger      => 'persistent_400',
+                            messages     => \@messages,
+                            api_manager  => $self->{api_manager},
+                            iteration    => $iteration,
+                            retry_count  => $retry_count,
+                            error        => $error,
+                            api_response => $api_response,
+                            append       => 1,
+                            extra        => {
+                                escalations => $self->{_bad_request_escalations},
+                            },
+                        );
+                        
+                        return {
+                            success => 0,
+                            error => "Persistent 400 Bad Request from API after $retry_count retries and " .
+                                     "$self->{_bad_request_escalations} context trims. The API backend may be " .
+                                     "experiencing issues. Diagnostic dump written to /tmp/clio_diag_persistent_400.log. " .
+                                     "Try again in a few minutes, or use a different model.",
+                            iterations => $iteration,
+                            tool_calls_made => \@tool_calls_made
+                        };
+                    }
                 }
                 
                 # Determine which retry limit to use based on error type
-                # Rate limits, server errors, and transient 400s get more retries
+                # Rate limits and server errors get more retries; 400s get fewer
                 my $error_type_for_limit = $api_response->{error_type} || '';
-                my $retry_limit = ($error_type_for_limit eq 'server_error' || $error_type_for_limit eq 'rate_limit' || $error_type_for_limit eq 'bad_request') 
-                    ? $max_server_retries 
-                    : $max_retries;
+                my $retry_limit;
+                if ($error_type_for_limit eq 'server_error' || $error_type_for_limit eq 'rate_limit') {
+                    $retry_limit = $max_server_retries;
+                } elsif ($error_type_for_limit eq 'bad_request') {
+                    $retry_limit = 4;  # Bare 400: 1 silent retry + 1 trim + bail
+                } else {
+                    $retry_limit = $max_retries;
+                }
                 
                 # Check if we've exceeded max retries for this iteration
                 if ($retry_count > $retry_limit) {
@@ -823,9 +868,9 @@ sub process_input {
                 # Special handling for token limit exceeded errors
                 elsif ($api_response->{error_type} && $api_response->{error_type} eq 'token_limit_exceeded') {
                     # DIAGNOSTIC: Dump full state BEFORE reactive trim (CLIO_TRIM_DIAG=1 to enable)
-                    _dump_trim_diagnostic(
-                        phase       => 'before',
-                        trigger     => 'reactive',
+                    _dump_diagnostic(
+                        trigger     => 'trim',
+                        phase       => 'reactive_before',
                         messages    => \@messages,
                         api_manager => $self->{api_manager},
                         iteration   => $iteration,
@@ -1037,9 +1082,9 @@ sub process_input {
                     push @messages, @non_system;
                     
                     # DIAGNOSTIC: Dump full state AFTER reactive trim (CLIO_TRIM_DIAG=1 to enable)
-                    _dump_trim_diagnostic(
-                        phase       => 'after',
-                        trigger     => 'reactive',
+                    _dump_diagnostic(
+                        trigger     => 'trim',
+                        phase       => 'reactive_after',
                         messages    => \@messages,
                         api_manager => $self->{api_manager},
                         iteration   => $iteration,
@@ -1058,6 +1103,40 @@ sub process_input {
                     $system_msg = "Token limit exceeded. Trimmed $trimmed_count messages from conversation history and retrying$preserved_info...$recovery_info (attempt $retry_count/$max_retries)";
                     
                     log_info('WorkflowOrchestrator', "Trimmed $trimmed_count messages due to token limit (kept " . scalar(@non_system) . " messages, first_user=" . ($first_user_msg ? 'YES' : 'NO') . ")");
+                    
+                    # If nothing was trimmed, context isn't the problem. Don't retry
+                    # endlessly - this was likely escalated from bad_request and the
+                    # real cause is something else (backend issue, content encoding, etc).
+                    if ($trimmed_count == 0) {
+                        log_warning('WorkflowOrchestrator', "Context trim removed 0 messages - problem is not context size. Escalating to non-retryable.");
+                        
+                        _dump_diagnostic(
+                            trigger      => 'persistent_400',
+                            phase        => 'trim_zero',
+                            messages     => \@messages,
+                            api_manager  => $self->{api_manager},
+                            iteration    => $iteration,
+                            retry_count  => $retry_count,
+                            error        => $error,
+                            api_response => $api_response,
+                            append       => 1,
+                            extra        => {
+                                escalations     => $self->{_bad_request_escalations} || 0,
+                                original_count  => $original_count,
+                                trimmed_count   => 0,
+                            },
+                        );
+                        
+                        return {
+                            success => 0,
+                            error => "API error persists after context trim (0 messages removed, $retry_count retries). " .
+                                     "This is likely a backend issue, not a context size problem. " .
+                                     "Diagnostic dump written to /tmp/clio_diag_persistent_400.log. " .
+                                     "Try again in a few minutes, or use a different model.",
+                            iterations => $iteration,
+                            tool_calls_made => \@tool_calls_made
+                        };
+                    }
                     
                     # If we've trimmed to minimal context and still failing, give up
                     if ($retry_count > 2 && scalar(@non_system) <= 3) {
@@ -1331,6 +1410,7 @@ sub process_input {
         $retry_count = 0;
         $self->{consecutive_errors} = 0;
         $self->{last_error} = '';
+        $self->{_bad_request_escalations} = 0;
         $session_error_count = 0;  # Reset on success to allow future errors
         delete $session->{_error_count} if $session;
         
@@ -2144,6 +2224,10 @@ Returns:
 sub _check_and_handle_interrupt {
     my ($self, $session, $messages_ref) = @_;
     
+    # Skip if we already have a pending interrupt for this iteration
+    # (prevents duplicate interrupt message injection)
+    return 1 if $self->{_interrupt_pending};
+    
     if ($self->_check_for_user_interrupt($session)) {
         $self->_handle_interrupt($session, $messages_ref);
         $self->{_interrupt_pending} = 1;
@@ -2180,12 +2264,15 @@ sub _check_for_user_interrupt {
     # Only check if we have a TTY
     return 0 unless -t STDIN;
     
-    # Skip if already interrupted (prevent duplicate handling)
+    # Check if the ALRM signal handler (in Chat.pm) already detected a keypress
+    # and set the interrupt flag. This is the primary detection path - the ALRM
+    # fires every second and checks ReadKey(-1) even during blocking I/O.
     if ($session && $session->state() && $session->state()->{user_interrupted}) {
-        return 0;
+        log_debug('WorkflowOrchestrator', "Interrupt flag already set (detected by ALRM handler)");
+        return 1;
     }
     
-    # Non-blocking keyboard check
+    # Secondary check: non-blocking keyboard read
     # Terminal is already in cbreak mode (set by Chat.pm before agent execution)
     # so keypresses are immediately available without needing ReadMode switching
     my $key = eval { ReadKey(-1) };
@@ -2955,39 +3042,97 @@ sub get_performance_summary {
 # Writes full state to /tmp/clio_trim_*.log for root cause analysis
 # =============================================================================
 
-sub _dump_trim_diagnostic {
+=head2 _dump_diagnostic
+
+Unified diagnostic dump for debugging API and context management issues.
+
+Supports multiple trigger modes:
+
+  trigger => 'trim'            Context trim diagnostic (CLIO_TRIM_DIAG env var)
+  trigger => 'persistent_400'  Persistent 400 errors (always-on)
+
+Options:
+  phase       => 'before'|'after'  (for trim diagnostics)
+  messages    => \@messages
+  api_manager => $api_manager
+  iteration   => $iteration
+  retry_count => $retry_count
+  extra       => { ... }          Additional key-value pairs
+  api_response => { ... }         API response hash (for 400 diagnostics)
+  error       => 'error string'   Error message
+  append      => 1                Append to file instead of creating new
+
+=cut
+
+sub _dump_diagnostic {
     my (%args) = @_;
 
-    my $phase       = $args{phase} || 'unknown';
     my $trigger     = $args{trigger} || 'unknown';
+    my $phase       = $args{phase} || '';
     my $messages    = $args{messages} || [];
     my $api_manager = $args{api_manager};
     my $iteration   = $args{iteration} // 0;
     my $retry_count = $args{retry_count} // 0;
     my $extra       = $args{extra} || {};
+    my $api_response = $args{api_response};
+    my $error_msg   = $args{error} || '';
+    my $append      = $args{append} || 0;
 
-    my $ts = POSIX::strftime('%Y%m%d_%H%M%S', localtime);
-    my $file = "/tmp/clio_trim_${phase}_${trigger}_${ts}_$$.log";
+    # Determine output file
+    my $file;
+    if ($append) {
+        $file = "/tmp/clio_diag_${trigger}.log";
+    } else {
+        my $ts = POSIX::strftime('%Y%m%d_%H%M%S', localtime);
+        my $label = $phase ? "${trigger}_${phase}" : $trigger;
+        $file = "/tmp/clio_diag_${label}_${ts}_$$.log";
+    }
 
-    open my $fh, '>:encoding(UTF-8)', $file or do {
-        log_warning('WorkflowOrchestrator', "Cannot write trim diagnostic to $file: $!");
+    my $open_mode = $append ? '>>:encoding(UTF-8)' : '>:encoding(UTF-8)';
+    open my $fh, $open_mode, $file or do {
+        log_warning('WorkflowOrchestrator', "Cannot write diagnostic to $file: $!");
         return;
     };
 
+    # Header
+    my $title = uc($trigger);
+    $title .= " - " . uc($phase) if $phase;
+    print $fh "\n" if $append;
     print $fh "=" x 80, "\n";
-    print $fh "CLIO TRIM DIAGNOSTIC - \U$phase\E ($trigger trim)\n";
+    print $fh "CLIO DIAGNOSTIC: $title\n";
     print $fh "Timestamp: ", scalar(localtime), "\n";
     print $fh "PID: $$\n";
     print $fh "Iteration: $iteration, Retry: $retry_count\n";
+    print $fh "Error: $error_msg\n" if $error_msg;
     print $fh "=" x 80, "\n\n";
+
+    # API response details (if provided)
+    if ($api_response && ref($api_response) eq 'HASH') {
+        print $fh "-" x 40, "\n";
+        print $fh "API RESPONSE\n";
+        print $fh "-" x 40, "\n";
+        for my $key (sort keys %$api_response) {
+            next if $key eq 'content';  # Skip large content
+            my $val = $api_response->{$key};
+            if (ref($val)) {
+                $val = eval { encode_json($val) } // ref($val);
+                $val = substr($val, 0, 500) . "..." if length($val) > 500;
+            }
+            $val //= 'undef';
+            print $fh "  $key: $val\n";
+        }
+        print $fh "\n";
+    }
 
     # Model capabilities
     print $fh "-" x 40, "\n";
-    print $fh "MODEL CAPABILITIES\n";
+    print $fh "MODEL & CAPABILITIES\n";
     print $fh "-" x 40, "\n";
     if ($api_manager) {
         my $model = $api_manager->get_current_model() || 'unknown';
-        print $fh "Model: $model\n";
+        my $provider = $api_manager->{provider_name} || 'unknown';
+        print $fh "  Model: $model\n";
+        print $fh "  Provider: $provider\n";
         my $caps = $api_manager->get_model_capabilities($model);
         if ($caps) {
             for my $key (sort keys %$caps) {
@@ -3018,7 +3163,7 @@ sub _dump_trim_diagnostic {
     # Extra parameters
     if (keys %$extra) {
         print $fh "-" x 40, "\n";
-        print $fh "TRIM PARAMETERS\n";
+        print $fh "EXTRA CONTEXT\n";
         print $fh "-" x 40, "\n";
         for my $key (sort keys %$extra) {
             print $fh "  $key: " . ($extra->{$key} // 'undef') . "\n";
@@ -3081,8 +3226,64 @@ sub _dump_trim_diagnostic {
     }
     print $fh "\n";
 
+    # Tool pair validation (critical for diagnosing 400 errors)
+    {
+        my %tc_ids;   # tool_call_id => message index
+        my %tr_ids;   # tool_call_id => message index (from results)
+        for (my $i = 0; $i < @$messages; $i++) {
+            my $msg = $messages->[$i];
+            if ($msg->{role} && $msg->{role} eq 'assistant' &&
+                $msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
+                for my $tc (@{$msg->{tool_calls}}) {
+                    $tc_ids{$tc->{id}} = $i if $tc->{id};
+                }
+            }
+            if ($msg->{role} && $msg->{role} eq 'tool' && $msg->{tool_call_id}) {
+                $tr_ids{$msg->{tool_call_id}} = $i;
+            }
+        }
+        my @orphaned_calls  = grep { !exists $tr_ids{$_} } keys %tc_ids;
+        my @orphaned_results = grep { !exists $tc_ids{$_} } keys %tr_ids;
+        
+        if (@orphaned_calls || @orphaned_results) {
+            print $fh "-" x 40, "\n";
+            print $fh "TOOL PAIR VALIDATION (ERRORS)\n";
+            print $fh "-" x 40, "\n";
+            for my $id (@orphaned_calls) {
+                print $fh "  ORPHANED tool_call: $id (assistant at msg $tc_ids{$id})\n";
+            }
+            for my $id (@orphaned_results) {
+                print $fh "  ORPHANED tool_result: $id (tool at msg $tr_ids{$id})\n";
+            }
+            print $fh "Total tool_calls: " . scalar(keys %tc_ids) . ", tool_results: " . scalar(keys %tr_ids) . "\n";
+            print $fh "\n";
+        } else {
+            print $fh "-" x 40, "\n";
+            print $fh "TOOL PAIR VALIDATION: OK (" . scalar(keys %tc_ids) . " pairs matched)\n";
+            print $fh "-" x 40, "\n\n";
+        }
+    }
+
+    # Recent API 400 log (included for 400-related diagnostics)
+    if ($trigger =~ /400/ && -f '/tmp/clio_api_400.log') {
+        print $fh "-" x 40, "\n";
+        print $fh "RECENT API 400 LOG\n";
+        print $fh "-" x 40, "\n";
+        if (open my $log_fh, '<', '/tmp/clio_api_400.log') {
+            my @lines = <$log_fh>;
+            close $log_fh;
+            my $start = @lines > 20 ? @lines - 20 : 0;
+            for my $i ($start..$#lines) {
+                print $fh $lines[$i];
+            }
+        }
+        print $fh "\n";
+    }
+
+    print $fh "=" x 80, "\n";
     close $fh;
-    log_info('WorkflowOrchestrator', "Trim diagnostic written to $file");
+
+    log_info('WorkflowOrchestrator', "Diagnostic ($trigger" . ($phase ? "/$phase" : "") . ") written to $file");
     return $file;
 }
 
