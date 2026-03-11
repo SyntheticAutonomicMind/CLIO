@@ -743,10 +743,35 @@ sub run {
             # - HTTP::Tiny blocks in socket read syscall
             # - Perl signal handlers only run between Perl opcodes
             # - ALRM interrupts the syscall, allowing signal handlers to run
-            # Trade-off: 1-second worst-case latency for Ctrl-C response
+            # Trade-off: 1-second worst-case latency for ESC/keypress response
             my $alarm_count = 0;
             my $alarm_handler = sub {
                 $alarm_count++;
+                
+                # Actively check for keypress in the signal handler itself.
+                # This is critical because WorkflowOrchestrator's interrupt checks
+                # only run at specific points (loop top, between tools, etc).
+                # During long tool execution or HTTP streaming, the ALRM handler
+                # is the ONLY code that runs periodically. By checking for input
+                # here, we ensure ESC detection works even when the main loop is
+                # blocked in a tool call or network I/O.
+                if ($self->{session} && $self->{session}->state() && 
+                    !$self->{session}->state()->{user_interrupted}) {
+                    my $key = eval { ReadKey(-1) };
+                    if (defined $key) {
+                        my $key_desc = (ord($key) == 27) ? 'ESC' : 
+                                       (ord($key) < 32)  ? sprintf('Ctrl+%c', ord($key) + 64) :
+                                       "'$key'";
+                        log_debug('Chat', "ALRM interrupt: keypress detected ($key_desc)");
+                        
+                        # Drain remaining buffered input
+                        while (defined(eval { ReadKey(-1) })) { }
+                        
+                        # Set interrupt flag - WorkflowOrchestrator will pick this up
+                        $self->{session}->state()->{user_interrupted} = 1;
+                    }
+                }
+                
                 log_debug('Chat', "ALRM #$alarm_count - syscall interrupted for signal delivery");
                 alarm(1);  # Re-arm for next second
             };
@@ -2224,7 +2249,7 @@ sub display_help {
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/help, /h', 'help_command'), 'Display this help');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/exit, /quit, /q', 'help_command'), 'Exit the chat');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/clear', 'help_command'), 'Clear the screen');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/reset', 'help_command'), 'Reset terminal state');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/reset', 'help_command'), 'Reset terminal and kill stale processes');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/init', 'help_command'), 'Initialize CLIO for this project');
     push @help_lines, "";
     

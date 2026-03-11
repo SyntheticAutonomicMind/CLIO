@@ -8,7 +8,7 @@ use warnings;
 use utf8;
 use Exporter 'import';
 
-our @EXPORT_OK = qw(GetTerminalSize ReadMode ReadKey ReadLine reset_terminal reset_terminal_light reset_terminal_full);
+our @EXPORT_OK = qw(GetTerminalSize ReadMode ReadKey ReadLine reset_terminal reset_terminal_light reset_terminal_full kill_stale_children);
 
 =head1 NAME
 
@@ -560,6 +560,99 @@ sub reset_terminal_full {
     STDOUT->flush() if STDOUT->can('flush');
 
     return 1;
+}
+
+
+=head2 kill_stale_children
+
+Find and kill stale child processes spawned by this CLIO session.
+Kills shell wrappers, ssh connections, and hung sub-agents that outlived
+their usefulness. Skips curl (active API calls).
+
+Returns: hashref { killed => \@killed_pids, skipped => \@skipped }
+
+=cut
+
+sub kill_stale_children {
+    my $my_pid = $$;
+    my @killed;
+    my @skipped;
+
+    # Get all descendant PIDs via recursive pgrep
+    my @descendants = _get_descendants($my_pid);
+    return { killed => \@killed, skipped => \@skipped } unless @descendants;
+
+    # Classify each descendant
+    for my $pid (@descendants) {
+        next if $pid == $my_pid;
+
+        # Read the command line for this process
+        my $cmdline = '';
+        eval {
+            my $out = `ps -p $pid -o command= 2>/dev/null`;
+            chomp $out if $out;
+            $cmdline = $out || '';
+        };
+
+        # Skip curl processes (active API calls)
+        if ($cmdline =~ /\bcurl\b/) {
+            push @skipped, { pid => $pid, reason => 'curl (active API)', cmd => _truncate_cmd($cmdline) };
+            next;
+        }
+
+        # Kill everything else: sh -c wrappers, ssh, hung sub-agents, etc.
+        push @killed, { pid => $pid, cmd => _truncate_cmd($cmdline) };
+    }
+
+    # SIGTERM first, give processes a moment, then SIGKILL stragglers
+    if (@killed) {
+        my @pids = map { $_->{pid} } @killed;
+
+        # Send SIGTERM
+        kill 'TERM', @pids;
+
+        # Brief wait for graceful shutdown
+        select(undef, undef, undef, 0.5);
+
+        # Check for survivors and SIGKILL them
+        for my $pid (@pids) {
+            if (kill(0, $pid)) {
+                kill 'KILL', $pid;
+            }
+        }
+
+        # Reap zombies
+        for my $pid (@pids) {
+            waitpid($pid, POSIX::WNOHANG());
+        }
+    }
+
+    return { killed => \@killed, skipped => \@skipped };
+}
+
+sub _get_descendants {
+    my ($parent_pid) = @_;
+    my @all;
+
+    # Get direct children
+    my $children_out = `pgrep -P $parent_pid 2>/dev/null`;
+    return @all unless $children_out;
+
+    my @children = grep { $_ && $_ =~ /^\d+$/ } split /\n/, $children_out;
+
+    for my $child (@children) {
+        push @all, $child;
+        # Recurse to get grandchildren
+        push @all, _get_descendants($child);
+    }
+
+    return @all;
+}
+
+sub _truncate_cmd {
+    my ($cmd) = @_;
+    return '' unless $cmd;
+    return length($cmd) > 80 ? substr($cmd, 0, 77) . '...' : $cmd;
 }
 
 1;
