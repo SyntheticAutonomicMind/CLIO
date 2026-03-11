@@ -9,6 +9,8 @@ use utf8;
 use parent 'CLIO::Tools::Tool';
 use Cwd 'getcwd';
 use feature 'say';
+use POSIX qw(WNOHANG);
+use Time::HiRes ();
 use CLIO::Core::Logger qw(log_debug log_info log_warning);
 
 =head1 NAME
@@ -219,20 +221,51 @@ sub _execute_captured {
     
     my $exit_code;
     
+    # Use fork+waitpid instead of system() so we can poll for interrupts
+    # during command execution. system() blocks the entire Perl process.
+    # We intentionally do NOT touch $SIG{ALRM} or alarm() here - Chat.pm's
+    # 1-second ALRM handler must keep firing for interrupt detection.
     eval {
-        local $SIG{ALRM} = sub { die "Command timeout after ${timeout}s\n" };
-        alarm($timeout);
+        my $pid = fork();
+        if (!defined $pid) {
+            die "Fork failed: $!\n";
+        }
         
-        # Run in subshell with stdout+stderr captured to file
-        # No pty, no script command - prevents terminal corruption
-        $exit_code = system("($command) > \Q$log_file\E 2>&1");
-        $exit_code = $exit_code >> 8;
+        if ($pid == 0) {
+            # Child: exec the command with output captured
+            exec("/bin/sh", "-c", "($command) > \Q$log_file\E 2>&1")
+                or POSIX::_exit(127);  # exec failed
+        }
         
-        alarm(0);
+        # Parent: wait for child with timeout, polling for completion
+        my $start = Time::HiRes::time();
+        my $timed_out = 0;
+        
+        while (1) {
+            my $waited = waitpid($pid, POSIX::WNOHANG());
+            if ($waited > 0) {
+                $exit_code = $? >> 8;
+                last;
+            }
+            
+            if (Time::HiRes::time() - $start > $timeout) {
+                $timed_out = 1;
+                kill('TERM', $pid);
+                waitpid($pid, 0);
+                last;
+            }
+            
+            # Brief sleep to avoid busy-waiting (100ms)
+            # ALRM may interrupt this sleep - that's fine
+            Time::HiRes::usleep(100_000);
+        }
+        
+        if ($timed_out) {
+            die "Command timeout after ${timeout}s\n";
+        }
     };
     
     if ($@) {
-        alarm(0);
         if ($@ =~ /timeout/) {
             $exit_code = 124;
         } else {
@@ -270,6 +303,10 @@ sub _execute_passthrough {
     # Suspend CLIO's terminal input handling so the command owns the TTY
     $self->_suspend_clio_input();
     
+    # Save caller's ALRM handler and remaining alarm time
+    my $saved_alrm = $SIG{ALRM};
+    my $saved_alarm_remaining = alarm(0);
+    
     my $exit_code;
     
     eval {
@@ -284,9 +321,14 @@ sub _execute_passthrough {
         alarm(0);
     };
     
-    if ($@) {
-        alarm(0);
-        if ($@ =~ /timeout/) {
+    my $err = $@;
+    
+    # Restore caller's ALRM handler and re-arm their alarm
+    $SIG{ALRM} = $saved_alrm || 'DEFAULT';
+    alarm($saved_alarm_remaining) if $saved_alarm_remaining;
+    
+    if ($err) {
+        if ($err =~ /timeout/) {
             $exit_code = 124;
         }
         # Don't re-throw - still need to resume input
