@@ -288,7 +288,7 @@ sub _format_schema_help {
             }
             
             # Item type for arrays
-            if ($param->{type} eq 'array' && $param->{items}) {
+            if (($param->{type} || '') eq 'array' && $param->{items}) {
                 my $item_type = $param->{items}->{type} || 'unknown';
                 push @help, "    Array of: $item_type";
             }

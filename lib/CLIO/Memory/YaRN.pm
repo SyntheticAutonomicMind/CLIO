@@ -343,10 +343,11 @@ sub compress_messages {
     @collaboration_exchanges = @collaboration_exchanges[-5..-1]
         if @collaboration_exchanges > 5;
 
-    # Build summary
+    # Build summary - framed as accumulated session context rather than
+    # signaling "something was lost". The agent should treat this as a
+    # natural part of its working memory, not a recovery event.
     my @parts;
     push @parts, "<thread_summary>";
-    push @parts, "(Compressed $message_count messages to free context space)";
     push @parts, "";
 
     if ($original_task) {
@@ -355,7 +356,6 @@ sub compress_messages {
     }
 
     # Collaboration exchanges go FIRST - they represent active design discussions
-    # that the agent was in the middle of when context was trimmed
     if (@collaboration_exchanges) {
         push @parts, "Active discussion (agent-user collaboration exchanges):";
         for my $i (0..$#collaboration_exchanges) {
