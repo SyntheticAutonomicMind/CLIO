@@ -264,9 +264,27 @@ sub handle_command {
         $chat->repaint_screen();
     }
     elsif ($cmd eq 'reset') {
-        # Terminal reset - restore terminal to known-good state
+        # Full terminal reset + kill stale child processes
         require CLIO::Compat::Terminal;
-        CLIO::Compat::Terminal::reset_terminal();
+
+        # Kill stale children first (ssh, sh -c wrappers, hung sub-agents)
+        my $result = CLIO::Compat::Terminal::kill_stale_children();
+        my @killed = @{$result->{killed} || []};
+        my @skipped = @{$result->{skipped} || []};
+
+        # Then reset terminal state
+        CLIO::Compat::Terminal::reset_terminal_full();
+
+        # Report what happened
+        if (@killed) {
+            $chat->display_system_message("Killed " . scalar(@killed) . " stale process(es):");
+            for my $k (@killed) {
+                $chat->display_system_message("  PID $k->{pid}: $k->{cmd}");
+            }
+        }
+        if (@skipped) {
+            $chat->display_system_message("Skipped " . scalar(@skipped) . " active process(es)");
+        }
         $chat->display_system_message("Terminal reset complete");
     }
     elsif ($cmd eq 'shell' || $cmd eq 'sh') {
