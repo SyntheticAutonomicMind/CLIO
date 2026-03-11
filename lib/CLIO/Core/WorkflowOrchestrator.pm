@@ -485,6 +485,15 @@ sub process_input {
         # Clear interrupt pending flag at start of each iteration
         $self->{_interrupt_pending} = 0;
         
+        # Clear any stale user_interrupted session flag from a previous iteration.
+        # This prevents the flag from being left over if an interrupt was partially
+        # handled in a previous cycle (e.g. detected during streaming but the
+        # _handle_interrupt path was skipped due to error recovery).
+        if ($session && $session->state() && $session->state()->{user_interrupted}) {
+            log_debug('WorkflowOrchestrator', "Clearing stale user_interrupted flag from previous iteration");
+            $session->state()->{user_interrupted} = 0;
+        }
+        
         # Check wall-clock timeout (sub-agents only)
         if ($max_wall_time && (time() - $start_time) > $max_wall_time) {
             log_warning('WorkflowOrchestrator', "Wall-clock timeout reached (" . int((time() - $start_time)) . "s). Forcing exit.");
@@ -2144,6 +2153,10 @@ Returns:
 sub _check_and_handle_interrupt {
     my ($self, $session, $messages_ref) = @_;
     
+    # Skip if we already have a pending interrupt for this iteration
+    # (prevents duplicate interrupt message injection)
+    return 1 if $self->{_interrupt_pending};
+    
     if ($self->_check_for_user_interrupt($session)) {
         $self->_handle_interrupt($session, $messages_ref);
         $self->{_interrupt_pending} = 1;
@@ -2180,12 +2193,15 @@ sub _check_for_user_interrupt {
     # Only check if we have a TTY
     return 0 unless -t STDIN;
     
-    # Skip if already interrupted (prevent duplicate handling)
+    # Check if the ALRM signal handler (in Chat.pm) already detected a keypress
+    # and set the interrupt flag. This is the primary detection path - the ALRM
+    # fires every second and checks ReadKey(-1) even during blocking I/O.
     if ($session && $session->state() && $session->state()->{user_interrupted}) {
-        return 0;
+        log_debug('WorkflowOrchestrator', "Interrupt flag already set (detected by ALRM handler)");
+        return 1;
     }
     
-    # Non-blocking keyboard check
+    # Secondary check: non-blocking keyboard read
     # Terminal is already in cbreak mode (set by Chat.pm before agent execution)
     # so keypresses are immediately available without needing ReadMode switching
     my $key = eval { ReadKey(-1) };
