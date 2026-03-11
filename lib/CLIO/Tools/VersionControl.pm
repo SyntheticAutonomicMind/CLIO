@@ -592,28 +592,32 @@ sub worktree {
     my $lock_acquired = 0;
     if ($action ne 'list' && $context->{broker_client}) {
         log_info('VersionControl', "Requesting git lock for worktree $action");
+        my $lock_denied = 0;
         eval {
             my $lock_result = $context->{broker_client}->request_git_lock();
             if ($lock_result) {
                 $lock_acquired = 1;
                 log_info('VersionControl', "Git lock acquired for worktree $action");
             } else {
-                return $self->error_result(
-                    "Git is locked by another agent.\n" .
-                    "Wait for the other agent's operation to complete."
-                );
+                $lock_denied = 1;
             }
         };
+        if ($lock_denied) {
+            return $self->error_result(
+                "Git is locked by another agent.\n" .
+                "Wait for the other agent's operation to complete."
+            );
+        }
         if ($@) {
             log_warning('VersionControl', "Failed to acquire git lock: $@");
             log_warning('VersionControl', "Continuing without lock");
         }
     }
     
+    my $original_cwd = getcwd();
+    chdir $repo_path if $repo_path ne '.';
+
     eval {
-        my $original_cwd = getcwd();
-        chdir $repo_path if $repo_path ne '.';
-        
         my $output;
         if ($action eq 'list') {
             $output = `git worktree list 2>&1`;
@@ -622,17 +626,17 @@ sub worktree {
             my $create_branch = $params->{create_branch} || 0;
             my $cmd = "git worktree add";
             if ($create_branch && $branch) {
-                $cmd .= " -b $branch";
+                $cmd .= " -b '$branch'";
             }
-            $cmd .= " $worktree_path";
-            $cmd .= " $branch" if $branch && !$create_branch;
+            $cmd .= " '$worktree_path'";
+            $cmd .= " '$branch'" if $branch && !$create_branch;
             $cmd .= " 2>&1";
             $output = `$cmd`;
         } elsif ($action eq 'remove' && $worktree_path) {
             my $force = $params->{force} || 0;
             my $cmd = "git worktree remove";
             $cmd .= " --force" if $force;
-            $cmd .= " $worktree_path 2>&1";
+            $cmd .= " '$worktree_path' 2>&1";
             $output = `$cmd`;
         } elsif ($action eq 'prune') {
             $output = `git worktree prune 2>&1`;
@@ -643,11 +647,11 @@ sub worktree {
             croak "Could not find worktree '$worktree_path' in worktree list. Use action 'list' to see available worktrees." unless $wt_branch;
             
             if ($action eq 'merge') {
-                $output = `git merge $wt_branch 2>&1`;
+                $output = `git merge '$wt_branch' 2>&1`;
             } else {
                 # pr: push branch to remote, then provide PR info
                 my $remote = $params->{remote} || 'origin';
-                my $push_output = `git push $remote $wt_branch 2>&1`;
+                my $push_output = `git push '$remote' '$wt_branch' 2>&1`;
                 my $push_exit = $? >> 8;
                 my $current_branch = `git rev-parse --abbrev-ref HEAD 2>&1`;
                 chomp $current_branch;
@@ -666,8 +670,6 @@ sub worktree {
             croak "Invalid worktree action or missing worktree_path for add/remove";
         }
         
-        chdir $original_cwd if $repo_path ne '.';
-        
         my $action_desc = $action eq 'list'
             ? "listing worktrees"
             : $action eq 'prune'
@@ -681,7 +683,9 @@ sub worktree {
             worktree_path => $worktree_path,
         );
     };
-    
+
+    chdir $original_cwd if $repo_path ne '.';
+
     # Release git lock if acquired
     if ($lock_acquired && $context->{broker_client}) {
         eval {
