@@ -233,6 +233,7 @@ sub compress_messages {
     return undef unless $messages && ref($messages) eq 'ARRAY' && @$messages;
 
     my $original_task = $opts{original_task} || '';
+    my $previous_summary = $opts{previous_summary} || '';
     my $message_count = scalar(@$messages);
 
     log_debug('YaRN', "Compressing $message_count messages");
@@ -247,6 +248,16 @@ sub compress_messages {
 
     # Track collaboration tool_call IDs so we can pair them with responses
     my %collab_tool_calls;  # tool_call_id => agent's question text
+
+    # Seed buckets from previous summary so accumulated history isn't lost across trim cycles
+    if ($previous_summary) {
+        _parse_previous_summary($previous_summary, {
+            commits       => \@commits,
+            files_touched => \@files_touched,
+            decisions     => \@decisions,
+            tool_counts   => \%tool_counts,
+        });
+    }
 
     for my $msg (@$messages) {
         my $role    = $msg->{role}    || '';
@@ -415,6 +426,57 @@ sub compress_messages {
                 ? $compressed_tokens / $original_tokens : 0,
         },
     };
+}
+
+# Parse structured sections from a previous thread_summary to seed extraction buckets.
+# This preserves accumulated history across multiple trim cycles.
+sub _parse_previous_summary {
+    my ($summary_text, $buckets) = @_;
+    
+    return unless $summary_text && $buckets;
+    
+    # Strip thread_summary tags
+    $summary_text =~ s/<\/?thread_summary>//g;
+    
+    my $commits       = $buckets->{commits}       || [];
+    my $files_touched = $buckets->{files_touched}  || [];
+    my $decisions     = $buckets->{decisions}       || [];
+    my $tool_counts   = $buckets->{tool_counts}     || {};
+    
+    # Parse git commits: lines starting with "- " under "Git commits" section
+    if ($summary_text =~ /Git commits.*?:\n((?:- .+\n)+)/s) {
+        my $block = $1;
+        while ($block =~ /^- (.+)$/mg) {
+            push @$commits, $1;
+        }
+    }
+    
+    # Parse files: lines starting with "- " under "Files created/modified" section
+    if ($summary_text =~ /Files created\/modified:\n((?:- .+\n)+)/s) {
+        my $block = $1;
+        while ($block =~ /^- (.+)$/mg) {
+            push @$files_touched, $1;
+        }
+    }
+    
+    # Parse decisions: lines starting with "- " under "Key decisions" section
+    if ($summary_text =~ /Key decisions:\n((?:- .+\n)+)/s) {
+        my $block = $1;
+        while ($block =~ /^- (.+)$/mg) {
+            push @$decisions, $1;
+        }
+    }
+    
+    # Parse tool usage: lines like "- tool_name: N calls"
+    if ($summary_text =~ /Tool usage:\n((?:- .+\n)+)/s) {
+        my $block = $1;
+        while ($block =~ /^- ([^:]+):\s*(\d+)\s*calls?$/mg) {
+            $tool_counts->{$1} = ($tool_counts->{$1} || 0) + $2;
+        }
+    }
+    
+    my $parsed_items = scalar(@$commits) + scalar(@$files_touched) + scalar(@$decisions) + scalar(keys %$tool_counts);
+    log_debug('YaRN', "Parsed $parsed_items items from previous summary") if $parsed_items;
 }
 
 1;

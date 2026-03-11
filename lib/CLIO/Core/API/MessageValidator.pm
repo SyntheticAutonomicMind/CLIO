@@ -8,6 +8,8 @@ use warnings;
 use utf8;
 use CLIO::Core::Logger qw(should_log log_debug log_info log_warning);
 use CLIO::Memory::TokenEstimator qw(estimate_tokens);
+use CLIO::Util::JSON qw(encode_json decode_json);
+use POSIX qw(strftime);
 
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
@@ -119,6 +121,30 @@ sub validate_and_truncate {
     
     # Exceeds limit - need to truncate
     log_debug('MessageValidator', "Messages exceed token limit: $estimated_tokens > $effective_limit, truncating");
+
+    # DIAGNOSTIC: Dump MessageValidator internal thresholds to /tmp (CLIO_TRIM_DIAG=1 to enable)
+    if ($ENV{CLIO_TRIM_DIAG}) {
+    eval {
+        my $ts = POSIX::strftime('%Y%m%d_%H%M%S', localtime);
+        my $diag_file = "/tmp/clio_trim_validator_${ts}_$$.log";
+        if (open my $dfh, '>:encoding(UTF-8)', $diag_file) {
+            print $dfh "MessageValidator TRUNCATION TRIGGERED\n";
+            print $dfh "=" x 60, "\n";
+            print $dfh "Timestamp: ", scalar(localtime), "\n";
+            print $dfh "Model: $model\n";
+            print $dfh "max_prompt (from caps): $max_prompt\n";
+            print $dfh "tool_tokens: $tool_tokens\n";
+            print $dfh "estimation_margin (15%): $estimation_margin\n";
+            print $dfh "response_buffer: $response_buffer\n";
+            print $dfh "effective_limit: $effective_limit\n";
+            print $dfh "estimated_tokens: $estimated_tokens\n";
+            print $dfh "overage: " . ($estimated_tokens - $effective_limit) . "\n";
+            print $dfh "message_count: " . scalar(@$messages) . "\n";
+            close $dfh;
+            log_info('MessageValidator', "Validator thresholds dumped to $diag_file");
+        }
+    };
+    }
     
     # Group messages into units
     my ($units_ref, $tool_id_map) = _group_into_units($messages);
@@ -127,13 +153,19 @@ sub validate_and_truncate {
     log_debug('MessageValidator', "Grouped " . scalar(@$messages) . " messages into " . scalar(@units) . " units");
     
     # Extract system message and first user message
-    my ($system_msg, $first_user_unit, $start_unit, $system_tokens, $first_user_tokens) = 
+    my ($system_msg, $first_user_unit, $start_unit, $system_tokens, $first_user_tokens,
+        $summary_unit, $summary_tokens, $gap_units) = 
         _extract_preserved_units(\@units);
     
     # Build conversation from newest to oldest
     my @conversation;
-    my $current_tokens = $system_tokens + $first_user_tokens;
+    my $current_tokens = $system_tokens + $first_user_tokens + $summary_tokens;
     my %included_tool_ids;
+    # Extract previous summary content for merging into new compression
+    my $previous_summary_content = '';
+    if ($summary_unit && $summary_unit->{messages} && @{$summary_unit->{messages}}) {
+        $previous_summary_content = $summary_unit->{messages}[0]{content} || '';
+    }
     my @dropped_units;
     
     my @remaining = @units[$start_unit .. $#units];
@@ -145,6 +177,27 @@ sub validate_and_truncate {
     $post_trim_keep_limit = $effective_limit if $post_trim_keep_limit < $effective_limit * 0.5;
     $post_trim_keep_limit = 32000 if $post_trim_keep_limit < 32000;
     log_debug('MessageValidator', "Post-trim keep target: $post_trim_keep_limit tokens (50% of $max_prompt)");
+
+    # DIAGNOSTIC: Append post_trim_keep_limit to the validator diagnostic (CLIO_TRIM_DIAG=1 to enable)
+    if ($ENV{CLIO_TRIM_DIAG}) {
+    eval {
+        my $ts = POSIX::strftime('%Y%m%d_%H%M%S', localtime);
+        # Append to the most recent validator log
+        my @logs = glob("/tmp/clio_trim_validator_*_$$.log");
+        if (@logs) {
+            my $latest = $logs[-1];
+            if (open my $dfh, '>>:encoding(UTF-8)', $latest) {
+                print $dfh "post_trim_keep_limit: $post_trim_keep_limit\n";
+                print $dfh "system_tokens: $system_tokens\n";
+                print $dfh "first_user_tokens: $first_user_tokens\n";
+                print $dfh "summary_tokens: $summary_tokens\n";
+                print $dfh "units_count: " . scalar(@units) . "\n";
+                print $dfh "remaining_units: " . scalar(@remaining) . "\n";
+                close $dfh;
+            }
+        }
+    };
+    }
 
     for my $unit (reverse @remaining) {
         if ($unit->{is_orphan_tool_result}) {
@@ -164,7 +217,17 @@ sub validate_and_truncate {
     }
     
     # Compress dropped units
-    my $compressed = _compress_dropped(\@dropped_units, $first_user_unit, $debug);
+    # Create merged summary only if there are dropped messages to compress.
+    # If nothing was dropped, preserve the existing summary as-is.
+    my $summary_to_use;
+    if (@dropped_units) {
+        my $compressed = _compress_dropped(\@dropped_units, $first_user_unit, $debug, $previous_summary_content);
+        $summary_to_use = $compressed;
+    } elsif ($summary_unit && $summary_unit->{messages} && @{$summary_unit->{messages}}) {
+        # No new drops - keep the existing summary intact
+        $summary_to_use = $summary_unit->{messages}[0];
+        log_debug('MessageValidator', "No dropped messages - preserving existing thread_summary");
+    }
     
     # Post-truncation validation
     my @validated;
@@ -180,7 +243,7 @@ sub validate_and_truncate {
     # Combine: system + compressed + first user + validated
     my @truncated;
     push @truncated, $system_msg if $system_msg;
-    push @truncated, $compressed if $compressed;
+    push @truncated, $summary_to_use if $summary_to_use;
     push @truncated, @{$first_user_unit->{messages}} if $first_user_unit;
     push @truncated, @validated;
     
@@ -380,13 +443,20 @@ sub _group_into_units {
 
     for my $msg (@$messages) {
         my $msg_tokens = estimate_tokens($msg->{content} || '') + 4;
+        $msg_tokens += 8 if $msg->{role} && $msg->{role} eq 'tool';
         my $has_tool_calls = $msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY' && @{$msg->{tool_calls}};
         my $is_tool_result = $msg->{tool_call_id} || ($msg->{role} && $msg->{role} eq 'tool');
         
         if ($has_tool_calls) {
             push @units, $current_unit if $current_unit;
             
-            $current_unit = { messages => [$msg], tokens => $msg_tokens, tool_call_ids => {} };
+            # Include tool_call JSON tokens in the unit's token count
+            my $tc_tokens = 0;
+            for my $tc (@{$msg->{tool_calls}}) {
+                my $json = eval { encode_json($tc) } // '';
+                $tc_tokens += estimate_tokens($json);
+            }
+            $current_unit = { messages => [$msg], tokens => $msg_tokens + $tc_tokens, tool_call_ids => {} };
             %pending_tool_ids = ();
             
             for my $tc (@{$msg->{tool_calls}}) {
@@ -452,6 +522,9 @@ sub _extract_preserved_units {
     my $start_unit = 0;
     my $system_tokens = 0;
     my $first_user_tokens = 0;
+    my $summary_unit;         # Previous thread_summary (preserved across trims)
+    my $summary_tokens = 0;
+    my @gap_units;            # Other units between system msg and first user
     
     # Extract system message
     if (@$units && @{$units->[0]{messages}} && $units->[0]{messages}[0]{role} eq 'system') {
@@ -475,14 +548,26 @@ sub _extract_preserved_units {
             log_debug('MessageValidator', "Preserving first user message (importance=" . 
                 ($first_msg->{_importance} // 'n/a') . ", tokens=$first_user_tokens)");
             last;
-        }
+        } else {
+            # Check if this is an old thread_summary - preserve it separately
+            my $content = $first_msg->{content} || '';
+            if ($content =~ /<thread_summary>/) {
+                $summary_unit = $unit;
+                $summary_tokens = $unit->{tokens};
+                log_debug('MessageValidator', "Preserving thread_summary ($summary_tokens tokens)");
+            } else {
+                push @gap_units, $unit;
+                log_debug('MessageValidator', "Collected gap unit (role=$first_msg->{role}, tokens=$unit->{tokens})");
+            }
+         }
     }
     
-    return ($system_msg, $first_user_unit, $start_unit, $system_tokens, $first_user_tokens);
+    return ($system_msg, $first_user_unit, $start_unit, $system_tokens, $first_user_tokens,
+            $summary_unit, $summary_tokens, \@gap_units);
 }
 
 sub _compress_dropped {
-    my ($dropped_units, $first_user_unit, $debug) = @_;
+    my ($dropped_units, $first_user_unit, $debug, $previous_summary) = @_;
     
     return undef unless $dropped_units && @$dropped_units;
     
@@ -504,7 +589,8 @@ sub _compress_dropped {
         }
         
         $compressed = $yarn->compress_messages(\@dropped_messages,
-            original_task => $original_task
+            original_task    => $original_task,
+            previous_summary => $previous_summary,
         );
         
         log_debug('MessageValidator', "Compression successful: " . scalar(@dropped_messages) . 
