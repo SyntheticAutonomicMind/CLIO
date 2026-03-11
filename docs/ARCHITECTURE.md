@@ -147,19 +147,21 @@ Terminal Output
 
 ### 5. Memory System
 **Files:** `lib/CLIO/Memory/`
+**Deep Dive:** [Memory Architecture](MEMORY.md)
 
 | Component | File | Purpose |
 |-----------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Short-Term | `ShortTerm.pm` | Session context |
-| Long-Term | `LongTerm.pm` | Persistent storage |
-| YaRN | `YaRN.pm` | Conversation threading |
-| Token Estimator | `TokenEstimator.pm` | Count tokens for context |
+| Short-Term | `ShortTerm.pm` | Session context (sliding window) |
+| Long-Term | `LongTerm.pm` | Project-level knowledge (.clio/ltm.json) |
+| YaRN | `YaRN.pm` | Conversation archival and compression |
+| Token Estimator | `TokenEstimator.pm` | Token count estimation with learned ratio |
 
 **How it works:**
-- Short-term memory maintains current session context
-- Long-term memory provides persistent storage across sessions
-- YaRN manages conversation threading and context windows
-- Token estimator prevents context overflow
+- Short-term memory maintains a sliding window of recent messages for the active context
+- Long-term memory accumulates discoveries, solutions, and patterns across sessions
+- YaRN archives full conversations and compresses dropped messages during trimming
+- Token estimator learns from API responses to calibrate proactive trimming thresholds
+- See [MEMORY.md](MEMORY.md) for the complete architecture
 
 ### 5b. User Profile
 **Files:** `lib/CLIO/Profile/`

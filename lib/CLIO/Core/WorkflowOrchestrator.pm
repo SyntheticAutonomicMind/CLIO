@@ -32,6 +32,7 @@ use Time::HiRes qw(time sleep);
 use Digest::MD5 qw(md5_hex);
 use CLIO::Compat::Terminal qw(ReadKey ReadMode);  # For interrupt detection
 use CLIO::Logging::ProcessStats;
+use POSIX qw(strftime);
 
 # ANSI color codes for terminal output - FALLBACK only when UI is unavailable
 # The preferred approach is using $self->{ui}->colorize() which respects theme settings
@@ -530,7 +531,31 @@ sub process_input {
                 model              => $model,
             );
             if ($trimmed && scalar(@$trimmed) < $pre_count) {
+                # DIAGNOSTIC: Dump state before and after proactive trim (CLIO_TRIM_DIAG=1 to enable)
+                _dump_trim_diagnostic(
+                    phase       => 'before',
+                    trigger     => 'proactive',
+                    messages    => \@messages,
+                    api_manager => $self->{api_manager},
+                    iteration   => $iteration,
+                    retry_count => $retry_count,
+                    extra       => {
+                        max_prompt_tokens => ($caps && $caps->{max_prompt_tokens}) || 'unknown',
+                    },
+                ) if $ENV{CLIO_TRIM_DIAG};
                 @messages = @$trimmed;
+                _dump_trim_diagnostic(
+                    phase       => 'after',
+                    trigger     => 'proactive',
+                    messages    => \@messages,
+                    api_manager => $self->{api_manager},
+                    iteration   => $iteration,
+                    retry_count => $retry_count,
+                    extra       => {
+                        original_count => $pre_count,
+                        trimmed_to     => scalar(@messages),
+                    },
+                ) if $ENV{CLIO_TRIM_DIAG};
                 log_info('WorkflowOrchestrator', "Proactive trim (pre-API): $pre_count -> " . scalar(@messages) . " messages");
             }
         }
@@ -654,24 +679,25 @@ sub process_input {
         if (!$api_response || $api_response->{error}) {
             my $error = $api_response->{error} || "Unknown API error";
             
-            # Track session-level errors for budget enforcement
-            $session_error_count++;
-            $session->{_error_count} = $session_error_count;
-            
-            # Check if we've exceeded session error budget
-            if ($session_error_count > $max_session_errors) {
-                log_error('WorkflowOrchestrator', "Session error budget exhausted ($session_error_count errors). Stopping to prevent cascading failures.");
-                return {
-                    success => 0,
-                    error => "Session error limit reached ($max_session_errors errors). Please start a new request or session. Last error: $error",
-                    iterations => $iteration,
-                    tool_calls_made => \@tool_calls_made
-                };
-            }
+            # Track session-level errors for budget enforcement.
+            # Only count once per distinct error event (not per retry attempt).
+            # Retryable errors count when retries exhaust; non-retryable count immediately.
             
             # Check if this is a retryable error (rate limit or server error)
             if ($api_response->{retryable}) {
                 $retry_count++;
+                
+                # Escalate repeated bare 400s to context trim. When the API returns
+                # "Bad Request" with no details after multiple retries, it's likely a
+                # context overflow that the token estimator missed.
+                my $error_type_check = $api_response->{error_type} || '';
+                if ($error_type_check eq 'bad_request' && $retry_count >= 3) {
+                    log_warning('WorkflowOrchestrator', "Repeated 400 Bad Request ($retry_count attempts) - escalating to context trim");
+                    $api_response->{error_type} = 'token_limit_exceeded';
+                    # Reset retry_count so the trim handler starts with its gentle
+                    # 40% trim (retry 1), not the nuclear option (retry 3)
+                    $retry_count = 1;
+                }
                 
                 # Determine which retry limit to use based on error type
                 # Rate limits, server errors, and transient 400s get more retries
@@ -708,7 +734,7 @@ sub process_input {
                 # Handle generic 400 - silent retry, no message needed
                 elsif ($api_response->{error_type} && $api_response->{error_type} eq 'bad_request') {
                     $system_msg = undef;  # Silent retry
-                    log_info('WorkflowOrchestrator', "API 400 Bad Request - retrying silently");
+                    log_info('WorkflowOrchestrator', "API 400 Bad Request - retrying silently (attempt $retry_count)");
                 }
                 # Special handling for malformed tool JSON errors
                 # ONE RETRY ONLY: Remove bad message, add guidance with tool schema, let AI fix it
@@ -796,6 +822,21 @@ sub process_input {
                 }
                 # Special handling for token limit exceeded errors
                 elsif ($api_response->{error_type} && $api_response->{error_type} eq 'token_limit_exceeded') {
+                    # DIAGNOSTIC: Dump full state BEFORE reactive trim (CLIO_TRIM_DIAG=1 to enable)
+                    _dump_trim_diagnostic(
+                        phase       => 'before',
+                        trigger     => 'reactive',
+                        messages    => \@messages,
+                        api_manager => $self->{api_manager},
+                        iteration   => $iteration,
+                        retry_count => $retry_count,
+                        extra       => {
+                            max_retries        => $max_retries,
+                            max_server_retries => $max_server_retries,
+                            error_message      => $error || '',
+                        },
+                    ) if $ENV{CLIO_TRIM_DIAG};
+
                     # Checkpoint progress before trimming - creates recovery anchor
                     _checkpoint_session_progress($session, \@tool_calls_made, $iteration, \@messages)
                         if $session;
@@ -995,6 +1036,22 @@ sub process_input {
                     push @messages, $system_prompt if $system_prompt;
                     push @messages, @non_system;
                     
+                    # DIAGNOSTIC: Dump full state AFTER reactive trim (CLIO_TRIM_DIAG=1 to enable)
+                    _dump_trim_diagnostic(
+                        phase       => 'after',
+                        trigger     => 'reactive',
+                        messages    => \@messages,
+                        api_manager => $self->{api_manager},
+                        iteration   => $iteration,
+                        retry_count => $retry_count,
+                        extra       => {
+                            original_count => $original_count,
+                            trimmed_count  => $trimmed_count,
+                            kept_count     => scalar(@non_system),
+                            first_user_preserved => ($first_user_msg ? 'YES' : 'NO'),
+                        },
+                    ) if $ENV{CLIO_TRIM_DIAG};
+
                     $error_type = "token limit exceeded";
                     my $preserved_info = $first_user_msg ? " (first user message preserved)" : "";
                     my $recovery_info = ($trimmed_count > 0) ? " Context summary injected." : "";
@@ -1102,6 +1159,19 @@ sub process_input {
             
             # Non-retryable error - reset retry counter for next iteration
             $retry_count = 0;
+            
+            # Count non-retryable errors against session budget
+            $session_error_count++;
+            $session->{_error_count} = $session_error_count;
+            if ($session_error_count > $max_session_errors) {
+                log_error('WorkflowOrchestrator', "Session error budget exhausted ($session_error_count errors). Stopping to prevent cascading failures.");
+                return {
+                    success => 0,
+                    error => "Session error limit reached ($max_session_errors errors). Please start a new request or session. Last error: $error",
+                    iterations => $iteration,
+                    tool_calls_made => \@tool_calls_made
+                };
+            }
             
             # Track consecutive identical errors to prevent infinite loops
             if ($error eq $self->{last_error}) {
@@ -2241,6 +2311,23 @@ sub _compress_dropped_for_recovery {
     
     return undef unless $dropped_messages && @$dropped_messages;
     
+    # Extract previous thread_summary from dropped messages (system-role messages
+    # containing <thread_summary> tags). These are ignored by YaRN's role-based
+    # extraction, so we pass them explicitly to preserve accumulated history.
+    my $previous_summary = '';
+    my @actual_messages;
+    for my $msg (@$dropped_messages) {
+        my $content = $msg->{content} || '';
+        if ($msg->{role} && $msg->{role} eq 'system' && $content =~ /<thread_summary>/) {
+            $previous_summary = $content;
+        } else {
+            push @actual_messages, $msg;
+        }
+    }
+    
+    # Use filtered messages (without old summary) for extraction
+    my $messages_to_compress = @actual_messages ? \@actual_messages : $dropped_messages;
+    
     my $compressed;
     eval {
         require CLIO::Memory::YaRN;
@@ -2252,8 +2339,9 @@ sub _compress_dropped_for_recovery {
             $original_task = $first_user_msg->{content} || '';
         }
         
-        $compressed = $yarn->compress_messages($dropped_messages,
-            original_task => $original_task
+        $compressed = $yarn->compress_messages($messages_to_compress,
+            original_task    => $original_task,
+            previous_summary => $previous_summary,
         );
     };
     if ($@) {
@@ -2862,6 +2950,142 @@ sub get_performance_summary {
     };
 }
 
+# =============================================================================
+# DIAGNOSTIC: Token limit exceeded state dump
+# Writes full state to /tmp/clio_trim_*.log for root cause analysis
+# =============================================================================
+
+sub _dump_trim_diagnostic {
+    my (%args) = @_;
+
+    my $phase       = $args{phase} || 'unknown';
+    my $trigger     = $args{trigger} || 'unknown';
+    my $messages    = $args{messages} || [];
+    my $api_manager = $args{api_manager};
+    my $iteration   = $args{iteration} // 0;
+    my $retry_count = $args{retry_count} // 0;
+    my $extra       = $args{extra} || {};
+
+    my $ts = POSIX::strftime('%Y%m%d_%H%M%S', localtime);
+    my $file = "/tmp/clio_trim_${phase}_${trigger}_${ts}_$$.log";
+
+    open my $fh, '>:encoding(UTF-8)', $file or do {
+        log_warning('WorkflowOrchestrator', "Cannot write trim diagnostic to $file: $!");
+        return;
+    };
+
+    print $fh "=" x 80, "\n";
+    print $fh "CLIO TRIM DIAGNOSTIC - \U$phase\E ($trigger trim)\n";
+    print $fh "Timestamp: ", scalar(localtime), "\n";
+    print $fh "PID: $$\n";
+    print $fh "Iteration: $iteration, Retry: $retry_count\n";
+    print $fh "=" x 80, "\n\n";
+
+    # Model capabilities
+    print $fh "-" x 40, "\n";
+    print $fh "MODEL CAPABILITIES\n";
+    print $fh "-" x 40, "\n";
+    if ($api_manager) {
+        my $model = $api_manager->get_current_model() || 'unknown';
+        print $fh "Model: $model\n";
+        my $caps = $api_manager->get_model_capabilities($model);
+        if ($caps) {
+            for my $key (sort keys %$caps) {
+                my $val = $caps->{$key};
+                if (ref($val) eq 'ARRAY') {
+                    $val = '[' . join(', ', @$val) . ']';
+                } elsif (ref($val)) {
+                    $val = eval { encode_json($val) } // ref($val);
+                }
+                print $fh "  $key: $val\n";
+            }
+        } else {
+            print $fh "  (no capabilities available)\n";
+        }
+        print $fh "  learned_token_ratio: " . ($api_manager->{learned_token_ratio} // 'undef') . "\n";
+    } else {
+        print $fh "  (no api_manager)\n";
+    }
+    print $fh "\n";
+
+    # Token estimator state
+    print $fh "-" x 40, "\n";
+    print $fh "TOKEN ESTIMATOR\n";
+    print $fh "-" x 40, "\n";
+    my $effective_ratio = CLIO::Memory::TokenEstimator::get_effective_ratio();
+    print $fh "  effective_ratio: $effective_ratio\n\n";
+
+    # Extra parameters
+    if (keys %$extra) {
+        print $fh "-" x 40, "\n";
+        print $fh "TRIM PARAMETERS\n";
+        print $fh "-" x 40, "\n";
+        for my $key (sort keys %$extra) {
+            print $fh "  $key: " . ($extra->{$key} // 'undef') . "\n";
+        }
+        print $fh "\n";
+    }
+
+    # Messages detail
+    print $fh "-" x 40, "\n";
+    print $fh "MESSAGES (" . scalar(@$messages) . " total)\n";
+    print $fh "-" x 40, "\n";
+
+    my $grand_total_tokens = 0;
+    my %role_counts;
+    my %role_tokens;
+
+    for (my $i = 0; $i < @$messages; $i++) {
+        my $msg = $messages->[$i];
+        my $role = $msg->{role} || 'unknown';
+        my $content = $msg->{content} || '';
+        my $content_len = length($content);
+        my $msg_tokens = estimate_tokens($content) + 4;
+        $msg_tokens += 8 if $role eq 'tool';
+
+        my $tc_count = 0;
+        my $tc_tokens = 0;
+        if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
+            $tc_count = scalar(@{$msg->{tool_calls}});
+            for my $tc (@{$msg->{tool_calls}}) {
+                my $json = eval { encode_json($tc) } // '';
+                $tc_tokens += estimate_tokens($json);
+            }
+            $msg_tokens += $tc_tokens;
+        }
+
+        $grand_total_tokens += $msg_tokens;
+        $role_counts{$role}++;
+        $role_tokens{$role} = ($role_tokens{$role} || 0) + $msg_tokens;
+
+        my $tc_info = $tc_count ? " tool_calls=$tc_count(${tc_tokens}tok)" : "";
+        my $tool_id = $msg->{tool_call_id} ? " tool_call_id=$msg->{tool_call_id}" : "";
+        my $importance = defined $msg->{_importance} ? " importance=$msg->{_importance}" : "";
+        print $fh sprintf("[%4d] role=%-10s tokens=%-6d chars=%-7d%s%s%s\n",
+            $i, $role, $msg_tokens, $content_len, $tc_info, $tool_id, $importance);
+
+        my $preview = substr($content, 0, 200);
+        $preview =~ s/\n/\\n/g;
+        print $fh "       content: $preview" . ($content_len > 200 ? "..." : "") . "\n";
+    }
+
+    print $fh "\n";
+    print $fh "-" x 40, "\n";
+    print $fh "SUMMARY\n";
+    print $fh "-" x 40, "\n";
+    print $fh "Total messages: " . scalar(@$messages) . "\n";
+    print $fh "Total estimated tokens: $grand_total_tokens\n";
+    for my $role (sort keys %role_counts) {
+        print $fh sprintf("  %-12s %4d messages, %7d tokens\n",
+            "$role:", $role_counts{$role}, $role_tokens{$role});
+    }
+    print $fh "\n";
+
+    close $fh;
+    log_info('WorkflowOrchestrator', "Trim diagnostic written to $file");
+    return $file;
+}
+
 1;
 
 __END__
@@ -2917,15 +3141,3 @@ Task 3: ⏳ Enhance APIManager to send/parse tools
 Task 4: ⏳ Implement ToolExecutor to execute tools
 Task 5: ⏳ Testing
 Task 6: ⏳ Remove pattern matching, cleanup
-
-=head1 AUTHOR
-
-Fewtarius
-
-=head1 LICENSE
-
-GPL-3.0-only
-
-=cut
-
-1;
