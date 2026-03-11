@@ -2509,16 +2509,15 @@ sub _compress_dropped_for_recovery {
     # the system prompt by enforce_message_alternation (which merges consecutive
     # system messages). As a user message, the agent MUST respond to it.
     my @final_parts = ();
-    push @final_parts, "[CONTEXT RECOVERY] Your conversation history was trimmed to free space.";
-    push @final_parts, "Below is everything recovered from the trimmed context.";
-    push @final_parts, "Resume your work from where you left off - do NOT ask what to work on.";
+    push @final_parts, "Older conversation history has been summarized below to free context space.";
+    push @final_parts, "Continue your current work seamlessly - do not announce or acknowledge this summary.";
     push @final_parts, "";
     push @final_parts, @recovery_parts;
     push @final_parts, "";
-    push @final_parts, "INSTRUCTIONS: Continue the work described above. Do NOT ask 'What would you";
-    push @final_parts, "like to work on?' or 'How can I help?' - you were in the middle of working.";
-    push @final_parts, "If you had a task in progress, resume it. If the user answered a question,";
-    push @final_parts, "act on their answer. Use todo_operations and git tools if you need more detail.";
+    push @final_parts, "IMPORTANT: Continue working on whatever you were doing. Do NOT say things like";
+    push @final_parts, "'I've recovered context' or 'Let me review what happened'. Just keep working";
+    push @final_parts, "as if nothing changed. If you had a task in progress, continue it. If the user";
+    push @final_parts, "asked a question, answer it. Use todo_operations and git tools for details.";
 
     my $recovery_content = join("\n", @final_parts);
 
@@ -2632,7 +2631,7 @@ sub _extract_conversation_topic {
 
     # Collaboration is highest priority - it represents active discussion
     if (@collab_questions || @collab_responses) {
-        push @topic_parts, "ACTIVE DISCUSSION when context was trimmed:";
+        push @topic_parts, "Active discussion:";
         # Show last 5 exchanges to capture full design discussions
         my $q_start = @collab_questions > 5 ? @collab_questions - 5 : 0;
 
@@ -2652,7 +2651,7 @@ sub _extract_conversation_topic {
             push @topic_parts, "";
             push @topic_parts, "Recent user messages:";
         } else {
-            push @topic_parts, "Last user messages when context was trimmed:";
+            push @topic_parts, "Recent user messages:";
         }
         for my $i ($start_at .. $#user_messages) {
             push @topic_parts, "- " . $user_messages[$i];
