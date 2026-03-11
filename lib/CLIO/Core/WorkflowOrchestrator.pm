@@ -701,14 +701,13 @@ sub process_input {
                 # context overflow that the token estimator missed. But if trimming
                 # doesn't help, stop escalating - the problem is something else.
                 my $error_type_check = $api_response->{error_type} || '';
-                if ($error_type_check eq 'bad_request' && $retry_count >= 3) {
+                if ($error_type_check eq 'bad_request' && $retry_count >= 2) {
                     $self->{_bad_request_escalations} = ($self->{_bad_request_escalations} || 0) + 1;
                     
                     if ($self->{_bad_request_escalations} <= 1) {
                         # First escalation: try context trim (might be token limit)
                         log_warning('WorkflowOrchestrator', "Repeated 400 Bad Request ($retry_count attempts) - escalating to context trim (escalation #$self->{_bad_request_escalations})");
                         $api_response->{error_type} = 'token_limit_exceeded';
-                        # Don't reset retry_count - let it accumulate toward max_server_retries
                     } else {
                         # Already escalated and trimmed but 400s persist. This isn't a
                         # context size issue. Dump diagnostic state and bail out.
@@ -741,11 +740,16 @@ sub process_input {
                 }
                 
                 # Determine which retry limit to use based on error type
-                # Rate limits, server errors, and transient 400s get more retries
+                # Rate limits and server errors get more retries; 400s get fewer
                 my $error_type_for_limit = $api_response->{error_type} || '';
-                my $retry_limit = ($error_type_for_limit eq 'server_error' || $error_type_for_limit eq 'rate_limit' || $error_type_for_limit eq 'bad_request') 
-                    ? $max_server_retries 
-                    : $max_retries;
+                my $retry_limit;
+                if ($error_type_for_limit eq 'server_error' || $error_type_for_limit eq 'rate_limit') {
+                    $retry_limit = $max_server_retries;
+                } elsif ($error_type_for_limit eq 'bad_request') {
+                    $retry_limit = 4;  # Bare 400: 1 silent retry + 1 trim + bail
+                } else {
+                    $retry_limit = $max_retries;
+                }
                 
                 # Check if we've exceeded max retries for this iteration
                 if ($retry_count > $retry_limit) {
@@ -3221,6 +3225,44 @@ sub _dump_diagnostic {
             "$role:", $role_counts{$role}, $role_tokens{$role});
     }
     print $fh "\n";
+
+    # Tool pair validation (critical for diagnosing 400 errors)
+    {
+        my %tc_ids;   # tool_call_id => message index
+        my %tr_ids;   # tool_call_id => message index (from results)
+        for (my $i = 0; $i < @$messages; $i++) {
+            my $msg = $messages->[$i];
+            if ($msg->{role} && $msg->{role} eq 'assistant' &&
+                $msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
+                for my $tc (@{$msg->{tool_calls}}) {
+                    $tc_ids{$tc->{id}} = $i if $tc->{id};
+                }
+            }
+            if ($msg->{role} && $msg->{role} eq 'tool' && $msg->{tool_call_id}) {
+                $tr_ids{$msg->{tool_call_id}} = $i;
+            }
+        }
+        my @orphaned_calls  = grep { !exists $tr_ids{$_} } keys %tc_ids;
+        my @orphaned_results = grep { !exists $tc_ids{$_} } keys %tr_ids;
+        
+        if (@orphaned_calls || @orphaned_results) {
+            print $fh "-" x 40, "\n";
+            print $fh "TOOL PAIR VALIDATION (ERRORS)\n";
+            print $fh "-" x 40, "\n";
+            for my $id (@orphaned_calls) {
+                print $fh "  ORPHANED tool_call: $id (assistant at msg $tc_ids{$id})\n";
+            }
+            for my $id (@orphaned_results) {
+                print $fh "  ORPHANED tool_result: $id (tool at msg $tr_ids{$id})\n";
+            }
+            print $fh "Total tool_calls: " . scalar(keys %tc_ids) . ", tool_results: " . scalar(keys %tr_ids) . "\n";
+            print $fh "\n";
+        } else {
+            print $fh "-" x 40, "\n";
+            print $fh "TOOL PAIR VALIDATION: OK (" . scalar(keys %tc_ids) . " pairs matched)\n";
+            print $fh "-" x 40, "\n\n";
+        }
+    }
 
     # Recent API 400 log (included for 400-related diagnostics)
     if ($trigger =~ /400/ && -f '/tmp/clio_api_400.log') {
