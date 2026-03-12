@@ -621,6 +621,8 @@ sub worktree {
         my $output;
         if ($action eq 'list') {
             $output = `git worktree list 2>&1`;
+            my $exit = $? >> 8;
+            croak "git worktree list failed (exit $exit):\n$output" if $exit != 0;
         } elsif ($action eq 'add' && $worktree_path) {
             my $branch = $params->{branch} || '';
             my $create_branch = $params->{create_branch} || 0;
@@ -632,22 +634,30 @@ sub worktree {
             $cmd .= " '$branch'" if $branch && !$create_branch;
             $cmd .= " 2>&1";
             $output = `$cmd`;
+            my $exit = $? >> 8;
+            croak "git worktree add failed (exit $exit):\n$output" if $exit != 0;
         } elsif ($action eq 'remove' && $worktree_path) {
             my $force = $params->{force} || 0;
             my $cmd = "git worktree remove";
             $cmd .= " --force" if $force;
             $cmd .= " '$worktree_path' 2>&1";
             $output = `$cmd`;
+            my $exit = $? >> 8;
+            croak "git worktree remove failed (exit $exit):\n$output" if $exit != 0;
         } elsif ($action eq 'prune') {
             $output = `git worktree prune 2>&1`;
+            my $exit = $? >> 8;
+            croak "git worktree prune failed (exit $exit):\n$output" if $exit != 0;
         } elsif (($action eq 'merge' || $action eq 'pr') && $worktree_path) {
             # Resolve the branch name from the worktree
             my $wt_list = `git worktree list --porcelain 2>&1`;
             my $wt_branch = $self->_resolve_worktree_branch($wt_list, $worktree_path);
             croak "Could not find worktree '$worktree_path' in worktree list. Use action 'list' to see available worktrees." unless $wt_branch;
-            
+
             if ($action eq 'merge') {
                 $output = `git merge '$wt_branch' 2>&1`;
+                my $exit = $? >> 8;
+                croak "git merge failed (exit $exit):\n$output" if $exit != 0;
             } else {
                 # pr: push branch to remote, then provide PR info
                 my $remote = $params->{remote} || 'origin';
@@ -669,13 +679,13 @@ sub worktree {
         } else {
             croak "Invalid worktree action or missing worktree_path for add/remove";
         }
-        
+
         my $action_desc = $action eq 'list'
             ? "listing worktrees"
             : $action eq 'prune'
             ? "pruning stale worktrees"
             : "$action worktree" . ($worktree_path ? " '$worktree_path'" : "");
-        
+
         $result = $self->success_result(
             $output,
             action_description => $action_desc,
