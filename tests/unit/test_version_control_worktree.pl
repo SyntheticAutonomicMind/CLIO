@@ -59,10 +59,11 @@ like($result->{error}, qr/Not a Git repository/, 'worktree routes through git re
 my $temp_repo = tempdir(CLEANUP => 1);
 my $original_cwd = getcwd();
 
-# Initialize a git repo
+# Initialize a git repo (disable gpg signing so tests work on machines with commit.gpgsign=true)
 system("cd $temp_repo && git init -b main >/dev/null 2>&1");
 system("cd $temp_repo && git config user.email 'test\@test.com' >/dev/null 2>&1");
 system("cd $temp_repo && git config user.name 'Test User' >/dev/null 2>&1");
+system("cd $temp_repo && git config commit.gpgsign false >/dev/null 2>&1");
 system("cd $temp_repo && echo 'hello' > README.md && git add . && git commit -m 'initial' >/dev/null 2>&1");
 
 # Test 7: worktree list on a real repo

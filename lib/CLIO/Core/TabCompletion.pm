@@ -116,7 +116,7 @@ sub new {
                 _subs => [qw(status diff log commit branch switch push pull blame stash tag worktree help)],
                 'stash' => [qw(list save apply drop)],
                 'tag' => [qw(-d)],
-                'worktree' => [qw(list add remove prune merge)],
+                'worktree' => [qw(list add remove prune merge pr)],
             },
             '/file' => [qw(read edit list ls help)],
             '/config' => [qw(show set save load workdir loglevel help)],
