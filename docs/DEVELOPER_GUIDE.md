@@ -905,6 +905,48 @@ use Moo;           # Not core
 use LWP::UserAgent # Not core
 ```
 
+**Terminal and Process Safety:**
+
+When spawning child processes (shell commands, ssh, compilers, etc.), always use process groups to ensure cleanup on timeout or interrupt:
+
+```perl
+# CORRECT: use process groups so kill() reaches all descendants
+use POSIX qw(setpgid WNOHANG);
+
+my $pid = fork();
+if ($pid == 0) {
+    # Child: create own process group
+    setpgid(0, 0);
+    exec($command) or die "exec failed: $!";
+}
+
+# Parent: kill the whole group on timeout/interrupt
+kill('-TERM', $pid);   # SIGTERM to process group (negative = group)
+sleep(2);
+kill('-KILL', $pid) if kill(0, $pid);  # SIGKILL if still alive
+waitpid($pid, WNOHANG);
+```
+
+**NEVER use `alarm()` or `local $SIG{ALRM}` in tool execution code.** Chat.pm's 1-second ALRM timer drives ESC interrupt detection. Clobbering it breaks keyboard responsiveness. For timeouts, use a fork+waitpid poll loop instead:
+
+```perl
+# CORRECT: poll loop with Time::HiRes (doesn't touch ALRM)
+use Time::HiRes qw(time);
+my $deadline = time() + $timeout;
+while (1) {
+    my $done = waitpid($pid, WNOHANG);
+    last if $done;
+    last if time() > $deadline;
+    select(undef, undef, undef, 0.1);  # 100ms poll interval
+}
+
+# WRONG: destroys the ESC interrupt timer
+local $SIG{ALRM} = sub { kill 'TERM', $pid };
+alarm($timeout);
+waitpid($pid, 0);
+alarm(0);
+```
+
 ### Documentation Standards
 
 **POD for modules:**
