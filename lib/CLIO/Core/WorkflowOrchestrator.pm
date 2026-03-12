@@ -890,27 +890,29 @@ sub process_input {
                     # Remove oldest messages while keeping system prompt, FIRST USER MESSAGE, and recent context
                     # Preserve tool_call/tool_result pairs to avoid orphans
                     
-                    my $system_prompt = undef;
-                    my @non_system = ();
-                    my $first_user_msg = undef;
-                    my $first_user_idx = -1;
-                    
-                    # Separate system prompt and find first user message
-                    for my $msg (@messages) {
-                        if ($msg->{role} eq 'system' && !$system_prompt) {
-                            $system_prompt = $msg;
-                        } else {
-                            push @non_system, $msg;
-                            # Track first user message (critical for context preservation)
-                            # Uses the first user-role message found (previously required
-                            # _importance >= 10.0, but that field is lost after proactive
-                            # trim sync since enforce_message_alternation creates new hashes)
-                            if (!$first_user_msg && $msg->{role} && $msg->{role} eq 'user') {
-                                $first_user_msg = $msg;
-                                $first_user_idx = $#non_system;
-                            }
-                        }
-                    }
+                   my $system_prompt = undef;
+                   my @non_system = ();
+                    my $last_user_msg = undef;
+                    my $last_user_idx = -1;
+                   
+                    # Separate system prompt and find most recent user message.
+                    # Previously we preserved the FIRST user message (the original
+                    # session-start task), but in long sessions with multiple task
+                    # transitions, that message is hours stale and causes the agent
+                    # to revert to old work after trimming. The original task is
+                    # already captured in the thread_summary. The most recent user
+                    # message represents the CURRENT work and should be preserved.
+                   for my $msg (@messages) {
+                       if ($msg->{role} eq 'system' && !$system_prompt) {
+                           $system_prompt = $msg;
+                       } else {
+                           push @non_system, $msg;
+                            if ($msg->{role} && $msg->{role} eq 'user') {
+                                $last_user_msg = $msg;
+                                $last_user_idx = $#non_system;
+                           }
+                       }
+                   }
                     
                     my $original_count = scalar(@non_system);
                     
@@ -969,9 +971,9 @@ sub process_input {
                         # Find any tool_results in the kept range that need their tool_calls
                         my @must_include = ();
                         
-                        # Always include first user message if it would be trimmed
-                        if ($first_user_idx >= 0 && $first_user_idx < $start_idx) {
-                            push @must_include, $first_user_idx;
+                        # Include last user message if it would be trimmed
+                        if ($last_user_idx >= 0 && $last_user_idx < $start_idx) {
+                            push @must_include, $last_user_idx;
                         }
                         
                         for (my $i = $start_idx; $i < $original_count; $i++) {
@@ -1005,7 +1007,7 @@ sub process_input {
                         
                         # Compress dropped messages into a summary using YaRN
                         if (@dropped_messages) {
-                            my $compressed = _compress_dropped_for_recovery(\@dropped_messages, $first_user_msg, $session, \@messages);
+                            my $compressed = _compress_dropped_for_recovery(\@dropped_messages, $last_user_msg, $session, \@messages);
                             if ($compressed) {
                                 # Append recovery as the LAST message so the agent sees it as
                                 # the most recent input and must respond to it. Previously this
@@ -1032,15 +1034,15 @@ sub process_input {
                             @kept = @non_system[-$keep_count..-1];
                         }
                         
-                        # Ensure first user message is preserved
-                        if ($first_user_msg && !grep { $_ == $first_user_msg } @kept) {
-                            unshift @kept, $first_user_msg;
+                        # Ensure last user message is preserved
+                        if ($last_user_msg && !grep { $_ == $last_user_msg } @kept) {
+                            unshift @kept, $last_user_msg;
                         }
                         @non_system = @kept;
                         
                         # Compress dropped messages
                         if (@dropped_messages) {
-                            my $compressed = _compress_dropped_for_recovery(\@dropped_messages, $first_user_msg, $session, \@messages);
+                            my $compressed = _compress_dropped_for_recovery(\@dropped_messages, $last_user_msg, $session, \@messages);
                             if ($compressed) {
                                 # Append recovery as the last message
                                 push @non_system, $compressed;
@@ -1053,19 +1055,19 @@ sub process_input {
                         my @dropped_messages = @non_system;
                         
                         my @kept = ();
-                        push @kept, $first_user_msg if $first_user_msg;
+                        push @kept, $last_user_msg if $last_user_msg;
                         
-                        # Add last 2 messages (if not the first user message)
+                        # Add last 2 messages (if not the last user message)
                         my @last_two = @non_system[-2..-1];
                         for my $msg (@last_two) {
-                            next if $first_user_msg && $msg == $first_user_msg;
+                            next if $last_user_msg && $msg == $last_user_msg;
                             push @kept, $msg;
                         }
                         @non_system = @kept;
                         
                         # Compress dropped messages - especially important for minimal context
                         if (@dropped_messages > 2) {
-                            my $compressed = _compress_dropped_for_recovery(\@dropped_messages, $first_user_msg, $session, \@messages);
+                            my $compressed = _compress_dropped_for_recovery(\@dropped_messages, $last_user_msg, $session, \@messages);
                             if ($compressed) {
                                 # Append recovery as the last message
                                 push @non_system, $compressed;
@@ -1093,16 +1095,16 @@ sub process_input {
                             original_count => $original_count,
                             trimmed_count  => $trimmed_count,
                             kept_count     => scalar(@non_system),
-                            first_user_preserved => ($first_user_msg ? 'YES' : 'NO'),
+                            first_user_preserved => ($last_user_msg ? 'YES' : 'NO'),
                         },
                     ) if $ENV{CLIO_TRIM_DIAG};
 
                     $error_type = "token limit exceeded";
-                    my $preserved_info = $first_user_msg ? " (first user message preserved)" : "";
+                    my $preserved_info = $last_user_msg ? " (most recent user message preserved)" : "";
                     my $recovery_info = ($trimmed_count > 0) ? " Context summary injected." : "";
                     $system_msg = "Token limit exceeded. Trimmed $trimmed_count messages from conversation history and retrying$preserved_info...$recovery_info (attempt $retry_count/$max_retries)";
                     
-                    log_info('WorkflowOrchestrator', "Trimmed $trimmed_count messages due to token limit (kept " . scalar(@non_system) . " messages, first_user=" . ($first_user_msg ? 'YES' : 'NO') . ")");
+                    log_info('WorkflowOrchestrator', "Trimmed $trimmed_count messages due to token limit (kept " . scalar(@non_system) . " messages, last_user=" . ($last_user_msg ? 'YES' : 'NO') . ")");
                     
                     # If nothing was trimmed, context isn't the problem. Don't retry
                     # endlessly - this was likely escalated from bad_request and the
@@ -2384,7 +2386,7 @@ includes current task state from todos.
 
 Arguments:
 - $dropped_messages: Arrayref of message hashes that were dropped
-- $first_user_msg: The first user message (for original task context)
+- $last_user_msg: The most recent user message (for current task context)
 - $session: Session object (optional, for todo state)
 - $all_messages: Arrayref of ALL messages before trimming (for topic extraction)
 
@@ -2394,7 +2396,7 @@ Returns: Message hashref with role 'system' containing compressed summary,
 =cut
 
 sub _compress_dropped_for_recovery {
-    my ($dropped_messages, $first_user_msg, $session, $all_messages) = @_;
+    my ($dropped_messages, $last_user_msg, $session, $all_messages) = @_;
     
     return undef unless $dropped_messages && @$dropped_messages;
     
@@ -2420,10 +2422,10 @@ sub _compress_dropped_for_recovery {
         require CLIO::Memory::YaRN;
         my $yarn = CLIO::Memory::YaRN->new();
         
-        # Get original task from first user message
+        # Get current task from most recent user message
         my $original_task = '';
-        if ($first_user_msg && ref($first_user_msg) eq 'HASH') {
-            $original_task = $first_user_msg->{content} || '';
+        if ($last_user_msg && ref($last_user_msg) eq 'HASH') {
+            $original_task = $last_user_msg->{content} || '';
         }
         
         $compressed = $yarn->compress_messages($messages_to_compress,
@@ -2509,16 +2511,15 @@ sub _compress_dropped_for_recovery {
     # the system prompt by enforce_message_alternation (which merges consecutive
     # system messages). As a user message, the agent MUST respond to it.
     my @final_parts = ();
-    push @final_parts, "[CONTEXT RECOVERY] Your conversation history was trimmed to free space.";
-    push @final_parts, "Below is everything recovered from the trimmed context.";
-    push @final_parts, "Resume your work from where you left off - do NOT ask what to work on.";
+    push @final_parts, "Older conversation history has been summarized below to free context space.";
+    push @final_parts, "Continue your current work seamlessly - do not announce or acknowledge this summary.";
     push @final_parts, "";
     push @final_parts, @recovery_parts;
     push @final_parts, "";
-    push @final_parts, "INSTRUCTIONS: Continue the work described above. Do NOT ask 'What would you";
-    push @final_parts, "like to work on?' or 'How can I help?' - you were in the middle of working.";
-    push @final_parts, "If you had a task in progress, resume it. If the user answered a question,";
-    push @final_parts, "act on their answer. Use todo_operations and git tools if you need more detail.";
+    push @final_parts, "IMPORTANT: Continue working on whatever you were doing. Do NOT say things like";
+    push @final_parts, "'I've recovered context' or 'Let me review what happened'. Just keep working";
+    push @final_parts, "as if nothing changed. If you had a task in progress, continue it. If the user";
+    push @final_parts, "asked a question, answer it. Use todo_operations and git tools for details.";
 
     my $recovery_content = join("\n", @final_parts);
 
@@ -2632,7 +2633,7 @@ sub _extract_conversation_topic {
 
     # Collaboration is highest priority - it represents active discussion
     if (@collab_questions || @collab_responses) {
-        push @topic_parts, "ACTIVE DISCUSSION when context was trimmed:";
+        push @topic_parts, "Active discussion:";
         # Show last 5 exchanges to capture full design discussions
         my $q_start = @collab_questions > 5 ? @collab_questions - 5 : 0;
 
@@ -2652,7 +2653,7 @@ sub _extract_conversation_topic {
             push @topic_parts, "";
             push @topic_parts, "Recent user messages:";
         } else {
-            push @topic_parts, "Last user messages when context was trimmed:";
+            push @topic_parts, "Recent user messages:";
         }
         for my $i ($start_at .. $#user_messages) {
             push @topic_parts, "- " . $user_messages[$i];
