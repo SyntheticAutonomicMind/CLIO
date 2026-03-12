@@ -138,6 +138,8 @@ Commands are validated before execution. CLIO shows the command text before runn
 - **Passthrough mode** - User gets interactive TTY access (for SSH, editors, etc.). Output is captured via `tee`. CLIO suspends its input handling while the command owns the terminal, then restores terminal state cleanly.
 - **Multiplexer pane** - When running inside tmux, GNU Screen, or Zellij, commands open in a new pane. Output is captured via log file while the pane stays live.
 
+**Process safety:** Commands are spawned in their own process group (via `setpgid`). On ESC interrupt or timeout, CLIO sends SIGTERM to the entire group (killing shells, ssh connections, and any grandchild processes), then SIGKILL after 2 seconds if needed. This prevents orphaned processes accumulating in the background.
+
 ### Apply Patch
 
 A lightweight diff-based tool for efficient multi-file changes. Instead of rewriting entire files, CLIO can apply surgical patches:
@@ -422,19 +424,21 @@ CLIO manages a limited context window (the amount of conversation the AI can "se
 
 When trimming is needed, CLIO prioritizes:
 - **System prompt** (always kept)
-- **First user message** (the original task - scored at maximum importance)
-- **Recent messages** (most recent context)
+- **Most recent user message** (the current task anchor - what you're working on NOW)
+- **Thread summary** (compressed record of dropped messages, preserved across trim cycles)
+- **Recent messages** (most recent context, budget-walked newest to oldest)
 - **Tool call/result pairs** (kept together to avoid orphans)
-- **High-importance messages** (those containing error, bug, fix, critical keywords)
+
+**Note on task continuity:** CLIO preserves the **most recent** user message as the task anchor, not the session-start message. In long sessions with multiple task transitions, the original session-start message is stale and already captured in the thread summary. Preserving the most recent message keeps the AI focused on what you're working on now.
 
 ### Context Recovery
 
-When aggressive trimming occurs, CLIO injects a recovery context that includes:
-- A summary of dropped messages (user requests, tool operations, key events)
+When aggressive trimming occurs, CLIO injects recovery context that includes:
+- A thread summary of dropped messages (user requests, tool operations, key events)
 - The current todo/task state (what the AI was working on)
-- The most recent user requests from the dropped portion
+- Recent git activity (commits, working tree status)
 
-This prevents the AI from losing track of what it was doing during long sessions.
+Context recovery is **seamless** - the AI continues working without announcing that trimming occurred. Thread summaries accumulate across trim cycles, building a running record of the full session history.
 
 ### Token Estimation
 
@@ -453,7 +457,7 @@ CLIO has 40+ slash commands organized by category. Type `/help` for the full lis
 | `/help` | Show all commands |
 | `/exit` | Exit CLIO |
 | `/clear` | Clear the screen |
-| `/reset` | Reset terminal to known-good state |
+| `/reset` | Reset terminal to known-good state and kill orphaned child processes |
 | `/debug` | Toggle debug mode |
 | `/shell` | Open an interactive shell |
 | `/multi-line` | Enter multi-line input mode |
