@@ -2014,11 +2014,16 @@ sub request_collaboration {
         if ($response =~ /^\//) {
             log_debug('Chat', "Slash command in collaboration: $response");
             
-            # Drop cbreak mode before running the command - interactive commands
-            # like /shell, /exec, /multiline need normal terminal input to work.
+            # Suspend ALRM timer and cbreak mode before running the command.
+            # Interactive commands like /shell, /exec need normal terminal input.
+            # The ALRM handler calls ReadKey(-1) which does sysread(STDIN) -
+            # if /shell hands the foreground to bash via tcsetpgrp(), CLIO becomes
+            # a background process and sysread triggers SIGTTIN, stopping CLIO.
+            alarm(0);
             ReadMode(0);
             my ($continue, $ai_prompt) = $self->handle_command($response);
             ReadMode(1);  # Re-enter cbreak for interrupt detection
+            alarm(1);     # Re-arm ALRM for interrupt detection
             
             # If command requested exit, cancel collaboration
             if (!$continue) {
