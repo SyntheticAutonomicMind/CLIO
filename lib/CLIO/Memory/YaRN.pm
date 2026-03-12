@@ -215,7 +215,7 @@ Strategy:
 Arguments:
 - $messages: Array reference of message hashes to compress
 - %opts: Optional parameters
-  * original_task: First user message (for context)
+  * original_task: Most recent user message (for current task context)
   * compression_ratio_target: Desired compression (default 0.2 = 80% reduction)
 
 Returns: Hashref with compressed summary message
@@ -351,7 +351,7 @@ sub compress_messages {
     push @parts, "";
 
     if ($original_task) {
-        push @parts, "Original task: " . substr($original_task, 0, 300);
+        push @parts, "Current task: " . substr($original_task, 0, 300);
         push @parts, "";
     }
 
