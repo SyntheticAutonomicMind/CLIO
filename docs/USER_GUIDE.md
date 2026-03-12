@@ -45,7 +45,7 @@ CLIO is a terminal-based AI code assistant that brings powerful AI capabilities 
 
 - **Code Understanding**: Read and analyze code, explain functions, trace logic
 - **File Operations**: Read, write, search, edit files across your project
-- **Version Control**: Git operations (status, diff, commit, branch, merge)
+- **Version Control**: Git operations (status, diff, commit, branch, merge, worktree)
 - **Command Execution**: Run terminal commands and scripts
 - **Code Refactoring**: Restructure code with intelligent changes
 - **Documentation**: Generate docs, write README files, create comments
@@ -410,6 +410,11 @@ CLIO provides 35+ powerful slash commands. Type `/help` in any session to see th
 | `/git stash [save\|apply\|drop]` | Manage stashed changes |
 | `/git tag [name]` | List/create/delete tags |
 | `/git blame <file>` | Show who changed each line |
+| `/git worktree list` | List all worktrees |
+| `/git worktree add <path> [branch]` | Add a new worktree |
+| `/git worktree remove <path>` | Remove a worktree |
+| `/git worktree prune` | Prune stale worktrees |
+| `/git worktree merge <path>` | Merge worktree branch into current branch |
 | `/status` | Show git status (shorthand) |
 | `/diff` | Show git diff (shorthand) |
 | `/commit` | Create commit (shorthand) |

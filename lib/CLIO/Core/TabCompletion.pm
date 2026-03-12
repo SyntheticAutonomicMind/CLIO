@@ -113,9 +113,10 @@ sub new {
             '/model' => [qw(list alias)],
             '/session' => [qw(show list switch name new clear trim prune export help)],
             '/git' => {
-                _subs => [qw(status diff log commit branch switch push pull blame stash tag help)],
+                _subs => [qw(status diff log commit branch switch push pull blame stash tag worktree help)],
                 'stash' => [qw(list save apply drop)],
                 'tag' => [qw(-d)],
+                'worktree' => [qw(list add remove prune merge)],
             },
             '/file' => [qw(read edit list ls help)],
             '/config' => [qw(show set save load workdir loglevel help)],

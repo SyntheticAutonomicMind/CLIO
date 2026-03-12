@@ -59,6 +59,7 @@
 - `checkout` - branch or commit
 - `show` - commit
 - `remote` - action, url (optional)
+- `worktree` - action ('list'|'add'|'remove'|'prune'|'merge'|'pr'), worktree_path (for add/remove/merge/pr), branch (optional), create_branch (optional), force (optional), remote (optional, for pr)
 
 ### WebOperations
 
