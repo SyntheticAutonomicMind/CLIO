@@ -152,14 +152,17 @@ sub validate_and_truncate {
     
     log_debug('MessageValidator', "Grouped " . scalar(@$messages) . " messages into " . scalar(@units) . " units");
     
-    # Extract system message and first user message
-    my ($system_msg, $first_user_unit, $start_unit, $system_tokens, $first_user_tokens,
-        $summary_unit, $summary_tokens, $gap_units) = 
+    # Extract system message and most recent user message
+    my ($system_msg, $last_user_unit, $start_unit, $system_tokens, $last_user_tokens,
+        $summary_unit, $summary_tokens, $_unused) = 
         _extract_preserved_units(\@units);
     
     # Build conversation from newest to oldest
     my @conversation;
-    my $current_tokens = $system_tokens + $first_user_tokens + $summary_tokens;
+    # Don't pre-allocate token budget for last_user_unit - it will be included
+    # naturally by the budget walk below (it's a recent message). Only reserve
+    # space for the always-present system prompt and any existing summary.
+    my $current_tokens = $system_tokens + $summary_tokens;
     my %included_tool_ids;
     # Extract previous summary content for merging into new compression
     my $previous_summary_content = '';
@@ -189,7 +192,7 @@ sub validate_and_truncate {
             if (open my $dfh, '>>:encoding(UTF-8)', $latest) {
                 print $dfh "post_trim_keep_limit: $post_trim_keep_limit\n";
                 print $dfh "system_tokens: $system_tokens\n";
-                print $dfh "first_user_tokens: $first_user_tokens\n";
+                print $dfh "last_user_tokens: $last_user_tokens\n";
                 print $dfh "summary_tokens: $summary_tokens\n";
                 print $dfh "units_count: " . scalar(@units) . "\n";
                 print $dfh "remaining_units: " . scalar(@remaining) . "\n";
@@ -221,7 +224,7 @@ sub validate_and_truncate {
     # If nothing was dropped, preserve the existing summary as-is.
     my $summary_to_use;
     if (@dropped_units) {
-        my $compressed = _compress_dropped(\@dropped_units, $first_user_unit, $debug, $previous_summary_content);
+        my $compressed = _compress_dropped(\@dropped_units, $last_user_unit, $debug, $previous_summary_content);
         $summary_to_use = $compressed;
     } elsif ($summary_unit && $summary_unit->{messages} && @{$summary_unit->{messages}}) {
         # No new drops - keep the existing summary intact
@@ -240,11 +243,12 @@ sub validate_and_truncate {
         push @validated, $msg;
     }
     
-    # Combine: system + compressed + first user + validated
+    # Combine: system + compressed summary + validated conversation
+    # The most recent user message is already in @validated (it's recent enough
+    # to be included by the token-budget walk). No need to inject it separately.
     my @truncated;
     push @truncated, $system_msg if $system_msg;
     push @truncated, $summary_to_use if $summary_to_use;
-    push @truncated, @{$first_user_unit->{messages}} if $first_user_unit;
     push @truncated, @validated;
     
     if (should_log('DEBUG')) {
@@ -544,13 +548,10 @@ sub _extract_preserved_units {
     my ($units) = @_;
     
     my $system_msg;
-    my $first_user_unit;
     my $start_unit = 0;
     my $system_tokens = 0;
-    my $first_user_tokens = 0;
     my $summary_unit;         # Previous thread_summary (preserved across trims)
     my $summary_tokens = 0;
-    my @gap_units;            # Other units between system msg and first user
     
     # Extract system message
     if (@$units && @{$units->[0]{messages}} && $units->[0]{messages}[0]{role} eq 'system') {
@@ -559,41 +560,54 @@ sub _extract_preserved_units {
         $start_unit = 1;
     }
     
-    # Extract first user message
-    # Uses _importance >= 10.0 (set by Session::State) if available, otherwise
-    # falls back to the first user-role message found after system messages
+    # Find any thread_summary units between system msg and conversation
     for my $i ($start_unit .. $#$units) {
         my $unit = $units->[$i];
         next unless $unit && $unit->{messages} && @{$unit->{messages}};
         
         my $first_msg = $unit->{messages}[0];
-        if ($first_msg->{role} && $first_msg->{role} eq 'user') {
-            $first_user_unit = $unit;
-            $first_user_tokens = $unit->{tokens};
+        my $content = $first_msg->{content} || '';
+        if ($content =~ /<thread_summary>/) {
+            $summary_unit = $unit;
+            $summary_tokens = $unit->{tokens};
             $start_unit = $i + 1;
-            log_debug('MessageValidator', "Preserving first user message (importance=" . 
-                ($first_msg->{_importance} // 'n/a') . ", tokens=$first_user_tokens)");
+            log_debug('MessageValidator', "Preserving thread_summary ($summary_tokens tokens)");
+        } elsif ($first_msg->{role} && $first_msg->{role} ne 'system') {
+            # Hit a non-system, non-summary message - start of conversation
+            $start_unit = $i;
             last;
-        } else {
-            # Check if this is an old thread_summary - preserve it separately
-            my $content = $first_msg->{content} || '';
-            if ($content =~ /<thread_summary>/) {
-                $summary_unit = $unit;
-                $summary_tokens = $unit->{tokens};
-                log_debug('MessageValidator', "Preserving thread_summary ($summary_tokens tokens)");
-            } else {
-                push @gap_units, $unit;
-                log_debug('MessageValidator', "Collected gap unit (role=$first_msg->{role}, tokens=$unit->{tokens})");
-            }
-         }
+        }
     }
     
-    return ($system_msg, $first_user_unit, $start_unit, $system_tokens, $first_user_tokens,
-            $summary_unit, $summary_tokens, \@gap_units);
+    # Find the MOST RECENT user unit for task context preservation.
+    # Previously we preserved the FIRST user message, but in long sessions
+    # with task transitions that message is stale and misleads the agent.
+    # The original task is captured in the thread_summary. The most recent
+    # user message represents the current work.
+    my $last_user_unit;
+    my $last_user_tokens = 0;
+    my $last_user_idx = -1;
+    for my $i ($start_unit .. $#$units) {
+        my $unit = $units->[$i];
+        next unless $unit && $unit->{messages} && @{$unit->{messages}};
+        my $first_msg = $unit->{messages}[0];
+        if ($first_msg->{role} && $first_msg->{role} eq 'user') {
+            $last_user_unit = $unit;
+            $last_user_tokens = $unit->{tokens};
+            $last_user_idx = $i;
+        }
+    }
+    
+    if ($last_user_unit) {
+        log_debug('MessageValidator', "Found most recent user message at unit $last_user_idx (tokens=$last_user_tokens)");
+    }
+    
+    return ($system_msg, $last_user_unit, $start_unit, $system_tokens, $last_user_tokens,
+            $summary_unit, $summary_tokens, undef);
 }
 
 sub _compress_dropped {
-    my ($dropped_units, $first_user_unit, $debug, $previous_summary) = @_;
+    my ($dropped_units, $last_user_unit, $debug, $previous_summary) = @_;
     
     return undef unless $dropped_units && @$dropped_units;
     
@@ -609,9 +623,10 @@ sub _compress_dropped {
         require CLIO::Memory::YaRN;
         my $yarn = CLIO::Memory::YaRN->new(debug => $debug);
         
+        # Use the most recent user message as the task context
         my $original_task = '';
-        if ($first_user_unit && @{$first_user_unit->{messages}}) {
-            $original_task = $first_user_unit->{messages}[0]{content} || '';
+        if ($last_user_unit && @{$last_user_unit->{messages}}) {
+            $original_task = $last_user_unit->{messages}[0]{content} || '';
         }
         
         $compressed = $yarn->compress_messages(\@dropped_messages,
