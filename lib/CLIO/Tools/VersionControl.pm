@@ -683,6 +683,7 @@ sub worktree {
             worktree_path => $worktree_path,
         );
     };
+    my $main_error = $@;
 
     chdir $original_cwd if $repo_path ne '.';
 
@@ -697,8 +698,8 @@ sub worktree {
         }
     }
     
-    if ($@) {
-        return $self->error_result("Git worktree failed: $@");
+    if ($main_error) {
+        return $self->error_result("Git worktree failed: $main_error");
     }
     
     return $result;
