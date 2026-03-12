@@ -94,7 +94,10 @@ Terminal Output
 
 **How it works:**
 1. APIManager connects to AI provider (GitHub Copilot, OpenAI, etc.)
-2. WorkflowOrchestrator manages complex interactions
+2. WorkflowOrchestrator manages complex interactions, including:
+   - Proactive context trimming before each API call (keeps messages at ≤75% of context)
+   - Reactive trimming with 3-attempt escalation when the API rejects due to token overflow
+   - 400 Bad Request escalation: silent retry → tool_call repair → context trim → error surface
 3. PromptManager provides system prompt + custom instructions
 4. ToolExecutor invokes selected tools
 5. Results processed and returned
@@ -106,7 +109,7 @@ Terminal Output
 |------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | File Operations | `FileOperations.pm` | read, write, search, create, delete, rename, etc. |
 | Version Control | `VersionControl.pm` | git status, log, diff, commit, branch, push, pull |
-| Terminal | `TerminalOperations.pm` | exec - run shell commands |
+| Terminal | `TerminalOperations.pm` | exec - run shell commands safely (fork+process group, ESC-interruptible) |
 | Memory | `MemoryOperations.pm` | store, retrieve, search, list, delete |
 | Todo | `TodoList.pm` | create, update, complete, list, track tasks |
 | Code Intelligence | `CodeIntelligence.pm` | list_usages, search_history |
@@ -485,6 +488,13 @@ clio --new           # First run
 - Session data in `sessions/` (JSON files)
 - In-memory conversation history
 - Token estimator helps avoid OOM
+
+### Terminal Safety
+- `TerminalOperations` uses fork+exec with `POSIX::setpgid(0,0)` in the child, creating a process group
+- On timeout or ESC interrupt, `kill(-TERM, $pgid)` sends SIGTERM to the entire process group (kills ssh, sh -c wrappers, and grandchildren)
+- SIGKILL follows after 2 seconds if processes survive SIGTERM
+- `/reset` runs `kill_stale_children()` to clean up any orphaned processes from the current session
+- ESC interrupt is detected via ALRM timer (1Hz) throughout all execution phases - API calls, tool execution, and streaming
 
 ### Scalability
 - Not designed for 1000s of projects

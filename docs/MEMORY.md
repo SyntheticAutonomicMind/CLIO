@@ -75,22 +75,35 @@ When the context window needs trimming, `compress_messages()` takes the messages
 | Category | What's Extracted |
 |----------|-----------------|
 | **User requests** | The last N user messages (truncated to ~300 chars each) |
+| **Current task** | Most recent user message - the active work being done |
 | **Git commits** | Commit hashes and messages from tool output |
 | **Files touched** | File paths from tool call arguments (path, new_path, old_path) |
 | **Key decisions** | Collaboration exchanges (question + user response) |
 | **Tool usage** | Counts of each tool type used |
 
-The result is a single system message wrapped in `<thread_summary>` tags that gets injected into the trimmed context. This gives the AI a compressed map of what happened before the trim point.
+The result is a single system message wrapped in `<thread_summary>` tags that gets injected into the trimmed context. Critically, the `<thread_summary>` is **preserved across multiple trim cycles** - each new compression merges with the previous summary, building an accumulating record of the entire session.
+
+### Seamless Recovery
+
+After context trimming, CLIO agents continue working without announcing that context was lost. The thread_summary provides enough continuity that no recovery stumbling is needed:
+
+- No "I've recovered context" announcements
+- No re-reading handoff documents
+- No asking the user what to do next
+- Just continuing work as if nothing changed
+
+The recovery injection includes neutral language ("Older conversation history has been summarized") rather than disruption signals, and explicitly instructs the agent to keep working.
 
 ### Session Recovery
 
 After aggressive context trimming, the AI might otherwise "forget" what it was working on. YaRN compression plus the recovery injection system means the AI gets:
 
-1. A summary of everything that was dropped
-2. The current todo/task state
-3. Recent git activity (commits, working tree status)
+1. A merged summary of everything dropped (accumulated across trim cycles)
+2. The current task anchor (most recent user message - what was being worked on NOW, not at session start)
+3. The current todo/task state
+4. Recent git activity (commits, working tree status)
 
-This is why CLIO agents can work for hours on complex tasks without losing track of their objectives.
+This is why CLIO agents can work for hours on complex tasks across multiple topic transitions without losing track of their current objectives. In long sessions where early work is long done and the agent has moved through several task transitions, the original session-start message is intentionally NOT re-injected - it's stale and misleading. The thread_summary already captures it. The most recent user message represents the actual current work.
 
 ---
 
@@ -261,20 +274,22 @@ AI models have a fixed context window (e.g., 128K tokens for Claude Sonnet, 200K
 ### Three-Stage Trimming
 
 ```
-Stage 1: Proactive Trim (before API call)
-  TokenEstimator checks if messages approach 75% of context window
-  If over: MessageValidator drops oldest message units
-  Dropped messages -> YaRN compression -> summary injected
+Stage 1: Proactive Trim (before API call, every iteration)
+  WorkflowOrchestrator checks messages against 75% of context window
+  If over: MessageValidator drops oldest message units (budget-walk newest to oldest)
+  Dropped messages -> YaRN compression -> thread_summary injected
+  thread_summary is preserved and merged across successive trim cycles
 
-Stage 2: Validation Trim (just before sending)
+Stage 2: Validation Trim (just before sending to API)
   Final check against effective token limit
   Smart unit-based truncation (keeps tool call/result pairs together)
   Post-trim target: 50% of max prompt tokens
 
 Stage 3: Reactive Trim (after API rejection)
   If API returns token_limit_exceeded despite proactive trim:
-  Progressive reduction (50% -> 25% -> minimal)
-  Recovery context injected (summary + todo state + git activity)
+  Progressive reduction across up to 3 retry attempts (50% -> 25% -> minimal)
+  Each retry injects recovery context (YaRN summary + todo state + git activity)
+  Most recent user message preserved as the current task anchor
 ```
 
 ### Token Estimation
@@ -290,10 +305,10 @@ The learned ratio is critical - an inaccurate ratio means proactive trimming eit
 When messages must be dropped, CLIO prioritizes keeping:
 
 1. **System prompt** - Always preserved
-2. **First user message** - The original task (scored at maximum importance)
-3. **Recent messages** - Most recent conversation context
+2. **Most recent user message** - The current task anchor (newest user message, not the session-start message)
+3. **Recent messages** - Most recent conversation context (budget-walked newest to oldest)
 4. **Tool call/result pairs** - Kept together to avoid orphaned results
-5. **High-importance messages** - Those containing keywords like error, bug, fix, critical
+5. **Thread summary** - Compressed history of dropped messages, injected before the conversation
 
 ---
 
