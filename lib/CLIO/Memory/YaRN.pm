@@ -337,21 +337,46 @@ sub compress_messages {
     @files_touched = @files_touched[0..29] if @files_touched > 30;
     @commits       = do { my %s; grep { !$s{$_}++ } reverse @commits };
     @commits       = @commits[0..14] if @commits > 15;
-    @user_requests = @user_requests[-5..-1] if @user_requests > 5;
     @decisions     = @decisions[-3..-1]     if @decisions > 3;
     # Keep last 5 collaboration exchanges (most recent are most relevant)
     @collaboration_exchanges = @collaboration_exchanges[-5..-1]
         if @collaboration_exchanges > 5;
 
-    # Build summary - framed as accumulated session context rather than
-    # signaling "something was lost". The agent should treat this as a
-    # natural part of its working memory, not a recovery event.
+    # Always preserve the FIRST user request (the original session task).
+    # When trimming to last N, we risk losing the original task context
+    # that started the session. Keep it separately if we have many requests.
+    my $first_user_request;
+    if (@user_requests > 8) {
+        $first_user_request = $user_requests[0];
+        @user_requests = @user_requests[-7..-1];
+    }
+    # Cap at 8 total (up from 5)
+
+    # If $original_task is a short confirmation (< 50 chars), find a more
+    # substantive user message to use as the task description. Short messages
+    # like "yes", "go ahead", "looks good" are useless as task context.
+    my $effective_task = $original_task;
+    if (!$effective_task || length($effective_task) < 50) {
+        # Scan user_requests from newest to oldest for something substantive
+        for my $req (reverse @user_requests) {
+            if (length($req) >= 50) {
+                $effective_task = $req;
+                last;
+            }
+        }
+        # Also check the first user request if we preserved it
+        if ((!$effective_task || length($effective_task) < 50) && $first_user_request && length($first_user_request) >= 50) {
+            $effective_task = $first_user_request;
+        }
+    }
+
+    # Build summary
     my @parts;
     push @parts, "<thread_summary>";
     push @parts, "";
 
-    if ($original_task) {
-        push @parts, "Current task: " . substr($original_task, 0, 300);
+    if ($effective_task) {
+        push @parts, "Current task: " . substr($effective_task, 0, 300);
         push @parts, "";
     }
 
@@ -367,8 +392,12 @@ sub compress_messages {
         push @parts, "";
     }
 
-    if (@user_requests) {
+    if (@user_requests || $first_user_request) {
         push @parts, "Recent user requests:";
+        # Include original request first if it was preserved separately
+        if ($first_user_request && !grep { $_ eq $first_user_request } @user_requests) {
+            push @parts, "- [original] $first_user_request";
+        }
         push @parts, "- $_" for @user_requests;
         push @parts, "";
     }

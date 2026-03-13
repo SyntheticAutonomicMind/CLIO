@@ -2422,10 +2422,23 @@ sub _compress_dropped_for_recovery {
         require CLIO::Memory::YaRN;
         my $yarn = CLIO::Memory::YaRN->new();
         
-        # Get current task from most recent user message
+        # Get current task from most recent user message.
+        # If it's a short confirmation (< 50 chars like "yes", "go ahead"),
+        # scan dropped messages for a more substantive user message.
         my $original_task = '';
         if ($last_user_msg && ref($last_user_msg) eq 'HASH') {
             $original_task = $last_user_msg->{content} || '';
+        }
+        
+        if (length($original_task) < 50) {
+            for my $msg (reverse @$messages_to_compress) {
+                next unless $msg->{role} && $msg->{role} eq 'user' && $msg->{content};
+                if (length($msg->{content}) >= 50) {
+                    $original_task = $msg->{content};
+                    log_debug('WorkflowOrchestrator', "Using substantive dropped user message as task context (" . length($original_task) . " chars)");
+                    last;
+                }
+            }
         }
         
         $compressed = $yarn->compress_messages($messages_to_compress,
