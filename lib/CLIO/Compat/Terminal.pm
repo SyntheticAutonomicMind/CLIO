@@ -578,13 +578,54 @@ sub kill_stale_children {
     my @killed;
     my @skipped;
 
+    # Build a set of PIDs we must never kill: ourselves and all our ancestors.
+    # On Linux, killing our own process group would kill CLIO itself.
+    my %protected = ($my_pid => 1);
+    {
+        my $walk = $my_pid;
+        while ($walk > 1) {
+            # Read parent PID from /proc if available (Linux), else use ps
+            my $ppid;
+            if (-f "/proc/$walk/status") {
+                open my $fh, '<', "/proc/$walk/status" or last;
+                while (<$fh>) {
+                    if (/^PPid:\s+(\d+)/) { $ppid = $1; last; }
+                }
+                close $fh;
+            } else {
+                chomp(my $out = `ps -p $walk -o ppid= 2>/dev/null`);
+                $out =~ s/^\s+|\s+$//g;
+                $ppid = $out if $out && $out =~ /^\d+$/;
+            }
+            last unless defined $ppid && $ppid > 1;
+            $protected{$ppid} = 1;
+            $walk = $ppid;
+        }
+    }
+
+    # Also protect processes in CLIO's own process group.
+    # getpgrp() returns our process group ID; any process with the same pgid
+    # is a peer (e.g. the terminal's shell) and must not be killed.
+    my $my_pgid = POSIX::getpgrp();
+
     # Get all descendant PIDs via recursive pgrep
     my @descendants = _get_descendants($my_pid);
     return { killed => \@killed, skipped => \@skipped } unless @descendants;
 
     # Classify each descendant
     for my $pid (@descendants) {
-        next if $pid == $my_pid;
+        # Never kill ourselves or any ancestor process
+        if ($protected{$pid}) {
+            push @skipped, { pid => $pid, reason => 'protected ancestor/self', cmd => '' };
+            next;
+        }
+
+        # Skip processes in CLIO's own process group (terminal shell peers)
+        my $proc_pgid = eval { POSIX::getpgid($pid) };
+        if (defined $proc_pgid && $proc_pgid == $my_pgid) {
+            push @skipped, { pid => $pid, reason => 'same process group as CLIO', cmd => '' };
+            next;
+        }
 
         # Read the command line for this process
         my $cmdline = '';
@@ -597,6 +638,14 @@ sub kill_stale_children {
         # Skip curl processes (active API calls)
         if ($cmdline =~ /\bcurl\b/) {
             push @skipped, { pid => $pid, reason => 'curl (active API)', cmd => _truncate_cmd($cmdline) };
+            next;
+        }
+
+        # Skip perl processes that look like they ARE CLIO (safety net for Linux
+        # systems where a parent perl process may appear as our child due to
+        # clone/fork semantics in some container environments).
+        if ($cmdline =~ /\bperl\b.*\bclio\b/i) {
+            push @skipped, { pid => $pid, reason => 'CLIO process (perl/clio)', cmd => _truncate_cmd($cmdline) };
             next;
         }
 
