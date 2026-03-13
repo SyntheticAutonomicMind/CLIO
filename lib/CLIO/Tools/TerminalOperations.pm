@@ -134,6 +134,8 @@ sub execute_command {
         my $original_cwd = getcwd();
         chdir $working_dir if $working_dir ne '.';
         
+        my $start_time = Time::HiRes::time();
+
         if ($passthrough) {
             $result = $self->_execute_passthrough($command, $timeout, $display_cmd, $working_dir, $session);
         } elsif ($mux && $mux->available()) {
@@ -142,6 +144,20 @@ sub execute_command {
             $result = $self->_execute_captured($command, $timeout, $display_cmd, $working_dir, $session);
         }
         
+        # Append [exit:N | Xms] footer to output so agent develops cost intuition
+        if ($result && $result->{success} && defined $result->{exit_code}) {
+            my $elapsed_ms = int((Time::HiRes::time() - $start_time) * 1000);
+            my $duration_str = $elapsed_ms >= 1000
+                ? sprintf("%.1fs", $elapsed_ms / 1000)
+                : "${elapsed_ms}ms";
+            my $footer = "\n[exit:$result->{exit_code} | $duration_str]";
+            if (ref($result->{output}) eq 'HASH') {
+                $result->{output}{text} = ($result->{output}{text} // '') . $footer;
+            } else {
+                $result->{output} = ($result->{output} // '') . $footer;
+            }
+        }
+
         chdir $original_cwd if $working_dir ne '.';
     };
     
@@ -631,14 +647,24 @@ sub _read_and_cleanup_log {
     
     my $output = '';
     if (-f $log_file) {
-        if (open my $fh, '<:encoding(UTF-8)', $log_file) {
+        if (open my $fh, '<:raw', $log_file) {
             $output = do { local $/; <$fh> };
             close $fh;
         }
         unlink $log_file;
     }
     
-    return $self->_sanitize_terminal_output($output);
+    # Decode as UTF-8, replacing invalid bytes with U+FFFD
+    # Terminal output may contain non-UTF-8 bytes (Latin-1, CP437, raw binary)
+    require Encode;
+    $output = Encode::decode('UTF-8', $output, Encode::FB_DEFAULT);
+    
+    $output = $self->_sanitize_terminal_output($output);
+    
+    # Strip replacement characters left from invalid byte sequences
+    $output =~ s/\x{FFFD}//g;
+    
+    return $output;
 }
 
 =head2 _sanitize_terminal_output
