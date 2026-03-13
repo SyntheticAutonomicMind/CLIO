@@ -623,25 +623,13 @@ sub _compress_dropped {
         require CLIO::Memory::YaRN;
         my $yarn = CLIO::Memory::YaRN->new(debug => $debug);
         
-        # Use the most recent user message as the task context.
-        # If it's a short confirmation (< 50 chars like "yes", "go ahead"),
-        # scan dropped messages for a more substantive user message.
+        # Get task context from most recent user message, falling back to
+        # a substantive message from the dropped set if it's too short.
         my $original_task = '';
         if ($last_user_unit && @{$last_user_unit->{messages}}) {
             $original_task = $last_user_unit->{messages}[0]{content} || '';
         }
-        
-        if (length($original_task) < 50) {
-            # Short or empty - find a better task description from dropped messages
-            for my $msg (reverse @dropped_messages) {
-                next unless $msg->{role} && $msg->{role} eq 'user' && $msg->{content};
-                if (length($msg->{content}) >= 50) {
-                    $original_task = $msg->{content};
-                    log_debug('MessageValidator', "Using substantive dropped user message as task context (" . length($original_task) . " chars)");
-                    last;
-                }
-            }
-        }
+        $original_task = CLIO::Memory::YaRN::find_substantive_task($original_task, \@dropped_messages);
         
         $compressed = $yarn->compress_messages(\@dropped_messages,
             original_task    => $original_task,
