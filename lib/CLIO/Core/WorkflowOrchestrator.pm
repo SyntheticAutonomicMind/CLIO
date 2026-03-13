@@ -804,6 +804,8 @@ sub process_input {
                                 # Extract just the parameters section for clarity
                                 my $params = $tool_def->{function}{parameters};
                                 if ($params) {
+                                    # Use JSON::PP directly for pretty-printed output
+                                    # (CLIO::Util::JSON doesn't expose pretty mode)
                                     require JSON::PP;
                                     $tool_schema = "\n\nCorrect schema for $failed_tool_name:\n" . 
                                                    JSON::PP->new->pretty->encode($params);
@@ -887,7 +889,7 @@ sub process_input {
                         if $session;
                     
                     # Trim conversation history to fit within model's context window
-                    # Remove oldest messages while keeping system prompt, FIRST USER MESSAGE, and recent context
+                    # Remove oldest messages while keeping system prompt, most recent user message, and recent context
                     # Preserve tool_call/tool_result pairs to avoid orphans
                     
                    my $system_prompt = undef;
@@ -1018,7 +1020,7 @@ sub process_input {
                             }
                         }
                     } elsif ($retry_count == 2) {
-                        # Second retry: Keep last 25% of messages + first user message
+                        # Second retry: Keep last 25% of messages + most recent user message
                         my $keep_count = int($original_count / 4);
                         $keep_count = 5 if $keep_count < 5 && $original_count >= 5;  # Keep at least 5
                         
@@ -1050,7 +1052,7 @@ sub process_input {
                             }
                         }
                     } else {
-                        # Third retry: Keep first user message + last 2 messages (minimal context)
+                        # Third retry: Keep most recent user message + last 2 messages (minimal context)
                         # Collect ALL messages for compression (most aggressive)
                         my @dropped_messages = @non_system;
                         
@@ -1095,7 +1097,7 @@ sub process_input {
                             original_count => $original_count,
                             trimmed_count  => $trimmed_count,
                             kept_count     => scalar(@non_system),
-                            first_user_preserved => ($last_user_msg ? 'YES' : 'NO'),
+                            last_user_preserved => ($last_user_msg ? 'YES' : 'NO'),
                         },
                     ) if $ENV{CLIO_TRIM_DIAG};
 
@@ -2422,24 +2424,13 @@ sub _compress_dropped_for_recovery {
         require CLIO::Memory::YaRN;
         my $yarn = CLIO::Memory::YaRN->new();
         
-        # Get current task from most recent user message.
-        # If it's a short confirmation (< 50 chars like "yes", "go ahead"),
-        # scan dropped messages for a more substantive user message.
+        # Get task context from most recent user message, falling back to
+        # a substantive message from the dropped set if it's too short.
         my $original_task = '';
         if ($last_user_msg && ref($last_user_msg) eq 'HASH') {
             $original_task = $last_user_msg->{content} || '';
         }
-        
-        if (length($original_task) < 50) {
-            for my $msg (reverse @$messages_to_compress) {
-                next unless $msg->{role} && $msg->{role} eq 'user' && $msg->{content};
-                if (length($msg->{content}) >= 50) {
-                    $original_task = $msg->{content};
-                    log_debug('WorkflowOrchestrator', "Using substantive dropped user message as task context (" . length($original_task) . " chars)");
-                    last;
-                }
-            }
-        }
+        $original_task = CLIO::Memory::YaRN::find_substantive_task($original_task, $messages_to_compress);
         
         $compressed = $yarn->compress_messages($messages_to_compress,
             original_task    => $original_task,
