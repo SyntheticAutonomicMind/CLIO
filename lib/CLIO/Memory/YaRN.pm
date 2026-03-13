@@ -352,23 +352,11 @@ sub compress_messages {
     }
     # Cap at 8 total (up from 5)
 
-    # If $original_task is a short confirmation (< 50 chars), find a more
-    # substantive user message to use as the task description. Short messages
-    # like "yes", "go ahead", "looks good" are useless as task context.
-    my $effective_task = $original_task;
-    if (!$effective_task || length($effective_task) < 50) {
-        # Scan user_requests from newest to oldest for something substantive
-        for my $req (reverse @user_requests) {
-            if (length($req) >= 50) {
-                $effective_task = $req;
-                last;
-            }
-        }
-        # Also check the first user request if we preserved it
-        if ((!$effective_task || length($effective_task) < 50) && $first_user_request && length($first_user_request) >= 50) {
-            $effective_task = $first_user_request;
-        }
-    }
+    # Find a substantive task description. Short confirmations like "yes" or
+    # "go ahead" are useless as task context - scan user_requests for better.
+    my @all_requests = @user_requests;
+    unshift @all_requests, $first_user_request if $first_user_request;
+    my $effective_task = find_substantive_task($original_task, \@all_requests);
 
     # Build summary
     my @parts;
@@ -455,6 +443,44 @@ sub compress_messages {
                 ? $compressed_tokens / $original_tokens : 0,
         },
     };
+}
+
+=head2 find_substantive_task
+
+Class method. Given a candidate task string and a source of user messages,
+returns a substantive task description (>= 50 chars). Falls back to the
+candidate if no better option is found.
+
+The messages parameter accepts either:
+- An arrayref of message hashes ({role => 'user', content => '...'})
+- An arrayref of plain strings (treated as user messages)
+
+    my $task = CLIO::Memory::YaRN::find_substantive_task($candidate, \@messages);
+
+=cut
+
+sub find_substantive_task {
+    my ($candidate, $messages) = @_;
+    my $min_len = 50;
+
+    return $candidate if $candidate && length($candidate) >= $min_len;
+
+    # Scan messages newest-first for a substantive user message
+    if ($messages && ref($messages) eq 'ARRAY') {
+        for my $item (reverse @$messages) {
+            if (ref($item) eq 'HASH') {
+                next unless ($item->{role} || '') eq 'user';
+                my $content = $item->{content} || '';
+                return $content if length($content) >= $min_len;
+            } else {
+                # Plain string (e.g. from @user_requests)
+                return $item if defined $item && length($item) >= $min_len;
+            }
+        }
+    }
+
+    # No substantive message found - return whatever we have
+    return $candidate || '';
 }
 
 # Parse structured sections from a previous thread_summary to seed extraction buckets.

@@ -260,7 +260,8 @@ sub _execute_captured {
         if ($pid == 0) {
             # Child: create new process group so we can kill the entire tree
             POSIX::setpgid(0, 0);
-            exec("/bin/sh", "-c", "($command) > \Q$log_file\E 2>&1")
+            my $escaped_log = _shell_escape($log_file);
+            exec("/bin/sh", "-c", "($command) > $escaped_log 2>&1")
                 or POSIX::_exit(127);  # exec failed
         }
         
@@ -328,7 +329,9 @@ sub _execute_captured {
         if ($@ =~ /timeout/) {
             $exit_code = 124;
         } else {
-            die $@;
+            # Fork or other unexpected failure - log and set error exit code
+            log_warning('TerminalOps', "Command execution error: $@");
+            $exit_code = 1 unless defined $exit_code;
         }
     }
     
@@ -380,7 +383,8 @@ sub _execute_passthrough {
             # Child: create new process group for clean cleanup
             POSIX::setpgid(0, 0);
             # Exec the command with tee for output capture
-            exec("/bin/sh", "-c", "$command 2>&1 | tee \Q$log_file\E")
+            my $escaped_log = _shell_escape($log_file);
+            exec("/bin/sh", "-c", "$command 2>&1 | tee $escaped_log")
                 or POSIX::_exit(127);
         }
         
@@ -414,9 +418,16 @@ sub _execute_passthrough {
         }
     }
     
-    # Restore caller's ALRM handler and re-arm their alarm
+    # Restore caller's ALRM handler and re-arm their alarm.
+    # alarm(0) returns 0 both when no alarm was pending AND when <1 second
+    # remained (integer floor). If a handler existed, always re-arm with at
+    # least 1 second so the periodic timer doesn't go dead.
     $SIG{ALRM} = $saved_alrm || 'DEFAULT';
-    alarm($saved_alarm_remaining) if $saved_alarm_remaining;
+    if ($saved_alrm && ref($saved_alrm) eq 'CODE') {
+        alarm($saved_alarm_remaining || 1);
+    } elsif ($saved_alarm_remaining) {
+        alarm($saved_alarm_remaining);
+    }
     
     if ($err) {
         if ($err =~ /timeout/) {
