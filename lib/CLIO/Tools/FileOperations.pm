@@ -577,6 +577,21 @@ sub read_file {
     return $self->error_result("File not found: $path") unless -f $path;
     return $self->error_result("File not readable: $path") unless -r $path;
     
+    # Binary file detection - check first 8KB for null bytes
+    my $binary_check = $self->_detect_binary($path);
+    if ($binary_check->{is_binary}) {
+        my $file_size = -s $path // 0;
+        my $size_kb = int($file_size / 1024);
+        my $size_str = $file_size < 1024 ? "${file_size}B" : "${size_kb}KB";
+        my $type = $binary_check->{type};
+        return $self->error_result(
+            "Binary file detected ($type, $size_str): $path\n" .
+            "read_file only works with text files. Options:\n" .
+            "- For images: describe the path to the user and ask them to view it\n" .
+            "- For other binary files: use terminal_operations to run 'file $path' or 'xxd $path | head'"
+        );
+    }
+
     log_debug('FileOperations', "Reading file: $path (lines $start_line-" . ($end_line || 'EOF') . ")");
     
     # Read file
@@ -1275,6 +1290,45 @@ sub _truncate {
     return '' unless defined $text;
     return $text if length($text) <= $max;
     return substr($text, 0, $max) . '...';
+}
+
+=head2 _detect_binary
+
+Checks whether a file appears to be binary by sampling the first 8KB.
+Returns a hashref with {is_binary, type}.
+
+=cut
+
+sub _detect_binary {
+    my ($self, $path) = @_;
+
+    open my $fh, '<:raw', $path or return { is_binary => 0 };
+    my $sample = '';
+    read $fh, $sample, 8192;
+    close $fh;
+
+    # Null bytes are the clearest binary indicator
+    if ($sample =~ /\x00/) {
+        # Identify common image/binary types by magic bytes
+        my $type = 'binary';
+        if (substr($sample, 0, 4) eq "\x89PNG")       { $type = 'image/png' }
+        elsif (substr($sample, 0, 2) eq "\xff\xd8")   { $type = 'image/jpeg' }
+        elsif (substr($sample, 0, 4) eq 'GIF8')       { $type = 'image/gif' }
+        elsif (substr($sample, 0, 4) eq 'RIFF')       { $type = 'image/webp' }
+        elsif (substr($sample, 0, 4) eq "\x1f\x8b\x08\x00") { $type = 'gzip' }
+        elsif (substr($sample, 0, 2) eq 'PK')         { $type = 'zip/jar' }
+        elsif (substr($sample, 0, 4) eq '%PDF')       { $type = 'pdf' }
+        return { is_binary => 1, type => $type };
+    }
+
+    # High ratio of non-ASCII/control chars also indicates binary
+    my $non_text = () = $sample =~ /[\x01-\x08\x0e-\x1f\x7f-\x9f]/g;
+    my $ratio = length($sample) > 0 ? $non_text / length($sample) : 0;
+    if ($ratio > 0.10) {
+        return { is_binary => 1, type => 'binary (high non-text ratio)' };
+    }
+
+    return { is_binary => 0 };
 }
 
 sub read_tool_result {
