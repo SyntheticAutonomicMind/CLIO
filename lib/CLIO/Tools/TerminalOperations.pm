@@ -266,7 +266,7 @@ sub _execute_captured {
             if ($session && $session->state() && $session->state()->{user_interrupted}) {
                 log_info('TerminalOps', "User interrupt during command execution, killing child process group $pid");
                 $interrupted = 1;
-                kill('-TERM', $pid);  # Kill entire process group
+                kill('TERM', -$pid);  # Kill entire process group (POSIX: negative PID = group)
                 # Give it a moment to clean up
                 my $wait_start = Time::HiRes::time();
                 while (Time::HiRes::time() - $wait_start < 2) {
@@ -275,7 +275,7 @@ sub _execute_captured {
                 }
                 # Force kill if still alive
                 if (waitpid($pid, POSIX::WNOHANG()) <= 0) {
-                    kill('-KILL', $pid);
+                    kill('KILL', -$pid);  # Force kill entire process group
                     waitpid($pid, 0);
                 }
                 $exit_code = 130;  # Standard exit code for interrupt
@@ -285,14 +285,14 @@ sub _execute_captured {
             if (Time::HiRes::time() - $start > $timeout) {
                 $timed_out = 1;
                 log_warning('TerminalOps', "Command timeout after ${timeout}s, killing child process group $pid");
-                kill('-TERM', $pid);  # Kill entire process group
+                kill('TERM', -$pid);  # Kill entire process group (POSIX: negative PID = group)
                 my $wait_start = Time::HiRes::time();
                 while (Time::HiRes::time() - $wait_start < 2) {
                     last if waitpid($pid, POSIX::WNOHANG()) > 0;
                     Time::HiRes::usleep(50_000);
                 }
                 if (waitpid($pid, POSIX::WNOHANG()) <= 0) {
-                    kill('-KILL', $pid);
+                    kill('KILL', -$pid);  # Force kill entire process group
                     waitpid($pid, 0);
                 }
                 last;
@@ -386,14 +386,14 @@ sub _execute_passthrough {
     # On timeout, kill the entire process group
     if ($err && $err =~ /timeout/ && $child_pid && $child_pid > 0) {
         log_warning('TerminalOps', "Passthrough command timeout, killing process group $child_pid");
-        kill('-TERM', $child_pid);
+        kill('TERM', -$child_pid);  # POSIX portable: negative PID = process group
         my $wait_start = Time::HiRes::time();
         while (Time::HiRes::time() - $wait_start < 2) {
             last if waitpid($child_pid, POSIX::WNOHANG()) > 0;
             Time::HiRes::usleep(50_000);
         }
         if (waitpid($child_pid, POSIX::WNOHANG()) <= 0) {
-            kill('-KILL', $child_pid);
+            kill('KILL', -$child_pid);  # Force kill
             waitpid($child_pid, 0);
         }
     }
