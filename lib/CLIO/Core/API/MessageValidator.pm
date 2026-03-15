@@ -244,8 +244,34 @@ sub validate_and_truncate {
     }
     
     # Combine: system + compressed summary + validated conversation
-    # The most recent user message is already in @validated (it's recent enough
-    # to be included by the token-budget walk). No need to inject it separately.
+    # Ensure at least one user message exists in the conversation.
+    # In long autonomous tool loops (50+ iterations), the original user message
+    # can be far enough back that the budget walk drops it. Without a user
+    # message, the model sees only assistant+tool pairs and may hallucinate
+    # that it's in a new session with no active task.
+    my $has_user_msg = grep { $_->{role} && $_->{role} eq 'user' } @validated;
+    if (!$has_user_msg && $last_user_unit && @{$last_user_unit->{messages}}) {
+        my $user_content = $last_user_unit->{messages}[0]{content} || '';
+        if (length($user_content) > 0) {
+            # Inject the most recent user message at the start of the conversation
+            # so the model knows there's an active task
+            unshift @validated, { role => 'user', content => $user_content };
+            log_info('MessageValidator', "Injected preserved user message (budget walk dropped it)");
+        }
+    }
+    if (!$has_user_msg && !($last_user_unit && @{$last_user_unit->{messages}})) {
+        # No user unit found at all - extract task from thread_summary as fallback
+        my $task_content = '';
+        if ($summary_to_use && $summary_to_use->{content}) {
+            if ($summary_to_use->{content} =~ /Current task:\s*(.+?)(?:\n\n|\z)/s) {
+                $task_content = $1;
+            }
+        }
+        if (length($task_content) > 0) {
+            unshift @validated, { role => 'user', content => $task_content };
+            log_info('MessageValidator', "Injected synthetic user message from thread_summary task");
+        }
+    }
     my @truncated;
     push @truncated, $system_msg if $system_msg;
     push @truncated, $summary_to_use if $summary_to_use;
