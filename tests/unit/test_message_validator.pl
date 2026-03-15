@@ -135,4 +135,68 @@ use_ok('CLIO::Core::API::MessageValidator');
     is(scalar @$errors, 0, "Empty preflight returns no errors");
 }
 
+# Test: user message injection after trim drops user message in autonomous tool loop
+# This tests the fix for the hallucination bug where the model saw no user message
+# after a proactive trim during a long autonomous tool loop, causing it to think
+# it was a new session.
+{
+    # Build a message array simulating a long autonomous tool loop:
+    # system prompt + user message + many (assistant+tool) pairs
+    # Set max_prompt_tokens low enough that the budget walk drops the user message
+    my @messages;
+    push @messages, { role => 'system', content => 'You are a helpful assistant.' };
+    push @messages, { role => 'user', content => 'Please investigate the Usurper source code thoroughly.' };
+    
+    # Add 40 assistant+tool pairs (simulating autonomous tool loop)
+    for my $i (1..40) {
+        my $tc_id = "tc_$i";
+        push @messages, {
+            role => 'assistant',
+            content => "Reading file $i...",
+            tool_calls => [{ id => $tc_id, type => 'function', function => { name => 'file_operations', arguments => '{"operation":"read_file","path":"file'.$i.'.txt"}' } }],
+        };
+        push @messages, {
+            role => 'tool',
+            tool_call_id => $tc_id,
+            content => ('x' x 500),  # Each tool result is ~200 tokens
+        };
+    }
+    
+    # Set max_prompt_tokens very low so the budget walk only keeps the most recent messages
+    my $result = CLIO::Core::API::MessageValidator::validate_and_truncate(
+        messages           => \@messages,
+        model_capabilities => { max_prompt_tokens => 8000 },
+        token_ratio        => 2.5,
+    );
+    
+    # Verify: the result should contain at least one user message
+    my @user_msgs = grep { $_->{role} && $_->{role} eq 'user' } @$result;
+    ok(scalar(@user_msgs) > 0, "User message preserved after trim in autonomous tool loop");
+    
+    # The user message content should match the original request
+    if (@user_msgs) {
+        like($user_msgs[0]{content}, qr/Usurper/, "Preserved user message contains original task");
+    }
+}
+
+# Test: user message NOT injected when conversation already has a user message
+{
+    my @messages;
+    push @messages, { role => 'system', content => 'You are a helpful assistant.' };
+    push @messages, { role => 'user', content => 'Hello world' };
+    push @messages, { role => 'assistant', content => 'Hi there!' };
+    push @messages, { role => 'user', content => 'Now do something else' };
+    push @messages, { role => 'assistant', content => 'OK doing it' };
+    
+    my $result = CLIO::Core::API::MessageValidator::validate_and_truncate(
+        messages           => \@messages,
+        model_capabilities => { max_prompt_tokens => 128000 },
+        token_ratio        => 2.5,
+    );
+    
+    # Count user messages - should be exactly 2 (not 3)
+    my @user_msgs = grep { $_->{role} && $_->{role} eq 'user' } @$result;
+    is(scalar(@user_msgs), 2, "No extra user message injected when conversation has user messages");
+}
+
 done_testing();
