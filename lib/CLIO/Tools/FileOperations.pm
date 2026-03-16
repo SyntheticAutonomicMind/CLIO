@@ -496,6 +496,22 @@ Returns: Hashref with:
 
 =cut
 
+# Check if a file contains null bytes in its first N bytes
+sub _has_null_bytes {
+    my ($self, $path, $sample_size) = @_;
+    $sample_size ||= 8192;
+    
+    my $fh;
+    return 0 unless open $fh, '<:raw', $path;
+    
+    my $buf;
+    my $bytes_read = read($fh, $buf, $sample_size);
+    close $fh;
+    
+    return 0 unless $bytes_read;
+    return index($buf, "\x00") >= 0;
+}
+
 sub _check_sandbox {
     my ($self, $path, $context) = @_;
     
@@ -982,6 +998,12 @@ sub grep_search {
     my $is_regex = $params->{is_regex} || 0;
     my $max_results = $params->{max_results} || 50;  # Prevent runaway searches
     
+    # Safeguards to prevent hangs on binary/large/problematic files
+    my $MAX_FILE_SIZE    = 1_048_576;  # 1MB - skip files larger than this
+    my $MAX_LINE_LENGTH  = 10_240;     # 10KB - skip file if any line exceeds this
+    my $SEARCH_TIMEOUT   = 120;        # 2 minutes wall-clock limit
+    my $BINARY_CHECK_SIZE = 8_192;     # 8KB sample for null byte detection
+    
     return $self->error_result("Missing 'query' parameter") unless $query;
     
     log_debug('FileOp', "Grep search: query=$query, pattern=$pattern, regex=$is_regex, max_results=$max_results");
@@ -990,7 +1012,10 @@ sub grep_search {
     eval {
         my @matches;
         my $files_searched = 0;
+        my $files_skipped = 0;
         my $search_truncated = 0;
+        my $timed_out = 0;
+        my $start_time = time();
         
         # First, find files matching pattern
         my $file_result = $self->file_search({ pattern => $pattern }, $context);
@@ -1040,8 +1065,35 @@ sub grep_search {
             my $path = $file->{path};
             $files_searched++;
             
-            # Skip binary files
-            next unless -T $path;
+            # Wall-clock timeout check
+            if (time() - $start_time > $SEARCH_TIMEOUT) {
+                $timed_out = 1;
+                $search_truncated = 1;
+                log_debug('FileOp', "Grep search timed out after ${SEARCH_TIMEOUT}s");
+                last;
+            }
+            
+            # Skip files larger than size limit
+            my $file_size = -s $path;
+            if (defined $file_size && $file_size > $MAX_FILE_SIZE) {
+                $files_skipped++;
+                log_debug('FileOp', "Skipping large file ($file_size bytes): $path");
+                next;
+            }
+            
+            # Skip binary files - enhanced detection
+            # First check Perl's -T heuristic
+            unless (-T $path) {
+                $files_skipped++;
+                next;
+            }
+            
+            # Then sample for null bytes (catches files -T misclassifies)
+            if ($self->_has_null_bytes($path, $BINARY_CHECK_SIZE)) {
+                $files_skipped++;
+                log_debug('FileOp', "Skipping file with null bytes: $path");
+                next;
+            }
             
             # Open in raw mode and let Perl handle encoding gracefully
             my $fh;
@@ -1053,6 +1105,13 @@ sub grep_search {
             my $line_num = 0;
             while (my $line = <$fh>) {
                 $line_num++;
+                
+                # Skip file if line is excessively long (binary/minified/data)
+                if (length($line) > $MAX_LINE_LENGTH) {
+                    log_debug('FileOp', "Skipping file with long line (${\length($line)} bytes) at line $line_num: $path");
+                    $files_skipped++;
+                    last;
+                }
                 
                 # Regex matching is encoding-agnostic for ASCII queries
                 if ($line =~ $search_regex) {
@@ -1077,9 +1136,11 @@ sub grep_search {
         log_debug('FileOperations', "Found " . scalar(@matches) . " matches (limited to $max_results) across " .
                      $files_searched . " files searched");
         
-        my $match_summary = scalar(@matches) . " matches in " . $files_searched . " files";
+        my $match_summary = scalar(@matches) . " matches in " . $files_searched . " files"
+            . ($files_skipped ? " ($files_skipped skipped)" : "");
+        my $timeout_note = $timed_out ? " (timed out after ${SEARCH_TIMEOUT}s)" : "";
         my $truncated_note = ($search_truncated || scalar(@matches) >= $max_results) ? " (results may be truncated)" : "";
-        my $action_desc = "searching for '$query' ($match_summary)$truncated_note";
+        my $action_desc = "searching for '$query' ($match_summary)$timeout_note$truncated_note";
         
         $result = $self->success_result(
             \@matches,
