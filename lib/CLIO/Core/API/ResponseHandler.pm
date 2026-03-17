@@ -703,6 +703,7 @@ sub release_broker_slot {
 
     my $request_id = $self->{_current_broker_request_id};
    eval {
+       local $SIG{PIPE} = 'IGNORE';
        $self->{broker_client}->release_api_slot(
            request_id => $request_id,
            status     => $status,

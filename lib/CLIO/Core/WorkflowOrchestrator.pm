@@ -338,6 +338,10 @@ Returns:
 sub process_input {
     my ($self, $user_input, $session, %opts) = @_;
     
+    # Protect against SIGPIPE from broken broker socket connections
+    # This prevents crashes when the broker process dies or network fails
+    local $SIG{PIPE} = 'IGNORE';
+    
     # Extract callbacks
     my $on_chunk = $opts{on_chunk};
     my $on_system_message = $opts{on_system_message};  # Callback for system messages

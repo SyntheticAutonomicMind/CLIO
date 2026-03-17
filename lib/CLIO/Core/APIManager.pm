@@ -1541,6 +1541,7 @@ sub send_request {
     my $broker_request_id;
     if ($self->{broker_client}) {
         # Wait for an API slot from the broker
+        local $SIG{PIPE} = 'IGNORE';
         my $slot_result = $self->{broker_client}->wait_for_api_slot(120);
         $broker_request_id = $slot_result->{request_id};
         
@@ -2065,6 +2066,7 @@ sub send_request_streaming {
     my $broker_request_id;
     if ($self->{broker_client}) {
         # Wait for an API slot from the broker
+        local $SIG{PIPE} = 'IGNORE';
         my $slot_result = $self->{broker_client}->wait_for_api_slot(120);
         $broker_request_id = $slot_result->{request_id};
         
