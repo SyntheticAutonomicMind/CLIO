@@ -485,6 +485,9 @@ sub _resume_clio_input {
         require CLIO::Compat::Terminal;
         # Force full restoration to pristine state
         CLIO::Compat::Terminal::reset_terminal();
+        # Re-enable cbreak mode so ReadKey(-1) in Chat.pm ALRM handler works
+        # This is critical for interrupt detection (ESC key, Ctrl-C)
+        CLIO::Compat::Terminal::ReadMode(1);
     };
     if ($@) {
         log_debug('TerminalOps', "Could not resume terminal: $@");
