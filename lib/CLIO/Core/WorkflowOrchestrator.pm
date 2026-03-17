@@ -467,7 +467,7 @@ sub process_input {
     my $max_retries = 3;  # Maximum retries for API errors (malformed JSON, etc.)
     my $premature_stop_retries = 0;  # Track retries for premature workflow stops
     my $max_premature_stop_retries = 2;  # Max auto-retries for premature stops
-    my $max_server_retries = 20;  # Higher limit for server/network errors (502, 503, 599)
+    my $max_server_retries = 30;  # Higher limit for server/network errors (502, 503, 599)
     
     # Session-level error budget: Limit total errors across all iterations
     # This prevents cascading failures from consuming the entire session
@@ -766,8 +766,14 @@ sub process_input {
                 
                 # Determine error type for logging
                 my $error_type = $error =~ /rate limit/i ? "rate limit" : "server error";
+
+                # Add 1s buffer on top of server-specified retry delay for rate limits
+                if ($api_response->{error_type} && $api_response->{error_type} eq 'rate_limit' && $retry_delay > 0) {
+                    $retry_delay += 1;
+                }
+
                 my $system_msg = "Temporary $error_type detected. Retrying in ${retry_delay}s... (attempt $retry_count/$retry_limit)";
-                
+
                 # Unsupported parameter (e.g. previous_response_id) - silent instant retry
                 # ResponseHandler already cleared the offending parameter
                 if ($api_response->{error_type} && $api_response->{error_type} eq 'unsupported_param') {
