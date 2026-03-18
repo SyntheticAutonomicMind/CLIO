@@ -64,6 +64,9 @@ use constant DEFAULT_CONFIG => {
     show_thinking => 0,         # Show model's reasoning/thinking output (default: off)
     # Agent iteration limit (0 = unlimited)
     max_iterations => 0,
+    # Feature switches (tools available to agent)
+    enable_subagents => 1,  # Enable agent_operations tool (sub-agent spawning)
+    enable_remote => 1,     # Enable remote_execution tool (SSH remote tasks)
     # GitHub Copilot API version headers (update to match latest vscode-copilot-chat)
     editor_version => 'vscode/2.0.0',  # Editor version for API requests
     plugin_version => 'copilot-chat/0.38.0',  # Plugin version for API requests
