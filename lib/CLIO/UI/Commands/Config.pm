@@ -201,6 +201,8 @@ sub _display_config_help {
     $self->display_key_value("terminal_passthrough", "Force direct terminal access", 25);
     $self->display_key_value("terminal_autodetect", "Auto-detect interactive commands", 25);
     $self->display_key_value("redact_level", "Redaction level: strict|standard|api_permissive|pii|off", 25);
+    $self->display_key_value("enable_subagents", "Enable/disable sub-agent spawning (on/off)", 25);
+    $self->display_key_value("enable_remote", "Enable/disable remote execution (on/off)", 25);
     $self->writeline("", markdown => 0);
     
     $self->display_section_header("REDACTION LEVELS");
@@ -216,12 +218,15 @@ sub _display_config_help {
     $self->display_command_row("/config set theme photon", "Use photon theme", 35);
     $self->display_command_row("/config workdir ~/projects", "Change working directory", 35);
     $self->display_command_row("/config set redact_level api_permissive", "Allow API keys in agent output", 35);
+    $self->display_command_row("/config set enable_subagents off", "Disable sub-agent tool", 35);
+    $self->display_command_row("/config set enable_remote off", "Disable remote execution tool", 35);
     $self->writeline("", markdown => 0);
     
     $self->display_section_header("TIPS");
     $self->display_tip("For API settings, use /api set");
     $self->display_tip("terminal_autodetect detects vim, nano, GPG, ssh, etc.");
     $self->display_tip("Use api_permissive when agent needs to work with API tokens");
+    $self->display_tip("Feature toggles take effect on next session start");
     $self->writeline("", markdown => 0);
 }
 
@@ -238,7 +243,7 @@ sub _handle_config_set {
     
     unless ($key) {
         $self->display_error_message("Usage: /config set <key> <value>");
-        $self->writeline("Keys: style, theme, working_directory, terminal_passthrough, terminal_autodetect, redact_level", markdown => 0);
+        $self->writeline("Keys: style, theme, working_directory, terminal_passthrough, terminal_autodetect, redact_level, enable_subagents, enable_remote", markdown => 0);
         return;
     }
     
@@ -256,6 +261,8 @@ sub _handle_config_set {
         terminal_autodetect => 1,
         redact_level => 1,
         redact_secrets => 1,  # Deprecated, for backward compat
+        enable_subagents => 1,
+        enable_remote => 1,
     );
     
     unless ($allowed{$key}) {
@@ -313,7 +320,7 @@ sub _handle_config_set {
     }
     
     # Handle boolean values for terminal toggle settings
-    if ($key =~ /^terminal_/) {
+    if ($key =~ /^(terminal_|enable_)/) {
         if ($value =~ /^(true|1|yes|on)$/i) {
             $value = 1;
         } elsif ($value =~ /^(false|0|no|off)$/i) {
@@ -338,6 +345,26 @@ sub _handle_config_set {
             } else {
                 $self->display_info_message("Auto-detect disabled: All commands will capture output unless terminal_passthrough is true");
             }
+        } elsif ($key eq 'enable_subagents') {
+            if ($value) {
+                $self->display_info_message("Sub-agents enabled: agent_operations tool will be available");
+            } else {
+                $self->display_info_message("Sub-agents disabled: agent_operations tool will be hidden from AI");
+            }
+            $self->{config}->set($key, $value);
+            $self->{config}->save();
+            $self->display_system_message("Restart session for changes to take effect");
+            return;
+        } elsif ($key eq 'enable_remote') {
+            if ($value) {
+                $self->display_info_message("Remote execution enabled: remote_execution tool will be available");
+            } else {
+                $self->display_info_message("Remote execution disabled: remote_execution tool will be hidden from AI");
+            }
+            $self->{config}->set($key, $value);
+            $self->{config}->save();
+            $self->display_system_message("Restart session for changes to take effect");
+            return;
         }
     }
     
@@ -484,6 +511,16 @@ sub show_global_config {
     );
     my $redact_display = "$redact_level " . ($level_desc{$redact_level} || '');
     $self->display_key_value("Redact Level", $redact_display, 18);
+    
+    # Feature Switches
+    $self->writeline("", markdown => 0);
+    $self->display_section_header("Features");
+    my $subagents = $self->{config}->get('enable_subagents');
+    $subagents = 1 unless defined $subagents;
+    my $remote = $self->{config}->get('enable_remote');
+    $remote = 1 unless defined $remote;
+    $self->display_key_value("Sub-agents", $subagents ? 'enabled' : 'disabled', 18);
+    $self->display_key_value("Remote Exec", $remote ? 'enabled' : 'disabled', 18);
     
     # Paths
     $self->writeline("", markdown => 0);

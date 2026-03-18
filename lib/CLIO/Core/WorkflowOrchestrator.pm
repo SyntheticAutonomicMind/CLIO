@@ -108,6 +108,9 @@ sub new {
     
     # Initialize tool error guidance
     $self->{error_guidance} = CLIO::Core::ToolErrorGuidance->new();
+
+    # Store config reference for tool registration decisions
+    $self->{config} = $args{config};
     
     # Initialize tool registry
     require CLIO::Tools::Registry;
@@ -285,23 +288,27 @@ sub _register_default_tools {
     );
     
     # Register RemoteExecution tool (blocked for sub-agents)
-    unless ($is_subagent && $blocked_for_subagent{'remote_execution'}) {
+    my $remote_enabled = $self->{config} ? $self->{config}->get('enable_remote') : 1;
+    unless (($is_subagent && $blocked_for_subagent{'remote_execution'}) || !$remote_enabled) {
         require CLIO::Tools::RemoteExecution;
         $self->{tool_registry}->register_tool(
             CLIO::Tools::RemoteExecution->new(debug => $self->{debug})
         );
     } else {
-        log_debug('WorkflowOrchestrator', "Blocked remote_execution for sub-agent");
+        my $reason = !$remote_enabled ? "disabled in config" : "sub-agent restriction";
+        log_debug('WorkflowOrchestrator', "Blocked remote_execution: $reason");
     }
     
     # Register SubAgentOperations tool (blocked for sub-agents to prevent fork bombs)
-    unless ($is_subagent && $blocked_for_subagent{'agent_operations'}) {
+    my $subagents_enabled = $self->{config} ? $self->{config}->get('enable_subagents') : 1;
+    unless (($is_subagent && $blocked_for_subagent{'agent_operations'}) || !$subagents_enabled) {
         require CLIO::Tools::SubAgentOperations;
         $self->{tool_registry}->register_tool(
             CLIO::Tools::SubAgentOperations->new(debug => $self->{debug})
         );
     } else {
-        log_debug('WorkflowOrchestrator', "Blocked agent_operations for sub-agent");
+        my $reason = !$subagents_enabled ? "disabled in config" : "sub-agent restriction";
+        log_debug('WorkflowOrchestrator', "Blocked agent_operations: $reason");
     }
     
     # Register ApplyPatch tool (diff-based file editing)
