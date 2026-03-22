@@ -181,9 +181,18 @@ Display help for /api commands using unified style.
 sub _display_api_help {
     my ($self) = @_;
     
-    $self->display_command_header("API");
+    $self->display_command_header("API - Configure AI Provider");
     
-    $self->display_section_header("COMMANDS");
+    $self->display_section_header("QUICK START - Discover Available Providers");
+    $self->writeline("  Type: /api providers              Show all available AI providers", markdown => 0);
+    $self->writeline("  Then: /api providers <name>      Get setup instructions for that provider", markdown => 0);
+    $self->writeline("", markdown => 0);
+    
+    $self->display_section_header("SETUP COMMANDS");
+    $self->display_command_row("/api show", "Display current configuration", 40);
+    $self->writeline("", markdown => 0);
+    
+    $self->display_section_header("ALL COMMANDS");
     $self->display_command_row("/api show", "Display current API configuration", 40);
     $self->display_command_row("/api set model <name>", "Set AI model", 40);
     $self->display_command_row("/api set model <provider>/<model>", "Set model + auto-switch provider", 40);
@@ -319,24 +328,66 @@ sub _display_api_providers {
         $max_provider_length = length($display_name) if length($display_name) > $max_provider_length;
     }
     
-    # Table header
-    my $header = $self->colorize("PROVIDER", 'LABEL') . 
-                 " " x ($max_provider_length - 8 + 4) .
-                 $self->colorize("DEFAULT MODEL", 'LABEL');
-    $self->writeline($header, markdown => 0);
-    $self->writeline($self->colorize("─" x 77, 'DIM'), markdown => 0);
+    # Separate providers by type for clearer display
+    my (@local_providers, @cloud_providers, @experimental_providers);
     
     for my $prov_name (@providers) {
         my $prov = CLIO::Providers::get_provider($prov_name);
         next unless $prov;
         
-        my $display_name = $prov->{name} || $prov_name;
-        my $model = $prov->{model} || 'N/A';
+        if ($prov->{experimental}) {
+            push @experimental_providers, { name => $prov_name, prov => $prov };
+        } elsif ($prov->{api_base} && $prov->{api_base} =~ /localhost/i) {
+            # Local provider (llama.cpp, lmstudio, sam)
+            push @local_providers, { name => $prov_name, prov => $prov };
+        } else {
+            push @cloud_providers, { name => $prov_name, prov => $prov };
+        }
+    }
+    
+    # Helper to format a provider line
+    my $format_provider_line = sub {
+        my ($prov_name, $prov) = @_;
         
-        my $line = "  " . 
-                   $self->colorize(sprintf("%-" . $max_provider_length . "s", $display_name), 'PROMPT') .
-                   "  " . $model;
-        $self->writeline($line, markdown => 0);
+        # Clean display name - remove "(Local)" suffix since we already have categories
+        my $display_name = $prov->{name} || $prov_name;
+        $display_name =~ s/\s*\(Local\)\s*$//;
+        
+        # Format: "  GitHub Copilot            github_copilot"
+        # Show property name in dimmed text for easy copy/paste
+        return sprintf("  %-24s %s", 
+                      $self->colorize($display_name, 'PROMPT'),
+                      $self->colorize($prov_name, 'DIM'));
+    };
+    
+    # Display local providers first
+    if (@local_providers) {
+        $self->writeline($self->colorize("LOCAL PROVIDERS", 'SUCCESS'), markdown => 0);
+        $self->writeline($self->colorize("─" x 70, 'DIM'), markdown => 0);
+        for my $item (@local_providers) {
+            $self->writeline($format_provider_line->($item->{name}, $item->{prov}), markdown => 0);
+        }
+        $self->writeline("", markdown => 0);
+    }
+    
+    # Display cloud providers
+    if (@cloud_providers) {
+        $self->writeline($self->colorize("CLOUD PROVIDERS", 'DATA'), markdown => 0);
+        $self->writeline($self->colorize("─" x 70, 'DIM'), markdown => 0);
+        for my $item (@cloud_providers) {
+            $self->writeline($format_provider_line->($item->{name}, $item->{prov}), markdown => 0);
+        }
+        $self->writeline("", markdown => 0);
+    }
+    
+    # Display experimental providers
+    if (@experimental_providers) {
+        $self->writeline($self->colorize("EXPERIMENTAL PROVIDERS", 'DIM'), markdown => 0);
+        $self->writeline($self->colorize("─" x 70, 'DIM'), markdown => 0);
+        for my $item (@experimental_providers) {
+            $self->writeline($format_provider_line->($item->{name}, $item->{prov}), markdown => 0);
+        }
+        $self->writeline("", markdown => 0);
     }
     
     $self->writeline("", markdown => 0);
