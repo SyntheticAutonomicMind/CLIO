@@ -1,8 +1,8 @@
 # CLIO Installation Guide
 
-**Detailed installation instructions for CLIO (Command Line Intelligence Orchestrator)**
+**Getting CLIO up and running on your system**
 
----------------------------------------------------
+---
 
 ## Table of Contents
 
@@ -10,150 +10,94 @@
 2. [Quick Installation](#quick-installation)
 3. [Docker Installation](#docker-installation)
 4. [Installation Options](#installation-options)
-5. [Configuration](#configuration)
+5. [First-Time Configuration](#first-time-configuration)
 6. [Verification](#verification)
 7. [Uninstallation](#uninstallation)
 8. [Troubleshooting](#troubleshooting)
 9. [Platform-Specific Notes](#platform-specific-notes)
 
----------------------------------------------------
+---
 
 ## System Requirements
 
 ### Operating System
 
-**Supported:**
-- **macOS**: 10.14 (Mojave) or later
-- **Linux**: Any modern distribution (Ubuntu 18.04+, Debian 10+, Fedora 30+, Arch, etc.)
-
-**Experimental:**
-- **Windows**: Via WSL (Windows Subsystem for Linux) or Cygwin
+| Platform | Status |
+|----------|--------|
+| **macOS** 10.14+ | Fully Supported |
+| **Linux** (Ubuntu 18.04+, Debian 10+, Fedora 30+, Arch) | Fully Supported |
+| **Windows** (WSL or Cygwin) | Experimental |
 
 ### Required Software
 
-**Perl:**
-- Version 5.32 or higher
-- Standard Perl installation (usually pre-installed on macOS and Linux)
-
-**Check your Perl version:**
+**Perl 5.32+** (usually pre-installed on macOS/Linux):
 ```bash
 perl --version
 ```
 
-You should see output like:
-```
-This is perl 5, version 34, subversion 0 (v5.34.0) built for darwin-thread-multi-2level
-...
-```
-
-**Git:**
-- Required for version control operations
-- Any recent version (2.0+)
-
-**Check Git installation:**
+**Git 2.0+:**
 ```bash
 git --version
 ```
 
-### Required Perl Modules
+### Perl Modules
 
-CLIO uses only **core Perl modules** (no CPAN dependencies required):
+CLIO uses only **core Perl modules** - no CPAN dependencies:
 
-- `JSON::PP` - JSON parsing (core since 5.14)
-- `HTTP::Tiny` - HTTP client (core since 5.14)
-- `MIME::Base64` - Base64 encoding (core)
-- `File::Spec` - Path manipulation (core)
-- `File::Path` - Directory operations (core)
-- `Time::HiRes` - High-resolution timers (core)
+- `JSON::PP` (core since 5.14)
+- `HTTP::Tiny` (core since 5.14)
+- `MIME::Base64` (core)
+- `File::Spec`, `File::Path` (core)
+- `Time::HiRes` (core)
 
-These are included in all modern Perl installations.
+### AI Provider
 
-### AI Provider Account
+You need at least one AI provider. See [PROVIDERS.md](PROVIDERS.md) for the complete list.
 
-You need **one of the following**:
+**Quick options:**
+- **GitHub Copilot** (~$10/mo) - Recommended, access to multiple models
+- **Local models** (free) - llama.cpp, LM Studio, or SAM
+- **API providers** - OpenAI, Anthropic, Google, DeepSeek, OpenRouter
 
-**GitHub Copilot** (Default & Recommended)
-- GitHub Copilot subscription (Individual ~$10/month or Business ~$19/month)
-- API token from GitHub Copilot settings
-- Provides access to: GPT-4.1, Claude Sonnet 4, o3 models, and more
-
-**OpenAI**
-- OpenAI API account
-- API key from OpenAI platform
-- Pay-as-you-go pricing
-
-**Anthropic** (Native API)
-- Anthropic API account
-- API key from Anthropic console
-- Direct access to Claude models
-
-**Google Gemini** (Native API)
-- Google AI Studio API key
-- Access to Gemini models
-
-**DeepSeek**
-- DeepSeek API account
-- API key from DeepSeek platform
-- Cost-effective code-focused AI
-
-**OpenRouter**
-- OpenRouter API account
-- API key from OpenRouter
-- Access to many models via single key
-
-**llama.cpp** (Local)
-- llama.cpp server running locally
-- No API key required
-- Fully local inference
-
-**LM Studio** (Local)
-- LM Studio running locally
-- No API key required
-- GUI-based local model management
-
-**SAM** (Local)
-- SAM local installation
-- No API key required
-- Integrated with CLIO
-
----------------------------------------------------
+---
 
 ## Quick Installation
 
-**For most users (macOS and Linux):**
+### Standard Install (Recommended)
 
 ```bash
-# 1. Clone the repository
+# Clone the repository
 git clone https://github.com/SyntheticAutonomicMind/CLIO.git
 cd CLIO
 
-# 2. Run installer with sudo
+# Install system-wide
 sudo ./install.sh
 
-# 3. Start CLIO and configure
-./clio --new
-
-# 4. Inside CLIO, configure your provider
-: /api provider github_copilot
-: /api key YOUR_GITHUB_COPILOT_TOKEN  
-: /config save
-
-# 4. Run CLIO
+# Start CLIO
 clio --new
 ```
 
-That's it! CLIO is now installed to `/opt/clio` with a symlink at `/usr/local/bin/clio`.
+CLIO installs to `/opt/clio` with a symlink at `/usr/local/bin/clio`.
 
----------------------------------------------------
+### User Install (No Sudo)
+
+```bash
+./install.sh --user
+```
+
+Installs to `~/.local/clio`. Ensure `~/.local/bin` is in your PATH:
+```bash
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+---
 
 ## Docker Installation
 
-**The easiest way to run CLIO with full isolation:**
-
-### Quick Start
+**Run CLIO in a container - no local Perl required:**
 
 ```bash
-# Run CLIO in a container (project directory mounted)
 docker run -it --rm \
     -v "$(pwd)":/workspace \
     -v clio-auth:/root/.clio \
@@ -162,737 +106,193 @@ docker run -it --rm \
     --new
 ```
 
-### Using the Wrapper Script
-
-For convenience, CLIO provides a `clio-container` wrapper:
+### Convenience Wrapper
 
 ```bash
-# Clone the repo to get the wrapper script
 git clone https://github.com/SyntheticAutonomicMind/CLIO.git
 cd CLIO
-
-# Run sandboxed in any project
 ./clio-container ~/projects/myapp
 ```
-
-The wrapper:
-- Checks Docker is installed and running
-- Creates a persistent auth volume
-- Pulls the latest CLIO image
-- Runs with `--sandbox` enabled automatically
-
-### Supported Architectures
-
-| Architecture | Platform |
-|--------------|----------|
-| `linux/amd64` | Intel/AMD (x86-64) |
-| `linux/arm64` | Apple Silicon, ARM servers |
 
 ### Image Tags
 
 | Tag | Description |
 |-----|-------------|
 | `:latest` | Most recent stable release |
-| `:YYYYMMDD.N` | Specific version (e.g., `:20260210.1`) |
+| `:YYYYMMDD.N` | Specific version |
 | `:sha-XXXXXX` | Specific Git commit |
 
-### Benefits
+See [SANDBOX.md](SANDBOX.md) for security details.
 
-- No Perl installation required
-- Works on any system with Docker
-- Includes all dependencies
-- Automatic sandboxing (file access limited to project)
-- Auth persists across runs
-
-See [docs/SANDBOX.md](SANDBOX.md) for security details.
-
----------------------------------------------------
+---
 
 ## Installation Options
 
-The `install.sh` script provides several installation options:
-
-### Standard Installation (System-wide)
-
-**Default location: `/opt/clio`**
-
-```bash
-sudo ./install.sh
-```
-
-This installs:
-- CLIO executable to `/opt/clio/clio`
-- Library files to `/opt/clio/lib/`
-- Sessions directory to `/opt/clio/sessions/`
-- Symlink at `/usr/local/bin/clio`
-
-### Custom Installation Directory
-
-```bash
-sudo ./install.sh /usr/local/clio
-```
-
-Installs to `/usr/local/clio` instead of `/opt/clio`.
-
-### User Installation (No Sudo Required)
-
-```bash
-./install.sh --user
-```
-
-Installs to `~/.local/clio` with symlink at `~/.local/bin/clio`.
-
-**Note:** Make sure `~/.local/bin` is in your `$PATH`:
-```bash
-# Add to ~/.bashrc or ~/.zshrc
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-### Installation Without Symlink
-
-```bash
-sudo ./install.sh --no-symlink
-```
-
-Installs files but doesn't create `/usr/local/bin/clio` symlink. Useful if you want to manage the PATH yourself.
-
-To run CLIO:
-```bash
-/opt/clio/clio --new
-```
-
-### Custom Symlink Path
-
-```bash
-sudo ./install.sh --symlink /usr/bin/clio
-```
-
-Creates symlink at `/usr/bin/clio` instead of `/usr/local/bin/clio`.
-
----------------------------------------------------
-
-## Configuration
-
-### First-Time Setup
-
-After installation, start CLIO and configure your AI provider using the `/api` and `/config` commands:
-
-```bash
-# Start CLIO
-./clio --new
-```
-
-#### Configuring GitHub Copilot
-
-**1. Get your token:**
-- Open VS Code or your GitHub Copilot-enabled editor  
-- Go to Copilot settings
-- Generate/copy API token
-
-**2. Configure CLIO:**
-
-```bash
-# Inside CLIO:
-: /api provider github_copilot
-: /api key YOUR_GITHUB_COPILOT_TOKEN
-: /config save
-
-# CLIO will confirm:
-# Provider set to: github_copilot
-# API key configured
-# Configuration saved to ~/.clio/config.json
-```
-
-#### Configuring SAM (Local Model Server)
-
-If you're running SAM locally:
-
-```bash
-# Inside CLIO:
-: /api provider sam
-: /api base http://localhost:8080/v1/chat/completions
-: /api key YOUR_SAM_API_TOKEN
-: /config save
-```
-
-#### Configuring OpenAI
-
-```bash
-# Inside CLIO:
-: /api provider openai
-: /api key YOUR_OPENAI_API_KEY
-: /config save
-```
-
-### Configuration File
-
-CLIO saves your configuration to `~/.clio/config.json`:
-
-```json
-{
-  "provider": "github_copilot",
-  "api_key": "your_api_key_here"
-}
-```
-
-**Note:** Only explicitly-set values are saved. Provider-specific defaults (api_base, model) are loaded automatically from the provider definition.
-
-### Viewing Configuration
-
-Check your current configuration:
-
-```bash
-: /config show
-
-# Output:
-# Current Configuration:
-#   Provider: github_copilot
-#   API Base URL: https://api.githubcopilot.com/chat/completions
-#   Model: gpt-4o
-#   Working Directory: /Users/you/projects
-```
-
-### Discovering Available Providers
-
-To see all available AI providers (local and cloud):
-
-```bash
-: /api providers
-```
-
-This displays:
-- **LOCAL PROVIDERS** - Work completely offline, no internet needed
-- **CLOUD PROVIDERS** - Require API key or account
-- **EXPERIMENTAL PROVIDERS** - New features under testing
-
-To get setup instructions for a specific provider:
-
-```bash
-: /api providers llama.cpp
-: /api providers github_copilot
-: /api providers openai
-# (or any provider name from /api providers)
-```
-
-### Local Providers: Quick Start
-
-CLIO includes built-in support for local models. No internet required!
-
-#### llama.cpp (Popular)
-
-1. **Install llama.cpp:**
-   ```bash
-   git clone https://github.com/ggerganov/llama.cpp.git
-   cd llama.cpp && make
-   ```
-
-2. **Download a model** (visit https://huggingface.co/models?search=gguf)
-
-3. **Start the server:**
-   ```bash
-   ./server -m your-model.gguf
-   ```
-
-4. **Configure CLIO:**
-   ```bash
-   clio --new
-   : /api providers llama.cpp
-   : /api set provider llama.cpp
-   : /api show
-   ```
-
-**Done!** CLIO now uses your local model.
-
-#### LM Studio (GUI-Based)
-
-1. **Download and install** from https://lmstudio.ai
-
-2. **Launch the app**
-   - It will automatically download and manage models
-   - Start the local server (default: port 1234)
-
-3. **Configure CLIO:**
-   ```bash
-   clio --new
-   : /api providers lmstudio
-   : /api set provider lmstudio
-   : /api show
-   ```
-
-**Done!** CLIO now uses LM Studio.
-
-#### SAM (Fast Local Inference)
-
-1. **Install SAM locally** (see SAM documentation)
-
-2. **Start the SAM server**
-   ```bash
-   sam serve
-   ```
-
-3. **Configure CLIO:**
-   ```bash
-   clio --new
-   : /api providers sam
-   : /api set provider sam
-   : /api key <sam_token_if_needed>
-   : /api show
-   ```
-
-**Done!** CLIO now uses SAM.
-
-### Cloud Providers: Quick Start
-
-#### GitHub Copilot (Recommended)
-
-1. **Subscribe** to GitHub Copilot ($10/month individual)
-
-2. **Configure CLIO:**
-   ```bash
-   clio --new
-   : /api providers github_copilot
-   : /api login
-   # Browser opens → authorize → done!
-   : /api show
-   ```
-
-#### OpenAI
-
-1. **Get API key** from https://platform.openai.com/account/api-keys
-
-2. **Configure CLIO:**
-   ```bash
-   clio --new
-   : /api providers openai
-   : /api set provider openai
-   : /api set key sk-...  (paste your key)
-   : /config save
-   : /api show
-   ```
-
-#### Anthropic
-
-1. **Get API key** from https://console.anthropic.com
-
-2. **Configure CLIO:**
-   ```bash
-   clio --new
-   : /api providers anthropic
-   : /api set provider anthropic
-   : /api set key sk-ant-...  (paste your key)
-   : /config save
-   : /api show
-   ```
-
-#### Other Providers
-
-DeepSeek, Google Gemini, OpenRouter - follow the same pattern:
-- Get API key from provider's website
-- Run `/api providers <provider_name>` for specific instructions
-- Configure with `/api set provider <name>` and `/api set key <key>`
-
-### Switching Providers
-
-You can switch providers at any time:
-
-```bash
-: /api provider sam
-: /api key NEW_API_KEY
-: /config save
-```
-
-Your new configuration persists across sessions.
-
-### Advanced Configuration
-
-#### Debug Mode
-
-Enable debug logging from CLIO:
-
-```bash
-: /debug on
-```
-
-Or via command-line flag:
-
-```bash
-./clio --debug
-```
-
-#### Custom Working Directory
-
-Set the default working directory for file operations:
-
-```bash
-: /config working_directory /path/to/project
-: /config save
-```
-
----------------------------------------------------
-
-## Verification
-
-### Verify Installation
-
-**1. Check CLIO is in PATH:**
-```bash
-which clio
-```
-
-Expected output:
-```
-/usr/local/bin/clio
-```
-
-**2. Check version/help:**
-```bash
-clio --help
-```
-
-Expected output:
-```
-CLIO - Command Line Intelligence Orchestrator
-AI-Powered Development Assistant
-
-USAGE:
-    clio [OPTIONS]
-
-OPTIONS:
-    --new              Start a new session
-    --resume [ID]      Resume a session (most recent if no ID provided)
-    --debug            Enable debug output
-    --input TEXT       Send input directly (for scripting)
-    --exit             Exit after processing input
-    --help             Show this help message
-...
-```
-
-**3. Verify Perl modules:**
-```bash
-perl -MJSON::PP -e 'print "JSON::PP OK\n"'
-perl -MHTTP::Tiny -e 'print "HTTP::Tiny OK\n"'
-perl -MMIME::Base64 -e 'print "MIME::Base64 OK\n"'
-```
-
-All should print "OK".
-
-**4. Test basic functionality:**
-```bash
-echo "hello from CLIO" | clio --new --input "What did I say?" --exit
-```
-
-If CLIO is configured correctly, it should respond based on your input.
-
-### Verify Configuration
-
-**Check environment variables:**
-```bash
-echo $GITHUB_COPILOT_TOKEN
-# or for other providers:
-echo $OPENAI_API_KEY
-echo $DEEPSEEK_API_KEY
-```
-
-Should print your token/key (not empty).
-
----------------------------------------------------
-
-## Uninstallation
-
-### Manual Uninstallation
-
-```bash
-# Remove installation directory
-sudo rm -rf /opt/clio
-
-# Remove symlink
-sudo rm /usr/local/bin/clio
-
-# Optional: Remove user data
-rm -rf ~/.clio
-```
-
-### Removing Configuration
-
-```bash
-# Remove environment variables from shell profile
-# Edit ~/.bashrc or ~/.zshrc and remove lines like:
-# export GITHUB_COPILOT_TOKEN="..."
-
-# Remove config file
-rm -rf ~/.clio/config.yaml
-
-# Remove session data
-rm -rf ~/.clio/sessions
-```
-
----------------------------------------------------
-
-## Troubleshooting
-
-### Installation Issues
-
-#### Problem: "Permission denied"
-
-**Cause:** Installation requires sudo for system directories.
-
-**Solution:**
-```bash
-sudo ./install.sh
-```
-
-Or use user installation:
-```bash
-./install.sh --user
-```
-
-#### Problem: "perl: command not found"
-
-**Cause:** Perl is not installed or not in PATH.
-
-**Solution:**
-
-**macOS:**
-Perl should be pre-installed. If not:
-```bash
-brew install perl
-```
-
-**Ubuntu/Debian:**
-```bash
-sudo apt-get update
-sudo apt-get install perl
-```
-
-**Fedora/RHEL:**
-```bash
-sudo dnf install perl
-```
-
-**Arch Linux:**
-```bash
-sudo pacman -S perl
-```
-
-#### Problem: "git: command not found"
-
-**Cause:** Git is not installed.
-
-**Solution:**
-
-**macOS:**
-```bash
-brew install git
-# or use Xcode command line tools:
-xcode-select --install
-```
-
-**Ubuntu/Debian:**
-```bash
-sudo apt-get install git
-```
-
-**Fedora/RHEL:**
-```bash
-sudo dnf install git
-```
-
-#### Problem: "Can't locate JSON/PP.pm in @INC"
-
-**Cause:** Perl core modules not installed (unusual but possible).
-
-**Solution:**
-
-**Ubuntu/Debian:**
-```bash
-sudo apt-get install perl-modules-5.*
-```
-
-**macOS:**
-```bash
-# JSON::PP is a core Perl module included since Perl 5.14
-# If missing, your Perl installation may be incomplete
-# Reinstall Perl: brew install perl
-```
-
-### Path Issues
-
-#### Problem: "clio: command not found" after installation
-
-**Cause:** Symlink not created or not in PATH.
-
-**Solution:**
-
-**Check if symlink exists:**
-```bash
-ls -l /usr/local/bin/clio
-```
-
-**If missing, create manually:**
-```bash
-sudo ln -s /opt/clio/clio /usr/local/bin/clio
-```
-
-**Check if /usr/local/bin is in PATH:**
-```bash
-echo $PATH | grep /usr/local/bin
-```
-
-**If not in PATH, add it:**
-```bash
-# Add to ~/.bashrc or ~/.zshrc
-export PATH="/usr/local/bin:$PATH"
-source ~/.bashrc
-```
-
-### Configuration Issues
-
-#### Problem: "API authentication failed"
-
-**Cause:** Token not set or invalid.
-
-**Solution:**
-
-**Verify token is set:**
-```bash
-echo $GITHUB_COPILOT_TOKEN
-```
-
-**If empty:**
-```bash
-export GITHUB_COPILOT_TOKEN="your_token_here"
-```
-
-**If still failing:**
-- Verify token is correct (copy/paste carefully)
-- Check if token has expired
-- Generate new token from provider settings
-
-#### Problem: "Session directory not writable"
-
-**Cause:** Permission issues with session directory.
-
-**Solution:**
-
-**Check permissions:**
-```bash
-ls -ld /opt/clio/sessions
-```
-
-**Fix permissions:**
-```bash
-sudo chmod 755 /opt/clio/sessions
-sudo chown $USER /opt/clio/sessions
-```
-
-**Or use custom directory:**
-```bash
-export CLIO_SESSION_DIR="$HOME/.clio/sessions"
-mkdir -p $HOME/.clio/sessions
-```
-
----------------------------------------------------
-
-## Platform-Specific Notes
-
-### macOS
-
-**Gatekeeper:**
-On first run, macOS may block CLIO as an unsigned application. This is not an issue for command-line tools, but if you encounter problems:
-
-```bash
-# Allow execution
-chmod +x /opt/clio/clio
-```
-
-**Homebrew Perl:**
-If you're using Homebrew's Perl instead of system Perl:
-```bash
-# Verify which Perl is used
-which perl
-
-# Should show /usr/bin/perl (system) or /usr/local/bin/perl (Homebrew)
-```
-
-Both work fine with CLIO.
-
-### Linux
-
-**SELinux:**
-On RHEL/Fedora/CentOS with SELinux, you may need to set proper contexts:
-
-```bash
-# Check SELinux status
-sestatus
-
-# If enforcing, set contexts:
-sudo chcon -R -t bin_t /opt/clio/clio
-sudo chcon -R -t lib_t /opt/clio/lib
-```
-
-**AppArmor:**
-On Ubuntu with AppArmor, CLIO should work without additional configuration. If you encounter issues:
-
-```bash
-# Check AppArmor status
-sudo aa-status
-
-# Disable for troubleshooting:
-sudo systemctl stop apparmor
-```
-
-### Windows (WSL)
-
-**WSL1 vs WSL2:**
-CLIO works on both WSL1 and WSL2, but WSL2 is recommended for better performance.
-
-**Installation:**
-```bash
-# In WSL terminal
-git clone https://github.com/SyntheticAutonomicMind/CLIO.git
-cd CLIO
-./install.sh --user
-```
-
-**Note:** Use `--user` installation to avoid permission issues with Windows filesystem.
-
-**Path Configuration:**
-Make sure `~/.local/bin` is in PATH:
-```bash
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
-source ~/.bashrc
-```
-
----------------------------------------------------
-
-## Next Steps
-
-After installation:
-
-1. **Read the User Guide**: [docs/USER_GUIDE.md](USER_GUIDE.md)
-2. **Try the Quick Start**: Run `clio --new` and explore
-3. **Configure advanced settings**: Edit `~/.clio/config.yaml`
-4. **Join the community**: [GitHub Discussions](https://github.com/SyntheticAutonomicMind/CLIO/discussions)
-
----------------------------------------------------
-
-## Getting Help
-
-**Issues during installation?**
-
-1. Check this troubleshooting section
-2. Run with debug mode: `clio --debug --new`
-3. Search [GitHub Issues](https://github.com/SyntheticAutonomicMind/CLIO/issues)
-4. Create a new issue with:
-   - Your OS and version
-   - Perl version (`perl --version`)
-   - Error messages
-   - Output of `clio --debug`
-
-**Installation successful? Start using CLIO:**
+| Option | Command | Location |
+|--------|---------|----------|
+| System-wide (default) | `sudo ./install.sh` | `/opt/clio` |
+| Custom directory | `sudo ./install.sh /usr/local/clio` | `/usr/local/clio` |
+| User install | `./install.sh --user` | `~/.local/clio` |
+| No symlink | `sudo ./install.sh --no-symlink` | `/opt/clio` (no PATH) |
+| Custom symlink | `sudo ./install.sh --symlink /usr/bin/clio` | Custom symlink path |
+
+---
+
+## First-Time Configuration
+
+After installation, configure your AI provider:
 
 ```bash
 clio --new
 ```
 
-Welcome to CLIO!
+### GitHub Copilot (Recommended)
+
+```bash
+/api set provider github_copilot
+/api login
+# Browser opens -> authorize -> done!
+```
+
+### OpenAI / Anthropic / Other API Providers
+
+```bash
+/api set provider openai
+/api set key sk-...your-key...
+/config save
+```
+
+### Local Models (llama.cpp, LM Studio)
+
+```bash
+# Ensure your local server is running first
+/api set provider llama.cpp
+# No key needed for local providers
+```
+
+### View Configuration
+
+```bash
+/api show
+```
+
+**For detailed provider setup instructions, see [PROVIDERS.md](PROVIDERS.md).**
+
+---
+
+## Verification
+
+### Check Installation
+
+```bash
+# Verify CLIO is in PATH
+which clio
+
+# Check help
+clio --help
+
+# Verify Perl modules
+perl -MJSON::PP -e 'print "OK\n"'
+perl -MHTTP::Tiny -e 'print "OK\n"'
+```
+
+### Test CLIO
+
+```bash
+clio --new --input "Hello, what's 2+2?" --exit
+```
+
+---
+
+## Uninstallation
+
+```bash
+# Remove installation
+sudo rm -rf /opt/clio
+sudo rm /usr/local/bin/clio
+
+# Remove user data (optional)
+rm -rf ~/.clio
+```
+
+---
+
+## Troubleshooting
+
+### "Permission denied"
+
+```bash
+# Use sudo for system install
+sudo ./install.sh
+
+# Or use user install
+./install.sh --user
+```
+
+### "perl: command not found"
+
+| Platform | Install Command |
+|----------|-----------------|
+| macOS | `brew install perl` |
+| Ubuntu/Debian | `sudo apt-get install perl` |
+| Fedora/RHEL | `sudo dnf install perl` |
+| Arch | `sudo pacman -S perl` |
+
+### "clio: command not found"
+
+```bash
+# Check symlink
+ls -l /usr/local/bin/clio
+
+# Create manually if missing
+sudo ln -s /opt/clio/clio /usr/local/bin/clio
+
+# Or add to PATH
+export PATH="/opt/clio:$PATH"
+```
+
+### "API authentication failed"
+
+- Verify API key is correct
+- For GitHub Copilot: run `/api login` again
+- Check provider subscription is active
+- See [PROVIDERS.md](PROVIDERS.md) for provider-specific help
+
+### "Session directory not writable"
+
+```bash
+sudo chmod 755 /opt/clio/sessions
+sudo chown $USER /opt/clio/sessions
+```
+
+---
+
+## Platform-Specific Notes
+
+### macOS
+
+Both system Perl (`/usr/bin/perl`) and Homebrew Perl work fine.
+
+### Linux with SELinux
+
+```bash
+# Check status
+getenforce
+
+# If enabled, set context
+sudo chcon -R -t bin_t /opt/clio/clio
+```
+
+### Windows (WSL)
+
+1. Install WSL: `wsl --install`
+2. Open Ubuntu terminal
+3. Follow Linux installation steps
+
+---
+
+## Next Steps
+
+- **[PROVIDERS.md](PROVIDERS.md)** - Complete provider configuration guide
+- **[USER_GUIDE.md](USER_GUIDE.md)** - Learn to use CLIO effectively
+- **[FEATURES.md](FEATURES.md)** - Explore all capabilities

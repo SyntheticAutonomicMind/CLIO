@@ -2390,7 +2390,7 @@ A: Yes! CLIO can:
 
 **Q: How do I switch between AI providers?**
 
-A: Use `/api` commands:
+A: Use `/api` commands. See [PROVIDERS.md](PROVIDERS.md) for full details:
 ```bash
 # Switch to OpenAI
 : /api provider openai
@@ -2415,9 +2415,9 @@ CLIO automatically detects which provider to use based on available credentials.
 ## Next Steps
 
 **Explore More:**
+- [Provider Configuration](PROVIDERS.md) - Configure AI providers
 - [Developer Guide](DEVELOPER_GUIDE.md) - Learn to extend CLIO
-- [Architecture](SPECS/ARCHITECTURE.md) - Understand how CLIO works
-- [Tools Reference](SPECS/TOOLS.md) - Complete tool documentation
+- [Architecture](ARCHITECTURE.md) - Understand how CLIO works
 
 **Get Help:**
 - [GitHub Issues](https://github.com/SyntheticAutonomicMind/CLIO/issues)

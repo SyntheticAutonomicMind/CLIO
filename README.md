@@ -236,7 +236,8 @@ For more examples, see [docs/USER_GUIDE.md](docs/USER_GUIDE.md#usage-examples).
 |----------|-------------|
 | [User Guide](docs/USER_GUIDE.md) | Complete usage guide with examples |
 | [Feature Guide](docs/FEATURES.md) | Every feature explained in detail |
-| [Installation](docs/INSTALLATION.md) | Detailed installation instructions |
+| [Installation](docs/INSTALLATION.md) | Getting started with CLIO |
+| [Providers](docs/PROVIDERS.md) | AI provider configuration guide |
 | [Dependencies](docs/DEPENDENCIES.md) | System requirements and verification |
 | [Sandbox Mode](docs/SANDBOX.md) | Security isolation options |
 | [Architecture](docs/ARCHITECTURE.md) | System design and internals |

@@ -217,6 +217,8 @@ CLIO supports 9 AI providers out of the box. Switch between them at any time - e
 /config save
 ```
 
+See [PROVIDERS.md](PROVIDERS.md) for complete setup instructions for each provider.
+
 Or within a conversation:
 ```
 /api provider github_copilot
