@@ -179,7 +179,6 @@ my %PROVIDERS = (
         supports_streaming => 1,
         native_api => 1,
         provider_module => 'CLIO::Providers::Google',
-        experimental => 1,
         max_context_tokens => 1048576,
         endpoint => {
             path_suffix => '/openai/chat/completions',
