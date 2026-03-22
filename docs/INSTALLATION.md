@@ -82,12 +82,12 @@ You need **one of the following**:
 - API key from OpenAI platform
 - Pay-as-you-go pricing
 
-**Anthropic** (Experimental - Native API)
+**Anthropic** (Native API)
 - Anthropic API account
 - API key from Anthropic console
 - Direct access to Claude models
 
-**Google Gemini** (Experimental - Native API)
+**Google Gemini** (Native API)
 - Google AI Studio API key
 - Access to Gemini models
 
@@ -352,20 +352,144 @@ Check your current configuration:
 #   Working Directory: /Users/you/projects
 ```
 
-### Available Providers
+### Discovering Available Providers
 
-List all available providers:
+To see all available AI providers (local and cloud):
 
 ```bash
 : /api providers
-
-# Output shows all built-in providers:
-# - github_copilot (GitHub Copilot API - default)
-# - openai (OpenAI API)
-# - deepseek (DeepSeek API)
-# - llama.cpp (Local llama.cpp server)
-# - sam (Local SAM server)
 ```
+
+This displays:
+- **LOCAL PROVIDERS** - Work completely offline, no internet needed
+- **CLOUD PROVIDERS** - Require API key or account
+- **EXPERIMENTAL PROVIDERS** - New features under testing
+
+To get setup instructions for a specific provider:
+
+```bash
+: /api providers llama.cpp
+: /api providers github_copilot
+: /api providers openai
+# (or any provider name from /api providers)
+```
+
+### Local Providers: Quick Start
+
+CLIO includes built-in support for local models. No internet required!
+
+#### llama.cpp (Popular)
+
+1. **Install llama.cpp:**
+   ```bash
+   git clone https://github.com/ggerganov/llama.cpp.git
+   cd llama.cpp && make
+   ```
+
+2. **Download a model** (visit https://huggingface.co/models?search=gguf)
+
+3. **Start the server:**
+   ```bash
+   ./server -m your-model.gguf
+   ```
+
+4. **Configure CLIO:**
+   ```bash
+   clio --new
+   : /api providers llama.cpp
+   : /api set provider llama.cpp
+   : /api show
+   ```
+
+**Done!** CLIO now uses your local model.
+
+#### LM Studio (GUI-Based)
+
+1. **Download and install** from https://lmstudio.ai
+
+2. **Launch the app**
+   - It will automatically download and manage models
+   - Start the local server (default: port 1234)
+
+3. **Configure CLIO:**
+   ```bash
+   clio --new
+   : /api providers lmstudio
+   : /api set provider lmstudio
+   : /api show
+   ```
+
+**Done!** CLIO now uses LM Studio.
+
+#### SAM (Fast Local Inference)
+
+1. **Install SAM locally** (see SAM documentation)
+
+2. **Start the SAM server**
+   ```bash
+   sam serve
+   ```
+
+3. **Configure CLIO:**
+   ```bash
+   clio --new
+   : /api providers sam
+   : /api set provider sam
+   : /api key <sam_token_if_needed>
+   : /api show
+   ```
+
+**Done!** CLIO now uses SAM.
+
+### Cloud Providers: Quick Start
+
+#### GitHub Copilot (Recommended)
+
+1. **Subscribe** to GitHub Copilot ($10/month individual)
+
+2. **Configure CLIO:**
+   ```bash
+   clio --new
+   : /api providers github_copilot
+   : /api login
+   # Browser opens → authorize → done!
+   : /api show
+   ```
+
+#### OpenAI
+
+1. **Get API key** from https://platform.openai.com/account/api-keys
+
+2. **Configure CLIO:**
+   ```bash
+   clio --new
+   : /api providers openai
+   : /api set provider openai
+   : /api set key sk-...  (paste your key)
+   : /config save
+   : /api show
+   ```
+
+#### Anthropic
+
+1. **Get API key** from https://console.anthropic.com
+
+2. **Configure CLIO:**
+   ```bash
+   clio --new
+   : /api providers anthropic
+   : /api set provider anthropic
+   : /api set key sk-ant-...  (paste your key)
+   : /config save
+   : /api show
+   ```
+
+#### Other Providers
+
+DeepSeek, Google Gemini, OpenRouter - follow the same pattern:
+- Get API key from provider's website
+- Run `/api providers <provider_name>` for specific instructions
+- Configure with `/api set provider <name>` and `/api set key <key>`
 
 ### Switching Providers
 
