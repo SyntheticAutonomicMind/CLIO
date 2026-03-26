@@ -14,6 +14,7 @@ use CLIO::UI::Theme;
 use CLIO::UI::ProgressSpinner;
 use CLIO::UI::CommandHandler;
 use CLIO::UI::Display;
+use CLIO::UI::HostProtocol;
 use utf8;
 use open ':std', ':encoding(UTF-8)';
 binmode(STDOUT, ':encoding(UTF-8)');
@@ -98,6 +99,9 @@ sub new {
         debug => $args{debug},
         theme_mgr => $self->{theme_mgr},
     );
+    
+    # Initialize host protocol (structured GUI communication)
+    $self->{host_proto} = CLIO::UI::HostProtocol->new(debug => $args{debug});
     
     # Get terminal size (width and height)
     eval {
@@ -261,6 +265,13 @@ sub show_busy_indicator {
     # No human is watching, and the forked spinner child can orphan
     return 0 unless -t STDOUT;
     
+    # In host mode, skip ASCII spinner - host renders its own
+    if ($self->{host_proto}->active()) {
+        $self->{host_proto}->emit_status('thinking');
+        $self->{host_proto}->emit_spinner_start('Thinking...');
+        return 1;
+    }
+    
     # Ensure spinner is initialized or recreate if theme changed
     # Check if spinner needs to be recreated due to theme change
     my $spinner_frames = $self->{theme_mgr}->get_spinner_frames();
@@ -307,6 +318,12 @@ Called when outputting data or waiting for user input.
 sub hide_busy_indicator {
     my ($self) = @_;
     
+    # In host mode, just emit the protocol event
+    if ($self->{host_proto}->active()) {
+        $self->{host_proto}->emit_spinner_stop();
+        return 1;
+    }
+    
     # Stop spinner if it exists and is running
     # Use is_running() for robust check (validates child process is alive)
     if ($self->{spinner} && $self->{spinner}->is_running()) {
@@ -328,6 +345,20 @@ sub run {
     
     # Display header
     $self->display_header();
+    
+    # Emit session metadata to host application
+    if ($self->{host_proto}->active() && $self->{session}) {
+        my $state = $self->{session}->state() || {};
+        $self->{host_proto}->emit_session(
+            id   => $self->{session}->id() || '',
+            name => $state->{title} || $state->{name} || '',
+            dir  => $state->{working_directory} || '',
+        );
+        my $model = ($self->{config} ? $self->{config}->get('model') : '') || '';
+        $self->{host_proto}->emit_title("CLIO - " .
+            ($state->{title} || $state->{name} || 'New Session') .
+            ($model ? " ($model)" : ''));
+    }
     
     # Check for authentication migrations (one-time notices)
     $self->_check_auth_migration();
@@ -490,6 +521,7 @@ sub run {
                     
                     log_debug('Chat', "First chunk received, printed CLIO: prefix and removed spinner");
                     $first_chunk_received = 1;
+                    $self->{host_proto}->emit_status('streaming');
                 }
                 
                 # Clear the _need_agent_prefix flag if set (no longer needed)
@@ -621,8 +653,18 @@ sub run {
                 # Agent streaming output is NOT affected by this flag and remains paginated
                 $self->{_tools_invoked_this_request} = 1;
                 
+                $self->{host_proto}->emit_status('tools');
+                $self->{host_proto}->emit_tool_start($tool_name);
+                
                 log_debug('Chat', "Tool execution marked (pagination still enabled for agent text)");
                 log_debug('Chat', "Tool called: $tool_name");
+            };
+            
+            # Callback when a tool finishes execution
+            my $on_tool_end = sub {
+                my ($tool_name) = @_;
+                return unless defined $tool_name;
+                $self->{host_proto}->emit_tool_end($tool_name);
             };
             
             # Display thinking/reasoning content from reasoning models
@@ -792,6 +834,7 @@ sub run {
                 $result = $self->{ai_agent}->process_user_request($input, {
                     on_chunk => $on_chunk,
                     on_tool_call => $on_tool_call,  # Track which tools are being called
+                    on_tool_end => $on_tool_end,    # Track when tools finish
                     on_thinking => $on_thinking,  # Display reasoning/thinking content
                     on_system_message => $on_system_message,  # Display system messages
                     conversation_history => $conversation_history,
@@ -948,6 +991,20 @@ sub run {
             
             # Display usage summary after response
             $self->display_usage_summary();
+            
+            # Emit token usage to host application
+            if ($self->{host_proto}->active() && $self->{session} && $self->{session}->{state}) {
+                my $billing = $self->{session}->{state}->{billing};
+                if ($billing && $billing->{requests} && @{$billing->{requests}}) {
+                    my $last = $billing->{requests}[-1];
+                    $self->{host_proto}->emit_tokens(
+                        prompt     => $last->{prompt_tokens} || 0,
+                        completion => $last->{completion_tokens} || 0,
+                        total      => $last->{total_tokens} || 0,
+                        model      => $billing->{model} || '',
+                    );
+                }
+            }
             
             # Display premium charge notification if any
             if ($self->{session} && $self->{session}->can('state')) {
@@ -1601,6 +1658,9 @@ sub get_input {
         $self->{spinner}->stop();
         log_debug('Chat', "Spinner stopped at get_input entry");
     }
+    
+    # Signal host that we're idle (waiting for user input)
+    $self->{host_proto}->emit_status('idle');
     
     # Check if running in --input mode (non-interactive)
     if (!-t STDIN) {
@@ -2804,6 +2864,20 @@ sub repaint_screen {
     
     # Display header
     $self->display_header();
+    
+    # Emit session metadata to host application
+    if ($self->{host_proto}->active() && $self->{session}) {
+        my $state = $self->{session}->state() || {};
+        $self->{host_proto}->emit_session(
+            id   => $self->{session}->id() || '',
+            name => $state->{title} || $state->{name} || '',
+            dir  => $state->{working_directory} || '',
+        );
+        my $model = ($self->{config} ? $self->{config}->get('model') : '') || '';
+        $self->{host_proto}->emit_title("CLIO - " .
+            ($state->{title} || $state->{name} || 'New Session') .
+            ($model ? " ($model)" : ''));
+    }
     
     # Replay buffer without adding to it again
     for my $msg (@{$self->{screen_buffer}}) {
