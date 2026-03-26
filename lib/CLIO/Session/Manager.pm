@@ -320,6 +320,7 @@ sub load {
 sub stm  { $_[0]->{stm} }
 sub ltm  { $_[0]->{ltm} }
 sub yarn { $_[0]->{yarn} }
+sub id   { $_[0]->{session_id} }
 sub state { $_[0]->{state} }
 sub working_directory { $_[0]->{state}->{working_directory} }
 sub session_name {
