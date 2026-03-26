@@ -353,6 +353,7 @@ sub process_input {
     my $on_chunk = $opts{on_chunk};
     my $on_system_message = $opts{on_system_message};  # Callback for system messages
     my $on_tool_call_from_ui = $opts{on_tool_call};  # Tool call tracker from UI
+    my $on_tool_end_from_ui = $opts{on_tool_end};    # Tool end tracker from UI
     my $on_thinking = $opts{on_thinking};  # Callback for reasoning/thinking content
     
     # Start a new vault turn before processing - file changes during this turn will be tracked
@@ -1859,6 +1860,11 @@ sub process_input {
                 
                 # Execute tool to get the result
                 my $tool_result = $self->_execute_tool($tool_call);
+                
+                # Notify UI that tool execution is complete
+                if ($on_tool_end_from_ui) {
+                    eval { $on_tool_end_from_ui->($tool_name); };
+                }
                 
                 # Extract action_description from tool result
                 my $action_detail = '';
