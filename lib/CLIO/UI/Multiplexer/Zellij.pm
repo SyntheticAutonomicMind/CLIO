@@ -112,14 +112,29 @@ sub kill_pane {
         $name = $pane_id;
     }
 
-    # Zellij can close panes by focusing them then closing
-    # This is imperfect - Zellij CLI doesn't have great pane targeting
-    eval {
-        $self->_run_cmd($self->{zellij_bin}, 'action', 'close-pane');
-    };
-    if ($@) {
-        log_debug('Zellij', "close-pane failed (may already be closed): $@");
+    # Check if we still track this pane before trying to close it.
+    # If the command already exited, Zellij may have already closed
+    # the pane. Running 'close-pane' without a target closes the
+    # CURRENTLY FOCUSED pane (CLIO's own pane), which kills the session.
+    unless (exists $self->{pane_map}{ $self->_name_from_id($pane_id) }) {
+        log_debug('Zellij', "Pane '$name' already gone, skipping close");
+        return 1;
     }
+
+    # Zellij CLI doesn't have great pane targeting by name.
+    # We can only close the focused pane, so skip the close entirely
+    # when the pane's command has already exited. The pane will have
+    # been cleaned up by Zellij automatically.
+    # For safety, we only attempt close if we can verify the pane is
+    # still alive. Since Zellij CLI doesn't expose pane liveness
+    # reliably, we skip the close-pane call and let Zellij handle
+    # cleanup of finished command panes automatically.
+    eval {
+        # Use move-focus to the target pane, then close it
+        # But this is still risky - if the pane is gone, focus stays on CLIO
+        # Safest: don't close at all; Zellij auto-closes panes when command exits
+        log_debug('Zellij', "Skipping explicit close-pane for '$name' (Zellij auto-cleans finished panes)");
+    };
 
     # Clean up internal tracking
     my @to_remove = grep { ($self->{pane_map}{$_} // '') eq $pane_id } keys %{$self->{pane_map}};
