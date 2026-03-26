@@ -53,12 +53,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install Perl modules required by CLIO
 # Using cpanm for cleaner installation
 RUN cpanm --notest --quiet \
-    # Core JSON handling (already in core but useful for version consistency)
-    JSON::PP \
-    # HTTP/networking
+    # HTTPS support for HTTP::Tiny (core)
     IO::Socket::SSL \
-    LWP::UserAgent \
-    LWP::Protocol::https \
+    Net::SSLeay \
     # Terminal handling
     Term::ReadKey \
     && rm -rf ~/.cpanm
