@@ -113,10 +113,23 @@ sub kill_pane {
         $name = $pane_id;
     }
 
-    # Select the window by title, then kill it
+    # Check if window still exists before trying to kill it.
+    # Screen auto-kills windows when their program terminates, so the
+    # window is usually already gone by the time we get here. If we
+    # blindly run 'kill', it targets the CURRENT window (CLIO's own
+    # window), which kills the screen session.
+    unless ($self->pane_exists($pane_id)) {
+        log_debug('Screen', "Window '$name' already gone, skipping kill");
+        # Clean up internal tracking
+        my @to_remove = grep { ($self->{pane_map}{$_} // '') eq $pane_id } keys %{$self->{pane_map}};
+        delete $self->{pane_map}{$_} for @to_remove;
+        return 1;
+    }
+
+    # Use -p to target the specific window by name, avoiding the
+    # two-step select+kill race that can hit the wrong window.
     eval {
-        $self->_run_cmd($self->{screen_bin}, '-X', 'select', $name);
-        $self->_run_cmd($self->{screen_bin}, '-X', 'kill');
+        $self->_run_cmd($self->{screen_bin}, '-p', $name, '-X', 'kill');
     };
     if ($@) {
         log_debug('Screen', "kill window failed (may already be closed): $@");

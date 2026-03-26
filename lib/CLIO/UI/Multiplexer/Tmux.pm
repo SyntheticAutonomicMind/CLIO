@@ -105,8 +105,10 @@ sub kill_pane {
 
     return 0 unless $pane_id;
 
-    # Only send kill-pane for real tmux pane IDs (format: %N)
-    if ($pane_id =~ /^%\d+$/) {
+    # Only send kill-pane for real tmux pane IDs (format: %N) that still exist.
+    # Tmux uses -t targeting so this is already safe, but checking existence
+    # first avoids noisy error output from trying to kill dead panes.
+    if ($pane_id =~ /^%\d+$/ && $self->pane_exists($pane_id)) {
         my @cmd = ($self->{tmux_bin}, 'kill-pane', '-t', $pane_id);
         log_debug('Tmux', "Killing pane: $pane_id");
 
