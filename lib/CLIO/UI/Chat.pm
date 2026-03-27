@@ -539,11 +539,12 @@ sub run {
                     my $line = substr($self->{_streaming_line_buffer}, 0, $pos);
                     $self->{_streaming_line_buffer} = substr($self->{_streaming_line_buffer}, $pos + 1);
                     
-                    # Suppress session naming markers from display
-                    # The marker is extracted later from accumulated_content
-                    if ($line =~ /^\s*<!--session:\{.*\}-->\s*$/) {
-                        log_debug('Chat', "Suppressed session naming marker from display");
-                        next;
+                    # Strip session naming markers from display (inline or whole-line)
+                    if ($line =~ /<!--session:\{/) {
+                        my $had_content = ($line =~ /\S/ && $line !~ /^\s*<!--session:\{[^}]*\}-->\s*$/);
+                        $line =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;
+                        # Skip entirely if the line was only the marker
+                        next if !$had_content && $line !~ /\S/;
                     }
 
                     # Update markdown context state

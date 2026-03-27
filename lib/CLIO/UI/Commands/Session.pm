@@ -323,9 +323,11 @@ sub _list_sessions {
         my $mtime = (stat($filepath))[9] || 0;
         my $size = (stat($filepath))[7] || 0;
         
-        # Read session name from file
+        # Read session name and model from file
         my $name = undef;
+        my $model = undef;
         my $msg_count = 0;
+        my $total_tokens = 0;
         eval {
             open my $fh, '<', $filepath or die;
             local $/;
@@ -335,14 +337,20 @@ sub _list_sessions {
             my $data = CLIO::Util::JSON::decode_json($json);
             $name = $data->{session_name} if $data->{session_name};
             $msg_count = scalar(@{$data->{history} || []});
+            if ($data->{billing}) {
+                $model = $data->{billing}{model};
+                $total_tokens = $data->{billing}{total_tokens} || 0;
+            }
         };
         
         push @session_info, {
             id => $id,
             name => $name,
+            model => $model,
             mtime => $mtime,
             size => $size,
             msg_count => $msg_count,
+            total_tokens => $total_tokens,
             is_current => ($self->{session} && $self->{session}->{session_id} eq $id),
         };
     }
@@ -351,15 +359,59 @@ sub _list_sessions {
     @session_info = sort { $b->{mtime} <=> $a->{mtime} } @session_info;
     
     # Create formatted items for paginated display
+    my $chat = $self->{chat};
     my @items;
     for my $i (0 .. $#session_info) {
         my $sess = $session_info[$i];
-        my $marker = $sess->{is_current} ? ' (current)' : '';
         my $time = _format_relative_time($sess->{mtime});
-        my $display = $sess->{name} || substr($sess->{id}, 0, 20) . '...';
+        my $raw_name = $sess->{name} || '';
         
-        push @items, sprintf("%3d) %-40s [%s, %d msgs]%s", 
-            $i + 1, $display, $time, $sess->{msg_count}, $marker);
+        # Display full session name (no truncation - needed for /session switch)
+        my $display_name;
+        if ($raw_name) {
+            $display_name = $raw_name;
+        } else {
+            $display_name = '(unnamed)';
+        }
+        
+        # Format model name
+        my $short_model = '';
+        if ($sess->{model}) {
+            $short_model = $sess->{model};
+            $short_model =~ s/-20\d{6}$//;
+            $short_model =~ s{^[a-z][a-z0-9_.-]*/}{}i;
+        }
+        
+        # Format token count
+        my $tk_fmt = '';
+        if ($sess->{total_tokens} > 0) {
+            my $tk = $sess->{total_tokens};
+            if ($tk >= 1_000_000) {
+                $tk_fmt = sprintf("%.1fM tokens", $tk / 1_000_000);
+            } elsif ($tk >= 1_000) {
+                $tk_fmt = sprintf("%.0fK tokens", $tk / 1_000);
+            } else {
+                $tk_fmt = "$tk tokens";
+            }
+        }
+        
+        # Line 1: number + name (green if current)
+        my $num = sprintf("%3d)", $i + 1);
+        my $name_color = $sess->{is_current} ? 'GREEN' : 'BOLD';
+        my $current_tag = $sess->{is_current} ? $chat->colorize(' (current)', 'GREEN') : '';
+        my $line1 = "$num " . $chat->colorize($display_name, $name_color) . $current_tag;
+        
+        # Line 2: time, model, tokens
+        my @details;
+        push @details, $time;
+        push @details, "via $short_model" if $short_model;
+        push @details, $tk_fmt if $tk_fmt;
+        my $line2 = "     " . $chat->colorize(join(", ", @details), 'DIM');
+        
+        # Line 3: session ID
+        my $line3 = "     " . $chat->colorize("ID: $sess->{id}", 'DIM');
+        
+        push @items, "$line1\n$line2\n$line3";
     }
     
     # Use standard pagination
