@@ -1845,18 +1845,22 @@ sub process_input {
                     $current_tool = $tool_name;
                 }
                 
+                # Parse tool arguments for display and diff capture
+                my $tool_args = eval { decode_json($tool_call->{function}->{arguments} || '{}') };
+                my $tool_operation = ($tool_args && $tool_args->{operation}) ? $tool_args->{operation} : '';
+                
                 # For terminal_operations: show the command BEFORE execution
-                # so the user can see what's about to run
                 if ($tool_name eq 'terminal_operations') {
-                    my $tool_args = eval { decode_json($tool_call->{function}->{arguments} || '{}') };
                     my $cmd_preview = ($tool_args && $tool_args->{command}) ? $tool_args->{command} : undef;
                    if ($cmd_preview) {
-                       # Show the command text directly (connector provided by formatter)
                        $self->{formatter}->display_action_detail(
                             $cmd_preview, 0, 0
                        );
                    }
                 }
+                
+                # Capture file state before write operations for diff display
+                my $diff_before = $self->_capture_file_before($tool_name, $tool_operation, $tool_args);
                 
                 # Execute tool to get the result
                 my $tool_result = $self->_execute_tool($tool_call);
@@ -1935,6 +1939,11 @@ sub process_input {
                     }
                     
                     $self->{formatter}->display_action_detail($action_detail, $is_error, $remaining_same_tool, $expanded_content);
+                }
+                
+                # Display diff for file-writing operations
+                if ($diff_before && !$is_error) {
+                    $self->_display_file_diff($diff_before, $tool_name, $tool_operation, $tool_args);
                 }
                 
                 # Extract the actual output for the AI (not the UI metadata)
@@ -2205,6 +2214,113 @@ sub process_input {
         tool_calls_made => \@tool_calls_made,
         elapsed_time => $elapsed_time
     };
+}
+
+=head2 _capture_file_before
+
+Snapshot file content before a write operation so we can show diffs after.
+
+Returns a hashref with captured file paths and content, or undef if
+not a diff-eligible operation.
+
+=cut
+
+# Operations that modify files and should show diffs
+my %DIFF_OPERATIONS = (
+    'file_operations' => {
+        'write_file'           => 'path',
+        'replace_string'       => 'path',
+        'multi_replace_string' => 'replacements',
+        'append_file'          => 'path',
+        'insert_at_line'       => 'path',
+    },
+);
+
+sub _capture_file_before {
+    my ($self, $tool_name, $operation, $args) = @_;
+    
+    return undef unless $args;
+    
+    # apply_patch captures handled separately (multiple files)
+    if ($tool_name eq 'apply_patch') {
+        return $self->_capture_patch_files_before($args);
+    }
+    
+    my $op_info = $DIFF_OPERATIONS{$tool_name};
+    return undef unless $op_info && $op_info->{$operation};
+    
+    my $path_key = $op_info->{$operation};
+    my %before;
+    
+    if ($path_key eq 'path') {
+        my $path = $args->{path};
+        return undef unless $path;
+        my $content = $self->_safe_read_file($path);
+        $before{$path} = $content if defined $content;
+    } elsif ($path_key eq 'replacements') {
+        my $replacements = $args->{replacements};
+        return undef unless $replacements && ref($replacements) eq 'ARRAY';
+        for my $r (@$replacements) {
+            next unless $r->{path};
+            next if exists $before{$r->{path}};
+            my $content = $self->_safe_read_file($r->{path});
+            $before{$r->{path}} = $content if defined $content;
+        }
+    }
+    
+    return keys %before ? \%before : undef;
+}
+
+sub _capture_patch_files_before {
+    my ($self, $args) = @_;
+    
+    my $patch = $args->{patch} || '';
+    my %before;
+    
+    while ($patch =~ /^\*\*\*\s+(?:Update|Delete)\s+File:\s*(.+)$/gm) {
+        my $path = $1;
+        $path =~ s/^\s+|\s+$//g;
+        next if exists $before{$path};
+        my $content = $self->_safe_read_file($path);
+        $before{$path} = $content if defined $content;
+    }
+    
+    return keys %before ? \%before : undef;
+}
+
+sub _safe_read_file {
+    my ($self, $path) = @_;
+    return undef unless $path && -f $path;
+    my $content = eval {
+        open my $fh, '<:encoding(UTF-8)', $path or return undef;
+        local $/;
+        my $data = <$fh>;
+        close $fh;
+        $data;
+    };
+    return $content;
+}
+
+=head2 _display_file_diff
+
+Display unified diffs for files changed by a tool operation.
+
+=cut
+
+sub _display_file_diff {
+    my ($self, $before_map, $tool_name, $operation, $args) = @_;
+    
+    return unless $before_map && ref($before_map) eq 'HASH';
+    
+    for my $path (sort keys %$before_map) {
+        my $old = $before_map->{$path};
+        my $new = $self->_safe_read_file($path);
+        next unless defined $new;
+        next if (!defined $old && !length($new));
+        
+        $old //= '';
+        $self->{formatter}->display_diff($old, $new, $path);
+    }
 }
 
 =head2 _execute_tool

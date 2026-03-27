@@ -240,4 +240,26 @@ sub format_error {
     }
 }
 
+=head2 display_diff($old, $new, $filename)
+
+Display a colorized unified diff for a file change using DiffRenderer.
+
+=cut
+
+sub display_diff {
+    my ($self, $old, $new, $filename) = @_;
+    
+    eval { require CLIO::UI::DiffRenderer; };
+    return if $@;
+    
+    my $renderer = CLIO::UI::DiffRenderer->new(
+        theme_mgr => ($self->{ui} && $self->{ui}->{theme_mgr}) ? $self->{ui}->{theme_mgr} : undef,
+        ansi      => ($self->{ui} && $self->{ui}->{ansi}) ? $self->{ui}->{ansi} : undef,
+        max_lines => 20,
+        context   => 3,
+    );
+    
+    $renderer->display_diff($old, $new, $filename);
+}
+
 1;
