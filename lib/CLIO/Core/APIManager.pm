@@ -2795,21 +2795,37 @@ sub send_request_streaming {
         if ($remaining) {
             # Try to parse as JSON error
             my $error_msg;
+            my $error_code;
             eval {
                 my $body = decode_json($remaining);
                 # Handle array-wrapped errors: [{"error": {...}}]
                 if (ref($body) eq 'ARRAY' && @$body && $body->[0]{error}) {
                     $error_msg = $body->[0]{error}{message} || $body->[0]{error};
+                    $error_code = $body->[0]{error}{code};
                 }
                 # Handle object errors: {"error": {...}}
                 elsif (ref($body) eq 'HASH' && $body->{error}) {
                     $error_msg = $body->{error}{message} || $body->{error};
+                    $error_code = $body->{error}{code};
                 }
             };
             
             if ($error_msg) {
                 log_debug('APIManager', "Detected error in 200 response body: $error_msg");
+                # Detect rate limit errors from semantic error codes (GitHub returns 200 + code string)
+                my $is_rate_limit = $error_code && $error_code =~ /rate.lim/i;
                 $self->{response_handler}->release_broker_slot($resp, 200);
+                if ($is_rate_limit) {
+                    log_info('APIManager', "Rate limit in 200 response body (code=$error_code), treating as 429");
+                    $self->{response_handler}{rate_limit_until} = time() + 60;
+                    return {
+                        success     => 0,
+                        error       => $error_msg,
+                        retryable   => 1,
+                        retry_after => 60,
+                        error_type  => 'rate_limit',
+                    };
+                }
                 return {
                     success => 0,
                     error => $error_msg,
