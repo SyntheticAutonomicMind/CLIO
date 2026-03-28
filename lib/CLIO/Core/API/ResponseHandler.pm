@@ -127,6 +127,11 @@ sub handle_error_response {
     #   OpenAI/OpenRouter: {"error": {"message": "...", "code": 400}}
     #   Google native:     [{"error": {"message": "...", "code": 429, "status": "RESOURCE_EXHAUSTED"}}]
     my $content = eval { decode_json($resp->decoded_content) };
+    # For streaming errors, decoded_content may be empty because the body was
+    # captured in raw_response_body and injected as $resp->{content} by APIManager.
+    if (!$content && $resp->{content}) {
+        $content = eval { decode_json($resp->{content}) };
+    }
     my $error_obj;
     if ($content) {
         if (ref($content) eq 'HASH' && $content->{error}) {
