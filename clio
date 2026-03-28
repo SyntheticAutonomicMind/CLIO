@@ -235,9 +235,10 @@ if ($mode eq 'list_sessions') {
         my $mtime = $stat[9] // 0;
         my $size = $stat[7] // 0;
         
-        # Read session data to get friendly name and message count
         my $name = undef;
+        my $model = undef;
         my $msg_count = 0;
+        my $total_tokens = 0;
         eval {
             open my $fh, '<', $file_path or die;
             local $/;
@@ -246,33 +247,73 @@ if ($mode eq 'list_sessions') {
             my $data = decode_json($json);
             $name = $data->{session_name} if $data->{session_name};
             $msg_count = scalar(@{$data->{history} || []});
+            if ($data->{billing}) {
+                $model = $data->{billing}{model};
+                $total_tokens = $data->{billing}{total_tokens} || 0;
+            }
         };
         
         push @sessions_info, {
             id => $sid,
             name => $name,
+            model => $model,
             mtime => $mtime,
             size => $size,
             msg_count => $msg_count,
+            total_tokens => $total_tokens,
         };
     }
     
     # Sort by modification time (most recent first)
     @sessions_info = sort { $b->{mtime} <=> $a->{mtime} } @sessions_info;
     
-    # Display
-    printf "%-4s %-50s %-20s %s\n", "#", "SESSION", "LAST ACTIVE", "MSGS";
-    printf "%-4s %-50s %-20s %s\n", "-" x 3, "-" x 48, "-" x 18, "-" x 4;
+    # ANSI codes for terminal display
+    my $bold = "\e[1m";
+    my $dim  = "\e[2m";
+    my $reset = "\e[0m";
     
+    # Display in multi-line format matching /session list
     for my $i (0 .. $#sessions_info) {
         my $s = $sessions_info[$i];
-        my $display_name = $s->{name} || substr($s->{id}, 0, 36);
+        my $display_name = $s->{name} || '(unnamed)';
         my $time_str = _format_relative_time_cli($s->{mtime});
-        printf "%3d) %-50s %-20s %4d\n", $i + 1, $display_name, $time_str, $s->{msg_count};
+        
+        # Format model name (strip date suffix and provider prefix)
+        my $short_model = '';
+        if ($s->{model}) {
+            $short_model = $s->{model};
+            $short_model =~ s/-20\d{6}$//;
+            $short_model =~ s{^[a-z][a-z0-9_.-]*/}{}i;
+        }
+        
+        # Format token count
+        my $tk_fmt = '';
+        if ($s->{total_tokens} > 0) {
+            my $tk = $s->{total_tokens};
+            if ($tk >= 1_000_000) {
+                $tk_fmt = sprintf("%.1fM tokens", $tk / 1_000_000);
+            } elsif ($tk >= 1_000) {
+                $tk_fmt = sprintf("%.0fK tokens", $tk / 1_000);
+            } else {
+                $tk_fmt = "$tk tokens";
+            }
+        }
+        
+        # Line 1: full session name (no truncation)
+        printf "${bold}%s${reset}\n", $display_name;
+        
+        # Line 2: time, model, tokens
+        my @details;
+        push @details, $time_str;
+        push @details, "via $short_model" if $short_model;
+        push @details, $tk_fmt if $tk_fmt;
+        printf "  ${dim}%s${reset}\n", join(", ", @details);
+        
+        # Line 3: session ID
+        printf "  ${dim}ID: %s${reset}\n", $s->{id};
     }
     
     print "\nResume a session:\n";
-    print "  clio --resume <number>       # by list number\n";
     print "  clio --resume <name>         # by friendly name\n";
     print "  clio --resume <uuid>         # by session ID\n";
     
