@@ -158,6 +158,11 @@ sub handle_error_response {
             $status = int($error_obj->{code});
             log_debug('ResponseHandler', "Using embedded error code $status from response body");
         }
+        # Detect rate limit from semantic string codes (e.g. GitHub's user_model_rate_limited)
+        if ($status == 200 && $error_obj->{code} && $error_obj->{code} =~ /rate.lim/i) {
+            $status = 429;
+            log_debug('ResponseHandler', "Detected rate limit via code '$error_obj->{code}', treating as 429");
+        }
     }
 
     my $retryable = 0;
