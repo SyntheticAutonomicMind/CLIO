@@ -797,6 +797,11 @@ sub process_input {
                         $retry_delay = $backoff > 300 ? 300 : $backoff;
                     }
                     log_info('WorkflowOrchestrator', "Rate limit backoff: ${retry_delay}s (consecutive hit #$consecutive_rate_limits)");
+                    # Inform APIManager's proactive throttler about this rate limit event.
+                    # APIManager learns the current request count as the model's effective limit.
+                    if ($self->{api_manager} && $self->{api_manager}->can('report_rate_limit_for_model')) {
+                        $self->{api_manager}->report_rate_limit_for_model();
+                    }
                 } else {
                     # Non-rate-limit error resets the consecutive counter
                     $consecutive_rate_limits = 0;
