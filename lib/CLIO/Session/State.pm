@@ -877,13 +877,6 @@ sub _generate_fallback_name {
     
     $name = ucfirst($name);
     
-    # Truncate to ~50 chars at word boundary
-    if (length($name) > 50) {
-        $name = substr($name, 0, 50);
-        $name =~ s/\s+\S*$//;
-        $name .= '...' if length($name) > 0;
-    }
-    
     return undef if !defined($name) || length($name) < 3;
     return $name;
 }
