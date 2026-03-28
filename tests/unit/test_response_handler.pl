@@ -269,15 +269,29 @@ subtest 'handle_error_response - OpenRouter provider error with metadata.raw' =>
 };
 
 subtest 'handle_error_response - embedded 429 overrides HTTP 200' => sub {
+   my $handler = CLIO::Core::API::ResponseHandler->new();
+   my $resp = MockResponse->new(
+       code => 200,
+       status_line => '200 OK',
+       content => '{"error":{"message":"Rate limit exceeded","code":429}}',
+   );
+   my $result = $handler->handle_error_response($resp, '{}', 0);
+   is($result->{retryable}, 1, 'Embedded 429 treated as rate limit');
+   like($result->{error}, qr/rate limit/i, 'Error message from embedded error');
+};
+
+subtest 'handle_error_response - GitHub user_model_rate_limited (200 with string code)' => sub {
     my $handler = CLIO::Core::API::ResponseHandler->new();
     my $resp = MockResponse->new(
         code => 200,
         status_line => '200 OK',
-        content => '{"error":{"message":"Rate limit exceeded","code":429}}',
+        content => '{"error":{"message":"You have exhausted this model rate limit","code":"user_model_rate_limited"}}',
     );
-    my $result = $handler->handle_error_response($resp, '{}', 0);
-    is($result->{retryable}, 1, 'Embedded 429 treated as rate limit');
-    like($result->{error}, qr/rate limit/i, 'Error message from embedded error');
+    my $result = $handler->handle_error_response($resp, '{}', 1);
+    is($result->{retryable}, 1, 'String rate limit code treated as retryable');
+    is($result->{error_type}, 'rate_limit', 'Error type is rate_limit');
+    ok($result->{retry_after} && $result->{retry_after} > 0, 'Has retry_after value');
+    like($result->{error}, qr/rate limit/i, 'Error message mentions rate limit');
 };
 
 done_testing();
