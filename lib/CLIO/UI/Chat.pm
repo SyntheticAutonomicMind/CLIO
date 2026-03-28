@@ -3579,14 +3579,6 @@ sub _generate_session_name {
     # Capitalize first letter
     $name = ucfirst($name);
     
-    # Truncate to ~50 chars at a word boundary
-    if (length($name) > 50) {
-        $name = substr($name, 0, 50);
-        # Cut at the last word boundary
-        $name =~ s/\s+\S*$//;
-        $name .= '...' if length($name) > 0;
-    }
-    
     # Final sanity check - must have some meaningful content
     return undef if length($name) < 3;
     
