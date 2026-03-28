@@ -542,6 +542,96 @@ sub get_endpoint_config {
     return CLIO::Providers::build_endpoint_config($provider_name, $self->{api_key});
 }
 
+# Per-model proactive request throttle.
+#
+# Tracks request timestamps per model in a 60-second sliding window.
+# When the count approaches the inferred rate limit, adds a pre-emptive delay
+# to avoid hitting the rate limit in the first place.
+#
+# Limits are learned: when a rate limit fires, we record how many requests
+# were in the window as the model's effective limit.
+
+sub _model_throttle_record {
+    my ($self, $model) = @_;
+    return unless $model;
+
+    $self->{_model_request_times} //= {};
+    my $times = $self->{_model_request_times}{$model} //= [];
+
+    # Prune entries older than 60 seconds
+    my $now = time();
+    @$times = grep { $_ > $now - 60 } @$times;
+
+    push @$times, $now;
+}
+
+sub _model_throttle_learn {
+    my ($self, $model, $count) = @_;
+    return unless $model && $count && $count > 0;
+
+    # Only lower the limit (never raise from a rate limit event - the actual limit
+    # may be higher than what triggered this particular hit, but we know count-1
+    # was acceptable and count was not)
+    my $learned = $self->{_model_rate_limits}{$model};
+    my $new_limit = ($count > 1) ? $count - 1 : 1;
+    if (!defined $learned || $new_limit < $learned) {
+        $self->{_model_rate_limits}{$model} = $new_limit;
+        log_info('APIManager', "Learned rate limit for $model: $new_limit req/60s (was " . ($learned // 'unknown') . ")");
+    }
+}
+
+sub report_rate_limit_for_model {
+    my ($self, $model) = @_;
+    $model ||= $self->get_current_model();
+    return unless $model;
+    my $times = $self->{_model_request_times}{$model} // [];
+    my $now   = time();
+    my $count = scalar grep { $_ > $now - 60 } @$times;
+    $self->_model_throttle_learn($model, $count) if $count > 0;
+}
+
+sub _model_throttle_check {
+    my ($self, $model) = @_;
+    return 0 unless $model;
+    return 0 if $self->{broker_client};  # Broker handles throttling centrally
+
+    $self->{_model_request_times} //= {};
+    $self->{_model_rate_limits}   //= {};
+
+    my $times = $self->{_model_request_times}{$model} //= [];
+    my $now   = time();
+
+    # Prune to 60-second window
+    @$times = grep { $_ > $now - 60 } @$times;
+
+    my $count  = scalar @$times;
+    my $limit  = $self->{_model_rate_limits}{$model};
+
+    # No learned limit yet - no proactive throttle
+    return 0 unless defined $limit && $limit > 0;
+
+    # At 70%+ of inferred limit, add delay proportional to how close we are
+    my $pct = $count / $limit;
+    return 0 if $pct < 0.7;
+
+    # Find oldest timestamp in window to estimate time-to-window-reset
+    my $oldest = $times->[0] // $now;
+    my $window_age = $now - $oldest;  # How old is the oldest request?
+    my $window_remaining = 60 - $window_age;  # How many seconds until oldest expires?
+
+    if ($pct >= 1.0) {
+        # At or over limit - wait for the oldest request to fall out of the window
+        return ($window_remaining > 0) ? $window_remaining + 1 : 2;
+    }
+
+    # 70-99%: add a proportional fractional delay to spread requests out
+    # At 70%: ~1s delay. At 90%: ~3s. At 99%: spread over remaining window.
+    my $spread_delay = ($pct - 0.7) / 0.3 * ($window_remaining / ($limit - $count + 1));
+    $spread_delay = 1.0 if $spread_delay < 1.0;
+    $spread_delay = 10.0 if $spread_delay > 10.0;
+    return $spread_delay;
+}
+
 # Validate and adapt request parameters for specific endpoints
 sub adapt_request_for_endpoint {
     my ($self, $payload, $endpoint_config) = @_;
@@ -1596,6 +1686,15 @@ sub send_request {
     my $endpoint_config = $ep->{config};
     my $endpoint = $ep->{endpoint};
     my $model = $ep->{model};
+
+    # Proactive per-model throttle: check if we're approaching the inferred rate limit.
+    # _model_throttle_check() returns a suggested delay in seconds (0 if no throttle needed).
+    if (my $throttle_delay = $self->_model_throttle_check($model)) {
+        log_info('APIManager', sprintf("Proactive rate throttle for %s: %.1fs (approaching inferred limit)", $model, $throttle_delay));
+        for (my $i = int($throttle_delay); $i > 0; $i--) { sleep(1); }
+    }
+    $self->_model_throttle_record($model);
+
     
     # Prepare and trim messages
     my $messages = $self->_prepare_messages($input, %opts);
@@ -2129,6 +2228,14 @@ sub send_request_streaming {
     my $endpoint_config = $ep->{config};
     my $endpoint = $ep->{endpoint};
     my $model = $ep->{model};
+
+    # Proactive per-model throttle: check if we're approaching the inferred rate limit.
+    if (my $throttle_delay = $self->_model_throttle_check($model)) {
+        log_info('APIManager', sprintf("Proactive rate throttle for %s: %.1fs (approaching inferred limit)", $model, $throttle_delay));
+        for (my $i = int($throttle_delay); $i > 0; $i--) { sleep(1); }
+    }
+    $self->_model_throttle_record($model);
+
     
     # Prepare and trim messages
     my $messages = $self->_prepare_messages($input, %opts);
