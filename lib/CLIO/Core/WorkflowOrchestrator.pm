@@ -1507,15 +1507,18 @@ sub process_input {
         
         # Extract session naming marker from response content (regardless of tool calls)
         # The AI may include the marker in its first response alongside tool calls
-        if ($session && $session->can('session_name') && !$session->session_name()) {
+        # Always strip the marker - only set session name if not already set
+        if ($session && $session->can('session_name')) {
             my $content = $api_response->{content} // '';
             if ($content =~ s/\s*<!--session:\{[^}]*"title"\s*:\s*"([^"]{3,80})"[^}]*\}-->\s*//s) {
-                my $title = $1;
-                $title =~ s/^\s+|\s+$//g;
-                if (length($title) >= 3) {
-                    $session->session_name($title);
-                    $api_response->{content} = $content;
-                    log_info('WorkflowOrchestrator', "Session named by AI: $title");
+                $api_response->{content} = $content;
+                if (!$session->session_name()) {
+                    my $title = $1;
+                    $title =~ s/^\s+|\s+$//g;
+                    if (length($title) >= 3) {
+                        $session->session_name($title);
+                        log_info('WorkflowOrchestrator', "Session named by AI: $title");
+                    }
                 }
             }
         }
@@ -2204,14 +2207,17 @@ sub process_input {
         my $final_content = $api_response->{content} || '';
         
         # Extract session naming marker before any other cleanup
-        # The AI includes <!--session:{"title":"..."}-->  in its first response
-        if ($session && $session->can('session_name') && !$session->session_name()) {
+        # The AI includes <!--session:{"title":"..."}--> in its first response
+        # Always strip the marker - only set session name if not already set
+        if ($session && $session->can('session_name')) {
             if ($final_content =~ s/\s*<!--session:\{[^}]*"title"\s*:\s*"([^"]{3,80})"[^}]*\}-->\s*//s) {
-                my $title = $1;
-                $title =~ s/^\s+|\s+$//g;
-                if (length($title) >= 3) {
-                    $session->session_name($title);
-                    log_info('WorkflowOrchestrator', "Session named by AI: $title");
+                if (!$session->session_name()) {
+                    my $title = $1;
+                    $title =~ s/^\s+|\s+$//g;
+                    if (length($title) >= 3) {
+                        $session->session_name($title);
+                        log_info('WorkflowOrchestrator', "Session named by AI: $title");
+                    }
                 }
             }
         }
