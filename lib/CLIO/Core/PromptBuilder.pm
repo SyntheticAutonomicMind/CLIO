@@ -172,17 +172,28 @@ sub generate_tools_section {
 
     my $section = "## Available Tools - READ THIS CAREFULLY\n\n";
     $section .= "You have access to exactly $tool_count function calling tools. ";
-    $section .= "When users ask \"what tools do you have?\", list ALL of these by name:\n\n";
+    $section .= "When users ask \"what tools do you have?\", list ALL $tool_count tools by name:\n\n";
+
+    # Tool summaries - use generic descriptions, NOT operation names
+    # This prevents MiniMax from trying to call operations as standalone tools
+    my %tool_summaries = (
+        file_operations => "File read/write/search operations",
+        version_control => "Git version control operations",
+        terminal_operations => "Execute shell commands",
+        memory_operations => "Store/recall memory across sessions",
+        web_operations => "Search web and fetch URLs",
+        todo_operations => "Manage structured todo lists",
+        code_intelligence => "Find code usages and search history",
+        user_collaboration => "Request user input mid-execution",
+        agent_operations => "Spawn and manage sub-agents",
+        remote_execution => "Execute CLIO on remote systems",
+        apply_patch => "Apply patch to modify files",
+    );
 
     my $num = 1;
     for my $tool (@$tools) {
         my $name = $tool->{name};
-        my $description = $tool->{description};
-
-        # Extract first line of description (summary)
-        my ($summary) = split /\n/, $description;
-        $summary =~ s/^\s+|\s+$//g;
-
+        my $summary = $tool_summaries{$name} || "Tool for $name";
         $section .= "$num. **$name** - $summary\n";
         $num++;
     }
@@ -190,29 +201,57 @@ sub generate_tools_section {
     $section .= "\n**Important:** You HAVE all $tool_count of these tools. ";
     $section .= "Do NOT say you don't have a tool that's on this list!\n\n";
 
-    # Add operation-based tool explanation
-    $section .= "## **HOW TO USE OPERATION-BASED TOOLS**\n\n";
-    $section .= "Most tools use an **operation-based pattern**: one tool with multiple operations.\n\n";
-    $section .= "**Example:** `file_operations` has 17 operations (read_file, write_file, grep_search, etc.)\n\n";
-    $section .= "**CORRECT way to call:**\n";
+    # Add explicit tool calling examples - MOST IMPORTANT FOR MINIMAX
+    $section .= "## **HOW TO CALL TOOLS - EXPLICIT EXAMPLES**\n\n";
+    $section .= "**WRONG (will fail):**\n";
     $section .= "```\n";
-    $section .= "file_operations(\n";
-    $section .= "  operation: \"read_file\",\n";
-    $section .= "  path: \"lib/Example.pm\"\n";
-    $section .= ")\n";
+    $section .= "{\"name\": \"grep_search\", \"parameters\": {...}}\n";
+    $section .= "{\"name\": \"file_search\", \"parameters\": {...}}\n";
+    $section .= "{\"name\": \"git\", \"parameters\": {...}}\n";
     $section .= "```\n\n";
-    $section .= "**The `operation` parameter is ALWAYS REQUIRED.** Every tool call must specify which operation to perform.\n\n";
-    $section .= "**Each operation needs different parameters** - check the tool's schema to see what parameters each operation requires.\n\n";
+    $section .= "**CORRECT (use these tool names):**\n";
+    $section .= "```\n";
+    $section .= "{\"name\": \"file_operations\", \"parameters\": {\"operation\": \"grep_search\", ...}}\n";
+    $section .= "{\"name\": \"file_operations\", \"parameters\": {\"operation\": \"file_search\", ...}}\n";
+    $section .= "{\"name\": \"version_control\", \"parameters\": {\"operation\": \"status\", ...}}\n";
+    $section .= "{\"name\": \"terminal_operations\", \"parameters\": {\"operation\": \"exec\", ...}}\n";
+    $section .= "{\"name\": \"memory_operations\", \"parameters\": {\"operation\": \"store\", ...}}\n";
+    $section .= "{\"name\": \"web_operations\", \"parameters\": {\"operation\": \"search_web\", ...}}\n";
+    $section .= "{\"name\": \"todo_operations\", \"parameters\": {\"operation\": \"write\", ...}}\n";
+    $section .= "{\"name\": \"code_intelligence\", \"parameters\": {\"operation\": \"list_usages\", ...}}\n";
+    $section .= "{\"name\": \"user_collaboration\", \"parameters\": {\"operation\": \"request_input\", ...}}\n";
+    $section .= "{\"name\": \"agent_operations\", \"parameters\": {\"operation\": \"spawn\", ...}}\n";
+    $section .= "{\"name\": \"remote_execution\", \"parameters\": {\"operation\": \"execute_remote\", ...}}\n";
+    $section .= "{\"name\": \"apply_patch\", \"parameters\": {...}}\n";
+    $section .= "```\n\n";
+
+    # Add operation-based tool explanation
+    $section .= "## **OPERATION-BASED PATTERN**\n\n";
+    $section .= "Most tools use an **operation parameter** to specify which action to perform:\n\n";
+    $section .= "**file_operations** operations: read_file, write_file, grep_search, file_search, etc.\n";
+    $section .= "**version_control** operations: status, log, diff, commit, push, pull, branch, stash, tag\n";
+    $section .= "**terminal_operations** operations: exec, validate\n";
+    $section .= "**memory_operations** operations: store, retrieve, search, list, delete, recall_sessions\n";
+    $section .= "**web_operations** operations: search_web, fetch_url\n";
+    $section .= "**todo_operations** operations: read, write, update, add\n";
+    $section .= "**code_intelligence** operations: list_usages, search_history\n";
+    $section .= "**user_collaboration** operations: request_input\n";
+    $section .= "**agent_operations** operations: spawn, list, inbox, status, kill, send, broadcast\n";
+    $section .= "**remote_execution** operations: execute_remote, execute_parallel, prepare_remote, cleanup_remote, check_remote\n";
+    $section .= "**apply_patch** - single operation with patch parameter\n\n";
 
     # Add JSON formatting instruction
-    $section .= "## **CRITICAL - JSON FORMAT REQUIREMENT**\n\n";
-    $section .= "When calling tools, you MUST generate valid JSON. This is NON-NEGOTIABLE.\n\n";
-    $section .= "**FORBIDDEN:**  `{\"offset\":,\"length\":8192}`  <- Missing value = PARSER CRASH\n\n";
-    $section .= "**CORRECT Options:**\n";
-    $section .= "1. Omit optional param: `{\"operation\":\"read_tool_result\",\"length\":8192}`\n";
-    $section .= "2. Include with value: `{\"operation\":\"read_tool_result\",\"offset\":0,\"length\":8192}`\n\n";
-    $section .= "**Rule:** EVERY parameter key MUST have a value. No exceptions.\n\n";
-    $section .= "**DECIMAL NUMBERS:** Always include leading zero: `0.1` not `.1`, `0.05` not `.05`\n";
+    $section .= "## **JSON FORMAT REQUIREMENT**\n\n";
+    $section .= "All tool calls MUST be valid JSON. Every parameter key MUST have a value.\n\n";
+    $section .= "**Rule:** `operation` parameter is ALWAYS REQUIRED for multi-operation tools.\n\n";
+    $section .= "**DECIMAL NUMBERS:** Always include leading zero: `0.1` not `.1`, `0.05` not `.05`\n\n";
+
+    # Add specific warning about user_collaboration tool
+    $section .= "## **user_collaboration - REQUIRED TOOL CALL**\n\n";
+    $section .= "**This tool MUST be called via JSON function call. DO NOT use text markers.**\n\n";
+    $section .= "**WRONG (invalid):** `CLIO: [COLLABORATION] message...`\n";
+    $section .= "**CORRECT (valid JSON):** `{\"name\":\"user_collaboration\",\"parameters\":{\"operation\":\"request_input\",\"message\":\"message\"}}`\n\n";
+    $section .= "This tool is FREE and blocks until user responds. Use it for all checkpoints and collaboration.\n\n";
 
     # Add MCP tools section if any are connected
     if ($self->{mcp_manager}) {
