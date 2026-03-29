@@ -479,8 +479,7 @@ sub process_input {
     my $max_retries = 3;  # Maximum retries for API errors (malformed JSON, etc.)
     my $premature_stop_retries = 0;  # Track retries for premature workflow stops
     my $max_premature_stop_retries = 2;  # Max auto-retries for premature stops
-    my $max_server_retries = 30;   # Higher limit for server/network errors (502, 503, 599)
-    my $consecutive_rate_limits = 0;  # Track consecutive rate limit hits for backoff
+    my $max_server_retries = 30;  # Higher limit for server/network errors (502, 503, 599)
     
     # Session-level error budget: Limit total errors across all iterations
     # This prevents cascading failures from consuming the entire session
@@ -753,12 +752,10 @@ sub process_input {
                 }
                 
                 # Determine which retry limit to use based on error type
-                # Rate limits retry indefinitely; server errors get many; 400s get fewer
+                # Rate limits and server errors get more retries; 400s get fewer
                 my $error_type_for_limit = $api_response->{error_type} || '';
                 my $retry_limit;
-                if ($error_type_for_limit eq 'rate_limit') {
-                    $retry_limit = undef;  # Infinite - rate limits always clear eventually
-                } elsif ($error_type_for_limit eq 'server_error') {
+                if ($error_type_for_limit eq 'server_error' || $error_type_for_limit eq 'rate_limit') {
                     $retry_limit = $max_server_retries;
                 } elsif ($error_type_for_limit eq 'bad_request') {
                     $retry_limit = 4;  # Bare 400: 1 silent retry + 1 trim + bail
@@ -767,8 +764,7 @@ sub process_input {
                 }
                 
                 # Check if we've exceeded max retries for this iteration
-                # (rate_limit has no cap - retry indefinitely)
-                if (defined $retry_limit && $retry_count > $retry_limit) {
+                if ($retry_count > $retry_limit) {
                     log_error('WorkflowOrchestrator', "Maximum retries ($retry_limit) exceeded for this iteration");
                     return {
                         success => 0,
@@ -783,32 +779,12 @@ sub process_input {
                 # Determine error type for logging
                 my $error_type = $error =~ /rate limit/i ? "rate limit" : "server error";
 
-                # Rate limit backoff: use exponential backoff instead of server's
-                # (often decreasing) retry_after value. GitHub's API returns 200 OK
-                # with rate limit errors and countdown values that keep failing.
-                if ($api_response->{error_type} && $api_response->{error_type} eq 'rate_limit') {
-                    $consecutive_rate_limits++;
-                    # First hit: use server value with a 15s floor + 1s buffer
-                    # Subsequent hits: exponential backoff (15, 30, 60, 120... capped at 300)
-                    if ($consecutive_rate_limits <= 1) {
-                        $retry_delay = ($retry_delay > 15 ? $retry_delay : 15) + 1;
-                    } else {
-                        my $backoff = 15 * (2 ** ($consecutive_rate_limits - 1));
-                        $retry_delay = $backoff > 300 ? 300 : $backoff;
-                    }
-                    log_info('WorkflowOrchestrator', "Rate limit backoff: ${retry_delay}s (consecutive hit #$consecutive_rate_limits)");
-                    # Inform APIManager's proactive throttler about this rate limit event.
-                    # APIManager learns the current request count as the model's effective limit.
-                    if ($self->{api_manager} && $self->{api_manager}->can('report_rate_limit_for_model')) {
-                        $self->{api_manager}->report_rate_limit_for_model();
-                    }
-                } else {
-                    # Non-rate-limit error resets the consecutive counter
-                    $consecutive_rate_limits = 0;
+                # Add 1s buffer on top of server-specified retry delay for rate limits
+                if ($api_response->{error_type} && $api_response->{error_type} eq 'rate_limit' && $retry_delay > 0) {
+                    $retry_delay += 1;
                 }
 
-                my $retry_limit_display = defined $retry_limit ? $retry_limit : '∞';
-                my $system_msg = "Temporary $error_type detected. Retrying in ${retry_delay}s... (attempt $retry_count/$retry_limit_display)";
+                my $system_msg = "Temporary $error_type detected. Retrying in ${retry_delay}s... (attempt $retry_count/$retry_limit)";
 
                 # Unsupported parameter (e.g. previous_response_id) - silent instant retry
                 # ResponseHandler already cleared the offending parameter
@@ -1207,9 +1183,10 @@ sub process_input {
                 }
                 # Special handling for rate limit errors
                 elsif ($api_response->{error_type} && $api_response->{error_type} eq 'rate_limit') {
-                    # Backoff already computed above with exponential increase
+                    # Rate limit already has appropriate retry_after from APIManager
+                    # Just update the error_type for logging
                     $error_type = "rate limit";
-                    # system_msg already set above with correct backoff delay
+                    # system_msg already set above
                 }
                 # Special handling for auth recovery (token refreshed silently)
                 elsif ($api_response->{error_type} && $api_response->{error_type} eq 'auth_recovered') {
@@ -1453,7 +1430,6 @@ sub process_input {
         
         # API call succeeded - reset retry counter and clear session error count
         $retry_count = 0;
-        $consecutive_rate_limits = 0;
         $self->{consecutive_errors} = 0;
         $self->{last_error} = '';
         $self->{_bad_request_escalations} = 0;
