@@ -508,12 +508,19 @@ if ($broker_session && $broker_agent_id) {
 
 # Apply --model override if specified (temporary, not persisted to config file)
 if ($model_override) {
-    # Auto-prepend current provider if no provider prefix
+    # Auto-prepend provider if no provider prefix
     require CLIO::Providers;
     if ($model_override !~ m{^([a-z][a-z0-9_.-]*)/}i || 
         !CLIO::Providers::provider_exists($1)) {
-        my $provider = $config->get('provider') || '';
+        # Try to detect the correct provider from model name
+        my $detected = CLIO::Providers::detect_provider_for_model($model_override);
+        my $provider = $detected || $config->get('provider') || '';
         if ($provider) {
+            # Switch provider if we detected a different one
+            if ($detected && $detected ne ($config->get('provider') || '')) {
+                $config->set('provider', $detected, 0);
+                print STDERR "[DEBUG] Auto-detected provider '$detected' for model '$model_override'\n" if $debug;
+            }
             $model_override = "$provider/$model_override";
         }
     }

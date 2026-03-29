@@ -14,6 +14,8 @@
 | **Google Gemini** | `google` | API Key | `gemini-2.5-flash` | Free tier + pay-per-use |
 | **DeepSeek** | `deepseek` | API Key | `deepseek-coder` | Pay-per-use (low cost) |
 | **OpenRouter** | `openrouter` | API Key | `llama-3.1-405b-instruct:free` | Varies by model |
+| **MiniMax** | `minimax` | API Key | `MiniMax-M2.7` | Pay-per-use |
+| **MiniMax Token Plan** | `minimax_token` | API Key | `MiniMax-M2.7` | Subscription |
 | **llama.cpp** | `llama.cpp` | None | `local-model` | Free (local) |
 | **LM Studio** | `lmstudio` | None | `local-model` | Free (local) |
 | **SAM** | `sam` | API Key | `github_copilot/gpt-4.1` | Free (local) |
@@ -230,6 +232,62 @@ OpenRouter provides access to 100+ models. Some popular options:
 /api set model anthropic/claude-sonnet-4
 /api set model openai/gpt-4.1
 ```
+
+---
+
+### MiniMax
+
+**Best for:** High-throughput coding, large output windows (131k tokens), competitive pricing
+
+**Pricing:** Pay-per-use or Token Plan subscription ([platform.minimax.io](https://platform.minimax.io))
+
+**Get API Key:**
+1. Create account at [platform.minimax.io](https://platform.minimax.io)
+2. Go to API Keys in your dashboard
+3. Create new key
+
+**Configure CLIO (Pay-per-use):**
+```bash
+clio --new
+/api set provider minimax
+/api set key <your-api-key>
+/config save
+```
+
+**Configure CLIO (Token Plan subscription):**
+```bash
+clio --new
+/api set provider minimax_token
+/api set key <your-api-key>
+/config save
+```
+
+The only difference between `minimax` and `minimax_token` is the API endpoint. Token Plan users get rate-limited access at a flat subscription cost.
+
+**Available Models:**
+- `MiniMax-M2.7` - Latest, recursive self-improvement (~60 tps)
+- `MiniMax-M2.7-highspeed` - Same as M2.7 (~100 tps)
+- `MiniMax-M2.5` - Code generation and refactoring (~60 tps)
+- `MiniMax-M2.5-highspeed` - Same as M2.5 (~100 tps)
+- `MiniMax-M2.1` - 230B params, code + reasoning (~60 tps)
+- `MiniMax-M2.1-highspeed` - Same as M2.1 (~100 tps)
+- `MiniMax-M2` - Function calling, advanced reasoning
+
+All models share a 204.8k context window and 131k max output tokens.
+
+**Check Quota (Token Plan only):**
+```bash
+/api quota
+```
+
+Shows 5-hour rolling window usage and weekly limits.
+
+**Use with --model flag:**
+```bash
+clio --model MiniMax-M2.7 --new
+```
+
+CLIO auto-detects MiniMax models and routes to the correct provider.
 
 ---
 
