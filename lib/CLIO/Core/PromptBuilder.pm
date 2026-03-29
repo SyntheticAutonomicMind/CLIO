@@ -227,18 +227,19 @@ sub generate_tools_section {
 
     # Add operation-based tool explanation
     $section .= "## **OPERATION-BASED PATTERN**\n\n";
-    $section .= "Most tools use an **operation parameter** to specify which action to perform:\n\n";
-    $section .= "**file_operations** operations: read_file, write_file, grep_search, file_search, etc.\n";
-    $section .= "**version_control** operations: status, log, diff, commit, push, pull, branch, stash, tag\n";
-    $section .= "**terminal_operations** operations: exec, validate\n";
-    $section .= "**memory_operations** operations: store, retrieve, search, list, delete, recall_sessions\n";
-    $section .= "**web_operations** operations: search_web, fetch_url\n";
-    $section .= "**todo_operations** operations: read, write, update, add\n";
-    $section .= "**code_intelligence** operations: list_usages, search_history\n";
-    $section .= "**user_collaboration** operations: request_input\n";
-    $section .= "**agent_operations** operations: spawn, list, inbox, status, kill, send, broadcast\n";
-    $section .= "**remote_execution** operations: execute_remote, execute_parallel, prepare_remote, cleanup_remote, check_remote\n";
-    $section .= "**apply_patch** - single operation with patch parameter\n\n";
+    $section .= "Most tools use an **operation parameter** to specify which action to perform.\n";
+    $section .= "The value after `operation=` is what GOES IN the operation parameter, NOT a tool name.\n\n";
+    $section .= "**file_operations** with operation= read_file | write_file | grep_search | file_search | list_dir | etc.\n";
+    $section .= "**version_control** with operation= status | log | diff | commit | push | pull | branch | stash | tag\n";
+    $section .= "**terminal_operations** with operation= exec | validate\n";
+    $section .= "**memory_operations** with operation= store | retrieve | search | list | delete | recall_sessions\n";
+    $section .= "**web_operations** with operation= search_web | fetch_url\n";
+    $section .= "**todo_operations** with operation= read | write | update | add\n";
+    $section .= "**code_intelligence** with operation= list_usages | search_history\n";
+    $section .= "**user_collaboration** with operation= request_input\n";
+    $section .= "**agent_operations** with operation= spawn | list | inbox | status | kill | send | broadcast\n";
+    $section .= "**remote_execution** with operation= execute_remote | execute_parallel | prepare_remote | cleanup_remote | check_remote\n";
+    $section .= "**apply_patch** - single operation (pass patch parameter directly)\n\n";
 
     # Add JSON formatting instruction
     $section .= "## **JSON FORMAT REQUIREMENT**\n\n";
