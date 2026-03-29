@@ -436,6 +436,7 @@ sub enforce_message_alternation {
     my $accumulated_content = '';
     my $accumulated_tool_calls = [];
     my $accumulated_tool_call_id = undef;
+    my $accumulated_reasoning_details = undef;  # MiniMax interleaved thinking
 
     # Determine if provider supports role=tool
     my $provider_supports_tool_role = ($provider =~ /github|openai/i);
@@ -487,6 +488,10 @@ sub enforce_message_alternation {
                     $flushed->{tool_call_id} = $accumulated_tool_call_id;
                 }
 
+                if ($accumulated_reasoning_details) {
+                    $flushed->{reasoning_details} = $accumulated_reasoning_details;
+                }
+
                 push @alternating, $flushed;
             }
 
@@ -495,6 +500,7 @@ sub enforce_message_alternation {
             $accumulated_content = $msg->{content} || '';
             $accumulated_tool_calls = $msg->{tool_calls} ? [@{$msg->{tool_calls}}] : [];
             $accumulated_tool_call_id = $msg->{tool_call_id};
+            $accumulated_reasoning_details = $msg->{reasoning_details};
         }
     }
 
@@ -511,6 +517,10 @@ sub enforce_message_alternation {
 
         if ($last_role eq 'tool' && defined $accumulated_tool_call_id) {
             $flushed->{tool_call_id} = $accumulated_tool_call_id;
+        }
+
+        if ($accumulated_reasoning_details) {
+            $flushed->{reasoning_details} = $accumulated_reasoning_details;
         }
 
         push @alternating, $flushed;

@@ -1598,11 +1598,17 @@ sub process_input {
                 ($had_validation_errors ? " (some were rejected/repaired)" : "") . "\n");
             
             # Add assistant's message with VALIDATED tool_calls to conversation
-            push @messages, {
+            # Include reasoning_details if present (MiniMax interleaved thinking
+            # requires them preserved in conversation history for chain-of-thought continuity)
+            my $assistant_msg = {
                 role => 'assistant',
                 content => $api_response->{content},
                 tool_calls => \@validated_tool_calls
             };
+            if ($api_response->{reasoning_details}) {
+                $assistant_msg->{reasoning_details} = $api_response->{reasoning_details};
+            }
+            push @messages, $assistant_msg;
             
             # DELAYED SAVE: Do NOT save assistant message with tool_calls yet.
             # 
@@ -1628,6 +1634,9 @@ sub process_input {
                 content => $api_response->{content} // '',
                 tool_calls => \@validated_tool_calls  # Use validated version
             };
+            if ($api_response->{reasoning_details}) {
+                $assistant_msg_pending->{reasoning_details} = $api_response->{reasoning_details};
+            }
             
             log_debug('WorkflowOrchestrator', "Delaying save of assistant message with tool_calls until first tool result completes");
             

@@ -1965,6 +1965,7 @@ sub send_request {
     # Extract and validate the message content
     my $content = '';
     my $tool_calls = undef;  # Task 3: Extract tool_calls if present
+    my $reasoning_details = undef;  # MiniMax interleaved thinking
     
     # Try to extract content based on different API response formats
     if (ref $data eq 'HASH') {
@@ -2039,6 +2040,12 @@ sub send_request {
                     warn "[DEBUG] Extracted " . scalar(@$tool_calls) . " tool_calls from response\n";
                 }
             }
+            
+            # Extract reasoning_details for MiniMax interleaved thinking
+            if ($message->{reasoning_details} && ref($message->{reasoning_details}) eq 'ARRAY') {
+                $reasoning_details = $message->{reasoning_details};
+                log_debug('APIManager', "Extracted " . scalar(@$reasoning_details) . " reasoning_details from response");
+            }
         }
         # Text completion format
         elsif ($data->{choices} && @{$data->{choices}} && $data->{choices}[0]{text}) {
@@ -2111,6 +2118,11 @@ sub send_request {
             if ($self->{debug}) {
                 warn "[DEBUG] Including tool_calls in result\n";
             }
+        }
+        
+        # Include reasoning_details for MiniMax interleaved thinking
+        if ($reasoning_details) {
+            $result->{reasoning_details} = $reasoning_details;
         }
         # Release broker slot on success
         $self->{response_handler}->release_broker_slot($resp, 200);
@@ -2475,6 +2487,7 @@ sub send_request_streaming {
     my $buffer = '';  # Buffer for partial SSE lines
     my $tool_calls_accumulator = {};  # Accumulate tool call deltas by index
     my $reasoning_was_active = 0;  # Track if reasoning_content was being streamed
+    my $accumulated_reasoning_details = '';  # Accumulate reasoning for MiniMax interleaved thinking
     my $streaming_usage = undef;  # Capture real usage from final streaming chunk
     my $raw_response_body = '';  # Preserve full response body for error detection
     
@@ -2732,6 +2745,7 @@ sub send_request_streaming {
                             if (!$reasoning_emitted && $delta->{reasoning_content} && $on_thinking) {
                                 $reasoning_was_active = 1;
                                 $reasoning_emitted = 1;
+                                $accumulated_reasoning_details .= $delta->{reasoning_content};
                                 $on_thinking->($delta->{reasoning_content});
                             }
                             
@@ -2747,17 +2761,20 @@ sub send_request_streaming {
                                     if ($type eq 'reasoning.text' && defined $detail->{text}) {
                                         $reasoning_was_active = 1;
                                         $reasoning_emitted = 1;
+                                        $accumulated_reasoning_details .= $detail->{text};
                                         $on_thinking->($detail->{text});
                                     }
                                     elsif ($type eq 'reasoning.summary' && defined $detail->{summary}) {
                                         $reasoning_was_active = 1;
                                         $reasoning_emitted = 1;
+                                        $accumulated_reasoning_details .= $detail->{summary};
                                         $on_thinking->($detail->{summary});
                                     }
                                     # MiniMax format: no type field, just {text: "..."}
                                     elsif (!$type && defined $detail->{text}) {
                                         $reasoning_was_active = 1;
                                         $reasoning_emitted = 1;
+                                        $accumulated_reasoning_details .= $detail->{text};
                                         $on_thinking->($detail->{text});
                                     }
                                     # reasoning.encrypted - skip display (redacted)
@@ -2767,6 +2784,7 @@ sub send_request_streaming {
                             # 3. Legacy 'reasoning' string field (some providers)
                             if (!$reasoning_emitted && $delta->{reasoning} && !ref($delta->{reasoning}) && $on_thinking) {
                                 $reasoning_was_active = 1;
+                                $accumulated_reasoning_details .= $delta->{reasoning};
                                 $on_thinking->($delta->{reasoning});
                             }
                             
@@ -3070,6 +3088,14 @@ sub send_request_streaming {
     # Add tool_calls if present
     if ($tool_calls) {
         $response->{tool_calls} = $tool_calls;
+    }
+    
+    # Include accumulated reasoning_details for MiniMax interleaved thinking
+    # MiniMax requires reasoning_details to be preserved in conversation history
+    # for interleaved thinking to work properly across tool-calling turns
+    if (length($accumulated_reasoning_details)) {
+        $response->{reasoning_details} = [{ type => 'reasoning.text', text => $accumulated_reasoning_details }];
+        log_debug('APIManager', "Accumulated reasoning_details: " . length($accumulated_reasoning_details) . " chars");
     }
     
     # DEBUG: Print EXACT response structure being returned
