@@ -1655,6 +1655,34 @@ sub process_input {
             
             for my $tool_call (@{$api_response->{tool_calls}}) {
                 my $tool_name = $tool_call->{function}->{name} || 'unknown';
+                
+                # Check if tool_name is an alias for an operation
+                # This handles cases where AI calls "file_search" instead of "file_operations" with operation="file_search"
+                my $alias_info = $self->{tool_registry}->get_alias_info($tool_name);
+                if ($alias_info) {
+                    log_debug('WorkflowOrchestrator', "Alias detected: '$tool_name' -> '$alias_info->{tool}' with operation='$alias_info->{operation}'");
+                    # Rewrite the tool call
+                    $tool_call->{function}->{name} = $alias_info->{tool};
+                    $tool_name = $alias_info->{tool};
+                    
+                    # Parse existing args and inject operation if not already set
+                    my $args_str = $tool_call->{function}->{arguments};
+                    if ($args_str) {
+                        eval {
+                            my $args = decode_json($args_str);
+                            unless (exists $args->{operation}) {
+                                $args->{operation} = $alias_info->{operation};
+                                $tool_call->{function}->{arguments} = encode_json($args);
+                                log_debug('WorkflowOrchestrator', "Injected operation='$alias_info->{operation}' into args");
+                            }
+                        };
+                    } else {
+                        # No arguments provided - create with operation
+                        $tool_call->{function}->{arguments} = encode_json({ operation => $alias_info->{operation} });
+                        log_debug('WorkflowOrchestrator', "Created args with operation='$alias_info->{operation}'");
+                    }
+                }
+                
                 my $tool = $self->{tool_registry}->get_tool($tool_name);
                 
                 # Parse tool arguments to check for isInteractive parameter

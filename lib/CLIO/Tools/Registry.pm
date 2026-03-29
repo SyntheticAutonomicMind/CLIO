@@ -97,17 +97,79 @@ sub register_tool {
 
 =head2 get_tool
 
-Get a tool instance by name.
+Get a tool instance by name. Supports aliasing for common mistakes.
+
+When an operation name is used as a tool name (e.g., "file_search" instead of
+"file_operations" with operation="file_search"), this method automatically
+resolves the alias and returns the correct tool.
 
 Arguments:
-- $name: Tool name
+- $name: Tool name (may be an alias)
 
-Returns: Tool instance, or undef if not found
+Returns: Tool instance, or undef if not found (after alias resolution)
 
 =cut
 
 sub get_tool {
     my ($self, $name) = @_;
+    
+    # Operation aliases - maps operation names to their parent tool with default operation
+    # This handles cases where AI calls "file_search" instead of "file_operations" with operation="file_search"
+    my %OPERATION_ALIASES = (
+        'file_search'     => { tool => 'file_operations', operation => 'file_search' },
+        'list_dir'        => { tool => 'file_operations', operation => 'list_dir' },
+        'read_file'       => { tool => 'file_operations', operation => 'read_file' },
+        'write_file'      => { tool => 'file_operations', operation => 'write_file' },
+        'create_file'     => { tool => 'file_operations', operation => 'create_file' },
+        'delete_file'     => { tool => 'file_operations', operation => 'delete_file' },
+        'grep_search'     => { tool => 'file_operations', operation => 'grep_search' },
+        'semantic_search' => { tool => 'file_operations', operation => 'semantic_search' },
+        'file_exists'     => { tool => 'file_operations', operation => 'file_exists' },
+        'get_file_info'   => { tool => 'file_operations', operation => 'get_file_info' },
+        'rename_file'     => { tool => 'file_operations', operation => 'rename_file' },
+        'append_file'     => { tool => 'file_operations', operation => 'append_file' },
+        'replace_string'  => { tool => 'file_operations', operation => 'replace_string' },
+        'insert_at_line'  => { tool => 'file_operations', operation => 'insert_at_line' },
+        'create_directory'=> { tool => 'file_operations', operation => 'create_directory' },
+        'get_errors'      => { tool => 'file_operations', operation => 'get_errors' },
+        'read_tool_result'=> { tool => 'file_operations', operation => 'read_tool_result' },
+        'git'             => { tool => 'version_control', operation => 'status' },
+        'status'          => { tool => 'version_control', operation => 'status' },
+        'log'             => { tool => 'version_control', operation => 'log' },
+        'diff'            => { tool => 'version_control', operation => 'diff' },
+        'commit'          => { tool => 'version_control', operation => 'commit' },
+        'push'            => { tool => 'version_control', operation => 'push' },
+        'pull'            => { tool => 'version_control', operation => 'pull' },
+        'branch'          => { tool => 'version_control', operation => 'branch' },
+        'stash'           => { tool => 'version_control', operation => 'stash' },
+        'shell'           => { tool => 'terminal_operations', operation => 'exec' },
+        'exec'            => { tool => 'terminal_operations', operation => 'exec' },
+        'store'           => { tool => 'memory_operations', operation => 'store' },
+        'retrieve'        => { tool => 'memory_operations', operation => 'retrieve' },
+        'search'          => { tool => 'memory_operations', operation => 'search' },
+        'recall_sessions' => { tool => 'memory_operations', operation => 'recall_sessions' },
+        'list'            => { tool => 'memory_operations', operation => 'list' },
+        'delete'          => { tool => 'memory_operations', operation => 'delete' },
+        'search_web'      => { tool => 'web_operations', operation => 'search_web' },
+        'fetch_url'       => { tool => 'web_operations', operation => 'fetch_url' },
+        'todo'            => { tool => 'todo_operations', operation => 'write' },
+        'todos'           => { tool => 'todo_operations', operation => 'read' },
+        'list_usages'    => { tool => 'code_intelligence', operation => 'list_usages' },
+        'search_history'  => { tool => 'code_intelligence', operation => 'search_history' },
+        'ask'             => { tool => 'user_collaboration', operation => 'request_input' },
+        'collab'          => { tool => 'user_collaboration', operation => 'request_input' },
+        'spawn'           => { tool => 'agent_operations', operation => 'spawn' },
+        'agents'          => { tool => 'agent_operations', operation => 'list' },
+        'inbox'           => { tool => 'agent_operations', operation => 'inbox' },
+        'patch'           => { tool => 'apply_patch', operation => 'patch' },
+    );
+    
+    # Check if name is an operation alias first
+    if (exists $OPERATION_ALIASES{$name}) {
+        my $alias = $OPERATION_ALIASES{$name};
+        log_debug('Registry', "Resolving alias '$name' -> '$alias->{tool}' with operation='$alias->{operation}'");
+        $name = $alias->{tool};
+    }
     
     my $tool = $self->{tools}{$name};
     
@@ -116,6 +178,76 @@ sub get_tool {
     }
     
     return $tool;
+}
+
+=head2 get_alias_info
+
+Get alias information for a tool name. Returns the alias mapping if the name
+is an alias, or undef if it's a real tool name.
+
+This allows callers to detect when an alias was used and extract the default
+operation that should be set.
+
+Arguments:
+- $name: Tool name
+
+Returns: Hashref with { tool => '...', operation => '...' } or undef
+
+=cut
+
+sub get_alias_info {
+    my ($self, $name) = @_;
+    
+    my %OPERATION_ALIASES = (
+        'file_search'     => { tool => 'file_operations', operation => 'file_search' },
+        'list_dir'        => { tool => 'file_operations', operation => 'list_dir' },
+        'read_file'       => { tool => 'file_operations', operation => 'read_file' },
+        'write_file'      => { tool => 'file_operations', operation => 'write_file' },
+        'create_file'     => { tool => 'file_operations', operation => 'create_file' },
+        'delete_file'     => { tool => 'file_operations', operation => 'delete_file' },
+        'grep_search'     => { tool => 'file_operations', operation => 'grep_search' },
+        'semantic_search' => { tool => 'file_operations', operation => 'semantic_search' },
+        'file_exists'     => { tool => 'file_operations', operation => 'file_exists' },
+        'get_file_info'   => { tool => 'file_operations', operation => 'get_file_info' },
+        'rename_file'     => { tool => 'file_operations', operation => 'rename_file' },
+        'append_file'     => { tool => 'file_operations', operation => 'append_file' },
+        'replace_string'  => { tool => 'file_operations', operation => 'replace_string' },
+        'insert_at_line'  => { tool => 'file_operations', operation => 'insert_at_line' },
+        'create_directory'=> { tool => 'file_operations', operation => 'create_directory' },
+        'get_errors'      => { tool => 'file_operations', operation => 'get_errors' },
+        'read_tool_result'=> { tool => 'file_operations', operation => 'read_tool_result' },
+        'git'             => { tool => 'version_control', operation => 'status' },
+        'status'          => { tool => 'version_control', operation => 'status' },
+        'log'             => { tool => 'version_control', operation => 'log' },
+        'diff'            => { tool => 'version_control', operation => 'diff' },
+        'commit'          => { tool => 'version_control', operation => 'commit' },
+        'push'            => { tool => 'version_control', operation => 'push' },
+        'pull'            => { tool => 'version_control', operation => 'pull' },
+        'branch'          => { tool => 'version_control', operation => 'branch' },
+        'stash'           => { tool => 'version_control', operation => 'stash' },
+        'shell'           => { tool => 'terminal_operations', operation => 'exec' },
+        'exec'            => { tool => 'terminal_operations', operation => 'exec' },
+        'store'           => { tool => 'memory_operations', operation => 'store' },
+        'retrieve'        => { tool => 'memory_operations', operation => 'retrieve' },
+        'search'          => { tool => 'memory_operations', operation => 'search' },
+        'recall_sessions' => { tool => 'memory_operations', operation => 'recall_sessions' },
+        'list'            => { tool => 'memory_operations', operation => 'list' },
+        'delete'          => { tool => 'memory_operations', operation => 'delete' },
+        'search_web'      => { tool => 'web_operations', operation => 'search_web' },
+        'fetch_url'       => { tool => 'web_operations', operation => 'fetch_url' },
+        'todo'            => { tool => 'todo_operations', operation => 'write' },
+        'todos'           => { tool => 'todo_operations', operation => 'read' },
+        'list_usages'     => { tool => 'code_intelligence', operation => 'list_usages' },
+        'search_history'   => { tool => 'code_intelligence', operation => 'search_history' },
+        'ask'             => { tool => 'user_collaboration', operation => 'request_input' },
+        'collab'          => { tool => 'user_collaboration', operation => 'request_input' },
+        'spawn'           => { tool => 'agent_operations', operation => 'spawn' },
+        'agents'          => { tool => 'agent_operations', operation => 'list' },
+        'inbox'           => { tool => 'agent_operations', operation => 'inbox' },
+        'patch'           => { tool => 'apply_patch', operation => 'patch' },
+    );
+    
+    return $OPERATION_ALIASES{$name};
 }
 
 =head2 get_all_tools
