@@ -58,11 +58,28 @@ sub new {
         name => 'user_collaboration',
         description => q{Request user input, clarification, or decisions during task execution.
 
-**CRITICAL - Use This Tool for ALL Agent-User Collaboration:**
+**CRITICAL - THIS IS A JSON TOOL CALL, NOT TEXT:**
 
-You MUST use this tool instead of providing summary responses or asking questions in chat. This tool is FREE (no premium request cost) and enables efficient collaboration.
+You MUST call this as a JSON function tool call. The correct format is:
+```
+{
+  "name": "user_collaboration",
+  "parameters": {
+    "operation": "request_input",
+    "message": "Your question here"
+  }
+}
+```
 
-**WHEN TO USE (ALWAYS):**
+**ABSOLUTELY DO NOT USE TEXT MARKERS:** Do NOT write "[COLLABORATION]", "[COLLAB]", "CLIO: [COLLABORATION]...", or any similar text-based markers in your response. These are INVALID. Collaboration MUST be done via this tool call.
+
+**WHY THIS TOOL:**
+- FREE - Does not consume premium API requests
+- SYNCHRONOUS - Workflow continues in same API call
+- INTERACTIVE - User can guide agent in real-time
+- BLOCKING - Execution pauses until user responds
+
+**WHEN TO USE:**
 - Before implementing complex changes
 - When multiple valid approaches exist
 - To show findings and get approval
@@ -72,24 +89,31 @@ You MUST use this tool instead of providing summary responses or asking question
 - When you need clarification
 
 **WHEN NOT TO USE:**
-- Never (seriously, always use it for collaboration)
 - Questions answerable with available tools
 - Information already in conversation history
 
-**EXAMPLES:**
+**EXAMPLES OF CORRECT USAGE:**
 
-SUCCESS: "Found 3 bugs. Fix all at once or one at a time?"
-SUCCESS: "Analyzed codebase. Here are 2 approaches: A) Refactor entirely (3 hours), B) Patch (30 min). Which?"
-SUCCESS: "Encountered error X. Should I: 1) Retry, 2) Try alternative, 3) Report?"
-FAILURE: "Here's what I found..." (don't summarize - use the tool!)
-FAILURE: "Should I search the codebase?" (just do it, don't ask)
+CORRECT (tool call):
+```
+{
+  "name": "user_collaboration",
+  "parameters": {
+    "operation": "request_input",
+    "message": "Found 3 bugs. Fix all at once or one at a time?"
+  }
+}
+```
+
+WRONG (text marker - INVALID):
+`CLIO: [COLLABORATION] Found 3 bugs...`
 
 **WORKFLOW:**
-1. Agent calls this tool with message
+1. Call this tool with message
 2. UI displays message with special styling
 3. User responds
-4. Response returned to agent as tool result
-5. Agent continues in SAME API call (no extra cost!)
+4. Response returned as tool result
+5. Continue in SAME API call (no extra cost!)
 
 **Parameters:**
 - message (required): Your question/update for the user
