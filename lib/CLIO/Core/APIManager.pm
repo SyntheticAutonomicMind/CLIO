@@ -815,7 +815,7 @@ sub get_model_capabilities {
                     my $ctx = $pdef->{max_context_tokens};
                     my $capabilities = {
                         max_prompt_tokens          => $ctx,
-                        max_output_tokens          => 4096,
+                        max_output_tokens          => $pdef->{max_output_tokens} || 4096,
                         max_context_window_tokens  => $ctx,
                     };
                     $self->{_model_capabilities_cache} ||= {};
@@ -876,6 +876,15 @@ sub get_model_capabilities {
                 $fallback_context = 128000;
             }
             
+            # Look up provider-level max_output_tokens for fallback
+            my $provider_max_output;
+            my $effective_provider = $target_provider || ($self->{config} ? ($self->{config}->get('provider') || '') : '');
+            if ($effective_provider) {
+                require CLIO::Providers;
+                my $pdef = CLIO::Providers::get_provider($effective_provider);
+                $provider_max_output = $pdef->{max_output_tokens} if $pdef;
+            }
+            
             # Build normalized capabilities hash
             # Priority: root-level fields (SAM/OpenAI), then capabilities.limits (GitHub Copilot), then provider-specific defaults
             my $capabilities = {
@@ -887,6 +896,7 @@ sub get_model_capabilities {
                 max_output_tokens => $model_info->{max_completion_tokens} ||
                                      $limits->{max_output_tokens} ||
                                      $limits->{max_completion_tokens} ||
+                                     $provider_max_output ||
                                      4096,  # Default fallback
                 max_context_window_tokens => $model_info->{context_window} ||
                                               $limits->{max_context_window_tokens} ||
@@ -1158,7 +1168,9 @@ sub _model_uses_responses_api {
 sub _get_max_output_tokens {
     my ($self, $model) = @_;
     my $caps = $self->get_model_capabilities($model);
-    return ($caps && $caps->{max_output_tokens}) ? $caps->{max_output_tokens} : 16384;
+    my $max = ($caps && $caps->{max_output_tokens}) ? $caps->{max_output_tokens} : 16384;
+    # Enforce a minimum of 32768 to avoid unusably low limits
+    return $max < 32768 ? 32768 : $max;
 }
 
 =head2 _build_responses_api_payload($messages, $model, $endpoint_config, %opts)
@@ -1400,7 +1412,11 @@ sub _parse_model_provider {
         }
     }
     
-    # No provider prefix found - use current provider
+    # No explicit provider prefix - try to detect from model name
+    my $detected = CLIO::Providers::detect_provider_for_model($model);
+    return ($detected, $model) if $detected;
+    
+    # No provider detected - use current provider
     return (undef, $model);
 }
 
@@ -1462,12 +1478,16 @@ sub _build_payload {
     # Extract stream parameter (default false for non-streaming)
     my $stream = $opts{stream} || 0;
     
+    # Determine max_tokens from capabilities or provider config
+    my $max_tokens = $opts{max_tokens} || $self->_get_max_output_tokens($model);
+    
     # Build base payload
     my $payload = {
         model => $model,
         messages => $messages,
         temperature => $opts{temperature} // 0.2,
         top_p => $opts{top_p} // 0.95,
+        max_tokens => $max_tokens,
     };
     
     # Add stream flag if streaming
@@ -1827,37 +1847,55 @@ sub send_request {
     # Build HTTP request with headers (pass opts for tool_call_iteration)
     my ($req, $final_endpoint) = $self->_build_request($endpoint, $endpoint_config, $json, 0, \%opts);
 
-    # ALWAYS log full request for debugging quota issues
+    # Log full request for debugging
+    my $provider_label = $endpoint_config->{minimax} ? 'MiniMax' :
+                         $endpoint_config->{requires_copilot_headers} ? 'GitHub Copilot' :
+                         $endpoint_config->{openrouter} ? 'OpenRouter' : 'API';
     log_debug('APIManager', "=" x 80);
-    log_debug('APIManager', "[REQUEST DEBUG] Endpoint: $final_endpoint");
-    log_debug('APIManager', "[REQUEST DEBUG] Headers:");
+    log_debug('APIManager', "[$provider_label REQUEST] Endpoint: $final_endpoint");
+    log_debug('APIManager', "[$provider_label REQUEST] Model: $model");
+    log_debug('APIManager', "[$provider_label REQUEST] Headers:");
     for my $h ($req->headers->header_field_names) {
-        log_debug('APIManager', "  $h: " . $req->header($h) . "");
+        my $val = $req->header($h);
+        # Mask auth values
+        $val =~ s/(Bearer\s+).{8}(.*)/${1}XXXX...${2}/ if $h =~ /auth/i;
+        log_debug('APIManager', "  $h: $val");
     }
-    log_debug('APIManager', "[REQUEST DEBUG] Body:");
     # Pretty-print JSON for easier comparison
     my $pretty_json = $json;
     eval {
         my $decoded = decode_json($json);
         $pretty_json = encode_json($decoded);  # Re-encode compactly
     };
-    # Save to file for detailed inspection
-    if (open my $fh, '>>', '/tmp/clio_requests.log') {
+    # Log tool count and key payload fields
+    eval {
+        my $p = decode_json($json);
+        log_debug('APIManager', "[$provider_label REQUEST] max_tokens: " . ($p->{max_tokens} || 'NOT SET'));
+        log_debug('APIManager', "[$provider_label REQUEST] tools: " . (ref($p->{tools}) eq 'ARRAY' ? scalar(@{$p->{tools}}) . " tools" : 'none'));
+        log_debug('APIManager', "[$provider_label REQUEST] messages: " . (ref($p->{messages}) eq 'ARRAY' ? scalar(@{$p->{messages}}) . " messages" : 'none'));
+        log_debug('APIManager', "[$provider_label REQUEST] reasoning_split: " . ($p->{reasoning_split} ? 'true' : 'false'));
+        log_debug('APIManager', "[$provider_label REQUEST] stream: " . ($p->{stream} ? 'true' : 'false'));
+    };
+    # Save full request to file for detailed inspection
+    if (open my $fh, '>>', '/tmp/clio_api_debug.log') {
         print $fh "\n" . "="x80 . "\n";
-        print $fh "[" . scalar(localtime) . "] GitHub Copilot Request\n";
-        print $fh "Endpoint: $final_endpoint\n\n";
+        print $fh "[" . scalar(localtime) . "] $provider_label REQUEST\n";
+        print $fh "Endpoint: $final_endpoint\n";
+        print $fh "Model: $model\n\n";
         print $fh "Headers:\n";
         for my $h ($req->headers->header_field_names) {
-            print $fh "  $h: " . $req->header($h) . "\n";
+            my $val = $req->header($h);
+            $val =~ s/(Bearer\s+).{8}(.*)/${1}XXXX.../ if $h =~ /auth/i;
+            print $fh "  $h: $val\n";
         }
         print $fh "\nBody:\n$pretty_json\n";
         close $fh;
     }
-    log_debug('APIManager', "[First 800 chars]: " . substr($pretty_json, 0, 800) . "...");
-    log_debug('APIManager', "="x80 . "");
+    log_debug('APIManager', "[$provider_label REQUEST] Body (first 800 chars): " . substr($pretty_json, 0, 800));
+    log_debug('APIManager', "=" x 80);
 
     if ($self->{debug}) {
-        warn "[DEBUG] Making request to final endpoint: $final_endpoint\n";
+        warn "[DEBUG] Making $provider_label request to: $final_endpoint\n";
         warn "[DEBUG] Using auth header: $endpoint_config->{auth_header}\n";
     }
     
@@ -1914,6 +1952,18 @@ sub send_request {
     }
     
     if (!$resp->is_success) {
+        # Log the error response for debugging
+        my $error_body = $resp->decoded_content || '';
+        log_debug('APIManager', "[$provider_label RESPONSE ERROR] Status: " . $resp->status_line);
+        log_debug('APIManager', "[$provider_label RESPONSE ERROR] Body: " . substr($error_body, 0, 2000));
+        if (open my $fh, '>>', '/tmp/clio_api_debug.log') {
+            print $fh "\n" . "-"x80 . "\n";
+            print $fh "[" . scalar(localtime) . "] $provider_label RESPONSE ERROR\n";
+            print $fh "Status: " . $resp->status_line . "\n";
+            print $fh "Body:\n$error_body\n";
+            close $fh;
+        }
+        
         # Release broker slot with response info before returning
         $self->{response_handler}->release_broker_slot($resp, $resp->code);
         
@@ -1924,18 +1974,39 @@ sub send_request {
     # Process rate limit headers from ALL successful responses (proactive throttling)
     $self->{response_handler}->process_rate_limit_headers($resp->headers);
     
-    # Log raw response for debugging
-    warn "[DEBUG] Raw response: " . $resp->decoded_content . "\n" if $self->{debug};
+    # Log full response for debugging
+    my $raw_response = $resp->decoded_content;
+    log_debug('APIManager', "[$provider_label RESPONSE] Status: " . $resp->status_line);
+    log_debug('APIManager', "[$provider_label RESPONSE] Body (first 1500 chars): " . substr($raw_response, 0, 1500));
+    if (open my $fh, '>>', '/tmp/clio_api_debug.log') {
+        print $fh "\n" . "-"x80 . "\n";
+        print $fh "[" . scalar(localtime) . "] $provider_label RESPONSE\n";
+        print $fh "Status: " . $resp->status_line . "\n";
+        print $fh "Headers:\n";
+        for my $h ($resp->headers->header_field_names) {
+            print $fh "  $h: " . $resp->header($h) . "\n";
+        }
+        print $fh "\nBody:\n$raw_response\n";
+        close $fh;
+    }
     
-    my $data = eval { decode_json($resp->decoded_content) };
+    my $data = eval { decode_json($raw_response) };
     if ($@) {
         my $error = "Invalid response format: $@";
-        warn "[ERROR] $error\n" if $self->{debug};
+        log_error('APIManager', "[$provider_label] $error");
+        log_debug('APIManager', "[$provider_label] Raw content: " . substr($raw_response, 0, 500));
         return $self->_error($error);
     }
     
-    # Log parsed data structure
-    warn "[DEBUG] Parsed data: " . encode_json($data) . "\n" if $self->{debug};
+    # Log key response fields
+    eval {
+        my $finish_reason = $data->{choices}[0]{finish_reason} || 'unknown';
+        my $has_tool_calls = $data->{choices}[0]{message}{tool_calls} ? scalar(@{$data->{choices}[0]{message}{tool_calls}}) : 0;
+        my $content_len = length($data->{choices}[0]{message}{content} || '');
+        my $usage_in = $data->{usage}{prompt_tokens} || 0;
+        my $usage_out = $data->{usage}{completion_tokens} || 0;
+        log_debug('APIManager', "[$provider_label RESPONSE] finish_reason=$finish_reason, tool_calls=$has_tool_calls, content_len=$content_len, usage=$usage_in/$usage_out");
+    };
     
     # Extract stateful_marker for session continuation (GitHub Copilot billing)
     # This is the CORRECT field to use (not 'id'!) per VS Code implementation
@@ -2471,11 +2542,34 @@ sub send_request_streaming {
     # Build HTTP request with headers (pass opts for tool_call_iteration)
     my ($req, $final_endpoint) = $self->_build_request($endpoint, $endpoint_config, $json, 1, \%opts);
     
-    # Debug: Log actual target endpoint (visible with should_log)
-    if (should_log('DEBUG')) {
-        log_debug('APIManager', "Streaming request to: $final_endpoint");
-        log_debug('APIManager', "Streaming model: $model");
+    # Log full streaming request for debugging
+    my $provider_label = $endpoint_config->{minimax} ? 'MiniMax' :
+                         $endpoint_config->{requires_copilot_headers} ? 'GitHub Copilot' :
+                         $endpoint_config->{openrouter} ? 'OpenRouter' : 'API';
+    log_debug('APIManager', "=" x 80);
+    log_debug('APIManager', "[$provider_label STREAMING REQUEST] Endpoint: $final_endpoint");
+    log_debug('APIManager', "[$provider_label STREAMING REQUEST] Model: $model");
+    eval {
+        my $p = decode_json($json);
+        log_debug('APIManager', "[$provider_label STREAMING REQUEST] max_tokens: " . ($p->{max_tokens} || 'NOT SET'));
+        log_debug('APIManager', "[$provider_label STREAMING REQUEST] tools: " . (ref($p->{tools}) eq 'ARRAY' ? scalar(@{$p->{tools}}) . " tools" : 'none'));
+        log_debug('APIManager', "[$provider_label STREAMING REQUEST] messages: " . (ref($p->{messages}) eq 'ARRAY' ? scalar(@{$p->{messages}}) . " messages" : 'none'));
+    };
+    if (open my $fh, '>>', '/tmp/clio_api_debug.log') {
+        print $fh "\n" . "="x80 . "\n";
+        print $fh "[" . scalar(localtime) . "] $provider_label STREAMING REQUEST\n";
+        print $fh "Endpoint: $final_endpoint\n";
+        print $fh "Model: $model\n\n";
+        print $fh "Headers:\n";
+        for my $h ($req->headers->header_field_names) {
+            my $val = $req->header($h);
+            $val =~ s/(Bearer\s+).{8}(.*)/${1}XXXX.../ if $h =~ /auth/i;
+            print $fh "  $h: $val\n";
+        }
+        print $fh "\nBody:\n$json\n";
+        close $fh;
     }
+    log_debug('APIManager', "=" x 80);
     
     # Request headers available for debugging if needed (use should_log('DEBUG'))
     
@@ -2911,15 +3005,20 @@ sub send_request_streaming {
         $self->{response_handler}->release_broker_slot($resp, $resp->code);
         
         # Use raw_response_body as fallback when decoded_content is empty
-        # (SSE parser may have consumed buffer, HTTP::Tiny may not store body for callbacks)
         my $body = $resp->decoded_content;
         if (!$body || $body !~ /\S/) {
             $body = $raw_response_body // $buffer // '';
         }
         
-        # Log the full response body so we can see what error the API returned
-        if (should_log('DEBUG')) {
-            log_debug('APIManager', "Streaming error response body: " . substr($body, 0, 2000));
+        # Log streaming error response
+        log_debug('APIManager', "[$provider_label STREAMING ERROR] Status: " . $resp->status_line);
+        log_debug('APIManager', "[$provider_label STREAMING ERROR] Body: " . substr($body, 0, 2000));
+        if (open my $fh, '>>', '/tmp/clio_api_debug.log') {
+            print $fh "\n" . "-"x80 . "\n";
+            print $fh "[" . scalar(localtime) . "] $provider_label STREAMING ERROR\n";
+            print $fh "Status: " . $resp->status_line . "\n";
+            print $fh "Body:\n$body\n";
+            close $fh;
         }
 
         # Inject raw body into response object so handle_error_response can parse it
@@ -3082,12 +3181,33 @@ sub send_request_streaming {
         usage => $final_usage,
     };
     
-    log_debug('APIManager', "Streaming complete - accumulated content length: " . length($accumulated_content));
-    log_debug('APIManager', "Content: '" . $accumulated_content . "'");
+    log_debug('APIManager', "[$provider_label STREAMING COMPLETE] accumulated content length: " . length($accumulated_content));
+    log_debug('APIManager', "[$provider_label STREAMING COMPLETE] Content preview: '" . substr($accumulated_content, 0, 300) . "'");
     
     # Add tool_calls if present
     if ($tool_calls) {
         $response->{tool_calls} = $tool_calls;
+        log_debug('APIManager', "[$provider_label STREAMING COMPLETE] tool_calls: " . scalar(@$tool_calls) . " calls");
+        for my $tc (@$tool_calls) {
+            log_debug('APIManager', "[$provider_label TOOL CALL] " . ($tc->{function}{name} || 'unknown') . 
+                      " args_len=" . length($tc->{function}{arguments} || ''));
+        }
+    } else {
+        log_debug('APIManager', "[$provider_label STREAMING COMPLETE] NO tool_calls in response");
+    }
+    
+    if (open my $fh, '>>', '/tmp/clio_api_debug.log') {
+        print $fh "\n" . "-"x80 . "\n";
+        print $fh "[" . scalar(localtime) . "] $provider_label STREAMING RESPONSE COMPLETE\n";
+        print $fh "Content length: " . length($accumulated_content) . "\n";
+        print $fh "Tool calls: " . ($tool_calls ? scalar(@$tool_calls) : 0) . "\n";
+        if ($tool_calls) {
+            for my $tc (@$tool_calls) {
+                print $fh "  - " . ($tc->{function}{name} || 'unknown') . ": " . substr($tc->{function}{arguments} || '', 0, 200) . "\n";
+            }
+        }
+        print $fh "Content:\n" . substr($accumulated_content, 0, 1000) . "\n";
+        close $fh;
     }
     
     # Include accumulated reasoning_details for MiniMax interleaved thinking
@@ -3332,7 +3452,7 @@ sub _send_native_streaming {
     # Build the request using the native provider
     my $request = $provider->build_request($messages, $tools, {
         model => $opts{model} // $self->{model},
-        max_tokens => $opts{max_tokens} // 8192,
+        max_tokens => $opts{max_tokens} // $self->_get_max_output_tokens($opts{model} // $self->{model}),
         temperature => $opts{temperature} // 0.2,
     });
     

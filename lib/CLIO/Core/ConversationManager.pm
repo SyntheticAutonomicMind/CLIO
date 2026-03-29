@@ -408,9 +408,8 @@ Enforce strict user/assistant alternation for provider compatibility.
 
 Some providers (like Claude via GitHub Copilot) require alternating roles.
 This function:
-1. Converts tool messages to user messages for providers without role=tool support
-2. Merges consecutive same-role messages into one
-3. Strips orphaned tool_calls when provider doesn't support role=tool
+1. Merges consecutive same-role messages into one
+2. Preserves tool messages with their tool_call_ids
 
 Arguments:
 - $messages: Arrayref of messages
@@ -438,26 +437,8 @@ sub enforce_message_alternation {
     my $accumulated_tool_call_id = undef;
     my $accumulated_reasoning_details = undef;  # MiniMax interleaved thinking
 
-    # Determine if provider supports role=tool
-    my $provider_supports_tool_role = ($provider =~ /github|openai/i);
-
     for my $msg (@$messages) {
         my $role = $msg->{role};
-
-        # Convert tool messages to user messages ONLY for providers that don't support role=tool
-        if ($role eq 'tool' && !$provider_supports_tool_role) {
-            $role = 'user';
-
-            my $tool_content = $msg->{content} || '{}';
-            my $tool_id = $msg->{tool_call_id} || 'unknown';
-
-            $msg = {
-                role => 'user',
-                content => "Tool Result (ID: $tool_id):\n$tool_content"
-            };
-
-            log_debug('ConversationManager', "Converted tool message to user message");
-        }
 
         # Check if same role as previous (needs merging)
         # Do NOT merge tool messages - each has unique tool_call_id
@@ -524,16 +505,6 @@ sub enforce_message_alternation {
         }
 
         push @alternating, $flushed;
-    }
-
-    # Strip tool_calls from assistant messages if provider doesn't support role=tool
-    if (!$provider_supports_tool_role) {
-        for my $msg (@alternating) {
-            if ($msg->{role} eq 'assistant' && $msg->{tool_calls}) {
-                delete $msg->{tool_calls};
-                log_debug('ConversationManager', "Stripped tool_calls from assistant message (provider doesn't support role=tool)");
-            }
-        }
     }
 
     log_debug('ConversationManager', "Alternation complete: " . scalar(@$messages) . " -> " . scalar(@alternating) . " messages");
