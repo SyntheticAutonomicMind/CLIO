@@ -1388,7 +1388,8 @@ sub _handle_minimax_quota {
                       : $percent >= 50 ? 'LABEL'
                       : 'DATA';
 
-            my $status = sprintf("%d / %d (%.1f%% used)", $used, $total, $percent);
+            my $remaining = $total - $used;
+            my $status = sprintf("%d / %d used, %d remaining", $used, $total, $remaining);
             $self->writeline(sprintf("  %-22s %s", "5-hour window:",
                 $self->colorize($status, $color)), markdown => 0);
 
@@ -1409,7 +1410,8 @@ sub _handle_minimax_quota {
                        : $wpercent >= 50 ? 'LABEL'
                        : 'DATA';
 
-            my $wstatus = sprintf("%d / %d (%.1f%% used)", $weekly_used, $weekly_total, $wpercent);
+            my $wremaining = $weekly_total - $weekly_used;
+            my $wstatus = sprintf("%d / %d used, %d remaining", $weekly_used, $weekly_total, $wremaining);
             $self->writeline(sprintf("  %-22s %s", "Weekly:",
                 $self->colorize($wstatus, $wcolor)), markdown => 0);
 
@@ -1574,13 +1576,13 @@ sub _fetch_provider_models {
         # MiniMax doesn't provide a /v1/models endpoint - static list required
         # Reference: https://platform.minimax.io/docs/api-reference/text-openai-api#supported-models
         $models = [
-            { id => 'MiniMax-M2.7', name => 'MiniMax M2.7', description => 'Recursive self-improvement, ~60 tps (204,800 ctx)' },
-            { id => 'MiniMax-M2.7-highspeed', name => 'MiniMax M2.7 Highspeed', description => 'Same as M2.7, ~100 tps (204,800 ctx)' },
-            { id => 'MiniMax-M2.5', name => 'MiniMax M2.5', description => 'Code generation and refactoring, ~60 tps (204,800 ctx)' },
-            { id => 'MiniMax-M2.5-highspeed', name => 'MiniMax M2.5 Highspeed', description => 'Same as M2.5, ~100 tps (204,800 ctx)' },
-            { id => 'MiniMax-M2.1', name => 'MiniMax M2.1', description => '230B params, code + reasoning, ~60 tps (204,800 ctx)' },
-            { id => 'MiniMax-M2.1-highspeed', name => 'MiniMax M2.1 Highspeed', description => 'Same as M2.1, ~100 tps (204,800 ctx)' },
-            { id => 'MiniMax-M2', name => 'MiniMax M2', description => 'Function calling, advanced reasoning (204,800 ctx)' },
+            { id => 'MiniMax-M2.7', name => 'MiniMax M2.7', description => 'Recursive self-improvement, ~60 tps (204.8k ctx, 131k out)' },
+            { id => 'MiniMax-M2.7-highspeed', name => 'MiniMax M2.7 Highspeed', description => 'Same as M2.7, ~100 tps (204.8k ctx, 131k out)' },
+            { id => 'MiniMax-M2.5', name => 'MiniMax M2.5', description => 'Code generation and refactoring, ~60 tps (204.8k ctx, 131k out)' },
+            { id => 'MiniMax-M2.5-highspeed', name => 'MiniMax M2.5 Highspeed', description => 'Same as M2.5, ~100 tps (204.8k ctx, 131k out)' },
+            { id => 'MiniMax-M2.1', name => 'MiniMax M2.1', description => '230B params, code + reasoning, ~60 tps (204.8k ctx, 131k out)' },
+            { id => 'MiniMax-M2.1-highspeed', name => 'MiniMax M2.1 Highspeed', description => 'Same as M2.1, ~100 tps (204.8k ctx, 131k out)' },
+            { id => 'MiniMax-M2', name => 'MiniMax M2', description => 'Function calling, advanced reasoning (204.8k ctx, 131k out)' },
         ];
     } else {
         # Generic OpenAI-compatible /models endpoint
