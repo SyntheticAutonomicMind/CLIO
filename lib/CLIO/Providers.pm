@@ -197,7 +197,23 @@ my %PROVIDERS = (
         max_context_tokens => 204800,
         endpoint => {
             path_suffix => '',
-            temperature_range => [0.0, 1.0],
+            temperature_range => [0.01, 1.0],
+            supports_tools => 1,
+            minimax => 1,
+        },
+    },
+    
+    minimax_token => {
+        name => 'MiniMax Token Plan',
+        api_base => 'https://api.minimax.io/v1/chat/completions',
+        model => 'MiniMax-M2.7',
+        requires_auth => 'apikey',
+        supports_tools => 1,
+        supports_streaming => 1,
+        max_context_tokens => 204800,
+        endpoint => {
+            path_suffix => '',
+            temperature_range => [0.01, 1.0],
             supports_tools => 1,
             minimax => 1,
         },
