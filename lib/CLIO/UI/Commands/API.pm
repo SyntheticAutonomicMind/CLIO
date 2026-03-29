@@ -133,7 +133,7 @@ sub handle_api_command {
         return;
     }
     
-    # /api quota - show Copilot quota status
+    # /api quota - show provider quota status (Copilot, MiniMax Token Plan)
     if ($action eq 'quota') {
         $self->handle_quota_command(@args);
         return;
@@ -206,7 +206,7 @@ sub _display_api_help {
     $self->display_command_row("/api models --refresh", "Refresh models (bypass cache)", 40);
     $self->display_command_row("/api login", "Authenticate with GitHub Copilot", 40);
     $self->display_command_row("/api logout", "Sign out from GitHub", 40);
-    $self->display_command_row("/api quota", "Show GitHub Copilot quota status", 40);
+    $self->display_command_row("/api quota", "Show provider quota (Copilot, MiniMax Token Plan)", 40);
     $self->display_command_row("/api alias", "List model aliases", 40);
     $self->display_command_row("/api alias <name> <model>", "Create model alias", 40);
     $self->display_command_row("/api alias <name> --delete", "Remove alias", 40);
@@ -1209,6 +1209,13 @@ sub handle_quota_command {
         }
     } @args;
     
+    # Dispatch based on current provider
+    my $provider = $self->{config}->get('provider') || '';
+    if ($provider =~ /^minimax/) {
+        $self->_handle_minimax_quota($refresh);
+        return;
+    }
+
     eval { require CLIO::Core::CopilotUserAPI; };
     if ($@) {
         $self->display_error_message("CopilotUserAPI not available: $@");
@@ -1302,6 +1309,128 @@ sub handle_quota_command {
     }
     
     $self->writeline("", markdown => 0);
+    $self->writeline($self->colorize("Use /api quota --refresh to bypass cache", 'DIM'), markdown => 0);
+    $self->writeline("", markdown => 0);
+}
+
+=head2 _handle_minimax_quota
+
+Handle /api quota for MiniMax Token Plan users.
+Fetches usage from https://www.minimax.io/v1/api/openplatform/coding_plan/remains
+
+=cut
+
+sub _handle_minimax_quota {
+    my ($self, $refresh) = @_;
+
+    my $provider = $self->{config}->get('provider') || 'minimax';
+    my $api_key = $self->{config}->get_provider_key($provider);
+
+    unless ($api_key) {
+        $self->display_error_message("No API key configured for $provider");
+        $self->display_system_message("Set your key with: /api set api_key <key>");
+        return;
+    }
+
+    require CLIO::Compat::HTTP;
+    my $ua = CLIO::Compat::HTTP->new(timeout => 15);
+
+    my $url = 'https://www.minimax.io/v1/api/openplatform/coding_plan/remains';
+    my $resp;
+    eval {
+        $resp = $ua->get($url, headers => {
+            'Authorization' => "Bearer $api_key",
+            'Content-Type'  => 'application/json',
+        });
+    };
+    if ($@ || !$resp || !$resp->is_success) {
+        my $err = $@ || ($resp ? "HTTP " . $resp->code : "no response");
+        $self->display_error_message("Failed to fetch MiniMax quota: $err");
+        return;
+    }
+
+    my $data;
+    eval { $data = decode_json($resp->decoded_content); };
+    if ($@ || !$data) {
+        $self->display_error_message("Failed to parse MiniMax quota response");
+        return;
+    }
+
+    # Check for API error
+    if ($data->{base_resp} && $data->{base_resp}{status_code} && $data->{base_resp}{status_code} != 0) {
+        $self->display_error_message("MiniMax API error: " . ($data->{base_resp}{status_msg} || "code $data->{base_resp}{status_code}"));
+        return;
+    }
+
+    my $remains = $data->{model_remains} || [];
+    unless (@$remains) {
+        $self->display_error_message("No quota data returned (is this a Token Plan key?)");
+        return;
+    }
+
+    $self->display_command_header("MINIMAX TOKEN PLAN QUOTA");
+
+    for my $model (@$remains) {
+        my $name = $model->{model_name} || 'unknown';
+        my $total = $model->{current_interval_total_count} || 0;
+        my $used  = $model->{current_interval_usage_count} || 0;
+        my $weekly_total = $model->{current_weekly_total_count} || 0;
+        my $weekly_used  = $model->{current_weekly_usage_count} || 0;
+        my $remains_sec  = ($model->{remains_time} || 0) / 1000;
+
+        $self->display_section_header($name);
+
+        if ($total > 0) {
+            # 5-hour rolling window
+            my $percent = $total > 0 ? ($used / $total) * 100 : 0;
+            my $color = $percent >= 95 ? 'ERROR'
+                      : $percent >= 80 ? 'WARN'
+                      : $percent >= 50 ? 'LABEL'
+                      : 'DATA';
+
+            my $status = sprintf("%d / %d (%.1f%% used)", $used, $total, $percent);
+            $self->writeline(sprintf("  %-22s %s", "5-hour window:",
+                $self->colorize($status, $color)), markdown => 0);
+
+            # Time until reset
+            if ($remains_sec > 0) {
+                my $h = int($remains_sec / 3600);
+                my $m = int(($remains_sec % 3600) / 60);
+                my $reset_str = $h > 0 ? sprintf("%dh %dm", $h, $m) : sprintf("%dm", $m);
+                $self->writeline(sprintf("  %-22s %s", "Resets in:",
+                    $self->colorize($reset_str, 'DIM')), markdown => 0);
+            }
+        }
+
+        if ($weekly_total > 0) {
+            my $wpercent = $weekly_total > 0 ? ($weekly_used / $weekly_total) * 100 : 0;
+            my $wcolor = $wpercent >= 95 ? 'ERROR'
+                       : $wpercent >= 80 ? 'WARN'
+                       : $wpercent >= 50 ? 'LABEL'
+                       : 'DATA';
+
+            my $wstatus = sprintf("%d / %d (%.1f%% used)", $weekly_used, $weekly_total, $wpercent);
+            $self->writeline(sprintf("  %-22s %s", "Weekly:",
+                $self->colorize($wstatus, $wcolor)), markdown => 0);
+
+            my $weekly_remains = ($model->{weekly_remains_time} || 0) / 1000;
+            if ($weekly_remains > 0) {
+                my $d = int($weekly_remains / 86400);
+                my $h = int(($weekly_remains % 86400) / 3600);
+                my $reset_str = $d > 0 ? sprintf("%dd %dh", $d, $h) : sprintf("%dh", $h);
+                $self->writeline(sprintf("  %-22s %s", "Weekly resets in:",
+                    $self->colorize($reset_str, 'DIM')), markdown => 0);
+            }
+        }
+
+        # Skip models with no quotas at all (0/0)
+        if ($total == 0 && $weekly_total == 0) {
+            $self->writeline(sprintf("  %s", $self->colorize("No quota limits", 'DIM')), markdown => 0);
+        }
+
+        $self->writeline("", markdown => 0);
+    }
+
     $self->writeline($self->colorize("Use /api quota --refresh to bypass cache", 'DIM'), markdown => 0);
     $self->writeline("", markdown => 0);
 }
@@ -1441,6 +1570,18 @@ sub _fetch_provider_models {
         if ($@) {
             log_warning('API', "Failed to fetch Google models: $@");
         }
+    } elsif ($provider_name =~ /^minimax/) {
+        # MiniMax doesn't provide a /v1/models endpoint - static list required
+        # Reference: https://platform.minimax.io/docs/api-reference/text-openai-api#supported-models
+        $models = [
+            { id => 'MiniMax-M2.7', name => 'MiniMax M2.7', description => 'Recursive self-improvement, ~60 tps (204,800 ctx)' },
+            { id => 'MiniMax-M2.7-highspeed', name => 'MiniMax M2.7 Highspeed', description => 'Same as M2.7, ~100 tps (204,800 ctx)' },
+            { id => 'MiniMax-M2.5', name => 'MiniMax M2.5', description => 'Code generation and refactoring, ~60 tps (204,800 ctx)' },
+            { id => 'MiniMax-M2.5-highspeed', name => 'MiniMax M2.5 Highspeed', description => 'Same as M2.5, ~100 tps (204,800 ctx)' },
+            { id => 'MiniMax-M2.1', name => 'MiniMax M2.1', description => '230B params, code + reasoning, ~60 tps (204,800 ctx)' },
+            { id => 'MiniMax-M2.1-highspeed', name => 'MiniMax M2.1 Highspeed', description => 'Same as M2.1, ~100 tps (204,800 ctx)' },
+            { id => 'MiniMax-M2', name => 'MiniMax M2', description => 'Function calling, advanced reasoning (204,800 ctx)' },
+        ];
     } else {
         # Generic OpenAI-compatible /models endpoint
         my $api_base = $provider_def->{api_base} || '';
