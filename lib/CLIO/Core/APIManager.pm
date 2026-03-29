@@ -118,6 +118,12 @@ sub _model_supports_reasoning {
         return $caps->{supports_reasoning};
     }
 
+    # Pattern-based fallback for known reasoning models
+    # MiniMax M2.x models support interleaved thinking natively
+    if ($model =~ /^MiniMax-M2/i) {
+        return 1;
+    }
+
     # Default: don't send reasoning params for unknown models
     return 0;
 }
@@ -687,6 +693,11 @@ sub adapt_request_for_endpoint {
         }
     }
     
+    # Add reasoning_split for MiniMax to separate thinking into reasoning_details field
+    if ($endpoint_config->{minimax}) {
+        $payload->{reasoning_split} = \1;  # JSON true
+    }
+    
     return $payload;
 }
 
@@ -949,6 +960,8 @@ sub _detect_api_type_and_url {
         return ('google', 'https://generativelanguage.googleapis.com/v1beta/models');
     } elsif ($api_base =~ m{openrouter\.ai}i) {
         return ('openrouter', 'https://openrouter.ai/api/v1/models');
+    } elsif ($api_base =~ m{api\.minimax\.io}i) {
+        return ('minimax', 'https://api.minimax.io/v1/models');
     } elsif ($api_base =~ m{localhost:1234}i || $api_base =~ m{127\.0\.0\.1:1234}i) {
         # LM Studio running locally
         return ('lmstudio', 'http://localhost:1234/v1/models');
@@ -2722,7 +2735,9 @@ sub send_request_streaming {
                                 $on_thinking->($delta->{reasoning_content});
                             }
                             
-                            # 2. reasoning_details (OpenRouter normalized format)
+                            # 2. reasoning_details (OpenRouter and MiniMax format)
+                            # OpenRouter: [{type: "reasoning.text", text: "..."}, {type: "reasoning.summary", summary: "..."}]
+                            # MiniMax: [{text: "..."}] (no type field, reasoning_split=true)
                             # Only check if we didn't already get content from reasoning_content
                             if (!$reasoning_emitted && $delta->{reasoning_details} && ref($delta->{reasoning_details}) eq 'ARRAY' && $on_thinking) {
                                 for my $detail (@{$delta->{reasoning_details}}) {
@@ -2738,6 +2753,12 @@ sub send_request_streaming {
                                         $reasoning_was_active = 1;
                                         $reasoning_emitted = 1;
                                         $on_thinking->($detail->{summary});
+                                    }
+                                    # MiniMax format: no type field, just {text: "..."}
+                                    elsif (!$type && defined $detail->{text}) {
+                                        $reasoning_was_active = 1;
+                                        $reasoning_emitted = 1;
+                                        $on_thinking->($detail->{text});
                                     }
                                     # reasoning.encrypted - skip display (redacted)
                                 }
