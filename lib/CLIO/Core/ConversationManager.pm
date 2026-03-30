@@ -6,6 +6,7 @@ package CLIO::Core::ConversationManager;
 use strict;
 use warnings;
 use utf8;
+use Carp qw(croak);
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 
@@ -548,7 +549,7 @@ sub inject_context_files {
         }
 
         eval {
-            open my $fh, '<', $file or die "Cannot read file: $!";
+            open my $fh, '<', $file or croak "Cannot read file: $!";
             my $content = do { local $/; <$fh> };
             close $fh;
 

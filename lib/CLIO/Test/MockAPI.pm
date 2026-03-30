@@ -8,6 +8,7 @@ use warnings;
 use utf8;
 use CLIO::Core::Logger qw(log_debug);
 use CLIO::Memory::TokenEstimator qw(estimate_tokens);
+use Carp qw(croak);
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 
@@ -180,14 +181,14 @@ sub chat_completion {
     
     # Simulate random errors
     if ($self->{error_rate} > 0 && rand() < $self->{error_rate}) {
-        die "Mock API random error (error_rate=$self->{error_rate})\n";
+        croak "Mock API random error (error_rate=$self->{error_rate})\n";
     }
     
     # Return explicit error if set
     if ($self->{simulate_error}) {
         my $error = $self->{simulate_error};
         $self->{simulate_error} = undef;  # Clear after use
-        die "Mock API error: $error\n";
+        croak "Mock API error: $error\n";
     }
     
     # Get response from queue or use default

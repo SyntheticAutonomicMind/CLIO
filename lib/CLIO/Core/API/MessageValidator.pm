@@ -455,7 +455,7 @@ sub _calculate_tool_tokens {
     
     my $total = 0;
     for my $tool (@$tools) {
-        my $tool_json = eval { require JSON::PP; JSON::PP::encode_json($tool) };
+        my $tool_json = eval { encode_json($tool) };
         if ($tool_json) {
             $total += int(length($tool_json) / 2.5);
         } else {

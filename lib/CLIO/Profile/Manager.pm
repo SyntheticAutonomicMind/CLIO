@@ -6,6 +6,7 @@ package CLIO::Profile::Manager;
 use strict;
 use warnings;
 use utf8;
+use Carp qw(croak);
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use CLIO::Core::Logger qw(log_debug log_warning log_error);
@@ -83,7 +84,7 @@ sub load_profile {
 
     my $content;
     eval {
-        open my $fh, '<:encoding(UTF-8)', $path or die "Cannot open $path: $!";
+        open my $fh, '<:encoding(UTF-8)', $path or croak "Cannot open $path: $!";
         local $/;
         $content = <$fh>;
         close $fh;
@@ -135,10 +136,10 @@ sub save_profile {
 
     eval {
         my $temp = $path . '.tmp.' . $$;
-        open my $fh, '>:encoding(UTF-8)', $temp or die "Cannot write $temp: $!";
+        open my $fh, '>:encoding(UTF-8)', $temp or croak "Cannot write $temp: $!";
         print $fh $content;
         close $fh;
-        rename $temp, $path or die "Cannot rename $temp to $path: $!";
+        rename $temp, $path or croak "Cannot rename $temp to $path: $!";
     };
 
     if ($@) {

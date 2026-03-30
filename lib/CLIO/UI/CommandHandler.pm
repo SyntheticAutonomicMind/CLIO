@@ -253,264 +253,270 @@ sub handle_command {
     my ($cmd, @args) = split /\s+/, $command;
     $cmd = lc($cmd);
     
-    # Route to appropriate handler
-    if ($cmd eq 'exit' || $cmd eq 'quit' || $cmd eq 'q') {
-        return 0;  # Signal to exit
-    }
-    elsif ($cmd eq 'help' || $cmd eq 'h') {
-        $chat->display_help();
-    }
-    elsif ($cmd eq 'clear' || $cmd eq 'cls') {
-        $chat->repaint_screen();
-    }
-    elsif ($cmd eq 'reset') {
-        # Full terminal reset + kill stale child processes
-        require CLIO::Compat::Terminal;
-
-        # Kill stale children first (ssh, sh -c wrappers, hung sub-agents)
-        my $result = CLIO::Compat::Terminal::kill_stale_children();
-        my @killed = @{$result->{killed} || []};
-        my @skipped = @{$result->{skipped} || []};
-
-        # Then reset terminal state
-        CLIO::Compat::Terminal::reset_terminal_full();
-
-        # Report what happened
-        if (@killed) {
-            $chat->display_system_message("Killed " . scalar(@killed) . " stale process(es):");
-            for my $k (@killed) {
-                $chat->display_system_message("  PID $k->{pid}: $k->{cmd}");
-            }
-        }
-        if (@skipped) {
-            $chat->display_system_message("Skipped " . scalar(@skipped) . " active process(es)");
-        }
-        $chat->display_system_message("Terminal reset complete");
-    }
-    elsif ($cmd eq 'shell' || $cmd eq 'sh') {
-        # Use extracted System command module
-        $self->{system_cmd}->handle_shell_command();
-    }
-    elsif ($cmd eq 'debug') {
-        $chat->{debug} = !$chat->{debug};
-        $chat->display_system_message("Debug mode: " . ($chat->{debug} ? "ON" : "OFF"));
-    }
-    elsif ($cmd eq 'color') {
-        $chat->{use_color} = !$chat->{use_color};
-        $chat->display_system_message("Color mode: " . ($chat->{use_color} ? "ON" : "OFF"));
-    }
-    elsif ($cmd eq 'session') {
-        # Use extracted Session command module
-        $self->{session_cmd}->handle_session_command(@args);
-    }
-    elsif ($cmd eq 'config') {
-        # Use extracted Config command module
-        $self->{config_cmd}->handle_config_command(@args);
-    }
-    elsif ($cmd eq 'api') {
-        # Use extracted API command module
-        $self->{api_cmd}->handle_api_command(@args);
-    }
-    elsif ($cmd eq 'loglevel') {
-        # Use extracted Config command module
-        $self->{config_cmd}->handle_loglevel_command(@args);
-    }
-    elsif ($cmd eq 'style') {
-        # Use extracted Config command module
-        $self->{config_cmd}->handle_style_command(@args);
-    }
-    elsif ($cmd eq 'theme') {
-        # Use extracted Config command module
-        $self->{config_cmd}->handle_theme_command(@args);
-    }
-    elsif ($cmd eq 'login') {
-        # Backward compatibility - redirect to /api login
-        $chat->display_system_message("Note: Use '/api login' (new syntax)");
-        $self->{api_cmd}->handle_login_command(@args);
-    }
-    elsif ($cmd eq 'logout') {
-        # Backward compatibility - redirect to /api logout
-        $chat->display_system_message("Note: Use '/api logout' (new syntax)");
-        $self->{api_cmd}->handle_logout_command(@args);
-    }
-    elsif ($cmd eq 'file') {
-        # Use extracted File command module
-        $self->{file_cmd}->handle_file_command(@args);
-    }
-    elsif ($cmd eq 'edit') {
-        # Backward compatibility
-        $chat->display_system_message("Note: Use '/file edit <path>' (new syntax)");
-        $self->{file_cmd}->handle_edit_command(join(' ', @args));
-    }
-    elsif ($cmd eq 'multi-line' || $cmd eq 'multiline' || $cmd eq 'multi' || $cmd eq 'ml') {
-        # Use extracted System command module
-        my $content = $self->{system_cmd}->handle_multiline_command();
-        return (1, $content) if $content;  # Return content as AI prompt
-    }
-    elsif ($cmd eq 'performance' || $cmd eq 'perf') {
-        # Use extracted System command module
-        $self->{system_cmd}->handle_performance_command(@args);
-    }
-    elsif ($cmd eq 'todo') {
-        # Use extracted Todo command module
-        $self->{todo_cmd}->handle_todo_command(@args);
-    }
-    elsif ($cmd eq 'billing' || $cmd eq 'bill' || $cmd eq 'usage') {
-        # Use extracted Billing command module
-        $self->{billing_cmd}->handle_billing_command(@args);
-    }
-    elsif ($cmd eq 'model') {
-        # Quick model switching with alias support
-        $self->{api_cmd}->handle_model_command(@args);
-    }
-    elsif ($cmd eq 'models') {
-        # Backward compatibility - redirect to /api models
-        $chat->display_system_message("Note: Use '/api models' (new syntax)");
-        $self->{api_cmd}->handle_models_command(@args);
-    }
-    elsif ($cmd eq 'context' || $cmd eq 'ctx') {
-        # Use extracted Context command module
-        $self->{context_cmd}->handle_context_command(@args);
-    }
-    elsif ($cmd eq 'skills' || $cmd eq 'skill') {
-        # Use extracted Skills command module
-        # Must capture list return value: (1, $prompt) for AI execution
-        my @result = $self->{skills_cmd}->handle_skills_command(@args);
-        return @result if @result > 1;  # Return (1, $prompt) if prompt was returned
-    }
-    elsif ($cmd eq 'prompt') {
-        # Use extracted Prompt command module
-        $self->{prompt_cmd}->handle_prompt_command(@args);
-    }
-    elsif ($cmd eq 'explain') {
-        # Use extracted AI command module
-        my $prompt = $self->{ai_cmd}->handle_explain_command(@args);
-        return (1, $prompt) if $prompt;
-    }
-    elsif ($cmd eq 'review') {
-        # Use extracted AI command module
-        my $prompt = $self->{ai_cmd}->handle_review_command(@args);
-        return (1, $prompt) if $prompt;
-    }
-    elsif ($cmd eq 'test') {
-        # Use extracted AI command module
-        my $prompt = $self->{ai_cmd}->handle_test_command(@args);
-        return (1, $prompt) if $prompt;
-    }
-    elsif ($cmd eq 'fix') {
-        # Use extracted AI command module
-        my $prompt = $self->{ai_cmd}->handle_fix_command(@args);
-        return (1, $prompt) if $prompt;
-    }
-    elsif ($cmd eq 'doc') {
-        # Use extracted AI command module
-        my $prompt = $self->{ai_cmd}->handle_doc_command(@args);
-        return (1, $prompt) if $prompt;
-    }
-    elsif ($cmd eq 'git') {
-        # Use extracted Git command module
-        $self->{git_cmd}->handle_git_command(@args);
-    }
-    elsif ($cmd eq 'commit') {
-        # Backward compatibility
-        $chat->display_system_message("Note: Use '/git commit' (new syntax)");
-        $self->{git_cmd}->handle_commit_command(@args);
-    }
-    elsif ($cmd eq 'diff') {
-        # Backward compatibility
-        $chat->display_system_message("Note: Use '/git diff' (new syntax)");
-        $self->{git_cmd}->handle_diff_command(@args);
-    }
-    elsif ($cmd eq 'status' || $cmd eq 'st') {
-        # Backward compatibility
-        $chat->display_system_message("Note: Use '/git status' (new syntax)");
-        $self->{git_cmd}->handle_status_command(@args);
-    }
-    elsif ($cmd eq 'log') {
-        # Use extracted Log command module
-        $self->{log_cmd}->handle_log_command(@args);
-    }
-    elsif ($cmd eq 'gitlog' || $cmd eq 'gl') {
-        # Backward compatibility
-        $chat->display_system_message("Note: Use '/git log' (new syntax)");
-        $self->{git_cmd}->handle_gitlog_command(@args);
-    }
-    elsif ($cmd eq 'exec' || $cmd eq 'shell' || $cmd eq 'sh') {
-        # Use extracted System command module
-        $self->{system_cmd}->handle_exec_command(@args);
-    }
-    elsif ($cmd eq 'switch') {
-        # Backward compatibility - redirect to /session switch
-        $chat->display_system_message("Note: Use '/session switch' (new syntax)");
-        $self->{session_cmd}->handle_switch_command(@args);
-    }
-    elsif ($cmd eq 'read' || $cmd eq 'view' || $cmd eq 'cat') {
-        # Backward compatibility
-        $chat->display_system_message("Note: Use '/file read <path>' (new syntax)");
-        $self->{file_cmd}->handle_read_command(@args);
-    }
-    elsif ($cmd eq 'memory' || $cmd eq 'mem' || $cmd eq 'ltm') {
-        # Use extracted Memory command module
-        my $result = $self->{memory_cmd}->handle_memory_command(@args);
-        return $result if $result;  # Returns (1, $prompt) for store command
-    }
-    elsif ($cmd eq 'update') {
-        # Use extracted Update command module
-        $self->{update_cmd}->handle_update_command(@args);
-    }
-    elsif ($cmd eq 'subagent' || $cmd eq 'agent') {
-        # Multi-agent coordination
-        my $subcommand = shift @args || 'help';
-        my $result = $self->{subagent_cmd}->handle($subcommand, join(' ', @args));
-        print "$result\n" if $result;
-    }
-    elsif ($cmd eq 'mux' || $cmd eq 'multiplexer') {
-        # Terminal multiplexer integration
-        my $subcommand = shift @args || 'help';
-        my $result = $self->{mux_cmd}->handle($subcommand, join(' ', @args));
-        print "$result\n" if $result;
-    }
-    elsif ($cmd eq 'init') {
-        # Use extracted Project command module
-        my $prompt = $self->{project_cmd}->handle_init_command(@args);
-        return (1, $prompt) if $prompt;  # Return prompt to be sent to AI
-    }
-    elsif ($cmd eq 'design') {
-        # Use extracted Project command module
-        my $prompt = $self->{project_cmd}->handle_design_command(@args);
-        return (1, $prompt) if $prompt;  # Return prompt to be sent to AI
-    }
-    elsif ($cmd eq 'device' || $cmd eq 'dev') {
-        # Device registry management
-        CLIO::UI::Commands::Device::handle_device_command(join(' ', @args), { chat => $chat });
-    }
-    elsif ($cmd eq 'group') {
-        # Device group management
-        CLIO::UI::Commands::Device::handle_group_command(join(' ', @args), { chat => $chat });
-    }
-    elsif ($cmd eq 'undo') {
-        $self->handle_undo_command(@args);
-    }
-    elsif ($cmd eq 'mcp') {
-        $self->handle_mcp_command(@args);
-    }
-    elsif ($cmd eq 'stats') {
-        $self->{stats_cmd}->handle_stats_command(@args);
-    }
-    elsif ($cmd eq 'profile') {
-        my @result = $self->{profile_cmd}->handle_profile_command(@args);
-        return @result if @result > 1;  # Return (1, $prompt) for build command
-    }
-    elsif ($cmd eq 'spec' || $cmd eq 'specs') {
-        my @result = $self->{spec_cmd}->handle_spec_command(@args);
-        return @result if @result > 1;  # Return (1, $prompt) for propose command
-    }
-    else {
+    # Build registry on first use
+    $self->{_registry} ||= $self->_build_command_registry();
+    
+    # Look up command (direct or alias)
+    my $entry = $self->{_registry}{$cmd};
+    
+    if (!$entry) {
         $chat->display_error_message("Unknown command: /$cmd (type /help for help)");
+        print "\n";
+        return 1;
+    }
+    
+    # Show deprecation hint for backward-compat aliases
+    if ($entry->{hint}) {
+        $chat->display_system_message("Note: Use '$entry->{hint}' (new syntax)");
+    }
+    
+    # Dispatch
+    my @result = $entry->{handler}->(@args);
+    
+    # Handle special return values
+    if ($entry->{returns} && $entry->{returns} eq 'exit') {
+        return 0;
+    }
+    
+    if ($entry->{returns} && $entry->{returns} eq 'prompt') {
+        # Commands that may return (1, $prompt) for AI execution
+        return @result if @result > 1;
     }
     
     print "\n";
     return 1;  # Continue
+}
+
+=head2 _build_command_registry
+
+Build the command dispatch registry. Each entry maps a command name to:
+- handler: coderef that receives @args
+- hint: optional deprecation message for old syntax
+- returns: 'exit', 'prompt', or undef for standard commands
+
+=cut
+
+sub _build_command_registry {
+    my ($self) = @_;
+    my $chat = $self->{chat};
+    my %reg;
+    
+    # Helper to register a command with optional aliases
+    my $register = sub {
+        my ($names, %opts) = @_;
+        my @names = ref $names ? @$names : ($names);
+        for my $name (@names) {
+            $reg{$name} = \%opts;
+        }
+    };
+    
+    # --- Exit ---
+    $register->([qw(exit quit q)],
+        handler => sub { return 0 },
+        returns => 'exit',
+    );
+    
+    # --- Core UI ---
+    $register->([qw(help h)],
+        handler => sub { $chat->display_help() },
+    );
+    $register->([qw(clear cls)],
+        handler => sub { $chat->repaint_screen() },
+    );
+    $register->('reset',
+        handler => sub { $self->_handle_reset_command() },
+    );
+    $register->('debug',
+        handler => sub {
+            $chat->{debug} = !$chat->{debug};
+            $chat->display_system_message("Debug mode: " . ($chat->{debug} ? "ON" : "OFF"));
+        },
+    );
+    $register->('color',
+        handler => sub {
+            $chat->{use_color} = !$chat->{use_color};
+            $chat->display_system_message("Color mode: " . ($chat->{use_color} ? "ON" : "OFF"));
+        },
+    );
+    
+    # --- Primary commands (routed to extracted modules) ---
+    $register->('session',   handler => sub { $self->{session_cmd}->handle_session_command(@_) });
+    $register->('config',    handler => sub { $self->{config_cmd}->handle_config_command(@_) });
+    $register->('api',       handler => sub { $self->{api_cmd}->handle_api_command(@_) });
+    $register->('loglevel',  handler => sub { $self->{config_cmd}->handle_loglevel_command(@_) });
+    $register->('style',     handler => sub { $self->{config_cmd}->handle_style_command(@_) });
+    $register->('theme',     handler => sub { $self->{config_cmd}->handle_theme_command(@_) });
+    $register->('file',      handler => sub { $self->{file_cmd}->handle_file_command(@_) });
+    $register->('todo',      handler => sub { $self->{todo_cmd}->handle_todo_command(@_) });
+    $register->('model',     handler => sub { $self->{api_cmd}->handle_model_command(@_) });
+    $register->('prompt',    handler => sub { $self->{prompt_cmd}->handle_prompt_command(@_) });
+    $register->('git',       handler => sub { $self->{git_cmd}->handle_git_command(@_) });
+    $register->('log',       handler => sub { $self->{log_cmd}->handle_log_command(@_) });
+    $register->('update',    handler => sub { $self->{update_cmd}->handle_update_command(@_) });
+    $register->('undo',      handler => sub { $self->handle_undo_command(@_) });
+    $register->('mcp',       handler => sub { $self->handle_mcp_command(@_) });
+    $register->('stats',     handler => sub { $self->{stats_cmd}->handle_stats_command(@_) });
+    $register->([qw(context ctx)],
+        handler => sub { $self->{context_cmd}->handle_context_command(@_) },
+    );
+    $register->([qw(billing bill usage)],
+        handler => sub { $self->{billing_cmd}->handle_billing_command(@_) },
+    );
+    $register->([qw(performance perf)],
+        handler => sub { $self->{system_cmd}->handle_performance_command(@_) },
+    );
+    $register->([qw(shell sh)],
+        handler => sub { $self->{system_cmd}->handle_shell_command() },
+    );
+    $register->([qw(device dev)],
+        handler => sub { CLIO::UI::Commands::Device::handle_device_command(join(' ', @_), { chat => $chat }) },
+    );
+    $register->('group',
+        handler => sub { CLIO::UI::Commands::Device::handle_group_command(join(' ', @_), { chat => $chat }) },
+    );
+    
+    # --- Commands that return prompts ---
+    $register->([qw(multi-line multiline multi ml)],
+        handler => sub { my $c = $self->{system_cmd}->handle_multiline_command(); return (1, $c) if $c; return () },
+        returns => 'prompt',
+    );
+    $register->([qw(skills skill)],
+        handler => sub { $self->{skills_cmd}->handle_skills_command(@_) },
+        returns => 'prompt',
+    );
+    $register->([qw(memory mem ltm)],
+        handler => sub { $self->{memory_cmd}->handle_memory_command(@_) },
+        returns => 'prompt',
+    );
+    $register->([qw(profile)],
+        handler => sub { $self->{profile_cmd}->handle_profile_command(@_) },
+        returns => 'prompt',
+    );
+    $register->([qw(spec specs)],
+        handler => sub { $self->{spec_cmd}->handle_spec_command(@_) },
+        returns => 'prompt',
+    );
+    $register->('explain',
+        handler => sub { my $p = $self->{ai_cmd}->handle_explain_command(@_); return (1, $p) if $p; return () },
+        returns => 'prompt',
+    );
+    $register->('review',
+        handler => sub { my $p = $self->{ai_cmd}->handle_review_command(@_); return (1, $p) if $p; return () },
+        returns => 'prompt',
+    );
+    $register->('test',
+        handler => sub { my $p = $self->{ai_cmd}->handle_test_command(@_); return (1, $p) if $p; return () },
+        returns => 'prompt',
+    );
+    $register->('fix',
+        handler => sub { my $p = $self->{ai_cmd}->handle_fix_command(@_); return (1, $p) if $p; return () },
+        returns => 'prompt',
+    );
+    $register->('doc',
+        handler => sub { my $p = $self->{ai_cmd}->handle_doc_command(@_); return (1, $p) if $p; return () },
+        returns => 'prompt',
+    );
+    $register->('init',
+        handler => sub { my $p = $self->{project_cmd}->handle_init_command(@_); return (1, $p) if $p; return () },
+        returns => 'prompt',
+    );
+    $register->('design',
+        handler => sub { my $p = $self->{project_cmd}->handle_design_command(@_); return (1, $p) if $p; return () },
+        returns => 'prompt',
+    );
+    
+    # --- Commands with subcommand dispatch ---
+    $register->([qw(subagent agent)],
+        handler => sub {
+            my $sub = shift(@_) || 'help';
+            my $r = $self->{subagent_cmd}->handle($sub, join(' ', @_));
+            print "$r\n" if $r;
+        },
+    );
+    $register->([qw(mux multiplexer)],
+        handler => sub {
+            my $sub = shift(@_) || 'help';
+            my $r = $self->{mux_cmd}->handle($sub, join(' ', @_));
+            print "$r\n" if $r;
+        },
+    );
+    
+    # --- Backward compatibility aliases ---
+    $register->('login',
+        handler => sub { $self->{api_cmd}->handle_login_command(@_) },
+        hint    => '/api login',
+    );
+    $register->('logout',
+        handler => sub { $self->{api_cmd}->handle_logout_command(@_) },
+        hint    => '/api logout',
+    );
+    $register->('models',
+        handler => sub { $self->{api_cmd}->handle_models_command(@_) },
+        hint    => '/api models',
+    );
+    $register->('edit',
+        handler => sub { $self->{file_cmd}->handle_edit_command(join(' ', @_)) },
+        hint    => '/file edit <path>',
+    );
+    $register->('commit',
+        handler => sub { $self->{git_cmd}->handle_commit_command(@_) },
+        hint    => '/git commit',
+    );
+    $register->('diff',
+        handler => sub { $self->{git_cmd}->handle_diff_command(@_) },
+        hint    => '/git diff',
+    );
+    $register->([qw(status st)],
+        handler => sub { $self->{git_cmd}->handle_status_command(@_) },
+        hint    => '/git status',
+    );
+    $register->([qw(gitlog gl)],
+        handler => sub { $self->{git_cmd}->handle_gitlog_command(@_) },
+        hint    => '/git log',
+    );
+    $register->('switch',
+        handler => sub { $self->{session_cmd}->handle_switch_command(@_) },
+        hint    => '/session switch',
+    );
+    $register->([qw(read view cat)],
+        handler => sub { $self->{file_cmd}->handle_read_command(@_) },
+        hint    => '/file read <path>',
+    );
+    $register->('exec',
+        handler => sub { $self->{system_cmd}->handle_exec_command(@_) },
+    );
+    
+    return \%reg;
+}
+
+=head2 _handle_reset_command
+
+Full terminal reset + kill stale child processes.
+
+=cut
+
+sub _handle_reset_command {
+    my ($self) = @_;
+    my $chat = $self->{chat};
+    
+    require CLIO::Compat::Terminal;
+    
+    my $result = CLIO::Compat::Terminal::kill_stale_children();
+    my @killed = @{$result->{killed} || []};
+    my @skipped = @{$result->{skipped} || []};
+    
+    CLIO::Compat::Terminal::reset_terminal_full();
+    
+    if (@killed) {
+        $chat->display_system_message("Killed " . scalar(@killed) . " stale process(es):");
+        for my $k (@killed) {
+            $chat->display_system_message("  PID $k->{pid}: $k->{cmd}");
+        }
+    }
+    if (@skipped) {
+        $chat->display_system_message("Skipped " . scalar(@skipped) . " active process(es)");
+    }
+    $chat->display_system_message("Terminal reset complete");
 }
 
 =head2 handle_undo_command

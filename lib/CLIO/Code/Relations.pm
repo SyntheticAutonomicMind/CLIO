@@ -6,7 +6,7 @@ package CLIO::Code::Relations;
 use strict;
 use warnings;
 use utf8;
-use JSON::PP;
+use CLIO::Util::JSON qw(encode_json decode_json encode_json_pretty);
 
 =head1 NAME
 
@@ -416,7 +416,7 @@ sub export_graph {
     $format ||= 'json';
     
     if ($format eq 'json') {
-        return JSON::PP->new->pretty->encode({
+        return encode_json_pretty({
             dependencies => $self->{dependencies},
             dependents => $self->{dependents},
             call_graph => $self->{call_graph},

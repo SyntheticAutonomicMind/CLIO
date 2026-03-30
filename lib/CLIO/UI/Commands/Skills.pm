@@ -618,7 +618,6 @@ sub _search_skills {
         return;
     }
     
-    require JSON::PP;
     my $skills = eval { decode_json($resp->decoded_content) };
     if ($@) {
         $self->display_error_message("Failed to parse skills catalog: $@");
@@ -764,14 +763,13 @@ sub _install_skill {
         $self->writeline("", markdown => 0);
         
         # Enable pagination for full content
-        $self->{chat}->{pagination_enabled} = 1;
-        $self->{chat}->{line_count} = 0;
+        $self->{chat}->{pager}->enable();
         
         # Render the content as markdown (writeline with markdown => 1)
         last unless $self->writeline($content, markdown => 1);
         
         # Disable pagination
-        $self->{chat}->{pagination_enabled} = 0;
+        $self->{chat}->{pager}->disable();
         $self->writeline("", markdown => 0);
     }
     
