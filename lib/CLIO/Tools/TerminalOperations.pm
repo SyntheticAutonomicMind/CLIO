@@ -39,6 +39,9 @@ Operations:
 -  execute - Alias for 'exec'
 -  validate - Check command safety before execution
 },
+# Timeout is an idle timeout: if the command produces no output for
+# $timeout seconds it is killed. Active commands that keep writing
+# output will not be killed until the hard ceiling (10min default).
         supported_operations => [qw(exec execute validate)],
         %opts,
     );
@@ -89,7 +92,7 @@ sub execute_command {
     }
     
     my $command = $params->{command};
-    my $timeout = $params->{timeout} || 30;
+    my $timeout = $params->{timeout} || 60;
     my $passthrough = $params->{passthrough} || 0;
     
     # Get working directory from params first, then from session context, then default to '.'
@@ -245,10 +248,12 @@ sub _execute_captured {
     
     my $exit_code;
     my $interrupted = 0;
+    my $hard_ceiling = $ENV{CLIO_TERMINAL_MAX_TIMEOUT} || 600;
     
     # Use fork+waitpid instead of system() so we can:
     # 1. Poll for user interrupts during command execution
     # 2. Kill children cleanly on timeout or interrupt
+    # 3. Extend timeout when command is actively producing output
     # We intentionally do NOT touch $SIG{ALRM} or alarm() here - Chat.pm's
     # 1-second ALRM handler must keep firing for interrupt detection.
     eval {
@@ -268,8 +273,13 @@ sub _execute_captured {
         # Parent: set child's process group (race-safe with child's setpgid)
         eval { POSIX::setpgid($pid, $pid) };
         
-        # Wait for child with timeout, polling for completion and interrupts
+        # Wait for child with timeout, polling for completion and interrupts.
+        # Activity-based timeout: if the command is producing output, the idle
+        # timer resets. The command is only killed when it has been silent for
+        # $timeout seconds, OR when the hard ceiling is reached.
         my $start = Time::HiRes::time();
+        my $last_activity = $start;
+        my $last_output_size = 0;
         my $timed_out = 0;
         
         while (1) {
@@ -283,35 +293,36 @@ sub _execute_captured {
             if ($session && $session->state() && $session->state()->{user_interrupted}) {
                 log_info('TerminalOps', "User interrupt during command execution, killing child process group $pid");
                 $interrupted = 1;
-                kill('TERM', -$pid);  # Kill entire process group (POSIX: negative PID = group)
-                # Give it a moment to clean up
-                my $wait_start = Time::HiRes::time();
-                while (Time::HiRes::time() - $wait_start < 2) {
-                    last if waitpid($pid, POSIX::WNOHANG()) > 0;
-                    Time::HiRes::usleep(50_000);
-                }
-                # Force kill if still alive
-                if (waitpid($pid, POSIX::WNOHANG()) <= 0) {
-                    kill('KILL', -$pid);  # Force kill entire process group
-                    waitpid($pid, 0);
-                }
-                $exit_code = 130;  # Standard exit code for interrupt
+                $self->_kill_process_group($pid);
+                $exit_code = 130;
                 last;
             }
             
-            if (Time::HiRes::time() - $start > $timeout) {
+            # Check for output activity - reset idle timer if command is producing output
+            my $current_size = -s $log_file || 0;
+            if ($current_size > $last_output_size) {
+                $last_activity = Time::HiRes::time();
+                $last_output_size = $current_size;
+            }
+            
+            my $now = Time::HiRes::time();
+            my $idle_seconds = $now - $last_activity;
+            my $wall_seconds = $now - $start;
+            
+            # Hard ceiling: absolute wall-clock limit regardless of activity
+            if ($wall_seconds > $hard_ceiling) {
                 $timed_out = 1;
-                log_warning('TerminalOps', "Command timeout after ${timeout}s, killing child process group $pid");
-                kill('TERM', -$pid);  # Kill entire process group (POSIX: negative PID = group)
-                my $wait_start = Time::HiRes::time();
-                while (Time::HiRes::time() - $wait_start < 2) {
-                    last if waitpid($pid, POSIX::WNOHANG()) > 0;
-                    Time::HiRes::usleep(50_000);
-                }
-                if (waitpid($pid, POSIX::WNOHANG()) <= 0) {
-                    kill('KILL', -$pid);  # Force kill entire process group
-                    waitpid($pid, 0);
-                }
+                log_warning('TerminalOps', "Command hit hard ceiling after ${hard_ceiling}s, killing process group $pid");
+                $self->_kill_process_group($pid);
+                last;
+            }
+            
+            # Idle timeout: no output for $timeout seconds
+            if ($idle_seconds > $timeout) {
+                $timed_out = 1;
+                my $total = int($wall_seconds);
+                log_warning('TerminalOps', "Command idle for ${timeout}s (${total}s total), killing process group $pid");
+                $self->_kill_process_group($pid);
                 last;
             }
             
@@ -321,7 +332,7 @@ sub _execute_captured {
         }
         
         if ($timed_out) {
-            die "Command timeout after ${timeout}s\n";
+            die "Command timeout after ${timeout}s idle\n";
         }
     };
     
@@ -365,12 +376,15 @@ sub _execute_passthrough {
     # Suspend CLIO's terminal input handling so the command owns the TTY
     $self->_suspend_clio_input();
     
-    # Save caller's ALRM handler and remaining alarm time
+    # Save caller's ALRM handler and remaining alarm time, then disable.
+    # We use a poll loop instead of alarm() for timeout - no ALRM needed.
     my $saved_alrm = $SIG{ALRM};
     my $saved_alarm_remaining = alarm(0);
     
     my $exit_code;
     my $child_pid;
+    my $interrupted = 0;
+    my $hard_ceiling = $ENV{CLIO_TERMINAL_MAX_TIMEOUT} || 600;
     
     eval {
         # Fork to get a child PID we can manage with process groups
@@ -391,32 +405,66 @@ sub _execute_passthrough {
         # Parent: set child's process group (race-safe)
         eval { POSIX::setpgid($child_pid, $child_pid) };
         
-        # Wait for child with timeout
-        local $SIG{ALRM} = sub { die "Command timeout after ${timeout}s\n" };
-        alarm($timeout);
+        # Poll loop with activity-based timeout (matches captured mode pattern).
+        # No alarm() or $SIG{ALRM} used - avoids the historical ALRM bugs.
+        my $start = Time::HiRes::time();
+        my $last_activity = $start;
+        my $last_output_size = 0;
+        my $timed_out = 0;
         
-        waitpid($child_pid, 0);
-        $exit_code = $? >> 8;
+        while (1) {
+            my $waited = waitpid($child_pid, POSIX::WNOHANG());
+            if ($waited > 0) {
+                $exit_code = $? >> 8;
+                last;
+            }
+            
+            # Check for user interrupt
+            if ($session && $session->state() && $session->state()->{user_interrupted}) {
+                log_info('TerminalOps', "User interrupt during passthrough, killing process group $child_pid");
+                $interrupted = 1;
+                $self->_kill_process_group($child_pid);
+                $exit_code = 130;
+                last;
+            }
+            
+            # Check for output activity (tee writes to log file)
+            my $current_size = -s $log_file || 0;
+            if ($current_size > $last_output_size) {
+                $last_activity = Time::HiRes::time();
+                $last_output_size = $current_size;
+            }
+            
+            my $now = Time::HiRes::time();
+            my $idle_seconds = $now - $last_activity;
+            my $wall_seconds = $now - $start;
+            
+            # Hard ceiling
+            if ($wall_seconds > $hard_ceiling) {
+                $timed_out = 1;
+                log_warning('TerminalOps', "Passthrough hit hard ceiling after ${hard_ceiling}s, killing process group $child_pid");
+                $self->_kill_process_group($child_pid);
+                last;
+            }
+            
+            # Idle timeout
+            if ($idle_seconds > $timeout) {
+                $timed_out = 1;
+                my $total = int($wall_seconds);
+                log_warning('TerminalOps', "Passthrough idle for ${timeout}s (${total}s total), killing process group $child_pid");
+                $self->_kill_process_group($child_pid);
+                last;
+            }
+            
+            Time::HiRes::usleep(100_000);
+        }
         
-        alarm(0);
+        if ($timed_out) {
+            die "Command timeout after ${timeout}s idle\n";
+        }
     };
     
     my $err = $@;
-    
-    # On timeout, kill the entire process group
-    if ($err && $err =~ /timeout/ && $child_pid && $child_pid > 0) {
-        log_warning('TerminalOps', "Passthrough command timeout, killing process group $child_pid");
-        kill('TERM', -$child_pid);  # POSIX portable: negative PID = process group
-        my $wait_start = Time::HiRes::time();
-        while (Time::HiRes::time() - $wait_start < 2) {
-            last if waitpid($child_pid, POSIX::WNOHANG()) > 0;
-            Time::HiRes::usleep(50_000);
-        }
-        if (waitpid($child_pid, POSIX::WNOHANG()) <= 0) {
-            kill('KILL', -$child_pid);  # Force kill
-            waitpid($child_pid, 0);
-        }
-    }
     
     # Restore caller's ALRM handler and re-arm their alarm.
     # alarm(0) returns 0 both when no alarm was pending AND when <1 second
@@ -450,6 +498,29 @@ sub _execute_passthrough {
         timeout => $timeout,
         passthrough => 1,
     );
+}
+
+=head2 _kill_process_group
+
+Send TERM to a process group, wait up to 2 seconds for graceful exit, then
+KILL if still alive. Uses POSIX-portable negative-PID form for group kill.
+
+=cut
+
+sub _kill_process_group {
+    my ($self, $pid) = @_;
+    return unless $pid && $pid > 0;
+    
+    kill('TERM', -$pid);
+    my $wait_start = Time::HiRes::time();
+    while (Time::HiRes::time() - $wait_start < 2) {
+        last if waitpid($pid, POSIX::WNOHANG()) > 0;
+        Time::HiRes::usleep(50_000);
+    }
+    if (waitpid($pid, POSIX::WNOHANG()) <= 0) {
+        kill('KILL', -$pid);
+        waitpid($pid, 0);
+    }
 }
 
 =head2 _suspend_clio_input
@@ -637,7 +708,7 @@ sub get_additional_parameters {
         },
         timeout => {
             type => "integer",
-            description => "Timeout in seconds (default: 30)",
+            description => "Idle timeout in seconds (default: 60). Command is killed only after this many seconds with no output. Active commands keep running.",
         },
         working_directory => {
             type => "string",
