@@ -15,8 +15,11 @@ use CLIO::UI::ProgressSpinner;
 use CLIO::UI::CommandHandler;
 use CLIO::UI::Display;
 use CLIO::UI::HostProtocol;
+use CLIO::UI::StreamingController;
+use CLIO::UI::PaginationManager;
 use utf8;
 use open ':std', ':encoding(UTF-8)';
+use Carp qw(croak);
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use CLIO::Compat::Terminal qw(GetTerminalSize ReadMode ReadKey);  # Portable terminal control
@@ -63,14 +66,8 @@ sub new {
         readline => undef,  # CLIO::Core::ReadLine instance
         completer => undef,  # TabCompletion instance
         screen_buffer => [],  # Message history for repaint
-        line_count => 0,      # For pagination
         max_buffer_size => 100, # Keep last 100 messages
-        # Arrow key pagination support
-        pages => [],          # Buffer of pages for navigation
-        current_page => [],   # Current page being built
-        page_index => 0,      # Current page number for navigation
-        # Pagination control - OFF by default, enabled only for text responses
-        pagination_enabled => 0,  # Only enable for final agent text, not tool output
+        # Pagination control - managed by PaginationManager ($self->{pager})
         # Persistent spinner - shared across all requests
         # Keep spinner as persistent Chat property so tools can reliably access it
         spinner => undef,     # Will be created on first use, reused across requests
@@ -131,6 +128,12 @@ sub new {
         debug => $self->{debug},
     );
     
+    # Initialize streaming controller
+    $self->{streaming} = CLIO::UI::StreamingController->new(ui => $self);
+
+    # Initialize pagination manager
+    $self->{pager} = CLIO::UI::PaginationManager->new(ui => $self);
+    
     if (-t STDIN) {
         $self->setup_tab_completion();
     }
@@ -186,45 +189,7 @@ where streaming content was being displayed after tool execution output.
 
 sub flush_output_buffer {
     my ($self) = @_;
-    
-    my $printed_content = 0;
-    
-    # Flush the streaming markdown buffer if it exists and has content
-    if ($self->{_streaming_markdown_buffer} && $self->{_streaming_markdown_buffer} =~ /\S/) {
-        my $output = $self->{_streaming_markdown_buffer};
-        if ($self->{enable_markdown}) {
-            $output = $self->render_markdown($self->{_streaming_markdown_buffer});
-        }
-        print $output;
-        # DO NOT add extra newline - content already has proper line endings from streaming
-        $self->{_streaming_markdown_buffer} = '';
-        $printed_content = 1;
-    }
-    
-    # Flush the line buffer if it has content (partial line)
-    if ($self->{_streaming_line_buffer} && $self->{_streaming_line_buffer} =~ /\S/) {
-        # Strip session naming markers before flushing
-        $self->{_streaming_line_buffer} =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;
-    }
-    if ($self->{_streaming_line_buffer} && $self->{_streaming_line_buffer} =~ /\S/) {
-        my $output = $self->{_streaming_line_buffer};
-        if ($self->{enable_markdown}) {
-            $output = $self->render_markdown($self->{_streaming_line_buffer});
-        }
-        print $output;
-        # Add newline only for partial lines (those that don't already have one)
-        print "\n" unless $output =~ /\n$/;
-        $self->{_streaming_line_buffer} = '';
-        $printed_content = 1;
-    }
-    
-    # Force STDOUT flush
-    STDOUT->flush() if STDOUT->can('flush');
-    $| = 1;
-    
-    log_debug('Chat', "Buffer flushed for tool execution handshake (printed=$printed_content)");
-    
-    return 1;
+    return $self->{streaming}->flush_for_tools();
 }
 
 =head2 reset_streaming_state
@@ -247,6 +212,57 @@ sub reset_streaming_state {
     log_debug('Chat', "Streaming state reset - next chunk will get CLIO: prefix");
     
     return 1;
+}
+
+=head2 begin_tool_execution
+
+Signal that the agent is entering tool execution mode. Called by
+WorkflowOrchestrator before processing tool calls.
+
+=cut
+
+sub begin_tool_execution {
+    my ($self) = @_;
+    $self->{_in_tool_execution} = 1;
+}
+
+=head2 end_tool_execution
+
+Signal that tool execution has completed. Called by WorkflowOrchestrator
+after all tool calls in a round are processed.
+
+=cut
+
+sub end_tool_execution {
+    my ($self) = @_;
+    $self->{_in_tool_execution} = 0;
+}
+
+=head2 prepare_for_iteration
+
+Signal that the next streaming response should get fresh UI state
+(new prefix, blank line separator). Called by WorkflowOrchestrator
+when continuing after tool execution.
+
+=cut
+
+sub prepare_for_iteration {
+    my ($self) = @_;
+    $self->{_prepare_for_next_iteration} = 1;
+    log_debug('Chat', "Set prepare_for_next_iteration flag for next API call");
+}
+
+=head2 clear_system_message_flag
+
+Clear the flag indicating that the last displayed content was a system
+message. Called by WorkflowOrchestrator when the agent produces visible
+output that supersedes a system message.
+
+=cut
+
+sub clear_system_message_flag {
+    my ($self) = @_;
+    $self->{_last_was_system_message} = 0;
 }
 
 =head2 show_busy_indicator
@@ -428,603 +444,7 @@ sub run {
         
         # Process with AI agent (using streaming)
         if ($self->{ai_agent}) {
-            log_debug('Chat', "About to process user input with AI agent");
-            
-            # Refresh terminal size before output (handle resize)
-            $self->refresh_terminal_size();
-            
-            # Show progress indicator while waiting for AI response
-            # Use persistent spinner stored on Chat object
-            # This ensures tools can access the SAME spinner instance via context
-            # Previously, a new local spinner was created per request, causing reference issues
-            unless ($self->{spinner}) {
-                # Create persistent spinner on first use with frames from current style
-                # Use inline mode so spinner animates after text we print
-                my $spinner_frames = $self->{theme_mgr}->get_spinner_frames();
-                $self->{spinner} = CLIO::UI::ProgressSpinner->new(
-                    frames => $spinner_frames,
-                    delay => 100000,  # 100ms between frames for smooth block animation
-                    inline => 1,      # Inline mode: don't clear entire line, just the spinner
-                );
-                log_debug('Chat', "Created persistent spinner in inline mode");
-            }
-            
-            # DON'T print "CLIO: " prefix here - we'll print it in on_chunk when actual content arrives
-            # This prevents the prefix from appearing for tool-only responses or system messages
-            # Start the inline spinner (will animate until first chunk arrives)
-            $self->{spinner}->start();
-            log_debug('Chat', "Started spinner (will print CLIO: prefix on first content chunk)");
-            
-            # Reference for use in closures below
-            my $spinner = $self->{spinner};
-            
-            # Reset pagination state before streaming
-            $self->{line_count} = 0;
-            $self->{stop_streaming} = 0;
-            $self->{pages} = [];
-            $self->{current_page} = [];
-            $self->{page_index} = 0;
-            
-            # Track whether tools were called - disable pagination during tool workflows
-            # This prevents having to press space after every page of tool output
-            # Pagination only applies to "final" responses without tool calls
-            $self->{_tools_invoked_this_request} = 0;
-            
-            my $first_chunk_received = 0;
-            my $accumulated_content = '';
-            my $final_metrics = undef;
-            
-            # Smart buffering for markdown rendering (Option D)
-            # Store buffers in $self so flush_output_buffer can access them
-            $self->{_streaming_line_buffer} = '';      # Buffer for extracting complete lines
-            $self->{_streaming_markdown_buffer} = '';  # Accumulates lines for batch rendering
-            my $markdown_line_count = 0;   # Lines in current markdown buffer
-            my $in_code_block = 0;         # Track if inside ```code block```
-            my $in_table = 0;              # Track if inside table
-            my $last_flush_time = time();  # Timestamp of last flush
-            
-            # Define streaming callback with smart batched markdown rendering
-            my $on_chunk = sub {
-                my ($chunk, $metrics) = @_;
-                
-                # If user pressed Q to stop streaming, silently drop remaining chunks
-                return if $self->{stop_streaming};
-                
-                log_debug('Chat', "Received chunk: " . substr($chunk, 0, 50) . "...");
-                
-                # Reset system message flag when we start outputting text
-                $self->{_last_was_system_message} = 0;
-                
-                # Stop progress spinner on first chunk (AI is now responding)
-                # Now that we have actual content, print "CLIO: " prefix and stop spinner
-                # Also check _prepare_for_next_iteration flag set by WorkflowOrchestrator
-                # after tool execution - this ensures proper prefix on continuation chunks
-                if (!$first_chunk_received || $self->{_prepare_for_next_iteration}) {
-                    $spinner->stop();  # Removes spinner character
-                    
-                    # Print "CLIO: " prefix now that we know there's actual content
-                    print $self->colorize("CLIO: ", 'ASSISTANT');
-                    STDOUT->flush() if STDOUT->can('flush');
-                    
-                    if ($self->{_prepare_for_next_iteration}) {
-                        # This is a continuation after tool execution
-                        $self->{_prepare_for_next_iteration} = 0;  # Clear the flag
-                        log_debug('Chat', "Printed CLIO: prefix for continuation after tools");
-                    }
-                    
-                    # Enable pagination for text responses (agent is speaking directly)
-                    # This will be left enabled unless/until tools are invoked
-                    if (!$first_chunk_received) {
-                        $self->{pagination_enabled} = 1;
-                        log_debug('Chat', "Pagination ENABLED for text response");
-                    }
-                    
-                    log_debug('Chat', "First chunk received, printed CLIO: prefix and removed spinner");
-                    $first_chunk_received = 1;
-                    $self->{host_proto}->emit_status('streaming');
-                }
-                
-                # Clear the _need_agent_prefix flag if set (no longer needed)
-                if ($self->{_need_agent_prefix}) {
-                    $self->{_need_agent_prefix} = 0;  # Clear the flag
-                    log_debug('Chat', "Cleared _need_agent_prefix flag");
-                }
-                
-                # Add chunk to line buffer (using $self for access from flush_output_buffer)
-                $self->{_streaming_line_buffer} .= $chunk;
-                
-                # Process complete lines
-                while ($self->{_streaming_line_buffer} =~ /\n/) {
-                    my $pos = index($self->{_streaming_line_buffer}, "\n");
-                    my $line = substr($self->{_streaming_line_buffer}, 0, $pos);
-                    $self->{_streaming_line_buffer} = substr($self->{_streaming_line_buffer}, $pos + 1);
-                    
-                    # Strip session naming markers from display (inline or whole-line)
-                    if ($line =~ /<!--session:\{/) {
-                        my $had_content = ($line =~ /\S/ && $line !~ /^\s*<!--session:\{[^}]*\}-->\s*$/);
-                        $line =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;
-                        # Skip entirely if the line was only the marker
-                        next if !$had_content && $line !~ /\S/;
-                    }
-
-                    # Update markdown context state
-                    if ($line =~ /^```/) {
-                        $in_code_block = !$in_code_block;
-                    }
-                    
-                    # Track table state more accurately:
-                    # - Start table when we see a | row
-                    # - End table when we see a non-| row (excluding blank lines)
-                    my $line_is_table_row = ($line =~ /^\|.*\|$/);
-                    my $line_is_blank = ($line =~ /^\s*$/);
-                    
-                    if ($line_is_table_row) {
-                        $in_table = 1;
-                    } elsif (!$line_is_blank && $in_table) {
-                        # Non-blank, non-table line ends the table
-                        $in_table = 0;
-                    }
-                    # Blank lines don't change table state (tables can have blank lines)
-                    
-                    # Add line to markdown buffer (using $self)
-                    $self->{_streaming_markdown_buffer} .= $line . "\n";
-                    $markdown_line_count++;
-                    
-                    # Determine if we should flush the buffer
-                    my $current_time = time();
-                    my $buffer_size_threshold = 10;     # Flush every 10 lines
-                    my $time_threshold = 0.5;            # Or every 500ms
-                    my $max_buffer_size = 50;            # Force flush at 50 lines even in table
-                    
-                    # Flush buffer when:
-                    # 1. Buffer has enough lines (size threshold) AND not in code block or table
-                    # 2. Timeout reached AND not in code block or table
-                    # 3. Force flush if buffer is very large (prevents memory issues)
-                    # Note: We DON'T flush while inside code blocks or tables
-                    my $in_special_block = $in_code_block || $in_table;
-                    my $should_flush = (
-                        ($markdown_line_count >= $buffer_size_threshold && !$in_special_block) ||  # Normal flush
-                        ($current_time - $last_flush_time >= $time_threshold && !$in_special_block) ||  # Timeout flush
-                        ($markdown_line_count >= $max_buffer_size)  # Force flush to prevent memory issues
-                    );
-                    
-                    if ($should_flush) {
-                        # Render accumulated markdown buffer
-                        log_debug('Chat', "Periodic flush of markdown_buffer (" . length($self->{_streaming_markdown_buffer}) . " bytes, $markdown_line_count lines)");
-                        log_debug('Chat', "Buffer ends with: " . substr($self->{_streaming_markdown_buffer}, -80));
-                        my $output = $self->{_streaming_markdown_buffer};
-                        if ($self->{enable_markdown}) {
-                            $output = $self->render_markdown($self->{_streaming_markdown_buffer});
-                        }
-                        
-                        # Print rendered output and flush immediately
-                        print $output;
-                        STDOUT->flush() if STDOUT->can('flush');
-                        
-                        # Buffer lines for page navigation (split back to lines)
-                        my @rendered_lines = split /\n/, $self->{_streaming_markdown_buffer};
-                        push @{$self->{current_page}}, @rendered_lines;
-                        
-                        # Use helper for consistent line counting
-                        my $line_count_delta = $self->_count_visual_lines($self->{_streaming_markdown_buffer});
-                        $self->{line_count} += $line_count_delta;
-                        
-                        # Reset markdown buffer
-                        $self->{_streaming_markdown_buffer} = '';
-                        $markdown_line_count = 0;
-                        $last_flush_time = $current_time;
-                        
-                        # Check pagination using agent streaming helper (ignores tool flag)
-                        # Agent text should paginate even when tools are executing
-                        if ($self->_should_pagination_trigger_for_agent_streaming()) {
-                            # Pause for user to read (streaming mode)
-                            my $response = $self->pause(1);  # 1 = streaming mode
-                            if ($response eq 'Q') {
-                                $self->{stop_streaming} = 1;
-                                return;  # Stop streaming
-                            }
-                            
-                            # Reset for next page
-                            $self->{line_count} = 0;
-                            $self->{current_page} = [];
-                        }
-                    }
-                }
-                
-                # Accumulate content
-                $accumulated_content .= $chunk;
-                
-                # Store metrics
-                $final_metrics = $metrics;
-            };
-            
-            # Track tool calls and display which tool is being executed
-            my $current_tool = '';
-            my $on_tool_call = sub {
-                my ($tool_name) = @_;
-                
-                return unless defined $tool_name;
-                return if $tool_name eq $current_tool;  # Skip if same tool
-                
-                $current_tool = $tool_name;
-                
-                # Mark that tools have been invoked - disables pagination in writeline()
-                # so user doesn't have to press space during tool output.
-                # Note: _tools_invoked_this_request is checked in _should_pagination_trigger()
-                # Agent streaming output is NOT affected by this flag and remains paginated
-                $self->{_tools_invoked_this_request} = 1;
-                
-                $self->{host_proto}->emit_status('tools');
-                $self->{host_proto}->emit_tool_start($tool_name);
-                
-                log_debug('Chat', "Tool execution marked (pagination still enabled for agent text)");
-                log_debug('Chat', "Tool called: $tool_name");
-            };
-            
-            # Callback when a tool finishes execution
-            my $on_tool_end = sub {
-                my ($tool_name) = @_;
-                return unless defined $tool_name;
-                $self->{host_proto}->emit_tool_end($tool_name);
-            };
-            
-            # Display thinking/reasoning content from reasoning models
-            # Shows content dimmed to distinguish from actual response
-            my $thinking_active = 0;
-            my $on_thinking = sub {
-                my ($content, $signal) = @_;
-                
-                # Check if thinking display is enabled (default: off)
-                my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
-                return unless $show_thinking;
-                
-                # Handle start/end signals from native providers (Anthropic)
-                if (defined $signal) {
-                    if ($signal eq 'start') {
-                        $thinking_active = 1;
-                        # Stop spinner if running and show thinking header
-                        # Style matches tool output: {DIM}connector {ASSISTANT}label
-                        $spinner->stop();
-                        print $self->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
-                        print $self->colorize("THINKING", 'ASSISTANT');
-                        print "\n";
-                        STDOUT->flush() if STDOUT->can('flush');
-                        return;
-                    }
-                    elsif ($signal eq 'end') {
-                        if ($thinking_active) {
-                            # Only close the thinking box if it was actually opened
-                            # Blank line to separate thinking from response (matches tool output pattern)
-                            print "\n\n";
-                            STDOUT->flush() if STDOUT->can('flush');
-                        }
-                        $thinking_active = 0;
-                        # Reset first_chunk_received so CLIO: prefix prints for actual response
-                        $first_chunk_received = 0;
-                        return;
-                    }
-                }
-                
-                # Thinking content delta
-                return unless defined $content && length($content);
-                
-                # For OpenAI-compatible reasoning_content (no start/end signals),
-                # auto-detect start on first chunk
-                if (!$thinking_active) {
-                    $thinking_active = 1;
-                    $spinner->stop();
-                    # Style matches tool output: {DIM}connector {ASSISTANT}label
-                    print $self->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
-                    print $self->colorize("THINKING", 'ASSISTANT');
-                    print "\n";
-                    STDOUT->flush() if STDOUT->can('flush');
-                }
-                
-                # Print thinking content in DATA color (matches tool action detail style)
-                print $self->colorize($content, 'DATA');
-                STDOUT->flush() if STDOUT->can('flush');
-            };
-            
-            # Display system messages (rate limits, server errors, etc.)
-            my $on_system_message = sub {
-                my ($message) = @_;
-                
-                return unless defined $message;
-                
-                # Hide busy indicator before displaying system message
-                # This clears the spinner, leaving "CLIO: " on the line
-                $self->hide_busy_indicator() if $self->can('hide_busy_indicator');
-                
-                # Clear the "CLIO: " prefix that was printed before the spinner
-                # This ensures system messages start on a clean line
-                print "\r\e[K";  # Carriage return + clear entire line
-                
-                # Display system message with format based on theme
-                # Check if theme uses inline format (like console theme)
-                my $tool_format = 'box';  # default
-                if ($self->{theme_mgr} && $self->{theme_mgr}->can('get_tool_display_format')) {
-                    $tool_format = $self->{theme_mgr}->get_tool_display_format();
-                }
-                
-                if ($tool_format eq 'inline') {
-                    # Inline format: [SYSTEM] message
-                    my $prefix = $self->colorize("[SYSTEM] ", 'SYSTEM');
-                    my $msg = $self->colorize($message, 'DATA');
-                    print "$prefix$msg\n";
-                    print "\n";  # Add blank line AFTER system message for separation
-                    STDOUT->flush() if STDOUT->can('flush');
-                    $self->{line_count} += 2;  # Message + blank line
-                } else {
-                    # Box-drawing format (default):
-                    # {dim}┌──┤ {agent_label}SYSTEM{reset}
-                    # {dim}└─ {data}message{reset}
-                    my $header_conn = $self->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
-                    my $header_name = $self->colorize("SYSTEM", 'ASSISTANT');
-                    my $footer_conn = $self->colorize("\x{2514}\x{2500} ", 'DIM');
-                    my $footer_msg = $self->colorize($message, 'DATA');
-                    
-                    print "$header_conn$header_name\n";
-                    print "$footer_conn$footer_msg\n";
-                    print "\n";  # Add blank line AFTER system message for separation
-                    STDOUT->flush() if STDOUT->can('flush');
-                    $self->{line_count} += 3;  # Header + footer + blank line
-                }
-                $self->{_last_was_system_message} = 1;  # Mark that we just displayed a system message
-                
-                log_debug('Chat', "System message: $message");
-            };
-            
-            # Get conversation history from session
-            my $conversation_history = [];
-            if ($self->{session} && $self->{session}->can('get_conversation_history')) {
-                $conversation_history = $self->{session}->get_conversation_history() || [];
-                log_debug('Chat', "Loaded " . scalar(@$conversation_history) . " messages from session history");
-            }
-            
-            # Enable periodic signal delivery during streaming
-            # Without this, Ctrl-C during HTTP streaming won't save session because:
-            # - HTTP::Tiny blocks in socket read syscall
-            # - Perl signal handlers only run between Perl opcodes
-            # - ALRM interrupts the syscall, allowing signal handlers to run
-            # Trade-off: 1-second worst-case latency for ESC/keypress response
-            my $alarm_count = 0;
-            my $alarm_handler = sub {
-                $alarm_count++;
-                
-                # Actively check for keypress in the signal handler itself.
-                # This is critical because WorkflowOrchestrator's interrupt checks
-                # only run at specific points (loop top, between tools, etc).
-                # During long tool execution or HTTP streaming, the ALRM handler
-                # is the ONLY code that runs periodically. By checking for input
-                # here, we ensure ESC detection works even when the main loop is
-                # blocked in a tool call or network I/O.
-                if ($self->{session} && $self->{session}->state() && 
-                    !$self->{session}->state()->{user_interrupted}) {
-                    my $key = eval { ReadKey(-1) };
-                    if (defined $key) {
-                        my $key_desc = (ord($key) == 27) ? 'ESC' : 
-                                       (ord($key) < 32)  ? sprintf('Ctrl+%c', ord($key) + 64) :
-                                       "'$key'";
-                        log_debug('Chat', "ALRM interrupt: keypress detected ($key_desc)");
-                        
-                        # Drain remaining buffered input
-                        while (defined(eval { ReadKey(-1) })) { }
-                        
-                        # Set interrupt flag - WorkflowOrchestrator will pick this up
-                        $self->{session}->state()->{user_interrupted} = 1;
-                    }
-                }
-                
-                log_debug('Chat', "ALRM #$alarm_count - syscall interrupted for signal delivery");
-                alarm(1);  # Re-arm for next second
-            };
-            local $SIG{ALRM} = $alarm_handler;
-            alarm(1);  # Start periodic interruption
-            
-            # Set cbreak mode for interrupt detection during agent execution
-            # In normal/canonical mode, keypresses are buffered until Enter and
-            # sysread() (used by ReadKey) can't see them. Cbreak mode makes each
-            # keypress immediately available so _check_for_user_interrupt works.
-            # ReadLine (for user_collaboration) manages its own mode internally.
-            ReadMode(1);
-            
-            # Process request with streaming callback (match clio script pattern)
-            log_debug('Chat', "Calling process_user_request...");
-            my $result;
-            eval {
-                $result = $self->{ai_agent}->process_user_request($input, {
-                    on_chunk => $on_chunk,
-                    on_tool_call => $on_tool_call,  # Track which tools are being called
-                    on_tool_end => $on_tool_end,    # Track when tools finish
-                    on_thinking => $on_thinking,  # Display reasoning/thinking content
-                    on_system_message => $on_system_message,  # Display system messages
-                    conversation_history => $conversation_history,
-                    current_file => $self->{session}->{state}->{current_file},
-                    working_directory => $self->{session}->{state}->{working_directory},
-                    ui => $self,  # Pass UI object for user_collaboration tool
-                    spinner => $spinner  # Pass spinner for interactive tools to stop
-                });
-            };
-            my $process_error = $@;
-            
-            # ALWAYS restore normal terminal mode, even on exception
-            ReadMode(0);
-            log_debug('Chat', "process_user_request returned, success=" . ($result ? ($result->{success} ? "yes" : "no") : "exception"));
-            
-            # Re-throw if process_user_request died
-            die $process_error if $process_error;
-            
-            # Disable periodic alarm after streaming completes
-            alarm(0);
-            log_debug('Chat', "Disabled periodic ALRM after streaming ($alarm_count interrupts)");
-            
-            # Stop spinner in case it's still running (e.g., error before first chunk)
-            $spinner->stop();
-            
-            # DEBUG: Check buffer states before flush
-            if ($self->{debug}) {
-                log_debug('Chat', "AFTER streaming - markdown_buffer length=" . length($self->{_streaming_markdown_buffer} // ''));
-                log_debug('Chat', "AFTER streaming - line_buffer length=" . length($self->{_streaming_line_buffer} // ''));
-                log_debug('Chat', "AFTER streaming - first_chunk_received=$first_chunk_received");
-            }
-            
-            # Flush any remaining content in buffers after streaming completes
-            
-            # 1. Flush markdown buffer if it has content
-            if ($self->{_streaming_markdown_buffer} && $self->{_streaming_markdown_buffer} =~ /\S/) {
-                # Strip session naming markers before display
-                $self->{_streaming_markdown_buffer} =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;
-            }
-            if ($self->{_streaming_markdown_buffer} && $self->{_streaming_markdown_buffer} =~ /\S/) {
-                log_debug('Chat', "Flushing markdown_buffer (" . length($self->{_streaming_markdown_buffer}) . " bytes): " .
-                             substr($self->{_streaming_markdown_buffer}, -50));
-                my $output = $self->{_streaming_markdown_buffer};
-                if ($self->{enable_markdown}) {
-                    $output = $self->render_markdown($self->{_streaming_markdown_buffer});
-                }
-                print $output;
-                STDOUT->flush() if STDOUT->can('flush');
-            }
-            
-            # 2. Flush line buffer if it has content (incomplete final line)
-            if ($self->{_streaming_line_buffer} && $self->{_streaming_line_buffer} =~ /\S/) {
-                # Strip session naming markers before display
-                $self->{_streaming_line_buffer} =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;
-            }
-            if ($self->{_streaming_line_buffer} && $self->{_streaming_line_buffer} =~ /\S/) {
-                log_debug('Chat', "Flushing line_buffer (" . length($self->{_streaming_line_buffer}) . " bytes): " .
-                             substr($self->{_streaming_line_buffer}, -50));
-                my $output = $self->{_streaming_line_buffer};
-                if ($self->{enable_markdown}) {
-                    $output = $self->render_markdown($self->{_streaming_line_buffer});
-                }
-                print $output, "\n";
-                STDOUT->flush() if STDOUT->can('flush');
-            }
-            
-            # Clear streaming buffers after final flush
-            $self->{_streaming_markdown_buffer} = '';
-            $self->{_streaming_line_buffer} = '';
-            
-            # Reset line count after streaming completes
-            $self->{line_count} = 0;
-            
-            log_debug('Chat', "first_chunk_received=$first_chunk_received, accumulated_content_len=" . length($accumulated_content));
-            
-            # Display metrics in debug mode
-            if ($self->{debug} && $result->{metrics}) {
-                my $m = $result->{metrics};
-                log_debug('Chat', sprintf(
-                    "[METRICS] TTFT: %.2fs | TPS: %.1f | Tokens: %d | Duration: %.2fs\n",
-                    $m->{ttft} // 0,
-                    $m->{tps} // 0,
-                    $m->{tokens} // 0,
-                    $m->{duration} // 0
-                ));
-            }
-            
-            # Store complete message in session history
-            # Sanitize assistant responses before storing to prevent emoji encoding issues
-            # BUT only if messages weren't already saved during the workflow execution.
-            # Tool-calling workflows save messages atomically (assistant + tool results together),
-            # so we should NOT save another assistant message here to avoid duplicates.
-
-            # Strip session naming markers from content before saving to history
-            # The marker was already extracted by WorkflowOrchestrator, but accumulated_content
-            # is built independently from streaming chunks and may still contain it
-            if ($accumulated_content) {
-                $accumulated_content =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;
-            }
-
-            if ($result && $result->{messages_saved_during_workflow}) {
-                log_debug('Chat', "Skipping session save - messages already saved during workflow");
-                # Still add to buffer for display (content was streamed, not saved)
-                $self->add_to_buffer('assistant', $result->{final_response} // '') if $result->{final_response};
-            } elsif ($result && $result->{final_response}) {
-                log_debug('Chat', "Storing final_response in session (length=" . length($result->{final_response}) . ")");
-                my $sanitized = sanitize_text($result->{final_response});
-                $self->{session}->add_message('assistant', $sanitized);
-                $self->add_to_buffer('assistant', $result->{final_response});  # Display original with emojis
-            } elsif ($accumulated_content) {
-                log_debug('Chat', "Storing accumulated_content in session (length=" . length($accumulated_content) . ")");
-                # Fallback: use accumulated content
-                my $sanitized = sanitize_text($accumulated_content);
-                $self->{session}->add_message('assistant', $sanitized);
-                $self->add_to_buffer('assistant', $accumulated_content);  # Display original with emojis
-            }
-            
-            # Handle error case - show actual error message to user
-            # Ensure session has a name - AI marker is primary, text-truncation is fallback
-            # This runs regardless of success/error so no session stays as a UUID
-            if ($self->{session} && !$self->{session}->session_name()) {
-                $self->_auto_name_session();
-            }
-
-            if (!$result || !$result->{success}) {
-                my $error_msg = $result->{error} || $result->{final_response} || "No response received from AI";
-                log_debug('Chat', "Error occurred: $error_msg");
-                $self->display_error_message($error_msg);
-                
-                # Store error in session for context
-                if ($self->{session}) {
-                    $self->{session}->add_message('system', "Error: $error_msg");
-                    
-                    # Save session immediately after error to prevent history loss
-                    # This ensures error context is available on next startup
-                    $self->{session}->save();
-                    log_debug('Chat', "Session saved after error (preserving context)");
-                }
-            } else {
-                # Save session after successful responses
-                # Without this, if user doesn't call /exit, all work-in-progress is lost
-                # on next session restart. This ensures session continuity even if terminal
-                # is closed abruptly without explicit /exit command.
-                if ($self->{session}) {
-                    $self->{session}->save();
-                    log_debug('Chat', "Session saved after successful response (preserving work-in-progress)");
-                }
-                
-                # HYBRID LTM APPROACH: AutoCapture disabled. Agents store discoveries
-                # explicitly via memory_operations tool when important facts are learned.
-                # This ensures clean LTM with no heuristic noise or truncation.
-                # See: memory_operations(operation: "add_discovery") or related methods
-            }
-            
-            # Display usage summary after response
-            $self->display_usage_summary();
-            
-            # Emit token usage to host application
-            if ($self->{host_proto}->active() && $self->{session} && $self->{session}->{state}) {
-                my $billing = $self->{session}->{state}->{billing};
-                if ($billing && $billing->{requests} && @{$billing->{requests}}) {
-                    my $last = $billing->{requests}[-1];
-                    $self->{host_proto}->emit_tokens(
-                        prompt     => $last->{prompt_tokens} || 0,
-                        completion => $last->{completion_tokens} || 0,
-                        total      => $last->{total_tokens} || 0,
-                        model      => $billing->{model} || '',
-                    );
-                }
-            }
-            
-            # Display premium charge notification if any
-            if ($self->{session} && $self->{session}->can('state')) {
-                my $state = $self->{session}->state();
-                if ($state->{_premium_charge_message}) {
-                    print "\n";
-                    $self->display_system_message($state->{_premium_charge_message});
-                    delete $state->{_premium_charge_message};  # Clear after displaying
-                }
-            }
-            
-            # Disable pagination after response completes
-            # Will be re-enabled on first chunk of next text response
-            $self->{pagination_enabled} = 0;
-            log_debug('Chat', "Pagination DISABLED after response complete");
-            
-            # Ensure spinner is stopped before returning to input prompt
-            # This prevents spinner from still running when waiting for user input
-            $self->hide_busy_indicator();
+            $self->_process_ai_request($input);
         } else {
             $self->display_error_message("AI agent not initialized");
         }
@@ -1034,6 +454,410 @@ sub run {
     
     # Exit gracefully (goodbye message will be shown by caller)
     print "\n";
+}
+
+
+=head2 _process_ai_request($input)
+
+Process user input through the AI agent with streaming callbacks.
+Handles spinner, callbacks, session save, and error display.
+
+=cut
+
+sub _process_ai_request {
+    my ($self, $input) = @_;
+
+    log_debug("Chat", "About to process user input with AI agent");
+
+    
+    # Show progress indicator while waiting for AI response
+    # Use persistent spinner stored on Chat object
+    # This ensures tools can access the SAME spinner instance via context
+    # Previously, a new local spinner was created per request, causing reference issues
+    unless ($self->{spinner}) {
+        # Create persistent spinner on first use with frames from current style
+        # Use inline mode so spinner animates after text we print
+        my $spinner_frames = $self->{theme_mgr}->get_spinner_frames();
+        $self->{spinner} = CLIO::UI::ProgressSpinner->new(
+            frames => $spinner_frames,
+            delay => 100000,  # 100ms between frames for smooth block animation
+            inline => 1,      # Inline mode: don't clear entire line, just the spinner
+        );
+        log_debug('Chat', "Created persistent spinner in inline mode");
+    }
+    
+    # DON'T print "CLIO: " prefix here - we'll print it in on_chunk when actual content arrives
+    # This prevents the prefix from appearing for tool-only responses or system messages
+    # Start the inline spinner (will animate until first chunk arrives)
+    $self->{spinner}->start();
+    log_debug('Chat', "Started spinner (will print CLIO: prefix on first content chunk)");
+    
+    # Reference for use in closures below
+    my $spinner = $self->{spinner};
+    
+    # Reset pagination state before streaming
+    $self->{pager}->reset();
+    $self->{stop_streaming} = 0;
+    
+    # Track whether tools were called - disable pagination during tool workflows
+    $self->{_tools_invoked_this_request} = 0;
+    
+    my $final_metrics = undef;
+    
+    # Reset streaming controller and build on_chunk callback
+    $self->{streaming}->reset();
+    my $on_chunk = $self->{streaming}->make_on_chunk_callback(
+        spinner    => $spinner,
+        host_proto => $self->{host_proto},
+    );
+    
+    # Track tool calls and display which tool is being executed
+    my $current_tool = '';
+    my $on_tool_call = sub {
+        my ($tool_name) = @_;
+        
+        return unless defined $tool_name;
+        return if $tool_name eq $current_tool;  # Skip if same tool
+        
+        $current_tool = $tool_name;
+        
+        # Mark that tools have been invoked - disables pagination in writeline()
+        # so user doesn't have to press space during tool output.
+        # Note: _tools_invoked_this_request is checked in _should_pagination_trigger()
+        # Agent streaming output is NOT affected by this flag and remains paginated
+        $self->{_tools_invoked_this_request} = 1;
+        
+        $self->{host_proto}->emit_status('tools');
+        $self->{host_proto}->emit_tool_start($tool_name);
+        
+        log_debug('Chat', "Tool execution marked (pagination still enabled for agent text)");
+        log_debug('Chat', "Tool called: $tool_name");
+    };
+    
+    # Callback when a tool finishes execution
+    my $on_tool_end = sub {
+        my ($tool_name) = @_;
+        return unless defined $tool_name;
+        $self->{host_proto}->emit_tool_end($tool_name);
+    };
+    
+    # Display thinking/reasoning content from reasoning models
+    # Shows content dimmed to distinguish from actual response
+    my $thinking_active = 0;
+    my $on_thinking = sub {
+        my ($content, $signal) = @_;
+        
+        # Check if thinking display is enabled (default: off)
+        my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
+        return unless $show_thinking;
+        
+        # Handle start/end signals from native providers (Anthropic)
+        if (defined $signal) {
+            if ($signal eq 'start') {
+                $thinking_active = 1;
+                # Stop spinner if running and show thinking header
+                # Style matches tool output: {DIM}connector {ASSISTANT}label
+                $spinner->stop();
+                print $self->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
+                print $self->colorize("THINKING", 'ASSISTANT');
+                print "\n";
+                STDOUT->flush() if STDOUT->can('flush');
+                return;
+            }
+            elsif ($signal eq 'end') {
+                if ($thinking_active) {
+                    # Only close the thinking box if it was actually opened
+                    # Blank line to separate thinking from response (matches tool output pattern)
+                    print "\n\n";
+                    STDOUT->flush() if STDOUT->can('flush');
+                }
+                $thinking_active = 0;
+                # Reset so CLIO: prefix prints for actual response
+                $self->{streaming}->{first_chunk_received} = 0;
+                return;
+            }
+        }
+        
+        # Thinking content delta
+        return unless defined $content && length($content);
+        
+        # For OpenAI-compatible reasoning_content (no start/end signals),
+        # auto-detect start on first chunk
+        if (!$thinking_active) {
+            $thinking_active = 1;
+            $spinner->stop();
+            # Style matches tool output: {DIM}connector {ASSISTANT}label
+            print $self->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
+            print $self->colorize("THINKING", 'ASSISTANT');
+            print "\n";
+            STDOUT->flush() if STDOUT->can('flush');
+        }
+        
+        # Print thinking content in DATA color (matches tool action detail style)
+        print $self->colorize($content, 'DATA');
+        STDOUT->flush() if STDOUT->can('flush');
+    };
+    
+    # Display system messages (rate limits, server errors, etc.)
+    my $on_system_message = sub {
+        my ($message) = @_;
+        
+        return unless defined $message;
+        
+        # Hide busy indicator before displaying system message
+        # This clears the spinner, leaving "CLIO: " on the line
+        $self->hide_busy_indicator() if $self->can('hide_busy_indicator');
+        
+        # Clear the "CLIO: " prefix that was printed before the spinner
+        # This ensures system messages start on a clean line
+        print "\r\e[K";  # Carriage return + clear entire line
+        
+        # Display system message with format based on theme
+        # Check if theme uses inline format (like console theme)
+        my $tool_format = 'box';  # default
+        if ($self->{theme_mgr} && $self->{theme_mgr}->can('get_tool_display_format')) {
+            $tool_format = $self->{theme_mgr}->get_tool_display_format();
+        }
+        
+        if ($tool_format eq 'inline') {
+            # Inline format: [SYSTEM] message
+            my $prefix = $self->colorize("[SYSTEM] ", 'SYSTEM');
+            my $msg = $self->colorize($message, 'DATA');
+            print "$prefix$msg\n";
+            print "\n";  # Add blank line AFTER system message for separation
+            STDOUT->flush() if STDOUT->can('flush');
+            $self->{pager}->increment_lines(2);  # Message + blank line
+        } else {
+            # Box-drawing format (default):
+            # {dim}┌──┤ {agent_label}SYSTEM{reset}
+            # {dim}└─ {data}message{reset}
+            my $header_conn = $self->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
+            my $header_name = $self->colorize("SYSTEM", 'ASSISTANT');
+            my $footer_conn = $self->colorize("\x{2514}\x{2500} ", 'DIM');
+            my $footer_msg = $self->colorize($message, 'DATA');
+            
+            print "$header_conn$header_name\n";
+            print "$footer_conn$footer_msg\n";
+            print "\n";  # Add blank line AFTER system message for separation
+            STDOUT->flush() if STDOUT->can('flush');
+            $self->{pager}->increment_lines(3);  # Header + footer + blank line
+        }
+        $self->{_last_was_system_message} = 1;  # Mark that we just displayed a system message
+        
+        log_debug('Chat', "System message: $message");
+    };
+    
+    # Get conversation history from session
+    my $conversation_history = [];
+    if ($self->{session} && $self->{session}->can('get_conversation_history')) {
+        $conversation_history = $self->{session}->get_conversation_history() || [];
+        log_debug('Chat', "Loaded " . scalar(@$conversation_history) . " messages from session history");
+    }
+    
+    # Enable periodic signal delivery during streaming
+    # Without this, Ctrl-C during HTTP streaming won't save session because:
+    # - HTTP::Tiny blocks in socket read syscall
+    # - Perl signal handlers only run between Perl opcodes
+    # - ALRM interrupts the syscall, allowing signal handlers to run
+    # Trade-off: 1-second worst-case latency for ESC/keypress response
+    my $alarm_count = 0;
+    my $alarm_handler = sub {
+        $alarm_count++;
+        
+        # Actively check for keypress in the signal handler itself.
+        # This is critical because WorkflowOrchestrator's interrupt checks
+        # only run at specific points (loop top, between tools, etc).
+        # During long tool execution or HTTP streaming, the ALRM handler
+        # is the ONLY code that runs periodically. By checking for input
+        # here, we ensure ESC detection works even when the main loop is
+        # blocked in a tool call or network I/O.
+        if ($self->{session} && $self->{session}->state() && 
+            !$self->{session}->state()->{user_interrupted}) {
+            my $key = eval { ReadKey(-1) };
+            if (defined $key) {
+                my $key_desc = (ord($key) == 27) ? 'ESC' : 
+                               (ord($key) < 32)  ? sprintf('Ctrl+%c', ord($key) + 64) :
+                               "'$key'";
+                log_debug('Chat', "ALRM interrupt: keypress detected ($key_desc)");
+                
+                # Drain remaining buffered input
+                while (defined(eval { ReadKey(-1) })) { }
+                
+                # Set interrupt flag - WorkflowOrchestrator will pick this up
+                $self->{session}->state()->{user_interrupted} = 1;
+            }
+        }
+        
+        log_debug('Chat', "ALRM #$alarm_count - syscall interrupted for signal delivery");
+        alarm(1);  # Re-arm for next second
+    };
+    local $SIG{ALRM} = $alarm_handler;
+    alarm(1);  # Start periodic interruption
+    
+    # Set cbreak mode for interrupt detection during agent execution
+    # In normal/canonical mode, keypresses are buffered until Enter and
+    # sysread() (used by ReadKey) can't see them. Cbreak mode makes each
+    # keypress immediately available so _check_for_user_interrupt works.
+    # ReadLine (for user_collaboration) manages its own mode internally.
+    ReadMode(1);
+    
+    # Process request with streaming callback (match clio script pattern)
+    log_debug('Chat', "Calling process_user_request...");
+    my $result;
+    eval {
+        $result = $self->{ai_agent}->process_user_request($input, {
+            on_chunk => $on_chunk,
+            on_tool_call => $on_tool_call,  # Track which tools are being called
+            on_tool_end => $on_tool_end,    # Track when tools finish
+            on_thinking => $on_thinking,  # Display reasoning/thinking content
+            on_system_message => $on_system_message,  # Display system messages
+            conversation_history => $conversation_history,
+            current_file => $self->{session}->{state}->{current_file},
+            working_directory => $self->{session}->{state}->{working_directory},
+            ui => $self,  # Pass UI object for user_collaboration tool
+            spinner => $spinner  # Pass spinner for interactive tools to stop
+        });
+    };
+    my $process_error = $@;
+    
+    # ALWAYS restore normal terminal mode, even on exception
+    ReadMode(0);
+    log_debug('Chat', "process_user_request returned, success=" . ($result ? ($result->{success} ? "yes" : "no") : "exception"));
+    
+    # Re-throw if process_user_request died
+    croak $process_error if $process_error;
+    
+    # Disable periodic alarm after streaming completes
+    alarm(0);
+    log_debug('Chat', "Disabled periodic ALRM after streaming ($alarm_count interrupts)");
+    
+    # Stop spinner in case it's still running (e.g., error before first chunk)
+    $spinner->stop();
+    
+    # Flush remaining streaming buffers
+    $self->{streaming}->flush();
+    
+    # Reset line count after streaming completes
+    $self->{pager}->line_count(0);
+    
+    my $accumulated_content = $self->{streaming}->content();
+    my $first_chunk_received = $self->{streaming}->first_chunk_received();
+    log_debug('Chat', "first_chunk_received=$first_chunk_received, accumulated_content_len=" . length($accumulated_content));
+    
+    # Display metrics in debug mode
+    if ($self->{debug} && $result->{metrics}) {
+        my $m = $result->{metrics};
+        log_debug('Chat', sprintf(
+            "[METRICS] TTFT: %.2fs | TPS: %.1f | Tokens: %d | Duration: %.2fs\n",
+            $m->{ttft} // 0,
+            $m->{tps} // 0,
+            $m->{tokens} // 0,
+            $m->{duration} // 0
+        ));
+    }
+    
+    # Store complete message in session history
+    # Sanitize assistant responses before storing to prevent emoji encoding issues
+    # BUT only if messages weren't already saved during the workflow execution.
+    # Tool-calling workflows save messages atomically (assistant + tool results together),
+    # so we should NOT save another assistant message here to avoid duplicates.
+
+    # Strip session naming markers from content before saving to history
+    # The marker was already extracted by WorkflowOrchestrator, but accumulated_content
+    # is built independently from streaming chunks and may still contain it
+    if ($accumulated_content) {
+        $accumulated_content =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;
+    }
+
+    if ($result && $result->{messages_saved_during_workflow}) {
+        log_debug('Chat', "Skipping session save - messages already saved during workflow");
+        # Still add to buffer for display (content was streamed, not saved)
+        $self->add_to_buffer('assistant', $result->{final_response} // '') if $result->{final_response};
+    } elsif ($result && $result->{final_response}) {
+        log_debug('Chat', "Storing final_response in session (length=" . length($result->{final_response}) . ")");
+        my $sanitized = sanitize_text($result->{final_response});
+        $self->{session}->add_message('assistant', $sanitized);
+        $self->add_to_buffer('assistant', $result->{final_response});  # Display original with emojis
+    } elsif ($accumulated_content) {
+        log_debug('Chat', "Storing accumulated_content in session (length=" . length($accumulated_content) . ")");
+        # Fallback: use accumulated content
+        my $sanitized = sanitize_text($accumulated_content);
+        $self->{session}->add_message('assistant', $sanitized);
+        $self->add_to_buffer('assistant', $accumulated_content);  # Display original with emojis
+    }
+    
+    # Handle error case - show actual error message to user
+    # Ensure session has a name - AI marker is primary, text-truncation is fallback
+    # This runs regardless of success/error so no session stays as a UUID
+    if ($self->{session} && !$self->{session}->session_name()) {
+        $self->_auto_name_session();
+    }
+
+    if (!$result || !$result->{success}) {
+        my $error_msg = $result->{error} || $result->{final_response} || "No response received from AI";
+        log_debug('Chat', "Error occurred: $error_msg");
+        $self->display_error_message($error_msg);
+        
+        # Store error in session for context
+        if ($self->{session}) {
+            $self->{session}->add_message('system', "Error: $error_msg");
+            
+            # Save session immediately after error to prevent history loss
+            # This ensures error context is available on next startup
+            $self->{session}->save();
+            log_debug('Chat', "Session saved after error (preserving context)");
+        }
+    } else {
+        # Save session after successful responses
+        # Without this, if user doesn't call /exit, all work-in-progress is lost
+        # on next session restart. This ensures session continuity even if terminal
+        # is closed abruptly without explicit /exit command.
+        if ($self->{session}) {
+            $self->{session}->save();
+            log_debug('Chat', "Session saved after successful response (preserving work-in-progress)");
+        }
+        
+        # HYBRID LTM APPROACH: AutoCapture disabled. Agents store discoveries
+        # explicitly via memory_operations tool when important facts are learned.
+        # This ensures clean LTM with no heuristic noise or truncation.
+        # See: memory_operations(operation: "add_discovery") or related methods
+    }
+    
+    # Display usage summary after response
+    $self->display_usage_summary();
+    
+    # Emit token usage to host application
+    if ($self->{host_proto}->active() && $self->{session} && $self->{session}->{state}) {
+        my $billing = $self->{session}->{state}->{billing};
+        if ($billing && $billing->{requests} && @{$billing->{requests}}) {
+            my $last = $billing->{requests}[-1];
+            $self->{host_proto}->emit_tokens(
+                prompt     => $last->{prompt_tokens} || 0,
+                completion => $last->{completion_tokens} || 0,
+                total      => $last->{total_tokens} || 0,
+                model      => $billing->{model} || '',
+            );
+        }
+    }
+    
+    # Display premium charge notification if any
+    if ($self->{session} && $self->{session}->can('state')) {
+        my $state = $self->{session}->state();
+        if ($state->{_premium_charge_message}) {
+            print "\n";
+            $self->display_system_message($state->{_premium_charge_message});
+            delete $state->{_premium_charge_message};  # Clear after displaying
+        }
+    }
+    
+    # Disable pagination after response completes
+    # Will be re-enabled on first chunk of next text response
+    $self->{pager}->disable();
+    log_debug('Chat', "Pagination DISABLED after response complete");
+    
+    # Ensure spinner is stopped before returning to input prompt
+    # This prevents spinner from still running when waiting for user input
+    $self->hide_busy_indicator();
 }
 
 =head2 check_agent_messages($broker_client)
@@ -1940,8 +1764,7 @@ sub request_collaboration {
     }
     
     # Enable pagination for collaboration responses
-    $self->{pagination_enabled} = 1;
-    $self->{line_count} = 0;  # Reset line count for pagination
+    $self->{pager}->enable();
     log_debug('Chat', "Pagination ENABLED for collaboration");
     
     # Display the agent's message using full markdown rendering (includes @-code to ANSI conversion)
@@ -1954,28 +1777,21 @@ sub request_collaboration {
     # Print first line inline with prefix
     if (@lines) {
         print shift(@lines), "\n";
-        $self->{line_count}++;
+        $self->{pager}->increment_lines();
     }
     
     # Print remaining lines with pagination checks
     for my $line (@lines) {
         print $line, "\n";
-        $self->{line_count}++;
+        $self->{pager}->increment_lines();
         
-        # Check if we need to paginate using helper for consistent threshold
-        my $pause_threshold = $self->_get_pagination_threshold();
-        if ($self->{line_count} >= $pause_threshold && 
-            $self->{pagination_enabled} && 
-            -t STDIN) {  # Only paginate if interactive
-            
-            my $response = $self->pause(0);  # 0 = non-streaming mode
+        # Check if we need to paginate
+        if ($self->{pager}->should_trigger()) {
+            my $response = $self->{pager}->pause(0);
             if ($response eq 'Q') {
-                # User quit - stop displaying
                 last;
             }
-            
-            # Reset for next page
-            $self->{line_count} = 0;
+            $self->{pager}->reset_page();
         }
     }
     
@@ -1989,53 +1805,39 @@ sub request_collaboration {
         my $context_line = $self->colorize("Context: ", 'SYSTEM');
         
         if (@context_lines) {
-            # Print header with first line inline (same pattern as message display)
             $context_line .= shift(@context_lines);
             print $context_line, "\n";
-            $self->{line_count}++;
+            $self->{pager}->increment_lines();
             
-            # Check pagination AFTER first line using helper for consistent threshold
-            my $pause_threshold = $self->_get_pagination_threshold();
-            if ($self->{line_count} >= $pause_threshold && 
-                $self->{pagination_enabled} && 
-                -t STDIN) {
-                
-                my $response = $self->pause(0);
+            if ($self->{pager}->should_trigger()) {
+                my $response = $self->{pager}->pause(0);
                 if ($response eq 'Q') {
-                    return;  # User quit during context display
+                    return;
                 }
-                $self->{line_count} = 0;
+                $self->{pager}->reset_page();
             }
         } else {
-            # Just the header with no content
             print $context_line, "\n";
-            $self->{line_count}++;
+            $self->{pager}->increment_lines();
         }
         
         # Print remaining context lines with pagination
         for my $line (@context_lines) {
             print $line, "\n";
-            $self->{line_count}++;
+            $self->{pager}->increment_lines();
             
-            # Check if we need to paginate BEFORE hitting terminal height using helper
-            my $pause_threshold = $self->_get_pagination_threshold();
-            if ($self->{line_count} >= $pause_threshold && 
-                $self->{pagination_enabled} && 
-                -t STDIN) {
-                
-                my $response = $self->pause(0);  # Non-streaming mode
+            if ($self->{pager}->should_trigger()) {
+                my $response = $self->{pager}->pause(0);
                 if ($response eq 'Q') {
-                    # User quit - stop displaying context
                     return;
                 }
-                # Reset line count for next page
-                $self->{line_count} = 0;
+                $self->{pager}->reset_page();
             }
         }
     }
     
     # Disable pagination after displaying message (user will respond)
-    $self->{pagination_enabled} = 0;
+    $self->{pager}->disable();
     log_debug('Chat', "Pagination DISABLED after collaboration message");
     
     # Use the main readline instance (with shared history) if available,
@@ -2128,143 +1930,7 @@ Returns: Nothing
 
 sub display_paginated_list {
     my ($self, $title, $items, $formatter) = @_;
-    
-    # Refresh terminal size before pagination (handle resize)
-    $self->refresh_terminal_size();
-    
-    # Default formatter: just print the item
-    $formatter ||= sub { return $_[0] };
-    
-    # Calculate page size:
-    # Overhead = 5 (header: blank, ===, title, ===, blank) + 4 (footer: blank, ===, status, prompt)
-    # Total overhead = 9 lines
-    my $overhead = 9;
-    my $page_size = ($self->{terminal_height} || 24) - $overhead;
-    $page_size = 10 if $page_size < 10;  # Minimum page size
-    
-    my $total = scalar @$items;
-    my $total_pages = int(($total + $page_size - 1) / $page_size);
-    $total_pages = 1 if $total_pages < 1;
-    my $current_page = 0;
-    
-    if ($total == 0) {
-        $self->display_system_message("No items to display");
-        return;
-    }
-    
-    # Detect if running in interactive mode (stdin is a terminal)
-    my $is_interactive = -t STDIN;
-    
-    # If not interactive (pipe mode) or list is small, just display all items
-    if (!$is_interactive || $total <= $page_size) {
-        print "\n";
-        print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
-        print $self->colorize($title, 'DATA'), "\n";
-        print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
-        print "\n";
-        
-        for my $i (0 .. $total - 1) {
-            my $formatted = $formatter->($items->[$i], $i);
-            print "  $formatted\n";
-        }
-        
-        print "\n";
-        print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
-        print $self->colorize("Total: $total items", 'DIM'), "\n";
-        print "\n";
-        return;
-    }
-    
-    # Switch to alternate screen buffer for clean pagination
-    print "\e[?1049h";  # Enter alternate screen buffer
-    
-    # Track if hint has been shown
-    my $show_hint = !$self->{_pagination_hint_shown};
-    
-    while (1) {
-        # Calculate page bounds
-        my $start = $current_page * $page_size;
-        my $end = $start + $page_size - 1;
-        $end = $total - 1 if $end >= $total;
-        
-        # Clear screen and display page
-        print "\e[2J\e[H";  # Clear screen + home cursor
-        print "\n";
-        print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
-        print $self->colorize($title, 'DATA'), "\n";
-        print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
-        print "\n";
-        
-        # Display items for this page
-        for my $i ($start .. $end) {
-            my $formatted = $formatter->($items->[$i], $i);
-            print "  $formatted\n";
-        }
-        
-        print "\n";
-        print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
-        
-        # Navigation info
-        my $showing = sprintf("Showing %d-%d of %d", $start + 1, $end + 1, $total);
-        print $self->colorize($showing, 'DIM'), "\n";
-        
-        # Show hint on first pagination (unified BBS-style)
-        if ($show_hint) {
-            print $self->{theme_mgr}->get_pagination_hint(0) . "\n";  # full hint with arrows
-            $self->{_pagination_hint_shown} = 1;
-            $show_hint = 0;
-        }
-        
-        # BBS-style pagination prompt (unified with pause())
-        my $current = $current_page + 1;
-        my $prompt = $self->{theme_mgr}->get_pagination_prompt($current, $total_pages, ($total_pages > 1));
-        print $prompt;
-        
-        # Get user input (single key)
-        ReadMode('cbreak');
-        my $key = ReadKey(0);
-        
-        # Handle arrow keys (escape sequences)
-        if ($key eq "\e") {
-            my $seq = ReadKey(0) . ReadKey(0);
-            ReadMode('normal');
-            
-            # Clear prompt line
-            print "\e[2K\e[" . $self->{terminal_width} . "D";
-            
-            if ($seq eq '[A' && $current_page > 0) {
-                # Up arrow - previous page
-                $current_page--;
-                next;
-            }
-            elsif ($seq eq '[B' && $current_page < $total_pages - 1) {
-                # Down arrow - next page
-                $current_page++;
-                next;
-            }
-            # Other escape sequences - treat as continue
-        } else {
-            ReadMode('normal');
-        }
-        
-        # Handle Q to quit
-        if ($key && $key =~ /^[qQ]$/) {
-            last;
-        }
-        
-        # Any other key - advance to next page or exit if at end
-        if ($current_page < $total_pages - 1) {
-            $current_page++;
-        } else {
-            last;  # At last page, any key exits
-        }
-    }
-    
-    # Ensure terminal mode is restored
-    ReadMode('restore');
-    
-    # Exit alternate screen buffer (restores original screen)
-    print "\e[?1049l";
+    return $self->{pager}->display_list($title, $items, $formatter);
 }
 
 =head2 handle_command
@@ -2293,11 +1959,8 @@ sub display_help {
     $self->refresh_terminal_size();
     
     # Reset pagination state and ENABLE pagination for help output
-    $self->{line_count} = 0;
-    $self->{pages} = [];
-    $self->{current_page} = [];
-    $self->{page_index} = 0;
-    $self->{pagination_enabled} = 1;  # Enable pagination for help
+    $self->{pager}->reset();
+    $self->{pager}->enable();
     
     # Build help text as array of lines for pagination
     my @help_lines = ();
@@ -2462,8 +2125,7 @@ sub display_help {
     }
     
     # Reset pagination state after display
-    $self->{line_count} = 0;
-    $self->{pagination_enabled} = 0;
+    $self->{pager}->reset();
 }
 
 
@@ -2651,142 +2313,7 @@ Returns: Nothing
 
 sub display_paginated_content {
     my ($self, $title, $lines, $filepath) = @_;
-    
-    # Refresh terminal size
-    $self->refresh_terminal_size();
-    
-    # Calculate page size:
-    # Overhead = 5 (header: blank, ===, title, ===, blank) + 4 (footer: blank, ---, status, prompt)
-    # Total overhead = 9 lines
-    my $overhead = 9;
-    my $page_size = ($self->{terminal_height} || 24) - $overhead;
-    $page_size = 10 if $page_size < 10;  # Minimum page size
-    
-    my $total_lines = scalar @$lines;
-    my $total_pages = int(($total_lines + $page_size - 1) / $page_size);
-    $total_pages = 1 if $total_pages < 1;
-    my $current_page = 0;
-    
-    # If content fits on one page or not interactive, display all
-    my $is_interactive = -t STDIN;
-    
-    if (!$is_interactive || $total_lines <= $page_size) {
-        # Non-paginated display
-        print "\n";
-        print $self->colorize("═" x 80, 'DIM'), "\n";
-        print $self->colorize($title, 'DATA'), "\n";
-        print $self->colorize("═" x 80, 'DIM'), "\n";
-        print "\n";
-        
-        for my $line (@$lines) {
-            print $line, "\n";
-        }
-        
-        print "\n";
-        print $self->colorize("─" x 80, 'DIM'), "\n";
-        print $self->colorize("$total_lines lines", 'DIM');
-        print $self->colorize(" | $filepath", 'DIM') if $filepath;
-        print "\n\n";
-        return;
-    }
-    
-    # Switch to alternate screen buffer for clean pagination
-    print "\e[?1049h";  # Enter alternate screen buffer
-    
-    # Track if hint has been shown
-    my $show_hint = !$self->{_pagination_hint_shown};
-    
-    while (1) {
-        # Calculate page bounds
-        my $start = $current_page * $page_size;
-        my $end = $start + $page_size - 1;
-        $end = $total_lines - 1 if $end >= $total_lines;
-        
-        # Clear screen and display page
-        print "\e[2J\e[H";  # Clear screen + home cursor
-        
-        # Header
-        print "\n";
-        print $self->colorize("═" x 80, 'DIM'), "\n";
-        print $self->colorize($title, 'DATA'), "\n";
-        print $self->colorize("═" x 80, 'DIM'), "\n";
-        print "\n";
-        
-        # Display lines for this page
-        for my $i ($start .. $end) {
-            print $lines->[$i], "\n";
-        }
-        
-        # Footer
-        print "\n";
-        print $self->colorize("─" x 80, 'DIM'), "\n";
-        
-        # Status line
-        my $status = sprintf("Lines %d-%d of %d", $start + 1, $end + 1, $total_lines);
-        $status .= " | $filepath" if $filepath;
-        print $self->colorize($status, 'DIM'), "\n";
-        
-        # Show hint on first pagination (unified BBS-style)
-        if ($show_hint) {
-            print $self->{theme_mgr}->get_pagination_hint(0) . "\n";  # full hint with arrows
-            $self->{_pagination_hint_shown} = 1;
-            $show_hint = 0;
-        }
-        
-        # BBS-style pagination prompt (unified with pause())
-        my $current = $current_page + 1;
-        my $prompt = $self->{theme_mgr}->get_pagination_prompt($current, $total_pages, ($total_pages > 1));
-        print $prompt;
-        
-        # Get user input (single key)
-        ReadMode('cbreak');
-        my $key = ReadKey(0);
-        
-        # Handle arrow keys (escape sequences)
-        if ($key eq "\e") {
-            my $seq = ReadKey(0) . ReadKey(0);
-            ReadMode('normal');
-            
-            # Clear prompt line
-            print "\e[2K\e[" . $self->{terminal_width} . "D";
-            
-            if ($seq eq '[A' && $current_page > 0) {
-                # Up arrow - previous page
-                $current_page--;
-                next;
-            }
-            elsif ($seq eq '[B' && $current_page < $total_pages - 1) {
-                # Down arrow - next page
-                $current_page++;
-                next;
-            }
-            # Escape key (no sequence) - quit
-            if ($seq !~ /^\[/) {
-                last;
-            }
-            # Other sequences - treat as continue
-        } else {
-            ReadMode('normal');
-        }
-        
-        # Handle Q to quit
-        if ($key && $key =~ /^[qQ]$/) {
-            last;
-        }
-        
-        # Any other key - advance to next page or exit if at end
-        if ($current_page < $total_pages - 1) {
-            $current_page++;
-        } else {
-            last;  # At last page, any key exits
-        }
-    }
-    
-    # Ensure terminal mode is restored
-    ReadMode('restore');
-    
-    # Exit alternate screen buffer and return to normal view
-    print "\e[?1049l";  # Exit alternate screen buffer (restores original screen)
+    return $self->{pager}->display_content($title, $lines, $filepath);
 }
 
 
@@ -2951,107 +2478,7 @@ Display pagination prompt and wait for keypress (BBS-style prompt)
 
 sub pause {
     my ($self, $streaming) = @_;
-    $streaming ||= 0;  # Default to non-streaming mode
-    
-    # Refresh terminal size before pagination (handle resize)
-    $self->refresh_terminal_size();
-    
-    # Track if this is the first pagination prompt in the session
-    # Show a hint the first time to help users learn the controls
-    my $show_hint = !$self->{_pagination_hint_shown};
-    my $hint_was_shown = 0;  # Track if we showed hint this time (for cleanup)
-    
-    my $total_pages = scalar(@{$self->{pages}}) || 1;
-    my $current = ($self->{page_index} || 0) + 1;
-    
-    # In streaming mode, simplified prompt (can't navigate)
-    if ($streaming) {
-        # Show hint on first pagination
-        if ($show_hint) {
-            print $self->{theme_mgr}->get_pagination_hint(1) . "\n";  # streaming=true
-            $self->{_pagination_hint_shown} = 1;
-            $hint_was_shown = 1;
-        }
-        
-        # Compact streaming prompt
-        my $prompt = $self->{theme_mgr}->get_pagination_prompt($current, 1, 0);
-        print $prompt;
-        
-        # ReadKey handles cbreak mode internally if not already set
-        # Don't explicitly set/restore mode here - that breaks cbreak mode
-        # maintained by the agent execution loop for interrupt detection
-        my $key = ReadKey(0);
-        
-        # Always clear pagination prompt lines (even during tool execution)
-        # The _in_tool_execution flag should not prevent clearing user prompts
-        if ($hint_was_shown) {
-            print "\e[2K";  # Clear prompt line
-            print "\e[" . $self->{terminal_width} . "D";  # Move to start of prompt line
-            print "\e[1A";  # Move up to hint line
-            print "\e[2K";  # Clear hint line
-        } else {
-            print "\e[2K\e[" . $self->{terminal_width} . "D";  # Clear prompt line only and move to start
-        }
-        
-        $key = uc($key) if $key;
-        return $key || 'C';
-    }
-    
-    # Non-streaming mode: full arrow navigation
-    while (1) {
-        # Show hint on first pagination
-        if ($show_hint) {
-            print $self->{theme_mgr}->get_pagination_hint(0) . "\n";  # streaming=false
-            $self->{_pagination_hint_shown} = 1;
-            $hint_was_shown = 1;
-            $show_hint = 0;  # Don't show again in this loop
-        }
-        
-        # Build pagination prompt using theme
-        my $prompt = $self->{theme_mgr}->get_pagination_prompt($current, $total_pages, ($total_pages > 1));
-        print $prompt;
-        
-        # Wait for keypress - ReadKey handles cbreak mode internally
-        my $key = ReadKey(0);
-        
-        # Handle arrow keys (escape sequences)
-        if ($key eq "\e") {
-            # Read the rest of the escape sequence
-            my $seq = ReadKey(0) . ReadKey(0);
-            
-            # Clear prompt line
-            print "\e[2K\e[" . $self->{terminal_width} . "D";
-            
-            if ($seq eq '[A' && $self->{page_index} > 0) {
-                # Up arrow - go to previous page
-                $self->{page_index}--;
-                $current = $self->{page_index} + 1;
-                $self->redraw_page();
-                next;  # Stay in pause loop
-            }
-            elsif ($seq eq '[B' && $self->{page_index} < $total_pages - 1) {
-                # Down arrow - go to next page
-                $self->{page_index}++;
-                $current = $self->{page_index} + 1;
-                $self->redraw_page();
-                next;  # Stay in pause loop
-            }
-            # Unrecognized escape sequence - continue output
-        }
-        
-        # Clear pagination prompt lines
-        if ($hint_was_shown) {
-            print "\e[2K";  # Clear prompt line
-            print "\e[" . $self->{terminal_width} . "D";  # Move to start of prompt line
-            print "\e[1A";  # Move up to hint line
-            print "\e[2K";  # Clear hint line
-        } else {
-            print "\e[2K\e[" . $self->{terminal_width} . "D";  # Clear prompt line only and move to start
-        }
-        
-        $key = uc($key) if $key;
-        return $key || 'C';
-    }
+    return $self->{pager}->pause($streaming);
 }
 
 =head2 render_markdown
@@ -3113,9 +2540,7 @@ to ensure streaming and writeline use the same pagination point.
 
 sub _get_pagination_threshold {
     my ($self) = @_;
-    
-    # Reserve 2 lines for pagination prompt and buffer
-    return ($self->{terminal_height} // 24) - 2;
+    return $self->{pager}->threshold();
 }
 
 =head2 _count_visual_lines($text)
@@ -3163,40 +2588,19 @@ Returns: 1 if pause needed, 0 otherwise
 
 sub _should_pagination_trigger {
     my ($self) = @_;
-    
-    return 0 unless -t STDIN;  # Not interactive
-    return 0 unless $self->{pagination_enabled};  # Pagination disabled
-    return 0 if $self->{_tools_invoked_this_request};  # During tool execution
-    
-    my $threshold = $self->_get_pagination_threshold();
-    return 1 if $self->{line_count} >= $threshold;
-    
-    return 0;
+    return $self->{pager}->should_trigger();
 }
 
 =head2 _should_pagination_trigger_for_agent_streaming
 
-Check if pagination should trigger for agent streaming output (on_chunk callback).
-
-This is DIFFERENT from _should_pagination_trigger which also checks _tools_invoked_this_request.
-Agent streaming should always be paginated when enabled, regardless of tool execution state.
-Tool output gets separate pagination control via the tool flag.
-
-Returns: 1 if pause needed, 0 otherwise
+Check if pagination should trigger for agent streaming output.
+Delegates to PaginationManager with streaming flag.
 
 =cut
 
 sub _should_pagination_trigger_for_agent_streaming {
     my ($self) = @_;
-    
-    return 0 unless -t STDIN;  # Not interactive
-    return 0 unless $self->{pagination_enabled};  # Pagination disabled
-    # NOTE: Do NOT check _tools_invoked_this_request - agent text should paginate even during tool execution
-    
-    my $threshold = $self->_get_pagination_threshold();
-    return 1 if $self->{line_count} >= $threshold;
-    
-    return 0;
+    return $self->{pager}->should_trigger(streaming => 1);
 }
 
 =head2 writeline
@@ -3222,90 +2626,65 @@ sub writeline {
     my ($self, $text, %opts) = @_;
     
     # Handle legacy positional args for backwards compatibility
-    # Old signature: writeline($text, $newline, $use_markdown)
     if (!%opts && defined $_[2]) {
-        # Legacy call with positional args
         $opts{newline} = $_[2];
         $opts{markdown} = $_[3] if defined $_[3];
     }
     
-    # Defaults: newline on, markdown on
     my $newline = exists $opts{newline} ? $opts{newline} : 1;
     my $use_markdown = exists $opts{markdown} ? $opts{markdown} : 1;
     my $raw = $opts{raw} || 0;
     
-    # Check if pagination should be active
-    # Pagination is controlled by pagination_enabled flag OR force_paginate option
-    # This prevents pagination during tool execution while allowing it for user-facing output
-    my $should_paginate = $opts{force_paginate} || $self->{pagination_enabled};
+    my $pager = $self->{pager};
+    my $should_paginate = $opts{force_paginate} || $pager->enabled();
     
-    # Handle undef text gracefully
     $text //= '';
     
-    # Raw mode: direct print, no processing
     if ($raw) {
         print $text;
         print "\n" if $newline;
         return 1;
     }
     
-    # Render markdown if enabled (default: yes)
     if ($use_markdown && $self->{enable_markdown} && length($text) > 0) {
         $text = $self->render_markdown($text);
     }
     
-    # Skip pagination if not interactive (pipe mode, redirected, etc.)
     my $is_interactive = -t STDIN;
-    
-    # Split rendered text into actual lines (markdown can produce multiple lines)
-    # This ensures pagination counts VISUAL lines, not input lines
-    my @lines = split /\n/, $text, -1;  # -1 preserves trailing empty strings
-    
-    # If text doesn't end with newline and caller wants one, the last "line" gets a newline
-    # If text had multiple newlines, we print all those lines
+    my @lines = split /\n/, $text, -1;
     my $last_idx = $#lines;
     
     for my $i (0 .. $last_idx) {
         my $line = $lines[$i];
         my $is_last = ($i == $last_idx);
-        my $print_newline = $is_last ? $newline : 1;  # All but last get newline, last gets caller's choice
+        my $print_newline = $is_last ? $newline : 1;
         
-        # Check pagination BEFORE printing to prevent scrolling past content
-        # Only paginate when: interactive, pagination enabled, and outputting a line
         if ($print_newline && $is_interactive && $should_paginate) {
-            my $pause_threshold = $self->_get_pagination_threshold();
+            my $pause_threshold = $pager->threshold();
             
-            if ($self->{line_count} >= $pause_threshold) {
-                # Save current page to buffer before pausing
-                push @{$self->{pages}}, [@{$self->{current_page}}];
-                $self->{page_index} = scalar(@{$self->{pages}}) - 1;
+            if ($pager->line_count() >= $pause_threshold) {
+                $pager->save_page();
                 
-                my $response = $self->pause();
+                my $response = $pager->pause();
                 
                 if ($response eq 'Q') {
-                    $self->{line_count} = 0;
-                    $self->{current_page} = [];
-                    return 0;  # Signal to stop output
+                    $pager->reset_page();
+                    return 0;
                 }
                 
-                # Reset for next page
-                $self->{line_count} = 0;
-                $self->{current_page} = [];
+                $pager->reset_page();
             }
         }
         
-        # Now print the line
         print $line;
         print "\n" if $print_newline;
         
-        # Track the line for page navigation (only when pagination active)
         if ($print_newline && $is_interactive && $should_paginate) {
-            push @{$self->{current_page}}, $line;
-            $self->{line_count}++;
+            $pager->track_line($line);
         }
     }
     
-    return 1;  # Continue
+    return 1;
 }
 
 =head2 writeln
@@ -3340,13 +2719,10 @@ Redraw a buffered page for arrow key navigation
 sub redraw_page {
     my ($self) = @_;
     
-    my $page = $self->{pages}->[$self->{page_index}];
+    my $page = $self->{pager}{pages}[$self->{pager}{page_index}];
     return unless $page && ref($page) eq 'ARRAY';
     
-    # Clear screen and home cursor
     print "\e[2J\e[H";
-    
-    # Redraw the page
     for my $line (@$page) {
         print $line, "\n";
     }

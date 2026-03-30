@@ -13,7 +13,6 @@ use parent 'CLIO::UI::Commands::Base';
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 
-use Carp qw(croak);
 use CLIO::Core::Logger qw(log_debug log_error log_info log_warning);
 
 =head1 NAME
@@ -208,7 +207,7 @@ sub cmd_list {
     }
     
     # Enable pagination for long output
-    $self->{chat}{pagination_enabled} = 1;
+    $self->{chat}{pager}->enable();
     
     $self->display_section_header("SUB-AGENTS");
     
@@ -254,7 +253,7 @@ sub cmd_list {
         $self->colorize("=persistent mode, others are oneshot (exit after task)", 'DIM'), markdown => 0);
     
     # Disable pagination
-    $self->{chat}{pagination_enabled} = 0;
+    $self->{chat}{pager}->disable();
     
     return "";  # Already displayed
 }
@@ -292,7 +291,7 @@ sub cmd_status {
     $status_style = 'RED' if $status eq 'killed';
     
     # Enable pagination
-    $self->{chat}{pagination_enabled} = 1;
+    $self->{chat}{pager}->enable();
     
     $self->display_section_header("AGENT STATUS: $agent_id");
     $self->display_key_value("Status", $self->colorize($status, $status_style));
@@ -319,7 +318,7 @@ sub cmd_status {
     }
     
     # Disable pagination
-    $self->{chat}{pagination_enabled} = 0;
+    $self->{chat}{pager}->disable();
     
     return "";
 }
@@ -525,7 +524,7 @@ sub cmd_inbox {
     }
     
     # Enable pagination for long output
-    $self->{chat}{pagination_enabled} = 1;
+    $self->{chat}{pager}->enable();
     
     $self->display_section_header("UNREAD MESSAGES (" . scalar(@$messages) . ")");
     
@@ -562,7 +561,7 @@ sub cmd_inbox {
     $self->writeline("Use " . $self->colorize("/subagent ack", 'BOLD') . " to mark messages as read", markdown => 0);
     
     # Disable pagination
-    $self->{chat}{pagination_enabled} = 0;
+    $self->{chat}{pager}->disable();
     
     return "";  # Already displayed
 }
@@ -609,7 +608,7 @@ sub cmd_history {
     }
     
     # Enable pagination for long output
-    $self->{chat}{pagination_enabled} = 1;
+    $self->{chat}{pager}->enable();
     
     $self->display_section_header("MESSAGE HISTORY (" . scalar(@$messages) . ")");
     
@@ -643,7 +642,7 @@ sub cmd_history {
     }
     
     # Disable pagination
-    $self->{chat}{pagination_enabled} = 0;
+    $self->{chat}{pager}->disable();
     
     return "";  # Already displayed
 }
@@ -739,7 +738,7 @@ sub cmd_help {
     my ($self) = @_;
     
     # Enable pagination for help text
-    $self->{chat}{pagination_enabled} = 1;
+    $self->{chat}{pager}->enable();
     
     $self->display_command_header("SUB-AGENT");
     $self->writeline("", markdown => 0);
@@ -778,7 +777,7 @@ sub cmd_help {
     $self->writeline($self->colorize("Tip: ", 'DIM') . "Use --persistent for interactive work where you need to reply.", markdown => 0);
     
     # Disable pagination
-    $self->{chat}{pagination_enabled} = 0;
+    $self->{chat}{pager}->disable();
     
     return "";  # Already displayed
 }

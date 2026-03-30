@@ -6,6 +6,7 @@ package CLIO::Core::CopilotUserAPI;
 use strict;
 use warnings;
 use utf8;
+use Carp qw(croak);
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 
@@ -200,7 +201,7 @@ sub _save_cache {
     
     eval {
         open my $fh, '>:encoding(UTF-8)', $self->{cache_file}
-            or die "Cannot write cache: $!";
+            or croak "Cannot write cache: $!";
         print $fh encode_json($cache);
         close $fh;
         chmod 0600, $self->{cache_file};
@@ -227,7 +228,7 @@ sub _load_cache {
     my $cache;
     eval {
         open my $fh, '<:encoding(UTF-8)', $self->{cache_file}
-            or die "Cannot read cache: $!";
+            or croak "Cannot read cache: $!";
         my $json = do { local $/; <$fh> };
         close $fh;
         

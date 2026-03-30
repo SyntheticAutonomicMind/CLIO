@@ -2037,12 +2037,12 @@ sub delete_file {
         if (-d $path) {
             if ($recursive) {
                 use File::Path qw(remove_tree);
-                remove_tree($path) or die "Cannot remove directory tree $path: $!";
+                remove_tree($path) or croak "Cannot remove directory tree $path: $!";
             } else {
-                rmdir $path or die "Cannot remove directory $path: $! (use recursive=1 for non-empty dirs)";
+                rmdir $path or croak "Cannot remove directory $path: $! (use recursive=1 for non-empty dirs)";
             }
         } else {
-            unlink $path or die "Cannot delete file $path: $!";
+            unlink $path or croak "Cannot delete file $path: $!";
         }
         
         log_debug('FileOp', "Deleted: $path");
@@ -2117,7 +2117,7 @@ sub rename_file {
             make_path($dir) or croak "Cannot create directory $dir: $!";
         }
         
-        rename $old_path, $new_path or die "Cannot rename $old_path to $new_path: $!";
+        rename $old_path, $new_path or croak "Cannot rename $old_path to $new_path: $!";
         
         log_debug('FileOp', "Renamed: $old_path -> $new_path");
         
@@ -2170,7 +2170,7 @@ sub create_directory {
     
     my $result;
     eval {
-        make_path($path) or die "Cannot create directory $path: $!";
+        make_path($path) or croak "Cannot create directory $path: $!";
         
         log_debug('FileOp', "Created directory: $path");
         

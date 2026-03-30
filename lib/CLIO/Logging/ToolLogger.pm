@@ -6,6 +6,7 @@ package CLIO::Logging::ToolLogger;
 use strict;
 use warnings;
 use utf8;
+use Carp qw(croak);
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use feature 'say';
@@ -139,8 +140,8 @@ sub log {
     
     # Append to log file (with file locking)
     eval {
-        open my $fh, '>>', $log_file or die "Cannot open log file: $!";
-        flock($fh, 2) or die "Cannot lock log file: $!";  # LOCK_EX = 2
+        open my $fh, '>>', $log_file or croak "Cannot open log file: $!";
+        flock($fh, 2) or croak "Cannot lock log file: $!";  # LOCK_EX = 2
         print $fh $json_line, "\n";
         flock($fh, 8);  # LOCK_UN = 8
         close $fh;

@@ -251,7 +251,7 @@ sub persistResult {
     
     # Write content to file (using wrapped version)
     eval {
-        open my $fh, '>:utf8', $result_file or die "Failed to open $result_file: $!";
+        open my $fh, '>:utf8', $result_file or croak "Failed to open $result_file: $!";
         print $fh $wrapped_content;
         close $fh;
     };
@@ -409,7 +409,7 @@ sub retrieveChunk {
     # Read file content
     my $full_content;
     eval {
-        open my $fh, '<:utf8', $result_file or die "Failed to open $result_file: $!";
+        open my $fh, '<:utf8', $result_file or croak "Failed to open $result_file: $!";
         local $/;
         $full_content = <$fh>;
         close $fh;
@@ -592,7 +592,7 @@ sub deleteResult {
     return unless -f $result_file;  # Already deleted - not an error
     
     eval {
-        unlink $result_file or die "Failed to delete $result_file: $!";
+        unlink $result_file or croak "Failed to delete $result_file: $!";
         log_debug('ToolResultStore', "Deleted: $toolCallId");
     };
     if ($@) {

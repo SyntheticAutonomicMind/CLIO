@@ -6,6 +6,7 @@ package CLIO::Logging::ProcessStats;
 use strict;
 use warnings;
 use utf8;
+use Carp qw(croak);
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use CLIO::Util::JSON qw(encode_json);
@@ -219,7 +220,7 @@ sub _read_proc_status {
     my ($rss_kb, $vsz_kb);
 
     eval {
-        open my $fh, '<', '/proc/self/status' or die "Cannot open: $!";
+        open my $fh, '<', '/proc/self/status' or croak "Cannot open: $!";
         while (my $line = <$fh>) {
             if ($line =~ /^VmRSS:\s+(\d+)\s+kB/) {
                 $rss_kb = $1;
@@ -267,7 +268,7 @@ sub _write_entry {
     return if $@;
 
     eval {
-        open my $fh, '>>', $log_file or die "Cannot open: $!";
+        open my $fh, '>>', $log_file or croak "Cannot open: $!";
         flock($fh, 2);  # LOCK_EX
         print $fh $json_line, "\n";
         flock($fh, 8);  # LOCK_UN

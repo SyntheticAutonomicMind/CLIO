@@ -236,7 +236,7 @@ sub handle_read_command {
     # Read file content
     my $content;
     eval {
-        open my $fh, '<:encoding(UTF-8)', $filepath or die "Cannot open file: $!";
+        open my $fh, '<:encoding(UTF-8)', $filepath or croak "Cannot open file: $!";
         local $/;  # Slurp mode
         $content = <$fh>;
         close $fh;

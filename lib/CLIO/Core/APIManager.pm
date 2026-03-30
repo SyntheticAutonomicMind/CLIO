@@ -1774,78 +1774,79 @@ sub _build_request {
     
     return ($req, $final_endpoint);
 }
-sub send_request {
-    my ($self, $input, %opts) = @_;
-    
+
+# Apply rate limiting: broker coordination, local delay, and cooldown.
+#
+# Shared preamble for send_request and send_request_streaming.
+# Handles broker slot acquisition, inter-request delay, and rate limit cooldown.
+# Sets response_handler broker_request_id for later release.
+#
+sub _apply_rate_limiting {
+    my ($self) = @_;
+
     # Broker-based rate limiting coordination (for multi-agent scenarios)
     my $broker_request_id;
     if ($self->{broker_client}) {
-        # Wait for an API slot from the broker
         local $SIG{PIPE} = 'IGNORE';
         my $slot_result = $self->{broker_client}->wait_for_api_slot(120);
         $broker_request_id = $slot_result->{request_id};
-        
+
         if (!$slot_result->{success}) {
             log_warning('APIManager', "Broker rate limit timeout after $slot_result->{waited}s, proceeding anyway");
         } elsif ($slot_result->{waited} > 0) {
             log_debug('APIManager', "Broker granted API slot after waiting " . sprintf("%.2f", $slot_result->{waited}) . "s");
         }
     }
-    
-    # Fallback: Local rate limit prevention when broker not available
-    # Prevent rate limits: Add delay between requests
-    # Track wall clock time, not just request timestamps
-    # This ensures delay even when tool executions happen between requests
+
+    # Local rate limit prevention when broker not available
     if (!$self->{broker_client} && defined $self->{last_request_time}) {
-        my $now = Time::HiRes::time();  # High resolution time
+        my $now = Time::HiRes::time();
         my $elapsed = $now - $self->{last_request_time};
-        # Use dynamic delay if set by rate limit headers, otherwise default to 1.0s
-        # Base delay of 1.0s is more conservative to prevent rate limits during heavy use
         my $min_delay = $self->{response_handler}{_dynamic_min_delay} // 1.0;
-        
+
         if ($elapsed < $min_delay) {
             my $wait = $min_delay - $elapsed;
             log_debug('APIManager', "Rate limit prevention: waiting " . sprintf("%.3f", $wait) . "s");
-            Time::HiRes::sleep($wait);  # High resolution sleep
+            Time::HiRes::sleep($wait);
         }
     }
-    
-    # Record timestamp BEFORE request (prevents race conditions)
+
+    # Record timestamp BEFORE request
     $self->{last_request_time} = Time::HiRes::time();
-    
+
     # Store broker_request_id for later release
     $self->{response_handler}->set_broker_request_id($broker_request_id);
-    
-    # Local rate limit cooldown check (only when NOT using broker)
-    # When broker is active, it handles all rate limit delays centrally
+
+    # Local rate limit cooldown (only when NOT using broker)
     if (!$self->{broker_client} && time() < ($self->{response_handler}{rate_limit_until} // 0)) {
         my $wait = int($self->{response_handler}{rate_limit_until} - time()) + 1;
         log_debug('APIManager', "Rate limited. Waiting ${wait}s before retry...");
-        
-        # Countdown loop - each 1s sleep survives signal interruption
-        # (alarm/SIGALRM can interrupt sleep(), so we loop in 1s chunks)
         for (my $i = $wait; $i > 0; $i--) {
-            log_debug('APIManager', "Retrying in ${i}s...") if !($i % 5);  # Update every 5s
+            log_debug('APIManager', "Retrying in ${i}s...") if !($i % 5);
             sleep(1);
         }
         log_debug('APIManager', "Rate limit cleared. Sending request...");
     }
+}
+
+sub send_request {
+    my ($self, $input, %opts) = @_;
     
+    $self->_apply_rate_limiting();
+
     # Get endpoint-specific configuration
     my $ep = $self->_prepare_endpoint_config(%opts);
     my $endpoint_config = $ep->{config};
     my $endpoint = $ep->{endpoint};
     my $model = $ep->{model};
 
-    # Proactive per-model throttle: check if we're approaching the inferred rate limit.
-    # _model_throttle_check() returns a suggested delay in seconds (0 if no throttle needed).
+    # Proactive per-model throttle
     if (my $throttle_delay = $self->_model_throttle_check($model)) {
-        log_info('APIManager', sprintf("Proactive rate throttle for %s: %.1fs (approaching inferred limit)", $model, $throttle_delay));
+        log_info('APIManager', sprintf("Proactive rate throttle for %s: %.1fs", $model, $throttle_delay));
         for (my $i = int($throttle_delay); $i > 0; $i--) { sleep(1); }
     }
     $self->_model_throttle_record($model);
 
-    
     # Prepare and trim messages
     my $messages = $self->_prepare_messages($input, %opts);
     
@@ -2386,60 +2387,8 @@ sub send_request_streaming {
     
     log_debug('APIManager', "Starting streaming request");
     
-    # Broker-based rate limiting coordination (for multi-agent scenarios)
-    my $broker_request_id;
-    if ($self->{broker_client}) {
-        # Wait for an API slot from the broker
-        local $SIG{PIPE} = 'IGNORE';
-        my $slot_result = $self->{broker_client}->wait_for_api_slot(120);
-        $broker_request_id = $slot_result->{request_id};
-        
-        if (!$slot_result->{success}) {
-            log_warning('APIManager', "Broker rate limit timeout after $slot_result->{waited}s, proceeding anyway");
-        } elsif ($slot_result->{waited} > 0) {
-            log_debug('APIManager', "Broker granted API slot after waiting " . sprintf("%.2f", $slot_result->{waited}) . "s");
-        }
-    }
-    
-    # Fallback: Local rate limit prevention when broker not available
-    # Prevent rate limits: Add delay between requests
-    # Track wall clock time, not just request timestamps
-    # This ensures delay even when tool executions happen between requests
-    if (!$self->{broker_client} && defined $self->{last_request_time}) {
-        my $now = Time::HiRes::time();  # High resolution time
-        my $elapsed = $now - $self->{last_request_time};
-        # Use dynamic delay if set by rate limit headers, otherwise default to 1.0s
-        # Base delay of 1.0s is more conservative to prevent rate limits during heavy use
-        my $min_delay = $self->{response_handler}{_dynamic_min_delay} // 1.0;
-        
-        if ($elapsed < $min_delay) {
-            my $wait = $min_delay - $elapsed;
-            log_debug('APIManager', "Waiting " . sprintf("%.3f", $wait) . "s for rate limit");
-            Time::HiRes::sleep($wait);  # High resolution sleep
-        }
-    }
-    
-    # Record timestamp BEFORE request (prevents race conditions)
-    $self->{last_request_time} = Time::HiRes::time();
-    
-    # Store broker_request_id for later release
-    $self->{response_handler}->set_broker_request_id($broker_request_id);
-    
-    # Local rate limit cooldown check (only when NOT using broker)
-    # When broker is active, it handles all rate limit delays centrally
-    if (!$self->{broker_client} && time() < ($self->{response_handler}{rate_limit_until} // 0)) {
-        my $wait = int($self->{response_handler}{rate_limit_until} - time()) + 1;
-        log_debug('APIManager', "Rate limited. Waiting ${wait}s before retry...");
-        
-        # Countdown loop - each 1s sleep survives signal interruption
-        # (alarm/SIGALRM can interrupt sleep(), so we loop in 1s chunks)
-        for (my $i = $wait; $i > 0; $i--) {
-            log_debug('APIManager', "Retrying in ${i}s...") if !($i % 5);  # Update every 5s
-            sleep(1);
-        }
-        log_debug('APIManager', "Rate limit cleared. Sending request...");
-    }
-    
+    $self->_apply_rate_limiting();
+
     # Extract on_chunk and on_tool_call callbacks
     my $on_chunk = $opts{on_chunk};
     my $on_tool_call = $opts{on_tool_call};
@@ -2454,14 +2403,13 @@ sub send_request_streaming {
     my $endpoint = $ep->{endpoint};
     my $model = $ep->{model};
 
-    # Proactive per-model throttle: check if we're approaching the inferred rate limit.
+    # Proactive per-model throttle
     if (my $throttle_delay = $self->_model_throttle_check($model)) {
-        log_info('APIManager', sprintf("Proactive rate throttle for %s: %.1fs (approaching inferred limit)", $model, $throttle_delay));
+        log_info('APIManager', sprintf("Proactive rate throttle for %s: %.1fs", $model, $throttle_delay));
         for (my $i = int($throttle_delay); $i > 0; $i--) { sleep(1); }
     }
     $self->_model_throttle_record($model);
 
-    
     # Prepare and trim messages
     my $messages = $self->_prepare_messages($input, %opts);
     
@@ -3187,88 +3135,157 @@ sub send_request_streaming {
     };
     
     # Signal end of reasoning if it was still active when stream ended
-    # (e.g., reasoning followed directly by tool calls with no regular content)
     if ($reasoning_was_active && $on_thinking) {
         $on_thinking->(undef, 'end');
         $reasoning_was_active = 0;
     }
     
-    # Handle request errors
-    if ($@) {
-        my $error = "Streaming request failed: $@";
+    # Post-streaming cleanup: strip residual <think> tags from accumulated content
+    if ($is_minimax && length($accumulated_content) && $accumulated_content =~ /<\/?think>/) {
+        while ($accumulated_content =~ s{<think>(.*?)</think>\n*}{}sg) {
+            my $residual_think = $1;
+            if (length($residual_think)) {
+                $accumulated_reasoning_details .= $residual_think;
+                if ($on_thinking) {
+                    $on_thinking->($residual_think);
+                }
+            }
+        }
+        $accumulated_content =~ s/<\/?think>//g;
+        $accumulated_content =~ s/^\n+//;
+        log_debug('APIManager', "Cleaned residual <think> tags from streaming content");
+    }
+    
+    # Flush any remaining think_buffer content
+    if ($is_minimax && length($think_buffer)) {
+        if (!$in_think_tag) {
+            $accumulated_content .= $think_buffer;
+        }
+        elsif ($on_thinking) {
+            $accumulated_reasoning_details .= $think_buffer;
+            $on_thinking->($think_buffer);
+            $on_thinking->(undef, 'end');
+        }
+        $think_buffer = '';
+    }
+    
+    return $self->_finalize_streaming_response(
+        resp                  => $resp,
+        error                 => $@,
+        buffer                => $buffer,
+        raw_response_body     => $raw_response_body,
+        accumulated_content   => $accumulated_content,
+        accumulated_reasoning => $accumulated_reasoning_details,
+        streaming_usage       => $streaming_usage,
+        streaming_headers     => $streaming_headers,
+        token_count           => $token_count,
+        start_time            => $start_time,
+        first_token_time      => $first_token_time,
+        tool_calls_accumulator => $tool_calls_accumulator,
+        endpoint_config       => $endpoint_config,
+        provider_label        => $provider_label,
+        messages              => $messages,
+        input                 => $input,
+        json                  => $json,
+    );
+}
+
+# Process the result of a streaming HTTP request: handle errors, build final response.
+#
+# Called after the SSE streaming callback completes. Handles: network errors,
+# HTTP errors, 200-body errors (Google/OpenRouter), metrics calculation,
+# session persistence, rate limit headers, usage estimation, tool_calls
+# conversion, and response construction.
+#
+# Args (hash):
+#   resp                  => HTTP response object
+#   error                 => $@ from eval (undef if no error)
+#   buffer                => remaining SSE buffer
+#   raw_response_body     => accumulated raw response
+#   accumulated_content   => accumulated text content
+#   accumulated_reasoning => accumulated reasoning details
+#   streaming_usage       => real usage from stream (or undef)
+#   streaming_headers     => captured HTTP headers (or undef)
+#   token_count           => number of content tokens
+#   start_time            => request start time (epoch)
+#   first_token_time      => time of first token (epoch or undef)
+#   tool_calls_accumulator => hashref of accumulated tool call deltas
+#   endpoint_config       => endpoint configuration hash
+#   provider_label        => string for logging
+#   messages              => messages arrayref (for usage estimation)
+#   input                 => original input string (for usage estimation)
+#   json                  => encoded request JSON (for error handling)
+#
+# Returns: response hashref (success/error + content/tool_calls/metrics/usage)
+#
+sub _finalize_streaming_response {
+    my ($self, %s) = @_;
+
+    # Handle request exception ($@ from eval)
+    if ($s{error}) {
+        my $error = "Streaming request failed: $s{error}";
         log_debug('APIManager', "$error");
-        
-        # Release broker slot on error
-        $self->{response_handler}->release_broker_slot(undef, 599);  # 599 = network error
-        
-        # Network/timeout errors (599) are transient and should be retried
-        return { 
-            success => 0, 
-            error => $error, 
-            retryable => 1, 
+        $self->{response_handler}->release_broker_slot(undef, 599);
+        return {
+            success => 0,
+            error => $error,
+            retryable => 1,
             retry_after => 2,
             error_type => 'server_error',
         };
     }
-    
+
+    my $resp = $s{resp};
+
+    # Handle HTTP error responses
     if (!$resp->is_success) {
-        # Release broker slot with response info before returning
         $self->{response_handler}->release_broker_slot($resp, $resp->code);
-        
-        # Use raw_response_body as fallback when decoded_content is empty
+
         my $body = $resp->decoded_content;
         if (!$body || $body !~ /\S/) {
-            $body = $raw_response_body // $buffer // '';
+            $body = $s{raw_response_body} // $s{buffer} // '';
         }
-        
-        # Log streaming error response
-        log_debug('APIManager', "[$provider_label STREAMING ERROR] Status: " . $resp->status_line);
-        log_debug('APIManager', "[$provider_label STREAMING ERROR] Body: " . substr($body, 0, 2000));
+
+        log_debug('APIManager', "[$s{provider_label} STREAMING ERROR] Status: " . $resp->status_line);
+        log_debug('APIManager', "[$s{provider_label} STREAMING ERROR] Body: " . substr($body, 0, 2000));
         if (open my $fh, '>>', '/tmp/clio_api_debug.log') {
             print $fh "\n" . "-"x80 . "\n";
-            print $fh "[" . scalar(localtime) . "] $provider_label STREAMING ERROR\n";
+            print $fh "[" . scalar(localtime) . "] $s{provider_label} STREAMING ERROR\n";
             print $fh "Status: " . $resp->status_line . "\n";
             print $fh "Body:\n$body\n";
             close $fh;
         }
 
-        # Inject raw body into response object so handle_error_response can parse it
         if ($body && $body =~ /\S/ && (!$resp->decoded_content || $resp->decoded_content !~ /\S/)) {
             $resp->{content} = $body;
         }
 
-        return $self->{response_handler}->handle_error_response($resp, $json, 1,
+        return $self->{response_handler}->handle_error_response($resp, $s{json}, 1,
             attempt_token_recovery => sub { $self->_attempt_token_recovery() });
     }
-    
+
     # Check for API errors returned as non-SSE body with HTTP 200
-    # Some providers (Google, OpenRouter) return JSON errors with 200 status
-    # Use raw_response_body since SSE parser may have consumed $buffer
-    my $check_body = $raw_response_body || $buffer || '';
-    if (!$accumulated_content && !keys(%$tool_calls_accumulator) && $check_body =~ /\S/) {
+    my $check_body = $s{raw_response_body} || $s{buffer} || '';
+    if (!$s{accumulated_content} && !keys(%{$s{tool_calls_accumulator}}) && $check_body =~ /\S/) {
         my $remaining = $check_body;
         $remaining =~ s/^\s+|\s+$//g;
         if ($remaining) {
-            # Try to parse as JSON error
             my $error_msg;
             my $error_code;
             eval {
                 my $body = decode_json($remaining);
-                # Handle array-wrapped errors: [{"error": {...}}]
                 if (ref($body) eq 'ARRAY' && @$body && $body->[0]{error}) {
                     $error_msg = $body->[0]{error}{message} || $body->[0]{error};
                     $error_code = $body->[0]{error}{code};
                 }
-                # Handle object errors: {"error": {...}}
                 elsif (ref($body) eq 'HASH' && $body->{error}) {
                     $error_msg = $body->{error}{message} || $body->{error};
                     $error_code = $body->{error}{code};
                 }
             };
-            
+
             if ($error_msg) {
                 log_debug('APIManager', "Detected error in 200 response body: $error_msg");
-                # Detect rate limit errors from semantic error codes (GitHub returns 200 + code string)
                 my $is_rate_limit = $error_code && $error_code =~ /rate.lim/i;
                 $self->{response_handler}->release_broker_slot($resp, 200);
                 if ($is_rate_limit) {
@@ -3290,74 +3307,65 @@ sub send_request_streaming {
             }
         }
     }
-    
+
     # Calculate final metrics
     my $end_time = time();
-    my $total_duration = $end_time - $start_time;
-    my $ttft = $first_token_time ? ($first_token_time - $start_time) : undef;
-    my $tps = ($total_duration > 0 && $token_count > 0) ? ($token_count / $total_duration) : 0;
-    
-    # Debug metrics
+    my $total_duration = $end_time - $s{start_time};
+    my $ttft = $s{first_token_time} ? ($s{first_token_time} - $s{start_time}) : undef;
+    my $tps = ($total_duration > 0 && $s{token_count} > 0) ? ($s{token_count} / $total_duration) : 0;
+
     if ($self->{debug}) {
         log_debug('APIManager', sprintf(
             "[DEBUG][APIManager] Streaming complete - TTFT: %.2fs, TPS: %.1f, Tokens: %d, Duration: %.2fs\n",
-            $ttft // 0,
-            $tps,
-            $token_count,
-            $total_duration
+            $ttft // 0, $tps, $s{token_count}, $total_duration
         ));
     }
-    
+
     # Persist session if we got a response_id
     if ($self->{session} && $self->{session}{lastGitHubCopilotResponseId}) {
         if (ref($self->{session}) && blessed($self->{session}) && $self->{session}->can('save')) {
             $self->{session}->save();
         }
     }
-    
-    # Process rate limit headers from ALL streaming responses (proactive throttling)
-    # Use streaming_headers if available (captured during streaming), otherwise resp->headers
-    my $headers_to_use = $streaming_headers || $resp->headers;
-    
-    # Always process rate limit headers regardless of endpoint type
+
+    # Process rate limit headers
+    my $headers_to_use = $s{streaming_headers} || $resp->headers;
     if ($headers_to_use) {
         $self->{response_handler}->process_rate_limit_headers($headers_to_use);
     }
-    
+
     # Process quota headers for billing tracking (GitHub Copilot only)
-    log_debug('APIManager', "Checking quota header conditions: requires_copilot_headers=" . ($endpoint_config->{requires_copilot_headers} ? 'yes' : 'no') . ", has_headers=" . 
-        ($headers_to_use ? 'yes' : 'no') . "\n");
-    
+    my $endpoint_config = $s{endpoint_config};
+    log_debug('APIManager', "Checking quota header conditions: requires_copilot_headers=" .
+        ($endpoint_config->{requires_copilot_headers} ? 'yes' : 'no') .
+        ", has_headers=" . ($headers_to_use ? 'yes' : 'no') . "\n");
+
     if ($endpoint_config->{requires_copilot_headers} && $headers_to_use) {
         my $response_id = $self->{session}{lastGitHubCopilotResponseId} || 'unknown';
-        
         log_debug('APIManager', "Calling _process_quota_headers with response_id=$response_id");
         $self->{response_handler}->process_quota_headers($headers_to_use, $response_id);
     } else {
         log_debug('APIManager', "Skipping quota header processing");
     }
-    
-    # Estimate usage for billing (streaming doesn't provide usage data)
-    # Use real usage from stream_options if available, fall back to estimates
+
+    # Estimate usage for billing
     my $final_usage;
-    if ($streaming_usage) {
-        $final_usage = $streaming_usage;
+    if ($s{streaming_usage}) {
+        $final_usage = $s{streaming_usage};
         log_debug('APIManager', "Using real streaming usage: prompt=$final_usage->{prompt_tokens}, completion=$final_usage->{completion_tokens}");
-        
-        # Learn from streaming usage to improve token estimation accuracy
-        $self->_learn_from_api_response($final_usage, $messages);
+        $self->_learn_from_api_response($final_usage, $s{messages});
     } else {
-        # Fallback: estimate tokens (inaccurate - doesn't count tool call tokens)
-        my $estimated_completion_tokens = $token_count;
+        my $estimated_completion_tokens = $s{token_count};
         my $estimated_prompt_tokens = 0;
+        my $messages = $s{messages};
         if ($messages && ref($messages) eq 'ARRAY') {
             for my $msg (@$messages) {
                 if ($msg->{content}) {
                     $estimated_prompt_tokens += int(length($msg->{content}) / 4);
                 }
             }
-        } elsif ($input) {
-            $estimated_prompt_tokens = int(length($input) / 4);
+        } elsif ($s{input}) {
+            $estimated_prompt_tokens = int(length($s{input}) / 4);
         }
         $final_usage = {
             prompt_tokens => $estimated_prompt_tokens,
@@ -3366,106 +3374,67 @@ sub send_request_streaming {
         };
         log_debug('APIManager', "Using estimated streaming usage (no real data available)");
     }
-    
+
     # Convert accumulated tool_calls to array
     my $tool_calls = undef;
-    if (keys %$tool_calls_accumulator) {
+    if (keys %{$s{tool_calls_accumulator}}) {
         $tool_calls = [
-            map { $tool_calls_accumulator->{$_} }
+            map { $s{tool_calls_accumulator}->{$_} }
             sort { $a <=> $b }
-            keys %$tool_calls_accumulator
+            keys %{$s{tool_calls_accumulator}}
         ];
-        
         log_debug('APIManager', "Accumulated " . scalar(@$tool_calls) . " tool calls from streaming");
     }
-    
-    # Post-streaming cleanup: strip residual <think> tags from accumulated content
-    # Tags may be orphaned if stream ended mid-thinking or if reasoning_split didn't
-    # fully separate thinking from content
-    if ($is_minimax && length($accumulated_content) && $accumulated_content =~ /<\/?think>/) {
-        # Extract and route any remaining think blocks to reasoning
-        while ($accumulated_content =~ s{<think>(.*?)</think>\n*}{}sg) {
-            my $residual_think = $1;
-            if (length($residual_think)) {
-                $accumulated_reasoning_details .= $residual_think;
-                if ($on_thinking) {
-                    $on_thinking->($residual_think);
-                }
-            }
-        }
-        # Strip orphaned tags (incomplete pairs)
-        $accumulated_content =~ s/<\/?think>//g;
-        # Only strip leading newlines that were adjacent to removed tags, not all whitespace
-        $accumulated_content =~ s/^\n+//;
-        log_debug('APIManager', "Cleaned residual <think> tags from streaming content");
-    }
-    
-    # Flush any remaining think_buffer content
-    # If we were buffering a partial tag that never completed, add it back as content
-    if ($is_minimax && length($think_buffer)) {
-        if (!$in_think_tag) {
-            $accumulated_content .= $think_buffer;
-        }
-        # If still in_think_tag, the buffer is thinking content - route to reasoning
-        elsif ($on_thinking) {
-            $accumulated_reasoning_details .= $think_buffer;
-            $on_thinking->($think_buffer);
-            $on_thinking->(undef, 'end');
-        }
-        $think_buffer = '';
-    }
-    
+
     # Build response with metrics and estimated usage
     my $response = {
         success => 1,
-        content => $accumulated_content,
+        content => $s{accumulated_content},
         metrics => {
             ttft => $ttft,
             tps => $tps,
-            tokens => $token_count,
+            tokens => $s{token_count},
             duration => $total_duration,
         },
         usage => $final_usage,
     };
-    
-    log_debug('APIManager', "[$provider_label STREAMING COMPLETE] accumulated content length: " . length($accumulated_content));
-    log_debug('APIManager', "[$provider_label STREAMING COMPLETE] Content preview: '" . substr($accumulated_content, 0, 300) . "'");
-    
+
+    log_debug('APIManager', "[$s{provider_label} STREAMING COMPLETE] accumulated content length: " . length($s{accumulated_content}));
+    log_debug('APIManager', "[$s{provider_label} STREAMING COMPLETE] Content preview: '" . substr($s{accumulated_content}, 0, 300) . "'");
+
     # Add tool_calls if present
     if ($tool_calls) {
         $response->{tool_calls} = $tool_calls;
-        log_debug('APIManager', "[$provider_label STREAMING COMPLETE] tool_calls: " . scalar(@$tool_calls) . " calls");
+        log_debug('APIManager', "[$s{provider_label} STREAMING COMPLETE] tool_calls: " . scalar(@$tool_calls) . " calls");
         for my $tc (@$tool_calls) {
-            log_debug('APIManager', "[$provider_label TOOL CALL] " . ($tc->{function}{name} || 'unknown') . 
+            log_debug('APIManager', "[$s{provider_label} TOOL CALL] " . ($tc->{function}{name} || 'unknown') .
                       " args_len=" . length($tc->{function}{arguments} || ''));
         }
     } else {
-        log_debug('APIManager', "[$provider_label STREAMING COMPLETE] NO tool_calls in response");
+        log_debug('APIManager', "[$s{provider_label} STREAMING COMPLETE] NO tool_calls in response");
     }
-    
+
     if (open my $fh, '>>', '/tmp/clio_api_debug.log') {
         print $fh "\n" . "-"x80 . "\n";
-        print $fh "[" . scalar(localtime) . "] $provider_label STREAMING RESPONSE COMPLETE\n";
-        print $fh "Content length: " . length($accumulated_content) . "\n";
+        print $fh "[" . scalar(localtime) . "] $s{provider_label} STREAMING RESPONSE COMPLETE\n";
+        print $fh "Content length: " . length($s{accumulated_content}) . "\n";
         print $fh "Tool calls: " . ($tool_calls ? scalar(@$tool_calls) : 0) . "\n";
         if ($tool_calls) {
             for my $tc (@$tool_calls) {
                 print $fh "  - " . ($tc->{function}{name} || 'unknown') . ": " . substr($tc->{function}{arguments} || '', 0, 200) . "\n";
             }
         }
-        print $fh "Content:\n" . substr($accumulated_content, 0, 1000) . "\n";
+        print $fh "Content:\n" . substr($s{accumulated_content}, 0, 1000) . "\n";
         close $fh;
     }
-    
+
     # Include accumulated reasoning_details for MiniMax interleaved thinking
-    # MiniMax requires reasoning_details to be preserved in conversation history
-    # for interleaved thinking to work properly across tool-calling turns
-    if (length($accumulated_reasoning_details)) {
-        $response->{reasoning_details} = [{ type => 'reasoning.text', text => $accumulated_reasoning_details }];
-        log_debug('APIManager', "Accumulated reasoning_details: " . length($accumulated_reasoning_details) . " chars");
+    if (length($s{accumulated_reasoning} // '')) {
+        $response->{reasoning_details} = [{ type => 'reasoning.text', text => $s{accumulated_reasoning} }];
+        log_debug('APIManager', "Accumulated reasoning_details: " . length($s{accumulated_reasoning}) . " chars");
     }
-    
-    # DEBUG: Print EXACT response structure being returned
+
+    # Debug response structure
     if ($self->{debug}) {
         require Data::Dumper;
         log_debug('APIManager', "===== API RESPONSE =====");
@@ -3478,10 +3447,10 @@ sub send_request_streaming {
         log_debug('APIManager', "Content preview: " . substr($response->{content}, 0, 200) . "...");
         log_debug('APIManager', "===== END API RESPONSE =====");
     }
-    
+
     # Release broker slot on success
     $self->{response_handler}->release_broker_slot($resp, 200);
-    
+
     return $response;
 }
 
@@ -3545,7 +3514,7 @@ sub process_events {
         # Read response if available
         if ($self->{message_file} && -f $self->{message_file}) {
             eval {
-                open(my $fh, '<', $self->{message_file}) or die "Could not open message file: $!";
+                open(my $fh, '<', $self->{message_file}) or croak "Could not open message file: $!";
                 local $/;
                 my $json = <$fh>;
                 close($fh);
@@ -3823,7 +3792,7 @@ sub _send_native_streaming {
                     }
                 }
                 elsif ($type eq 'error') {
-                    die "API Error: $event->{message}";
+                    croak "API Error: $event->{message}";
                 }
             }
         });

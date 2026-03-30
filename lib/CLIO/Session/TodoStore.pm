@@ -13,8 +13,8 @@ use Carp qw(croak);
 use feature 'say';
 use File::Path qw(make_path);
 use File::Spec;
-use CLIO::Util::JSON qw(decode_json);
-use JSON::PP ();
+use CLIO::Util::JSON qw(decode_json encode_json_pretty);
+
 
 =head1 NAME
 
@@ -418,7 +418,7 @@ sub _save {
     };
     
     my $file = $self->_todos_file();
-    my $json = JSON::PP->new->utf8->pretty->canonical->encode($data);
+    my $json = encode_json_pretty($data);
     
     # Atomic write: write to temp file, then rename
     # This prevents corruption if process is killed during write

@@ -32,7 +32,7 @@ No CPAN installation required. Simply uses whatever is already on the system.
 =cut
 
 use Exporter 'import';
-our @EXPORT_OK = qw(encode_json decode_json JSON_BACKEND);
+our @EXPORT_OK = qw(encode_json decode_json encode_json_pretty JSON_BACKEND);
 
 # Detect the best available JSON backend at compile time
 my $_backend;
@@ -83,6 +83,27 @@ Decode a JSON string to a Perl data structure.
 
 sub decode_json {
     goto &$_decode;
+}
+
+
+=head2 encode_json_pretty
+
+Encode a Perl data structure to a pretty-printed, canonical JSON string.
+
+    my $json = encode_json_pretty($hashref);
+
+=cut
+
+sub encode_json_pretty {
+    my ($data) = @_;
+    # All backends support OO interface for pretty/canonical
+    if ($_backend eq 'JSON::XS') {
+        return JSON::XS->new->utf8->pretty->canonical->encode($data);
+    } elsif ($_backend eq 'Cpanel::JSON::XS') {
+        return Cpanel::JSON::XS->new->utf8->pretty->canonical->encode($data);
+    } else {
+        return JSON::PP->new->utf8->pretty->canonical->encode($data);
+    }
 }
 
 =head2 JSON_BACKEND

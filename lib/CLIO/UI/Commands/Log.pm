@@ -11,7 +11,7 @@ binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 
 use Carp qw(croak);
-use JSON::PP;
+use CLIO::Util::JSON qw(encode_json decode_json);
 
 =head1 NAME
 
@@ -254,7 +254,7 @@ sub _display_tool_log_entry {
     
     # Parameters (compact JSON)
     if ($entry->{parameters} && ref($entry->{parameters}) eq 'HASH') {
-        my $params_json = JSON::PP->new->canonical->encode($entry->{parameters});
+        my $params_json = encode_json($entry->{parameters});
         # Truncate if too long
         if (length($params_json) > 100) {
             $params_json = substr($params_json, 0, 97) . "...";

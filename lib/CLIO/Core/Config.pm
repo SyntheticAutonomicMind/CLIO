@@ -126,7 +126,7 @@ sub load {
     # Try to load user-explicitly-set values from file
     if (-f $self->{config_file}) {
         eval {
-            open my $fh, '<', $self->{config_file} or die "Cannot open: $!";
+            open my $fh, '<', $self->{config_file} or croak "Cannot open: $!";
             my $json = do { local $/; <$fh> };
             close $fh;
             
@@ -226,7 +226,7 @@ sub save {
     
     # Save config
     eval {
-        open my $fh, '>', $self->{config_file} or die "Cannot write: $!";
+        open my $fh, '>', $self->{config_file} or croak "Cannot write: $!";
         print $fh encode_json(\%config_to_save);
         close $fh;
         

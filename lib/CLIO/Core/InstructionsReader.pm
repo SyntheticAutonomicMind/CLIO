@@ -6,6 +6,7 @@ package CLIO::Core::InstructionsReader;
 use strict;
 use warnings;
 use utf8;
+use Carp qw(croak);
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use CLIO::Core::Logger qw(log_error log_warning log_debug);
@@ -273,7 +274,7 @@ sub _read_file {
     # Read file contents
     my $content = eval {
         open my $fh, '<:encoding(UTF-8)', $file_path
-            or die "Cannot open $file_path: $!";
+            or croak "Cannot open $file_path: $!";
         
         local $/; # slurp mode
         my $data = <$fh>;

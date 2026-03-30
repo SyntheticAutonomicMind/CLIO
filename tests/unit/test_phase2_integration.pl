@@ -54,11 +54,12 @@ if ($count == 3) {
 
 # Test 1.3: Pagination trigger logic
 my $current_threshold = $chat->_get_pagination_threshold();
-$chat->{line_count} = $current_threshold + 1;  # Over threshold
-$chat->{pagination_enabled} = 1;
+my $pager = $chat->{pager};
+$pager->{line_count} = $current_threshold + 1;  # Over threshold
+$pager->{pagination_enabled} = 1;
 $chat->{_tools_invoked_this_request} = 0;
 
-my $should_trigger = $chat->_should_pagination_trigger();
+my $should_trigger = $pager->should_trigger(force => 1);
 if ($should_trigger) {
     print "[PASS] Pagination trigger detection\n";
     $passed++;
@@ -69,7 +70,7 @@ if ($should_trigger) {
 
 # Test 1.4: Tool execution disables pagination
 $chat->{_tools_invoked_this_request} = 1;
-my $should_not_trigger = $chat->_should_pagination_trigger();
+my $should_not_trigger = $pager->should_trigger(force => 1);
 if (!$should_not_trigger) {
     print "[PASS] Tool execution pagination inhibition\n";
     $passed++;

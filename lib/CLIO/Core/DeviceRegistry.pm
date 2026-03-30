@@ -76,7 +76,7 @@ sub _load_registry {
     return unless -f $file;
     
     eval {
-        open my $fh, '<:encoding(UTF-8)', $file or die "Cannot open $file: $!";
+        open my $fh, '<:encoding(UTF-8)', $file or croak "Cannot open $file: $!";
         my $content = do { local $/; <$fh> };
         close $fh;
         

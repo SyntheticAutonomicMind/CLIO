@@ -51,24 +51,24 @@ foreach my $test (@test_cases) {
 
 print "\n";
 
-# Test 3: _should_pagination_trigger
+# Test 3: _should_pagination_trigger (state now on pager)
 print "Test 3: _should_pagination_trigger\n";
-$chat->{line_count} = 0;
-$chat->{pagination_enabled} = 0;
+my $pager = $chat->{pager};
+$pager->reset();
 my $result = $chat->_should_pagination_trigger();
 print "  With pagination disabled: " . ($result ? "FAIL (triggered)" : "PASS (not triggered)") . "\n";
 
-$chat->{pagination_enabled} = 1;
+$pager->enable();
 $chat->{_tools_invoked_this_request} = 1;
 $result = $chat->_should_pagination_trigger();
 print "  With tools invoked: " . ($result ? "FAIL (triggered)" : "PASS (not triggered)") . "\n";
 
 $chat->{_tools_invoked_this_request} = 0;
-$chat->{line_count} = 20;  # Below threshold
+$pager->line_count(20);  # Below threshold
 $result = $chat->_should_pagination_trigger();
 print "  With line_count=20, threshold=22: " . ($result ? "FAIL (triggered)" : "PASS (not triggered)") . "\n";
 
-$chat->{line_count} = 22;  # At threshold
+$pager->line_count(22);  # At threshold
 $result = $chat->_should_pagination_trigger();
 print "  With line_count=22, threshold=22: " . ($result ? "PASS (triggered)" : "FAIL (not triggered)") . "\n";
 

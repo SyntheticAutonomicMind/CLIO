@@ -6,7 +6,7 @@ package CLIO::Memory::LongTerm;
 use strict;
 use warnings;
 use CLIO::Core::Logger qw(log_debug);
-use JSON::PP;
+use CLIO::Util::JSON qw(encode_json decode_json encode_json_pretty);
 use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
@@ -577,8 +577,8 @@ sub save {
     my $temp_file = $file . '.tmp.' . $$;  # $$ = process ID
     
     eval {
-        open my $fh, '>:encoding(UTF-8)', $temp_file or die "Cannot create temp LTM file: $!";
-        print $fh JSON::PP->new->pretty->canonical->encode($data);
+        open my $fh, '>:encoding(UTF-8)', $temp_file or croak "Cannot create temp LTM file: $!";
+        print $fh encode_json_pretty($data);
         close $fh;
         
         # Atomic rename (overwrites target file atomically on Unix)
@@ -615,7 +615,7 @@ sub load {
     my $json = <$fh>;
     close $fh;
     
-    my $data = eval { JSON::PP->new->decode($json) };
+    my $data = eval { decode_json($json) };
     if ($@) {
         log_debug('LTM', "Failed to parse $file: $@");
         return $class->new(%args);

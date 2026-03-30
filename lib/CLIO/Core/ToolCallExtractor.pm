@@ -146,7 +146,6 @@ sub _extract_xml_format {
         if ($data->{name}) {
             my $arguments = $data->{arguments};
             if (ref($arguments) eq 'HASH' || ref($arguments) eq 'ARRAY') {
-                require JSON::PP;
                 $arguments = encode_json($arguments);
             }
             
@@ -210,7 +209,6 @@ sub _extract_clio_format {
         }
         
         # Re-encode as JSON string
-        require JSON::PP;
         my $arguments_json = encode_json($arguments_data);
         
         push @tool_calls, {
@@ -328,7 +326,6 @@ sub _extract_json_blocks {
             
             my $arguments = $call->{arguments};
             if (ref($arguments) eq 'HASH' || ref($arguments) eq 'ARRAY') {
-                require JSON::PP;
                 $arguments = encode_json($arguments);
             }
             

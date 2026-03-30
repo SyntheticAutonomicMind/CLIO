@@ -6,6 +6,7 @@ package CLIO::Util::GitIgnore;
 use strict;
 use warnings;
 use utf8;
+use Carp qw(croak);
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 
@@ -99,7 +100,7 @@ sub ensure_clio_ignored {
     my $content = '';
     if (-f $gitignore_path) {
         eval {
-            open my $fh, '<:encoding(UTF-8)', $gitignore_path or die "Cannot read: $!";
+            open my $fh, '<:encoding(UTF-8)', $gitignore_path or croak "Cannot read: $!";
             local $/;
             $content = <$fh>;
             close $fh;
@@ -179,10 +180,10 @@ sub _write_gitignore {
 
     my $tmp = "$path.tmp";
     eval {
-        open my $fh, '>:encoding(UTF-8)', $tmp or die "Cannot write: $!";
+        open my $fh, '>:encoding(UTF-8)', $tmp or croak "Cannot write: $!";
         print $fh $content;
         close $fh;
-        rename $tmp, $path or die "Cannot rename: $!";
+        rename $tmp, $path or croak "Cannot rename: $!";
     };
     if ($@) {
         unlink $tmp if -f $tmp;

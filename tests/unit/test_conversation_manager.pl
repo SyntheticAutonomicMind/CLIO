@@ -154,7 +154,7 @@ subtest 'enforce_message_alternation - preserves tool messages for github' => su
     is($tool_count, 1, 'Tool message preserved for github_copilot provider');
 };
 
-subtest 'enforce_message_alternation - converts tool to user for non-github' => sub {
+subtest 'enforce_message_alternation - preserves tool messages for all providers' => sub {
     my @messages = (
         { role => 'user', content => 'hello' },
         { role => 'assistant', content => 'calling tool', tool_calls => [{ id => 'call_1', function => { name => 'test' } }] },
@@ -162,16 +162,14 @@ subtest 'enforce_message_alternation - converts tool to user for non-github' => 
         { role => 'assistant', content => 'done' },
     );
 
+    # All modern providers support role=tool natively
     my $result = enforce_message_alternation(\@messages, 'anthropic');
     my $tool_count = grep { $_->{role} eq 'tool' } @$result;
-    is($tool_count, 0, 'No tool role messages for anthropic provider');
+    is($tool_count, 1, 'Tool messages preserved for anthropic provider');
 
-    # Assistant messages should not have tool_calls (stripped)
-    for my $msg (@$result) {
-        if ($msg->{role} eq 'assistant') {
-            ok(!$msg->{tool_calls}, 'tool_calls stripped from assistant for anthropic');
-        }
-    }
+    # tool_calls preserved on assistant messages
+    my @assistants_with_tools = grep { $_->{role} eq 'assistant' && $_->{tool_calls} } @$result;
+    is(scalar @assistants_with_tools, 1, 'tool_calls preserved on assistant for anthropic');
 };
 
 subtest 'enforce_message_alternation - empty input' => sub {

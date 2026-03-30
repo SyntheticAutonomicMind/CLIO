@@ -6,6 +6,7 @@ package CLIO::Profile::Analyzer;
 use strict;
 use warnings;
 use utf8;
+use Carp qw(croak);
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use CLIO::Core::Logger qw(log_debug log_warning log_error);
@@ -325,7 +326,7 @@ sub _analyze_session_file {
 
     my $json_text;
     eval {
-        open my $fh, '<', $file or die "Cannot open $file: $!";
+        open my $fh, '<', $file or croak "Cannot open $file: $!";
         local $/;
         $json_text = <$fh>;
         close $fh;

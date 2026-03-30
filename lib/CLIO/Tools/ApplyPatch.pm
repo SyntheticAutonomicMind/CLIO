@@ -6,6 +6,7 @@ package CLIO::Tools::ApplyPatch;
 use strict;
 use warnings;
 use utf8;
+use Carp qw(croak);
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use File::Spec;
@@ -500,7 +501,7 @@ sub _apply_add {
     # Write file
     eval {
         open my $fh, '>:encoding(UTF-8)', $full_path
-            or die "Cannot write: $!";
+            or croak "Cannot write: $!";
         print $fh $content;
         close $fh;
     };
@@ -537,7 +538,7 @@ sub _apply_update {
     my $content;
     eval {
         open my $fh, '<:encoding(UTF-8)', $full_path
-            or die "Cannot read: $!";
+            or croak "Cannot read: $!";
         $content = do { local $/; <$fh> };
         close $fh;
     };
@@ -594,7 +595,7 @@ sub _apply_update {
         my $new_content = join("\n", @lines);
         eval {
             open my $fh, '>:encoding(UTF-8)', $new_full
-                or die "Cannot write: $!";
+                or croak "Cannot write: $!";
             print $fh $new_content;
             close $fh;
         };
@@ -615,11 +616,11 @@ sub _apply_update {
         # Atomic write via temp file
         my $temp = $full_path . '.clio_tmp';
         open my $fh, '>:encoding(UTF-8)', $temp
-            or die "Cannot write temp: $!";
+            or croak "Cannot write temp: $!";
         print $fh $new_content;
         close $fh;
         rename $temp, $full_path
-            or die "Cannot rename: $!";
+            or croak "Cannot rename: $!";
     };
     
     if ($@) {

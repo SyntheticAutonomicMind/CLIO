@@ -120,7 +120,7 @@ sub start_device_flow {
         my $status = $response->code;
         my $error = $response->decoded_content || 'Unknown error';
         log_error('GitHubAuth', "Device code request failed: HTTP $status - $error");
-        die "Device code request failed: HTTP $status";
+        croak "Device code request failed: HTTP $status";
     }
     
     my $data = decode_json($response->decoded_content);
@@ -220,17 +220,17 @@ sub poll_for_token {
             elsif ($error eq 'expired_token') {
                 # Device code expired
                 log_error('GitHubAuth', "Device code expired");
-                die "Device code expired. Please try again.";
+                croak "Device code expired. Please try again.";
             }
             elsif ($error eq 'access_denied') {
                 # User denied authorization
                 log_error('GitHubAuth', "User denied authorization");
-                die "Authorization denied by user";
+                croak "Authorization denied by user";
             }
             else {
                 # Unknown error
                 log_error('GitHubAuth', "Token poll error: $error");
-                die "Token poll error: $error";
+                croak "Token poll error: $error";
             }
         }
         
@@ -246,7 +246,7 @@ sub poll_for_token {
     
     # Timeout reached
     log_error('GitHubAuth', "Authorization timed out after 15 minutes");
-    die "Authorization timed out after 15 minutes. Please try again.";
+    croak "Authorization timed out after 15 minutes. Please try again.";
 }
 
 =head2 exchange_for_copilot_token
@@ -301,7 +301,7 @@ sub exchange_for_copilot_token {
         
         # Other errors (4xx except 404) are real failures worth reporting
         log_warning('GitHubAuth', "Copilot token exchange failed: HTTP $status - $error");
-        die "Copilot token exchange failed: HTTP $status - $error";
+        croak "Copilot token exchange failed: HTTP $status - $error";
     }
     
     my $data = decode_json($response->decoded_content);

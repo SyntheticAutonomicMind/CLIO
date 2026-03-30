@@ -8,8 +8,8 @@ use warnings;
 use utf8;
 use base 'CLIO::Protocols::Handler';
 use MIME::Base64;
-use CLIO::Util::JSON qw(encode_json decode_json);
-use JSON::PP ();
+use CLIO::Util::JSON qw(encode_json decode_json encode_json_pretty);
+
 use File::Temp qw(tempfile);
 
 =head1 NAME
@@ -651,12 +651,13 @@ sub _format_javascript_code {
 sub _format_json_code {
     my ($self, $content, $options) = @_;
     
+    my $formatted;
     eval {
         my $json = decode_json($content);
-        my $json_obj = JSON::PP->new->pretty->canonical;
-        return $json_obj->encode($json);
+        $formatted = encode_json_pretty($json);
     };
     
+    return $formatted if defined $formatted;
     return $content;  # Return original if parsing fails
 }
 

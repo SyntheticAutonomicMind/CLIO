@@ -17,23 +17,26 @@ close $fh;
 my $test_count = 0;
 my $pass_count = 0;
 
-# Test 1: Centralized _get_pagination_threshold method exists and uses terminal_height - 2
+# Test 1: _get_pagination_threshold delegates to pager->threshold()
 $test_count++;
-if ($content =~ /sub _get_pagination_threshold\b.*?return.*?terminal_height.*?-\s*2/s) {
-    print " Test 1 PASS: _get_pagination_threshold uses terminal_height - 2\n";
+if ($content =~ /sub _get_pagination_threshold\b.*?pager.*?threshold/s) {
+    print " Test 1 PASS: _get_pagination_threshold delegates to pager->threshold()\n";
     $pass_count++;
 } else {
-    print " Test 1 FAIL: _get_pagination_threshold not found or wrong formula\n";
+    print " Test 1 FAIL: _get_pagination_threshold doesn't delegate to pager\n";
 }
 
-# Test 2: All pagination sites use the centralized helper
+# Test 2: PaginationManager::threshold uses terminal_height - 2
 $test_count++;
-my @threshold_calls = $content =~ /(\$self->_get_pagination_threshold\(\))/g;
-if (scalar(@threshold_calls) >= 3) {
-    print " Test 2 PASS: Found " . scalar(@threshold_calls) . " calls to _get_pagination_threshold()\n";
+my $pager_pm = "$FindBin::Bin/../../lib/CLIO/UI/PaginationManager.pm";
+open my $pfh, '<', $pager_pm or die "Cannot open $pager_pm: $!";
+my $pager_content = do { local $/; <$pfh> };
+close $pfh;
+if ($pager_content =~ /sub threshold\b.*?terminal_height.*?-\s*2/s) {
+    print " Test 2 PASS: PaginationManager::threshold uses terminal_height - 2\n";
     $pass_count++;
 } else {
-    print " Test 2 FAIL: Expected 3+ calls to _get_pagination_threshold(), found " . scalar(@threshold_calls) . "\n";
+    print " Test 2 FAIL: PaginationManager::threshold formula not found\n";
 }
 
 # Test 3: No old-style direct terminal_height comparisons remain in pagination checks
