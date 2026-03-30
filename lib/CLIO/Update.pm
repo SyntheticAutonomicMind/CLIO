@@ -11,7 +11,7 @@ binmode(STDERR, ':encoding(UTF-8)');
 use File::Spec;
 use File::Basename qw(dirname);
 use File::Path qw(mkpath rmtree);
-use CLIO::Util::JSON qw(decode_json);
+use CLIO::Util::JSON qw(decode_json encode_json);
 use CLIO::Core::Logger qw(log_debug log_error log_warning);
 
 =head1 NAME
@@ -522,8 +522,7 @@ sub check_for_updates_async {
             # Also write detailed info
             my $info_file = File::Spec->catfile($self->{cache_dir}, 'update_info');
             open my $info_fh, '>', $info_file or exit 1;
-            require JSON::PP;
-            print $info_fh JSON::PP->new->encode($result->{release_info} || {});
+            print $info_fh encode_json($result->{release_info} || {});
             close $info_fh;
         } else {
             # No update available or error - touch cache file to mark check complete

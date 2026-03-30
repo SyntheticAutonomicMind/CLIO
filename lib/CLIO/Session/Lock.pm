@@ -14,7 +14,7 @@ use CLIO::Util::PathResolver;
 use File::Spec;
 use Fcntl qw(:flock SEEK_SET);
 use Time::HiRes qw(time);
-use JSON::PP;
+use CLIO::Util::JSON qw(encode_json decode_json encode_json_pretty);
 
 =head1 NAME
 
@@ -92,7 +92,7 @@ sub acquire {
                     session_id => $session_id,
                 };
                 
-                print $fh JSON::PP->new->pretty->encode($lock_info);
+                print $fh encode_json_pretty($lock_info);
                 $fh->flush();
                 
                 # Create lock object
@@ -211,7 +211,7 @@ sub get_lock_info {
         close $fh;
         
         eval {
-            return JSON::PP->new->decode($content);
+            return decode_json($content);
         };
     }
     
@@ -238,7 +238,7 @@ sub _is_lock_stale {
         close $fh;
         
         eval {
-            $info = JSON::PP->new->decode($content);
+            $info = decode_json($content);
         };
     }
     

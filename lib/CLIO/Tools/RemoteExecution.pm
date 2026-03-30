@@ -14,6 +14,7 @@ use File::Spec;
 use File::Path qw(make_path remove_tree);
 use feature 'say';
 use CLIO::Core::Logger qw(should_log log_debug);
+use Carp qw(croak);
 
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
@@ -313,7 +314,7 @@ sub execute_remote {
         }, $context);
         
         unless ($check_result->{success}) {
-            die "Remote system check failed: " . ($check_result->{error} || 'unknown error');
+            croak "Remote system check failed: " . ($check_result->{error} || 'unknown error');
         }
         
         # 2. Download CLIO on remote
@@ -326,7 +327,7 @@ sub execute_remote {
         );
         
         unless ($install_result->{success}) {
-            die "CLIO download failed: " . $install_result->{error};
+            croak "CLIO download failed: " . $install_result->{error};
         }
         
         my $clio_path = $install_result->{clio_path};
@@ -344,7 +345,7 @@ sub execute_remote {
         );
         
         unless ($config_result->{success}) {
-            die "Config creation failed: " . $config_result->{error};
+            croak "Config creation failed: " . $config_result->{error};
         }
         
         # 4. Execute CLIO on remote
@@ -363,7 +364,7 @@ sub execute_remote {
         );
         
         unless ($exec_result->{success}) {
-            die "Remote execution failed: " . $exec_result->{error};
+            croak "Remote execution failed: " . $exec_result->{error};
         }
         
         my $stdout = $exec_result->{stdout};
@@ -638,7 +639,7 @@ sub prepare_remote {
         );
         
         unless ($download_result->{success}) {
-            die $download_result->{error};
+            croak $download_result->{error};
         }
         
         $result = $self->success_result(
@@ -685,7 +686,7 @@ sub cleanup_remote {
         );
         
         unless ($ssh_result->{success}) {
-            die $ssh_result->{error};
+            croak $ssh_result->{error};
         }
         
         $result = $self->success_result(
@@ -746,7 +747,7 @@ sub check_remote {
         );
         
         unless ($conn->{success}) {
-            die "SSH connection failed: " . ($conn->{error} || 'unknown error');
+            croak "SSH connection failed: " . ($conn->{error} || 'unknown error');
         }
         
         # Check Perl
@@ -758,7 +759,7 @@ sub check_remote {
         );
         
         unless ($perl->{success}) {
-            die "Perl not available on remote";
+            croak "Perl not available on remote";
         }
         
         # Check for download tools
@@ -770,7 +771,7 @@ sub check_remote {
         );
         
         unless ($curl->{success}) {
-            die "Neither curl nor wget available on remote";
+            croak "Neither curl nor wget available on remote";
         }
         
         # Check disk space in /tmp
@@ -788,7 +789,7 @@ sub check_remote {
         my $available_mb = int($available_kb / 1024);
         
         if ($available_mb < 50) {
-            die "Insufficient disk space: only ${available_mb}MB available in /tmp";
+            croak "Insufficient disk space: only ${available_mb}MB available in /tmp";
         }
         
         $result = $self->success_result(
@@ -845,7 +846,7 @@ sub transfer_files {
             my $remote = $file_spec->{remote_path};
             
             unless ($local && $remote) {
-                die "File spec missing local_path or remote_path";
+                croak "File spec missing local_path or remote_path";
             }
             
             my $scp_result = $self->_scp_to_remote(
@@ -857,7 +858,7 @@ sub transfer_files {
             );
             
             unless ($scp_result->{success}) {
-                die "Failed to transfer $local: " . $scp_result->{error};
+                croak "Failed to transfer $local: " . $scp_result->{error};
             }
             
             push @transferred, $remote;
@@ -915,7 +916,7 @@ sub retrieve_files {
             my $local = $file_spec->{local_path};
             
             unless ($local && $remote) {
-                die "File spec missing local_path or remote_path";
+                croak "File spec missing local_path or remote_path";
             }
             
             my $scp_result = $self->_scp_from_remote(
@@ -927,7 +928,7 @@ sub retrieve_files {
             );
             
             unless ($scp_result->{success}) {
-                die "Failed to retrieve $remote: " . $scp_result->{error};
+                croak "Failed to retrieve $remote: " . $scp_result->{error};
             }
             
             push @retrieved, $local;

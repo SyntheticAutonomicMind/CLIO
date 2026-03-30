@@ -6,7 +6,7 @@ package CLIO::Code::Symbols;
 use strict;
 use warnings;
 use utf8;
-use JSON::PP;
+use CLIO::Util::JSON qw(encode_json decode_json encode_json_pretty);
 use File::Basename;
 use File::Spec;
 
@@ -360,7 +360,7 @@ sub _cache_analysis {
     
     eval {
         open my $fh, '>', $cache_file;
-        print $fh JSON::PP->new->pretty->encode($analysis);
+        print $fh encode_json_pretty($analysis);
         close $fh;
     };
     

@@ -197,11 +197,8 @@ sub _show_prompt {
     $self->refresh_terminal_size();
     
     # Enable pagination for this command output
-    $self->{chat}{pagination_enabled} = 1;
-    $self->{chat}{line_count} = 0;
-    $self->{chat}{pages} = [];
-    $self->{chat}{current_page} = [];
-    $self->{chat}{page_index} = 0;
+    $self->{chat}{pager}->reset();
+    $self->{chat}{pager}->enable();
     
     $self->display_command_header("ACTIVE SYSTEM PROMPT: " . uc($active));
     
@@ -222,8 +219,7 @@ sub _show_prompt {
     }
     
     # Disable pagination after command completes
-    $self->{chat}{pagination_enabled} = 0;
-    $self->{chat}{line_count} = 0;
+    $self->{chat}{pager}->reset();
 }
 
 =head2 _list_prompts($pm)

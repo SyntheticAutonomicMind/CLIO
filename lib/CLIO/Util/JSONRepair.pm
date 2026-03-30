@@ -125,7 +125,6 @@ sub repair_malformed_json {
         }
         
         if (%params) {
-            require JSON::PP;
             $json_str = encode_json(\%params);
             log_debug('JSONRepair', "Converted XML to JSON: $json_str");
             return $json_str;

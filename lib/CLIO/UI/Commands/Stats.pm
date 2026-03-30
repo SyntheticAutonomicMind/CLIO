@@ -271,7 +271,6 @@ sub _show_log {
     
     $self->writeline("", markdown => 0);
     
-    require JSON::PP;
     for my $entry (@recent) {
         my $json = eval { encode_json($entry) };
         $self->writeline("  $json", markdown => 0) if $json;
@@ -504,7 +503,6 @@ sub _read_log_entries {
     
     require POSIX;
     require File::Spec;
-    require JSON::PP;
     
     my $date = POSIX::strftime("%Y-%m-%d", localtime(time()));
     my $log_file = File::Spec->catfile('.clio', 'logs', "process_stats_$date.log");
@@ -513,7 +511,7 @@ sub _read_log_entries {
     
     my @entries;
     eval {
-        open my $fh, '<:encoding(UTF-8)', $log_file or die "Cannot open: $!";
+        open my $fh, '<:encoding(UTF-8)', $log_file or croak "Cannot open: $!";
         while (my $line = <$fh>) {
             chomp $line;
             next unless $line =~ /\S/;

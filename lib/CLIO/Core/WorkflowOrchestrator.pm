@@ -6,6 +6,7 @@ package CLIO::Core::WorkflowOrchestrator;
 use strict;
 use warnings;
 use utf8;
+use Carp qw(croak);
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use CLIO::Core::Logger qw(log_error log_warning log_info log_debug);
@@ -356,120 +357,9 @@ sub process_input {
     my $on_tool_end_from_ui = $opts{on_tool_end};    # Tool end tracker from UI
     my $on_thinking = $opts{on_thinking};  # Callback for reasoning/thinking content
     
-    # Start a new vault turn before processing - file changes during this turn will be tracked
-    my $turn_snapshot;
-    if ($self->{file_vault}) {
-        $turn_snapshot = eval { $self->{file_vault}->start_turn($user_input) };
-        if ($turn_snapshot) {
-            # Store on session for /undo access
-            if ($session && ref($session) && $session->can('state')) {
-                my $state = $session->state();
-                $state->{last_turn_id} = $turn_snapshot;
-                # Keep a history of recent turns (last 20)
-                $state->{turn_history} ||= [];
-                push @{$state->{turn_history}}, {
-                    turn_id => $turn_snapshot,
-                    timestamp => time(),
-                    user_input => substr($user_input, 0, 100),  # Truncated for storage
-                };
-                # Trim to last 20
-                if (@{$state->{turn_history}} > 20) {
-                    splice(@{$state->{turn_history}}, 0, @{$state->{turn_history}} - 20);
-                }
-            }
-            # Pass vault and turn ID to tool executor so tools can capture files
-            $self->{tool_executor}{file_vault} = $self->{file_vault};
-            $self->{tool_executor}{vault_turn_id} = $turn_snapshot;
-            log_debug('WorkflowOrchestrator', "FileVault turn started: $turn_snapshot");
-        } elsif ($@) {
-            log_debug('WorkflowOrchestrator', "FileVault turn start failed: $@");
-        }
-    }
-    
-    log_debug('WorkflowOrchestrator', "Processing input: '$user_input'");
-    
-    # Build initial messages array
-    my @messages = ();
-    
-    # Build system prompt with dynamic tools FIRST
-    # This must come before history to ensure tools are always available
-    my $system_prompt = $self->{prompt_builder}->build_system_prompt($session);
-    push @messages, {
-        role => 'system',
-        content => $system_prompt
-    };
-    
-    log_debug('WorkflowOrchestrator', "Added system prompt with tools (" . length($system_prompt) . " chars)");
-    
-    # Inject context files from session
-    inject_context_files($session, \@messages, debug => $self->{debug});
-    
-    # Load conversation history from session (excluding any system messages from history)
-    my $history = load_conversation_history($session, debug => $self->{debug});
-    
-    # Apply aggressive pre-flight trimming before adding history to messages
-    # This prevents token limit errors on the first API call
-    # Uses model's actual context window for dynamic threshold calculation
-    if ($history && @$history) {
-        # Get model capabilities to determine context window
-        my $model_caps = {};
-        if ($self->{api_manager}) {
-            $model_caps = $self->{api_manager}->get_model_capabilities() || {};
-        }
-        
-        $history = trim_conversation_for_api(
-            $history, 
-            $system_prompt,
-            model_context_window => $model_caps->{max_context_window_tokens} // 128000,
-            max_response_tokens => $model_caps->{max_output_tokens} // 16000,
-            debug => $self->{debug},
-        );
-    }
-    
-    if ($history && @$history) {
-        push @messages, @$history;
-        log_debug('WorkflowOrchestrator', "Loaded " . scalar(@$history) . " messages from history (after pre-flight trim)");
-    }
-    
-    # Add current user message to messages array for API call
-    push @messages, {
-        role => 'user',
-        content => $user_input
-    };
-    
-    # Save user message to session history NOW (before processing)
-    # This ensures the message is persisted even if processing fails
-    if ($session && $session->can('add_message')) {
-        $session->add_message('user', $user_input);
-        log_debug('WorkflowOrchestrator', "Saved user message to session history");
-    }
-    
-    # Get tool definitions from registry (for API)
-    my $tools = $self->{tool_registry}->get_tool_definitions();
-    
-    # Add MCP tool definitions if MCP is active
-    if ($self->{mcp_manager}) {
-        eval {
-            require CLIO::Tools::MCPBridge;
-            my $mcp_defs = CLIO::Tools::MCPBridge->generate_tool_definitions($self->{mcp_manager});
-            if ($mcp_defs && @$mcp_defs) {
-                for my $mcp_def (@$mcp_defs) {
-                    push @$tools, {
-                        type     => 'function',
-                        function => {
-                            name        => $mcp_def->{name},
-                            description => $mcp_def->{description},
-                            parameters  => $mcp_def->{parameters},
-                        },
-                    };
-                }
-                log_debug('WorkflowOrchestrator', "Added " . scalar(@$mcp_defs) . " MCP tool(s) to API definitions");
-            }
-        };
-        log_warning('WorkflowOrchestrator', "MCP tool definition error: $@") if $@;
-    }
-    
-    log_debug('WorkflowOrchestrator', "Loaded " . scalar(@$tools) . " tool definitions");
+    # Build messages array (system prompt + history + user input) and tool definitions
+    my ($messages_ref, $tools) = $self->_build_turn_context($user_input, $session);
+    my @messages = @$messages_ref;
     
     # Main workflow loop
     my $iteration = 0;
@@ -698,733 +588,30 @@ sub process_input {
         
         # Check for API errors
         if (!$api_response || $api_response->{error}) {
-            my $error = $api_response->{error} || "Unknown API error";
-            
-            # Track session-level errors for budget enforcement.
-            # Only count once per distinct error event (not per retry attempt).
-            # Retryable errors count when retries exhaust; non-retryable count immediately.
-            
-            # Check if this is a retryable error (rate limit or server error)
-            if ($api_response->{retryable}) {
-                $retry_count++;
-                
-                # Escalate repeated bare 400s to context trim. When the API returns
-                # "Bad Request" with no details after multiple retries, it may be a
-                # context overflow that the token estimator missed. But if trimming
-                # doesn't help, stop escalating - the problem is something else.
-                my $error_type_check = $api_response->{error_type} || '';
-                if ($error_type_check eq 'bad_request' && $retry_count >= 2) {
-                    $self->{_bad_request_escalations} = ($self->{_bad_request_escalations} || 0) + 1;
-                    
-                    if ($self->{_bad_request_escalations} <= 1) {
-                        # First escalation: try context trim (might be token limit)
-                        log_warning('WorkflowOrchestrator', "Repeated 400 Bad Request ($retry_count attempts) - escalating to context trim (escalation #$self->{_bad_request_escalations})");
-                        $api_response->{error_type} = 'token_limit_exceeded';
-                    } else {
-                        # Already escalated and trimmed but 400s persist. This isn't a
-                        # context size issue. Dump diagnostic state and bail out.
-                        log_error('WorkflowOrchestrator', "Persistent 400 Bad Request after $self->{_bad_request_escalations} context trim attempts ($retry_count total retries). Giving up.");
-                        
-                        _dump_diagnostic(
-                            trigger      => 'persistent_400',
-                            messages     => \@messages,
-                            api_manager  => $self->{api_manager},
-                            iteration    => $iteration,
-                            retry_count  => $retry_count,
-                            error        => $error,
-                            api_response => $api_response,
-                            append       => 1,
-                            extra        => {
-                                escalations => $self->{_bad_request_escalations},
-                            },
-                        );
-                        
-                        return {
-                            success => 0,
-                            error => "Persistent 400 Bad Request from API after $retry_count retries and " .
-                                     "$self->{_bad_request_escalations} context trims. The API backend may be " .
-                                     "experiencing issues. Diagnostic dump written to /tmp/clio_diag_persistent_400.log. " .
-                                     "Try again in a few minutes, or use a different model.",
-                            iterations => $iteration,
-                            tool_calls_made => \@tool_calls_made
-                        };
-                    }
-                }
-                
-                # Determine which retry limit to use based on error type
-                # Rate limits and server errors get more retries; 400s get fewer
-                my $error_type_for_limit = $api_response->{error_type} || '';
-                my $retry_limit;
-                if ($error_type_for_limit eq 'server_error' || $error_type_for_limit eq 'rate_limit') {
-                    $retry_limit = $max_server_retries;
-                } elsif ($error_type_for_limit eq 'bad_request') {
-                    $retry_limit = 4;  # Bare 400: 1 silent retry + 1 trim + bail
-                } else {
-                    $retry_limit = $max_retries;
-                }
-                
-                # Check if we've exceeded max retries for this iteration
-                if ($retry_count > $retry_limit) {
-                    log_error('WorkflowOrchestrator', "Maximum retries ($retry_limit) exceeded for this iteration");
-                    return {
-                        success => 0,
-                        error => "Maximum retries exceeded: $error",
-                        iterations => $iteration,
-                        tool_calls_made => \@tool_calls_made
-                    };
-                }
-                
-                my $retry_delay = $api_response->{retry_after} || 2;
-                
-                # Determine error type for logging
-                my $error_type = $error =~ /rate limit/i ? "rate limit" : "server error";
+            my $result = $self->_handle_api_error($api_response, {
+                messages            => \@messages,
+                retry_count         => \$retry_count,
+                session_error_count => \$session_error_count,
+                iteration           => $iteration,
+                tool_calls_made     => \@tool_calls_made,
+                session             => $session,
+                on_system_message   => $on_system_message,
+                max_retries         => $max_retries,
+                max_server_retries  => $max_server_retries,
+                max_session_errors  => $max_session_errors,
+            });
 
-                # Add 1s buffer on top of server-specified retry delay for rate limits
-                if ($api_response->{error_type} && $api_response->{error_type} eq 'rate_limit' && $retry_delay > 0) {
-                    $retry_delay += 1;
-                }
+            # Fatal - propagate return value from process_input
+            if (ref($result) eq 'HASH') {
+                return $result;
+            }
 
-                my $system_msg = "Temporary $error_type detected. Retrying in ${retry_delay}s... (attempt $retry_count/$retry_limit)";
-
-                # Unsupported parameter (e.g. previous_response_id) - silent instant retry
-                # ResponseHandler already cleared the offending parameter
-                if ($api_response->{error_type} && $api_response->{error_type} eq 'unsupported_param') {
-                    $error_type = "unsupported parameter";
-                    $system_msg = undef;  # Silent retry - user doesn't need to know
-                    $retry_delay = 0;
-                    log_info('WorkflowOrchestrator', "Retrying without unsupported parameter");
-                }
-                # Handle generic 400 - silent retry, no message needed
-                elsif ($api_response->{error_type} && $api_response->{error_type} eq 'bad_request') {
-                    $system_msg = undef;  # Silent retry
-                    log_info('WorkflowOrchestrator', "API 400 Bad Request - retrying silently (attempt $retry_count)");
-                }
-                # Special handling for malformed tool JSON errors
-                # ONE RETRY ONLY: Remove bad message, add guidance with tool schema, let AI fix it
-                elsif ($api_response->{error_type} && $api_response->{error_type} eq 'malformed_tool_json') {
-                    if ($retry_count == 1) {
-                        # First attempt: Remove bad message and provide detailed guidance
-                        
-                        # Remove the malformed assistant message from history
-                        if (@messages && $messages[-1]->{role} eq 'assistant') {
-                            my $removed_msg = pop @messages;
-                            log_info('WorkflowOrchestrator', "Removed malformed assistant message from history");
-                        }
-                        
-                        # Extract the tool name from error if available to provide specific schema
-                        my $failed_tool_name = $api_response->{failed_tool} || 'unknown';
-                        my $tool_schema = '';
-                        
-                        # Get the specific tool's schema to help AI understand the correct format
-                        if ($failed_tool_name ne 'unknown') {
-                            my $tool_def = $self->{tool_registry}->get_tool($failed_tool_name);
-                            if ($tool_def) {
-                                # Extract just the parameters section for clarity
-                                my $params = $tool_def->{function}{parameters};
-                                if ($params) {
-                                    # Use JSON::PP directly for pretty-printed output
-                                    # (CLIO::Util::JSON doesn't expose pretty mode)
-                                    require JSON::PP;
-                                    $tool_schema = "\n\nCorrect schema for $failed_tool_name:\n" . 
-                                                   JSON::PP->new->pretty->encode($params);
-                                }
-                            }
-                        }
-                        
-                        # First retry: provide detailed guidance based on the failed tool
-                        my $tool_guidance = _get_tool_specific_guidance($failed_tool_name);
-                        
-                        my $guidance_msg = {
-                            role => 'system',
-                            content => "ERROR: Your previous tool call had invalid JSON parameters.\n\n" .
-                                       "Common issues:\n" .
-                                       "- Missing parameter values (e.g., \"offset\":, instead of \"offset\":0)\n" .
-                                       "- Unescaped quotes in strings\n" .
-                                       "- Trailing commas\n" .
-                                       "- Missing required parameters\n\n" .
-                                       "ALL parameters must have valid values - no empty/missing values permitted.\n" .
-                                       "$tool_schema\n\n" .
-                                       "$tool_guidance" .
-                                       "Please retry the operation with correct JSON, or try a different approach if the tool call isn't critical."
-                        };
-                        push @messages, $guidance_msg;
-                        
-                        $error_type = "malformed tool JSON";
-                        $system_msg = "AI generated invalid JSON parameters. Removed bad message, adding guidance and retrying... (attempt $retry_count/$max_retries)";
-                        
-                        log_info('WorkflowOrchestrator', "Added JSON formatting guidance for tool: $failed_tool_name");
-                    }
-                    else {
-                        # Second attempt failed: DON'T give up - let agent continue with error context
-                        # Remove the failed assistant message again
-                        if (@messages && $messages[-1]->{role} eq 'assistant') {
-                            pop @messages;
-                            log_info('WorkflowOrchestrator', "Removed second malformed assistant message");
-                        }
-                        
-                        # Add a recovery message that preserves context
-                        my $recovery_msg = {
-                            role => 'system',
-                            content => "TOOL CALL FAILED: The previous tool call still had invalid JSON after correction attempt. " .
-                                       "The tool call has been removed from history. You can:\n" .
-                                       "1. Try a different approach to accomplish the same goal\n" .
-                                       "2. Continue with other work\n" .
-                                       "3. Ask the user for clarification if needed\n\n" .
-                                       "Your conversation context is preserved - continue your work."
-                        };
-                        push @messages, $recovery_msg;
-                        
-                        # Reset retry count and continue the workflow loop
-                        # The agent can recover and try something else
-                        $retry_count = 0;
-                        
-                        log_warning('WorkflowOrchestrator', "Malformed JSON persisted - agent informed, continuing workflow");
-                        
-                        # Don't return error - let the loop continue so AI can recover
-                        # Skip the sleep and retry, just continue to next iteration
-                        next;  # Skip sleep/retry, go to next iteration
-                    }
-                }
-                # Special handling for token limit exceeded errors
-                elsif ($api_response->{error_type} && $api_response->{error_type} eq 'token_limit_exceeded') {
-                    # DIAGNOSTIC: Dump full state BEFORE reactive trim (CLIO_TRIM_DIAG=1 to enable)
-                    _dump_diagnostic(
-                        trigger     => 'trim',
-                        phase       => 'reactive_before',
-                        messages    => \@messages,
-                        api_manager => $self->{api_manager},
-                        iteration   => $iteration,
-                        retry_count => $retry_count,
-                        extra       => {
-                            max_retries        => $max_retries,
-                            max_server_retries => $max_server_retries,
-                            error_message      => $error || '',
-                        },
-                    ) if $ENV{CLIO_TRIM_DIAG};
-
-                    # Checkpoint progress before trimming - creates recovery anchor
-                    _checkpoint_session_progress($session, \@tool_calls_made, $iteration, \@messages)
-                        if $session;
-                    
-                    # Trim conversation history to fit within model's context window
-                    # Remove oldest messages while keeping system prompt, most recent user message, and recent context
-                    # Preserve tool_call/tool_result pairs to avoid orphans
-                    
-                   my $system_prompt = undef;
-                   my @non_system = ();
-                    my $last_user_msg = undef;
-                    my $last_user_idx = -1;
-                   
-                    # Separate system prompt and find most recent user message.
-                    # Previously we preserved the FIRST user message (the original
-                    # session-start task), but in long sessions with multiple task
-                    # transitions, that message is hours stale and causes the agent
-                    # to revert to old work after trimming. The original task is
-                    # already captured in the thread_summary. The most recent user
-                    # message represents the CURRENT work and should be preserved.
-                   for my $msg (@messages) {
-                       if ($msg->{role} eq 'system' && !$system_prompt) {
-                           $system_prompt = $msg;
-                       } else {
-                           push @non_system, $msg;
-                            if ($msg->{role} && $msg->{role} eq 'user') {
-                                $last_user_msg = $msg;
-                                $last_user_idx = $#non_system;
-                           }
-                       }
-                   }
-                    
-                    my $original_count = scalar(@non_system);
-                    
-                    # Build map of tool_call_id -> message indices for smart trimming
-                    my %tool_call_indices = ();  # tool_call_id => index in @non_system
-                    my %tool_result_indices = (); # tool_call_id => index in @non_system
-                    
-                    for (my $i = 0; $i < @non_system; $i++) {
-                        my $msg = $non_system[$i];
-                        # Track tool_calls from assistant messages
-                        if ($msg->{role} && $msg->{role} eq 'assistant' && 
-                            $msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
-                            for my $tc (@{$msg->{tool_calls}}) {
-                                $tool_call_indices{$tc->{id}} = $i if $tc->{id};
-                            }
-                        }
-                        # Track tool_results
-                        elsif ($msg->{role} && $msg->{role} eq 'tool' && $msg->{tool_call_id}) {
-                            $tool_result_indices{$msg->{tool_call_id}} = $i;
-                        }
-                    }
-                    
-                    if ($retry_count == 1) {
-                        # First retry: Keep recent messages that fit in 40% of model context.
-                        # Token-budget based (not message-count) so a session that ran for
-                        # an hour past a handoff keeps the RECENT work, not the stale old work.
-                        my $_retry_caps = $self->{api_manager}
-                            ? ($self->{api_manager}->get_model_capabilities() || {}) : {};
-                        my $max_ctx = $_retry_caps->{max_prompt_tokens} || 128000;
-                        my $keep_budget = int($max_ctx * 0.40);   # 40% of context for recent work
-                        $keep_budget = 40000 if $keep_budget < 40000;
-
-                        # Walk messages from newest to oldest, count tokens, stop at budget
-                        my $kept_tokens = 0;
-                        my $start_idx = $original_count;  # start from end, walk backwards
-                        for (my $i = $original_count - 1; $i >= 0; $i--) {
-                            my $msg_tokens = estimate_tokens($non_system[$i]{content} || '') + 10;
-                            if ($kept_tokens + $msg_tokens <= $keep_budget) {
-                                $kept_tokens += $msg_tokens;
-                                $start_idx = $i;
-                            } else {
-                                last;
-                            }
-                        }
-                        # Always keep at least the last 10 messages
-                        my $min_start = $original_count - 10;
-                        $start_idx = $min_start if $start_idx > $min_start && $min_start >= 0;
-                        $start_idx = 0 if $start_idx < 0;
-                        
-                        # Collect dropped messages for compression BEFORE trimming
-                        my @dropped_messages;
-                        if ($start_idx > 0) {
-                            @dropped_messages = @non_system[0..($start_idx - 1)];
-                        }
-                        
-                        # Find any tool_results in the kept range that need their tool_calls
-                        my @must_include = ();
-                        
-                        # Include last user message if it would be trimmed
-                        if ($last_user_idx >= 0 && $last_user_idx < $start_idx) {
-                            push @must_include, $last_user_idx;
-                        }
-                        
-                        for (my $i = $start_idx; $i < $original_count; $i++) {
-                            my $msg = $non_system[$i];
-                            if ($msg->{role} && $msg->{role} eq 'tool' && $msg->{tool_call_id}) {
-                                my $tc_id = $msg->{tool_call_id};
-                                if (exists $tool_call_indices{$tc_id}) {
-                                    my $tc_idx = $tool_call_indices{$tc_id};
-                                    if ($tc_idx < $start_idx) {
-                                        push @must_include, $tc_idx;
-                                    }
-                                }
-                            }
-                        }
-                        
-                        # Include the essential messages (first user + tool_calls)
-                        if (@must_include) {
-                            @must_include = sort { $a <=> $b } @must_include;
-                            my @preserved = ();
-                            my %seen = ();
-                            for my $idx (@must_include) {
-                                next if $seen{$idx}++;
-                                push @preserved, $non_system[$idx];
-                            }
-                            # Add the trimmed messages
-                            push @preserved, @non_system[$start_idx..-1];
-                            @non_system = @preserved;
-                        } else {
-                            @non_system = @non_system[$start_idx..-1];
-                        }
-                        
-                        # Compress dropped messages into a summary using YaRN
-                        if (@dropped_messages) {
-                            my $compressed = _compress_dropped_for_recovery(\@dropped_messages, $last_user_msg, $session, \@messages);
-                            if ($compressed) {
-                                # Append recovery as the LAST message so the agent sees it as
-                                # the most recent input and must respond to it. Previously this
-                                # was unshifted at the start as a system message, where it got
-                                # merged into the system prompt and ignored.
-                                push @non_system, $compressed;
-                                log_info('WorkflowOrchestrator', "Injected compression summary for " . scalar(@dropped_messages) . " dropped messages");
-                            }
-                        }
-                    } elsif ($retry_count == 2) {
-                        # Second retry: Keep last 25% of messages + most recent user message
-                        my $keep_count = int($original_count / 4);
-                        $keep_count = 5 if $keep_count < 5 && $original_count >= 5;  # Keep at least 5
-                        
-                        # Collect dropped messages for compression
-                        my $drop_count = $original_count - $keep_count;
-                        my @dropped_messages;
-                        if ($drop_count > 0) {
-                            @dropped_messages = @non_system[0..($drop_count - 1)];
-                        }
-                        
-                        my @kept;
-                        if ($keep_count > 0) {
-                            @kept = @non_system[-$keep_count..-1];
-                        }
-                        
-                        # Ensure last user message is preserved
-                        if ($last_user_msg && !grep { $_ == $last_user_msg } @kept) {
-                            unshift @kept, $last_user_msg;
-                        }
-                        @non_system = @kept;
-                        
-                        # Compress dropped messages
-                        if (@dropped_messages) {
-                            my $compressed = _compress_dropped_for_recovery(\@dropped_messages, $last_user_msg, $session, \@messages);
-                            if ($compressed) {
-                                # Append recovery as the last message
-                                push @non_system, $compressed;
-                                log_info('WorkflowOrchestrator', "Injected compression summary for " . scalar(@dropped_messages) . " dropped messages (retry 2)");
-                            }
-                        }
-                    } else {
-                        # Third retry: Keep most recent user message + last 2 messages (minimal context)
-                        # Collect ALL messages for compression (most aggressive)
-                        my @dropped_messages = @non_system;
-                        
-                        my @kept = ();
-                        push @kept, $last_user_msg if $last_user_msg;
-                        
-                        # Add last 2 messages (if not the last user message)
-                        my @last_two = @non_system[-2..-1];
-                        for my $msg (@last_two) {
-                            next if $last_user_msg && $msg == $last_user_msg;
-                            push @kept, $msg;
-                        }
-                        @non_system = @kept;
-                        
-                        # Compress dropped messages - especially important for minimal context
-                        if (@dropped_messages > 2) {
-                            my $compressed = _compress_dropped_for_recovery(\@dropped_messages, $last_user_msg, $session, \@messages);
-                            if ($compressed) {
-                                # Append recovery as the last message
-                                push @non_system, $compressed;
-                                log_info('WorkflowOrchestrator', "Injected compression summary for " . scalar(@dropped_messages) . " dropped messages (retry 3 - minimal)");
-                            }
-                        }
-                    }
-                    
-                    my $trimmed_count = $original_count - scalar(@non_system);
-                    
-                    # Rebuild messages array
-                    @messages = ();
-                    push @messages, $system_prompt if $system_prompt;
-                    push @messages, @non_system;
-                    
-                    # DIAGNOSTIC: Dump full state AFTER reactive trim (CLIO_TRIM_DIAG=1 to enable)
-                    _dump_diagnostic(
-                        trigger     => 'trim',
-                        phase       => 'reactive_after',
-                        messages    => \@messages,
-                        api_manager => $self->{api_manager},
-                        iteration   => $iteration,
-                        retry_count => $retry_count,
-                        extra       => {
-                            original_count => $original_count,
-                            trimmed_count  => $trimmed_count,
-                            kept_count     => scalar(@non_system),
-                            last_user_preserved => ($last_user_msg ? 'YES' : 'NO'),
-                        },
-                    ) if $ENV{CLIO_TRIM_DIAG};
-
-                    $error_type = "token limit exceeded";
-                    my $preserved_info = $last_user_msg ? " (most recent user message preserved)" : "";
-                    my $recovery_info = ($trimmed_count > 0) ? " Context summary injected." : "";
-                    $system_msg = "Token limit exceeded. Trimmed $trimmed_count messages from conversation history and retrying$preserved_info...$recovery_info (attempt $retry_count/$max_retries)";
-                    
-                    log_info('WorkflowOrchestrator', "Trimmed $trimmed_count messages due to token limit (kept " . scalar(@non_system) . " messages, last_user=" . ($last_user_msg ? 'YES' : 'NO') . ")");
-                    
-                    # If nothing was trimmed, context isn't the problem. Don't retry
-                    # endlessly - this was likely escalated from bad_request and the
-                    # real cause is something else (backend issue, content encoding, etc).
-                    if ($trimmed_count == 0) {
-                        log_warning('WorkflowOrchestrator', "Context trim removed 0 messages - problem is not context size. Escalating to non-retryable.");
-                        
-                        _dump_diagnostic(
-                            trigger      => 'persistent_400',
-                            phase        => 'trim_zero',
-                            messages     => \@messages,
-                            api_manager  => $self->{api_manager},
-                            iteration    => $iteration,
-                            retry_count  => $retry_count,
-                            error        => $error,
-                            api_response => $api_response,
-                            append       => 1,
-                            extra        => {
-                                escalations     => $self->{_bad_request_escalations} || 0,
-                                original_count  => $original_count,
-                                trimmed_count   => 0,
-                            },
-                        );
-                        
-                        return {
-                            success => 0,
-                            error => "API error persists after context trim (0 messages removed, $retry_count retries). " .
-                                     "This is likely a backend issue, not a context size problem. " .
-                                     "Diagnostic dump written to /tmp/clio_diag_persistent_400.log. " .
-                                     "Try again in a few minutes, or use a different model.",
-                            iterations => $iteration,
-                            tool_calls_made => \@tool_calls_made
-                        };
-                    }
-                    
-                    # If we've trimmed to minimal context and still failing, give up
-                    if ($retry_count > 2 && scalar(@non_system) <= 3) {
-                        log_debug('WorkflowOrchestrator', "Token limit persists even with minimal context - giving up");
-                        return {
-                            success => 0,
-                            error => "Token limit exceeded even with minimal conversation history. The request may be too large for this model. Try using a model with a larger context window.",
-                            tool_calls_made => \@tool_calls_made
-                        };
-                    }
-                }
-                # Special handling for server errors (502, 503) - exponential backoff
-                elsif ($api_response->{error_type} && $api_response->{error_type} eq 'server_error') {
-                    # Apply exponential backoff: 2s, 4s, 8s, 16s...
-                    my $backoff_multiplier = 2 ** ($retry_count - 1);
-                    $retry_delay = $retry_delay * $backoff_multiplier;
-                    
-                    $error_type = "server error";
-                    $system_msg = "Server temporarily unavailable. Retrying in ${retry_delay}s with exponential backoff... (attempt $retry_count/$max_server_retries)";
-                    
-                    log_info('WorkflowOrchestrator', "Applying exponential backoff for server error: ${retry_delay}s delay");
-                }
-                # Special handling for rate limit errors
-                elsif ($api_response->{error_type} && $api_response->{error_type} eq 'rate_limit') {
-                    # Rate limit already has appropriate retry_after from APIManager
-                    # Just update the error_type for logging
-                    $error_type = "rate limit";
-                    # system_msg already set above
-                }
-                # Special handling for auth recovery (token refreshed silently)
-                elsif ($api_response->{error_type} && $api_response->{error_type} eq 'auth_recovered') {
-                    # Token was refreshed successfully - retry silently without alarming the user
-                    $error_type = "auth recovery";
-                    $system_msg = undef;  # Suppress system message - user doesn't need to know
-                    $retry_delay = 0;     # Instant retry since token is already refreshed
-                    log_info('WorkflowOrchestrator', "Auth token refreshed, retrying request silently");
-                }
-                # Special handling for message structure errors (auto-repair attempted but failed)
-                elsif ($api_response->{error_type} && $api_response->{error_type} eq 'message_structure_error') {
-                    # Message structure was corrupted and couldn't be repaired
-                    # Try to recover by rebuilding from session history
-                    $error_type = "message structure error";
-                    $system_msg = "Message structure error detected. Rebuilding from session history... (attempt $retry_count/$max_retries)";
-                    
-                    # Reload conversation history from session to get clean state
-                    if ($session && $session->can('get_conversation_history')) {
-                        my $fresh_history = $session->get_conversation_history() || [];
-                        
-                        # Rebuild messages: system prompt + fresh history + current user message
-                        my $system_msg_content = $messages[0]->{role} eq 'system' ? $messages[0] : undef;
-                        my $current_user_msg = $messages[-1]->{role} eq 'user' ? $messages[-1] : undef;
-                        
-                        @messages = ();
-                        push @messages, $system_msg_content if $system_msg_content;
-                        push @messages, @$fresh_history;
-                        push @messages, $current_user_msg if $current_user_msg && 
-                            (!@$fresh_history || $fresh_history->[-1]->{content} ne $current_user_msg->{content});
-                        
-                        log_info('WorkflowOrchestrator', "Rebuilt messages from session history (" . scalar(@messages) . " messages)");
-                    }
-                    
-                    $retry_delay = 0;  # Instant retry after rebuild
-                }
-                
-                # Call system message callback if provided
-                if ($system_msg && $on_system_message) {
-                    eval { $on_system_message->($system_msg); };
-                    log_debug('WorkflowOrchestrator', "UI callback error: $@");
-                } elsif ($system_msg) {
-                    log_info('WorkflowOrchestrator', "Retryable $error_type detected, retrying in ${retry_delay}s on next iteration (attempt $retry_count/$max_retries)");
-                }
-                
-                # Wait the full retry_delay duration before retrying
-                # Use a countdown loop that sleeps in 1s chunks and checks
-                # for user interrupt between each chunk
-                if ($retry_delay > 0) {
-                    log_debug('WorkflowOrchestrator', "Waiting ${retry_delay}s before retry...");
-                    my $remaining = $retry_delay;
-                    while ($remaining > 0) {
-                        my $chunk = ($remaining > 1) ? 1 : $remaining;
-                        sleep($chunk);
-                        $remaining -= $chunk;
-                        
-                        # Check for user interrupt between sleep chunks
-                        if ($self->_check_for_user_interrupt($session)) {
-                            log_info('WorkflowOrchestrator', "Retry wait interrupted by user");
-                            $self->_handle_interrupt($session, \@messages);
-                            last;
-                        }
-                    }
-                    log_debug('WorkflowOrchestrator', "Retry delay complete, sending request...");
-                }
-                
-                # Don't increment iteration counter - this failed attempt doesn't count
+            # Retryable - don't count this as a real iteration
+            if ($result eq 'retry') {
                 $iteration--;
-                # Continue to next iteration
-                next;
             }
-            
-            # Non-retryable error - reset retry counter for next iteration
-            $retry_count = 0;
-            
-            # Count non-retryable errors against session budget
-            $session_error_count++;
-            $session->{_error_count} = $session_error_count;
-            if ($session_error_count > $max_session_errors) {
-                log_error('WorkflowOrchestrator', "Session error budget exhausted ($session_error_count errors). Stopping to prevent cascading failures.");
-                return {
-                    success => 0,
-                    error => "Session error limit reached ($max_session_errors errors). Please start a new request or session. Last error: $error",
-                    iterations => $iteration,
-                    tool_calls_made => \@tool_calls_made
-                };
-            }
-            
-            # Track consecutive identical errors to prevent infinite loops
-            if ($error eq $self->{last_error}) {
-                $self->{consecutive_errors}++;
-                log_debug('WorkflowOrchestrator', "Consecutive error count: $self->{consecutive_errors}/$self->{max_consecutive_errors}");
-            } else {
-                $self->{consecutive_errors} = 1;
-                $self->{last_error} = $error;
-            }
-            
-            # Break infinite loop if same error repeats too many times
-            if ($self->{consecutive_errors} >= $self->{max_consecutive_errors}) {
-                log_debug('WorkflowOrchestrator', "Same error occurred $self->{consecutive_errors} times in a row. Breaking loop.");
-                log_debug('WorkflowOrchestrator', "Persistent error: $error");
-                log_debug('WorkflowOrchestrator', "This likely indicates a bug in the request construction or API incompatibility.");
-                log_debug('WorkflowOrchestrator', "Check /tmp/clio_json_errors.log for details.");
-                
-                # Reset counters and return failure
-                $self->{consecutive_errors} = 0;
-                $self->{last_error} = '';
-                return {
-                    success => 0,
-                    error => $error,
-                    content => '',
-                    iterations => $iteration,
-                    tool_calls_made => \@tool_calls_made
-                };
-            }
-            
-            # Remove the last assistant message from @messages array if it exists
-            # This prevents issues where a bad AI response keeps triggering the same error
-            # The AI will see the error message and try a different approach
-            if (@messages && $messages[-1]->{role} eq 'assistant') {
-                my $removed_msg = pop @messages;
-                log_warning('WorkflowOrchestrator', "Removed bad assistant message due to API error: $error");
-                
-                # Show what was removed for debugging
-                if ($self->{debug}) {
-                    my $content_preview = substr($removed_msg->{content} // '', 0, 100);
-                    log_debug('WorkflowOrchestrator', "Removed message content: $content_preview...");
-                    if ($removed_msg->{tool_calls}) {
-                        log_debug('WorkflowOrchestrator', "Removed message had " . scalar(@{$removed_msg->{tool_calls}}) . " tool_calls");
-                    }
-                }
-            }
-            
-            # Check if error is token/context limit related
-            # IMPORTANT: Be precise here - we must NOT match:
-            # - Auth errors mentioning "token" (401/403 with "token expired")
-            # - Rate limit errors mentioning "limit" (429)
-            # - Network errors (599 Internal Exception)
-            # We ONLY want to match actual context window exceeded errors
-            my $is_token_limit_error = (
-                $error =~ /context.length.exceeded/i ||
-                $error =~ /maximum.context.length/i ||
-                $error =~ /token.limit.exceeded/i ||
-                $error =~ /too.many.tokens/i ||
-                $error =~ /exceeds?\s+(?:the\s+)?(?:maximum|max)\s+(?:number\s+of\s+)?tokens/i ||
-                $error =~ /input.*too\s+(?:long|large)/i ||
-                $error =~ /reduce.*(?:prompt|input|context)/i
-            );
-            
-            # Only add error message if it's not a token limit error
-            # Token limit errors need more aggressive context trimming, not error messages
-            # (error messages just make the problem worse)
-            if (!$is_token_limit_error) {
-                # Add error message to conversation so AI knows what went wrong
-                # Format it as a user message (to maintain alternation)
-                push @messages, {
-                    role => 'user',
-                    content => "SYSTEM ERROR: Your previous response triggered an API error and was removed.\n\n" .
-                               "Error details: $error\n\n" .
-                               "Please try a different approach. Avoid repeating the same action that caused this error."
-                };
-                
-                log_info('WorkflowOrchestrator', "Added error message to conversation, continuing workflow");
-            } else {
-                # Token limit error - trim messages instead of adding error
-                log_warning('WorkflowOrchestrator', "Token limit error detected. Using smart context trimming...");
-                
-                # Smart trim: Keep system message + recent complete message groups
-                # A "message group" is either:
-                # - A user message
-                # - An assistant message followed by all its tool results (if any)
-                # This preserves tool call/result pairs to avoid API errors
-                
-                my $system_msg = undef;
-                my @non_system = ();
-                for my $msg (@messages) {
-                    if ($msg->{role} && $msg->{role} eq 'system') {
-                        $system_msg = $msg;
-                    } else {
-                        push @non_system, $msg;
-                    }
-                }
-                
-                # Group messages into logical units
-                my @groups = ();  # Each group is an arrayref of messages
-                my $current_group = [];
-                
-                for (my $i = 0; $i < @non_system; $i++) {
-                    my $msg = $non_system[$i];
-                    
-                    if ($msg->{role} eq 'user') {
-                        # User messages start a new group (except first)
-                        if (@$current_group > 0) {
-                            push @groups, $current_group;
-                        }
-                        $current_group = [$msg];
-                    } elsif ($msg->{role} eq 'assistant') {
-                        # Assistant messages either continue or start a group
-                        if (@$current_group > 0 && $current_group->[-1]{role} eq 'user') {
-                            # Continue the current group (user -> assistant)
-                            push @$current_group, $msg;
-                        } else {
-                            # Start a new group
-                            if (@$current_group > 0) {
-                                push @groups, $current_group;
-                            }
-                            $current_group = [$msg];
-                        }
-                    } elsif ($msg->{role} eq 'tool') {
-                        # Tool results always belong to the current group
-                        push @$current_group, $msg;
-                    } else {
-                        # Unknown role - add to current group
-                        push @$current_group, $msg;
-                    }
-                }
-                # Don't forget the last group
-                if (@$current_group > 0) {
-                    push @groups, $current_group;
-                }
-                
-                # Keep last 3 complete groups (typically user + assistant + tools)
-                my $keep_count = 3;
-                $keep_count = scalar(@groups) if $keep_count > scalar(@groups);
-                
-                my @kept_groups = @groups[-$keep_count..-1] if $keep_count > 0;
-                
-                # Rebuild messages array
-                @messages = ();
-                push @messages, $system_msg if $system_msg;
-                for my $group (@kept_groups) {
-                    push @messages, @$group;
-                }
-                
-                my $removed_groups = scalar(@groups) - $keep_count;
-                log_info('WorkflowOrchestrator', "Smart trim: kept $keep_count of " . scalar(@groups) . " message groups (removed $removed_groups)");
-            }
-            
-            # Continue to next iteration - let AI try again with the error context
+
+            # Both 'retry' and 'continue' proceed to next loop iteration
             next;
         }
         
@@ -1498,613 +685,25 @@ sub process_input {
         }
 
         if ($api_response->{tool_calls} && @{$api_response->{tool_calls}}) {
-            # Validate tool_calls arguments JSON before adding to history
-            # This prevents malformed JSON from contaminating conversation history
-            # which would cause API rejection on the next request
-            my @validated_tool_calls = ();
-            my $had_validation_errors = 0;
-            
-            for my $tool_call (@{$api_response->{tool_calls}}) {
-                my $tool_name = $tool_call->{function}->{name} || 'unknown';
-                my $arguments_str = $tool_call->{function}->{arguments} || '{}';
-                
-                # Attempt to parse arguments JSON
-                # Handle UTF-8: JSON::PP expects bytes, not Perl's internal UTF-8 strings
-                my $arguments_valid = 0;
-                eval {
-                    use CLIO::Util::JSON qw(decode_json);
-                    use Encode qw(encode_utf8);
-                    
-                    # Convert to UTF-8 bytes if it's a wide string
-                    my $json_bytes = utf8::is_utf8($arguments_str) ? encode_utf8($arguments_str) : $arguments_str;
-                    my $parsed = decode_json($json_bytes);
-                    $arguments_valid = 1;
-                };
-                
-                if ($@) {
-                    # JSON parsing failed - attempt repair first, only log error if repair fails
-                    my $error = $@;
-                    
-                    # Attempt to repair common JSON errors
-                    my $repaired = repair_tool_call_json($arguments_str, debug => $self->{debug});
-                    
-                    if ($repaired) {
-                        # Repair succeeded - log at DEBUG level (user doesn't need to know)
-                        log_debug('WorkflowOrchestrator', "Repaired malformed JSON for tool '$tool_name'");
-                        $tool_call->{function}->{arguments} = $repaired;
-                        push @validated_tool_calls, $tool_call;
-                    } else {
-                        # Repair failed - log at DEBUG level (recoverable: error fed back to AI for retry)
-                        $had_validation_errors = 1;
-                        log_debug('WorkflowOrchestrator', "Invalid JSON in tool call arguments for '$tool_name': $error");
-                        log_debug('WorkflowOrchestrator', "Malformed arguments: " . substr($arguments_str, 0, 200));
-                        log_debug('WorkflowOrchestrator', "Could not repair JSON for tool '$tool_name' - tool call will be skipped");
-                        
-                        # Add an error message to conversation explaining what happened
-                        push @messages, {
-                            role => 'tool',
-                            tool_call_id => $tool_call->{id},
-                            name => $tool_name,
-                            content => "ERROR: Tool call rejected due to invalid JSON in arguments. The AI generated malformed parameters that could not be parsed. Please retry with valid JSON."
-                        };
-                    }
-                } else {
-                    # JSON is valid - add to validated list
-                    push @validated_tool_calls, $tool_call;
-                }
+            my $tool_round = $self->_prepare_tool_round($api_response, \@messages, $session);
+            unless ($tool_round) {
+                next;  # All tool calls rejected - skip to next iteration
             }
-            
-            # Replace tool_calls with validated version
-            $api_response->{tool_calls} = \@validated_tool_calls;
-            
-            # If all tool calls were rejected, skip tool execution entirely
-            if (@validated_tool_calls == 0) {
-                log_debug('WorkflowOrchestrator', "All tool calls were rejected due to invalid JSON - skipping tool execution");
-                
-                # Add simple text response to continue conversation
-                push @messages, {
-                    role => 'assistant',
-                    content => $api_response->{content} || "I encountered an error with my tool calls. Let me try a different approach."
-                };
-                
-                # Skip tool execution - continue to next iteration
-                next;
-            }
-            
-            log_debug('WorkflowOrchestrator', "Processing " . scalar(@validated_tool_calls) . " validated tool calls" .
-                ($had_validation_errors ? " (some were rejected/repaired)" : "") . "\n");
-            
-            # Add assistant's message with VALIDATED tool_calls to conversation
-            # Include reasoning_details if present (MiniMax interleaved thinking
-            # requires them preserved in conversation history for chain-of-thought continuity)
-            my $assistant_msg = {
-                role => 'assistant',
-                content => $api_response->{content},
-                tool_calls => \@validated_tool_calls
-            };
-            if ($api_response->{reasoning_details}) {
-                $assistant_msg->{reasoning_details} = $api_response->{reasoning_details};
-            }
-            push @messages, $assistant_msg;
-            
-            # DELAYED SAVE: Do NOT save assistant message with tool_calls yet.
-            # 
-            # REASONING (prevents orphaned tool_calls on interrupt):
-            # If we save the assistant message now, but tool execution is interrupted (Ctrl-C),
-            # the tool results never get saved, leaving orphaned tool_calls in history.
-            # On resume, these orphans cause API errors.
-            #
-            # SOLUTION: Delay saving the assistant message until AFTER the first tool
-            # result is saved. This ensures assistant message + tool results are saved
-            # together as an atomic unit, avoiding orphans entirely.
-            #
-            # If user interrupts during tool execution:
-            # - Assistant message + tool_calls NOT yet saved
-            # - History naturally ends at previous turn (clean state)
-            # - No orphans, no cleanup needed on resume
-            #
-            # The flag below is used in tool result saving (see ~line 780) to ensure
-            # the assistant message is saved when the first tool result completes.
-            
-            $assistant_msg_pending = {
-                role => 'assistant',
-                content => $api_response->{content} // '',
-                tool_calls => \@validated_tool_calls  # Use validated version
-            };
-            if ($api_response->{reasoning_details}) {
-                $assistant_msg_pending->{reasoning_details} = $api_response->{reasoning_details};
-            }
-            
-            log_debug('WorkflowOrchestrator', "Delaying save of assistant message with tool_calls until first tool result completes");
-            
-            # Classify tools by execution requirements (SAM pattern + CLIO enhancements)
-            # - BLOCKING: Must complete before workflow continues (interactive tools)
-            # - SERIAL: Execute one-at-a-time but don't block workflow
-            # - PARALLEL: Execute concurrently (default)
-            #
-            # isInteractive parameter handling (Option C - hybrid approach):
-            # 1. Check parameter: $params->{isInteractive} (per-call override)
-            # 2. Fall back to metadata: $tool->{is_interactive} (default)
-            # 3. Default to false if neither specified
-            my @blocking_tools = ();
-            my @serial_tools = ();
-            my @parallel_tools = ();
-            
-            for my $tool_call (@{$api_response->{tool_calls}}) {
-                my $tool_name = $tool_call->{function}->{name} || 'unknown';
-                
-                # Check if tool_name is an alias for an operation
-                # This handles cases where AI calls "file_search" instead of "file_operations" with operation="file_search"
-                my $alias_info = $self->{tool_registry}->get_alias_info($tool_name);
-                if ($alias_info) {
-                    log_debug('WorkflowOrchestrator', "Alias detected: '$tool_name' -> '$alias_info->{tool}' with operation='$alias_info->{operation}'");
-                    # Rewrite the tool call
-                    $tool_call->{function}->{name} = $alias_info->{tool};
-                    $tool_name = $alias_info->{tool};
-                    
-                    # Parse existing args and inject operation if not already set
-                    my $args_str = $tool_call->{function}->{arguments};
-                    if ($args_str) {
-                        eval {
-                            my $args = decode_json($args_str);
-                            unless (exists $args->{operation}) {
-                                $args->{operation} = $alias_info->{operation};
-                                $tool_call->{function}->{arguments} = encode_json($args);
-                                log_debug('WorkflowOrchestrator', "Injected operation='$alias_info->{operation}' into args");
-                            }
-                        };
-                    } else {
-                        # No arguments provided - create with operation
-                        $tool_call->{function}->{arguments} = encode_json({ operation => $alias_info->{operation} });
-                        log_debug('WorkflowOrchestrator', "Created args with operation='$alias_info->{operation}'");
-                    }
-                }
-                
-                my $tool = $self->{tool_registry}->get_tool($tool_name);
-                
-                # Parse tool arguments to check for isInteractive parameter
-                my $params = {};
-                if ($tool_call->{function}->{arguments}) {
-                    eval {
-                        my $json_str = $tool_call->{function}->{arguments};
+            my @ordered_tool_calls = @{$tool_round->{ordered_tools}};
+            my $assistant_msg_pending = $tool_round->{pending_msg};
 
-                        # Debug: Show original arguments before any processing
-                        if ($self->{debug}) {
-                            my $preview = substr($json_str, 0, 300);
-                            log_debug('WorkflowOrchestrator', "Original arguments (first 300 chars): $preview");
-                        }
 
-                        # Check for Anthropic XML format first
-                        # Claude sometimes uses native XML instead of JSON for tool calls
-                        if (is_anthropic_xml_format($json_str)) {
-                            log_info('WorkflowOrchestrator', "Detected Anthropic XML format, converting to JSON");
-                            $json_str = parse_anthropic_xml_to_json($json_str, $self->{debug});
-                            log_debug('WorkflowOrchestrator', "Converted XML to JSON: " . substr($json_str, 0, 300));
-                        } else {
-                            # Standard JSON path - try repair if needed
-                            $json_str = repair_malformed_json($json_str, $self->{debug});
+            $self->_execute_tool_round(
+                ordered_tools   => \@ordered_tool_calls,
+                pending_msg     => \$assistant_msg_pending,
+                messages        => \@messages,
+                session         => $session,
+                api_response    => $api_response,
+                iteration       => $iteration,
+                tool_calls_made => \@tool_calls_made,
+                on_tool_end     => $on_tool_end_from_ui,
+            );
 
-                            # Debug: Show repaired JSON
-                            if ($self->{debug}) {
-                                my $preview = substr($json_str, 0, 300);
-                                log_debug('WorkflowOrchestrator', "Repaired JSON arguments (first 300 chars): $preview");
-                            }
-                        }
-                        
-                        # Encode to UTF-8 bytes to avoid "Wide character in subroutine entry"
-                        my $json_bytes = encode_utf8($json_str);
-                        
-                        $params = decode_json($json_bytes);
-                    };
-                    if ($@) {
-                        my $tool_name = $tool_call->{function}->{name} || 'unknown';
-                        my $error = $@;
-                        my $args_full = $tool_call->{function}->{arguments} || '';
-                        
-                        log_error('WorkflowOrchestrator', "Failed to parse arguments for tool '$tool_name': $error");
-                        log_error('WorkflowOrchestrator', "Full arguments:\n$args_full");
-                        
-                        # Instead of skipping (which creates orphaned tool_use), create an error tool_result
-                        # This keeps tool_use/tool_result pairs intact and prevents infinite loops
-                        my $error_message = "JSON parsing failed for tool '$tool_name': $error\nArguments received:\n$args_full";
-                        
-                        # Add error result to conversation immediately
-                        push @messages, {
-                            role => 'tool',
-                            tool_call_id => $tool_call->{id},
-                            name => $tool_name,
-                            content => $error_message
-                        };
-                        
-                        # Save error result to session
-                        if ($session && $session->can('add_message')) {
-                            eval {
-                                # Save the assistant message with tool_calls on FIRST tool result (even if error)
-                                if ($assistant_msg_pending) {
-                                    $session->add_message(
-                                        'assistant',
-                                        $assistant_msg_pending->{content},
-                                        { tool_calls => $assistant_msg_pending->{tool_calls} }
-                                    );
-                                    log_debug('WorkflowOrchestrator', "Saved assistant message with tool_calls to session (on error result)");
-                                    $assistant_msg_pending = undef;
-                                }
-                                
-                                # Save the error result
-                                $session->add_message(
-                                    'tool',
-                                    $error_message,
-                                    { tool_call_id => $tool_call->{id} }
-                                );
-                                log_debug('WorkflowOrchestrator', "Saved error tool result to session");
-                            };
-                            if ($@) {
-                                log_debug('WorkflowOrchestrator', "Session save error (non-critical): $@");
-                            }
-                        }
-                        
-                        # Skip to next tool call (error has been recorded, no execution needed)
-                        next;
-                    }
-                }
-                
-                # Determine if tool is interactive (hybrid: parameter overrides metadata)
-                my $is_interactive = 0;
-                if (exists $params->{isInteractive}) {
-                    $is_interactive = $params->{isInteractive} ? 1 : 0;
-                    log_debug('WorkflowOrchestrator', "Tool $tool_name isInteractive parameter: $is_interactive");
-                } elsif ($tool && $tool->{is_interactive}) {
-                    $is_interactive = 1;
-                    log_debug('WorkflowOrchestrator', "Tool $tool_name default is_interactive: $is_interactive");
-                }
-                
-                # Interactive tools are BLOCKING (must wait for user I/O)
-                my $requires_blocking = ($tool && $tool->{requires_blocking}) || $is_interactive;
-                
-                if ($tool) {
-                    if ($requires_blocking) {
-                        push @blocking_tools, $tool_call;
-                        log_debug('WorkflowOrchestrator', "Classified $tool_name as BLOCKING (interactive=$is_interactive)");
-                    } elsif ($tool->{requires_serial}) {
-                        push @serial_tools, $tool_call;
-                        log_debug('WorkflowOrchestrator', "Classified $tool_name as SERIAL");
-                    } else {
-                        push @parallel_tools, $tool_call;
-                        log_debug('WorkflowOrchestrator', "Classified $tool_name as PARALLEL");
-                    }
-                } else {
-                    # Unknown tool - treat as parallel (will fail safely)
-                    push @parallel_tools, $tool_call;
-                    log_warning('WorkflowOrchestrator', "Unknown tool $tool_name, treating as PARALLEL");
-                }
-            }
-            
-            # Separate user_collaboration from other blocking tools
-            # user_collaboration MUST execute LAST to ensure:
-            # 1. All other tool results are available when showing to user
-            # 2. User sees correct state before responding
-            # 3. No race conditions between tool execution and user input
-            my @user_collaboration_tools = ();
-            my @other_blocking_tools = ();
-            
-            for my $tool_call (@blocking_tools) {
-                my $tool_name = $tool_call->{function}->{name} || 'unknown';
-                if ($tool_name eq 'user_collaboration') {
-                    push @user_collaboration_tools, $tool_call;
-                } else {
-                    push @other_blocking_tools, $tool_call;
-                }
-            }
-            
-            # Combine in execution order: 
-            # 1. Other blocking tools (non-user_collaboration interactive tools)
-            # 2. Serial tools
-            # 3. Parallel tools  
-            # 4. user_collaboration tools (ALWAYS LAST)
-            my @ordered_tool_calls = (@other_blocking_tools, @serial_tools, @parallel_tools, @user_collaboration_tools);
-            
-            log_debug('WorkflowOrchestrator', "Execution order: " . scalar(@other_blocking_tools) . " other blocking, " .
-                scalar(@serial_tools) . " serial, " .
-                scalar(@parallel_tools) . " parallel, " .
-                scalar(@user_collaboration_tools) . " user_collaboration (LAST)\n");
-            
-            # Flush UI streaming buffer BEFORE executing any tools
-            # This ensures agent text appears BEFORE tool execution output
-            # Part of the handshake mechanism to fix message ordering (Bug 1 & 3)
-            if ($self->{ui} && $self->{ui}->can('flush_output_buffer')) {
-                log_debug('WorkflowOrchestrator', "Flushing UI buffer before tool execution");
-                $self->{ui}->flush_output_buffer();
-            }
-            # Also flush STDOUT directly as a fallback
-            STDOUT->flush() if STDOUT->can('flush');
-            $| = 1;
-            
-            # Set flag to prevent UI pagination from clearing tool headers
-            $self->{ui}->{_in_tool_execution} = 1 if $self->{ui};
-            
-            # Pre-analyze tool calls to know how many of each tool type will execute
-            my %tool_call_count;
-            foreach my $i (0..$#ordered_tool_calls) {
-                my $tool = $ordered_tool_calls[$i]->{function}->{name} || 'unknown';
-                $tool_call_count{$tool}++;
-            }
-            
-            # Track if this is the first tool call in the iteration
-            my $first_tool_call = 1;
-            my $current_tool = '';
-            
-            # Execute tools in classified order with index tracking
-            for my $i (0..$#ordered_tool_calls) {
-                # Check for user interrupt between tool executions
-                # This allows any keypress to abort remaining tools mid-iteration
-                if ($self->{_interrupt_pending} || $self->_check_and_handle_interrupt($session, \@messages)) {
-                    log_info('WorkflowOrchestrator', "Interrupt detected between tool executions, skipping remaining tools");
-                    last;  # Break out of tool execution loop
-                }
-                
-                my $tool_call = $ordered_tool_calls[$i];
-                my $tool_name = $tool_call->{function}->{name} || 'unknown';
-                my $tool_display_name = uc($tool_name);
-                $tool_display_name =~ s/_/ /g;
-                
-                log_debug('WorkflowOrchestrator', "Executing tool: $tool_name");
-                
-                # Handle first tool call: ensure proper line separation from agent content
-                # The streaming callback prints "CLIO: " immediately on first chunk
-                if ($first_tool_call) {
-                    # Stop spinner BEFORE any tool output
-                    # The spinner runs during AI API calls and must be stopped before
-                    # we print tool execution messages to prevent spinner characters
-                    # from appearing in the output
-                    if ($self->{spinner} && $self->{spinner}->can('stop')) {
-                        $self->{spinner}->stop();
-                        log_debug('WorkflowOrchestrator', "Stopped spinner before tool output");
-                    }
-                    
-                    my $content = $api_response->{content} // '';
-                    log_debug('WorkflowOrchestrator', "First tool call - content: '" . substr($content, 0, 100) . "'");
-                    
-                    # No need to clear anything - "CLIO: " prefix is only printed when there's actual content
-                    # If this is a tool-only response, no prefix was printed, so nothing to clear
-                    
-                    $first_tool_call = 0;
-                }
-                
-                # Handle tool group transitions (new tool type starting)
-                if ($tool_name ne $current_tool) {
-                    # Transitioning to a new tool type
-                    # Reset system message flag when tool output starts
-                    if ($self->{ui}) {
-                        $self->{ui}->{_last_was_system_message} = 0;
-                    }
-                    
-                    my $is_first_tool = ($current_tool eq '');
-                    $self->{formatter}->display_tool_header($tool_name, $tool_display_name, $is_first_tool);
-                    $current_tool = $tool_name;
-                }
-                
-                # Parse tool arguments for display and diff capture
-                my $tool_args = eval { decode_json($tool_call->{function}->{arguments} || '{}') };
-                my $tool_operation = ($tool_args && $tool_args->{operation}) ? $tool_args->{operation} : '';
-                
-                # For terminal_operations: show the command BEFORE execution
-                if ($tool_name eq 'terminal_operations') {
-                    my $cmd_preview = ($tool_args && $tool_args->{command}) ? $tool_args->{command} : undef;
-                   if ($cmd_preview) {
-                       $self->{formatter}->display_action_detail(
-                            $cmd_preview, 0, 0
-                       );
-                   }
-                }
-                
-                # Capture file state before write operations for diff display
-                my $diff_before = $self->_capture_file_before($tool_name, $tool_operation, $tool_args);
-                
-                # Execute tool to get the result
-                my $tool_result = $self->_execute_tool($tool_call);
-                
-                # Notify UI that tool execution is complete
-                if ($on_tool_end_from_ui) {
-                    eval { $on_tool_end_from_ui->($tool_name); };
-                }
-                
-                # Extract action_description from tool result
-                my $action_detail = '';
-                my $result_data;  # Declare here so it's available later
-                my $is_error = 0;
-                my $enhanced_error_for_ai = '';  # Enhanced error with schema guidance
-                if ($tool_result) {
-                    $result_data = eval { 
-                        # Tool result might be JSON string or already decoded
-                        ref($tool_result) eq 'HASH' ? $tool_result : decode_json($tool_result);
-                    };
-                    if ($result_data && ref($result_data) eq 'HASH') {
-                        # Check if this is an error result
-                        if (exists $result_data->{success} && !$result_data->{success}) {
-                            $is_error = 1;
-                            # For errors, create a friendly message using formatter
-                            my $error_msg = $result_data->{error} || 'Unknown error';
-                            $action_detail = $self->{formatter}->format_error($error_msg);
-                            
-                            # ENHANCEMENT: Provide schema guidance to help agent recover
-                            # Get the tool definition for schema information
-                            my $tool_obj = $self->{tool_registry}->get_tool($tool_name);
-                            my $tool_def = undef;
-                            if ($tool_obj && $tool_obj->can('get_tool_definition')) {
-                                $tool_def = $tool_obj->get_tool_definition();
-                            }
-                            
-                            # Get the attempted parameters (what agent tried)
-                            my $attempted_params = {};
-                            if ($tool_call->{function}->{arguments}) {
-                                eval {
-                                    $attempted_params = decode_json($tool_call->{function}->{arguments});
-                                };
-                            }
-                            
-                            # Use error guidance system to enhance the error message
-                            $enhanced_error_for_ai = $self->{error_guidance}->enhance_tool_error(
-                                error => $error_msg,
-                                tool_name => $tool_name,
-                                tool_definition => $tool_def,
-                                attempted_params => $attempted_params
-                            );
-                            
-                            log_debug('WorkflowOrchestrator', "Enhanced error for AI: " . substr($enhanced_error_for_ai, 0, 100) . "...");
-                        } elsif ($result_data->{action_description}) {
-                            $action_detail = $result_data->{action_description};
-                        } elsif ($result_data->{metadata} && ref($result_data->{metadata}) eq 'HASH' && 
-                                 $result_data->{metadata}->{action_description}) {
-                            $action_detail = $result_data->{metadata}->{action_description};
-                        }
-                    }
-                }
-                
-                # Display action detail if provided
-                if ($action_detail) {
-                    # Count remaining calls to this tool after current index
-                    my $remaining_same_tool = 0;
-                    for my $j ($i+1..$#ordered_tool_calls) {
-                        if ($ordered_tool_calls[$j]->{function}->{name} eq $tool_name) {
-                            $remaining_same_tool++;
-                        }
-                    }
-                    
-                    # Check for expanded_content (multi-line detail like agent messages)
-                    my $expanded_content;
-                    if ($result_data && ref($result_data) eq 'HASH') {
-                        $expanded_content = $result_data->{expanded_content};
-                    }
-                    
-                    $self->{formatter}->display_action_detail($action_detail, $is_error, $remaining_same_tool, $expanded_content);
-                }
-                
-                # Display diff for file-writing operations
-                if ($diff_before && !$is_error) {
-                    $self->_display_file_diff($diff_before, $tool_name, $tool_operation, $tool_args);
-                }
-                
-                # Extract the actual output for the AI (not the UI metadata)
-                # For ERRORS: Use the enhanced error message with schema guidance
-                # For SUCCESS: Use the regular output
-                my $ai_content = $tool_result;
-                if ($is_error && $enhanced_error_for_ai) {
-                    # Use enhanced error with schema guidance
-                    $ai_content = $enhanced_error_for_ai;
-                } elsif ($result_data && ref($result_data) eq 'HASH' && exists $result_data->{output}) {
-                    $ai_content = $result_data->{output};
-                }
-                
-                # Track tool calls made
-                push @tool_calls_made, {
-                    name => $tool_name,
-                    arguments => $tool_call->{function}->{arguments},
-                    result => $ai_content  # Use the actual output, not the wrapper
-                };
-                
-                # Sanitize tool result content to prevent JSON encoding issues (emojis, etc.)
-                my $sanitized_content = sanitize_text($ai_content);
-                
-                # Content MUST be a string, not a number!
-                # GitHub Copilot API requires content to be string type.
-                # If tool returns a number (e.g., file size, boolean), stringify it.
-                $sanitized_content = "$sanitized_content" if defined $sanitized_content;
-                
-                # Add tool result to conversation (AI sees the output, not the UI wrapper)
-                push @messages, {
-                    role => 'tool',
-                    tool_call_id => $tool_call->{id},
-                    name => $tool_name,
-                    content => $sanitized_content
-                };
-                
-                # Save tool result to session immediately after adding to conversation
-                # This ensures that if user presses Ctrl-C before next iteration,
-                # the tool execution result is preserved in session history
-                #
-                # ATOMIC SAVING: On first tool result, also save the assistant message with tool_calls.
-                # This ensures they're saved together, preventing orphaned tool_calls on interrupt.
-                if ($session && $session->can('add_message')) {
-                    eval {
-                        # Save the assistant message with tool_calls on FIRST tool result
-                        # This makes the assistant + tool results atomic (all or nothing)
-                        if ($assistant_msg_pending) {
-                            $session->add_message(
-                                'assistant',
-                                $assistant_msg_pending->{content},
-                                { tool_calls => $assistant_msg_pending->{tool_calls} }
-                            );
-                            log_debug('WorkflowOrchestrator', "Saved assistant message with tool_calls to session (on first tool result)");
-                            $assistant_msg_pending = undef;  # Mark as saved
-                        }
-                        
-                        # Now save the tool result
-                        $session->add_message(
-                            'tool',
-                            $sanitized_content,
-                            { tool_call_id => $tool_call->{id} }
-                        );
-                        log_debug('WorkflowOrchestrator', "Saved tool result to session (tool_call_id=" . $tool_call->{id} . ")");
-                    };
-                    if ($@) {
-                        log_warning('WorkflowOrchestrator', "Failed to save tool result: $@");
-                    }
-                }
-                
-                log_debug('WorkflowOrchestrator', "Tool result added to conversation (sanitized)");
-            }
-            
-            # Clear flag that prevented UI pagination from clearing tool headers
-            $self->{ui}->{_in_tool_execution} = 0 if $self->{ui};
-            
-            # Capture process stats after tool execution phase
-            $self->{process_stats}->capture('after_tools', {
-                iteration => $iteration,
-                tool_count => scalar(@ordered_tool_calls),
-            }) if $self->{process_stats};
-            
-            # Reset UI streaming state so next iteration shows new CLIO: prefix
-            # This ensures proper message formatting after tool execution
-            if ($self->{ui} && $self->{ui}->can('reset_streaming_state')) {
-                log_debug('WorkflowOrchestrator', "Resetting UI streaming state for next iteration");
-                $self->{ui}->reset_streaming_state();
-            }
-            
-            # DO NOT show spinner here - it will be shown at the top of the loop
-            # before the next API call. Showing it here causes it to appear while
-            # user is typing their response to user_collaboration tool.
-            # Instead, set a flag to indicate we need the "CLIO: " prefix on next iteration.
-            if ($self->{ui}) {
-                # Set flag so on_chunk callback knows to stop spinner on next chunk
-                $self->{ui}->{_prepare_for_next_iteration} = 1;
-                log_debug('WorkflowOrchestrator', "Set _prepare_for_next_iteration flag for next API call");
-            }
-            
-            # Save session after each iteration to prevent data loss
-            # This ensures tool execution history is preserved even if process crashes mid-workflow
-            # Performance impact: ~2-5ms per iteration (negligible vs multi-second AI response times)
-            if ($session && $session->can('save')) {
-                eval {
-                    $session->save();
-                    log_debug('WorkflowOrchestrator', "Session saved after iteration $iteration (preserving tool execution history)");
-                };
-                if ($@) {
-                    log_warning('WorkflowOrchestrator', "Failed to save session after iteration: $@");
-                }
-            }
-            
-            # Checkpoint session progress to memory every 15 iterations
-            # This creates a recovery anchor the agent can use after context trim
-            if ($iteration % 15 == 0 && $session) {
-                _checkpoint_session_progress($session, \@tool_calls_made, $iteration, \@messages);
-            }
-            
-            # Print newline to separate tool output from next iteration
-            # This ensures the spinner (and subsequent "CLIO: " prefix clearing)
-            # doesn't accidentally overwrite the last tool action detail
-            print "\n";
-            STDOUT->flush() if STDOUT->can('flush');
-            
             # Loop back - AI will process tool results
             next;
         }
@@ -2255,6 +854,113 @@ sub process_input {
     };
 }
 
+=head2 _build_turn_context($user_input, $session)
+
+Build the messages array and tool definitions for a new turn.
+Handles vault snapshot, system prompt, history loading/trimming,
+user message injection, and MCP tool merging.
+
+Returns: ($messages_arrayref, $tools_arrayref)
+
+=cut
+
+sub _build_turn_context {
+    my ($self, $user_input, $session) = @_;
+
+    # Start a new vault turn before processing
+    if ($self->{file_vault}) {
+        my $turn_snapshot = eval { $self->{file_vault}->start_turn($user_input) };
+        if ($turn_snapshot) {
+            if ($session && ref($session) && $session->can('state')) {
+                my $state = $session->state();
+                $state->{last_turn_id} = $turn_snapshot;
+                $state->{turn_history} ||= [];
+                push @{$state->{turn_history}}, {
+                    turn_id => $turn_snapshot,
+                    timestamp => time(),
+                    user_input => substr($user_input, 0, 100),
+                };
+                if (@{$state->{turn_history}} > 20) {
+                    splice(@{$state->{turn_history}}, 0, @{$state->{turn_history}} - 20);
+                }
+            }
+            $self->{tool_executor}{file_vault} = $self->{file_vault};
+            $self->{tool_executor}{vault_turn_id} = $turn_snapshot;
+            log_debug('WorkflowOrchestrator', "FileVault turn started: $turn_snapshot");
+        } elsif ($@) {
+            log_debug('WorkflowOrchestrator', "FileVault turn start failed: $@");
+        }
+    }
+
+    log_debug('WorkflowOrchestrator', "Processing input: '$user_input'");
+
+    # Build messages: system prompt + history + user input
+    my @messages = ();
+
+    my $system_prompt = $self->{prompt_builder}->build_system_prompt($session);
+    push @messages, { role => 'system', content => $system_prompt };
+    log_debug('WorkflowOrchestrator', "Added system prompt with tools (" . length($system_prompt) . " chars)");
+
+    inject_context_files($session, \@messages, debug => $self->{debug});
+
+    my $history = load_conversation_history($session, debug => $self->{debug});
+
+    if ($history && @$history) {
+        my $model_caps = {};
+        if ($self->{api_manager}) {
+            $model_caps = $self->{api_manager}->get_model_capabilities() || {};
+        }
+        $history = trim_conversation_for_api(
+            $history,
+            $system_prompt,
+            model_context_window => $model_caps->{max_context_window_tokens} // 128000,
+            max_response_tokens  => $model_caps->{max_output_tokens} // 16000,
+            debug => $self->{debug},
+        );
+    }
+
+    if ($history && @$history) {
+        push @messages, @$history;
+        log_debug('WorkflowOrchestrator', "Loaded " . scalar(@$history) . " messages from history (after pre-flight trim)");
+    }
+
+    push @messages, { role => 'user', content => $user_input };
+
+    # Save user message to session history NOW (before processing)
+    if ($session && $session->can('add_message')) {
+        $session->add_message('user', $user_input);
+        log_debug('WorkflowOrchestrator', "Saved user message to session history");
+    }
+
+    # Build tool definitions
+    my $tools = $self->{tool_registry}->get_tool_definitions();
+
+    if ($self->{mcp_manager}) {
+        eval {
+            require CLIO::Tools::MCPBridge;
+            my $mcp_defs = CLIO::Tools::MCPBridge->generate_tool_definitions($self->{mcp_manager});
+            if ($mcp_defs && @$mcp_defs) {
+                for my $mcp_def (@$mcp_defs) {
+                    push @$tools, {
+                        type     => 'function',
+                        function => {
+                            name        => $mcp_def->{name},
+                            description => $mcp_def->{description},
+                            parameters  => $mcp_def->{parameters},
+                        },
+                    };
+                }
+                log_debug('WorkflowOrchestrator', "Added " . scalar(@$mcp_defs) . " MCP tool(s) to API definitions");
+            }
+        };
+        log_warning('WorkflowOrchestrator', "MCP tool definition error: $@") if $@;
+    }
+
+    log_debug('WorkflowOrchestrator', "Loaded " . scalar(@$tools) . " tool definitions");
+
+    return (\@messages, $tools);
+}
+
 =head2 _capture_file_before
 
 Snapshot file content before a write operation so we can show diffs after.
@@ -2274,6 +980,937 @@ my %DIFF_OPERATIONS = (
         'insert_at_line'       => 'path',
     },
 );
+
+# Execute a round of tool calls: flush UI, iterate tools, save results.
+#
+# Called after _prepare_tool_round returns the ordered tool list.
+# Handles: interrupt checks, UI headers/transitions, diff display,
+# error enhancement, session persistence (atomic assistant+tool saves),
+# and periodic checkpoints.
+#
+# Args (hash):
+#   ordered_tools  => \@ordered_tool_calls
+#   pending_msg    => \$assistant_msg_pending  (scalar ref - cleared on first save)
+#   messages       => \@messages               (arrayref - pushed to)
+#   session        => $session                 (object or undef)
+#   api_response   => $api_response            (for content)
+#   iteration      => $iteration               (integer)
+#   tool_calls_made => \@tool_calls_made       (arrayref - pushed to)
+#   on_tool_end    => $callback                (coderef or undef)
+#
+sub _execute_tool_round {
+    my ($self, %args) = @_;
+
+    my $ordered_tools   = $args{ordered_tools};
+    my $pending_msg_ref = $args{pending_msg};     # scalar ref
+    my $messages        = $args{messages};         # arrayref
+    my $session         = $args{session};
+    my $api_response    = $args{api_response};
+    my $iteration       = $args{iteration};
+    my $tool_calls_made = $args{tool_calls_made};  # arrayref
+    my $on_tool_end     = $args{on_tool_end};
+
+    # Flush UI streaming buffer BEFORE executing any tools
+    if ($self->{ui} && $self->{ui}->can('flush_output_buffer')) {
+        log_debug('WorkflowOrchestrator', "Flushing UI buffer before tool execution");
+        $self->{ui}->flush_output_buffer();
+    }
+    STDOUT->flush() if STDOUT->can('flush');
+    $| = 1;
+
+    # Signal tool execution mode to UI
+    $self->{ui}->begin_tool_execution() if $self->{ui};
+
+    # Pre-analyze tool calls to know how many of each tool type will execute
+    my %tool_call_count;
+    foreach my $i (0..$#$ordered_tools) {
+        my $tool = $ordered_tools->[$i]->{function}->{name} || 'unknown';
+        $tool_call_count{$tool}++;
+    }
+
+    my $first_tool_call = 1;
+    my $current_tool = '';
+
+    for my $i (0..$#$ordered_tools) {
+        # Check for user interrupt between tool executions
+        if ($self->{_interrupt_pending} || $self->_check_and_handle_interrupt($session, $messages)) {
+            log_info('WorkflowOrchestrator', "Interrupt detected between tool executions, skipping remaining tools");
+            last;
+        }
+
+        my $tool_call = $ordered_tools->[$i];
+        my $tool_name = $tool_call->{function}->{name} || 'unknown';
+        my $tool_display_name = uc($tool_name);
+        $tool_display_name =~ s/_/ /g;
+
+        log_debug('WorkflowOrchestrator', "Executing tool: $tool_name");
+
+        # Handle first tool call: stop spinner, check content
+        if ($first_tool_call) {
+            if ($self->{spinner} && $self->{spinner}->can('stop')) {
+                $self->{spinner}->stop();
+                log_debug('WorkflowOrchestrator', "Stopped spinner before tool output");
+            }
+
+            my $content = $api_response->{content} // '';
+            log_debug('WorkflowOrchestrator', "First tool call - content: '" . substr($content, 0, 100) . "'");
+            $first_tool_call = 0;
+        }
+
+        # Handle tool group transitions (new tool type starting)
+        if ($tool_name ne $current_tool) {
+            $self->{ui}->clear_system_message_flag() if $self->{ui};
+
+            my $is_first_tool = ($current_tool eq '');
+            $self->{formatter}->display_tool_header($tool_name, $tool_display_name, $is_first_tool);
+            $current_tool = $tool_name;
+        }
+
+        # Parse tool arguments for display and diff capture
+        my $tool_args = eval { decode_json($tool_call->{function}->{arguments} || '{}') };
+        my $tool_operation = ($tool_args && $tool_args->{operation}) ? $tool_args->{operation} : '';
+
+        # For terminal_operations: show the command BEFORE execution
+        if ($tool_name eq 'terminal_operations') {
+            my $cmd_preview = ($tool_args && $tool_args->{command}) ? $tool_args->{command} : undef;
+            if ($cmd_preview) {
+                $self->{formatter}->display_action_detail($cmd_preview, 0, 0);
+            }
+        }
+
+        # Capture file state before write operations for diff display
+        my $diff_before = $self->_capture_file_before($tool_name, $tool_operation, $tool_args);
+
+        # Execute tool
+        my $tool_result = $self->_execute_tool($tool_call);
+
+        # Notify UI that tool execution is complete
+        if ($on_tool_end) {
+            eval { $on_tool_end->($tool_name); };
+        }
+
+        # Extract action_description from tool result
+        my $action_detail = '';
+        my $result_data;
+        my $is_error = 0;
+        my $enhanced_error_for_ai = '';
+        if ($tool_result) {
+            $result_data = eval {
+                ref($tool_result) eq 'HASH' ? $tool_result : decode_json($tool_result);
+            };
+            if ($result_data && ref($result_data) eq 'HASH') {
+                if (exists $result_data->{success} && !$result_data->{success}) {
+                    $is_error = 1;
+                    my $error_msg = $result_data->{error} || 'Unknown error';
+                    $action_detail = $self->{formatter}->format_error($error_msg);
+
+                    # Enhanced error with schema guidance
+                    my $tool_obj = $self->{tool_registry}->get_tool($tool_name);
+                    my $tool_def = undef;
+                    if ($tool_obj && $tool_obj->can('get_tool_definition')) {
+                        $tool_def = $tool_obj->get_tool_definition();
+                    }
+
+                    my $attempted_params = {};
+                    if ($tool_call->{function}->{arguments}) {
+                        eval { $attempted_params = decode_json($tool_call->{function}->{arguments}); };
+                    }
+
+                    $enhanced_error_for_ai = $self->{error_guidance}->enhance_tool_error(
+                        error => $error_msg,
+                        tool_name => $tool_name,
+                        tool_definition => $tool_def,
+                        attempted_params => $attempted_params
+                    );
+
+                    log_debug('WorkflowOrchestrator', "Enhanced error for AI: " . substr($enhanced_error_for_ai, 0, 100) . "...");
+                } elsif ($result_data->{action_description}) {
+                    $action_detail = $result_data->{action_description};
+                } elsif ($result_data->{metadata} && ref($result_data->{metadata}) eq 'HASH' &&
+                         $result_data->{metadata}->{action_description}) {
+                    $action_detail = $result_data->{metadata}->{action_description};
+                }
+            }
+        }
+
+        # Display action detail
+        if ($action_detail) {
+            my $remaining_same_tool = 0;
+            for my $j ($i+1..$#$ordered_tools) {
+                if ($ordered_tools->[$j]->{function}->{name} eq $tool_name) {
+                    $remaining_same_tool++;
+                }
+            }
+
+            my $expanded_content;
+            if ($result_data && ref($result_data) eq 'HASH') {
+                $expanded_content = $result_data->{expanded_content};
+            }
+
+            $self->{formatter}->display_action_detail($action_detail, $is_error, $remaining_same_tool, $expanded_content);
+        }
+
+        # Display diff for file-writing operations
+        if ($diff_before && !$is_error) {
+            $self->_display_file_diff($diff_before, $tool_name, $tool_operation, $tool_args);
+        }
+
+        # Extract output for the AI
+        my $ai_content = $tool_result;
+        if ($is_error && $enhanced_error_for_ai) {
+            $ai_content = $enhanced_error_for_ai;
+        } elsif ($result_data && ref($result_data) eq 'HASH' && exists $result_data->{output}) {
+            $ai_content = $result_data->{output};
+        }
+
+        # Track tool calls made
+        push @$tool_calls_made, {
+            name => $tool_name,
+            arguments => $tool_call->{function}->{arguments},
+            result => $ai_content
+        };
+
+        # Sanitize tool result content
+        my $sanitized_content = sanitize_text($ai_content);
+        $sanitized_content = "$sanitized_content" if defined $sanitized_content;
+
+        # Add tool result to conversation
+        push @$messages, {
+            role => 'tool',
+            tool_call_id => $tool_call->{id},
+            name => $tool_name,
+            content => $sanitized_content
+        };
+
+        # Save tool result to session (atomic with assistant message on first result)
+        if ($session && $session->can('add_message')) {
+            eval {
+                if ($$pending_msg_ref) {
+                    $session->add_message(
+                        'assistant',
+                        $$pending_msg_ref->{content},
+                        { tool_calls => $$pending_msg_ref->{tool_calls} }
+                    );
+                    log_debug('WorkflowOrchestrator', "Saved assistant message with tool_calls to session (on first tool result)");
+                    $$pending_msg_ref = undef;
+                }
+
+                $session->add_message(
+                    'tool',
+                    $sanitized_content,
+                    { tool_call_id => $tool_call->{id} }
+                );
+                log_debug('WorkflowOrchestrator', "Saved tool result to session (tool_call_id=" . $tool_call->{id} . ")");
+            };
+            if ($@) {
+                log_warning('WorkflowOrchestrator', "Failed to save tool result: $@");
+            }
+        }
+
+        log_debug('WorkflowOrchestrator', "Tool result added to conversation (sanitized)");
+    }
+
+    # Signal end of tool execution to UI
+    $self->{ui}->end_tool_execution() if $self->{ui};
+
+    # Capture process stats after tool execution phase
+    $self->{process_stats}->capture('after_tools', {
+        iteration => $iteration,
+        tool_count => scalar(@$ordered_tools),
+    }) if $self->{process_stats};
+
+    # Reset UI streaming state for next iteration
+    if ($self->{ui} && $self->{ui}->can('reset_streaming_state')) {
+        log_debug('WorkflowOrchestrator', "Resetting UI streaming state for next iteration");
+        $self->{ui}->reset_streaming_state();
+    }
+
+    $self->{ui}->prepare_for_iteration() if $self->{ui};
+
+    # Save session after each iteration
+    if ($session && $session->can('save')) {
+        eval {
+            $session->save();
+            log_debug('WorkflowOrchestrator', "Session saved after iteration $iteration (preserving tool execution history)");
+        };
+        if ($@) {
+            log_warning('WorkflowOrchestrator', "Failed to save session after iteration: $@");
+        }
+    }
+
+    # Checkpoint session progress to memory every 15 iterations
+    if ($iteration % 15 == 0 && $session) {
+        _checkpoint_session_progress($session, $tool_calls_made, $iteration, $messages);
+    }
+
+    # Print newline to separate tool output from next iteration
+    print "\n";
+    STDOUT->flush() if STDOUT->can('flush');
+}
+
+
+# Validate, classify, and order tool calls from an API response.
+#
+# Performs:
+#   1. JSON validation on each tool_call argument string
+#   2. JSON repair for common malformations
+#   3. Tool alias resolution (e.g., 'file_search' -> 'file_operations')
+#   4. Argument parsing with Anthropic XML detection
+#   5. Classification into blocking/serial/parallel categories
+#   6. Ordering: other blocking -> serial -> parallel -> user_collaboration (last)
+#
+# Args:
+#   $api_response - API response hashref with tool_calls array
+#   $messages     - arrayref of conversation messages (may be appended to)
+#   $session      - session object (for saving error results) or undef
+#
+# Returns:
+#   undef - all tool calls rejected; caller should skip to next iteration
+#   hashref with:
+#     ordered_tools => \@ordered_tool_calls  (tool calls in execution order)
+#     pending_msg   => $assistant_msg_pending (assistant message to save on first result)
+#
+sub _prepare_tool_round {
+    my ($self, $api_response, $messages, $session) = @_;
+
+    # ── Phase 1: Validate tool_call argument JSON ────────────────────
+    my @validated_tool_calls = ();
+    my $had_validation_errors = 0;
+
+    for my $tool_call (@{$api_response->{tool_calls}}) {
+        my $tool_name = $tool_call->{function}->{name} || 'unknown';
+        my $arguments_str = $tool_call->{function}->{arguments} || '{}';
+
+        my $arguments_valid = 0;
+        eval {
+            use CLIO::Util::JSON qw(decode_json);
+            use Encode qw(encode_utf8);
+            my $json_bytes = utf8::is_utf8($arguments_str) ? encode_utf8($arguments_str) : $arguments_str;
+            my $parsed = decode_json($json_bytes);
+            $arguments_valid = 1;
+        };
+
+        if ($@) {
+            my $error = $@;
+            my $repaired = repair_tool_call_json($arguments_str, debug => $self->{debug});
+
+            if ($repaired) {
+                log_debug('WorkflowOrchestrator', "Repaired malformed JSON for tool '$tool_name'");
+                $tool_call->{function}->{arguments} = $repaired;
+                push @validated_tool_calls, $tool_call;
+            } else {
+                $had_validation_errors = 1;
+                log_debug('WorkflowOrchestrator', "Invalid JSON in tool call arguments for '$tool_name': $error");
+                log_debug('WorkflowOrchestrator', "Malformed arguments: " . substr($arguments_str, 0, 200));
+                log_debug('WorkflowOrchestrator', "Could not repair JSON for tool '$tool_name' - tool call will be skipped");
+
+                push @$messages, {
+                    role => 'tool',
+                    tool_call_id => $tool_call->{id},
+                    name => $tool_name,
+                    content => "ERROR: Tool call rejected due to invalid JSON in arguments. The AI generated malformed parameters that could not be parsed. Please retry with valid JSON."
+                };
+            }
+        } else {
+            push @validated_tool_calls, $tool_call;
+        }
+    }
+
+    $api_response->{tool_calls} = \@validated_tool_calls;
+
+    # All tool calls rejected
+    if (@validated_tool_calls == 0) {
+        log_debug('WorkflowOrchestrator', "All tool calls were rejected due to invalid JSON - skipping tool execution");
+        push @$messages, {
+            role => 'assistant',
+            content => $api_response->{content} || "I encountered an error with my tool calls. Let me try a different approach."
+        };
+        return undef;
+    }
+
+    log_debug('WorkflowOrchestrator', "Processing " . scalar(@validated_tool_calls) . " validated tool calls" .
+        ($had_validation_errors ? " (some were rejected/repaired)" : "") . "\n");
+
+    # ── Phase 2: Build assistant message ──────────────────────────────
+    my $assistant_msg = {
+        role => 'assistant',
+        content => $api_response->{content},
+        tool_calls => \@validated_tool_calls
+    };
+    if ($api_response->{reasoning_details}) {
+        $assistant_msg->{reasoning_details} = $api_response->{reasoning_details};
+    }
+    push @$messages, $assistant_msg;
+
+    # Delayed save: assistant message saved with first tool result to prevent orphans
+    my $assistant_msg_pending = {
+        role => 'assistant',
+        content => $api_response->{content} // '',
+        tool_calls => \@validated_tool_calls
+    };
+    if ($api_response->{reasoning_details}) {
+        $assistant_msg_pending->{reasoning_details} = $api_response->{reasoning_details};
+    }
+
+    log_debug('WorkflowOrchestrator', "Delaying save of assistant message with tool_calls until first tool result completes");
+
+    # ── Phase 3: Resolve aliases and classify tools ───────────────────
+    my @blocking_tools = ();
+    my @serial_tools = ();
+    my @parallel_tools = ();
+
+    for my $tool_call (@{$api_response->{tool_calls}}) {
+        my $tool_name = $tool_call->{function}->{name} || 'unknown';
+
+        # Resolve tool aliases
+        my $alias_info = $self->{tool_registry}->get_alias_info($tool_name);
+        if ($alias_info) {
+            log_debug('WorkflowOrchestrator', "Alias detected: '$tool_name' -> '$alias_info->{tool}' with operation='$alias_info->{operation}'");
+            $tool_call->{function}->{name} = $alias_info->{tool};
+            $tool_name = $alias_info->{tool};
+
+            my $args_str = $tool_call->{function}->{arguments};
+            if ($args_str) {
+                eval {
+                    my $args = decode_json($args_str);
+                    unless (exists $args->{operation}) {
+                        $args->{operation} = $alias_info->{operation};
+                        $tool_call->{function}->{arguments} = encode_json($args);
+                        log_debug('WorkflowOrchestrator', "Injected operation='$alias_info->{operation}' into args");
+                    }
+                };
+            } else {
+                $tool_call->{function}->{arguments} = encode_json({ operation => $alias_info->{operation} });
+                log_debug('WorkflowOrchestrator', "Created args with operation='$alias_info->{operation}'");
+            }
+        }
+
+        my $tool = $self->{tool_registry}->get_tool($tool_name);
+
+        # Parse arguments for classification
+        my $params = {};
+        if ($tool_call->{function}->{arguments}) {
+            eval {
+                my $json_str = $tool_call->{function}->{arguments};
+
+                if ($self->{debug}) {
+                    my $preview = substr($json_str, 0, 300);
+                    log_debug('WorkflowOrchestrator', "Original arguments (first 300 chars): $preview");
+                }
+
+                if (is_anthropic_xml_format($json_str)) {
+                    log_info('WorkflowOrchestrator', "Detected Anthropic XML format, converting to JSON");
+                    $json_str = parse_anthropic_xml_to_json($json_str, $self->{debug});
+                    log_debug('WorkflowOrchestrator', "Converted XML to JSON: " . substr($json_str, 0, 300));
+                } else {
+                    $json_str = repair_malformed_json($json_str, $self->{debug});
+                    if ($self->{debug}) {
+                        my $preview = substr($json_str, 0, 300);
+                        log_debug('WorkflowOrchestrator', "Repaired JSON arguments (first 300 chars): $preview");
+                    }
+                }
+
+                my $json_bytes = encode_utf8($json_str);
+                $params = decode_json($json_bytes);
+            };
+            if ($@) {
+                my $error = $@;
+                my $args_full = $tool_call->{function}->{arguments} || '';
+
+                log_error('WorkflowOrchestrator', "Failed to parse arguments for tool '$tool_name': $error");
+                log_error('WorkflowOrchestrator', "Full arguments:\n$args_full");
+
+                my $error_message = "JSON parsing failed for tool '$tool_name': $error\nArguments received:\n$args_full";
+
+                push @$messages, {
+                    role => 'tool',
+                    tool_call_id => $tool_call->{id},
+                    name => $tool_name,
+                    content => $error_message
+                };
+
+                if ($session && $session->can('add_message')) {
+                    eval {
+                        if ($assistant_msg_pending) {
+                            $session->add_message(
+                                'assistant',
+                                $assistant_msg_pending->{content},
+                                { tool_calls => $assistant_msg_pending->{tool_calls} }
+                            );
+                            log_debug('WorkflowOrchestrator', "Saved assistant message with tool_calls to session (on error result)");
+                            $assistant_msg_pending = undef;
+                        }
+                        $session->add_message(
+                            'tool',
+                            $error_message,
+                            { tool_call_id => $tool_call->{id} }
+                        );
+                        log_debug('WorkflowOrchestrator', "Saved error tool result to session");
+                    };
+                    if ($@) {
+                        log_debug('WorkflowOrchestrator', "Session save error (non-critical): $@");
+                    }
+                }
+                next;
+            }
+        }
+
+        # Determine interactive status (parameter overrides metadata)
+        my $is_interactive = 0;
+        if (exists $params->{isInteractive}) {
+            $is_interactive = $params->{isInteractive} ? 1 : 0;
+            log_debug('WorkflowOrchestrator', "Tool $tool_name isInteractive parameter: $is_interactive");
+        } elsif ($tool && $tool->{is_interactive}) {
+            $is_interactive = 1;
+            log_debug('WorkflowOrchestrator', "Tool $tool_name default is_interactive: $is_interactive");
+        }
+
+        my $requires_blocking = ($tool && $tool->{requires_blocking}) || $is_interactive;
+
+        if ($tool) {
+            if ($requires_blocking) {
+                push @blocking_tools, $tool_call;
+                log_debug('WorkflowOrchestrator', "Classified $tool_name as BLOCKING (interactive=$is_interactive)");
+            } elsif ($tool->{requires_serial}) {
+                push @serial_tools, $tool_call;
+                log_debug('WorkflowOrchestrator', "Classified $tool_name as SERIAL");
+            } else {
+                push @parallel_tools, $tool_call;
+                log_debug('WorkflowOrchestrator', "Classified $tool_name as PARALLEL");
+            }
+        } else {
+            push @parallel_tools, $tool_call;
+            log_warning('WorkflowOrchestrator', "Unknown tool $tool_name, treating as PARALLEL");
+        }
+    }
+
+    # ── Phase 4: Order for execution ──────────────────────────────────
+    # user_collaboration always last
+    my @user_collaboration_tools = ();
+    my @other_blocking_tools = ();
+
+    for my $tool_call (@blocking_tools) {
+        my $tool_name = $tool_call->{function}->{name} || 'unknown';
+        if ($tool_name eq 'user_collaboration') {
+            push @user_collaboration_tools, $tool_call;
+        } else {
+            push @other_blocking_tools, $tool_call;
+        }
+    }
+
+    my @ordered_tool_calls = (@other_blocking_tools, @serial_tools, @parallel_tools, @user_collaboration_tools);
+
+    log_debug('WorkflowOrchestrator', "Execution order: " . scalar(@other_blocking_tools) . " other blocking, " .
+        scalar(@serial_tools) . " serial, " .
+        scalar(@parallel_tools) . " parallel, " .
+        scalar(@user_collaboration_tools) . " user_collaboration (LAST)\n");
+
+    return {
+        ordered_tools => \@ordered_tool_calls,
+        pending_msg   => $assistant_msg_pending,
+    };
+}
+
+
+
+# Extracted from process_input error handling block (lines 701-1430).
+# Handles API errors: retryable (rate limit, server, token limit) and non-retryable.
+#
+# Args:
+#   $api_response - the failed API response hashref
+#   $ctx          - shared context hash with scalar refs for mutables:
+#       messages            => \@messages       (arrayref, modified in place)
+#       retry_count         => \$retry_count    (scalar ref, incremented/reset)
+#       session_error_count => \$session_error_count (scalar ref)
+#       iteration           => $iteration       (read-only integer)
+#       tool_calls_made     => \@tool_calls_made (arrayref, read-only)
+#       session             => $session          (object or undef)
+#       on_system_message   => $callback         (coderef or undef)
+#       max_retries         => $max_retries
+#       max_server_retries  => $max_server_retries
+#       max_session_errors  => $max_session_errors
+#
+# Returns:
+#   'retry'    - retryable error handled; caller should decrement $iteration and next
+#   'continue' - non-retryable error handled; caller should just next
+#   hashref    - fatal error; caller should return this hashref from process_input
+sub _handle_api_error {
+    my ($self, $api_response, $ctx) = @_;
+
+    my $messages            = $ctx->{messages};
+    my $retry_count_ref     = $ctx->{retry_count};
+    my $session_error_ref   = $ctx->{session_error_count};
+    my $iteration           = $ctx->{iteration};
+    my $tool_calls_made     = $ctx->{tool_calls_made};
+    my $session             = $ctx->{session};
+    my $on_system_message   = $ctx->{on_system_message};
+    my $max_retries         = $ctx->{max_retries};
+    my $max_server_retries  = $ctx->{max_server_retries};
+    my $max_session_errors  = $ctx->{max_session_errors};
+
+    my $error = $api_response->{error} || "Unknown API error";
+
+    # ── Retryable errors ──────────────────────────────────────────────
+    if ($api_response->{retryable}) {
+        $$retry_count_ref++;
+
+        # Escalate repeated bare 400s to context trim
+        my $error_type_check = $api_response->{error_type} || '';
+        if ($error_type_check eq 'bad_request' && $$retry_count_ref >= 2) {
+            $self->{_bad_request_escalations} = ($self->{_bad_request_escalations} || 0) + 1;
+
+            if ($self->{_bad_request_escalations} <= 1) {
+                log_warning('WorkflowOrchestrator', "Repeated 400 Bad Request ($$retry_count_ref attempts) - escalating to context trim (escalation #$self->{_bad_request_escalations})");
+                $api_response->{error_type} = 'token_limit_exceeded';
+            } else {
+                log_error('WorkflowOrchestrator', "Persistent 400 Bad Request after $self->{_bad_request_escalations} context trim attempts ($$retry_count_ref total retries). Giving up.");
+
+                _dump_diagnostic(
+                    trigger      => 'persistent_400',
+                    messages     => $messages,
+                    api_manager  => $self->{api_manager},
+                    iteration    => $iteration,
+                    retry_count  => $$retry_count_ref,
+                    error        => $error,
+                    api_response => $api_response,
+                    append       => 1,
+                    extra        => { escalations => $self->{_bad_request_escalations} },
+                );
+
+                return {
+                    success         => 0,
+                    error           => "Persistent 400 Bad Request from API after $$retry_count_ref retries and $self->{_bad_request_escalations} context trims. The API backend may be experiencing issues. Diagnostic dump written to /tmp/clio_diag_persistent_400.log. Try again in a few minutes, or use a different model.",
+                    iterations      => $iteration,
+                    tool_calls_made => $tool_calls_made,
+                };
+            }
+        }
+
+        # Determine retry limit based on error type
+        my $error_type_for_limit = $api_response->{error_type} || '';
+        my $retry_limit;
+        if ($error_type_for_limit eq 'server_error' || $error_type_for_limit eq 'rate_limit') {
+            $retry_limit = $max_server_retries;
+        } elsif ($error_type_for_limit eq 'bad_request') {
+            $retry_limit = 4;
+        } else {
+            $retry_limit = $max_retries;
+        }
+
+        if ($$retry_count_ref > $retry_limit) {
+            log_error('WorkflowOrchestrator', "Maximum retries ($retry_limit) exceeded for this iteration");
+            return {
+                success         => 0,
+                error           => "Maximum retries exceeded: $error",
+                iterations      => $iteration,
+                tool_calls_made => $tool_calls_made,
+            };
+        }
+
+        my $retry_delay = $api_response->{retry_after} || 2;
+        my $error_type  = $error =~ /rate limit/i ? "rate limit" : "server error";
+
+        # Add 1s buffer for rate limits
+        if ($api_response->{error_type} && $api_response->{error_type} eq 'rate_limit' && $retry_delay > 0) {
+            $retry_delay += 1;
+        }
+
+        my $system_msg = "Temporary $error_type detected. Retrying in ${retry_delay}s... (attempt $$retry_count_ref/$retry_limit)";
+
+        # ── Per-error-type handling ──
+        if ($api_response->{error_type} && $api_response->{error_type} eq 'unsupported_param') {
+            $error_type  = "unsupported parameter";
+            $system_msg  = undef;
+            $retry_delay = 0;
+            log_info('WorkflowOrchestrator', "Retrying without unsupported parameter");
+        }
+        elsif ($api_response->{error_type} && $api_response->{error_type} eq 'bad_request') {
+            $system_msg = undef;
+            log_info('WorkflowOrchestrator', "API 400 Bad Request - retrying silently (attempt $$retry_count_ref)");
+        }
+        elsif ($api_response->{error_type} && $api_response->{error_type} eq 'malformed_tool_json') {
+            if ($$retry_count_ref == 1) {
+                # First attempt: remove bad message, provide schema guidance
+                if (@$messages && $messages->[-1]{role} eq 'assistant') {
+                    pop @$messages;
+                    log_info('WorkflowOrchestrator', "Removed malformed assistant message from history");
+                }
+
+                my $failed_tool_name = $api_response->{failed_tool} || 'unknown';
+                my $tool_schema      = '';
+
+                if ($failed_tool_name ne 'unknown') {
+                    my $tool_def = $self->{tool_registry}->get_tool($failed_tool_name);
+                    if ($tool_def) {
+                        my $params = $tool_def->{function}{parameters};
+                        if ($params) {
+                            require JSON::PP;
+                            $tool_schema = "\n\nCorrect schema for $failed_tool_name:\n" .
+                                           JSON::PP->new->pretty->encode($params);
+                        }
+                    }
+                }
+
+                my $tool_guidance = _get_tool_specific_guidance($failed_tool_name);
+
+                push @$messages, {
+                    role    => 'system',
+                    content => "ERROR: Your previous tool call had invalid JSON parameters.\n\n" .
+                               "Common issues:\n" .
+                               "- Missing parameter values (e.g., \"offset\":, instead of \"offset\":0)\n" .
+                               "- Unescaped quotes in strings\n" .
+                               "- Trailing commas\n" .
+                               "- Missing required parameters\n\n" .
+                               "ALL parameters must have valid values - no empty/missing values permitted.\n" .
+                               "$tool_schema\n\n" .
+                               "${tool_guidance}" .
+                               "Please retry the operation with correct JSON, or try a different approach if the tool call isn't critical.",
+                };
+
+                $error_type = "malformed tool JSON";
+                $system_msg = "AI generated invalid JSON parameters. Removed bad message, adding guidance and retrying... (attempt $$retry_count_ref/$max_retries)";
+                log_info('WorkflowOrchestrator', "Added JSON formatting guidance for tool: $failed_tool_name");
+            }
+            else {
+                # Second attempt failed: let agent recover
+                if (@$messages && $messages->[-1]{role} eq 'assistant') {
+                    pop @$messages;
+                    log_info('WorkflowOrchestrator', "Removed second malformed assistant message");
+                }
+
+                push @$messages, {
+                    role    => 'system',
+                    content => "TOOL CALL FAILED: The previous tool call still had invalid JSON after correction attempt. " .
+                               "The tool call has been removed from history. You can:\n" .
+                               "1. Try a different approach to accomplish the same goal\n" .
+                               "2. Continue with other work\n" .
+                               "3. Ask the user for clarification if needed\n\n" .
+                               "Your conversation context is preserved - continue your work.",
+                };
+
+                $$retry_count_ref = 0;
+                log_warning('WorkflowOrchestrator', "Malformed JSON persisted - agent informed, continuing workflow");
+                return 'retry';  # Don't decrement iteration, just continue
+            }
+        }
+        elsif ($api_response->{error_type} && $api_response->{error_type} eq 'token_limit_exceeded') {
+            my $trim_result = $self->_trim_for_token_limit(
+                messages        => $messages,
+                retry_count     => $$retry_count_ref,
+                session         => $session,
+                tool_calls_made => $tool_calls_made,
+                iteration       => $iteration,
+                max_retries     => $max_retries,
+                max_server_retries => $max_server_retries,
+                error           => $error,
+            );
+
+            # Bail out if trim decided further retries are pointless
+            return $trim_result->{response} if $trim_result->{bail};
+
+            $error_type = "token limit exceeded";
+            $system_msg = $trim_result->{system_msg};
+        }
+        elsif ($api_response->{error_type} && $api_response->{error_type} eq 'server_error') {
+            my $backoff_multiplier = 2 ** ($$retry_count_ref - 1);
+            $retry_delay = $retry_delay * $backoff_multiplier;
+
+            $error_type = "server error";
+            $system_msg = "Server temporarily unavailable. Retrying in ${retry_delay}s with exponential backoff... (attempt $$retry_count_ref/$max_server_retries)";
+            log_info('WorkflowOrchestrator', "Applying exponential backoff for server error: ${retry_delay}s delay");
+        }
+        elsif ($api_response->{error_type} && $api_response->{error_type} eq 'rate_limit') {
+            $error_type = "rate limit";
+        }
+        elsif ($api_response->{error_type} && $api_response->{error_type} eq 'auth_recovered') {
+            $error_type  = "auth recovery";
+            $system_msg  = undef;
+            $retry_delay = 0;
+            log_info('WorkflowOrchestrator', "Auth token refreshed, retrying request silently");
+        }
+        elsif ($api_response->{error_type} && $api_response->{error_type} eq 'message_structure_error') {
+            $error_type = "message structure error";
+            $system_msg = "Message structure error detected. Rebuilding from session history... (attempt $$retry_count_ref/$max_retries)";
+
+            if ($session && $session->can('get_conversation_history')) {
+                my $fresh_history    = $session->get_conversation_history() || [];
+                my $system_msg_saved = $messages->[0]{role} eq 'system' ? $messages->[0] : undef;
+                my $current_user_msg = $messages->[-1]{role} eq 'user'  ? $messages->[-1] : undef;
+
+                @$messages = ();
+                push @$messages, $system_msg_saved if $system_msg_saved;
+                push @$messages, @$fresh_history;
+                push @$messages, $current_user_msg
+                    if $current_user_msg &&
+                       (!@$fresh_history || $fresh_history->[-1]{content} ne $current_user_msg->{content});
+
+                log_info('WorkflowOrchestrator', "Rebuilt messages from session history (" . scalar(@$messages) . " messages)");
+            }
+
+            $retry_delay = 0;
+        }
+
+        # Notify UI
+        if ($system_msg && $on_system_message) {
+            eval { $on_system_message->($system_msg); };
+            log_debug('WorkflowOrchestrator', "UI callback error: $@") if $@;
+        } elsif ($system_msg) {
+            log_info('WorkflowOrchestrator', "Retryable $error_type detected, retrying in ${retry_delay}s on next iteration (attempt $$retry_count_ref/$max_retries)");
+        }
+
+        # Wait before retrying (interruptible)
+        if ($retry_delay > 0) {
+            log_debug('WorkflowOrchestrator', "Waiting ${retry_delay}s before retry...");
+            my $remaining = $retry_delay;
+            while ($remaining > 0) {
+                my $chunk = ($remaining > 1) ? 1 : $remaining;
+                sleep($chunk);
+                $remaining -= $chunk;
+
+                if ($self->_check_for_user_interrupt($session)) {
+                    log_info('WorkflowOrchestrator', "Retry wait interrupted by user");
+                    $self->_handle_interrupt($session, $messages);
+                    last;
+                }
+            }
+            log_debug('WorkflowOrchestrator', "Retry delay complete, sending request...");
+        }
+
+        return 'retry';
+    }
+
+    # ── Non-retryable errors ──────────────────────────────────────────
+    $$retry_count_ref = 0;
+
+    $$session_error_ref++;
+    $session->{_error_count} = $$session_error_ref if $session;
+    if ($$session_error_ref > $max_session_errors) {
+        log_error('WorkflowOrchestrator', "Session error budget exhausted ($$session_error_ref errors). Stopping to prevent cascading failures.");
+        return {
+            success         => 0,
+            error           => "Session error limit reached ($max_session_errors errors). Please start a new request or session. Last error: $error",
+            iterations      => $iteration,
+            tool_calls_made => $tool_calls_made,
+        };
+    }
+
+    # Track consecutive identical errors
+    if ($error eq $self->{last_error}) {
+        $self->{consecutive_errors}++;
+        log_debug('WorkflowOrchestrator', "Consecutive error count: $self->{consecutive_errors}/$self->{max_consecutive_errors}");
+    } else {
+        $self->{consecutive_errors} = 1;
+        $self->{last_error} = $error;
+    }
+
+    if ($self->{consecutive_errors} >= $self->{max_consecutive_errors}) {
+        log_debug('WorkflowOrchestrator', "Same error occurred $self->{consecutive_errors} times in a row. Breaking loop.");
+        log_debug('WorkflowOrchestrator', "Persistent error: $error");
+        log_debug('WorkflowOrchestrator', "This likely indicates a bug in the request construction or API incompatibility.");
+        log_debug('WorkflowOrchestrator', "Check /tmp/clio_json_errors.log for details.");
+
+        $self->{consecutive_errors} = 0;
+        $self->{last_error} = '';
+        return {
+            success         => 0,
+            error           => $error,
+            content         => '',
+            iterations      => $iteration,
+            tool_calls_made => $tool_calls_made,
+        };
+    }
+
+    # Remove bad assistant message
+    if (@$messages && $messages->[-1]{role} eq 'assistant') {
+        my $removed_msg = pop @$messages;
+        log_warning('WorkflowOrchestrator', "Removed bad assistant message due to API error: $error");
+
+        if ($self->{debug}) {
+            my $content_preview = substr($removed_msg->{content} // '', 0, 100);
+            log_debug('WorkflowOrchestrator', "Removed message content: $content_preview...");
+            if ($removed_msg->{tool_calls}) {
+                log_debug('WorkflowOrchestrator', "Removed message had " . scalar(@{$removed_msg->{tool_calls}}) . " tool_calls");
+            }
+        }
+    }
+
+    # Check if error is token/context limit related
+    my $is_token_limit_error = (
+        $error =~ /context.length.exceeded/i ||
+        $error =~ /maximum.context.length/i ||
+        $error =~ /token.limit.exceeded/i ||
+        $error =~ /too.many.tokens/i ||
+        $error =~ /exceeds?\s+(?:the\s+)?(?:maximum|max)\s+(?:number\s+of\s+)?tokens/i ||
+        $error =~ /input.*too\s+(?:long|large)/i ||
+        $error =~ /reduce.*(?:prompt|input|context)/i
+    );
+
+    if (!$is_token_limit_error) {
+        push @$messages, {
+            role    => 'user',
+            content => "SYSTEM ERROR: Your previous response triggered an API error and was removed.\n\n" .
+                       "Error details: $error\n\n" .
+                       "Please try a different approach. Avoid repeating the same action that caused this error.",
+        };
+        log_info('WorkflowOrchestrator', "Added error message to conversation, continuing workflow");
+    } else {
+        # Smart group-based trim for non-retryable token limit errors
+        log_warning('WorkflowOrchestrator', "Token limit error detected. Using smart context trimming...");
+
+        my $sys_msg    = undef;
+        my @non_system = ();
+        for my $msg (@$messages) {
+            if ($msg->{role} && $msg->{role} eq 'system') {
+                $sys_msg = $msg;
+            } else {
+                push @non_system, $msg;
+            }
+        }
+
+        # Group messages into logical units
+        my @groups        = ();
+        my $current_group = [];
+
+        for (my $i = 0; $i < @non_system; $i++) {
+            my $msg = $non_system[$i];
+
+            if ($msg->{role} eq 'user') {
+                push @groups, $current_group if @$current_group > 0;
+                $current_group = [$msg];
+            } elsif ($msg->{role} eq 'assistant') {
+                if (@$current_group > 0 && $current_group->[-1]{role} eq 'user') {
+                    push @$current_group, $msg;
+                } else {
+                    push @groups, $current_group if @$current_group > 0;
+                    $current_group = [$msg];
+                }
+            } elsif ($msg->{role} eq 'tool') {
+                push @$current_group, $msg;
+            } else {
+                push @$current_group, $msg;
+            }
+        }
+        push @groups, $current_group if @$current_group > 0;
+
+        # Keep last 3 complete groups
+        my $keep_count = 3;
+        $keep_count = scalar(@groups) if $keep_count > scalar(@groups);
+
+        my @kept_groups = @groups[-$keep_count..-1] if $keep_count > 0;
+
+        @$messages = ();
+        push @$messages, $sys_msg if $sys_msg;
+        for my $group (@kept_groups) {
+            push @$messages, @$group;
+        }
+
+        my $removed_groups = scalar(@groups) - $keep_count;
+        log_info('WorkflowOrchestrator', "Smart trim: kept $keep_count of " . scalar(@groups) . " message groups (removed $removed_groups)");
+    }
+
+    return 'continue';
+}
+
 
 sub _capture_file_before {
     my ($self, $tool_name, $operation, $args) = @_;
@@ -2574,6 +2211,262 @@ Returns: Message hashref with role 'system' containing compressed summary,
          or undef if compression fails
 
 =cut
+
+# Reactive context trim for token_limit_exceeded errors.
+# Trims messages in place using a 3-tier strategy based on retry_count.
+# Returns { system_msg => '...' } on success,
+# or { bail => 1, response => {...} } when further retries are pointless.
+sub _trim_for_token_limit {
+    my ($self, %args) = @_;
+
+    my $messages        = $args{messages};
+    my $retry_count     = $args{retry_count};
+    my $session         = $args{session};
+    my $tool_calls_made = $args{tool_calls_made};
+    my $iteration       = $args{iteration};
+    my $max_retries     = $args{max_retries};
+    my $max_server_retries = $args{max_server_retries};
+    my $error           = $args{error};
+
+    _dump_diagnostic(
+        trigger     => 'trim',
+        phase       => 'reactive_before',
+        messages    => $messages,
+        api_manager => $self->{api_manager},
+        iteration   => $iteration,
+        retry_count => $retry_count,
+        extra       => {
+            max_retries        => $max_retries,
+            max_server_retries => $max_server_retries,
+            error_message      => $error || '',
+        },
+    ) if $ENV{CLIO_TRIM_DIAG};
+
+    _checkpoint_session_progress($session, $tool_calls_made, $iteration, $messages)
+        if $session;
+
+    # Separate system prompt and find most recent user message
+    my $system_prompt = undef;
+    my @non_system    = ();
+    my $last_user_msg = undef;
+    my $last_user_idx = -1;
+
+    for my $msg (@$messages) {
+        if ($msg->{role} eq 'system' && !$system_prompt) {
+            $system_prompt = $msg;
+        } else {
+            push @non_system, $msg;
+            if ($msg->{role} && $msg->{role} eq 'user') {
+                $last_user_msg = $msg;
+                $last_user_idx = $#non_system;
+            }
+        }
+    }
+
+    my $original_count = scalar(@non_system);
+
+    # Build tool_call_id -> message index maps
+    my %tool_call_indices   = ();
+    my %tool_result_indices = ();
+
+    for (my $i = 0; $i < @non_system; $i++) {
+        my $msg = $non_system[$i];
+        if ($msg->{role} && $msg->{role} eq 'assistant' &&
+            $msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
+            for my $tc (@{$msg->{tool_calls}}) {
+                $tool_call_indices{$tc->{id}} = $i if $tc->{id};
+            }
+        }
+        elsif ($msg->{role} && $msg->{role} eq 'tool' && $msg->{tool_call_id}) {
+            $tool_result_indices{$msg->{tool_call_id}} = $i;
+        }
+    }
+
+    if ($retry_count == 1) {
+        # First retry: keep recent messages that fit in 40% of model context
+        my $_retry_caps = $self->{api_manager}
+            ? ($self->{api_manager}->get_model_capabilities() || {}) : {};
+        my $max_ctx     = $_retry_caps->{max_prompt_tokens} || 128000;
+        my $keep_budget = int($max_ctx * 0.40);
+        $keep_budget = 40000 if $keep_budget < 40000;
+
+        my $kept_tokens = 0;
+        my $start_idx   = $original_count;
+        for (my $i = $original_count - 1; $i >= 0; $i--) {
+            my $msg_tokens = estimate_tokens($non_system[$i]{content} || '') + 10;
+            if ($kept_tokens + $msg_tokens <= $keep_budget) {
+                $kept_tokens += $msg_tokens;
+                $start_idx = $i;
+            } else {
+                last;
+            }
+        }
+        my $min_start = $original_count - 10;
+        $start_idx = $min_start if $start_idx > $min_start && $min_start >= 0;
+        $start_idx = 0 if $start_idx < 0;
+
+        my @dropped_messages;
+        @dropped_messages = @non_system[0..($start_idx - 1)] if $start_idx > 0;
+
+        my @must_include = ();
+        push @must_include, $last_user_idx
+            if $last_user_idx >= 0 && $last_user_idx < $start_idx;
+
+        for (my $i = $start_idx; $i < $original_count; $i++) {
+            my $msg = $non_system[$i];
+            if ($msg->{role} && $msg->{role} eq 'tool' && $msg->{tool_call_id}) {
+                my $tc_id = $msg->{tool_call_id};
+                if (exists $tool_call_indices{$tc_id}) {
+                    my $tc_idx = $tool_call_indices{$tc_id};
+                    push @must_include, $tc_idx if $tc_idx < $start_idx;
+                }
+            }
+        }
+
+        if (@must_include) {
+            @must_include = sort { $a <=> $b } @must_include;
+            my @preserved = ();
+            my %seen      = ();
+            for my $idx (@must_include) {
+                next if $seen{$idx}++;
+                push @preserved, $non_system[$idx];
+            }
+            push @preserved, @non_system[$start_idx..-1];
+            @non_system = @preserved;
+        } else {
+            @non_system = @non_system[$start_idx..-1];
+        }
+
+        if (@dropped_messages) {
+            my $compressed = _compress_dropped_for_recovery(\@dropped_messages, $last_user_msg, $session, $messages);
+            if ($compressed) {
+                push @non_system, $compressed;
+                log_info('WorkflowOrchestrator', "Injected compression summary for " . scalar(@dropped_messages) . " dropped messages");
+            }
+        }
+    }
+    elsif ($retry_count == 2) {
+        # Second retry: keep last 25% + most recent user message
+        my $keep_count = int($original_count / 4);
+        $keep_count = 5 if $keep_count < 5 && $original_count >= 5;
+
+        my $drop_count = $original_count - $keep_count;
+        my @dropped_messages;
+        @dropped_messages = @non_system[0..($drop_count - 1)] if $drop_count > 0;
+
+        my @kept;
+        @kept = @non_system[-$keep_count..-1] if $keep_count > 0;
+
+        if ($last_user_msg && !grep { $_ == $last_user_msg } @kept) {
+            unshift @kept, $last_user_msg;
+        }
+        @non_system = @kept;
+
+        if (@dropped_messages) {
+            my $compressed = _compress_dropped_for_recovery(\@dropped_messages, $last_user_msg, $session, $messages);
+            if ($compressed) {
+                push @non_system, $compressed;
+                log_info('WorkflowOrchestrator', "Injected compression summary for " . scalar(@dropped_messages) . " dropped messages (retry 2)");
+            }
+        }
+    }
+    else {
+        # Third retry: minimal context - last user message + last 2 messages
+        my @dropped_messages = @non_system;
+
+        my @kept = ();
+        push @kept, $last_user_msg if $last_user_msg;
+
+        my @last_two = @non_system[-2..-1];
+        for my $msg (@last_two) {
+            next if $last_user_msg && $msg == $last_user_msg;
+            push @kept, $msg;
+        }
+        @non_system = @kept;
+
+        if (@dropped_messages > 2) {
+            my $compressed = _compress_dropped_for_recovery(\@dropped_messages, $last_user_msg, $session, $messages);
+            if ($compressed) {
+                push @non_system, $compressed;
+                log_info('WorkflowOrchestrator', "Injected compression summary for " . scalar(@dropped_messages) . " dropped messages (retry 3 - minimal)");
+            }
+        }
+    }
+
+    my $trimmed_count = $original_count - scalar(@non_system);
+
+    # Rebuild messages array in place
+    @$messages = ();
+    push @$messages, $system_prompt if $system_prompt;
+    push @$messages, @non_system;
+
+    _dump_diagnostic(
+        trigger     => 'trim',
+        phase       => 'reactive_after',
+        messages    => $messages,
+        api_manager => $self->{api_manager},
+        iteration   => $iteration,
+        retry_count => $retry_count,
+        extra       => {
+            original_count      => $original_count,
+            trimmed_count       => $trimmed_count,
+            kept_count          => scalar(@non_system),
+            last_user_preserved => ($last_user_msg ? 'YES' : 'NO'),
+        },
+    ) if $ENV{CLIO_TRIM_DIAG};
+
+    my $preserved_info = $last_user_msg ? " (most recent user message preserved)" : "";
+    my $recovery_info  = ($trimmed_count > 0) ? " Context summary injected." : "";
+    my $system_msg = "Token limit exceeded. Trimmed $trimmed_count messages from conversation history and retrying$preserved_info...$recovery_info (attempt $retry_count/$max_retries)";
+
+    log_info('WorkflowOrchestrator', "Trimmed $trimmed_count messages due to token limit (kept " . scalar(@non_system) . " messages, last_user=" . ($last_user_msg ? 'YES' : 'NO') . ")");
+
+    # Nothing trimmed means context isn't the problem
+    if ($trimmed_count == 0) {
+        log_warning('WorkflowOrchestrator', "Context trim removed 0 messages - problem is not context size. Escalating to non-retryable.");
+
+        _dump_diagnostic(
+            trigger      => 'persistent_400',
+            phase        => 'trim_zero',
+            messages     => $messages,
+            api_manager  => $self->{api_manager},
+            iteration    => $iteration,
+            retry_count  => $retry_count,
+            error        => $error,
+            append       => 1,
+            extra        => {
+                escalations    => $self->{_bad_request_escalations} || 0,
+                original_count => $original_count,
+                trimmed_count  => 0,
+            },
+        );
+
+        return {
+            bail     => 1,
+            response => {
+                success         => 0,
+                error           => "API error persists after context trim (0 messages removed, $retry_count retries). This is likely a backend issue, not a context size problem. Diagnostic dump written to /tmp/clio_diag_persistent_400.log. Try again in a few minutes, or use a different model.",
+                iterations      => $iteration,
+                tool_calls_made => $tool_calls_made,
+            },
+        };
+    }
+
+    # Minimal context and still failing
+    if ($retry_count > 2 && scalar(@non_system) <= 3) {
+        log_debug('WorkflowOrchestrator', "Token limit persists even with minimal context - giving up");
+        return {
+            bail     => 1,
+            response => {
+                success         => 0,
+                error           => "Token limit exceeded even with minimal conversation history. The request may be too large for this model. Try using a model with a larger context window.",
+                tool_calls_made => $tool_calls_made,
+            },
+        };
+    }
+
+    return { system_msg => $system_msg };
+}
 
 sub _compress_dropped_for_recovery {
     my ($dropped_messages, $last_user_msg, $session, $all_messages) = @_;
@@ -2995,10 +2888,10 @@ sub _checkpoint_session_progress {
         # Atomic write
         my $file = "$memory_dir/session_progress.md";
         my $temp = "$file.tmp.$$";
-        open my $fh, '>:encoding(UTF-8)', $temp or die "Cannot write: $!";
+        open my $fh, '>:encoding(UTF-8)', $temp or croak "Cannot write: $!";
         print $fh $content;
         close $fh;
-        rename $temp, $file or die "Cannot rename: $!";
+        rename $temp, $file or croak "Cannot rename: $!";
 
         log_debug('WorkflowOrchestrator', "Session progress checkpoint saved (iteration $iteration, " . length($content) . " chars)");
     };

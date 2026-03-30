@@ -6,6 +6,7 @@ package CLIO::Session::FileVault;
 use strict;
 use warnings;
 use utf8;
+use Carp qw(croak);
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 
@@ -199,7 +200,7 @@ sub capture_before {
     make_path($vault_file_dir) unless -d $vault_file_dir;
 
     eval {
-        copy($abs_path, $vault_file) or die "Copy failed: $!";
+        copy($abs_path, $vault_file) or croak "Copy failed: $!";
     };
     if ($@) {
         log_debug('FileVault', "Failed to capture $rel_path: $@");
@@ -295,7 +296,7 @@ sub record_deletion {
         make_path($vault_file_dir) unless -d $vault_file_dir;
 
         eval {
-            copy($abs_path, $vault_file) or die "Copy failed: $!";
+            copy($abs_path, $vault_file) or croak "Copy failed: $!";
         };
         if ($@) {
             log_debug('FileVault', "Failed to back up before deletion: $@");
@@ -349,7 +350,7 @@ sub record_rename {
         make_path($vault_file_dir) unless -d $vault_file_dir;
 
         eval {
-            copy($old_abs, $vault_file) or die "Copy failed: $!";
+            copy($old_abs, $vault_file) or croak "Copy failed: $!";
         };
         if ($@) {
             log_debug('FileVault', "Failed to back up before rename: $@");
@@ -437,7 +438,7 @@ sub undo_turn {
                 eval {
                     my $target_dir = dirname($abs_path);
                     make_path($target_dir) unless -d $target_dir;
-                    copy($vault_file, $abs_path) or die "Restore failed: $!";
+                    copy($vault_file, $abs_path) or croak "Restore failed: $!";
                 };
                 if ($@) {
                     push @errors, "Failed to restore $rel_path: $@";
@@ -472,7 +473,7 @@ sub undo_turn {
                 eval {
                     my $target_dir = dirname($abs_path);
                     make_path($target_dir) unless -d $target_dir;
-                    copy($vault_file, $abs_path) or die "Restore failed: $!";
+                    copy($vault_file, $abs_path) or croak "Restore failed: $!";
                 };
                 if ($@) {
                     push @errors, "Failed to restore deleted $rel_path: $@";
@@ -495,7 +496,7 @@ sub undo_turn {
                 eval {
                     my $target_dir = dirname($original_abs);
                     make_path($target_dir) unless -d $target_dir;
-                    copy($vault_file, $original_abs) or die "Restore failed: $!";
+                    copy($vault_file, $original_abs) or croak "Restore failed: $!";
                 };
                 if ($@) {
                     push @errors, "Failed to restore $original_rel: $@";
@@ -507,7 +508,7 @@ sub undo_turn {
                 eval {
                     my $target_dir = dirname($original_abs);
                     make_path($target_dir) unless -d $target_dir;
-                    rename($abs_path, $original_abs) or die "Rename failed: $!";
+                    rename($abs_path, $original_abs) or croak "Rename failed: $!";
                 };
                 if ($@) {
                     push @errors, "Failed to rename $rel_path back to $original_rel: $@";
@@ -806,7 +807,7 @@ sub _write_manifest {
 
     my $manifest_file = File::Spec->catfile($self->{vault_dir}, $turn_id, 'manifest.json');
     eval {
-        open my $fh, '>:encoding(UTF-8)', $manifest_file or die "Cannot write manifest: $!";
+        open my $fh, '>:encoding(UTF-8)', $manifest_file or croak "Cannot write manifest: $!";
         print $fh encode_json($manifest);
         close $fh;
     };
@@ -831,7 +832,7 @@ sub _read_manifest {
 
     my $content;
     eval {
-        open my $fh, '<:encoding(UTF-8)', $manifest_file or die "Cannot read manifest: $!";
+        open my $fh, '<:encoding(UTF-8)', $manifest_file or croak "Cannot read manifest: $!";
         local $/;
         $content = <$fh>;
         close $fh;
@@ -893,7 +894,7 @@ sub _read_file_content {
     my ($self, $path) = @_;
     my $content;
     eval {
-        open my $fh, '<:raw', $path or die "Cannot read: $!";
+        open my $fh, '<:raw', $path or croak "Cannot read: $!";
         local $/;
         $content = <$fh>;
         close $fh;

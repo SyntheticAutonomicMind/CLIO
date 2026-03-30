@@ -142,7 +142,7 @@ sub init {
         Type   => SOCK_STREAM,
         Local  => $self->{socket_path},
         Listen => $self->{max_clients},
-    ) or die "Cannot create socket at $self->{socket_path}: $!";
+    ) or croak "Cannot create socket at $self->{socket_path}: $!";
     
     chmod 0777, $self->{socket_path};
     

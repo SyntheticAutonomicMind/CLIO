@@ -158,7 +158,7 @@ sub run_oneshot_agent {
     use FindBin;
     my $clio_path = "$FindBin::Bin/clio";
     unless (-x $clio_path) {
-        die "Cannot find CLIO executable: $clio_path";
+        croak "Cannot find CLIO executable: $clio_path";
     }
     
     # Set environment for broker connection and sub-agent mode
