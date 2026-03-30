@@ -499,7 +499,24 @@ if ($broker_session && $broker_agent_id) {
         }
         
         unless ($has_prefix) {
-            my $full_model = "$current_provider/$current_model";
+            # Detect the correct provider from the model name before blindly
+            # prepending the current provider. Models like "MiniMax-M2.7" need
+            # the minimax provider, not github_copilot, even if that's the default.
+            my $detected = CLIO::Providers::detect_provider_for_model($current_model);
+            my $target_provider = $detected || $current_provider;
+            
+            # If the detected provider differs from current, switch to it
+            # so api_base, api_key, etc. are correct for this model.
+            if ($detected && $detected ne $current_provider) {
+                $config->set_provider($detected);
+                # Don't persist the auto-switch (session restore is temporary)
+                delete $config->{user_set}->{provider};
+                delete $config->{user_set}->{api_base};
+                delete $config->{user_set}->{model};
+                print STDERR "[DEBUG] Auto-detected provider '$detected' for restored model '$current_model'\n" if $debug;
+            }
+            
+            my $full_model = "$target_provider/$current_model";
             $config->set('model', $full_model, 0);
             print STDERR "[DEBUG] Migrated model to provider/model format: $full_model\n" if $debug;
         }
