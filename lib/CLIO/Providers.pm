@@ -201,6 +201,7 @@ my %PROVIDERS = (
             temperature_range => [0.01, 1.0],
             supports_tools => 1,
             minimax => 1,
+            no_system_role => 1,
         },
     },
     
@@ -218,6 +219,7 @@ my %PROVIDERS = (
             temperature_range => [0.01, 1.0],
             supports_tools => 1,
             minimax => 1,
+            no_system_role => 1,
         },
     },
 );

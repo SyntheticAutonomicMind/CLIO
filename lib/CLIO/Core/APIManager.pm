@@ -642,6 +642,12 @@ sub _model_throttle_check {
 sub adapt_request_for_endpoint {
     my ($self, $payload, $endpoint_config) = @_;
     
+    # Convert system messages to user messages for providers that don't support role=system
+    # Flag: no_system_role in endpoint config
+    if ($endpoint_config->{no_system_role} && $payload->{messages} && ref($payload->{messages}) eq 'ARRAY') {
+        $payload->{messages} = _convert_system_to_user($payload->{messages});
+    }
+    
     # Clamp temperature to endpoint's supported range
     if (exists $payload->{temperature} && $endpoint_config->{temperature_range}) {
         my ($min_temp, $max_temp) = @{$endpoint_config->{temperature_range}};
@@ -696,9 +702,116 @@ sub adapt_request_for_endpoint {
     # Add reasoning_split for MiniMax to separate thinking into reasoning_details field
     if ($endpoint_config->{minimax}) {
         $payload->{reasoning_split} = \1;  # JSON true
+        
+        # Transform tool messages to MiniMax format
+        # MiniMax requires tool results as: content => [{name, type, text}]
+        # and assistant messages with tool_calls must have content => ""
+        if ($payload->{messages} && ref($payload->{messages}) eq 'ARRAY') {
+            $payload->{messages} = _transform_messages_for_minimax($payload->{messages});
+        }
     }
     
     return $payload;
+}
+# Check if string ends with a valid partial <think> prefix.
+# Only matches exact prefixes: <, <t, <th, <thi, <thin, <think
+# Does NOT match arbitrary < followed by other characters (e.g. <a, <b, <div)
+sub _has_partial_open_think_suffix {
+    my ($text) = @_;
+    return 0 unless length($text);
+    return $text =~ /(?:<think|<thin|<thi|<th|<t|<)$/;
+}
+
+# Check if string ends with a valid partial </think> prefix.
+# Only matches exact prefixes: <, </, </t, </th, </thi, </thin, </think
+sub _has_partial_close_think_suffix {
+    my ($text) = @_;
+    return 0 unless length($text);
+    return $text =~ /(?:<\/think|<\/thin|<\/thi|<\/th|<\/t|<\/|<)$/;
+}
+
+
+# Convert role=system messages to role=user for providers that don't support system role.
+# The first system message (system prompt) gets a [System Instructions] wrapper.
+# Mid-conversation system messages (error recovery, context summaries) get [System Note].
+# Also merges resulting consecutive user messages to maintain alternation.
+sub _convert_system_to_user {
+    my ($messages) = @_;
+    return $messages unless $messages && @$messages;
+
+    my $seen_system = 0;
+    my @result;
+    for my $msg (@$messages) {
+        if ($msg->{role} eq 'system') {
+            my $prefix = $seen_system ? '[System Note]' : '[System Instructions]';
+            $seen_system++;
+            my $converted = {
+                role => 'user',
+                content => "$prefix\n$msg->{content}",
+            };
+            # Merge into previous user message if consecutive
+            if (@result && $result[-1]{role} eq 'user' && !$result[-1]{tool_call_id}) {
+                $result[-1]{content} .= "\n\n$converted->{content}";
+            } else {
+                push @result, $converted;
+            }
+        } else {
+            push @result, $msg;
+        }
+    }
+
+    log_debug('APIManager', "Converted $seen_system system message(s) to user role (no_system_role)");
+    return \@result;
+}
+
+# Transform messages to MiniMax-compatible format
+# MiniMax requires different tool message formatting:
+# - Tool results: content is array of [{name => "func", type => "text", text => "result"}]
+# - Assistant with tool_calls: content must be "" (empty string, not undef)
+sub _transform_messages_for_minimax {
+    my ($messages) = @_;
+    
+    # First pass: collect tool_call_id -> function_name mappings
+    my %tc_id_to_name;
+    for my $msg (@$messages) {
+        next unless $msg->{role} eq 'assistant' && $msg->{tool_calls};
+        for my $tc (@{$msg->{tool_calls}}) {
+            $tc_id_to_name{$tc->{id}} = $tc->{function}{name} if $tc->{id};
+        }
+    }
+    
+    # Second pass: transform messages
+    my @result;
+    for my $msg (@$messages) {
+        if ($msg->{role} eq 'tool') {
+            # MiniMax tool message format: content is array of {name, type, text}
+            my $func_name = 'unknown';
+            if ($msg->{tool_call_id} && $tc_id_to_name{$msg->{tool_call_id}}) {
+                $func_name = $tc_id_to_name{$msg->{tool_call_id}};
+            }
+            
+            push @result, {
+                role => 'tool',
+                tool_call_id => $msg->{tool_call_id} // '',
+                content => [{
+                    name => $func_name,
+                    type => 'text',
+                    text => $msg->{content} // '',
+                }],
+            };
+        }
+        elsif ($msg->{role} eq 'assistant' && $msg->{tool_calls} && @{$msg->{tool_calls}}) {
+            # Assistant with tool_calls: ensure content is empty string
+            my %transformed = %$msg;
+            $transformed{content} = '';
+            push @result, \%transformed;
+        }
+        else {
+            push @result, $msg;
+        }
+    }
+    
+    return \@result;
 }
 
 =head2 get_model_capabilities
@@ -1497,9 +1610,13 @@ sub _build_payload {
     }
     
     # Save currently used model to session for persistence
-    if ($self->{session} && (!$self->{session}{selected_model} || $self->{session}{selected_model} ne $model)) {
-        $self->{session}{selected_model} = $model;
-        log_debug('APIManager', "Saving model to session: $model");
+    # Use the full prefixed model (e.g., "minimax/MiniMax-M2.7") so that
+    # --resume correctly routes to the right provider, not the stripped
+    # API model name which loses the provider prefix.
+    my $full_model = $self->get_current_model() || $model;
+    if ($self->{session} && (!$self->{session}{selected_model} || $self->{session}{selected_model} ne $full_model)) {
+        $self->{session}{selected_model} = $full_model;
+        log_debug('APIManager', "Saving model to session: $full_model");
     }
     
     # Add copilot_thread_id for session continuity (GitHub Copilot requirement)
@@ -2147,6 +2264,18 @@ sub send_request {
     
     # Process the content if we found it
     if (defined $content && length($content)) {
+        # Strip <think>...</think> tags from non-streaming responses (MiniMax)
+        # MiniMax M2.x models sometimes include thinking inline even with reasoning_split
+        if ($endpoint_config->{minimax} && $content =~ /<think>/) {
+            # Remove complete <think>...</think> blocks
+            while ($content =~ s{<think>.*?</think>\n*}{}sg) {}
+            # Remove orphaned tags
+            $content =~ s/<\/?think>//g;
+            # Only strip leading newlines that were adjacent to removed tags
+            $content =~ s/^\n+//;
+            log_debug('APIManager', "Stripped <think> tags from MiniMax non-streaming response");
+        }
+        
         # Only wrap in conversation tags if not already wrapped
         if ($content !~ m{\[conversation\].*?\[/conversation\]}s) {
             $content = "[conversation]$content\[/conversation]";
@@ -2585,6 +2714,11 @@ sub send_request_streaming {
     my $streaming_usage = undef;  # Capture real usage from final streaming chunk
     my $raw_response_body = '';  # Preserve full response body for error detection
     
+    # State machine for <think> tag handling (MiniMax M2.x inline thinking)
+    my $in_think_tag = 0;       # Currently inside <think>...</think> block
+    my $think_buffer = '';      # Buffer for partial tag detection at chunk boundaries
+    my $is_minimax = $endpoint_config->{minimax} ? 1 : 0;
+    
     # Make streaming request with callback
     my $resp;
     my $streaming_headers;  # Capture headers from streaming callback
@@ -2604,6 +2738,9 @@ sub send_request_streaming {
             
             # Append chunk to buffer
             $buffer .= $chunk;
+            
+            # Normalize CRLF to LF for providers that use \r\n line endings
+            $buffer =~ s/\r\n/\n/g;
             
             # Process complete SSE lines (ending with \n\n)
             while ($buffer =~ s/^(.*?)\n\n//s) {
@@ -2819,13 +2956,87 @@ sub send_request_streaming {
                                 $self->{response_handler}->store_stateful_marker($delta->{stateful_marker}, $model, $iteration);
                             }
                             
-                            # Extract content
-                            if ($delta->{content}) {
+                            # Extract content (use defined+length to preserve "0" and whitespace-only deltas)
+                            if (defined($delta->{content}) && length($delta->{content})) {
                                 $content_delta = $delta->{content};
+                                
+                                # Handle <think> tags from MiniMax models
+                                # MiniMax M2.x may send thinking inline as <think>...</think>
+                                # even when reasoning_split=true. Strip tags and route
+                                # thinking content to on_thinking callback.
+                                if ($is_minimax && defined $content_delta) {
+                                    my $work = $think_buffer . $content_delta;
+                                    $think_buffer = '';
+                                    $content_delta = '';
+                                    
+                                    while (length($work)) {
+                                        if ($in_think_tag) {
+                                            # Inside <think> - look for closing </think>
+                                            if ($work =~ s{^(.*?)</think>}{}s) {
+                                                my $think_text = $1;
+                                                if (length($think_text) && $on_thinking) {
+                                                    $reasoning_was_active = 1;
+                                                    $accumulated_reasoning_details .= $think_text;
+                                                    $on_thinking->($think_text);
+                                                }
+                                                $in_think_tag = 0;
+                                                # Strip leading newlines after </think> to prevent blank lines
+                                                $work =~ s/^\n+//;
+                                            }
+                                            elsif (_has_partial_close_think_suffix($work)) {
+                                                # Partial </think> at end - buffer only the tag fragment
+                                                my $idx = rindex($work, '<');
+                                                my $before = substr($work, 0, $idx);
+                                                my $fragment = substr($work, $idx);
+                                                if (length($before) && $on_thinking) {
+                                                    $reasoning_was_active = 1;
+                                                    $accumulated_reasoning_details .= $before;
+                                                    $on_thinking->($before);
+                                                }
+                                                $think_buffer = $fragment;
+                                                $work = '';
+                                            }
+                                            else {
+                                                # All thinking content, no closing tag yet
+                                                if ($on_thinking) {
+                                                    $reasoning_was_active = 1;
+                                                    $accumulated_reasoning_details .= $work;
+                                                    $on_thinking->($work);
+                                                }
+                                                $work = '';
+                                            }
+                                        }
+                                        else {
+                                            # Outside <think> - look for opening <think>
+                                            if ($work =~ s{^(.*?)<think>}{}s) {
+                                                my $before = $1;
+                                                $content_delta .= $before;
+                                                $in_think_tag = 1;
+                                            }
+                                            elsif (_has_partial_open_think_suffix($work)) {
+                                                # Partial <think> at end - buffer only the tag fragment
+                                                my $idx = rindex($work, '<');
+                                                my $before = substr($work, 0, $idx);
+                                                my $fragment = substr($work, $idx);
+                                                $content_delta .= $before;
+                                                $think_buffer = $fragment;
+                                                $work = '';
+                                            }
+                                            else {
+                                                # No think tags - pass through as content
+                                                $content_delta .= $work;
+                                                $work = '';
+                                            }
+                                        }
+                                    }
+                                    
+                                    # If content_delta is now empty, clear it
+                                    $content_delta = undef unless length($content_delta);
+                                }
                                 
                                 # If reasoning was active and now regular content starts,
                                 # signal end of thinking
-                                if ($reasoning_was_active && $on_thinking) {
+                                if (defined($content_delta) && length($content_delta) && $reasoning_was_active && $on_thinking) {
                                     $on_thinking->(undef, 'end');
                                     $reasoning_was_active = 0;
                                 }
@@ -2945,7 +3156,7 @@ sub send_request_streaming {
                     }
                     
                     # If we got content, track metrics and call callback
-                    if ($content_delta) {
+                    if (defined($content_delta) && length($content_delta)) {
                         # Record first token time
                         $first_token_time //= time();
                         
@@ -3166,6 +3377,42 @@ sub send_request_streaming {
         ];
         
         log_debug('APIManager', "Accumulated " . scalar(@$tool_calls) . " tool calls from streaming");
+    }
+    
+    # Post-streaming cleanup: strip residual <think> tags from accumulated content
+    # Tags may be orphaned if stream ended mid-thinking or if reasoning_split didn't
+    # fully separate thinking from content
+    if ($is_minimax && length($accumulated_content) && $accumulated_content =~ /<\/?think>/) {
+        # Extract and route any remaining think blocks to reasoning
+        while ($accumulated_content =~ s{<think>(.*?)</think>\n*}{}sg) {
+            my $residual_think = $1;
+            if (length($residual_think)) {
+                $accumulated_reasoning_details .= $residual_think;
+                if ($on_thinking) {
+                    $on_thinking->($residual_think);
+                }
+            }
+        }
+        # Strip orphaned tags (incomplete pairs)
+        $accumulated_content =~ s/<\/?think>//g;
+        # Only strip leading newlines that were adjacent to removed tags, not all whitespace
+        $accumulated_content =~ s/^\n+//;
+        log_debug('APIManager', "Cleaned residual <think> tags from streaming content");
+    }
+    
+    # Flush any remaining think_buffer content
+    # If we were buffering a partial tag that never completed, add it back as content
+    if ($is_minimax && length($think_buffer)) {
+        if (!$in_think_tag) {
+            $accumulated_content .= $think_buffer;
+        }
+        # If still in_think_tag, the buffer is thinking content - route to reasoning
+        elsif ($on_thinking) {
+            $accumulated_reasoning_details .= $think_buffer;
+            $on_thinking->($think_buffer);
+            $on_thinking->(undef, 'end');
+        }
+        $think_buffer = '';
     }
     
     # Build response with metrics and estimated usage
@@ -3492,6 +3739,9 @@ sub _send_native_streaming {
             my ($chunk, $resp, $proto) = @_;
             
             $buffer .= $chunk;
+            
+            # Normalize CRLF to LF for providers that use \r\n line endings
+            $buffer =~ s/\r\n/\n/g;
             
             # Process complete SSE events
             while ($buffer =~ s/^(.*?)\n//s) {
