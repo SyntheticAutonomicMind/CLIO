@@ -528,7 +528,6 @@ if ($broker_session && $broker_agent_id) {
 if ($model_override) {
     require CLIO::Providers;
     my $target_provider;
-    my $current_provider = $config->get('provider') || '';
     
     # Check for explicit provider prefix (e.g. "openrouter/deepseek-r1")
     if ($model_override =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i &&
@@ -537,11 +536,8 @@ if ($model_override) {
         $model_override = $2;  # Strip prefix; will be re-added below
     }
     
-    # Fall back to configured provider
-    $target_provider ||= $current_provider;
-    
     unless ($target_provider) {
-        die "No provider configured. Use --model provider/model (e.g. github_copilot/gpt-4.1) or configure a provider with /api provider <name>\n";
+        die "--model requires provider/model format (e.g. --model github_copilot/gpt-4.1)\n";
     }
     
     # Load provider config (api_base, api_key, etc.)
