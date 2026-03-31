@@ -236,12 +236,22 @@ sub flush {
         if ($ui->{enable_markdown}) {
             $output = $ui->render_markdown($self->{markdown_buffer});
         }
-        # Indent agent output (first line follows CLIO: prefix)
+        # Indent agent output by 4 spaces under CLIO: prefix
         if (!$self->{first_line_printed}) {
             $self->{first_line_printed} = 1;
-            $output =~ s/\n/\n    /g;
+            my @lines = split /\n/, $output, -1;
+            for my $i (1 .. $#lines) {
+                next unless length($lines[$i]) > 0;
+                $lines[$i] = "    " . $lines[$i];
+            }
+            $output = join "\n", @lines;
         } else {
-            $output =~ s/^/    /gm;
+            my @lines = split /\n/, $output, -1;
+            for my $i (0 .. $#lines) {
+                next unless length($lines[$i]) > 0;
+                $lines[$i] = "    " . $lines[$i];
+            }
+            $output = join "\n", @lines;
         }
         print $output;
         STDOUT->flush() if STDOUT->can('flush');
@@ -263,7 +273,12 @@ sub flush {
             $self->{first_line_printed} = 1;
             # No indent for the line itself (follows CLIO: prefix)
         } else {
-            $output =~ s/^/    /gm;
+            my @lines = split /\n/, $output, -1;
+            for my $i (0 .. $#lines) {
+                next unless length($lines[$i]) > 0;
+                $lines[$i] = "    " . $lines[$i];
+            }
+            $output = join "\n", @lines;
         }
         print $output, "\n";
         STDOUT->flush() if STDOUT->can('flush');
@@ -293,12 +308,22 @@ sub flush_for_tools {
         if ($ui->{enable_markdown}) {
             $output = $ui->render_markdown($self->{markdown_buffer});
         }
-        # Indent agent output (first line follows CLIO: prefix)
+        # Indent agent output by 4 spaces under CLIO: prefix
         if (!$self->{first_line_printed}) {
             $self->{first_line_printed} = 1;
-            $output =~ s/\n/\n    /g;
+            my @lines = split /\n/, $output, -1;
+            for my $i (1 .. $#lines) {
+                next unless length($lines[$i]) > 0;
+                $lines[$i] = "    " . $lines[$i];
+            }
+            $output = join "\n", @lines;
         } else {
-            $output =~ s/^/    /gm;
+            my @lines = split /\n/, $output, -1;
+            for my $i (0 .. $#lines) {
+                next unless length($lines[$i]) > 0;
+                $lines[$i] = "    " . $lines[$i];
+            }
+            $output = join "\n", @lines;
         }
         print $output;
         $self->{markdown_buffer} = '';
@@ -317,7 +342,12 @@ sub flush_for_tools {
         if (!$self->{first_line_printed}) {
             $self->{first_line_printed} = 1;
         } else {
-            $output =~ s/^/    /gm;
+            my @lines = split /\n/, $output, -1;
+            for my $i (0 .. $#lines) {
+                next unless length($lines[$i]) > 0;
+                $lines[$i] = "    " . $lines[$i];
+            }
+            $output = join "\n", @lines;
         }
         print $output;
         print "\n" unless $output =~ /\n$/;
@@ -362,14 +392,24 @@ sub _flush_markdown_buffer {
         $output = $ui->render_markdown($self->{markdown_buffer});
     }
     
-    # Indent agent output by 2 spaces for visual separation
-    # First line of response follows CLIO: prefix, so skip its indent
+    # Indent agent output by 4 spaces for visual nesting under CLIO: prefix
     if (!$self->{first_line_printed}) {
         $self->{first_line_printed} = 1;
-        # Indent all lines EXCEPT the first (which continues after CLIO: prefix)
-        $output =~ s/\n/\n    /g;
+        # First flush: indent all lines EXCEPT the first (follows CLIO: prefix)
+        my @lines = split /\n/, $output, -1;
+        for my $i (1 .. $#lines) {
+            next unless length($lines[$i]) > 0;
+            $lines[$i] = "    " . $lines[$i];
+        }
+        $output = join "\n", @lines;
     } else {
-        $output =~ s/^/    /gm;
+        # Subsequent flushes: indent all lines
+        my @lines = split /\n/, $output, -1;
+        for my $i (0 .. $#lines) {
+            next unless length($lines[$i]) > 0;
+            $lines[$i] = "    " . $lines[$i];
+        }
+        $output = join "\n", @lines;
     }
     
     print $output;
