@@ -11,6 +11,7 @@ binmode(STDERR, ':encoding(UTF-8)');
 
 use Carp qw(croak confess);
 use CLIO::Util::TextSanitizer qw(sanitize_text);
+use CLIO::UI::Terminal qw(box_char);
 
 =head1 NAME
 
@@ -72,6 +73,16 @@ sub new {
     return $self;
 }
 
+# Get tool display format from theme
+sub _get_tool_format {
+    my ($self) = @_;
+    my $chat = $self->{chat};
+    if ($chat && $chat->{theme_mgr} && $chat->{theme_mgr}->can('get_tool_display_format')) {
+        return $chat->{theme_mgr}->get_tool_display_format();
+    }
+    return 'inline';
+}
+
 =head2 display_user_message($message)
 
 Display a user message with appropriate styling.
@@ -125,6 +136,9 @@ sub display_assistant_message {
         $display_message = $chat->render_markdown($message);
     }
     
+    # Indent continuation lines by 2 spaces (first line follows CLIO: prefix)
+    $display_message =~ s/\n/\n    /g;
+    
     # Display with role label using writeline (markdown already rendered above)
     my $line = $chat->colorize("CLIO: ", 'ASSISTANT') . $display_message;
     $chat->writeline($line, markdown => 0);
@@ -148,24 +162,28 @@ sub display_system_message {
     # Add to screen buffer
     $chat->add_to_buffer('system', $message);
     
-    # Handle multi-line messages by splitting and applying proper connectors
+    my $tool_format = $self->_get_tool_format();
     my @lines = split /\n/, $message, -1;
-    pop @lines if @lines && $lines[-1] eq '';  # Remove trailing empty if message ended with \n
+    pop @lines if @lines && $lines[-1] eq '';
     
-    # Build header with three-color format:
-    # {dim}┌──┤ {assistant}SYSTEM{reset}
-    my $header_conn = $chat->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
-    my $header_name = $chat->colorize("SYSTEM", 'ASSISTANT');
-    print "$header_conn$header_name\n";
-    
-    # Display each line of the message with appropriate connector
-    # {dim}└─ {data}message{reset}
-    for my $i (0..$#lines) {
-        my $is_last = ($i == $#lines);
-        my $connector = $is_last ? "\x{2514}\x{2500} " : "\x{251C}\x{2500} ";  # └─ or ├─
-        my $conn_colored = $chat->colorize($connector, 'DIM');
-        my $msg_colored = $chat->colorize($lines[$i], 'DATA');
-        print "$conn_colored$msg_colored\n";
+    if ($tool_format eq 'inline') {
+        for my $line (@lines) {
+            my $prefix = $chat->colorize("[SYSTEM] ", 'SYSTEM');
+            my $msg = $chat->colorize($line, 'DATA');
+            print "$prefix$msg\n";
+        }
+    } else {
+        my $header_conn = $chat->colorize(box_char("topleft") . box_char("horizontal") x 2 . box_char("tleft") . " ", 'DIM');
+        my $header_name = $chat->colorize("SYSTEM", 'ASSISTANT');
+        print "$header_conn$header_name\n";
+        
+        for my $i (0..$#lines) {
+            my $is_last = ($i == $#lines);
+            my $connector = $is_last ? box_char("bottomleft") . box_char("horizontal") . " " : box_char("tright") . box_char("horizontal") . " ";
+            my $conn_colored = $chat->colorize($connector, 'DIM');
+            my $msg_colored = $chat->colorize($lines[$i], 'DATA');
+            print "$conn_colored$msg_colored\n";
+        }
     }
 }
 
@@ -183,18 +201,20 @@ sub display_error_message {
     my ($self, $message) = @_;
     
     my $chat = $self->{chat};
-    
-    # Add to screen buffer
     $chat->add_to_buffer('error', $message);
     
-    # Box-drawing format
-    my $header_conn = $chat->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
-    my $header_name = $chat->colorize("ERROR", 'ERROR');
-    my $footer_conn = $chat->colorize("\x{2514}\x{2500} ", 'DIM');
-    my $footer_msg = $chat->colorize($message, 'DATA');
-    
-    $chat->writeline("$header_conn$header_name", markdown => 0);
-    $chat->writeline("$footer_conn$footer_msg", markdown => 0);
+    if ($self->_get_tool_format() eq 'inline') {
+        my $prefix = $chat->colorize("[ERROR] ", 'ERROR');
+        my $msg = $chat->colorize($message, 'DATA');
+        $chat->writeline("$prefix$msg", markdown => 0);
+    } else {
+        my $header_conn = $chat->colorize(box_char("topleft") . box_char("horizontal") x 2 . box_char("tleft") . " ", 'DIM');
+        my $header_name = $chat->colorize("ERROR", 'ERROR');
+        my $footer_conn = $chat->colorize(box_char("bottomleft") . box_char("horizontal") . " ", 'DIM');
+        my $footer_msg = $chat->colorize($message, 'DATA');
+        $chat->writeline("$header_conn$header_name", markdown => 0);
+        $chat->writeline("$footer_conn$footer_msg", markdown => 0);
+    }
 }
 
 =head2 display_success_message($message)
@@ -211,18 +231,20 @@ sub display_success_message {
     my ($self, $message) = @_;
     
     my $chat = $self->{chat};
-    
-    # Add to screen buffer
     $chat->add_to_buffer('success', $message);
     
-    # Box-drawing format
-    my $header_conn = $chat->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
-    my $header_name = $chat->colorize("SUCCESS", 'SUCCESS');
-    my $footer_conn = $chat->colorize("\x{2514}\x{2500} ", 'DIM');
-    my $footer_msg = $chat->colorize($message, 'DATA');
-    
-    $chat->writeline("$header_conn$header_name", markdown => 0);
-    $chat->writeline("$footer_conn$footer_msg", markdown => 0);
+    if ($self->_get_tool_format() eq 'inline') {
+        my $prefix = $chat->colorize("[OK] ", 'SUCCESS');
+        my $msg = $chat->colorize($message, 'DATA');
+        $chat->writeline("$prefix$msg", markdown => 0);
+    } else {
+        my $header_conn = $chat->colorize(box_char("topleft") . box_char("horizontal") x 2 . box_char("tleft") . " ", 'DIM');
+        my $header_name = $chat->colorize("SUCCESS", 'SUCCESS');
+        my $footer_conn = $chat->colorize(box_char("bottomleft") . box_char("horizontal") . " ", 'DIM');
+        my $footer_msg = $chat->colorize($message, 'DATA');
+        $chat->writeline("$header_conn$header_name", markdown => 0);
+        $chat->writeline("$footer_conn$footer_msg", markdown => 0);
+    }
 }
 
 =head2 display_warning_message($message)
@@ -239,18 +261,20 @@ sub display_warning_message {
     my ($self, $message) = @_;
     
     my $chat = $self->{chat};
-    
-    # Add to screen buffer
     $chat->add_to_buffer('warning', $message);
     
-    # Box-drawing format
-    my $header_conn = $chat->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
-    my $header_name = $chat->colorize("WARNING", 'WARNING');
-    my $footer_conn = $chat->colorize("\x{2514}\x{2500} ", 'DIM');
-    my $footer_msg = $chat->colorize($message, 'DATA');
-    
-    $chat->writeline("$header_conn$header_name", markdown => 0);
-    $chat->writeline("$footer_conn$footer_msg", markdown => 0);
+    if ($self->_get_tool_format() eq 'inline') {
+        my $prefix = $chat->colorize("[WARN] ", 'WARNING');
+        my $msg = $chat->colorize($message, 'DATA');
+        $chat->writeline("$prefix$msg", markdown => 0);
+    } else {
+        my $header_conn = $chat->colorize(box_char("topleft") . box_char("horizontal") x 2 . box_char("tleft") . " ", 'DIM');
+        my $header_name = $chat->colorize("WARNING", 'WARNING');
+        my $footer_conn = $chat->colorize(box_char("bottomleft") . box_char("horizontal") . " ", 'DIM');
+        my $footer_msg = $chat->colorize($message, 'DATA');
+        $chat->writeline("$header_conn$header_name", markdown => 0);
+        $chat->writeline("$footer_conn$footer_msg", markdown => 0);
+    }
 }
 
 =head2 display_info_message($message)
@@ -267,18 +291,20 @@ sub display_info_message {
     my ($self, $message) = @_;
     
     my $chat = $self->{chat};
-    
-    # Add to screen buffer
     $chat->add_to_buffer('info', $message);
     
-    # Box-drawing format
-    my $header_conn = $chat->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
-    my $header_name = $chat->colorize("INFO", 'ASSISTANT');  # Use ASSISTANT color for info
-    my $footer_conn = $chat->colorize("\x{2514}\x{2500} ", 'DIM');
-    my $footer_msg = $chat->colorize($message, 'DATA');
-    
-    $chat->writeline("$header_conn$header_name", markdown => 0);
-    $chat->writeline("$footer_conn$footer_msg", markdown => 0);
+    if ($self->_get_tool_format() eq 'inline') {
+        my $prefix = $chat->colorize("[INFO] ", 'SYSTEM');
+        my $msg = $chat->colorize($message, 'DATA');
+        $chat->writeline("$prefix$msg", markdown => 0);
+    } else {
+        my $header_conn = $chat->colorize(box_char("topleft") . box_char("horizontal") x 2 . box_char("tleft") . " ", 'DIM');
+        my $header_name = $chat->colorize("INFO", 'ASSISTANT');
+        my $footer_conn = $chat->colorize(box_char("bottomleft") . box_char("horizontal") . " ", 'DIM');
+        my $footer_msg = $chat->colorize($message, 'DATA');
+        $chat->writeline("$header_conn$header_name", markdown => 0);
+        $chat->writeline("$footer_conn$footer_msg", markdown => 0);
+    }
 }
 
 =head2 display_command_header($text, $width)

@@ -7,6 +7,7 @@ use strict;
 use warnings;
 use utf8;
 use parent 'CLIO::UI::Commands::Base';
+use CLIO::UI::Terminal qw(box_char);
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 
@@ -273,7 +274,7 @@ sub _display_multi_provider_models {
 
         push @lines, "";
         push @lines, $self->colorize("$display_name ($count models)", 'THEME');
-        push @lines, "  " . ("─" x 72);
+        push @lines, "  " . (box_char("horizontal") x 72);
 
         my @sorted = sort { $a->{id} cmp $b->{id} } @$models;
 

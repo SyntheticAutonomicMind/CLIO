@@ -15,79 +15,65 @@ binmode(STDERR, ':encoding(UTF-8)');
 
 =head1 NAME
 
-CLIO::UI::ProgressSpinner - Simple terminal progress animation
+CLIO::UI::ProgressSpinner - Terminal progress animation with cursor management
 
 =head1 DESCRIPTION
 
-Provides a simple rotating animation to indicate system is busy processing.
-Can run standalone or inline (without printing its own line).
+Provides a progress animation to indicate the system is busy. Hides the
+cursor during animation and restores it on stop. Default animation is a
+dot pattern (. .. ... .. . [blank]) that works on all terminals including console
+and serial.
 
-Animation clears itself when stopped. In inline mode, only the spinner
-character is removed, preserving any text that came before it on the line.
-
-Uses a forked child process for non-blocking animation. The stop() method
-is designed to be robust against race conditions: it kills the child,
-uses non-blocking waitpid with a timeout, and performs aggressive terminal
-cleanup to ensure no stale spinner characters remain.
+Uses a forked child process for non-blocking animation.
 
 =head1 SYNOPSIS
 
-    # Standalone spinner with theme-managed frames
     my $spinner = CLIO::UI::ProgressSpinner->new(
         theme_mgr => $theme_manager,
-        delay => 100000,  # microseconds (100ms)
     );
-    $spinner->start();
+    $spinner->start();  # cursor hidden, animation starts
     # ... do work ...
-    $spinner->stop();
-
-    # Custom spinner (explicit frames override theme)
-    my $spinner = CLIO::UI::ProgressSpinner->new(
-        frames => ['.', 'o', 'O', 'o'],
-        delay => 100000,
-    );
-
-    # Inline spinner (animates on same line as existing text)
-    # Usage: Print "CLIO: " then start inline spinner
-    print "CLIO: ";
-    my $spinner = CLIO::UI::ProgressSpinner->new(
-        theme_mgr => $theme_manager,
-        inline => 1,  # Don't clear entire line on stop, just remove spinner
-    );
-    $spinner->start();
-    # Terminal shows: "CLIO: ⠋" animating (using frames from theme)
-    # ... do work ...
-    $spinner->stop();
-    # Terminal shows: "CLIO: " with cursor after it for content to follow
+    $spinner->stop();   # animation cleared, cursor restored
 
 =cut
+
+# Default dot frames - works everywhere (ASCII, console, serial)
+my @DEFAULT_FRAMES = ('.', '..', '...', '..', '.', ' ');
 
 sub new {
     my ($class, %args) = @_;
     
-    # Use theme manager frames if available, otherwise fall back to default
-    my @frames = ('⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏');
+    # Use theme manager frames if available, otherwise default dots
+    my @frames = @DEFAULT_FRAMES;
     if ($args{theme_mgr} && $args{theme_mgr}->can('get_spinner_frames')) {
-        @frames = @{$args{theme_mgr}->get_spinner_frames()};
+        my $theme_frames = $args{theme_mgr}->get_spinner_frames();
+        @frames = @$theme_frames if $theme_frames && @$theme_frames;
     } elsif ($args{frames}) {
         @frames = @{$args{frames}};
     }
     
     # If frames contain braille characters but locale doesn't support Unicode,
-    # fall back to ASCII spinner to avoid rendering as empty/garbled output
+    # fall back to default dot pattern
     if (_has_braille_chars(\@frames) && !_locale_supports_utf8()) {
-        @frames = ('-', '\\', '|', '/');
+        @frames = @DEFAULT_FRAMES;
+    }
+    
+    # Calculate max frame width for clean erasure
+    my $max_width = 0;
+    for my $f (@frames) {
+        my $len = length($f);
+        $max_width = $len if $len > $max_width;
     }
     
     my $self = {
-        # Frames from theme or explicit argument or default braille pattern
-        frames => \@frames,
-        delay => $args{delay} || 100000,  # 100ms default
-        inline => $args{inline} // 0,     # Inline mode: don't clear entire line
-        theme_mgr => $args{theme_mgr},    # Store theme manager for potential future use
-        pid => undef,
-        running => 0,
-        _started_at => 0,                 # Timestamp when start() was called
+        frames     => \@frames,
+        max_width  => $max_width,
+        delay      => $args{delay} || 200000,  # 200ms default (slower for dots)
+        inline     => $args{inline} // 0,
+        theme_mgr  => $args{theme_mgr},
+        pid        => undef,
+        running    => 0,
+        _started_at => 0,
     };
     
     bless $self, $class;
@@ -96,13 +82,7 @@ sub new {
 
 =head2 start
 
-Start the progress animation in background.
-Non-blocking - returns immediately while animation continues.
-
-In inline mode, assumes the cursor is already positioned where the spinner
-should appear (typically right after "CLIO: "). The spinner will animate in place.
-
-In standalone mode, the spinner animates from the beginning of the line.
+Start the progress animation. Hides the cursor and forks a child process.
 
 =cut
 
@@ -111,32 +91,34 @@ sub start {
     
     return if $self->{running};
     
-    # Fork a child process to handle animation
+    # Hide cursor before animation begins
+    print "\e[?25l";
+    STDOUT->flush() if STDOUT->can('flush');
+    
     my $pid = fork();
     
     if (!defined $pid) {
-        # Fork failures can happen legitimately (e.g., resource limits)
-        # Only log in debug mode to avoid alarming users
         log_debug('ProgressSpinner', "Failed to fork progress spinner: $!");
+        # Restore cursor on fork failure
+        print "\e[?25h";
+        STDOUT->flush() if STDOUT->can('flush');
         return;
     }
     
     if ($pid == 0) {
-        # Child process - detach from parent's terminal input
+        # Child process
         close(STDIN);
         open(STDIN, '<', '/dev/null') or warn "Cannot reopen STDIN: $!";
         
-        # Clear inherited signal handlers - ensure SIGTERM terminates immediately
         $SIG{INT} = 'DEFAULT';
         $SIG{TERM} = 'DEFAULT';
         $SIG{ALRM} = 'DEFAULT';
         
-        # Run animation loop
         $self->_run_animation();
         POSIX::_exit(0);
     }
     
-    # Parent process - store child PID and return
+    # Parent
     $self->{pid} = $pid;
     $self->{running} = 1;
     $self->{_started_at} = time();
@@ -144,17 +126,7 @@ sub start {
 
 =head2 stop
 
-Stop the progress animation and clear it from terminal.
-
-Uses a robust multi-step shutdown:
-1. Send SIGTERM to child process
-2. Non-blocking waitpid with timeout (prevents hang)
-3. Escalate to SIGKILL if child doesn't exit within 200ms
-4. Aggressive terminal cleanup to handle race conditions where child
-   may have output a frame between our kill and cleanup
-
-In standalone mode: clears the entire line and repositions cursor at start
-In inline mode: removes just the spinner character(s), leaves text before it
+Stop the animation, clear spinner text, and show the cursor.
 
 =cut
 
@@ -163,21 +135,17 @@ sub stop {
     
     return unless $self->{running};
     
-    # Mark as not running immediately to prevent re-entrant calls
     $self->{running} = 0;
     
-    # Kill child process with robust shutdown
     if ($self->{pid}) {
         my $pid = $self->{pid};
         $self->{pid} = undef;
         
-        # Step 1: Send SIGTERM (graceful)
+        # Graceful shutdown
         kill('TERM', $pid);
         
-        # Step 2: Non-blocking wait with timeout
-        # This prevents hanging if the child is somehow stuck
         my $reaped = 0;
-        my $deadline = time() + 0.2;  # 200ms timeout
+        my $deadline = time() + 0.2;
         
         while (time() < $deadline) {
             my $result = waitpid($pid, POSIX::WNOHANG());
@@ -185,45 +153,35 @@ sub stop {
                 $reaped = 1;
                 last;
             }
-            usleep(10000);  # 10ms between checks
+            usleep(10000);
         }
         
-        # Step 3: Escalate to SIGKILL if still alive
         if (!$reaped) {
             kill('KILL', $pid);
-            # Brief final wait for SIGKILL (always works on non-zombie)
             waitpid($pid, 0);
             log_debug('ProgressSpinner', "Spinner child required SIGKILL (pid=$pid)");
         }
         
-        # Step 4: Brief delay to let any in-flight output from child settle
-        # The child may have output a frame just before being killed.
-        # This tiny delay lets the terminal process it before we clean up.
-        usleep(5000);  # 5ms
+        usleep(5000);  # Let in-flight output settle
     }
     
-    # Step 5: Aggressive terminal cleanup
-    # Must handle race condition where child wrote a frame right before dying
+    # Clean up spinner text
     if ($self->{inline}) {
-        # Inline mode: erase spinner character(s) robustly
-        # Use backspace + space + backspace for the spinner character,
-        # but also add a second pass for race condition safety
-        print "\b \b";
+        # Erase up to max frame width
+        my $w = $self->{max_width};
+        print "\b" x $w . ' ' x $w . "\b" x $w;
     } else {
-        # Standalone mode: clear entire line and move cursor to start
         print "\r\e[K";
     }
     
-    # Flush immediately to ensure cleanup is visible
+    # Show cursor
+    print "\e[?25h";
     STDOUT->flush() if STDOUT->can('flush');
 }
 
 =head2 is_running
 
-Check if the spinner animation is currently active.
-Also validates that the child process is actually alive (handles zombie detection).
-
-Returns: 1 if running, 0 if not
+Check if the spinner is active (validates child process is alive).
 
 =cut
 
@@ -232,13 +190,14 @@ sub is_running {
     
     return 0 unless $self->{running};
     
-    # Validate the child process is still alive
     if ($self->{pid}) {
         my $result = waitpid($self->{pid}, POSIX::WNOHANG());
         if ($result == $self->{pid} || $result == -1) {
-            # Child has exited (or doesn't exist) - mark as not running
             $self->{pid} = undef;
             $self->{running} = 0;
+            # Show cursor if child died unexpectedly
+            print "\e[?25h";
+            STDOUT->flush() if STDOUT->can('flush');
             return 0;
         }
     }
@@ -248,52 +207,49 @@ sub is_running {
 
 =head2 _run_animation (internal)
 
-Animation loop running in child process.
+Animation loop in child process.
 
 =cut
 
 sub _run_animation {
     my ($self) = @_;
     
-    # Child process must set UTF-8 binmode for Unicode characters
     binmode(STDOUT, ':encoding(UTF-8)');
     
     my $frame_index = 0;
     my $frames = $self->{frames};
     my $delay = $self->{delay};
     my $inline = $self->{inline};
-    my $first_frame = 1;  # Track first frame to avoid spurious backspace
+    my $max_width = $self->{max_width};
+    my $first_frame = 1;
     
     while (1) {
         my $frame = $frames->[$frame_index];
         
         if ($inline) {
-            # Inline mode: print frame, backspacing first to clear previous frame
-            # On first frame, don't backspace - there's nothing to erase yet
             if ($first_frame) {
-                print $frame;
+                # Pad to max width so all frames occupy the same space
+                print $frame . (' ' x ($max_width - length($frame)));
                 $first_frame = 0;
             } else {
-                print "\b$frame";
+                # Back up, write frame padded, back up trailing spaces
+                print "\b" x $max_width;
+                print $frame . (' ' x ($max_width - length($frame)));
             }
         } else {
-            # Standalone mode: carriage return to start of line + frame
-            print "\r$frame";
+            # Standalone: carriage return + frame padded to max width
+            print "\r" . $frame . (' ' x ($max_width - length($frame)));
         }
         
         STDOUT->flush() if STDOUT->can('flush');
-        
         usleep($delay);
-        
         $frame_index = ($frame_index + 1) % scalar(@$frames);
     }
 }
 
-=head2 _has_braille_chars (internal)
-
-Check if any spinner frames contain Unicode braille characters (U+2800-U+28FF).
-
-=cut
+# ─────────────────────────────────────────────────────────────
+# Internal helpers
+# ─────────────────────────────────────────────────────────────
 
 sub _has_braille_chars {
     my ($frames) = @_;
@@ -302,13 +258,6 @@ sub _has_braille_chars {
     }
     return 0;
 }
-
-=head2 _locale_supports_utf8 (internal)
-
-Check if the current locale indicates UTF-8 support by examining
-LC_ALL, LC_CTYPE, and LANG environment variables.
-
-=cut
 
 sub _locale_supports_utf8 {
     for my $var ($ENV{LC_ALL}, $ENV{LC_CTYPE}, $ENV{LANG}) {
@@ -320,46 +269,28 @@ sub _locale_supports_utf8 {
 
 sub DESTROY {
     my ($self) = @_;
-    # Safety net: ensure child process is cleaned up on object destruction.
-    # Handles both normal case (running=1) and edge cases where pid is set
-    # but running flag was cleared (e.g., partial stop() or exception).
     if ($self->{running}) {
         $self->stop();
     } elsif ($self->{pid}) {
         kill('KILL', $self->{pid});
         waitpid($self->{pid}, POSIX::WNOHANG());
         $self->{pid} = undef;
+        # Show cursor as safety net
+        print "\e[?25h";
+        STDOUT->flush() if STDOUT->can('flush');
     }
 }
 
 1;
 
-=head1 EXAMPLES
+__END__
 
-Simple dots animation:
+=head1 DEFAULT FRAMES
 
-    my $spinner = CLIO::UI::ProgressSpinner->new(
-        frames => ['.', '..', '...'],
-        delay => 200000,
-    );
+The default spinner is a dot pattern: .  ..  ...  ..  .  (blank)
 
-Classic spinner:
+This works on all terminals including Linux console, serial, and dumb.
 
-    my $spinner = CLIO::UI::ProgressSpinner->new(
-        frames => ['|', '/', '-', '\\'],
-    );
-
-Inline spinner with prefix:
-
-    print "CLIO: ";
-    my $spinner = CLIO::UI::ProgressSpinner->new(
-        frames => ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'],
-        inline => 1,
-    );
-    $spinner->start();
-    # Terminal shows: "CLIO: ⠋" animating
-    sleep 3;
-    $spinner->stop();
-    # Terminal shows: "CLIO: " ready for content
+Themes can override with spinner_frames in their .style file.
 
 =cut

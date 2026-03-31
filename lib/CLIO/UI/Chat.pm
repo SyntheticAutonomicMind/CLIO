@@ -11,6 +11,7 @@ use CLIO::Util::TextSanitizer qw(sanitize_text);
 use CLIO::UI::Markdown;
 use CLIO::UI::ANSI;
 use CLIO::UI::Theme;
+use CLIO::UI::Terminal qw(box_char ui_char);
 use CLIO::UI::ProgressSpinner;
 use CLIO::UI::CommandHandler;
 use CLIO::UI::Display;
@@ -191,6 +192,14 @@ sub flush_output_buffer {
     my ($self) = @_;
     return $self->{streaming}->flush_for_tools();
 }
+
+=head2 streaming_controller
+
+Return the streaming controller instance.
+
+=cut
+
+sub streaming_controller { $_[0]->{streaming} }
 
 =head2 reset_streaming_state
 
@@ -482,12 +491,22 @@ sub _make_thinking_callback {
         my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
         return unless $show_thinking;
         
+        my $tool_format = 'inline';
+        if ($self->{theme_mgr} && $self->{theme_mgr}->can('get_tool_display_format')) {
+            $tool_format = $self->{theme_mgr}->get_tool_display_format();
+        }
+        
         if (defined $signal) {
             if ($signal eq 'start') {
                 $thinking_active = 1;
                 $spinner->stop();
-                print $self->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
-                print $self->colorize("THINKING", 'ASSISTANT');
+                if ($tool_format eq 'inline') {
+                    my $bullet = ui_char('tool_bullet');
+                    print $self->colorize("$bullet THINKING", 'DIM');
+                } else {
+                    print $self->colorize(box_char("topleft") . box_char("horizontal") x 2 . box_char("tleft") . " ", 'DIM');
+                    print $self->colorize("THINKING", 'ASSISTANT');
+                }
                 print "\n";
                 STDOUT->flush() if STDOUT->can('flush');
                 return;
@@ -508,12 +527,24 @@ sub _make_thinking_callback {
         if (!$thinking_active) {
             $thinking_active = 1;
             $spinner->stop();
-            print $self->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
-            print $self->colorize("THINKING", 'ASSISTANT');
+            if ($tool_format eq 'inline') {
+                my $bullet = ui_char('tool_bullet');
+                print $self->colorize("$bullet THINKING", 'DIM');
+            } else {
+                print $self->colorize(box_char("topleft") . box_char("horizontal") x 2 . box_char("tleft") . " ", 'DIM');
+                print $self->colorize("THINKING", 'ASSISTANT');
+            }
             print "\n";
             STDOUT->flush() if STDOUT->can('flush');
         }
         
+        # Indent thinking content by 4 spaces
+        $content =~ s/\n/\n    /g;
+        if ($thinking_active == 1) {
+            # First content chunk: add leading indent
+            $content = "    " . $content;
+            $thinking_active = 2;  # Mark first content printed
+        }
         print $self->colorize($content, 'DATA');
         STDOUT->flush() if STDOUT->can('flush');
     };
@@ -549,9 +580,9 @@ sub _make_system_message_callback {
             STDOUT->flush() if STDOUT->can('flush');
             $self->{pager}->increment_lines(2);
         } else {
-            my $header_conn = $self->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
+            my $header_conn = $self->colorize(box_char("topleft") . box_char("horizontal") x 2 . box_char("tleft") . " ", 'DIM');
             my $header_name = $self->colorize("SYSTEM", 'ASSISTANT');
-            my $footer_conn = $self->colorize("\x{2514}\x{2500} ", 'DIM');
+            my $footer_conn = $self->colorize(box_char("bottomleft") . box_char("horizontal") . " ", 'DIM');
             my $footer_msg = $self->colorize($message, 'DATA');
             
             print "$header_conn$header_name\n";
@@ -897,7 +928,7 @@ sub display_agent_message {
     }
     
     # Print separator
-    print $self->colorize("─" x 80, 'DIM'), "\n";
+    print $self->colorize(box_char("horizontal") x 80, 'DIM'), "\n";
     
     # Print header
     my $header = "$icon Agent Message: " . $self->colorize("$from", 'BOLD') . 
@@ -928,7 +959,7 @@ sub display_agent_message {
         print "Reply with: " . $self->colorize("/subagent reply $from <your-response>", 'BOLD'), "\n";
     }
     
-    print $self->colorize("─" x 80, 'DIM'), "\n";
+    print $self->colorize(box_char("horizontal") x 80, 'DIM'), "\n";
     print "\n";
 }
 
@@ -1550,18 +1581,30 @@ sub display_system_messages {
     
     return unless $messages && ref($messages) eq 'ARRAY' && @$messages;
     
-    # Header
-    my $header_conn = $self->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
-    my $header_name = $self->colorize("SYSTEM", 'ASSISTANT');
-    print "$header_conn$header_name\n";
+    my $tool_format = 'inline';
+    if ($self->{theme_mgr} && $self->{theme_mgr}->can('get_tool_display_format')) {
+        $tool_format = $self->{theme_mgr}->get_tool_display_format();
+    }
     
-    # Messages
-    for my $i (0 .. $#{$messages}) {
-        my $is_last = ($i == $#{$messages});
-        my $connector = $is_last ? "\x{2514}\x{2500} " : "\x{251C}\x{2500} ";
-        my $conn_colored = $self->colorize($connector, 'DIM');
-        my $msg_colored = $self->colorize($messages->[$i], 'DATA');
-        print "$conn_colored$msg_colored\n";
+    if ($tool_format eq 'inline') {
+        for my $msg (@$messages) {
+            my $prefix = $self->colorize("[SYSTEM] ", 'SYSTEM');
+            my $msg_colored = $self->colorize($msg, 'DATA');
+            print "$prefix$msg_colored\n";
+        }
+    } else {
+        # Box format
+        my $header_conn = $self->colorize(box_char("topleft") . box_char("horizontal") x 2 . box_char("tleft") . " ", 'DIM');
+        my $header_name = $self->colorize("SYSTEM", 'ASSISTANT');
+        print "$header_conn$header_name\n";
+        
+        for my $i (0 .. $#{$messages}) {
+            my $is_last = ($i == $#{$messages});
+            my $connector = $is_last ? box_char("bottomleft") . box_char("horizontal") . " " : box_char("tright") . box_char("horizontal") . " ";
+            my $conn_colored = $self->colorize($connector, 'DIM');
+            my $msg_colored = $self->colorize($messages->[$i], 'DATA');
+            print "$conn_colored$msg_colored\n";
+        }
     }
     
     STDOUT->flush() if STDOUT->can('flush');
@@ -1745,9 +1788,9 @@ sub request_collaboration {
         $self->{pager}->increment_lines();
     }
     
-    # Print remaining lines with pagination checks
+    # Print remaining lines with pagination checks (indented 2 spaces)
     for my $line (@lines) {
-        print $line, "\n";
+        print "    $line\n";
         $self->{pager}->increment_lines();
         
         # Check if we need to paginate
@@ -1932,14 +1975,14 @@ sub display_help {
     
     # Header
     push @help_lines, "";
-    push @help_lines, $self->colorize("═" x 62, 'command_header');
+    push @help_lines, $self->colorize(box_char("dhorizontal") x 62, 'command_header');
     push @help_lines, $self->colorize("CLIO COMMANDS", 'command_header');
-    push @help_lines, $self->colorize("═" x 62, 'command_header');
+    push @help_lines, $self->colorize(box_char("dhorizontal") x 62, 'command_header');
     push @help_lines, "";
     
     # Sections
     push @help_lines, $self->colorize("BASICS", 'command_subheader');
-    push @help_lines, $self->colorize("─" x 62, 'dim');
+    push @help_lines, $self->colorize(box_char("horizontal") x 62, 'dim');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/help, /h', 'help_command'), 'Display this help');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/exit, /quit, /q', 'help_command'), 'Exit the chat');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/clear', 'help_command'), 'Clear the screen');
@@ -1948,7 +1991,7 @@ sub display_help {
     push @help_lines, "";
     
     push @help_lines, $self->colorize("KEYBOARD SHORTCUTS", 'command_subheader');
-    push @help_lines, $self->colorize("─" x 62, 'dim');
+    push @help_lines, $self->colorize(box_char("horizontal") x 62, 'dim');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('Left/Right', 'help_command'), 'Move cursor by character');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('Shift+Left/Right', 'help_command'), 'Move cursor by word');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('Ctrl+A / Home', 'help_command'), 'Move to start of line');
@@ -1961,7 +2004,7 @@ sub display_help {
     push @help_lines, "";
     
     push @help_lines, $self->colorize("API & CONFIG", 'command_subheader');
-    push @help_lines, $self->colorize("─" x 62, 'dim');
+    push @help_lines, $self->colorize(box_char("horizontal") x 62, 'dim');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/api', 'help_command'), 'API settings (model, provider, login)');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/api set model <name>', 'help_command'), 'Set AI model');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/api models', 'help_command'), 'List available models');
@@ -1971,14 +2014,14 @@ sub display_help {
     push @help_lines, "";
     
     push @help_lines, $self->colorize("SESSION", 'command_subheader');
-    push @help_lines, $self->colorize("─" x 62, 'dim');
+    push @help_lines, $self->colorize(box_char("horizontal") x 62, 'dim');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/session', 'help_command'), 'Session management');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/session list', 'help_command'), 'List all sessions');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/session switch', 'help_command'), 'Switch sessions');
     push @help_lines, "";
     
     push @help_lines, $self->colorize("FILE & GIT", 'command_subheader');
-    push @help_lines, $self->colorize("─" x 62, 'dim');
+    push @help_lines, $self->colorize(box_char("horizontal") x 62, 'dim');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/file', 'help_command'), 'File operations');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/file read <path>', 'help_command'), 'View file');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/git', 'help_command'), 'Git operations');
@@ -1994,14 +2037,14 @@ sub display_help {
     push @help_lines, "";
     
     push @help_lines, $self->colorize("TODO", 'command_subheader');
-    push @help_lines, $self->colorize("─" x 62, 'dim');
+    push @help_lines, $self->colorize(box_char("horizontal") x 62, 'dim');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo', 'help_command'), "View agent's todo list");
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo add <text>', 'help_command'), 'Add todo');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo done <id>', 'help_command'), 'Complete todo');
     push @help_lines, "";
     
     push @help_lines, $self->colorize("SPECS (OpenSpec)", 'command_subheader');
-    push @help_lines, $self->colorize("─" x 62, 'dim');
+    push @help_lines, $self->colorize(box_char("horizontal") x 62, 'dim');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/spec', 'help_command'), 'Show spec overview');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/spec init', 'help_command'), 'Initialize openspec/ directory');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/spec list', 'help_command'), 'List specs and changes');
@@ -2012,7 +2055,7 @@ sub display_help {
     push @help_lines, "";
     
     push @help_lines, $self->colorize("MEMORY", 'command_subheader');
-    push @help_lines, $self->colorize("─" x 62, 'dim');
+    push @help_lines, $self->colorize(box_char("horizontal") x 62, 'dim');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory', 'help_command'), 'View long-term memory patterns');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory list [type]', 'help_command'), 'List all or filtered patterns');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory store <type>', 'help_command'), 'Store pattern (via AI)');
@@ -2020,7 +2063,7 @@ sub display_help {
     push @help_lines, "";
     
     push @help_lines, $self->colorize("PROFILE", 'command_subheader');
-    push @help_lines, $self->colorize("─" x 62, 'dim');
+    push @help_lines, $self->colorize(box_char("horizontal") x 62, 'dim');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/profile', 'help_command'), 'View profile status');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/profile build', 'help_command'), 'Build profile from session history');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/profile show', 'help_command'), 'Display current profile');
@@ -2029,7 +2072,7 @@ sub display_help {
     push @help_lines, "";
     
     push @help_lines, $self->colorize("UPDATES", 'command_subheader');
-    push @help_lines, $self->colorize("─" x 62, 'dim');
+    push @help_lines, $self->colorize(box_char("horizontal") x 62, 'dim');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/update', 'help_command'), 'Show update status and help');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/update check', 'help_command'), 'Check for available updates');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/update list', 'help_command'), 'List all available versions');
@@ -2038,7 +2081,7 @@ sub display_help {
     push @help_lines, "";
     
     push @help_lines, $self->colorize("DEVELOPER", 'command_subheader');
-    push @help_lines, $self->colorize("─" x 62, 'dim');
+    push @help_lines, $self->colorize(box_char("horizontal") x 62, 'dim');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/explain [file]', 'help_command'), 'Explain code');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/review [file]', 'help_command'), 'Review code');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/test [file]', 'help_command'), 'Generate tests');
@@ -2048,13 +2091,13 @@ sub display_help {
     push @help_lines, "";
     
     push @help_lines, $self->colorize("SKILLS & PROMPTS", 'command_subheader');
-    push @help_lines, $self->colorize("─" x 62, 'dim');
+    push @help_lines, $self->colorize(box_char("horizontal") x 62, 'dim');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/skills', 'help_command'), 'Manage custom skills');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/prompt', 'help_command'), 'Manage system prompts');
     push @help_lines, "";
     
     push @help_lines, $self->colorize("DEVICES & REMOTE", 'command_subheader');
-    push @help_lines, $self->colorize("─" x 62, 'dim');
+    push @help_lines, $self->colorize(box_char("horizontal") x 62, 'dim');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/device', 'help_command'), 'List registered devices');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/device add <name> <host>', 'help_command'), 'Register device');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/device info <name>', 'help_command'), 'Device details');
@@ -2063,7 +2106,7 @@ sub display_help {
     push @help_lines, "";
     
     push @help_lines, $self->colorize("MULTI-AGENT", 'command_subheader');
-    push @help_lines, $self->colorize("─" x 62, 'dim');
+    push @help_lines, $self->colorize(box_char("horizontal") x 62, 'dim');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/agent spawn <task>', 'help_command'), 'Spawn a sub-agent');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/agent list', 'help_command'), 'List sub-agents');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/agent inbox', 'help_command'), 'Check messages from agents');
@@ -2073,7 +2116,7 @@ sub display_help {
     push @help_lines, "";
     
     push @help_lines, $self->colorize("OTHER", 'command_subheader');
-    push @help_lines, $self->colorize("─" x 62, 'dim');
+    push @help_lines, $self->colorize(box_char("horizontal") x 62, 'dim');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/billing', 'help_command'), 'API usage stats');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/stats', 'help_command'), 'Memory and performance stats');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/stats history', 'help_command'), 'Memory usage timeline');
@@ -2373,60 +2416,69 @@ sub repaint_screen {
     }
     
     # Replay buffer without adding to it again
+    my $tool_format = 'inline';
+    if ($self->{theme_mgr} && $self->{theme_mgr}->can('get_tool_display_format')) {
+        $tool_format = $self->{theme_mgr}->get_tool_display_format();
+    }
+    
     for my $msg (@{$self->{screen_buffer}}) {
         if ($msg->{type} eq 'user') {
             print $self->colorize("YOU: ", 'USER'), $msg->{content}, "\n";
         }
         elsif ($msg->{type} eq 'assistant') {
-            print $self->colorize("CLIO: ", 'ASSISTANT'), $msg->{content}, "\n";
+            my $content = $msg->{content};
+            $content =~ s/\n/\n    /g;  # Indent continuation lines
+            print $self->colorize("CLIO: ", 'ASSISTANT'), $content, "\n";
         }
         elsif ($msg->{type} eq 'system') {
-            # Display system message with three-color box-drawing format:
-            # {dim}┌──┤ {agent_label}SYSTEM{reset}
-            # {dim}└─ {data}message{reset}
-            my $header_conn = $self->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
-            my $header_name = $self->colorize("SYSTEM", 'ASSISTANT');
-            my $footer_conn = $self->colorize("\x{2514}\x{2500} ", 'DIM');
-            my $footer_msg = $self->colorize($msg->{content}, 'DATA');
-            
-            print "$header_conn$header_name\n";
-            print "$footer_conn$footer_msg\n";
+            if ($tool_format eq 'inline') {
+                print $self->colorize("[SYSTEM] ", 'SYSTEM'), $self->colorize($msg->{content}, 'DATA'), "\n";
+            } else {
+                my $header_conn = $self->colorize(box_char("topleft") . box_char("horizontal") x 2 . box_char("tleft") . " ", 'DIM');
+                my $header_name = $self->colorize("SYSTEM", 'ASSISTANT');
+                my $footer_conn = $self->colorize(box_char("bottomleft") . box_char("horizontal") . " ", 'DIM');
+                my $footer_msg = $self->colorize($msg->{content}, 'DATA');
+                print "$header_conn$header_name\n$footer_conn$footer_msg\n";
+            }
         }
         elsif ($msg->{type} eq 'error') {
-            # Display error with box-drawing format
-            my $header_conn = $self->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
-            my $header_name = $self->colorize("ERROR", 'ERROR');
-            my $footer_conn = $self->colorize("\x{2514}\x{2500} ", 'DIM');
-            my $footer_msg = $self->colorize($msg->{content}, 'DATA');
-            
-            print "$header_conn$header_name\n";
-            print "$footer_conn$footer_msg\n";
+            if ($tool_format eq 'inline') {
+                print $self->colorize("[ERROR] ", 'ERROR'), $self->colorize($msg->{content}, 'DATA'), "\n";
+            } else {
+                my $header_conn = $self->colorize(box_char("topleft") . box_char("horizontal") x 2 . box_char("tleft") . " ", 'DIM');
+                my $header_name = $self->colorize("ERROR", 'ERROR');
+                my $footer_conn = $self->colorize(box_char("bottomleft") . box_char("horizontal") . " ", 'DIM');
+                my $footer_msg = $self->colorize($msg->{content}, 'DATA');
+                print "$header_conn$header_name\n$footer_conn$footer_msg\n";
+            }
         }
         elsif ($msg->{type} eq 'warning') {
-            # Display warning with box-drawing format
-            my $header_conn = $self->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
-            my $header_name = $self->colorize("WARNING", 'WARNING');
-            my $footer_conn = $self->colorize("\x{2514}\x{2500} ", 'DIM');
-            my $footer_msg = $self->colorize($msg->{content}, 'DATA');
-            
-            print "$header_conn$header_name\n";
-            print "$footer_conn$footer_msg\n";
+            if ($tool_format eq 'inline') {
+                print $self->colorize("[WARN] ", 'WARNING'), $self->colorize($msg->{content}, 'DATA'), "\n";
+            } else {
+                my $header_conn = $self->colorize(box_char("topleft") . box_char("horizontal") x 2 . box_char("tleft") . " ", 'DIM');
+                my $header_name = $self->colorize("WARNING", 'WARNING');
+                my $footer_conn = $self->colorize(box_char("bottomleft") . box_char("horizontal") . " ", 'DIM');
+                my $footer_msg = $self->colorize($msg->{content}, 'DATA');
+                print "$header_conn$header_name\n$footer_conn$footer_msg\n";
+            }
         }
         elsif ($msg->{type} eq 'success') {
-            # Display success with box-drawing format
-            my $header_conn = $self->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
-            my $header_name = $self->colorize("SUCCESS", 'SUCCESS');
-            my $footer_conn = $self->colorize("\x{2514}\x{2500} ", 'DIM');
-            my $footer_msg = $self->colorize($msg->{content}, 'DATA');
-            
-            print "$header_conn$header_name\n";
-            print "$footer_conn$footer_msg\n";
+            if ($tool_format eq 'inline') {
+                print $self->colorize("[OK] ", 'SUCCESS'), $self->colorize($msg->{content}, 'DATA'), "\n";
+            } else {
+                my $header_conn = $self->colorize(box_char("topleft") . box_char("horizontal") x 2 . box_char("tleft") . " ", 'DIM');
+                my $header_name = $self->colorize("SUCCESS", 'SUCCESS');
+                my $footer_conn = $self->colorize(box_char("bottomleft") . box_char("horizontal") . " ", 'DIM');
+                my $footer_msg = $self->colorize($msg->{content}, 'DATA');
+                print "$header_conn$header_name\n$footer_conn$footer_msg\n";
+            }
         }
         elsif ($msg->{type} eq 'info') {
             # Display info with box-drawing format
-            my $header_conn = $self->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
+            my $header_conn = $self->colorize(box_char("topleft") . box_char("horizontal") x 2 . box_char("tleft") . " ", 'DIM');
             my $header_name = $self->colorize("INFO", 'ASSISTANT');
-            my $footer_conn = $self->colorize("\x{2514}\x{2500} ", 'DIM');
+            my $footer_conn = $self->colorize(box_char("bottomleft") . box_char("horizontal") . " ", 'DIM');
             my $footer_msg = $self->colorize($msg->{content}, 'DATA');
             
             print "$header_conn$header_name\n";
