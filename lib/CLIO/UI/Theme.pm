@@ -278,12 +278,15 @@ sub get_spinner_frames {
     my ($self) = @_;
     
     my $style = $self->{styles}->{$self->{current_style}} || $self->{styles}->{default};
-    return ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] unless $style;
+    return ['.', '..', '...', '..', '.', ' '] unless $style;
     
-    my $frames_str = $style->{spinner_frames} || '⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏';
-    
-    # Split comma-separated frames
+    my $frames_str = $style->{spinner_frames} || '.,..,...,..,., ';    
+    # Split comma-separated frames, preserving intentional spaces
     my @frames = split(/,/, $frames_str);
+    # Trim leading whitespace only (trailing space may be intentional for blank frames)
+    @frames = map { s/^\s+//r } @frames;
+    # Replace empty strings with space (blank frame)
+    @frames = map { $_ eq '' ? ' ' : $_ } @frames;
     
     return \@frames;
 }
@@ -292,7 +295,7 @@ sub get_spinner_frames {
 
 Get tool display format from current theme: 'box' or 'inline'
 
-Returns 'box' (default) or 'inline'
+Returns 'inline' (default) or 'box'
 
 =cut
 
@@ -300,9 +303,60 @@ sub get_tool_display_format {
     my ($self) = @_;
     
     my $theme = $self->{themes}->{$self->{current_theme}} || $self->{themes}->{default};
-    return 'box' unless $theme;
+    return 'inline' unless $theme;
     
-    return $theme->{tool_display_format} || 'box';
+    return $theme->{tool_display_format} || 'inline';
+}
+
+=head2 get_ui_char($name)
+
+Get a UI symbol, checking theme override first, then falling back to
+Terminal.pm capability-aware defaults.
+
+Theme keys: tool_bullet, tool_separator, footer_separator
+
+    my $bullet = $theme_mgr->get_ui_char('tool_bullet');
+
+=cut
+
+sub get_ui_char {
+    my ($self, $name) = @_;
+    
+    require CLIO::UI::Terminal;
+    
+    # Check theme override first
+    my $theme = $self->{themes}->{$self->{current_theme}} || $self->{themes}->{default};
+    if ($theme && defined $theme->{$name} && $theme->{$name} ne '') {
+        return $theme->{$name};
+    }
+    
+    # Map theme key names to ui_char() names
+    my %key_map = (
+        tool_bullet      => 'bullet',
+        tool_separator   => 'separator',
+        footer_separator => 'footer_sep',
+    );
+    
+    my $ui_name = $key_map{$name} // $name;
+    return CLIO::UI::Terminal::ui_char($ui_name);
+}
+
+# Resolve {char.X} template variables to capability-aware characters
+sub _resolve_char {
+    my ($name) = @_;
+    require CLIO::UI::Terminal;
+    
+    # Try box_char first, then ui_char
+    my %box_names = map { $_ => 1 } qw(
+        horizontal vertical topleft topright bottomleft bottomright
+        tdown tup tleft tright cross
+        dhorizontal dvertical dtopleft dtopright dbottomleft dbottomright
+    );
+    
+    if ($box_names{$name}) {
+        return CLIO::UI::Terminal::box_char($name);
+    }
+    return CLIO::UI::Terminal::ui_char($name);
 }
 
 =head2 get_template
@@ -339,6 +393,9 @@ sub render {
     
     # Substitute {var.key} with provided variables
     $template =~ s/\{var\.(\w+)\}/$vars->{$1} || ''/ge;
+    
+    # Substitute {char.key} with capability-aware box/UI characters
+    $template =~ s/\{char\.(\w+)\}/_resolve_char($1)/ge;
     
     # Parse @-codes
     return $self->{ansi}->parse($template);
@@ -683,11 +740,10 @@ sub get_builtin_theme {
         error_prefix => '{style.error_message}ERROR: @RESET@',
         
         # Banner (displayed at session start)
-        banner_line1 => '{style.app_title}CLIO@RESET@ {style.app_subtitle}- Command Line Intelligence Orchestrator@RESET@',
+        banner_line1 => '{style.app_title}CLIO {style.app_subtitle}- Command Line Intelligence Orchestrator@RESET@',
         banner_line2 => '{style.banner_label}Session ID: {style.data}{var.session_id}@RESET@',
         banner_line3 => '{var.session_name_line}',
         banner_line4 => '{style.banner_label}You are connected to {style.data}{var.model}@RESET@',
-        banner_line5 => '{style.banner_label}Type "{style.data}/help{style.banner_label}" for a list of commands.@RESET@',
         
         # Help system
         help_header => '{style.data}{var.title}@RESET@',
@@ -704,13 +760,13 @@ sub get_builtin_theme {
         pagination_info => '{style.dim}{var.info}@RESET@',
         
         # Pagination prompts (box-drawing format with proper closures)
-        pagination_hint_streaming => '{style.dim}┌──┤ {style.agent_label}Q Quits {style.dim}│ {style.agent_label}Any key for more@RESET@',
-        pagination_hint_full => '{style.dim}┌──┤ {style.agent_label}^/v Pages {style.dim}│ {style.agent_label}Q Quits {style.dim}│ {style.agent_label}Any key for more@RESET@',
-        pagination_prompt => '{style.dim}└─┤ {style.data}{var.current}/{var.total} {style.dim}│ {style.agent_label}{var.nav_hint}Q {style.dim}│ {style.prompt_indicator}> @RESET@',
+        pagination_hint_streaming => '{style.dim}{char.topleft}{char.horizontal}{char.horizontal}{char.tleft} {style.agent_label}Q Quits {style.dim}{char.vertical} {style.agent_label}Any key for more@RESET@',
+        pagination_hint_full => '{style.dim}{char.topleft}{char.horizontal}{char.horizontal}{char.tleft} {style.agent_label}^/v Pages {style.dim}{char.vertical} {style.agent_label}Q Quits {style.dim}{char.vertical} {style.agent_label}Any key for more@RESET@',
+        pagination_prompt => '{style.dim}{char.bottomleft}{char.horizontal}{char.tleft} {style.data}{var.current}/{var.total} {style.dim}{char.vertical} {style.agent_label}{var.nav_hint}Q {style.dim}{char.vertical} {style.prompt_indicator}> @RESET@',
         
         # Confirmation prompts (box-drawing two-part format)
-        confirmation_header => '{style.dim}┌──┤ {style.prompt_indicator}{var.question}@RESET@',
-        confirmation_input => '{style.dim}└─┤ {style.data}{var.options} {style.dim}│ {style.data}Enter{style.dim} to {style.data}{var.default_action}{style.dim}: @RESET@',
+        confirmation_header => '{style.dim}{char.topleft}{char.horizontal}{char.horizontal}{char.tleft} {style.prompt_indicator}{var.question}@RESET@',
+        confirmation_input => '{style.dim}{char.bottomleft}{char.horizontal}{char.tleft} {style.data}{var.options} {style.dim}{char.vertical} {style.data}Enter{style.dim} to {style.data}{var.default_action}{style.dim}: @RESET@',
         
         # Messages
         user_message_prefix => '{style.user_text}YOU: @RESET@',
@@ -778,7 +834,6 @@ sub get_required_theme_keys {
         banner_line2
         banner_line3
         banner_line4
-        banner_line5
         help_header
         help_section
         help_command

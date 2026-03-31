@@ -130,9 +130,6 @@ sub execute_command {
         $session = $context->{ui}->{session};
     }
     
-    # Try multiplexer path first, fall back to direct TTY handoff
-    my $mux = $self->_get_multiplexer($context);
-    
     eval {
         my $original_cwd = getcwd();
         chdir $working_dir if $working_dir ne '.';
@@ -141,8 +138,6 @@ sub execute_command {
 
         if ($passthrough) {
             $result = $self->_execute_passthrough($command, $timeout, $display_cmd, $working_dir, $session);
-        } elsif ($mux && $mux->available()) {
-            $result = $self->_execute_in_mux_pane($command, $timeout, $display_cmd, $mux, $working_dir);
         } else {
             $result = $self->_execute_captured($command, $timeout, $display_cmd, $working_dir, $session);
         }
@@ -169,67 +164,6 @@ sub execute_command {
     }
     
     return $result;
-}
-
-=head2 _execute_in_mux_pane
-
-Execute a command in a multiplexer pane. The command runs in a new pane
-where the user can see and interact with it. Output is captured via a
-log file for the agent.
-
-=cut
-
-sub _execute_in_mux_pane {
-    my ($self, $command, $timeout, $display_cmd, $mux, $working_dir) = @_;
-    
-    my $log_file = "/tmp/clio_terminal_$$.log";
-    unlink $log_file if -f $log_file;
-    
-    # Build the command to run in the pane:
-    # 1. cd to working directory
-    # 2. Run command, capturing output via script
-    # 3. Touch a done marker when complete
-    my $done_marker = "/tmp/clio_terminal_done_$$";
-    unlink $done_marker if -f $done_marker;
-    
-    # Wrap with working directory, output capture, and done marker
-    # No script/pty - just subshell with redirect
-    my $pane_cmd = "cd " . _shell_escape($working_dir) . " && "
-                 . "($command) > " . _shell_escape($log_file) . " 2>&1"
-                 . "; echo \$? > " . _shell_escape($done_marker);
-    
-    log_debug('TerminalOps', "Multiplexer execution: $pane_cmd");
-    
-    my $pane_id = $mux->create_pane(
-        name    => "cmd-$$",
-        command => $pane_cmd,
-        size    => 40,
-    );
-    
-    unless ($pane_id) {
-        # Mux pane creation failed, fall back to direct TTY
-        log_warning('TerminalOps', "Multiplexer pane creation failed, falling back to TTY handoff");
-        return $self->_execute_captured($command, $timeout, $display_cmd, $working_dir);
-    }
-    
-    # Wait for command to complete (poll for done marker)
-    my $exit_code = $self->_wait_for_pane_completion($done_marker, $timeout, $mux, $pane_id);
-    
-    # Read captured output
-    my $output = $self->_read_and_cleanup_log($log_file);
-    unlink $done_marker if -f $done_marker;
-    
-    # Clean up the pane
-    eval { $mux->kill_pane($pane_id) };
-    
-    return $self->success_result(
-        $output,
-        pre_action_description => $display_cmd,
-        exit_code => $exit_code,
-        command => $command,
-        timeout => $timeout,
-        passthrough => 1,
-    );
 }
 
 =head2 _execute_captured
@@ -349,12 +283,27 @@ sub _execute_captured {
     # Read captured output
     my $output = $self->_read_and_cleanup_log($log_file);
     
+    # Build expanded_content for inline display (show output under the command)
+    my @expanded;
+    if (defined $output && length($output)) {
+        my @lines = split /\n/, $output;
+        # Show up to 15 lines of output; truncate if longer
+        my $max_preview = 15;
+        for my $j (0 .. ($#lines < $max_preview - 1 ? $#lines : $max_preview - 1)) {
+            push @expanded, $lines[$j];
+        }
+        if (@lines > $max_preview) {
+            push @expanded, "... (" . scalar(@lines) . " lines total)";
+        }
+    }
+    
     return $self->success_result(
         $output,
         pre_action_description => $display_cmd,
         exit_code => $exit_code,
         command => $command,
         timeout => $timeout,
+        expanded_content => (@expanded ? \@expanded : undef),
     );
 }
 
@@ -563,87 +512,6 @@ sub _resume_clio_input {
     if ($@) {
         log_debug('TerminalOps', "Could not resume terminal: $@");
     }
-}
-
-=head2 _wait_for_pane_completion
-
-Wait for a multiplexer pane command to complete by polling for a done marker file.
-
-=cut
-
-sub _wait_for_pane_completion {
-    my ($self, $done_marker, $timeout, $mux, $pane_id) = @_;
-    
-    my $start = time();
-    my $exit_code = -1;
-    
-    while (time() - $start < $timeout) {
-        if (-f $done_marker) {
-            # Read exit code from marker
-            if (open my $fh, '<', $done_marker) {
-                my $code = <$fh>;
-                close $fh;
-                chomp $code if defined $code;
-                $exit_code = ($code =~ /^\d+$/) ? int($code) : -1;
-            }
-            last;
-        }
-        
-        # Check if the pane still exists (command may have been killed)
-        if ($mux->{driver} && $mux->{driver}->can('pane_exists')) {
-            unless ($mux->{driver}->pane_exists($pane_id)) {
-                log_debug('TerminalOps', "Multiplexer pane disappeared, command may have completed");
-                # Give a moment for the done marker to be written
-                select(undef, undef, undef, 0.5);
-                if (-f $done_marker) {
-                    if (open my $fh, '<', $done_marker) {
-                        my $code = <$fh>;
-                        close $fh;
-                        chomp $code if defined $code;
-                        $exit_code = ($code =~ /^\d+$/) ? int($code) : -1;
-                    }
-                }
-                last;
-            }
-        }
-        
-        select(undef, undef, undef, 0.5);  # Poll every 500ms
-    }
-    
-    if ($exit_code == -1 && time() - $start >= $timeout) {
-        log_warning('TerminalOps', "Command timed out after ${timeout}s");
-        $exit_code = 124;
-    }
-    
-    return $exit_code;
-}
-
-=head2 _get_multiplexer
-
-Get or create a Multiplexer instance from context.
-
-=cut
-
-sub _get_multiplexer {
-    my ($self, $context) = @_;
-    
-    # Check if multiplexer is available in context
-    if ($context && $context->{multiplexer}) {
-        return $context->{multiplexer};
-    }
-    
-    # Try to detect and create one
-    my $mux;
-    eval {
-        require CLIO::UI::Multiplexer;
-        $mux = CLIO::UI::Multiplexer->new();
-    };
-    if ($@) {
-        log_debug('TerminalOps', "Could not load Multiplexer: $@");
-        return undef;
-    }
-    
-    return ($mux && $mux->available()) ? $mux : undef;
 }
 
 sub validate_command {

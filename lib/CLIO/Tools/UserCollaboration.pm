@@ -9,6 +9,7 @@ use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use CLIO::Core::Logger qw(should_log log_debug log_error log_info log_warning);
+use CLIO::UI::Terminal qw(box_char);
 use parent 'CLIO::Tools::Tool';
 use feature 'say';
 
@@ -250,11 +251,19 @@ sub request_input {
     }
     
     # Display action line BEFORE showing collaboration prompt
-    # This closes the box-drawing header and indicates what's happening
     if ($ui->can('colorize')) {
-        my $conn = $ui->colorize("\x{2514}\x{2500} ", 'DIM');
-        my $action = $ui->colorize("Requesting your input...", 'DATA');
-        print "$conn$action\n";
+        my $tool_format = 'inline';
+        if ($ui->{theme_mgr} && $ui->{theme_mgr}->can('get_tool_display_format')) {
+            $tool_format = $ui->{theme_mgr}->get_tool_display_format();
+        }
+        
+        if ($tool_format eq 'inline') {
+            # Inline: no connector needed, the prompt speaks for itself
+        } else {
+            my $conn = $ui->colorize(box_char('bottomleft') . box_char('horizontal') . ' ', 'DIM');
+            my $action = $ui->colorize("Requesting your input...", 'DATA');
+            print "$conn$action\n";
+        }
         STDOUT->flush() if STDOUT->can('flush');
     }
     

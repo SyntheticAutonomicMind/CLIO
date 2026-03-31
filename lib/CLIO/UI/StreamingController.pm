@@ -88,6 +88,7 @@ sub reset {
     # Chunk tracking
     $self->{first_chunk_received} = 0;
     $self->{accumulated_content}  = '';
+    $self->{first_line_printed}   = 0;  # Track if first line has been printed (no indent)
 
     return $self;
 }
@@ -134,11 +135,13 @@ sub make_on_chunk_callback {
 
             if ($ui->{_prepare_for_next_iteration}) {
                 $ui->{_prepare_for_next_iteration} = 0;
+                $self->{first_line_printed} = 0;  # Reset for new CLIO: prefix
                 log_debug('Chat', "Printed CLIO: prefix for continuation after tools");
             }
 
             if (!$self->{first_chunk_received}) {
                 $ui->{pager}->enable();
+                $self->{first_line_printed} = 0;  # Reset for first CLIO: prefix
                 log_debug('Chat', "Pagination ENABLED for text response");
             }
 
@@ -233,6 +236,13 @@ sub flush {
         if ($ui->{enable_markdown}) {
             $output = $ui->render_markdown($self->{markdown_buffer});
         }
+        # Indent agent output (first line follows CLIO: prefix)
+        if (!$self->{first_line_printed}) {
+            $self->{first_line_printed} = 1;
+            $output =~ s/\n/\n    /g;
+        } else {
+            $output =~ s/^/    /gm;
+        }
         print $output;
         STDOUT->flush() if STDOUT->can('flush');
         $printed = 1;
@@ -247,6 +257,13 @@ sub flush {
         my $output = $self->{line_buffer};
         if ($ui->{enable_markdown}) {
             $output = $ui->render_markdown($self->{line_buffer});
+        }
+        # Indent agent output (line_buffer is always a continuation)
+        if (!$self->{first_line_printed}) {
+            $self->{first_line_printed} = 1;
+            # No indent for the line itself (follows CLIO: prefix)
+        } else {
+            $output =~ s/^/    /gm;
         }
         print $output, "\n";
         STDOUT->flush() if STDOUT->can('flush');
@@ -276,6 +293,13 @@ sub flush_for_tools {
         if ($ui->{enable_markdown}) {
             $output = $ui->render_markdown($self->{markdown_buffer});
         }
+        # Indent agent output (first line follows CLIO: prefix)
+        if (!$self->{first_line_printed}) {
+            $self->{first_line_printed} = 1;
+            $output =~ s/\n/\n    /g;
+        } else {
+            $output =~ s/^/    /gm;
+        }
         print $output;
         $self->{markdown_buffer} = '';
         $printed = 1;
@@ -288,6 +312,12 @@ sub flush_for_tools {
         my $output = $self->{line_buffer};
         if ($ui->{enable_markdown}) {
             $output = $ui->render_markdown($self->{line_buffer});
+        }
+        # Indent agent output (continuation)
+        if (!$self->{first_line_printed}) {
+            $self->{first_line_printed} = 1;
+        } else {
+            $output =~ s/^/    /gm;
         }
         print $output;
         print "\n" unless $output =~ /\n$/;
@@ -331,6 +361,17 @@ sub _flush_markdown_buffer {
     if ($ui->{enable_markdown}) {
         $output = $ui->render_markdown($self->{markdown_buffer});
     }
+    
+    # Indent agent output by 2 spaces for visual separation
+    # First line of response follows CLIO: prefix, so skip its indent
+    if (!$self->{first_line_printed}) {
+        $self->{first_line_printed} = 1;
+        # Indent all lines EXCEPT the first (which continues after CLIO: prefix)
+        $output =~ s/\n/\n    /g;
+    } else {
+        $output =~ s/^/    /gm;
+    }
+    
     print $output;
     STDOUT->flush() if STDOUT->can('flush');
 

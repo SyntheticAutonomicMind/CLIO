@@ -171,24 +171,26 @@ sub cmd_spawn {
         $mux_pane_id = $self->_multiplexer()->create_agent_pane($agent_id);
     }
     
-    # Display formatted output following CLIO style
-    $self->display_section_header("SUB-AGENT SPAWNED");
-    $self->display_key_value("Agent ID", $self->colorize($agent_id, 'BOLD'));
-    $self->display_key_value("Mode", $self->colorize($mode_str, $persistent ? 'YELLOW' : 'CYAN'));
-    $self->display_key_value("Model", $model);
-    
-    if ($mux_pane_id) {
-        my $mux_type = $self->_multiplexer()->type();
-        $self->display_key_value("Output", $self->colorize("$mux_type pane (live)", 'GREEN'));
+    # Display formatted output (skip when called from tool with suppress_display)
+    unless ($self->{suppress_display}) {
+        $self->display_section_header("SUB-AGENT SPAWNED");
+        $self->display_key_value("Agent ID", $self->colorize($agent_id, 'BOLD'));
+        $self->display_key_value("Mode", $self->colorize($mode_str, $persistent ? 'YELLOW' : 'CYAN'));
+        $self->display_key_value("Model", $model);
+        
+        if ($mux_pane_id) {
+            my $mux_type = $self->_multiplexer()->type();
+            $self->display_key_value("Output", $self->colorize("$mux_type pane (live)", 'GREEN'));
+        }
+        
+        # Truncate long tasks for display
+        my $display_task = length($task) > 60 ? substr($task, 0, 57) . '...' : $task;
+        $self->display_key_value("Task", $self->colorize(qq{"$display_task"}, 'DIM'));
+        $self->writeline("", markdown => 0);
+        $self->writeline("Use " . $self->colorize("/subagent list", 'BOLD') . " to monitor progress", markdown => 0);
     }
     
-    # Truncate long tasks for display
-    my $display_task = length($task) > 60 ? substr($task, 0, 57) . '...' : $task;
-    $self->display_key_value("Task", $self->colorize(qq{"$display_task"}, 'DIM'));
-    $self->writeline("", markdown => 0);
-    $self->writeline("Use " . $self->colorize("/subagent list", 'BOLD') . " to monitor progress", markdown => 0);
-    
-    return "";  # Already displayed
+    return "";  # Already displayed (or suppressed for tool path)
 }
 
 sub cmd_list {
