@@ -243,16 +243,18 @@ sub render_inline {
         return $self->color('markdown_quote') . box_char('horizontal') x 40 . '@RESET@';
     }
     
-    # Lists
+    # Lists - convert model whitespace to nesting depth (2 spaces per level)
     if ($line =~ /^(\s*)[-*+]\s+(.+)$/) {
-        my $indent = $1;
+        my $depth = int(length($1) / 2);
+        my $indent = '  ' x $depth;
         my $text = $2;
         return $indent . $self->color('markdown_list_bullet') . "• " . '@RESET@' . $self->process_inline_formatting($text);
     }
     
     # Ordered lists
     if ($line =~ /^(\s*)(\d+)\.\s+(.+)$/) {
-        my $indent = $1;
+        my $depth = int(length($1) / 2);
+        my $indent = '  ' x $depth;
         my $num = $2;
         my $text = $3;
         return $indent . $self->color('markdown_list_bullet') . "$num. " . '@RESET@' . $self->process_inline_formatting($text);
