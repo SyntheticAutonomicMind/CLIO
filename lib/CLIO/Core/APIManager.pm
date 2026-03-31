@@ -969,83 +969,74 @@ sub get_model_capabilities {
         }
     }
     
-    # Find our model (use api_model name without CLIO provider prefix)
+    # Find our model and extract capabilities
     for my $model_info (@$models) {
-        if ($model_info->{id} eq $api_model) {
-            my $limits = {};
-            
-            # Extract limits from capabilities (GitHub Copilot format)
-            if ($model_info->{capabilities} && $model_info->{capabilities}{limits}) {
-                $limits = $model_info->{capabilities}{limits};
-            }
-            
-            # Determine fallback limits based on API type
-            my $fallback_context;
-            if ($api_type =~ /^(sam|lmstudio|llama\.cpp)$/i) {
-                # Local models: smaller context to avoid OOM
-                $fallback_context = 32000;
-            } else {
-                # Cloud models: modern LLMs typically have 128k+
-                $fallback_context = 128000;
-            }
-            
-            # Look up provider-level max_output_tokens for fallback
-            my $provider_max_output;
-            my $effective_provider = $target_provider || ($self->{config} ? ($self->{config}->get('provider') || '') : '');
-            if ($effective_provider) {
-                require CLIO::Providers;
-                my $pdef = CLIO::Providers::get_provider($effective_provider);
-                $provider_max_output = $pdef->{max_output_tokens} if $pdef;
-            }
-            
-            # Build normalized capabilities hash
-            # Priority: root-level fields (SAM/OpenAI), then capabilities.limits (GitHub Copilot), then provider-specific defaults
-            my $capabilities = {
-                max_prompt_tokens => $model_info->{max_request_tokens} ||
-                                     $limits->{max_prompt_tokens} ||
-                                     $limits->{max_context_window_tokens} ||
-                                     $model_info->{context_window} ||
-                                     $fallback_context,
-                max_output_tokens => $model_info->{max_completion_tokens} ||
-                                     $limits->{max_output_tokens} ||
-                                     $limits->{max_completion_tokens} ||
-                                     $provider_max_output ||
-                                     4096,  # Default fallback
-                max_context_window_tokens => $model_info->{context_window} ||
-                                              $limits->{max_context_window_tokens} ||
-                                              $limits->{context_window} ||
-                                              $fallback_context,
-            };
-            
-            # Extract per-model tool support (GitHub Copilot provides this)
-            if ($model_info->{capabilities} && $model_info->{capabilities}{supports}) {
-                $capabilities->{supports_tools} = $model_info->{capabilities}{supports}{tool_calls} ? 1 : 0;
-            }
-            
-            # Google models: check supportedGenerationMethods
-            if ($api_type eq 'google' && $model_info->{supportedGenerationMethods}) {
-                my @methods = @{$model_info->{supportedGenerationMethods}};
-                $capabilities->{supports_tools} = (grep { $_ eq 'generateContent' } @methods) ? 1 : 0;
-            }
-            
-            # OpenRouter models: check supported_parameters for reasoning support
-            if ($model_info->{supported_parameters} && ref($model_info->{supported_parameters}) eq 'ARRAY') {
-                $capabilities->{supports_reasoning} = (grep { $_ eq 'reasoning' } @{$model_info->{supported_parameters}}) ? 1 : 0;
-            }
-            
-            # Cache the result
-            $self->{_model_capabilities_cache} ||= {};
-            $self->{_model_capabilities_cache}{$model} = $capabilities;
-            
-            log_debug('APIManager', "Model capabilities for $model: " . "max_prompt=" . $capabilities->{max_prompt_tokens} . ", " .
-                "max_output=" . $capabilities->{max_output_tokens} . "\n");
-            
-            return $capabilities;
-        }
+        next unless $model_info->{id} eq $api_model;
+
+        my $capabilities = $self->_extract_model_capabilities($model_info, $api_type, $target_provider);
+        $self->{_model_capabilities_cache} ||= {};
+        $self->{_model_capabilities_cache}{$model} = $capabilities;
+
+        log_debug('APIManager', "Model caps for $model: prompt=$capabilities->{max_prompt_tokens}, output=$capabilities->{max_output_tokens}");
+        return $capabilities;
     }
     
     log_debug('APIManager', "Model $api_model not found in /models response (using fallback token limits)");
     return undef;
+}
+
+=head2 _extract_model_capabilities($model_info, $api_type, $target_provider)
+
+Extract normalized capabilities hash from a model info record.
+Handles GitHub Copilot, Google, OpenRouter, SAM, and standard OpenAI formats.
+
+=cut
+
+sub _extract_model_capabilities {
+    my ($self, $info, $api_type, $target_provider) = @_;
+
+    my $limits = ($info->{capabilities} && $info->{capabilities}{limits}) || {};
+
+    # Local models: smaller context to avoid OOM
+    my $fallback_ctx = ($api_type =~ /^(sam|lmstudio|llama\.cpp)$/i) ? 32000 : 128000;
+
+    # Provider-level output fallback
+    my $provider_max_output;
+    my $eff_provider = $target_provider || ($self->{config} ? ($self->{config}->get('provider') || '') : '');
+    if ($eff_provider) {
+        require CLIO::Providers;
+        my $pdef = CLIO::Providers::get_provider($eff_provider);
+        $provider_max_output = $pdef->{max_output_tokens} if $pdef;
+    }
+
+    my $caps = {
+        max_prompt_tokens => $info->{max_request_tokens}
+            || $limits->{max_prompt_tokens} || $limits->{max_context_window_tokens}
+            || $info->{context_window} || $fallback_ctx,
+        max_output_tokens => $info->{max_completion_tokens}
+            || $limits->{max_output_tokens} || $limits->{max_completion_tokens}
+            || $provider_max_output || 4096,
+        max_context_window_tokens => $info->{context_window}
+            || $limits->{max_context_window_tokens} || $limits->{context_window}
+            || $fallback_ctx,
+    };
+
+    # Per-model tool support (GitHub Copilot)
+    if ($info->{capabilities} && $info->{capabilities}{supports}) {
+        $caps->{supports_tools} = $info->{capabilities}{supports}{tool_calls} ? 1 : 0;
+    }
+
+    # Google: supportedGenerationMethods
+    if ($api_type eq 'google' && $info->{supportedGenerationMethods}) {
+        $caps->{supports_tools} = (grep { $_ eq 'generateContent' } @{$info->{supportedGenerationMethods}}) ? 1 : 0;
+    }
+
+    # OpenRouter: reasoning support
+    if ($info->{supported_parameters} && ref($info->{supported_parameters}) eq 'ARRAY') {
+        $caps->{supports_reasoning} = (grep { $_ eq 'reasoning' } @{$info->{supported_parameters}}) ? 1 : 0;
+    }
+
+    return $caps;
 }
 
 =head2 _detect_api_type_and_url
@@ -1306,101 +1297,42 @@ sub _build_responses_api_payload {
     
     # Convert messages to Responses API input format
     my @input = ();
-    my @pending_tool_calls = ();
-    
+    my @pending_tc = ();
+
+    my $flush_tc = sub {
+        push @input, map {{
+            type => 'function_call', name => $_->{function}{name},
+            arguments => $_->{function}{arguments} || '{}', call_id => $_->{id},
+        }} @pending_tc;
+        @pending_tc = ();
+    };
+
     for my $msg (@$messages) {
         my $role = $msg->{role} || 'user';
         my $content = $msg->{content} || '';
-        
+
         if ($role eq 'system') {
-            # System messages become developer role in Responses API
-            push @input, {
-                role => 'developer',
-                content => [{ type => 'input_text', text => $content }],
-            };
+            push @input, { role => 'developer', content => [{ type => 'input_text', text => $content }] };
         }
         elsif ($role eq 'user') {
-            push @input, {
-                role => 'user',
-                content => [{ type => 'input_text', text => $content }],
-            };
+            push @input, { role => 'user', content => [{ type => 'input_text', text => $content }] };
         }
         elsif ($role eq 'assistant') {
-            # Flush any pending tool calls first
-            if (@pending_tool_calls) {
-                for my $tc (@pending_tool_calls) {
-                    push @input, {
-                        type => 'function_call',
-                        name => $tc->{function}{name},
-                        arguments => $tc->{function}{arguments} || '{}',
-                        call_id => $tc->{id},
-                    };
-                }
-                @pending_tool_calls = ();
-            }
-            
-            # If assistant message has tool_calls, queue them
-            if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
-                @pending_tool_calls = @{$msg->{tool_calls}};
-                
-                # Also add the text content if present
-                if (defined $content && length($content)) {
-                    push @input, {
-                        role => 'assistant',
-                        content => [{ type => 'output_text', text => $content, annotations => [] }],
-                        id => 'msg_placeholder',
-                        status => 'completed',
-                        type => 'message',
-                    };
-                }
-            }
-            else {
-                # Plain assistant text message
-                if (defined $content && length($content)) {
-                    push @input, {
-                        role => 'assistant',
-                        content => [{ type => 'output_text', text => $content, annotations => [] }],
-                        id => 'msg_placeholder',
-                        status => 'completed',
-                        type => 'message',
-                    };
-                }
+            $flush_tc->() if @pending_tc;
+            @pending_tc = @{$msg->{tool_calls}} if $msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY';
+            if (defined $content && length($content)) {
+                push @input, {
+                    role => 'assistant', type => 'message', id => 'msg_placeholder', status => 'completed',
+                    content => [{ type => 'output_text', text => $content, annotations => [] }],
+                };
             }
         }
         elsif ($role eq 'tool') {
-            # Flush pending tool calls before tool result
-            if (@pending_tool_calls) {
-                for my $tc (@pending_tool_calls) {
-                    push @input, {
-                        type => 'function_call',
-                        name => $tc->{function}{name},
-                        arguments => $tc->{function}{arguments} || '{}',
-                        call_id => $tc->{id},
-                    };
-                }
-                @pending_tool_calls = ();
-            }
-            
-            # Tool results become function_call_output
-            push @input, {
-                type => 'function_call_output',
-                call_id => $msg->{tool_call_id} || '',
-                output => $content,
-            };
+            $flush_tc->() if @pending_tc;
+            push @input, { type => 'function_call_output', call_id => $msg->{tool_call_id} || '', output => $content };
         }
     }
-    
-    # Flush any remaining pending tool calls
-    if (@pending_tool_calls) {
-        for my $tc (@pending_tool_calls) {
-            push @input, {
-                type => 'function_call',
-                name => $tc->{function}{name},
-                arguments => $tc->{function}{arguments} || '{}',
-                call_id => $tc->{id},
-            };
-        }
-    }
+    $flush_tc->() if @pending_tc;
     
     # Build the Responses API payload
     my $payload = {
@@ -1938,23 +1870,12 @@ sub _prepare_api_request {
 
     # Debug: dump payload summary
     if ($self->{debug}) {
-        log_debug('APIManager', "===== REQUEST PAYLOAD =====");
-        log_debug('APIManager', "Endpoint: $endpoint");
-        log_debug('APIManager', "Model: $payload->{model}");
-        log_debug('APIManager', "API: " . ($use_responses_api ? "Responses" : "Chat Completions"));
         my $msg_key = $use_responses_api ? 'input' : 'messages';
-        log_debug('APIManager', ucfirst($msg_key) . " count: " . scalar(@{$payload->{$msg_key} || []}));
-        if ($payload->{tools}) {
-            log_debug('APIManager', "Tools array (" . scalar(@{$payload->{tools}}) . " tools):");
-            for my $i (0 .. $#{$payload->{tools}}) {
-                my $tool = $payload->{tools}[$i];
-                my $tool_name = $tool->{function} ? $tool->{function}{name} : ($tool->{name} || '?');
-                log_debug('APIManager', "Tool $i: $tool_name");
-            }
-        } else {
-            log_debug('APIManager', "Tools: NONE");
-        }
-        log_debug('APIManager', "===== END REQUEST PAYLOAD =====");
+        my $msg_count = scalar(@{$payload->{$msg_key} || []});
+        my $tool_count = $payload->{tools} ? scalar(@{$payload->{tools}}) : 0;
+        log_debug('APIManager', sprintf("Payload: %s %s, %d %s, %d tools -> %s",
+            $payload->{model}, ($use_responses_api ? 'Responses' : 'ChatCompletions'),
+            $msg_count, $msg_key, $tool_count, $endpoint));
     }
 
     # Clean up internal metadata fields from tool_calls (Chat Completions only)
@@ -1992,44 +1913,19 @@ sub _prepare_api_request {
         }
     }
 
-    # Debug: dump tool_calls after cleanup
+    # Debug: dump tool_calls in payload
     if ($self->{debug} && $payload->{messages}) {
         for my $i (0 .. $#{$payload->{messages}}) {
-            my $msg = $payload->{messages}[$i];
-            if ($msg->{tool_calls}) {
-                use Data::Dumper;
-                log_debug('APIManager', "Message $i has tool_calls:");
-                log_debug('APIManager', Dumper($msg->{tool_calls}));
+            if ($payload->{messages}[$i]{tool_calls}) {
+                require Data::Dumper;
+                log_debug('APIManager', "Message $i tool_calls: " . Data::Dumper::Dumper($payload->{messages}[$i]{tool_calls}));
             }
         }
     }
 
-    # Encode payload to JSON
-    my $json;
-    eval { $json = encode_json($payload); };
-    if ($@) {
-        my $error = $@;
-        log_debug('APIManager', "JSON encoding failed: $error");
-        $self->_log_json_error("JSON Encoding Failure", $error, $payload);
-        my $err = "Failed to encode request as JSON: $error";
-        return { error_result => ($is_streaming
-            ? { success => 0, error => $err }
-            : $self->_error($err))
-        };
-    }
-
-    # Validate the JSON by attempting to decode it
-    eval { decode_json($json); };
-    if ($@) {
-        my $error = $@;
-        log_debug('APIManager', "JSON validation failed: $error");
-        $self->_log_json_error("JSON Validation Failure", $error, undef, $json);
-        my $err = "Generated invalid JSON: $error";
-        return { error_result => ($is_streaming
-            ? { success => 0, error => $err }
-            : $self->_error($err))
-        };
-    }
+    # Encode and validate JSON payload
+    my $json = $self->_encode_payload_json($payload, $is_streaming);
+    return { error_result => $json } if ref($json) eq 'HASH' && !$json->{success};
 
     # Create HTTP client
     my $ua_timeout = $is_streaming ? 300 : 60;
@@ -2062,6 +1958,37 @@ sub _prepare_api_request {
         provider_label   => $provider_label,
         use_responses_api => $use_responses_api,
     };
+}
+
+# Log JSON encoding/validation errors to /tmp/clio_json_errors.log
+=head2 _encode_payload_json($payload, $is_streaming)
+
+Encode payload hash to JSON, validate round-trip. Returns JSON string on success
+or error hashref on failure.
+
+=cut
+
+sub _encode_payload_json {
+    my ($self, $payload, $is_streaming) = @_;
+
+    my $json;
+    eval { $json = encode_json($payload); };
+    if ($@) {
+        $self->_log_json_error("JSON Encoding Failure", $@, $payload);
+        my $err = "Failed to encode request as JSON: $@";
+        return $is_streaming ? { success => 0, error => $err }
+                             : $self->_error($err);
+    }
+
+    eval { decode_json($json); };
+    if ($@) {
+        $self->_log_json_error("JSON Validation Failure", $@, undef, $json);
+        my $err = "Generated invalid JSON: $@";
+        return $is_streaming ? { success => 0, error => $err }
+                             : $self->_error($err);
+    }
+
+    return $json;
 }
 
 # Log JSON encoding/validation errors to /tmp/clio_json_errors.log
@@ -2114,6 +2041,31 @@ sub _log_api_request {
     log_debug('APIManager', "=" x 80);
 }
 
+# Log API response to debug log and file
+sub _log_api_response {
+    my ($self, $resp, $provider_label, $is_error) = @_;
+    my $status = $resp->status_line;
+    my $body = $resp->decoded_content // '';
+    my $label = $is_error ? "RESPONSE ERROR" : "RESPONSE";
+
+    log_debug('APIManager', "[$provider_label $label] Status: $status");
+    log_debug('APIManager', "[$provider_label $label] Body: " . substr($body, 0, 1500)) unless $is_error;
+
+    if (open my $fh, '>>', '/tmp/clio_api_debug.log') {
+        print $fh "\n" . "-"x80 . "\n";
+        print $fh "[" . scalar(localtime) . "] $provider_label $label\n";
+        print $fh "Status: $status\n";
+        unless ($is_error) {
+            print $fh "Headers:\n";
+            for my $h ($resp->headers->header_field_names) {
+                print $fh "  $h: " . $resp->header($h) . "\n";
+            }
+        }
+        print $fh "\nBody:\n" . substr($body, 0, ($is_error ? 2000 : length($body))) . "\n";
+        close $fh;
+    }
+}
+
 sub send_request {
     my ($self, $input, %opts) = @_;
 
@@ -2156,134 +2108,81 @@ sub _process_non_streaming_response {
     my $json            = $ctx->{json};
     my $use_responses_api = $ctx->{use_responses_api};
 
-    my $perf_end_time = time();
-    my $tokens_in = 0;
-    my $tokens_out = 0;
-
     # Handle request-level failure ($@ from eval around ua->request)
     if ($eval_error) {
-        my $error = "Request failed: $eval_error";
-        warn "[ERROR] $error\n" if $self->{debug};
-
-        $self->{performance_monitor}->record_api_call(
-            $self->{api_base}, $model,
-            { start_time => $perf_start_time, end_time => $perf_end_time,
-              success => 0, error => $error }
-        );
+        $self->{performance_monitor}->record_api_call($self->{api_base}, $model,
+            { start_time => $perf_start_time, end_time => time(), success => 0, error => "Request failed: $eval_error" });
         $self->{response_handler}->release_broker_slot(undef, 599);
-
-        return {
-            success => 0, error => $error,
-            retryable => 1, retry_after => 2, error_type => 'server_error',
-        };
+        return { success => 0, error => "Request failed: $eval_error", retryable => 1, retry_after => 2, error_type => 'server_error' };
     }
 
     # Handle HTTP error status
     if (!$resp->is_success) {
-        my $error_body = $resp->decoded_content || '';
-        log_debug('APIManager', "[$provider_label RESPONSE ERROR] Status: " . $resp->status_line);
-        log_debug('APIManager', "[$provider_label RESPONSE ERROR] Body: " . substr($error_body, 0, 2000));
-        if (open my $fh, '>>', '/tmp/clio_api_debug.log') {
-            print $fh "\n" . "-"x80 . "\n";
-            print $fh "[" . scalar(localtime) . "] $provider_label RESPONSE ERROR\n";
-            print $fh "Status: " . $resp->status_line . "\nBody:\n$error_body\n";
-            close $fh;
-        }
+        $self->_log_api_response($resp, $provider_label, 1);
         $self->{response_handler}->release_broker_slot($resp, $resp->code);
         return $self->{response_handler}->handle_error_response($resp, $json, 0,
             attempt_token_recovery => sub { $self->_attempt_token_recovery() });
     }
 
-    # Successful response - process rate limits and decode
+    # Successful response
     $self->{response_handler}->process_rate_limit_headers($resp->headers);
+    $self->_log_api_response($resp, $provider_label, 0);
 
-    my $raw_response = $resp->decoded_content;
-    log_debug('APIManager', "[$provider_label RESPONSE] Status: " . $resp->status_line);
-    log_debug('APIManager', "[$provider_label RESPONSE] Body (first 1500 chars): " . substr($raw_response, 0, 1500));
-    if (open my $fh, '>>', '/tmp/clio_api_debug.log') {
-        print $fh "\n" . "-"x80 . "\n";
-        print $fh "[" . scalar(localtime) . "] $provider_label RESPONSE\n";
-        print $fh "Status: " . $resp->status_line . "\nHeaders:\n";
-        for my $h ($resp->headers->header_field_names) {
-            print $fh "  $h: " . $resp->header($h) . "\n";
-        }
-        print $fh "\nBody:\n$raw_response\n";
-        close $fh;
-    }
-
-    my $data = eval { decode_json($raw_response) };
+    my $data = eval { decode_json($resp->decoded_content) };
     if ($@) {
-        my $error = "Invalid response format: $@";
-        log_error('APIManager', "[$provider_label] $error");
-        log_debug('APIManager', "[$provider_label] Raw content: " . substr($raw_response, 0, 500));
-        return $self->_error($error);
+        log_error('APIManager', "[$provider_label] Invalid response: $@");
+        return $self->_error("Invalid response format: $@");
     }
 
-    # Log key response fields
+    # Log key fields
     eval {
-        my $finish_reason = $data->{choices}[0]{finish_reason} || 'unknown';
-        my $has_tool_calls = $data->{choices}[0]{message}{tool_calls} ? scalar(@{$data->{choices}[0]{message}{tool_calls}}) : 0;
-        my $content_len = length($data->{choices}[0]{message}{content} || '');
-        my $usage_in = $data->{usage}{prompt_tokens} || 0;
-        my $usage_out = $data->{usage}{completion_tokens} || 0;
-        log_debug('APIManager', "[$provider_label RESPONSE] finish_reason=$finish_reason, tool_calls=$has_tool_calls, content_len=$content_len, usage=$usage_in/$usage_out");
+        my $c = $data->{choices}[0] || {};
+        log_debug('APIManager', sprintf("[$provider_label] finish=%s tools=%d content=%d usage=%d/%d",
+            $c->{finish_reason} || '?', ($c->{message}{tool_calls} ? scalar @{$c->{message}{tool_calls}} : 0),
+            length($c->{message}{content} || ''), $data->{usage}{prompt_tokens} || 0, $data->{usage}{completion_tokens} || 0));
     };
 
-    # Extract stateful_marker for session continuation (GitHub Copilot billing)
     $self->_extract_stateful_markers($data, $opts);
-
-    # Process GitHub Copilot quota headers for premium billing tracking
     $self->{response_handler}->process_quota_headers($resp->headers, $data->{id}) if $endpoint_config->{requires_copilot_headers};
 
-    # Extract content based on API response format
+    # Extract content
     my ($content, $tool_calls, $reasoning_details) =
         $self->_extract_response_content($data, $use_responses_api, $opts);
-    ($tokens_in, $tokens_out) = $self->_extract_usage_tokens($data, $use_responses_api);
+    my ($tokens_in, $tokens_out) = $self->_extract_usage_tokens($data, $use_responses_api);
 
     # Post-process content
     if (defined $content && length($content)) {
-        # Strip <think> tags from MiniMax non-streaming responses
+        # Strip <think> tags from MiniMax non-streaming
         if ($endpoint_config->{minimax} && $content =~ /<think>/) {
-            while ($content =~ s{<think>.*?</think>\n*}{}sg) {}
+            $content =~ s{<think>.*?</think>\n*}{}sg;
             $content =~ s/<\/?think>//g;
             $content =~ s/^\n+//;
-            log_debug('APIManager', "Stripped <think> tags from MiniMax non-streaming response");
         }
+        $content = "[conversation]$content\[/conversation]" unless $content =~ m{\[conversation\].*?\[/conversation\]}s;
 
-        # Wrap in conversation tags
-        if ($content !~ m{\[conversation\].*?\[/conversation\]}s) {
-            $content = "[conversation]$content\[/conversation]";
-        }
-
-        # Learn from usage data
         if ($data->{usage}) {
             $tokens_in  ||= $data->{usage}{prompt_tokens} || $data->{usage}{input_tokens} || 0;
             $tokens_out ||= $data->{usage}{completion_tokens} || $data->{usage}{output_tokens} || 0;
             $self->_learn_from_api_response($data->{usage}, $messages);
         }
 
-        $self->{performance_monitor}->record_api_call(
-            $self->{api_base}, $model,
-            { start_time => $perf_start_time, end_time => $perf_end_time,
-              success => 1, tokens_in => $tokens_in, tokens_out => $tokens_out }
-        );
+        $self->{performance_monitor}->record_api_call($self->{api_base}, $model,
+            { start_time => $perf_start_time, end_time => time(), success => 1, tokens_in => $tokens_in, tokens_out => $tokens_out });
 
         my $result = { content => $content, usage => $data->{usage} };
         $result->{tool_calls} = $tool_calls if $tool_calls;
         $result->{reasoning_details} = $reasoning_details if $reasoning_details;
-
         $self->{response_handler}->release_broker_slot($resp, 200);
         return $result;
     }
 
-    # Tool-calls-only response (no text content)
+    # Tool-calls-only (no text)
     if ($tool_calls && @$tool_calls) {
         $self->{response_handler}->release_broker_slot($resp, 200);
         return { content => '', tool_calls => $tool_calls, usage => $data->{usage} };
     }
 
-    # No valid content found
-    warn "[ERROR] No message content in response\n" if $self->{debug};
+    log_error('APIManager', "No message content in response") if $self->{debug};
     $self->{response_handler}->release_broker_slot($resp, 200);
     return $self->_error("No message content in response");
 }
@@ -2872,15 +2771,11 @@ sub _finalize_streaming_response {
 
     # Handle request exception ($@ from eval)
     if ($s{error}) {
-        my $error = "Streaming request failed: $s{error}";
-        log_debug('APIManager', "$error");
+        log_debug('APIManager', "Streaming request failed: $s{error}");
         $self->{response_handler}->release_broker_slot(undef, 599);
         return {
-            success => 0,
-            error => $error,
-            retryable => 1,
-            retry_after => 2,
-            error_type => 'server_error',
+            success => 0, error => "Streaming request failed: $s{error}",
+            retryable => 1, retry_after => 2, error_type => 'server_error',
         };
     }
 
@@ -2888,219 +2783,183 @@ sub _finalize_streaming_response {
 
     # Handle HTTP error responses
     if (!$resp->is_success) {
-        $self->{response_handler}->release_broker_slot($resp, $resp->code);
-
-        my $body = $resp->decoded_content;
-        if (!$body || $body !~ /\S/) {
-            $body = $s{raw_response_body} // $s{buffer} // '';
-        }
-
-        log_debug('APIManager', "[$s{provider_label} STREAMING ERROR] Status: " . $resp->status_line);
-        log_debug('APIManager', "[$s{provider_label} STREAMING ERROR] Body: " . substr($body, 0, 2000));
-        if (open my $fh, '>>', '/tmp/clio_api_debug.log') {
-            print $fh "\n" . "-"x80 . "\n";
-            print $fh "[" . scalar(localtime) . "] $s{provider_label} STREAMING ERROR\n";
-            print $fh "Status: " . $resp->status_line . "\n";
-            print $fh "Body:\n$body\n";
-            close $fh;
-        }
-
-        if ($body && $body =~ /\S/ && (!$resp->decoded_content || $resp->decoded_content !~ /\S/)) {
-            $resp->{content} = $body;
-        }
-
-        return $self->{response_handler}->handle_error_response($resp, $s{json}, 1,
-            attempt_token_recovery => sub { $self->_attempt_token_recovery() });
+        return $self->_handle_streaming_http_error($resp, \%s);
     }
 
-    # Check for API errors returned as non-SSE body with HTTP 200
-    my $check_body = $s{raw_response_body} || $s{buffer} || '';
-    if (!$s{accumulated_content} && !keys(%{$s{tool_calls_accumulator}}) && $check_body =~ /\S/) {
-        my $remaining = $check_body;
-        $remaining =~ s/^\s+|\s+$//g;
-        if ($remaining) {
-            my $error_msg;
-            my $error_code;
-            eval {
-                my $body = decode_json($remaining);
-                if (ref($body) eq 'ARRAY' && @$body && $body->[0]{error}) {
-                    $error_msg = $body->[0]{error}{message} || $body->[0]{error};
-                    $error_code = $body->[0]{error}{code};
-                }
-                elsif (ref($body) eq 'HASH' && $body->{error}) {
-                    $error_msg = $body->{error}{message} || $body->{error};
-                    $error_code = $body->{error}{code};
-                }
-            };
-
-            if ($error_msg) {
-                log_debug('APIManager', "Detected error in 200 response body: $error_msg");
-                my $is_rate_limit = $error_code && $error_code =~ /rate.lim/i;
-                $self->{response_handler}->release_broker_slot($resp, 200);
-                if ($is_rate_limit) {
-                    log_info('APIManager', "Rate limit in 200 response body (code=$error_code), treating as 429");
-                    $self->{response_handler}{rate_limit_until} = time() + 60;
-                    return {
-                        success     => 0,
-                        error       => $error_msg,
-                        retryable   => 1,
-                        retry_after => 60,
-                        error_type  => 'rate_limit',
-                    };
-                }
-                return {
-                    success => 0,
-                    error => $error_msg,
-                    retryable => 0,
-                };
-            }
-        }
-    }
+    # Check for API errors returned as HTTP 200 with error body (Google/OpenRouter)
+    my $body_error = $self->_check_200_body_error($resp, \%s);
+    return $body_error if $body_error;
 
     # Calculate final metrics
-    my $end_time = time();
-    my $total_duration = $end_time - $s{start_time};
+    my $duration = time() - $s{start_time};
     my $ttft = $s{first_token_time} ? ($s{first_token_time} - $s{start_time}) : undef;
-    my $tps = ($total_duration > 0 && $s{token_count} > 0) ? ($s{token_count} / $total_duration) : 0;
+    my $tps = ($duration > 0 && $s{token_count} > 0) ? ($s{token_count} / $duration) : 0;
 
-    if ($self->{debug}) {
-        log_debug('APIManager', sprintf(
-            "[DEBUG][APIManager] Streaming complete - TTFT: %.2fs, TPS: %.1f, Tokens: %d, Duration: %.2fs\n",
-            $ttft // 0, $tps, $s{token_count}, $total_duration
-        ));
-    }
+    log_debug('APIManager', sprintf("Streaming complete - TTFT: %.2fs, TPS: %.1f, Tokens: %d, Duration: %.2fs",
+        $ttft // 0, $tps, $s{token_count}, $duration));
 
-    # Persist session if we got a response_id
+    # Persist session for response_id continuity
     if ($self->{session} && $self->{session}{lastGitHubCopilotResponseId}) {
         if (ref($self->{session}) && blessed($self->{session}) && $self->{session}->can('save')) {
             $self->{session}->save();
         }
     }
 
-    # Process rate limit headers
-    my $headers_to_use = $s{streaming_headers} || $resp->headers;
-    if ($headers_to_use) {
-        $self->{response_handler}->process_rate_limit_headers($headers_to_use);
-    }
+    # Process rate limit and quota headers
+    my $headers = $s{streaming_headers} || $resp->headers;
+    $self->{response_handler}->process_rate_limit_headers($headers) if $headers;
 
-    # Process quota headers for billing tracking (GitHub Copilot only)
-    my $endpoint_config = $s{endpoint_config};
-    log_debug('APIManager', "Checking quota header conditions: requires_copilot_headers=" .
-        ($endpoint_config->{requires_copilot_headers} ? 'yes' : 'no') .
-        ", has_headers=" . ($headers_to_use ? 'yes' : 'no') . "\n");
-
-    if ($endpoint_config->{requires_copilot_headers} && $headers_to_use) {
+    if ($s{endpoint_config}{requires_copilot_headers} && $headers) {
         my $response_id = $self->{session}{lastGitHubCopilotResponseId} || 'unknown';
-        log_debug('APIManager', "Calling _process_quota_headers with response_id=$response_id");
-        $self->{response_handler}->process_quota_headers($headers_to_use, $response_id);
-    } else {
-        log_debug('APIManager', "Skipping quota header processing");
+        $self->{response_handler}->process_quota_headers($headers, $response_id);
     }
 
-    # Estimate usage for billing
-    my $final_usage;
-    if ($s{streaming_usage}) {
-        $final_usage = $s{streaming_usage};
-        log_debug('APIManager', "Using real streaming usage: prompt=$final_usage->{prompt_tokens}, completion=$final_usage->{completion_tokens}");
-        $self->_learn_from_api_response($final_usage, $s{messages});
-    } else {
-        my $estimated_completion_tokens = $s{token_count};
-        my $estimated_prompt_tokens = 0;
-        my $messages = $s{messages};
-        if ($messages && ref($messages) eq 'ARRAY') {
-            for my $msg (@$messages) {
-                if ($msg->{content}) {
-                    $estimated_prompt_tokens += int(length($msg->{content}) / 4);
-                }
-            }
-        } elsif ($s{input}) {
-            $estimated_prompt_tokens = int(length($s{input}) / 4);
-        }
-        $final_usage = {
-            prompt_tokens => $estimated_prompt_tokens,
-            completion_tokens => $estimated_completion_tokens,
-            total_tokens => $estimated_prompt_tokens + $estimated_completion_tokens,
-        };
-        log_debug('APIManager', "Using estimated streaming usage (no real data available)");
-    }
+    # Resolve or estimate usage for billing
+    my $usage = $self->_resolve_streaming_usage(\%s);
 
-    # Convert accumulated tool_calls to array
-    my $tool_calls = undef;
+    # Convert accumulated tool_calls hash to sorted array
+    my $tool_calls;
     if (keys %{$s{tool_calls_accumulator}}) {
-        $tool_calls = [
-            map { $s{tool_calls_accumulator}->{$_} }
-            sort { $a <=> $b }
-            keys %{$s{tool_calls_accumulator}}
-        ];
-        log_debug('APIManager', "Accumulated " . scalar(@$tool_calls) . " tool calls from streaming");
+        $tool_calls = [ map { $s{tool_calls_accumulator}{$_} }
+                        sort { $a <=> $b } keys %{$s{tool_calls_accumulator}} ];
+        log_debug('APIManager', "Accumulated " . scalar(@$tool_calls) . " tool calls");
     }
 
-    # Build response with metrics and estimated usage
+    # Build response
     my $response = {
         success => 1,
         content => $s{accumulated_content},
-        metrics => {
-            ttft => $ttft,
-            tps => $tps,
-            tokens => $s{token_count},
-            duration => $total_duration,
-        },
-        usage => $final_usage,
+        metrics => { ttft => $ttft, tps => $tps, tokens => $s{token_count}, duration => $duration },
+        usage   => $usage,
     };
 
-    log_debug('APIManager', "[$s{provider_label} STREAMING COMPLETE] accumulated content length: " . length($s{accumulated_content}));
-    log_debug('APIManager', "[$s{provider_label} STREAMING COMPLETE] Content preview: '" . substr($s{accumulated_content}, 0, 300) . "'");
+    $response->{tool_calls} = $tool_calls if $tool_calls;
 
-    # Add tool_calls if present
-    if ($tool_calls) {
-        $response->{tool_calls} = $tool_calls;
-        log_debug('APIManager', "[$s{provider_label} STREAMING COMPLETE] tool_calls: " . scalar(@$tool_calls) . " calls");
-        for my $tc (@$tool_calls) {
-            log_debug('APIManager', "[$s{provider_label} TOOL CALL] " . ($tc->{function}{name} || 'unknown') .
-                      " args_len=" . length($tc->{function}{arguments} || ''));
-        }
-    } else {
-        log_debug('APIManager', "[$s{provider_label} STREAMING COMPLETE] NO tool_calls in response");
-    }
-
-    if (open my $fh, '>>', '/tmp/clio_api_debug.log') {
-        print $fh "\n" . "-"x80 . "\n";
-        print $fh "[" . scalar(localtime) . "] $s{provider_label} STREAMING RESPONSE COMPLETE\n";
-        print $fh "Content length: " . length($s{accumulated_content}) . "\n";
-        print $fh "Tool calls: " . ($tool_calls ? scalar(@$tool_calls) : 0) . "\n";
-        if ($tool_calls) {
-            for my $tc (@$tool_calls) {
-                print $fh "  - " . ($tc->{function}{name} || 'unknown') . ": " . substr($tc->{function}{arguments} || '', 0, 200) . "\n";
-            }
-        }
-        print $fh "Content:\n" . substr($s{accumulated_content}, 0, 1000) . "\n";
-        close $fh;
-    }
-
-    # Include accumulated reasoning_details for MiniMax interleaved thinking
     if (length($s{accumulated_reasoning} // '')) {
         $response->{reasoning_details} = [{ type => 'reasoning.text', text => $s{accumulated_reasoning} }];
-        log_debug('APIManager', "Accumulated reasoning_details: " . length($s{accumulated_reasoning}) . " chars");
     }
 
-    # Debug response structure
-    if ($self->{debug}) {
-        require Data::Dumper;
-        log_debug('APIManager', "===== API RESPONSE =====");
-        log_debug('APIManager', "Has tool_calls: " . ($response->{tool_calls} ? "YES" : "NO"));
-        if ($response->{tool_calls}) {
-            log_debug('APIManager', "Tool calls count: " . scalar(@{$response->{tool_calls}}));
-            log_debug('APIManager', Data::Dumper->Dump([$response->{tool_calls}], ['tool_calls']));
-        }
-        log_debug('APIManager', "Content length: " . length($response->{content}));
-        log_debug('APIManager', "Content preview: " . substr($response->{content}, 0, 200) . "...");
-        log_debug('APIManager', "===== END API RESPONSE =====");
-    }
-
-    # Release broker slot on success
+    $self->_log_streaming_response($response, $s{provider_label}, $tool_calls);
     $self->{response_handler}->release_broker_slot($resp, 200);
 
     return $response;
+}
+
+=head2 _handle_streaming_http_error($resp, $s)
+
+Handle HTTP error responses from streaming requests.
+
+=cut
+
+sub _handle_streaming_http_error {
+    my ($self, $resp, $s) = @_;
+
+    $self->{response_handler}->release_broker_slot($resp, $resp->code);
+
+    my $body = $resp->decoded_content;
+    $body = $s->{raw_response_body} // $s->{buffer} // '' unless $body && $body =~ /\S/;
+
+    log_debug('APIManager', "[$s->{provider_label} STREAMING ERROR] " . $resp->status_line .
+        " Body: " . substr($body, 0, 500));
+
+    # Ensure body is available for error handler
+    if ($body && $body =~ /\S/ && (!$resp->decoded_content || $resp->decoded_content !~ /\S/)) {
+        $resp->{content} = $body;
+    }
+
+    return $self->{response_handler}->handle_error_response($resp, $s->{json}, 1,
+        attempt_token_recovery => sub { $self->_attempt_token_recovery() });
+}
+
+=head2 _check_200_body_error($resp, $s)
+
+Check for API errors returned as HTTP 200 with error body (Google/OpenRouter).
+Returns error hashref if found, undef otherwise.
+
+=cut
+
+sub _check_200_body_error {
+    my ($self, $resp, $s) = @_;
+
+    return undef if $s->{accumulated_content} || keys(%{$s->{tool_calls_accumulator}});
+
+    my $body = $s->{raw_response_body} || $s->{buffer} || '';
+    $body =~ s/^\s+|\s+$//g;
+    return undef unless $body;
+
+    my ($error_msg, $error_code);
+    eval {
+        my $parsed = decode_json($body);
+        my $err = (ref($parsed) eq 'ARRAY' && @$parsed) ? $parsed->[0]{error}
+                : (ref($parsed) eq 'HASH')              ? $parsed->{error}
+                : undef;
+        if ($err) {
+            $error_msg  = ref($err) eq 'HASH' ? $err->{message} : $err;
+            $error_code = ref($err) eq 'HASH' ? $err->{code}    : undef;
+        }
+    };
+    return undef unless $error_msg;
+
+    log_debug('APIManager', "Error in 200 body: $error_msg");
+    $self->{response_handler}->release_broker_slot($resp, 200);
+
+    if ($error_code && $error_code =~ /rate.lim/i) {
+        log_info('APIManager', "Rate limit in 200 body (code=$error_code), treating as 429");
+        $self->{response_handler}{rate_limit_until} = time() + 60;
+        return { success => 0, error => $error_msg, retryable => 1, retry_after => 60, error_type => 'rate_limit' };
+    }
+
+    return { success => 0, error => $error_msg, retryable => 0 };
+}
+
+=head2 _resolve_streaming_usage($s)
+
+Resolve real streaming usage or estimate from accumulated data.
+
+=cut
+
+sub _resolve_streaming_usage {
+    my ($self, $s) = @_;
+
+    if ($s->{streaming_usage}) {
+        log_debug('APIManager', "Real usage: prompt=$s->{streaming_usage}{prompt_tokens}, completion=$s->{streaming_usage}{completion_tokens}");
+        $self->_learn_from_api_response($s->{streaming_usage}, $s->{messages});
+        return $s->{streaming_usage};
+    }
+
+    my $prompt_tokens = 0;
+    if ($s->{messages} && ref($s->{messages}) eq 'ARRAY') {
+        $prompt_tokens += int(length($_->{content} || '') / 4) for @{$s->{messages}};
+    } elsif ($s->{input}) {
+        $prompt_tokens = int(length($s->{input}) / 4);
+    }
+
+    log_debug('APIManager', "Estimated usage: prompt~$prompt_tokens, completion~$s->{token_count}");
+    return {
+        prompt_tokens     => $prompt_tokens,
+        completion_tokens => $s->{token_count},
+        total_tokens      => $prompt_tokens + $s->{token_count},
+    };
+}
+
+=head2 _log_streaming_response($response, $provider_label, $tool_calls)
+
+Log streaming response details at debug level.
+
+=cut
+
+sub _log_streaming_response {
+    my ($self, $response, $label, $tool_calls) = @_;
+
+    log_debug('APIManager', "[$label COMPLETE] content=" . length($response->{content}) .
+        " tool_calls=" . ($tool_calls ? scalar(@$tool_calls) : 0));
+
+    if ($self->{debug} && $tool_calls) {
+        for my $tc (@$tool_calls) {
+            log_debug('APIManager', "  tool: " . ($tc->{function}{name} || '?') .
+                " args=" . length($tc->{function}{arguments} || '') . "b");
+        }
+    }
 }
 
 # Async API methods
@@ -3523,80 +3382,41 @@ sub _send_native_streaming {
             
             # Process complete SSE events
             while ($buffer =~ s/^(.*?)\n//s) {
-                my $line = $1;
-                
-                my $event = $provider->parse_stream_event($line);
+                my $event = $provider->parse_stream_event($1);
                 next unless $event;
-                
+
                 my $type = $event->{type};
-                
                 if ($type eq 'text') {
-                    # Record first token time
                     $first_token_time //= time();
                     $token_count++;
-                    
                     $accumulated_content .= $event->{content};
-                    
-                    # Call chunk callback
-                    if ($on_chunk) {
-                        $on_chunk->($event->{content});
-                    }
+                    $on_chunk->($event->{content}) if $on_chunk;
                 }
-                elsif ($type eq 'thinking_start' || $type eq 'thinking' || $type eq 'thinking_end') {
-                    # Thinking/reasoning content from provider
+                elsif ($type =~ /^thinking/) {
                     if ($on_thinking) {
-                        if ($type eq 'thinking') {
-                            $on_thinking->($event->{content});
-                        } elsif ($type eq 'thinking_start') {
-                            $on_thinking->(undef, 'start');
-                        } elsif ($type eq 'thinking_end') {
-                            $on_thinking->(undef, 'end');
-                        }
+                        $type eq 'thinking'       ? $on_thinking->($event->{content})
+                      : $type eq 'thinking_start' ? $on_thinking->(undef, 'start')
+                      :                             $on_thinking->(undef, 'end');
                     }
                 }
                 elsif ($type eq 'tool_start') {
-                    $current_tool_call = {
-                        id => $event->{id},
-                        type => 'function',
-                        function => {
-                            name => $event->{name},
-                            arguments => '',
-                        },
-                    };
+                    $current_tool_call = { id => $event->{id}, type => 'function',
+                        function => { name => $event->{name}, arguments => '' } };
                 }
-                elsif ($type eq 'tool_args') {
-                    if ($current_tool_call) {
-                        $current_tool_call->{function}{arguments} .= $event->{content};
-                    }
+                elsif ($type eq 'tool_args' && $current_tool_call) {
+                    $current_tool_call->{function}{arguments} .= $event->{content};
                 }
                 elsif ($type eq 'tool_end') {
-                    # Google sends complete tool calls as a single tool_end event (no preceding tool_start).
-                    # Other providers stream tool args and send tool_end to finalize.
+                    # Google sends complete tool calls as single tool_end (no prior tool_start)
                     if (!$current_tool_call && $event->{name}) {
-                        # Complete tool call in one event (Google-style)
-                        $current_tool_call = {
-                            id => $event->{id},
-                            type => 'function',
-                            function => {
-                                name => $event->{name},
-                                arguments => '',
-                            },
-                        };
+                        $current_tool_call = { id => $event->{id}, type => 'function',
+                            function => { name => $event->{name}, arguments => '' } };
                     }
-
                     if ($current_tool_call) {
-                        # Parse arguments - either from event or already in current_tool_call
-                        if ($event->{arguments}) {
-                            $current_tool_call->{function}{arguments} =
-                                encode_json($event->{arguments});
-                        }
-
+                        $current_tool_call->{function}{arguments} = encode_json($event->{arguments})
+                            if $event->{arguments};
                         push @tool_calls, $current_tool_call;
-
-                        if ($on_tool_call) {
-                            $on_tool_call->($current_tool_call);
-                        }
-
+                        $on_tool_call->($current_tool_call) if $on_tool_call;
                         $current_tool_call = undef;
                     }
                 }
@@ -3606,63 +3426,29 @@ sub _send_native_streaming {
             }
         });
     };
-    
+
     if ($@) {
-        my $error = $@;
-        log_error('APIManager', "Native streaming failed: $error");
-        return {
-            success => 0,
-            error => $error,
-        };
+        log_error('APIManager', "Native streaming failed: $@");
+        return { success => 0, error => $@ };
     }
-    
-    # Check HTTP status
+
     if (!$response->is_success) {
-        my $status = $response->code;
-        my $body = $response->decoded_content // '';
-        
-        log_error('APIManager', "Native API error $status: $body");
-        
-        return {
-            success => 0,
-            error => "HTTP $status: $body",
-            retryable => ($status == 429 || $status >= 500),
-        };
+        log_error('APIManager', "Native API error " . $response->code . ": " . ($response->decoded_content // ''));
+        return { success => 0, error => "HTTP " . $response->code, retryable => ($response->code == 429 || $response->code >= 500) };
     }
-    
-    # Calculate metrics
-    my $end_time = time();
-    my $duration = $end_time - $start_time;
-    my $ttft = $first_token_time ? ($first_token_time - $start_time) : $duration;
-    my $tps = $duration > 0 ? $token_count / $duration : 0;
-    
-    # Build response
+
+    # Build result
+    my $duration = time() - $start_time;
     my $result = {
-        success => 1,
-        content => $accumulated_content,
-        metrics => {
-            ttft => $ttft,
-            tps => $tps,
-            tokens => $token_count,
-            duration => $duration,
-        },
+        success => 1, content => $accumulated_content,
+        metrics => { ttft => ($first_token_time ? $first_token_time - $start_time : $duration),
+                     tps => ($duration > 0 ? $token_count / $duration : 0),
+                     tokens => $token_count, duration => $duration },
+        usage => { prompt_tokens => 0, completion_tokens => $token_count, total_tokens => $token_count },
+        finish_reason => (@tool_calls ? 'tool_calls' : 'stop'),
     };
-    
-    # Add estimated usage (native providers may not provide real usage)
-    $result->{usage} = {
-        prompt_tokens => 0,
-        completion_tokens => $token_count,
-        total_tokens => $token_count,
-    };
-    
-    # Add tool calls if present
-    if (@tool_calls) {
-        $result->{tool_calls} = \@tool_calls;
-        $result->{finish_reason} = 'tool_calls';
-    } else {
-        $result->{finish_reason} = 'stop';
-    }
-    
+    $result->{tool_calls} = \@tool_calls if @tool_calls;
+
     return $result;
 }
 
