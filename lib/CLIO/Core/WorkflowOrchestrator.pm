@@ -480,6 +480,7 @@ sub process_input {
     my $premature_stop_retries = 0;  # Track retries for premature workflow stops
     my $max_premature_stop_retries = 2;  # Max auto-retries for premature stops
     my $max_server_retries = 30;  # Higher limit for server/network errors (502, 503, 599)
+    my $max_rate_limit_retries = 0;  # Infinite retries for rate limits (0 = unlimited)
     
     # Session-level error budget: Limit total errors across all iterations
     # This prevents cascading failures from consuming the entire session
@@ -755,7 +756,11 @@ sub process_input {
                 # Rate limits and server errors get more retries; 400s get fewer
                 my $error_type_for_limit = $api_response->{error_type} || '';
                 my $retry_limit;
-                if ($error_type_for_limit eq 'server_error' || $error_type_for_limit eq 'rate_limit') {
+                my $allow_infinite_retry = 0;  # Flag for infinite retry support
+                if ($error_type_for_limit eq 'rate_limit') {
+                    $retry_limit = $max_rate_limit_retries;
+                    $allow_infinite_retry = 1 if $max_rate_limit_retries == 0;
+                } elsif ($error_type_for_limit eq 'server_error') {
                     $retry_limit = $max_server_retries;
                 } elsif ($error_type_for_limit eq 'bad_request') {
                     $retry_limit = 4;  # Bare 400: 1 silent retry + 1 trim + bail
@@ -764,7 +769,8 @@ sub process_input {
                 }
                 
                 # Check if we've exceeded max retries for this iteration
-                if ($retry_count > $retry_limit) {
+                # Skip check for rate limits when infinite retry is enabled
+                if (!$allow_infinite_retry && defined $retry_limit && $retry_count > $retry_limit) {
                     log_error('WorkflowOrchestrator', "Maximum retries ($retry_limit) exceeded for this iteration");
                     return {
                         success => 0,
@@ -784,7 +790,9 @@ sub process_input {
                     $retry_delay += 1;
                 }
 
-                my $system_msg = "Temporary $error_type detected. Retrying in ${retry_delay}s... (attempt $retry_count/$retry_limit)";
+                # Format retry count display (show ∞ for infinite retries)
+                my $retry_display = $allow_infinite_retry ? '∞' : $retry_limit;
+                my $system_msg = "Temporary $error_type detected. Retrying in ${retry_delay}s... (attempt $retry_count" . ($allow_infinite_retry ? "" : "/$retry_display") . ")";
 
                 # Unsupported parameter (e.g. previous_response_id) - silent instant retry
                 # ResponseHandler already cleared the offending parameter
