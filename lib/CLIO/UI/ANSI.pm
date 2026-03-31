@@ -7,18 +7,22 @@ use strict;
 use warnings;
 use utf8;
 
+use CLIO::UI::Terminal qw(box_char);
+
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 
 =head1 NAME
 
-CLIO::UI::ANSI - ANSI escape code management with @-code system
+CLIO::UI::ANSI - ANSI escape code management with extended @-code system
 
 =head1 DESCRIPTION
 
-Provides ANSI escape codes and an @-code system for terminal formatting,
-similar to PhotonBBS/PhotonMUD. This enables consistent theming and styling
-across CLIO.
+Provides ANSI escape codes and an extended @-code system for terminal
+formatting. Supports basic 16-color, 256-color, TrueColor (24-bit RGB),
+cursor control, and capability-aware box-drawing characters.
+
+Compatible with PhotonBBS @-code conventions.
 
 =head1 SYNOPSIS
 
@@ -26,11 +30,19 @@ across CLIO.
     
     my $ansi = CLIO::UI::ANSI->new();
     
-    # Use @ codes for formatting
+    # Standard @-codes
     print $ansi->parse("@BOLD@Hello @RED@World@RESET@\n");
     
-    # Or use direct codes
-    print $ansi->codes->{BOLD}, "Hello", $ansi->codes->{RESET}, "\n";
+    # TrueColor hex (24-bit RGB)
+    print $ansi->parse("@[FF5500]@Orange text@RESET@\n");
+    print $ansi->parse("@[BG:003366]@Blue background@RESET@\n");
+    
+    # 256-color palette
+    print $ansi->parse("@256:208@Orange text@RESET@\n");
+    
+    # Cursor control
+    print $ansi->parse("@CURSOR_HIDE@");  # Hide cursor during animation
+    print $ansi->parse("@CURSOR_SHOW@");  # Restore cursor
 
 =cut
 
@@ -44,6 +56,8 @@ use constant {
     CURSOR_HOME     => "\e[H",
     CURSOR_SAVE     => "\e[s",
     CURSOR_RESTORE  => "\e[u",
+    CURSOR_HIDE     => "\e[?25l",
+    CURSOR_SHOW     => "\e[?25h",
     
     # Line operations
     CLEAR_LINE      => "\e[2K",
@@ -141,6 +155,8 @@ sub codes {
         CURSOR_HOME     => CURSOR_HOME,
         CURSOR_SAVE     => CURSOR_SAVE,
         CURSOR_RESTORE  => CURSOR_RESTORE,
+        CURSOR_HIDE     => CURSOR_HIDE,
+        CURSOR_SHOW     => CURSOR_SHOW,
         CUP             => CURSOR_UP,      # Short alias
         CDN             => CURSOR_DOWN,
         CRT             => CURSOR_RIGHT,
@@ -163,8 +179,10 @@ sub codes {
         UNDERLINE       => UNDERLINE,
         BLINK           => BLINK,
         REVERSE         => REVERSE,
+        REV             => REVERSE,        # PhotonBBS alias
         HIDDEN          => HIDDEN,
         STRIKETHROUGH   => STRIKETHROUGH,
+        STRIKE          => STRIKETHROUGH,  # PhotonBBS alias
         
         # Foreground colors
         BLACK           => BLACK,
@@ -214,9 +232,13 @@ sub codes {
 
 =head2 parse
 
-Parse @-codes in text and replace with ANSI escape sequences
+Parse @-codes in text and replace with ANSI escape sequences.
 
-    # Example: @BOLD@Hello @RED@World@RESET@
+Supports:
+- Standard @-codes: @BOLD@, @RED@, @RESET@ etc.
+- TrueColor hex: @[RRGGBB] or @[RRGGBB]@ foreground, @[BG:RRGGBB] or @[BG:RRGGBB]@ background
+- 256-color: @256:NNN@ foreground, @BG256:NNN@ background
+
     my $formatted = $ansi->parse($text);
 
 =cut
@@ -226,18 +248,31 @@ sub parse {
     
     return '' unless defined $text;
     
-    # If ANSI is disabled (--no-color), strip @-codes instead of converting them
+    # If ANSI is disabled (--no-color), strip extended codes, resolve box-drawing to chars
     unless ($self->{enabled}) {
-        $text =~ s/@[A-Z_]+@//g;
+        $text =~ s/\@\[[^\]]*\]\@?//g;         # Strip @[hex]@ and @[hex] codes
+        $text =~ s/\@(?:BG)?256:\d+\@//g;      # Strip @256:N@ codes
+        # Box-drawing codes still resolve to characters (they're not color)
+        $text =~ s/\@(D?BOX(?:HORIZ|VERT|TOPLEFT|TOPRIGHT|BOTLEFT|BOTRIGHT|TDOWN|TUP|TLEFT|TRIGHT|CROSS))\@/_boxcode_to_char($1)/ge;
+        $text =~ s/\@[A-Z_]+\@//g;             # Strip standard @-codes
         return $text;
     }
     
     my $codes = $self->codes();
     
-    # Replace @CODE@ with actual ANSI escape sequence
-    # For valid codes: replace with ANSI escape sequence
-    # For invalid codes: strip the @-code markers (they were intended as formatting)
-    # This handles AI mistakes like @BRIGHT@ (invalid) while preserving valid codes
+    # 1. TrueColor hex: @[RRGGBB]@ or @[RRGGBB] foreground, @[BG:RRGGBB]@ or @[BG:RRGGBB] background
+    #    Both with and without trailing @ are supported (PhotonBBS compat)
+    $text =~ s/\@\[([0-9A-Fa-f]{6})\]\@?/_hex_to_ansi($1, 0)/ge;
+    $text =~ s/\@\[BG:([0-9A-Fa-f]{6})\]\@?/_hex_to_ansi($1, 1)/ge;
+    
+    # 2. 256-color: @256:NNN@ foreground, @BG256:NNN@ background
+    $text =~ s/\@256:(\d{1,3})\@/_256_to_ansi($1, 0)/ge;
+    $text =~ s/\@BG256:(\d{1,3})\@/_256_to_ansi($1, 1)/ge;
+    
+    # 3. Box-drawing @-codes: @BOXHORIZ@, @BOXVERT@, @DBOXHORIZ@, etc.
+    $text =~ s/\@(D?BOX(?:HORIZ|VERT|TOPLEFT|TOPRIGHT|BOTLEFT|BOTRIGHT|TDOWN|TUP|TLEFT|TRIGHT|CROSS))\@/_boxcode_to_char($1)/ge;
+    
+    # 4. Standard @CODE@ with ANSI escape sequence
     $text =~ s/\@([A-Z_]+)\@/exists $codes->{$1} ? $codes->{$1} : ''/ge;
     
     return $text;
@@ -245,7 +280,7 @@ sub parse {
 
 =head2 strip
 
-Remove all @-codes from text
+Remove all @-codes from text (including hex and 256-color codes)
 
 =cut
 
@@ -254,8 +289,9 @@ sub strip {
     
     return '' unless defined $text;
     
-    # Remove @CODE@ patterns
-    $text =~ s/@[A-Z_]+@//g;
+    $text =~ s/\@\[[^\]]*\]\@?//g;         # @[hex]@ and @[hex] codes
+    $text =~ s/\@(?:BG)?256:\d+\@//g;      # @256:N@ / @BG256:N@ codes
+    $text =~ s/\@[A-Z_]+\@//g;             # Standard @CODE@ patterns
     
     return $text;
 }
@@ -273,6 +309,9 @@ sub strip_ansi {
     
     # Remove ANSI CSI sequences (colors, cursor movement, etc.)
     $text =~ s/\e\[[0-9;]*[A-Za-z]//g;
+    
+    # Remove private-mode sequences (cursor hide/show: \e[?25l, \e[?25h)
+    $text =~ s/\e\[\?\d+[lh]//g;
     
     # Remove OSC 8 hyperlinks: \e]8;;URL\e\\text\e]8;;\e\\ -> text
     $text =~ s/\e\]8;;[^\e]*\e\\//g;
@@ -309,6 +348,43 @@ sub is_enabled {
     return $self->{enabled};
 }
 
+# ─────────────────────────────────────────────────────────────
+# Internal: extended color conversion
+# ─────────────────────────────────────────────────────────────
+
+sub _hex_to_ansi {
+    my ($hex, $is_bg) = @_;
+    my $r = hex(substr($hex, 0, 2));
+    my $g = hex(substr($hex, 2, 2));
+    my $b = hex(substr($hex, 4, 2));
+    my $prefix = $is_bg ? 48 : 38;
+    return "\e[${prefix};2;${r};${g};${b}m";
+}
+
+sub _256_to_ansi {
+    my ($n, $is_bg) = @_;
+    $n = 0   if $n < 0;
+    $n = 255 if $n > 255;
+    my $prefix = $is_bg ? 48 : 38;
+    return "\e[${prefix};5;${n}m";
+}
+
+sub _boxcode_to_char {
+    my ($code) = @_;
+    my %box_map = (
+        'BOXHORIZ'    => 'horizontal',   'BOXVERT'     => 'vertical',
+        'BOXTOPLEFT'  => 'topleft',      'BOXTOPRIGHT'  => 'topright',
+        'BOXBOTLEFT'  => 'bottomleft',   'BOXBOTRIGHT'  => 'bottomright',
+        'BOXTDOWN'    => 'tdown',        'BOXTUP'       => 'tup',
+        'BOXTLEFT'    => 'tleft',        'BOXTRIGHT'    => 'tright',
+        'BOXCROSS'    => 'cross',
+        'DBOXHORIZ'   => 'dhorizontal',  'DBOXVERT'     => 'dvertical',
+        'DBOXTOPLEFT' => 'dtopleft',     'DBOXTOPRIGHT' => 'dtopright',
+        'DBOXBOTLEFT' => 'dbottomleft',  'DBOXBOTRIGHT' => 'dbottomright',
+    );
+    return box_char($box_map{$code} || 'horizontal');
+}
+
 1;
 
 __END__
@@ -321,63 +397,80 @@ __END__
   @CURSOR_DOWN@, @CDN@     - Move cursor down one line
   @CURSOR_RIGHT@, @CRT@    - Move cursor right one column
   @CURSOR_LEFT@, @CLT@     - Move cursor left one column
-  @CURSOR_HOME@            - Move cursor to home position
+  @CURSOR_HOME@            - Move cursor to top-left (1,1)
   @CURSOR_SAVE@            - Save cursor position
   @CURSOR_RESTORE@         - Restore cursor position
+  @CURSOR_HIDE@            - Hide cursor (for animations)
+  @CURSOR_SHOW@            - Show cursor (restore after hide)
 
 =head2 Line Operations
 
   @CLEAR_LINE@, @CLL@      - Clear entire line
-  @CLEAR_TO_EOL@           - Clear from cursor to end of line
-  @CLEAR_TO_BOL@           - Clear from cursor to beginning of line
-  @CLEAR_SCREEN@, @CLS@    - Clear entire screen
+  @CLEAR_TO_EOL@           - Clear to end of line
+  @CLEAR_TO_BOL@           - Clear to beginning of line
+  @CLEAR_SCREEN@, @CLS@   - Clear entire screen
   @CR@                     - Carriage return
 
 =head2 Text Attributes
 
-  @RESET@                  - Reset all attributes
-  @BOLD@                   - Bold text
-  @DIM@                    - Dim/faint text
-  @ITALIC@                 - Italic text
-  @UNDERLINE@              - Underlined text
-  @BLINK@                  - Blinking text
-  @REVERSE@                - Reverse video
-  @HIDDEN@                 - Hidden text
-  @STRIKETHROUGH@          - Strikethrough text
+  @RESET@        - Reset all attributes
+  @BOLD@         - Bold/bright text
+  @DIM@          - Dim text
+  @ITALIC@       - Italic text
+  @UNDERLINE@    - Underlined text
+  @BLINK@        - Blinking text
+  @REVERSE@, @REV@     - Reverse video
+  @HIDDEN@       - Hidden text
+  @STRIKETHROUGH@, @STRIKE@ - Strikethrough text
 
-=head2 Colors
+=head2 Foreground Colors
 
-  @BLACK@, @RED@, @GREEN@, @YELLOW@, @BLUE@, @MAGENTA@, @CYAN@, @WHITE@
-  
-  @BRIGHT_BLACK@, @BRIGHT_RED@, @BRIGHT_GREEN@, @BRIGHT_YELLOW@,
-  @BRIGHT_BLUE@, @BRIGHT_MAGENTA@, @BRIGHT_CYAN@, @BRIGHT_WHITE@
-  
-  @BG_BLACK@, @BG_RED@, @BG_GREEN@, @BG_YELLOW@, @BG_BLUE@,
-  @BG_MAGENTA@, @BG_CYAN@, @BG_WHITE@
+  @BLACK@ @RED@ @GREEN@ @YELLOW@ @BLUE@ @MAGENTA@ @CYAN@ @WHITE@
+  @BRIGHT_BLACK@ @BRIGHT_RED@ @BRIGHT_GREEN@ @BRIGHT_YELLOW@
+  @BRIGHT_BLUE@ @BRIGHT_MAGENTA@ @BRIGHT_CYAN@ @BRIGHT_WHITE@
+  @DEFAULT_FG@
 
-=head1 USAGE EXAMPLES
+=head2 Background Colors
 
-  # Simple colored output
-  print $ansi->parse("@BOLD@@GREEN@Success!@RESET@\n");
-  
-  # Cursor manipulation
-  print $ansi->parse("@CURSOR_UP@@CLL@Updated line@CR@\n");
-  
-  # Complex formatting
-  my $text = "@BOLD@@CYAN@CLIO@RESET@ - @DIM@Command Line Intelligence Orchestrator@RESET@";
-  print $ansi->parse($text), "\n";
+  @BG_BLACK@ @BG_RED@ @BG_GREEN@ @BG_YELLOW@
+  @BG_BLUE@ @BG_MAGENTA@ @BG_CYAN@ @BG_WHITE@
+  @BG_BRIGHT_BLACK@ @BG_BRIGHT_RED@ @BG_BRIGHT_GREEN@ @BG_BRIGHT_YELLOW@
+  @BG_BRIGHT_BLUE@ @BG_BRIGHT_MAGENTA@ @BG_BRIGHT_CYAN@ @BG_BRIGHT_WHITE@
+  @DEFAULT_BG@
 
-=head1 RELATED MODULES
+=head2 Extended Colors
 
-CLIO::UI::Theme provides higher-level theming:
-- Multiple style files (24+ color schemes in styles/)
-- Multiple theme files (layout templates in themes/)
-- Use /style command to switch: /style dracula, /style matrix, etc.
+  @[RRGGBB]@       - TrueColor foreground (e.g., @[FF5500]@ = orange)
+  @[BG:RRGGBB]@    - TrueColor background (e.g., @[BG:003366]@ = dark blue)
+  @256:NNN@        - 256-color foreground (0-255)
+  @BG256:NNN@      - 256-color background (0-255)
 
-=head1 AUTHOR
+=head2 Box-Drawing Characters (capability-aware)
 
-Fewtarius
+  @BOXHORIZ@    - Horizontal line (─ or -)
+  @BOXVERT@     - Vertical line (│ or |)
+  @BOXTOPLEFT@  - Top-left corner (┌ or +)
+  @BOXTOPRIGHT@ - Top-right corner (┐ or +)
+  @BOXBOTLEFT@  - Bottom-left corner (└ or +)
+  @BOXBOTRIGHT@ - Bottom-right corner (┘ or +)
+  @BOXTDOWN@    - T-down junction (┬ or +)
+  @BOXTUP@      - T-up junction (┴ or +)
+  @BOXTLEFT@    - T-left junction (┤ or +)
+  @BOXTRIGHT@   - T-right junction (├ or +)
+  @BOXCROSS@    - Cross junction (┼ or +)
+  @DBOXHORIZ@   - Double horizontal (═ or =)
+  @DBOXVERT@    - Double vertical (║ or |)
+  @DBOXTOPLEFT@ - Double top-left (╔ or +)
+  @DBOXTOPRIGHT@ - Double top-right (╗ or +)
+  @DBOXBOTLEFT@ - Double bottom-left (╚ or +)
+  @DBOXBOTRIGHT@ - Double bottom-right (╝ or +)
+
+Box-drawing codes respect terminal capability detection from
+L<CLIO::UI::Terminal>. On Unicode terminals they render as line-drawing
+characters; on ASCII-only terminals they degrade to +, -, |.
+
+=head1 SEE ALSO
+
+L<CLIO::UI::Terminal>, L<CLIO::UI::Theme>
 
 =cut
-
-1;

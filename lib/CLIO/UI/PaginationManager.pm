@@ -8,6 +8,7 @@ binmode(STDERR, ':encoding(UTF-8)');
 
 use Carp qw(croak);
 use CLIO::Core::Logger qw(log_debug);
+use CLIO::UI::Terminal qw(box_char);
 use CLIO::Compat::Terminal qw(ReadKey ReadMode);
 
 =head1 NAME
@@ -456,15 +457,15 @@ sub display_content {
     # Non-paginated path
     if (!$is_interactive || $total_lines <= $page_size) {
         print "\n";
-        print $ui->colorize("═" x 80, 'DIM'), "\n";
+        print $ui->colorize(box_char("dhorizontal") x 80, 'DIM'), "\n";
         print $ui->colorize($title, 'DATA'), "\n";
-        print $ui->colorize("═" x 80, 'DIM'), "\n";
+        print $ui->colorize(box_char("dhorizontal") x 80, 'DIM'), "\n";
         print "\n";
         for my $line (@$lines) {
             print $line, "\n";
         }
         print "\n";
-        print $ui->colorize("─" x 80, 'DIM'), "\n";
+        print $ui->colorize(box_char("horizontal") x 80, 'DIM'), "\n";
         print $ui->colorize("$total_lines lines", 'DIM');
         print $ui->colorize(" | $filepath", 'DIM') if $filepath;
         print "\n\n";
@@ -482,9 +483,9 @@ sub display_content {
 
         print "\e[2J\e[H";
         print "\n";
-        print $ui->colorize("═" x 80, 'DIM'), "\n";
+        print $ui->colorize(box_char("dhorizontal") x 80, 'DIM'), "\n";
         print $ui->colorize($title, 'DATA'), "\n";
-        print $ui->colorize("═" x 80, 'DIM'), "\n";
+        print $ui->colorize(box_char("dhorizontal") x 80, 'DIM'), "\n";
         print "\n";
 
         for my $i ($start .. $end) {
@@ -492,7 +493,7 @@ sub display_content {
         }
 
         print "\n";
-        print $ui->colorize("─" x 80, 'DIM'), "\n";
+        print $ui->colorize(box_char("horizontal") x 80, 'DIM'), "\n";
 
         my $status = sprintf("Lines %d-%d of %d", $start + 1, $end + 1, $total_lines);
         $status .= " | $filepath" if $filepath;

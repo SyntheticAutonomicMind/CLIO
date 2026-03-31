@@ -277,8 +277,13 @@ sub spawn {
     my $args = qq{"$task" --model $model};
     $args .= " --persistent" if $persistent;
     
-    # Call the spawn command
+    # Suppress direct display - we'll return expanded_content instead
+    $handler->{suppress_display} = 1;
+    
+    # Call the spawn command (display suppressed)
     my $result = $handler->cmd_spawn($args);
+    
+    delete $handler->{suppress_display};
     
     # Extract agent ID from result if available
     if ($handler->{manager}) {
@@ -286,13 +291,22 @@ sub spawn {
         my @ids = sort { $b cmp $a } keys %$agents;  # Get newest
         my $agent_id = $ids[0] || 'unknown';
         
+        my $mode_str = $persistent ? 'persistent' : 'oneshot';
+        my @expanded = (
+            sprintf("%-20s %s", "Agent ID:", $agent_id),
+            sprintf("%-20s %s", "Mode:", $mode_str),
+            sprintf("%-20s %s", "Model:", $model),
+            sprintf("%-20s %s", "Task:", qq{"$task_short"}),
+        );
+        
         return $self->success_result(
             "Spawned sub-agent: $agent_id",
             action_description => $action_desc,
+            expanded_content => \@expanded,
             agent_id => $agent_id,
             task => $task,
             model => $model,
-            mode => $persistent ? 'persistent' : 'oneshot',
+            mode => $mode_str,
         );
     }
     

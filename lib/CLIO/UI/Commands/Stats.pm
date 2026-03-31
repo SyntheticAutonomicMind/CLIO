@@ -12,6 +12,7 @@ binmode(STDERR, ':encoding(UTF-8)');
 
 use Carp qw(croak);
 use CLIO::Util::JSON qw(encode_json decode_json);
+use CLIO::UI::Terminal qw(box_char);
 
 =head1 NAME
 
@@ -113,7 +114,7 @@ sub _show_current {
     # Current memory
     $self->writeline("", markdown => 0);
     $self->writeline($self->colorize("  Current Memory", 'command_subheader'), markdown => 0);
-    $self->writeline($self->colorize("  " . "\x{2500}" x 40, 'dim'), markdown => 0);
+    $self->writeline($self->colorize("  " . box_char("horizontal") x 40, 'dim'), markdown => 0);
     $self->writeline(sprintf("  %-24s %s",
         "RSS (physical):",
         $self->colorize("$snap->{rss_mb} MB", 'success')),
@@ -131,7 +132,7 @@ sub _show_current {
     if ($summary && defined $summary->{baseline_rss_mb}) {
         $self->writeline("", markdown => 0);
         $self->writeline($self->colorize("  Session Baseline", 'command_subheader'), markdown => 0);
-        $self->writeline($self->colorize("  " . "\x{2500}" x 40, 'dim'), markdown => 0);
+        $self->writeline($self->colorize("  " . box_char("horizontal") x 40, 'dim'), markdown => 0);
         $self->writeline(sprintf("  %-24s %s",
             "Baseline RSS:",
             "$summary->{baseline_rss_mb} MB"),
@@ -206,7 +207,7 @@ sub _show_history {
     $self->writeline(sprintf("  %-12s %-18s %8s %8s %10s  %s",
         "Time", "Phase", "RSS", "VSZ", "Delta", "Context"),
         markdown => 0);
-    $self->writeline("  " . $self->colorize("\x{2500}" x 72, 'dim'), markdown => 0);
+    $self->writeline("  " . $self->colorize(box_char("horizontal") x 72, 'dim'), markdown => 0);
     
     for my $entry (@session_entries) {
         my $time = $entry->{timestamp} || '';
@@ -309,7 +310,7 @@ sub _show_fallback_stats {
         my ($rss_kb, $vsz_kb) = ($1, $2);
         $self->writeline("", markdown => 0);
         $self->writeline($self->colorize("  Current Memory (direct)", 'command_subheader'), markdown => 0);
-        $self->writeline($self->colorize("  " . "\x{2500}" x 40, 'dim'), markdown => 0);
+        $self->writeline($self->colorize("  " . box_char("horizontal") x 40, 'dim'), markdown => 0);
         $self->writeline(sprintf("  %-24s %s",
             "RSS (physical):",
             $self->colorize(sprintf("%.1f MB", $rss_kb / 1024), 'success')),
@@ -369,7 +370,7 @@ sub _show_performance {
     my $perf = $orchestrator->get_performance_summary();
     return unless $perf;
     
-    my $sep = "\x{2500}" x 40;
+    my $sep = box_char("horizontal") x 40;
     
     # Session averages
     $self->writeline("", markdown => 0);

@@ -363,6 +363,16 @@ sub execute_tool {
             $response->{action_description} = $result->{action_description};
         }
         
+        # Pass through expanded_content for inline display (e.g. terminal output)
+        if ($result->{expanded_content} && ref($result->{expanded_content}) eq 'ARRAY') {
+            $response->{expanded_content} = $result->{expanded_content};
+        }
+        
+        # Pass through metadata for display (e.g. file diffs)
+        if ($result->{metadata} && ref($result->{metadata}) eq 'HASH') {
+            $response->{metadata} = $result->{metadata};
+        }
+        
         return encode_json($response);
     } else {
         # Error - log the failure
@@ -380,7 +390,12 @@ sub execute_tool {
         });
         
         # Error
-        return "ERROR: " . ($result->{error} || 'Unknown error');
+        my $error_msg = $result->{error} || 'Unknown error';
+        return encode_json({
+            success => 0,
+            error => $error_msg,
+            output => "ERROR: $error_msg",
+        });
     }
 }
 
@@ -784,7 +799,8 @@ sub _error_result {
     
     return encode_json({
         success => 0,
-        error => $error
+        error => $error,
+        output => "ERROR: $error",
     });
 }
 

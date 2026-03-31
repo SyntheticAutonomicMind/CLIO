@@ -9,8 +9,10 @@ use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use HTTP::Tiny;
+use File::Temp qw(tempfile);
+use POSIX qw(:errno_h);
 use CLIO::Util::JSON qw(decode_json encode_json);
-use CLIO::Core::Logger qw(log_debug log_warning);
+use CLIO::Core::Logger qw(should_log log_debug log_warning);
 
 # Check if SSL is available for HTTP::Tiny
 our $HAS_SSL;
@@ -222,9 +224,6 @@ sub _find_ca_bundle {
 sub _request_via_curl {
     my ($self, $method, $uri, $headers, $content) = @_;
     
-    use File::Temp qw(tempfile);
-    use POSIX qw(:sys_wait_h);
-    
     # Build curl command
     my @cmd = ('curl', '-s', '-i', '-X', $method);
     
@@ -254,7 +253,7 @@ sub _request_via_curl {
     # Add URL
     push @cmd, $uri;
     
-    if ($ENV{CLIO_DEBUG}) {
+    if (should_log("DEBUG")) {
         log_debug('HTTP', "Running curl with " . scalar(@cmd) . " args");
     }
     
@@ -278,7 +277,7 @@ sub _request_via_curl {
     
     # Parse HTTP response
     my ($status_line, $header_block, $body);
-    if ($output =~ /^(HTTP\/[\d.]+\s+(\d+)\s+([^\r\n]*))\r?\n(.*?)\r?\n\r?\n(.*)$/s) {
+    if ($output =~ /^(HTTP\/[\d.]+\s+(\d+)\s*([^\r\n]*))\r?\n(.*?)\r?\n\r?\n(.*)$/s) {
         $status_line = $1;
         my $status = $2;
         my $reason = $3;
@@ -293,7 +292,7 @@ sub _request_via_curl {
             }
         }
         
-        if ($ENV{CLIO_DEBUG}) {
+        if (should_log("DEBUG")) {
             log_debug('HTTP::curl', "Status: $status $reason");
             log_debug('HTTP', "Body length: " . length($body));
         }
@@ -337,8 +336,6 @@ Returns: Response hash compatible with HTTP::Tiny format
 sub _request_via_curl_streaming {
     my ($self, $method, $uri, $headers, $content, $callback) = @_;
     
-    use File::Temp qw(tempfile);
-    
     # Build curl command - use -N (no-buffer) for streaming and separate headers
     my @cmd = ('curl', '-s', '-N', '-X', $method);
     
@@ -374,7 +371,7 @@ sub _request_via_curl_streaming {
     # Add URL
     push @cmd, $uri;
     
-    if ($ENV{CLIO_DEBUG}) {
+    if (should_log("DEBUG")) {
         log_debug('HTTP::curl_streaming', "Starting streaming curl request");
     }
     
@@ -406,7 +403,6 @@ sub _request_via_curl_streaming {
         
         if (!defined $bytes) {
             # sysread error - likely EINTR from signal
-            use POSIX qw(:errno_h);
             next if $! == EINTR;  # Retry on signal interrupt
             last;  # Real error
         }
@@ -437,17 +433,17 @@ sub _request_via_curl_streaming {
     my $exit_code = $? >> 8;
     
     # Parse headers from the header dump file
-    my $status = 200;
-    my $reason = 'OK';
+    my $status;
+    my $reason;
     my %resp_headers;
     
     if (open(my $hfh, '<', $hdr_file)) {
         while (my $line = <$hfh>) {
             chomp $line;
             $line =~ s/\r$//;
-            if ($line =~ /^HTTP\/[\d.]+\s+(\d+)\s+(.*)$/) {
+            if ($line =~ /^HTTP\/[\d.]+\s+(\d+)\s*(.*)$/) {
                 $status = $1;
-                $reason = $2;
+                $reason = $2 // '';
             } elsif ($line =~ /^([^:]+):\s*(.+)$/) {
                 $resp_headers{lc($1)} = $2;
             }
@@ -455,7 +451,28 @@ sub _request_via_curl_streaming {
         close $hfh;
     }
     
-    if ($ENV{CLIO_DEBUG}) {
+    # If no HTTP status was parsed from headers, check curl exit code
+    if (!defined $status) {
+        if ($exit_code == 0 && length($accumulated_content) > 0) {
+            # curl succeeded and we got data - assume 200
+            $status = 200;
+            $reason = 'OK';
+        } else {
+            # curl failed or no data - report as connection error
+            $status = 599;
+            $reason = "curl exit code $exit_code";
+        }
+    }
+    $reason //= '';
+
+    # Override status on curl failure even if headers were partially written
+    if ($exit_code != 0 && $status >= 200 && $status < 300) {
+        log_debug('HTTP::curl_streaming', "curl exit code $exit_code but headers showed $status - overriding to 599");
+        $status = 599;
+        $reason = "curl exit code $exit_code (was $status)";
+    }
+
+    if (should_log("DEBUG")) {
         log_debug('HTTP', "Streaming complete: status=$status, " . length($accumulated_content) . " bytes, exit_code=$exit_code");
     }
     
@@ -509,7 +526,7 @@ sub request {
         my $has_callback = ref($url_or_callback) eq 'CODE';
         
         # DEBUG: Print what we're about to send
-        if ($ENV{CLIO_DEBUG}) {
+        if (should_log("DEBUG")) {
             log_debug('HTTP', "Request details:");
             log_debug('HTTP', "  Backend: " . ($use_curl ? "curl" : "HTTP::Tiny") . "");
             log_debug('HTTP', "  Method: $method");
@@ -564,7 +581,7 @@ sub request {
                 # Store accumulated content on the response for post-processing
                 $response->{content} = $accumulated_content;
                 
-                if ($ENV{CLIO_DEBUG}) {
+                if (should_log("DEBUG")) {
                     log_debug('HTTP', "True streaming complete: " . length($accumulated_content) . " bytes delivered via callback");
                 }
             } else {

@@ -1047,7 +1047,7 @@ sub _execute_tool_round {
 
         log_debug('WorkflowOrchestrator', "Executing tool: $tool_name");
 
-        # Handle first tool call: stop spinner, check content
+        # Handle first tool call: stop spinner, display unstreamed content
         if ($first_tool_call) {
             if ($self->{spinner} && $self->{spinner}->can('stop')) {
                 $self->{spinner}->stop();
@@ -1055,28 +1055,70 @@ sub _execute_tool_round {
             }
 
             my $content = $api_response->{content} // '';
+            $content =~ s/^\s+|\s+$//g;
             log_debug('WorkflowOrchestrator', "First tool call - content: '" . substr($content, 0, 100) . "'");
+            
+            # If the model sent text content alongside tool_calls but streaming
+            # didn't deliver it (or no streaming callback), display it now
+            if (length($content) > 0 && $self->{ui}) {
+                my $already_streamed = 0;
+                if ($self->{ui}->can('streaming_controller')) {
+                    my $sc = $self->{ui}->streaming_controller();
+                    $already_streamed = $sc && $sc->first_chunk_received();
+                }
+                if (!$already_streamed) {
+                    $self->{ui}->display_assistant_message($content);
+                    print "\n";
+                }
+            }
+            
             $first_tool_call = 0;
         }
 
         # Handle tool group transitions (new tool type starting)
-        if ($tool_name ne $current_tool) {
+        my $is_inline = ($self->{formatter}->get_tool_format() eq 'inline');
+        my $tool_changed = ($tool_name ne $current_tool);
+        
+        if ($tool_changed) {
             $self->{ui}->clear_system_message_flag() if $self->{ui};
-
-            my $is_first_tool = ($current_tool eq '');
-            $self->{formatter}->display_tool_header($tool_name, $tool_display_name, $is_first_tool);
+        }
+        
+        # Parse tool arguments early (needed for suppress_display and pre-action)
+        my $tool_args = eval { decode_json($tool_call->{function}->{arguments} || '{}') };
+        my $tool_operation = ($tool_args && $tool_args->{operation}) ? $tool_args->{operation} : '';
+        
+        # Skip display for internal-only operations and self-displaying tools
+        my $suppress_display = ($tool_name eq 'terminal_operations' && $tool_operation eq 'validate')
+                            || ($tool_name eq 'user_collaboration');
+        
+        # In inline mode, show a bullet for every tool call.
+        # In box mode, only show header on tool group transitions.
+        if (!$suppress_display && ($is_inline || $tool_changed)) {
+            my $is_first_tool = ($current_tool eq '' && !$is_inline) || ($i == 0);
+            my $is_continuation = ($is_inline && !$tool_changed && $current_tool ne '');
+            $self->{formatter}->display_tool_header($tool_name, $tool_display_name, $is_first_tool, $is_continuation);
             $current_tool = $tool_name;
         }
 
-        # Parse tool arguments for display and diff capture
-        my $tool_args = eval { decode_json($tool_call->{function}->{arguments} || '{}') };
-        my $tool_operation = ($tool_args && $tool_args->{operation}) ? $tool_args->{operation} : '';
-
         # For terminal_operations: show the command BEFORE execution
-        if ($tool_name eq 'terminal_operations') {
+        my $pre_action_printed = 0;
+        if ($tool_name eq 'terminal_operations' && !$suppress_display) {
             my $cmd_preview = ($tool_args && $tool_args->{command}) ? $tool_args->{command} : undef;
             if ($cmd_preview) {
                 $self->{formatter}->display_action_detail($cmd_preview, 0, 0);
+                $pre_action_printed = 1;
+            }
+        }
+        # For apply_patch: extract file list from patch text for pre-action
+        elsif ($tool_name eq 'apply_patch' && $tool_args && $tool_args->{patch}) {
+            my @files;
+            while ($tool_args->{patch} =~ /\*\*\* (?:Add|Update|Delete) File:\s*(.+)/g) {
+                push @files, $1;
+            }
+            if (@files) {
+                my $preview = @files == 1 ? $files[0] : scalar(@files) . " files";
+                $self->{formatter}->display_action_detail("patching $preview", 0, 0);
+                $pre_action_printed = 1;
             }
         }
 
@@ -1104,7 +1146,8 @@ sub _execute_tool_round {
                 if (exists $result_data->{success} && !$result_data->{success}) {
                     $is_error = 1;
                     my $error_msg = $result_data->{error} || 'Unknown error';
-                    $action_detail = $self->{formatter}->format_error($error_msg);
+                    my $error_prefix = $tool_operation ? "$tool_operation: " : '';
+                    $action_detail = $error_prefix . $self->{formatter}->format_error($error_msg);
 
                     # Enhanced error with schema guidance
                     my $tool_obj = $self->{tool_registry}->get_tool($tool_name);
@@ -1135,12 +1178,48 @@ sub _execute_tool_round {
             }
         }
 
+        # Fallback: if no action_detail, build one from tool args
+        # Skip if pre-action was already printed (e.g. terminal_operations command)
+        if (!$action_detail && $is_inline && !$pre_action_printed) {
+            if ($tool_operation) {
+                # Include key context args (path, host, query, etc.)
+                my $ctx = '';
+                for my $key (qw(path host query url pattern key name)) {
+                    if ($tool_args && $tool_args->{$key}) {
+                        $ctx = $tool_args->{$key};
+                        last;
+                    }
+                }
+                $action_detail = $ctx ? "$tool_operation: $ctx" : $tool_operation;
+            } elsif ($tool_name eq 'apply_patch') {
+                $action_detail = 'applying patch';
+            }
+        }
+
         # Display action detail
-        if ($action_detail) {
+        my $printed_action = 0;
+        # For tools with pre-action printed (apply_patch), convert the result's
+        # action_description into expanded_content for proper hrule formatting
+        if ($pre_action_printed && $action_detail && !$suppress_display && $tool_name eq 'apply_patch') {
+            my $expanded_content;
+            if ($result_data && ref($result_data) eq 'HASH') {
+                $expanded_content = $result_data->{expanded_content} || [];
+            }
+            $expanded_content ||= [];
+            # Use action_detail as expanded content line
+            unshift @$expanded_content, $action_detail;
+            $self->{formatter}->display_expanded_content($expanded_content);
+            $printed_action = 1;
+            $action_detail = undef;
+        }
+        elsif ($action_detail && !$suppress_display) {
             my $remaining_same_tool = 0;
-            for my $j ($i+1..$#$ordered_tools) {
-                if ($ordered_tools->[$j]->{function}->{name} eq $tool_name) {
-                    $remaining_same_tool++;
+            # In inline mode, each call has its own bullet, so remaining is 0
+            if (!$is_inline) {
+                for my $j ($i+1..$#$ordered_tools) {
+                    if ($ordered_tools->[$j]->{function}->{name} eq $tool_name) {
+                        $remaining_same_tool++;
+                    }
                 }
             }
 
@@ -1150,11 +1229,31 @@ sub _execute_tool_round {
             }
 
             $self->{formatter}->display_action_detail($action_detail, $is_error, $remaining_same_tool, $expanded_content);
+            $printed_action = 1;
+        }
+
+        # For tools that printed before execution (terminal_operations), show
+        # expanded_content from the result (captured command output)
+        if (!$printed_action && $pre_action_printed && $result_data && ref($result_data) eq 'HASH') {
+            my $expanded_content = $result_data->{expanded_content};
+            if ($expanded_content && ref($expanded_content) eq 'ARRAY' && @$expanded_content) {
+                $self->{formatter}->display_expanded_content($expanded_content);
+            }
+        }
+
+        # In inline mode, if no action detail was printed after the header,
+        # close the line so the next tool header starts on a new line
+        if ($is_inline && !$printed_action && !$pre_action_printed) {
+            print "\n";
+            STDOUT->flush() if STDOUT->can('flush');
         }
 
         # Display diff for file-writing operations
         if ($diff_before && !$is_error) {
-            $self->_display_file_diff($diff_before, $tool_name, $tool_operation, $tool_args);
+            # Skip opening hrule if expanded_content with hrules was just displayed
+            my $skip_open = ($tool_name eq 'apply_patch' && $printed_action);
+            $self->_display_file_diff($diff_before, $tool_name, $tool_operation, $tool_args,
+                $skip_open ? { skip_opening_hrule => 1 } : undef);
         }
 
         # Extract output for the AI
@@ -1246,8 +1345,12 @@ sub _execute_tool_round {
     }
 
     # Print newline to separate tool output from next iteration
-    print "\n";
-    STDOUT->flush() if STDOUT->can('flush');
+    # Skip if last tool was user_collaboration (its output already provides separation)
+    my $last_tool = @$ordered_tools ? ($ordered_tools->[-1]->{function}->{name} || '') : '';
+    if ($last_tool ne 'user_collaboration') {
+        print "\n";
+        STDOUT->flush() if STDOUT->can('flush');
+    }
 }
 
 
@@ -1995,10 +2098,12 @@ Display unified diffs for files changed by a tool operation.
 =cut
 
 sub _display_file_diff {
-    my ($self, $before_map, $tool_name, $operation, $args) = @_;
+    my ($self, $before_map, $tool_name, $operation, $args, $opts) = @_;
     
     return unless $before_map && ref($before_map) eq 'HASH';
     
+    my $skip_opening_hrule = $opts && $opts->{skip_opening_hrule};
+    my $has_diffs = 0;
     for my $path (sort keys %$before_map) {
         my $old = $before_map->{$path};
         my $new = $self->_safe_read_file($path);
@@ -2006,8 +2111,16 @@ sub _display_file_diff {
         next if (!defined $old && !length($new));
         
         $old //= '';
+        
+        # Opening hrule before first diff
+        if (!$has_diffs) {
+            $self->{formatter}->display_hrule() unless $skip_opening_hrule;
+            $has_diffs = 1;
+        }
         $self->{formatter}->display_diff($old, $new, $path);
     }
+    # Closing hrule after all diffs
+    $self->{formatter}->display_hrule() if $has_diffs;
 }
 
 =head2 _execute_tool

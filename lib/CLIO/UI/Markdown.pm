@@ -7,6 +7,8 @@ use strict;
 use warnings;
 use utf8;
 
+use CLIO::UI::Terminal qw(box_char ui_char);
+
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use open ':std', ':encoding(UTF-8)';
@@ -83,12 +85,13 @@ sub render {
     my $code_lang = '';
     my $in_table = 0;
     my @table_rows;
+    my $numbered_list_indent = -1;  # indent level of current numbered list
     
     for my $i (0 .. $#lines) {
         my $line = $lines[$i];
         
-        # Handle code blocks
-        if ($line =~ /^```(.*)$/) {
+        # Handle code blocks (allow optional leading whitespace)
+        if ($line =~ /^\s*```(.*)$/) {
             # Flush table if we were in one
             if ($in_table) {
                 push @output, $self->render_table(@table_rows);
@@ -181,6 +184,20 @@ sub render {
             next;
         }
         
+        # Track numbered list context for sub-list indentation
+        if ($line =~ /^(\s*)(?:\*\*)?(\d+)\.\s/) {
+            $numbered_list_indent = length($1);
+        } elsif ($line =~ /^(\s*)[-*+]\s/ && $numbered_list_indent >= 0) {
+            # Bullet at or after numbered list indent -> indent as sub-item
+            my $bullet_indent = length($1);
+            if ($bullet_indent >= $numbered_list_indent) {
+                $line = '  ' . $line;
+            }
+        } elsif ($line !~ /^\s*$/) {
+            # Non-blank, non-list line resets numbered list tracking
+            $numbered_list_indent = -1;
+        }
+        
         # Process inline markdown
         $line = $self->render_inline($line);
         
@@ -217,13 +234,13 @@ sub render_inline {
     # Blockquotes
     if ($line =~ /^>\s+(.+)$/) {
         my $quoted = $self->process_inline_formatting($1);
-        return $self->color('markdown_quote') . "│ " . '@RESET@' . $quoted;
+        return $self->color('markdown_quote') . box_char('vertical') . " " . '@RESET@' . $quoted;
     }
     
     # Horizontal rules (---, ***, ___, or variants with 3+ characters)
     if ($line =~ /^(?:---|---+|\*\*\*|\*\*\*+|___|___+)\s*$/) {
         # Render as a colored line
-        return $self->color('markdown_quote') . "─" x 40 . '@RESET@';
+        return $self->color('markdown_quote') . box_char('horizontal') x 40 . '@RESET@';
     }
     
     # Lists
@@ -368,12 +385,13 @@ sub render_table {
     my @output;
     
     # Top border
-    my $top_border = "┌" . join("┬", map { "─" x ($_ + 2) } @col_widths) . "┐";
+    my $h = box_char('horizontal');
+    my $top_border = box_char('topleft') . join(box_char('tdown'), map { $h x ($_ + 2) } @col_widths) . box_char('topright');
     push @output, $self->color('table_border') . $top_border . '@RESET@';
     
     for my $i (0 .. $#parsed_rows) {
         my $row = $parsed_rows[$i];
-        my $line = "│";
+        my $line = box_char('vertical');
         
         for my $j (0 .. $#{$row->{cells}}) {
             my $cell = $row->{cells}[$j];
@@ -398,20 +416,20 @@ sub render_table {
             # Pad cell based on visual length, not formatted string length
             my $padding = $width - $visual_len;
             $padding = 0 if $padding < 0;  # Safety check
-            $line .= " " . $formatted . (" " x $padding) . " " . $self->color('table_border') . "│" . '@RESET@';
+            $line .= " " . $formatted . (" " x $padding) . " " . $self->color('table_border') . box_char('vertical') . '@RESET@';
         }
         
         push @output, $line;
         
         # Add separator after header
         if ($row->{is_header}) {
-            my $sep = "├" . join("┼", map { "─" x ($_ + 2) } @col_widths) . "┤";
+            my $sep = box_char('tright') . join(box_char('cross'), map { $h x ($_ + 2) } @col_widths) . box_char('tleft');
             push @output, $self->color('table_border') . $sep . '@RESET@';
         }
     }
     
     # Bottom border
-    my $bottom_border = "└" . join("┴", map { "─" x ($_ + 2) } @col_widths) . "┘";
+    my $bottom_border = box_char('bottomleft') . join(box_char('tup'), map { $h x ($_ + 2) } @col_widths) . box_char('bottomright');
     push @output, $self->color('table_border') . $bottom_border . '@RESET@';
     
     return join("\n", @output);
@@ -449,7 +467,7 @@ sub process_inline_formatting {
     }ge;
     
     # Bold (**text** or __text__)
-    $text =~ s/\*\*([^\*]+)\*\*/${bold_color}$1\@RESET\@/g;
+    $text =~ s/\*\*(.+?)\*\*/${bold_color}$1\@RESET\@/g;
     $text =~ s/__([^_]+)__/${bold_color}$1\@RESET\@/g;
     
     # Italic (*text* or _text_) - must be careful not to match ** or __
@@ -537,7 +555,7 @@ sub strip_markdown {
     $text =~ s/(?<!\$)\$([^\$]+)\$(?!\$)/$1/g;  # Inline formulas
     
     # Remove bold/italic
-    $text =~ s/\*\*([^\*]+)\*\*/$1/g;
+    $text =~ s/\*\*(.+?)\*\*/$1/g;
     $text =~ s/__([^_]+)__/$1/g;
     $text =~ s/\*([^\*]+)\*/$1/g;
     $text =~ s/_([^_]+)_/$1/g;
@@ -578,9 +596,11 @@ sub render_formula_block {
     my $rendered = $self->render_formula_content($formula);
     
     # Render with a box frame
-    return $formula_color . "┌─ Formula ─────────────────┐" . '@RESET@' . "\n" .
-           $formula_color . "│ " . '@RESET@' . $rendered . " " . $formula_color . "│" . '@RESET@' . "\n" .
-           $formula_color . "└────────────────────────────┘" . '@RESET@';
+    my $h = box_char('horizontal');
+    my $v = box_char('vertical');
+    return $formula_color . box_char('topleft') . $h . " Formula " . $h x 19 . box_char('topright') . '@RESET@' . "\n" .
+           $formula_color . $v . " " . '@RESET@' . $rendered . " " . $formula_color . $v . '@RESET@' . "\n" .
+           $formula_color . box_char('bottomleft') . $h x 28 . box_char('bottomright') . '@RESET@';
 }
 
 =head2 render_formula_content

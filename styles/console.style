@@ -91,6 +91,9 @@ table_border=@DIM@
 
 # ASCII spinner - compatible with all terminals, no Unicode required
 spinner_frames=-,\\,|,/
+# ASCII symbols - force plain text for maximum compatibility
+tool_bullet=*
+tool_separator=>
 
 # ═══════════════════════════════════════════════════════════════
 # DEPRECATED (Backward Compatibility)

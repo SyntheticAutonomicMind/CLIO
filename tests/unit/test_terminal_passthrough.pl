@@ -59,12 +59,12 @@ print "\n=== Terminal Operations Tests ===\n\n";
     print "[OK] Missing command handling\n";
 }
 
-# Test 5: Multiplexer detection method exists
+# Test 5: Captured execution method exists
 {
     my $tool = CLIO::Tools::TerminalOperations->new();
-    ok($tool->can('_get_multiplexer'), "Has _get_multiplexer method");
+    ok($tool->can('_execute_captured'), "Has _execute_captured method");
     
-    print "[OK] Multiplexer integration method exists\n";
+    print "[OK] Captured execution method exists\n";
 }
 
 # Test 6: Tool definition includes required params
