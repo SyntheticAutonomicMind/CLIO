@@ -148,7 +148,7 @@ sub _display_api_help {
     $self->display_section_header("ALL COMMANDS");
     $self->display_command_row("/api show", "Display current API configuration", 40);
     $self->display_command_row("/api set model <name>", "Set AI model", 40);
-    $self->display_command_row("/api set model <provider>/<model>", "Set model + auto-switch provider", 40);
+    $self->display_command_row("/api set model <provider>/<model>", "Set model with provider prefix", 40);
     $self->display_command_row("/api set provider <name>", "Set provider (anthropic, google, etc.)", 40);
     $self->display_command_row("/api set base <url>", "Set API base URL", 40);
     $self->display_command_row("/api set key <value>", "Set API key (stored per-provider)", 40);
@@ -181,7 +181,7 @@ sub _display_api_help {
     $self->display_section_header("EXAMPLES");
     $self->writeline("  " . $self->colorize("/api set provider github_copilot", 'USER') . "  Switch to GitHub Copilot", markdown => 0);
     $self->writeline("  " . $self->colorize("/api login", 'USER') . "                        Authenticate with GitHub", markdown => 0);
-    $self->writeline("  " . $self->colorize("/api set model gpt-4.1", 'USER') . "            Set model (auto-detect provider)", markdown => 0);
+    $self->writeline("  " . $self->colorize("/api set model gpt-4.1", 'USER') . "            Set model (uses current provider)", markdown => 0);
     $self->writeline("  " . $self->colorize("/api set model openrouter/deepseek/deepseek-r1", 'USER') . "  Cross-provider model", markdown => 0);
     $self->writeline("", markdown => 0);
 }
