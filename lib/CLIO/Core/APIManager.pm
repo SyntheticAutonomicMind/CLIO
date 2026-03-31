@@ -2121,107 +2121,96 @@ sub send_request {
     return $ctx->{native_result} if $ctx->{native_result};
     return $ctx->{error_result}  if $ctx->{error_result};
 
+    my $perf_start_time = time();
+
+    my $resp;
+    eval {
+        $resp = $ctx->{ua}->request($ctx->{req});
+        if ($self->{debug}) {
+            warn sprintf("[DEBUG] Response status: %s\n", $resp->status_line);
+            warn sprintf("[DEBUG] Error response: %s\n", $resp->decoded_content) if !$resp->is_success;
+        }
+    };
+
+    return $self->_process_non_streaming_response($resp, $@, $perf_start_time, $ctx, \%opts);
+}
+
+=head2 _process_non_streaming_response($resp, $eval_error, $perf_start_time, $ctx, $opts)
+
+Process the HTTP response from a non-streaming API request.
+Handles error detection, JSON decoding, content extraction (Chat Completions,
+Responses API, and fallback formats), stateful marker tracking, performance
+recording, and result construction.
+
+Returns the final result hashref suitable for the caller.
+
+=cut
+
+sub _process_non_streaming_response {
+    my ($self, $resp, $eval_error, $perf_start_time, $ctx, $opts) = @_;
+
     my $model           = $ctx->{model};
     my $endpoint_config = $ctx->{endpoint_config};
     my $provider_label  = $ctx->{provider_label};
     my $messages        = $ctx->{messages};
     my $json            = $ctx->{json};
     my $use_responses_api = $ctx->{use_responses_api};
-    my $ua              = $ctx->{ua};
-    my $req             = $ctx->{req};
-    my $final_endpoint  = $ctx->{final_endpoint};
 
-    # Start performance tracking
-    my $perf_start_time = time();
-    
-    my $resp;
-    eval {
-        $resp = $ua->request($req);
-        
-        if ($self->{debug}) {
-            warn sprintf("[DEBUG] Response status: %s\n", $resp->status_line);
-            if (!$resp->is_success) {
-                warn sprintf("[DEBUG] Error response: %s\n", $resp->decoded_content);
-            }
-        }
-    };
-    
-    # End performance tracking
     my $perf_end_time = time();
     my $tokens_in = 0;
     my $tokens_out = 0;
-    my $success = 0;
-    my $perf_error = undef;
-    
-    if ($@) {
-        my $error = "Request failed: $@";
+
+    # Handle request-level failure ($@ from eval around ua->request)
+    if ($eval_error) {
+        my $error = "Request failed: $eval_error";
         warn "[ERROR] $error\n" if $self->{debug};
-        $perf_error = $error;
-        
-        # Record failed request
+
         $self->{performance_monitor}->record_api_call(
-            $self->{api_base},
-            $model,
-            {
-                start_time => $perf_start_time,
-                end_time => $perf_end_time,
-                success => 0,
-                error => $error,
-            }
+            $self->{api_base}, $model,
+            { start_time => $perf_start_time, end_time => $perf_end_time,
+              success => 0, error => $error }
         );
-        
-        # Release broker slot before returning
-        $self->{response_handler}->release_broker_slot(undef, 599);  # 599 = network error
-        
-        # Network/timeout errors are transient and should be retried
-        return { 
-            success => 0, 
-            error => $error, 
-            retryable => 1,
-            retry_after => 2,
-            error_type => 'server_error',
+        $self->{response_handler}->release_broker_slot(undef, 599);
+
+        return {
+            success => 0, error => $error,
+            retryable => 1, retry_after => 2, error_type => 'server_error',
         };
     }
-    
+
+    # Handle HTTP error status
     if (!$resp->is_success) {
-        # Log the error response for debugging
         my $error_body = $resp->decoded_content || '';
         log_debug('APIManager', "[$provider_label RESPONSE ERROR] Status: " . $resp->status_line);
         log_debug('APIManager', "[$provider_label RESPONSE ERROR] Body: " . substr($error_body, 0, 2000));
         if (open my $fh, '>>', '/tmp/clio_api_debug.log') {
             print $fh "\n" . "-"x80 . "\n";
             print $fh "[" . scalar(localtime) . "] $provider_label RESPONSE ERROR\n";
-            print $fh "Status: " . $resp->status_line . "\n";
-            print $fh "Body:\n$error_body\n";
+            print $fh "Status: " . $resp->status_line . "\nBody:\n$error_body\n";
             close $fh;
         }
-        
-        # Release broker slot with response info before returning
         $self->{response_handler}->release_broker_slot($resp, $resp->code);
-        
         return $self->{response_handler}->handle_error_response($resp, $json, 0,
             attempt_token_recovery => sub { $self->_attempt_token_recovery() });
     }
-    
-    # Process rate limit headers from ALL successful responses (proactive throttling)
+
+    # Successful response - process rate limits and decode
     $self->{response_handler}->process_rate_limit_headers($resp->headers);
-    
-    # Log full response for debugging
+
     my $raw_response = $resp->decoded_content;
     log_debug('APIManager', "[$provider_label RESPONSE] Status: " . $resp->status_line);
     log_debug('APIManager', "[$provider_label RESPONSE] Body (first 1500 chars): " . substr($raw_response, 0, 1500));
     if (open my $fh, '>>', '/tmp/clio_api_debug.log') {
         print $fh "\n" . "-"x80 . "\n";
         print $fh "[" . scalar(localtime) . "] $provider_label RESPONSE\n";
-        print $fh "Status: " . $resp->status_line . "\n";
-        print $fh "Headers:\n";
+        print $fh "Status: " . $resp->status_line . "\nHeaders:\n";
         for my $h ($resp->headers->header_field_names) {
             print $fh "  $h: " . $resp->header($h) . "\n";
         }
         print $fh "\nBody:\n$raw_response\n";
         close $fh;
     }
-    
+
     my $data = eval { decode_json($raw_response) };
     if ($@) {
         my $error = "Invalid response format: $@";
@@ -2229,7 +2218,7 @@ sub send_request {
         log_debug('APIManager', "[$provider_label] Raw content: " . substr($raw_response, 0, 500));
         return $self->_error($error);
     }
-    
+
     # Log key response fields
     eval {
         my $finish_reason = $data->{choices}[0]{finish_reason} || 'unknown';
@@ -2239,234 +2228,63 @@ sub send_request {
         my $usage_out = $data->{usage}{completion_tokens} || 0;
         log_debug('APIManager', "[$provider_label RESPONSE] finish_reason=$finish_reason, tool_calls=$has_tool_calls, content_len=$content_len, usage=$usage_in/$usage_out");
     };
-    
+
     # Extract stateful_marker for session continuation (GitHub Copilot billing)
-    # This is the CORRECT field to use (not 'id'!) per VS Code implementation
-    # The stateful_marker is used as previous_response_id in next request
-    # to signal session continuation and prevent duplicate premium charges
-    if ($data->{stateful_marker}) {
-        my $iteration = $opts{tool_call_iteration} || 1;
-        $self->{response_handler}->store_stateful_marker($data->{stateful_marker}, $model, $iteration);
-    }
-    
-    # Check for stateful_marker in message as well (SAM approach)
-    if ($data->{choices} && @{$data->{choices}} && 
-        $data->{choices}[0]{message} && 
-        $data->{choices}[0]{message}{stateful_marker}) {
-        my $iteration = $opts{tool_call_iteration} || 1;
-        $self->{response_handler}->store_stateful_marker($data->{choices}[0]{message}{stateful_marker}, $model, $iteration);
-    }
-    
-    # Fallback: Store response_id if stateful_marker unavailable
-    if ($data->{id} && $self->{session}) {
-        $self->{session}{lastGitHubCopilotResponseId} = $data->{id};
-        log_debug('APIManager', "Stored response_id fallback: " . substr($data->{id}, 0, 30) . "...");
-    }
+    $self->_extract_stateful_markers($data, $opts);
+
     # Process GitHub Copilot quota headers for premium billing tracking
     $self->{response_handler}->process_quota_headers($resp->headers, $data->{id}) if $endpoint_config->{requires_copilot_headers};
-    
-    # Extract and validate the message content
-    my $content = '';
-    my $tool_calls = undef;  # Task 3: Extract tool_calls if present
-    my $reasoning_details = undef;  # MiniMax interleaved thinking
-    
-    # Try to extract content based on different API response formats
-    if (ref $data eq 'HASH') {
-        # Responses API format (codex models, etc.)
-        # Response has 'output' array with items of type 'message', 'function_call', 'reasoning'
-        if ($use_responses_api && $data->{output} && ref($data->{output}) eq 'ARRAY') {
-            log_debug('APIManager', "Parsing Responses API format (output items: " . scalar(@{$data->{output}}) . ")");
-            
-            my @text_parts = ();
-            my @resp_tool_calls = ();
-            
-            for my $item (@{$data->{output}}) {
-                my $type = $item->{type} || '';
-                
-                if ($type eq 'message' && $item->{content} && ref($item->{content}) eq 'ARRAY') {
-                    # Extract text content from message output
-                    for my $part (@{$item->{content}}) {
-                        if (($part->{type} || '') eq 'output_text' && defined $part->{text}) {
-                            push @text_parts, $part->{text};
-                        }
-                    }
-                }
-                elsif ($type eq 'function_call') {
-                    # Convert Responses API function_call to Chat Completions tool_call format
-                    push @resp_tool_calls, {
-                        id => $item->{call_id} || '',
-                        type => 'function',
-                        function => {
-                            name => $item->{name} || '',
-                            arguments => $item->{arguments} || '{}',
-                        },
-                    };
-                }
-                # 'reasoning' type is ignored for content extraction
-            }
-            
-            $content = join('', @text_parts) if @text_parts;
-            $tool_calls = \@resp_tool_calls if @resp_tool_calls;
-            
-            # Store response.id as stateful marker for billing continuity
-            if ($data->{id} && $self->{session}) {
-                my $iteration = $opts{tool_call_iteration} || 1;
-                $self->{response_handler}->store_stateful_marker($data->{id}, $model, $iteration);
-                $self->{session}{lastGitHubCopilotResponseId} = $data->{id};
-            }
-            
-            # Extract usage - Responses API uses input_tokens/output_tokens
-            if ($data->{usage}) {
-                $tokens_in = $data->{usage}{input_tokens} || 0;
-                $tokens_out = $data->{usage}{output_tokens} || 0;
-            }
-            
-            log_debug('APIManager', "Responses API: content=" . length($content) . " chars, tool_calls=" . scalar(@{$tool_calls || []}));
-        }
-        # OpenAI/GitHub Copilot format (Chat Completions)
-        elsif ($data->{choices} && @{$data->{choices}} && $data->{choices}[0]{message}) {
-            my $message = $data->{choices}[0]{message};
-            $content = $message->{content};
-            
-            # Task 3: Extract tool_calls from message if present
-            if ($message->{tool_calls} && ref($message->{tool_calls}) eq 'ARRAY') {
-                $tool_calls = $message->{tool_calls};
-                
-                # Normalize non-OpenAI tool call IDs (e.g. Google 'function-call-NNNN')
-                for my $tc (@$tool_calls) {
-                    if ($tc->{id} && $tc->{id} =~ /^function-call-(\d+)$/) {
-                        $tc->{id} = 'call_' . substr($1, -24);
-                    }
-                }
-                
-                if ($self->{debug}) {
-                    warn "[DEBUG] Extracted " . scalar(@$tool_calls) . " tool_calls from response\n";
-                }
-            }
-            
-            # Extract reasoning_details for MiniMax interleaved thinking
-            if ($message->{reasoning_details} && ref($message->{reasoning_details}) eq 'ARRAY') {
-                $reasoning_details = $message->{reasoning_details};
-                log_debug('APIManager', "Extracted " . scalar(@$reasoning_details) . " reasoning_details from response");
-            }
-        }
-        # Text completion format
-        elsif ($data->{choices} && @{$data->{choices}} && $data->{choices}[0]{text}) {
-            $content = $data->{choices}[0]{text};
-        }
-        # Direct content format
-        elsif ($data->{content}) {
-            $content = $data->{content};
-        }
-        # Message array format (GitHub Copilot)
-        elsif ($data->{messages} && @{$data->{messages}}) {
-            $content = $data->{messages}[-1]{content};
-        }
-        # Nested response format
-        elsif ($data->{response} && $data->{response}{content}) {
-            $content = $data->{response}{content};
-        }
-    }
-    
-    # Log extracted content for debugging
-    if ($self->{debug}) {
-        warn "[DEBUG] Extracted content: " . ($content // '[undef]') . "\n";
-        if (!defined $content) {
-            require Data::Dumper;
-            warn "[DEBUG] Response structure:\n" . Data::Dumper::Dumper($data);
-        }
-    }
-    
-    # Process the content if we found it
+
+    # Extract content based on API response format
+    my ($content, $tool_calls, $reasoning_details) =
+        $self->_extract_response_content($data, $use_responses_api, $opts);
+    ($tokens_in, $tokens_out) = $self->_extract_usage_tokens($data, $use_responses_api);
+
+    # Post-process content
     if (defined $content && length($content)) {
-        # Strip <think>...</think> tags from non-streaming responses (MiniMax)
-        # MiniMax M2.x models sometimes include thinking inline even with reasoning_split
+        # Strip <think> tags from MiniMax non-streaming responses
         if ($endpoint_config->{minimax} && $content =~ /<think>/) {
-            # Remove complete <think>...</think> blocks
             while ($content =~ s{<think>.*?</think>\n*}{}sg) {}
-            # Remove orphaned tags
             $content =~ s/<\/?think>//g;
-            # Only strip leading newlines that were adjacent to removed tags
             $content =~ s/^\n+//;
             log_debug('APIManager', "Stripped <think> tags from MiniMax non-streaming response");
         }
-        
-        # Only wrap in conversation tags if not already wrapped
+
+        # Wrap in conversation tags
         if ($content !~ m{\[conversation\].*?\[/conversation\]}s) {
             $content = "[conversation]$content\[/conversation]";
-            warn "[DEBUG] Wrapped content in conversation tags\n" if $self->{debug};
         }
-        
-        # Extract token usage for performance tracking
+
+        # Learn from usage data
         if ($data->{usage}) {
-            # Responses API uses input_tokens/output_tokens, Chat Completions uses prompt_tokens/completion_tokens
-            $tokens_in ||= $data->{usage}{prompt_tokens} || $data->{usage}{input_tokens} || 0;
+            $tokens_in  ||= $data->{usage}{prompt_tokens} || $data->{usage}{input_tokens} || 0;
             $tokens_out ||= $data->{usage}{completion_tokens} || $data->{usage}{output_tokens} || 0;
-            
-            # Strategy #5: Learn from actual API response to improve estimation
             $self->_learn_from_api_response($data->{usage}, $messages);
         }
-        
-        # Record successful request performance
+
         $self->{performance_monitor}->record_api_call(
-            $self->{api_base},
-            $model,
-            {
-                start_time => $perf_start_time,
-                end_time => $perf_end_time,
-                success => 1,
-                tokens_in => $tokens_in,
-                tokens_out => $tokens_out,
-            }
+            $self->{api_base}, $model,
+            { start_time => $perf_start_time, end_time => $perf_end_time,
+              success => 1, tokens_in => $tokens_in, tokens_out => $tokens_out }
         );
-        
-        # Build result hashref
-        my $result = { 
-            content => $content, 
-            usage => $data->{usage} 
-        };
-        
-        # Task 3: Include tool_calls if present
-        if ($tool_calls) {
-            $result->{tool_calls} = $tool_calls;
-            
-            if ($self->{debug}) {
-                warn "[DEBUG] Including tool_calls in result\n";
-            }
-        }
-        
-        # Include reasoning_details for MiniMax interleaved thinking
-        if ($reasoning_details) {
-            $result->{reasoning_details} = $reasoning_details;
-        }
-        # Release broker slot on success
+
+        my $result = { content => $content, usage => $data->{usage} };
+        $result->{tool_calls} = $tool_calls if $tool_calls;
+        $result->{reasoning_details} = $reasoning_details if $reasoning_details;
+
         $self->{response_handler}->release_broker_slot($resp, 200);
-        
         return $result;
     }
-    
-    # Task 3: Handle case where AI only returns tool_calls (no content)
+
+    # Tool-calls-only response (no text content)
     if ($tool_calls && @$tool_calls) {
-        if ($self->{debug}) {
-            warn "[DEBUG] Response contains only tool_calls (no text content)\n";
-        }
-        
-        # Release broker slot on success
         $self->{response_handler}->release_broker_slot($resp, 200);
-        
-        return {
-            content => '',  # Empty content when only tool_calls
-            tool_calls => $tool_calls,
-            usage => $data->{usage}
-        };
+        return { content => '', tool_calls => $tool_calls, usage => $data->{usage} };
     }
-    
+
     # No valid content found
     warn "[ERROR] No message content in response\n" if $self->{debug};
-    
-    # Release broker slot before returning error
-    $self->{response_handler}->release_broker_slot($resp, 200);  # Response was successful but content invalid
-    
+    $self->{response_handler}->release_broker_slot($resp, 200);
     return $self->_error("No message content in response");
 }
 
@@ -3470,6 +3288,166 @@ sub _cleanup {
             $self->{error} ? " Error=$self->{error}" : ""
         );
     }
+}
+
+=head2 _extract_stateful_markers($data, $opts)
+
+Extract and store stateful_marker / response_id from the decoded API response
+for GitHub Copilot billing session continuity.
+
+=cut
+
+sub _extract_stateful_markers {
+    my ($self, $data, $opts) = @_;
+
+    my $model = $self->{model} || '';
+    my $iteration = ($opts && $opts->{tool_call_iteration}) || 1;
+
+    # Top-level stateful_marker
+    if ($data->{stateful_marker}) {
+        $self->{response_handler}->store_stateful_marker($data->{stateful_marker}, $model, $iteration);
+    }
+
+    # stateful_marker inside message (SAM approach)
+    if ($data->{choices} && @{$data->{choices}} &&
+        $data->{choices}[0]{message} &&
+        $data->{choices}[0]{message}{stateful_marker}) {
+        $self->{response_handler}->store_stateful_marker(
+            $data->{choices}[0]{message}{stateful_marker}, $model, $iteration);
+    }
+
+    # Fallback: store response id
+    if ($data->{id} && $self->{session}) {
+        $self->{session}{lastGitHubCopilotResponseId} = $data->{id};
+        log_debug('APIManager', "Stored response_id fallback: " . substr($data->{id}, 0, 30) . "...");
+    }
+}
+
+=head2 _extract_response_content($data, $use_responses_api, $opts)
+
+Extract message content, tool_calls, and reasoning_details from a decoded
+API response hash. Handles Responses API, Chat Completions, text completion,
+direct content, message array, and nested response formats.
+
+Returns: ($content, $tool_calls_aref_or_undef, $reasoning_details_aref_or_undef)
+
+=cut
+
+sub _extract_response_content {
+    my ($self, $data, $use_responses_api, $opts) = @_;
+
+    my $content = '';
+    my $tool_calls = undef;
+    my $reasoning_details = undef;
+
+    return ($content, $tool_calls, $reasoning_details) unless ref $data eq 'HASH';
+
+    # Responses API format (codex models, etc.)
+    if ($use_responses_api && $data->{output} && ref($data->{output}) eq 'ARRAY') {
+        log_debug('APIManager', "Parsing Responses API format (output items: " . scalar(@{$data->{output}}) . ")");
+
+        my @text_parts;
+        my @resp_tool_calls;
+
+        for my $item (@{$data->{output}}) {
+            my $type = $item->{type} || '';
+
+            if ($type eq 'message' && $item->{content} && ref($item->{content}) eq 'ARRAY') {
+                for my $part (@{$item->{content}}) {
+                    push @text_parts, $part->{text}
+                        if ($part->{type} || '') eq 'output_text' && defined $part->{text};
+                }
+            }
+            elsif ($type eq 'function_call') {
+                push @resp_tool_calls, {
+                    id   => $item->{call_id} || '',
+                    type => 'function',
+                    function => {
+                        name      => $item->{name}      || '',
+                        arguments => $item->{arguments}  || '{}',
+                    },
+                };
+            }
+        }
+
+        $content    = join('', @text_parts)    if @text_parts;
+        $tool_calls = \@resp_tool_calls        if @resp_tool_calls;
+
+        # Store response.id as stateful marker for billing continuity
+        if ($data->{id} && $self->{session}) {
+            my $iteration = ($opts && $opts->{tool_call_iteration}) || 1;
+            $self->{response_handler}->store_stateful_marker($data->{id}, $self->{model} || '', $iteration);
+            $self->{session}{lastGitHubCopilotResponseId} = $data->{id};
+        }
+
+        log_debug('APIManager', "Responses API: content=" . length($content) . " chars, tool_calls=" . scalar(@{$tool_calls || []}));
+    }
+    # Chat Completions format
+    elsif ($data->{choices} && @{$data->{choices}} && $data->{choices}[0]{message}) {
+        my $message = $data->{choices}[0]{message};
+        $content = $message->{content};
+
+        if ($message->{tool_calls} && ref($message->{tool_calls}) eq 'ARRAY') {
+            $tool_calls = $message->{tool_calls};
+            # Normalize non-OpenAI tool call IDs
+            for my $tc (@$tool_calls) {
+                if ($tc->{id} && $tc->{id} =~ /^function-call-(\d+)$/) {
+                    $tc->{id} = 'call_' . substr($1, -24);
+                }
+            }
+        }
+
+        if ($message->{reasoning_details} && ref($message->{reasoning_details}) eq 'ARRAY') {
+            $reasoning_details = $message->{reasoning_details};
+            log_debug('APIManager', "Extracted " . scalar(@$reasoning_details) . " reasoning_details");
+        }
+    }
+    # Text completion format
+    elsif ($data->{choices} && @{$data->{choices}} && $data->{choices}[0]{text}) {
+        $content = $data->{choices}[0]{text};
+    }
+    # Direct content format
+    elsif ($data->{content}) {
+        $content = $data->{content};
+    }
+    # Message array format
+    elsif ($data->{messages} && @{$data->{messages}}) {
+        $content = $data->{messages}[-1]{content};
+    }
+    # Nested response format
+    elsif ($data->{response} && $data->{response}{content}) {
+        $content = $data->{response}{content};
+    }
+
+    return ($content, $tool_calls, $reasoning_details);
+}
+
+=head2 _extract_usage_tokens($data, $use_responses_api)
+
+Extract input/output token counts from a decoded API response.
+Handles both Chat Completions (prompt_tokens/completion_tokens) and
+Responses API (input_tokens/output_tokens) formats.
+
+Returns: ($tokens_in, $tokens_out)
+
+=cut
+
+sub _extract_usage_tokens {
+    my ($self, $data, $use_responses_api) = @_;
+
+    return (0, 0) unless $data->{usage};
+
+    if ($use_responses_api) {
+        return (
+            $data->{usage}{input_tokens}  || 0,
+            $data->{usage}{output_tokens} || 0,
+        );
+    }
+
+    return (
+        $data->{usage}{prompt_tokens}     || $data->{usage}{input_tokens}  || 0,
+        $data->{usage}{completion_tokens} || $data->{usage}{output_tokens} || 0,
+    );
 }
 
 sub _error {
