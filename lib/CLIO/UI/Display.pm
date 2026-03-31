@@ -136,8 +136,13 @@ sub display_assistant_message {
         $display_message = $chat->render_markdown($message);
     }
     
-    # Indent continuation lines by 2 spaces (first line follows CLIO: prefix)
-    $display_message =~ s/\n/\n    /g;
+    # Indent continuation lines by 4 spaces (lines after the first)
+    # Only indent newlines that have following content (not trailing newlines)
+    my @lines = split /\n/, $display_message, -1;
+    for my $i (1 .. $#lines) {
+        $lines[$i] = "    " . $lines[$i] if length($lines[$i]) > 0;
+    }
+    $display_message = join "\n", @lines;
     
     # Display with role label using writeline (markdown already rendered above)
     my $line = $chat->colorize("CLIO: ", 'ASSISTANT') . $display_message;
