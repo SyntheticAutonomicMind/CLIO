@@ -6,6 +6,7 @@ package CLIO::Security::Authz;
 use strict;
 use warnings;
 use utf8;
+use CLIO::Core::Logger qw(log_debug);
 use CLIO::Util::JSON qw(encode_json decode_json);
 
 =head1 NAME
@@ -373,10 +374,7 @@ sub _audit {
 
 sub _log {
     my ($self, $message) = @_;
-    
-    return unless $self->{debug};
-    
-    warn "[DEBUG Authz] $message\n";
+    log_debug("Authz", $message);
 }
 
 1;

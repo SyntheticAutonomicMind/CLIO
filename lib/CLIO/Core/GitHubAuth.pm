@@ -559,7 +559,7 @@ sub clear_tokens {
     
     if (-f $self->{tokens_file}) {
         unlink $self->{tokens_file}
-            or warn "Failed to delete tokens file: $!";
+            or log_warning('GitHubAuth', "Failed to delete tokens file: $!");
         log_info('GitHubAuth', "Tokens cleared, user signed out");
     }
     
