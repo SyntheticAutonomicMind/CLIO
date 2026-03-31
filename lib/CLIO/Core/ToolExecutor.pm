@@ -496,7 +496,7 @@ sub _execute_read_tool_result {
         offset => $chunk->{offset},
         length => $chunk->{length},
         total_length => $chunk->{total_length},
-        has_more => $chunk->{has_more} ? JSON::PP::true : JSON::PP::false,
+        has_more => $chunk->{has_more} ? \1 : \0,
     };
     
     if ($chunk->{next_offset}) {
