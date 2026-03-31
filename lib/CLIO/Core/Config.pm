@@ -47,7 +47,7 @@ use constant DEFAULT_CONFIG => {
     api_keys => {},  # Per-provider API keys: { anthropic => 'sk-ant-...', google => 'AIza...' }
     provider => 'github_copilot',  # Default provider
     editor => $ENV{EDITOR} || $ENV{VISUAL} || 'vim',  # Default editor
-    log_level => 'INFO',  # Default log level: ERROR, WARNING, INFO, DEBUG
+    log_level => 'WARNING',  # Default log level: ERROR, WARNING, INFO, DEBUG
     # Web search configuration (SerpAPI)
     serpapi_key => '',  # SerpAPI key for reliable web search
     search_engine => 'google',  # SerpAPI engine: google, bing, duckduckgo
@@ -538,7 +538,7 @@ sub display {
         $self->{user_set}->{model} ? ' (user-set)' : ' (from provider)');
     
     # Log Level
-    push @lines, sprintf("Log Level: %s", $config->{log_level} || 'INFO');
+    push @lines, sprintf("Log Level: %s", $config->{log_level} || 'WARNING');
     
     # Current Provider
     push @lines, sprintf("Provider:  %s%s", 
