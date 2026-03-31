@@ -2333,548 +2333,97 @@ sub send_request_streaming {
     return $ctx->{native_result} if $ctx->{native_result};
     return $ctx->{error_result}  if $ctx->{error_result};
 
-    my $model           = $ctx->{model};
-    my $endpoint_config = $ctx->{endpoint_config};
-    my $provider_label  = $ctx->{provider_label};
-    my $messages        = $ctx->{messages};
-    my $json            = $ctx->{json};
+    my $model             = $ctx->{model};
+    my $endpoint_config   = $ctx->{endpoint_config};
+    my $provider_label    = $ctx->{provider_label};
+    my $messages          = $ctx->{messages};
+    my $json              = $ctx->{json};
     my $use_responses_api = $ctx->{use_responses_api};
-    my $ua              = $ctx->{ua};
-    my $req             = $ctx->{req};
-    my $final_endpoint  = $ctx->{final_endpoint};
 
-    # Initialize metrics tracking
-    my $start_time = time();
-    my $first_token_time = undef;
-    my $token_count = 0;
-    my $accumulated_content = '';
-    my $buffer = '';  # Buffer for partial SSE lines
-    my $tool_calls_accumulator = {};  # Accumulate tool call deltas by index
-    my $reasoning_was_active = 0;  # Track if reasoning_content was being streamed
-    my $accumulated_reasoning_details = '';  # Accumulate reasoning for MiniMax interleaved thinking
-    my $streaming_usage = undef;  # Capture real usage from final streaming chunk
-    my $raw_response_body = '';  # Preserve full response body for error detection
-    
-    # State machine for <think> tag handling (MiniMax M2.x inline thinking)
-    my $in_think_tag = 0;       # Currently inside <think>...</think> block
-    my $think_buffer = '';      # Buffer for partial tag detection at chunk boundaries
-    my $is_minimax = $endpoint_config->{minimax} ? 1 : 0;
-    
-    # Make streaming request with callback
+    # Streaming state - shared between callback and post-processing
+    my $ss = {
+        accum_content    => '',
+        accum_reasoning  => '',
+        tool_calls_acc   => {},
+        streaming_usage  => undef,
+        token_count      => 0,
+        first_token_time => undef,
+        start_time       => time(),
+        reasoning_active => 0,
+        in_think_tag     => 0,
+        think_buffer     => '',
+        is_minimax       => $endpoint_config->{minimax} ? 1 : 0,
+        use_responses_api => $use_responses_api,
+        model            => $model,
+        on_chunk         => $on_chunk,
+        on_tool_call     => $on_tool_call,
+        on_thinking      => $on_thinking,
+        opts             => \%opts,
+    };
+
+    my $buffer = '';
+    my $raw_response_body = '';
     my $resp;
-    my $streaming_headers;  # Capture headers from streaming callback
+    my $streaming_headers;
+
     eval {
-        $resp = $ua->request($req, sub {
+        $resp = $ctx->{ua}->request($ctx->{req}, sub {
             my ($chunk, $response, $protocol) = @_;
-            
-            # Capture headers on first chunk (they're available in $response object)
+
+            # Capture headers on first chunk
             if (!$streaming_headers && $response) {
                 $streaming_headers = $response->headers->clone;
-                log_debug('APIManager', "Captured headers from streaming response");
                 log_debug('APIManager', "Streaming response HTTP status: " . $response->code . " " . ($response->message // ''));
             }
-            
-            # Preserve raw body for post-streaming error detection
+
             $raw_response_body .= $chunk;
-            
-            # Append chunk to buffer
             $buffer .= $chunk;
-            
-            # Normalize CRLF to LF for providers that use \r\n line endings
             $buffer =~ s/\r\n/\n/g;
-            
+
             # Process complete SSE lines (ending with \n\n)
             while ($buffer =~ s/^(.*?)\n\n//s) {
                 my $sse_chunk = $1;
-                
-                # Skip empty lines
                 next unless $sse_chunk =~ /\S/;
-                
-                # Parse SSE format
-                # Chat Completions: "data: {...}\n"
-                # Responses API: "event: <type>\ndata: {...}\n"
+
                 my $event_type = '';
                 for my $line (split /\n/, $sse_chunk) {
-                    # Capture event type (Responses API uses event: lines)
                     if ($line =~ /^event:\s*(.+)$/) {
                         $event_type = $1;
                         next;
                     }
                     next unless $line =~ /^data:\s*(.+)$/;
                     my $data_json = $1;
-                    
-                    # Check for stream end
                     next if $data_json eq '[DONE]';
-                    
-                    # Parse JSON chunk
+
                     my $data = eval { decode_json($data_json) };
                     if ($@) {
                         log_warning('APIManager', "Failed to parse SSE chunk: $@");
                         next;
                     }
-                    
-                    # Infer event type from data if not set by event: line
-                    # Responses API always has a 'type' field in the data
-                    if (!$event_type && $data->{type}) {
-                        $event_type = $data->{type};
-                    }
-                    
-                    # DEBUG: Log what fields are in each chunk
-                    if (should_log('DEBUG')) {
-                        my @fields = keys %$data;
-                        log_debug('APIManager', "SSE chunk fields: " . join(', ', @fields));
-                        if ($data->{id}) {
-                            log_debug('APIManager', "Chunk has id: " . substr($data->{id}, 0, 30) . "...");
-                        }
-                    }
-                    
-                    # Extract stateful_marker for session continuation (GitHub Copilot billing)
-                    # This is the CORRECT field to use (not 'id'!) per VS Code implementation
-                    # The stateful_marker is used as previous_response_id in next request
-                    # to signal session continuation and prevent duplicate premium charges
-                    if ($data->{stateful_marker}) {
-                        my $iteration = $opts{tool_call_iteration} || 1;
-                        $self->{response_handler}->store_stateful_marker($data->{stateful_marker}, $model, $iteration);
-                    }
-                    
-                    # Fallback: Store response id for models without stateful_marker
-                    if ($data->{id} && $self->{session}) {
-                        $self->{session}{lastGitHubCopilotResponseId} = $data->{id};
-                        log_debug('APIManager', "Stored response_id fallback: " . substr($data->{id}, 0, 30) . "...");
-                    }
-                    
-                    # Capture real usage from final streaming chunk
-                    # When stream_options.include_usage is true, the API sends a
-                    # final chunk with usage data (prompt_tokens, completion_tokens)
-                    if ($data->{usage}) {
-                        $streaming_usage = {
-                            prompt_tokens => $data->{usage}{prompt_tokens} || $data->{usage}{input_tokens} || 0,
-                            completion_tokens => $data->{usage}{completion_tokens} || $data->{usage}{output_tokens} || 0,
-                            total_tokens => $data->{usage}{total_tokens} || 0,
-                        };
-                        $streaming_usage->{total_tokens} ||= $streaming_usage->{prompt_tokens} + $streaming_usage->{completion_tokens};
-                        log_debug('APIManager', "Streaming usage captured: prompt=$streaming_usage->{prompt_tokens}, completion=$streaming_usage->{completion_tokens}");
-                    }
-                    
-                    # Extract content delta and tool_calls from chunk
-                    my $content_delta = undef;
-                    my $tool_calls_delta = undef;
-                    
-                    # ==========================================
-                    # Responses API streaming events (codex models, etc.)
-                    # Event types: response.output_text.delta, response.function_call_arguments.delta,
-                    #              response.output_item.added, response.output_item.done, response.completed
-                    # ==========================================
-                    if ($use_responses_api && $event_type) {
-                        if ($event_type eq 'response.output_text.delta') {
-                            # Text content delta
-                            $content_delta = $data->{delta} if defined $data->{delta};
-                            
-                            # End reasoning if it was active
-                            if ($reasoning_was_active && $on_thinking) {
-                                $on_thinking->(undef, 'end');
-                                $reasoning_was_active = 0;
-                            }
-                        }
-                        elsif ($event_type eq 'response.output_item.added') {
-                            my $item = $data->{item} || {};
-                            my $item_type = $item->{type} || '';
-                            
-                            if ($item_type eq 'function_call') {
-                                # Tool call starting - initialize accumulator
-                                my $output_index = $data->{output_index} // 0;
-                                $tool_calls_accumulator->{$output_index} = {
-                                    id => $item->{call_id} || '',
-                                    type => 'function',
-                                    function => {
-                                        name => $item->{name} || '',
-                                        arguments => '',
-                                    },
-                                    _name_complete => 0,
-                                };
-                                
-                                # Signal tool name to callback
-                                if ($on_tool_call && $item->{name}) {
-                                    $tool_calls_accumulator->{$output_index}{_name_complete} = 1;
-                                    $on_tool_call->($item->{name});
-                                }
-                                
-                                log_debug('APIManager', "Responses API: function_call started: " . ($item->{name} || '?'));
-                            }
-                            elsif ($item_type eq 'reasoning') {
-                                # Reasoning started - but don't open THINKING box yet
-                                # Wait until actual reasoning summary text arrives
-                                # (handled by response.reasoning_summary_text.delta)
-                                $reasoning_was_active = 1;
-                                log_debug('APIManager', "Responses API: reasoning started (waiting for summary text)");
-                            }
-                        }
-                        elsif ($event_type eq 'response.function_call_arguments.delta') {
-                            # Accumulate function arguments
-                            my $output_index = $data->{output_index} // 0;
-                            if ($tool_calls_accumulator->{$output_index}) {
-                                $tool_calls_accumulator->{$output_index}{function}{arguments} .= ($data->{delta} || '');
-                                log_debug('APIManager', "Responses API: function_call args delta: " . length($data->{delta} || '') . " chars");
-                            }
-                        }
-                        elsif ($event_type eq 'response.output_item.done') {
-                            my $item = $data->{item} || {};
-                            my $item_type = $item->{type} || '';
-                            
-                            if ($item_type eq 'function_call') {
-                                # Tool call complete - finalize accumulator entry
-                                my $output_index = $data->{output_index} // 0;
-                                if ($tool_calls_accumulator->{$output_index}) {
-                                    # Use final values from the item
-                                    $tool_calls_accumulator->{$output_index}{id} = $item->{call_id} || $tool_calls_accumulator->{$output_index}{id};
-                                    $tool_calls_accumulator->{$output_index}{function}{name} = $item->{name} || $tool_calls_accumulator->{$output_index}{function}{name};
-                                    $tool_calls_accumulator->{$output_index}{function}{arguments} = $item->{arguments} || $tool_calls_accumulator->{$output_index}{function}{arguments};
-                                }
-                                log_debug('APIManager', "Responses API: function_call completed: " . ($item->{name} || '?'));
-                            }
-                            elsif ($item_type eq 'reasoning') {
-                                # Reasoning done - only signal end if thinking was displayed
-                                if ($on_thinking && $reasoning_was_active) {
-                                    $on_thinking->(undef, 'end');
-                                }
-                                $reasoning_was_active = 0;
-                            }
-                        }
-                        elsif ($event_type eq 'response.reasoning_summary_text.delta') {
-                            # Reasoning summary text - show as thinking
-                            if ($on_thinking && defined $data->{delta}) {
-                                $reasoning_was_active = 1;
-                                $on_thinking->($data->{delta});
-                            }
-                        }
-                        elsif ($event_type eq 'response.completed') {
-                            my $resp_data = $data->{response} || {};
-                            
-                            # Store response.id as stateful marker for billing continuity
-                            if ($resp_data->{id} && $self->{session}) {
-                                my $iteration = $opts{tool_call_iteration} || 1;
-                                $self->{response_handler}->store_stateful_marker($resp_data->{id}, $model, $iteration);
-                                $self->{session}{lastGitHubCopilotResponseId} = $resp_data->{id};
-                                log_info('APIManager', "Responses API: Stored stateful marker for billing continuity");
-                            }
-                            
-                            # Extract usage from completed response
-                            if ($resp_data->{usage}) {
-                                # Store real usage for accurate billing
-                                $streaming_usage = {
-                                    prompt_tokens => $resp_data->{usage}{input_tokens} || 0,
-                                    completion_tokens => $resp_data->{usage}{output_tokens} || 0,
-                                    total_tokens => ($resp_data->{usage}{input_tokens} || 0) + ($resp_data->{usage}{output_tokens} || 0),
-                                };
-                                log_debug('APIManager', "Responses API usage: " .
-                                    "input=" . ($resp_data->{usage}{input_tokens} || 0) . ", " .
-                                    "output=" . ($resp_data->{usage}{output_tokens} || 0));
-                            }
-                            
-                            log_debug('APIManager', "Responses API: stream completed, status=" . ($resp_data->{status} || '?'));
-                        }
-                        elsif ($event_type eq 'error') {
-                            # Error event from Responses API
-                            my $error_msg = $data->{message} || 'Unknown error';
-                            my $error_code = $data->{code} || 'unknown';
-                            log_warning('APIManager', "Responses API error: [$error_code] $error_msg");
-                        }
-                        # else: response.created, response.in_progress, response.content_part.added,
-                        #       response.content_part.done, response.output_text.done - skip silently
-                    }
-                    # ==========================================
-                    # OpenAI/GitHub Copilot Chat Completions streaming format
-                    # ==========================================
-                    elsif ($data->{choices} && @{$data->{choices}}) {
-                        my $choice = $data->{choices}[0];
-                        my $delta = $choice->{delta};
-                        
-                        if ($delta) {
-                            # Check for stateful_marker in delta as well
-                            # (SAM implementation suggests it might be in message)
-                            if ($delta->{stateful_marker}) {
-                                my $iteration = $opts{tool_call_iteration} || 1;
-                                $self->{response_handler}->store_stateful_marker($delta->{stateful_marker}, $model, $iteration);
-                            }
-                            
-                            # Extract content (use defined+length to preserve "0" and whitespace-only deltas)
-                            if (defined($delta->{content}) && length($delta->{content})) {
-                                $content_delta = $delta->{content};
-                                
-                                # Handle <think> tags from MiniMax models
-                                # MiniMax M2.x may send thinking inline as <think>...</think>
-                                # even when reasoning_split=true. Strip tags and route
-                                # thinking content to on_thinking callback.
-                                if ($is_minimax && defined $content_delta) {
-                                    my $work = $think_buffer . $content_delta;
-                                    $think_buffer = '';
-                                    $content_delta = '';
-                                    
-                                    while (length($work)) {
-                                        if ($in_think_tag) {
-                                            # Inside <think> - look for closing </think>
-                                            if ($work =~ s{^(.*?)</think>}{}s) {
-                                                my $think_text = $1;
-                                                if (length($think_text) && $on_thinking) {
-                                                    $reasoning_was_active = 1;
-                                                    $accumulated_reasoning_details .= $think_text;
-                                                    $on_thinking->($think_text);
-                                                }
-                                                $in_think_tag = 0;
-                                                # Strip leading newlines after </think> to prevent blank lines
-                                                $work =~ s/^\n+//;
-                                            }
-                                            elsif (_has_partial_close_think_suffix($work)) {
-                                                # Partial </think> at end - buffer only the tag fragment
-                                                my $idx = rindex($work, '<');
-                                                my $before = substr($work, 0, $idx);
-                                                my $fragment = substr($work, $idx);
-                                                if (length($before) && $on_thinking) {
-                                                    $reasoning_was_active = 1;
-                                                    $accumulated_reasoning_details .= $before;
-                                                    $on_thinking->($before);
-                                                }
-                                                $think_buffer = $fragment;
-                                                $work = '';
-                                            }
-                                            else {
-                                                # All thinking content, no closing tag yet
-                                                if ($on_thinking) {
-                                                    $reasoning_was_active = 1;
-                                                    $accumulated_reasoning_details .= $work;
-                                                    $on_thinking->($work);
-                                                }
-                                                $work = '';
-                                            }
-                                        }
-                                        else {
-                                            # Outside <think> - look for opening <think>
-                                            if ($work =~ s{^(.*?)<think>}{}s) {
-                                                my $before = $1;
-                                                $content_delta .= $before;
-                                                $in_think_tag = 1;
-                                            }
-                                            elsif (_has_partial_open_think_suffix($work)) {
-                                                # Partial <think> at end - buffer only the tag fragment
-                                                my $idx = rindex($work, '<');
-                                                my $before = substr($work, 0, $idx);
-                                                my $fragment = substr($work, $idx);
-                                                $content_delta .= $before;
-                                                $think_buffer = $fragment;
-                                                $work = '';
-                                            }
-                                            else {
-                                                # No think tags - pass through as content
-                                                $content_delta .= $work;
-                                                $work = '';
-                                            }
-                                        }
-                                    }
-                                    
-                                    # If content_delta is now empty, clear it
-                                    $content_delta = undef unless length($content_delta);
-                                }
-                                
-                                # If reasoning was active and now regular content starts,
-                                # signal end of thinking
-                                if (defined($content_delta) && length($content_delta) && $reasoning_was_active && $on_thinking) {
-                                    $on_thinking->(undef, 'end');
-                                    $reasoning_was_active = 0;
-                                }
-                            }
-                            
-                            # Extract reasoning/thinking content from various formats
-                            # Multiple providers use different fields - only emit once per chunk to prevent duplication
-                            my $reasoning_emitted = 0;
-                            
-                            # 1. reasoning_content (DeepSeek direct API, some OpenAI-compat providers)
-                            if (!$reasoning_emitted && $delta->{reasoning_content} && $on_thinking) {
-                                $reasoning_was_active = 1;
-                                $reasoning_emitted = 1;
-                                $accumulated_reasoning_details .= $delta->{reasoning_content};
-                                $on_thinking->($delta->{reasoning_content});
-                            }
-                            
-                            # 2. reasoning_details (OpenRouter and MiniMax format)
-                            # OpenRouter: [{type: "reasoning.text", text: "..."}, {type: "reasoning.summary", summary: "..."}]
-                            # MiniMax: [{text: "..."}] (no type field, reasoning_split=true)
-                            # Only check if we didn't already get content from reasoning_content
-                            if (!$reasoning_emitted && $delta->{reasoning_details} && ref($delta->{reasoning_details}) eq 'ARRAY' && $on_thinking) {
-                                for my $detail (@{$delta->{reasoning_details}}) {
-                                    next unless ref($detail) eq 'HASH';
-                                    my $type = $detail->{type} || '';
-                                    
-                                    if ($type eq 'reasoning.text' && defined $detail->{text}) {
-                                        $reasoning_was_active = 1;
-                                        $reasoning_emitted = 1;
-                                        $accumulated_reasoning_details .= $detail->{text};
-                                        $on_thinking->($detail->{text});
-                                    }
-                                    elsif ($type eq 'reasoning.summary' && defined $detail->{summary}) {
-                                        $reasoning_was_active = 1;
-                                        $reasoning_emitted = 1;
-                                        $accumulated_reasoning_details .= $detail->{summary};
-                                        $on_thinking->($detail->{summary});
-                                    }
-                                    # MiniMax format: no type field, just {text: "..."}
-                                    elsif (!$type && defined $detail->{text}) {
-                                        $reasoning_was_active = 1;
-                                        $reasoning_emitted = 1;
-                                        $accumulated_reasoning_details .= $detail->{text};
-                                        $on_thinking->($detail->{text});
-                                    }
-                                    # reasoning.encrypted - skip display (redacted)
-                                }
-                            }
-                            
-                            # 3. Legacy 'reasoning' string field (some providers)
-                            if (!$reasoning_emitted && $delta->{reasoning} && !ref($delta->{reasoning}) && $on_thinking) {
-                                $reasoning_was_active = 1;
-                                $accumulated_reasoning_details .= $delta->{reasoning};
-                                $on_thinking->($delta->{reasoning});
-                            }
-                            
-                            # Extract tool_calls delta
-                            if ($delta->{tool_calls} && ref($delta->{tool_calls}) eq 'ARRAY') {
-                                $tool_calls_delta = $delta->{tool_calls};
-                            }
-                        }
-                    }
-                    
-                    # Process tool_calls delta (accumulate incrementally)
-                    if ($tool_calls_delta) {
-                        for my $tc_delta (@$tool_calls_delta) {
-                            my $index = $tc_delta->{index} // 0;
-                            
-                            # Initialize accumulator for this index if needed
-                           if (!$tool_calls_accumulator->{$index}) {
-                                # Normalize non-OpenAI tool call IDs to OpenAI format.
-                                # The Copilot proxy returns Google-style IDs ('function-call-NNNN')
-                                # when routing to Gemini, but then rejects them on the next turn
-                                # when they appear in role=tool messages. Convert to 'call_XXXXX'.
-                                my $raw_id = $tc_delta->{id} // '';
-                                my $norm_id = ($raw_id =~ /^function-call-(\d+)$/)
-                                    ? 'call_' . substr($1, -24)
-                                    : $raw_id;
-                                $tool_calls_accumulator->{$index} = {
-                                    id => $norm_id,
-                                    type => $tc_delta->{type} // 'function',
-                                    function => {
-                                        name => '',
-                                        arguments => '',
-                                    },
-                                    _name_complete => 0,  # Track if we've shown this tool name yet
-                                };
-                            }
-                            
-                            # Accumulate function name and arguments
-                            if ($tc_delta->{function}) {
-                                if ($tc_delta->{function}{name}) {
-                                    # Set name (don't concatenate - some providers send it in every delta)
-                                    if (!$tool_calls_accumulator->{$index}{function}{name}) {
-                                        $tool_calls_accumulator->{$index}{function}{name} = $tc_delta->{function}{name};
-                                    }
-                                    
-                                    # If name just became complete and we haven't shown it yet, call tool name callback
-                                    if (!$tool_calls_accumulator->{$index}{_name_complete} && 
-                                        $tool_calls_accumulator->{$index}{function}{name} =~ /\w/) {
-                                        $tool_calls_accumulator->{$index}{_name_complete} = 1;
-                                        
-                                        # Call on_tool_call callback if provided
-                                        if ($on_tool_call) {
-                                            $on_tool_call->($tool_calls_accumulator->{$index}{function}{name});
-                                        }
-                                    }
-                                }
-                                if ($tc_delta->{function}{arguments}) {
-                                    $tool_calls_accumulator->{$index}{function}{arguments} .= $tc_delta->{function}{arguments};
-                                }
-                            }
-                            
-                            log_debug('APIManager', "Tool call delta: index=$index, " . "name=" . ($tc_delta->{function}{name} // '') . ", " .
-                                "args_chunk=" . (length($tc_delta->{function}{arguments} // 0)) . " bytes\n");
-                        }
-                    }
-                    
-                    # If we got content, track metrics and call callback
-                    if (defined($content_delta) && length($content_delta)) {
-                        # Record first token time
-                        $first_token_time //= time();
-                        
-                        # Count tokens (rough estimate: 1 token ~= 4 chars)
-                        $token_count += int(length($content_delta) / 4) || 1;
-                        
-                        # Accumulate content
-                        $accumulated_content .= $content_delta;
-                        
-                        # Call chunk callback if provided
-                        if ($on_chunk) {
-                            my $current_time = time();
-                            my $duration = $current_time - $start_time;
-                            my $ttft = $first_token_time ? ($first_token_time - $start_time) : undef;
-                            my $tps = ($duration > 0 && $token_count > 0) ? ($token_count / $duration) : 0;
-                            
-                            $on_chunk->($content_delta, {
-                                token_count => $token_count,
-                                ttft => $ttft,
-                                tps => $tps,
-                                duration => $duration,
-                            });
-                        }
-                    }
+
+                    $event_type = $data->{type} if !$event_type && $data->{type};
+                    $self->_process_sse_data($data, $event_type, $ss);
                 }
             }
         });
     };
-    
-    # Signal end of reasoning if it was still active when stream ended
-    if ($reasoning_was_active && $on_thinking) {
-        $on_thinking->(undef, 'end');
-        $reasoning_was_active = 0;
-    }
-    
-    # Post-streaming cleanup: strip residual <think> tags from accumulated content
-    if ($is_minimax && length($accumulated_content) && $accumulated_content =~ /<\/?think>/) {
-        while ($accumulated_content =~ s{<think>(.*?)</think>\n*}{}sg) {
-            my $residual_think = $1;
-            if (length($residual_think)) {
-                $accumulated_reasoning_details .= $residual_think;
-                if ($on_thinking) {
-                    $on_thinking->($residual_think);
-                }
-            }
-        }
-        $accumulated_content =~ s/<\/?think>//g;
-        $accumulated_content =~ s/^\n+//;
-        log_debug('APIManager', "Cleaned residual <think> tags from streaming content");
-    }
-    
-    # Flush any remaining think_buffer content
-    if ($is_minimax && length($think_buffer)) {
-        if (!$in_think_tag) {
-            $accumulated_content .= $think_buffer;
-        }
-        elsif ($on_thinking) {
-            $accumulated_reasoning_details .= $think_buffer;
-            $on_thinking->($think_buffer);
-            $on_thinking->(undef, 'end');
-        }
-        $think_buffer = '';
-    }
-    
+
+    # Post-streaming cleanup
+    $self->_cleanup_streaming_state($ss);
+
     return $self->_finalize_streaming_response(
         resp                  => $resp,
         error                 => $@,
         buffer                => $buffer,
         raw_response_body     => $raw_response_body,
-        accumulated_content   => $accumulated_content,
-        accumulated_reasoning => $accumulated_reasoning_details,
-        streaming_usage       => $streaming_usage,
+        accumulated_content   => $ss->{accum_content},
+        accumulated_reasoning => $ss->{accum_reasoning},
+        streaming_usage       => $ss->{streaming_usage},
         streaming_headers     => $streaming_headers,
-        token_count           => $token_count,
-        start_time            => $start_time,
-        first_token_time      => $first_token_time,
-        tool_calls_accumulator => $tool_calls_accumulator,
+        token_count           => $ss->{token_count},
+        start_time            => $ss->{start_time},
+        first_token_time      => $ss->{first_token_time},
+        tool_calls_accumulator => $ss->{tool_calls_acc},
         endpoint_config       => $endpoint_config,
         provider_label        => $provider_label,
         messages              => $messages,
@@ -2882,6 +2431,413 @@ sub send_request_streaming {
         json                  => $json,
     );
 }
+
+=head2 _process_sse_data($data, $event_type, $ss)
+
+Process a single parsed SSE data chunk during streaming.
+Updates the streaming state hash ($ss) with accumulated content,
+tool calls, reasoning, usage, and stateful markers.
+
+=cut
+
+sub _process_sse_data {
+    my ($self, $data, $event_type, $ss) = @_;
+
+    if (should_log('DEBUG')) {
+        my @fields = keys %$data;
+        log_debug('APIManager', "SSE chunk fields: " . join(', ', @fields));
+        log_debug('APIManager', "Chunk has id: " . substr($data->{id}, 0, 30) . "...") if $data->{id};
+    }
+
+    # Extract stateful_marker for billing session continuity
+    if ($data->{stateful_marker}) {
+        my $iteration = ($ss->{opts} && $ss->{opts}{tool_call_iteration}) || 1;
+        $self->{response_handler}->store_stateful_marker($data->{stateful_marker}, $ss->{model}, $iteration);
+    }
+    if ($data->{id} && $self->{session}) {
+        $self->{session}{lastGitHubCopilotResponseId} = $data->{id};
+        log_debug('APIManager', "Stored response_id fallback: " . substr($data->{id}, 0, 30) . "...");
+    }
+
+    # Capture real usage from final streaming chunk
+    if ($data->{usage}) {
+        $ss->{streaming_usage} = {
+            prompt_tokens     => $data->{usage}{prompt_tokens} || $data->{usage}{input_tokens} || 0,
+            completion_tokens => $data->{usage}{completion_tokens} || $data->{usage}{output_tokens} || 0,
+            total_tokens      => $data->{usage}{total_tokens} || 0,
+        };
+        $ss->{streaming_usage}{total_tokens} ||=
+            $ss->{streaming_usage}{prompt_tokens} + $ss->{streaming_usage}{completion_tokens};
+        log_debug('APIManager', "Streaming usage: prompt=$ss->{streaming_usage}{prompt_tokens}, completion=$ss->{streaming_usage}{completion_tokens}");
+    }
+
+    # Extract content delta and tool_calls delta
+    my ($content_delta, $tool_calls_delta);
+
+    if ($ss->{use_responses_api} && $event_type) {
+        ($content_delta, $tool_calls_delta) = $self->_process_responses_api_event($data, $event_type, $ss);
+    }
+    elsif ($data->{choices} && @{$data->{choices}}) {
+        ($content_delta, $tool_calls_delta) = $self->_process_chat_completions_delta($data, $ss);
+    }
+
+    # Accumulate tool_calls
+    $self->_accumulate_tool_calls_delta($tool_calls_delta, $ss) if $tool_calls_delta;
+
+    # Track metrics and invoke chunk callback
+    if (defined($content_delta) && length($content_delta)) {
+        $ss->{first_token_time} //= time();
+        $ss->{token_count} += int(length($content_delta) / 4) || 1;
+        $ss->{accum_content} .= $content_delta;
+
+        if ($ss->{on_chunk}) {
+            my $duration = time() - $ss->{start_time};
+            my $ttft = $ss->{first_token_time} ? ($ss->{first_token_time} - $ss->{start_time}) : undef;
+            my $tps  = ($duration > 0 && $ss->{token_count} > 0) ? ($ss->{token_count} / $duration) : 0;
+            $ss->{on_chunk}->($content_delta, {
+                token_count => $ss->{token_count},
+                ttft        => $ttft,
+                tps         => $tps,
+                duration    => $duration,
+            });
+        }
+    }
+}
+
+=head2 _process_responses_api_event($data, $event_type, $ss)
+
+Process a Responses API streaming event (codex models, etc.).
+Returns ($content_delta, $tool_calls_delta).
+
+=cut
+
+sub _process_responses_api_event {
+    my ($self, $data, $event_type, $ss) = @_;
+
+    my $content_delta = undef;
+
+    if ($event_type eq 'response.output_text.delta') {
+        $content_delta = $data->{delta} if defined $data->{delta};
+        if ($ss->{reasoning_active} && $ss->{on_thinking}) {
+            $ss->{on_thinking}->(undef, 'end');
+            $ss->{reasoning_active} = 0;
+        }
+    }
+    elsif ($event_type eq 'response.output_item.added') {
+        my $item = $data->{item} || {};
+        my $item_type = $item->{type} || '';
+
+        if ($item_type eq 'function_call') {
+            my $idx = $data->{output_index} // 0;
+            $ss->{tool_calls_acc}{$idx} = {
+                id       => $item->{call_id} || '',
+                type     => 'function',
+                function => { name => $item->{name} || '', arguments => '' },
+                _name_complete => 0,
+            };
+            if ($ss->{on_tool_call} && $item->{name}) {
+                $ss->{tool_calls_acc}{$idx}{_name_complete} = 1;
+                $ss->{on_tool_call}->($item->{name});
+            }
+            log_debug('APIManager', "Responses API: function_call started: " . ($item->{name} || '?'));
+        }
+        elsif ($item_type eq 'reasoning') {
+            $ss->{reasoning_active} = 1;
+            log_debug('APIManager', "Responses API: reasoning started");
+        }
+    }
+    elsif ($event_type eq 'response.function_call_arguments.delta') {
+        my $idx = $data->{output_index} // 0;
+        if ($ss->{tool_calls_acc}{$idx}) {
+            $ss->{tool_calls_acc}{$idx}{function}{arguments} .= ($data->{delta} || '');
+        }
+    }
+    elsif ($event_type eq 'response.output_item.done') {
+        my $item = $data->{item} || {};
+        my $item_type = $item->{type} || '';
+
+        if ($item_type eq 'function_call') {
+            my $idx = $data->{output_index} // 0;
+            if ($ss->{tool_calls_acc}{$idx}) {
+                $ss->{tool_calls_acc}{$idx}{id} = $item->{call_id} || $ss->{tool_calls_acc}{$idx}{id};
+                $ss->{tool_calls_acc}{$idx}{function}{name} = $item->{name} || $ss->{tool_calls_acc}{$idx}{function}{name};
+                $ss->{tool_calls_acc}{$idx}{function}{arguments} = $item->{arguments} || $ss->{tool_calls_acc}{$idx}{function}{arguments};
+            }
+            log_debug('APIManager', "Responses API: function_call completed: " . ($item->{name} || '?'));
+        }
+        elsif ($item_type eq 'reasoning') {
+            if ($ss->{on_thinking} && $ss->{reasoning_active}) {
+                $ss->{on_thinking}->(undef, 'end');
+            }
+            $ss->{reasoning_active} = 0;
+        }
+    }
+    elsif ($event_type eq 'response.reasoning_summary_text.delta') {
+        if ($ss->{on_thinking} && defined $data->{delta}) {
+            $ss->{reasoning_active} = 1;
+            $ss->{on_thinking}->($data->{delta});
+        }
+    }
+    elsif ($event_type eq 'response.completed') {
+        my $resp_data = $data->{response} || {};
+        if ($resp_data->{id} && $self->{session}) {
+            my $iteration = ($ss->{opts} && $ss->{opts}{tool_call_iteration}) || 1;
+            $self->{response_handler}->store_stateful_marker($resp_data->{id}, $ss->{model}, $iteration);
+            $self->{session}{lastGitHubCopilotResponseId} = $resp_data->{id};
+        }
+        if ($resp_data->{usage}) {
+            $ss->{streaming_usage} = {
+                prompt_tokens     => $resp_data->{usage}{input_tokens} || 0,
+                completion_tokens => $resp_data->{usage}{output_tokens} || 0,
+                total_tokens      => ($resp_data->{usage}{input_tokens} || 0) + ($resp_data->{usage}{output_tokens} || 0),
+            };
+        }
+        log_debug('APIManager', "Responses API: stream completed, status=" . ($resp_data->{status} || '?'));
+    }
+    elsif ($event_type eq 'error') {
+        log_warning('APIManager', "Responses API error: [" . ($data->{code} || 'unknown') . "] " . ($data->{message} || 'Unknown'));
+    }
+
+    return ($content_delta, undef);
+}
+
+=head2 _process_chat_completions_delta($data, $ss)
+
+Process a Chat Completions streaming delta (OpenAI/GitHub Copilot format).
+Handles content, tool_calls, reasoning (multiple formats), and MiniMax think tags.
+Returns ($content_delta, $tool_calls_delta).
+
+=cut
+
+sub _process_chat_completions_delta {
+    my ($self, $data, $ss) = @_;
+
+    my $choice = $data->{choices}[0];
+    my $delta  = $choice->{delta} || return (undef, undef);
+
+    my $content_delta    = undef;
+    my $tool_calls_delta = undef;
+
+    # Stateful marker in delta
+    if ($delta->{stateful_marker}) {
+        my $iteration = ($ss->{opts} && $ss->{opts}{tool_call_iteration}) || 1;
+        $self->{response_handler}->store_stateful_marker($delta->{stateful_marker}, $ss->{model}, $iteration);
+    }
+
+    # Content extraction
+    if (defined($delta->{content}) && length($delta->{content})) {
+        $content_delta = $delta->{content};
+
+        # MiniMax <think> tag state machine
+        if ($ss->{is_minimax} && defined $content_delta) {
+            $content_delta = $self->_process_think_tags($content_delta, $ss);
+            $content_delta = undef unless defined($content_delta) && length($content_delta);
+        }
+
+        # Signal end of reasoning when regular content starts
+        if (defined($content_delta) && length($content_delta) && $ss->{reasoning_active} && $ss->{on_thinking}) {
+            $ss->{on_thinking}->(undef, 'end');
+            $ss->{reasoning_active} = 0;
+        }
+    }
+
+    # Reasoning content extraction (multiple formats, emit once per chunk)
+    my $emitted = 0;
+
+    # 1. reasoning_content (DeepSeek, some OpenAI-compat)
+    if (!$emitted && $delta->{reasoning_content} && $ss->{on_thinking}) {
+        $ss->{reasoning_active} = 1;
+        $ss->{accum_reasoning} .= $delta->{reasoning_content};
+        $ss->{on_thinking}->($delta->{reasoning_content});
+        $emitted = 1;
+    }
+
+    # 2. reasoning_details array (OpenRouter, MiniMax)
+    if (!$emitted && $delta->{reasoning_details} && ref($delta->{reasoning_details}) eq 'ARRAY' && $ss->{on_thinking}) {
+        for my $detail (@{$delta->{reasoning_details}}) {
+            next unless ref($detail) eq 'HASH';
+            my $type = $detail->{type} || '';
+            my $text = ($type eq 'reasoning.summary') ? $detail->{summary}
+                     : $detail->{text};
+            if (defined $text && (!$type || $type =~ /^reasoning\.(text|summary)$/ || !$type)) {
+                $ss->{reasoning_active} = 1;
+                $ss->{accum_reasoning} .= $text;
+                $ss->{on_thinking}->($text);
+                $emitted = 1;
+            }
+        }
+    }
+
+    # 3. Legacy reasoning string
+    if (!$emitted && $delta->{reasoning} && !ref($delta->{reasoning}) && $ss->{on_thinking}) {
+        $ss->{reasoning_active} = 1;
+        $ss->{accum_reasoning} .= $delta->{reasoning};
+        $ss->{on_thinking}->($delta->{reasoning});
+    }
+
+    # Tool calls delta
+    $tool_calls_delta = $delta->{tool_calls} if $delta->{tool_calls} && ref($delta->{tool_calls}) eq 'ARRAY';
+
+    return ($content_delta, $tool_calls_delta);
+}
+
+=head2 _accumulate_tool_calls_delta($deltas, $ss)
+
+Accumulate incremental tool_calls deltas into the streaming state accumulator.
+
+=cut
+
+sub _accumulate_tool_calls_delta {
+    my ($self, $deltas, $ss) = @_;
+
+    for my $tc_delta (@$deltas) {
+        my $index = $tc_delta->{index} // 0;
+
+        if (!$ss->{tool_calls_acc}{$index}) {
+            my $raw_id = $tc_delta->{id} // '';
+            my $norm_id = ($raw_id =~ /^function-call-(\d+)$/)
+                ? 'call_' . substr($1, -24)
+                : $raw_id;
+            $ss->{tool_calls_acc}{$index} = {
+                id       => $norm_id,
+                type     => $tc_delta->{type} // 'function',
+                function => { name => '', arguments => '' },
+                _name_complete => 0,
+            };
+        }
+
+        if ($tc_delta->{function}) {
+            if ($tc_delta->{function}{name} && !$ss->{tool_calls_acc}{$index}{function}{name}) {
+                $ss->{tool_calls_acc}{$index}{function}{name} = $tc_delta->{function}{name};
+            }
+            if (!$ss->{tool_calls_acc}{$index}{_name_complete} &&
+                $ss->{tool_calls_acc}{$index}{function}{name} =~ /\w/) {
+                $ss->{tool_calls_acc}{$index}{_name_complete} = 1;
+                $ss->{on_tool_call}->($ss->{tool_calls_acc}{$index}{function}{name}) if $ss->{on_tool_call};
+            }
+            if ($tc_delta->{function}{arguments}) {
+                $ss->{tool_calls_acc}{$index}{function}{arguments} .= $tc_delta->{function}{arguments};
+            }
+        }
+
+        log_debug('APIManager', "Tool call delta: index=$index, name=" .
+            ($tc_delta->{function}{name} // '') . ", args_chunk=" .
+            length($tc_delta->{function}{arguments} // '') . " bytes");
+    }
+}
+
+=head2 _process_think_tags($content_delta, $ss)
+
+MiniMax M2.x <think>...</think> state machine. Strips think tags from content
+and routes thinking content to the on_thinking callback.
+Returns the filtered content_delta (may be empty string).
+
+=cut
+
+sub _process_think_tags {
+    my ($self, $content_delta, $ss) = @_;
+
+    my $work = $ss->{think_buffer} . $content_delta;
+    $ss->{think_buffer} = '';
+    my $output = '';
+
+    while (length($work)) {
+        if ($ss->{in_think_tag}) {
+            if ($work =~ s{^(.*?)</think>}{}s) {
+                my $think_text = $1;
+                if (length($think_text) && $ss->{on_thinking}) {
+                    $ss->{reasoning_active} = 1;
+                    $ss->{accum_reasoning} .= $think_text;
+                    $ss->{on_thinking}->($think_text);
+                }
+                $ss->{in_think_tag} = 0;
+                $work =~ s/^\n+//;
+            }
+            elsif (_has_partial_close_think_suffix($work)) {
+                my $idx = rindex($work, '<');
+                my $before = substr($work, 0, $idx);
+                if (length($before) && $ss->{on_thinking}) {
+                    $ss->{reasoning_active} = 1;
+                    $ss->{accum_reasoning} .= $before;
+                    $ss->{on_thinking}->($before);
+                }
+                $ss->{think_buffer} = substr($work, $idx);
+                $work = '';
+            }
+            else {
+                if ($ss->{on_thinking}) {
+                    $ss->{reasoning_active} = 1;
+                    $ss->{accum_reasoning} .= $work;
+                    $ss->{on_thinking}->($work);
+                }
+                $work = '';
+            }
+        }
+        else {
+            if ($work =~ s{^(.*?)<think>}{}s) {
+                $output .= $1;
+                $ss->{in_think_tag} = 1;
+            }
+            elsif (_has_partial_open_think_suffix($work)) {
+                my $idx = rindex($work, '<');
+                $output .= substr($work, 0, $idx);
+                $ss->{think_buffer} = substr($work, $idx);
+                $work = '';
+            }
+            else {
+                $output .= $work;
+                $work = '';
+            }
+        }
+    }
+
+    return $output;
+}
+
+=head2 _cleanup_streaming_state($ss)
+
+Post-streaming cleanup: signal end of reasoning, flush think buffers,
+strip residual think tags from accumulated content.
+
+=cut
+
+sub _cleanup_streaming_state {
+    my ($self, $ss) = @_;
+
+    # Signal end of reasoning if still active
+    if ($ss->{reasoning_active} && $ss->{on_thinking}) {
+        $ss->{on_thinking}->(undef, 'end');
+        $ss->{reasoning_active} = 0;
+    }
+
+    # Strip residual <think> tags from accumulated content
+    if ($ss->{is_minimax} && length($ss->{accum_content}) && $ss->{accum_content} =~ /<\/?think>/) {
+        while ($ss->{accum_content} =~ s{<think>(.*?)</think>\n*}{}sg) {
+            my $residual = $1;
+            if (length($residual)) {
+                $ss->{accum_reasoning} .= $residual;
+                $ss->{on_thinking}->($residual) if $ss->{on_thinking};
+            }
+        }
+        $ss->{accum_content} =~ s/<\/?think>//g;
+        $ss->{accum_content} =~ s/^\n+//;
+        log_debug('APIManager', "Cleaned residual <think> tags from streaming content");
+    }
+
+    # Flush remaining think_buffer
+    if ($ss->{is_minimax} && length($ss->{think_buffer})) {
+        if (!$ss->{in_think_tag}) {
+            $ss->{accum_content} .= $ss->{think_buffer};
+        }
+        elsif ($ss->{on_thinking}) {
+            $ss->{accum_reasoning} .= $ss->{think_buffer};
+            $ss->{on_thinking}->($ss->{think_buffer});
+            $ss->{on_thinking}->(undef, 'end');
+        }
+        $ss->{think_buffer} = '';
+    }
+}
+
 
 # Process the result of a streaming HTTP request: handle errors, build final response.
 #
