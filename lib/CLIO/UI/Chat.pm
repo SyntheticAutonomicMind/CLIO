@@ -2427,7 +2427,14 @@ sub repaint_screen {
         }
         elsif ($msg->{type} eq 'assistant') {
             my $content = $msg->{content};
-            $content =~ s/\n/\n    /g;  # Indent continuation lines
+            # Normalize indentation on continuation lines
+            my @lines = split /\n/, $content, -1;
+            for my $i (1 .. $#lines) {
+                next unless length($lines[$i]) > 0;
+                $lines[$i] =~ s/^\s+//;
+                $lines[$i] = "    " . $lines[$i];
+            }
+            $content = join "\n", @lines;
             print $self->colorize("CLIO: ", 'ASSISTANT'), $content, "\n";
         }
         elsif ($msg->{type} eq 'system') {
