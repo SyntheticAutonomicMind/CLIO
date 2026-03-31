@@ -15,7 +15,7 @@ use File::Basename;
 use CLIO::Util::JSON qw(encode_json decode_json);
 use CLIO::UI::Chat;
 use CLIO::Util::PathResolver;
-use CLIO::Core::Logger qw(should_log);
+use CLIO::Core::Logger qw(should_log log_info);
 
 # Parse early CLI options BEFORE module init (--config and --no-color)
 my $config_dir_override;
@@ -555,8 +555,7 @@ if ($model_override) {
     # Apply model override with provider prefix
     $model_override = "$target_provider/$model_override";
     $config->set('model', $model_override, 0);  # 0 = don't persist
-    print STDERR "[DEBUG] Applied --model override: $model_override\n" if $debug;
-    print "[INFO] Using temporary model: $model_override\n";
+    log_info('Main', "Using temporary model: $model_override");
 }
 
 # Initialize API manager and AI agent
