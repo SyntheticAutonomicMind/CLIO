@@ -370,6 +370,7 @@ sub process_input {
     my $premature_stop_retries = 0;  # Track retries for premature workflow stops
     my $max_premature_stop_retries = 2;  # Max auto-retries for premature stops
     my $max_server_retries = 30;  # Higher limit for server/network errors (502, 503, 599)
+    my $max_rate_limit_retries = 0;  # Infinite retries for rate limits (0 = unlimited)
     
     # Session-level error budget: Limit total errors across all iterations
     # This prevents cascading failures from consuming the entire session
@@ -599,6 +600,7 @@ sub process_input {
                 max_retries         => $max_retries,
                 max_server_retries  => $max_server_retries,
                 max_session_errors  => $max_session_errors,
+                max_rate_limit_retries => $max_rate_limit_retries,
             });
 
             # Fatal - propagate return value from process_input
@@ -1548,6 +1550,8 @@ sub _handle_api_error {
     my $max_server_retries  = $ctx->{max_server_retries};
     my $max_session_errors  = $ctx->{max_session_errors};
 
+    my $max_rate_limit_retries = $ctx->{max_rate_limit_retries} // 0;
+
     my $error = $api_response->{error} || "Unknown API error";
 
     # ── Retryable errors ──────────────────────────────────────────────
@@ -1589,7 +1593,11 @@ sub _handle_api_error {
         # Determine retry limit based on error type
         my $error_type_for_limit = $api_response->{error_type} || '';
         my $retry_limit;
-        if ($error_type_for_limit eq 'server_error' || $error_type_for_limit eq 'rate_limit') {
+        my $allow_infinite_retry = 0;
+        if ($error_type_for_limit eq 'rate_limit') {
+            $retry_limit = $max_rate_limit_retries;
+            $allow_infinite_retry = 1 if $max_rate_limit_retries == 0;
+        } elsif ($error_type_for_limit eq 'server_error') {
             $retry_limit = $max_server_retries;
         } elsif ($error_type_for_limit eq 'bad_request') {
             $retry_limit = 4;
@@ -1597,7 +1605,8 @@ sub _handle_api_error {
             $retry_limit = $max_retries;
         }
 
-        if ($$retry_count_ref > $retry_limit) {
+        # Skip retry limit check for rate limits when infinite retry is enabled
+        if (!$allow_infinite_retry && $$retry_count_ref > $retry_limit) {
             log_error('WorkflowOrchestrator', "Maximum retries ($retry_limit) exceeded for this iteration");
             return {
                 success         => 0,
@@ -1615,7 +1624,9 @@ sub _handle_api_error {
             $retry_delay += 1;
         }
 
-        my $system_msg = "Temporary $error_type detected. Retrying in ${retry_delay}s... (attempt $$retry_count_ref/$retry_limit)";
+        # Format retry count display (show ∞ for infinite retries)
+        my $retry_display = $allow_infinite_retry ? '∞' : $retry_limit;
+        my $system_msg = "Temporary $error_type detected. Retrying in ${retry_delay}s... (attempt $$retry_count_ref" . ($allow_infinite_retry ? "" : "/$retry_display") . ")";
 
         # ── Per-error-type handling ──
         if ($api_response->{error_type} && $api_response->{error_type} eq 'unsupported_param') {
