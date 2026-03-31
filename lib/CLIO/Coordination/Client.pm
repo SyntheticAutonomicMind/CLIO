@@ -493,7 +493,7 @@ sub send {
         $self->{socket}->print("$json\n");
     };
     if ($@) {
-        warn "Failed to send message: $@";
+        CLIO::Core::Logger::log_warning("BrokerClient", "Failed to send message: $@");
         return 0;
     }
     
@@ -521,7 +521,7 @@ sub send_and_wait {
             my $bytes = $self->{socket}->sysread($data, 65536);
             
             if (!defined $bytes || $bytes == 0) {
-                warn "Broker disconnected";
+                CLIO::Core::Logger::log_warning("BrokerClient", "Broker disconnected");
                 return undef;
             }
             
@@ -536,7 +536,7 @@ sub send_and_wait {
         }
     }
     
-    warn "Timeout waiting for broker response";
+    CLIO::Core::Logger::log_warning("BrokerClient", "Timeout waiting for broker response");
     return undef;
 }
 

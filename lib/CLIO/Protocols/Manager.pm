@@ -6,6 +6,7 @@ package CLIO::Protocols::Manager;
 use strict;
 use warnings;
 use utf8;
+use CLIO::Core::Logger qw(log_error);
 
 =head1 NAME
 
@@ -104,7 +105,7 @@ sub handle {
         if ($handler_class) {
             eval "require $handler_class";
             if ($@) {
-                warn "[PROTO][ERROR] Failed to load handler $handler_class: $@\n";
+                log_error("Protocols", "Failed to load handler $handler_class: $@");
                 return { success => 0, error => "Handler load failed: $@" };
             }
             
@@ -117,7 +118,7 @@ sub handle {
                 return $handler->handle($input);
             }
         } else {
-            warn "[PROTO][ERROR] No handler for protocol $proto\n";
+            log_error("Protocols", "No handler for protocol $proto");
             return { success => 0, error => "No handler for protocol $proto" };
         }
     } else {

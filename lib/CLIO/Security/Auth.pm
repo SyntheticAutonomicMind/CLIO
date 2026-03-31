@@ -6,6 +6,7 @@ package CLIO::Security::Auth;
 use strict;
 use warnings;
 use utf8;
+use CLIO::Core::Logger qw(log_debug);
 use Digest::SHA qw(sha256_hex);
 use Time::HiRes qw(time);
 use POSIX qw(strftime);
@@ -337,11 +338,7 @@ sub _audit {
 
 sub _log {
     my ($self, $message) = @_;
-    
-    return unless $self->{debug};
-    
-    my $timestamp = strftime("%H:%M:%S", localtime());
-    warn "[DEBUG Auth $timestamp] $message\n";
+    log_debug("Auth", $message);
 }
 
 1;

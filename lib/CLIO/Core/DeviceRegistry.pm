@@ -7,6 +7,7 @@ use strict;
 use warnings;
 use utf8;
 use Carp qw(croak);
+use CLIO::Core::Logger qw(log_warning);
 use CLIO::Util::JSON qw(encode_json decode_json);
 use File::Spec;
 use File::Path qw(make_path);
@@ -85,7 +86,7 @@ sub _load_registry {
         $self->{groups} = $data->{groups} || {};
     };
     if ($@) {
-        warn "[WARN][DeviceRegistry] Failed to load registry: $@\n";
+        log_warning('DeviceRegistry', "Failed to load registry: $@");
     }
 }
 
@@ -109,7 +110,7 @@ sub _save_registry {
         close $fh;
     };
     if ($@) {
-        warn "[WARN][DeviceRegistry] Failed to save registry: $@\n";
+        log_warning('DeviceRegistry', "Failed to save registry: $@");
         return 0;
     }
     return 1;

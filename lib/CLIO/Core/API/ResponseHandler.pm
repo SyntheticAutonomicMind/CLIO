@@ -350,7 +350,7 @@ sub handle_error_response {
             log_debug('ResponseHandler', "Response body: $body");
             log_debug('ResponseHandler', "Request was: " . substr($json // '', 0, 500) . "...");
         } elsif ($self->{debug}) {
-            warn "[ERROR] $error\n";
+            log_error('ResponseHandler', $error);
         }
     }
 

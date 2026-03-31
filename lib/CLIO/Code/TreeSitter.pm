@@ -6,6 +6,7 @@ package CLIO::Code::TreeSitter;
 use strict;
 use warnings;
 use utf8;
+use CLIO::Core::Logger qw(log_debug log_info log_warning log_error);
 use File::Basename;
 
 =head1 NAME
@@ -61,7 +62,7 @@ Parse code and return a simplified AST structure.
 sub parse_code {
     my ($self, $code, $language) = @_;
     
-    warn "[DEBUG TreeSitter] Parsing $language code (", length($code), " chars)\n" if $self->{debug};
+    log_debug("TreeSitter", "Parsing $language code (" . length($code) . " chars)");
     
     return undef unless $code && $language;
     
@@ -94,7 +95,7 @@ sub parse_code {
         push @{$ast->{root}->{children}}, $node if $node;
     }
     
-    warn "[DEBUG TreeSitter] Parsed AST with ", scalar(@{$ast->{root}->{children}}), " nodes\n" if $self->{debug};
+    log_debug("TreeSitter", "Parsed AST with " . scalar(@{$ast->{root}->{children}}) . " nodes");
     
     return $ast;
 }
@@ -192,7 +193,7 @@ sub extract_symbols {
         }
     }
     
-    warn "[DEBUG TreeSitter] Extracted ", scalar(@$symbols), " symbols\n" if $self->{debug};
+    log_debug("TreeSitter", "Extracted " . scalar(@$symbols) . " symbols");
     
     return $symbols;
 }
@@ -208,7 +209,7 @@ sub analyze_file {
     
     return undef unless -f $filepath;
     
-    warn "[DEBUG TreeSitter] Analyzing file: $filepath\n" if $self->{debug};
+    log_debug("TreeSitter", "Analyzing file: $filepath");
     
     # Determine language from extension
     my $language = $self->_detect_language($filepath);
@@ -216,7 +217,7 @@ sub analyze_file {
     
     # Read file content
     open my $fh, '<', $filepath or do {
-        warn "[ERROR TreeSitter] Cannot read file $filepath: $!\n";
+        log_error("TreeSitter", "Cannot read file $filepath: $!");
         return undef;
     };
     
