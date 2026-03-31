@@ -874,13 +874,13 @@ sub _save_mcp_to_config {
             $mcp->{$name} = {
                 type    => 'remote',
                 url     => $url,
-                enabled => JSON::PP::true,
+                enabled => \1,
             };
         } else {
             # Local server
             $mcp->{$name} = {
                 command => $command,
-                enabled => JSON::PP::true,
+                enabled => \1,
             };
         }
         

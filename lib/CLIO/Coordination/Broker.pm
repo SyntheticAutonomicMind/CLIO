@@ -372,7 +372,7 @@ sub handle_register {
     $self->send_message($fd, {
         type => 'ack',
         request_type => 'register',
-        success => JSON::PP::true,
+        success => \1,
     });
 }
 

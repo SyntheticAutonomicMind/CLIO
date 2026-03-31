@@ -237,7 +237,7 @@ sub _initialize {
     my $response = $self->{transport}->send_request('initialize', {
         protocolVersion => '2025-11-25',
         capabilities    => {
-            roots => { listChanged => JSON::PP::false },
+            roots => { listChanged => \0 },
         },
         clientInfo => {
             name    => 'CLIO',

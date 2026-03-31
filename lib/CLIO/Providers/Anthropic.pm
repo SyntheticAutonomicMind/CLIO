@@ -90,7 +90,7 @@ sub build_request {
     my $payload = {
         model => $options->{model} // $self->{model},
         max_tokens => $options->{max_tokens} // $self->{max_tokens},
-        stream => JSON::PP::true,
+        stream => \1,
         messages => $anthropic_messages,
     };
     
@@ -382,7 +382,7 @@ sub convert_tool_result {
     };
     
     if ($is_error) {
-        $content->{is_error} = JSON::PP::true;
+        $content->{is_error} = \1;
     }
     
     return {
