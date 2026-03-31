@@ -1457,11 +1457,7 @@ sub _parse_model_provider {
         }
     }
     
-    # No explicit provider prefix - try to detect from model name
-    my $detected = CLIO::Providers::detect_provider_for_model($model);
-    return ($detected, $model) if $detected;
-    
-    # No provider detected - use current provider
+    # No explicit provider prefix - caller uses current provider
     return (undef, $model);
 }
 

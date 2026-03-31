@@ -135,6 +135,12 @@ CLIO::Protocols::Manager->register(name => 'AUDIT', handler => 'CLIO::Protocols:
 # Initialize configuration system
 my $config = CLIO::Core::Config->new(debug => $debug);
 
+# Apply config log_level to env if --debug wasn't used
+unless ($ENV{CLIO_LOG_LEVEL}) {
+    my $config_level = $config->get('log_level');
+    $ENV{CLIO_LOG_LEVEL} = uc($config_level) if $config_level;
+}
+
 # Parse command line arguments
 my $should_exit = 0;
 my $skip_custom = 0;
@@ -498,41 +504,22 @@ if ($broker_session && $broker_agent_id) {
     print STDERR "[TRACE][BROKER] No broker env vars, running standalone\n" if should_log('TRACE');
 }
 
-# Migrate model names to provider/model format (backward compatibility)
-# Existing users may have "gpt-4.1" instead of "github_copilot/gpt-4.1"
+# Ensure model has provider/ prefix (backward compatibility for bare model names)
 {
     my $current_model = $config->get('model') || '';
     my $current_provider = $config->get('provider') || '';
     
     if ($current_model && $current_provider) {
         require CLIO::Providers;
-        # Check if model already has a provider prefix
         my $has_prefix = 0;
         if ($current_model =~ m{^([a-z][a-z0-9_.-]*)/}i) {
             $has_prefix = CLIO::Providers::provider_exists($1);
         }
         
         unless ($has_prefix) {
-            # Detect the correct provider from the model name before blindly
-            # prepending the current provider. Models like "MiniMax-M2.7" need
-            # the minimax provider, not github_copilot, even if that's the default.
-            my $detected = CLIO::Providers::detect_provider_for_model($current_model);
-            my $target_provider = $detected || $current_provider;
-            
-            # If the detected provider differs from current, switch to it
-            # so api_base, api_key, etc. are correct for this model.
-            if ($detected && $detected ne $current_provider) {
-                $config->set_provider($detected);
-                # Don't persist the auto-switch (session restore is temporary)
-                delete $config->{user_set}->{provider};
-                delete $config->{user_set}->{api_base};
-                delete $config->{user_set}->{model};
-                print STDERR "[DEBUG] Auto-detected provider '$detected' for restored model '$current_model'\n" if $debug;
-            }
-            
-            my $full_model = "$target_provider/$current_model";
+            my $full_model = "$current_provider/$current_model";
             $config->set('model', $full_model, 0);
-            print STDERR "[DEBUG] Migrated model to provider/model format: $full_model\n" if $debug;
+            print STDERR "[DEBUG] Added provider prefix to model: $full_model\n" if $debug;
         }
     }
 }
@@ -543,47 +530,30 @@ if ($model_override) {
     my $target_provider;
     my $current_provider = $config->get('provider') || '';
     
-    # Check for explicit provider prefix (e.g. "minimax/MiniMax-M2.7")
+    # Check for explicit provider prefix (e.g. "openrouter/deepseek-r1")
     if ($model_override =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i &&
         CLIO::Providers::provider_exists($1)) {
         $target_provider = $1;
         $model_override = $2;  # Strip prefix; will be re-added below
-    } else {
-        # Try to detect provider from model name (e.g. "MiniMax-M2.7" -> minimax)
-        my $detected = CLIO::Providers::detect_provider_for_model($model_override);
-        
-        # Only auto-switch provider for models that need a direct API.
-        # GitHub Copilot proxies many models (OpenAI, Anthropic, etc.) so don't
-        # switch away from it just because detect_provider matched a pattern.
-        # Only switch for providers that Copilot doesn't proxy (minimax, deepseek, etc.)
-        if ($detected && $current_provider eq 'github_copilot') {
-            my %copilot_proxied = map { $_ => 1 } qw(openai anthropic google);
-            $target_provider = $detected unless $copilot_proxied{$detected};
-        } else {
-            $target_provider = $detected;
-        }
     }
     
-    # Fall back to current provider if detection didn't match
+    # Fall back to configured provider
     $target_provider ||= $current_provider;
     
-    # Always call set_provider to ensure api_key is loaded from api_keys store.
-    # This is needed even when provider doesn't change (e.g., --model minimax/...
-    # when already on minimax), because the api_key might not be in the active
-    # config even though it's stored in the per-provider api_keys hash.
-    if ($target_provider) {
-        $config->set_provider($target_provider);
-        # Remove user_set flags so the temporary switch isn't persisted to config file
-        delete $config->{user_set}->{provider};
-        delete $config->{user_set}->{api_base};
-        delete $config->{user_set}->{model};
-        print STDERR "[DEBUG] Loaded provider '$target_provider' config including api_key\n" if $debug;
+    unless ($target_provider) {
+        die "No provider configured. Use --model provider/model (e.g. github_copilot/gpt-4.1) or configure a provider with /api provider <name>\n";
     }
     
+    # Load provider config (api_base, api_key, etc.)
+    $config->set_provider($target_provider);
+    # Remove user_set flags so the temporary switch isn't persisted to config file
+    delete $config->{user_set}->{provider};
+    delete $config->{user_set}->{api_base};
+    delete $config->{user_set}->{model};
+    print STDERR "[DEBUG] Loaded provider '$target_provider' config including api_key\n" if $debug;
+    
     # Apply model override with provider prefix
-    if ($target_provider) {
-        $model_override = "$target_provider/$model_override";
-    }
+    $model_override = "$target_provider/$model_override";
     $config->set('model', $model_override, 0);  # 0 = don't persist
     print STDERR "[DEBUG] Applied --model override: $model_override\n" if $debug;
     print "[INFO] Using temporary model: $model_override\n";

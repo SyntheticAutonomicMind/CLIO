@@ -481,7 +481,7 @@ sub show_global_config {
     $self->display_section_header("UI Settings");
     my $style = $self->{config}->get('style') || 'default';
     my $theme = $self->{config}->get('theme') || 'default';
-    my $loglevel = $self->{config}->get('loglevel') || $self->{config}->get('log_level') || 'WARNING';
+    my $loglevel = $ENV{CLIO_LOG_LEVEL} || $self->{config}->get('log_level') || 'WARNING';
     
     $self->display_key_value("Color Style", $style, 18);
     $self->display_key_value("Output Theme", $theme, 18);
@@ -588,27 +588,35 @@ sub handle_loglevel_command {
     my ($self, $level) = @_;
     
     unless ($level) {
-        my $current = $self->{config}->get('loglevel') || $self->{config}->get('log_level') || 'WARNING';
+        my $current = $ENV{CLIO_LOG_LEVEL} || $self->{config}->get('log_level') || 'WARNING';
         $self->writeline("", markdown => 0);
         $self->writeline($self->colorize("CURRENT LOG LEVEL", 'DATA'), markdown => 0);
         $self->writeline($self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), markdown => 0);
         $self->writeline("", markdown => 0);
         $self->writeline("  $current", markdown => 0);
+        $self->writeline("  Levels: ERROR, WARNING, INFO, DEBUG", markdown => 0);
         $self->writeline("", markdown => 0);
         return;
     }
     
-    my %valid = map { $_ => 1 } qw(DEBUG INFO WARNING ERROR CRITICAL);
+    my %valid = map { $_ => 1 } qw(DEBUG INFO WARNING ERROR);
     
     unless ($valid{uc($level)}) {
         $self->display_error_message("Invalid log level: $level");
-        $self->writeline("Valid levels: DEBUG, INFO, WARNING, ERROR, CRITICAL", markdown => 0);
+        $self->writeline("Valid levels: DEBUG, INFO, WARNING, ERROR", markdown => 0);
         return;
     }
     
-    $self->{config}->set('loglevel', uc($level));
-    $self->display_system_message("Log level set to: " . uc($level));
-    $self->display_system_message("Use /config save to persist");
+    my $new_level = uc($level);
+    
+    # Set env var so Logger picks it up immediately for all modules
+    $ENV{CLIO_LOG_LEVEL} = $new_level;
+    
+    # Persist to config
+    $self->{config}->set('log_level', $new_level);
+    $self->{config}->save();
+    
+    $self->display_system_message("Log level set to: $new_level (saved)");
 }
 
 =head2 handle_style_command

@@ -2178,7 +2178,7 @@ sub show_global_config {
     $self->display_section_header("UI Settings");
     my $style = $self->{config}->get('style') || 'default';
     my $theme = $self->{config}->get('theme') || 'default';
-    my $loglevel = $self->{config}->get('loglevel') || $self->{config}->get('log_level') || 'WARNING';
+    my $loglevel = $ENV{CLIO_LOG_LEVEL} || $self->{config}->get('log_level') || 'WARNING';
     
     $self->display_key_value("Color Style", $style, 18);
     $self->display_key_value("Output Theme", $theme, 18);

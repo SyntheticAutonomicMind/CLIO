@@ -8,7 +8,7 @@ use warnings;
 use utf8;
 use Exporter 'import';
 
-our @EXPORT_OK = qw(get_provider list_providers provider_exists detect_provider_for_model build_endpoint_config DEFAULT_MODEL);
+our @EXPORT_OK = qw(get_provider list_providers provider_exists build_endpoint_config DEFAULT_MODEL);
 
 # Fallback model when no model is configured anywhere.
 # This should rarely be reached - Config and provider defaults take priority.
@@ -277,43 +277,6 @@ sub provider_exists {
     
     return 0 unless defined $name;
     return exists $PROVIDERS{$name} ? 1 : 0;
-}
-
-=head2 detect_provider_for_model($model_name)
-
-Detect which provider a model belongs to based on its name.
-Used when --model is specified without a provider/ prefix.
-
-Arguments:
-  $model_name - Model name (e.g. 'MiniMax-M2.7', 'gemini-2.5-flash')
-
-Returns:
-  Provider name string, or undef if no match
-
-=cut
-
-my %MODEL_PATTERNS = (
-    qr/^MiniMax-/i          => 'minimax',
-    qr/^gemini-/i           => 'google',
-    qr/^claude-/i           => 'anthropic',
-    qr/^deepseek-/i         => 'deepseek',
-    qr/^gpt-/i              => 'openai',
-    qr/^o[134]-/i           => 'openai',
-    qr/^chatgpt-/i          => 'openai',
-    qr/^codex-/i            => 'openai',
-);
-
-sub detect_provider_for_model {
-    my ($model_name) = @_;
-    return undef unless defined $model_name;
-    
-    for my $pattern (keys %MODEL_PATTERNS) {
-        if ($model_name =~ $pattern) {
-            return $MODEL_PATTERNS{$pattern};
-        }
-    }
-    
-    return undef;
 }
 
 =head2 build_endpoint_config($provider_name, $api_key)
