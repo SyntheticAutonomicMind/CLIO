@@ -176,6 +176,13 @@ sub load {
                 $config{model} = $provider_config->{model};
                 log_debug('Config', "Using model from provider '$config{provider}': $config{model}");
             }
+            
+            # Load the provider's api_key if one exists in the api_keys store
+            my $provider_key = $self->get_provider_key($config{provider});
+            if ($provider_key) {
+                $config{api_key} = $provider_key;
+                log_debug('Config', "Loaded api_key for provider '$config{provider}'");
+            }
         } else {
             log_warning('Config', "Unknown provider '$config{provider}', using defaults");
         }
