@@ -553,14 +553,17 @@ if ($model_override) {
     # Fall back to current provider if detection didn't match
     $target_provider ||= $current_provider;
     
-    # Switch provider if needed (updates api_base, api_key, etc.)
-    if ($target_provider && $target_provider ne $current_provider) {
+    # Always call set_provider to ensure api_key is loaded from api_keys store.
+    # This is needed even when provider doesn't change (e.g., --model minimax/...
+    # when already on minimax), because the api_key might not be in the active
+    # config even though it's stored in the per-provider api_keys hash.
+    if ($target_provider) {
         $config->set_provider($target_provider);
         # Remove user_set flags so the temporary switch isn't persisted to config file
         delete $config->{user_set}->{provider};
         delete $config->{user_set}->{api_base};
         delete $config->{user_set}->{model};
-        print STDERR "[DEBUG] Auto-detected provider '$target_provider' for model '$model_override'\n" if $debug;
+        print STDERR "[DEBUG] Loaded provider '$target_provider' config including api_key\n" if $debug;
     }
     
     # Apply model override with provider prefix
