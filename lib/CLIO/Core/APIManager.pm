@@ -1829,9 +1829,29 @@ sub _apply_rate_limiting {
     }
 }
 
-sub send_request {
+# Shared pre-request pipeline for send_request and send_request_streaming.
+#
+# Handles: rate limiting, endpoint config, throttling, message preparation,
+# validation/truncation, native provider dispatch, payload building, JSON
+# encoding, preflight validation, and HTTP request construction.
+#
+# Args:
+#   $input   - User input text
+#   %opts    - Request options (messages, tools, model, etc.)
+#              is_streaming => 1/0 (required)
+#              on_chunk, on_tool_call, on_thinking => callbacks (streaming only)
+#
+# Returns hashref:
+#   On native provider dispatch: { native_result => $result }
+#   On error: { error_result => $result }
+#   On success: { req, final_endpoint, endpoint_config, model, messages,
+#                 json, payload, provider_label, use_responses_api }
+#
+sub _prepare_api_request {
     my ($self, $input, %opts) = @_;
-    
+
+    my $is_streaming = delete $opts{is_streaming} || 0;
+
     $self->_apply_rate_limiting();
 
     # Get endpoint-specific configuration
@@ -1849,30 +1869,47 @@ sub send_request {
 
     # Prepare and trim messages
     my $messages = $self->_prepare_messages($input, %opts);
-    
-    # Debug logging if enabled
+
+    # Check for native provider (non-OpenAI-compatible API)
+    my $native_provider = $self->_get_native_provider();
+    if ($native_provider) {
+        my $result = $self->_send_native_streaming(
+            $native_provider,
+            $messages,
+            $opts{tools},
+            on_chunk     => $opts{_on_chunk},
+            on_tool_call => $opts{_on_tool_call},
+            on_thinking  => $opts{_on_thinking},
+            model        => $model,
+            %opts
+        );
+        return { native_result => $result };
+    }
+
+    # Strip non-standard 'name' field from tool messages (OpenAI rejects it)
+    for my $msg (@$messages) {
+        delete $msg->{name} if $msg->{role} && $msg->{role} eq 'tool' && exists $msg->{name};
+    }
+
     if ($self->{debug}) {
-        warn "[DEBUG] Sending request to $endpoint\n";
-        warn sprintf("[DEBUG] Using model: %s\n", $model);
-        warn sprintf("[DEBUG] API key status: %s\n", $self->{api_key} ? '[SET]' : '[MISSING]');
-        warn "[DEBUG] Endpoint config: " . (ref($endpoint_config) eq 'HASH' ? 'loaded' : 'missing') . "\n";
+        my $label = $is_streaming ? "Streaming to" : "Sending request to";
+        log_debug('APIManager', "$label $endpoint");
+        log_debug('APIManager', "Model: $model");
     }
-    
+
     if (!$self->{api_key}) {
-        return $self->_error("Missing API key. Please configure a provider with /api provider <name> or set key with /api key <value>");
+        return { error_result => {
+            success => 0,
+            error => "Missing API key. Please configure a provider with /api provider <name> or set key with /api key <value>"
+        }};
     }
-    
-    # Validate and truncate messages against model token limits (pass tools for accurate budget)
-    # Use full model name (with CLIO provider prefix) so get_model_capabilities correctly
-    # identifies the provider. Without this, model names like 'deepseek/deepseek-r1' (from
-    # OpenRouter) get misinterpreted as 'deepseek' provider + 'deepseek-r1' model.
+
+    # Validate and truncate messages against model token limits
     my $full_model_for_caps = $self->get_current_model();
     my $pre_trim_count = scalar(@$messages);
     $messages = $self->validate_and_truncate_messages($messages, $full_model_for_caps, $opts{tools});
-    
+
     # Store trimmed messages for orchestrator sync
-    # When proactive trimming occurs, the orchestrator should update its @messages
-    # to match, preventing unbounded growth and reducing reactive trim severity
     my $post_trim_count = scalar(@$messages);
     if ($post_trim_count < $pre_trim_count) {
         $self->{_last_trimmed_messages} = $messages;
@@ -1880,124 +1917,189 @@ sub send_request {
     } else {
         $self->{_last_trimmed_messages} = undef;
     }
-    
+
+    # Strip non-standard 'name' field again (truncation may re-introduce messages)
+    for my $msg (@$messages) {
+        delete $msg->{name} if $msg->{role} && $msg->{role} eq 'tool' && exists $msg->{name};
+    }
+
     # Check if model uses Responses API (codex models, etc.)
     my $use_responses_api = $self->_model_uses_responses_api($model);
     $self->{_current_request_uses_responses} = $use_responses_api;
-    
-    # Build request payload - use Responses API format when needed
+
+    # Build request payload
     my $payload;
     if ($use_responses_api) {
-        log_info('APIManager', "Using Responses API for model: $model");
-        $payload = $self->_build_responses_api_payload($messages, $model, $endpoint_config, %opts, stream => 0);
+        log_info('APIManager', ($is_streaming ? "Streaming: " : "") . "Using Responses API for model: $model");
+        $payload = $self->_build_responses_api_payload($messages, $model, $endpoint_config, %opts, stream => ($is_streaming ? 1 : 0));
     } else {
-        $payload = $self->_build_payload($messages, $model, $endpoint_config, %opts, stream => 0);
+        $payload = $self->_build_payload($messages, $model, $endpoint_config, %opts, stream => ($is_streaming ? 1 : 0));
     }
-    
-    # PRE-FLIGHT VALIDATION: Final check for message structure integrity
-    # (Only applies to Chat Completions API which uses 'messages')
-    my $preflight_errors = $use_responses_api ? undef : $self->_preflight_validate_messages($payload->{messages});
-    if ($preflight_errors && @$preflight_errors) {
-        my $error_summary = join('; ', @$preflight_errors);
-        log_debug('APIManager', "Pre-flight validation failed: $error_summary");
-        
-        # Attempt auto-repair
-        $payload->{messages} = $self->_validate_tool_message_pairs($payload->{messages});
-        
-        # Re-validate after repair
-        my $post_repair_errors = $self->_preflight_validate_messages($payload->{messages});
-        if ($post_repair_errors && @$post_repair_errors) {
-            return $self->_error("Message structure validation failed: " . join('; ', @$post_repair_errors));
+
+    # Debug: dump payload summary
+    if ($self->{debug}) {
+        log_debug('APIManager', "===== REQUEST PAYLOAD =====");
+        log_debug('APIManager', "Endpoint: $endpoint");
+        log_debug('APIManager', "Model: $payload->{model}");
+        log_debug('APIManager', "API: " . ($use_responses_api ? "Responses" : "Chat Completions"));
+        my $msg_key = $use_responses_api ? 'input' : 'messages';
+        log_debug('APIManager', ucfirst($msg_key) . " count: " . scalar(@{$payload->{$msg_key} || []}));
+        if ($payload->{tools}) {
+            log_debug('APIManager', "Tools array (" . scalar(@{$payload->{tools}}) . " tools):");
+            for my $i (0 .. $#{$payload->{tools}}) {
+                my $tool = $payload->{tools}[$i];
+                my $tool_name = $tool->{function} ? $tool->{function}{name} : ($tool->{name} || '?');
+                log_debug('APIManager', "Tool $i: $tool_name");
+            }
+        } else {
+            log_debug('APIManager', "Tools: NONE");
         }
-        log_info('APIManager', "Message structure repaired successfully");
+        log_debug('APIManager', "===== END REQUEST PAYLOAD =====");
     }
-    
-    # Encode payload to JSON with error handling
+
+    # Clean up internal metadata fields from tool_calls (Chat Completions only)
+    if (!$use_responses_api && $payload->{messages}) {
+        for my $msg (@{$payload->{messages}}) {
+            if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
+                for my $tc (@{$msg->{tool_calls}}) {
+                    delete $tc->{_name_complete} if exists $tc->{_name_complete};
+                }
+            }
+        }
+    }
+
+    # Pre-flight validation (Chat Completions only)
+    if (!$use_responses_api) {
+        my $preflight_errors = $self->_preflight_validate_messages($payload->{messages});
+        if ($preflight_errors && @$preflight_errors) {
+            my $error_summary = join('; ', @$preflight_errors);
+            log_debug('APIManager', "Pre-flight validation failed: $error_summary");
+
+            log_info('APIManager', "Attempting auto-repair of message structure");
+            $payload->{messages} = $self->_validate_tool_message_pairs($payload->{messages});
+
+            my $post_repair_errors = $self->_preflight_validate_messages($payload->{messages});
+            if ($post_repair_errors && @$post_repair_errors) {
+                return { error_result => {
+                    success => 0,
+                    error => "Message structure validation failed after repair: " . join('; ', @$post_repair_errors),
+                    retryable => 1,
+                    retry_after => 0,
+                    error_type => 'message_structure_error'
+                }};
+            }
+            log_info('APIManager', "Message structure repaired successfully");
+        }
+    }
+
+    # Debug: dump tool_calls after cleanup
+    if ($self->{debug} && $payload->{messages}) {
+        for my $i (0 .. $#{$payload->{messages}}) {
+            my $msg = $payload->{messages}[$i];
+            if ($msg->{tool_calls}) {
+                use Data::Dumper;
+                log_debug('APIManager', "Message $i has tool_calls:");
+                log_debug('APIManager', Dumper($msg->{tool_calls}));
+            }
+        }
+    }
+
+    # Encode payload to JSON
     my $json;
-    eval {
-        $json = encode_json($payload);
-    };
+    eval { $json = encode_json($payload); };
     if ($@) {
         my $error = $@;
         log_debug('APIManager', "JSON encoding failed: $error");
-        # Log the payload structure for debugging
-        if (open my $fh, '>>', '/tmp/clio_json_errors.log') {
-            use Data::Dumper;
-            print $fh "\n" . "="x80 . "\n";
-            print $fh "[" . scalar(localtime) . "] JSON Encoding Failure\n";
-            print $fh "Error: $error\n";
-            print $fh "Payload structure:\n";
-            print $fh Dumper($payload);
-            close $fh;
-        }
-        return $self->_error("Failed to encode request as JSON: $error");
+        $self->_log_json_error("JSON Encoding Failure", $error, $payload);
+        my $err = "Failed to encode request as JSON: $error";
+        return { error_result => ($is_streaming
+            ? { success => 0, error => $err }
+            : $self->_error($err))
+        };
     }
-    
+
     # Validate the JSON by attempting to decode it
-    eval {
-        decode_json($json);
-    };
+    eval { decode_json($json); };
     if ($@) {
         my $error = $@;
         log_debug('APIManager', "JSON validation failed: $error");
-        # Log the actual JSON for inspection
-        if (open my $fh, '>>', '/tmp/clio_json_errors.log') {
-            print $fh "\n" . "="x80 . "\n";
-            print $fh "[" . scalar(localtime) . "] JSON Validation Failure\n";
-            print $fh "Error: $error\n";
-            print $fh "Generated JSON:\n";
-            print $fh $json . "\n";
-            close $fh;
-        }
-        return $self->_error("Generated invalid JSON: $error");
+        $self->_log_json_error("JSON Validation Failure", $error, undef, $json);
+        my $err = "Generated invalid JSON: $error";
+        return { error_result => ($is_streaming
+            ? { success => 0, error => $err }
+            : $self->_error($err))
+        };
     }
-    
-    if ($self->{debug}) {
-        warn "[DEBUG] Payload: $json\n";
-    }
-    
+
+    # Create HTTP client
+    my $ua_timeout = $is_streaming ? 300 : 60;
     my $ua = CLIO::Compat::HTTP->new(
-        timeout => 60,
-        agent   => 'CLIO/1.0',
+        timeout  => $ua_timeout,
+        agent    => 'GitHubCopilotChat/0.22.4',
         ssl_opts => { verify_hostname => 1 }
     );
 
-    # Build HTTP request with headers (pass opts for tool_call_iteration)
-    my ($req, $final_endpoint) = $self->_build_request($endpoint, $endpoint_config, $json, 0, \%opts);
+    # Build HTTP request with headers
+    my ($req, $final_endpoint) = $self->_build_request($endpoint, $endpoint_config, $json, $is_streaming, \%opts);
 
-    # Log full request for debugging
+    # Determine provider label for logging
     my $provider_label = $endpoint_config->{minimax} ? 'MiniMax' :
                          $endpoint_config->{requires_copilot_headers} ? 'GitHub Copilot' :
                          $endpoint_config->{openrouter} ? 'OpenRouter' : 'API';
-    log_debug('APIManager', "=" x 80);
-    log_debug('APIManager', "[$provider_label REQUEST] Endpoint: $final_endpoint");
-    log_debug('APIManager', "[$provider_label REQUEST] Model: $model");
-    log_debug('APIManager', "[$provider_label REQUEST] Headers:");
-    for my $h ($req->headers->header_field_names) {
-        my $val = $req->header($h);
-        # Mask auth values
-        $val =~ s/(Bearer\s+).{8}(.*)/${1}XXXX...${2}/ if $h =~ /auth/i;
-        log_debug('APIManager', "  $h: $val");
-    }
-    # Pretty-print JSON for easier comparison
-    my $pretty_json = $json;
-    eval {
-        my $decoded = decode_json($json);
-        $pretty_json = encode_json($decoded);  # Re-encode compactly
+
+    # Log full request to debug log
+    $self->_log_api_request($req, $final_endpoint, $provider_label, $model, $json, $is_streaming, $use_responses_api);
+
+    return {
+        req              => $req,
+        ua               => $ua,
+        final_endpoint   => $final_endpoint,
+        endpoint_config  => $endpoint_config,
+        model            => $model,
+        messages         => $messages,
+        json             => $json,
+        payload          => $payload,
+        provider_label   => $provider_label,
+        use_responses_api => $use_responses_api,
     };
-    # Log tool count and key payload fields
+}
+
+# Log JSON encoding/validation errors to /tmp/clio_json_errors.log
+sub _log_json_error {
+    my ($self, $label, $error, $payload, $json_str) = @_;
+    if (open my $fh, '>>', '/tmp/clio_json_errors.log') {
+        print $fh "\n" . "=" x 80 . "\n";
+        print $fh "[" . scalar(localtime) . "] $label\n";
+        print $fh "Error: $error\n";
+        if ($payload) {
+            use Data::Dumper;
+            print $fh "Payload structure:\n";
+            print $fh Dumper($payload);
+        }
+        if ($json_str) {
+            print $fh "Generated JSON:\n$json_str\n";
+        }
+        close $fh;
+    }
+}
+
+# Log full API request to debug log and /tmp/clio_api_debug.log
+sub _log_api_request {
+    my ($self, $req, $final_endpoint, $provider_label, $model, $json, $is_streaming, $use_responses_api) = @_;
+    my $stream_label = $is_streaming ? "STREAMING " : "";
+
+    log_debug('APIManager', "=" x 80);
+    log_debug('APIManager', "[$provider_label ${stream_label}REQUEST] Endpoint: $final_endpoint");
+    log_debug('APIManager', "[$provider_label ${stream_label}REQUEST] Model: $model");
     eval {
         my $p = decode_json($json);
-        log_debug('APIManager', "[$provider_label REQUEST] max_tokens: " . ($p->{max_tokens} || 'NOT SET'));
-        log_debug('APIManager', "[$provider_label REQUEST] tools: " . (ref($p->{tools}) eq 'ARRAY' ? scalar(@{$p->{tools}}) . " tools" : 'none'));
-        log_debug('APIManager', "[$provider_label REQUEST] messages: " . (ref($p->{messages}) eq 'ARRAY' ? scalar(@{$p->{messages}}) . " messages" : 'none'));
-        log_debug('APIManager', "[$provider_label REQUEST] reasoning_split: " . ($p->{reasoning_split} ? 'true' : 'false'));
-        log_debug('APIManager', "[$provider_label REQUEST] stream: " . ($p->{stream} ? 'true' : 'false'));
+        log_debug('APIManager', "[$provider_label ${stream_label}REQUEST] max_tokens: " . ($p->{max_tokens} || 'NOT SET'));
+        log_debug('APIManager', "[$provider_label ${stream_label}REQUEST] tools: " . (ref($p->{tools}) eq 'ARRAY' ? scalar(@{$p->{tools}}) . " tools" : 'none'));
+        log_debug('APIManager', "[$provider_label ${stream_label}REQUEST] messages: " . (ref($p->{messages}) eq 'ARRAY' ? scalar(@{$p->{messages}}) . " messages" : 'none'));
     };
-    # Save full request to file for detailed inspection
     if (open my $fh, '>>', '/tmp/clio_api_debug.log') {
-        print $fh "\n" . "="x80 . "\n";
-        print $fh "[" . scalar(localtime) . "] $provider_label REQUEST\n";
+        print $fh "\n" . "=" x 80 . "\n";
+        print $fh "[" . scalar(localtime) . "] $provider_label ${stream_label}REQUEST\n";
         print $fh "Endpoint: $final_endpoint\n";
         print $fh "Model: $model\n\n";
         print $fh "Headers:\n";
@@ -2006,17 +2108,29 @@ sub send_request {
             $val =~ s/(Bearer\s+).{8}(.*)/${1}XXXX.../ if $h =~ /auth/i;
             print $fh "  $h: $val\n";
         }
-        print $fh "\nBody:\n$pretty_json\n";
+        print $fh "\nBody:\n$json\n";
         close $fh;
     }
-    log_debug('APIManager', "[$provider_label REQUEST] Body (first 800 chars): " . substr($pretty_json, 0, 800));
     log_debug('APIManager', "=" x 80);
+}
 
-    if ($self->{debug}) {
-        warn "[DEBUG] Making $provider_label request to: $final_endpoint\n";
-        warn "[DEBUG] Using auth header: $endpoint_config->{auth_header}\n";
-    }
-    
+sub send_request {
+    my ($self, $input, %opts) = @_;
+
+    my $ctx = $self->_prepare_api_request($input, %opts, is_streaming => 0);
+    return $ctx->{native_result} if $ctx->{native_result};
+    return $ctx->{error_result}  if $ctx->{error_result};
+
+    my $model           = $ctx->{model};
+    my $endpoint_config = $ctx->{endpoint_config};
+    my $provider_label  = $ctx->{provider_label};
+    my $messages        = $ctx->{messages};
+    my $json            = $ctx->{json};
+    my $use_responses_api = $ctx->{use_responses_api};
+    my $ua              = $ctx->{ua};
+    my $req             = $ctx->{req};
+    my $final_endpoint  = $ctx->{final_endpoint};
+
     # Start performance tracking
     my $perf_start_time = time();
     
@@ -2384,272 +2498,33 @@ Returns: Hash with:
 
 sub send_request_streaming {
     my ($self, $input, %opts) = @_;
-    
+
     log_debug('APIManager', "Starting streaming request");
-    
-    $self->_apply_rate_limiting();
 
-    # Extract on_chunk and on_tool_call callbacks
-    my $on_chunk = $opts{on_chunk};
-    my $on_tool_call = $opts{on_tool_call};
-    my $on_thinking = $opts{on_thinking};
-    delete $opts{on_chunk};  # Remove from opts before building payload
-    delete $opts{on_tool_call};  # Remove from opts before building payload
-    delete $opts{on_thinking};  # Remove from opts before building payload
-    
-    # Get endpoint-specific configuration
-    my $ep = $self->_prepare_endpoint_config(%opts);
-    my $endpoint_config = $ep->{config};
-    my $endpoint = $ep->{endpoint};
-    my $model = $ep->{model};
+    # Extract callbacks before passing opts to _prepare_api_request
+    my $on_chunk     = delete $opts{on_chunk};
+    my $on_tool_call = delete $opts{on_tool_call};
+    my $on_thinking  = delete $opts{on_thinking};
 
-    # Proactive per-model throttle
-    if (my $throttle_delay = $self->_model_throttle_check($model)) {
-        log_info('APIManager', sprintf("Proactive rate throttle for %s: %.1fs", $model, $throttle_delay));
-        for (my $i = int($throttle_delay); $i > 0; $i--) { sleep(1); }
-    }
-    $self->_model_throttle_record($model);
-
-    # Prepare and trim messages
-    my $messages = $self->_prepare_messages($input, %opts);
-    
-    # Check for native provider (non-OpenAI-compatible API)
-    my $native_provider = $self->_get_native_provider();
-    if ($native_provider) {
-        # Dispatch to native provider implementation
-        return $self->_send_native_streaming(
-            $native_provider, 
-            $messages, 
-            $opts{tools},
-            on_chunk => $on_chunk,
-            on_tool_call => $on_tool_call,
-            on_thinking => $on_thinking,
-            model => $model,
-            %opts
-        );
-    }
-    
-    # Continue with OpenAI-compatible implementation...
-    
-    # Strip non-standard fields from tool result messages before sending to OpenAI-compatible endpoints.
-    # The 'name' field is stored internally so native providers (e.g. Google) can build
-    # functionResponse.name, but OpenAI-spec endpoints reject it on role=tool messages.
-    for my $msg (@$messages) {
-        delete $msg->{name} if $msg->{role} && $msg->{role} eq 'tool' && exists $msg->{name};
-    }
-
-    # Debug logging
-    if ($self->{debug}) {
-        log_debug('APIManager', "Streaming to $endpoint");
-        log_debug('APIManager', "Model: $model");
-    }
-    
-    if (!$self->{api_key}) {
-        return { success => 0, error => "Missing API key. Please configure a provider with /api provider <name> or set key with /api key <value>" };
-    }
-    
-    # Validate and truncate messages against model token limits (pass tools for accurate budget)
-    # Use full model name (with CLIO provider prefix) so get_model_capabilities correctly
-    # identifies the provider. Without this, model names like 'deepseek/deepseek-r1' (from
-    # OpenRouter) get misinterpreted as 'deepseek' provider + 'deepseek-r1' model.
-    my $full_model_for_caps = $self->get_current_model();
-    my $pre_trim_count = scalar(@$messages);
-    $messages = $self->validate_and_truncate_messages($messages, $full_model_for_caps, $opts{tools});
-    
-    # Store trimmed messages for orchestrator sync
-    # When proactive trimming occurs, the orchestrator should update its @messages
-    # to match, preventing unbounded growth and reducing reactive trim severity
-    my $post_trim_count = scalar(@$messages);
-    if ($post_trim_count < $pre_trim_count) {
-        $self->{_last_trimmed_messages} = $messages;
-        log_info('APIManager', "Proactive trim: $pre_trim_count -> $post_trim_count messages");
-    } else {
-        $self->{_last_trimmed_messages} = undef;
-    }
-
-    # Strip non-standard fields before building OpenAI-compatible payload.
-    # The 'name' field on role=tool messages is for native providers only.
-    for my $msg (@$messages) {
-        delete $msg->{name} if $msg->{role} && $msg->{role} eq 'tool' && exists $msg->{name};
-    }
-    
-    # Check if model uses Responses API (codex models, etc.)
-    my $use_responses_api = $self->_model_uses_responses_api($model);
-    $self->{_current_request_uses_responses} = $use_responses_api;
-    
-    # Build request payload - use Responses API format when needed
-    my $payload;
-    if ($use_responses_api) {
-        log_info('APIManager', "Streaming: Using Responses API for model: $model");
-        $payload = $self->_build_responses_api_payload($messages, $model, $endpoint_config, %opts, stream => 1);
-    } else {
-        $payload = $self->_build_payload($messages, $model, $endpoint_config, %opts, stream => 1);
-    }
-    
-    # DEBUG: Print EXACT request payload being sent to API
-    if ($self->{debug}) {
-        require Data::Dumper;
-        log_debug('APIManager', "===== REQUEST PAYLOAD =====");
-        log_debug('APIManager', "Endpoint: $endpoint");
-        log_debug('APIManager', "Model: $payload->{model}");
-        log_debug('APIManager', "API: " . ($use_responses_api ? "Responses" : "Chat Completions"));
-        if ($use_responses_api) {
-            log_debug('APIManager', "Input items: " . scalar(@{$payload->{input} || []}));
-        } else {
-            log_debug('APIManager', "Messages count: " . scalar(@{$payload->{messages} || []}));
-        }
-        if ($payload->{tools}) {
-            log_debug('APIManager', "Tools array (" . scalar(@{$payload->{tools}}) . " tools):");
-            for my $i (0 .. $#{$payload->{tools}}) {
-                my $tool = $payload->{tools}[$i];
-                my $tool_name = $tool->{function} ? $tool->{function}{name} : ($tool->{name} || '?');
-                log_debug('APIManager', "Tool $i: $tool_name");
-            }
-        } else {
-            log_debug('APIManager', "Tools: NONE");
-        }
-        log_debug('APIManager', "===== END REQUEST PAYLOAD =====");
-    }
-    
-    # Clean up tool_calls before encoding (only for Chat Completions format)
-    # Remove internal metadata fields (_name_complete, etc) that were added during streaming
-    # GitHub Copilot API rejects requests with unknown fields in tool_calls
-    if (!$use_responses_api && $payload->{messages}) {
-    for my $msg (@{$payload->{messages}}) {
-        if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
-            for my $tc (@{$msg->{tool_calls}}) {
-                delete $tc->{_name_complete} if exists $tc->{_name_complete};
-            }
-        }
-    }
-    }
-    
-    # PRE-FLIGHT VALIDATION: Final check for message structure integrity
-    # This catches any orphans that might have slipped through truncation/preparation
-    my $preflight_errors = $self->_preflight_validate_messages($payload->{messages});
-    if ($preflight_errors && @$preflight_errors) {
-        my $error_summary = join('; ', @$preflight_errors);
-        log_debug('APIManager', "Pre-flight validation failed: $error_summary");
-        
-        # Attempt auto-repair via _validate_tool_message_pairs
-        log_info('APIManager', "Attempting auto-repair of message structure");
-        $payload->{messages} = $self->_validate_tool_message_pairs($payload->{messages});
-        
-        # Re-validate after repair
-        my $post_repair_errors = $self->_preflight_validate_messages($payload->{messages});
-        if ($post_repair_errors && @$post_repair_errors) {
-            # Repair failed - return error to trigger retry logic
-            return { 
-                success => 0, 
-                error => "Message structure validation failed after repair: " . join('; ', @$post_repair_errors),
-                retryable => 1,
-                retry_after => 0,
-                error_type => 'message_structure_error'
-            };
-        }
-        log_info('APIManager', "Message structure repaired successfully");
-    }
-    
-    # DEBUG: Dump messages with tool_calls AFTER cleanup (only when debug enabled)
-    if ($self->{debug}) {
-        log_debug('APIManager', "POST-CLEANUP CHECK: Dumping messages with tool_calls:");
-        for my $i (0 .. $#{$payload->{messages}}) {
-            my $msg = $payload->{messages}[$i];
-            if ($msg->{tool_calls}) {
-                use Data::Dumper;
-                log_debug('APIManager', "Message $i has tool_calls:");
-                log_debug('APIManager', Dumper($msg->{tool_calls}));
-            }
-        }
-    }
-    
-    # Encode payload to JSON with error handling
-    my $json;
-    eval {
-        $json = encode_json($payload);
-    };
-    if ($@) {
-        my $error = $@;
-        log_debug('APIManager', "JSON encoding failed (streaming): $error");
-        # Log the payload structure for debugging
-        if (open my $fh, '>>', '/tmp/clio_json_errors.log') {
-            use Data::Dumper;
-            print $fh "\n" . "="x80 . "\n";
-            print $fh "[" . scalar(localtime) . "] JSON Encoding Failure (Streaming)\n";
-            print $fh "Error: $error\n";
-            print $fh "Payload structure:\n";
-            print $fh Dumper($payload);
-            close $fh;
-        }
-        return {
-            success => 0,
-            error => "Failed to encode request as JSON: $error"
-        };
-    }
-    
-    # Validate the JSON by attempting to decode it
-    eval {
-        decode_json($json);
-    };
-    if ($@) {
-        my $error = $@;
-        log_debug('APIManager', "JSON validation failed (streaming): $error");
-        # Log the actual JSON for inspection
-        if (open my $fh, '>>', '/tmp/clio_json_errors.log') {
-            print $fh "\n" . "="x80 . "\n";
-            print $fh "[" . scalar(localtime) . "] JSON Validation Failure (Streaming)\n";
-            print $fh "Error: $error\n";
-            print $fh "Generated JSON:\n";
-            print $fh $json . "\n";
-            close $fh;
-        }
-        return {
-            success => 0,
-            error => "Generated invalid JSON: $error"
-        };
-    }
-    
-    # Create HTTP client
-    my $ua = CLIO::Compat::HTTP->new(
-        timeout => 300,  # Longer timeout for streaming
-        agent   => 'GitHubCopilotChat/0.22.4',  # Match GitHub Copilot client  
-        ssl_opts => { verify_hostname => 1 }
+    my $ctx = $self->_prepare_api_request($input, %opts,
+        is_streaming => 1,
+        _on_chunk     => $on_chunk,
+        _on_tool_call => $on_tool_call,
+        _on_thinking  => $on_thinking,
     );
-    
-    # Build HTTP request with headers (pass opts for tool_call_iteration)
-    my ($req, $final_endpoint) = $self->_build_request($endpoint, $endpoint_config, $json, 1, \%opts);
-    
-    # Log full streaming request for debugging
-    my $provider_label = $endpoint_config->{minimax} ? 'MiniMax' :
-                         $endpoint_config->{requires_copilot_headers} ? 'GitHub Copilot' :
-                         $endpoint_config->{openrouter} ? 'OpenRouter' : 'API';
-    log_debug('APIManager', "=" x 80);
-    log_debug('APIManager', "[$provider_label STREAMING REQUEST] Endpoint: $final_endpoint");
-    log_debug('APIManager', "[$provider_label STREAMING REQUEST] Model: $model");
-    eval {
-        my $p = decode_json($json);
-        log_debug('APIManager', "[$provider_label STREAMING REQUEST] max_tokens: " . ($p->{max_tokens} || 'NOT SET'));
-        log_debug('APIManager', "[$provider_label STREAMING REQUEST] tools: " . (ref($p->{tools}) eq 'ARRAY' ? scalar(@{$p->{tools}}) . " tools" : 'none'));
-        log_debug('APIManager', "[$provider_label STREAMING REQUEST] messages: " . (ref($p->{messages}) eq 'ARRAY' ? scalar(@{$p->{messages}}) . " messages" : 'none'));
-    };
-    if (open my $fh, '>>', '/tmp/clio_api_debug.log') {
-        print $fh "\n" . "="x80 . "\n";
-        print $fh "[" . scalar(localtime) . "] $provider_label STREAMING REQUEST\n";
-        print $fh "Endpoint: $final_endpoint\n";
-        print $fh "Model: $model\n\n";
-        print $fh "Headers:\n";
-        for my $h ($req->headers->header_field_names) {
-            my $val = $req->header($h);
-            $val =~ s/(Bearer\s+).{8}(.*)/${1}XXXX.../ if $h =~ /auth/i;
-            print $fh "  $h: $val\n";
-        }
-        print $fh "\nBody:\n$json\n";
-        close $fh;
-    }
-    log_debug('APIManager', "=" x 80);
-    
-    # Request headers available for debugging if needed (use should_log('DEBUG'))
-    
+    return $ctx->{native_result} if $ctx->{native_result};
+    return $ctx->{error_result}  if $ctx->{error_result};
+
+    my $model           = $ctx->{model};
+    my $endpoint_config = $ctx->{endpoint_config};
+    my $provider_label  = $ctx->{provider_label};
+    my $messages        = $ctx->{messages};
+    my $json            = $ctx->{json};
+    my $use_responses_api = $ctx->{use_responses_api};
+    my $ua              = $ctx->{ua};
+    my $req             = $ctx->{req};
+    my $final_endpoint  = $ctx->{final_endpoint};
+
     # Initialize metrics tracking
     my $start_time = time();
     my $first_token_time = undef;
