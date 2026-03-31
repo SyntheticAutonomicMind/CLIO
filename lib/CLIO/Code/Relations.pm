@@ -6,6 +6,7 @@ package CLIO::Code::Relations;
 use strict;
 use warnings;
 use utf8;
+use CLIO::Core::Logger qw(log_debug log_info log_warning log_error);
 use CLIO::Util::JSON qw(encode_json decode_json encode_json_pretty);
 
 =head1 NAME
@@ -52,7 +53,7 @@ Set the symbol manager instance.
 sub set_symbol_manager {
     my ($self, $symbol_mgr) = @_;
     $self->{symbol_manager} = $symbol_mgr;
-    warn "[DEBUG Relations] Symbol manager set\n" if $self->{debug};
+    log_debug("Relations", "Symbol manager set");
 }
 
 =head2 analyze_dependencies($filepath)
@@ -66,7 +67,7 @@ sub analyze_dependencies {
     
     return 0 unless -f $filepath;
     
-    warn "[DEBUG Relations] Analyzing dependencies in: $filepath\n" if $self->{debug};
+    log_debug("Relations", "Analyzing dependencies in: $filepath");
     
     open my $fh, '<', $filepath or return 0;
     my $content = do { local $/; <$fh> };
@@ -96,7 +97,7 @@ sub analyze_dependencies {
         $self->_analyze_inheritance($line, $filepath, $line_num, $current_package);
     }
     
-    warn "[DEBUG Relations] Completed dependency analysis for $filepath\n" if $self->{debug};
+    log_debug("Relations", "Completed dependency analysis for $filepath");
     return 1;
 }
 
@@ -218,7 +219,7 @@ sub _add_dependency {
         line => $line
     };
     
-    warn "[DEBUG Relations] Added $type dependency: $source -> $target (line $line)\n" if $self->{debug};
+    log_debug("Relations", "Added $type dependency: $source -> $target (line $line)");
 }
 
 =head2 _add_call_relationship($caller, $callee, $line)
@@ -236,7 +237,7 @@ sub _add_call_relationship {
         line => $line
     };
     
-    warn "[DEBUG Relations] Added call: $caller -> $callee (line $line)\n" if $self->{debug};
+    log_debug("Relations", "Added call: $caller -> $callee (line $line)");
 }
 
 =head2 _add_inheritance_relationship($child, $parent, $line)
@@ -254,7 +255,7 @@ sub _add_inheritance_relationship {
         line => $line
     };
     
-    warn "[DEBUG Relations] Added inheritance: $child extends $parent (line $line)\n" if $self->{debug};
+    log_debug("Relations", "Added inheritance: $child extends $parent (line $line)");
 }
 
 =head2 _add_file_dependency($source_file, $target_module)
@@ -327,7 +328,7 @@ Find circular dependencies in the codebase.
 sub find_circular_dependencies {
     my ($self) = @_;
     
-    warn "[DEBUG Relations] Searching for circular dependencies\n" if $self->{debug};
+    log_debug("Relations", "Searching for circular dependencies");
     
     my @cycles;
     my %visited;
@@ -341,7 +342,7 @@ sub find_circular_dependencies {
         push @cycles, $cycle if $cycle;
     }
     
-    warn "[DEBUG Relations] Found ", scalar(@cycles), " circular dependencies\n" if $self->{debug};
+    log_debug("Relations", "Found ", scalar(@cycles), " circular dependencies");
     
     return \@cycles;
 }

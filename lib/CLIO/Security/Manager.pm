@@ -6,6 +6,7 @@ package CLIO::Security::Manager;
 use strict;
 use warnings;
 use utf8;
+use CLIO::Core::Logger qw(log_debug);
 use CLIO::Security::Auth;
 use CLIO::Security::Authz;
 
@@ -386,10 +387,7 @@ sub _audit {
 
 sub _log {
     my ($self, $message) = @_;
-    
-    return unless $self->{debug};
-    
-    warn "[DEBUG Security] $message\n";
+    log_debug("Security", $message);
 }
 
 1;

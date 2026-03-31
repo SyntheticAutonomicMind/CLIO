@@ -167,7 +167,7 @@ sub save {
         require File::Path;
         eval { File::Path::make_path($dir) };
         if ($@) {
-            warn "[WARN][State] Failed to create session directory: $@";
+            log_warning('State', "Failed to create session directory: $@");
         }
     }
     

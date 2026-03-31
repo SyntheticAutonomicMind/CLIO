@@ -2079,8 +2079,8 @@ sub send_request {
     eval {
         $resp = $ctx->{ua}->request($ctx->{req});
         if ($self->{debug}) {
-            warn sprintf("[DEBUG] Response status: %s\n", $resp->status_line);
-            warn sprintf("[DEBUG] Error response: %s\n", $resp->decoded_content) if !$resp->is_success;
+            log_debug('APIManager', sprintf("Response status: %s", $resp->status_line));
+            log_debug('APIManager', sprintf("Error response: %s", $resp->decoded_content)) if !$resp->is_success;
         }
     };
 
@@ -2968,7 +2968,7 @@ sub send_request_async {
     
     # Prevent multiple concurrent requests
     if (($self->{request_state} // 0) == REQUEST_PENDING) {
-        warn "[DEBUG] Request already pending\n" if $self->{debug};
+        log_debug('APIManager', "Request already pending");
         return 0;
     }
     
@@ -2991,7 +2991,7 @@ sub send_request_async {
     if ($@) {
         $self->{error} = $@;
         $self->{request_state} = REQUEST_ERROR;
-        warn "[ERROR] Request failed: $@\n" if $self->{debug};
+        log_error('APIManager', "Request failed: $@");
         return 0;
     }
     
@@ -2999,14 +2999,14 @@ sub send_request_async {
     if ($response && $response->{content}) {
         $self->{response} = $response;
         $self->{request_state} = REQUEST_COMPLETE;
-        warn "[DEBUG] Request completed with response\n" if $self->{debug};
+        log_debug('APIManager', "Request completed with response");
         return 1;
     }
     
     # No valid response
     $self->{error} = "Invalid response format";
     $self->{request_state} = REQUEST_ERROR;
-    warn "[ERROR] Invalid response format\n" if $self->{debug};
+    log_error('APIManager', "Invalid response format");
     return 0;
 }
 
@@ -3098,10 +3098,10 @@ sub _cleanup {
     $self->{pid} = undef;
     
     if ($self->{debug}) {
-        warn sprintf("[DEBUG] Request complete: State=%s%s\n",
+        log_debug('APIManager', sprintf("Request complete: State=%s%s",
             $self->{request_state},
             $self->{error} ? " Error=$self->{error}" : ""
-        );
+        ));
     }
 }
 
@@ -3267,7 +3267,7 @@ sub _extract_usage_tokens {
 
 sub _error {
     my ($self, $msg) = @_;
-    warn "[APIManager] $msg\n" if $self->{debug};
+    log_error('APIManager', $msg);
     return { error => 1, message => $msg };
 }
 

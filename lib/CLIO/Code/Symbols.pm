@@ -6,6 +6,7 @@ package CLIO::Code::Symbols;
 use strict;
 use warnings;
 use utf8;
+use CLIO::Core::Logger qw(log_debug log_info log_warning log_error);
 use CLIO::Util::JSON qw(encode_json decode_json encode_json_pretty);
 use File::Basename;
 use File::Spec;
@@ -42,7 +43,7 @@ sub new {
     
     # Create cache directory
     unless (-d $self->{cache_dir}) {
-        mkdir $self->{cache_dir} or warn "[WARN Symbols] Cannot create cache dir: $!\n";
+        mkdir $self->{cache_dir} or log_warning("Symbols", "Cannot create cache dir: $!");
     }
     
     return bless $self, $class;
@@ -57,7 +58,7 @@ Set the TreeSitter instance to use for parsing.
 sub set_tree_sitter {
     my ($self, $ts) = @_;
     $self->{tree_sitter} = $ts;
-    warn "[DEBUG Symbols] TreeSitter instance set\n" if $self->{debug};
+    log_debug("Symbols", "TreeSitter instance set");
 }
 
 =head2 index_file($filepath)
@@ -71,7 +72,7 @@ sub index_file {
     
     return 0 unless -f $filepath;
     
-    warn "[DEBUG Symbols] Indexing file: $filepath\n" if $self->{debug};
+    log_debug("Symbols", "Indexing file: $filepath");
     
     # Use TreeSitter if available, otherwise fall back to basic parsing
     my $analysis;
@@ -103,7 +104,7 @@ sub index_file {
         };
     }
     
-    warn "[DEBUG Symbols] Indexed ", scalar(@{$analysis->{symbols}}), " symbols from $filepath\n" if $self->{debug};
+    log_debug("Symbols", "Indexed " . scalar(@{$analysis->{symbols}}) . " symbols from $filepath");
     
     # Cache the analysis
     $self->_cache_analysis($file_key, $analysis);
@@ -178,7 +179,7 @@ sub find_symbols {
     my $scope_filter = $options{scope};
     my $file_filter = $options{file};
     
-    warn "[DEBUG Symbols] Finding symbols matching '$pattern'\n" if $self->{debug};
+    log_debug("Symbols", "Finding symbols matching '$pattern'");
     
     my @results;
     
@@ -210,7 +211,7 @@ sub find_symbols {
         @results = grep { $_->{file_key} eq $norm_file } @results;
     }
     
-    warn "[DEBUG Symbols] Found ", scalar(@results), " matching symbols\n" if $self->{debug};
+    log_debug("Symbols", "Found " . scalar(@results) . " matching symbols");
     
     return \@results;
 }
@@ -243,7 +244,7 @@ Find all references to a symbol across indexed files.
 sub get_symbol_references {
     my ($self, $symbol_name) = @_;
     
-    warn "[DEBUG Symbols] Finding references to '$symbol_name'\n" if $self->{debug};
+    log_debug("Symbols", "Finding references to '$symbol_name'");
     
     my $references = [];
     
@@ -272,7 +273,7 @@ sub get_symbol_references {
         }
     }
     
-    warn "[DEBUG Symbols] Found ", scalar(@$references), " references\n" if $self->{debug};
+    log_debug("Symbols", "Found " . scalar(@$references) . " references");
     
     return $references;
 }
@@ -311,7 +312,7 @@ Clear the symbol index.
 sub clear_index {
     my ($self) = @_;
     
-    warn "[DEBUG Symbols] Clearing symbol index\n" if $self->{debug};
+    log_debug("Symbols", "Clearing symbol index");
     
     $self->{symbol_index} = {};
     $self->{file_index} = {};
@@ -364,7 +365,7 @@ sub _cache_analysis {
         close $fh;
     };
     
-    warn "[WARN Symbols] Cache write failed for $file_key: $@\n" if $@ && $self->{debug};
+    log_warning("Symbols", "Cache write failed for $file_key: $@") if $@;
 }
 
 1;
