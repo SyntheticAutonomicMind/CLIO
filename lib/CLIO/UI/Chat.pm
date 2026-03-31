@@ -464,6 +464,202 @@ Handles spinner, callbacks, session save, and error display.
 
 =cut
 
+
+=head2 _make_thinking_callback($spinner)
+
+Build the on_thinking callback for reasoning model output display.
+Returns a closure and a reference to the thinking_active flag.
+
+=cut
+
+sub _make_thinking_callback {
+    my ($self, $spinner) = @_;
+    my $thinking_active = 0;
+    
+    my $callback = sub {
+        my ($content, $signal) = @_;
+        
+        my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
+        return unless $show_thinking;
+        
+        if (defined $signal) {
+            if ($signal eq 'start') {
+                $thinking_active = 1;
+                $spinner->stop();
+                print $self->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
+                print $self->colorize("THINKING", 'ASSISTANT');
+                print "\n";
+                STDOUT->flush() if STDOUT->can('flush');
+                return;
+            }
+            elsif ($signal eq 'end') {
+                if ($thinking_active) {
+                    print "\n\n";
+                    STDOUT->flush() if STDOUT->can('flush');
+                }
+                $thinking_active = 0;
+                $self->{streaming}->{first_chunk_received} = 0;
+                return;
+            }
+        }
+        
+        return unless defined $content && length($content);
+        
+        if (!$thinking_active) {
+            $thinking_active = 1;
+            $spinner->stop();
+            print $self->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
+            print $self->colorize("THINKING", 'ASSISTANT');
+            print "\n";
+            STDOUT->flush() if STDOUT->can('flush');
+        }
+        
+        print $self->colorize($content, 'DATA');
+        STDOUT->flush() if STDOUT->can('flush');
+    };
+    
+    return $callback;
+}
+
+=head2 _make_system_message_callback($spinner)
+
+Build the on_system_message callback for rate limits, server errors, etc.
+
+=cut
+
+sub _make_system_message_callback {
+    my ($self, $spinner) = @_;
+    
+    return sub {
+        my ($message) = @_;
+        return unless defined $message;
+        
+        $self->hide_busy_indicator() if $self->can('hide_busy_indicator');
+        print "\r\e[K";
+        
+        my $tool_format = 'box';
+        if ($self->{theme_mgr} && $self->{theme_mgr}->can('get_tool_display_format')) {
+            $tool_format = $self->{theme_mgr}->get_tool_display_format();
+        }
+        
+        if ($tool_format eq 'inline') {
+            my $prefix = $self->colorize("[SYSTEM] ", 'SYSTEM');
+            my $msg = $self->colorize($message, 'DATA');
+            print "$prefix$msg\n\n";
+            STDOUT->flush() if STDOUT->can('flush');
+            $self->{pager}->increment_lines(2);
+        } else {
+            my $header_conn = $self->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
+            my $header_name = $self->colorize("SYSTEM", 'ASSISTANT');
+            my $footer_conn = $self->colorize("\x{2514}\x{2500} ", 'DIM');
+            my $footer_msg = $self->colorize($message, 'DATA');
+            
+            print "$header_conn$header_name\n";
+            print "$footer_conn$footer_msg\n\n";
+            STDOUT->flush() if STDOUT->can('flush');
+            $self->{pager}->increment_lines(3);
+        }
+        $self->{_last_was_system_message} = 1;
+        log_debug('Chat', "System message: $message");
+    };
+}
+
+=head2 _handle_ai_response($result, $alarm_count, $spinner)
+
+Post-process AI response: save session, handle errors, display usage.
+
+=cut
+
+sub _handle_ai_response {
+    my ($self, $result, $alarm_count, $spinner) = @_;
+    
+    alarm(0);
+    log_debug('Chat', "Disabled periodic ALRM after streaming ($alarm_count interrupts)");
+    
+    $spinner->stop();
+    $self->{streaming}->flush();
+    $self->{pager}->line_count(0);
+    
+    my $accumulated_content = $self->{streaming}->content();
+    my $first_chunk_received = $self->{streaming}->first_chunk_received();
+    log_debug('Chat', "first_chunk_received=$first_chunk_received, accumulated_content_len=" . length($accumulated_content));
+    
+    if ($self->{debug} && $result->{metrics}) {
+        my $m = $result->{metrics};
+        log_debug('Chat', sprintf(
+            "[METRICS] TTFT: %.2fs | TPS: %.1f | Tokens: %d | Duration: %.2fs\n",
+            $m->{ttft} // 0, $m->{tps} // 0, $m->{tokens} // 0, $m->{duration} // 0
+        ));
+    }
+    
+    if ($accumulated_content) {
+        $accumulated_content =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;
+    }
+    
+    if ($result && $result->{messages_saved_during_workflow}) {
+        log_debug('Chat', "Skipping session save - messages already saved during workflow");
+        $self->add_to_buffer('assistant', $result->{final_response} // '') if $result->{final_response};
+    } elsif ($result && $result->{final_response}) {
+        log_debug('Chat', "Storing final_response in session (length=" . length($result->{final_response}) . ")");
+        my $sanitized = sanitize_text($result->{final_response});
+        $self->{session}->add_message('assistant', $sanitized);
+        $self->add_to_buffer('assistant', $result->{final_response});
+    } elsif ($accumulated_content) {
+        log_debug('Chat', "Storing accumulated_content in session (length=" . length($accumulated_content) . ")");
+        my $sanitized = sanitize_text($accumulated_content);
+        $self->{session}->add_message('assistant', $sanitized);
+        $self->add_to_buffer('assistant', $accumulated_content);
+    }
+    
+    if ($self->{session} && !$self->{session}->session_name()) {
+        $self->_auto_name_session();
+    }
+    
+    if (!$result || !$result->{success}) {
+        my $error_msg = $result->{error} || $result->{final_response} || "No response received from AI";
+        log_debug('Chat', "Error occurred: $error_msg");
+        $self->display_error_message($error_msg);
+        if ($self->{session}) {
+            $self->{session}->add_message('system', "Error: $error_msg");
+            $self->{session}->save();
+            log_debug('Chat', "Session saved after error (preserving context)");
+        }
+    } else {
+        if ($self->{session}) {
+            $self->{session}->save();
+            log_debug('Chat', "Session saved after successful response");
+        }
+    }
+    
+    $self->display_usage_summary();
+    
+    if ($self->{host_proto}->active() && $self->{session} && $self->{session}->{state}) {
+        my $billing = $self->{session}->{state}->{billing};
+        if ($billing && $billing->{requests} && @{$billing->{requests}}) {
+            my $last = $billing->{requests}[-1];
+            $self->{host_proto}->emit_tokens(
+                prompt     => $last->{prompt_tokens} || 0,
+                completion => $last->{completion_tokens} || 0,
+                total      => $last->{total_tokens} || 0,
+                model      => $billing->{model} || '',
+            );
+        }
+    }
+    
+    if ($self->{session} && $self->{session}->can('state')) {
+        my $state = $self->{session}->state();
+        if ($state->{_premium_charge_message}) {
+            print "\n";
+            $self->display_system_message($state->{_premium_charge_message});
+            delete $state->{_premium_charge_message};
+        }
+    }
+    
+    $self->{pager}->disable();
+    log_debug('Chat', "Pagination DISABLED after response complete");
+    $self->hide_busy_indicator();
+}
+
 sub _process_ai_request {
     my ($self, $input) = @_;
 
@@ -541,111 +737,9 @@ sub _process_ai_request {
         $self->{host_proto}->emit_tool_end($tool_name);
     };
     
-    # Display thinking/reasoning content from reasoning models
-    # Shows content dimmed to distinguish from actual response
-    my $thinking_active = 0;
-    my $on_thinking = sub {
-        my ($content, $signal) = @_;
-        
-        # Check if thinking display is enabled (default: off)
-        my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
-        return unless $show_thinking;
-        
-        # Handle start/end signals from native providers (Anthropic)
-        if (defined $signal) {
-            if ($signal eq 'start') {
-                $thinking_active = 1;
-                # Stop spinner if running and show thinking header
-                # Style matches tool output: {DIM}connector {ASSISTANT}label
-                $spinner->stop();
-                print $self->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
-                print $self->colorize("THINKING", 'ASSISTANT');
-                print "\n";
-                STDOUT->flush() if STDOUT->can('flush');
-                return;
-            }
-            elsif ($signal eq 'end') {
-                if ($thinking_active) {
-                    # Only close the thinking box if it was actually opened
-                    # Blank line to separate thinking from response (matches tool output pattern)
-                    print "\n\n";
-                    STDOUT->flush() if STDOUT->can('flush');
-                }
-                $thinking_active = 0;
-                # Reset so CLIO: prefix prints for actual response
-                $self->{streaming}->{first_chunk_received} = 0;
-                return;
-            }
-        }
-        
-        # Thinking content delta
-        return unless defined $content && length($content);
-        
-        # For OpenAI-compatible reasoning_content (no start/end signals),
-        # auto-detect start on first chunk
-        if (!$thinking_active) {
-            $thinking_active = 1;
-            $spinner->stop();
-            # Style matches tool output: {DIM}connector {ASSISTANT}label
-            print $self->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
-            print $self->colorize("THINKING", 'ASSISTANT');
-            print "\n";
-            STDOUT->flush() if STDOUT->can('flush');
-        }
-        
-        # Print thinking content in DATA color (matches tool action detail style)
-        print $self->colorize($content, 'DATA');
-        STDOUT->flush() if STDOUT->can('flush');
-    };
-    
-    # Display system messages (rate limits, server errors, etc.)
-    my $on_system_message = sub {
-        my ($message) = @_;
-        
-        return unless defined $message;
-        
-        # Hide busy indicator before displaying system message
-        # This clears the spinner, leaving "CLIO: " on the line
-        $self->hide_busy_indicator() if $self->can('hide_busy_indicator');
-        
-        # Clear the "CLIO: " prefix that was printed before the spinner
-        # This ensures system messages start on a clean line
-        print "\r\e[K";  # Carriage return + clear entire line
-        
-        # Display system message with format based on theme
-        # Check if theme uses inline format (like console theme)
-        my $tool_format = 'box';  # default
-        if ($self->{theme_mgr} && $self->{theme_mgr}->can('get_tool_display_format')) {
-            $tool_format = $self->{theme_mgr}->get_tool_display_format();
-        }
-        
-        if ($tool_format eq 'inline') {
-            # Inline format: [SYSTEM] message
-            my $prefix = $self->colorize("[SYSTEM] ", 'SYSTEM');
-            my $msg = $self->colorize($message, 'DATA');
-            print "$prefix$msg\n";
-            print "\n";  # Add blank line AFTER system message for separation
-            STDOUT->flush() if STDOUT->can('flush');
-            $self->{pager}->increment_lines(2);  # Message + blank line
-        } else {
-            # Box-drawing format (default):
-            # {dim}┌──┤ {agent_label}SYSTEM{reset}
-            # {dim}└─ {data}message{reset}
-            my $header_conn = $self->colorize("\x{250C}\x{2500}\x{2500}\x{2524} ", 'DIM');
-            my $header_name = $self->colorize("SYSTEM", 'ASSISTANT');
-            my $footer_conn = $self->colorize("\x{2514}\x{2500} ", 'DIM');
-            my $footer_msg = $self->colorize($message, 'DATA');
-            
-            print "$header_conn$header_name\n";
-            print "$footer_conn$footer_msg\n";
-            print "\n";  # Add blank line AFTER system message for separation
-            STDOUT->flush() if STDOUT->can('flush');
-            $self->{pager}->increment_lines(3);  # Header + footer + blank line
-        }
-        $self->{_last_was_system_message} = 1;  # Mark that we just displayed a system message
-        
-        log_debug('Chat', "System message: $message");
-    };
+    # Build thinking and system message callbacks via extracted methods
+    my $on_thinking = $self->_make_thinking_callback($spinner);
+    my $on_system_message = $self->_make_system_message_callback($spinner);
     
     # Get conversation history from session
     my $conversation_history = [];
@@ -727,137 +821,8 @@ sub _process_ai_request {
     # Re-throw if process_user_request died
     croak $process_error if $process_error;
     
-    # Disable periodic alarm after streaming completes
-    alarm(0);
-    log_debug('Chat', "Disabled periodic ALRM after streaming ($alarm_count interrupts)");
-    
-    # Stop spinner in case it's still running (e.g., error before first chunk)
-    $spinner->stop();
-    
-    # Flush remaining streaming buffers
-    $self->{streaming}->flush();
-    
-    # Reset line count after streaming completes
-    $self->{pager}->line_count(0);
-    
-    my $accumulated_content = $self->{streaming}->content();
-    my $first_chunk_received = $self->{streaming}->first_chunk_received();
-    log_debug('Chat', "first_chunk_received=$first_chunk_received, accumulated_content_len=" . length($accumulated_content));
-    
-    # Display metrics in debug mode
-    if ($self->{debug} && $result->{metrics}) {
-        my $m = $result->{metrics};
-        log_debug('Chat', sprintf(
-            "[METRICS] TTFT: %.2fs | TPS: %.1f | Tokens: %d | Duration: %.2fs\n",
-            $m->{ttft} // 0,
-            $m->{tps} // 0,
-            $m->{tokens} // 0,
-            $m->{duration} // 0
-        ));
-    }
-    
-    # Store complete message in session history
-    # Sanitize assistant responses before storing to prevent emoji encoding issues
-    # BUT only if messages weren't already saved during the workflow execution.
-    # Tool-calling workflows save messages atomically (assistant + tool results together),
-    # so we should NOT save another assistant message here to avoid duplicates.
-
-    # Strip session naming markers from content before saving to history
-    # The marker was already extracted by WorkflowOrchestrator, but accumulated_content
-    # is built independently from streaming chunks and may still contain it
-    if ($accumulated_content) {
-        $accumulated_content =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;
-    }
-
-    if ($result && $result->{messages_saved_during_workflow}) {
-        log_debug('Chat', "Skipping session save - messages already saved during workflow");
-        # Still add to buffer for display (content was streamed, not saved)
-        $self->add_to_buffer('assistant', $result->{final_response} // '') if $result->{final_response};
-    } elsif ($result && $result->{final_response}) {
-        log_debug('Chat', "Storing final_response in session (length=" . length($result->{final_response}) . ")");
-        my $sanitized = sanitize_text($result->{final_response});
-        $self->{session}->add_message('assistant', $sanitized);
-        $self->add_to_buffer('assistant', $result->{final_response});  # Display original with emojis
-    } elsif ($accumulated_content) {
-        log_debug('Chat', "Storing accumulated_content in session (length=" . length($accumulated_content) . ")");
-        # Fallback: use accumulated content
-        my $sanitized = sanitize_text($accumulated_content);
-        $self->{session}->add_message('assistant', $sanitized);
-        $self->add_to_buffer('assistant', $accumulated_content);  # Display original with emojis
-    }
-    
-    # Handle error case - show actual error message to user
-    # Ensure session has a name - AI marker is primary, text-truncation is fallback
-    # This runs regardless of success/error so no session stays as a UUID
-    if ($self->{session} && !$self->{session}->session_name()) {
-        $self->_auto_name_session();
-    }
-
-    if (!$result || !$result->{success}) {
-        my $error_msg = $result->{error} || $result->{final_response} || "No response received from AI";
-        log_debug('Chat', "Error occurred: $error_msg");
-        $self->display_error_message($error_msg);
-        
-        # Store error in session for context
-        if ($self->{session}) {
-            $self->{session}->add_message('system', "Error: $error_msg");
-            
-            # Save session immediately after error to prevent history loss
-            # This ensures error context is available on next startup
-            $self->{session}->save();
-            log_debug('Chat', "Session saved after error (preserving context)");
-        }
-    } else {
-        # Save session after successful responses
-        # Without this, if user doesn't call /exit, all work-in-progress is lost
-        # on next session restart. This ensures session continuity even if terminal
-        # is closed abruptly without explicit /exit command.
-        if ($self->{session}) {
-            $self->{session}->save();
-            log_debug('Chat', "Session saved after successful response (preserving work-in-progress)");
-        }
-        
-        # HYBRID LTM APPROACH: AutoCapture disabled. Agents store discoveries
-        # explicitly via memory_operations tool when important facts are learned.
-        # This ensures clean LTM with no heuristic noise or truncation.
-        # See: memory_operations(operation: "add_discovery") or related methods
-    }
-    
-    # Display usage summary after response
-    $self->display_usage_summary();
-    
-    # Emit token usage to host application
-    if ($self->{host_proto}->active() && $self->{session} && $self->{session}->{state}) {
-        my $billing = $self->{session}->{state}->{billing};
-        if ($billing && $billing->{requests} && @{$billing->{requests}}) {
-            my $last = $billing->{requests}[-1];
-            $self->{host_proto}->emit_tokens(
-                prompt     => $last->{prompt_tokens} || 0,
-                completion => $last->{completion_tokens} || 0,
-                total      => $last->{total_tokens} || 0,
-                model      => $billing->{model} || '',
-            );
-        }
-    }
-    
-    # Display premium charge notification if any
-    if ($self->{session} && $self->{session}->can('state')) {
-        my $state = $self->{session}->state();
-        if ($state->{_premium_charge_message}) {
-            print "\n";
-            $self->display_system_message($state->{_premium_charge_message});
-            delete $state->{_premium_charge_message};  # Clear after displaying
-        }
-    }
-    
-    # Disable pagination after response completes
-    # Will be re-enabled on first chunk of next text response
-    $self->{pager}->disable();
-    log_debug('Chat', "Pagination DISABLED after response complete");
-    
-    # Ensure spinner is stopped before returning to input prompt
-    # This prevents spinner from still running when waiting for user input
-    $self->hide_busy_indicator();
+    # Post-process: save session, handle errors, display usage
+    $self->_handle_ai_response($result, $alarm_count, $spinner);
 }
 
 =head2 check_agent_messages($broker_client)
