@@ -419,6 +419,13 @@ sub run {
         # Handle empty input
         next unless defined $input && length($input) > 0;
         
+        # Sync readline history to session state for persistence (cap at 500 entries)
+        if ($self->{readline} && $self->{session} && $self->{session}->state()) {
+            my @hist = @{$self->{readline}->{history}};
+            splice(@hist, 0, @hist - 500) if @hist > 500;
+            $self->{session}->state()->{input_history} = \@hist;
+        }
+        
         # Handle standalone '?' as help command
         if ($input eq '?') {
             $input = '/help';
@@ -2495,10 +2502,16 @@ sub setup_tab_completion {
         # Create tab completer
         $self->{completer} = CLIO::Core::TabCompletion->new(debug => $self->{debug});
         
-        # Create custom readline with completer
+        # Create custom readline with completer and restored history
+        my @saved_history;
+        if ($self->{session} && $self->{session}->state() && 
+            $self->{session}->state()->{input_history}) {
+            @saved_history = @{$self->{session}->state()->{input_history}};
+        }
         $self->{readline} = CLIO::Core::ReadLine->new(
             prompt => '',  # We'll provide prompt in get_input
             completer => $self->{completer},
+            history => \@saved_history,
             debug => $self->{debug}
         );
         
