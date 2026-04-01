@@ -485,8 +485,14 @@ sub _make_thinking_callback {
     my ($self, $spinner) = @_;
     my $thinking_active = 0;
     
-    # Helper: print a dim hrule indented by 4 spaces (matches ToolOutputFormatter)
+    # Helper: print a dim hrule indented by 4 spaces (inline format only)
     my $print_thinking_hrule = sub {
+        my $tool_format = 'inline';
+        if ($self->{theme_mgr} && $self->{theme_mgr}->can('get_tool_display_format')) {
+            $tool_format = $self->{theme_mgr}->get_tool_display_format();
+        }
+        return unless $tool_format eq 'inline';
+
         my ($term_cols) = GetTerminalSize();
         $term_cols ||= 80;
         my $indent = '    ';
