@@ -369,7 +369,7 @@ sub process_input {
     my $max_retries = 3;  # Maximum retries for API errors (malformed JSON, etc.)
     my $premature_stop_retries = 0;  # Track retries for premature workflow stops
     my $max_premature_stop_retries = 2;  # Max auto-retries for premature stops
-    my $max_server_retries = 30;  # Higher limit for server/network errors (502, 503, 599)
+    my $max_server_retries = 0;  # Infinite retries for server/network errors (0 = unlimited)
     my $max_rate_limit_retries = 0;  # Infinite retries for rate limits (0 = unlimited)
     
     # Session-level error budget: Limit total errors across all iterations
@@ -1700,8 +1700,9 @@ sub _handle_api_error {
         if ($error_type_for_limit eq 'rate_limit') {
             $retry_limit = $max_rate_limit_retries;
             $allow_infinite_retry = 1 if $max_rate_limit_retries == 0;
-        } elsif ($error_type_for_limit eq 'server_error') {
+        } elsif ($error_type_for_limit eq 'server_error' || $error_type_for_limit eq 'connection_error') {
             $retry_limit = $max_server_retries;
+            $allow_infinite_retry = 1 if $max_server_retries == 0;
         } elsif ($error_type_for_limit eq 'bad_request') {
             $retry_limit = 4;
         } else {
@@ -1825,12 +1826,14 @@ sub _handle_api_error {
             $error_type = "token limit exceeded";
             $system_msg = $trim_result->{system_msg};
         }
-        elsif ($api_response->{error_type} && $api_response->{error_type} eq 'server_error') {
+        elsif ($api_response->{error_type} && ($api_response->{error_type} eq 'server_error' || $api_response->{error_type} eq 'connection_error')) {
             my $backoff_multiplier = 2 ** ($$retry_count_ref - 1);
             $retry_delay = $retry_delay * $backoff_multiplier;
+            # Cap backoff at 5 minutes
+            $retry_delay = 300 if $retry_delay > 300;
 
-            $error_type = "server error";
-            $system_msg = "Server temporarily unavailable. Retrying in ${retry_delay}s with exponential backoff... (attempt $$retry_count_ref/$max_server_retries)";
+            $error_type = $api_response->{error_type} eq 'connection_error' ? "connection error" : "server error";
+            $system_msg = "Temporary $error_type. Retrying in ${retry_delay}s with exponential backoff... (attempt $$retry_count_ref)";
             log_info('WorkflowOrchestrator', "Applying exponential backoff for server error: ${retry_delay}s delay");
         }
         elsif ($api_response->{error_type} && $api_response->{error_type} eq 'rate_limit') {
