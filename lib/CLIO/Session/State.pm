@@ -155,6 +155,7 @@ sub save {
         theme => $self->{theme},  # Save current output theme
         session_name => $self->{session_name},  # Human-friendly session name
         loaded_skills => $self->{loaded_skills} || [],  # Skills merged into system prompt
+        input_history => $self->{input_history} || [],  # User input readline history
     };
     use Data::Dumper;
     if ($ENV{CLIO_DEBUG} || $self->{debug}) {
@@ -286,6 +287,8 @@ sub load {
         session_name => $data->{session_name} // undef,
         # Loaded skills (merged into system prompt)
         loaded_skills => $data->{loaded_skills} || [],
+        # User input readline history (persisted across sessions)
+        input_history => $data->{input_history} || [],
     };
     bless $self, $class;
     
