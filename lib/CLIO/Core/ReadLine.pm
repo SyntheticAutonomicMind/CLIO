@@ -188,8 +188,9 @@ sub _get_prompt_disp {
 =head2 _redraw_from_cursor
 
 Partial redraw: reprint from cursor position to end of input, then
-clear any leftover characters. Much faster than full redraw for mid-line
-edits since it skips the prompt and text before the cursor.
+clear any leftover characters and reposition the cursor. The caller
+must have already printed any new content (e.g., an inserted character)
+so the terminal cursor is at the correct starting point.
 
 =cut
 
@@ -198,30 +199,33 @@ sub _redraw_from_cursor {
 
     my $term_width = $self->_get_term_width();
     my $prompt_disp = $self->_get_prompt_disp($prompt);
-    my $input_len = length($$input_ref);
 
-    # Text from cursor to end
+    # Print everything after cursor, then clear leftover chars
     my $tail = substr($$input_ref, $$cursor_pos_ref);
-    my $tail_disp = _display_width($tail);
+    print $tail;
+    print "\e[J";
 
-    # Where cursor is right now (display columns from start of line)
-    my $cursor_prefix_disp = _display_width(substr($$input_ref, 0, $$cursor_pos_ref));
-    my $cursor_total = $prompt_disp + $cursor_prefix_disp;
-    my $cursor_row = int($cursor_total / $term_width);
-    my $cursor_col = ($cursor_total % $term_width) + 1;
-
-    # Save cursor position, print tail, clear to end of screen, restore cursor
-    print "\e7";        # save cursor
-    print $tail;        # overwrite from cursor to end
-    print "\e[J";       # clear any leftover chars beyond new end
-    print "\e8";        # restore cursor
-
-    # Update display_lines tracking
+    # Calculate where the cursor IS now (end of input) and where it SHOULD be
     my $total_disp = $prompt_disp + _display_width($$input_ref);
+    my $cursor_disp = $prompt_disp + _display_width(substr($$input_ref, 0, $$cursor_pos_ref));
+
+    my $end_row = $total_disp > 0 ? int(($total_disp - 1) / $term_width) : 0;
+    my $target_row = $cursor_disp > 0 ? int(($cursor_disp - 1) / $term_width) : 0;
+    my $target_col = $cursor_disp > 0 ? (($cursor_disp - 1) % $term_width) + 1 : 0;
+
+    # Move up if needed (from end-of-input row to cursor row)
+    my $rows_up = $end_row - $target_row;
+    print "\e[${rows_up}A" if $rows_up > 0;
+
+    # Move to exact column: go to column 0, then forward
+    print "\r";
+    print "\e[${target_col}C" if $target_col > 0;
+
+    # Update tracking
     my $new_display_lines = $total_disp > 0 ? int(($total_disp - 1) / $term_width) + 1 : 1;
     $self->{display_lines} = $new_display_lines;
-    $self->{last_cursor_row} = $cursor_row;
-    $self->{last_cursor_col} = $cursor_col;
+    $self->{last_cursor_row} = $target_row;
+    $self->{last_cursor_col} = $target_col + 1;
 }
 
 sub readline {
@@ -521,7 +525,10 @@ sub readline {
                 $self->{last_cursor_row} = $new_row;
                 $self->{last_cursor_col} = $new_col;
             } else {
-                # Inserting in middle - partial redraw from cursor
+                # Inserting in middle: print the new char (advances terminal
+                # cursor past it), then redraw the remaining tail and
+                # reposition the cursor back.
+                print $char;
                 $self->_redraw_from_cursor(\$input, \$cursor_pos, $prompt);
             }
         }
