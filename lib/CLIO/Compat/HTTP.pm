@@ -432,6 +432,21 @@ sub _request_via_curl_streaming {
     close($curl_fh);
     my $exit_code = $? >> 8;
     
+    # Map common curl exit codes to human-readable descriptions
+    my %curl_errors = (
+        6  => 'DNS resolution failed',
+        7  => 'Connection refused',
+        18 => 'Partial transfer',
+        22 => 'HTTP error',
+        28 => 'Connection timed out',
+        35 => 'TLS handshake failed',
+        47 => 'Too many redirects',
+        52 => 'Empty reply from server',
+        55 => 'Send error',
+        56 => 'Connection reset by server',
+        92 => 'HTTP/2 stream error',
+    );
+
     # Parse headers from the header dump file
     my $status;
     my $reason;
@@ -460,16 +475,26 @@ sub _request_via_curl_streaming {
         } else {
             # curl failed or no data - report as connection error
             $status = 599;
-            $reason = "curl exit code $exit_code";
+            $reason = $curl_errors{$exit_code} || "curl exit code $exit_code";
         }
     }
     $reason //= '';
 
-    # Override status on curl failure even if headers were partially written
-    if ($exit_code != 0 && $status >= 200 && $status < 300) {
-        log_debug('HTTP::curl_streaming', "curl exit code $exit_code but headers showed $status - overriding to 599");
+    # Override bogus status on curl failure.  HTTP/2 can report "000" when
+    # the stream is reset before a real status arrives.  Treat any non-success
+    # exit combined with a non-2xx status (including < 100) as a connection error.
+    if ($exit_code != 0 && !($status >= 200 && $status < 300)) {
+        my $desc = $curl_errors{$exit_code} || "curl exit code $exit_code";
+        if ($status < 100) {
+            log_debug('HTTP::curl_streaming', "Bogus status $status with curl exit $exit_code - setting to 599 ($desc)");
+            $status = 599;
+            $reason = $desc;
+        }
+    } elsif ($exit_code != 0 && $status >= 200 && $status < 300) {
+        my $desc = $curl_errors{$exit_code} || "curl exit code $exit_code";
+        log_debug('HTTP::curl_streaming', "curl exit code $exit_code but headers showed $status - overriding to 599 ($desc)");
         $status = 599;
-        $reason = "curl exit code $exit_code (was $status)";
+        $reason = "$desc (was HTTP $status)";
     }
 
     if (should_log("DEBUG")) {
