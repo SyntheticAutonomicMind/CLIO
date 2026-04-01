@@ -173,22 +173,24 @@ When models provide reasoning content (toggle with `/api set thinking on`):
 
 **Inline format:**
 ```
-∙ THINKING
+∙ THINKING ->
+    ────────────────────────────────────
     reasoning content indented by 4 spaces
     continues here...
-
+    ────────────────────────────────────
 ```
 
 **Box format:**
 ```
 ┌──┤ THINKING
+    ────────────────────────────────────
     reasoning content indented by 4 spaces
     continues here...
-
+    ────────────────────────────────────
 ```
 
-- Header: DIM bullet/connector + ASSISTANT for "THINKING" (inline) or DIM connector + ASSISTANT name (box)
-- Content: DATA color, 4-space indent
+- Header: Three-color pattern (DIM bullet + ASSISTANT name + DIM separator) matching tool headers
+- Content: DATA color, 4-space indent, wrapped in hrule separators
 - Ends with blank line separator before the response
 
 ---

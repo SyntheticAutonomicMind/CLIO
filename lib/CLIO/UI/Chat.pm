@@ -485,35 +485,58 @@ sub _make_thinking_callback {
     my ($self, $spinner) = @_;
     my $thinking_active = 0;
     
+    # Helper: print a dim hrule indented by 4 spaces (matches ToolOutputFormatter)
+    my $print_thinking_hrule = sub {
+        my ($term_cols) = GetTerminalSize();
+        $term_cols ||= 80;
+        my $indent = '    ';
+        my $rule_len = $term_cols - length($indent) - 1;
+        $rule_len = 20 if $rule_len < 20;
+        my $hz = box_char('horizontal');
+        print $self->colorize("$indent" . ($hz x $rule_len), 'DIM') . "\n";
+        STDOUT->flush() if STDOUT->can('flush');
+    };
+
+    # Helper: print the thinking header in three-color format
+    my $print_thinking_header = sub {
+        my $tool_format = 'inline';
+        if ($self->{theme_mgr} && $self->{theme_mgr}->can('get_tool_display_format')) {
+            $tool_format = $self->{theme_mgr}->get_tool_display_format();
+        }
+        if ($tool_format eq 'inline') {
+            my $bullet = ui_char('bullet');
+            my $sep    = ui_char('separator');
+            my $b = $self->colorize($bullet, 'DIM');
+            my $n = $self->colorize(" THINKING ", 'ASSISTANT');
+            my $s = $self->colorize($sep, 'DIM');
+            print "$b$n$s\n";
+        } else {
+            print $self->colorize(box_char("topleft") . box_char("horizontal") x 2 . box_char("tleft") . " ", 'DIM');
+            print $self->colorize("THINKING", 'ASSISTANT');
+            print "\n";
+        }
+        STDOUT->flush() if STDOUT->can('flush');
+    };
+
     my $callback = sub {
         my ($content, $signal) = @_;
         
         my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
         return unless $show_thinking;
         
-        my $tool_format = 'inline';
-        if ($self->{theme_mgr} && $self->{theme_mgr}->can('get_tool_display_format')) {
-            $tool_format = $self->{theme_mgr}->get_tool_display_format();
-        }
-        
         if (defined $signal) {
             if ($signal eq 'start') {
                 $thinking_active = 1;
                 $spinner->stop();
-                if ($tool_format eq 'inline') {
-                    my $bullet = ui_char('tool_bullet');
-                    print $self->colorize("$bullet THINKING", 'DIM');
-                } else {
-                    print $self->colorize(box_char("topleft") . box_char("horizontal") x 2 . box_char("tleft") . " ", 'DIM');
-                    print $self->colorize("THINKING", 'ASSISTANT');
-                }
-                print "\n";
-                STDOUT->flush() if STDOUT->can('flush');
+                $print_thinking_header->();
+                $print_thinking_hrule->();
                 return;
             }
             elsif ($signal eq 'end') {
                 if ($thinking_active) {
-                    print "\n\n";
+                    print "\n";
+                    $print_thinking_hrule->();
+                    print "\n";
                     STDOUT->flush() if STDOUT->can('flush');
                 }
                 $thinking_active = 0;
@@ -527,23 +550,15 @@ sub _make_thinking_callback {
         if (!$thinking_active) {
             $thinking_active = 1;
             $spinner->stop();
-            if ($tool_format eq 'inline') {
-                my $bullet = ui_char('tool_bullet');
-                print $self->colorize("$bullet THINKING", 'DIM');
-            } else {
-                print $self->colorize(box_char("topleft") . box_char("horizontal") x 2 . box_char("tleft") . " ", 'DIM');
-                print $self->colorize("THINKING", 'ASSISTANT');
-            }
-            print "\n";
-            STDOUT->flush() if STDOUT->can('flush');
+            $print_thinking_header->();
+            $print_thinking_hrule->();
         }
         
         # Indent thinking content by 4 spaces
         $content =~ s/\n/\n    /g;
         if ($thinking_active == 1) {
-            # First content chunk: add leading indent
             $content = "    " . $content;
-            $thinking_active = 2;  # Mark first content printed
+            $thinking_active = 2;
         }
         print $self->colorize($content, 'DATA');
         STDOUT->flush() if STDOUT->can('flush');
