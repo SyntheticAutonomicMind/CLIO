@@ -11,7 +11,7 @@ binmode(STDERR, ':encoding(UTF-8)');
 
 use Carp qw(croak confess);
 use CLIO::Util::TextSanitizer qw(sanitize_text);
-use CLIO::UI::Terminal qw(box_char);
+use CLIO::UI::Terminal qw(box_char ui_char);
 
 =head1 NAME
 
@@ -83,6 +83,30 @@ sub _get_tool_format {
     return 'inline';
 }
 
+# Get a UI character, checking theme overrides first
+sub _ui_char {
+    my ($self, $name) = @_;
+    my $chat = $self->{chat};
+    if ($chat && $chat->{theme_mgr} && $chat->{theme_mgr}->can('get_ui_char')) {
+        return $chat->{theme_mgr}->get_ui_char($name);
+    }
+    return ui_char($name eq 'tool_bullet' ? 'bullet' :
+                   $name eq 'tool_separator' ? 'separator' : $name);
+}
+
+# Format an inline three-color message: ∙ LABEL -> content
+sub _format_inline_msg {
+    my ($self, $label, $label_color, $content, $content_color) = @_;
+    my $chat = $self->{chat};
+    my $bullet = $self->_ui_char('tool_bullet');
+    my $sep    = $self->_ui_char('tool_separator');
+    my $b = $chat->colorize($bullet, 'DIM');
+    my $n = $chat->colorize(" $label ", $label_color);
+    my $s = $chat->colorize("$sep ", 'DIM');
+    my $c = $chat->colorize($content, $content_color);
+    return "$b$n$s$c";
+}
+
 =head2 display_user_message($message)
 
 Display a user message with appropriate styling.
@@ -151,11 +175,7 @@ sub display_assistant_message {
 
 =head2 display_system_message($message)
 
-Display a system message using box-drawing format.
-
-Displays a system message with box-drawing format for consistency with tool output:
-  ┌──┤ SYSTEM
-  └─ System message text here
+Display a system message with inline three-color or box-drawing format.
 
 =cut
 
@@ -163,19 +183,14 @@ sub display_system_message {
     my ($self, $message) = @_;
     
     my $chat = $self->{chat};
-    
-    # Add to screen buffer
     $chat->add_to_buffer('system', $message);
     
-    my $tool_format = $self->_get_tool_format();
     my @lines = split /\n/, $message, -1;
     pop @lines if @lines && $lines[-1] eq '';
     
-    if ($tool_format eq 'inline') {
+    if ($self->_get_tool_format() eq 'inline') {
         for my $line (@lines) {
-            my $prefix = $chat->colorize("[SYSTEM] ", 'SYSTEM');
-            my $msg = $chat->colorize($line, 'DATA');
-            print "$prefix$msg\n";
+            print $self->_format_inline_msg('SYSTEM', 'SYSTEM', $line, 'WARNING'), "\n";
         }
     } else {
         my $header_conn = $chat->colorize(box_char("topleft") . box_char("horizontal") x 2 . box_char("tleft") . " ", 'DIM');
@@ -186,7 +201,7 @@ sub display_system_message {
             my $is_last = ($i == $#lines);
             my $connector = $is_last ? box_char("bottomleft") . box_char("horizontal") . " " : box_char("tright") . box_char("horizontal") . " ";
             my $conn_colored = $chat->colorize($connector, 'DIM');
-            my $msg_colored = $chat->colorize($lines[$i], 'DATA');
+            my $msg_colored = $chat->colorize($lines[$i], 'WARNING');
             print "$conn_colored$msg_colored\n";
         }
     }
@@ -209,14 +224,12 @@ sub display_error_message {
     $chat->add_to_buffer('error', $message);
     
     if ($self->_get_tool_format() eq 'inline') {
-        my $prefix = $chat->colorize("[ERROR] ", 'ERROR');
-        my $msg = $chat->colorize($message, 'DATA');
-        $chat->writeline("$prefix$msg", markdown => 0);
+        $chat->writeline($self->_format_inline_msg('ERROR', 'ERROR', $message, 'ERROR'), markdown => 0);
     } else {
         my $header_conn = $chat->colorize(box_char("topleft") . box_char("horizontal") x 2 . box_char("tleft") . " ", 'DIM');
         my $header_name = $chat->colorize("ERROR", 'ERROR');
         my $footer_conn = $chat->colorize(box_char("bottomleft") . box_char("horizontal") . " ", 'DIM');
-        my $footer_msg = $chat->colorize($message, 'DATA');
+        my $footer_msg = $chat->colorize($message, 'ERROR');
         $chat->writeline("$header_conn$header_name", markdown => 0);
         $chat->writeline("$footer_conn$footer_msg", markdown => 0);
     }
@@ -224,11 +237,7 @@ sub display_error_message {
 
 =head2 display_success_message($message)
 
-Display a success message with box-drawing format.
-
-Format:
-  ┌──┤ SUCCESS
-  └─ message
+Display a success message with inline three-color or box-drawing format.
 
 =cut
 
@@ -239,9 +248,7 @@ sub display_success_message {
     $chat->add_to_buffer('success', $message);
     
     if ($self->_get_tool_format() eq 'inline') {
-        my $prefix = $chat->colorize("[OK] ", 'SUCCESS');
-        my $msg = $chat->colorize($message, 'DATA');
-        $chat->writeline("$prefix$msg", markdown => 0);
+        $chat->writeline($self->_format_inline_msg('OK', 'SUCCESS', $message, 'DATA'), markdown => 0);
     } else {
         my $header_conn = $chat->colorize(box_char("topleft") . box_char("horizontal") x 2 . box_char("tleft") . " ", 'DIM');
         my $header_name = $chat->colorize("SUCCESS", 'SUCCESS');
@@ -254,11 +261,7 @@ sub display_success_message {
 
 =head2 display_warning_message($message)
 
-Display a warning message with box-drawing format.
-
-Format:
-  ┌──┤ WARNING
-  └─ message
+Display a warning message with inline three-color or box-drawing format.
 
 =cut
 
@@ -269,14 +272,12 @@ sub display_warning_message {
     $chat->add_to_buffer('warning', $message);
     
     if ($self->_get_tool_format() eq 'inline') {
-        my $prefix = $chat->colorize("[WARN] ", 'WARNING');
-        my $msg = $chat->colorize($message, 'DATA');
-        $chat->writeline("$prefix$msg", markdown => 0);
+        $chat->writeline($self->_format_inline_msg('WARNING', 'WARNING', $message, 'WARNING'), markdown => 0);
     } else {
         my $header_conn = $chat->colorize(box_char("topleft") . box_char("horizontal") x 2 . box_char("tleft") . " ", 'DIM');
         my $header_name = $chat->colorize("WARNING", 'WARNING');
         my $footer_conn = $chat->colorize(box_char("bottomleft") . box_char("horizontal") . " ", 'DIM');
-        my $footer_msg = $chat->colorize($message, 'DATA');
+        my $footer_msg = $chat->colorize($message, 'WARNING');
         $chat->writeline("$header_conn$header_name", markdown => 0);
         $chat->writeline("$footer_conn$footer_msg", markdown => 0);
     }
@@ -284,11 +285,7 @@ sub display_warning_message {
 
 =head2 display_info_message($message)
 
-Display an informational message with box-drawing format.
-
-Format:
-  ┌──┤ INFO
-  └─ message
+Display an informational message with inline three-color or box-drawing format.
 
 =cut
 
@@ -299,9 +296,7 @@ sub display_info_message {
     $chat->add_to_buffer('info', $message);
     
     if ($self->_get_tool_format() eq 'inline') {
-        my $prefix = $chat->colorize("[INFO] ", 'SYSTEM');
-        my $msg = $chat->colorize($message, 'DATA');
-        $chat->writeline("$prefix$msg", markdown => 0);
+        $chat->writeline($self->_format_inline_msg('INFO', 'ASSISTANT', $message, 'DATA'), markdown => 0);
     } else {
         my $header_conn = $chat->colorize(box_char("topleft") . box_char("horizontal") x 2 . box_char("tleft") . " ", 'DIM');
         my $header_name = $chat->colorize("INFO", 'ASSISTANT');
