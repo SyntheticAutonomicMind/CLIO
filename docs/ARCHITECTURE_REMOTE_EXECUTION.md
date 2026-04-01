@@ -1,447 +1,181 @@
-# Remote Execution & Distributed Agent Architecture
+# Remote Execution Architecture
 
-**Date:** 2026-02-01  
-**Author:** CLIO (with Andrew Wyatt)  
-**Status:** Design Phase
+Architecture reference for CLIO's distributed agent execution system.
 
-## Vision
+For user-facing documentation, see [REMOTE_EXECUTION.md](REMOTE_EXECUTION.md).
 
-Transform CLIO into a distributed orchestration platform where a local agent can:
+---
 
-1. **Remotely execute** complex tasks on specialized devices
-2. **Delegate work** to systems optimized for specific tasks
-3. **Offload processing** from resource-constrained environments
-4. **Gather intelligence** from multiple networked systems
-5. **Coordinate multi-stage workflows** across heterogeneous infrastructure
+## Overview
 
-This enables powerful use cases where a single development machine can coordinate work across multiple remote systems with different hardware, operating systems, and network connectivity.
+CLIO's remote execution system enables a local agent to execute tasks on remote systems via SSH. A local CLIO instance copies itself to the remote, runs a task, and retrieves results - all within a single tool call.
 
-## Architecture Overview
+### Key Modules
 
-### Layer 1: RemoteExecution Tool (Tactical)
+| Module | Lines | Purpose |
+|--------|-------|---------|
+| `CLIO::Tools::RemoteExecution` | ~1670 | Tool implementation (7 operations) |
+| `CLIO::Core::DeviceRegistry` | ~540 | Device/group management with ~/.clio/devices.json |
 
-**Purpose:** Direct, single-task remote execution  
-**Complexity:** Low  
-**Use Case:** One-off tasks, simple information gathering, straightforward builds, distributed compilation
+---
 
-**Responsibilities:**
-- SSH connection management
-- Config transfer (minimal set)
-- CLIO download/installation
-- Task execution
-- Result retrieval
-- Cleanup
+## Distribution Method
 
-**Key Design Decisions:**
-1. **Minimal Config Transfer**: Only send necessary credentials
-   - API provider URL (not in config, hardcoded)
-   - API model (user-specified or default)
-   - API key (via environment variable, never persisted on remote)
+Remote execution uses **rsync** to copy the local CLIO installation to the remote system:
 
-2. **Config Security**: Never persist full config on remote
-   - After execution, immediately delete transferred credentials
-   - Environment variables only for credential delivery
-   - No `.clio/config.json` left on remote by default
-
-3. **No Bi-directional Communication**: Remote CLIO runs autonomously
-   - Execute remote command, wait for completion
-   - Return results or error
-   - No streaming, no interactive prompts to local agent
-
-### Layer 2: RemoteDistribution Protocol (Strategic)
-
-**Purpose:** Complex, multi-stage workflows across remote systems  
-**Complexity:** High  
-**Use Case:** Build pipelines, hardware analysis, staged deployments
-
-**Responsibilities:**
-- Analyze task suitability for remote execution
-- Plan which files/data to transfer
-- Prepare environment on remote
-- Execute with monitoring
-- Verify success/failure
-- Decide on retry vs. error handling
-- Coordinate multi-system workflows
-
-**Phases:**
-
-#### Phase 1: Planning
-- Understand the task requirements
-- Determine if remote execution is appropriate
-- Identify data dependencies
-- Estimate resource needs
-- Validate remote system capabilities
-
-#### Phase 2: Preparation
-- Gather all required files for transfer
-- Create minimal configuration package
-- Prepare environment setup script (if needed)
-- Validate connectivity and authentication
-
-#### Phase 3: Execution
-- Use RemoteExecution tool to run the task
-- Monitor progress (if streaming support added later)
-- Capture all output and artifacts
-
-#### Phase 4: Verification
-- Check success/failure status
-- Validate output format/correctness
-- Decide if retry is appropriate
-- Log outcome for audit trail
-
-#### Phase 5: Cleanup & Result Processing
-- Delete temporary files on remote
-- Transfer results back to local system
-- Clean up local staging area
-- Return structured result
-
-## Data Models
-
-### RemoteTask (used by RemoteExecution tool)
-
-```perl
-{
-    # Connection info
-    host => 'user@hostname',           # SSH connection target
-    ssh_key => '/path/to/key',         # SSH key (optional, use ~/.ssh/default)
-    ssh_port => 22,                    # SSH port (optional, default 22)
-    
-    # Execution
-    command => 'Analyze hardware',     # Task description for CLIO
-    model => 'gpt-4.1',                # Model to use on remote
-    
-    # Configuration (MINIMAL - only what's needed)
-    api_provider => 'github_copilot',  # Provider (optional, default from config)
-    # API key passed via SSH_CLIO_API_KEY environment variable
-    # NO config.json transferred
-    
-    # Remote execution environment
-    clio_install_dir => '/tmp/clio',   # Where to install CLIO (default: /tmp/clio-<random>)
-    clio_source => 'github',           # github | local_tar | cached
-    
-    # Execution options
-    timeout => 300,                    # Max execution time (seconds)
-    cleanup => 1,                      # Delete CLIO after execution (default: yes)
-    capture_output => 1,               # Capture stdout/stderr
-    
-    # Results handling
-    output_file => 'report.md',        # Specific file to fetch back
-    output_dir => 'results/',          # Directory to fetch back
-}
+```
+Local CLIO install --rsync--> /tmp/clio-<random>/ on remote
 ```
 
-### RemoteWorkflow (used by RemoteDistribution protocol)
+This ensures:
+- Version consistency (remote always matches local)
+- No dependency on GitHub releases or network connectivity from the remote
+- Works on air-gapped networks (only needs SSH between local and remote)
 
-```perl
+Rsync excludes `.git/`, `.clio/sessions/`, and other non-essential files.
+
+---
+
+## Security Model
+
+### Credential Handling
+
+- **API key** is passed via environment variable (`SSH_CLIO_API_KEY`), never persisted on remote
+- **GitHub Copilot tokens** are auto-populated from the local session's active token
+- No `config.json` is written on the remote with credentials
+- Cleanup removes the entire CLIO installation after execution (default behavior)
+
+### SSH
+
+- Standard SSH key authentication (uses system default or specified key)
+- `StrictHostKeyChecking=accept-new` for first-time connections
+- Port configurable (default 22)
+- Host/port validation prevents injection attacks
+
+---
+
+## Operations
+
+### execute_remote
+
+Primary operation. Runs a single task on one remote system:
+
+1. Validate SSH connectivity
+2. Rsync CLIO to remote temp directory
+3. Create minimal config with API credentials
+4. Execute CLIO in non-interactive mode (`--input "task" --exit`)
+5. Capture stdout/stderr
+6. Retrieve specified output files
+7. Cleanup (if enabled)
+
+### execute_parallel
+
+Runs the same task on multiple devices simultaneously:
+
+1. Resolve targets (device names, group name, or `"all"`)
+2. Fork one process per target
+3. Each child runs `execute_remote` independently
+4. Parent collects results from all children
+5. Returns aggregated results
+
+### Other Operations
+
+| Operation | Purpose |
+|-----------|---------|
+| `prepare_remote` | Pre-stage CLIO without executing |
+| `cleanup_remote` | Remove CLIO from remote |
+| `check_remote` | Verify SSH connectivity and requirements |
+| `transfer_files` | Copy files to remote |
+| `retrieve_files` | Fetch files from remote |
+
+---
+
+## Device Registry
+
+Devices and groups are stored in `~/.clio/devices.json`:
+
+```json
 {
-    name => 'Multi-Device Analysis Pipeline',
-    description => 'Analyze and build on multiple remote systems',
-    
-    # Task breakdown
-    stages => [
-        {
-            name => 'Analyze',
-            task => 'Gather system specs and environment info',
-            target => 'all',                    # all | device_list
-            devices => ['dev1', 'dev2', 'dev3'],   # Specific devices
-            
-            # What to transfer to this stage
-            files_to_transfer => [
-                '/path/to/project',
-                '/path/to/analysis_script.sh',
-            ],
-            
-            # How to execute
-            command => 'Run system analysis and save to report.json',
-            model => 'gpt-4o-mini',  # Can use different model per stage
-            
-            # What to bring back
-            expected_outputs => ['report.json', 'system.log'],
-        },
-        {
-            name => 'Build',
-            task => 'Compile project for this system',
-            target => 'per-device',
-            
-            # Continue with device results from Analyze stage
-            depends_on => 'Analyze',
-            use_stage_outputs => 1,
-            
-            command => 'Build with system-specific optimizations',
-            timeout => 900,
-        },
-    ],
-    
-    # Error handling strategy
-    error_handling => {
-        retry_failed_devices => 1,
-        max_retries => 2,
-        fail_fast => 0,  # Continue with other devices even if one fails
-        notification => 'send_summary',  # notify_user | send_summary | silent
+    "devices": {
+        "build-server": {
+            "host": "user@build.local",
+            "ssh_key": "~/.ssh/build_key",
+            "description": "ARM build server"
+        }
     },
-    
-    # Aggregation strategy for multi-device
-    aggregation => {
-        merge_outputs => 1,
-        create_summary => 1,
-        report_format => 'markdown',
-    },
+    "groups": {
+        "handhelds": ["steam-deck", "legion-go", "ally-x"]
+    }
 }
 ```
 
-### RemoteResult
+Managed via the `/device` command:
+- `/device add <name> <host>` - Register a device
+- `/device remove <name>` - Unregister
+- `/device list` - Show all devices and groups
+- `/device group create <name>` - Create a group
+- `/device group add <group> <device>` - Add device to group
 
-```perl
-{
-    success => 1,
-    host => 'user@remote-host',
-    
-    # Task info
-    command => 'Analyze system',
-    execution_time => 45.2,
-    
-    # Output
-    stdout => '...',
-    stderr => '...',
-    exit_code => 0,
-    
-    # Retrieved files
-    files => {
-        'report.md' => '/local/path/to/report.md',
-        'data.json' => '/local/path/to/data.json',
-    },
-    
-    # Metadata for retry/debugging
-    attempt => 1,
-    retry_info => {
-        should_retry => 0,
-        reason => 'Success',
-    },
-}
-```
+The `execute_parallel` operation accepts group names or device names as targets.
 
-## RemoteExecution Tool API
+---
 
-### Operation: execute_remote
+## Feature Toggle
 
-**Description:** Execute a command on a remote system via CLIO
-
-**Parameters:**
-```json
-{
-    "operation": "execute_remote",
-    "host": "user@remote-system",
-    "command": "Analyze the system and environment",
-    "model": "gpt-4.1",
-    "api_key": "ghp_...",  // Via SSH_CLIO_API_KEY env var
-    "timeout": 300,
-    "cleanup": true
-}
-```
-
-**Returns:**
-```json
-{
-    "success": true,
-    "output": "Analysis complete...",
-    "host": "user@remote-system",
-    "exit_code": 0,
-    "execution_time": 45.2,
-    "files_retrieved": ["report.md"]
-}
-```
-
-### Operation: prepare_remote
-
-**Description:** Pre-stage CLIO on a remote system without executing
-
-**Parameters:**
-```json
-{
-    "operation": "prepare_remote",
-    "host": "user@remote-system",
-    "api_key": "ghp_...",
-    "clio_source": "github",
-    "install_dir": "/tmp/clio"
-}
-```
-
-**Returns:**
-```json
-{
-    "success": true,
-    "host": "user@remote-system",
-    "clio_version": "20260201.1",
-    "install_dir": "/tmp/clio"
-}
-```
-
-### Operation: cleanup_remote
-
-**Description:** Remove CLIO and cleanup temporary files
-
-**Parameters:**
-```json
-{
-    "operation": "cleanup_remote",
-    "host": "user@remote-system",
-    "install_dir": "/tmp/clio"
-}
-```
-
-## RemoteDistribution Protocol
-
-**Purpose:** Orchestrate complex multi-stage workflows
-
-**Entry Point:**
-```perl
-my $remote_dist = CLIO::Protocols::RemoteDistribution->new();
-my $result = $remote_dist->execute_workflow($workflow, $context);
-```
-
-**Workflow Execution:**
-1. Parse workflow definition
-2. Validate all stages
-3. For each stage:
-   a. Prepare remote environments
-   b. Transfer files
-   c. Execute via RemoteExecution tool
-   d. Capture results
-   e. Transfer back results
-4. Aggregate results across devices
-5. Return comprehensive summary
-
-## Security Considerations
-
-### 1. API Key Handling
-
-**NEVER:**
-- Write API key to remote filesystem
-- Store in ~/.clio/config.json on remote
-- Log API key in any output
-
-**DO:**
-- Pass API key via SSH_CLIO_API_KEY environment variable
-- Delete environment variable immediately after use
-- Use SSH's secure channel for credential transport
-
-### 2. Configuration Transfer
-
-**NEVER:**
-- Transfer full ~/.clio/config.json
-- Transfer ~/.clio/github_tokens.json
-- Leave any sensitive config on remote after execution
-
-**DO:**
-- Construct minimal in-memory config on remote
-- Only include API provider URL and model
-- Pass credentials via secure channel
-- Clean up immediately
-
-### 3. File Transfer Security
-
-- Use SCP/SFTP (over SSH) for all file transfers
-- Verify file integrity with checksums
-- Use temporary directories with restricted permissions
-- Cleanup all temporary files after execution
-
-### 4. Session Isolation
-
-- Each remote execution in isolated temp directory
-- No config persistence between executions
-- No state sharing except explicit result files
-- Clear session data after completion
-
-## Implementation Roadmap
-
-### Phase 1: Foundation (Today)
-- [ ] Create RemoteExecution.pm tool
-- [ ] Implement execute_remote operation
-- [ ] Basic SSH connectivity
-- [ ] Config transfer (secure)
-- [ ] CLIO download and execute
-- [ ] Result retrieval
-
-### Phase 2: Enhancement
-- [ ] prepare_remote operation (pre-stage)
-- [ ] cleanup_remote operation (explicit cleanup)
-- [ ] Error handling and retry logic
-- [ ] Timeout management
-- [ ] Comprehensive logging
-
-### Phase 3: Protocol
-- [ ] RemoteDistribution.pm protocol
-- [ ] Multi-device workflows
-- [ ] Result aggregation
-- [ ] Workflow definition DSL
-- [ ] Status reporting
-
-### Phase 4: Skills
-- [ ] Document as reusable skill
-- [ ] PowerDeck integration
-- [ ] Example workflows
-- [ ] Best practices guide
-
-## PowerDeck Integration Example
+Remote execution can be disabled via configuration:
 
 ```
-User: "Analyze all PowerDeck devices and create a unified report"
-
-Local CLIO:
-1. Plans: Need to gather hardware info from 5 devices
-2. Prepares: Create minimal config, gather any needed files
-3. Executes (via RemoteDistribution protocol):
-   - For each device (laptop, desktop, server1, server2, workstation):
-     a. SSH connect
-     b. Transfer CLIO + minimal config
-     c. Execute: "Analyze this device's hardware"
-     d. Retrieve report_<device>.md
-     e. Cleanup
-4. Aggregates: Merge all reports into unified_report.md
-5. Returns: Comprehensive analysis across all devices
+/config set enable_remote off
 ```
 
-## Testing Strategy
+When disabled, the `remote_execution` tool is not registered in the tool registry and is unavailable to the AI agent.
 
-### Unit Tests
-- SSH connection validation
-- Config minimization logic
-- File transfer simulation
-- Error handling for each operation
+---
 
-### Integration Tests
-- End-to-end execution with mock remote
-- Multi-device workflow (using local as mock)
-- Error recovery and retry logic
-- File cleanup verification
+## Data Flow
 
-### PowerDeck Validation
-- Real execution on 1-2 actual devices
-- Verify credential security
-- Check file cleanup
-- Measure performance
+```
+User/Agent Request
+    │
+    ▼
+RemoteExecution.route_operation()
+    │
+    ├─ execute_remote ──▶ _validate_execute_params()
+    │                         │
+    │                         ▼
+    │                    _validate_ssh_setup()
+    │                         │
+    │                         ▼
+    │                    rsync local CLIO to remote
+    │                         │
+    │                         ▼
+    │                    _ssh_exec("clio --input 'task' --exit")
+    │                         │
+    │                         ▼
+    │                    retrieve output files
+    │                         │
+    │                         ▼
+    │                    cleanup (if enabled)
+    │
+    ├─ execute_parallel ──▶ _resolve_targets() via DeviceRegistry
+    │                         │
+    │                         ▼
+    │                    fork() per target
+    │                         │
+    │                         ▼
+    │                    each child: execute_remote()
+    │                         │
+    │                         ▼
+    │                    collect & aggregate results
+    │
+    └─ check_remote ──▶ SSH connectivity test
+```
 
-## Success Criteria
+---
 
-1. ✓ RemoteExecution tool works for single-task execution
-2. ✓ No credentials persist on remote after execution
-3. ✓ Multi-device workflows complete successfully
-4. ✓ Results properly aggregated and returned
-5. ✓ Performance reasonable for interactive use
-6. ✓ Error handling graceful with clear feedback
-7. ✓ Skill documented and reusable
+## Limitations
 
-## Open Questions
-
-1. Should we support bi-directional streaming? (Phase 3.5)
-2. How to handle offline devices? (Queue, retry schedule, etc.)
-3. Should we cache CLIO binary on remote to avoid re-download?
-4. How to handle version mismatches between local and remote CLIO?
-5. Should we support different models per device?
-
-## References
-
-- PowerDeck project requirements
-- CLIO tool architecture (Tool.pm, Registry.pm)
-- Protocol architecture (ProtocolIntegration.pm)
-- Session management patterns
+- **No streaming:** Remote execution returns results after completion (no incremental output)
+- **No interactive prompts:** Remote CLIO runs in `--input --exit` mode only
+- **SSH required:** No support for other transport protocols
+- **Single model per task:** Each remote execution uses one model (can differ per device in parallel)

@@ -194,6 +194,11 @@ clio/
           CommandHandler.pm # Slash command routing
           ProgressSpinner.pm  # Animated busy indicator
           Multiplexer.pm    # Multiplexer detection and pane management
+          StreamingController.pm # Streaming response display and pagination
+          PaginationManager.pm # Page-based output display
+          DiffRenderer.pm   # Unified diff display with syntax coloring
+          Terminal.pm       # Terminal capability detection
+          HostProtocol.pm   # Structured protocol for GUI host apps
           Multiplexer/      # Multiplexer drivers
               Tmux.pm  Screen.pm  Zellij.pm
           Commands/         # Slash command handlers
@@ -203,6 +208,8 @@ clio/
               Mux.pm  Profile.pm  Project.pm  Prompt.pm
               Session.pm  Skills.pm  Spec.pm  Stats.pm
               SubAgent.pm  System.pm  Todo.pm  Update.pm
+              API/          # API sub-command handlers
+                  Auth.pm  Config.pm  Models.pm
       Session/              # Session management
           Manager.pm        # Session manager
           State.pm          # Session state
@@ -634,100 +641,50 @@ sub handle_query {
 
 ## Adding New AI Providers
 
-### Provider Interface
+### Provider Architecture
 
-AI providers implement a standard interface for API communication.
+CLIO's provider system is built into APIManager.pm. Each provider is defined by its configuration (endpoints, headers, payload format) rather than a separate class. The `_prepare_api_request` method builds provider-specific payloads, and `ResponseHandler.pm` parses responses.
 
-**Create `lib/CLIO/Core/Providers/MyProvider.pm`:**
+**Key files to modify:**
+- `lib/CLIO/Core/APIManager.pm` - Add provider config, endpoint logic
+- `lib/CLIO/Core/API/ResponseHandler.pm` - Handle provider-specific response formats
+- `lib/CLIO/Core/ModelRegistry.pm` - Add model definitions and metadata
+- `lib/CLIO/Core/Config.pm` - Add provider defaults (base URL, etc.)
 
-```perl
-package CLIO::Core::Providers::MyProvider;
+**Step 1: Add provider config in Config.pm**
 
-use strict;
-use warnings;
-use HTTP::Tiny;
-use JSON::PP;
-
-sub new {
-    my ($class, %opts) = @_;
-    
-    my $self = {
-        api_key => $ENV{MY_PROVIDER_API_KEY} || $opts{api_key},
-        base_url => 'https://api.myprovider.com/v1',
-        debug => $opts{debug} || 0,
-    };
-    
-    return bless $self, $class;
-}
-
-sub send_request {
-    my ($self, $messages, $tools) = @_;
-    
-    my $http = HTTP::Tiny->new(
-        timeout => 30,
-        default_headers => {
-            'Authorization' => "Bearer $self->{api_key}",
-            'Content-Type' => 'application/json',
-        },
-    );
-    
-    my $payload = {
-        model => 'myprovider-model',
-        messages => $messages,
-        tools => $tools,
-        stream => JSON::PP::true,
-    };
-    
-    my $response = $http->post(
-        "$self->{base_url}/chat/completions",
-        {
-            content => encode_json($payload),
-        }
-    );
-    
-    if ($response->{success}) {
-        return $self->parse_response($response->{content});
-    }
-    else {
-        die "API request failed: $response->{reason}\n";
-    }
-}
-
-sub parse_response {
-    my ($self, $content) = @_;
-    
-    # Parse streaming response
-    # Extract messages and tool calls
-    
-    return {
-        message => $message,
-        tool_calls => \@tool_calls,
-    };
-}
-
-1;
-```
-
-**Integrate in APIManager:**
-
-Edit `lib/CLIO/Core/APIManager.pm`:
+Add your provider to `_get_provider_defaults()`:
 
 ```perl
-use CLIO::Core::Providers::MyProvider;
-
-sub new {
-    my ($class, %opts) = @_;
-    
-    # ... existing code ...
-    
-    # Auto-detect provider
-    if ($ENV{MY_PROVIDER_API_KEY}) {
-        $provider = CLIO::Core::Providers::MyProvider->new(debug => $debug);
-    }
-    
-    # ... rest of code ...
-}
+myprovider => {
+    base_url => 'https://api.myprovider.com/v1',
+    model => 'my-model-latest',
+},
 ```
+
+**Step 2: Add endpoint logic in APIManager**
+
+In `_prepare_api_request()`, add a case for your provider to build the correct URL, headers, and payload format. Most providers follow the OpenAI chat completions format (`/chat/completions` endpoint with messages array).
+
+**Step 3: Add model metadata in ModelRegistry**
+
+Define available models with their context windows and capabilities:
+
+```perl
+'my-model-latest' => {
+    context_window => 128000,
+    supports_tools => 1,
+    supports_streaming => 1,
+},
+```
+
+**Step 4: Handle response quirks in ResponseHandler**
+
+If the provider returns tool calls, reasoning content, or error codes differently from the OpenAI format, add handling in ResponseHandler.pm.
+
+**Step 5: Add to PROVIDERS.md documentation**
+
+**Reference implementation:** See the MiniMax provider (commits `72e7080` through `93556e1`) for a recent example of adding a new provider with Token Plan billing, static model lists, and reasoning content support.
 
 ---------------------------------------------------
 

@@ -75,6 +75,17 @@ A single request might involve dozens of tool calls - reading files, searching c
 
 Responses stream in real-time, token by token. You see the AI "thinking" as it types. Tool operations show live action descriptions so you know exactly what's happening.
 
+### Thinking/Reasoning Display
+
+When using models that support extended thinking (OpenAI reasoning, Anthropic thinking blocks, Google thoughts, OpenRouter reasoning), CLIO can display the model's internal reasoning process:
+
+```
+/api set thinking on     # Enable thinking display
+/api set thinking off    # Disable (default)
+```
+
+When enabled, reasoning content appears in a distinct visual style before the main response, giving you visibility into the model's thought process.
+
 ### Iteration and Error Recovery
 
 When something goes wrong - a syntax error, a failed test, an unexpected file structure - CLIO doesn't stop. It reads the error, adjusts its approach, and tries again. In interactive mode CLIO has no iteration limit. In non-interactive mode (scripting, sub-agents) a default of 75 iterations applies. Both are configurable.
@@ -126,7 +137,9 @@ A dedicated git tool with 10 operations - not just "run git via shell" but struc
 | `pull` | Pull from remote |
 | `blame` | File annotation/blame |
 | `stash` | Save, list, apply, or drop stashed changes |
-| `tag` | List, create, or delete tags |
+| `worktree` | Manage git worktrees (list, add, remove) |
+
+**Unified diff display:** When CLIO shows diffs (via `/status`, `/diff`, `git diff`, or the undo system), it renders them with syntax coloring - additions in green, deletions in red, context in dim, and hunk headers highlighted. This makes reviewing changes significantly easier in the terminal.
 
 ### Terminal Operations
 
@@ -139,6 +152,8 @@ Commands are validated before execution. CLIO shows the command text before runn
 - **Multiplexer pane** - When running inside tmux, GNU Screen, or Zellij, commands open in a new pane. Output is captured via log file while the pane stays live.
 
 **Process safety:** Commands are spawned in their own process group (via `setpgid`). On ESC interrupt or timeout, CLIO sends SIGTERM to the entire group (killing shells, ssh connections, and any grandchild processes), then SIGKILL after 2 seconds if needed. This prevents orphaned processes accumulating in the background.
+
+**Activity-based timeouts:** CLIO uses idle timeout detection rather than wall-clock timeouts. If a command is actively producing output (build logs, test results), it keeps running. Commands are only killed after the idle timeout (default 60 seconds) with no output. A hard ceiling (default 600 seconds, configurable via `CLIO_TERMINAL_MAX_TIMEOUT`) prevents infinite runs.
 
 ### Apply Patch
 
@@ -195,7 +210,7 @@ Connect to external tool servers via the Model Context Protocol. See [MCP Integr
 
 ## 3. AI Providers
 
-CLIO supports 9 AI providers out of the box. Switch between them at any time - even mid-session.
+CLIO supports 10 AI providers out of the box. Switch between them at any time - even mid-session.
 
 | Provider | Type | Authentication |
 |----------|------|---------------|
@@ -205,6 +220,7 @@ CLIO supports 9 AI providers out of the box. Switch between them at any time - e
 | **Google Gemini** | Cloud | API key |
 | **DeepSeek** | Cloud | API key |
 | **OpenRouter** | Cloud | API key |
+| **MiniMax** | Cloud | API key (Token Plan support) |
 | **llama.cpp** | Local | None |
 | **LM Studio** | Local | None |
 | **SAM** | Local | API key (optional) |
@@ -240,7 +256,7 @@ Each provider offers multiple models. CLIO automatically queries available model
 
 ```
 /api models              # List available models
-/api set model gpt-4.1   # Switch to a specific model
+/api set model <model-name>   # Switch to a specific model
 ```
 
 ### Model Aliases and Quick Switch
@@ -248,10 +264,10 @@ Each provider offers multiple models. CLIO automatically queries available model
 Create short aliases for frequently-used models:
 
 ```
-/api alias fast gpt-4.1-mini    # Create alias 'fast'
+/api alias fast <model-name>    # Create alias 'fast'
 /api alias                      # List all aliases
 /model fast                     # Quick switch to 'fast' model (resolves alias)
-/model gpt-4.1                  # Quick switch to any model by name
+/model <model-name>             # Quick switch to any model by name
 /model                          # Show current model and aliases
 ```
 
@@ -273,6 +289,7 @@ Every conversation in CLIO is a **session**. Sessions persist to disk automatica
 clio --new              # Start a new session
 clio --resume           # Resume the most recent session
 clio --session <id>     # Resume a specific session
+clio --sessions         # List all sessions from the command line
 ```
 
 ### Session Commands
@@ -512,7 +529,7 @@ These send structured prompts to the AI:
 | `/config save` | Save config to disk |
 | `/theme <name>` | Switch color theme |
 | `/style <name>` | Switch UI style |
-| `/loglevel <level>` | Set logging level |
+| `/loglevel <level>` | Set logging level (persists to config) |
 
 ### Git Commands
 
@@ -1034,6 +1051,28 @@ For GitHub Copilot, CLIO tracks premium request quotas and warns when approachin
 - Cost estimates per provider
 - Premium request counts
 - Model-specific multipliers
+
+---
+
+## 21. Host Application Protocol
+
+When CLIO is embedded inside a GUI application, it can emit structured events via OSC escape sequences that the host intercepts to drive native UI elements.
+
+**Enable host protocol:**
+```bash
+export CLIO_HOST_PROTOCOL=1
+```
+
+**Events emitted:**
+- `status` - Agent state changes (thinking, streaming, tools, idle)
+- `tool_start` / `tool_end` - Tool execution lifecycle with descriptions
+- `spinner_start` / `spinner_stop` - Activity indicator events
+- `session` - Session metadata (ID, title, model)
+- `tokens` - Real-time token usage updates
+- `todo` - Todo list state changes
+- `title` - Conversation title updates
+
+Events are encoded as `\033]0;clio:<event_type>:<json_payload>\007` in OSC 0 sequences. The host application's terminal title callback intercepts and parses these. Zero overhead when not in host mode - the module is a no-op when `CLIO_HOST_PROTOCOL` is unset.
 
 ---
 

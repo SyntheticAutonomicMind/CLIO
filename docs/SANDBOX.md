@@ -176,6 +176,34 @@ This handles:
 | Maximum security required | `clio-container` |
 | CI/CD pipelines | Container image directly |
 
+## Additional Security Features
+
+These features work independently of sandbox mode but complement it:
+
+### Secret Redaction
+
+CLIO automatically detects and redacts secrets (API keys, tokens, passwords) from AI context. Configure the level:
+
+```
+/api set redact_level standard   # Default - redacts common secrets
+/api set redact_level aggressive # Also redacts emails, IPs, paths
+/api set redact_level off        # Disable redaction
+```
+
+See `CLIO::Security::SecretRedactor` for details.
+
+### Invisible Character Filtering
+
+CLIO strips invisible Unicode characters (zero-width spaces, directional overrides, etc.) from user input to prevent prompt injection attacks via invisible character sequences.
+
+See `CLIO::Security::InvisibleCharFilter` for details.
+
+### Path Authorization
+
+Outside sandbox mode, CLIO uses a session-level path authorization system (`CLIO::Security::PathAuthorizer`) to track which paths the agent has been granted access to, preventing accidental access to sensitive system directories.
+
+---
+
 ## Security Best Practices
 
 1. **Review changes before committing** - Use `git diff` before `git commit`
@@ -183,8 +211,10 @@ This handles:
 3. **Don't rely solely on soft sandbox** - It prevents accidents, not attacks
 4. **Use containers for sensitive work** - When mistakes could be costly
 5. **Consider network isolation** - Container doesn't restrict network by default
+6. **Enable secret redaction** - Prevents accidental API key leakage to AI providers
 
 ## See Also
 
 - [USER_GUIDE.md](USER_GUIDE.md) - General usage guide
 - [REMOTE_EXECUTION.md](REMOTE_EXECUTION.md) - Remote execution (blocked in sandbox)
+- [SECURITY.md](../SECURITY.md) - Security policy

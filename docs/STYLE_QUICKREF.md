@@ -131,6 +131,16 @@ green-screen, photon, retro-rainbow, vt100
 
 **Flair/Nature:** monokai, synthwave, cyberpunk, matrix, ocean, forest
 
+## Theme Templates
+
+The theme system also defines output templates using `{style.*}` references:
+
+| Template | Default |
+|----------|---------|
+| `thinking_indicator` | `{style.dim}(thinking...)@RESET@` |
+
+Templates are rendered at display time with style token substitution.
+
 ## More Info
 
 Full guide: `docs/STYLE_GUIDE.md`
