@@ -59,19 +59,16 @@ subtest 'generate_non_interactive_section - content' => sub {
     like($section, qr/DO complete the task/, 'Contains completion instruction');
 };
 
-# Test 4: generate_ltm_section - no session
-subtest 'generate_ltm_section - no session' => sub {
+# Test 4: LTM no longer injected by PromptBuilder (now handled by PromptManager)
+subtest 'LTM injection removed from PromptBuilder' => sub {
     my $builder = CLIO::Core::PromptBuilder->new();
-    my $section = $builder->generate_ltm_section(undef);
-    is($section, '', 'Empty string for undef session');
+    ok(!$builder->can('generate_ltm_section'), 'generate_ltm_section removed (now in PromptManager)');
 };
 
-# Test 5: generate_ltm_section - session without LTM
-subtest 'generate_ltm_section - no LTM method' => sub {
-    my $builder = CLIO::Core::PromptBuilder->new();
-    my $session = bless {}, 'FakeSession';
-    my $section = $builder->generate_ltm_section($session);
-    is($section, '', 'Empty string when session has no LTM');
+# Test 5: skip_ltm flag still logged
+subtest 'skip_ltm flag handling' => sub {
+    my $builder = CLIO::Core::PromptBuilder->new(skip_ltm => 1);
+    is($builder->{skip_ltm}, 1, 'skip_ltm flag preserved');
 };
 
 # Test 6: tools section cache

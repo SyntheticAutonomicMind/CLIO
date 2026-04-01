@@ -7,8 +7,6 @@ use strict;
 use warnings;
 use utf8;
 use parent 'CLIO::UI::Commands::Base';
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 
 use Carp qw(croak);
 
@@ -236,7 +234,7 @@ sub _install_update {
             if ($path_mismatch && $running_path) {
                 $self->writeline("", markdown => 0);
                 $self->display_info_message(
-                    "NOTE: You are running CLIO from: $running_path"
+                    "NOTE: You are running " . ($ENV{CLIO_AGENT_NAME} || 'CLIO') . " from: $running_path"
                 );
                 $self->writeline(
                     "      This differs from '" . ($which_path || 'clio') .

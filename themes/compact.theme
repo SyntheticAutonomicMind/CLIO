@@ -10,7 +10,7 @@ system_prefix={style.system_message}SYS: @RESET@
 error_prefix={style.error_message}ERR: @RESET@
 
 # Banner - condensed
-banner_line1={style.app_title}CLIO@RESET@ {style.dim}v1.0@RESET@
+banner_line1={style.app_title}{var.agent_name}@RESET@ {style.dim}v1.0@RESET@
 banner_line2={style.dim}Session: {style.data}{var.session_id}@RESET@
 banner_line3={style.dim}Model: {style.data}{var.model}@RESET@
 banner_line4={style.dim}Type "{style.data}/help{style.dim}" for commands.@RESET@
@@ -29,11 +29,11 @@ nav_previous={style.prompt_indicator}P@RESET@
 nav_quit={style.prompt_indicator}Q@RESET@
 pagination_info={style.dim}{var.info}@RESET@
 
-# Pagination prompts (box-drawing format with proper closures)
-# Two-part pause: hint tells what to do, prompt shows page status
-pagination_hint_streaming={style.dim}{char.topleft}{char.horizontal}{char.horizontal}{char.tleft} {style.agent_label}Q {style.dim}{char.vertical} {style.agent_label}More@RESET@
-pagination_hint_full={style.dim}{char.topleft}{char.horizontal}{char.horizontal}{char.tleft} {style.agent_label}^v {style.dim}{char.vertical} {style.agent_label}Q {style.dim}{char.vertical} {style.agent_label}More@RESET@
-pagination_prompt={style.dim}{char.bottomleft}{char.horizontal}{char.tleft} {style.data}{var.current}/{var.total} {style.dim}{char.vertical} {style.agent_label}{var.nav_hint}Q {style.dim}{char.vertical} {style.prompt_indicator}> @RESET@
+# Pagination prompts (single-line pause format)
+pagination_hint_streaming=
+pagination_hint_full=
+pagination_prompt_streaming={style.dim}{char.bullet} {style.agent_label}Q{style.dim} {char.pipe} more @RESET@
+pagination_prompt={style.dim}{char.bullet} {style.data}{var.current}/{var.total} {style.dim}{char.pipe} {var.nav_hint}{style.agent_label}Q{style.dim} {char.pipe} more @RESET@
 
 # Input prompts (box-drawing - compact style)
 input_prompt={style.dim}{char.topleft}{char.horizontal}{char.horizontal}{char.tleft} {style.prompt_indicator}{var.prompt}@RESET@

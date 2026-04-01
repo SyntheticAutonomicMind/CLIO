@@ -7,10 +7,9 @@ use strict;
 use warnings;
 use utf8;
 use parent 'CLIO::UI::Commands::Base';
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 
 use Carp qw(croak);
+use CLIO::UI::Terminal qw(box_char);
 
 =head1 NAME
 
@@ -420,25 +419,25 @@ sub _show_stats {
     
     my $total = $stats->{discoveries} + $stats->{solutions} + $stats->{patterns} + 
                 $stats->{workflows} + $stats->{failures};
-    $self->writeline("  " . "─" x 20, markdown => 0);
+    $self->writeline("  " . box_char('horizontal') x 20, markdown => 0);
     $self->writeline(sprintf("  Total:          %3d", $total), markdown => 0);
     $self->writeline("", markdown => 0);
     
     # Timestamps
     if ($stats->{created}) {
         my @t = localtime($stats->{created});
-        printf "Created:      %04d-%02d-%02d %02d:%02d\n", 
-            $t[5]+1900, $t[4]+1, $t[3], $t[2], $t[1];
+        $self->writeline(sprintf("  Created:      %04d-%02d-%02d %02d:%02d", 
+            $t[5]+1900, $t[4]+1, $t[3], $t[2], $t[1]), markdown => 0);
     }
     if ($stats->{last_updated}) {
         my @t = localtime($stats->{last_updated});
-        printf "Last updated: %04d-%02d-%02d %02d:%02d\n",
-            $t[5]+1900, $t[4]+1, $t[3], $t[2], $t[1];
+        $self->writeline(sprintf("  Last updated: %04d-%02d-%02d %02d:%02d",
+            $t[5]+1900, $t[4]+1, $t[3], $t[2], $t[1]), markdown => 0);
     }
     if ($stats->{last_pruned}) {
         my @t = localtime($stats->{last_pruned});
-        printf "Last pruned:  %04d-%02d-%02d %02d:%02d\n",
-            $t[5]+1900, $t[4]+1, $t[3], $t[2], $t[1];
+        $self->writeline(sprintf("  Last pruned:  %04d-%02d-%02d %02d:%02d",
+            $t[5]+1900, $t[4]+1, $t[3], $t[2], $t[1]), markdown => 0);
     }
     
     $self->writeline("", markdown => 0);

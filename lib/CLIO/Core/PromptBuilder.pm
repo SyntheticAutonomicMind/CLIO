@@ -6,8 +6,6 @@ package CLIO::Core::PromptBuilder;
 use strict;
 use warnings;
 use utf8;
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 
 use CLIO::Core::Logger qw(log_error log_warning log_info log_debug);
 use Cwd qw(getcwd);
@@ -94,12 +92,10 @@ sub build_system_prompt {
     # Dynamically add available tools section from tool registry
     my $tools_section = $self->generate_tools_section();
 
-    # Build LTM context section if session is available AND not skipping LTM
-    my $ltm_section = '';
-    if ($session && !$self->{skip_ltm}) {
-        $ltm_section = $self->generate_ltm_section($session);
-    } elsif ($self->{skip_ltm}) {
-        log_debug('PromptBuilder', "Skipping LTM injection (--no-ltm or --incognito)");
+    # LTM is now handled by PromptManager (budgeted, scored, with index footer)
+    # PromptBuilder no longer injects a separate LTM section to avoid duplication
+    if ($self->{skip_ltm}) {
+        log_debug('PromptBuilder', "LTM injection skipped (--no-ltm or --incognito)");
     }
 
     # Build user profile section if available AND not in incognito mode
@@ -115,13 +111,7 @@ sub build_system_prompt {
         $base_prompt .= "\n\n$tools_section";
     }
 
-    # Insert LTM section after tools section if available
-    if ($ltm_section) {
-        $base_prompt .= "\n\n$ltm_section";
-        log_debug('PromptBuilder', "Added LTM context section to prompt");
-    }
-
-    # Insert user profile section after LTM
+    # Insert user profile section after tools section
     if ($profile_section) {
         $base_prompt .= "\n\n$profile_section";
         log_debug('PromptBuilder', "Added user profile section to prompt");
@@ -232,7 +222,7 @@ sub generate_tools_section {
     $section .= "**file_operations** with operation= read_file | write_file | grep_search | file_search | list_dir | etc.\n";
     $section .= "**version_control** with operation= status | log | diff | commit | push | pull | branch | stash | tag\n";
     $section .= "**terminal_operations** with operation= exec | validate\n";
-    $section .= "**memory_operations** with operation= store | retrieve | search | list | delete | recall_sessions\n";
+    $section .= "**memory_operations** with operation= store | retrieve | search | list | delete | recall_sessions | add_discovery | add_solution | add_pattern | update_ltm | prune_ltm | ltm_stats\n";
     $section .= "**web_operations** with operation= search_web | fetch_url\n";
     $section .= "**todo_operations** with operation= read | write | update | add\n";
     $section .= "**code_intelligence** with operation= list_usages | search_history\n";
@@ -356,111 +346,6 @@ sub generate_profile_section {
     return $mgr->generate_prompt_section();
 }
 
-=head2 generate_ltm_section
-
-Build a section with relevant Long-Term Memory patterns from the session.
-
-Arguments:
-- $session: Session object with LTM access
-
-Returns:
-- Markdown text with relevant LTM patterns (empty string if no patterns)
-
-=cut
-
-sub generate_ltm_section {
-    my ($self, $session) = @_;
-
-    return '' unless $session;
-
-    my $ltm = eval { $session->get_long_term_memory() };
-    if ($@ || !$ltm) {
-        log_debug('PromptBuilder', "No LTM available: $@");
-        return '';
-    }
-
-    my $discoveries = eval { $ltm->query_discoveries(limit => 3) } || [];
-    my $solutions = eval { $ltm->query_solutions(limit => 3) } || [];
-    my $patterns = eval { $ltm->query_patterns(limit => 3) } || [];
-    my $workflows = eval { $ltm->query_workflows(limit => 2) } || [];
-    my $failures = eval { $ltm->query_failures(limit => 2) } || [];
-
-    my $total = @$discoveries + @$solutions + @$patterns + @$workflows + @$failures;
-    return '' if $total == 0;
-
-    log_debug('PromptBuilder', "Found $total LTM patterns to inject");
-
-    my $section = "## Long-Term Memory Patterns\n\n";
-    $section .= "The following patterns have been learned from previous sessions in this project:\n\n";
-
-    if (@$discoveries) {
-        $section .= "### Key Discoveries\n\n";
-        for my $item (@$discoveries) {
-            my $fact = $item->{fact} || 'Unknown';
-            my $confidence = $item->{confidence} || 0;
-            my $verified = $item->{verified} ? 'Verified' : 'Unverified';
-            $section .= "- **$fact** (Confidence: " . sprintf("%.0f%%", $confidence * 100) . ", $verified)\n";
-        }
-        $section .= "\n";
-    }
-
-    if (@$solutions) {
-        $section .= "### Problem Solutions\n\n";
-        for my $item (@$solutions) {
-            my $error = $item->{error} || 'Unknown error';
-            my $solution = $item->{solution} || 'No solution';
-            my $solved_count = $item->{solved_count} || 0;
-            $section .= "**Problem:** $error\n";
-            $section .= "**Solution:** $solution\n";
-            $section .= "_Applied successfully $solved_count time" . ($solved_count == 1 ? '' : 's') . "_\n\n";
-        }
-    }
-
-    if (@$patterns) {
-        $section .= "### Code Patterns\n\n";
-        for my $item (@$patterns) {
-            my $pattern = $item->{pattern} || 'Unknown pattern';
-            my $confidence = $item->{confidence} || 0;
-            my $examples = $item->{examples} || [];
-            $section .= "- **$pattern** (Confidence: " . sprintf("%.0f%%", $confidence * 100) . ")\n";
-            if (@$examples) {
-                $section .= "  Examples: " . join(", ", @$examples) . "\n";
-            }
-        }
-        $section .= "\n";
-    }
-
-    if (@$workflows) {
-        $section .= "### Successful Workflows\n\n";
-        for my $item (@$workflows) {
-            my $sequence = $item->{sequence} || [];
-            my $success_rate = $item->{success_rate} || 0;
-            my $count = $item->{count} || 0;
-            if (@$sequence) {
-                $section .= "- " . join(" -> ", @$sequence) . "\n";
-                $section .= "  _Success rate: " . sprintf("%.0f%%", $success_rate * 100) . " ($count attempts)_\n";
-            }
-        }
-        $section .= "\n";
-    }
-
-    if (@$failures) {
-        $section .= "### Known Failures (Avoid These)\n\n";
-        for my $item (@$failures) {
-            my $what_broke = $item->{what_broke} || 'Unknown failure';
-            my $impact = $item->{impact} || 'Unknown impact';
-            my $prevention = $item->{prevention} || 'No prevention documented';
-            $section .= "**What broke:** $what_broke\n";
-            $section .= "**Impact:** $impact\n";
-            $section .= "**Prevention:** $prevention\n\n";
-        }
-    }
-
-    $section .= "_These patterns are project-specific and should inform your approach to similar tasks._\n";
-    $section .= "\n_After context trimming, use these patterns plus `memory_operations(recall_sessions)` to recover context instead of reading handoff documents._\n";
-
-    return $section;
-}
 
 =head2 generate_non_interactive_section
 

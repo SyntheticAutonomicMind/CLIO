@@ -6,11 +6,10 @@ package CLIO::Core::PerformanceMonitor;
 use strict;
 use warnings;
 use utf8;
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 use CLIO::Core::Logger qw(log_debug);
 use feature 'say';
 use Time::HiRes qw(time);
+use CLIO::UI::Terminal qw(box_char ui_char);
 
 =head1 NAME
 
@@ -302,7 +301,7 @@ sub format_stats {
     return "No performance data available.\n" unless keys %$stats;
     
     my $output = "\n";
-    $output .= "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" . "\n";
+    $output .= box_char('hhorizontal') x 54 . "\n";
     $output .= "$label Performance Statistics\n";
     $output .= "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501" . "\n\n";
     
@@ -310,7 +309,7 @@ sub format_stats {
         my $s = $stats->{$name};
         
         $output .= sprintf("%-40s\n", $name);
-        $output .= sprintf("  Calls:          %d (✓ %d, ✗ %d)\n", 
+        $output .= sprintf("  Calls:          %d ([" . ui_char("check") . "] %d, [" . ui_char("cross_mark") . "] %d)\n", 
             $s->{total_calls}, $s->{successful_calls}, $s->{failed_calls});
         $output .= sprintf("  Success Rate:   %.1f%%\n", $s->{success_rate} * 100);
         $output .= sprintf("  Avg Response:   %.2fs\n", $s->{avg_response_time});
@@ -347,6 +346,7 @@ __END__
 
     use CLIO::Core::PerformanceMonitor;
     use Time::HiRes qw(time);
+
     
     my $monitor = CLIO::Core::PerformanceMonitor->new(debug => 1);
     

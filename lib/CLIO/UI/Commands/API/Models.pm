@@ -8,8 +8,6 @@ use warnings;
 use utf8;
 use parent 'CLIO::UI::Commands::Base';
 use CLIO::UI::Terminal qw(box_char);
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 
 use Carp qw(croak);
 use CLIO::Core::Logger qw(log_debug log_warning);
@@ -263,9 +261,9 @@ sub _display_multi_provider_models {
     my $total_count = scalar @$all_models;
 
     push @lines, "";
-    push @lines, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
+    push @lines, box_char("hhorizontal") x 76;
     push @lines, $self->colorize("AVAILABLE MODELS", 'DATA') . " (" . scalar(@provider_order) . " providers, $total_count models)";
-    push @lines, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
+    push @lines, box_char("hhorizontal") x 76;
 
     for my $provider_name (@provider_order) {
         my $models = $by_provider{$provider_name};
@@ -307,7 +305,7 @@ sub _display_multi_provider_models {
     }
 
     push @lines, "";
-    push @lines, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
+    push @lines, box_char("hhorizontal") x 76;
     push @lines, sprintf("Total: %d models across %d providers", $total_count, scalar(@provider_order));
     push @lines, "";
     push @lines, $self->colorize("Usage: /api set model <provider>/<model>", 'SYSTEM');
@@ -358,19 +356,19 @@ sub _display_models_list {
     my @lines;
 
     push @lines, "";
-    push @lines, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
+    push @lines, box_char("hhorizontal") x 54;
     push @lines, $self->colorize("AVAILABLE MODELS", 'DATA') . " (" . $self->colorize($api_base, 'THEME') . ")";
-    push @lines, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
+    push @lines, box_char("hhorizontal") x 54;
     push @lines, "";
 
     if ($has_billing) {
         my $header = sprintf("  %-64s %12s", "Model", "Rate");
         push @lines, $self->colorize($header, 'THEME');
-        push @lines, sprintf("  %-64s %12s", "━" x 64, "━" x 12);
+        push @lines, sprintf("  %-64s %12s", box_char("hhorizontal") x 64, box_char("hhorizontal") x 12);
     } else {
         my $header = sprintf("  %-70s", "Model");
         push @lines, $self->colorize($header, 'THEME');
-        push @lines, sprintf("  %-70s", "━" x 70);
+        push @lines, sprintf("  %-70s", box_char("hhorizontal") x 70);
     }
 
     if (@free_models) {
@@ -398,7 +396,7 @@ sub _display_models_list {
     }
 
     push @lines, "";
-    push @lines, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
+    push @lines, box_char("hhorizontal") x 54;
     push @lines, sprintf("Total: %d models available", scalar(@$models));
 
     if ($has_billing) {

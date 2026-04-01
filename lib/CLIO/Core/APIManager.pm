@@ -25,8 +25,6 @@ backoff, and token usage tracking. Central hub for all AI API interactions.
 use strict;
 use warnings;
 use utf8;
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 use CLIO::Core::Logger qw(should_log log_debug log_error log_info log_warning);
 use CLIO::Core::ErrorContext qw(classify_error format_error);
 use CLIO::Util::ConfigPath qw(get_config_dir);
@@ -46,6 +44,7 @@ use CLIO::Core::API::MessageValidator qw(
 );
 use CLIO::Core::API::ResponseHandler;
 use CLIO::Util::TextSanitizer qw(sanitize_text);
+use CLIO::UI::Terminal qw(ui_char);
 
 # Define request states
 use constant {
@@ -167,9 +166,9 @@ sub validate_configuration {
         my $auth = CLIO::Core::GitHubAuth->new();
         if ($auth->is_authenticated()) {
             my $username = $auth->get_username() || 'unknown';
-            print "✓ GitHub Copilot: Authenticated as $username\n";
+            print "[" . ui_char("check") . "] GitHub Copilot: Authenticated as $username\n";
         } else {
-            print "✗ GitHub Copilot: Not authenticated (use /login)\n";
+            print "[" . ui_char("cross_mark") . "] GitHub Copilot: Not authenticated (use /login)\n";
         }
     };
     
@@ -180,18 +179,18 @@ sub validate_configuration {
         my $model = $config->get('model') || '(not set)';
         my $api_key = $config->get('api_key');
         
-        print "✓ Provider: $provider\n";
-        print "✓ API Base: $api_base\n";
-        print "✓ Model: $model\n";
+        print "[" . ui_char("check") . "] Provider: $provider\n";
+        print "[" . ui_char("check") . "] API Base: $api_base\n";
+        print "[" . ui_char("check") . "] Model: $model\n";
         
         if ($api_key) {
             my $key_display = substr($api_key, 0, 8) . '...' . substr($api_key, -4);
-            print "✓ API Key: $key_display\n";
+            print "[" . ui_char("check") . "] API Key: $key_display\n";
         } else {
             print "[ ] API Key: NOT SET (required unless using GitHub auth)\n";
         }
     } else {
-        print "✗ Config object not available\n";
+        print "[" . ui_char("check") . "] Config object not available\n";
     }
     
     print "\nSupported Providers:\n";

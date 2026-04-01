@@ -9,8 +9,6 @@ use utf8;
 
 use CLIO::UI::Terminal qw(box_char);
 
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 
 =head1 NAME
 

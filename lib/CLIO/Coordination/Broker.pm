@@ -15,8 +15,6 @@ use Carp qw(croak);
 use File::Path qw(make_path);
 require CLIO::Core::Logger;
 
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 
 =head1 NAME
 

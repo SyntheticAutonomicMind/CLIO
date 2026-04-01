@@ -6,9 +6,8 @@ package CLIO::Core::Config;
 use strict;
 use warnings;
 use utf8;
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 use Carp qw(croak);
+use CLIO::UI::Terminal qw(box_char);
 use CLIO::Core::Logger qw(should_log log_debug log_error log_warning);
 use CLIO::Util::ConfigPath qw(get_config_dir);
 use CLIO::Providers qw(get_provider list_providers provider_exists);
@@ -488,6 +487,18 @@ sub get_all {
     return $self->{config};
 }
 
+=head2 agent_name
+
+Return the agent display name. Defaults to "CLIO" unless overridden
+by the CLIO_AGENT_NAME environment variable (used by host applications
+like MIRA to rebrand the interface).
+
+=cut
+
+sub agent_name {
+    return $ENV{CLIO_AGENT_NAME} || 'CLIO';
+}
+
 =head2 display
 
 Display current configuration (with masked API key)
@@ -504,7 +515,7 @@ sub display {
     my @lines;
     
     push @lines, "Current Configuration:";
-    push @lines, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
+    push @lines, box_char('hhorizontal') x 54;
     
     my $current_provider = $config->{provider} || 'openai';
     my $key = $config->{api_key};
@@ -550,7 +561,7 @@ sub display {
     # Available providers from Providers.pm
     push @lines, "";
     push @lines, "Available Providers:";
-    push @lines, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
+    push @lines, box_char('hhorizontal') x 54;
     
     for my $provider (list_providers()) {
         my $provider_config = get_provider($provider);

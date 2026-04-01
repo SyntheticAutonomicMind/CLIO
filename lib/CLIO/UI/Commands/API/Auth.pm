@@ -7,10 +7,9 @@ use strict;
 use warnings;
 use utf8;
 use parent 'CLIO::UI::Commands::Base';
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 
 use Carp qw(croak);
+use CLIO::UI::Terminal qw(box_char ui_char);
 use CLIO::Core::Logger qw(log_debug log_warning);
 use CLIO::Util::JSON qw(decode_json);
 
@@ -78,9 +77,9 @@ sub handle_login {
     }
 
     $self->writeline("", markdown => 0);
-    $self->writeline("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", markdown => 0);
+    $self->writeline(box_char('hhorizontal') x 54, markdown => 0);
     $self->writeline($self->colorize("GITHUB COPILOT AUTHENTICATION", 'DATA'), markdown => 0);
-    $self->writeline("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", markdown => 0);
+    $self->writeline(box_char('hhorizontal') x 54, markdown => 0);
     $self->writeline("", markdown => 0);
 
     $self->writeline($self->colorize("Step 1:", 'PROMPT') . " Requesting device code from GitHub...", markdown => 0);
@@ -99,7 +98,7 @@ sub handle_login {
     $self->writeline("  2. Enter code: " . $self->colorize($device_data->{user_code}, 'DATA'), markdown => 0);
     $self->writeline("", markdown => 0);
 
-    print "  " . $self->colorize("Waiting for authorization...", 'DIM') . " (this may take a few minutes)\n  ";
+    $self->writeline("  " . $self->colorize("Waiting for authorization...", 'DIM') . " (this may take a few minutes)", markdown => 0);
 
     my $github_token;
     eval {
@@ -151,9 +150,9 @@ sub handle_login {
     $self->writeline("  " . $self->colorize("", 'PROMPT') . " Tokens saved to ~/.clio/github_tokens.json", markdown => 0);
     $self->writeline("", markdown => 0);
 
-    $self->writeline("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", markdown => 0);
+    $self->writeline(box_char('hhorizontal') x 54, markdown => 0);
     $self->writeline($self->colorize("SUCCESS!", 'PROMPT'), markdown => 0);
-    $self->writeline("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", markdown => 0);
+    $self->writeline(box_char('hhorizontal') x 54, markdown => 0);
     $self->writeline("", markdown => 0);
 
     if ($copilot_token) {
@@ -266,7 +265,7 @@ sub handle_quota {
             $filled = $bar_width if $filled > $bar_width;
             my $empty = $bar_width - $filled;
             my $bar_color = $ratio > 0.9 ? 'ERROR' : $ratio > 0.7 ? 'SYSTEM' : 'PROMPT';
-            my $bar = $self->colorize("█" x $filled, $bar_color) . $self->colorize("░" x $empty, 'DIM');
+            my $bar = $self->colorize(ui_char("filled_block") x $filled, $bar_color) . $self->colorize(ui_char("light_shade") x $empty, "DIM");
             $self->writeline("", markdown => 0);
             $self->writeline("  [$bar]", markdown => 0);
         }
@@ -361,7 +360,7 @@ sub _handle_minimax_quota {
                 $filled = $bar_width if $filled > $bar_width;
                 my $empty = $bar_width - $filled;
                 my $bar_color = $ratio > 0.9 ? 'ERROR' : $ratio > 0.7 ? 'SYSTEM' : 'PROMPT';
-                my $bar = $self->colorize("█" x $filled, $bar_color) . $self->colorize("░" x $empty, 'DIM');
+                my $bar = $self->colorize(ui_char("filled_block") x $filled, $bar_color) . $self->colorize(ui_char("light_shade") x $empty, "DIM");
                 $self->writeline("    [$bar]", markdown => 0);
             }
             $self->writeline("", markdown => 0);

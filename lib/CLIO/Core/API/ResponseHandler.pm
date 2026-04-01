@@ -6,8 +6,6 @@ package CLIO::Core::API::ResponseHandler;
 use strict;
 use warnings;
 use utf8;
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 
 use CLIO::Core::Logger qw(should_log log_error log_warning log_info log_debug);
 use CLIO::Util::JSON qw(decode_json);

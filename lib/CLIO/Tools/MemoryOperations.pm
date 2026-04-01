@@ -85,6 +85,15 @@ PROJECT-LEVEL LTM STORAGE (persists facts across all sessions):
    Example: "Always check for X before doing Y"
 
 LTM MAINTENANCE (agents can self-groom their memory):
+-  update_ltm - Update an existing LTM entry (correct outdated information)
+   Parameters:
+     search_text (required) - Text to find in existing entry (substring match)
+     replacement (required) - New text to replace the entry with
+     entry_type (optional) - Limit to: discovery, solution, or pattern
+   Returns: {success, type, old_text, new_text}
+   Use when: LTM contains outdated info (e.g., "deploy to marvin" should be "deploy to zaphod")
+   Note: Prefer update_ltm over adding a new entry when correcting existing knowledge
+
 -  prune_ltm - Remove old, low-confidence, or excess LTM entries
    Parameters:
      max_age_days (optional, default 90) - Remove entries older than this
@@ -104,10 +113,11 @@ HOW TO USE:
 1. Use store/retrieve for temporary per-project notes
 2. Use recall_sessions to remember what you learned in previous sessions
 3. Use add_discovery/add_solution/add_pattern for important facts to keep
-4. All LTM data persists in .clio/ltm.json and is automatically injected
+4. Use update_ltm to correct outdated LTM entries instead of adding duplicates
+5. All LTM data persists in .clio/ltm.json and is automatically injected
    into future sessions for context
 },
-        supported_operations => [qw(store retrieve search list delete recall_sessions add_discovery add_solution add_pattern prune_ltm ltm_stats)],
+        supported_operations => [qw(store retrieve search list delete recall_sessions add_discovery add_solution add_pattern update_ltm prune_ltm ltm_stats)],
         %opts,
     );
 }
@@ -133,6 +143,8 @@ sub route_operation {
         return $self->add_solution($params, $context);
     } elsif ($operation eq 'add_pattern') {
         return $self->add_pattern($params, $context);
+    } elsif ($operation eq 'update_ltm') {
+        return $self->update_ltm($params, $context);
     } elsif ($operation eq 'prune_ltm') {
         return $self->prune_ltm($params, $context);
     } elsif ($operation eq 'ltm_stats') {
@@ -216,6 +228,18 @@ sub get_additional_parameters {
         max_patterns => {
             type => "integer",
             description => "Max patterns to keep (for prune_ltm, default: 30)",
+        },
+        search_text => {
+            type => "string",
+            description => "Text to search for in existing LTM entry (for update_ltm operation)",
+        },
+        replacement => {
+            type => "string",
+            description => "New text to replace the matched entry with (for update_ltm operation)",
+        },
+        entry_type => {
+            type => "string",
+            description => "Type of entry to update: discovery, solution, or pattern (for update_ltm, optional - searches all types if omitted)",
         },
     };
 }
@@ -311,33 +335,62 @@ sub search {
     
     my $result;
     eval {
-        return $self->error_result("Memory directory not found") unless -d $memory_dir;
-        
         my @matches;
-        opendir my $dh, $memory_dir or croak "Cannot open $memory_dir: $!";
-        while (my $file = readdir $dh) {
-            next unless $file =~ /\.json$/;
-            
-            my $path = File::Spec->catfile($memory_dir, $file);
-            open my $fh, '<:utf8', $path or next;
-            my $json = do { local $/; <$fh> };
-            close $fh;
-            
-            my $data = eval { decode_json($json) };
-            next unless $data;
-            
-            # Simple text search
-            if ($data->{content} =~ /\Q$query\E/i || $data->{key} =~ /\Q$query\E/i) {
+        
+        # Search session-level memory files
+        if (-d $memory_dir) {
+            opendir my $dh, $memory_dir or croak "Cannot open $memory_dir: $!";
+            while (my $file = readdir $dh) {
+                next unless $file =~ /\.json$/;
+                
+                my $path = File::Spec->catfile($memory_dir, $file);
+                open my $fh, '<:utf8', $path or next;
+                my $json = do { local $/; <$fh> };
+                close $fh;
+                
+                my $data = eval { decode_json($json) };
+                next unless $data;
+                
+                if ($data->{content} =~ /\Q$query\E/i || $data->{key} =~ /\Q$query\E/i) {
+                    push @matches, {
+                        source => 'session_memory',
+                        key => $data->{key},
+                        content => substr($data->{content}, 0, 200),
+                        timestamp => $data->{timestamp},
+                    };
+                }
+            }
+            closedir $dh;
+        }
+        
+        # Also search LTM entries and refresh matched entries' timestamps
+        my $ltm = eval {
+            ref($context) eq 'HASH' ? ($context->{ltm} || $context->{session}{ltm}) : undef;
+        };
+        my $ltm_matches = 0;
+        if ($ltm && $ltm->can('search_entries')) {
+            my $ltm_results = $ltm->search_entries($query, refresh => 1);
+            for my $entry (@$ltm_results) {
                 push @matches, {
-                    key => $data->{key},
-                    content => substr($data->{content}, 0, 200),  # Preview
-                    timestamp => $data->{timestamp},
+                    source => 'ltm',
+                    type => $entry->{type},
+                    content => substr($entry->{text}, 0, 300),
+                    confidence => $entry->{confidence},
+                };
+                $ltm_matches++;
+            }
+            # Save LTM if entries were refreshed
+            if ($ltm_matches > 0) {
+                eval {
+                    my $ltm_file = File::Spec->catfile(Cwd::getcwd(), '.clio', 'ltm.json');
+                    $ltm->save($ltm_file) if -e $ltm_file;
                 };
             }
         }
-        closedir $dh;
         
-        my $action_desc = "searching memories for '$query' (" . scalar(@matches) . " matches)";
+        my $action_desc = "searching memories for '$query' (" . scalar(@matches) . " matches";
+        $action_desc .= ", $ltm_matches from LTM" if $ltm_matches;
+        $action_desc .= ")";
         
         $result = $self->success_result(
             \@matches,
@@ -813,6 +866,67 @@ sub add_pattern {
     
     if ($@) {
         return $self->error_result("Failed to add pattern: $@");
+    }
+    
+    return $result;
+}
+
+=head2 update_ltm
+
+Update an existing LTM entry by finding matching text and replacing it.
+Useful for correcting outdated information without creating duplicates.
+
+Parameters:
+  search_text - Text to search for in existing entries (required)
+  replacement - New text to replace the matched entry with (required)
+  entry_type - Type to search: discovery, solution, pattern (optional, searches all)
+
+=cut
+
+sub update_ltm {
+    my ($self, $params, $context) = @_;
+    
+    my $search = $params->{search_text} || $params->{search};
+    my $replacement = $params->{replacement};
+    my $type = $params->{entry_type} || $params->{type};
+    
+    return $self->error_result("Missing 'search_text' parameter") unless $search;
+    return $self->error_result("Missing 'replacement' parameter") unless $replacement;
+    
+    my $result;
+    eval {
+        my $ltm = $context->{ltm} || $context->{session}->{ltm} if ref($context) eq 'HASH';
+        return $self->error_result("LTM not available in context") unless $ltm;
+        
+        my $update_result = $ltm->update_entry(
+            search      => $search,
+            replacement => $replacement,
+            type        => $type,
+        );
+        
+        if ($update_result->{found}) {
+            # Save the updated LTM
+            eval {
+                my $ltm_file = File::Spec->catfile(Cwd::getcwd(), '.clio', 'ltm.json');
+                $ltm->save($ltm_file) if -e $ltm_file;
+            };
+            
+            $result = $self->success_result(
+                encode_json($update_result),
+                action_description => "updated LTM $update_result->{type}: '$search' -> new text",
+                type => $update_result->{type},
+                old_text => $update_result->{old_text},
+                new_text => $update_result->{new_text},
+            );
+        } else {
+            $result = $self->error_result(
+                "No LTM entry matching '$search' found. Use add_discovery/add_solution/add_pattern to create new entries."
+            );
+        }
+    };
+    
+    if ($@) {
+        return $self->error_result("Failed to update LTM: $@");
     }
     
     return $result;

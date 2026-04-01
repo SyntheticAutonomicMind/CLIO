@@ -6,8 +6,6 @@ package CLIO::UI::CommandHandler;
 use strict;
 use warnings;
 use utf8;
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 use Carp qw(croak confess);
 use CLIO::Core::Logger qw(log_warning);
 use CLIO::UI::Commands::API;

@@ -6,13 +6,12 @@ package CLIO::Protocols::Recall;
 use strict;
 use warnings;
 use utf8;
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 use parent 'CLIO::Protocols::Handler';
 use MIME::Base64 qw(decode_base64 encode_base64);
 use CLIO::Util::JSON qw(encode_json);
 use CLIO::Core::Logger qw(log_debug);
 use POSIX qw(strftime);
+use CLIO::UI::Terminal qw(box_char);
 
 =head1 NAME
 
@@ -141,7 +140,7 @@ sub format_recall_response {
     }
     
     my $response = "Recall Results: Found $count message(s) matching '$query'\n";
-    $response .= "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" . "\n\n";
+    $response .= box_char('hhorizontal') x 54 . "\n\n";
     
     my $msg_num = 1;
     for my $msg (@$results) {
@@ -158,9 +157,9 @@ sub format_recall_response {
         }
         
         $response .= "[$msg_num] $role at $timestamp\n";
-        $response .= "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" . "\n";
+        $response .= box_char('hhorizontal') x 54 . "\n";
         $response .= "$content\n";
-        $response .= "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" . "\n\n";
+        $response .= box_char('hhorizontal') x 54 . "\n\n";
         
         $msg_num++;
     }

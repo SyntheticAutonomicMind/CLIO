@@ -7,10 +7,9 @@ use strict;
 use warnings;
 use utf8;
 use parent 'CLIO::UI::Commands::Base';
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 
 use Carp qw(croak);
+use CLIO::UI::Terminal qw(box_char);
 use File::Spec ();
 
 =head1 NAME
@@ -303,7 +302,7 @@ sub handle_diff_command {
     }
     
     $self->writeline("", markdown => 0);
-    $self->writeline("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", markdown => 0);
+    $self->writeline(box_char('hhorizontal') x 54, markdown => 0);
     my $header = "GIT DIFF" . ($file ? " - $file" : "");
     $self->display_command_header($header);
     for my $line (split /\n/, $output) {
@@ -371,10 +370,13 @@ sub handle_commit_command {
     
     # If no message provided, prompt for one
     unless ($message) {
-        $self->writeline("", markdown => 0);
-        $self->display_section_header("COMMIT MESSAGE");
-        print $self->colorize("Enter message (Ctrl+C to cancel):\n", 'PROMPT');
-        print $self->colorize("> ", 'PROMPT');
+        my ($header, $input_line) = @{$self->{chat}{theme_mgr}->get_confirmation_prompt(
+            "Commit message (Ctrl+C to cancel)",
+            "",
+            "cancel"
+        )};
+        print $header, "\n";
+        print $input_line;
         $message = <STDIN>;
         chomp $message if defined $message;
         

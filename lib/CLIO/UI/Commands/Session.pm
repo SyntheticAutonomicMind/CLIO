@@ -7,8 +7,6 @@ use strict;
 use warnings;
 use utf8;
 use parent 'CLIO::UI::Commands::Base';
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 
 use Carp qw(croak);
 use CLIO::Util::PathResolver qw(expand_tilde);
@@ -617,9 +615,9 @@ sub _trim_sessions {
     for my $sess (sort { $a->{mtime} <=> $b->{mtime} } @to_delete) {
         my $age = _format_relative_time($sess->{mtime});
         my $size = _format_bytes($sess->{size});
-        printf "  %s [%s, %s]\n", 
+        $self->writeline(sprintf("  %s [%s, %s]", 
             substr($sess->{id}, 0, 36) . "...",
-            $age, $size;
+            $age, $size), markdown => 0);
     }
     
     # Confirm
@@ -854,14 +852,14 @@ sub handle_switch_command {
         
         for my $i (0..$#sessions) {
             my $s = $sessions[$i];
-            my $current = ($s->{id} eq $current_id) ? ' @BOLD@(current)@RESET@' : "";
+            my $current = ($s->{id} eq $current_id) ? ' ' . $self->colorize('(current)', 'SUCCESS') : "";
             my $time = _format_relative_time($s->{mtime});
             my $display = $s->{name} || substr($s->{id}, 0, 20) . "...";
-            printf "  %d) %-40s %s%s\n", 
+            $self->writeline(sprintf("  %d) %-40s %s%s", 
                 $i + 1, 
                 $display,
-                $self->colorize("[$time]", 'dim'),
-                $chat->{ansi}->parse($current);
+                $self->colorize("[$time]", 'DIM'),
+                $current), markdown => 0);
         }
         
         $self->writeline("", markdown => 0);

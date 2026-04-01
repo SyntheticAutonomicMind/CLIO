@@ -9,8 +9,6 @@ use utf8;
 use Carp qw(croak);
 use CLIO::Core::Logger qw(log_debug log_info log_warning);
 
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 
 =head1 NAME
 

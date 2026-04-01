@@ -8,8 +8,6 @@ use warnings;
 use utf8;
 use Exporter 'import';
 
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 
 =head1 NAME
 

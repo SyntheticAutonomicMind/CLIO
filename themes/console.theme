@@ -5,12 +5,12 @@ name=console
 
 # Prompts - simple text, no box-drawing
 user_prompt_format={style.user_prompt}> @RESET@
-agent_prefix={style.agent_label}CLIO: @RESET@
+agent_prefix={style.agent_label}{var.agent_name}: @RESET@
 system_prefix={style.system_message}[SYSTEM] @RESET@
 error_prefix={style.error_message}[ERROR] @RESET@
 
 # Banner - simple text
-banner_line1={style.app_title}CLIO@RESET@ {style.dim}- Command Line Intelligence Orchestrator@RESET@
+banner_line1={style.app_title}{var.agent_name}@RESET@ {style.dim}- {var.agent_subtitle}@RESET@
 banner_line2={style.dim}Session: {style.data}{var.session_id}@RESET@
 banner_line3={style.dim}Model: {style.data}{var.model}@RESET@
 
@@ -28,10 +28,11 @@ nav_previous={style.prompt_indicator}P@RESET@
 nav_quit={style.prompt_indicator}Q@RESET@
 pagination_info={style.dim}{var.info}@RESET@
 
-# Pagination prompts - plain text instead of box-drawing
-pagination_hint_streaming={style.dim}(Press Q to quit, any key for more)@RESET@
-pagination_hint_full={style.dim}(Use ^/v for pages, Q to quit, any key for more)@RESET@
-pagination_prompt={style.dim}[Page {var.current}/{var.total}] {var.nav_hint}Q to quit > @RESET@
+# Pagination prompts - plain text, single-line
+pagination_hint_streaming=
+pagination_hint_full=
+pagination_prompt_streaming={style.dim}* Q quit | any key for more @RESET@
+pagination_prompt={style.dim}* {var.current}/{var.total} | {var.nav_hint}Q quit | any key for more @RESET@
 
 # Input prompts - plain text instead of box-drawing
 input_prompt={style.prompt_indicator}{var.prompt}: @RESET@
@@ -43,7 +44,7 @@ confirmation_input={style.data}{var.options} {style.dim}(Enter={var.default_acti
 
 # Messages - simple prefixes
 user_message_prefix={style.user_text}YOU: @RESET@
-agent_message_prefix={style.agent_label}CLIO: @RESET@
+agent_message_prefix={style.agent_label}{var.agent_name}: @RESET@
 
 # Tool display format: 'box' (default) or 'inline'
 # box: Uses box-drawing characters (┌──┤ TOOL NAME)

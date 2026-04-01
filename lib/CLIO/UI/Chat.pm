@@ -21,8 +21,6 @@ use CLIO::UI::PaginationManager;
 use utf8;
 use open ':std', ':encoding(UTF-8)';
 use Carp qw(croak);
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 use CLIO::Compat::Terminal qw(GetTerminalSize ReadMode ReadKey);  # Portable terminal control
 use File::Spec;
 
@@ -193,22 +191,31 @@ sub flush_output_buffer {
     return $self->{streaming}->flush_for_tools();
 }
 
+=head2 agent_name
+
+Return the agent display name (e.g. "CLIO" or "MIRA").
+
+=cut
+
+sub agent_name {
+    return $ENV{CLIO_AGENT_NAME} || 'CLIO';
+}
+
 =head2 streaming_controller
 
 Return the streaming controller instance.
-
 =cut
 
 sub streaming_controller { $_[0]->{streaming} }
 
 =head2 reset_streaming_state
 
-Reset the streaming state to allow a new "CLIO: " prefix to be printed.
+Reset the streaming state to allow a new agent prefix to be printed.
 Called by WorkflowOrchestrator after tool execution completes, before
 the next AI iteration starts streaming.
 
 This ensures that each new AI response chunk after tool execution
-gets a proper "CLIO: " prefix.
+gets a proper agent prefix.
 
 =cut
 
@@ -218,7 +225,7 @@ sub reset_streaming_state {
     # Mark that we need a new CLIO: prefix on next chunk
     $self->{_need_agent_prefix} = 1;
     
-    log_debug('Chat', "Streaming state reset - next chunk will get CLIO: prefix");
+    log_debug('Chat', "Streaming state reset - next chunk will get agent prefix");
     
     return 1;
 }
@@ -380,7 +387,7 @@ sub run {
             dir  => $state->{working_directory} || '',
         );
         my $model = ($self->{config} ? $self->{config}->get('model') : '') || '';
-        $self->{host_proto}->emit_title("CLIO - " .
+        $self->{host_proto}->emit_title($self->agent_name() . " - " .
             ($state->{title} || $state->{name} || 'New Session') .
             ($model ? " ($model)" : ''));
     }
@@ -574,11 +581,9 @@ sub _make_thinking_callback {
         }
         if ($tool_format eq 'inline') {
             my $bullet = ui_char('bullet');
-            my $sep    = ui_char('separator');
             my $b = $self->colorize($bullet, 'DIM');
-            my $n = $self->colorize(" THINKING ", 'ASSISTANT');
-            my $s = $self->colorize($sep, 'DIM');
-            print "$b$n$s\n";
+            my $n = $self->colorize(" THINKING", 'ASSISTANT');
+            print "$b$n\n";
         } else {
             print $self->colorize(box_char("topleft") . box_char("horizontal") x 2 . box_char("tleft") . " ", 'DIM');
             print $self->colorize("THINKING", 'ASSISTANT');
@@ -809,11 +814,11 @@ sub _process_ai_request {
         log_debug('Chat', "Created persistent spinner in inline mode");
     }
     
-    # DON'T print "CLIO: " prefix here - we'll print it in on_chunk when actual content arrives
+    # DON'T print agent prefix here - we'll print it in on_chunk when actual content arrives
     # This prevents the prefix from appearing for tool-only responses or system messages
     # Start the inline spinner (will animate until first chunk arrives)
     $self->{spinner}->start();
-    log_debug('Chat', "Started spinner (will print CLIO: prefix on first content chunk)");
+    log_debug('Chat', "Started spinner (will print agent prefix on first content chunk)");
     
     # Reference for use in closures below
     my $spinner = $self->{spinner};
@@ -999,27 +1004,27 @@ sub display_agent_message {
     my ($color, $icon, $label);
     if ($type eq 'question') {
         $color = 'YELLOW';
-        $icon = '❓';
+        $icon = '[?]';
         $label = 'QUESTION';
     } elsif ($type eq 'blocked') {
         $color = 'RED';
-        $icon = '🚫';
+        $icon = '[' . ui_char('cross_mark') . ']';
         $label = 'BLOCKED';
     } elsif ($type eq 'complete') {
         $color = 'GREEN';
-        $icon = '✓';
+        $icon = '[' . ui_char('check') . ']';
         $label = 'COMPLETE';
     } elsif ($type eq 'status') {
         $color = 'CYAN';
-        $icon = 'ℹ';
+        $icon = ui_char("info");
         $label = 'STATUS';
     } elsif ($type eq 'discovery') {
         $color = 'MAGENTA';
-        $icon = '💡';
+        $icon = ui_char("lightbulb");
         $label = 'DISCOVERY';
     } else {
         $color = 'WHITE';
-        $icon = '📨';
+        $icon = ui_char("envelope");
         $label = uc($type);
     }
     
@@ -1533,7 +1538,7 @@ sub _build_prompt {
     }
     
     # 4. Prompt indicator (colon) - color depends on mode
-    my $indicator_color = $mode eq 'collaboration' ? 'collab_prompt' : 'prompt_indicator';
+    my $indicator_color = $mode eq 'collaboration' ? 'COLLAB_PROMPT' : 'prompt_indicator';
     push @parts, $self->colorize(":", $indicator_color);
     
     # Join with spaces (except before colon)
@@ -1880,7 +1885,7 @@ sub request_collaboration {
     
     # Display with pagination support
     my @lines = split /\n/, $rendered_message;
-    print $self->colorize("CLIO: ", 'ASSISTANT');
+    print $self->colorize($self->agent_name() . ": ", 'ASSISTANT');
     
     # Print first line inline with prefix
     if (@lines) {
@@ -2066,7 +2071,7 @@ sub request_collaboration {
             # Otherwise, command was handled silently - don't display it, just return to prompt
             # Commands like /context, /git diff process and output their own results
             # No need to show "YOU: /command" in the chat
-            print $self->colorize("CLIO: ", 'ASSISTANT'), "(Command processed. What's your response?)\n";
+            print $self->colorize($self->agent_name() . ": ", 'ASSISTANT'), "(Command processed. What's your response?)\n";
             next;
         }
         
@@ -2130,7 +2135,7 @@ sub display_help {
     # Header
     push @help_lines, "";
     push @help_lines, $self->colorize(box_char("dhorizontal") x 62, 'command_header');
-    push @help_lines, $self->colorize("CLIO COMMANDS", 'command_header');
+    push @help_lines, $self->colorize($self->agent_name() . " COMMANDS", 'command_header');
     push @help_lines, $self->colorize(box_char("dhorizontal") x 62, 'command_header');
     push @help_lines, "";
     
@@ -2141,7 +2146,7 @@ sub display_help {
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/exit, /quit, /q', 'help_command'), 'Exit the chat');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/clear', 'help_command'), 'Clear the screen');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/reset', 'help_command'), 'Reset terminal and kill stale processes');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/init', 'help_command'), 'Initialize CLIO for this project');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/init', 'help_command'), 'Initialize ' . $self->agent_name() . ' for this project');
     push @help_lines, "";
     
     push @help_lines, $self->colorize("KEYBOARD SHORTCUTS", 'command_subheader');
@@ -2365,7 +2370,7 @@ sub show_global_config {
             $display_url =~ s{/models$}{};
             $display_url =~ s{/v1/chat/completions$}{};
             # If we removed something, show it resolved. Otherwise show original.
-            $display_url = "$api_base → $display_url" if $display_url ne $models_url;
+            $display_url = "$api_base " . ui_char("arrow_right") . " $display_url" if $display_url ne $models_url;
         }
     }
     $self->display_key_value("API Base URL", $display_url, 18);
@@ -2411,7 +2416,7 @@ sub show_session_config {
     my $state = $self->{session}->state();
     
     print "\n", $self->colorize("SESSION CONFIGURATION", 'DATA'), "\n";
-    print $self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), "\n\n";
+    print $self->colorize(box_char("hhorizontal") x 51, "DIM"), "\n\n";
     
     print $self->colorize("Session Info:", 'SYSTEM'), "\n";
     printf "  Session ID:   %s\n", $state->{session_id};
@@ -2570,7 +2575,7 @@ sub repaint_screen {
             dir  => $state->{working_directory} || '',
         );
         my $model = ($self->{config} ? $self->{config}->get('model') : '') || '';
-        $self->{host_proto}->emit_title("CLIO - " .
+        $self->{host_proto}->emit_title($self->agent_name() . " - " .
             ($state->{title} || $state->{name} || 'New Session') .
             ($model ? " ($model)" : ''));
     }
@@ -2595,7 +2600,7 @@ sub repaint_screen {
                 $lines[$i] = "    " . $lines[$i];
             }
             $content = join "\n", @lines;
-            print $self->colorize("CLIO: ", 'ASSISTANT'), $content, "\n";
+            print $self->colorize($self->agent_name() . ": ", 'ASSISTANT'), $content, "\n";
         }
         elsif ($msg->{type} eq 'system') {
             if ($tool_format eq 'inline') {
@@ -3006,7 +3011,13 @@ sub _prompt_session_learnings {
     return unless $response && $response =~ /^y(es)?$/i;
     
     # Now prompt for the actual learning text
-    print $self->colorize("\nEnter learnings (Ctrl+D when done):\n> ", 'PROMPT');
+    my ($lheader, $linput) = @{$self->{theme_mgr}->get_confirmation_prompt(
+        "Enter learnings (Ctrl+D when done)",
+        "",
+        "skip"
+    )};
+    print $lheader, "\n";
+    print $linput;
     
     # Read multi-line input
     my @lines;
@@ -3076,11 +3087,21 @@ sub colorize {
         SUCCESS => 'user_prompt',  # Green
         WARN => 'error_message',   # Red
         WARNING => 'error_message',  # Red
-        SEPARATOR => 'dim',  # Dim for separator lines
-        COLLAB_HEADER => 'banner',  # Bright/bold for collaboration header
-        COLLAB_CONTEXT => 'data',   # Data color for context
-        COLLAB_PROMPT => 'agent_label',  # Different from normal prompt
-        COLLAB_ARROW => 'prompt_indicator',  # Arrow indicator
+        SEPARATOR => 'dim',
+        BOLD => 'command_value',    # Emphasis (bright white)
+        GREEN => 'success',
+        CYAN => 'info',
+        YELLOW => 'warning',
+        RED => 'error',
+        MAGENTA => 'primary',
+        WHITE => 'normal',
+        SECTION_HEADER => 'command_subheader',
+        CLIO => 'agent_label',
+        TOOL => 'command',
+        COLLAB_HEADER => 'banner',
+        COLLAB_CONTEXT => 'data',
+        COLLAB_PROMPT => 'agent_label',
+        COLLAB_ARROW => 'prompt_indicator',
     );
     
     # Map legacy key to new key

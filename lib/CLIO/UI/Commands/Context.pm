@@ -7,11 +7,10 @@ use strict;
 use warnings;
 use utf8;
 use parent 'CLIO::UI::Commands::Base';
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 
 use Carp qw(croak);
 use Cwd;
+use CLIO::UI::Terminal qw(box_char);
 
 =head1 NAME
 
@@ -198,17 +197,16 @@ sub _list_context_files {
             $total_tokens += $tokens;
         }
         
-        printf "%2d. %-60s %s\n",
-            $i + 1,
-            $file,
-            $self->colorize($self->_format_tokens($tokens), 'THEME');
+        $self->writeline(sprintf("%2d. %-60s %s",
+            $i + 1, $file,
+            $self->colorize($self->_format_tokens($tokens), 'THEME')), markdown => 0);
     }
     
     $self->writeline("", markdown => 0);
-    $self->writeline("─" x 62, markdown => 0);
-    printf "Total: %d files, ~%s\n",
+    $self->writeline(box_char('horizontal') x 62, markdown => 0);
+    $self->writeline(sprintf("Total: %d files, ~%s",
         scalar(@files),
-        $self->_format_tokens($total_tokens);
+        $self->_format_tokens($total_tokens)), markdown => 0);
     $self->writeline("", markdown => 0);
 }
 
@@ -271,23 +269,24 @@ sub _display_memory_stats {
         $status = $self->colorize("Healthy", 'SUCCESS');
     }
     
-    printf "\n%-24s %d messages (~%s)\n",
+    $self->writeline("", markdown => 0);
+    $self->writeline(sprintf("%-24s %d messages (~%s)",
         "Active Messages:",
         $active_messages,
-        $self->_format_tokens($active_tokens);
+        $self->_format_tokens($active_tokens)), markdown => 0);
     
     if ($archived_messages > 0) {
-        printf "%-24s %d messages (~%s)\n",
+        $self->writeline(sprintf("%-24s %d messages (~%s)",
             "Archived (YaRN):",
             $archived_messages,
-            $self->_format_tokens($archived_tokens);
+            $self->_format_tokens($archived_tokens)), markdown => 0);
     }
     
-    printf "%-24s %s / %s (%s)\n",
+    $self->writeline(sprintf("%-24s %s / %s (%s)",
         "Context Usage:",
         $self->_format_tokens($active_tokens),
         $self->_format_tokens($max_tokens),
-        $usage_pct;
+        $usage_pct), markdown => 0);
     
     $self->writeline(sprintf("%-24s %s", "Status:", $status), markdown => 0);
     
@@ -298,9 +297,9 @@ sub _display_memory_stats {
     }
     
     $self->writeline("", markdown => 0);
-    $self->writeline("─" x 62, markdown => 0);
+    $self->writeline(box_char('horizontal') x 62, markdown => 0);
     $self->writeline($self->colorize("CONTEXT FILES", 'DATA'), markdown => 0);
-    $self->writeline("─" x 62, markdown => 0);
+    $self->writeline(box_char('horizontal') x 62, markdown => 0);
 }
 
 =head2 _clear_context_files()

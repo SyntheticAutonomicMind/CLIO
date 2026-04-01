@@ -7,10 +7,9 @@ use strict;
 use warnings;
 use utf8;
 use parent 'CLIO::UI::Commands::Base';
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 
 use Carp qw(croak);
+use CLIO::UI::Terminal qw(ui_char);
 use CLIO::Spec::Manager;
 
 =head1 NAME
@@ -292,9 +291,9 @@ sub _cmd_status {
     $self->writeline("");
 
     for my $art (@{$status->{artifacts}}) {
-        my $icon = $art->{status} eq 'done' ? $self->colorize('', 'success')
-                 : $art->{status} eq 'ready' ? $self->colorize('◆', 'warning')
-                 : $self->colorize('○', 'dim');
+        my $icon = $art->{status} eq 'done' ? $self->colorize(ui_char('check'), 'success')
+                 : $art->{status} eq 'ready' ? $self->colorize(ui_char('diamond'), 'warning')
+                 : $self->colorize(ui_char('circle'), 'dim');
         my $deps = @{$art->{requires}} ? " (requires: " . join(', ', @{$art->{requires}}) . ")" : '';
         $self->writeline("  $icon $art->{id} - $art->{description}$deps");
     }

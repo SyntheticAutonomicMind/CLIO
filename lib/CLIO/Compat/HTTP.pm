@@ -6,8 +6,6 @@ package CLIO::Compat::HTTP;
 use strict;
 use warnings;
 use utf8;
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 use HTTP::Tiny;
 use File::Temp qw(tempfile);
 use POSIX qw(:errno_h);

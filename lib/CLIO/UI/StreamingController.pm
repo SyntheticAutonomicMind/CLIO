@@ -6,8 +6,6 @@ package CLIO::UI::StreamingController;
 use strict;
 use warnings;
 use utf8;
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 
 use Carp qw(croak);
 use CLIO::Core::Logger qw(log_debug);
@@ -131,13 +129,14 @@ sub make_on_chunk_callback {
         # Print prefix on first chunk or after tool execution continuation
         if (!$self->{first_chunk_received} || $ui->{_prepare_for_next_iteration}) {
             $spinner->stop();
-            print $ui->colorize("CLIO: ", 'ASSISTANT');
+            my $agent = $ui->agent_name();
+            print $ui->colorize("$agent: ", 'ASSISTANT');
             STDOUT->flush() if STDOUT->can('flush');
 
             if ($ui->{_prepare_for_next_iteration}) {
                 $ui->{_prepare_for_next_iteration} = 0;
-                $self->{first_line_printed} = 0;  # Reset for new CLIO: prefix
-                log_debug('Chat', "Printed CLIO: prefix for continuation after tools");
+                $self->{first_line_printed} = 0;  # Reset for new agent prefix
+                log_debug('Chat', "Printed agent prefix for continuation after tools");
             }
 
             if (!$self->{first_chunk_received}) {
@@ -420,7 +419,8 @@ sub _indent_and_wrap {
         my $is_preformatted = ($visible =~ /^  \S/ || $visible =~ /^\|/
                                || $visible =~ /^Code Block/);
         
-        my $effective_avail = $no_indent ? ($max_width - 6) : $avail;  # 6 = length("CLIO: ")
+        my $prefix_len = length(($ENV{CLIO_AGENT_NAME} || 'CLIO') . ": ");
+        my $effective_avail = $no_indent ? ($max_width - $prefix_len) : $avail;
         
         if ($is_preformatted || length($visible) <= $effective_avail) {
             # Line fits or is preformatted - just indent

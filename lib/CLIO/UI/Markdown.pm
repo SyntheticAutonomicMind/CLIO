@@ -9,8 +9,6 @@ use utf8;
 
 use CLIO::UI::Terminal qw(box_char ui_char);
 
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 use open ':std', ':encoding(UTF-8)';
 
 =head1 NAME
@@ -658,26 +656,42 @@ sub render_formula_content {
     $result =~ s/\\Psi/Ψ/g;
     $result =~ s/\\Omega/Ω/g;
     
-    # Common mathematical operators and symbols
-    $result =~ s/\\sqrt/√/g;
-    $result =~ s/\\cbrt/∛/g;
-    $result =~ s/\\sum/∑/g;
-    $result =~ s/\\prod/∏/g;
-    $result =~ s/\\int/∫/g;
-    $result =~ s/\\oint/∮/g;
-    $result =~ s/\\infty/∞/g;
-    $result =~ s/\\pm/±/g;
-    $result =~ s/\\mp/∓/g;
-    $result =~ s/\\times/×/g;
-    $result =~ s/\\div/÷/g;
-    $result =~ s/\\leq/≤/g;
-    $result =~ s/\\geq/≥/g;
-    $result =~ s/\\neq/≠/g;
-    $result =~ s/\\approx/≈/g;
+    # Common mathematical operators and symbols (routed through Terminal charset layer)
+    my $times_c = ui_char('times');
+    my $divide_c = ui_char('divide');
+    my $pm_c = ui_char('plus_minus');
+    my $approx_c = ui_char('approx');
+    my $neq_c = ui_char('not_equal');
+    my $leq_c = ui_char('less_equal');
+    my $geq_c = ui_char('greater_equal');
+    my $sqrt_c = ui_char('sqrt_sym');
+    my $sum_c = ui_char('sum_sym');
+    my $int_c = ui_char('integral');
+    my $partial_c = ui_char('partial');
+    my $nabla_c = ui_char('nabla');
+    my $inf_c = ui_char('infinity');
+    my $dot_c = ui_char('dot');
+    my $ellipsis_c = ui_char('ellipsis');
+    
+    $result =~ s/\\sqrt/$sqrt_c/g;
+    $result =~ s/\\cbrt/$sqrt_c/g;
+    $result =~ s/\\sum/$sum_c/g;
+    $result =~ s/\\prod/PROD/g;
+    $result =~ s/\\int/$int_c/g;
+    $result =~ s/\\oint/$int_c/g;
+    $result =~ s/\\infty/$inf_c/g;
+    $result =~ s/\\pm/$pm_c/g;
+    $result =~ s/\\mp/-+/g;
+    $result =~ s/\\times/$times_c/g;
+    $result =~ s/\\div/$divide_c/g;
+    $result =~ s/\\leq/$leq_c/g;
+    $result =~ s/\\geq/$geq_c/g;
+    $result =~ s/\\neq/$neq_c/g;
+    $result =~ s/\\approx/$approx_c/g;
     $result =~ s/\\equiv/≡/g;
     $result =~ s/\\propto/∝/g;
-    $result =~ s/\\partial/∂/g;
-    $result =~ s/\\nabla/∇/g;
+    $result =~ s/\\partial/$partial_c/g;
+    $result =~ s/\\nabla/$nabla_c/g;
     $result =~ s/\\forall/∀/g;
     $result =~ s/\\exists/∃/g;
     $result =~ s/\\in/∈/g;
@@ -690,8 +704,8 @@ sub render_formula_content {
     $result =~ s/\\cap/∩/g;
     $result =~ s/\\therefore/∴/g;
     $result =~ s/\\because/∵/g;
-    $result =~ s/\\cdot/·/g;
-    $result =~ s/\\ldots|\\dots/…/g;
+    $result =~ s/\\cdot/$dot_c/g;
+    $result =~ s/\\ldots|\\dots/$ellipsis_c/g;
     
     # Power and subscript notation
     $result =~ s/\^2/²/g;

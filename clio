@@ -13,9 +13,15 @@ use warnings;
 use File::Spec;
 use File::Basename;
 use CLIO::Util::JSON qw(encode_json decode_json);
+use CLIO::UI::Terminal qw(detect_capabilities configure_io_encoding);
 use CLIO::UI::Chat;
 use CLIO::Util::PathResolver;
 use CLIO::Core::Logger qw(should_log log_info);
+
+# Detect terminal capabilities and set IO encoding early
+# This must happen before any module sets binmode
+detect_capabilities();
+configure_io_encoding();
 
 # Parse early CLI options BEFORE module init (--config and --no-color)
 my $config_dir_override;
@@ -633,9 +639,10 @@ if ($input) {
             
             # Handle common slash commands
             if ($cmd_name eq 'help' || $cmd_name eq 'h' || $cmd_name eq '?') {
-                print "[SYSTEM] CLIO Slash Commands:\n";
+                my $_agent_name = $ENV{CLIO_AGENT_NAME} || 'CLIO';
+                print "[SYSTEM] $_agent_name Slash Commands:\n";
                 print "  /help, /h, /?              Display help\n";
-                print "  /exit, /quit, /q           Exit CLIO\n";
+                print "  /exit, /quit, /q           Exit $_agent_name\n";
                 print "  /clear, /cls               Clear screen\n";
                 print "  /reset                     Reset terminal state\n";
                 print "  /debug                     Toggle debug mode\n";
@@ -736,8 +743,7 @@ if ($input) {
                 my $rendered_response = $md->render($response);
                 $rendered_response = $ansi->parse($rendered_response);
                 
-                # Set UTF-8 output and print (no encode_utf8 needed with binmode)
-                binmode(STDOUT, ':encoding(UTF-8)');
+                # Set output encoding (already configured at startup via configure_io_encoding)
                 print "[RESPONSE] $rendered_response\n";
                 
                 # Show protocol usage if debug mode

@@ -610,7 +610,7 @@ sub _read_and_cleanup_log {
     # Decode as UTF-8, replacing invalid bytes with U+FFFD
     # Terminal output may contain non-UTF-8 bytes (Latin-1, CP437, raw binary)
     require Encode;
-    $output = Encode::decode('UTF-8', $output, Encode::FB_DEFAULT);
+    $output = Encode::decode('UTF-8', $output, Encode::FB_DEFAULT());
     
     $output = $self->_sanitize_terminal_output($output);
     

@@ -8,8 +8,6 @@ use warnings;
 use utf8;
 use parent 'CLIO::UI::Commands::Base';
 use CLIO::UI::Terminal qw(box_char);
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 
 use Carp qw(croak);
 use CLIO::Util::JSON qw(encode_json decode_json);
