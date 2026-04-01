@@ -178,7 +178,9 @@ sub load {
             }
             
             # Load the provider's api_key if one exists in the api_keys store
-            my $provider_key = $self->get_provider_key($config{provider});
+            # Note: Use local %config hash directly - $self->{config} isn't set until later
+            my $api_keys = $config{api_keys} || {};
+            my $provider_key = $api_keys->{$config{provider}};
             if ($provider_key) {
                 $config{api_key} = $provider_key;
                 log_debug('Config', "Loaded api_key for provider '$config{provider}'");
