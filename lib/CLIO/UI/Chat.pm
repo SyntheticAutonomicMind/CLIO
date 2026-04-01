@@ -484,7 +484,64 @@ Returns a closure and a reference to the thinking_active flag.
 sub _make_thinking_callback {
     my ($self, $spinner) = @_;
     my $thinking_active = 0;
+    my $line_buffer = '';  # accumulates streaming chunks until newline
     
+    # Get terminal width and compute available space for indented content
+    my $get_wrap_width = sub {
+        my ($term_cols) = GetTerminalSize();
+        $term_cols ||= 80;
+        return $term_cols - 1;  # 1 column margin
+    };
+    
+    my $indent = '    ';
+    
+    # Helper: word-wrap and print a complete line with indent
+    my $print_wrapped_line = sub {
+        my ($line) = @_;
+        my $max_width = $get_wrap_width->();
+        my $avail = $max_width - length($indent);
+        $avail = 20 if $avail < 20;
+        
+        if (length($line) <= $avail) {
+            print $self->colorize("$indent$line", 'DATA');
+        } else {
+            my @wrapped;
+            my $current = '';
+            for my $word (split /(\s+)/, $line) {
+                if ($current eq '' && $word =~ /^\s+$/) {
+                    next;
+                }
+                if ($current eq '') {
+                    $current = $word;
+                } elsif (length($current) + length($word) > $avail) {
+                    $current =~ s/\s+$//;
+                    push @wrapped, $current;
+                    if ($word =~ /^\s+$/) {
+                        $current = '';
+                    } else {
+                        $current = $word;
+                    }
+                } else {
+                    $current .= $word;
+                }
+            }
+            if ($current ne '') {
+                $current =~ s/\s+$//;
+                push @wrapped, $current;
+            }
+            my $text = join("\n", map { "$indent$_" } @wrapped);
+            print $self->colorize($text, 'DATA');
+        }
+    };
+    
+    # Helper: flush any partial line in the buffer
+    my $flush_buffer = sub {
+        if (length($line_buffer)) {
+            $print_wrapped_line->($line_buffer);
+            $line_buffer = '';
+        }
+    };
+
     # Helper: print a dim hrule indented by 4 spaces (inline format only)
     my $print_thinking_hrule = sub {
         my $tool_format = 'inline';
@@ -495,7 +552,6 @@ sub _make_thinking_callback {
 
         my ($term_cols) = GetTerminalSize();
         $term_cols ||= 80;
-        my $indent = '    ';
         my $rule_len = $term_cols - length($indent) - 1;
         $rule_len = 20 if $rule_len < 20;
         my $hz = box_char('horizontal');
@@ -533,6 +589,7 @@ sub _make_thinking_callback {
         if (defined $signal) {
             if ($signal eq 'start') {
                 $thinking_active = 1;
+                $line_buffer = '';
                 $spinner->stop();
                 $print_thinking_header->();
                 $print_thinking_hrule->();
@@ -540,12 +597,14 @@ sub _make_thinking_callback {
             }
             elsif ($signal eq 'end') {
                 if ($thinking_active) {
+                    $flush_buffer->();
                     print "\n";
                     $print_thinking_hrule->();
                     print "\n";
                     STDOUT->flush() if STDOUT->can('flush');
                 }
                 $thinking_active = 0;
+                $line_buffer = '';
                 $self->{streaming}->{first_chunk_received} = 0;
                 return;
             }
@@ -555,18 +614,23 @@ sub _make_thinking_callback {
         
         if (!$thinking_active) {
             $thinking_active = 1;
+            $line_buffer = '';
             $spinner->stop();
             $print_thinking_header->();
             $print_thinking_hrule->();
         }
         
-        # Indent thinking content by 4 spaces
-        $content =~ s/\n/\n    /g;
-        if ($thinking_active == 1) {
-            $content = "    " . $content;
-            $thinking_active = 2;
+        # Accumulate content and emit complete lines with word-wrap
+        $line_buffer .= $content;
+        
+        while ($line_buffer =~ /\n/) {
+            my $nl_pos = index($line_buffer, "\n");
+            my $line = substr($line_buffer, 0, $nl_pos);
+            $line_buffer = substr($line_buffer, $nl_pos + 1);
+            
+            $print_wrapped_line->($line);
+            print "\n";
         }
-        print $self->colorize($content, 'DATA');
         STDOUT->flush() if STDOUT->can('flush');
     };
     

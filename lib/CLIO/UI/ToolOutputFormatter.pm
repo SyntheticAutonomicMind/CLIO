@@ -250,11 +250,11 @@ sub display_action_detail {
         if ($expanded_content && ref($expanded_content) eq 'ARRAY' && @$expanded_content) {
             $self->display_hrule();
             for my $line (@$expanded_content) {
+                my $wrapped = $self->wrap_text_to_width($line, '    ');
                 if ($self->{ui} && $self->{ui}->can('colorize')) {
-                    my $line_colored = $self->{ui}->colorize("    $line", 'DIM');
-                    print "$line_colored\n";
+                    print $self->{ui}->colorize($wrapped, 'DIM') . "\n";
                 } else {
-                    print "    $line\n";
+                    print "$wrapped\n";
                 }
             }
             $self->display_hrule();
@@ -327,11 +327,11 @@ sub display_expanded_content {
     if ($tool_format eq 'inline') {
         $self->display_hrule();
         for my $line (@$expanded_content) {
+            my $wrapped = $self->wrap_text_to_width($line, '    ');
             if ($self->{ui} && $self->{ui}->can('colorize')) {
-                my $line_colored = $self->{ui}->colorize("    $line", 'DIM');
-                print "$line_colored\n";
+                print $self->{ui}->colorize($wrapped, 'DIM') . "\n";
             } else {
-                print "    $line\n";
+                print "$wrapped\n";
             }
         }
         $self->display_hrule();
@@ -386,6 +386,72 @@ sub display_hrule {
         print "$indent$rule\n";
     }
     STDOUT->flush() if STDOUT->can('flush');
+}
+
+=head2 wrap_text_to_width($text, $indent, $max_width)
+
+Word-wrap text to fit within a terminal width, preserving existing line breaks.
+Each line is broken at the last space before the width limit. Continuation lines
+use the same indent as the first line.
+
+Arguments:
+- text: The text to wrap (may contain newlines)
+- indent: String prefix for each line (e.g., '    ' for 4-space indent)
+- max_width: Terminal width to wrap at (default: auto-detect)
+
+Returns: Wrapped text string with indent applied to all lines
+
+=cut
+
+sub wrap_text_to_width {
+    my ($self, $text, $indent, $max_width) = @_;
+    
+    return '' unless defined $text && length($text);
+    
+    $indent //= '    ';
+    if (!$max_width) {
+        my ($term_cols) = GetTerminalSize();
+        $max_width = ($term_cols || 80) - 1;  # 1 column margin
+    }
+    
+    my $avail = $max_width - length($indent);
+    $avail = 20 if $avail < 20;
+    
+    my @input_lines = split /\n/, $text, -1;
+    my @output_lines;
+    
+    for my $line (@input_lines) {
+        if (length($line) <= $avail) {
+            push @output_lines, "$indent$line";
+        } else {
+            my $current = '';
+            for my $word (split /(\s+)/, $line) {
+                if ($current eq '' && $word =~ /^\s+$/) {
+                    next;  # skip leading whitespace on wrapped line
+                }
+                if ($current eq '') {
+                    $current = $word;
+                } elsif (length($current) + length($word) > $avail) {
+                    # Current line is full - emit it
+                    $current =~ s/\s+$//;  # trim trailing space
+                    push @output_lines, "$indent$current";
+                    if ($word =~ /^\s+$/) {
+                        $current = '';  # don't start next line with whitespace
+                    } else {
+                        $current = $word;
+                    }
+                } else {
+                    $current .= $word;
+                }
+            }
+            if ($current ne '') {
+                $current =~ s/\s+$//;
+                push @output_lines, "$indent$current";
+            }
+        }
+    }
+    
+    return join("\n", @output_lines);
 }
 
 =head2 format_error($error_message)
