@@ -11,6 +11,7 @@ binmode(STDERR, ':encoding(UTF-8)');
 
 use Carp qw(croak);
 use CLIO::Core::Logger qw(log_debug);
+use CLIO::Compat::Terminal qw(GetTerminalSize);
 
 =head1 NAME
 
@@ -236,23 +237,9 @@ sub flush {
         if ($ui->{enable_markdown}) {
             $output = $ui->render_markdown($self->{markdown_buffer});
         }
-        # Indent agent output by 4 spaces under CLIO: prefix
-        if (!$self->{first_line_printed}) {
-            $self->{first_line_printed} = 1;
-            my @lines = split /\n/, $output, -1;
-            for my $i (1 .. $#lines) {
-                next unless length($lines[$i]) > 0;
-                $lines[$i] = "    " . $lines[$i];
-            }
-            $output = join "\n", @lines;
-        } else {
-            my @lines = split /\n/, $output, -1;
-            for my $i (0 .. $#lines) {
-                next unless length($lines[$i]) > 0;
-                $lines[$i] = "    " . $lines[$i];
-            }
-            $output = join "\n", @lines;
-        }
+        my $skip_first = !$self->{first_line_printed};
+        $self->{first_line_printed} = 1;
+        $output = $self->_indent_and_wrap($output, $skip_first);
         print $output;
         STDOUT->flush() if STDOUT->can('flush');
         $printed = 1;
@@ -268,18 +255,9 @@ sub flush {
         if ($ui->{enable_markdown}) {
             $output = $ui->render_markdown($self->{line_buffer});
         }
-        # Indent agent output (line_buffer is always a continuation)
-        if (!$self->{first_line_printed}) {
-            $self->{first_line_printed} = 1;
-            # No indent for the line itself (follows CLIO: prefix)
-        } else {
-            my @lines = split /\n/, $output, -1;
-            for my $i (0 .. $#lines) {
-                next unless length($lines[$i]) > 0;
-                $lines[$i] = "    " . $lines[$i];
-            }
-            $output = join "\n", @lines;
-        }
+        my $skip_first = !$self->{first_line_printed};
+        $self->{first_line_printed} = 1;
+        $output = $self->_indent_and_wrap($output, $skip_first);
         print $output, "\n";
         STDOUT->flush() if STDOUT->can('flush');
         $printed = 1;
@@ -308,23 +286,9 @@ sub flush_for_tools {
         if ($ui->{enable_markdown}) {
             $output = $ui->render_markdown($self->{markdown_buffer});
         }
-        # Indent agent output by 4 spaces under CLIO: prefix
-        if (!$self->{first_line_printed}) {
-            $self->{first_line_printed} = 1;
-            my @lines = split /\n/, $output, -1;
-            for my $i (1 .. $#lines) {
-                next unless length($lines[$i]) > 0;
-                $lines[$i] = "    " . $lines[$i];
-            }
-            $output = join "\n", @lines;
-        } else {
-            my @lines = split /\n/, $output, -1;
-            for my $i (0 .. $#lines) {
-                next unless length($lines[$i]) > 0;
-                $lines[$i] = "    " . $lines[$i];
-            }
-            $output = join "\n", @lines;
-        }
+        my $skip_first = !$self->{first_line_printed};
+        $self->{first_line_printed} = 1;
+        $output = $self->_indent_and_wrap($output, $skip_first);
         print $output;
         $self->{markdown_buffer} = '';
         $printed = 1;
@@ -338,17 +302,9 @@ sub flush_for_tools {
         if ($ui->{enable_markdown}) {
             $output = $ui->render_markdown($self->{line_buffer});
         }
-        # Indent agent output (continuation)
-        if (!$self->{first_line_printed}) {
-            $self->{first_line_printed} = 1;
-        } else {
-            my @lines = split /\n/, $output, -1;
-            for my $i (0 .. $#lines) {
-                next unless length($lines[$i]) > 0;
-                $lines[$i] = "    " . $lines[$i];
-            }
-            $output = join "\n", @lines;
-        }
+        my $skip_first = !$self->{first_line_printed};
+        $self->{first_line_printed} = 1;
+        $output = $self->_indent_and_wrap($output, $skip_first);
         print $output;
         print "\n" unless $output =~ /\n$/;
         $self->{line_buffer} = '';
@@ -392,25 +348,10 @@ sub _flush_markdown_buffer {
         $output = $ui->render_markdown($self->{markdown_buffer});
     }
     
-    # Indent agent output by 4 spaces for visual nesting under CLIO: prefix
-    if (!$self->{first_line_printed}) {
-        $self->{first_line_printed} = 1;
-        # First flush: indent all lines EXCEPT the first (follows CLIO: prefix)
-        my @lines = split /\n/, $output, -1;
-        for my $i (1 .. $#lines) {
-            next unless length($lines[$i]) > 0;
-            $lines[$i] = "    " . $lines[$i];
-        }
-        $output = join "\n", @lines;
-    } else {
-        # Subsequent flushes: indent all lines
-        my @lines = split /\n/, $output, -1;
-        for my $i (0 .. $#lines) {
-            next unless length($lines[$i]) > 0;
-            $lines[$i] = "    " . $lines[$i];
-        }
-        $output = join "\n", @lines;
-    }
+    # Indent (and word-wrap) agent output under CLIO: prefix
+    my $skip_first = !$self->{first_line_printed};
+    $self->{first_line_printed} = 1;
+    $output = $self->_indent_and_wrap($output, $skip_first);
     
     print $output;
     STDOUT->flush() if STDOUT->can('flush');
@@ -421,8 +362,6 @@ sub _flush_markdown_buffer {
     }
 
     my $line_count_delta = $ui->_count_visual_lines($self->{markdown_buffer});
-    # track_line already incremented, but _count_visual_lines may differ
-    # Adjust: track_line added scalar(@rendered_lines), we need line_count_delta
     my $tracked = scalar(@rendered_lines);
     if ($line_count_delta != $tracked) {
         $ui->{pager}->increment_lines($line_count_delta - $tracked);
@@ -431,6 +370,148 @@ sub _flush_markdown_buffer {
     $self->{markdown_buffer}  = '';
     $self->{md_line_count}    = 0;
     $self->{last_flush_time}  = time();
+}
+
+=head2 _indent_and_wrap($text, $skip_first)
+
+Add 4-space indent to agent output lines, word-wrapping lines that would
+exceed the terminal width. ANSI escape sequences are preserved across
+wrap boundaries.
+
+Arguments:
+- text: rendered output (may contain ANSI codes)
+- skip_first: if true, skip indenting the first line (follows CLIO: prefix)
+
+Returns: indented and wrapped text
+
+=cut
+
+sub _indent_and_wrap {
+    my ($self, $text, $skip_first) = @_;
+    
+    my $indent = '    ';
+    my ($term_cols) = GetTerminalSize();
+    $term_cols ||= 80;
+    my $max_width = $term_cols - 1;
+    my $avail = $max_width - length($indent);
+    $avail = 20 if $avail < 20;
+    
+    my @lines = split /\n/, $text, -1;
+    my @out;
+    
+    for my $i (0 .. $#lines) {
+        my $line = $lines[$i];
+        my $no_indent = ($skip_first && $i == 0);
+        
+        # Empty lines pass through
+        if (length($line) == 0) {
+            push @out, $line;
+            next;
+        }
+        
+        # Compute visible text (without ANSI escapes)
+        my $visible = $line;
+        $visible =~ s/\e\[[0-9;]*[A-Za-z]//g;
+        $visible =~ s/\e\[\?\d+[lh]//g;
+        $visible =~ s/\e\]8;;[^\e]*\e\\//g;
+        
+        # Skip word-wrapping for code block lines (2-space prefix from markdown renderer)
+        # and table rows (start with |)
+        my $is_preformatted = ($visible =~ /^  \S/ || $visible =~ /^\|/
+                               || $visible =~ /^Code Block/);
+        
+        my $effective_avail = $no_indent ? ($max_width - 6) : $avail;  # 6 = length("CLIO: ")
+        
+        if ($is_preformatted || length($visible) <= $effective_avail) {
+            # Line fits or is preformatted - just indent
+            push @out, ($no_indent ? $line : "$indent$line");
+        } else {
+            # Word-wrap needed
+            push @out, $self->_wrap_ansi_line($line, $indent, $effective_avail, $avail, $no_indent);
+        }
+    }
+    
+    return join("\n", @out);
+}
+
+=head2 _wrap_ansi_line($line, $indent, $avail, $no_indent_first)
+
+Word-wrap a single line that may contain ANSI codes, breaking at spaces.
+
+=cut
+
+sub _wrap_ansi_line {
+    my ($self, $line, $indent, $first_avail, $cont_avail, $no_indent_first) = @_;
+    
+    # Split into segments: alternating ANSI sequences and visible text
+    my @segments = split /(\e\[[0-9;]*[A-Za-z]|\e\[\?\d+[lh]|\e\]8;;[^\e]*\e\\)/, $line;
+    
+    # Build word list: each word carries its ANSI prefix
+    my @words;
+    my $ansi_prefix = '';
+    
+    for my $seg (@segments) {
+        if ($seg =~ /^\e/) {
+            $ansi_prefix .= $seg;
+        } else {
+            my @parts = split /( +)/, $seg;
+            for my $part (@parts) {
+                next if length($part) == 0;
+                push @words, { text => $part, raw => $ansi_prefix . $part };
+                $ansi_prefix = '';
+            }
+        }
+    }
+    if (length($ansi_prefix) && @words) {
+        $words[-1]{raw} .= $ansi_prefix;
+    }
+    
+    my @result_lines;
+    my $current_raw = '';
+    my $current_vis_len = 0;
+    my $is_first = 1;
+    
+    for my $w (@words) {
+        my $vis_len = length($w->{text});
+        my $avail = $is_first ? $first_avail : $cont_avail;
+        
+        if ($current_vis_len == 0) {
+            if ($w->{text} =~ /^ +$/) {
+                next unless $is_first;
+            }
+            $current_raw = $w->{raw};
+            $current_vis_len = $vis_len;
+        } elsif ($current_vis_len + $vis_len > $avail) {
+            $current_raw =~ s/ +$//;
+            if ($is_first && $no_indent_first) {
+                push @result_lines, $current_raw;
+            } else {
+                push @result_lines, "$indent$current_raw";
+            }
+            $is_first = 0;
+            if ($w->{text} =~ /^ +$/) {
+                $current_raw = '';
+                $current_vis_len = 0;
+            } else {
+                $current_raw = $w->{raw};
+                $current_vis_len = $vis_len;
+            }
+        } else {
+            $current_raw .= $w->{raw};
+            $current_vis_len += $vis_len;
+        }
+    }
+    
+    if (length($current_raw)) {
+        $current_raw =~ s/ +$//;
+        if ($is_first && $no_indent_first) {
+            push @result_lines, $current_raw;
+        } else {
+            push @result_lines, "$indent$current_raw";
+        }
+    }
+    
+    return @result_lines;
 }
 
 1;
