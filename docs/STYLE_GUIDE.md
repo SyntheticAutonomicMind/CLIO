@@ -183,14 +183,13 @@ When models provide reasoning content (toggle with `/api set thinking on`):
 **Box format:**
 ```
 ┌──┤ THINKING
-    ────────────────────────────────────
     reasoning content indented by 4 spaces
     continues here...
-    ────────────────────────────────────
 ```
 
-- Header: Three-color pattern (DIM bullet + ASSISTANT name + DIM separator) matching tool headers
-- Content: DATA color, 4-space indent, wrapped in hrule separators
+- Header: Three-color pattern (DIM bullet + ASSISTANT name + DIM separator) for inline; DIM connector + ASSISTANT name for box
+- Content: DATA color, 4-space indent
+- Inline format wraps content in hrule separators; box format does not
 - Ends with blank line separator before the response
 
 ---
