@@ -1873,9 +1873,63 @@ sub request_collaboration {
         $self->{pager}->increment_lines();
     }
     
-    # Print remaining lines with pagination checks (indented 2 spaces)
+    # Print remaining lines with pagination checks (indented, word-wrapped)
+    my ($term_cols) = GetTerminalSize();
+    $term_cols ||= 80;
+    my $collab_indent = '    ';
+    my $collab_avail = ($term_cols - 1) - length($collab_indent);
+    $collab_avail = 20 if $collab_avail < 20;
+    
     for my $line (@lines) {
-        print "    $line\n";
+        # Compute visible length
+        my $visible = $line;
+        $visible =~ s/\e\[[0-9;]*[A-Za-z]//g;
+        $visible =~ s/\e\[\?\d+[lh]//g;
+        $visible =~ s/\e\]8;;[^\e]*\e\\//g;
+        
+        # Skip wrapping for code/table lines
+        my $is_preformatted = ($visible =~ /^  \S/ || $visible =~ /^\|/
+                               || $visible =~ /^Code Block/);
+        
+        if ($is_preformatted || length($visible) <= $collab_avail) {
+            print "$collab_indent$line\n";
+        } else {
+            # Word-wrap using StreamingController's method via a temp wrapper
+            my @words = split /( +)/, $line;
+            my $current = '';
+            my $current_vis = 0;
+            for my $w (@words) {
+                my $wvis = $w;
+                $wvis =~ s/\e\[[0-9;]*[A-Za-z]//g;
+                $wvis =~ s/\e\[\?\d+[lh]//g;
+                $wvis =~ s/\e\]8;;[^\e]*\e\\//g;
+                my $wlen = length($wvis);
+                
+                if ($current eq '' && $w =~ /^ +$/) { next; }
+                if ($current eq '') {
+                    $current = $w;
+                    $current_vis = $wlen;
+                } elsif ($current_vis + $wlen > $collab_avail) {
+                    $current =~ s/ +$//;
+                    print "$collab_indent$current\n";
+                    $self->{pager}->increment_lines();
+                    if ($w =~ /^ +$/) {
+                        $current = '';
+                        $current_vis = 0;
+                    } else {
+                        $current = $w;
+                        $current_vis = $wlen;
+                    }
+                } else {
+                    $current .= $w;
+                    $current_vis += $wlen;
+                }
+            }
+            if (length($current)) {
+                $current =~ s/ +$//;
+                print "$collab_indent$current\n";
+            }
+        }
         $self->{pager}->increment_lines();
         
         # Check if we need to paginate
