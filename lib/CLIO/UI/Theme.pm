@@ -13,8 +13,6 @@ use CLIO::UI::ANSI;
 use CLIO::Util::ConfigPath qw(get_config_dir);
 use CLIO::Core::Logger qw(log_debug log_error);
 
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 
 =head1 NAME
 
@@ -385,6 +383,10 @@ sub render {
     
     $vars ||= {};
     
+    # Inject agent_name and subtitle as default variables (host apps override via env)
+    $vars->{agent_name} //= $ENV{CLIO_AGENT_NAME} || 'CLIO';
+    $vars->{agent_subtitle} //= $ENV{CLIO_AGENT_SUBTITLE} || 'Command Line Intelligence Orchestrator';
+    
     my $template = $self->get_template($template_key);
     return '' unless $template;
     
@@ -509,13 +511,23 @@ Args:
     current (int) - Current page number (1-indexed)
     total (int) - Total number of pages
     show_nav (bool) - Whether to show navigation hint (for multi-page)
+    streaming (bool) - If true, use streaming variant (no page numbers)
 
 Returns: Rendered pagination prompt string
 
 =cut
 
 sub get_pagination_prompt {
-    my ($self, $current, $total, $show_nav) = @_;
+    my ($self, $current, $total, $show_nav, $streaming) = @_;
+    
+    # Streaming mode uses a simpler prompt without page numbers
+    if ($streaming) {
+        my $template = $self->get_template('pagination_prompt_streaming');
+        if ($template && $template ne '') {
+            return $self->render('pagination_prompt_streaming', {});
+        }
+        # Fall through to standard prompt if no streaming variant
+    }
     
     my $nav_hint = '';
     if ($show_nav && $total > 1) {
@@ -735,12 +747,12 @@ sub get_builtin_theme {
         
         # Prompts
         user_prompt_format => '{style.user_prompt}: @RESET@',
-        agent_prefix => '{style.agent_label}CLIO: @RESET@',
+        agent_prefix => '{style.agent_label}{var.agent_name}: @RESET@',
         system_prefix => '{style.system_message}SYSTEM: @RESET@',
         error_prefix => '{style.error_message}ERROR: @RESET@',
         
         # Banner (displayed at session start)
-        banner_line1 => '{style.app_title}CLIO {style.app_subtitle}- Command Line Intelligence Orchestrator@RESET@',
+        banner_line1 => '{style.app_title}{var.agent_name} {style.app_subtitle}- {var.agent_subtitle}@RESET@',
         banner_line2 => '{style.banner_label}Session ID: {style.data}{var.session_id}@RESET@',
         banner_line3 => '{var.session_name_line}',
         banner_line4 => '{style.banner_label}You are connected to {style.data}{var.model}@RESET@',
@@ -759,10 +771,11 @@ sub get_builtin_theme {
         nav_quit => '{style.prompt_indicator}[Q]uit@RESET@',
         pagination_info => '{style.dim}{var.info}@RESET@',
         
-        # Pagination prompts (box-drawing format with proper closures)
-        pagination_hint_streaming => '{style.dim}{char.topleft}{char.horizontal}{char.horizontal}{char.tleft} {style.agent_label}Q Quits {style.dim}{char.vertical} {style.agent_label}Any key for more@RESET@',
-        pagination_hint_full => '{style.dim}{char.topleft}{char.horizontal}{char.horizontal}{char.tleft} {style.agent_label}^/v Pages {style.dim}{char.vertical} {style.agent_label}Q Quits {style.dim}{char.vertical} {style.agent_label}Any key for more@RESET@',
-        pagination_prompt => '{style.dim}{char.bottomleft}{char.horizontal}{char.tleft} {style.data}{var.current}/{var.total} {style.dim}{char.vertical} {style.agent_label}{var.nav_hint}Q {style.dim}{char.vertical} {style.prompt_indicator}> @RESET@',
+        # Pagination prompts (single-line format)
+        pagination_hint_streaming => '',
+        pagination_hint_full => '',
+        pagination_prompt_streaming => '{style.dim}{char.bullet} {style.agent_label}Q{style.dim} quit {char.pipe} any key for more @RESET@',
+        pagination_prompt => '{style.dim}{char.bullet} {style.data}{var.current}/{var.total} {style.dim}{char.pipe} {var.nav_hint}{style.agent_label}Q{style.dim} quit {char.pipe} any key for more @RESET@',
         
         # Confirmation prompts (box-drawing two-part format)
         confirmation_header => '{style.dim}{char.topleft}{char.horizontal}{char.horizontal}{char.tleft} {style.prompt_indicator}{var.question}@RESET@',
@@ -770,7 +783,7 @@ sub get_builtin_theme {
         
         # Messages
         user_message_prefix => '{style.user_text}YOU: @RESET@',
-        agent_message_prefix => '{style.agent_label}CLIO: @RESET@',
+        agent_message_prefix => '{style.agent_label}{var.agent_name}: @RESET@',
     };
 }
 
@@ -842,8 +855,7 @@ sub get_required_theme_keys {
         nav_previous
         nav_quit
         pagination_info
-        pagination_hint_streaming
-        pagination_hint_full
+        pagination_prompt_streaming
         pagination_prompt
         confirmation_header
         confirmation_input

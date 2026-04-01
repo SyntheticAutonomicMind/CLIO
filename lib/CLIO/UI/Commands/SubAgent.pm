@@ -8,10 +8,9 @@ use warnings;
 use utf8;
 use POSIX qw(setsid);
 use Carp qw(croak);
+use CLIO::UI::Terminal qw(ui_char);
 use parent 'CLIO::UI::Commands::Base';
 
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 
 use CLIO::Core::Logger qw(log_debug log_error log_info log_warning);
 
@@ -337,7 +336,7 @@ sub cmd_kill {
     }
     
     if ($self->{manager}->kill_agent($agent_id)) {
-        return "✓ Terminated agent: $agent_id";
+        return "[" . ui_char("check") . "] Terminated agent: $agent_id";
     }
     
     $self->display_error_message("Agent not found: $agent_id"); return "";
@@ -359,7 +358,7 @@ sub cmd_killall {
         }
     }
     
-    return $count > 0 ? "✓ Terminated $count agent(s)" : "No agents to kill";
+    return $count > 0 ? "[" . ui_char("check") . "] Terminated $count agent(s)" : "No agents to kill";
 }
 
 sub cmd_locks {
@@ -400,7 +399,7 @@ sub cmd_locks {
         $output .= "File Locks:\n";
         for my $file (sort keys %$file_locks) {
             my $lock = $file_locks->{$file};
-            $output .= "  🔒 $file\n";
+            $output .= "  [" . ui_char("lock") . "] $file\n";
             $output .= "     Owner: $lock->{owner}\n";
             $output .= "     Mode: $lock->{mode}\n";
         }
@@ -414,7 +413,7 @@ sub cmd_locks {
     my $git_lock = $status->{git_lock} || {};
     if ($git_lock->{holder}) {
         $output .= "Git Lock:\n";
-        $output .= "  🔒 Held by: $git_lock->{holder}\n";
+        $output .= "  [" . ui_char("lock") . "] Held by: $git_lock->{holder}\n";
     } else {
         $output .= "No git lock\n";
     }

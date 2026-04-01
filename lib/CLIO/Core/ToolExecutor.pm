@@ -6,8 +6,6 @@ package CLIO::Core::ToolExecutor;
 use strict;
 use warnings;
 use utf8;
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 use Encode qw(decode encode);
 use CLIO::Core::Logger qw(should_log log_debug);
 use CLIO::Core::ErrorContext qw(classify_error format_error);

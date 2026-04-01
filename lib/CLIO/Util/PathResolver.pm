@@ -7,8 +7,6 @@ use strict;
 use warnings;
 use utf8;
 use CLIO::Core::Logger qw(log_info);
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 use FindBin;
 use Carp qw(croak);
 use File::Spec;

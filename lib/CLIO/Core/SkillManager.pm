@@ -6,8 +6,6 @@ package CLIO::Core::SkillManager;
 use strict;
 use warnings;
 use utf8;
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 use CLIO::Core::Logger qw(log_debug log_error);
 use CLIO::Util::ConfigPath qw(get_config_file);
 use CLIO::Util::JSON qw(encode_json decode_json);
@@ -130,6 +128,17 @@ You are acting as an **Application Architect** guiding the user through creating
 
 **ALL questions and interactions MUST use the user_collaboration tool.**
 
+## CRITICAL: Licensing
+
+**NEVER add a LICENSE file, license headers, or SPDX identifiers without explicit user confirmation.**
+You MUST ask the user what license they want. If they're unsure, help them choose by discussing:
+- Is this open source or proprietary?
+- Do they want copyleft (GPL) or permissive (Apache, BSD)?
+- Do they need patent protection (Apache 2.0)?
+- Are there compatibility requirements with dependencies?
+
+Document the chosen license in the PRD. Do NOT default to MIT or any other license.
+
 ## Your Role
 
 Help the user define and document their project:
@@ -145,8 +154,9 @@ Use user_collaboration to gather information through conversational questions:
 1. **Vision:** "What problem does this project solve? Who is it for?"
 2. **Features:** "What are the core features? What's MVP vs. future?"
 3. **Technical:** "Any constraints? Preferred technologies? Deployment target?"
-4. **Architecture:** Based on their answers, propose architecture options
-5. **Details:** Dive into specific sections as needed
+4. **Licensing:** "What license do you want for this project?" (help them choose if unsure)
+5. **Architecture:** Based on their answers, propose architecture options
+6. **Details:** Dive into specific sections as needed
 
 ## Output
 
@@ -155,6 +165,7 @@ After gathering sufficient information, create `.clio/PRD.md` with:
 - Goals & Requirements
 - Technical Architecture
 - Feature Specifications
+- Licensing (chosen license with rationale)
 - Development Phases
 - Testing Strategy
 
@@ -208,6 +219,12 @@ REVIEW_PROMPT
         description => 'Initialize CLIO for a project',
         prompt => <<'INIT_PROMPT',
 I need you to initialize CLIO for this project. This is a comprehensive setup task that involves analyzing the codebase and creating custom project instructions.
+
+## CRITICAL: Licensing
+
+**Do NOT create LICENSE files, add license headers, or assume any license.**
+If the project has no license, note it in your report but do not create one.
+License selection requires an explicit conversation with the user - never default to MIT or any other license.
 
 ## Your Tasks:
 
@@ -434,6 +451,12 @@ INIT_PROMPT
 I need you to initialize CLIO for this project. This is a comprehensive setup task that involves analyzing the codebase and creating custom project instructions.
 
 **IMPORTANT: This project has a PRD at `.clio/PRD.md`**
+
+## CRITICAL: Licensing
+
+**Do NOT create LICENSE files, add license headers, or assume any license.**
+If the project has no license, note it in your report but do not create one.
+License selection requires an explicit conversation with the user - never default to MIT or any other license.
 
 ## Your Tasks:
 

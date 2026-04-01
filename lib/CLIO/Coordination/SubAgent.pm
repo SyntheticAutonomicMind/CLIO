@@ -12,8 +12,6 @@ use CLIO::Core::Logger qw(log_debug log_warning);
 use POSIX qw(setsid);
 use Carp qw(croak);
 
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 
 =head1 NAME
 

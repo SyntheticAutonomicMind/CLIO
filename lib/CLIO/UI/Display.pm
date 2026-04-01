@@ -6,8 +6,6 @@ package CLIO::UI::Display;
 use strict;
 use warnings;
 use utf8;
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 
 use Carp qw(croak confess);
 use CLIO::Util::TextSanitizer qw(sanitize_text);
@@ -169,7 +167,8 @@ sub display_assistant_message {
     $display_message = join "\n", @lines;
     
     # Display with role label using writeline (markdown already rendered above)
-    my $line = $chat->colorize("CLIO: ", 'ASSISTANT') . $display_message;
+    my $agent = $chat->agent_name();
+    my $line = $chat->colorize("$agent: ", 'ASSISTANT') . $display_message;
     $chat->writeline($line, markdown => 0);
 }
 
@@ -325,7 +324,7 @@ sub display_command_header {
     
     my $chat = $self->{chat};
     
-    my $border = "═" x $width;
+    my $border = box_char('dhorizontal') x $width;
     
     $chat->writeline('', markdown => 0);
     $chat->writeline($chat->colorize($border, 'command_header'), markdown => 0);
@@ -354,7 +353,7 @@ sub display_section_header {
     
     my $chat = $self->{chat};
     
-    my $underline = "─" x $width;
+    my $underline = box_char('horizontal') x $width;
     
     # Blank line before section for visual separation from previous content
     # Use writeline to ensure proper output handling (UTF-8, color codes, etc.)
@@ -431,7 +430,7 @@ sub display_list_item {
     if (defined $num) {
         $line = $chat->colorize("  $num. ", 'command_label') . $item;
     } else {
-        $line = $chat->colorize("  • ", 'command_label') . $item;
+        $line = $chat->colorize("  " . ui_char("bullet_round") . " ", "command_label") . $item;
     }
     $chat->writeline($line, markdown => 0);
 }
@@ -450,7 +449,7 @@ sub display_tip {
     
     my $chat = $self->{chat};
     
-    my $line = "  " . $chat->colorize("•", 'muted') . " " . $chat->colorize($text, 'muted');
+    my $line = "  " . $chat->colorize(ui_char("bullet_round"), "muted") . " " . $chat->colorize($text, "muted");
     $chat->writeline($line, markdown => 0);
 }
 
@@ -503,7 +502,7 @@ sub display_usage_summary {
         
         my $ent_display;
         if ($entitlement == -1) {
-            $ent_display = "∞";
+            $ent_display = ui_char("infinity");
         } else {
             $ent_display = $entitlement;
             $ent_display =~ s/(\d)(?=(\d{3})+$)/$1,/g;
@@ -513,7 +512,7 @@ sub display_usage_summary {
     }
     
     # Build complete line with all components and display via writeline for consistency
-    my $line = $chat->colorize("━ SERVER ━ ", 'SYSTEM') . $cost_str . $quota_info . " " . $chat->colorize("━", 'SYSTEM');
+    my $line = $chat->colorize(box_char("hhorizontal") . " SERVER " . box_char("hhorizontal") . " ", "SYSTEM") . $cost_str . $quota_info . " " . $chat->colorize(box_char("hhorizontal"), "SYSTEM");
     $chat->writeline($line, markdown => 0);
 }
 
@@ -528,7 +527,8 @@ sub show_thinking {
     
     my $chat = $self->{chat};
     
-    print $chat->colorize("CLIO: ", 'ASSISTANT');
+    my $agent = $chat->agent_name();
+    print $chat->colorize("$agent: ", 'ASSISTANT');
     print $chat->colorize("(thinking...)", 'DIM');
     $| = 1;
 }

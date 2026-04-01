@@ -11,8 +11,6 @@ use File::Spec;
 use POSIX qw(strftime);
 use Carp qw(croak);
 
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 
 =head1 NAME
 

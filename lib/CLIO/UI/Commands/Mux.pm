@@ -10,8 +10,6 @@ use Carp qw(croak);
 use CLIO::Core::Logger qw(log_debug log_info log_warning);
 use parent 'CLIO::UI::Commands::Base';
 
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 
 =head1 NAME
 
@@ -83,7 +81,7 @@ sub cmd_status {
         $self->display_key_value("Detected", $self->colorize("none", 'DIM'));
         $self->writeline("", markdown => 0);
         $self->writeline($self->colorize("Not running inside a terminal multiplexer.", 'DIM'), markdown => 0);
-        $self->writeline($self->colorize("Start CLIO inside tmux, GNU Screen, or Zellij for multi-pane support.", 'DIM'), markdown => 0);
+        $self->writeline($self->colorize("Start " . ($ENV{CLIO_AGENT_NAME} || 'CLIO') . " inside tmux, GNU Screen, or Zellij for multi-pane support.", 'DIM'), markdown => 0);
         return "";
     }
 
@@ -128,7 +126,7 @@ sub cmd_agent {
     my $mux = $self->_get_multiplexer();
     unless ($mux) {
         $self->display_error_message("Not running inside a terminal multiplexer.");
-        $self->writeline($self->colorize("Start CLIO inside tmux, GNU Screen, or Zellij.", 'DIM'), markdown => 0);
+        $self->writeline($self->colorize("Start " . ($ENV{CLIO_AGENT_NAME} || 'CLIO') . " inside tmux, GNU Screen, or Zellij.", 'DIM'), markdown => 0);
         return "";
     }
 

@@ -6,8 +6,6 @@ package CLIO::Tools::CodeIntelligence;
 use strict;
 use warnings;
 use utf8;
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 use CLIO::Core::Logger qw(log_debug);
 use parent 'CLIO::Tools::Tool';
 use File::Find;

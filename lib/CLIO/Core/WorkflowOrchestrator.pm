@@ -7,8 +7,7 @@ use strict;
 use warnings;
 use utf8;
 use Carp qw(croak);
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
+use CLIO::UI::Terminal qw(box_char ui_char);
 use CLIO::Core::Logger qw(log_error log_warning log_info log_debug);
 use CLIO::Core::ErrorContext qw(classify_error format_error);
 use CLIO::Util::TextSanitizer qw(sanitize_text);
@@ -1729,7 +1728,7 @@ sub _handle_api_error {
         }
 
         # Format retry count display (show ∞ for infinite retries)
-        my $retry_display = $allow_infinite_retry ? '∞' : $retry_limit;
+        my $retry_display = $allow_infinite_retry ? ui_char('infinity') : $retry_limit;
         my $system_msg = "Temporary $error_type detected. Retrying in ${retry_delay}s... (attempt $$retry_count_ref" . ($allow_infinite_retry ? "" : "/$retry_display") . ")";
 
         # ── Per-error-type handling ──
@@ -2288,7 +2287,7 @@ sub _handle_interrupt {
     my $interrupt_message = {
         role => 'user',
         content => 
-            "━━━ USER INTERRUPT ━━━\n\n" .
+            box_char("hhorizontal") x 3 . " USER INTERRUPT " . box_char("hhorizontal") x 3 . "\n\n" .
             "You pressed ESC to get the agent's attention.\n\n" .
             "AGENT: Stop your current work immediately and use the user_collaboration tool to ask what I need.\n\n" .
             "Example:\n" .

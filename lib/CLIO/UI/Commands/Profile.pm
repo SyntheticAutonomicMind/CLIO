@@ -7,8 +7,6 @@ use strict;
 use warnings;
 use utf8;
 use parent 'CLIO::UI::Commands::Base';
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 use CLIO::Core::Logger qw(log_debug log_warning);
 use CLIO::Profile::Manager;
 use CLIO::Profile::Analyzer;
@@ -254,6 +252,15 @@ $samples
 
 Analyze the data above to identify the user's communication style, working preferences, technical focus, and collaboration patterns. Then use the user_collaboration tool to walk through your findings with the user.
 
+### Required Information to Gather
+
+Before writing the profile, you MUST ask the user (via user_collaboration) for:
+
+1. **Name:** "What name would you like me to use in your profile?" (used as "The user's name is [Name]")
+2. **Licensing preference:** "What's your default license preference for new projects? (e.g., GPL-3.0, Apache-2.0, MIT, proprietary)" - If they're unsure, help them decide. Include SPDX header preference if applicable.
+
+### Profile Requirements
+
 The profile should be:
 
 1. **Concise** - 400-800 tokens max. This goes into every system prompt.
@@ -261,15 +268,23 @@ The profile should be:
 3. **Accurate** - Based on real data, not assumptions. The user validates everything.
 4. **Formatted** as markdown with bold section headers.
 
-Suggested sections (adapt based on what the data shows):
+### Required Sections
+
+- **Name:** "The user's name is [Name]."
 - **Communication:** How they communicate (direct? collaborative? terse?)
 - **Working style:** How they assign and manage work
 - **Preferences:** What they care about (code style, git workflow, testing, etc.)
+- **Licensing:** Default license, SPDX preferences, and the rule: never assume a license without asking
 - **Technical focus:** Languages, platforms, domains
 - **What works:** Behaviors that earn positive feedback
 - **What doesn't work:** Behaviors that trigger corrections
 
+Additional sections are welcome if the data supports them (e.g., **Writing style**, **Git workflow**, **Code style**).
+
+### Workflow
+
 Walk through your draft with the user:
+- Ask for their name and licensing preference first
 - Show what the analysis found
 - Ask if each section feels accurate
 - Let them add, remove, or modify anything

@@ -6,8 +6,6 @@ package CLIO::Core::PromptManager;
 use strict;
 use warnings;
 use utf8;
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 use CLIO::Core::Logger qw(log_error log_debug log_warning);
 use CLIO::Util::ConfigPath qw(get_config_file);
 use CLIO::Util::TextSanitizer qw(sanitize_text);
@@ -16,6 +14,7 @@ use CLIO::Util::JSON qw(encode_json decode_json);
 use File::Spec;
 use File::Path qw(make_path);
 use File::Basename qw(dirname);
+use Cwd qw(getcwd);
 
 =head1 NAME
 
@@ -931,14 +930,17 @@ sub _get_default_prompt_content {
     # Build conditional sections
     my $multi_agent_section = $is_subagent ? $self->_get_subagent_instructions() : $self->_get_manager_instructions();
     
+    my $agent_name = $ENV{CLIO_AGENT_NAME} || 'CLIO';
+    my $agent_subtitle = $ENV{CLIO_AGENT_SUBTITLE} || 'Command Line Intelligence Orchestrator';
+    
     return <<"END_PROMPT";
-# CLIO System Prompt
+# $agent_name System Prompt
 
-You are CLIO (Command Line Intelligence Orchestrator), an advanced AI coding assistant.
+You are $agent_name ($agent_subtitle), an advanced AI coding assistant.
 
 ## Core Identity
 
-When asked for your name, you must respond with "CLIO".
+When asked for your name, you must respond with "$agent_name".
 
 **YOU ARE AN AGENT** - This defines your operational model:
 
@@ -1163,6 +1165,20 @@ Agent: [reads code]
 Report: "Blocked on [X]. Tried: [list]. Need: [specific requirement]. Options: [alternatives]."
 
 **YOU HAVE TOOLS TO SOLVE PROBLEMS. USE THEM ITERATIVELY.**
+
+---
+
+## Licensing (CRITICAL)
+
+**NEVER create LICENSE files, add license headers, or assume any license for a project.**
+
+Before adding any licensing:
+1. Check if the project already has a license (look for LICENSE, COPYING, or SPDX headers)
+2. If no license exists, ask the user what license they want via user_collaboration
+3. If the user is unsure, help them choose by discussing their goals
+4. Only add licensing after explicit user confirmation
+
+This applies to: new projects, /init, /design, and any situation where licensing comes up.
 
 ---
 
@@ -1525,6 +1541,10 @@ END_PROMPT
 =head2 _format_ltm_patterns
 
 Format LTM (Long-Term Memory) patterns for injection into system prompt.
+Uses token-budgeted rendering to keep the LTM section within bounds.
+Entries are scored by confidence, recency, type, and usage - only the
+highest-scoring entries that fit within the budget are included.
+A compact index footer shows what additional memories are available.
 
 Arguments:
 - $session: Session object containing LTM
@@ -1542,66 +1562,32 @@ sub _format_ltm_patterns {
     my $ltm = $session->can('ltm') ? $session->ltm() : undef;
     return '' unless $ltm;
     
-    my @sections;
-    
-    # Format discoveries
-    my $discoveries = $ltm->{patterns}{discoveries} || [];
-    if (@$discoveries) {
-        push @sections, "### Key Discoveries\n";
-        for my $d (sort { ($b->{confidence} // 0) <=> ($a->{confidence} // 0) } @$discoveries) {
-            my $verified = $d->{verified} ? ", Verified" : "";
-            push @sections, sprintf("- **%s** (Confidence: %d%%%s)\n", 
-                $d->{fact}, 
-                int($d->{confidence} * 100),
-                $verified
-            );
-        }
-        push @sections, "\n";
-    }
-    
-    # Format problem-solutions
-    my $solutions = $ltm->{patterns}{problem_solutions} || [];
-    if (@$solutions) {
-        push @sections, "### Problem Solutions\n";
-        for my $ps (sort { ($b->{solved_count} // 0) <=> ($a->{solved_count} // 0) } @$solutions) {
-            push @sections, sprintf("**Problem:** %s\n**Solution:** %s\n",
-                $ps->{error},
-                $ps->{solution}
-            );
-            if ($ps->{examples} && @{$ps->{examples}}) {
-                push @sections, sprintf("_Applied successfully %d time%s_\n",
-                    $ps->{solved_count},
-                    $ps->{solved_count} == 1 ? '' : 's'
-                );
-            }
-            push @sections, "\n";
+    # Run inline consolidation if gate conditions are met
+    my $consol_stats = $ltm->maybe_consolidate();
+    if ($consol_stats) {
+        my $total = $consol_stats->{removed} + $consol_stats->{decayed} + $consol_stats->{deduped};
+        if ($total > 0) {
+            log_debug('PromptManager', "LTM consolidated: removed=$consol_stats->{removed}, decayed=$consol_stats->{decayed}, deduped=$consol_stats->{deduped}");
+            # Save consolidated LTM
+            eval {
+                my $ltm_file = File::Spec->catfile(Cwd::getcwd(), '.clio', 'ltm.json');
+                $ltm->save($ltm_file);
+            };
+            log_warning('PromptManager', "Failed to save consolidated LTM: $@") if $@;
         }
     }
     
-    # Format code patterns
-    my $patterns = $ltm->{patterns}{code_patterns} || [];
-    if (@$patterns) {
-        push @sections, "### Code Patterns\n";
-        for my $cp (sort { ($b->{confidence} // 0) <=> ($a->{confidence} // 0) } @$patterns) {
-            push @sections, sprintf("- **%s** (Confidence: %d%%)\n",
-                $cp->{pattern},
-                int($cp->{confidence} * 100)
-            );
-            if ($cp->{examples} && @{$cp->{examples}}) {
-                push @sections, "  Examples: " . join(", ", @{$cp->{examples}}) . "\n";
-            }
-        }
-        push @sections, "\n";
-    }
+    # Use budgeted rendering (~3000 tokens / ~12000 chars)
+    my ($section, $included, $total) = $ltm->render_budgeted_section(max_chars => 12000);
     
-    return '' unless @sections;
+    return '' unless $included > 0;
     
-    my $output = "\n## Long-Term Memory Patterns\n\n";
-    $output .= "The following patterns have been learned from previous sessions in this project:\n\n";
-    $output .= join('', @sections);
-    $output .= "_These patterns are project-specific and should inform your approach to similar tasks._\n";
+    log_debug('PromptManager', "LTM budgeted render: $included of $total entries, " . length($section) . " chars");
     
-    return $output;
+    # Add recovery guidance at end
+    $section .= "\n_After context trimming, use these patterns plus `memory_operations(recall_sessions)` to recover context instead of reading handoff documents._\n";
+    
+    return "\n" . $section;
 }
 
 1;
