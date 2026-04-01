@@ -111,7 +111,7 @@ sub new {
     
     my $self = {
         prompt => $args{prompt} || '> ',
-        history => [],
+        history => $args{history} || [],
         history_pos => -1,
         completer => $args{completer},  # CLIO::Core::TabCompletion instance
         debug => $args{debug} || 0,
@@ -123,6 +123,10 @@ sub new {
         # This allows us to know exactly where to start the next redraw from
         last_cursor_row => 0,
         last_cursor_col => 0,
+        # Performance caches (invalidated per-readline call)
+        _prompt_disp_cache => undef,   # cached prompt display width
+        _term_width_cache => undef,    # cached terminal width
+        _term_width_time => 0,         # when we last checked terminal width
     };
     
     return bless $self, $class;
@@ -145,6 +149,81 @@ Signal Handling:
 
 =cut
 
+
+=head2 _get_term_width
+
+Return cached terminal width. Refreshes from the terminal at most once
+per second to avoid expensive ioctl calls on every keystroke.
+
+=cut
+
+sub _get_term_width {
+    my ($self) = @_;
+    my $now = time();
+    if (!$self->{_term_width_cache} || $now > $self->{_term_width_time}) {
+        my ($w, $h) = GetTerminalSize();
+        $self->{_term_width_cache} = ($w && $w >= 10) ? $w : 80;
+        $self->{_term_width_time} = $now;
+    }
+    return $self->{_term_width_cache};
+}
+
+=head2 _get_prompt_disp
+
+Return cached display width of the visible prompt (ANSI codes stripped).
+Set once per readline() call since the prompt doesn't change mid-input.
+
+=cut
+
+sub _get_prompt_disp {
+    my ($self, $prompt) = @_;
+    unless (defined $self->{_prompt_disp_cache}) {
+        my $visible = $prompt // '';
+        $visible =~ s/\e\[[0-9;]*m//g;
+        $self->{_prompt_disp_cache} = _display_width($visible);
+    }
+    return $self->{_prompt_disp_cache};
+}
+
+=head2 _redraw_from_cursor
+
+Partial redraw: reprint from cursor position to end of input, then
+clear any leftover characters. Much faster than full redraw for mid-line
+edits since it skips the prompt and text before the cursor.
+
+=cut
+
+sub _redraw_from_cursor {
+    my ($self, $input_ref, $cursor_pos_ref, $prompt) = @_;
+
+    my $term_width = $self->_get_term_width();
+    my $prompt_disp = $self->_get_prompt_disp($prompt);
+    my $input_len = length($$input_ref);
+
+    # Text from cursor to end
+    my $tail = substr($$input_ref, $$cursor_pos_ref);
+    my $tail_disp = _display_width($tail);
+
+    # Where cursor is right now (display columns from start of line)
+    my $cursor_prefix_disp = _display_width(substr($$input_ref, 0, $$cursor_pos_ref));
+    my $cursor_total = $prompt_disp + $cursor_prefix_disp;
+    my $cursor_row = int($cursor_total / $term_width);
+    my $cursor_col = ($cursor_total % $term_width) + 1;
+
+    # Save cursor position, print tail, clear to end of screen, restore cursor
+    print "\e7";        # save cursor
+    print $tail;        # overwrite from cursor to end
+    print "\e[J";       # clear any leftover chars beyond new end
+    print "\e8";        # restore cursor
+
+    # Update display_lines tracking
+    my $total_disp = $prompt_disp + _display_width($$input_ref);
+    my $new_display_lines = $total_disp > 0 ? int(($total_disp - 1) / $term_width) + 1 : 1;
+    $self->{display_lines} = $new_display_lines;
+    $self->{last_cursor_row} = $cursor_row;
+    $self->{last_cursor_col} = $cursor_col;
+}
+
 sub readline {
     my ($self, $prompt) = @_;
     
@@ -154,6 +233,11 @@ sub readline {
     $self->{display_lines} = 1;
     $self->{last_cursor_row} = 0;
     $self->{last_cursor_col} = 0;
+    
+    # Reset performance caches for this readline session
+    $self->{_prompt_disp_cache} = undef;
+    $self->{_term_width_cache} = undef;
+    $self->{_term_width_time} = 0;
     
     # Print prompt
     print $prompt;
@@ -219,7 +303,11 @@ sub readline {
                 ReadMode('restore');
                 return undef;
             }
-            # If there's input, Ctrl-D deletes forward
+            # Ctrl-D with text: forward delete (standard terminal behavior)
+            if ($cursor_pos < length($input)) {
+                substr($input, $cursor_pos, 1, '');
+                $self->redraw_line(\$input, \$cursor_pos, $prompt);
+            }
             next;
         }
         
@@ -254,13 +342,8 @@ sub readline {
                     # Optimization: if deleting from end, we can handle it locally
                     # This avoids full redraw and prevents scroll issues when unwrapping.
 
-                    my ($term_width, $term_height) = GetTerminalSize();
-                    $term_width ||= 80;
-
-                    # Calculate visible prompt length and display widths
-                    my $visible_prompt = $prompt;
-                    $visible_prompt =~ s/\e\[[0-9;]*m//g;
-                    my $prompt_disp  = _display_width($visible_prompt);
+                    my $term_width = $self->_get_term_width();
+                    my $prompt_disp = $self->_get_prompt_disp($prompt);
                     my $input_before = substr($input, 0, $cursor_pos);  # after decrement
                     my $cursor_disp  = _display_width($input_before);
 
@@ -330,8 +413,10 @@ sub readline {
                 last unless defined $next;
                 $seq .= $next;
                 
-                # Stop if we've completed the sequence (ends with letter or ~)
-                if ($next =~ /[A-Za-z~]/) {
+                # Stop if we've completed the sequence:
+                # - letter or ~ (standard CSI/SS3 terminators)
+                # - DEL (0x7F) for Alt+Backspace (ESC + DEL)
+                if ($next =~ /[A-Za-z~]/ || ord($next) == 0x7F) {
                     last;
                 }
             }
@@ -373,6 +458,27 @@ sub readline {
             next;
         }
         
+        # Ctrl-W (kill word backward - standard terminal binding)
+        if ($ord == 23) {
+            if ($cursor_pos > 0) {
+                my $old_pos = $cursor_pos;
+                my $pos = $cursor_pos;
+                $pos--;
+                # Skip whitespace backward
+                while ($pos > 0 && substr($input, $pos - 1, 1) =~ /\s/) {
+                    $pos--;
+                }
+                # Skip non-whitespace backward
+                while ($pos > 0 && substr($input, $pos - 1, 1) !~ /\s/) {
+                    $pos--;
+                }
+                substr($input, $pos, $old_pos - $pos, '');
+                $cursor_pos = $pos;
+                $self->redraw_line(\$input, \$cursor_pos, $prompt);
+            }
+            next;
+        }
+        
         # Regular printable character (including multi-byte UTF-8)
         # Allow any character not caught by special handlers above
         # For multi-byte UTF-8 chars, ReadKey already assembled the full codepoint.
@@ -399,12 +505,8 @@ sub readline {
                 print $char;
 
                 # Update cursor tracking using display-column widths, not codepoint counts.
-                my ($term_width, $term_height) = GetTerminalSize();
-                $term_width ||= 80;
-
-                my $visible_prompt = $prompt;
-                $visible_prompt =~ s/\e\[[0-9;]*m//g;
-                my $prompt_disp   = _display_width($visible_prompt);
+                my $term_width = $self->_get_term_width();
+                my $prompt_disp = $self->_get_prompt_disp($prompt);
                 my $input_so_far  = substr($input, 0, $cursor_pos);
                 my $total_pos     = $prompt_disp + _display_width($input_so_far);
 
@@ -419,8 +521,8 @@ sub readline {
                 $self->{last_cursor_row} = $new_row;
                 $self->{last_cursor_col} = $new_col;
             } else {
-                # Inserting in middle - need full redraw
-                $self->redraw_line(\$input, \$cursor_pos, $prompt);
+                # Inserting in middle - partial redraw from cursor
+                $self->_redraw_from_cursor(\$input, \$cursor_pos, $prompt);
             }
         }
     }
@@ -503,14 +605,17 @@ Handle escape sequences (arrow keys, function keys, etc.)
 
 Supported sequences:
 - ESC [ A/B/C/D - Arrow keys (up/down/right/left)  
-- ESC [ 1;5C/D - Ctrl+Right/Left (standard xterm)
-- ESC [ 1;2C/D - Shift+Right/Left (standard xterm)
-- ESC [ 1;6C/D - Ctrl+Shift+Right/Left
-- ESC [ 5C/D - Ctrl+Right/Left (alternative)
-- ESC [ 6C/D - Shift+Right/Left (alternative)
-- ESC b/f - Option+Left/Right (macOS Terminal.app)
-
-Terminal.app can send different sequences depending on settings, so we handle multiple formats.
+- ESC [ 1;5C/D - Ctrl+Right/Left (word forward/backward, standard xterm)
+- ESC [ 1;3C/D - Ctrl+Right/Left (Terminal.app sends modifier 3)
+- ESC [ 1;2C/D - Shift+Right/Left (word forward/backward)
+- ESC [ 1;5A/B - Ctrl+Up/Down (home/end of line)
+- ESC [ 5C/D - Ctrl+Right/Left (alternative format)
+- ESC b/f - Option+Left/Right (macOS, word movement)
+- ESC d - Alt+D (kill word forward)
+- ESC DEL - Alt+Backspace (kill word backward)
+- ESC [ H / ESC [ 1~ / ESC O H - Home key (beginning of line)
+- ESC [ F / ESC [ 4~ / ESC O F - End key (end of line)
+- ESC [ 3~ - Delete key (forward delete)
 
 =cut
 
@@ -550,20 +655,26 @@ sub handle_escape_sequence {
     # Modified arrow keys - standard xterm format: ESC [ 1 ; MOD C/D
     # Modifiers: 2=Shift, 3=Alt, 4=Shift+Alt, 5=Ctrl, 6=Ctrl+Shift, 7=Ctrl+Alt, 8=Ctrl+Shift+Alt
     # NOTE: Terminal.app sends modifier 3 for Ctrl, not the standard modifier 5
-    if ($seq =~ /^\e\[1;([2-8])([CD])/) {
+    if ($seq =~ /^\e\[1;([2-8])([ABCD])/) {
         my ($modifier, $dir) = ($1, $2);
         
         if ($modifier == 5 || $modifier == 3) {
             # Ctrl modifier (5=standard xterm, 3=Terminal.app)
             if ($dir eq 'C') {
-                # Ctrl+Right - move to end of line
-                my $old_pos = $$cursor_pos_ref;
-                $$cursor_pos_ref = length($$input_ref);
-                $self->reposition_cursor(\$old_pos, $cursor_pos_ref, $input_ref, $prompt);
+                # Ctrl+Right - move word forward (standard terminal behavior)
+                $self->move_word_forward($input_ref, $cursor_pos_ref, $prompt);
             } elsif ($dir eq 'D') {
-                # Ctrl+Left - move to beginning of line
+                # Ctrl+Left - move word backward (standard terminal behavior)
+                $self->move_word_backward($input_ref, $cursor_pos_ref, $prompt);
+            } elsif ($dir eq 'A') {
+                # Ctrl+Up - move to beginning of line
                 my $old_pos = $$cursor_pos_ref;
                 $$cursor_pos_ref = 0;
+                $self->reposition_cursor(\$old_pos, $cursor_pos_ref, $input_ref, $prompt);
+            } elsif ($dir eq 'B') {
+                # Ctrl+Down - move to end of line
+                my $old_pos = $$cursor_pos_ref;
+                $$cursor_pos_ref = length($$input_ref);
                 $self->reposition_cursor(\$old_pos, $cursor_pos_ref, $input_ref, $prompt);
             }
         } elsif ($modifier == 2) {
@@ -586,30 +697,55 @@ sub handle_escape_sequence {
         if ($modifier == 5) {
             # Ctrl modifier
             if ($dir eq 'C') {
-                # Ctrl+Right - move to end of line
+                # Ctrl+Right - move word forward
+                $self->move_word_forward($input_ref, $cursor_pos_ref, $prompt);
+            } elsif ($dir eq 'D') {
+                # Ctrl+Left - move word backward
+                $self->move_word_backward($input_ref, $cursor_pos_ref, $prompt);
+            }
+        } elsif ($modifier == 6) {
+            # Ctrl+Shift modifier
+            if ($dir eq 'C') {
+                # Ctrl+Shift+Right - move to end of line
                 my $old_pos = $$cursor_pos_ref;
                 $$cursor_pos_ref = length($$input_ref);
                 $self->reposition_cursor(\$old_pos, $cursor_pos_ref, $input_ref, $prompt);
             } elsif ($dir eq 'D') {
-                # Ctrl+Left - move to beginning of line
+                # Ctrl+Shift+Left - move to beginning of line
                 my $old_pos = $$cursor_pos_ref;
                 $$cursor_pos_ref = 0;
                 $self->reposition_cursor(\$old_pos, $cursor_pos_ref, $input_ref, $prompt);
-            }
-        } elsif ($modifier == 6) {
-            # Shift modifier (alternative format)
-            if ($dir eq 'C') {
-                # Shift+Right - move word forward
-                $self->move_word_forward($input_ref, $cursor_pos_ref, $prompt);
-            } elsif ($dir eq 'D') {
-                # Shift+Left - move word backward
-                $self->move_word_backward($input_ref, $cursor_pos_ref, $prompt);
             }
         }
         return;
     }
     
-    # macOS Terminal.app specific: Option+Left = ESC b, Option+Right = ESC f
+    # Home key: ESC[H, ESC[1~, ESCOH (xterm application mode)
+    if ($seq =~ /^\e\[H$/ || $seq =~ /^\e\[1~$/ || $seq =~ /^\eOH$/) {
+        my $old_pos = $$cursor_pos_ref;
+        $$cursor_pos_ref = 0;
+        $self->reposition_cursor(\$old_pos, $cursor_pos_ref, $input_ref, $prompt);
+        return;
+    }
+    
+    # End key: ESC[F, ESC[4~, ESCOF (xterm application mode)
+    if ($seq =~ /^\e\[F$/ || $seq =~ /^\e\[4~$/ || $seq =~ /^\eOF$/) {
+        my $old_pos = $$cursor_pos_ref;
+        $$cursor_pos_ref = length($$input_ref);
+        $self->reposition_cursor(\$old_pos, $cursor_pos_ref, $input_ref, $prompt);
+        return;
+    }
+    
+    # Delete key: ESC[3~
+    if ($seq =~ /^\e\[3~$/) {
+        if ($$cursor_pos_ref < length($$input_ref)) {
+            substr($$input_ref, $$cursor_pos_ref, 1, '');
+            $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
+        }
+        return;
+    }
+    
+    # macOS Terminal.app / iTerm2: Option+Left = ESC b, Option+Right = ESC f
     if ($seq =~ /^\eb/) {
         # Option+Left - move word backward
         $self->move_word_backward($input_ref, $cursor_pos_ref, $prompt);
@@ -618,6 +754,45 @@ sub handle_escape_sequence {
     if ($seq =~ /^\ef/) {
         # Option+Right - move word forward
         $self->move_word_forward($input_ref, $cursor_pos_ref, $prompt);
+        return;
+    }
+    
+    # Alt+D / ESC d - kill word forward (standard readline binding)
+    if ($seq =~ /^\ed/) {
+        my $len = length($$input_ref);
+        if ($$cursor_pos_ref < $len) {
+            my $pos = $$cursor_pos_ref;
+            # Skip whitespace forward
+            while ($pos < $len && substr($$input_ref, $pos, 1) =~ /\s/) {
+                $pos++;
+            }
+            # Skip non-whitespace forward
+            while ($pos < $len && substr($$input_ref, $pos, 1) !~ /\s/) {
+                $pos++;
+            }
+            substr($$input_ref, $$cursor_pos_ref, $pos - $$cursor_pos_ref, '');
+            $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
+        }
+        return;
+    }
+    
+    # Alt+Backspace / ESC + DEL (0x7F) - kill word backward
+    if ($seq eq "\e\x7f") {
+        if ($$cursor_pos_ref > 0) {
+            my $old_pos = $$cursor_pos_ref;
+            my $pos = $$cursor_pos_ref - 1;
+            # Skip whitespace backward
+            while ($pos > 0 && substr($$input_ref, $pos - 1, 1) =~ /\s/) {
+                $pos--;
+            }
+            # Skip non-whitespace backward
+            while ($pos > 0 && substr($$input_ref, $pos - 1, 1) !~ /\s/) {
+                $pos--;
+            }
+            substr($$input_ref, $pos, $old_pos - $pos, '');
+            $$cursor_pos_ref = $pos;
+            $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
+        }
         return;
     }
 }
@@ -782,15 +957,8 @@ sub reposition_cursor {
 
     $prompt //= '';
 
-    # Get terminal width
-    my ($term_width, $term_height) = GetTerminalSize();
-    $term_width ||= 80;
-    $term_width = 80 if $term_width < 10;
-
-    # Calculate visible prompt display width (strip ANSI codes, measure columns)
-    my $visible_prompt = $prompt;
-    $visible_prompt =~ s/\e\[[0-9;]*m//g;
-    my $prompt_disp = _display_width($visible_prompt);
+    my $term_width = $self->_get_term_width();
+    my $prompt_disp = $self->_get_prompt_disp($prompt);
 
     # Calculate display-column positions of old and new cursor.
     # $$old_pos_ref and $$new_pos_ref are codepoint offsets into $$input_ref.
@@ -890,15 +1058,8 @@ sub redraw_line {
     }
 
     # Get terminal width for proper wrapping
-    my ($term_width, $term_height) = GetTerminalSize();
-    $term_width ||= 80;
-    $term_height ||= 24;
-    $term_width = 80 if $term_width < 10;
-
-    # Calculate visible prompt display width (strip ANSI codes, measure columns)
-    my $visible_prompt = $prompt;
-    $visible_prompt =~ s/\e\[[0-9;]*m//g;
-    my $prompt_disp = _display_width($visible_prompt);
+    my $term_width = $self->_get_term_width();
+    my $prompt_disp = $self->_get_prompt_disp($prompt);
 
     # Calculate total display columns occupied by prompt + full input
     my $input_disp  = _display_width($$input_ref);

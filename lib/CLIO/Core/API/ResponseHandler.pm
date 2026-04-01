@@ -216,8 +216,8 @@ sub handle_error_response {
             $error_type = 'auth_failed';
         }
     }
-    # Handle transient server errors (502, 503)
-    elsif ($status == 502 || $status == 503) {
+    # Handle transient server errors (5xx except 599 which is handled as connection_error)
+    elsif ($status >= 500 && $status < 599) {
         $is_retryable_error = 1;
         $retryable = 1;
         $retry_after = 2;
