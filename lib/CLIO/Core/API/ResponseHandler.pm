@@ -225,6 +225,16 @@ sub handle_error_response {
         $retry_info = "Server temporarily unavailable ($status). Retrying...";
         $error = $retry_info;
     }
+    # Handle connection errors (599 = curl/HTTP::Tiny internal failure)
+    elsif ($status == 599 || $status < 100) {
+        $is_retryable_error = 1;
+        $retryable = 1;
+        $retry_after = 3;
+        $error_type = 'connection_error';
+        my $reason = eval { $resp->message } // 'unknown';
+        $retry_info = "Connection error: $reason. Retrying...";
+        $error = $retry_info;
+    }
     # Handle token limit exceeded (400)
     elsif ($status == 400 && $error =~ /model_max_prompt_tokens_exceeded|context_length_exceeded|prompt token count.*exceeds/i) {
         $is_retryable_error = 1;
