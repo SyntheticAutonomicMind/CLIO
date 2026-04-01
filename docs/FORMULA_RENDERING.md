@@ -1,8 +1,5 @@
 # Formula Rendering in CLIO
 
-**Added:** January 2026  
-**Status:** @GREEN@Active@RESET@
-
 ## Overview
 
 CLIO now renders LaTeX mathematical formulas with Unicode symbol conversion, making mathematical content readable in the terminal. Both inline and display-level formulas are supported.

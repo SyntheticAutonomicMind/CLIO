@@ -2,47 +2,42 @@
 
 **For user-facing documentation: USER_GUIDE.md, INSTALLATION.md, README.md, tutorials**
 
----------------------------------------------------
+---
 
 ## Purpose
 
 This guide defines writing standards for CLIO's user-facing documentation. Consistent style, tone, and formatting make documentation easier to read, understand, and maintain.
 
----------------------------------------------------
+---
 
 ## Tone & Voice
 
 ### Be Direct and Concise
 
-❌ **Don't:** "It might be helpful if you could potentially try running the command with the debug flag to see if that provides any additional information that could help diagnose the issue."
-
-✅ **Do:** "Run the command with `--debug` to see diagnostic output."
+- **Don't:** "It might be helpful if you could potentially try running the command with the debug flag to see if that provides any additional information that could help diagnose the issue."
+- **Do:** "Run the command with `--debug` to see diagnostic output."
 
 ### Be Professional but Friendly
 
-❌ **Don't:** "OMG! CLIO is super awesome at reading files! 🎉🚀"
-
-✅ **Do:** "CLIO reads files directly from your filesystem, ensuring accurate content analysis."
+- **Don't:** "OMG! CLIO is super awesome at reading files!"
+- **Do:** "CLIO reads files directly from your filesystem, ensuring accurate content analysis."
 
 ### Avoid Jargon (Unless Explaining It)
 
-❌ **Don't:** "CLIO uses MCP-compliant protocol handlers for IPC."
-
-✅ **Do:** "CLIO uses protocol handlers (standardized message formats) to communicate with AI providers."
+- **Don't:** "CLIO uses MCP-compliant protocol handlers for IPC."
+- **Do:** "CLIO uses protocol handlers (standardized message formats) to communicate with AI providers."
 
 ### Write in Active Voice
 
-❌ **Don't:** "The file will be read by CLIO when the command is executed."
-
-✅ **Do:** "CLIO reads the file when you run the command."
+- **Don't:** "The file will be read by CLIO when the command is executed."
+- **Do:** "CLIO reads the file when you run the command."
 
 ### Address the User Directly
 
-❌ **Don't:** "Users should configure their API key before starting."
+- **Don't:** "Users should configure their API key before starting."
+- **Do:** "Configure your API key before starting."
 
-✅ **Do:** "Configure your API key before starting."
-
----------------------------------------------------
+---
 
 ## Formatting Standards
 
@@ -65,7 +60,7 @@ Use descriptive headers that form a clear outline:
 - H2 for major sections (Installation, Configuration, Usage, etc.)
 - H3 for subsections under major sections
 - H4 for fine details (use only when necessary)
-- Headers should be descriptive: "Installing on macOS" not just "Installation"
+- Headers should be descriptive: "Installing on Linux" not just "Installation"
 
 ### Code Blocks
 
@@ -82,8 +77,8 @@ my $config = CLIO::Core::Config->new();
 
 ```json
 {
-  "provider": "sam",
-  "model": "github_copilot/gpt-4.1"
+  "provider": "github_copilot",
+  "model": "gpt-5"
 }
 ```
 ````
@@ -114,7 +109,7 @@ my $config = CLIO::Core::Config->new();
 
 ```markdown
 1. Install CLIO
-2. Configure API key
+2. Configure API provider
 3. Start a new session
 ```
 
@@ -130,7 +125,7 @@ Use tables for structured comparison or reference data:
 
 ```markdown
 | Command | Description | Example |
-|---------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------|
+|---------|-------------|---------|
 | `/models` | List available models | `/models` |
 | `/config show` | Display configuration | `/config show` |
 | `/help` | Show help | `/help tools` |
@@ -139,12 +134,11 @@ Use tables for structured comparison or reference data:
 **Guidelines:**
 - Always include header row with separators
 - Left-align text columns
-- Right-align number columns (use `:---------------------------------------------------:` or `---------------------------------------------------:`)
 - Keep tables readable in source (align columns)
 
 ### Admonitions
 
-Use blockquotes with emoji for important notes:
+Use blockquotes with emphasis for important notes:
 
 ```markdown
 > **Note:** This feature requires API key configuration.
@@ -180,7 +174,7 @@ Learn more about [Markdown](https://www.markdownguide.org/).
 - Link to official sources when available
 - Check links periodically for rot
 
----------------------------------------------------
+---
 
 ## Content Structure
 
@@ -193,9 +187,9 @@ Every document should begin with a brief overview explaining what it covers:
 
 **Complete guide to using CLIO (Command Line Intelligence Orchestrator)**
 
----------------------------------------------------
+---
 
-CLIO is a terminal-based AI code assistant that integrates directly with your
+CLIO is a terminal-based AI coding assistant that integrates directly with your
 filesystem, version control, and command-line workflow.
 ```
 
@@ -217,18 +211,18 @@ For documents longer than 5 sections, include a linked table of contents:
 
 Every feature should include at least one example:
 
-❌ **Don't:** "Use `/config provider` to set your provider."
+- **Don't:** "Use `/api provider` to set your provider."
+- **Do:**
 
-✅ **Do:**
 ```markdown
-Set your provider using `/config provider`:
+Set your provider:
 
 ```bash
-: /config provider sam
-: /config save
+/api provider github_copilot
+/api login
 ```
 
-CLIO will now use the SAM provider for all requests.
+CLIO will authenticate via device flow and store your token.
 ```
 
 ### Show Both Command and Output
@@ -239,29 +233,28 @@ When demonstrating commands, show both input and expected output:
 Check your current configuration:
 
 ```bash
-: /config show
+/config show
 ```
 
 Output:
 ```
 API Configuration:
-  Provider: sam
-  API Base URL: http://localhost:8080/v1/chat/completions
-  Model: github_copilot/gpt-4.1
+  Provider: github_copilot
+  Model: gpt-5
 ```
 ```
 
----------------------------------------------------
+---
 
 ## Terminology
 
 ### Use Consistent Terms
 
 | Use This | Not This |
-|----------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------|
+|----------|----------|
 | API key | api key, API-key, api_key |
 | API provider | provider, api provider, API Provider |
-| command | slash command, command line |
+| slash command | command, CLIO command |
 | configuration | config, settings |
 | file path | filepath, file-path, path |
 | session | conversation, chat |
@@ -271,17 +264,15 @@ API Configuration:
 
 When introducing technical terms, define them:
 
-❌ **Don't:** "CLIO uses MCP tools to interact with your system."
-
-✅ **Do:** "CLIO uses MCP tools (Model Context Protocol - standardized AI tool formats) to interact with your system."
+- **Don't:** "CLIO uses MCP tools to interact with your system."
+- **Do:** "CLIO uses MCP tools (Model Context Protocol - standardized AI tool formats) to interact with your system."
 
 ### Avoid Ambiguous Pronouns
 
-❌ **Don't:** "When you configure the provider, it will use the default model."
+- **Don't:** "When you configure the provider, it will use the default model."
+- **Do:** "When you configure the provider, CLIO will use the provider's default model."
 
-✅ **Do:** "When you configure the provider, CLIO will use the provider's default model."
-
----------------------------------------------------
+---
 
 ## Command Documentation
 
@@ -300,7 +291,7 @@ Document commands with this structure:
 
 **Example:**
 ```bash
-: /command arg1 arg2
+/command arg1 arg2
 ```
 
 **Output:**
@@ -314,9 +305,9 @@ Example output here
 Indicate placeholders clearly:
 
 ```markdown
-`/config provider <provider_name>`
-`/exec <command>`
-`/read <file_path>`
+`/api provider <provider_name>`
+`/session resume <session_id>`
+`/model <model_name>`
 ```
 
 **Guidelines:**
@@ -324,20 +315,20 @@ Indicate placeholders clearly:
 - Use `[optional]` for optional arguments
 - Use `...` for variable number of arguments
 
----------------------------------------------------
+---
 
 ## Examples Best Practices
 
 ### Use Realistic Examples
 
-❌ **Don't:**
+- **Don't:**
 ```bash
-: /read foo.txt
+/read foo.txt
 ```
 
-✅ **Do:**
+- **Do:**
 ```bash
-: /read lib/CLIO/Core/Config.pm
+Read lib/CLIO/Core/Config.pm and explain how provider configuration works.
 ```
 
 ### Show Complete Workflows
@@ -345,32 +336,31 @@ Indicate placeholders clearly:
 Don't just show isolated commands - show complete workflows:
 
 ```markdown
-## Setting Up a New Provider
+## Setting Up GitHub Copilot
 
-1. **Check available providers:**
+1. **Start CLIO:**
    ```bash
-   : /providers
+   ./clio --new
    ```
 
-2. **Configure the provider:**
+2. **Log in:**
    ```bash
-   : /config provider sam
-   : /api key YOUR_API_KEY_HERE
+   /api login
    ```
 
-3. **Save configuration:**
+3. **Follow the device flow:**
+   - Open the URL shown in your browser
+   - Enter the code displayed
+   - Authorize the application
+
+4. **Verify the connection:**
    ```bash
-   : /config save
+   /models
    ```
 
-4. **Verify configuration:**
-   ```bash
-   : /config show
+5. **Test it:**
    ```
-
-5. **Test the connection:**
-   ```bash
-   : What is 2+2?
+   What is 2+2?
    ```
 ```
 
@@ -382,18 +372,18 @@ Always show what users should expect to see:
 Run CLIO in debug mode:
 
 ```bash
-./clio --debug
+./clio --debug --new
 ```
 
 You should see detailed logs:
 ```
-[DEBUG][Config] Loading configuration from /Users/you/.clio/config.json
-[DEBUG][Config] Provider: sam
-[DEBUG][APIManager] Connecting to http://localhost:8080/v1/chat/completions
+[DEBUG][Config] Loading configuration from ~/.clio/config.json
+[DEBUG][Config] Provider: github_copilot
+[DEBUG][APIManager] Initializing with model gpt-5
 ```
 ```
 
----------------------------------------------------
+---
 
 ## Error Messages & Troubleshooting
 
@@ -408,13 +398,12 @@ Create a troubleshooting section with common errors:
 
 **Problem:** CLIO cannot authenticate with the API.
 
-**Cause:** Invalid or missing API key.
+**Cause:** Invalid or expired token.
 
 **Solution:**
-1. Verify your API key is correct
-2. Set the key: `: /api key YOUR_KEY`
-3. Save configuration: `: /config save`
-4. Restart CLIO
+1. Log out: `/api logout`
+2. Log back in: `/api login`
+3. Follow the device flow to re-authenticate
 ```
 
 ### Use Clear Problem/Solution Format
@@ -427,86 +416,57 @@ Create a troubleshooting section with common errors:
 **Solution:** [Step-by-step fix]
 ```
 
----------------------------------------------------
+---
 
 ## File Paths & Locations
 
 ### Use Tilde for Home Directory
 
-❌ **Don't:** `/Users/username/.clio/config.json`
-
-✅ **Do:** `~/.clio/config.json`
+- **Don't:** `/Users/username/.clio/config.json`
+- **Do:** `~/.clio/config.json`
 
 ### Show Platform-Specific Paths When Necessary
 
 ```markdown
 **Configuration location:**
 - macOS/Linux: `~/.clio/config.json`
-- Windows: `%USERPROFILE%\.clio\config.json`
 ```
 
 ### Use Relative Paths in Examples
 
 When showing project files:
 
-❌ **Don't:** `/Users/you/projects/myapp/lib/module.pm`
+- **Don't:** `/Users/you/projects/myapp/lib/module.pm`
+- **Do:** `lib/module.pm`
 
-✅ **Do:** `lib/module.pm`
-
----------------------------------------------------
+---
 
 ## Version-Specific Documentation
+
+CLIO uses date-based versioning (e.g., `20260331.5`).
 
 ### Clearly Mark Version Requirements
 
 ```markdown
-> **Note:** This feature requires CLIO 1.5.0 or later.
+> **Note:** This feature requires CLIO version 20260301 or later.
 ```
 
 ### Document Breaking Changes
 
 ```markdown
-> **Warning:** As of version 2.0, the `/config endpoint` command has been
+> **Warning:** As of version 20260322, the `/config provider` command has been
 > replaced with `/api provider`. Update your workflows accordingly.
 ```
 
-### Show Upgrade Paths
+### Avoid Volatile External Information
 
-```markdown
-## Upgrading from 1.x to 2.x
+Don't document information that changes frequently and where CLIO isn't the source of truth:
 
-1. Backup your configuration: `cp ~/.clio/config.json ~/.clio/config.json.backup`
-2. Run the upgrade script: `./scripts/upgrade.sh`
-3. Verify your configuration: `./clio --config show`
-```
+- **Model versions** - Models change constantly. Tell users to run `/api models` instead of listing specific model names and versions. When a concrete name is needed in an example, use a current model family name.
+- **Pricing and subscriptions** - Never include dollar amounts, subscription tiers, or billing details. Link to the provider's website instead.
+- **Provider feature comparisons** - Capabilities change. Keep comparisons to stable attributes (cloud vs. local, auth type).
 
----------------------------------------------------
-
-## Screenshots & Visual Aids
-
-### When to Include Screenshots
-
-- Complex UI interactions
-- Visual configuration steps
-- Output formatting examples
-
-### Screenshot Guidelines
-
-- Use high-resolution images (2x scale for retina)
-- Crop to relevant area only
-- Include descriptive captions
-- Store in `docs/images/` directory
-- Use descriptive filenames: `config-provider-selection.png`
-
-### Alternative Text
-
-Always include alt text for accessibility:
-
-```markdown
-![CLIO configuration screen showing provider selection](/docs/images/config-provider.png)
-```
-
----------------------------------------------------
+---
 
 ## Maintenance
 
@@ -525,17 +485,7 @@ Periodically review documentation for:
 - Unclear explanations
 - Missing information
 
-### Update Dates
-
-Include last updated date at the top of major documents:
-
-```markdown
-# CLIO User Guide
-
-**Last Updated:** January 18, 2026
-```
-
----------------------------------------------------
+---
 
 ## Checklist
 
@@ -552,9 +502,8 @@ Before publishing documentation, verify:
 - [ ] No spelling or grammar errors
 - [ ] Formatted for readability (headers, lists, spacing)
 - [ ] Troubleshooting section (if applicable)
-- [ ] Platform-specific notes (if applicable)
 
----------------------------------------------------
+---
 
 ## Quick Reference
 
@@ -579,12 +528,12 @@ Code block
 [Link text](URL)
 
 | Table | Header |
-|-------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------|
+|-------|--------|
 | Cell  | Cell   |
 
 > **Note:** Important information
 ```
 
----------------------------------------------------
+---
 
 **Remember:** Good documentation is clear, concise, and user-focused. When in doubt, ask: "Would this help someone new to CLIO?"

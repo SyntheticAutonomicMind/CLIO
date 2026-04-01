@@ -1,7 +1,5 @@
 # CLIO Command Output Styling Standards
 
-**Version:** 2.0  
-**Last Updated:** 2026-01-31  
 **Audience:** Developers adding or modifying slash commands
 
 ## Purpose
@@ -10,7 +8,47 @@ This document defines the standard patterns for formatting slash command output 
 
 ---
 
-## Theme System Overview
+## Architecture
+
+### Command Base Class
+
+All slash commands extend `CLIO::UI::Commands::Base`, which delegates display methods to `CLIO::UI::Chat`:
+
+```perl
+package CLIO::UI::Commands::MyCommand;
+use parent 'CLIO::UI::Commands::Base';
+
+sub handle {
+    my ($self, @args) = @_;
+    $self->display_command_header("MY COMMAND");
+    $self->display_key_value("Key", "value");
+    $self->display_success_message("Done");
+}
+```
+
+All display helpers are available on `$self` via delegation - no need to access `$chat` directly.
+
+### Command Registration
+
+Commands are registered in the command registry (`CLIO::UI::Commands`) and dispatched by name. Larger command families (like `/api`) are split into submodules:
+
+```
+lib/CLIO/UI/Commands/
+├── Base.pm           # Base class with display helpers
+├── API.pm            # /api dispatcher
+├── API/
+│   ├── Auth.pm       # /api login, logout, key
+│   ├── Config.pm     # /api provider, set, show
+│   └── Models.pm     # /api models, list
+├── Config.pm         # /config
+├── Session.pm        # /session
+├── Stats.pm          # /stats
+└── ...
+```
+
+---
+
+## Theme System
 
 CLIO uses a layered theming system:
 
@@ -18,8 +56,8 @@ CLIO uses a layered theming system:
 Style (colors) + Theme (templates) = Rendered Output
 ```
 
-**Style** defines color tokens (e.g., `command_header => '@BOLD@@BRIGHT_CYAN@'`)  
-**Theme** defines output templates using those tokens (e.g., `{style.command_header}HEADER TEXT@RESET@`)
+**Style** defines color tokens (e.g., `command_header => '@BOLD@@BRIGHT_CYAN@'`)
+**Theme** defines output templates using those tokens
 
 Commands should use theme tokens via the `colorize()` method, never hardcode colors.
 
@@ -28,23 +66,27 @@ Commands should use theme tokens via the `colorize()` method, never hardcode col
 ## Available Theme Tokens
 
 ### Status Messages
+
 | Token | Purpose | Default Color |
 |-------|---------|---------------|
 | `success_message` | Success indicators | `@BRIGHT_GREEN@` |
 | `warning_message` | Warnings | `@BRIGHT_YELLOW@` |
-| `info_message` | Informational messages | `@BRIGHT_CYAN@` |
+| `info_message` | Informational | `@BRIGHT_CYAN@` |
 | `error_message` | Errors | `@BRIGHT_RED@` |
 | `system_message` | System notifications | `@BRIGHT_MAGENTA@` |
 
-### Command Output Elements
+### Command Output
+
 | Token | Purpose | Default Color |
 |-------|---------|---------------|
 | `command_header` | Major section headers | `@BOLD@@BRIGHT_CYAN@` |
 | `command_subheader` | Minor section headers | `@BOLD@@CYAN@` |
-| `command_label` | Labels/keys in key-value pairs | `@CYAN@` |
-| `command_value` | Values in key-value pairs | `@BRIGHT_WHITE@` |
+| `command_label` | Labels/keys | `@CYAN@` |
+| `command_value` | Values | `@BRIGHT_WHITE@` |
+| `help_command` | Command names in help | Theme-dependent |
 
 ### General Purpose
+
 | Token | Purpose | Default Color |
 |-------|---------|---------------|
 | `data` | Generic data display | `@BRIGHT_WHITE@` |
@@ -54,438 +96,219 @@ Commands should use theme tokens via the `colorize()` method, never hardcode col
 
 ---
 
-## Standard Output Patterns
+## Display Helper Methods
 
-### Pattern A: Command Header (Major Section)
+All of these are available on `$self` in any Commands::Base subclass:
 
-Use for top-level command output headers.
-
-```perl
-print "\n";
-print $self->colorize("═" x 70, 'command_header'), "\n";
-print $self->colorize("COMMAND OUTPUT TITLE", 'command_header'), "\n";
-print $self->colorize("═" x 70, 'command_header'), "\n";
-print "\n";
-```
-
-**Example Output:**
-```
-══════════════════════════════════════════════════════════════════════
-SESSION INFORMATION
-══════════════════════════════════════════════════════════════════════
-
-[content follows]
-```
-
-**Helper Method:**
-```perl
-$self->display_command_header("SESSION INFORMATION", 70);
-```
-
----
-
-### Pattern B: Section Header (Minor/Subsection)
-
-Use for subsections within command output.
+### Headers
 
 ```perl
-print $self->colorize("SUBSECTION NAME", 'command_subheader'), "\n";
-print $self->colorize("─" x 70, 'dim'), "\n";
+# Major section header (double-line border)
+$self->display_command_header("SESSION INFORMATION");
+# Output:
+# ══════════════════════════════════════════════════════════════════════
+# SESSION INFORMATION
+# ══════════════════════════════════════════════════════════════════════
+
+# Subsection header (single-line border)
+$self->display_section_header("Current Settings");
+# Output:
+# Current Settings
+# ──────────────────────────────────────────────────────────────────────
 ```
 
-**Example Output:**
-```
-Current Settings
-──────────────────────────────────────────────────────────────────────
-[settings list follows]
-```
-
-**Helper Method:**
-```perl
-$self->display_section_header("Current Settings", 70);
-```
-
----
-
-### Pattern C: Key-Value Pairs
-
-Use for displaying settings, properties, or structured data.
+### Key-Value Pairs
 
 ```perl
-printf "%-20s %s\n",
-    $self->colorize("Session ID:", 'command_label'),
-    $self->colorize($session_id, 'command_value');
-```
-
-**Example Output:**
-```
-Session ID:          abc123-def456-789ghi
-Model:               claude-3.7-sonnet
-Provider:            anthropic
-```
-
-**Helper Method:**
-```perl
-$self->display_key_value("Session ID", $session_id, 20);
+$self->display_key_value("Session ID", $id, 20);
 $self->display_key_value("Model", $model, 20);
-$self->display_key_value("Provider", $provider, 20);
+# Output:
+# Session ID:          abc123-def456
+# Model:               claude-sonnet-4
 ```
 
----
+### Status Messages
 
-### Pattern D: Status Messages
-
-Use for feedback to user actions.
-
-#### Success
 ```perl
-$self->display_success_message("Configuration saved successfully");
+$self->display_success_message("Configuration saved");
+# Output: [OK] Configuration saved
+
+$self->display_warning_message("Rate limit approaching");
+# Output: [WARN] Rate limit approaching
+
+$self->display_info_message("Using cached model list");
+# Output: [INFO] Using cached model list
+
+$self->display_error_message("Invalid session ID");
+# Output: ERROR: Invalid session ID
 ```
-**Output:** `[OK] Configuration saved successfully`
 
-#### Warning
+### Lists
+
 ```perl
-$self->display_warning_message("API rate limit approaching (80% used)");
-```
-**Output:** `[WARN] API rate limit approaching (80% used)`
-
-#### Info
-```perl
-$self->display_info_message("Using cached model list (5 minutes old)");
-```
-**Output:** `[INFO] Using cached model list (5 minutes old)`
-
-#### Error
-```perl
-$self->display_error_message("Invalid session ID: $session_id");
-```
-**Output:** `ERROR: Invalid session ID: abc123`
-
----
-
-### Pattern E: Lists
-
-Use for displaying multiple items.
-
-#### Bulleted List
-```perl
+# Bulleted list
 $self->display_list_item("First item");
 $self->display_list_item("Second item");
-$self->display_list_item("Third item");
-```
+# Output:
+#   • First item
+#   • Second item
 
-**Output:**
-```
-  • First item
-  • Second item
-  • Third item
-```
-
-#### Numbered List
-```perl
+# Numbered list
 $self->display_list_item("First step", 1);
 $self->display_list_item("Second step", 2);
-$self->display_list_item("Third step", 3);
+# Output:
+#   1. First step
+#   2. Second step
 ```
 
-**Output:**
-```
-  1. First step
-  2. Second step
-  3. Third step
-```
-
----
-
-### Pattern F: Tables
-
-For tabular data, use the markdown table renderer (which applies theme colors automatically):
+### Command Rows (for help output)
 
 ```perl
-my $table_markdown = <<"END_TABLE";
-| Column 1 | Column 2 | Column 3 |
-|----------|----------|----------|
-| Value A  | Value B  | Value C  |
-| Value D  | Value E  | Value F  |
-END_TABLE
-
-print $self->render_markdown($table_markdown);
+$self->display_command_row("/models", "List available models");
+$self->display_command_row("/config show", "Display configuration");
+# Output:
+#   /models                   List available models
+#   /config show              Display configuration
 ```
 
----
-
-## Helper Methods Reference
-
-### Display Helpers
+### Tips
 
 ```perl
-# Headers
-$self->display_command_header($text, $width);
-$self->display_section_header($text, $width);
-
-# Key-value pairs
-$self->display_key_value($key, $value, $key_width);
-
-# Status messages
-$self->display_success_message($message);
-$self->display_warning_message($message);
-$self->display_info_message($message);
-$self->display_error_message($message);      # Already exists
-$self->display_system_message($message);     # Already exists
-
-# Lists
-$self->display_list_item($item);             # Bulleted
-$self->display_list_item($item, $number);    # Numbered
+$self->display_tip("Use /debug on for verbose output");
+# Output:
+#   • Use /debug on for verbose output  (muted color)
 ```
 
-### Colorization
+### Tables
 
 ```perl
-# Use theme tokens
-my $colored = $self->colorize($text, 'TOKEN_NAME');
+my $table = <<'TABLE';
+| Column 1 | Column 2 |
+|----------|----------|
+| Value A  | Value B  |
+TABLE
+print $self->render_markdown($table);
+```
 
-# Never hardcode ANSI
-my $bad = "@BRIGHT_RED@Error@RESET@";        # WRONG
-my $good = $self->colorize("Error", 'error_message');  # RIGHT
+### Paginated Output
+
+```perl
+# For long lists
+$self->display_paginated_list(\@items, "AVAILABLE MODELS");
+
+# For long text content
+$self->display_paginated_content($text, "FILE CONTENTS");
+```
+
+### Confirmation Prompts
+
+For interactive prompts that require user input:
+
+```perl
+my ($header, $input_line) = @{$self->{chat}{theme_mgr}->get_confirmation_prompt(
+    "Confirm action",
+    "proceed"
+)};
+print $header;
+my $answer = <STDIN>;
 ```
 
 ---
 
 ## Command Output Guidelines
 
-### 1. Always Include Headers for Multi-Section Output
+### 1. Always Use Headers for Multi-Section Output
 
-**Good:**
 ```perl
+# Good
 $self->display_command_header("SESSION INFORMATION");
 $self->display_key_value("Session ID", $id);
-$self->display_key_value("Created", $created);
-```
 
-**Bad:**
-```perl
+# Bad
 print "Session ID: $id\n";
-print "Created: $created\n";
 ```
 
 ### 2. Use Status Messages for Feedback
 
-**Good:**
 ```perl
-if ($success) {
-    $self->display_success_message("Session created successfully");
-} else {
-    $self->display_error_message("Failed to create session: $error");
-}
-```
+# Good
+$self->display_success_message("Session created");
 
-**Bad:**
-```perl
+# Bad
 print "Session created successfully\n";
-print "Error: Failed to create session: $error\n";
 ```
 
-### 3. Be Consistent Within a Command
+### 3. Use Colorize, Never Hardcode ANSI
 
-All sections of a single command should use the same header style, separator characters, and indentation.
+```perl
+# Good
+my $colored = $self->colorize("Error", 'error_message');
+
+# Bad
+my $colored = "\e[91mError\e[0m";
+```
 
 ### 4. Respect Terminal Width
 
-Default to 70 characters for headers/separators to ensure compatibility with 80-column terminals (leaving margin).
+Default to 70 characters for headers/separators (80-column safe with margin).
 
 ### 5. Add Breathing Room
 
-Always include blank lines:
+Include blank lines:
 - Before and after major headers
 - Between sections
 - After final output
 
+### 6. Be Consistent Within a Command
+
+All sections of a single command should use the same header style, separator characters, and indentation.
+
 ---
 
-## Examples
-
-### Example 1: /session show
+## Example: Complete Command Implementation
 
 ```perl
-sub _display_session_info {
-    my ($self) = @_;
+package CLIO::UI::Commands::MyFeature;
+use parent 'CLIO::UI::Commands::Base';
+
+sub handle {
+    my ($self, @args) = @_;
     
-    $self->display_command_header("SESSION INFORMATION");
+    $self->display_command_header("MY FEATURE");
     
-    $self->display_section_header("Current Session");
-    $self->display_key_value("Session ID", $self->{session}{session_id});
-    $self->display_key_value("Created", format_timestamp($self->{session}{created_at}));
-    $self->display_key_value("Model", $self->{session}->state()->{model});
+    $self->display_section_header("Settings");
+    $self->display_key_value("Option A", $self->{config}->get('option_a'), 20);
+    $self->display_key_value("Option B", $self->{config}->get('option_b'), 20);
     print "\n";
     
-    $self->display_section_header("Activity");
-    $self->display_key_value("Messages", scalar(@{$self->{session}->state()->{history}}));
-    $self->display_key_value("Last Active", format_timestamp(time()));
-    print "\n";
-}
-```
-
-### Example 2: /api models
-
-```perl
-sub handle_models_command {
-    my ($self) = @_;
-    
-    $self->display_command_header("AVAILABLE MODELS");
-    
-    my @models = $api->get_models();
-    
-    if (@models) {
-        $self->display_info_message("Found " . scalar(@models) . " models");
-        print "\n";
-        
-        my $num = 1;
-        for my $model (@models) {
-            $self->display_list_item($model->{name}, $num);
-            print "    " . $self->colorize($model->{description}, 'dim') . "\n";
-            $num++;
+    $self->display_section_header("Available Items");
+    my @items = $self->_get_items();
+    if (@items) {
+        for my $i (0..$#items) {
+            $self->display_list_item($items[$i], $i + 1);
         }
     } else {
-        $self->display_warning_message("No models available");
+        $self->display_info_message("No items found");
     }
     
-    print "\n";
+    $self->display_tip("Use /myfeature add <name> to create a new item");
 }
+
+1;
 ```
 
 ---
 
-## Testing Your Command Output
+## Implementation Checklist
 
-Before committing changes:
+For new slash commands:
 
-1. **Test with default theme** - Ensure output looks good with built-in colors
-2. **Test with different terminal widths** - Verify headers/tables don't break
-3. **Test with color disabled** - Run with `--no-color` to ensure text is still readable
-4. **Test with different styles** - Use `/style list` and test with alternatives
-
----
-
-## Extending the Theme System
-
-If you need a new color token:
-
-1. Add to `lib/CLIO/UI/Theme.pm` in `get_builtin_style()`:
-   ```perl
-   new_token_name => '@BRIGHT_BLUE@',
-   ```
-
-2. Document it in this standards guide
-
-3. Use it via `$self->colorize($text, 'new_token_name')`
-
-Never hardcode ANSI escape sequences in command output code.
-
----
-
-## Questions?
-
-- **Where are helper methods defined?** `lib/CLIO/UI/Chat.pm`
-- **Where are theme tokens defined?** `lib/CLIO/UI/Theme.pm`
-- **How do I test themes?** Use `/style` and `/theme` commands
-- **Can I add custom @-codes?** Only use defined theme tokens via `colorize()`
-
----
-
-**Document Version History:**
-- 1.0 (2025-01-22): Initial standards document
-- 2.0 (2026-02-02): Updated to use get_confirmation_prompt only
-
-
----
-
-## Input Prompts and Pagination (v2.0)
-
-### BBS-Style Confirmation Prompts
-
-All confirmation prompts use a consistent two-line BBS-style format via `get_confirmation_prompt()`:
-
-```perl
-my ($header, $input_line) = @{$self->{chat}{theme_mgr}->get_confirmation_prompt(
-    "Delete file 'test.txt'?",
-    "yes/no",
-    "cancel"
-)};
-
-print $header, "\n";
-print $input_line;
-my $response = <STDIN>;
-chomp $response if defined $response;
-
-unless ($response && $response =~ /^y(es)?$/i) {
-    $self->display_system_message("Cancelled");
-    return;
-}
-```
-
-**Output:**
-```
-┌──┤ Delete file 'test.txt'?
-└─┤ yes/no | Enter to cancel:
-```
-
-### Text Input Prompts
-
-For text input (not yes/no), use simple formatted prompts:
-
-```perl
-$self->display_section_header("COMMIT MESSAGE");
-print $self->colorize("Enter message (Ctrl+C to cancel):\n", 'PROMPT');
-print $self->colorize("> ", 'PROMPT');
-my $message = <STDIN>;
-```
-
-### Pagination Prompts
-
-Paginated output uses BBS-style navigation:
-
-**First-time hint:**
-```
-===[ Tip: ^/v pages · Q quit · any key more ]===
-```
-
-**Navigation prompt:**
-```
-===[ 1/5 ]=== ^v Q > 
-```
-
-**Controls:**
-- Up/Down arrows navigate pages
-- Q quits immediately  
-- Any other key advances
-
-### Theme Templates
-
-These prompts are defined in theme files:
-```
-input_prompt={style.dim}===[ {var.prompt} ]===@RESET@
-pagination_prompt={style.dim}==={style.data}[ {var.current}/{var.total} ]{style.dim}===@RESET@ {var.nav_hint}Q >
-```
-
----
-
-## UTF-8 Content Handling
-
-When displaying content from external sources (GitHub, APIs):
-
-```perl
-require Encode;
-$content = Encode::decode('UTF-8', $content) unless utf8::is_utf8($content);
-```
-
-This ensures box-drawing characters (├──) and Unicode display correctly.
-
----
-
-## Width Standards
-
-- Default separator width: **62 characters** (fits 80-column with padding)
-- Key-value label width: 15-25 characters depending on content
-- Command description width: 25-35 characters
-
----
+- [ ] Extends `CLIO::UI::Commands::Base`
+- [ ] Uses `display_*` helpers for all output
+- [ ] Uses `colorize()` with theme tokens, never hardcoded ANSI
+- [ ] Uses `display_command_header` for top-level output
+- [ ] Uses `display_section_header` for subsections
+- [ ] Includes `use strict; use warnings; use utf8;`
+- [ ] Has `binmode(STDOUT, ':encoding(UTF-8)')` and `binmode(STDERR, ':encoding(UTF-8)')`
+- [ ] Has POD documentation
+- [ ] Registered in the command registry

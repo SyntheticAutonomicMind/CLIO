@@ -1,36 +1,26 @@
 # CLIO Dependencies
 
-**Version:** 1.0  
-**Last Updated:** 2026-02-08
-
----
-
 ## Philosophy
 
-CLIO is designed to work with **minimal dependencies** using standard Unix tools that have been stable for decades. We deliberately avoid:
+CLIO is designed to work with **minimal dependencies** using standard Unix tools. We deliberately avoid:
 
 - Heavy framework dependencies
-- Node.js/npm/JavaScript ecosystems  
+- Node.js/npm/JavaScript ecosystems
 - Python/pip dependencies
 - CPAN modules (zero external Perl dependencies)
 - Docker-only deployment
 
-**Result:** CLIO works on a clean Unix system with Perl 5.32+ installed. No package managers, no complex setup.
+**Result:** CLIO works on a clean Unix system with Perl 5.32+ installed.
 
 ---
 
 ## Quick Verification
 
-Check if your system has everything needed:
-
 ```bash
 ./check-deps
 ```
 
-This automated script verifies:
-- Perl version (>= 5.32 required)
-- All required system commands
-- Optional tools with fallback notes
+This checks Perl version, required system commands, and optional tools.
 
 ---
 
@@ -38,29 +28,22 @@ This automated script verifies:
 
 ### Perl 5.32 or Higher
 
-**Why:** CLIO is written in Perl and requires modern Perl core modules.
+CLIO uses **zero external CPAN modules**. Everything works with core modules included in Perl 5.32+.
 
-**Verify:**
 ```bash
 perl -v
 ```
 
-**Installation:**
-
 | Platform | Command |
 |----------|---------|
-| macOS | Pre-installed (usually 5.30+) or `brew install perl` |
+| macOS | Pre-installed or `brew install perl` |
 | Debian/Ubuntu | `sudo apt install perl` |
 | RHEL/Fedora | `sudo dnf install perl` |
 | Arch Linux | `sudo pacman -S perl` |
 
-**Important:** CLIO uses **zero external CPAN modules**. Everything works with Perl core modules included in 5.32+.
-
----
-
 ### System Commands
 
-All of these are typically pre-installed on Unix-like systems.
+All typically pre-installed on Unix-like systems:
 
 | Command | Purpose | Package |
 |---------|---------|---------|
@@ -68,170 +51,127 @@ All of these are typically pre-installed on Unix-like systems.
 | `curl` | HTTP requests, API calls, updates | curl |
 | `stty` | Terminal mode control | coreutils |
 | `tput` | Terminal capability queries | ncurses-bin |
-| `script` | Terminal session recording for hybrid passthrough | util-linux (Linux), BSD base (macOS) |
 | `tar` | Archive extraction for updates | tar |
 
-**Verify all commands:**
+**Verify:**
 ```bash
-which git curl stty tput script tar
+which git curl stty tput tar
 ```
 
 **Install if missing:**
 
-**Debian/Ubuntu:**
 ```bash
-sudo apt install git curl coreutils ncurses-bin util-linux tar
-```
+# Debian/Ubuntu
+sudo apt install git curl coreutils ncurses-bin tar
 
-**RHEL/Fedora:**
-```bash
-sudo dnf install git curl coreutils ncurses tar util-linux
-```
+# RHEL/Fedora
+sudo dnf install git curl coreutils ncurses tar
 
-**Arch Linux:**
-```bash
-sudo pacman -S git curl coreutils ncurses tar util-linux
-```
+# Arch Linux
+sudo pacman -S git curl coreutils ncurses tar
 
-**macOS:**
-```bash
-# Install Xcode Command Line Tools (includes git)
-xcode-select --install
-
-# Other tools (curl, stty, tput, script, tar) are pre-installed
+# macOS
+xcode-select --install  # Includes git; others are pre-installed
 ```
 
 ---
 
-## Perl Core Modules
+## Perl Core Modules Used
 
-CLIO uses **zero external CPAN modules**. All functionality is implemented with Perl core modules included in Perl 5.32+:
+No installation needed - these ship with Perl 5.32+:
 
 | Module | Purpose |
 |--------|---------|
-| `JSON::PP` | JSON parsing and generation |
+| `JSON::PP` | JSON parsing (auto-upgraded to JSON::XS if available) |
 | `File::*` | File operations (Spec, Path, Basename, Copy, Find, Temp) |
 | `Time::HiRes`, `Time::Piece` | Time operations |
 | `Digest::MD5` | Checksums |
 | `Encode` | UTF-8 handling |
-| `POSIX` | System interfaces |
+| `POSIX` | System interfaces, process groups |
 | `Cwd` | Directory operations |
 | `Getopt::Long` | Command-line parsing |
+| `Term::ReadKey` | Terminal input (bundled with CLIO in `lib/`) |
 
-**No installation needed** - these ship with Perl.
+---
+
+## Optional Performance Enhancement
+
+| Module | Purpose | Installation |
+|--------|---------|-------------|
+| `JSON::XS` | 10x faster JSON parsing | `cpan JSON::XS` |
+
+CLIO's `CLIO::Util::JSON` module automatically detects and uses the fastest JSON encoder available (JSON::XS > Cpanel::JSON::XS > JSON::PP fallback).
 
 ---
 
 ## Optional Tools
 
-These commands are **not required** but enable additional features when present:
+### Terminal Multiplexers (Auto-Detected)
 
-### File System Utilities
+When running inside a multiplexer, CLIO executes terminal commands in a separate pane:
 
-| Command | Purpose | Fallback |
-|---------|---------|----------|
-| `readlink` | Resolve symbolic links | Perl's own link resolution |
-| `which` | Find executables in PATH | Perl can work around it |
-
-### Interactive Tools (Auto-Detected)
-
-When you use these tools via CLIO's terminal operations, CLIO automatically enables hybrid passthrough mode - you get full interactivity AND CLIO sees the output:
-
-| Tool Category | Commands | Feature Enabled |
-|---------------|----------|-----------------|
-| Editors | vim, vi, nvim, nano, emacs | Interactive editing with output capture |
-| GPG | gpg | Passphrase prompts for git commit -S |
-| SSH | ssh | Interactive shell sessions |
-| Pagers | less, more, man | Paginated viewing |
-| Shells | bash, sh, zsh | Interactive shells |
-| REPLs | python, ruby, irb, node | Programming language REPLs |
-
-**These are not dependencies** - CLIO detects them and adapts behavior accordingly.
+| Multiplexer | Detection |
+|-------------|-----------|
+| tmux | `$TMUX` environment variable |
+| GNU Screen | `$STY` environment variable |
+| Zellij | `$ZELLIJ_SESSION_NAME` environment variable |
 
 ### MCP (Model Context Protocol) Support
 
-MCP allows CLIO to connect to external tool servers, extending its capabilities
-with third-party tools (databases, APIs, custom integrations, etc.).
+MCP connects CLIO to external tool servers. At least one runtime is needed:
 
 | Command | Purpose | Installation |
 |---------|---------|-------------|
-| `npx` | Run MCP servers from npm packages | Comes with Node.js |
-| `node` | Run local MCP servers | [nodejs.org](https://nodejs.org) |
+| `npx` | Run MCP servers from npm | Comes with Node.js |
 | `uvx` | Run Python-based MCP servers | `pip install uv` |
-| `python3` | Run Python MCP servers directly | Usually pre-installed |
+| `python3` | Run Python MCP servers | Usually pre-installed |
 
-**At least one** of these runtimes is needed for MCP support. If none are found,
-MCP is silently disabled and CLIO works normally without it.
+If none are found, MCP is silently disabled. See [MCP.md](MCP.md) for details.
 
-**Quick install (Node.js):**
-```bash
-# macOS
-brew install node
+### SSH (for Remote Execution)
 
-# Debian/Ubuntu
-sudo apt install nodejs npm
+| Command | Purpose |
+|---------|---------|
+| `ssh` | Remote system connectivity |
+| `rsync` | Efficient file transfer to remotes |
 
-# RHEL/Fedora
-sudo dnf install nodejs npm
-```
+Required only if using the `remote_execution` tool. See [REMOTE_EXECUTION.md](REMOTE_EXECUTION.md).
 
-**Verify:**
-```bash
-npx --version
-```
+### Docker (for Container Sandbox)
 
-See [docs/MCP.md](MCP.md) for configuration details.
+Required only for `clio-container` sandboxed execution:
+
+| Requirement | Purpose |
+|-------------|---------|
+| Docker Engine or Docker Desktop | Container runtime |
+| `docker` CLI | Container management |
+
+See [SANDBOX.md](SANDBOX.md).
 
 ---
 
 ## Troubleshooting
 
-### "script: command not found"
-
-**Symptom:** Interactive commands (GPG, vim) fail when using hybrid passthrough mode.
-
-**Solution:**
-```bash
-# Linux
-sudo apt install util-linux    # Debian/Ubuntu
-sudo dnf install util-linux    # RHEL/Fedora
-
-# macOS - reinstall Command Line Tools if missing
-xcode-select --install
-```
-
----
-
 ### "stty: command not found" or "tput: command not found"
 
-**Symptom:** Terminal input/output behaves incorrectly, readline doesn't work properly.
-
-**Solution:**
+Terminal input/output behaves incorrectly:
 ```bash
 sudo apt install coreutils ncurses-bin  # Debian/Ubuntu
 sudo dnf install coreutils ncurses      # RHEL/Fedora
 ```
 
----
-
 ### "curl: command not found"
 
-**Symptom:** Updates, web search, and API calls fail.
-
-**Solution:**
+Updates, web search, and API calls fail:
 ```bash
 sudo apt install curl  # Debian/Ubuntu
 sudo dnf install curl  # RHEL/Fedora
-brew install curl      # macOS (Homebrew)
+brew install curl      # macOS
 ```
-
----
 
 ### "git: command not found"
 
-**Symptom:** Version control operations fail, /git commands don't work.
-
-**Solution:**
+Version control operations fail:
 ```bash
 sudo apt install git   # Debian/Ubuntu
 sudo dnf install git   # RHEL/Fedora

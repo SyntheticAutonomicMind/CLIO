@@ -1,15 +1,16 @@
-# Performance Benchmarks
+# Performance
 
-This document describes CLIO's performance characteristics and benchmarking tools.
+This document describes CLIO's performance characteristics and optimization strategies.
 
 ## Quick Summary
 
-| Metric | Typical Value | Target |
-|--------|---------------|--------|
-| Module load time | 70-100ms | < 2s |
-| Tool execution (file ops) | 0.3-1ms | < 50ms |
-| Session save | 1-2ms | < 100ms |
-| Session load | 20-25ms | < 200ms |
+| Metric | Typical Value | Notes |
+|--------|---------------|-------|
+| Module load time | 70-100ms | 143 modules, lazy loading where possible |
+| Tool execution (file ops) | 0.3-1ms | File I/O dominates |
+| Session save | 1-2ms | Atomic write pattern |
+| Session load | 20-25ms | Scales with history size |
+| Baseline RSS | 50-80MB | Varies by platform |
 
 ## Running Benchmarks
 
@@ -24,45 +25,77 @@ perl tests/benchmark.pl --iterations 100
 perl tests/benchmark.pl --verbose
 ```
 
-## Performance Targets
+## Runtime Performance Monitoring
 
-### Module Loading
-- **Target:** < 2 seconds
-- **Measured:** ~70-100ms on modern hardware
-- **Notes:** Lazy loading of optional modules improves startup time
+CLIO includes built-in performance monitoring via the `/stats` command:
 
-### Tool Execution
-- **Target:** < 50ms per tool call
-- **Measured:** 0.3-1ms for file operations
-- **Notes:** Most time is spent in file I/O, not in CLIO overhead
+```
+/stats
+```
 
-### Session Management
-- **Target:** Save < 100ms, Load < 200ms
-- **Measured:** Save ~1ms, Load ~20ms
-- **Notes:** Load time scales with session history size
+This displays:
+- **RSS memory** - Current and baseline process memory (MB)
+- **TTFT** - Time to first token (API response latency)
+- **TPS** - Tokens per second (streaming throughput)
+- **Token usage** - Input/output/total for the current session
+- **Session duration** - Wall clock time
 
-## Optimization Tips
+Use `/stats` periodically during long sessions to monitor resource consumption.
 
-### For Users
+## JSON Performance
 
-1. **Session Size**: Large sessions (>1000 messages) may slow down load time
-   - Use `/session trim` to remove old sessions
-   - Enable `session_auto_prune` in config
+CLIO uses `CLIO::Util::JSON` for all JSON operations. This module automatically selects the fastest available encoder:
 
-2. **Debug Mode**: Running with `--debug` significantly impacts performance
-   - Only use during troubleshooting
-   - Debug logging adds 10-20% overhead
+1. **JSON::XS** - C-based, ~10x faster than pure Perl (preferred)
+2. **Cpanel::JSON::XS** - Alternative C-based encoder
+3. **JSON::PP** - Pure Perl fallback (always available in Perl 5.14+)
 
-3. **Tool Results**: Large tool outputs are automatically chunked
-   - Results >8KB are stored and referenced
-   - Reduces memory pressure in API calls
+No CPAN installation is required. CLIO detects what's available at runtime. For best performance, install JSON::XS:
 
-### For Developers
+```bash
+cpan JSON::XS
+```
 
-1. **Avoid Reloading Modules**: All modules are loaded once at startup
-2. **Use Session Caching**: Session state is cached in memory
-3. **Batch Operations**: Use `multi_replace_string` instead of multiple single replaces
-4. **Lazy Loading**: Optional features load modules on demand
+## Caching
+
+CLIO caches computed results that don't change during a session:
+
+- **ANSI codes** - Terminal escape sequences (`_codes_cache`)
+- **Theme colors** - Color lookup results (`_color_cache`)
+- **Tool definitions** - API tool schemas (`_definitions_cache`)
+- **Tools prompt** - System prompt tool section (`_tools_section_cache`)
+- **Token estimates** - Message token counts (cached after first calculation)
+
+Caches are invalidated when the underlying state changes (e.g., theme switch, tool registration).
+
+## Context Window Management
+
+CLIO manages the AI context window automatically with a two-tier trimming system:
+
+### Proactive Trimming
+
+The `MessageValidator` trims messages before each API call using a token-budget walk. It walks backward from the newest message, keeping messages until the budget is exhausted. This runs every iteration after the first.
+
+- **Safe context threshold:** 75% of the model's max context (`SAFE_CONTEXT_PERCENT = 0.75`)
+- **Strategy:** Budget walk from newest, preserves most recent user message
+- **Thread summary:** Compressed summary of dropped messages injected as context
+
+### Reactive Trimming
+
+If an API call returns `token_limit_exceeded` despite proactive trimming:
+
+1. **Escalation 1:** Keep messages fitting 50% of max prompt tokens
+2. **Escalation 2:** Aggressive trim with compressed recovery context
+3. **Escalation 3:** Emergency reset to system prompt + last user message
+
+Each escalation injects a thread summary and recovery context (git state, todo state) so the agent can continue seamlessly.
+
+### Key Design Decisions
+
+- The **most recent** user message is always preserved (not the first)
+- Thread summaries extract file paths, git commits, and collaboration decisions
+- Recovery injection includes git recent commits and working tree status
+- The agent is instructed to continue seamlessly without announcing recovery
 
 ## Memory Usage
 
@@ -70,9 +103,77 @@ CLIO's memory footprint depends on:
 - Session history length (primary factor)
 - Number of active tool results stored
 - LTM (Long-Term Memory) database size
+- Cached computed values
 
-Typical baseline memory: 50-100MB
+Typical baseline memory: 50-80MB
 With large session (500+ messages): 150-300MB
+
+Tool results over 8KB are stored to disk and referenced by ID, reducing in-memory pressure during API calls.
+
+## Optimization Tips
+
+### For Users
+
+1. **Session size** - Large sessions (>1000 messages) may slow load time
+   - Start new sessions for unrelated work (`--new`)
+   - Context trimming handles long sessions automatically
+
+2. **Debug mode** - Running with `--debug` increases overhead
+   - Default log level is WARNING (minimal overhead)
+   - Use `/loglevel debug` temporarily when troubleshooting
+   - Use `/loglevel warning` to restore normal performance
+
+3. **Model selection** - Response time varies significantly by model
+   - Check TTFT and TPS via `/stats`
+   - Smaller models respond faster for simple tasks
+
+### For Developers
+
+1. **Avoid reloading modules** - All modules are loaded once at startup
+2. **Use session caching** - Session state is cached in memory
+3. **Batch operations** - Use `multi_replace_string` instead of multiple single replaces
+4. **Lazy loading** - Optional features load modules on demand
+5. **Use Logger API** - `log_debug()` checks level internally, no guard needed
+
+## Bottleneck Areas
+
+Known performance considerations:
+
+1. **API latency** - Network calls dominate total response time
+   - CLIO adds <5ms overhead per API call
+   - Total latency is 95%+ API provider response time
+   - Rate limiting adds backoff delays (exponential, capped at 300s)
+
+2. **Streaming** - True HTTP streaming via chunked transfer
+   - First token appears as soon as the provider sends it
+   - Rendering overhead is minimal (markdown processed per-chunk)
+
+3. **Terminal operations** - Commands run in forked processes
+   - Activity-based idle timeout (default 60s) prevents hangs
+   - Process groups ensure clean cleanup on timeout
+
+4. **Context trimming** - Runs every iteration after the first
+   - Token estimation is fast (cached, heuristic-based)
+   - Budget walk is O(n) over message count
+   - Compression uses existing message content (no API call)
+
+## Module Load Analysis
+
+With 143 modules, CLIO starts quickly (~70-100ms):
+
+| Component | Approx. Load Time |
+|-----------|-------------------|
+| CLIO::Core::APIManager | 26ms |
+| CLIO::UI::Chat | 11ms |
+| CLIO::Core::Config | 10ms |
+| CLIO::Core::ToolExecutor | 7ms |
+| CLIO::Core::WorkflowOrchestrator | 6ms |
+| Other modules | <3ms each |
+
+Lazy loading is not implemented for core modules because:
+1. Total startup time is already excellent
+2. Core modules (APIManager, Chat, WorkflowOrchestrator) are always needed
+3. Optional features (Architect, MCP, OpenSpec) already load on demand
 
 ## Profiling
 
@@ -90,52 +191,4 @@ nytprofhtml
 
 # View report
 open nytprof/index.html
-```
-
-## Bottleneck Areas
-
-Known performance considerations:
-
-1. **JSON Encoding/Decoding**: Core module JSON::PP is slower than JSON::XS
-   - Optional: Install JSON::XS for 10x faster JSON parsing
-   - `cpan JSON::XS`
-
-2. **API Latency**: Network calls dominate total response time
-   - CLIO adds <5ms overhead per API call
-   - Total latency is 95%+ API provider response time
-
-3. **Token Counting**: Large messages require token estimation
-   - Cached after first calculation
-   - Minimal impact in practice
-
-## Lazy Loading Analysis
-
-Module load time analysis shows CLIO starts very quickly (~70ms):
-
-| Module | Load Time |
-|--------|-----------|
-| CLIO::Core::APIManager | 26ms |
-| CLIO::Core::Config | 10ms |
-| CLIO::UI::Chat | 11ms |
-| CLIO::Core::ToolExecutor | 7ms |
-| CLIO::Core::WorkflowOrchestrator | 6ms |
-| Other modules | <3ms each |
-
-**Decision:** Lazy loading not implemented because:
-1. Total startup time is already excellent (~70ms)
-2. Most heavy modules (APIManager, Chat) are required for core functionality
-3. Optional features (Architect, RepoMap) already load on demand
-4. Complexity of lazy loading outweighs the marginal benefit
-
-## Benchmark Results Archive
-
-Run benchmarks periodically and compare against these baselines:
-
-| Date | Module Load | Tool Create | Session Load | Notes |
-|------|-------------|-------------|--------------|-------|
-| 2026-01-30 | 71ms | 0.62ms | 20.7ms | Baseline |
-
-To add your results:
-```bash
-perl tests/benchmark.pl >> docs/PERFORMANCE.md
 ```

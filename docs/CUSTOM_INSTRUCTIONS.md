@@ -306,6 +306,9 @@ To skip custom instructions (useful for testing or special cases):
 
 ```bash
 clio --no-custom-instructions --new
+
+# Skip custom instructions AND LTM (fresh audit mode)
+clio --incognito --new
 ```
 
 ---------------------------------------------------

@@ -50,7 +50,7 @@ APIManager handles all communication with AI provider APIs. It manages:
 - Error handling and retry logic
 - Rate limiting and request throttling
 
-This module supports multiple AI providers (GitHub Copilot, OpenAI, SAM, etc.)
+This module supports multiple AI providers (GitHub Copilot, OpenAI, Anthropic, Google, etc.)
 and automatically handles provider-specific quirks like billing continuity
 and endpoint variations.
 
@@ -201,15 +201,15 @@ $self->{rate_limit_until} = time() + $retry_after;
 
 ❌ **Don't:**
 ```perl
-# Set the provider to SAM
-$config->set('provider', 'sam');
+# Set the provider to google
+$config->set('provider', 'google');
 ```
 
 ✅ **Do:**
 ```perl
-# SAM requires sam_config parameter to bypass its own preprocessing
-# which can interfere with CLIO's protocol detection
-$config->set('provider', 'sam');
+# Google Gemini uses a different endpoint structure and requires
+# cross-provider routing when auth is via github_copilot
+$config->set('provider', 'google');
 ```
 
 ### Comment Tricky Code
@@ -640,7 +640,7 @@ Error messages shown to users should be:
 
 ❌ **Don't:** "Configuration error"
 
-✅ **Do:** "Provider 'sam' requires API base URL. Set it with `/api base URL`"
+✅ **Do:** "Provider 'google' requires an API key. Set it with `/api key YOUR_KEY`"
 
 **Include next steps:**
 

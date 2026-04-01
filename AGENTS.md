@@ -1,7 +1,7 @@
 # AGENTS.md
 
-**Version:** 2.0  
-**Date:** 2026-02-03  
+**Version:** 3.0  
+**Date:** 2026-04-01  
 **Purpose:** Technical reference for CLIO development (methodology in .clio/instructions.md)
 
 ---
@@ -49,14 +49,18 @@ Tool Selection (WorkflowOrchestrator)
     v
 Tool Execution (ToolExecutor)
     |
-    +-- FileOperations (17 operations)
-    +-- VersionControl (git)
+    +-- FileOperations (18 operations)
+    +-- VersionControl (git + worktrees)
     +-- TerminalOperations (shell exec)
-    +-- Memory (store/recall)
+    +-- Memory (store/recall/LTM)
     +-- TodoOperations (task management)
     +-- WebOperations (search/fetch)
     +-- CodeIntelligence (search/analyze)
     +-- UserCollaboration (checkpoints)
+    +-- ApplyPatch (diff-based editing)
+    +-- RemoteExecution (SSH + parallel)
+    +-- SubAgentOperations (multi-agent)
+    +-- MCPBridge (external tool servers)
     |
     v
 Result Processing
@@ -75,15 +79,21 @@ Terminal Output (with color/theme)
 | Path | Purpose |
 |------|---------|
 | `lib/CLIO/Core/` | System core (APIs, workflow, config) |
+| `lib/CLIO/Core/API/` | APIManager sub-modules (ResponseHandler, MessageValidator, etc.) |
 | `lib/CLIO/Tools/` | AI-callable tools |
-| `lib/CLIO/UI/` | Terminal UI (Chat, Markdown, Theme) |
+| `lib/CLIO/UI/` | Terminal UI (Chat, Markdown, Theme, Commands) |
 | `lib/CLIO/Session/` | Session management |
-| `lib/CLIO/Memory/` | Context/memory system |
+| `lib/CLIO/Memory/` | Context/memory system (YaRN, TokenEstimator) |
 | `lib/CLIO/Profile/` | User personality profile (Analyzer, Manager) |
-| `lib/CLIO/Protocols/` | Complex workflows |
+| `lib/CLIO/Protocols/` | Complex workflows (Architect, Editor) |
+| `lib/CLIO/Providers/` | Direct API providers (Anthropic, Google) |
+| `lib/CLIO/Coordination/` | Multi-agent coordination (Broker, Client) |
+| `lib/CLIO/MCP/` | Model Context Protocol (servers, transports, OAuth) |
 | `lib/CLIO/Security/` | Auth/authz |
-| `lib/CLIO/Util/` | Utilities (PathResolver, TextSanitizer, YAML) |
-| `lib/CLIO/Spec/` | OpenSpec integration (spec lifecycle management) |
+| `lib/CLIO/Logging/` | Structured logging |
+| `lib/CLIO/Compat/` | Compatibility layers (Terminal) |
+| `lib/CLIO/Util/` | Utilities (PathResolver, TextSanitizer, JSON, YAML) |
+| `lib/CLIO/Spec/` | OpenSpec integration |
 | `docs/` | User/dev documentation |
 | `tests/unit/` | Single module tests |
 | `tests/integration/` | Cross-module tests |
@@ -91,10 +101,10 @@ Terminal Output (with color/theme)
 **Key Files:**
 
 - `clio` - Main executable
-- `lib/CLIO/Core/WorkflowOrchestrator.pm` - Tool orchestration (3,289 lines)
-- `lib/CLIO/Core/APIManager.pm` - AI provider integration (large)
-- `lib/CLIO/UI/Chat.pm` - Terminal interface (2,765 lines)
-- `lib/CLIO/Core/ToolExecutor.pm` - Tool invocation
+- `lib/CLIO/Core/WorkflowOrchestrator.pm` - Tool orchestration (3,544 lines)
+- `lib/CLIO/Core/APIManager.pm` - AI provider integration (3,450 lines)
+- `lib/CLIO/UI/Chat.pm` - Terminal interface (2,998 lines)
+- `lib/CLIO/Core/ToolExecutor.pm` - Tool invocation (1,051 lines)
 - `lib/CLIO/Tools/FileOperations.pm` - File system operations
 
 **Investigate, don't assume:** Use `git log --oneline -20`, `find lib -name "*.pm"`, read actual code.
@@ -147,15 +157,13 @@ Detailed description of module purpose and behavior
 **Debug Logging:**
 
 ```perl
-use CLIO::Core::Logger qw(should_log log_debug);
+use CLIO::Core::Logger qw(log_debug log_info log_warning log_error);
 
-# Preferred:
-log_debug('ModuleName', 'message');
-
-# Or:
-if (should_log('DEBUG')) {
-    print STDERR "[DEBUG][ModuleName] message\n";
-}
+# Logger functions handle level-checking internally:
+log_debug('ModuleName', 'detailed message');
+log_info('ModuleName', 'informational message');
+log_warning('ModuleName', 'something unexpected');
+log_error('ModuleName', 'something failed: %s', $error);
 ```
 
 ---
@@ -165,13 +173,20 @@ if (should_log('DEBUG')) {
 | Prefix | Purpose | Examples |
 |--------|---------|----------|
 | `CLIO::Core::` | System core | APIManager, WorkflowOrchestrator, ToolExecutor |
+| `CLIO::Core::API::` | APIManager sub-modules | ResponseHandler, MessageValidator, StreamProcessor |
 | `CLIO::Tools::` | AI-callable tools | FileOperations, VersionControl, TerminalOperations |
 | `CLIO::UI::` | Terminal interface | Chat, Markdown, Theme, ToolOutputFormatter |
+| `CLIO::UI::Commands::` | Slash command handlers | API, Session, Config, Project |
 | `CLIO::Session::` | Session management | Manager, State, TodoStore, ToolResultStore |
 | `CLIO::Memory::` | Context/memory | ShortTerm, LongTerm, YaRN, TokenEstimator |
+| `CLIO::Providers::` | Direct API providers | Anthropic, Google, Base |
+| `CLIO::Coordination::` | Multi-agent coordination | Broker, Client |
+| `CLIO::MCP::` | Model Context Protocol | Manager, Client, Transport::Stdio, Auth::OAuth |
+| `CLIO::Profile::` | User profiling | Analyzer, Manager |
 | `CLIO::Protocols::` | Complex workflows | Architect, Editor, Validate |
 | `CLIO::Security::` | Auth/authz | Auth, Authz, Manager |
-| `CLIO::Util::` | Utilities | PathResolver, TextSanitizer, JSONRepair, YAML |
+| `CLIO::Logging::` | Structured logging | Logger |
+| `CLIO::Util::` | Utilities | PathResolver, TextSanitizer, JSONRepair, JSON, YAML |
 | `CLIO::Spec::` | OpenSpec integration | Manager (spec lifecycle management) |
 | `CLIO::Compat::` | Compatibility | Terminal (ReadKey, ReadMode) |
 
@@ -303,12 +318,14 @@ git log --oneline --since="1 week ago"
 **Error Handling:**
 
 ```perl
+use Carp qw(croak);
+
 # Tool execution
 eval {
     # Potentially failing operation
 };
 if ($@) {
-    # Handle error, don't bare die
+    # Handle error with croak (not bare die)
     return error_result("Operation failed: $@");
 }
 ```
@@ -316,10 +333,10 @@ if ($@) {
 **JSON Encoding:**
 
 ```perl
-use JSON::PP qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json);
 
-# Always handle encoding errors
-my $json = encode_json($data);  # UTF-8 safe
+# Auto-selects fastest available: JSON::XS > Cpanel::JSON::XS > JSON::PP
+my $json = encode_json($data);
 
 my $decoded = eval { decode_json($json) };
 if ($@) {
@@ -404,12 +421,12 @@ Permanent knowledge -> Detailed commit message (committed)
 | Anti-Pattern | Why It's Wrong | What To Do |
 |--------------|----------------|------------|
 | Skip syntax check before commit | Causes silent failures in production | Run `perl -c` on all changed files |
-| Use `print()` without `should_log()` | Floods debug output, harms readability | Use Logger module with proper guards |
+| Use `print STDERR` for logging | Bypasses log level control | Use `log_debug()`, `log_info()`, `log_warning()`, `log_error()` |
 | Label bugs as "out of scope" | Violates Complete Ownership principle | Fix bugs you find in your scope |
 | Leave `TODO` comments in code | Creates technical debt, incomplete work | Finish implementation before committing |
 | Assume code behavior | Causes bugs, breaks things | Read the code, investigate first |
 | Commit without testing | Breaks builds, wastes time | Test syntax, run integration tests |
-| Use bare `die` in tools | Crashes AI loop ungracefully | Use error handlers with eval |
+| Use bare `die` in modules | Crashes AI loop ungracefully | Use `croak` from Carp, with eval for error handling |
 | Create giant modules (>1000 lines) | Hard to maintain and understand | Split into focused, cohesive modules |
 | Create summary docs in root | Clutters repository, wrong location | Use scratch/ for working documents |
 | Skip collaboration checkpoints | Violates Unbroken Method | Use user_collaboration at key decision points |

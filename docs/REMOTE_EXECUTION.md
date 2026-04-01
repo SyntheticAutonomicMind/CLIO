@@ -304,7 +304,7 @@ Execute an AI-powered task on a remote system.
 |-----------|----------|---------|-------------|
 | `host` | Yes | - | SSH target (user@hostname) |
 | `command` | Yes | - | Natural language task description |
-| `model` | Yes | - | AI model to use (e.g., gpt-4.1) |
+| `model` | Yes | - | AI model to use (e.g., gpt-5) |
 | `api_key` | No | Auto | API key (auto-populated from GitHub token) |
 | `timeout` | No | 300 | Max execution time in seconds |
 | `cleanup` | No | true | Delete CLIO after execution |
@@ -315,7 +315,7 @@ Execute an AI-powered task on a remote system.
 **Example:**
 
 ```
-Execute on user@mydevice with gpt-4.1: analyze the system hardware and create a detailed report
+Execute on user@mydevice with gpt-5: analyze the system hardware and create a detailed report
 ```
 
 ### check_remote
@@ -356,21 +356,21 @@ Transfer files to/from remote systems before or after execution.
 ### System Diagnostics
 
 ```
-Use remote_execution on admin@webserver with gpt-4.1:
+Use remote_execution on admin@webserver with gpt-5:
 Create a system health report including CPU, memory, disk, and network status
 ```
 
 ### Code Analysis on Remote
 
 ```
-Execute remotely on dev@buildserver with gpt-4.1:
+Execute remotely on dev@buildserver with gpt-5:
 Analyze the Python project in ~/myproject and identify potential security issues
 ```
 
 ### Multi-Step Remote Task
 
 ```
-On user@handheld with gpt-4.1:
+On user@handheld with gpt-5:
 1. Check what games are installed in ~/Games
 2. Report disk usage by game
 3. Identify the largest game and when it was last played
@@ -387,7 +387,7 @@ Format as a markdown table.
 ### Build on Specific Architecture
 
 ```
-Execute on builder@arm-device with gpt-4.1:
+Execute on builder@arm-device with gpt-5:
 Clone https://github.com/example/project, build for ARM64, and report any compilation errors
 ```
 
@@ -446,13 +446,13 @@ Error: Insufficient disk space: only XMB available in /tmp
 - Clear space in /tmp on the remote system
 - Use `working_dir` parameter to specify alternative directory
 
-**Download Failed**
+**Rsync Failed**
 ```
-Error: Could not find CLIO release
+Error: Could not transfer CLIO to remote
 ```
-- Verify internet connectivity on remote system
-- Check if curl/wget is available
-- GitHub API rate limits may apply
+- Verify rsync is installed on both local and remote
+- Check SSH connectivity
+- Ensure sufficient disk space on remote in /tmp
 
 ### Debug Mode
 
@@ -482,8 +482,8 @@ sequenceDiagram
 
     Local->>SSH: 1. Check host connectivity
     SSH->>Remote: 2. Verify requirements (Perl, etc.)
-    Local->>SSH: 3. Transfer CLIO (rsync/base64 scripts)
-    SSH->>Remote: 4. Install CLIO & create config
+    Local->>SSH: 3. Rsync CLIO installation
+    SSH->>Remote: 4. Create minimal config
     Local->>SSH: 5. Execute task command
     SSH->>Remote: 6. Run CLIO with AI task
     Remote-->>SSH: 7. Return output & results
@@ -494,33 +494,54 @@ sequenceDiagram
 
 ### Key Design Decisions
 
-1. **No persistent installation** - CLIO is downloaded fresh each time (ensures latest version)
-2. **Base64 script encoding** - Prevents shell quoting issues with complex commands
-3. **Automatic cleanup** - Leaves no trace on remote systems by default
-4. **Token forwarding** - Credentials passed securely, never persisted
+1. **Rsync distribution** - CLIO copies itself from local to remote, ensuring version consistency without requiring internet access on the remote
+2. **Automatic cleanup** - Leaves no trace on remote systems by default
+3. **Token forwarding** - Credentials passed via environment variable, never persisted on disk
 
 ---
 
-## Future Roadmap
+## Device Registry
 
-### Planned Features
+Manage named devices and groups for quick access:
 
-- **Multi-device workflows** - Execute tasks across multiple systems in parallel
-- **Result aggregation** - Combine outputs from distributed executions
-- **Persistent installations** - Option to keep CLIO installed for faster repeated tasks
-- **Streaming output** - Real-time output from remote executions
-- **Device groups** - Define named groups of systems for common workflows
-
-### RemoteDistribution Protocol
-
-A higher-level protocol for complex multi-stage workflows:
+### Adding Devices
 
 ```
-Workflow: "Build and Test Pipeline"
-  Stage 1: Build (on build-server)
-  Stage 2: Test (on test-servers, parallel)
-  Stage 3: Deploy (on production, sequential)
+/device add steam-deck deck@steamdeck.local
+/device add build-server admin@build.internal --key ~/.ssh/build_key
 ```
+
+### Device Groups
+
+```
+/device group create handhelds
+/device group add handhelds steam-deck
+/device group add handhelds legion-go
+```
+
+### Parallel Execution
+
+Run the same task on multiple devices simultaneously:
+
+```
+Execute on all handhelds with gpt-5: report CPU architecture and available disk space
+```
+
+This uses `execute_parallel` internally, forking one process per target and aggregating results.
+
+Devices and groups are stored in `~/.clio/devices.json`.
+
+---
+
+## Feature Toggle
+
+Remote execution can be disabled:
+
+```
+/config set enable_remote off
+```
+
+When disabled, the `remote_execution` tool is not available to the AI agent.
 
 ---
 
@@ -533,6 +554,7 @@ Workflow: "Build and Test Pipeline"
   "name": "remote_execution",
   "operations": [
     "execute_remote",
+    "execute_parallel",
     "prepare_remote", 
     "cleanup_remote",
     "check_remote",
@@ -549,14 +571,13 @@ Workflow: "Build and Test Pipeline"
   "operation": "execute_remote",
   "host": "user@hostname",
   "command": "task description",
-  "model": "gpt-4.1",
+  "model": "gpt-5",
   "api_key": "auto-populated",
   "api_provider": "github_copilot",
   "timeout": 300,
   "cleanup": true,
   "ssh_key": "/path/to/key",
   "ssh_port": 22,
-  "clio_source": "github",
   "output_files": ["report.md", "results/"],
   "working_dir": "/tmp"
 }
@@ -566,6 +587,6 @@ Workflow: "Build and Test Pipeline"
 
 ## See Also
 
+- [ARCHITECTURE_REMOTE_EXECUTION.md](ARCHITECTURE_REMOTE_EXECUTION.md) - Technical architecture
 - [User Guide](USER_GUIDE.md) - Complete CLIO documentation
-- [Architecture](ARCHITECTURE.md) - System design details
-- [Developer Guide](DEVELOPER_GUIDE.md) - Extending CLIO
+- [SANDBOX.md](SANDBOX.md) - Sandbox mode (blocks remote execution)

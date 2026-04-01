@@ -77,7 +77,7 @@ graph TD
 /subagent spawn "refactor auth module" --persistent
 
 # Specify model
-/subagent spawn "add tests" --model gpt-4.1 --persistent
+/subagent spawn "add tests" --model gpt-5 --persistent
 ```
 
 ### Communication
