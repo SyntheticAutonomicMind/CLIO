@@ -66,8 +66,9 @@ CLIO is a terminal-based AI code assistant that brings powerful AI capabilities 
 - ANSI-compatible terminal emulator
 
 **AI Provider Requirements:**
-- GitHub Copilot subscription + API token, OR
-- Qwen API key
+- GitHub Copilot subscription (recommended - includes GPT and Claude models), OR
+- API key from any supported provider: OpenAI, Anthropic, Google Gemini, DeepSeek, OpenRouter, MiniMax, OR
+- Local model server: llama.cpp, LM Studio, or SAM (no API key needed)
 
 ### Installation Steps
 
@@ -138,12 +139,7 @@ The default OAuth authentication provides access to dozens of models. To unlock 
 3. **Verify you have more models:**
    ```bash
    : /api models
-   # Should show additional preview models including:
-   # - claude-opus-4.6
-   # - gemini-3-flash-preview
-   # - gemini-3-pro-preview
-   # - gpt-5.1-codex-mini
-   # - gpt-5.2-codex
+   # Should show additional preview and premium models
    ```
 
 **Note:** PAT authentication takes priority over OAuth when both are configured. To revert to OAuth, clear the PAT with `/api set github_pat ""`.
@@ -154,11 +150,13 @@ Use `/api` commands interactively:
 
 ```bash
 ./clio
-: /api provider openai
-: /api key YOUR_OPENAI_API_KEY
-: /api model gpt-4o
+: /api set provider openai
+: /api set key YOUR_OPENAI_API_KEY
+: /api set model <model-name>
 : /config save  # Save to ~/.clio/config.json
 ```
+
+See [PROVIDERS.md](PROVIDERS.md) for setup instructions for all 10 providers.
 
 **Optional Environment Variables**
 
@@ -197,7 +195,7 @@ You'll see the welcome banner:
 ------------------------------------------━━
 CLIO - Command Line Intelligence Orchestrator
 Session ID: sess_20260118_143052
-You are connected to gpt-4o
+You are connected to claude-sonnet-4
 Press "?" for a list of commands.
 ------------------------------------------━━
 
@@ -371,6 +369,7 @@ CLIO provides 35+ powerful slash commands. Type `/help` in any session to see th
 | `/api set provider <name>` | Change AI provider |
 | `/api set model <name>` | Set AI model |
 | `/api set key <value>` | Set API key |
+| `/api set thinking on\|off` | Toggle reasoning display |
 | `/api models` | List available models |
 | `/api alias <name> <model>` | Create a model alias |
 | `/api alias` | List all model aliases |
@@ -388,6 +387,7 @@ CLIO provides 35+ powerful slash commands. Type `/help` in any session to see th
 |---------|---------|
 | `/session list` | List all saved sessions |
 | `/session switch <id>` | Resume a specific session |
+| `/session export [path]` | Export session as self-contained HTML |
 | `/session trim [days]` | Remove sessions older than N days (default: 30) |
 
 ### File & Git Operations
@@ -473,6 +473,7 @@ OpenSpec integration lets you define structured requirements (proposal, specs, d
 | Command | Purpose |
 |---------|---------|
 | `/debug [on\|off]` | Toggle debug mode |
+| `/loglevel <level>` | Set log level (DEBUG, INFO, WARNING, ERROR) - persists to config |
 | `/context` | View token usage statistics |
 | `/multiline`, `/ml` | Open editor for multi-line input |
 | `/theme <name>` | Change color theme |
@@ -500,6 +501,10 @@ OpenSpec integration lets you define structured requirements (proposal, specs, d
 |---------|---------|
 | `/exec <cmd>` | Execute shell command |
 | `/! <cmd>` | Execute shell command (shorthand) |
+| `/shell` | Open interactive shell |
+| `/undo` | Revert file changes from last AI turn |
+| `/undo list` | Show recent turns with file change counts |
+| `/undo diff` | Preview what would be reverted |
 | `/subagent spawn <task>` | Spawn sub-agent for parallel work |
 | `/subagent list` | List active sub-agents |
 | `/subagent inbox` | View messages from sub-agents |
@@ -546,7 +551,7 @@ Sessions are stored as JSON files in `sessions/` directory:
   "id": "sess_20260118_143052",
   "created_at": "2026-01-18T14:30:52Z",
   "conversation": [...],
-  "model": "gpt-4o",
+  "model": "claude-sonnet-4",
   "state": {...}
 }
 ```
@@ -874,7 +879,7 @@ YOU: Summarize the content of https://blog.example.com/article
 **execute_remote** - Run AI tasks on remote systems via SSH
 ```
 YOU: Use remote execution to check the disk space on myserver
-YOU: Execute on admin@webserver with gpt-4.1: create a system health report
+YOU: Execute on admin@webserver with gpt-5: create a system health report
 YOU: Remote execute on builder@arm-device: compile the project and report any errors
 ```
 
@@ -889,6 +894,27 @@ YOU: Prepare CLIO on dev@buildserver for repeated tasks
 ```
 
 Remote execution enables powerful distributed workflows - run analysis on servers, build on specific hardware, gather diagnostics from multiple systems, and more. See [Remote Execution Guide](REMOTE_EXECUTION.md) for complete documentation.
+
+### Code Intelligence
+
+**list_usages** - Find all references to a symbol across the codebase
+```
+YOU: Find all usages of the function validate_token
+```
+
+**search_history** - Semantic search through git commit messages
+```
+YOU: When did we fix the authentication bug?
+YOU: Show me commits related to performance improvements
+```
+
+### Apply Patch
+
+A lightweight diff-based tool for efficient multi-file changes. The AI can apply surgical patches rather than rewriting entire files:
+```
+YOU: Fix the off-by-one error in the loop on line 42 of parser.pm
+```
+The AI generates a targeted patch with context anchors, making changes precise and reviewable.
 
 ---------------------------------------------------
 
@@ -981,11 +1007,11 @@ CLIO: ────────────────────────�
 **Example Multi-Agent Workflow:**
 
 ```
-YOU: /subagent spawn "analyze lib/Module/A.pm" --model gpt-4.1
+YOU: /subagent spawn "analyze lib/Module/A.pm" --model gpt-5
 
 CLIO: ✓ Spawned sub-agent: agent-1
       Task: analyze lib/Module/A.pm and document key patterns
-      Model: gpt-4.1
+      Model: gpt-5
       
       Use /subagent list to monitor progress
 
@@ -1022,7 +1048,7 @@ CLIO: Reply sent to agent-2 (id: 5)
 
 **Best Practices:**
 
-1. **Use Different Models for Different Tasks**: Use `gpt-4.1` for complex analysis, `gpt-5-mini` for simple tasks
+1. **Use Different Models for Different Tasks**: Use a larger model for complex analysis, a smaller model for simple tasks. Run `/api models` to see what's available
 2. **Monitor Your Inbox**: Check `/subagent inbox` periodically for questions
 3. **Use Persistent Mode for Complex Work**: Agents can ask questions and receive guidance
 4. **Check Logs**: Agent logs are in `/tmp/clio-agent-<agent-id>.log`
@@ -1511,20 +1537,22 @@ CLIO is designed to be configured **interactively** using slash commands:
 
 ```bash
 ./clio
-: /api provider openai         # Set provider
-: /api key YOUR_API_KEY         # Set API key
-: /api model gpt-4o             # Set model (optional)
-: /config save                  # Save to config file
+: /api set provider openai         # Set provider
+: /api set key YOUR_API_KEY        # Set API key
+: /api set model <model-name>           # Set model (optional)
+: /config save                     # Save to config file
 ```
 
 **Available `/api` commands:**
 
 ```bash
 /api providers                  # List all available providers
-/api provider <name>            # Set current provider
-/api key <key>                  # Set API key for current provider
-/api model <model>              # Set model
+/api set provider <name>        # Set current provider
+/api set key <key>              # Set API key for current provider
+/api set model <model>          # Set model
 /api models                     # List available models
+/api set thinking on            # Enable reasoning display
+/api alias <name> <model>       # Create model alias
 ```
 
 **Available `/config` commands:**
@@ -1577,7 +1605,7 @@ CLIO can also be configured via a config file at `~/.clio/config.yaml`:
 # ~/.clio/config.yaml
 
 ai_provider: github_copilot
-model: gpt-4o
+model: claude-sonnet-4
 
 session:
   directory: ~/.clio/sessions
@@ -2304,19 +2332,19 @@ git init
 
 **Q: Is CLIO free?**
 
-A: CLIO itself is open-source and free (GPL v3). However, you need an AI provider subscription (GitHub Copilot or Qwen) which have their own pricing.
+A: CLIO itself is open-source and free (GPL v3). You need access to an AI provider - GitHub Copilot (included with GitHub subscriptions), OpenAI, Anthropic, Google, DeepSeek, OpenRouter, MiniMax, or a local model (llama.cpp, LM Studio, SAM).
 
 **Q: Does CLIO work offline?**
 
-A: No, CLIO requires an internet connection to communicate with AI provider APIs. However, session data is stored locally.
+A: With cloud providers, you need an internet connection. With local providers (llama.cpp, LM Studio, SAM), CLIO works completely offline. Session data is always stored locally regardless of provider.
 
 **Q: Can I use CLIO with ChatGPT/Claude directly?**
 
-A: Not currently. CLIO supports GitHub Copilot (which provides access to GPT-4o and Claude 3.5) and Qwen. Support for other providers may be added in the future.
+A: Yes. CLIO supports 10 providers including OpenAI (GPT models directly), Anthropic (Claude directly), Google Gemini, DeepSeek, OpenRouter (access to hundreds of models), MiniMax, and local models. See [PROVIDERS.md](PROVIDERS.md) for setup.
 
 **Q: Is CLIO safe to use with sensitive code?**
 
-A: CLIO only sends context to the AI provider that's necessary for the current request. However, this means code snippets and file contents are sent to third-party APIs. Review your organization's policies before using with proprietary code.
+A: CLIO only sends context to the AI provider that's necessary for the current request. Sensitive data (API keys, tokens, passwords) is automatically redacted before transmission. For complete privacy, use local providers where your data never leaves your machine. Review your organization's policies before using cloud providers with proprietary code.
 
 ### Feature Questions
 
@@ -2333,7 +2361,7 @@ But you should review all changes and understand what CLIO does.
 
 **Q: Does CLIO learn from my code?**
 
-A: Not within CLIO itself. The AI providers (GitHub Copilot, Qwen) may use interactions for improvement depending on their policies. CLIO's memory system stores information you explicitly ask it to remember.
+A: Not within CLIO itself. The AI providers may use interactions for improvement depending on their individual policies. CLIO's local memory system (LTM) stores only what you explicitly ask it to remember, and that data stays on your machine.
 
 **Q: Can CLIO work with multiple programming languages?**
 
@@ -2347,15 +2375,11 @@ A: Not directly. Sessions are stored as local JSON files. However, you could sha
 
 **Q: What AI models does CLIO use?**
 
-A: Through GitHub Copilot: GPT-4o, Claude 3.5 Sonnet, and o1 models. Through Qwen: Qwen-coder models.
+A: CLIO supports models from 10 providers. Through GitHub Copilot you get access to GPT-5, Claude Opus and Sonnet, MiniMax, and more. Direct provider access gives you the full model catalog from OpenAI, Anthropic, Google, DeepSeek, OpenRouter, and MiniMax. Local models (llama.cpp, LM Studio) work for offline use.
 
 **Q: How much does API usage cost?**
 
-A: This depends on your AI provider subscription:
-- GitHub Copilot: ~$10-20/month (individual/business)
-- Qwen: Pay-as-you-go pricing
-
-CLIO itself doesn't add any costs.
+A: This depends on your AI provider. Check your provider's website for current pricing. Local models (llama.cpp, LM Studio, SAM) run on your hardware at no cost. CLIO itself doesn't add any costs.
 
 **Q: Can I add custom tools to CLIO?**
 
@@ -2408,7 +2432,7 @@ A: Use `/api` commands. See [PROVIDERS.md](PROVIDERS.md) for full details:
 unset GITHUB_COPILOT_TOKEN
 ```
 
-CLIO automatically detects which provider to use based on available credentials.
+Provider and API key settings persist across sessions when you run `/config save`.
 
 ---------------------------------------------------
 

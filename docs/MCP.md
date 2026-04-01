@@ -1,10 +1,5 @@
 # MCP (Model Context Protocol) Support
 
-**Version:** 1.0  
-**Last Updated:** 2026-02-22
-
----
-
 ## Overview
 
 CLIO supports the [Model Context Protocol](https://modelcontextprotocol.io) (MCP),
@@ -252,14 +247,56 @@ Debug output shows all JSON-RPC messages between CLIO and the MCP server.
 
 ---
 
-## Limitations (v1)
+## OAuth 2.0 Authentication
+
+CLIO supports OAuth 2.0 with PKCE for MCP servers that require authentication:
+
+```json
+{
+  "mcp": {
+    "protected-server": {
+      "type": "remote",
+      "url": "https://mcp.example.com/api",
+      "oauth": {
+        "authorization_url": "https://auth.example.com/authorize",
+        "token_url": "https://auth.example.com/token",
+        "client_id": "your-client-id",
+        "scopes": ["tools:read", "tools:execute"]
+      }
+    }
+  }
+}
+```
+
+On first connection, CLIO opens a browser for authorization. Tokens are cached at `~/.clio/mcp-tokens/<servername>.json` (permissions 0600) and refreshed automatically.
+
+To re-authenticate manually:
+```
+/mcp auth <servername>
+```
+
+---
+
+## Architecture
+
+### Module Structure
+
+| Module | Purpose |
+|--------|---------|
+| `CLIO::MCP::Manager` | Server lifecycle, tool discovery, routing |
+| `CLIO::MCP::Client` | JSON-RPC 2.0 client implementation |
+| `CLIO::MCP::Transport::Stdio` | Local server communication (stdin/stdout) |
+| `CLIO::MCP::Transport::HTTP` | Remote server communication (HTTP POST + SSE) |
+| `CLIO::MCP::Auth::OAuth` | OAuth 2.0 + PKCE flow |
+| `CLIO::Tools::MCPBridge` | Tool registration bridge (MCP tools -> CLIO tools) |
+
+---
+
+## Limitations
 
 - **No MCP resources** - Only tools are bridged (resources and prompts planned)
-- **No OAuth** - Remote MCP servers requiring OAuth not yet supported
 - **No sampling** - Server-initiated LLM requests not supported
 - **No progress notifications** - Long-running tools show no progress
-
-These will be addressed in future versions.
 
 ---
 

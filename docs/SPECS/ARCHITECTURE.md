@@ -166,7 +166,7 @@ if ($ENV{GITHUB_COPILOT_TOKEN}) {
 **Request Format:**
 ```json
 {
-  "model": "gpt-4o",
+  "model": "gpt-5",
   "messages": [...],
   "tools": [...],
   "stream": true
@@ -221,7 +221,7 @@ $registry->register_tool(CLIO::Tools::TerminalOperations->new());
 {
   "id": "sess_20260118_143052",
   "created_at": "2026-01-18T14:30:52Z",
-  "model": "gpt-4o",
+  "model": "gpt-5",
   "conversation": [
     {
       "role": "user",
@@ -436,7 +436,7 @@ CLIO_LOG_LEVEL        # Debug level (automatically set by --debug flag)
 **Optional YAML config** (`~/.clio/config.yaml`):
 ```yaml
 ai_provider: github_copilot
-model: gpt-4o
+model: gpt-5
 session:
   directory: ~/.clio/sessions
 logging:

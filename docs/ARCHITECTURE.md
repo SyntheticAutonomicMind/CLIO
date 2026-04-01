@@ -1,12 +1,12 @@
 # CLIO Architecture
 
-**Last Updated:** March 2026
+**Last Updated:** April 2026
 
 ---------------------------------------------------
 
 ## Quick Overview
 
-CLIO is a **terminal-first AI code assistant** built in Perl. It integrates AI models (GitHub Copilot, OpenAI, etc.) with local tools (file operations, git, terminal) to help developers work more effectively.
+CLIO is a **terminal-first AI code assistant** built in Perl. It integrates AI models (GitHub Copilot, OpenAI, Anthropic, Google, OpenRouter) with local tools (file operations, git, terminal) to help developers work more effectively.
 
 **Core concept:** User types → CLIO thinks → CLIO uses tools → Results displayed
 
@@ -49,6 +49,11 @@ Terminal Output
 | Command Handler | `CommandHandler.pm` | Route slash commands to handler modules |
 | Progress Spinner | `ProgressSpinner.pm` | Animated busy indicator |
 | Multiplexer | `Multiplexer.pm` | Terminal multiplexer detection and pane management |
+| Streaming Controller | `StreamingController.pm` | Manage streaming response display and pagination |
+| Pagination Manager | `PaginationManager.pm` | Page-based output display for long content |
+| Diff Renderer | `DiffRenderer.pm` | Unified diff display with syntax coloring |
+| Terminal Capabilities | `Terminal.pm` | Terminal feature detection (color depth, image protocols) |
+| Host Protocol | `HostProtocol.pm` | Structured communication protocol for GUI host apps |
 | Commands Base | `Commands/Base.pm` | Base class providing display delegation for all slash command modules |
 
 **How it works:**
@@ -93,7 +98,7 @@ Terminal Output
 | Logger | `Logger.pm` | Debug and trace output |
 
 **How it works:**
-1. APIManager connects to AI provider (GitHub Copilot, OpenAI, etc.)
+1. APIManager connects to AI provider (GitHub Copilot, OpenAI, Anthropic, Google, OpenRouter)
 2. WorkflowOrchestrator manages complex interactions, including:
    - Proactive context trimming before each API call (keeps messages at ≤75% of context)
    - Reactive trimming with 3-attempt escalation when the API rejects due to token overflow
@@ -523,7 +528,7 @@ clio --new           # First run
 
 ```
 lib/CLIO/
-  Providers.pm             # AI provider registry (SAM, GitHub Copilot, etc.)
+  Providers.pm             # AI provider registry (GitHub Copilot, OpenAI, Anthropic, etc.)
   Update.pm                # Self-update system
   UI/                      # Terminal interface
       Chat.pm              # Main interactive loop
@@ -534,10 +539,18 @@ lib/CLIO/
       ToolOutputFormatter.pm # Tool output formatting
       CommandHandler.pm    # Slash command routing
       ProgressSpinner.pm   # Progress indicators
+      StreamingController.pm # Streaming response display
+      PaginationManager.pm # Page-based output
+      DiffRenderer.pm      # Unified diff display
+      Terminal.pm          # Terminal capability detection
+      HostProtocol.pm      # GUI host app protocol
       Commands/            # Slash command handlers
           Base.pm          # Base class with display delegation for all command modules
           AI.pm            # AI-powered commands (/explain, /review, /doc)
           API.pm           # API/provider commands (/api, /model)
+          API/Auth.pm      # API authentication sub-commands
+          API/Config.pm    # API configuration sub-commands
+          API/Models.pm    # API model listing sub-commands
           Billing.pm       # Billing/usage commands (/billing, /usage)
           Config.pm        # Configuration commands (/config, /theme)
           Context.pm       # Context window commands (/context)

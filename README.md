@@ -48,7 +48,7 @@ CLIO is part of the [Synthetic Autonomic Mind (SAM)](https://github.com/Syntheti
 | **Todos** | Manage tasks within your workflow |
 | **Web** | Fetch and analyze web content |
 | **MCP** | Connect to external tool servers via [Model Context Protocol](docs/MCP.md) |
-| **AI Providers** | GitHub Copilot, OpenAI, Anthropic, Google Gemini, DeepSeek, OpenRouter, llama.cpp, LM Studio, SAM |
+| **AI Providers** | GitHub Copilot, OpenAI, Anthropic, Google Gemini, DeepSeek, OpenRouter, MiniMax, llama.cpp, LM Studio, SAM |
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -99,7 +99,7 @@ Token Usage
     Completion:             6,927 tokens
 ```
 
-No surprises at the end of the month. See your quota consumption, billing multipliers for premium models, per-request token counts, and reset dates. CLIO warns you when premium models cost extra (e.g., Claude Opus at 3x) so you can make informed choices.
+No surprises at the end of the month. See your quota consumption, billing multipliers for premium models, per-request token counts, and reset dates. CLIO warns you when premium models cost extra so you can make informed choices.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -250,6 +250,8 @@ For more examples, see [docs/USER_GUIDE.md](docs/USER_GUIDE.md#usage-examples).
 | [Automation](docs/AUTOMATION.md) | CLIO-helper daemon and CI/CD integration |
 | [Style Guide](docs/STYLE_GUIDE.md) | Color themes and customization |
 | [Performance](docs/PERFORMANCE.md) | Benchmarks and optimization |
+| [Context Management](docs/CONTEXT_MANAGEMENT.md) | How CLIO handles long sessions and context limits |
+| [Security](docs/SECURITY.md) | Security model and secret redaction |
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

@@ -55,9 +55,9 @@ CLIO uses only **core Perl modules** - no CPAN dependencies:
 You need at least one AI provider. See [PROVIDERS.md](PROVIDERS.md) for the complete list.
 
 **Quick options:**
-- **GitHub Copilot** (~$10/mo) - Recommended, access to multiple models
+- **GitHub Copilot** - Recommended, access to multiple models
 - **Local models** (free) - llama.cpp, LM Studio, or SAM
-- **API providers** - OpenAI, Anthropic, Google, DeepSeek, OpenRouter
+- **API providers** - OpenAI, Anthropic, Google, DeepSeek, OpenRouter, MiniMax
 
 ---
 

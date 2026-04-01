@@ -1,120 +1,59 @@
 # CLIO UI/UX Style Guide
 
-**Version:** 1.0  
-**Date:** 2026-02-02  
-**Purpose:** Definitive reference for all terminal UI formatting in CLIO
+**Definitive reference for all terminal UI formatting in CLIO**
 
 ---
 
 ## Core Principles
 
 1. **Consistency First** - All output follows the same formatting patterns
-2. **Three-Color Format** - Box-drawing uses DIM for connectors, ASSISTANT for headers, DATA for content
+2. **Three-Color Format** - DIM for connectors/chrome, ASSISTANT for headers/names, DATA for content
 3. **Colorize Real Content** - Always pass actual text to `colorize()`, never empty strings
-4. **Box-Drawing for Structure** - Use Unicode box-drawing characters for visual hierarchy
+4. **Capability-Aware** - Detect terminal capabilities and degrade gracefully (Unicode -> CP437 -> ASCII)
 5. **Minimal Noise** - Don't announce tool calls or internal operations unless they provide value
+6. **Inline by Default** - Tool output uses compact inline format; box-drawing available via theme
 
 ---
 
-## Box-Drawing Characters
+## Display Formats
 
-Use these Unicode characters for structured output:
+CLIO supports two tool display formats, configured per-theme via `tool_display_format`:
 
-```
-┌  U+250C  BOX DRAWINGS LIGHT DOWN AND RIGHT
-├  U+251C  BOX DRAWINGS LIGHT VERTICAL AND RIGHT  
-└  U+2514  BOX DRAWINGS LIGHT UP AND RIGHT
-─  U+2500  BOX DRAWINGS LIGHT HORIZONTAL
-┤  U+2524  BOX DRAWINGS LIGHT VERTICAL AND LEFT
-│  U+2502  BOX DRAWINGS LIGHT VERTICAL
-```
+### Inline Format (Default)
 
----
-
-## Tool Output Format
-
-### Three-Color Format (Standard)
-
-All box-drawing output uses this three-color pattern:
-
-**Header:**
-```
-{DIM}┌──┤ {ASSISTANT}TOOL NAME{RESET}
-```
-
-**Action (single):**
-```
-{DIM}└─ {DATA}action description{RESET}
-```
-
-**Action (multiple):**
-```
-{DIM}├─ {DATA}first action{RESET}
-{DIM}└─ {DATA}last action{RESET}
-```
-
-### Implementation Pattern
-
-```perl
-# Header
-my $conn = $ui->colorize("┌──┤ ", 'DIM');
-my $name = $ui->colorize("TOOL NAME", 'ASSISTANT');
-print "$conn$name\n";
-
-# Action
-my $conn = $ui->colorize("└─ ", 'DIM');
-my $action = $ui->colorize("action description", 'DATA');
-print "$conn$action\n";
-```
-
-### Single-Line Tool Output
-
-When a tool executes once with one action:
+Compact, single-line tool output using bullet and arrow symbols:
 
 ```
-┌──┤ TOOL NAME
-└─ action description here
+∙ FILE OPERATIONS → reading lib/CLIO/Core/Config.pm (1247 bytes)
 ```
 
-**Example:**
+Multiple calls to the same tool collapse under one header:
+
+```
+∙ FILE OPERATIONS → reading lib/CLIO/UI/Chat.pm (5832 bytes)
+                  → writing lib/CLIO/UI/Chat.pm (5891 bytes)
+```
+
+Expanded content (diffs, key-value data) is indented below with hrule separators:
+
+```
+∙ FILE OPERATIONS → replaced 1 occurrence in lib/CLIO/Core/Config.pm
+    ────────────────────────────────────
+    (expanded content here)
+    ────────────────────────────────────
+```
+
+### Box Format
+
+Traditional box-drawing structure:
+
 ```
 ┌──┤ FILE OPERATIONS
 └─ reading lib/CLIO/Core/Config.pm (1247 bytes)
 ```
 
-**Colors:**
-- `┌──┤ ` = DIM (dim gray)
-- `FILE OPERATIONS` = ASSISTANT (bright cyan)
-- `└─ ` = DIM (dim gray)
-- `reading lib/...` = DATA (white)
+Multi-line:
 
-### Interactive Tool Output
-
-Interactive tools (like USER COLLABORATION) display an action line before user interaction:
-
-```
-┌──┤ USER COLLABORATION
-└─ Requesting your input...
-CLIO: Here's my question for you...
-Context: Some helpful context
-[Your answer]: <user types response>
-CLIO: <agent continues with response>
-```
-
-The action line (`└─ Requesting your input...`) closes the box-drawing header and indicates what's happening before the collaboration prompt appears.
-
-### Multi-Line Tool Output
-
-When a tool executes multiple times or has multiple actions:
-
-```
-┌──┤ TOOL NAME
-├─ first action description
-├─ second action description
-└─ last action description
-```
-
-**Example:**
 ```
 ┌──┤ FILE OPERATIONS
 ├─ reading lib/CLIO/UI/Chat.pm (5832 bytes)
@@ -122,78 +61,145 @@ When a tool executes multiple times or has multiple actions:
 └─ created backup at lib/CLIO/UI/Chat.pm.bak
 ```
 
-**Colors:**
-- Connectors (`┌──┤ `, `├─ `, `└─ `) = DIM
-- Tool name (`FILE OPERATIONS`) = ASSISTANT
-- Action descriptions = DATA
+### Setting the Format
 
-### Tool Group Transitions
-
-When switching from one tool to another, add a blank line:
+All shipped themes default to `inline`. To use box format, set in your theme file:
 
 ```
-┌──┤ FILE OPERATIONS
-└─ reading config file
-
-┌──┤ VERSION CONTROL
-└─ viewing git status
+tool_display_format=box
 ```
 
 ---
 
-## Colorization Rules
+## UI Symbols
+
+CLIO uses `CLIO::UI::Terminal::ui_char()` for capability-aware symbol rendering with three fallback tiers:
+
+| Symbol Name | Unicode | CP437 | ASCII | Usage |
+|-------------|---------|-------|-------|-------|
+| `bullet` | ∙ | ∙ | * | Tool header prefix |
+| `separator` | → | → | > | Tool header separator |
+| `footer_sep` | ─ | ─ | _ | Horizontal rules |
+| `ellipsis` | … | ... | ... | Truncation |
+| `arrow_right` | → | » | -> | Directional |
+| `arrow_left` | ← | « | <- | Directional |
+| `check` | ✓ | √ | + | Success |
+| `cross_mark` | ✗ | x | x | Failure |
+| `dot` | · | · | . | List items |
+| `dash` | — | - | - | Separators |
+| `pipe` | │ | │ | \| | Vertical lines |
+
+Box-drawing characters use `CLIO::UI::Terminal::box_char()`:
+
+| Name | Unicode | ASCII |
+|------|---------|-------|
+| `topleft` | ┌ | + |
+| `tright` | ├ | + |
+| `bottomleft` | └ | + |
+| `horizontal` | ─ | - |
+| `tleft` | ┤ | + |
+| `vertical` | │ | \| |
+
+---
+
+## Colorization
 
 ### Theme Style Names
 
-These are the canonical style names used in CLIO:
+| Style Name | Purpose | Usage |
+|-----------|---------|-------|
+| `DIM` | Chrome, connectors, metadata | Bullets, arrows, hrules, box connectors |
+| `ASSISTANT` | Names, headers, "CLIO:" prefix | Tool names, thinking header, system names |
+| `DATA` | Content, values | Action descriptions, thinking content, file data |
+| `USER` | User input, "YOU:" prefix | User messages |
+| `ERROR` | Error messages | Errors, diff removed lines |
+| `SUCCESS` | Success indicators | Checkmarks, diff added lines |
+| `WARNING` | Warnings | Warnings |
+| `PROMPT_INDICATOR` | Interactive prompts | `>` prompt symbol |
 
-| Style Name | Purpose | Typical Color | Usage |
-|-----------|---------|---------------|--------|
-| `DIM` | Box-drawing connectors, metadata | Dim/Gray | Connectors: `┌──┤ `, `├─ `, `└─ ` |
-| `ASSISTANT` | Tool names, headers, "CLIO:" prefix | Bright Cyan | Tool/system names |
-| `DATA` | Action descriptions, file content | White | All content data |
-| `USER` | User input, "YOU:" prefix | Default | User messages |
-| `ERROR` | Error messages | Red/Bright Red | Errors |
-| `SUCCESS` | Success indicators | Green/Bright Green | Checkmarks, success |
-| `WARNING` | Warnings | Yellow/Bright Yellow | Warnings |
-| `PROMPT_INDICATOR` | Interactive prompts | Bright Green | `>` prompt symbol |
+### Three-Color Pattern
 
-### Correct Colorization Pattern
+All structured output follows: DIM for chrome, ASSISTANT for names, DATA for content.
 
-**CORRECT (Three-color format):**
+**Inline tool header:**
 ```perl
-# Header: connector + name
-my $conn = $ui->colorize("┌──┤ ", 'DIM');
+my $b = $ui->colorize($bullet, 'DIM');
+my $n = $ui->colorize(" $tool_name ", 'ASSISTANT');
+my $s = $ui->colorize("$separator ", 'DIM');
+print "$b$n$s";
+# Action detail follows in DATA color
+```
+
+**Box tool header:**
+```perl
+my $connector = $ui->colorize("┌──┤ ", 'DIM');
 my $name = $ui->colorize("TOOL NAME", 'ASSISTANT');
-print "$conn$name\n";
-
-# Action: connector + description
-my $conn = $ui->colorize("└─ ", 'DIM');
-my $action = $ui->colorize("doing something", 'DATA');
-print "$conn$action\n";
+print "$connector$name\n";
 ```
 
-**WRONG (Single-color format):**
+### Correct Colorization
+
 ```perl
-# Everything the same color - no visual hierarchy
-my $line = "┌──┤ TOOL NAME";
-print $ui->colorize($line, 'DATA') . "\n";
+# CORRECT - colorize actual content
+print $ui->colorize($text, 'DATA') . "\n";
+
+# WRONG - colorizing empty string returns empty string
+my $color = $ui->colorize('', 'DATA');
+print "$color$text\n";  # Uncolored!
+
+# WRONG - hardcoded ANSI codes
+my $dim = "\e[2m";  # Use colorize() instead
 ```
 
-**WRONG (Empty string colorization):**
-```perl
-# Colorizing empty strings returns empty strings
-my $color = $ui->colorize('', 'DATA');  # Returns ''!
-print "$color$text\n";  # Uncolored output
+---
+
+## Agent Response Display
+
+Agent responses are displayed with a `CLIO: ` prefix and 4-space indentation on continuation lines:
+
+```
+CLIO: First line of response
+    Second line indented by 4 spaces
+    Third line also indented
 ```
 
-**WRONG (Manual ANSI codes):**
-```perl
-# Don't build colors manually - use colorize()
-my $dim = $ui->colorize('', 'DIM');
-my $data = $ui->colorize('', 'DATA');
-my $reset = "\e[0m";
-print "$dim$connector $data$action_detail$reset\n";
+The prefix uses ASSISTANT color. Response text is rendered through the Markdown renderer if enabled.
+
+---
+
+## Thinking/Reasoning Display
+
+When models provide reasoning content (toggle with `/api set thinking on`):
+
+**Inline format:**
+```
+∙ THINKING
+    reasoning content indented by 4 spaces
+    continues here...
+
+```
+
+**Box format:**
+```
+┌──┤ THINKING
+    reasoning content indented by 4 spaces
+    continues here...
+
+```
+
+- Header: DIM bullet/connector + ASSISTANT for "THINKING" (inline) or DIM connector + ASSISTANT name (box)
+- Content: DATA color, 4-space indent
+- Ends with blank line separator before the response
+
+---
+
+## System Messages
+
+System messages (errors, warnings, collaboration prompts) use box-drawing format regardless of the tool display format setting:
+
+```
+┌──┤ HEADER
+└─ message content
 ```
 
 ---
@@ -201,8 +207,6 @@ print "$dim$connector $data$action_detail$reset\n";
 ## Pause Prompts (Pagination)
 
 ### Two-Part Structure
-
-Pagination prompts have a two-part structure:
 
 **Part 1: Hint (first time only)**
 ```
@@ -214,75 +218,15 @@ Pagination prompts have a two-part structure:
 └─┤ 1/13 │ ^v Q ▸
 ```
 
-### Implementation
-
-```perl
-# First page
-my $hint = $theme->get_pagination_hint();
-print $hint;
-
-# Subsequent pages
-my $prompt = $theme->get_pagination_prompt($current, $total);
-print $prompt;
-```
-
----
-
-## System Messages
-
-### Command Headers
-
-```
-┌──┤ COMMAND NAME
-```
-
-**Example:**
-```perl
-print $chat->colorize("┌──┤ API CONFIGURATION", 'PROMPT_INDICATOR') . "\n";
-```
-
-### Section Headers
-
-```
-┌──┤ Section Title
-```
-
-### Key-Value Display
-
-```
-├─ Key: value
-└─ Last Key: value
-```
-
-**Example:**
-```
-┌──┤ CURRENT SETTINGS
-├─ Provider: github_copilot
-├─ Model: claude-sonnet-4.5
-└─ API Base: https://api.githubcopilot.com
-```
-
 ---
 
 ## Error Messages
-
-### Format
 
 ```
 ERROR: descriptive error message here
 ```
 
-**Colorization:** Use 'ERROR' style
-
-**Example:**
-```perl
-$chat->display_error_message("Model 'gpt-5' not found");
-# Outputs: ERROR: Model 'gpt-5' not found
-```
-
-### Multi-Line Errors
-
-For errors with context:
+Use `ERROR` style. Multi-line:
 
 ```
 ERROR: Primary error message
@@ -292,77 +236,45 @@ ERROR: Primary error message
 
 ---
 
-## Success Messages
+## Host Application Protocol
 
-### Format
+CLIO supports structured output for GUI host applications (via `CLIO::UI::HostProtocol`). When a host is detected, output is emitted as JSON events:
 
-```
-✓ Action completed successfully
-```
-
-**Colorization:** Use 'SUCCESS' style (for checkmark) or 'DATA' (for description)
-
-**Example:**
-```perl
-print $chat->colorize("✓", 'SUCCESS') . " File saved\n";
+```json
+{"type": "status", "data": "thinking"}
+{"type": "tool_call", "name": "file_operations", "action": "reading file"}
+{"type": "content", "text": "response text"}
 ```
 
 ---
 
-## Common Mistakes to Avoid
+## Terminal Capability Detection
 
-### ✗ Colorizing Empty Strings
+`CLIO::UI::Terminal` detects capabilities at startup:
 
-```perl
-# WRONG
-my $color = $ui->colorize('', 'DATA');
-print "$color$text\n";
+- **Unicode support** - Checks locale for UTF-8, falls back to CP437 then ASCII
+- **Color depth** - Detects truecolor, 256-color, 16-color, or no color
+- **Terminal dimensions** - Width/height for word wrapping and layout
+- **Braille characters** - Spinner uses braille patterns or falls back to ASCII
 
-# RIGHT
-print $ui->colorize($text, 'DATA') . "\n";
-```
-
-### ✗ Missing Action Lines
-
-When displaying tool output, always show the action:
+Respects `NO_COLOR` environment variable and `--no-color` flag.
 
 ```perl
-# WRONG
-print "┌──┤ FILE OPERATIONS\n";
-print "┌──┤ FILE OPERATIONS\n";  # Header repeats, no action shown
+use CLIO::UI::Terminal qw(box_char ui_char supports_unicode);
 
-# RIGHT
-print "┌──┤ FILE OPERATIONS\n";
-print "└─ reading file.txt\n";
+my $bullet = ui_char('bullet');       # ∙ or * based on capability
+my $corner = box_char('topleft');     # ┌ or + based on capability
 ```
 
-### ✗ Tool Name Pollution
+---
 
-Don't announce tool calls in the conversation flow:
+## Documentation Guidelines
 
-```perl
-# WRONG
-print "Using file_operations tool...\n";
-print "Calling version_control...\n";
+When writing docs that reference CLIO's interface:
 
-# RIGHT
-# Tools display their own headers via the standard format
-# Don't announce them separately
-```
-
-### ✗ Inconsistent Box Characters
-
-Always use the correct Unicode characters:
-
-```perl
-# WRONG
-print "|-- ACTION\n";  # ASCII approximation
-print "└── ACTION\n";  # Wrong character (U+2500 vs U+2500)
-
-# RIGHT
-print "├─ ACTION\n";   # U+251C U+2500
-print "└─ ACTION\n";   # U+2514 U+2500
-```
+- **Do not hardcode specific model names or versions** - models change frequently. Use `/api models` to discover available models. When a concrete name is needed in examples, use a current model family name without version suffix.
+- **Do not include pricing or subscription costs** - these change and CLIO is not the source of truth.
+- **Use `<model-name>` or `<provider-name>` as placeholders** in command examples.
 
 ---
 
@@ -371,13 +283,28 @@ print "└─ ACTION\n";   # U+2514 U+2500
 When implementing new UI components:
 
 - [ ] Use `colorize()` with actual content, not empty strings
-- [ ] Follow box-drawing format for structure
-- [ ] Use canonical style names from Theme.pm
-- [ ] Test with both `default` and `compact` themes
-- [ ] Verify colors display correctly
-- [ ] Check that multi-line output uses ├─ and └─ correctly
-- [ ] No tool name announcements (let the format speak for itself)
+- [ ] Follow three-color format (DIM/ASSISTANT/DATA)
+- [ ] Use `ui_char()` and `box_char()` for symbols (never hardcode Unicode)
+- [ ] Support both inline and box formats if displaying tool output
+- [ ] Use `ToolOutputFormatter` for tool output display
+- [ ] Use `CLIO::UI::Terminal` for capability detection
+- [ ] Test with `--no-color` flag
 - [ ] UTF-8 output enabled (`binmode(STDOUT, ':encoding(UTF-8)')`)
+- [ ] No tool name announcements (let the format speak for itself)
+
+---
+
+## Common Mistakes
+
+| Mistake | Fix |
+|---------|-----|
+| `$ui->colorize('', 'DATA')` | Colorize actual text, not empty strings |
+| `"\e[2m"` hardcoded ANSI | Use `$ui->colorize($text, 'DIM')` |
+| `"\x{2219}"` hardcoded Unicode | Use `ui_char('bullet')` |
+| `"┌──┤"` hardcoded box chars | Use `box_char('topleft')` etc. |
+| `print "Using file_operations tool...\n"` | Let ToolOutputFormatter handle display |
+| Repeated tool headers for same tool | Use continuation format (inline) or `├─`/`└─` (box) |
+| Hardcoded model versions in docs | Use `/api models` or `<model-name>` placeholder |
 
 ---
 
@@ -385,50 +312,31 @@ When implementing new UI components:
 
 ### Visual Test
 
-Run this to see all formatting:
-
 ```bash
 ./clio --input "read lib/CLIO/Core/Config.pm and show the first 10 lines" --exit
 ```
 
-Expected output should show:
-- Clean "CLIO: " prefix
-- Tool header: `┌──┤ FILE OPERATIONS`
-- Action line: `└─ reading lib/CLIO/Core/Config.pm (1247 bytes)`
-- Properly colored output
-
 ### Anti-Pattern Detection
-
-Search for these patterns to find violations:
 
 ```bash
 # Find colorize('', ...) calls
 grep -rn "colorize(''" lib/
 
-# Find potential tool announcements
-grep -rn "Using.*tool\|Calling.*tool" lib/
+# Find hardcoded ANSI codes
+grep -rn '\\e\[' lib/ | grep -v Terminal.pm
 
-# Find hardcoded ANSI codes (should use colorize instead)
-grep -rn '\\e\[' lib/ | grep -v "ANSI reset code"
+# Find hardcoded Unicode symbols (should use ui_char/box_char)
+grep -rn '\\x{25' lib/ | grep -v Terminal.pm
 ```
 
 ---
 
 ## References
 
-- **Implementation:** `lib/CLIO/Core/WorkflowOrchestrator.pm` - Tool output formatting
-- **Theme System:** `lib/CLIO/UI/Theme.pm` - Color definitions
-- **Display Methods:** `lib/CLIO/UI/Chat.pm` - High-level display methods
-- **Example Usage:** See any tool in `lib/CLIO/Tools/*.pm`
-
----
-
-## Version History
-
-| Version | Date | Changes |
-|---------|------|---------|
-| 1.0 | 2026-02-02 | Initial style guide creation after fixing colorization bugs |
-
----
-
-**Remember:** When in doubt, colorize the full content, not empty strings. This is the #1 cause of formatting bugs.
+- **ToolOutputFormatter:** `lib/CLIO/UI/ToolOutputFormatter.pm` - Tool output display (inline + box)
+- **Terminal:** `lib/CLIO/UI/Terminal.pm` - Capability detection, `ui_char()`, `box_char()`
+- **Theme System:** `lib/CLIO/UI/Theme.pm` - Two-layer theming (styles + themes)
+- **Host Protocol:** `lib/CLIO/UI/HostProtocol.pm` - Structured output for GUI hosts
+- **Display:** `lib/CLIO/UI/Display.pm` - High-level display methods
+- **Chat:** `lib/CLIO/UI/Chat.pm` - Terminal interface, streaming, thinking callbacks
+- **Spinner:** `lib/CLIO/UI/ProgressSpinner.pm` - Animated spinner with braille fallback
