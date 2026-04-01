@@ -1017,8 +1017,9 @@ sub ltm_stats {
         
         my $stats = $ltm->get_stats();
         
-        my $total = $stats->{discoveries} + $stats->{solutions} + $stats->{patterns} + 
-                    $stats->{workflows} + $stats->{failures};
+        my $total = ($stats->{discoveries} // 0) + ($stats->{problem_solutions} // 0) + 
+                    ($stats->{code_patterns} // 0) + ($stats->{workflows} // 0) + 
+                    ($stats->{failures} // 0);
         
         $result = $self->success_result(
             encode_json($stats),
