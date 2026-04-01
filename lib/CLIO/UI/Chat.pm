@@ -659,16 +659,20 @@ sub _make_system_message_callback {
         }
         
         if ($tool_format eq 'inline') {
-            my $prefix = $self->colorize("[SYSTEM] ", 'SYSTEM');
-            my $msg = $self->colorize($message, 'DATA');
-            print "$prefix$msg\n\n";
+            my $bullet = ui_char('bullet');
+            my $sep    = ui_char('separator');
+            my $b = $self->colorize($bullet, 'DIM');
+            my $n = $self->colorize(" SYSTEM ", 'SYSTEM');
+            my $s = $self->colorize("$sep ", 'DIM');
+            my $c = $self->colorize($message, 'WARNING');
+            print "$b$n$s$c\n\n";
             STDOUT->flush() if STDOUT->can('flush');
             $self->{pager}->increment_lines(2);
         } else {
             my $header_conn = $self->colorize(box_char("topleft") . box_char("horizontal") x 2 . box_char("tleft") . " ", 'DIM');
             my $header_name = $self->colorize("SYSTEM", 'ASSISTANT');
             my $footer_conn = $self->colorize(box_char("bottomleft") . box_char("horizontal") . " ", 'DIM');
-            my $footer_msg = $self->colorize($message, 'DATA');
+            my $footer_msg = $self->colorize($message, 'WARNING');
             
             print "$header_conn$header_name\n";
             print "$footer_conn$footer_msg\n\n";
@@ -1672,10 +1676,14 @@ sub display_system_messages {
     }
     
     if ($tool_format eq 'inline') {
+        my $bullet = ui_char('bullet');
+        my $sep    = ui_char('separator');
         for my $msg (@$messages) {
-            my $prefix = $self->colorize("[SYSTEM] ", 'SYSTEM');
-            my $msg_colored = $self->colorize($msg, 'DATA');
-            print "$prefix$msg_colored\n";
+            my $b = $self->colorize($bullet, 'DIM');
+            my $n = $self->colorize(" SYSTEM ", 'SYSTEM');
+            my $s = $self->colorize("$sep ", 'DIM');
+            my $c = $self->colorize($msg, 'WARNING');
+            print "$b$n$s$c\n";
         }
     } else {
         # Box format
@@ -1687,7 +1695,7 @@ sub display_system_messages {
             my $is_last = ($i == $#{$messages});
             my $connector = $is_last ? box_char("bottomleft") . box_char("horizontal") . " " : box_char("tright") . box_char("horizontal") . " ";
             my $conn_colored = $self->colorize($connector, 'DIM');
-            my $msg_colored = $self->colorize($messages->[$i], 'DATA');
+            my $msg_colored = $self->colorize($messages->[$i], 'WARNING');
             print "$conn_colored$msg_colored\n";
         }
     }
@@ -1719,7 +1727,7 @@ sub display_success_message {
 
 =head2 display_warning_message
 
-Display a warning message with [WARN] prefix
+Display a warning message
 
 =cut
 
@@ -1730,7 +1738,7 @@ sub display_warning_message {
 
 =head2 display_info_message
 
-Display an informational message with [INFO] prefix
+Display an informational message
 
 =cut
 
@@ -2578,40 +2586,56 @@ sub repaint_screen {
         }
         elsif ($msg->{type} eq 'system') {
             if ($tool_format eq 'inline') {
-                print $self->colorize("[SYSTEM] ", 'SYSTEM'), $self->colorize($msg->{content}, 'DATA'), "\n";
+                my $b = $self->colorize(ui_char('bullet'), 'DIM');
+                my $n = $self->colorize(" SYSTEM ", 'SYSTEM');
+                my $s = $self->colorize(ui_char('separator') . " ", 'DIM');
+                my $c = $self->colorize($msg->{content}, 'WARNING');
+                print "$b$n$s$c\n";
             } else {
                 my $header_conn = $self->colorize(box_char("topleft") . box_char("horizontal") x 2 . box_char("tleft") . " ", 'DIM');
                 my $header_name = $self->colorize("SYSTEM", 'ASSISTANT');
                 my $footer_conn = $self->colorize(box_char("bottomleft") . box_char("horizontal") . " ", 'DIM');
-                my $footer_msg = $self->colorize($msg->{content}, 'DATA');
+                my $footer_msg = $self->colorize($msg->{content}, 'WARNING');
                 print "$header_conn$header_name\n$footer_conn$footer_msg\n";
             }
         }
         elsif ($msg->{type} eq 'error') {
             if ($tool_format eq 'inline') {
-                print $self->colorize("[ERROR] ", 'ERROR'), $self->colorize($msg->{content}, 'DATA'), "\n";
+                my $b = $self->colorize(ui_char('bullet'), 'DIM');
+                my $n = $self->colorize(" ERROR ", 'ERROR');
+                my $s = $self->colorize(ui_char('separator') . " ", 'DIM');
+                my $c = $self->colorize($msg->{content}, 'ERROR');
+                print "$b$n$s$c\n";
             } else {
                 my $header_conn = $self->colorize(box_char("topleft") . box_char("horizontal") x 2 . box_char("tleft") . " ", 'DIM');
                 my $header_name = $self->colorize("ERROR", 'ERROR');
                 my $footer_conn = $self->colorize(box_char("bottomleft") . box_char("horizontal") . " ", 'DIM');
-                my $footer_msg = $self->colorize($msg->{content}, 'DATA');
+                my $footer_msg = $self->colorize($msg->{content}, 'ERROR');
                 print "$header_conn$header_name\n$footer_conn$footer_msg\n";
             }
         }
         elsif ($msg->{type} eq 'warning') {
             if ($tool_format eq 'inline') {
-                print $self->colorize("[WARN] ", 'WARNING'), $self->colorize($msg->{content}, 'DATA'), "\n";
+                my $b = $self->colorize(ui_char('bullet'), 'DIM');
+                my $n = $self->colorize(" WARNING ", 'WARNING');
+                my $s = $self->colorize(ui_char('separator') . " ", 'DIM');
+                my $c = $self->colorize($msg->{content}, 'WARNING');
+                print "$b$n$s$c\n";
             } else {
                 my $header_conn = $self->colorize(box_char("topleft") . box_char("horizontal") x 2 . box_char("tleft") . " ", 'DIM');
                 my $header_name = $self->colorize("WARNING", 'WARNING');
                 my $footer_conn = $self->colorize(box_char("bottomleft") . box_char("horizontal") . " ", 'DIM');
-                my $footer_msg = $self->colorize($msg->{content}, 'DATA');
+                my $footer_msg = $self->colorize($msg->{content}, 'WARNING');
                 print "$header_conn$header_name\n$footer_conn$footer_msg\n";
             }
         }
         elsif ($msg->{type} eq 'success') {
             if ($tool_format eq 'inline') {
-                print $self->colorize("[OK] ", 'SUCCESS'), $self->colorize($msg->{content}, 'DATA'), "\n";
+                my $b = $self->colorize(ui_char('bullet'), 'DIM');
+                my $n = $self->colorize(" OK ", 'SUCCESS');
+                my $s = $self->colorize(ui_char('separator') . " ", 'DIM');
+                my $c = $self->colorize($msg->{content}, 'DATA');
+                print "$b$n$s$c\n";
             } else {
                 my $header_conn = $self->colorize(box_char("topleft") . box_char("horizontal") x 2 . box_char("tleft") . " ", 'DIM');
                 my $header_name = $self->colorize("SUCCESS", 'SUCCESS');
@@ -2621,14 +2645,19 @@ sub repaint_screen {
             }
         }
         elsif ($msg->{type} eq 'info') {
-            # Display info with box-drawing format
-            my $header_conn = $self->colorize(box_char("topleft") . box_char("horizontal") x 2 . box_char("tleft") . " ", 'DIM');
-            my $header_name = $self->colorize("INFO", 'ASSISTANT');
-            my $footer_conn = $self->colorize(box_char("bottomleft") . box_char("horizontal") . " ", 'DIM');
-            my $footer_msg = $self->colorize($msg->{content}, 'DATA');
-            
-            print "$header_conn$header_name\n";
-            print "$footer_conn$footer_msg\n";
+            if ($tool_format eq 'inline') {
+                my $b = $self->colorize(ui_char('bullet'), 'DIM');
+                my $n = $self->colorize(" INFO ", 'ASSISTANT');
+                my $s = $self->colorize(ui_char('separator') . " ", 'DIM');
+                my $c = $self->colorize($msg->{content}, 'DATA');
+                print "$b$n$s$c\n";
+            } else {
+                my $header_conn = $self->colorize(box_char("topleft") . box_char("horizontal") x 2 . box_char("tleft") . " ", 'DIM');
+                my $header_name = $self->colorize("INFO", 'ASSISTANT');
+                my $footer_conn = $self->colorize(box_char("bottomleft") . box_char("horizontal") . " ", 'DIM');
+                my $footer_msg = $self->colorize($msg->{content}, 'DATA');
+                print "$header_conn$header_name\n$footer_conn$footer_msg\n";
+            }
         }
     }
 }

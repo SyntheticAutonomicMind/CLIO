@@ -239,10 +239,9 @@ sub _display_premium_warning {
         $mult_display =~ s/\.?0+x$/x/;
     }
     
-    $self->writeline($self->colorize("[WARN] Premium Model Usage:", 'LABEL'), markdown => 0);
-    $self->writeline(sprintf("  This model has a %s billing multiplier.", 
-        $self->colorize($mult_display, 'DATA')), markdown => 0);
-    $self->writeline("  Excessive use may impact your GitHub Copilot subscription.", markdown => 0);
+    # Display premium warning using display method for consistent styling
+    my $msg = "Premium Model Usage: $mult_display billing multiplier. Excessive use may impact your subscription.";
+    $self->{chat}->display_warning_message($msg);
     $self->writeline("", markdown => 0);
 }
 
