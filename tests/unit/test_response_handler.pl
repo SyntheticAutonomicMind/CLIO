@@ -58,10 +58,11 @@ subtest 'set_broker_request_id' => sub {
     sub new {
         my ($class, %opts) = @_;
         return bless {
-            code => $opts{code} || 200,
-            status_line => $opts{status_line} || "$opts{code} Error",
-            content => $opts{content} || '{}',
+            code => $opts{code} // 200,
+            status_line => $opts{status_line} // "$opts{code} Error",
+            content => defined $opts{content} ? $opts{content} : '{}',
             headers => $opts{headers} || MockHeaders->new(),
+            message => $opts{message} // '',
         }, $class;
     }
     sub code { $_[0]->{code} }
@@ -70,6 +71,7 @@ subtest 'set_broker_request_id' => sub {
     sub is_success { $_[0]->{code} >= 200 && $_[0]->{code} < 300 }
     sub header { return undef }
     sub headers { $_[0]->{headers} }
+    sub message { $_[0]->{message} }
 
     package MockHeaders;
     sub new { bless {}, $_[0] }
@@ -292,6 +294,34 @@ subtest 'handle_error_response - GitHub user_model_rate_limited (200 with string
     is($result->{error_type}, 'rate_limit', 'Error type is rate_limit');
     ok($result->{retry_after} && $result->{retry_after} > 0, 'Has retry_after value');
     like($result->{error}, qr/rate limit/i, 'Error message mentions rate limit');
+};
+
+subtest 'handle_error_response - 599 connection error (curl failure)' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 599,
+        status_line => '599 Connection reset by server',
+        message => 'Connection reset by server',
+        content => '',
+    );
+    my $result = $handler->handle_error_response($resp, '{}', 1);
+    is($result->{retryable}, 1, '599 is retryable');
+    is($result->{error_type}, 'connection_error', 'Error type is connection_error');
+    ok($result->{retry_after} >= 3, 'Has retry_after >= 3');
+    like($result->{error}, qr/Connection/, 'Error mentions connection');
+};
+
+subtest 'handle_error_response - status 0 (bogus HTTP/2 status)' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 0,
+        status_line => '0 ',
+        message => '',
+        content => '',
+    );
+    my $result = $handler->handle_error_response($resp, '{}', 1);
+    is($result->{retryable}, 1, 'Status 0 is retryable');
+    is($result->{error_type}, 'connection_error', 'Error type is connection_error');
 };
 
 done_testing();
