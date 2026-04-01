@@ -10,8 +10,6 @@ use Time::HiRes qw(usleep time);
 use POSIX ();
 use CLIO::Core::Logger qw(log_debug);
 
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 
 =head1 NAME
 
@@ -213,8 +211,6 @@ Animation loop in child process.
 
 sub _run_animation {
     my ($self) = @_;
-    
-    binmode(STDOUT, ':encoding(UTF-8)');
     
     my $frame_index = 0;
     my $frames = $self->{frames};

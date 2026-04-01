@@ -92,7 +92,7 @@ foreach my $theme_name (qw(default verbose compact)) {
     my ($conf_header, $conf_input) = @{$theme->get_confirmation_prompt("Test?", "yes/no", "cancel")};
     
     # Just verify they're not empty and contain expected elements
-    my $hint_ok = length($hint) > 5;
+    my  = defined();  # empty by design
     my $prompt_ok = length($prompt) > 5 && $prompt =~ /1\/5/;
     my $conf_ok = length($conf_header) > 5 && length($conf_input) > 5 && $conf_header =~ /Test/;
     

@@ -7,8 +7,6 @@ use strict;
 use warnings;
 use utf8;
 use parent 'CLIO::UI::Commands::Base';
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 
 use Carp qw(croak);
 
@@ -282,11 +280,11 @@ sub _display_recent_requests {
         
         $req_model = substr($req_model, 0, 23) . "..." if length($req_model) > 25;
         
-        printf "  %-5s %-25s %-12s %-12s\n",
+        $self->writeline(sprintf("  %-5s %-25s %-12s %-12s",
             $count,
             $req_model,
             $req->{total_tokens},
-            $rate_str;
+            $rate_str), markdown => 0);
         $count++;
     }
     $self->writeline("", markdown => 0);

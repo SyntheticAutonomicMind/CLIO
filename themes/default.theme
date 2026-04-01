@@ -5,12 +5,12 @@ name=default
 
 # Prompts
 user_prompt_format={style.user_prompt}: @RESET@
-agent_prefix={style.agent_label}CLIO: @RESET@
+agent_prefix={style.agent_label}{var.agent_name}: @RESET@
 system_prefix={style.system_message}SYSTEM: @RESET@
 error_prefix={style.error_message}ERROR: @RESET@
 
 # Banner (displayed at session start)
-banner_line1={style.app_title}CLIO {style.app_subtitle}- Command Line Intelligence Orchestrator@RESET@
+banner_line1={style.app_title}{var.agent_name} {style.app_subtitle}- {var.agent_subtitle}@RESET@
 banner_line2={style.banner_label}Session ID: {style.data}{var.session_id}@RESET@
 banner_line3={var.session_name_line}
 banner_line4={style.banner_label}You are connected to {style.data}{var.model}@RESET@
@@ -30,11 +30,11 @@ nav_previous={style.prompt_indicator}[P]revious@RESET@
 nav_quit={style.prompt_indicator}[Q]uit@RESET@
 pagination_info={style.dim}{var.info}@RESET@
 
-# Pagination prompts (box-drawing format with proper closures)
-# Two-part pause: hint tells what to do, prompt shows page status
-pagination_hint_streaming={style.dim}{char.topleft}{char.horizontal}{char.horizontal}{char.tleft} {style.agent_label}Q Quits {style.dim}{char.vertical} {style.agent_label}Any key for more@RESET@
-pagination_hint_full={style.dim}{char.topleft}{char.horizontal}{char.horizontal}{char.tleft} {style.agent_label}^/v Pages {style.dim}{char.vertical} {style.agent_label}Q Quits {style.dim}{char.vertical} {style.agent_label}Any key for more@RESET@
-pagination_prompt={style.dim}{char.bottomleft}{char.horizontal}{char.tleft} {style.data}{var.current}/{var.total} {style.dim}{char.vertical} {style.agent_label}{var.nav_hint}Q {style.dim}{char.vertical} {style.prompt_indicator}> @RESET@
+# Pagination prompts (single-line pause format)
+pagination_hint_streaming=
+pagination_hint_full=
+pagination_prompt_streaming={style.dim}{char.bullet} {style.agent_label}Q{style.dim} quit {char.pipe} any key for more @RESET@
+pagination_prompt={style.dim}{char.bullet} {style.data}{var.current}/{var.total} {style.dim}{char.pipe} {var.nav_hint}{style.agent_label}Q{style.dim} quit {char.pipe} any key for more @RESET@
 
 # Input prompts (standardized BBS style with box-drawing)
 input_prompt={style.dim}{char.topleft}{char.horizontal}{char.horizontal}{char.tleft} {style.prompt_indicator}{var.prompt}@RESET@
@@ -46,7 +46,7 @@ confirmation_input={style.dim}{char.bottomleft}{char.horizontal}{char.tleft} {st
 
 # Messages
 user_message_prefix={style.user_text}YOU: @RESET@
-agent_message_prefix={style.agent_label}CLIO: @RESET@
+agent_message_prefix={style.agent_label}{var.agent_name}: @RESET@
 
 # Tool display format: 'box' (default) or 'inline'
 tool_display_format=inline

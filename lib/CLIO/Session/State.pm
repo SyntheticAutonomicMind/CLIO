@@ -33,8 +33,6 @@ Handles atomic file saves, state migration from older formats, and session clean
 use strict;
 use warnings;
 use utf8;
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 use Carp qw(croak);
 use CLIO::Core::Logger qw(log_error log_warning log_debug log_info);
 use CLIO::Util::PathResolver;

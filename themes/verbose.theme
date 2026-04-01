@@ -11,7 +11,7 @@ error_prefix={style.error_message}[ERROR]: @RESET@
 
 # Banner - detailed
 banner_line1={style.banner}╔════════════════════════════════════════════╗@RESET@
-banner_line2={style.banner}║  {style.app_title}CLIO@RESET@{style.banner} {style.app_subtitle}- Command Line Intelligence Orchestrator@RESET@{style.banner} ║@RESET@
+banner_line2={style.banner}║  {style.app_title}{var.agent_name}@RESET@{style.banner} {style.app_subtitle}- {var.agent_subtitle}@RESET@{style.banner} ║@RESET@
 banner_line3={style.banner}╚════════════════════════════════════════════╝@RESET@
 banner_line4=Session ID: {style.data}{var.session_id}@RESET@
 banner_line5=Connected to: {style.data}{var.model}@RESET@
@@ -32,10 +32,10 @@ nav_previous={style.prompt_indicator}[P] Previous Page@RESET@
 nav_quit={style.prompt_indicator}[Q] Quit/Return@RESET@
 pagination_info={style.dim}Page info: {var.info}@RESET@
 
-# Pagination prompts (box-drawing format with proper closures)
-# Two-part pause: hint tells what to do, prompt shows page status
+# Pagination prompts (box-drawing format with two-line pause)
 pagination_hint_streaming={style.dim}{char.topleft}{char.horizontal}{char.horizontal}{char.tleft} {style.agent_label}Press Q to quit {style.dim}{char.vertical} {style.agent_label}Any key for more@RESET@
 pagination_hint_full={style.dim}{char.topleft}{char.horizontal}{char.horizontal}{char.tleft} {style.agent_label}^/v Navigate pages {style.dim}{char.vertical} {style.agent_label}Q Quit {style.dim}{char.vertical} {style.agent_label}Any key more@RESET@
+pagination_prompt_streaming={style.dim}{char.bottomleft}{char.horizontal}{char.tleft} {style.agent_label}Q {style.dim}{char.vertical} {style.prompt_indicator}> @RESET@
 pagination_prompt={style.dim}{char.bottomleft}{char.horizontal}{char.tleft} {style.data}Page {var.current} of {var.total} {style.dim}{char.vertical} {style.agent_label}{var.nav_hint}Q {style.dim}{char.vertical} {style.prompt_indicator}> @RESET@
 
 # Input prompts (box-drawing style)

@@ -7,10 +7,9 @@ use strict;
 use warnings;
 use utf8;
 use parent 'CLIO::UI::Commands::Base';
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 
 use Carp qw(croak);
+use CLIO::UI::Terminal qw(box_char);
 use File::Spec;
 use CLIO::Util::PathResolver qw(expand_tilde);
 
@@ -553,7 +552,7 @@ sub show_session_config {
     
     $self->writeline("", markdown => 0);
     $self->writeline($self->colorize("SESSION CONFIGURATION", 'DATA'), markdown => 0);
-    $self->writeline($self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), markdown => 0);
+    $self->writeline($self->colorize(box_char("hhorizontal") x 51, "DIM"), markdown => 0);
     $self->writeline("", markdown => 0);
     
     $self->writeline($self->colorize("Session Info:", 'SYSTEM'), markdown => 0);
@@ -591,7 +590,7 @@ sub handle_loglevel_command {
         my $current = $ENV{CLIO_LOG_LEVEL} || $self->{config}->get('log_level') || 'WARNING';
         $self->writeline("", markdown => 0);
         $self->writeline($self->colorize("CURRENT LOG LEVEL", 'DATA'), markdown => 0);
-        $self->writeline($self->colorize("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 'DIM'), markdown => 0);
+        $self->writeline($self->colorize(box_char("hhorizontal") x 51, "DIM"), markdown => 0);
         $self->writeline("", markdown => 0);
         $self->writeline("  $current", markdown => 0);
         $self->writeline("  Levels: ERROR, WARNING, INFO, DEBUG", markdown => 0);
@@ -643,7 +642,7 @@ sub handle_style_command {
         my @styles = $theme_mgr->list_styles();
         my $current = $theme_mgr->get_current_style();
         
-        $self->writeline($self->colorize("━ AVAILABLE STYLES ━" . ("━" x 41), 'DATA'), markdown => 0);
+        $self->writeline($self->colorize(box_char("hhorizontal") . " AVAILABLE STYLES " . box_char("hhorizontal") . (box_char("hhorizontal") x 41), "DATA"), markdown => 0);
         $self->writeline("", markdown => 0);
         for my $style (@styles) {
             my $marker = ($style eq $current) ? ' (current)' : '';
@@ -654,7 +653,7 @@ sub handle_style_command {
     }
     elsif ($action eq 'show') {
         my $current = $theme_mgr->get_current_style();
-        $self->writeline($self->colorize("━ CURRENT STYLE ━" . ("━" x 47), 'DATA'), markdown => 0);
+        $self->writeline($self->colorize(box_char("hhorizontal") . " CURRENT STYLE " . box_char("hhorizontal") . (box_char("hhorizontal") x 47), "DATA"), markdown => 0);
         $self->writeline("", markdown => 0);
         $self->writeline("  " . $self->colorize($current, 'USER'), markdown => 0);
         $self->writeline("", markdown => 0);
@@ -714,7 +713,7 @@ sub handle_theme_command {
         my @themes = $theme_mgr->list_themes();
         my $current = $theme_mgr->get_current_theme();
         
-        $self->writeline($self->colorize("━ AVAILABLE THEMES ━" . ("━" x 41), 'DATA'), markdown => 0);
+        $self->writeline($self->colorize(box_char("hhorizontal") . " AVAILABLE THEMES " . box_char("hhorizontal") . (box_char("hhorizontal") x 41), "DATA"), markdown => 0);
         $self->writeline("", markdown => 0);
         for my $theme (@themes) {
             my $marker = ($theme eq $current) ? ' (current)' : '';
@@ -725,7 +724,7 @@ sub handle_theme_command {
     }
     elsif ($action eq 'show') {
         my $current = $theme_mgr->get_current_theme();
-        $self->writeline($self->colorize("━ CURRENT THEME ━" . ("━" x 47), 'DATA'), markdown => 0);
+        $self->writeline($self->colorize(box_char("hhorizontal") . " CURRENT THEME " . box_char("hhorizontal") . (box_char("hhorizontal") x 47), "DATA"), markdown => 0);
         $self->writeline("", markdown => 0);
         $self->writeline("  " . $self->colorize($current, 'USER'), markdown => 0);
         $self->writeline("", markdown => 0);

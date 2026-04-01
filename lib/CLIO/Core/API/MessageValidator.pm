@@ -11,8 +11,6 @@ use CLIO::Memory::TokenEstimator qw(estimate_tokens);
 use CLIO::Util::JSON qw(encode_json decode_json);
 use POSIX qw(strftime);
 
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 
 =head1 NAME
 

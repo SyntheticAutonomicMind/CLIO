@@ -3,8 +3,6 @@ package CLIO::UI::PaginationManager;
 use strict;
 use warnings;
 use utf8;
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
 
 use Carp qw(croak);
 use CLIO::Core::Logger qw(log_debug);
@@ -227,18 +225,22 @@ sub pause {
     my $current      = ($self->{page_index} || 0) + 1;
 
     if ($streaming) {
+        # Show hint line if theme provides one and we haven't shown it yet
         if ($show_hint) {
-            print $ui->{theme_mgr}->get_pagination_hint(1) . "\n";
+            my $hint = $ui->{theme_mgr}->get_pagination_hint(1);
+            if (defined $hint && $hint ne '') {
+                print $hint . "\n";
+                $hint_shown = 1;
+            }
             $self->{_pagination_hint_shown} = 1;
-            $hint_shown = 1;
         }
 
-        my $prompt = $ui->{theme_mgr}->get_pagination_prompt($current, 1, 0);
+        my $prompt = $ui->{theme_mgr}->get_pagination_prompt($current, 1, 0, 1);
         print $prompt;
 
         my $key = ReadKey(0);
 
-        # Clear prompt (and hint if shown)
+        # Clear prompt (and hint line above if one was shown)
         if ($hint_shown) {
             print "\e[2K";
             print "\e[" . $ui->{terminal_width} . "D";
@@ -255,14 +257,17 @@ sub pause {
     # Non-streaming: full arrow navigation
     while (1) {
         if ($show_hint) {
-            print $ui->{theme_mgr}->get_pagination_hint(0) . "\n";
+            my $hint = $ui->{theme_mgr}->get_pagination_hint(0);
+            if (defined $hint && $hint ne '') {
+                print $hint . "\n";
+                $hint_shown = 1;
+            }
             $self->{_pagination_hint_shown} = 1;
-            $hint_shown = 1;
             $show_hint = 0;
         }
 
         my $prompt = $ui->{theme_mgr}->get_pagination_prompt(
-            $current, $total_pages, ($total_pages > 1)
+            $current, $total_pages, ($total_pages > 1), 0
         );
         print $prompt;
 
@@ -340,16 +345,16 @@ sub display_list {
     # Non-paginated path
     if (!$is_interactive || $total <= $page_size) {
         print "\n";
-        print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
+        print box_char('hhorizontal') x 54, "\n";
         print $ui->colorize($title, 'DATA'), "\n";
-        print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
+        print box_char('hhorizontal') x 54, "\n";
         print "\n";
         for my $i (0 .. $total - 1) {
             my $formatted = $formatter->($items->[$i], $i);
             print "  $formatted\n";
         }
         print "\n";
-        print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
+        print box_char('hhorizontal') x 54, "\n";
         print $ui->colorize("Total: $total items", 'DIM'), "\n";
         print "\n";
         return;
@@ -366,9 +371,9 @@ sub display_list {
 
         print "\e[2J\e[H";
         print "\n";
-        print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
+        print box_char('hhorizontal') x 54, "\n";
         print $ui->colorize($title, 'DATA'), "\n";
-        print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
+        print box_char('hhorizontal') x 54, "\n";
         print "\n";
 
         for my $i ($start .. $end) {
@@ -377,20 +382,23 @@ sub display_list {
         }
 
         print "\n";
-        print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "\n";
+        print box_char('hhorizontal') x 54, "\n";
 
         my $showing = sprintf("Showing %d-%d of %d", $start + 1, $end + 1, $total);
         print $ui->colorize($showing, 'DIM'), "\n";
 
         if ($show_hint) {
-            print $ui->{theme_mgr}->get_pagination_hint(0) . "\n";
+            my $hint = $ui->{theme_mgr}->get_pagination_hint(0);
+            if (defined $hint && $hint ne '') {
+                print $hint . "\n";
+            }
             $self->{_pagination_hint_shown} = 1;
             $show_hint = 0;
         }
 
         my $current = $current_page + 1;
         my $prompt = $ui->{theme_mgr}->get_pagination_prompt(
-            $current, $total_pages, ($total_pages > 1)
+            $current, $total_pages, ($total_pages > 1), 0
         );
         print $prompt;
 
@@ -500,14 +508,17 @@ sub display_content {
         print $ui->colorize($status, 'DIM'), "\n";
 
         if ($show_hint) {
-            print $ui->{theme_mgr}->get_pagination_hint(0) . "\n";
+            my $hint = $ui->{theme_mgr}->get_pagination_hint(0);
+            if (defined $hint && $hint ne '') {
+                print $hint . "\n";
+            }
             $self->{_pagination_hint_shown} = 1;
             $show_hint = 0;
         }
 
         my $current = $current_page + 1;
         my $prompt = $ui->{theme_mgr}->get_pagination_prompt(
-            $current, $total_pages, ($total_pages > 1)
+            $current, $total_pages, ($total_pages > 1), 0
         );
         print $prompt;
 

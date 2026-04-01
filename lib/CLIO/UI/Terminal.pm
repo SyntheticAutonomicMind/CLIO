@@ -10,6 +10,7 @@ use Exporter 'import';
 
 our @EXPORT_OK = qw(
     detect_capabilities
+    configure_io_encoding
     supports_unicode
     supports_cp437
     supports_truecolor
@@ -21,8 +22,7 @@ our @EXPORT_OK = qw(
     ui_char
 );
 
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
+# binmode set by configure_io_encoding() after detection, not here
 
 =head1 NAME
 
@@ -75,8 +75,41 @@ sub detect_capabilities {
         $caps{truecolor}  = _detect_truecolor();
         $caps{color_256}  = _detect_256color();
         $caps{detected}   = 1;
+
+        # Log capabilities for debugging (uses require to avoid circular deps)
+        eval {
+            require CLIO::Core::Logger;
+            my $lang = $ENV{LANG} // $ENV{LC_ALL} // $ENV{LC_CTYPE} // '(unset)';
+            my $term = $ENV{TERM} // '(unset)';
+            CLIO::Core::Logger::log_debug('Terminal',
+                sprintf('Capabilities: type=%s unicode=%d cp437=%d ansi=%d truecolor=%d 256=%d LANG=%s TERM=%s',
+                    $caps{term_type}, $caps{unicode}, $caps{cp437},
+                    $caps{ansi}, $caps{truecolor}, $caps{color_256},
+                    $lang, $term));
+        };
     }
     return \%caps;
+}
+
+=head2 configure_io_encoding()
+
+Set STDOUT/STDERR encoding based on detected terminal capabilities.
+Unicode terminals get C<:encoding(UTF-8)>, CP437/raw terminals get
+C<:raw> so that byte values 128-255 pass through unchanged.
+
+Call this once after detect_capabilities(), typically at startup.
+
+=cut
+
+sub configure_io_encoding {
+    _ensure();
+    if ($caps{unicode}) {
+        binmode(STDOUT, ':encoding(UTF-8)');
+        binmode(STDERR, ':encoding(UTF-8)');
+    } else {
+        binmode(STDOUT, ':raw');
+        binmode(STDERR, ':raw');
+    }
 }
 
 =head2 Accessors
@@ -185,6 +218,11 @@ sub _detect_unicode {
     my $lang = $ENV{LANG} // $ENV{LC_ALL} // $ENV{LC_CTYPE} // '';
     return 1 if $lang =~ /utf-?8/i;
     
+    # If LANG is explicitly set but not UTF-8, respect it - the terminal
+    # or user is telling us the encoding isn't Unicode (e.g. CP437, Latin-1).
+    # Don't let platform heuristics override an explicit locale.
+    return 0 if $lang ne '';
+    
     # macOS defaults to UTF-8 even without explicit locale
     return 1 if $^O eq 'darwin';
     
@@ -289,7 +327,8 @@ Non-Unicode terminals get ASCII fallbacks.
 
 Types: horizontal, vertical, topleft, topright, bottomleft, bottomright,
        tdown, tup, tright, tleft, cross,
-       dhorizontal, dvertical, dtopleft, dtopright, dbottomleft, dbottomright
+       dhorizontal, dvertical, dtopleft, dtopright, dbottomleft, dbottomright,
+       hhorizontal
 
 =cut
 
@@ -312,6 +351,31 @@ my %BOX_UNICODE = (
     dtopright    => "\x{2557}",  # ╗
     dbottomleft  => "\x{255A}",  # ╚
     dbottomright => "\x{255D}",  # ╝
+
+    hhorizontal  => "\x{2501}",  # ━ (heavy horizontal)
+);
+
+my %BOX_CP437 = (
+    horizontal   => chr(196),  # ─
+    vertical     => chr(179),  # │
+    topleft      => chr(218),  # ┌
+    topright     => chr(191),  # ┐
+    bottomleft   => chr(192),  # └
+    bottomright  => chr(217),  # ┘
+    tdown        => chr(194),  # ┬
+    tup          => chr(193),  # ┴
+    tright       => chr(195),  # ├
+    tleft        => chr(180),  # ┤
+    cross        => chr(197),  # ┼
+
+    dhorizontal  => chr(205),  # ═
+    dvertical    => chr(186),  # ║
+    dtopleft     => chr(201),  # ╔
+    dtopright    => chr(187),  # ╗
+    dbottomleft  => chr(200),  # ╚
+    dbottomright => chr(188),  # ╝
+
+    hhorizontal  => chr(196),  # ━ (no heavy variant in CP437, use horizontal)
 );
 
 my %BOX_ASCII = (
@@ -333,6 +397,8 @@ my %BOX_ASCII = (
     dtopright    => '+',
     dbottomleft  => '+',
     dbottomright => '+',
+
+    hhorizontal  => '-',
 );
 
 sub box_char {
@@ -341,6 +407,8 @@ sub box_char {
     
     if ($caps{unicode}) {
         return $BOX_UNICODE{$type} // '?';
+    } elsif ($caps{cp437}) {
+        return $BOX_CP437{$type} // $BOX_ASCII{$type} // '?';
     } else {
         return $BOX_ASCII{$type} // '?';
     }
@@ -358,7 +426,9 @@ Three tiers: Unicode -> CP437 -> ASCII.
 Themes can override these via the style file.
 
 Names: bullet, separator, footer_sep, ellipsis, arrow_right, arrow_left,
-       check, cross_mark, dot, dash, pipe
+       check, cross_mark, dot, dash, pipe,
+       bullet_round, infinity, lock, filled_block, light_shade, diamond, circle,
+       info, lightbulb, envelope
 
 =cut
 
@@ -374,21 +444,72 @@ my %UI_UNICODE = (
     dot          => "\x{00B7}",  # · (middle dot)
     dash         => "\x{2014}",  # — (em dash)
     pipe         => "\x{2502}",  # │ (vertical line)
+
+    bullet_round => "\x{2022}",  # • (bullet)
+    infinity     => "\x{221E}",  # ∞ (infinity)
+    lock         => "\x{1F512}", #  (lock)
+    filled_block => "\x{2588}",  # █ (full block)
+    light_shade  => "\x{2591}",  # ░ (light shade)
+    diamond      => "\x{25C6}",  # ◆ (black diamond)
+    circle       => "\x{25CB}",  # ○ (white circle)
+
+    info         => "\x{2139}",  # [INFO] (information source)
+    lightbulb    => "\x{1F4A1}", # [IDEA] (electric light bulb)
+    envelope     => "\x{1F4E8}", #  (incoming envelope)
+
+    times        => "\x{00D7}",  # × (multiplication sign)
+    divide       => "\x{00F7}",  # ÷ (division sign)
+    plus_minus   => "\x{00B1}",  # ± (plus-minus sign)
+    approx       => "\x{2248}",  # ≈ (approximately equal)
+    not_equal    => "\x{2260}",  # ≠ (not equal)
+    less_equal   => "\x{2264}",  # ≤ (less than or equal)
+    greater_equal => "\x{2265}", # ≥ (greater than or equal)
+    sqrt_sym     => "\x{221A}",  # √ (square root)
+    sum_sym      => "\x{2211}",  # ∑ (summation)
+    integral     => "\x{222B}",  # ∫ (integral)
+    partial      => "\x{2202}",  # ∂ (partial derivative)
+    nabla        => "\x{2207}",  # ∇ (nabla/del)
 );
 
 my %UI_CP437 = (
-    bullet       => "\x{2219}",  # ∙ CP437 chr(249)
-    separator    => "\x{2192}",  # -> (rightwards arrow)
-    footer_sep   => "\x{2500}",  # ─ CP437 chr(196)
-    ellipsis     => '...',
-    arrow_right  => "\x{00BB}",  # » (reuse double angle)
-    arrow_left   => "\x{00AB}",  # « CP437 chr(174)
-    check        => "\x{221A}",  # √ CP437 chr(251)
-    cross_mark   => 'x',
-    dot          => "\x{00B7}",  # · CP437 chr(250)
-    dash         => '-',
-    pipe         => "\x{2502}",  # │ CP437 chr(179)
+    bullet       => chr(249),    # bullet
+    separator    => chr(26),     # rightwards arrow
+    footer_sep   => chr(196),    # horizontal line
+    ellipsis     => "...",
+    arrow_right  => chr(175),    # double angle right
+    arrow_left   => chr(174),    # double angle left
+    check        => chr(251),    # check mark
+    cross_mark   => "x",
+    dot          => chr(250),    # middle dot
+    dash         => "-",
+    pipe         => chr(179),    # vertical line
+
+    bullet_round => chr(7),      # bullet
+    infinity     => chr(236),    # infinity
+    lock         => "*",
+    filled_block => chr(219),    # full block
+    light_shade  => chr(176),    # light shade
+    diamond      => chr(4),      # diamond
+    circle       => chr(9),      # circle
+
+    info         => "i",
+    lightbulb    => "*",
+    envelope     => "\@",
+
+    times        => chr(158),    # multiply (CP437 approx)
+    divide       => chr(246),    # ÷ (division sign)
+    plus_minus   => chr(241),    # ± (plus-minus)
+    approx       => "~=",
+    not_equal    => "!=",
+    less_equal   => "<=",
+    greater_equal => ">=",
+    sqrt_sym     => "sqrt",
+    sum_sym      => "SUM",
+    integral     => "INT",
+    partial      => "d",
+    nabla        => "V",
 );
+
 
 my %UI_ASCII = (
     bullet       => '*',
@@ -402,6 +523,31 @@ my %UI_ASCII = (
     dot          => '.',
     dash         => '-',
     pipe         => '|',
+
+    bullet_round => '*',
+    infinity     => 'inf',
+    lock         => '*',
+    filled_block => '#',
+    light_shade  => '.',
+    diamond      => '*',
+    circle       => 'o',
+
+    info         => 'i',
+    lightbulb    => '*',
+    envelope     => '@',
+
+    times        => 'x',
+    divide       => '/',
+    plus_minus   => '+/-',
+    approx       => '~=',
+    not_equal    => '!=',
+    less_equal   => '<=',
+    greater_equal => '>=',
+    sqrt_sym     => 'sqrt',
+    sum_sym      => 'SUM',
+    integral     => 'INT',
+    partial      => 'd',
+    nabla        => 'V',
 );
 
 sub ui_char {

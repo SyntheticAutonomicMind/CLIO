@@ -72,6 +72,7 @@ ok(exists $caps->{term_type}, "capabilities has 'term_type' key");
 # ─────────────────────────────────────────────────────────────
 {
     CLIO::UI::Terminal::set_unicode_support(0);
+    CLIO::UI::Terminal::set_cp437_support(0);
     
     is(box_char('horizontal'), '-', "ASCII mode: horizontal is '-'");
     is(box_char('vertical'), '|', "ASCII mode: vertical is '|'");
@@ -142,10 +143,10 @@ is(ui_char('nonexistent'), '?', "ui_char('nonexistent') returns '?'");
 {
     CLIO::UI::Terminal::set_unicode_support(0);
     CLIO::UI::Terminal::set_cp437_support(1);
-    is(ui_char('bullet'), "\x{2219}", "CP437: bullet");
-    is(ui_char('separator'), "\x{2192}", "CP437: separator");
+    is(ui_char('bullet'), chr(249), "CP437: bullet");
+    is(ui_char('separator'), chr(26), "CP437: separator");
     is(ui_char('ellipsis'), '...', "CP437: ellipsis stays ASCII");
-    is(ui_char('check'), "\x{221A}", "CP437: check is sqrt");
+    is(ui_char('check'), chr(251), "CP437: check is sqrt");
 }
 
 # Test 16: Force Unicode mode
