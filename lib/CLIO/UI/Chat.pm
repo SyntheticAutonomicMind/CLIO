@@ -2996,14 +2996,13 @@ sub _prompt_session_learnings {
     print "\n";
     $self->display_system_message("Session ending. Any important discoveries to remember?");
     
-    my ($header, $input_line) = @{$self->{theme_mgr}->get_confirmation_prompt(
+    my $prompt = $self->{theme_mgr}->get_confirmation_prompt(
         "Record session learnings?",
         "yes/no",
         "skip"
-    )};
+    );
     
-    print $header, "\n";
-    print $input_line;
+    print $prompt;
     my $response = <STDIN>;
     chomp $response if defined $response;
     
@@ -3011,13 +3010,12 @@ sub _prompt_session_learnings {
     return unless $response && $response =~ /^y(es)?$/i;
     
     # Now prompt for the actual learning text
-    my ($lheader, $linput) = @{$self->{theme_mgr}->get_confirmation_prompt(
+    my $lprompt = $self->{theme_mgr}->get_confirmation_prompt(
         "Enter learnings (Ctrl+D when done)",
         "",
         "skip"
-    )};
-    print $lheader, "\n";
-    print $linput;
+    );
+    print $lprompt;
     
     # Read multi-line input
     my @lines;
