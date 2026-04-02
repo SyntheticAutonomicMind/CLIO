@@ -56,6 +56,7 @@ OPTIONS:
     --new              Start a new session
     --resume [ID]      Resume a session (most recent if no ID provided)
     --sessions         List all sessions with friendly names
+    --list-models      Output available models as JSON (for integrations)
     --debug            Enable debug output
     --dir <path>       Set working directory for session
     --input <text>     Process input and exit
@@ -193,6 +194,9 @@ for (my $i = 0; $i < @ARGV; $i++) {
     if ($ARGV[$i] eq '--sessions') {
         $mode = 'list_sessions';
     }
+    if ($ARGV[$i] eq '--list-models') {
+        $mode = 'list_models';
+    }
 }
 
 # If no --input flag was provided but STDIN is piped (not a TTY), read from STDIN
@@ -329,6 +333,63 @@ if ($mode eq 'list_sessions') {
     print "  clio --resume <name>         # by friendly name\n";
     print "  clio --resume <uuid>         # by session ID\n";
     
+    exit 0;
+}
+
+# Handle --list-models mode (output JSON and exit)
+if ($mode eq 'list_models') {
+    require CLIO::Providers;
+    require CLIO::Util::JSON;
+
+    my @all_models;
+
+    my @providers = CLIO::Providers::list_providers();
+    for my $provider_name (@providers) {
+        my $provider_def = CLIO::Providers::get_provider($provider_name);
+        next unless $provider_def;
+
+        my $api_key = $config->get_provider_key($provider_name);
+        my $has_auth = $api_key
+            || $provider_name eq 'github_copilot'
+            || $provider_name eq 'sam'
+            || $provider_name eq 'llama.cpp'
+            || $provider_name eq 'lmstudio';
+
+        if ($provider_name eq 'github_copilot' && !$api_key) {
+            eval {
+                require CLIO::Core::GitHubAuth;
+                my $auth = CLIO::Core::GitHubAuth->new(debug => 0);
+                $api_key = $auth->get_copilot_token();
+                $has_auth = 1 if $api_key;
+            };
+            $has_auth = 0 unless $api_key;
+        }
+
+        next unless $has_auth;
+
+        my $models = _fetch_models_for_provider($provider_name, $provider_def, $api_key, $config);
+        next unless $models && @$models;
+
+        for my $m (@$models) {
+            push @all_models, {
+                id       => $m->{id},
+                name     => $m->{name} || $m->{id},
+                provider => $provider_name,
+                provider_display => $provider_def->{name} || $provider_name,
+                full_id  => "$provider_name/$m->{id}",
+                ($m->{vendor}      ? (vendor      => $m->{vendor})      : ()),
+                ($m->{description} ? (description => $m->{description}) : ()),
+                ($m->{billing}     ? (billing     => $m->{billing})     : ()),
+                ($m->{model_picker_enabled}  ? (picker_enabled  => \1) : ()),
+                ($m->{model_picker_category} ? (picker_category => $m->{model_picker_category}) : ()),
+                ($m->{preview}     ? (preview     => \1) : ()),
+                ($m->{capabilities} ? (capabilities => $m->{capabilities}) : ()),
+            };
+        }
+    }
+
+    print CLIO::Util::JSON::encode_json(\@all_models);
+    print "\n";
     exit 0;
 }
 
@@ -1110,6 +1171,77 @@ sub _format_relative_time_cli {
         my @t = localtime($timestamp);
         return sprintf("%04d-%02d-%02d", $t[5]+1900, $t[4]+1, $t[3]);
     }
+}
+
+sub _fetch_models_for_provider {
+    my ($provider_name, $provider_def, $api_key, $config) = @_;
+
+    my $models = [];
+
+    if ($provider_name eq 'github_copilot') {
+        eval {
+            require CLIO::Core::GitHubCopilotModelsAPI;
+            my $models_api = CLIO::Core::GitHubCopilotModelsAPI->new(
+                debug   => 0,
+                api_key => $api_key,
+            );
+            my $data = $models_api->fetch_models();
+            $models = $data->{data} || [] if $data;
+        };
+    } elsif ($provider_def->{native_api} && $provider_name eq 'google') {
+        my $api_base = $provider_def->{api_base} || 'https://generativelanguage.googleapis.com/v1beta';
+        $api_base =~ s{/+$}{};
+        my $models_url = "$api_base/models?key=$api_key";
+        eval {
+            require CLIO::Compat::HTTP;
+            my $ua = CLIO::Compat::HTTP->new(timeout => 15);
+            my $resp = $ua->get($models_url, headers => { 'Accept' => 'application/json' });
+            if ($resp->is_success) {
+                my $data = CLIO::Util::JSON::decode_json($resp->decoded_content);
+                for my $m (@{$data->{models} || []}) {
+                    my @methods = @{$m->{supportedGenerationMethods} || []};
+                    next unless grep { $_ eq 'generateContent' } @methods;
+                    (my $model_id = $m->{name}) =~ s{^models/}{};
+                    push @$models, {
+                        id          => $model_id,
+                        name        => $m->{displayName} || $model_id,
+                        description => $m->{description} || '',
+                    };
+                }
+            }
+        };
+    } elsif ($provider_name =~ /^minimax/) {
+        $models = [
+            { id => 'MiniMax-M2.7',          name => 'MiniMax M2.7',          description => 'Recursive self-improvement, ~60 tps' },
+            { id => 'MiniMax-M2.7-highspeed', name => 'MiniMax M2.7 Highspeed', description => 'Same as M2.7, ~100 tps' },
+            { id => 'MiniMax-M2.5',          name => 'MiniMax M2.5',          description => 'Code generation and refactoring, ~60 tps' },
+            { id => 'MiniMax-M2.5-highspeed', name => 'MiniMax M2.5 Highspeed', description => 'Same as M2.5, ~100 tps' },
+            { id => 'MiniMax-M2.1',          name => 'MiniMax M2.1',          description => '230B params, code + reasoning, ~60 tps' },
+            { id => 'MiniMax-M2.1-highspeed', name => 'MiniMax M2.1 Highspeed', description => 'Same as M2.1, ~100 tps' },
+            { id => 'MiniMax-M2',            name => 'MiniMax M2',            description => 'Function calling, advanced reasoning' },
+        ];
+    } else {
+        my $api_base = $provider_def->{api_base} || '';
+        my $models_url;
+        if ($api_base =~ m{openrouter\.ai}i) {
+            $models_url = 'https://openrouter.ai/api/v1/models';
+        } elsif ($api_base =~ m{^(https?://[^/]+)}) {
+            $models_url = "$1/v1/models";
+        }
+        return [] unless $models_url && $api_key;
+        eval {
+            require CLIO::Compat::HTTP;
+            my $ua = CLIO::Compat::HTTP->new(timeout => 15);
+            my %headers = ('Authorization' => "Bearer $api_key");
+            my $resp = $ua->get($models_url, headers => \%headers);
+            if ($resp->is_success) {
+                my $data = CLIO::Util::JSON::decode_json($resp->decoded_content);
+                $models = $data->{data} || [];
+            }
+        };
+    }
+
+    return $models;
 }
 
 exit 0;
