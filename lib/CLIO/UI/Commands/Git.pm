@@ -370,13 +370,12 @@ sub handle_commit_command {
     
     # If no message provided, prompt for one
     unless ($message) {
-        my ($header, $input_line) = @{$self->{chat}{theme_mgr}->get_confirmation_prompt(
+        my $prompt = $self->{chat}{theme_mgr}->get_confirmation_prompt(
             "Commit message (Ctrl+C to cancel)",
             "",
             "cancel"
-        )};
-        print $header, "\n";
-        print $input_line;
+        );
+        print $prompt;
         $message = <STDIN>;
         chomp $message if defined $message;
         

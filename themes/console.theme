@@ -39,8 +39,9 @@ input_prompt={style.prompt_indicator}{var.prompt}: @RESET@
 input_prompt_with_default={style.prompt_indicator}{var.prompt} (Enter={var.default_action}): @RESET@
 
 # Confirmation prompts - plain text
-confirmation_header={style.prompt_indicator}{var.question}@RESET@
-confirmation_input={style.data}{var.options} {style.dim}(Enter={var.default_action}): @RESET@
+confirmation_prompt={style.prompt_indicator}{var.question} {style.data}{var.options} {style.dim}(Enter={var.default_action}): @RESET@
+confirmation_prompt_no_options={style.prompt_indicator}{var.question} {style.dim}(Enter={var.default_action}): @RESET@
+confirmation_prompt_short={style.prompt_indicator}{var.question}{style.dim}: @RESET@
 
 # Messages - simple prefixes
 user_message_prefix={style.user_text}YOU: @RESET@

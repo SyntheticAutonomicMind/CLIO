@@ -382,14 +382,13 @@ sub _delete_prompt {
     }
     
     # Display confirmation prompt using theme
-    my ($header, $input_line) = @{$self->{chat}{theme_mgr}->get_confirmation_prompt(
+    my $prompt = $self->{chat}{theme_mgr}->get_confirmation_prompt(
         "Delete prompt '$name'?",
         "yes/no",
         "cancel"
-    )};
+    );
     
-    print $header, "\n";
-    print $input_line;
+    print $prompt;
     my $confirm = <STDIN>;
     chomp $confirm if defined $confirm;
     

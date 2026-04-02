@@ -543,30 +543,40 @@ sub get_pagination_prompt {
 
 =head2 get_confirmation_prompt
 
-Get a themed confirmation prompt with box drawing.
+Get a themed confirmation prompt as a single inline string.
 
 Arguments:
   - question: The question to ask (e.g., "Delete skill 'name'?")
   - options: Options display (e.g., "yes/no")
   - default_action: What pressing Enter does (e.g., "skip", "cancel")
 
-Returns: Arrayref of [header, input_line] for printing separately
+Returns: Single rendered prompt string ready to print
 
 =cut
 
 sub get_confirmation_prompt {
     my ($self, $question, $options, $default_action) = @_;
     
-    my $header = $self->render('confirmation_header', {
-        question => $question,
-    });
+    # Use short template when options/default are empty (free-form input)
+    if (!$options && !$default_action) {
+        return $self->render('confirmation_prompt_short', {
+            question => $question,
+        });
+    }
     
-    my $input = $self->render('confirmation_input', {
+    # Use no-options template when only default_action is given
+    if (!$options) {
+        return $self->render('confirmation_prompt_no_options', {
+            question => $question,
+            default_action => $default_action,
+        });
+    }
+    
+    return $self->render('confirmation_prompt', {
+        question => $question,
         options => $options,
         default_action => $default_action,
     });
-    
-    return [$header, $input];
 }
 
 =head2 save_style
@@ -777,9 +787,10 @@ sub get_builtin_theme {
         pagination_prompt_streaming => '{style.dim}{char.bullet} {style.agent_label}Q{style.dim} quit {char.pipe} any key for more @RESET@',
         pagination_prompt => '{style.dim}{char.bullet} {style.data}{var.current}/{var.total} {style.dim}{char.pipe} {var.nav_hint}{style.agent_label}Q{style.dim} quit {char.pipe} any key for more @RESET@',
         
-        # Confirmation prompts (box-drawing two-part format)
-        confirmation_header => '{style.dim}{char.topleft}{char.horizontal}{char.horizontal}{char.tleft} {style.prompt_indicator}{var.question}@RESET@',
-        confirmation_input => '{style.dim}{char.bottomleft}{char.horizontal}{char.tleft} {style.data}{var.options} {style.dim}{char.vertical} {style.data}Enter{style.dim} to {style.data}{var.default_action}{style.dim}: @RESET@',
+        # Confirmation prompts (single-line inline format)
+        confirmation_prompt => '{style.dim}{char.bullet} {style.prompt_indicator}{var.question}{style.dim} {char.pipe} {style.data}{var.options} {style.dim}{char.pipe} {style.data}Enter{style.dim} to {style.data}{var.default_action}{style.dim}: @RESET@',
+        confirmation_prompt_no_options => '{style.dim}{char.bullet} {style.prompt_indicator}{var.question}{style.dim} {char.pipe} {style.data}Enter{style.dim} to {style.data}{var.default_action}{style.dim}: @RESET@',
+        confirmation_prompt_short => '{style.dim}{char.bullet} {style.prompt_indicator}{var.question}{style.dim}: @RESET@',
         
         # Messages
         user_message_prefix => '{style.user_text}YOU: @RESET@',
@@ -857,8 +868,9 @@ sub get_required_theme_keys {
         pagination_info
         pagination_prompt_streaming
         pagination_prompt
-        confirmation_header
-        confirmation_input
+        confirmation_prompt
+        confirmation_prompt_no_options
+        confirmation_prompt_short
         user_message_prefix
         agent_message_prefix
     );

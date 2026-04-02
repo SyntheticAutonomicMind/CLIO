@@ -558,14 +558,13 @@ sub _delete_skill {
     }
     
     # Display confirmation prompt using theme
-    my ($header, $input_line) = @{$self->{chat}{theme_mgr}->get_confirmation_prompt(
+    my $prompt = $self->{chat}{theme_mgr}->get_confirmation_prompt(
         "Delete skill '$name'?",
         "yes/no",
         "cancel"
-    )};
+    );
     
-    print $header, "\n";
-    print $input_line;
+    print $prompt;
     my $confirm = <STDIN>;
     chomp $confirm if defined $confirm;
     
@@ -743,14 +742,13 @@ sub _install_skill {
     # Ask if user wants to preview full content
     print "\n";
     
-    my ($header1, $input_line1) = @{$self->{chat}{theme_mgr}->get_confirmation_prompt(
+    my $prompt1 = $self->{chat}{theme_mgr}->get_confirmation_prompt(
         "View full content?",
         "yes/no",
         "skip"
-    )};
+    );
     
-    print $header1, "\n";
-    print $input_line1;
+    print $prompt1;
     my $view_full = <STDIN>;
     chomp $view_full if defined $view_full;
     
@@ -772,14 +770,13 @@ sub _install_skill {
     }
     
     # Confirm installation
-    my ($header2, $input_line2) = @{$self->{chat}{theme_mgr}->get_confirmation_prompt(
+    my $prompt2 = $self->{chat}{theme_mgr}->get_confirmation_prompt(
         "Install '$name'?",
         "yes/no",
         "cancel"
-    )};
+    );
     
-    print $header2, "\n";
-    print $input_line2;
+    print $prompt2;
     my $confirm = <STDIN>;
     chomp $confirm if defined $confirm;
     

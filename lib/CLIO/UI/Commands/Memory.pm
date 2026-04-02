@@ -302,14 +302,13 @@ sub _clear_patterns {
     $self->display_warning_message("This will clear ALL long-term memory patterns for this project!");
     
     # Display confirmation prompt using theme
-    my ($header, $input_line) = @{$self->{chat}{theme_mgr}->get_confirmation_prompt(
+    my $prompt = $self->{chat}{theme_mgr}->get_confirmation_prompt(
         "Clear all patterns?",
         "yes/no",
         "cancel"
-    )};
+    );
     
-    print $header, "\n";
-    print $input_line;
+    print $prompt;
     
     my $response = <STDIN>;
     chomp $response if defined $response;
