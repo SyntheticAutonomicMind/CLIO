@@ -43,14 +43,13 @@ sub check_github_auth {
         $self->writeline("", markdown => 0);
         $self->display_system_message("GitHub Copilot requires authentication");
 
-        my ($header, $input_line) = @{$self->{chat}{theme_mgr}->get_confirmation_prompt(
+        my $prompt = $self->{chat}{theme_mgr}->get_confirmation_prompt(
             "Login now?",
             "yes/no",
             "skip"
-        )};
+        );
 
-        print $header, "\n";
-        print $input_line;
+        print $prompt;
         my $response = <STDIN>;
         chomp $response if defined $response;
 

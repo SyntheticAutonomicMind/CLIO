@@ -40,9 +40,10 @@ pagination_prompt={style.dim}{char.bullet} {style.data}{var.current}/{var.total}
 input_prompt={style.dim}{char.topleft}{char.horizontal}{char.horizontal}{char.tleft} {style.prompt_indicator}{var.prompt}@RESET@
 input_prompt_with_default={style.dim}{char.topleft}{char.horizontal}{char.horizontal}{char.tleft} {style.prompt_indicator}{var.prompt}{style.dim} {char.vertical} {style.data}Enter{style.dim} to {style.data}{var.default_action}@RESET@
 
-# Confirmation prompts (box-drawing two-part format)
-confirmation_header={style.dim}{char.topleft}{char.horizontal}{char.horizontal}{char.tleft} {style.prompt_indicator}{var.question}@RESET@
-confirmation_input={style.dim}{char.bottomleft}{char.horizontal}{char.tleft} {style.data}{var.options}{style.dim} {char.vertical} {style.data}Enter{style.dim} to {style.data}{var.default_action}{style.dim}: @RESET@
+# Confirmation prompts (single-line inline format)
+confirmation_prompt={style.dim}{char.bullet} {style.prompt_indicator}{var.question}{style.dim} {char.pipe} {style.data}{var.options} {style.dim}{char.pipe} {style.data}Enter{style.dim} to {style.data}{var.default_action}{style.dim}: @RESET@
+confirmation_prompt_no_options={style.dim}{char.bullet} {style.prompt_indicator}{var.question}{style.dim} {char.pipe} {style.data}Enter{style.dim} to {style.data}{var.default_action}{style.dim}: @RESET@
+confirmation_prompt_short={style.dim}{char.bullet} {style.prompt_indicator}{var.question}{style.dim}: @RESET@
 
 # Messages
 user_message_prefix={style.user_text}YOU: @RESET@
