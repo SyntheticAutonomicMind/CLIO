@@ -11,6 +11,8 @@ use parent 'CLIO::Tools::Tool';
 use File::Find;
 use Cwd 'abs_path';
 
+my $NULLDEV = $^O eq 'MSWin32' ? 'nul' : '/dev/null';
+
 =head1 NAME
 
 CLIO::Tools::CodeIntelligence - Code analysis, symbol search, and history search tool
@@ -293,7 +295,7 @@ sub _fetch_commits {
     # Limit to reasonable number of commits to search (can be a lot!)
     push @cmd_parts, '-n', '500';
     
-    my $cmd = join(' ', map { quotemeta($_) } @cmd_parts) . ' 2>/dev/null';
+    my $cmd = join(' ', map { quotemeta($_) } @cmd_parts) . " 2>$NULLDEV";
     
     log_debug('CodeIntelligence', "Running: $cmd");
     
@@ -390,7 +392,7 @@ Get list of files changed in a commit.
 sub _get_files_changed {
     my ($self, $hash) = @_;
     
-    my $cmd = "git show --name-only --format='' " . quotemeta($hash) . " 2>/dev/null";
+    my $cmd = "git show --name-only --format='' " . quotemeta($hash) . " 2>$NULLDEV";
     my $output = `$cmd`;
     
     return [] unless $output;
@@ -480,7 +482,7 @@ sub _has_git_grep {
     my ($self) = @_;
     
     # Check if git is available and we're in a git repo
-    my $result = `git rev-parse --is-inside-work-tree 2>/dev/null`;
+    my $result = `git rev-parse --is-inside-work-tree 2>$NULLDEV`;
     return $result && $result =~ /true/;
 }
 
@@ -494,7 +496,7 @@ sub _git_grep_search {
     my $paths_str = join(' ', map { quotemeta($_) } @$paths);
     
     # Use git grep with line numbers and file names
-    my $cmd = "git grep -n $context_flag -F " . quotemeta($symbol) . " -- $paths_str 2>/dev/null";
+    my $cmd = "git grep -n $context_flag -F " . quotemeta($symbol) . " -- $paths_str 2>$NULLDEV";
     
     log_debug('CodeIntelligence', "Running: $cmd");
     

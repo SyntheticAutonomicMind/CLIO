@@ -12,6 +12,8 @@ use File::Path qw(mkpath rmtree);
 use CLIO::Util::JSON qw(decode_json encode_json);
 use CLIO::Core::Logger qw(log_debug log_error log_warning);
 
+my $NULLDEV = $^O eq 'MSWin32' ? 'nul' : '/dev/null';
+
 =head1 NAME
 
 CLIO::Update - Update checking and installation management
@@ -92,7 +94,7 @@ sub get_current_version {
     }
     
     # Priority 3: Git tag (if in repo)
-    my $git_version = `git describe --tags --abbrev=0 2>/dev/null`;
+    my $git_version = `git describe --tags --abbrev=0 2>$NULLDEV`;
     if ($? == 0 && $git_version) {
         chomp $git_version;
         $git_version =~ s/^v//;  # Remove leading 'v' if present
@@ -122,7 +124,7 @@ sub get_latest_version {
     log_debug('Update', "Fetching latest release from: $api_url");
     
     # Use curl for HTTP request (more reliable than LWP)
-    my $response = `curl -s -m $self->{timeout} -H "Accept: application/vnd.github+json" "$api_url" 2>/dev/null`;
+    my $response = `curl -s -m $self->{timeout} -H "Accept: application/vnd.github+json" "$api_url" 2>$NULLDEV`;
     
     if ($? != 0) {
         log_debug('Update', "curl failed with exit code: " . ($? >> 8));
@@ -188,7 +190,7 @@ sub get_all_releases {
     log_debug('Update', "Fetching releases from: $api_url");
     
     # Use curl for HTTP request
-    my $response = `curl -s -m $self->{timeout} -H "Accept: application/vnd.github+json" "$api_url" 2>/dev/null`;
+    my $response = `curl -s -m $self->{timeout} -H "Accept: application/vnd.github+json" "$api_url" 2>$NULLDEV`;
     
     if ($? != 0) {
         log_debug('Update', "curl failed with exit code: " . ($? >> 8));
@@ -258,7 +260,7 @@ sub get_release_by_version {
         
         log_debug('Update', "Fetching release by tag: $tag");
         
-        my $response = `curl -s -m $self->{timeout} -H "Accept: application/vnd.github+json" "$api_url" 2>/dev/null`;
+        my $response = `curl -s -m $self->{timeout} -H "Accept: application/vnd.github+json" "$api_url" 2>$NULLDEV`;
         
         next if $? != 0;
         
@@ -341,7 +343,7 @@ sub download_version {
     # Extract tarball
     log_debug('Update', "Extracting tarball");
     
-    my $extract_result = system("cd '$download_dir' && tar -xzf clio.tar.gz 2>/dev/null");
+    my $extract_result = system("cd '$download_dir' && tar -xzf clio.tar.gz 2>$NULLDEV");
     
     if ($extract_result != 0) {
         log_error('Update', "Extraction failed");
@@ -622,7 +624,7 @@ sub detect_install_location {
     $running_path = undef unless defined($running_path) && -f $running_path;
 
     # Secondary: 'which clio' - what the user's PATH resolves to.
-    my $which_path = `which clio 2>/dev/null`;
+    my $which_path = `which clio 2>$NULLDEV`;
     chomp $which_path if $which_path;
     $which_path = undef unless $which_path && -f $which_path;
     if ($which_path) {
@@ -752,7 +754,7 @@ sub download_latest {
     # Extract tarball
     log_debug('Update', "Extracting tarball");
     
-    my $extract_result = system("cd '$download_dir' && tar -xzf clio.tar.gz 2>/dev/null");
+    my $extract_result = system("cd '$download_dir' && tar -xzf clio.tar.gz 2>$NULLDEV");
     
     if ($extract_result != 0) {
         log_error('Update', "Extraction failed");

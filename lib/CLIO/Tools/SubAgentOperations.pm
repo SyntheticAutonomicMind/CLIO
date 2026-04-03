@@ -371,7 +371,7 @@ sub status {
     my $log_path = "/tmp/clio-agent-$agent_id.log";
     my $log_tail = '';
     if (-f $log_path) {
-        $log_tail = `tail -20 "$log_path" 2>/dev/null`;
+        $log_tail = ($^O eq "MSWin32" ? "" : `tail -20 "$log_path" 2>/dev/null`);
     }
     
     $action_desc = "$agent_id: $agent->{status} (${elapsed}s)";
