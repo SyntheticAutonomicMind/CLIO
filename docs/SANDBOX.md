@@ -29,8 +29,9 @@ clio --sandbox --resume
 |------|-------------|
 | **file_operations** | All paths must be within project directory |
 | **remote_execution** | Completely blocked |
+| **web_operations** | Completely blocked |
 | **version_control** | Repository path must be within project |
-| **terminal_operations** | **NOT restricted** (see Limitations) |
+| **terminal_operations** | All command risk levels escalated (see [SECURITY.md](SECURITY.md)) |
 
 ### Error Messages
 
@@ -50,17 +51,15 @@ The --sandbox flag blocks all remote operations. This is a security feature to p
 
 ### Limitations
 
-**Important:** The soft sandbox does NOT restrict terminal operations.
-
-The agent can still execute arbitrary shell commands, which means:
-- It can read files outside the project via `cat`, `head`, etc.
-- It can write files outside the project via `echo`, `>`, etc.
-- It can access network via `curl`, `wget`, etc.
-- It can execute any program on your system
-
-**The soft sandbox prevents accidental access, not malicious behavior.**
+**Important:** The soft sandbox restricts terminal operations but cannot fully prevent
+all shell-based access. Commands go through the CommandAnalyzer which flags network
+access, credential reading, and other risky intents - but determined code can find
+creative paths.
 
 For true isolation, use the `clio-container` script.
+
+**The soft sandbox prevents accidental access and prompts on risky commands, but is not
+a hard security boundary.** For untrusted code or maximum security, use container isolation.
 
 ---
 

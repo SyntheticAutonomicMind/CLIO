@@ -11,6 +11,7 @@ use parent 'CLIO::Tools::Tool';
 use CLIO::Compat::HTTP;
 use CLIO::Util::JSON qw(encode_json decode_json);
 use feature 'say';
+use CLIO::Core::Logger qw(log_debug log_info log_warning);
 
 =head1 NAME
 
@@ -42,7 +43,7 @@ Operations:
    Parameters: url (required), timeout (optional, default 30s)
    Returns: Page content, status code, content-type
    
--  search_web - Web search using SerpAPI (configurable) or DuckDuckGo (fallback)
+-  search_web - Web search using SerpAPI (configurable), Brave Search, or DuckDuckGo (fallback)
    Parameters: query (required), max_results (optional, default 10), timeout (optional, default 30s)
    Returns: Array of search results with title, url, snippet
    
@@ -106,6 +107,26 @@ sub fetch_url {
     my $timeout = $params->{timeout} || 30;
     
     return $self->error_result("Missing 'url' parameter") unless $url;
+    
+    # Security: check for sandbox mode and suspicious URLs
+    my $security_check = $self->_check_url_security($url, $context);
+    if ($security_check->{blocked}) {
+        return $self->error_result($security_check->{reason});
+    }
+    if ($security_check->{requires_confirmation}) {
+        my $approved = $self->_prompt_url_confirmation($url, $security_check, $context);
+        unless ($approved) {
+            log_info('WebOps', "User DENIED URL fetch: $url");
+            return $self->error_result(
+                "URL fetch denied by user.\n\n" .
+                "Security concern: $security_check->{reason}\n" .
+                "The user chose not to allow this request."
+            );
+        }
+        log_info('WebOps', "User APPROVED URL fetch: $url");
+    }
+    
+    log_info('WebOps', "Fetching URL: $url");
     
     my $result;
     eval {
@@ -286,8 +307,18 @@ sub search_web {
         }
     }
     
-    # Fallback to DuckDuckGo direct (or explicit duckduckgo selection)
-    if ($search_provider eq 'duckduckgo_direct' || $search_provider eq 'auto') {
+    # Try Brave Search (reliable, no API key needed)
+    if ($search_provider eq 'brave' || $search_provider eq 'auto') {
+        $result = $self->_search_brave($query, $max_results, $timeout);
+        if ($result && !$result->{error}) {
+            $result = $self->_prepend_local_note($result, $local_note);
+            return $result;
+        }
+        push @errors, "Brave Search: " . ($result->{error} || 'unknown error');
+    }
+    
+    # Fallback to DuckDuckGo direct (often rate-limited/blocked)
+    if ($search_provider eq 'duckduckgo_direct') {
         $result = $self->_search_duckduckgo_direct($query, $max_results, $timeout);
         if ($result && !$result->{error}) {
             # Prepend local history note if found
@@ -489,6 +520,114 @@ sub _search_serpapi {
     return $result;
 }
 
+# Brave Search HTML scraping implementation (primary free provider)
+sub _search_brave {
+    my ($self, $query, $max_results, $timeout) = @_;
+    
+    my $result;
+    eval {
+        my $encoded_query = _uri_escape($query);
+        my $url = "https://search.brave.com/search?q=$encoded_query&source=web";
+        
+        my $ua = CLIO::Compat::HTTP->new(
+            timeout => $timeout,
+            agent => 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15',
+        );
+        
+        my $response = $ua->get($url);
+        
+        unless ($response->is_success) {
+            croak "HTTP error: " . $response->status_line;
+        }
+        
+        my $html = $response->decoded_content;
+        
+        # Check for rate limiting or blocking (check specific patterns, not generic words
+        # since Brave's JavaScript may contain words like "blocked" in normal pages)
+        if (length($html) < 1000) {
+            croak "Brave Search returned unusually small response (possible block)";
+        }
+        
+        # Parse Brave Search HTML results
+        # Results are in snippet blocks with data-pos="N" data-type="web"
+        my @results = ();
+        
+        # Split by data-pos markers to isolate each result block
+        my @blocks = split(/data-pos="\d+"/, $html);
+        shift @blocks;  # remove content before first result
+        
+        for my $block (@blocks) {
+            last if @results >= $max_results;
+            
+            # Only process web results (skip video, news, etc.)
+            next unless $block =~ /data-type="web"/;
+            
+            my ($link, $title, $snippet) = ('', '', '');
+            
+            # Extract URL from first external link in the block
+            if ($block =~ m{<a\s+href="(https?://[^"]+)"}) {
+                $link = $1;
+                # Skip brave.com internal links
+                next if $link =~ /brave\.com/;
+            }
+            
+            # Extract title from the title span
+            if ($block =~ m{class="title[^"]*"[^>]*>([^<]+)}) {
+                $title = $1;
+                $title =~ s/^\s+|\s+$//g;
+                # Decode HTML entities
+                $title =~ s/&quot;/"/g;
+                $title =~ s/&amp;/&/g;
+                $title =~ s/&lt;/</g;
+                $title =~ s/&gt;/>/g;
+                $title =~ s/&#39;/'/g;
+            }
+            
+            # Extract snippet/description
+            if ($block =~ m{class="snippet-description[^"]*"[^>]*>([^<]+)}) {
+                $snippet = $1;
+                $snippet =~ s/^\s+|\s+$//g;
+                $snippet =~ s/&quot;/"/g;
+                $snippet =~ s/&amp;/&/g;
+                $snippet =~ s/&lt;/</g;
+                $snippet =~ s/&gt;/>/g;
+                $snippet =~ s/&#39;/'/g;
+            }
+            
+            if ($title && $link) {
+                push @results, {
+                    title   => $title,
+                    url     => $link,
+                    snippet => $snippet || 'No description available',
+                };
+            }
+        }
+        
+        my $count = scalar(@results);
+        
+        if ($count == 0) {
+            croak "No results parsed from Brave Search response (HTML structure may have changed)";
+        }
+        
+        my $formatted = _format_search_results_markdown(\@results, $query, 'Brave Search');
+        
+        $result = $self->success_result(
+            $formatted,
+            action_description => "searching web for '$query' via Brave Search ($count results)",
+            results => \@results,
+            query   => $query,
+            count   => $count,
+            provider => 'brave',
+        );
+    };
+    
+    if ($@) {
+        return { error => $@ };
+    }
+    
+    return $result;
+}
+
 # DuckDuckGo HTML scraping implementation (fallback)
 sub _search_duckduckgo_direct {
     my ($self, $query, $max_results, $timeout) = @_;
@@ -634,6 +773,158 @@ sub _uri_unescape {
     my ($str) = @_;
     $str =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/ge;
     return $str;
+}
+
+# ---------------------------------------------------------------------------
+# URL Security Checks
+# ---------------------------------------------------------------------------
+
+=head2 _check_url_security
+
+Analyze a URL for security concerns.
+
+Checks for:
+- Sandbox mode (blocks or requires confirmation)
+- Suspiciously long query parameters (potential data exfiltration)
+- Known suspicious URL patterns
+- localhost/internal network access
+
+Returns hashref:
+  { blocked => 0|1, requires_confirmation => 0|1, reason => $text }
+
+=cut
+
+# Session-level URL grants
+my %_url_session_grants;
+
+sub _check_url_security {
+    my ($self, $url, $context) = @_;
+
+    my $config = ($context && $context->{config}) ? $context->{config} : undef;
+    my $sandbox = ($config && $config->get('sandbox')) ? 1 : 0;
+    my $security_level = ($config) ? ($config->get('security_level') || 'standard') : 'standard';
+
+    # In sandbox mode, block all web operations
+    if ($sandbox) {
+        return {
+            blocked => 1,
+            requires_confirmation => 0,
+            reason => "Sandbox mode: web operations are disabled. " .
+                      "The --sandbox flag blocks outbound network requests.",
+        };
+    }
+
+    # Check for session-level grants
+    return { blocked => 0, requires_confirmation => 0 }
+        if $_url_session_grants{fetch_url};
+
+    my @concerns;
+
+    # Check for suspiciously long query strings (potential data exfiltration)
+    if ($url =~ /\?(.+)/) {
+        my $query_string = $1;
+        if (length($query_string) > 500) {
+            push @concerns, "Unusually long query string (" . length($query_string) . " chars) - possible data exfiltration";
+        }
+        # Check for base64-like content in params
+        if ($query_string =~ /[A-Za-z0-9+\/]{100}={0,2}/) {
+            push @concerns, "Query string contains base64-like encoded data";
+        }
+    }
+
+    # Check for localhost/internal network (SSRF-like)
+    if ($url =~ m{^https?://(?:localhost|127\.0\.0\.\d+|0\.0\.0\.0|10\.\d+\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+|192\.168\.\d+\.\d+)(?::\d+)?/}i) {
+        push @concerns, "URL targets internal/localhost network address";
+    }
+
+    # Check for data: or file: URLs
+    if ($url =~ m{^(?:data|file|ftp)://}i) {
+        push @concerns, "Non-HTTP URL scheme detected: " . ($url =~ m{^([^:]+)})[0];
+    }
+
+    # Strict mode: require confirmation for ALL fetch_url calls
+    if ($security_level eq 'strict' && !@concerns) {
+        push @concerns, "Strict security: all outbound web requests require confirmation";
+    }
+
+    if (@concerns) {
+        return {
+            blocked => 0,
+            requires_confirmation => 1,
+            reason => join('; ', @concerns),
+        };
+    }
+
+    return { blocked => 0, requires_confirmation => 0 };
+}
+
+=head2 _prompt_url_confirmation
+
+Prompt the user to approve or deny a flagged URL fetch.
+
+=cut
+
+sub _prompt_url_confirmation {
+    my ($self, $url, $security_check, $context) = @_;
+
+    my $ui = ($context && $context->{ui}) ? $context->{ui} : undef;
+
+    unless ($ui && $ui->can('colorize')) {
+        log_warning('WebOps', "No UI for security prompt - denying URL fetch");
+        return 0;
+    }
+
+    my $spinner = ($context && $context->{spinner}) ? $context->{spinner} : undef;
+    $spinner->stop() if $spinner && $spinner->can('stop');
+
+    print "\n";
+    print $ui->colorize("  WEB SECURITY CHECK ", 'WARNING');
+    print "\n\n";
+
+    my $display_url = $url;
+    if (length($display_url) > 200) {
+        $display_url = substr($display_url, 0, 197) . '...';
+    }
+    print $ui->colorize("  URL: ", 'BOLD');
+    print "$display_url\n\n";
+
+    print $ui->colorize("  Concern: ", 'WARNING');
+    print "$security_check->{reason}\n\n";
+
+    print $ui->colorize("  Options: ", 'BOLD');
+    print "(y)es once, (a)llow web ops for session, (n)o deny\n";
+
+    require CLIO::Compat::Terminal;
+    CLIO::Compat::Terminal::ReadMode(0);
+
+    print $ui->colorize("  > ", 'PROMPT');
+
+    my $response = <STDIN>;
+    chomp($response) if defined $response;
+    $response = lc($response || 'n');
+
+    CLIO::Compat::Terminal::ReadMode(1);
+    $spinner->start() if $spinner && $spinner->can('start');
+
+    if ($response eq 'y' || $response eq 'yes') {
+        return 1;
+    } elsif ($response eq 'a' || $response eq 'allow') {
+        $_url_session_grants{fetch_url} = 1;
+        log_info('WebOps', "Session grant added for web operations");
+        return 1;
+    }
+
+    return 0;
+}
+
+=head2 reset_url_session_grants
+
+Reset web operations session grants. Called on new session.
+
+=cut
+
+sub reset_url_session_grants {
+    %_url_session_grants = ();
 }
 
 1;

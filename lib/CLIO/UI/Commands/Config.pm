@@ -200,6 +200,7 @@ sub _display_config_help {
     $self->display_key_value("terminal_passthrough", "Force direct terminal access", 25);
     $self->display_key_value("terminal_autodetect", "Auto-detect interactive commands", 25);
     $self->display_key_value("redact_level", "Redaction level: strict|standard|api_permissive|pii|off", 25);
+    $self->display_key_value("security_level", "Command security: relaxed|standard|strict", 25);
     $self->display_key_value("enable_subagents", "Enable/disable sub-agent spawning (on/off)", 25);
     $self->display_key_value("enable_remote", "Enable/disable remote execution (on/off)", 25);
     $self->writeline("", markdown => 0);
@@ -212,11 +213,18 @@ sub _display_config_help {
     $self->display_key_value("off", "No redaction (use with caution)", 25);
     $self->writeline("", markdown => 0);
     
+    $self->display_section_header("COMMAND SECURITY LEVELS");
+    $self->display_key_value("relaxed", "Only block system-destructive commands", 25);
+    $self->display_key_value("standard", "Prompt for high-risk commands (default)", 25);
+    $self->display_key_value("strict", "Prompt for all risky commands", 25);
+    $self->writeline("", markdown => 0);
+    
     $self->display_section_header("EXAMPLES");
     $self->display_command_row("/config set style dark", "Switch to dark color scheme", 35);
     $self->display_command_row("/config set theme photon", "Use photon theme", 35);
     $self->display_command_row("/config workdir ~/projects", "Change working directory", 35);
     $self->display_command_row("/config set redact_level api_permissive", "Allow API keys in agent output", 35);
+    $self->display_command_row("/config set security_level strict", "Prompt for all risky commands", 35);
     $self->display_command_row("/config set enable_subagents off", "Disable sub-agent tool", 35);
     $self->display_command_row("/config set enable_remote off", "Disable remote execution tool", 35);
     $self->writeline("", markdown => 0);
@@ -242,7 +250,7 @@ sub _handle_config_set {
     
     unless ($key) {
         $self->display_error_message("Usage: /config set <key> <value>");
-        $self->writeline("Keys: style, theme, working_directory, terminal_passthrough, terminal_autodetect, redact_level, enable_subagents, enable_remote", markdown => 0);
+        $self->writeline("Keys: style, theme, working_directory, terminal_passthrough, terminal_autodetect, redact_level, security_level, enable_subagents, enable_remote", markdown => 0);
         return;
     }
     
@@ -260,6 +268,7 @@ sub _handle_config_set {
         terminal_autodetect => 1,
         redact_level => 1,
         redact_secrets => 1,  # Deprecated, for backward compat
+        security_level => 1,
         enable_subagents => 1,
         enable_remote => 1,
     );
@@ -295,6 +304,33 @@ sub _handle_config_set {
         
         if ($value eq 'off') {
             $self->display_info_message("WARNING: All secrets and PII may be exposed to the AI and logs");
+        }
+        return;
+    }
+    
+    # Handle security_level
+    if ($key eq 'security_level') {
+        my %valid_levels = map { $_ => 1 } qw(relaxed standard strict);
+        unless ($valid_levels{$value}) {
+            $self->display_error_message("Invalid security_level: $value");
+            $self->writeline("Valid levels: relaxed, standard, strict", markdown => 0);
+            return;
+        }
+        
+        $self->{config}->set('security_level', $value);
+        $self->{config}->save();
+        
+        my %level_desc = (
+            relaxed => "Only block system-destructive commands (no prompts for network/credential access)",
+            standard => "Prompt for high-risk commands (network transfers, credential access)",
+            strict  => "Prompt for all risky commands including medium-risk (ssh, sudo, env dumps)",
+        );
+        
+        $self->display_system_message("Security level set to: $value");
+        $self->display_info_message($level_desc{$value});
+        
+        if ($value eq 'relaxed') {
+            $self->display_info_message("WARNING: Network and credential access commands will not be flagged");
         }
         return;
     }
@@ -510,6 +546,20 @@ sub show_global_config {
     );
     my $redact_display = "$redact_level " . ($level_desc{$redact_level} || '');
     $self->display_key_value("Redact Level", $redact_display, 18);
+    
+    # Command security level
+    my $security_level = $self->{config}->get('security_level') || 'standard';
+    my %sec_desc = (
+        relaxed  => '(block destructive only)',
+        standard => '(prompt for high-risk commands)',
+        strict   => '(prompt for all risky commands)',
+    );
+    my $security_display = "$security_level " . ($sec_desc{$security_level} || '');
+    $self->display_key_value("Security Level", $security_display, 18);
+    
+    # Sandbox status
+    my $sandbox = $self->{config}->get('sandbox') ? 'ACTIVE' : 'off';
+    $self->display_key_value("Sandbox", $sandbox, 18);
     
     # Feature Switches
     $self->writeline("", markdown => 0);

@@ -18,13 +18,17 @@ our $HAS_CURL;
 BEGIN {
     $HAS_SSL = eval { require IO::Socket::SSL; require Net::SSLeay; 1 };
     
-    # Check for curl: first try filesystem paths (desktop), then 'which' command (iOS/a-Shell)
-    $HAS_CURL = -x '/usr/bin/curl' || -x '/bin/curl' || -x '/usr/local/bin/curl';
-    
-    unless ($HAS_CURL) {
-        # iOS/a-Shell pattern: curl is an ios_system command, not a filesystem path
-        my $which_curl = `which curl 2>/dev/null`;
-        $HAS_CURL = ($which_curl && $which_curl =~ /curl/);
+    # Check for curl: filesystem paths on Unix, PATH search on Windows
+    if ($^O eq 'MSWin32') {
+        my $where_curl = `where curl 2>nul`;
+        $HAS_CURL = ($where_curl && $where_curl =~ /curl/);
+    } else {
+        $HAS_CURL = -x '/usr/bin/curl' || -x '/bin/curl' || -x '/usr/local/bin/curl';
+        unless ($HAS_CURL) {
+            # iOS/a-Shell pattern: curl is an ios_system command, not a filesystem path
+            my $which_curl = `which curl 2>/dev/null`;
+            $HAS_CURL = ($which_curl && $which_curl =~ /curl/);
+        }
     }
 }
 
@@ -197,6 +201,11 @@ Returns: Path to CA bundle file, or undef
 
 sub _find_ca_bundle {
     my ($self) = @_;
+    
+    # Check environment variable first (set by MIRA/bundled runtimes)
+    if ($ENV{SSL_CERT_FILE} && -f $ENV{SSL_CERT_FILE} && -r $ENV{SSL_CERT_FILE}) {
+        return $ENV{SSL_CERT_FILE};
+    }
     
     # Standard Unix/Linux/macOS paths
     my @paths = (

@@ -1531,7 +1531,8 @@ sub _build_prompt {
     push @parts, $self->colorize($dir_name, 'prompt_directory');
     
     # 3. Git branch (if in git repo)
-    my $branch = `git branch --show-current 2>/dev/null`;
+    my $nulldev = $^O eq 'MSWin32' ? 'nul' : '/dev/null';
+    my $branch = `git branch --show-current 2>$nulldev`;
     chomp $branch if $branch;
     if ($branch && length($branch) > 0) {
         push @parts, $self->colorize("($branch)", 'prompt_git_branch');

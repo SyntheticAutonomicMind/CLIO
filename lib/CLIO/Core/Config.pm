@@ -59,6 +59,8 @@ use constant DEFAULT_CONFIG => {
     session_prune_days => 30,   # Delete sessions older than this many days (default: 30)
     # Security configuration
     redact_level => 'pii',      # Redaction level: strict, standard, api_permissive, pii, off (default: pii)
+    # Command security analysis level
+    security_level => 'standard',  # Command security: relaxed, standard, strict (default: standard)
     # Reasoning/thinking display
     show_thinking => 0,         # Show model's reasoning/thinking output (default: off)
     # Agent iteration limit (0 = unlimited)

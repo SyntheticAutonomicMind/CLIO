@@ -11,7 +11,8 @@ use Cwd 'getcwd';
 use feature 'say';
 use POSIX qw(WNOHANG);
 use Time::HiRes ();
-use CLIO::Core::Logger qw(log_debug log_info log_warning);
+use CLIO::Core::Logger qw(log_debug log_info log_warning log_error);
+use CLIO::Security::CommandAnalyzer qw(analyze_command);
 
 =head1 NAME
 
@@ -516,31 +517,48 @@ sub _resume_clio_input {
 
 sub validate_command {
     my ($self, $params, $context) = @_;
-    
+
     my $command = $params->{command};
-    
+
     return $self->error_result("Missing 'command' parameter") unless $command;
-    
-    # Extract the actual command being executed (before pipes, redirects, or &&)
-    my $executable = $command;
-    
-    # For git commands, only check the git subcommand, not arguments
-    if ($command =~ /^\s*(?:git\s+(\w+)|(.+?))\s/) {
-        my $git_cmd = $1;
-        if ($git_cmd) {
-            $executable = "git $git_cmd";
-        }
+
+    # Get security settings from config
+    my $config = ($context && $context->{config}) ? $context->{config} : undef;
+    my $sandbox = ($config && $config->get('sandbox')) ? 1 : 0;
+    my $security_level = ($config) ? ($config->get('security_level') || 'standard') : 'standard';
+
+    # Run intent-based command analysis
+    my $analysis = analyze_command($command,
+        sandbox        => $sandbox,
+        security_level => $security_level,
+    );
+
+    # Hard-blocked commands (critical risk - system destructive)
+    if ($analysis->{blocked}) {
+        my @descs = map { $_->{description} } @{$analysis->{flags}};
+        my $reason = join('; ', @descs);
+        log_warning('TermOps', "BLOCKED command: $reason");
+        return $self->error_result(
+            "Command blocked (critical risk): $reason\n\n" .
+            "This command was classified as system-destructive and cannot be executed.\n" .
+            "If you believe this is a false positive, the user can adjust the security level."
+        );
     }
-    
-    # Check for dangerous patterns only in the actual executable part
-    my @dangerous = ('rm -rf', 'sudo rm', 'shutdown', 'reboot', 'halt', 'dd if=', 'mkfs');
-    
-    foreach my $pattern (@dangerous) {
-        if ($executable =~ /\Q$pattern\E/i) {
-            return $self->error_result("Dangerous command pattern detected: $pattern");
+
+    # Commands requiring user confirmation
+    if ($analysis->{requires_confirmation}) {
+        my $approved = $self->_prompt_command_confirmation($command, $analysis, $context);
+        unless ($approved) {
+            log_info('TermOps', "User DENIED command: $analysis->{summary}");
+            return $self->error_result(
+                "Command denied by user.\n\n" .
+                "Security analysis: $analysis->{summary}\n" .
+                "The user chose not to allow this command. Try a different approach."
+            );
         }
+        log_info('TermOps', "User APPROVED command: $analysis->{summary}");
     }
-    
+
     # Truncate command for display if very long
     my $display_cmd;
     if (length($command) > 60) {
@@ -549,13 +567,125 @@ sub validate_command {
         $display_cmd = $command;
     }
     my $action_desc = "validating command '$display_cmd'";
-    
+
     return $self->success_result(
         "Command validated",
         action_description => $action_desc,
-        command => $command,
-        safe => 1,
+        command   => $command,
+        safe      => 1,
+        analysis  => $analysis,
     );
+}
+
+=head2 _prompt_command_confirmation
+
+Prompt the user to approve or deny a flagged command.
+
+Displays the security analysis and asks the user to confirm.
+Session-level grants are tracked so the user isn't re-prompted
+for the same category of command within a session.
+
+Returns: 1 if approved, 0 if denied
+
+=cut
+
+# Session-level grants: once user approves a category, don't re-ask
+my %_session_grants;
+
+sub _prompt_command_confirmation {
+    my ($self, $command, $analysis, $context) = @_;
+
+    # Check session-level grants first
+    for my $flag (@{$analysis->{flags}}) {
+        my $cat = $flag->{category};
+        if ($_session_grants{$cat}) {
+            log_debug('TermOps', "Session grant exists for category '$cat' - auto-approving");
+            return 1;
+        }
+    }
+
+    # We need the UI to prompt the user
+    my $ui = ($context && $context->{ui}) ? $context->{ui} : undef;
+
+    unless ($ui && $ui->can('colorize')) {
+        # No UI available (non-interactive mode) - deny by default
+        log_warning('TermOps', "No UI for security prompt - denying command");
+        return 0;
+    }
+
+    # Stop spinner if active
+    my $spinner = ($context && $context->{spinner}) ? $context->{spinner} : undef;
+    $spinner->stop() if $spinner && $spinner->can('stop');
+
+    # Build the confirmation display
+    print "\n";
+    print $ui->colorize("  SECURITY CHECK ", 'ERROR');
+    print "\n\n";
+
+    # Show the command (truncated if very long)
+    my $display_cmd = $command;
+    if (length($display_cmd) > 200) {
+        $display_cmd = substr($display_cmd, 0, 197) . '...';
+    }
+    print $ui->colorize("  Command: ", 'BOLD');
+    print "$display_cmd\n\n";
+
+    # Show flags
+    for my $flag (@{$analysis->{flags}}) {
+        my $severity_color = 'WARNING';
+        $severity_color = 'ERROR' if $flag->{severity} eq 'high' || $flag->{severity} eq 'critical';
+
+        print $ui->colorize("  [$flag->{severity}] ", $severity_color);
+        print "$flag->{description}\n";
+        if ($flag->{details}) {
+            print $ui->colorize("          ", 'DIM');
+            print $ui->colorize("$flag->{details}\n", 'DIM');
+        }
+    }
+
+    print "\n";
+    print $ui->colorize("  Options: ", 'BOLD');
+    print "(y)es once, (a)llow category for session, (n)o deny\n";
+
+    # Use Term::ReadKey for single-character input
+    require CLIO::Compat::Terminal;
+    CLIO::Compat::Terminal::ReadMode(0);  # Normal mode for input
+
+    print $ui->colorize("  > ", 'PROMPT');
+
+    my $response = <STDIN>;
+    chomp($response) if defined $response;
+    $response = lc($response || 'n');
+
+    # Restore cbreak mode
+    CLIO::Compat::Terminal::ReadMode(1);
+
+    # Restart spinner
+    $spinner->start() if $spinner && $spinner->can('start');
+
+    if ($response eq 'y' || $response eq 'yes') {
+        return 1;
+    } elsif ($response eq 'a' || $response eq 'allow') {
+        # Grant session-level permission for all flagged categories
+        for my $flag (@{$analysis->{flags}}) {
+            $_session_grants{$flag->{category}} = 1;
+            log_info('TermOps', "Session grant added for category: $flag->{category}");
+        }
+        return 1;
+    }
+
+    return 0;
+}
+
+=head2 reset_session_grants
+
+Reset all session-level command security grants.
+Called when starting a new session.
+
+=cut
+
+sub reset_session_grants {
+    %_session_grants = ();
 }
 
 =head2 get_additional_parameters
