@@ -178,14 +178,41 @@ commands (grep, cat, ls, perl, git, etc).
 sub _execute_captured {
     my ($self, $command, $timeout, $display_cmd, $working_dir, $session) = @_;
     
-    my $log_file = "/tmp/clio_terminal_$$.log";
+    my $log_file;
+    if ($^O eq 'MSWin32') {
+        my $tmp = $ENV{TEMP} || $ENV{TMP} || 'C:\\Temp';
+        $log_file = "$tmp\\clio_terminal_$$.log";
+    } else {
+        $log_file = "/tmp/clio_terminal_$$.log";
+    }
     unlink $log_file if -f $log_file;
     
     my $exit_code;
     my $interrupted = 0;
     my $hard_ceiling = $ENV{CLIO_TERMINAL_MAX_TIMEOUT} || 600;
     
-    # Use fork+waitpid instead of system() so we can:
+    if ($^O eq 'MSWin32') {
+        # Windows: no fork/exec, use system() with output redirect
+        my $escaped_log = $log_file;
+        $escaped_log =~ s/"/\\"/g;
+        my $cmd = qq{cmd.exe /C "$command" > "$escaped_log" 2>&1};
+        eval {
+            local $SIG{ALRM} = sub { die "alarm\n" };
+            alarm($timeout) if $timeout;
+            $exit_code = system($cmd);
+            alarm(0);
+            $exit_code = $exit_code >> 8 if defined $exit_code;
+        };
+        if ($@) {
+            if ($@ =~ /alarm/) {
+                $exit_code = 124;
+            } else {
+                log_warning('TerminalOps', "Command execution error: $@");
+                $exit_code = 1 unless defined $exit_code;
+            }
+        }
+    } else {
+    # Unix: Use fork+waitpid instead of system() so we can:
     # 1. Poll for user interrupts during command execution
     # 2. Kill children cleanly on timeout or interrupt
     # 3. Extend timeout when command is actively producing output
@@ -280,6 +307,7 @@ sub _execute_captured {
             $exit_code = 1 unless defined $exit_code;
         }
     }
+    } # end Unix fork path
     
     # Read captured output
     my $output = $self->_read_and_cleanup_log($log_file);
@@ -320,7 +348,13 @@ interfere with the command.
 sub _execute_passthrough {
     my ($self, $command, $timeout, $display_cmd, $working_dir, $session) = @_;
     
-    my $log_file = "/tmp/clio_terminal_$$.log";
+    my $log_file;
+    if ($^O eq 'MSWin32') {
+        my $tmp = $ENV{TEMP} || $ENV{TMP} || 'C:\\Temp';
+        $log_file = "$tmp\\clio_terminal_pt_$$.log";
+    } else {
+        $log_file = "/tmp/clio_terminal_$$.log";
+    }
     unlink $log_file if -f $log_file;
     
     # Suspend CLIO's terminal input handling so the command owns the TTY
@@ -336,6 +370,27 @@ sub _execute_passthrough {
     my $interrupted = 0;
     my $hard_ceiling = $ENV{CLIO_TERMINAL_MAX_TIMEOUT} || 600;
     
+    if ($^O eq 'MSWin32') {
+        # Windows: no fork/exec, use system() with output redirect
+        my $escaped_log = $log_file;
+        $escaped_log =~ s/"/\\"/g;
+        my $cmd = qq{cmd.exe /C "$command" > "$escaped_log" 2>&1};
+        eval {
+            local $SIG{ALRM} = sub { die "alarm\n" };
+            alarm($timeout) if $timeout;
+            $exit_code = system($cmd);
+            alarm(0);
+            $exit_code = $exit_code >> 8 if defined $exit_code;
+        };
+        if ($@) {
+            if ($@ =~ /alarm/) {
+                $exit_code = 124;
+            } else {
+                log_warning('TerminalOps', "Command execution error: $@");
+                $exit_code = 1 unless defined $exit_code;
+            }
+        }
+    } else {
     eval {
         # Fork to get a child PID we can manage with process groups
         $child_pid = fork();
@@ -413,6 +468,7 @@ sub _execute_passthrough {
             die "Command timeout after ${timeout}s idle\n";
         }
     };
+    } # end Unix fork path
     
     my $err = $@;
     

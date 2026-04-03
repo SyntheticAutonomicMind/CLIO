@@ -3097,7 +3097,8 @@ sub _get_git_recovery_context {
     # Recent commits (last 5) - tells agent what was completed
     my $log = eval {
         my $out = '';
-        open my $fh, '-|', "git -C \Q$working_dir\E log --oneline -5 2>/dev/null"
+        my $nulldev = $^O eq 'MSWin32' ? 'nul' : '/dev/null';
+        open my $fh, '-|', "git -C \Q$working_dir\E log --oneline -5 2>$nulldev"
             or return undef;
         while (<$fh>) { $out .= $_ }
         close $fh;
@@ -3111,7 +3112,8 @@ sub _get_git_recovery_context {
     # Working tree status - tells agent what's modified/staged
     my $status = eval {
         my $out = '';
-        open my $fh, '-|', "git -C \Q$working_dir\E status --short 2>/dev/null"
+        my $nulldev = $^O eq 'MSWin32' ? 'nul' : '/dev/null';
+        open my $fh, '-|', "git -C \Q$working_dir\E status --short 2>$nulldev"
             or return undef;
         while (<$fh>) { $out .= $_ }
         close $fh;

@@ -213,7 +213,8 @@ sub _find_newest_pane {
 }
 
 sub _find_tmux {
-    my $path = `which tmux 2>/dev/null`;
+    my $nulldev = $^O eq 'MSWin32' ? 'nul' : '/dev/null';
+    my $path = `which tmux 2>$nulldev`;
     chomp $path if $path;
     return $path || 'tmux';
 }

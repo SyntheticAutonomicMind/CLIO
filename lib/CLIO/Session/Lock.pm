@@ -269,7 +269,8 @@ sub _get_hostname {
     
     unless ($hostname) {
         # Try using hostname command
-        $hostname = `hostname 2>/dev/null`;
+        my $nulldev = $^O eq 'MSWin32' ? 'nul' : '/dev/null';
+        $hostname = `hostname 2>$nulldev`;
         chomp $hostname if $hostname;
     }
     

@@ -232,9 +232,10 @@ $h";
 
 sub _open_browser {
     my ($self, $url) = @_;
-    my $cmd = ($^O eq 'darwin') ? 'open' : ($^O eq 'linux') ? 'xdg-open' : undef;
+    my $cmd = ($^O eq 'darwin') ? 'open' : ($^O eq 'MSWin32') ? 'start' : ($^O eq 'linux') ? 'xdg-open' : undef;
     return unless $cmd;
-    if (fork() == 0) { open STDOUT, '>/dev/null'; open STDERR, '>/dev/null'; exec $cmd, $url; exit 1; }
+    my $nulldev = $^O eq 'MSWin32' ? 'nul' : '/dev/null';
+    if (fork() == 0) { open STDOUT, '>', $nulldev; open STDERR, '>', $nulldev; exec $cmd, $url; exit 1; }
 }
 
 sub _token_dir { File::Spec->catdir($ENV{HOME} || '/tmp', '.clio', 'mcp-tokens') }

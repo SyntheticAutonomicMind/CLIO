@@ -1111,6 +1111,11 @@ sub check_for_updates_async {
     
     # Fork background process to check for updates
     # Parent returns immediately, child checks and caches result
+    # Skip on Windows - fork() emulation via threads is unreliable
+    if ($^O eq 'MSWin32') {
+        log_debug('Chat', "Skipping async update check on Windows (no fork)");
+        return;
+    }
     my $pid = fork();
     
     if (!defined $pid) {
@@ -2500,6 +2505,13 @@ Setup tab completion for interactive terminal
 
 sub setup_tab_completion {
     my ($self) = @_;
+    
+    # Skip custom readline on Windows - terminal raw mode not available,
+    # which causes double-echo. Fall through to basic <STDIN> input.
+    if ($^O eq 'MSWin32') {
+        log_debug('CleanChat', "Skipping custom readline on Windows");
+        return;
+    }
     
     eval {
         require CLIO::Core::TabCompletion;
