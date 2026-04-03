@@ -8,6 +8,7 @@ use warnings;
 use utf8;
 use Carp qw(croak confess);
 use CLIO::Core::Logger qw(log_debug log_info log_warning);
+use CLIO::Security::CommandAnalyzer qw(analyze_command);
 use parent 'CLIO::Tools::Tool';
 use File::Spec;
 use File::Basename;
@@ -882,11 +883,20 @@ sub file_search {
     
     return $self->error_result("Missing 'pattern' parameter") unless $pattern;
     
+    my $max_results = $params->{max_results} || 200;  # Limit result count
+    
     # Sandbox check for directory
     my $sandbox_check = $self->_check_sandbox($directory, $context);
     return $self->error_result($sandbox_check->{error}) unless $sandbox_check->{allowed};
     
     return $self->error_result("Directory not found: $directory") unless -d $directory;
+    
+    # Auto-upgrade to recursive when pattern has no path components
+    # Users/agents expect "*Patch*" to find "lib/X/ApplyPatch.pm"
+    if ($pattern !~ m{/} && $pattern !~ /\*\*/) {
+        $pattern = "**/$pattern";
+        log_debug('FileOp', "Auto-recursive search: pattern upgraded to $pattern");
+    }
     
     log_debug('FileOp', "Searching files: pattern=$pattern, dir=$directory");
     
@@ -930,7 +940,14 @@ sub file_search {
             
             log_debug('FileOp', "Recursive search, regex: $regex_pattern");
             
-            File::Find::find(sub {
+            # Directories to skip during recursive search
+            my %skip_dirs = map { $_ => 1 } qw(
+                .git .svn .hg .bzr node_modules __pycache__ .tox .venv
+                .mypy_cache .pytest_cache .coverage vendor .bundle
+            );
+            
+            File::Find::find({
+                wanted => sub {
                 return unless -f $_;  # Only match files
                 
                 # Get path relative to search directory
@@ -945,7 +962,13 @@ sub file_search {
                         type => 'file',
                         size => -s $File::Find::name,
                     };
+                    # Stop if we hit the limit
+                    $File::Find::prune = 1 if @matches >= $max_results;
                 }
+                },
+                preprocess => sub {
+                    return grep { !$skip_dirs{$_} } @_;
+                },
             }, $directory);
         } else {
             # Use File::Glob for non-recursive patterns (faster)
@@ -1536,12 +1559,36 @@ sub create_file {
         );
     } elsif ($auth_result->{status} eq 'denied') {
         return $self->error_result("Authorization denied: $auth_result->{reason}");
+   }
+   
+    # Security: scan script content for risky patterns
+    my $scan = $self->_scan_script_content($path, $content, $context);
+    if ($scan) {
+        if ($scan->{blocked}) {
+            log_warning('FileOp', "BLOCKED script creation: $scan->{summary}");
+            return $self->error_result(
+                "Script creation blocked (critical risk): $scan->{summary}\n\n" .
+                "The file contains system-destructive commands and cannot be written."
+            );
+        }
+        if ($scan->{requires_confirmation}) {
+            my $approved = $self->_prompt_script_confirmation($path, $scan, $context);
+            unless ($approved) {
+                log_info('FileOp', "User DENIED script creation: $path");
+                return $self->error_result(
+                    "Script creation denied by user.\n\n" .
+                    "Security analysis: $scan->{summary}\n" .
+                    "The user chose not to allow this file. Try a different approach."
+                );
+            }
+            log_info('FileOp', "User APPROVED script creation: $path");
+        }
     }
     
     # Multi-agent coordination: Request file lock via broker
     my ($lock_acquired, $lock_error) = $self->_acquire_file_lock($path, $context);
     return $self->error_result($lock_error) if $lock_error;
-    
+   
     log_debug('FileOp', "Creating file: $path (authorized: $auth_result->{reason})");
     
     # Vault: record creation for undo support
@@ -1610,11 +1657,35 @@ sub write_file {
     } elsif ($auth_result->{status} eq 'denied') {
         return $self->error_result("Authorization denied: $auth_result->{reason}");
     }
+   
+    # Security: scan script content for risky patterns
+    my $scan = $self->_scan_script_content($path, $content, $context);
+    if ($scan) {
+        if ($scan->{blocked}) {
+            log_warning('FileOp', "BLOCKED script write: $scan->{summary}");
+            return $self->error_result(
+                "Script write blocked (critical risk): $scan->{summary}\n\n" .
+                "The file contains system-destructive commands and cannot be written."
+            );
+        }
+        if ($scan->{requires_confirmation}) {
+            my $approved = $self->_prompt_script_confirmation($path, $scan, $context);
+            unless ($approved) {
+                log_info('FileOp', "User DENIED script write: $path");
+                return $self->error_result(
+                    "Script write denied by user.\n\n" .
+                    "Security analysis: $scan->{summary}\n" .
+                    "The user chose not to allow this file. Try a different approach."
+                );
+            }
+            log_info('FileOp', "User APPROVED script write: $path");
+        }
+    }
     
     # Multi-agent coordination: Request file lock via broker
     my ($lock_acquired, $lock_error) = $self->_acquire_file_lock($path, $context);
     return $self->error_result($lock_error) if $lock_error;
-    
+   
     log_debug('FileOp', "Writing file: $path (authorized: $auth_result->{reason})");
     
     # Vault: capture original content for undo support
@@ -1676,11 +1747,35 @@ sub append_file {
     } elsif ($auth_result->{status} eq 'denied') {
         return $self->error_result("Authorization denied: $auth_result->{reason}");
     }
+   
+    # Security: scan script content for risky patterns
+    my $scan = $self->_scan_script_content($path, $content, $context);
+    if ($scan) {
+        if ($scan->{blocked}) {
+            log_warning('FileOp', "BLOCKED script append: $scan->{summary}");
+            return $self->error_result(
+                "Script append blocked (critical risk): $scan->{summary}\n\n" .
+                "The content contains system-destructive commands and cannot be appended."
+            );
+        }
+        if ($scan->{requires_confirmation}) {
+            my $approved = $self->_prompt_script_confirmation($path, $scan, $context);
+            unless ($approved) {
+                log_info('FileOp', "User DENIED script append: $path");
+                return $self->error_result(
+                    "Script append denied by user.\n\n" .
+                    "Security analysis: $scan->{summary}\n" .
+                    "The user chose not to allow this content. Try a different approach."
+                );
+            }
+            log_info('FileOp', "User APPROVED script append: $path");
+        }
+    }
     
     # Multi-agent coordination: Request file lock via broker
     my ($lock_acquired, $lock_error) = $self->_acquire_file_lock($path, $context);
     return $self->error_result($lock_error) if $lock_error;
-    
+   
     log_debug('FileOp', "Appending to file: $path (authorized: $auth_result->{reason})");
     
     # Vault: capture original content for undo support
@@ -2189,32 +2284,170 @@ sub create_directory {
     return $result;
 }
 
-1;
+=head2 _scan_script_content
 
-__END__
+Scan file content for security-sensitive patterns when the file appears
+to be a script (by extension or shebang line). Uses the CommandAnalyzer
+to classify each significant line.
 
-=head1 MIGRATION FROM CLIO::Protocols::FileOp
+Returns undef if content is safe, or a hashref describing the concern:
+  { blocked => 0|1, requires_confirmation => 0|1, summary => $text, flags => [...] }
 
-This tool completely replaces CLIO::Protocols::FileOp with a cleaner,
-more comprehensive API:
+=cut
 
-Old Protocol Format:
-  [FILE_OP:action:path=<base64>:content=<base64>]
+# Session-level grants for script writing
+my %_script_write_grants;
 
-New Tool Format:
-  {
-    "tool": "file_operations",
-    "operation": "read_file",
-    "path": "/path/to/file"
-  }
+sub _scan_script_content {
+    my ($self, $path, $content, $context) = @_;
 
-Benefits:
-- No base64 encoding required
-- Clear parameter names
-- Better error messages
-- 16 operations vs 4
-- Consistent result format
-- Extensible design
+    return undef unless defined $content && length($content);
+
+    # Determine if this file looks like a script
+    my $is_script = 0;
+
+    # Check extension
+    if ($path =~ /\.(sh|bash|zsh|fish|py|pl|rb|js|ts|php|cgi|ps1|psm1|bat|cmd)$/i) {
+        $is_script = 1;
+    }
+
+    # Check shebang line
+    if ($content =~ /^#!\s*\//) {
+        $is_script = 1;
+    }
+
+    # Check for Makefile (contains shell commands)
+    if ($path =~ /(?:^|\/)(?:Makefile|makefile|GNUmakefile)$/) {
+        $is_script = 1;
+    }
+
+    return undef unless $is_script;
+
+    # Get security settings
+    my $config = ($context && $context->{config}) ? $context->{config} : undef;
+    my $sandbox = ($config && $config->get('sandbox')) ? 1 : 0;
+    my $security_level = ($config) ? ($config->get('security_level') || 'standard') : 'standard';
+
+    # In relaxed mode, don't scan scripts
+    return undef if $security_level eq 'relaxed' && !$sandbox;
+
+    # Check session grants
+    return undef if $_script_write_grants{script_creation};
+
+    # Scan each line for risky patterns
+    my @all_flags;
+    my %seen_categories;
+
+    for my $line (split /\n/, $content) {
+        # Skip comments and empty lines
+        next if $line =~ /^\s*#/;
+        next if $line =~ /^\s*$/;
+        next if $line =~ /^\s*\/\//;  # JS/C++ comments
+
+        my $analysis = analyze_command($line,
+            sandbox        => $sandbox,
+            security_level => $security_level,
+        );
+
+        if ($analysis->{risk_level} ne 'none') {
+            for my $flag (@{$analysis->{flags}}) {
+                unless ($seen_categories{$flag->{category}}) {
+                    push @all_flags, $flag;
+                    $seen_categories{$flag->{category}} = 1;
+                }
+            }
+        }
+    }
+
+    return undef unless @all_flags;
+
+    # Build summary
+    my @descriptions = map { $_->{description} } @all_flags;
+    my $has_blocked = grep { $_->{severity} eq 'critical' } @all_flags;
+    my $summary = "Script contains: " . join('; ', @descriptions);
+
+    return {
+        blocked              => $has_blocked ? 1 : 0,
+        requires_confirmation => 1,
+        summary              => $summary,
+        flags                => \@all_flags,
+    };
+}
+
+=head2 _prompt_script_confirmation
+
+Prompt the user to approve writing a script with flagged content.
+
+=cut
+
+sub _prompt_script_confirmation {
+    my ($self, $path, $scan_result, $context) = @_;
+
+    my $ui = ($context && $context->{ui}) ? $context->{ui} : undef;
+
+    unless ($ui && $ui->can('colorize')) {
+        log_warning('FileOp', "No UI for script security prompt - denying");
+        return 0;
+    }
+
+    my $spinner = ($context && $context->{spinner}) ? $context->{spinner} : undef;
+    $spinner->stop() if $spinner && $spinner->can('stop');
+
+    print "\n";
+    print $ui->colorize("  SCRIPT SECURITY CHECK ", 'WARNING');
+    print "\n\n";
+
+    my $display_path = $path;
+    if (length($display_path) > 100) {
+        $display_path = '...' . substr($display_path, -97);
+    }
+    print $ui->colorize("  File: ", 'BOLD');
+    print "$display_path\n\n";
+
+    for my $flag (@{$scan_result->{flags}}) {
+        my $severity_color = 'WARNING';
+        $severity_color = 'ERROR' if $flag->{severity} eq 'high' || $flag->{severity} eq 'critical';
+
+        print $ui->colorize("  [$flag->{severity}] ", $severity_color);
+        print "$flag->{description}\n";
+    }
+
+    print "\n";
+    print $ui->colorize("  Options: ", 'BOLD');
+    print "(y)es once, (a)llow scripts for session, (n)o deny\n";
+
+    require CLIO::Compat::Terminal;
+    CLIO::Compat::Terminal::ReadMode(0);
+
+    print $ui->colorize("  > ", 'PROMPT');
+
+    my $response = <STDIN>;
+    chomp($response) if defined $response;
+    $response = lc($response || 'n');
+
+    CLIO::Compat::Terminal::ReadMode(1);
+    $spinner->start() if $spinner && $spinner->can('start');
+
+    if ($response eq 'y' || $response eq 'yes') {
+        return 1;
+    } elsif ($response eq 'a' || $response eq 'allow') {
+        $_script_write_grants{script_creation} = 1;
+        log_info('FileOp', "Session grant added for script creation");
+        return 1;
+    }
+
+    return 0;
+}
+
+=head2 reset_script_session_grants
+
+Reset script writing session grants. Called at session end.
+
+=cut
+
+sub reset_script_session_grants {
+    %_script_write_grants = ();
+}
 
 =head1 AUTHOR
 
@@ -2223,8 +2456,6 @@ CLIO Project
 =head1 SEE ALSO
 
 - CLIO::Tools::Tool - Base class
-- IMPLEMENTATION_PLAN_SAM_PATTERNS.md - Implementation roadmap
-- ai-assisted/SAM_ANALYSIS.md - SAM pattern analysis
 
 =cut
 
