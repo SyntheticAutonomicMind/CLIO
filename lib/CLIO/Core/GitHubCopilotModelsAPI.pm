@@ -16,7 +16,10 @@ use File::Basename;
 # SSL CA bundle setup
 BEGIN {
     unless ($ENV{PERL_LWP_SSL_CA_FILE}) {
-        my @ca_candidates = (
+        my @ca_candidates;
+        # Check SSL_CERT_FILE first (set by MIRA/bundled runtimes)
+        push @ca_candidates, $ENV{SSL_CERT_FILE} if $ENV{SSL_CERT_FILE};
+        push @ca_candidates, (
             '/etc/ssl/cert.pem',
             '/opt/homebrew/etc/openssl@3/cert.pem',
         );

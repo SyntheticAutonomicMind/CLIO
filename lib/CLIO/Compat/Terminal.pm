@@ -45,6 +45,9 @@ my $INITIAL_TERMIOS;  # Saved at first ReadMode call - pristine terminal state
 eval {
     require POSIX;
     POSIX->import(qw(:termios_h));
+    # Verify termios is actually functional (fails on Windows)
+    my $t = POSIX::Termios->new();
+    $t->getattr(fileno(STDIN)) if -t STDIN;
     $HAS_POSIX_TERMIOS = 1;
 };
 
@@ -76,6 +79,19 @@ sub GetTerminalSize {
     # Check if we have a TTY on either STDOUT or STDIN
     unless (-t STDOUT || -t STDIN) {
         return (80, 24);
+    }
+
+    # Windows: use mode con to get console size
+    if ($^O eq 'MSWin32') {
+        my $mode = `mode con 2>nul`;
+        if ($mode && $mode =~ /Columns:\s*(\d+)/i && (my $cols = $1)) {
+            my $rows = 24;
+            $rows = $1 if $mode =~ /Lines:\s*(\d+)/i;
+            return ($cols, $rows) if $cols > 0;
+        }
+        my $env_cols = $ENV{COLUMNS} || 80;
+        my $env_rows = $ENV{LINES} || 24;
+        return ($env_cols, $env_rows);
     }
 
     # Method 1: ioctl(TIOCGWINSZ) via /dev/tty - no child process needed
@@ -141,6 +157,9 @@ Returns: 1 on success
 
         # Skip if not a TTY
         return 1 unless -t STDIN;
+
+        # Windows: terminal mode control is handled by ConPTY host
+        return 1 if $^O eq 'MSWin32';
 
         # Normalize mode to number if it's a string
         my $mode_num = $mode;
@@ -326,21 +345,32 @@ sub ReadKey {
 
     if ($timeout == -1) {
         # Non-blocking read
-        use POSIX qw(:errno_h);
-        use Fcntl;
+        if ($^O eq 'MSWin32') {
+            # Windows: non-blocking read not supported via fcntl,
+            # fall through to blocking read with short timeout
+            use IO::Select;
+            my $sel = IO::Select->new();
+            $sel->add(\*STDIN);
+            if ($sel->can_read(0.01)) {
+                $bytes_read = sysread(STDIN, $char, 1);
+            }
+        } else {
+            use POSIX qw(:errno_h);
+            use Fcntl;
 
-        my $flags = fcntl(STDIN, F_GETFL, 0);
-        fcntl(STDIN, F_SETFL, $flags | O_NONBLOCK);
+            my $flags = fcntl(STDIN, F_GETFL, 0);
+            fcntl(STDIN, F_SETFL, $flags | O_NONBLOCK);
 
-        # Retry on EINTR (interrupted by signal)
-        while (1) {
-            $bytes_read = sysread(STDIN, $char, 1);
-            last if defined $bytes_read;  # Success or real error
-            last if $! != EINTR;          # Real error (not EINTR)
-            # EINTR: retry immediately
+            # Retry on EINTR (interrupted by signal)
+            while (1) {
+                $bytes_read = sysread(STDIN, $char, 1);
+                last if defined $bytes_read;  # Success or real error
+                last if $! != EINTR;          # Real error (not EINTR)
+                # EINTR: retry immediately
+            }
+
+            fcntl(STDIN, F_SETFL, $flags);
         }
-
-        fcntl(STDIN, F_SETFL, $flags);
     } elsif ($timeout == 0) {
         # Blocking read with EINTR retry
         while (1) {

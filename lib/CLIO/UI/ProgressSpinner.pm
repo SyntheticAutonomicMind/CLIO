@@ -93,6 +93,13 @@ sub start {
     print "\e[?25l";
     STDOUT->flush() if STDOUT->can('flush');
     
+    # Windows: fork() is unreliable, skip animation subprocess
+    if ($^O eq 'MSWin32') {
+        $self->{running} = 1;
+        $self->{_started_at} = time();
+        return;
+    }
+    
     my $pid = fork();
     
     if (!defined $pid) {
