@@ -61,6 +61,10 @@ use constant DEFAULT_CONFIG => {
     redact_level => 'pii',      # Redaction level: strict, standard, api_permissive, pii, off (default: pii)
     # Command security analysis level
     security_level => 'standard',  # Command security: relaxed, standard, strict (default: standard)
+    # File/directory creation umask (controls default permissions)
+    # Value is octal as integer: 0077 (restrictive), 0022 (standard), 0000 (permissive)
+    # Setting this to 0077 ensures files are only readable/writable by owner
+    file_umask => 0022,  # Default: 0022 (owner read/write, group/other read)
     # Reasoning/thinking display
     show_thinking => 0,         # Show model's reasoning/thinking output (default: off)
     # Agent iteration limit (0 = unlimited)

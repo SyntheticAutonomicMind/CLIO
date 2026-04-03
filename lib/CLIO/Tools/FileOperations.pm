@@ -1592,16 +1592,16 @@ sub create_file {
     
     my $result;
     eval {
-        # Create parent directories if needed
+        # Create parent directories if needed with secure permissions
         my $dir = dirname($path);
         unless (-d $dir) {
-            make_path($dir) or croak "Cannot create directory $dir: $!";
+            $self->_secure_mkdir($dir, 0700, $context);
         }
         
-        # Write file
-        open my $fh, '>:utf8', $path or croak "Cannot create $path: $!";
+        # Write file using atomic write pattern (secure_open -> write -> secure_close)
+        my ($fh, $temp_path) = $self->_secure_open($path, 0600, $context);
         print $fh $content;
-        close $fh;
+        $self->_secure_close($fh, $temp_path, $path, $context);
         
         my $size = -s $path;
         
@@ -1689,9 +1689,10 @@ sub write_file {
     
     my $result;
     eval {
-        open my $fh, '>:utf8', $path or croak "Cannot write $path: $!";
+        # Write file using atomic write pattern
+        my ($fh, $temp_path) = $self->_secure_open($path, 0600, $context);
         print $fh $content;
-        close $fh;
+        $self->_secure_close($fh, $temp_path, $path, $context);
         
         my $size = -s $path;
         
@@ -1779,6 +1780,10 @@ sub append_file {
     
     my $result;
     eval {
+        # Ensure file has secure permissions before appending
+        # Files created by other tools might have overly permissive modes
+        chmod(0600, $path) if -f $path;
+
         open my $fh, '>>:utf8', $path or croak "Cannot append to $path: $!";
         print $fh $content;
         close $fh;
@@ -1856,10 +1861,10 @@ sub replace_string {
         # Replace
         $content =~ s/\Q$old_string\E/$new_string/g;
         
-        # Write back
-        open $fh, '>:utf8', $path or croak "Cannot write $path: $!";
-        print $fh $content;
-        close $fh;
+        # Write back using atomic write pattern
+        my ($write_fh, $temp_path) = $self->_secure_open($path, 0600, $context);
+        print $write_fh $content;
+        $self->_secure_close($write_fh, $temp_path, $path, $context);
         
         log_debug('FileOp', "Replaced $count occurrences in $path");
         
@@ -2058,10 +2063,10 @@ sub insert_at_line {
         # Insert at line (convert to 0-based index)
         splice @lines, $line_number - 1, 0, $content;
         
-        # Write back
-        open $fh, '>:utf8', $path or croak "Cannot write $path: $!";
-        print $fh @lines;
-        close $fh;
+        # Write back using atomic write pattern
+        my ($write_fh, $temp_path) = $self->_secure_open($path, 0600, $context);
+        print $write_fh @lines;
+        $self->_secure_close($write_fh, $temp_path, $path, $context);
         
         log_debug('FileOp', "Inserted content at line $line_number in $path");
         
@@ -2259,7 +2264,8 @@ sub create_directory {
     
     my $result;
     eval {
-        make_path($path) or croak "Cannot create directory $path: $!";
+        # Create directory with secure permissions
+        $self->_secure_mkdir($path, 0700, $context);
         
         log_debug('FileOp', "Created directory: $path");
         
@@ -2443,6 +2449,123 @@ Reset script writing session grants. Called at session end.
 
 sub reset_script_session_grants {
     %_script_write_grants = ();
+}
+
+=head2 _get_umask
+
+Get the current umask for file/directory operations from config.
+
+Returns: umask value as octal integer (e.g., 0022, 0077)
+
+=cut
+
+sub _get_umask {
+    my ($self, $context) = @_;
+
+    # Get from config if available
+    if ($context && $context->{config}) {
+        my $umask = $context->{config}->get('file_umask');
+        return $umask if defined $umask;
+    }
+
+    # Fall back to process umask
+    return umask();
+}
+
+=head2 _secure_open
+
+Open a file for writing with secure permissions.
+Uses atomic write pattern: write to temp file, then rename.
+
+Parameters:
+  - path: Target file path
+  - mode: Permission mode for new file (default: 0600 for files)
+  - context: Context hashref with config
+
+Returns: filehandle on success, croaks on failure
+
+=cut
+
+sub _secure_open {
+    my ($self, $path, $mode, $context) = @_;
+
+    $mode //= 0600;  # Default: owner read/write only
+
+    my $dir = dirname($path);
+
+    # Create temp file in same directory for atomic rename
+    my $temp_path = "${path}.tmp.$$";
+
+    # Open temp file
+    open my $fh, '>:utf8', $temp_path
+        or croak "Cannot create temp file $temp_path: $!";
+
+    # Set permissions on temp file before writing sensitive content
+    # Note: Perl's chmod works on the inode, affecting the file
+    chmod($mode, $temp_path)
+        or log_warning('FileOp', "Could not set permissions on temp file: $!");
+
+    return ($fh, $temp_path);
+}
+
+=head2 _secure_close
+
+Close a securely opened file with atomic rename.
+
+Parameters:
+  - fh: Filehandle to close
+  - temp_path: Path to temp file
+  - target_path: Final destination path
+  - context: Context hashref with config
+
+Returns: 1 on success, croaks on failure
+
+=cut
+
+sub _secure_close {
+    my ($self, $fh, $temp_path, $target_path, $context) = @_;
+
+    # Close the filehandle
+    close $fh
+        or croak "Error closing temp file $temp_path: $!";
+
+    # Atomic rename (overwrites existing file)
+    unless (rename($temp_path, $target_path)) {
+        # Attempt to clean up temp file
+        unlink($temp_path) if -e $temp_path;
+        croak "Cannot rename $temp_path to $target_path: $!";
+    }
+
+    return 1;
+}
+
+=head2 _secure_mkdir
+
+Create a directory with secure permissions.
+Uses explicit mode rather than relying on umask.
+
+Parameters:
+  - path: Directory path to create
+  - mode: Permission mode (default: 0700 for directories)
+  - context: Context hashref with config
+
+Returns: 1 on success, croaks on failure
+
+=cut
+
+sub _secure_mkdir {
+    my ($self, $path, $mode, $context) = @_;
+
+    $mode //= 0700;  # Default: owner only
+
+    # Create directory with explicit mode
+    # File::Path::make_path accepts mode parameter
+    unless (-d $path) {
+        make_path($path, { mode => $mode })
+            or croak "Cannot create directory $path: $!";
+    }
+
+    return 1;
 }
 
 =head1 AUTHOR

@@ -70,10 +70,10 @@ sub new {
     
     bless $self, $class;
     
-    # Ensure session directory exists
+    # Ensure session directory exists with secure permissions
     my $session_dir = $self->_session_dir();
     unless (-d $session_dir) {
-        make_path($session_dir) or croak "Cannot create session directory $session_dir: $!";
+        make_path($session_dir, { mode => 0700 }) or croak "Cannot create session directory $session_dir: $!";
     }
     
     return $self;

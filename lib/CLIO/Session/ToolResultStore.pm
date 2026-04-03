@@ -232,9 +232,9 @@ sub persistResult {
     
     log_debug('ToolResultStore', "Persisting: $toolCallId to $result_file");
     
-    # Create tool_results directory if needed
+    # Create tool_results directory if needed with secure permissions
     eval {
-        make_path($tool_results_dir) unless -d $tool_results_dir;
+        make_path($tool_results_dir, { mode => 0700 }) unless -d $tool_results_dir;
     };
     if ($@) {
         my $error = $@;
