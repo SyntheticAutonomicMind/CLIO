@@ -64,7 +64,8 @@ sub generate_diff {
         close $fh_new;
         
         my $ctx = $self->{context};
-        my $diff_output = `diff -u -U$ctx "$tmp_old" "$tmp_new" 2>/dev/null`;
+        my $nulldev = $^O eq 'MSWin32' ? 'nul' : '/dev/null';
+        my $diff_output = `diff -u -U$ctx "$tmp_old" "$tmp_new" 2>$nulldev`;
         @diff_lines = split /\n/, $diff_output;
         
         # Replace temp file names with actual filename

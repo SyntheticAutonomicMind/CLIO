@@ -26,7 +26,8 @@ BEGIN {
         $HAS_CURL = -x '/usr/bin/curl' || -x '/bin/curl' || -x '/usr/local/bin/curl';
         unless ($HAS_CURL) {
             # iOS/a-Shell pattern: curl is an ios_system command, not a filesystem path
-            my $which_curl = `which curl 2>/dev/null`;
+            my $nulldev = $^O eq 'MSWin32' ? 'nul' : '/dev/null';
+            my $which_curl = `which curl 2>$nulldev`;
             $HAS_CURL = ($which_curl && $which_curl =~ /curl/);
         }
     }

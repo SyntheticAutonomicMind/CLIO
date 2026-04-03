@@ -303,7 +303,7 @@ sub _show_fallback_stats {
     my ($self) = @_;
     
     # Direct ps reading when orchestrator isn't available
-    my $output = `ps -o rss=,vsz= -p $$ 2>/dev/null`;
+    my $output = ($^O eq "MSWin32" ? "" : `ps -o rss=,vsz= -p $$ 2>/dev/null`);
     if ($output && $output =~ /^\s*(\d+)\s+(\d+)/) {
         my ($rss_kb, $vsz_kb) = ($1, $2);
         $self->writeline("", markdown => 0);

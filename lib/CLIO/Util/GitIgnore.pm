@@ -206,7 +206,8 @@ sub _is_git_repo {
     # Fallback: ask git
     my $old_dir = getcwd();
     chdir $path or return 0;
-    my $result = `git rev-parse --is-inside-work-tree 2>/dev/null`;
+    my $nulldev = $^O eq 'MSWin32' ? 'nul' : '/dev/null';
+    my $result = `git rev-parse --is-inside-work-tree 2>$nulldev`;
     chdir $old_dir;
 
     return (defined $result && $result =~ /true/) ? 1 : 0;

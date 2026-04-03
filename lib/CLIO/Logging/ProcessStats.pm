@@ -237,7 +237,8 @@ sub _read_proc_status {
 sub _read_ps {
     my ($self) = @_;
 
-    my $output = `ps -o rss=,vsz= -p $self->{pid} 2>/dev/null`;
+    my $nulldev = $^O eq 'MSWin32' ? 'nul' : '/dev/null';
+    my $output = `ps -o rss=,vsz= -p $self->{pid} 2>$nulldev`;
     return () unless defined $output && $output =~ /\S/;
 
     # ps output: "  61440 421888\n"  (values in KB)

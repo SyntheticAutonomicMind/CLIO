@@ -869,7 +869,8 @@ sub _file_diff {
     my ($self, $file_a, $file_b, $label_a, $label_b) = @_;
 
     # Use system diff for proper unified diff output
-    my $cmd = sprintf('diff -u --label %s --label %s %s %s 2>/dev/null',
+    my $nulldev = $^O eq 'MSWin32' ? 'nul' : '/dev/null';
+    my $cmd = sprintf("diff -u --label %s --label %s %s %s 2>$nulldev",
         _shell_quote($label_a),
         _shell_quote($label_b),
         _shell_quote($file_a),

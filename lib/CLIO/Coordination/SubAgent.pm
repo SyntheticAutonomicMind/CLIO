@@ -131,8 +131,10 @@ sub run_subagent {
     setsid() or die "Cannot start new session: $!";
     
     # Redirect ALL I/O to log file (completely detach from parent terminal)
-    my $log_path = "/tmp/clio-agent-$agent_id.log";
-    open(STDIN, '<', '/dev/null') or die "Cannot redirect STDIN: $!";
+    my $tmpdir = $^O eq 'MSWin32' ? ($ENV{TEMP} || $ENV{TMP} || 'C:\\Temp') : '/tmp';
+    my $log_path = File::Spec->catfile($tmpdir, "clio-agent-$agent_id.log");
+    my $nulldev = $^O eq 'MSWin32' ? 'nul' : '/dev/null';
+    open(STDIN, '<', $nulldev) or die "Cannot redirect STDIN: $!";
     open(STDOUT, '>>', $log_path) or die "Cannot open log: $!";
     open(STDERR, '>&STDOUT') or die "Cannot redirect STDERR: $!";
     

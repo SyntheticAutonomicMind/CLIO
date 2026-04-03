@@ -792,7 +792,8 @@ sub _is_git_repo {
     my $original_cwd = getcwd();
     chdir $path if $path ne '.';
     
-    my $is_repo = -d '.git' || `git rev-parse --git-dir 2>/dev/null`;
+    my $nulldev = $^O eq 'MSWin32' ? 'nul' : '/dev/null';
+    my $is_repo = -d '.git' || `git rev-parse --git-dir 2>$nulldev`;
     
     chdir $original_cwd if $path ne '.';
     

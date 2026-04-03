@@ -215,7 +215,8 @@ sub _run_cmd {
 }
 
 sub _find_zellij {
-    my $path = `which zellij 2>/dev/null`;
+    my $nulldev = $^O eq 'MSWin32' ? 'nul' : '/dev/null';
+    my $path = `which zellij 2>$nulldev`;
     chomp $path if $path;
     return $path || 'zellij';
 }

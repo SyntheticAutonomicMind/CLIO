@@ -220,7 +220,8 @@ sub _run_cmd {
 }
 
 sub _find_screen {
-    my $path = `which screen 2>/dev/null`;
+    my $nulldev = $^O eq 'MSWin32' ? 'nul' : '/dev/null';
+    my $path = `which screen 2>$nulldev`;
     chomp $path if $path;
     return $path || 'screen';
 }

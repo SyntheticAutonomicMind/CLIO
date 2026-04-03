@@ -279,21 +279,17 @@ sub get_additional_parameters {
             description => "Array of replacement operations (multi_replace_string).",
         },
         
-        # PHASE 2: oneOf type parameter (accepts both formats)
-        # Using standard JSON Schema with oneOf to accept string OR object
-        text => {
-            oneOf => [
-                {type => "string", description => "Text as escaped JSON string"},
-                {type => "object", description => "Text as JSON object (no escaping needed)"}
-            ],
-            description => "Text to insert (insert_at_line). Can be JSON object or escaped string.",
-        },
+        # insert_at_line parameters
         line => {
             type => "integer",
             description => "Line number to insert at (insert_at_line).",
         },
         
         # Rename parameters
+        old_path => {
+            type => "string",
+            description => "Old file path for rename_file operation.",
+        },
         new_path => {
             type => "string",
             description => "New file path for rename_file operation.",

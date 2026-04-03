@@ -100,11 +100,15 @@ sub start {
         return;
     }
     
+    # Skip spinner on Windows (fork not reliable)
+    if ($^O eq 'MSWin32') {
+        return;
+    }
+    
     my $pid = fork();
     
     if (!defined $pid) {
         log_debug('ProgressSpinner', "Failed to fork progress spinner: $!");
-        # Restore cursor on fork failure
         print "\e[?25h";
         STDOUT->flush() if STDOUT->can('flush');
         return;

@@ -309,7 +309,7 @@ sub cmd_status {
         $self->display_key_value("Log", $log_path);
         $self->writeline("", markdown => 0);
         $self->writeline($self->colorize("Last 10 lines:", 'DIM'), markdown => 0);
-        my $log_tail = `tail -10 "$log_path" 2>/dev/null`;
+        my $log_tail = ($^O eq "MSWin32" ? "" : `tail -10 "$log_path" 2>/dev/null`);
         if ($log_tail) {
             # Show log lines with dim styling
             for my $line (split /\n/, $log_tail) {
@@ -877,12 +877,13 @@ sub start_broker {
         };
         log_debug('SubAgent', "setsid() complete");
         
-        # Redirect STDIN from /dev/null
-        open(STDIN, '<', '/dev/null') or do {
+        # Redirect STDIN from null device
+        my $nulldev = $^O eq 'MSWin32' ? 'nul' : '/dev/null';
+        open(STDIN, '<', $nulldev) or do {
             log_error('SubAgent', "[ERROR] Cannot redirect STDIN: $!");
             exit 1;
         };
-        log_debug('SubAgent', "STDIN redirected from /dev/null");
+        log_debug('SubAgent', "STDIN redirected from $nulldev");
         
         # Now run broker
         log_debug('SubAgent', "About to create Broker object");

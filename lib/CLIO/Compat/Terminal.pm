@@ -94,6 +94,22 @@ sub GetTerminalSize {
         return ($env_cols, $env_rows);
     }
 
+    # Windows: use Win32::Console API or environment variables
+    if ($^O eq 'MSWin32') {
+        eval {
+            require Win32::Console;
+            my @info = Win32::Console::CORE::GetConsoleScreenBufferInfo(
+                Win32::Console::STD_OUTPUT_HANDLE());
+            if (@info && $info[0] > 0 && $info[1] > 0) {
+                return ($info[0], $info[1]);
+            }
+        };
+        # Fall through to environment variables
+        my $env_cols = $ENV{COLUMNS} || 80;
+        my $env_rows = $ENV{LINES} || 24;
+        return ($env_cols, $env_rows);
+    }
+
     # Method 1: ioctl(TIOCGWINSZ) via /dev/tty - no child process needed
     if ($TIOCGWINSZ) {
         my ($cols, $rows);
@@ -112,15 +128,16 @@ sub GetTerminalSize {
     }
 
     # Method 2: stty fallback (spawns child process)
-    my $size = `stty size < /dev/tty 2>/dev/null`;
+    my $nulldev = '/dev/null';
+    my $size = `stty size < /dev/tty 2>$nulldev`;
     chomp($size) if $size;
     if ($size && $size =~ /^(\d+)\s+(\d+)/) {
         return ($2, $1);  # stty returns rows cols, we want cols rows
     }
 
     # Method 3: tput fallback
-    my $cols = `tput cols < /dev/tty 2>/dev/null`;
-    my $rows = `tput lines < /dev/tty 2>/dev/null`;
+    my $cols = `tput cols < /dev/tty 2>$nulldev`;
+    my $rows = `tput lines < /dev/tty 2>$nulldev`;
     chomp($cols, $rows);
     if ($cols && $rows && $cols =~ /^\d+$/ && $rows =~ /^\d+$/) {
         return ($cols, $rows);
@@ -242,8 +259,10 @@ Returns: 1 on success
     }
 
     # Fallback stty implementation (used only if POSIX::Termios unavailable)
+    # Not available on Windows
     sub _readmode_stty {
         my ($mode_num) = @_;
+        return 0 if $^O eq 'MSWin32';
         my $saved_mode = $CLIO::Compat::Terminal::_stty_saved_mode;
 
         if ($mode_num == 0 || $mode_num == 4) {
@@ -604,6 +623,8 @@ Returns: hashref { killed => \@killed_pids, skipped => \@skipped }
 =cut
 
 sub kill_stale_children {
+    # ps/pgrep not available on Windows
+    return { killed => [], skipped => [] } if $^O eq 'MSWin32';
     my $my_pid = $$;
     my @killed;
     my @skipped;
