@@ -91,9 +91,9 @@ sub new {
 
     bless $self, $class;
 
-    # Ensure vault directory exists
+    # Ensure vault directory exists with secure permissions
     unless (-d $vault_dir) {
-        make_path($vault_dir);
+        make_path($vault_dir, { mode => 0700 });
         log_debug('FileVault', "Created vault directory: $vault_dir");
     }
 
@@ -130,10 +130,10 @@ sub start_turn {
     my $turn_id = sprintf("turn_%04d", $self->{turn_count});
 
     my $turn_dir = File::Spec->catdir($self->{vault_dir}, $turn_id);
-    make_path($turn_dir);
+    make_path($turn_dir, { mode => 0700 });
 
     my $files_dir = File::Spec->catdir($turn_dir, 'files');
-    make_path($files_dir);
+    make_path($files_dir, { mode => 0700 });
 
     # Write initial manifest
     my $manifest = {
@@ -195,7 +195,7 @@ sub capture_before {
     # Copy the file to vault
     my $vault_file = $self->_vault_file_path($turn_id, $rel_path);
     my $vault_file_dir = dirname($vault_file);
-    make_path($vault_file_dir) unless -d $vault_file_dir;
+    make_path($vault_file_dir, { mode => 0700 }) unless -d $vault_file_dir;
 
     eval {
         copy($abs_path, $vault_file) or croak "Copy failed: $!";
@@ -291,7 +291,7 @@ sub record_deletion {
     if (-f $abs_path && !($self->{_captured}{$turn_id} && $self->{_captured}{$turn_id}{$rel_path})) {
         my $vault_file = $self->_vault_file_path($turn_id, $rel_path);
         my $vault_file_dir = dirname($vault_file);
-        make_path($vault_file_dir) unless -d $vault_file_dir;
+        make_path($vault_file_dir, { mode => 0700 }) unless -d $vault_file_dir;
 
         eval {
             copy($abs_path, $vault_file) or croak "Copy failed: $!";
@@ -345,7 +345,7 @@ sub record_rename {
     if (-f $old_abs && !($self->{_captured}{$turn_id} && $self->{_captured}{$turn_id}{$old_rel})) {
         my $vault_file = $self->_vault_file_path($turn_id, $old_rel);
         my $vault_file_dir = dirname($vault_file);
-        make_path($vault_file_dir) unless -d $vault_file_dir;
+        make_path($vault_file_dir, { mode => 0700 }) unless -d $vault_file_dir;
 
         eval {
             copy($old_abs, $vault_file) or croak "Copy failed: $!";
@@ -435,7 +435,7 @@ sub undo_turn {
             if (-f $vault_file) {
                 eval {
                     my $target_dir = dirname($abs_path);
-                    make_path($target_dir) unless -d $target_dir;
+                    make_path($target_dir, { mode => 0700 }) unless -d $target_dir;
                     copy($vault_file, $abs_path) or croak "Restore failed: $!";
                 };
                 if ($@) {
@@ -470,7 +470,7 @@ sub undo_turn {
             if (-f $vault_file) {
                 eval {
                     my $target_dir = dirname($abs_path);
-                    make_path($target_dir) unless -d $target_dir;
+                    make_path($target_dir, { mode => 0700 }) unless -d $target_dir;
                     copy($vault_file, $abs_path) or croak "Restore failed: $!";
                 };
                 if ($@) {
@@ -493,7 +493,7 @@ sub undo_turn {
             if (-f $vault_file) {
                 eval {
                     my $target_dir = dirname($original_abs);
-                    make_path($target_dir) unless -d $target_dir;
+                    make_path($target_dir, { mode => 0700 }) unless -d $target_dir;
                     copy($vault_file, $original_abs) or croak "Restore failed: $!";
                 };
                 if ($@) {
@@ -505,7 +505,7 @@ sub undo_turn {
                 # No vault backup, just rename back
                 eval {
                     my $target_dir = dirname($original_abs);
-                    make_path($target_dir) unless -d $target_dir;
+                    make_path($target_dir, { mode => 0700 }) unless -d $target_dir;
                     rename($abs_path, $original_abs) or croak "Rename failed: $!";
                 };
                 if ($@) {

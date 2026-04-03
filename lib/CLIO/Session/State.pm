@@ -160,11 +160,11 @@ sub save {
         log_debug('SessionState', "[STATE][DEBUG] Data to save: " . Dumper($data) . "");
     }
     
-    # Ensure session directory exists before writing
+    # Ensure session directory exists before writing with secure permissions
     my $dir = File::Basename::dirname($self->{file});
     unless (-d $dir) {
         require File::Path;
-        eval { File::Path::make_path($dir) };
+        eval { File::Path::make_path($dir, { mode => 0700 }) };
         if ($@) {
             log_warning('State', "Failed to create session directory: $@");
         }
@@ -175,6 +175,7 @@ sub save {
     # Use process ID in temp filename to prevent race conditions with multiple agents
     my $temp_file = $self->{file} . '.tmp.' . $$;
     open my $fh, '>', $temp_file or croak "Cannot create temp session file: $!";
+    chmod(0600, $temp_file);  # Ensure secure permissions before writing sensitive data
     print $fh encode_json($data);
     close $fh;
     
