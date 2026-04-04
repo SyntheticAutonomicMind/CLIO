@@ -7,7 +7,7 @@ use strict;
 use warnings;
 use CLIO::Core::Logger qw(log_debug log_warning);
 use CLIO::Security::InvisibleCharFilter qw(filter_invisible_chars has_invisible_chars);
-use CLIO::Util::TextSanitizer qw(sanitize_text);
+use CLIO::Util::TextSanitizer qw(sanitize_text set_sanitize_mode);
 use CLIO::UI::Markdown;
 use CLIO::UI::ANSI;
 use CLIO::UI::Theme;
@@ -135,6 +135,12 @@ sub new {
     
     if (-t STDIN) {
         $self->setup_tab_completion();
+    }
+    
+    # Apply saved sanitize_mode from config
+    if ($self->{config}) {
+        my $mode = $self->{config}->get('sanitize_mode');
+        set_sanitize_mode($mode) if $mode;
     }
     
     return $self;

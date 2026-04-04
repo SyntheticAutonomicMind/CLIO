@@ -201,6 +201,7 @@ sub _display_config_help {
     $self->display_key_value("terminal_autodetect", "Auto-detect interactive commands", 25);
     $self->display_key_value("redact_level", "Redaction level: strict|standard|api_permissive|pii|off", 25);
     $self->display_key_value("security_level", "Command security: relaxed|standard|strict", 25);
+    $self->display_key_value("sanitize_mode", "Text filter: strict|relaxed", 25);
     $self->display_key_value("enable_subagents", "Enable/disable sub-agent spawning (on/off)", 25);
     $self->display_key_value("enable_remote", "Enable/disable remote execution (on/off)", 25);
     $self->writeline("", markdown => 0);
@@ -225,6 +226,7 @@ sub _display_config_help {
     $self->display_command_row("/config workdir ~/projects", "Change working directory", 35);
     $self->display_command_row("/config set redact_level api_permissive", "Allow API keys in agent output", 35);
     $self->display_command_row("/config set security_level strict", "Prompt for all risky commands", 35);
+    $self->display_command_row("/config set sanitize_mode relaxed", "Quiet filtering for binary data work", 35);
     $self->display_command_row("/config set enable_subagents off", "Disable sub-agent tool", 35);
     $self->display_command_row("/config set enable_remote off", "Disable remote execution tool", 35);
     $self->writeline("", markdown => 0);
@@ -250,7 +252,7 @@ sub _handle_config_set {
     
     unless ($key) {
         $self->display_error_message("Usage: /config set <key> <value>");
-        $self->writeline("Keys: style, theme, working_directory, terminal_passthrough, terminal_autodetect, redact_level, security_level, enable_subagents, enable_remote", markdown => 0);
+        $self->writeline("Keys: style, theme, working_directory, terminal_passthrough, terminal_autodetect, redact_level, security_level, sanitize_mode, enable_subagents, enable_remote", markdown => 0);
         return;
     }
     
@@ -269,6 +271,7 @@ sub _handle_config_set {
         redact_level => 1,
         redact_secrets => 1,  # Deprecated, for backward compat
         security_level => 1,
+        sanitize_mode => 1,
         enable_subagents => 1,
         enable_remote => 1,
     );
@@ -332,6 +335,34 @@ sub _handle_config_set {
         if ($value eq 'relaxed') {
             $self->display_info_message("WARNING: Network and credential access commands will not be flagged");
         }
+        return;
+    }
+    
+    # Handle sanitize_mode
+    if ($key eq 'sanitize_mode') {
+        my %valid_modes = map { $_ => 1 } qw(strict relaxed);
+        unless ($valid_modes{$value}) {
+            $self->display_error_message("Invalid sanitize_mode: $value");
+            $self->writeline("Valid modes: strict, relaxed", markdown => 0);
+            return;
+        }
+        
+        $self->{config}->set('sanitize_mode', $value);
+        $self->{config}->save();
+        
+        # Apply immediately to TextSanitizer
+        eval {
+            require CLIO::Util::TextSanitizer;
+            CLIO::Util::TextSanitizer::set_sanitize_mode($value);
+        };
+        
+        my %mode_desc = (
+            strict  => "Warn on invisible character injection (default, recommended)",
+            relaxed => "Filter invisible chars silently (for binary/hex data analysis)",
+        );
+        
+        $self->display_system_message("Sanitize mode set to: $value");
+        $self->display_info_message($mode_desc{$value});
         return;
     }
     
@@ -556,6 +587,15 @@ sub show_global_config {
     );
     my $security_display = "$security_level " . ($sec_desc{$security_level} || '');
     $self->display_key_value("Security Level", $security_display, 18);
+    
+    # Sanitize mode
+    my $sanitize_mode = $self->{config}->get('sanitize_mode') || 'strict';
+    my %san_desc = (
+        strict  => '(warn on invisible char injection)',
+        relaxed => '(filter silently, for binary data)',
+    );
+    my $sanitize_display = "$sanitize_mode " . ($san_desc{$sanitize_mode} || '');
+    $self->display_key_value("Sanitize Mode", $sanitize_display, 18);
     
     # Sandbox status
     my $sandbox = $self->{config}->get('sandbox') ? 'ACTIVE' : 'off';

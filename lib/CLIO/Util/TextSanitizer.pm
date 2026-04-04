@@ -32,9 +32,33 @@ call, covering all points where text enters the AI pipeline.
 =cut
 
 use Exporter 'import';
-our @EXPORT_OK = qw(sanitize_text);
+our @EXPORT_OK = qw(sanitize_text set_sanitize_mode get_sanitize_mode);
 # Re-export InvisibleCharFilter helpers for callers that want raw detection
 push @EXPORT_OK, qw(filter_invisible_chars has_invisible_chars describe_invisible_chars);
+
+# Sanitize mode: 'strict' (default) warns on HIGH-severity invisible chars.
+# 'relaxed' still filters them but suppresses the warning - useful when working
+# with binary data, hex dumps, or extended ANSI that legitimately contains
+# control characters. Set via /config set sanitize_mode relaxed|strict.
+my $SANITIZE_MODE = 'strict';
+
+=head2 set_sanitize_mode
+
+Set the sanitizer mode. 'strict' (default) warns on HIGH-severity invisible
+character detections. 'relaxed' still filters invisible chars but logs at
+debug level instead of warning.
+
+=cut
+
+sub set_sanitize_mode {
+    my ($mode) = @_;
+    if ($mode && $mode =~ /^(strict|relaxed)$/) {
+        $SANITIZE_MODE = $mode;
+        log_debug('TextSanitizer', "Sanitize mode set to: $mode");
+    }
+}
+
+sub get_sanitize_mode { return $SANITIZE_MODE }
 
 =head2 sanitize_text
 
@@ -60,11 +84,11 @@ sub sanitize_text {
     # bypass emoji/pattern filters by hiding between zero-width characters.
     if (has_invisible_chars($text)) {
         my $report = describe_invisible_chars($text);
-        # Only warn for HIGH severity detections (BiDi overrides, Tag block, null byte).
-        # LOW/MEDIUM detections (variation selectors, soft hyphen, unusual whitespace)
-        # appear legitimately in CLIO's own UI strings and tool output, so log at DEBUG.
         my @high = grep { $_->{severity} eq 'HIGH' } @{$report->{detections}};
-        if (@high) {
+        # In strict mode, HIGH-severity detections (BiDi overrides, Tag block, null bytes)
+        # generate a warning. In relaxed mode, all detections log at debug level only.
+        # LOW/MEDIUM detections always log at debug (legitimate in UI strings/tool output).
+        if (@high && $SANITIZE_MODE eq 'strict') {
             log_warning('TextSanitizer', "Invisible character injection attempt detected: $report->{summary}");
         } else {
             log_debug('TextSanitizer', "Stripping invisible Unicode chars: $report->{summary}");
