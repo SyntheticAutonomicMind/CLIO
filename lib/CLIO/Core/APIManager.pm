@@ -2008,7 +2008,7 @@ sub _log_json_error {
     }
 }
 
-# Log full API request to debug log and /tmp/clio_api_debug.log
+# Log full API request to debug log (and /tmp/clio_api_debug.log when --debug)
 sub _log_api_request {
     my ($self, $req, $final_endpoint, $provider_label, $model, $json, $is_streaming, $use_responses_api) = @_;
     my $stream_label = $is_streaming ? "STREAMING " : "";
@@ -2022,7 +2022,7 @@ sub _log_api_request {
         log_debug('APIManager', "[$provider_label ${stream_label}REQUEST] tools: " . (ref($p->{tools}) eq 'ARRAY' ? scalar(@{$p->{tools}}) . " tools" : 'none'));
         log_debug('APIManager', "[$provider_label ${stream_label}REQUEST] messages: " . (ref($p->{messages}) eq 'ARRAY' ? scalar(@{$p->{messages}}) . " messages" : 'none'));
     };
-    if (open my $fh, '>>', '/tmp/clio_api_debug.log') {
+    if ($self->{debug} && open my $fh, '>>', '/tmp/clio_api_debug.log') {
         print $fh "\n" . "=" x 80 . "\n";
         print $fh "[" . scalar(localtime) . "] $provider_label ${stream_label}REQUEST\n";
         print $fh "Endpoint: $final_endpoint\n";
@@ -2049,7 +2049,7 @@ sub _log_api_response {
     log_debug('APIManager', "[$provider_label $label] Status: $status");
     log_debug('APIManager', "[$provider_label $label] Body: " . substr($body, 0, 1500)) unless $is_error;
 
-    if (open my $fh, '>>', '/tmp/clio_api_debug.log') {
+    if ($self->{debug} && open my $fh, '>>', '/tmp/clio_api_debug.log') {
         print $fh "\n" . "-"x80 . "\n";
         print $fh "[" . scalar(localtime) . "] $provider_label $label\n";
         print $fh "Status: $status\n";
