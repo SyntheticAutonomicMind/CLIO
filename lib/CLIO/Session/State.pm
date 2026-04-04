@@ -567,26 +567,17 @@ Calculate importance score for a message.
 Higher scores mean message is more important to preserve.
 
 Factors:
-- First user message: ALWAYS highest priority (10.0) - this is the original task
 - Role: user (1.5x), assistant with tool_calls (2.0x)
-- Recency: exponential decay (older = less important) - except first user
+- Recency: exponential decay (older = less important)
 - Keywords: error/bug/fix/critical (1.3x)
 - Length: log scaling (longer = more detail)
 
-Returns: Importance score (0.0 - 10.0)
+Returns: Importance score (float, decays with age)
 
 =cut
 
 sub calculate_message_importance {
     my ($self, $message, $message_index) = @_;
-    
-    # The FIRST user message (message index 1, after system) is the original task request
-    # It MUST be preserved above all other messages to prevent context loss
-    # Without this, GPT-style models lose track of what they were asked to do
-    if (defined $message_index && $message_index == 1 && 
-        $message->{role} && $message->{role} eq 'user') {
-        return 10.0;  # Maximum importance - never truncate
-    }
     
     my $score = 1.0;
     
@@ -668,41 +659,33 @@ sub trim_context {
     my @messages = @{$self->{history}};
     return unless @messages > 15;  # Don't trim very short conversations
     
-    # Aggressive trimming strategy:
-    # Keep system messages + last 10 messages + some high-importance from middle
-    # This targets ~25-30k tokens for conversation (accounting for system prompt ~10-12k)
+    # Simple tail-preserving trim strategy:
+    # Keep system messages + last N non-system messages.
+    # The proactive trim in MessageValidator handles sophisticated compression
+    # (thread_summary, user message preservation, budget-based walk).
+    # This trim just ensures Session::State history stays bounded.
+    #
+    # Previously this kept "important" middle messages (top 30% by _importance),
+    # which caused old completed tasks to persist across multiple trims while
+    # current work was dropped.
     
-    # Separate message types
+    # Separate system messages (prompt, previous trim notices) from conversation
     my @system = grep { $_->{role} eq 'system' } @messages;
+    my @non_system = grep { $_->{role} ne 'system' } @messages;
     
-    # Keep last 10 messages (most recent context)
-    # This is the core of what agent needs for continuity
+    # Keep the most recent non-system messages (the tail of the conversation)
     my $keep_recent = 10;
-    my @recent = @messages >= $keep_recent ? @messages[-$keep_recent .. -1] : @messages;
+    my @recent = @non_system >= $keep_recent 
+        ? @non_system[-$keep_recent .. -1] 
+        : @non_system;
     
-    # Get messages before the recent set for importance filtering
-    my $start_idx = @messages - $keep_recent;
-    my @middle = @messages[scalar(@system) .. $start_idx - 1];
-    
-    # From middle messages, keep only the most important (top 30%)
-    # This provides context for earlier parts of conversation
-    my @sorted_middle = sort { 
-        ($b->{_importance} // 0) <=> ($a->{_importance} // 0) 
-    } @middle;
-    
-    my $keep_important_count = int(@sorted_middle * 0.3);  # Reduced from 0.5 to 0.3
-    my @important = @sorted_middle[0 .. $keep_important_count - 1];
-    
-    # Restore chronological order for important messages
-    my %important_indices = map { $_ => 1 } @important;
-    @important = grep { $important_indices{$_} } @middle;
-    
-    # Calculate trimming statistics
     my $before = scalar(@messages);
-    my $dropped_count = $before - scalar(@system) - scalar(@important) - scalar(@recent);
+    my $dropped_count = scalar(@non_system) - scalar(@recent);
     
-    # Create trim notification message to inject
-    # This informs the agent that context was trimmed and how to recover
+    # Nothing to trim
+    return if $dropped_count <= 0;
+    
+    # Create trim notification message
     my $trim_notice = {
         role => 'system',
         content => "[CONTEXT TRIM: $dropped_count messages archived]\n" .
@@ -714,12 +697,11 @@ sub trim_context {
                    "3. memory_operations(operation: 'recall_sessions', query: '<keywords>') for session history\n" .
                    "4. git log and todo_operations(operation: 'read') to verify current state\n" .
                    "DO NOT read handoff documents in ai-assisted/ - use the tools above instead.",
-        _importance => 0.5,  # Medium importance - should be retained in next trim
+        _importance => 0.5,
     };
     
-    # Reconstruct trimmed history with notification
-    # Insert notification after system messages but before important/recent
-    my @trimmed = (@system, $trim_notice, @important, @recent);
+    # Reconstruct: system messages + trim notice + recent tail
+    my @trimmed = (@system, $trim_notice, @recent);
     
     # Log trimming
     my $after = scalar(@trimmed);
@@ -727,7 +709,7 @@ sub trim_context {
         use CLIO::Memory::TokenEstimator;
         my $before_tokens = CLIO::Memory::TokenEstimator::estimate_messages_tokens(\@messages);
         my $after_tokens = CLIO::Memory::TokenEstimator::estimate_messages_tokens(\@trimmed);
-        log_info('SessionState', "Aggressive trim: $before -> $after messages ($before_tokens -> $after_tokens tokens, " .
+        log_info('SessionState', "Context trim: $before -> $after messages ($before_tokens -> $after_tokens tokens, " .
                      int(($after_tokens / $before_tokens) * 100) . "% retained)");
         log_debug('SessionState', "[STATE] Trim notification injected - agent notified of archived context");
     }

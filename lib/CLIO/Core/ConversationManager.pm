@@ -299,7 +299,6 @@ sub trim_conversation_for_api {
     }
 
     my @messages = @$history;
-    my @trimmed = ();
 
     # Calculate target based on available space
     my $target_tokens = int(($safe_threshold - $system_tokens) * 0.9);
@@ -309,94 +308,36 @@ sub trim_conversation_for_api {
         log_warning('ConversationManager', "Target tokens very low ($target_tokens), system prompt may be too large");
     }
 
-    my $keep_recent = 10;
     my $current_count = scalar(@messages);
 
-    # Step 1: Extract and preserve the first user message (critical for context)
-    my $first_user_msg = undef;
-    my $first_user_tokens = 0;
-    my $first_user_idx = -1;
+    # Tail-preserving trim: walk backwards from newest message, keeping
+    # messages until token budget is exhausted. This ensures the most recent
+    # context (current task) survives, not old completed tasks.
+    # The proactive trim in MessageValidator handles sophisticated compression
+    # with thread_summary generation. This is a simple budget-based tail keep.
 
-    for my $i (0 .. $#messages) {
+    my @kept = ();
+    my $kept_tokens = 0;
+
+    for my $i (reverse 0 .. $#messages) {
         my $msg = $messages[$i];
-        if ($msg->{role} && $msg->{role} eq 'user') {
-            if (($msg->{_importance} // 0) >= 10.0) {
-                $first_user_msg = $msg;
-                $first_user_tokens = CLIO::Memory::TokenEstimator::estimate_tokens($msg->{content} // '');
-                $first_user_idx = $i;
-                log_debug('ConversationManager', "Preserving first user message (importance=" . ($msg->{_importance} // 0) . ", tokens=$first_user_tokens)");
-            }
+        my $msg_tokens = CLIO::Memory::TokenEstimator::estimate_tokens($msg->{content} // '');
+        if ($kept_tokens + $msg_tokens <= $target_tokens) {
+            unshift @kept, $msg;
+            $kept_tokens += $msg_tokens;
+        } else {
+            # Budget exhausted - stop adding older messages
             last;
         }
     }
 
-    my $reserved_tokens = $first_user_tokens;
-    my $available_tokens = $target_tokens - $reserved_tokens;
-
-    if ($current_count > $keep_recent) {
-        my @recent = ();
-        for my $i (($current_count - $keep_recent) .. ($current_count - 1)) {
-            next if $i == $first_user_idx;
-            push @recent, $messages[$i] if $i >= 0;
-        }
-
-        my @older = ();
-        for my $i (0 .. ($current_count - $keep_recent - 1)) {
-            next if $i == $first_user_idx;
-            push @older, $messages[$i] if $i >= 0;
-        }
-
-        my @sorted_older = sort {
-            ($b->{_importance} // 0) <=> ($a->{_importance} // 0)
-        } @older;
-
-        my $trimmed_tokens = 0;
-        my @kept_recent = ();
-
-        for my $msg (@recent) {
-            my $msg_tokens = CLIO::Memory::TokenEstimator::estimate_tokens($msg->{content} // '');
-            if ($trimmed_tokens + $msg_tokens <= $available_tokens) {
-                push @kept_recent, $msg;
-                $trimmed_tokens += $msg_tokens;
-            }
-        }
-
-        my @kept_older = ();
-        for my $msg (@sorted_older) {
-            my $msg_tokens = CLIO::Memory::TokenEstimator::estimate_tokens($msg->{content} // '');
-            if ($trimmed_tokens + $msg_tokens <= $available_tokens) {
-                push @kept_older, $msg;
-                $trimmed_tokens += $msg_tokens;
-            }
-        }
-
-        @trimmed = ();
-        push @trimmed, $first_user_msg if $first_user_msg;
-
-        @kept_older = sort {
-            my $idx_a = 0;
-            my $idx_b = 0;
-            for my $i (0 .. $#messages) {
-                $idx_a = $i if $messages[$i] == $a;
-                $idx_b = $i if $messages[$i] == $b;
-            }
-            $idx_a <=> $idx_b
-        } @kept_older;
-
-        push @trimmed, @kept_older;
-        push @trimmed, @kept_recent;
-
-        my $final_tokens = $reserved_tokens + $trimmed_tokens;
-        if ($debug) {
-            log_debug('ConversationManager', "Trimmed: " . scalar(@messages) . " -> " . scalar(@trimmed) . " messages");
-            log_debug('ConversationManager', "First user preserved: " . ($first_user_msg ? 'YES' : 'NO') .
-                ($first_user_msg ? " ($first_user_tokens tokens)" : ""));
-            log_debug('ConversationManager', "Token reduction: $history_tokens -> $final_tokens tokens");
-            log_debug('ConversationManager', "Final total with system: " . ($system_tokens + $final_tokens) . " of $safe_threshold safe limit");
-        }
-
-        return \@trimmed;
+    if ($debug) {
+        log_debug('ConversationManager', "Trimmed: " . scalar(@messages) . " -> " . scalar(@kept) . " messages");
+        log_debug('ConversationManager', "Token reduction: $history_tokens -> $kept_tokens tokens");
+        log_debug('ConversationManager', "Final total with system: " . ($system_tokens + $kept_tokens) . " of $safe_threshold safe limit");
     }
+
+    return \@kept if @kept;
 
     return $history;
 }
