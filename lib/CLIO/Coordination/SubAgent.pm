@@ -168,7 +168,7 @@ sub run_oneshot_agent {
     $ENV{IS_SUBAGENT} = 1;  # Triggers sub-agent instructions in PromptManager
     
     # Build CLIO command
-    my $model = $options{model} || 'gpt-5-mini';
+    my $model = $options{model} || croak "No model specified for sub-agent";
     my $debug = $options{debug} || 0;
     my @cmd = (
         $clio_path,
@@ -214,7 +214,7 @@ sub run_persistent_agent {
     
     # Create Config and Session (same as main CLIO initialization)
     my $config = CLIO::Core::Config->new();
-    my $model = $options{model} || 'gpt-5-mini';
+    my $model = $options{model} || croak "No model specified for sub-agent";
     my $debug = $options{debug} || 0;
     
     # Create a session for this agent (required for API tracking, history, etc.)

@@ -46,7 +46,7 @@ Spawn and manage sub-agents to work on tasks in parallel.
 -  spawn - Create a new sub-agent with a specific task
    Parameters: 
      task (required): Natural language description of what the agent should do
-     model (optional): AI model to use (default: gpt-5-mini)
+     model (optional): AI model to use (default: current session model)
      persistent (optional): Keep agent alive for multiple tasks (default: false)
    Returns: Agent ID and confirmation
 
@@ -117,7 +117,7 @@ sub schema {
             },
             model => {
                 type => 'string',
-                description => 'AI model for spawn (default: gpt-5-mini)',
+                description => 'AI model for spawn (default: current session model)',
             },
             persistent => {
                 type => 'boolean',
@@ -148,7 +148,7 @@ sub execute {
     }
     
     if ($operation eq 'spawn') {
-        return $self->spawn($params, $subagent_cmd);
+        return $self->spawn($params, $subagent_cmd, $context);
     }
     elsif ($operation eq 'list') {
         return $self->list($subagent_cmd);
@@ -259,12 +259,13 @@ sub _get_subagent_handler {
 }
 
 sub spawn {
-    my ($self, $params, $handler) = @_;
+    my ($self, $params, $handler, $context) = @_;
     
     my $task = $params->{task};
     return $self->error_result("Missing 'task' parameter") unless $task;
     
-    my $model = $params->{model} || 'gpt-5-mini';
+    # Use explicitly requested model, or inherit the current session model
+    my $model = $params->{model} || ($context && $context->{current_model}) || 'unknown';
     my $persistent = $params->{persistent} ? 1 : 0;
     
     # Truncate task for display
@@ -666,11 +667,10 @@ __END__
 
 The AI can use this tool to spawn and coordinate multiple sub-agents:
 
-    # Spawn a sub-agent
+    # Spawn a sub-agent (inherits current session model)
     agent_operations(
         operation => "spawn",
         task => "Create a test file in scratch/",
-        model => "gpt-5-mini"
     )
     
     # Check agent status

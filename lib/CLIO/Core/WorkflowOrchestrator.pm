@@ -128,6 +128,7 @@ sub new {
         ui => $args{ui},  # Forward UI for user_collaboration
         spinner => $args{spinner},  # Forward spinner for interactive tools
         broker_client => $args{broker_client},  # Forward broker client for coordination
+        api_manager => $args{api_manager},  # Forward api_manager for current model info
         debug => $args{debug}
     );
     

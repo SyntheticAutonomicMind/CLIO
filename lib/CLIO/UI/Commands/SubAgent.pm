@@ -142,7 +142,7 @@ sub cmd_spawn {
     }
     
     # Parse options (--model, --persistent, etc)
-    my $model = 'gpt-5-mini';  # default
+    my $model;  # default: inherit current session model
     my $persistent = 0;  # default to oneshot mode
     
     if ($task =~ s/\s*--model\s+(\S+)\s*/ /) {
@@ -150,6 +150,16 @@ sub cmd_spawn {
     }
     if ($task =~ s/\s*--persistent\s*/ /) {
         $persistent = 1;
+    }
+    
+    # If no model specified, inherit from the current session
+    unless ($model) {
+        if ($self->{chat} && $self->{chat}{ai_agent} && $self->{chat}{ai_agent}{api}) {
+            $model = $self->{chat}{ai_agent}{api}->get_current_model();
+        }
+        unless ($model) {
+            return "ERROR: No model specified and could not determine current session model. Use --model <name>.";
+        }
     }
     
     # Clean up extra whitespace
@@ -748,7 +758,7 @@ sub cmd_help {
     
     $self->display_section_header("LIFECYCLE");
     $self->display_command_row("/subagent spawn <task>", "Spawn new sub-agent with task", 35);
-    $self->display_command_row("  --model <model>", "Specify AI model (default: gpt-5-mini)", 35);
+    $self->display_command_row("  --model <model>", "Specify AI model (default: current session model)", 35);
     $self->display_command_row("  --persistent", "Keep agent alive for multiple tasks", 35);
     $self->display_command_row("/subagent list", "List all sub-agents and their status", 35);
     $self->display_command_row("/subagent status <id>", "Show detailed agent status", 35);
