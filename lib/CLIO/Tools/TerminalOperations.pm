@@ -703,8 +703,16 @@ sub _prompt_command_confirmation {
     print $ui->colorize("  Options: ", 'BOLD');
     print "(y)es once, (a)llow category for session, (n)o deny\n";
 
-    # Use Term::ReadKey for single-character input
+    # Suspend ALRM handler - Chat.pm's 1-second timer calls ReadKey(-1)
+    # which consumes keystrokes before <STDIN> can read them
+    my $saved_alrm = $SIG{ALRM};
+    my $remaining_alarm = alarm(0);
+
     require CLIO::Compat::Terminal;
+
+    # Flush any buffered ReadKey input from cbreak mode
+    while (defined(eval { CLIO::Compat::Terminal::ReadKey(-1) })) { }
+
     CLIO::Compat::Terminal::ReadMode(0);  # Normal mode for input
 
     print $ui->colorize("  > ", 'PROMPT');
@@ -713,8 +721,11 @@ sub _prompt_command_confirmation {
     chomp($response) if defined $response;
     $response = lc($response || 'n');
 
-    # Restore cbreak mode
     CLIO::Compat::Terminal::ReadMode(1);
+
+    # Restore ALRM handler
+    $SIG{ALRM} = $saved_alrm || 'DEFAULT';
+    alarm($remaining_alarm) if $remaining_alarm;
 
     # Restart spinner
     $spinner->start() if $spinner && $spinner->can('start');
