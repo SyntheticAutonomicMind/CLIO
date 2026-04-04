@@ -799,6 +799,23 @@ sub process_input {
         $final_content =~ s/\[\/conversation\]$//;
         $final_content =~ s/^\s+|\s+$//g;
         
+        # Save the final assistant text response to session history.
+        # During tool-calling workflows, _execute_tool_round saves intermediate
+        # assistant+tool message pairs. But the FINAL text-only response (the one
+        # that ends the loop) is not saved there - it exits through here.
+        # Without this save, the final message is streamed to screen but never
+        # persisted, causing context loss on the next turn.
+        if (@tool_calls_made > 0 && length($final_content) > 0 && $session && $session->can('add_message')) {
+            eval {
+                my $sanitized = sanitize_text($final_content);
+                $session->add_message('assistant', $sanitized);
+                log_debug('WorkflowOrchestrator', "Saved final assistant response to session (" . length($sanitized) . " chars)");
+            };
+            if ($@) {
+                log_warning('WorkflowOrchestrator', "Failed to save final assistant response: $@");
+            }
+        }
+
         # Build result hash
         my $result = {
             success => 1,
@@ -806,10 +823,8 @@ sub process_input {
             iterations => $iteration,
             tool_calls_made => \@tool_calls_made,
             elapsed_time => $elapsed_time,
-            # Flag to indicate messages were already saved during workflow execution.
-            # This prevents Chat.pm from saving duplicates after the workflow completes.
-            # Tool-calling workflows save messages atomically (assistant + tool results together),
-            # so Chat.pm should NOT save another assistant message.
+            # All messages (including the final response above) are now saved during
+            # workflow execution. This flag prevents Chat.pm from saving duplicates.
             messages_saved_during_workflow => (@tool_calls_made > 0) ? 1 : 0
         };
         
