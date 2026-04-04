@@ -70,6 +70,7 @@ sub new {
         ui => $args{ui},  # Store UI for tools
         spinner => $args{spinner},  # Store spinner for interactive tools
         broker_client => $args{broker_client},  # Broker client for multi-agent coordination
+        api_manager => $args{api_manager},  # API manager for current model info
         debug => $args{debug} || 0,
         storage => CLIO::Session::ToolResultStore->new(debug => $args{debug}),
     };
@@ -269,6 +270,12 @@ sub execute_tool {
         }
     }
     
+    # Get current model from api_manager for tools that need it (e.g., sub-agent spawning)
+    my $current_model;
+    if ($self->{api_manager} && $self->{api_manager}->can('get_current_model')) {
+        $current_model = $self->{api_manager}->get_current_model();
+    }
+
     my $result = $tool->execute($arguments, {
         session => $self->{session},
         config => $self->{config},  # Pass config for API keys (web search)
@@ -278,6 +285,7 @@ sub execute_tool {
         broker_client => $self->{broker_client},  # Provide broker for coordination
         file_vault => $self->{file_vault},  # FileVault for undo tracking
         vault_turn_id => $self->{vault_turn_id},  # Current turn ID for vault
+        current_model => $current_model,  # Current session model for sub-agents
     });
     
     my $execution_time_ms = int((time() - $start_time) * 1000);
