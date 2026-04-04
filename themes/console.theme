@@ -43,6 +43,10 @@ confirmation_prompt={style.prompt_indicator}{var.question} {style.data}{var.opti
 confirmation_prompt_no_options={style.prompt_indicator}{var.question} {style.dim}(Enter={var.default_action}): @RESET@
 confirmation_prompt_short={style.prompt_indicator}{var.question}{style.dim}: @RESET@
 
+# Security prompts (command/script approval)
+security_prompt={style.warning_message}Security{style.dim} | {style.data}{var.target}{style.dim} | {var.flags}@RESET@
+security_prompt_input={style.data}{var.options}{style.dim}: @RESET@
+
 # Messages - simple prefixes
 user_message_prefix={style.user_text}YOU: @RESET@
 agent_message_prefix={style.agent_label}{var.agent_name}: @RESET@
