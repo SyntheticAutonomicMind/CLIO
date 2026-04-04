@@ -1599,7 +1599,8 @@ sub create_file {
         }
         
         # Write file using atomic write pattern (secure_open -> write -> secure_close)
-        my ($fh, $temp_path) = $self->_secure_open($path, 0600, $context);
+        my $mode = $self->_get_file_mode($path, $content);
+        my ($fh, $temp_path) = $self->_secure_open($path, $mode, $context);
         print $fh $content;
         $self->_secure_close($fh, $temp_path, $path, $context);
         
@@ -1690,7 +1691,8 @@ sub write_file {
     my $result;
     eval {
         # Write file using atomic write pattern
-        my ($fh, $temp_path) = $self->_secure_open($path, 0600, $context);
+        my $mode = $self->_get_file_mode($path, $content);
+        my ($fh, $temp_path) = $self->_secure_open($path, $mode, $context);
         print $fh $content;
         $self->_secure_close($fh, $temp_path, $path, $context);
         
@@ -1862,7 +1864,8 @@ sub replace_string {
         $content =~ s/\Q$old_string\E/$new_string/g;
         
         # Write back using atomic write pattern
-        my ($write_fh, $temp_path) = $self->_secure_open($path, 0600, $context);
+        my $mode = $self->_get_file_mode($path);
+        my ($write_fh, $temp_path) = $self->_secure_open($path, $mode, $context);
         print $write_fh $content;
         $self->_secure_close($write_fh, $temp_path, $path, $context);
         
@@ -2064,7 +2067,8 @@ sub insert_at_line {
         splice @lines, $line_number - 1, 0, $content;
         
         # Write back using atomic write pattern
-        my ($write_fh, $temp_path) = $self->_secure_open($path, 0600, $context);
+        my $mode = $self->_get_file_mode($path);
+        my ($write_fh, $temp_path) = $self->_secure_open($path, $mode, $context);
         print $write_fh @lines;
         $self->_secure_close($write_fh, $temp_path, $path, $context);
         
@@ -2475,6 +2479,48 @@ sub _get_umask {
     return umask();
 }
 
+=head2 _get_file_mode
+
+Determine the appropriate permission mode for a file.
+
+For existing files: preserves current permissions.
+For new files: returns 0644 for regular files, 0755 for scripts.
+
+Parameters:
+  - path: File path
+  - content: File content (used to detect scripts for new files)
+
+Returns: Permission mode as octal integer
+
+=cut
+
+sub _get_file_mode {
+    my ($self, $path, $content) = @_;
+
+    # Existing file: preserve its current permissions
+    if (-e $path) {
+        my @stat = stat($path);
+        if (@stat) {
+            return $stat[2] & 07777;
+        }
+    }
+
+    # New file: detect if it's a script
+    my $is_script = 0;
+
+    # Check extension
+    if ($path =~ /\.(sh|bash|zsh|fish|py|pl|rb|cgi|ps1|bat|cmd)$/i) {
+        $is_script = 1;
+    }
+
+    # Check shebang
+    if (defined $content && $content =~ /^#!\s*\//) {
+        $is_script = 1;
+    }
+
+    return $is_script ? 0755 : 0644;
+}
+
 =head2 _secure_open
 
 Open a file for writing with secure permissions.
@@ -2482,7 +2528,7 @@ Uses atomic write pattern: write to temp file, then rename.
 
 Parameters:
   - path: Target file path
-  - mode: Permission mode for new file (default: 0600 for files)
+  - mode: Permission mode for the file (use _get_file_mode to determine)
   - context: Context hashref with config
 
 Returns: filehandle on success, croaks on failure
