@@ -513,10 +513,8 @@ if ($mode eq 'new') {
                              // $session_state->{selected_model};
             
             if ($session_model) {
-                $config->set('model', $session_model, 0);  # 0 = don't mark as user-set
-                print STDERR "[DEBUG] Applied session model to config: $session_model\n" if $debug;
-                
-                # Also load the provider's api_key - extract provider from model prefix
+                # Load provider config first (api_base, api_key), THEN set model
+                # set_provider() overwrites model with provider default, so model must come after
                 if ($session_model =~ m{^([a-z][a-z0-9_.-]*)/}i) {
                     my $session_provider = $1;
                     require CLIO::Providers;
@@ -529,6 +527,10 @@ if ($mode eq 'new') {
                         print STDERR "[DEBUG] Loaded api_key for provider '$session_provider' from session restore\n" if $debug;
                     }
                 }
+                
+                # Apply session model AFTER set_provider to avoid being overwritten
+                $config->set('model', $session_model, 0);  # 0 = don't mark as user-set
+                print STDERR "[DEBUG] Applied session model to config: $session_model\n" if $debug;
             }
         }
     }
