@@ -61,6 +61,8 @@ use constant DEFAULT_CONFIG => {
     redact_level => 'pii',      # Redaction level: strict, standard, api_permissive, pii, off (default: pii)
     # Command security analysis level
     security_level => 'standard',  # Command security: relaxed, standard, strict (default: standard)
+    # Text sanitizer mode: strict (warn on invisible char injection), relaxed (filter silently)
+    sanitize_mode => 'strict',
     # File/directory creation umask (controls default permissions)
     # Value is octal as integer: 0077 (restrictive), 0022 (standard), 0000 (permissive)
     # Setting this to 0077 ensures files are only readable/writable by owner
