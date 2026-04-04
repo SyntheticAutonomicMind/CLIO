@@ -328,13 +328,40 @@ sub commit {
         my $original_cwd = getcwd();
         chdir $repo_path if $repo_path ne '.';
         
+        # Auto-stage all tracked changes before commit
+        # This matches typical agent workflow: make changes, then commit
+        my $add_output = `git add -A 2>&1`;
+        my $add_exit = $? >> 8;
+        if ($add_exit != 0) {
+            chdir $original_cwd if $repo_path ne '.';
+            $result = $self->error_result("git add failed (exit $add_exit): $add_output");
+            return;
+        }
+        
+        # Check if there's anything to commit after staging
+        my $status = `git status --porcelain 2>&1`;
+        if (!$status || $status =~ /^\s*$/) {
+            chdir $original_cwd if $repo_path ne '.';
+            $result = $self->error_result(
+                "Nothing to commit - working tree clean.\n" .
+                "No modified, added, or deleted files detected."
+            );
+            return;
+        }
+        
         # Properly escape message for shell - use single quotes and escape embedded single quotes
         my $escaped_message = $message;
         $escaped_message =~ s/'/'\\''/g;  # Replace ' with '\''
         
         my $output = `git commit -m '$escaped_message' 2>&1`;
+        my $exit_code = $? >> 8;
         
         chdir $original_cwd if $repo_path ne '.';
+        
+        if ($exit_code != 0) {
+            $result = $self->error_result("git commit failed (exit $exit_code): $output");
+            return;
+        }
         
         my $action_desc = "committing changes";
         
