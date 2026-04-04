@@ -2395,28 +2395,19 @@ sub _prompt_script_confirmation {
     my $spinner = ($context && $context->{spinner}) ? $context->{spinner} : undef;
     $spinner->stop() if $spinner && $spinner->can('stop');
 
-    print "\n";
-    print $ui->colorize("  SCRIPT SECURITY CHECK ", 'WARNING');
-    print "\n\n";
-
-    my $display_path = $path;
-    if (length($display_path) > 100) {
-        $display_path = '...' . substr($display_path, -97);
+    # Use themed security prompt
+    my $theme_mgr = $ui->{theme_mgr};
+    if ($theme_mgr && $theme_mgr->can('get_security_prompt')) {
+        my ($prompt_line, $input_line) = $theme_mgr->get_security_prompt(
+            $path,
+            $scan_result->{flags},
+            '(y)es once | (a)llow scripts | (n)o deny',
+        );
+        print "\n$prompt_line\n$input_line";
+    } else {
+        my $display_path = length($path) > 80 ? '...' . substr($path, -77) : $path;
+        print "\n* Security | $display_path\n  (y)es once | (a)llow scripts | (n)o deny: ";
     }
-    print $ui->colorize("  File: ", 'BOLD');
-    print "$display_path\n\n";
-
-    for my $flag (@{$scan_result->{flags}}) {
-        my $severity_color = 'WARNING';
-        $severity_color = 'ERROR' if $flag->{severity} eq 'high' || $flag->{severity} eq 'critical';
-
-        print $ui->colorize("  [$flag->{severity}] ", $severity_color);
-        print "$flag->{description}\n";
-    }
-
-    print "\n";
-    print $ui->colorize("  Options: ", 'BOLD');
-    print "(y)es once, (a)llow scripts for session, (n)o deny\n";
 
     # Suspend ALRM handler - Chat.pm's 1-second timer calls ReadKey(-1)
     # which consumes keystrokes before <STDIN> can read them
@@ -2429,8 +2420,6 @@ sub _prompt_script_confirmation {
     while (defined(eval { CLIO::Compat::Terminal::ReadKey(-1) })) { }
 
     CLIO::Compat::Terminal::ReadMode(0);
-
-    print $ui->colorize("  > ", 'PROMPT');
 
     my $response = <STDIN>;
     chomp($response) if defined $response;

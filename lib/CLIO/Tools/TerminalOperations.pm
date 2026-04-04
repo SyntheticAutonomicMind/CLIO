@@ -660,48 +660,30 @@ sub _prompt_command_confirmation {
         }
     }
 
-    # We need the UI to prompt the user
     my $ui = ($context && $context->{ui}) ? $context->{ui} : undef;
 
     unless ($ui && $ui->can('colorize')) {
-        # No UI available (non-interactive mode) - deny by default
         log_warning('TermOps', "No UI for security prompt - denying command");
         return 0;
     }
 
-    # Stop spinner if active
     my $spinner = ($context && $context->{spinner}) ? $context->{spinner} : undef;
     $spinner->stop() if $spinner && $spinner->can('stop');
 
-    # Build the confirmation display
-    print "\n";
-    print $ui->colorize("  SECURITY CHECK ", 'ERROR');
-    print "\n\n";
-
-    # Show the command (truncated if very long)
-    my $display_cmd = $command;
-    if (length($display_cmd) > 200) {
-        $display_cmd = substr($display_cmd, 0, 197) . '...';
+    # Use themed security prompt
+    my $theme_mgr = $ui->{theme_mgr};
+    if ($theme_mgr && $theme_mgr->can('get_security_prompt')) {
+        my ($prompt_line, $input_line) = $theme_mgr->get_security_prompt(
+            $command,
+            $analysis->{flags},
+            '(y)es once | (a)llow category | (n)o deny',
+        );
+        print "\n$prompt_line\n$input_line";
+    } else {
+        # Minimal fallback if no theme available
+        my $display_cmd = length($command) > 80 ? substr($command, 0, 77) . '...' : $command;
+        print "\n* Security | $display_cmd\n  (y)es once | (a)llow category | (n)o deny: ";
     }
-    print $ui->colorize("  Command: ", 'BOLD');
-    print "$display_cmd\n\n";
-
-    # Show flags
-    for my $flag (@{$analysis->{flags}}) {
-        my $severity_color = 'WARNING';
-        $severity_color = 'ERROR' if $flag->{severity} eq 'high' || $flag->{severity} eq 'critical';
-
-        print $ui->colorize("  [$flag->{severity}] ", $severity_color);
-        print "$flag->{description}\n";
-        if ($flag->{details}) {
-            print $ui->colorize("          ", 'DIM');
-            print $ui->colorize("$flag->{details}\n", 'DIM');
-        }
-    }
-
-    print "\n";
-    print $ui->colorize("  Options: ", 'BOLD');
-    print "(y)es once, (a)llow category for session, (n)o deny\n";
 
     # Suspend ALRM handler - Chat.pm's 1-second timer calls ReadKey(-1)
     # which consumes keystrokes before <STDIN> can read them
@@ -713,9 +695,7 @@ sub _prompt_command_confirmation {
     # Flush any buffered ReadKey input from cbreak mode
     while (defined(eval { CLIO::Compat::Terminal::ReadKey(-1) })) { }
 
-    CLIO::Compat::Terminal::ReadMode(0);  # Normal mode for input
-
-    print $ui->colorize("  > ", 'PROMPT');
+    CLIO::Compat::Terminal::ReadMode(0);
 
     my $response = <STDIN>;
     chomp($response) if defined $response;
@@ -727,13 +707,11 @@ sub _prompt_command_confirmation {
     $SIG{ALRM} = $saved_alrm || 'DEFAULT';
     alarm($remaining_alarm) if $remaining_alarm;
 
-    # Restart spinner
     $spinner->start() if $spinner && $spinner->can('start');
 
     if ($response eq 'y' || $response eq 'yes') {
         return 1;
     } elsif ($response eq 'a' || $response eq 'allow') {
-        # Grant session-level permission for all flagged categories
         for my $flag (@{$analysis->{flags}}) {
             $_session_grants{$flag->{category}} = 1;
             log_info('TermOps', "Session grant added for category: $flag->{category}");

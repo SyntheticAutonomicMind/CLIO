@@ -45,6 +45,10 @@ confirmation_prompt={style.dim}{char.bullet} {style.prompt_indicator}{var.questi
 confirmation_prompt_no_options={style.dim}{char.bullet} {style.prompt_indicator}{var.question}{style.dim} {char.pipe} {style.data}Enter{style.dim} to {style.data}{var.default_action}{style.dim}: @RESET@
 confirmation_prompt_short={style.dim}{char.bullet} {style.prompt_indicator}{var.question}{style.dim}: @RESET@
 
+# Security prompts (command/script approval)
+security_prompt={style.dim}{char.bullet} {style.warning_message}Security{style.dim} {char.pipe} {style.data}{var.target}{style.dim} {char.pipe} {var.flags}@RESET@
+security_prompt_input={style.dim}  {style.data}{var.options}{style.dim}: @RESET@
+
 # Messages
 user_message_prefix={style.user_text}YOU: @RESET@
 agent_message_prefix={style.agent_label}{var.agent_name}: @RESET@

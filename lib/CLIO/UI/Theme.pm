@@ -579,6 +579,52 @@ sub get_confirmation_prompt {
     });
 }
 
+=head2 get_security_prompt
+
+Get a themed security confirmation prompt for command/script approval.
+
+Arguments:
+  - target: The command or file path being checked
+  - flags: Arrayref of flag hashrefs [{severity, description, details}, ...]
+  - options: Options text (e.g., "(y)es once | (a)llow category | (n)o deny")
+
+Returns: ($prompt_line, $input_line) - two rendered strings
+
+=cut
+
+sub get_security_prompt {
+    my ($self, $target, $flags, $options) = @_;
+
+    # Truncate target if very long
+    if (length($target) > 80) {
+        $target = substr($target, 0, 77) . '...';
+    }
+
+    # Build compact flag descriptions using style colors directly
+    my @flag_parts;
+    for my $flag (@$flags) {
+        my $is_high = ($flag->{severity} eq 'high' || $flag->{severity} eq 'critical');
+        my $sev_color = $is_high ? $self->get_color('error_message') : $self->get_color('warning_message');
+        my $dim = $self->get_color('dim');
+        my $reset = $self->{ansi}->parse('@RESET@');
+        push @flag_parts, "${sev_color}[$flag->{severity}]${dim} $flag->{description}${reset}";
+    }
+    my $flags_str = join($self->{ansi}->parse('@DIM@') . ', ', @flag_parts);
+
+    # Render the prompt line
+    my $prompt_line = $self->render('security_prompt', {
+        target => $target,
+        flags => $flags_str,
+    });
+
+    # Render the input line
+    my $input_line = $self->render('security_prompt_input', {
+        options => $options,
+    });
+
+    return ($prompt_line, $input_line);
+}
+
 =head2 save_style
 
 Save current style to a new file
@@ -792,6 +838,10 @@ sub get_builtin_theme {
         confirmation_prompt_no_options => '{style.dim}{char.bullet} {style.prompt_indicator}{var.question}{style.dim} {char.pipe} {style.data}Enter{style.dim} to {style.data}{var.default_action}{style.dim}: @RESET@',
         confirmation_prompt_short => '{style.dim}{char.bullet} {style.prompt_indicator}{var.question}{style.dim}: @RESET@',
         
+        # Security prompts (command/script approval)
+        security_prompt => '{style.dim}{char.bullet} {style.warning_message}Security{style.dim} {char.pipe} {style.data}{var.target}{style.dim} {char.pipe} {var.flags}@RESET@',
+        security_prompt_input => '{style.dim}  {style.data}{var.options}{style.dim}: @RESET@',
+        
         # Messages
         user_message_prefix => '{style.user_text}YOU: @RESET@',
         agent_message_prefix => '{style.agent_label}{var.agent_name}: @RESET@',
@@ -871,6 +921,8 @@ sub get_required_theme_keys {
         confirmation_prompt
         confirmation_prompt_no_options
         confirmation_prompt_short
+        security_prompt
+        security_prompt_input
         user_message_prefix
         agent_message_prefix
     );
