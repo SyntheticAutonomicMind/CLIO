@@ -127,7 +127,6 @@ use CLIO::Core::SimpleAIAgent;
 use CLIO::Core::Config;
 use CLIO::Session::Manager;
 use CLIO::Protocols::Manager;
-use CLIO::Core::CommandParser;
 
 # Register ALL protocol handlers including enhanced protocols
 CLIO::Protocols::Manager->register(name => 'FILE_OP', handler => 'CLIO::Protocols::FileOp');
@@ -701,151 +700,64 @@ if ($input) {
         exit 0;
     }
     
-    # Create command parser for stacked commands
-    my $parser = CLIO::Core::CommandParser->new(debug => $debug);
-    my $commands = $parser->parse_commands($input);
-    
-    if ($debug) {
-        print "[DEBUG] Processing " . scalar(@$commands) . " commands\n";
+    # Handle slash commands locally (don't send to AI)
+    if ($input =~ /^\/(\S+)/) {
+        my $cmd_name = lc($1);
+        if ($cmd_name eq 'help' || $cmd_name eq 'h' || $cmd_name eq '?') {
+            my $_agent_name = $ENV{CLIO_AGENT_NAME} || 'CLIO';
+            print "[SYSTEM] $_agent_name Slash Commands:\n";
+            print "  /help, /h, /?              Display help\n";
+            print "  /exit, /quit, /q           Exit $_agent_name\n";
+            print "  /session                   Show session ID\n";
+            print "  /config                    Show configuration\n";
+            print "  /api                       Show API status\n";
+            print "\n";
+            print "For full command list, use interactive mode (./clio)\n";
+        }
+        elsif ($cmd_name eq 'session') {
+            print "[SYSTEM] Current session: " . ($session->{session_id} || 'unknown') . "\n";
+        }
+        else {
+            print "[SYSTEM] Unknown slash command: /$cmd_name\n";
+            print "[SYSTEM] Note: Most commands only work in interactive mode\n";
+        }
     }
-    
-    # Process each command in sequence
-    for my $i (0 .. $#{$commands}) {
-        my $command = $commands->[$i];
+    else {
+        # Send input directly to AI agent
+        my $result = $ai_agent->process_user_request($input, {
+            current_file => $session->{state}->{current_file},
+            working_directory => $session->{state}->{working_directory},
+            conversation_history => $session->{state}->{history}
+        });
         
-        if ($debug) {
-            print "[DEBUG] Processing command " . ($i + 1) . ": '$command'\n";
-        }
-        
-        # Handle slash commands locally (don't send to AI)
-        if ($command =~ /^\//) {
-            print STDERR "[DEBUG] Detected slash command: $command\n" if $debug;
+        if ($result->{success}) {
+            my $response = $result->{final_response};
+            $response =~ s/^\[conversation\]//;
+            $response =~ s/\[\/conversation\]$//;
+            $response =~ s/^\s+|\s+$//g;
             
-            # Extract command and args
-            my $cmd = $command;
-            $cmd =~ s/^\///;  # Remove leading slash
-            my ($cmd_name, @cmd_args) = split /\s+/, $cmd;
-            $cmd_name = lc($cmd_name);
+            $last_response = $response;
+            $session->add_message('assistant', $response);
             
-            # Handle common slash commands
-            if ($cmd_name eq 'help' || $cmd_name eq 'h' || $cmd_name eq '?') {
-                my $_agent_name = $ENV{CLIO_AGENT_NAME} || 'CLIO';
-                print "[SYSTEM] $_agent_name Slash Commands:\n";
-                print "  /help, /h, /?              Display help\n";
-                print "  /exit, /quit, /q           Exit $_agent_name\n";
-                print "  /clear, /cls               Clear screen\n";
-                print "  /reset                     Reset terminal state\n";
-                print "  /debug                     Toggle debug mode\n";
-                print "  /session                   Show session ID\n";
-                print "  /config                    Show configuration\n";
-                print "  /api                       Show API status\n";
-                print "  /subagent, /agent          Multi-agent commands\n";
-                print "\n";
-                print "For full command list, use interactive mode (./clio)\n";
-                next;  # Skip to next command
-            }
-            elsif ($cmd_name eq 'exit' || $cmd_name eq 'quit' || $cmd_name eq 'q') {
-                print "[SYSTEM] Exiting...\n";
-                last;  # Exit command loop
-            }
-            elsif ($cmd_name eq 'debug') {
-                $debug = !$debug;
-                $ENV{CLIO_LOG_LEVEL} = $debug ? 'DEBUG' : 'INFO';
-                print "[SYSTEM] Debug mode: " . ($debug ? "ON" : "OFF") . "\n";
-                next;
-            }
-            elsif ($cmd_name eq 'session') {
-                print "[SYSTEM] Current session: " . ($session->{session_id} || 'unknown') . "\n";
-                next;
-            }
-            elsif ($cmd_name eq 'subagent' || $cmd_name eq 'agent') {
-                # Handle subagent commands
-                require CLIO::UI::Commands::SubAgent;
-                my $subagent_cmd = CLIO::UI::Commands::SubAgent->new(chat => $cli_ui);
-                my $subcommand = shift @cmd_args || 'help';
-                my $args = join(' ', @cmd_args);
-                my $result = $subagent_cmd->handle($subcommand, $args);
-                print "$result\n";
-                next;
-            }
-            elsif ($cmd_name eq 'reset') {
-                # Terminal reset - restore terminal to known-good state
-                # Use full reset since user explicitly requested it
-                require CLIO::Compat::Terminal;
-                CLIO::Compat::Terminal::reset_terminal_full();
-                print "[SYSTEM] Terminal reset complete\n";
-                next;
-            }
-            else {
-                print "[SYSTEM] Unknown slash command: $command\n";
-                print "[SYSTEM] Type /help for available commands\n";
-                print "[SYSTEM] Note: Some commands only work in interactive mode\n";
-                next;
-            }
-        }
-        
-        # Check if this is a recall query
-        if ($parser->is_recall_query($command)) {
-            # Handle recall query directly from memory
-            my $stm = $session->{stm} // $session->{state}->{stm};
-            my $recall_result = $parser->extract_recall_context($command, $stm);
+            # Render markdown for --input mode
+            use CLIO::UI::Markdown;
+            use CLIO::UI::ANSI;
+            my $md = CLIO::UI::Markdown->new(debug => $debug);
+            my $ansi = CLIO::UI::ANSI->new(enabled => !$no_color, debug => $debug);
             
-            if ($recall_result && $recall_result->{content}) {
-                my $response = "You said: \"$recall_result->{content}\"";
-                print "[RESPONSE] $response\n";
-                
-                # Add to session history
-                $session->add_message('user', $command);
-                $session->add_message('assistant', $response);
-            } else {
-                my $response = "I couldn't find what you're referring to in our conversation.";
-                print "[RESPONSE] $response\n";
-                
-                # Add to session history
-                $session->add_message('user', $command);
-                $session->add_message('assistant', $response);
+            my $rendered_response = $md->render($response);
+            $rendered_response = $ansi->parse($rendered_response);
+            
+            print "[RESPONSE] $rendered_response\n";
+            
+            if ($debug && @{$result->{protocols_used}}) {
+                print "[DEBUG] Protocols used: " . join(", ", @{$result->{protocols_used}}) . "\n";
             }
         } else {
-            # Regular command - use enhanced AI agent
-            my $result = $ai_agent->process_user_request($command, {
-                current_file => $session->{state}->{current_file},
-                working_directory => $session->{state}->{working_directory},
-                conversation_history => $session->{state}->{history}
-            });
-            
-            if ($result->{success}) {
-                my $response = $result->{final_response};
-                # Remove [conversation]...[/conversation] tags if present
-                $response =~ s/^\[conversation\]//;
-                $response =~ s/\[\/conversation\]$//;
-                $response =~ s/^\s+|\s+$//g;
-                
-                $last_response = $response;
-                $session->add_message('assistant', $response);
-                
-                # Render markdown for --input mode
-                use CLIO::UI::Markdown;
-                use CLIO::UI::ANSI;
-                my $md = CLIO::UI::Markdown->new(debug => $debug);
-                my $ansi = CLIO::UI::ANSI->new(enabled => !$no_color, debug => $debug);
-                
-                # Render markdown (adds @-codes), then parse @-codes to ANSI
-                my $rendered_response = $md->render($response);
-                $rendered_response = $ansi->parse($rendered_response);
-                
-                # Set output encoding (already configured at startup via configure_io_encoding)
-                print "[RESPONSE] $rendered_response\n";
-                
-                # Show protocol usage if debug mode
-                if ($debug && @{$result->{protocols_used}}) {
-                    print "[DEBUG] Protocols used: " . join(", ", @{$result->{protocols_used}}) . "\n";
-                }
-            } else {
-                my $error_msg = "[ERROR] " . join("; ", @{$result->{errors}});
-                $last_response = $error_msg;
-                $session->add_message('system', $error_msg);
-                print "$error_msg\n";
-            }
+            my $error_msg = "[ERROR] " . join("; ", @{$result->{errors}});
+            $last_response = $error_msg;
+            $session->add_message('system', $error_msg);
+            print "$error_msg\n";
         }
     }
     
