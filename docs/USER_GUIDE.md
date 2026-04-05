@@ -1587,14 +1587,30 @@ export CLIO_SESSION_DIR="$HOME/.clio/sessions"
 export CLIO_AUTOSAVE_INTERVAL=60
 ```
 
-**Tool Configuration:**
+**Tool Filtering:**
+
+CLIO supports restricting which tools are available, via CLI flags or persistent config:
 
 ```bash
-# Disable specific tool categories (comma-separated)
-export CLIO_DISABLE_TOOLS="web,terminal"
+# CLI flags (session-scoped, not persisted)
+clio --enable file_operations,terminal_operations --input "list files"
+clio --disable web_operations,remote_execution --new
 
-# Enable experimental tools
-export CLIO_EXPERIMENTAL=1
+# Persistent config (applies to all sessions)
+/config set enabled_tools file_operations,terminal_operations
+/config set disabled_tools web_operations,remote_execution
+```
+
+`--enable` creates an allowlist (only listed tools register). `--disable` creates a blocklist (everything except listed tools). They are mutually exclusive. CLI flags override config values.
+
+**System Prompt Override:**
+
+```bash
+# Use a different system prompt for one session
+clio --prompt minimal --new
+
+# List available prompts
+/prompt list
 ```
 
 ### Configuration File

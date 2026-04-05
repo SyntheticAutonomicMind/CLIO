@@ -78,7 +78,6 @@ Terminal Output
 | Instructions Reader | `InstructionsReader.pm` | Reads `.clio/instructions.md` and `AGENTS.md` |
 | Config | `Config.pm` | API keys, provider selection, model aliases |
 | ReadLine | `ReadLine.pm` | Command history & editing |
-| Command Parser | `CommandParser.pm` | Parse user commands |
 | Editor | `Editor.pm` | Core editing functionality |
 | Hashtag Parser | `HashtagParser.pm` | Parse hashtag commands |
 | Tab Completion | `TabCompletion.pm` | Tab completion support |
@@ -133,6 +132,9 @@ Terminal Output
 - `Registry.pm` maintains tool registry and handles lookup
 - `ToolExecutor.pm` (in Core) invokes tools and manages execution
 - `ToolResultStore.pm` (in Session) caches large tool outputs for efficiency
+
+**Tool Filtering:**
+Tools can be restricted via `--enable` (allowlist) or `--disable` (blocklist) CLI flags, or the persistent `enabled_tools`/`disabled_tools` config keys. Filtering is applied in `WorkflowOrchestrator::_register_default_tools()` before any tool is registered. CLI flags override config. No tool is immune from filtering.
 
 ### 4. Session Management
 **Files:** `lib/CLIO/Session/`
@@ -590,7 +592,6 @@ lib/CLIO/
       Config.pm            # Configuration
       ModelRegistry.pm     # Model management
       ReadLine.pm          # Command history
-      CommandParser.pm     # Command parsing
       Editor.pm            # Core editing
       HashtagParser.pm     # Hashtag commands
       TabCompletion.pm     # Tab completion

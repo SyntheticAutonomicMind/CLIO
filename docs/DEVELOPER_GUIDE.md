@@ -166,7 +166,7 @@ clio/
           API/              # API sub-modules
               MessageValidator.pm  # Message validation and proactive trimming
               ResponseHandler.pm   # AI provider response parsing
-          ReadLine.pm  CommandParser.pm  Editor.pm
+          ReadLine.pm  Editor.pm
           HashtagParser.pm  TabCompletion.pm
           GitHubAuth.pm  GitHubCopilotModelsAPI.pm  CopilotUserAPI.pm
       Tools/                # Tool implementations
@@ -475,25 +475,29 @@ Edit `lib/CLIO/Tools/Registry.pm`:
 ```perl
 use CLIO::Tools::MyNewTool;
 
-sub new {
-    my ($class, %opts) = @_;
-    
-    my $self = {
-        tools => {},
-        debug => $opts{debug} || 0,
-    };
-    bless $self, $class;
-    
-    # Register existing tools...
-    $self->register_tool(CLIO::Tools::FileOperations->new(debug => $self->{debug}));
-    $self->register_tool(CLIO::Tools::VersionControl->new(debug => $self->{debug}));
-    # ... other tools ...
-    
-    # Register your new tool
-    $self->register_tool(CLIO::Tools::MyNewTool->new(debug => $self->{debug}));
-    
-    return $self;
-}
+Tool registration in WorkflowOrchestrator is data-driven. Add your tool to the `@tool_defs` array in `_register_default_tools()`:
+
+```perl
+# In WorkflowOrchestrator::_register_default_tools()
+my @tool_defs = (
+    # ... existing tools ...
+    {
+        name  => 'my_new_tool',
+        class => 'CLIO::Tools::MyNewTool',
+        args  => { debug => $self->{debug} },
+    },
+);
+```
+
+Tools listed here are automatically subject to `--enable`/`--disable` filtering. If a tool should only register when a specific config key is set (like `enable_remote` for RemoteExecution), add a `config_gate` key:
+
+```perl
+{
+    name        => 'my_new_tool',
+    class       => 'CLIO::Tools::MyNewTool',
+    args        => { debug => $self->{debug} },
+    config_gate => 'enable_my_tool',  # only registers if this config key is truthy
+},
 ```
 
 **3. Test Your Tool**
