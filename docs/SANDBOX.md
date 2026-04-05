@@ -172,12 +172,33 @@ This handles:
 | Trusted local environment | No sandbox needed |
 | Exploring unfamiliar codebase | `--sandbox` flag |
 | Working on sensitive project | `--sandbox` flag |
+| Bot or automation deployment | `--disable` specific tools |
+| Read-only analysis | `--enable file_operations,code_intelligence` |
 | Maximum security required | `clio-container` |
 | CI/CD pipelines | Container image directly |
 
 ## Additional Security Features
 
 These features work independently of sandbox mode but complement it:
+
+### Tool Filtering
+
+CLIO can restrict which tools are available using `--enable` (allowlist) or `--disable` (blocklist):
+
+```bash
+# Only allow file operations in sandbox
+clio --sandbox --enable file_operations,version_control --new
+
+# Block remote and web access (similar to sandbox but without path restrictions)
+clio --disable web_operations,remote_execution --new
+```
+
+Tool filtering is applied at registration time - disabled tools never load, so the AI agent cannot call them at all. This is a hard restriction, unlike sandbox mode which gates specific operations within tools.
+
+For persistent configuration:
+```
+/config set disabled_tools web_operations,remote_execution
+```
 
 ### Secret Redaction
 

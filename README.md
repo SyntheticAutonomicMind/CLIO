@@ -162,6 +162,8 @@ For detailed options, see [docs/INSTALLATION.md](docs/INSTALLATION.md).
 ./clio --new          # New conversation
 ./clio --resume       # Resume last session
 ./clio --debug        # Debug mode
+./clio --enable file_operations  # Restrict to specific tools
+./clio --disable web_operations  # Block specific tools
 ```
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

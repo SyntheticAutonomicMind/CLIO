@@ -1949,6 +1949,31 @@ docker run -it --rm \
 - All other host files: completely inaccessible
 - Network: unrestricted (potential risk)
 
+### Tool Filtering
+
+CLIO can restrict which tools are available to the AI agent, independent of sandbox mode:
+
+```bash
+# Only allow specific tools (allowlist)
+clio --enable file_operations,version_control --new
+
+# Block specific tools (blocklist)
+clio --disable web_operations,remote_execution --new
+```
+
+For persistent configuration:
+```
+/config set disabled_tools web_operations,remote_execution
+```
+
+`--enable` and `--disable` are mutually exclusive. CLI flags override config values. Disabled tools never register, so the AI agent cannot call them at all.
+
+**Use cases:**
+- **Bot deployments**: disable `user_collaboration` for non-interactive mode
+- **Read-only analysis**: enable only `file_operations` and `code_intelligence`
+- **Network-restricted environments**: disable `web_operations` and `remote_execution`
+- **Minimal surface area**: enable only the tools you need
+
 ### When to Use Each Mode
 
 | Scenario | Recommendation |
@@ -1956,6 +1981,8 @@ docker run -it --rm \
 | Trusted environment | No sandbox needed |
 | Unfamiliar codebase | `--sandbox` flag |
 | Sensitive project | `--sandbox` flag |
+| Bot or automation | `--disable` specific tools |
+| Read-only analysis | `--enable` specific tools |
 | Maximum security | Container sandbox |
 
 For detailed information, see [docs/SANDBOX.md](SANDBOX.md).

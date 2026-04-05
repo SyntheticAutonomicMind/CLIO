@@ -46,6 +46,26 @@ CLIO is designed as a personal development assistant with the following assumpti
 
 ### Security Features
 
+#### Tool Filtering
+
+CLIO allows restricting which tools are available to the AI agent. This is useful for security hardening, bot deployments, or running CLIO in constrained environments:
+
+```bash
+# Only allow file and terminal operations
+clio --enable file_operations,terminal_operations --new
+
+# Block web and remote access
+clio --disable web_operations,remote_execution --new
+```
+
+Persistent configuration:
+```
+/config set enabled_tools file_operations,terminal_operations
+/config set disabled_tools web_operations,remote_execution
+```
+
+`--enable` creates an allowlist (only listed tools register). `--disable` creates a blocklist (everything registers except listed tools). CLI flags override config values. No tool is immune from filtering - even `user_collaboration` can be disabled for non-interactive bot mode.
+
 #### Path Authorization
 
 CLIO implements a path authorization system:
