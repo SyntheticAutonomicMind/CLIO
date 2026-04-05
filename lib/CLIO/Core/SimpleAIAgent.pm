@@ -35,6 +35,9 @@ sub new {
         skip_ltm => $opts{skip_ltm} || 0,        # Skip LTM injection
         broker_client => $opts{broker_client},   # Broker client for multi-agent coordination
         non_interactive => $opts{non_interactive} || 0,  # Non-interactive mode (--input flag)
+        enable_tools => $opts{enable_tools},     # --enable: allowlist of tools
+        disable_tools => $opts{disable_tools},   # --disable: blocklist of tools
+        prompt_override => $opts{prompt_override}, # --prompt: system prompt name override
     };
     
     bless $self, $class;
@@ -54,6 +57,9 @@ sub new {
             broker_client => $self->{broker_client},  # Pass broker client to orchestrator
             non_interactive => $self->{non_interactive},  # Pass non-interactive mode
             max_iterations => $self->{api}->{config}->get('max_iterations'),
+            enable_tools => $self->{enable_tools},      # Tool allowlist
+            disable_tools => $self->{disable_tools},    # Tool blocklist
+            prompt_override => $self->{prompt_override}, # System prompt override
         );
         log_debug('SimpleAIAgent', "Orchestrator initialized in constructor");
     };
@@ -211,6 +217,9 @@ sub process_user_request {
                 max_iterations => $self->{api}->{config}->get('max_iterations'),
                 non_interactive => $self->{non_interactive},
                 broker_client => $self->{broker_client},
+                enable_tools => $self->{enable_tools},
+                disable_tools => $self->{disable_tools},
+                prompt_override => $self->{prompt_override},
             );
         }
         

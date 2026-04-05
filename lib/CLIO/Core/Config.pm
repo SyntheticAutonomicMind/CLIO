@@ -74,6 +74,9 @@ use constant DEFAULT_CONFIG => {
     # Feature switches (tools available to agent)
     enable_subagents => 1,  # Enable agent_operations tool (sub-agent spawning)
     enable_remote => 1,     # Enable remote_execution tool (SSH remote tasks)
+    # Tool filtering (persistent version of --enable/--disable flags)
+    enabled_tools => '',    # Comma-separated allowlist of tools (empty = all)
+    disabled_tools => '',   # Comma-separated blocklist of tools (empty = none)
     # GitHub Copilot API version headers (update to match latest vscode-copilot-chat)
     editor_version => 'vscode/2.0.0',  # Editor version for API requests
     plugin_version => 'copilot-chat/0.38.0',  # Plugin version for API requests

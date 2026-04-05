@@ -89,6 +89,9 @@ sub new {
         skip_ltm => $args{skip_ltm} || 0,        # Skip LTM injection (--no-ltm)
         non_interactive => $args{non_interactive} || 0,  # Non-interactive mode (--input flag)
         broker_client => $args{broker_client},   # Broker client for multi-agent coordination
+        enable_tools => $args{enable_tools},     # Tool allowlist (comma-separated string or undef)
+        disable_tools => $args{disable_tools},   # Tool blocklist (comma-separated string or undef)
+        prompt_override => $args{prompt_override}, # System prompt name override
         consecutive_errors => 0,  # Track consecutive identical errors
         last_error => '',         # Track last error message
         max_consecutive_errors => 3,  # Break loop after 3 identical errors
@@ -157,6 +160,7 @@ sub new {
         non_interactive => $self->{non_interactive},
         tool_registry   => $self->{tool_registry},
         mcp_manager     => $self->{mcp_manager},
+        prompt_override => $self->{prompt_override},
     );
     
     # Initialize FileVault for targeted file backup and undo support
@@ -240,85 +244,117 @@ sub _register_default_tools {
     # Check if we're running as a sub-agent
     my $is_subagent = $self->{broker_client} ? 1 : 0;
     
-    # Register FileOperations tool
-    require CLIO::Tools::FileOperations;
-    $self->{tool_registry}->register_tool(
-        CLIO::Tools::FileOperations->new(debug => $self->{debug})
-    );
+    # Build tool enable/disable sets from CLI flags and config
+    # CLI flags (--enable/--disable) override config values
+    my %enabled_set;   # allowlist: only these tools if non-empty
+    my %disabled_set;  # blocklist: skip these tools
     
-    # Register VersionControl tool
-    require CLIO::Tools::VersionControl;
-    $self->{tool_registry}->register_tool(
-        CLIO::Tools::VersionControl->new(debug => $self->{debug})
-    );
+    my $enable_str = $self->{enable_tools}
+        || ($self->{config} ? $self->{config}->get('enabled_tools') : undef);
+    my $disable_str = $self->{disable_tools}
+        || ($self->{config} ? $self->{config}->get('disabled_tools') : undef);
     
-    # Register TerminalOperations tool
-    require CLIO::Tools::TerminalOperations;
-    $self->{tool_registry}->register_tool(
-        CLIO::Tools::TerminalOperations->new(debug => $self->{debug})
-    );
-    
-    # Register MemoryOperations tool
-    require CLIO::Tools::MemoryOperations;
-    $self->{tool_registry}->register_tool(
-        CLIO::Tools::MemoryOperations->new(debug => $self->{debug})
-    );
-    
-    # Register WebOperations tool
-    require CLIO::Tools::WebOperations;
-    $self->{tool_registry}->register_tool(
-        CLIO::Tools::WebOperations->new(debug => $self->{debug})
-    );
-    
-    # Register TodoList tool
-    require CLIO::Tools::TodoList;
-    $self->{tool_registry}->register_tool(
-        CLIO::Tools::TodoList->new(debug => $self->{debug})
-    );
-    
-    # Register CodeIntelligence tool
-    require CLIO::Tools::CodeIntelligence;
-    $self->{tool_registry}->register_tool(
-        CLIO::Tools::CodeIntelligence->new(debug => $self->{debug})
-    );
-    
-    # Register UserCollaboration tool
-    require CLIO::Tools::UserCollaboration;
-    $self->{tool_registry}->register_tool(
-        CLIO::Tools::UserCollaboration->new(debug => $self->{debug})
-    );
-    
-    # Register RemoteExecution tool (blocked for sub-agents)
-    my $remote_enabled = $self->{config} ? $self->{config}->get('enable_remote') : 1;
-    unless (($is_subagent && $blocked_for_subagent{'remote_execution'}) || !$remote_enabled) {
-        require CLIO::Tools::RemoteExecution;
-        $self->{tool_registry}->register_tool(
-            CLIO::Tools::RemoteExecution->new(debug => $self->{debug})
-        );
-    } else {
-        my $reason = !$remote_enabled ? "disabled in config" : "sub-agent restriction";
-        log_debug('WorkflowOrchestrator', "Blocked remote_execution: $reason");
+    if ($enable_str) {
+        %enabled_set = map { $_ => 1 } split(/\s*,\s*/, $enable_str);
+        log_debug('WorkflowOrchestrator', "Tool allowlist: " . join(', ', sort keys %enabled_set));
+    }
+    if ($disable_str && !$enable_str) {
+        %disabled_set = map { $_ => 1 } split(/\s*,\s*/, $disable_str);
+        log_debug('WorkflowOrchestrator', "Tool blocklist: " . join(', ', sort keys %disabled_set));
     }
     
-    # Register SubAgentOperations tool (blocked for sub-agents to prevent fork bombs)
-    my $subagents_enabled = $self->{config} ? $self->{config}->get('enable_subagents') : 1;
-    unless (($is_subagent && $blocked_for_subagent{'agent_operations'}) || !$subagents_enabled) {
-        require CLIO::Tools::SubAgentOperations;
-        $self->{tool_registry}->register_tool(
-            CLIO::Tools::SubAgentOperations->new(debug => $self->{debug})
-        );
-    } else {
-        my $reason = !$subagents_enabled ? "disabled in config" : "sub-agent restriction";
-        log_debug('WorkflowOrchestrator', "Blocked agent_operations: $reason");
-    }
+    # Helper: check if a tool should be registered
+    my $should_register = sub {
+        my ($tool_name) = @_;
+        if (%enabled_set) {
+            return $enabled_set{$tool_name} ? 1 : 0;
+        }
+        if (%disabled_set) {
+            return $disabled_set{$tool_name} ? 0 : 1;
+        }
+        return 1;  # Default: register
+    };
     
-    # Register ApplyPatch tool (diff-based file editing)
-    require CLIO::Tools::ApplyPatch;
-    $self->{tool_registry}->register_tool(
-        CLIO::Tools::ApplyPatch->new(debug => $self->{debug})
+    # All default tools with their module paths
+    my @default_tools = (
+        { name => 'file_operations',    module => 'CLIO::Tools::FileOperations' },
+        { name => 'version_control',    module => 'CLIO::Tools::VersionControl' },
+        { name => 'terminal_operations', module => 'CLIO::Tools::TerminalOperations' },
+        { name => 'memory_operations',  module => 'CLIO::Tools::MemoryOperations' },
+        { name => 'web_operations',     module => 'CLIO::Tools::WebOperations' },
+        { name => 'todo_operations',    module => 'CLIO::Tools::TodoList' },
+        { name => 'code_intelligence',  module => 'CLIO::Tools::CodeIntelligence' },
+        { name => 'user_collaboration', module => 'CLIO::Tools::UserCollaboration' },
+        { name => 'apply_patch',        module => 'CLIO::Tools::ApplyPatch' },
     );
     
-    log_debug('WorkflowOrchestrator', "Registered default tools (subagent=$is_subagent)");
+    # Conditionally-available tools (existing config switches + sub-agent restrictions)
+    my @conditional_tools = (
+        {
+            name => 'remote_execution',
+            module => 'CLIO::Tools::RemoteExecution',
+            config_key => 'enable_remote',
+            subagent_blocked => 1,
+        },
+        {
+            name => 'agent_operations',
+            module => 'CLIO::Tools::SubAgentOperations',
+            config_key => 'enable_subagents',
+            subagent_blocked => 1,
+        },
+    );
+    
+    # Register standard tools
+    for my $tool_def (@default_tools) {
+        unless ($should_register->($tool_def->{name})) {
+            log_debug('WorkflowOrchestrator', "Skipped $tool_def->{name}: filtered by --enable/--disable");
+            next;
+        }
+        eval "require $tool_def->{module}";
+        if ($@) {
+            log_warning('WorkflowOrchestrator', "Failed to load $tool_def->{module}: $@");
+            next;
+        }
+        $self->{tool_registry}->register_tool(
+            $tool_def->{module}->new(debug => $self->{debug})
+        );
+    }
+    
+    # Register conditional tools (respect config switches AND enable/disable filtering)
+    for my $tool_def (@conditional_tools) {
+        unless ($should_register->($tool_def->{name})) {
+            log_debug('WorkflowOrchestrator', "Skipped $tool_def->{name}: filtered by --enable/--disable");
+            next;
+        }
+        
+        # Check config-level feature switch
+        my $config_enabled = $self->{config}
+            ? $self->{config}->get($tool_def->{config_key})
+            : 1;
+        
+        if (!$config_enabled) {
+            log_debug('WorkflowOrchestrator', "Blocked $tool_def->{name}: disabled in config");
+            next;
+        }
+        
+        # Check sub-agent restriction
+        if ($is_subagent && $tool_def->{subagent_blocked}) {
+            log_debug('WorkflowOrchestrator', "Blocked $tool_def->{name}: sub-agent restriction");
+            next;
+        }
+        
+        eval "require $tool_def->{module}";
+        if ($@) {
+            log_warning('WorkflowOrchestrator', "Failed to load $tool_def->{module}: $@");
+            next;
+        }
+        $self->{tool_registry}->register_tool(
+            $tool_def->{module}->new(debug => $self->{debug})
+        );
+    }
+    
+    my $registered = $self->{tool_registry}->count_tools();
+    log_debug('WorkflowOrchestrator', "Registered $registered tools (subagent=$is_subagent)");
 }
 
 =head2 process_input
