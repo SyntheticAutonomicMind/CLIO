@@ -62,6 +62,9 @@ OPTIONS:
     --input <text>     Process input and exit
     --exit             Exit after processing (with --input)
     --model <name>     Use specific model (temporary, not persisted)
+    --prompt <name>    Use specific system prompt (see /prompt list)
+    --enable <tools>   Only enable these tools (comma-separated)
+    --disable <tools>  Disable these tools (comma-separated)
     --sandbox          Restrict file access to project directory only
     --config <path>    Use custom config directory (for isolated testing)
     --no-color         Disable ANSI color output (for CI/workflows)
@@ -79,6 +82,9 @@ EXAMPLES:
     clio --debug --new            # Start with debug logging
     clio --dir /path/to/project   # Start in specific directory
     clio --model gpt-4.1 --new    # Start with specific model
+    clio --prompt minimal --new   # Start with a custom system prompt
+    clio --enable file_operations,terminal_operations --input "list files"
+    clio --disable web_operations,remote_execution --new
     clio --incognito --new        # Fresh audit without project knowledge
     clio --config /tmp/clio-test  # Use isolated config for testing
     clio --no-color --input "hi"  # Non-interactive without color
@@ -154,6 +160,9 @@ my $skip_custom = 0;
 my $skip_ltm = 0;
 my $sandbox_mode = 0;  # Sandbox mode - restrict file access to project directory
 my $model_override = undef;  # Temporary model override from --model flag
+my $enable_tools = undef;   # --enable: allowlist of tools (comma-separated)
+my $disable_tools = undef;  # --disable: blocklist of tools (comma-separated)
+my $prompt_override = undef;  # --prompt: system prompt name override
 for (my $i = 0; $i < @ARGV; $i++) {
     if ($ARGV[$i] eq '--input' && defined $ARGV[$i+1]) {
         $input = $ARGV[$i+1];
@@ -191,12 +200,27 @@ for (my $i = 0; $i < @ARGV; $i++) {
     if ($ARGV[$i] eq '--model' && defined $ARGV[$i+1]) {
         $model_override = $ARGV[$i+1];
     }
+    if ($ARGV[$i] eq '--enable' && defined $ARGV[$i+1]) {
+        $enable_tools = $ARGV[$i+1];
+    }
+    if ($ARGV[$i] eq '--disable' && defined $ARGV[$i+1]) {
+        $disable_tools = $ARGV[$i+1];
+    }
+    if ($ARGV[$i] eq '--prompt' && defined $ARGV[$i+1]) {
+        $prompt_override = $ARGV[$i+1];
+    }
     if ($ARGV[$i] eq '--sessions') {
         $mode = 'list_sessions';
     }
     if ($ARGV[$i] eq '--list-models') {
         $mode = 'list_models';
     }
+}
+
+# Validate --enable and --disable are mutually exclusive
+if (defined $enable_tools && defined $disable_tools) {
+    print STDERR "Error: --enable and --disable are mutually exclusive. Use one or the other.\n";
+    exit 1;
 }
 
 # If no --input flag was provided but STDIN is piped (not a TTY), read from STDIN
@@ -638,6 +662,9 @@ my $ai_agent = CLIO::Core::SimpleAIAgent->new(
     skip_ltm => $skip_ltm,
     broker_client => $broker_client,  # Pass broker client for coordination
     non_interactive => $input ? 1 : 0,  # Non-interactive mode when --input is used
+    enable_tools => $enable_tools,      # --enable: allowlist of tools
+    disable_tools => $disable_tools,    # --disable: blocklist of tools
+    prompt_override => $prompt_override, # --prompt: system prompt name override
 );
 
 if ($debug) {

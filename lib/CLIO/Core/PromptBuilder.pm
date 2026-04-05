@@ -49,6 +49,7 @@ sub new {
         non_interactive => $opts{non_interactive} // 0,
         tool_registry   => $opts{tool_registry},
         mcp_manager     => $opts{mcp_manager},
+        prompt_override => $opts{prompt_override},  # --prompt: system prompt name override
         _tools_section_cache => undef,
     }, $class;
 }
@@ -78,6 +79,20 @@ sub build_system_prompt {
 
     if ($self->{skip_custom}) {
         log_debug('PromptBuilder', "Skipping custom instructions (--no-custom-instructions or --incognito)");
+    }
+
+    # Apply prompt override from --prompt flag (session-scoped, not persisted to disk)
+    if ($self->{prompt_override}) {
+        # Validate prompt exists before setting
+        my $prompts = $pm->list_prompts();
+        my @all_prompts = (@{$prompts->{builtin}}, @{$prompts->{custom}});
+        if (grep { $_ eq $self->{prompt_override} } @all_prompts) {
+            # Set in-memory only (don't call set_active_prompt which persists)
+            $pm->{metadata}->{active_prompt} = $self->{prompt_override};
+            log_info('PromptBuilder', "Using system prompt override: $self->{prompt_override}");
+        } else {
+            log_warning('PromptBuilder', "Prompt '$self->{prompt_override}' not found, using default. Available: " . join(', ', @all_prompts));
+        }
     }
 
     log_debug('PromptBuilder', "Loading system prompt from PromptManager");

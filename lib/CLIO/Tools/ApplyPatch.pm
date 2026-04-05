@@ -589,13 +589,16 @@ sub _apply_update {
         my $new_dir = dirname($new_full);
         eval { make_path($new_dir) } unless -d $new_dir;
         
-        # Write to new location
+        # Write to new location (preserving original permissions)
+        my @stat = stat($full_path);
+        my $orig_mode = @stat ? ($stat[2] & 07777) : 0644;
         my $new_content = join("\n", @lines);
         eval {
             open my $fh, '>:encoding(UTF-8)', $new_full
                 or croak "Cannot write: $!";
             print $fh $new_content;
             close $fh;
+            chmod $orig_mode, $new_full;
         };
         
         if ($@) {
@@ -611,12 +614,17 @@ sub _apply_update {
     # Write updated content back
     my $new_content = join("\n", @lines);
     eval {
+        # Preserve original file permissions
+        my @stat = stat($full_path);
+        my $orig_mode = @stat ? ($stat[2] & 07777) : 0644;
+        
         # Atomic write via temp file
         my $temp = $full_path . '.clio_tmp';
         open my $fh, '>:encoding(UTF-8)', $temp
             or croak "Cannot write temp: $!";
         print $fh $new_content;
         close $fh;
+        chmod $orig_mode, $temp;
         rename $temp, $full_path
             or croak "Cannot rename: $!";
     };
