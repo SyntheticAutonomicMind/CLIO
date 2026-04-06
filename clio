@@ -737,7 +737,15 @@ if ($input) {
             $response =~ s/^\s+|\s+$//g;
             
             $last_response = $response;
-            $session->add_message('assistant', $response);
+            
+            # Only save to session if the orchestrator didn't already save it.
+            # During tool-calling workflows, WorkflowOrchestrator saves the final
+            # assistant response to prevent context loss. Without this check,
+            # the message gets saved twice, causing duplicate entries in history
+            # that can make the model echo/repeat itself on subsequent turns.
+            if (!$result->{messages_saved_during_workflow}) {
+                $session->add_message('assistant', $response);
+            }
             
             # Render markdown for --input mode
             use CLIO::UI::Markdown;
