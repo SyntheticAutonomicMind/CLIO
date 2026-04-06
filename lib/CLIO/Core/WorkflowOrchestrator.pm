@@ -836,6 +836,11 @@ sub process_input {
         $final_content =~ s/\[\/conversation\]$//;
         $final_content =~ s/^\s+|\s+$//g;
         
+        # Deduplicate repeated paragraphs within the response.
+        # Models sometimes echo the same paragraph twice in a row, especially
+        # after tool-calling workflows where they see their own prior output.
+        $final_content = _deduplicate_paragraphs($final_content);
+        
         # Save the final assistant text response to session history.
         # During tool-calling workflows, _execute_tool_round saves intermediate
         # assistant+tool message pairs. But the FINAL text-only response (the one
@@ -3541,6 +3546,53 @@ sub _dump_diagnostic {
 
     log_info('WorkflowOrchestrator', "Diagnostic ($trigger" . ($phase ? "/$phase" : "") . ") written to $file");
     return $file;
+}
+
+# Detect and remove duplicated paragraphs within a single response.
+# Models sometimes echo the last paragraph(s) a second time, producing
+# output like "A\n\nB\n\nB" or "A\n\nB\n\nC\n\nB\n\nC".
+# We detect a repeated suffix: if the last N paragraphs equal the N
+# paragraphs just before them, strip the duplicate tail.
+sub _deduplicate_paragraphs {
+    my ($text) = @_;
+    return $text unless defined $text && length($text) > 40;
+
+    # Split on blank-line boundaries (two+ newlines)
+    my @parts = split /\n\s*\n/, $text;
+    return $text if @parts < 2;
+
+    # Try suffix lengths from half down to 1
+    my $max_suffix = int(@parts / 2);
+    for my $suffix_len (reverse 1 .. $max_suffix) {
+        my $start_a = @parts - 2 * $suffix_len;  # first copy starts here
+        my $start_b = @parts - $suffix_len;       # second copy starts here
+
+        my $match = 1;
+        for my $j (0 .. $suffix_len - 1) {
+            my $a = $parts[$start_a + $j];
+            my $b = $parts[$start_b + $j];
+            # Normalize whitespace for comparison
+            (my $na = $a) =~ s/\s+/ /g;
+            (my $nb = $b) =~ s/\s+/ /g;
+            $na =~ s/^\s+|\s+$//g;
+            $nb =~ s/^\s+|\s+$//g;
+            if ($na ne $nb) {
+                $match = 0;
+                last;
+            }
+        }
+
+        if ($match) {
+            # Remove the duplicated suffix
+            my @deduped = @parts[0 .. $start_b - 1];
+            my $result = join("\n\n", @deduped);
+            log_debug('WorkflowOrchestrator',
+                "Removed $suffix_len duplicated paragraph(s) from response");
+            return $result;
+        }
+    }
+
+    return $text;
 }
 
 1;
