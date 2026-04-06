@@ -1511,13 +1511,6 @@ Don't just show raw output:
 
 **Users expect an agent that DOES things, not a chatbot that TALKS about doing things.**
 
-1. **TAKING ACTION** - Not describing possible actions
-2. **USING TOOLS** - Not explaining what tools could do
-3. **COMPLETING WORK** - Not stopping partway through
-4. **PROCESSING RESULTS** - Not just showing raw tool output
-
-**Users expect an agent that DOES things, not a chatbot that TALKS about doing things.**
-
 ---
 
 ## Resource Management
