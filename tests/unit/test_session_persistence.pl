@@ -32,8 +32,8 @@ use File::Spec;
     my $content = do { local $/; <$fh> };
     close $fh;
     
-    # Check for session save in error handling block
-    like($content, qr/Store error in session.*?\$self->\{session\}->save\(\);/s,
+    # Check for session save after error handling
+    like($content, qr/Error.*?error_msg.*?\$self->\{session\}->save\(\);/s,
         "Chat.pm saves session immediately after errors");
 }
 

@@ -193,13 +193,9 @@ Tools can be restricted via `--enable` (allowlist) or `--disable` (blocklist) CL
 | Component | File | Purpose |
 |-----------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------|
 | Tree-sitter | `TreeSitter.pm` | Parse code into AST |
-| Symbols | `Symbols.pm` | Extract function/class names |
-| Relations | `Relations.pm` | Map symbol relationships |
 
 **How it works:**
-- TreeSitter parses source code into abstract syntax trees
-- Symbols extracts function/class/variable definitions
-- Relations maps dependencies and call graphs
+- TreeSitter parses source code into abstract syntax trees for code intelligence features
 
 ### 7. Security
 **Files:** `lib/CLIO/Security/`
@@ -210,7 +206,7 @@ Tools can be restricted via `--enable` (allowlist) or `--disable` (blocklist) CL
 | Authz | `Authz.pm` | Check file access permissions |
 | Path Authorizer | `PathAuthorizer.pm` | Control file access |
 | Secret Redactor | `SecretRedactor.pm` | PII and secret redaction from tool output |
-| Manager | `Manager.pm` | Security management and coordination |
+| Command Analyzer | `CommandAnalyzer.pm` | Intent-based command risk classification |
 | Invisible Char Filter | `InvisibleCharFilter.pm` | Detect and strip invisible Unicode characters from user input |
 
 **How it works:**

@@ -1997,9 +1997,9 @@ sub _log_json_error {
         print $fh "[" . scalar(localtime) . "] $label\n";
         print $fh "Error: $error\n";
         if ($payload) {
-            use Data::Dumper;
+            require Data::Dumper;
             print $fh "Payload structure:\n";
-            print $fh Dumper($payload);
+            print $fh Data::Dumper::Dumper($payload);
         }
         if ($json_str) {
             print $fh "Generated JSON:\n$json_str\n";

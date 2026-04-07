@@ -227,9 +227,9 @@ Only saves what user explicitly configured via /api commands.
 sub save {
     my ($self) = @_;
     
-    # Ensure config directory exists
+    # Ensure config directory exists with secure permissions
     unless (-d $self->{config_dir}) {
-        make_path($self->{config_dir}) or croak "Cannot create config dir: $!";
+        make_path($self->{config_dir}, { mode => 0700 }) or croak "Cannot create config dir: $!";
     }
     
     # Build config to save - ONLY user-explicitly-set values
@@ -243,11 +243,12 @@ sub save {
         log_debug('Config', "Saving user-set values: " . join(', ', sort keys %config_to_save));
     }
     
-    # Save config
+    # Save config with secure permissions (contains API keys)
     eval {
         open my $fh, '>', $self->{config_file} or croak "Cannot write: $!";
         print $fh encode_json(\%config_to_save);
         close $fh;
+        chmod 0600, $self->{config_file};
         
         log_debug('Config', "Saved to $self->{config_file}");
     };

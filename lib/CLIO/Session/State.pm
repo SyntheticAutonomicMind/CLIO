@@ -155,9 +155,9 @@ sub save {
         loaded_skills => $self->{loaded_skills} || [],  # Skills merged into system prompt
         input_history => $self->{input_history} || [],  # User input readline history
     };
-    use Data::Dumper;
     if ($ENV{CLIO_DEBUG} || $self->{debug}) {
-        log_debug('SessionState', "[STATE][DEBUG] Data to save: " . Dumper($data) . "");
+        require Data::Dumper;
+        log_debug('SessionState', "[STATE][DEBUG] Data to save: " . Data::Dumper::Dumper($data) . "");
     }
     
     # Ensure session directory exists before writing with secure permissions

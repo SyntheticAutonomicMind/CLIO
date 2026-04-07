@@ -97,9 +97,9 @@ sub load_conversation_history {
         for my $i (0 .. $#{$history}) {
             my $msg = $history->[$i];
             if ($msg->{role} eq 'assistant') {
-                use Data::Dumper;
+                require Data::Dumper;
                 log_debug('ConversationManager', "First assistant message structure:");
-                log_debug('ConversationManager', Dumper($msg));
+                log_debug('ConversationManager', Data::Dumper::Dumper($msg));
                 last;
             }
         }

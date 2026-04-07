@@ -239,6 +239,7 @@ package MockChat;
 
 sub render_markdown { return $_[1] }
 sub colorize { return $_[1] }  # just return text
+sub agent_name { return 'CLIO' }
 sub pause { }
 
 1;

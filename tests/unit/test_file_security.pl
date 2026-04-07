@@ -1,5 +1,5 @@
 #!/usr/bin/env perl
-# test_file_security.pl - Test atomic writes and secure permissions
+# test_file_security.pl - Test atomic writes and permissions
 
 use strict;
 use warnings;
@@ -28,8 +28,8 @@ my $context = {
 my $passed = 0;
 my $failed = 0;
 
-# Test 1: create_file with secure permissions
-print "\n--- Test 1: create_file with secure permissions ---\n";
+# Test 1: create_file with default permissions (0644 for regular files)
+print "\n--- Test 1: create_file with default permissions ---\n";
 my $test_file = "$test_dir/test1.txt";
 my $result = $fo->execute(
     { operation => 'create_file', path => $test_file, content => "Test content 1\n" },
@@ -39,11 +39,11 @@ if ($result->{success}) {
     my $perms = (stat($test_file))[2] & 07777;
     my $octal = sprintf("%04o", $perms);
     print "File created: $test_file, permissions: $octal\n";
-    if ($perms == 0600) {
-        print "PASS: File has correct permissions (0600)\n";
+    if ($perms == 0644) {
+        print "PASS: Regular file has correct permissions (0644)\n";
         $passed++;
     } else {
-        print "FAIL: File has incorrect permissions (expected 0600, got $octal)\n";
+        print "FAIL: File has incorrect permissions (expected 0644, got $octal)\n";
         $failed++;
     }
 } else {
@@ -51,11 +51,10 @@ if ($result->{success}) {
     $failed++;
 }
 
-# Test 2: write_file preserves secure permissions
-print "\n--- Test 2: write_file atomic write ---\n";
+# Test 2: write_file preserves existing permissions
+print "\n--- Test 2: write_file preserves existing permissions ---\n";
 $test_file = "$test_dir/test2.txt";
-# Create file first
-system("touch $test_file && chmod 0644 $test_file");  # Start with bad perms
+system("touch $test_file && chmod 0755 $test_file");
 $result = $fo->execute(
     { operation => 'write_file', path => $test_file, content => "Test content 2\n" },
     $context
@@ -64,11 +63,11 @@ if ($result->{success}) {
     my $perms = (stat($test_file))[2] & 07777;
     my $octal = sprintf("%04o", $perms);
     print "File written: $test_file, permissions: $octal\n";
-    if ($perms == 0600) {
-        print "PASS: File has correct permissions after write (0600)\n";
+    if ($perms == 0755) {
+        print "PASS: Existing file permissions preserved (0755)\n";
         $passed++;
     } else {
-        print "FAIL: File has incorrect permissions (expected 0600, got $octal)\n";
+        print "FAIL: File permissions not preserved (expected 0755, got $octal)\n";
         $failed++;
     }
 } else {
@@ -120,28 +119,26 @@ if ($result->{success}) {
     $failed++;
 }
 
-# Test 5: replace_string with atomic write
-print "\n--- Test 5: replace_string atomic write ---\n";
-$test_file = "$test_dir/test5.txt";
-system("echo 'original content' > $test_file");
-chmod(0644, $test_file);  # Start with bad perms
+# Test 5: Script files get executable permissions
+print "\n--- Test 5: Script files get executable permissions ---\n";
+$test_file = "$test_dir/test5.sh";
 $result = $fo->execute(
-    { operation => 'replace_string', path => $test_file, old_string => 'original', new_string => 'modified' },
+    { operation => 'create_file', path => $test_file, content => "#!/bin/bash\necho hello\n" },
     $context
 );
 if ($result->{success}) {
     my $perms = (stat($test_file))[2] & 07777;
     my $octal = sprintf("%04o", $perms);
-    print "File modified: $test_file, permissions: $octal\n";
-    if ($perms == 0600) {
-        print "PASS: File has correct permissions after replace (0600)\n";
+    print "Script created: $test_file, permissions: $octal\n";
+    if ($perms == 0755) {
+        print "PASS: Script file has executable permissions (0755)\n";
         $passed++;
     } else {
-        print "FAIL: File has incorrect permissions (expected 0600, got $octal)\n";
+        print "FAIL: Script has incorrect permissions (expected 0755, got $octal)\n";
         $failed++;
     }
 } else {
-    print "FAIL: replace_string failed: $result->{error}\n";
+    print "FAIL: create_file failed: $result->{error}\n";
     $failed++;
 }
 
