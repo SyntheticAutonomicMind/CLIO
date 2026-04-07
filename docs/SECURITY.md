@@ -140,6 +140,11 @@ When a command triggers confirmation, the user sees:
   >
 ```
 
+Commands are classified into risk levels: `low`, `medium`, `high`, and `critical`.
+All risk levels use the same three-option prompt format. Critical commands (e.g.,
+`rm -rf /`, system destructive operations) receive a prominent `CRITICAL RISK`
+banner but still allow session-level grants - the user decides their workflow.
+
 **Session-level grants:** If the user selects `(a)llow`, all future commands in
 the same category are auto-approved for the rest of the session. This prevents
 fatigue from repeated prompts during legitimate work.

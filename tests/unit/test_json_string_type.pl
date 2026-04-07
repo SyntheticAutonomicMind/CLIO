@@ -6,95 +6,125 @@ use lib './lib';
 use Test::More tests => 7;
 use JSON::PP qw(encode_json decode_json);
 
-=head1 TEST: OneOf Type Parameters (Phase 2 - Standard JSON Schema)
+=head1 TEST: OneOf Type Parameters (ToolExecutor normalization)
 
-Verify that oneOf parameters accept both objects and strings.
+Verify that _normalize_oneof_params correctly converts object values
+to JSON strings when a tool schema declares oneOf [{type: string}, {type: object}].
 
 Tests:
-1. ToolExecutor detects oneOf parameters
-2. Object values are converted to JSON strings
-3. String values pass through
-4. Invalid JSON strings handled gracefully
-5. FileOperations demonstrates oneOf
-6. oneOf with both string and object types
-7. Plain text strings work too
+1. Object param exists after normalization
+2. Object value converted to JSON string
+3. Serialized JSON preserves structure
+4. Nested data preserved
+5. JSON string passthrough
+6. Plain text passthrough
+7. Params without oneOf schema are untouched
 
 =cut
 
-# Test 1-5: ToolExecutor oneOf handling
+# Create a mock tool with oneOf schema for testing
 {
-    use CLIO::Core::ToolExecutor;
-    use CLIO::Tools::Registry;
-    use CLIO::Tools::FileOperations;
-    
-    # Create tool registry with FileOperations
-    my $registry = CLIO::Tools::Registry->new(debug => 0);
-    $registry->register_tool(CLIO::Tools::FileOperations->new(debug => 0));
-    
-    # Create ToolExecutor
-    my $executor = CLIO::Core::ToolExecutor->new(
-        session => undef,
-        tool_registry => $registry,
-        debug => 0,
-    );
-    
-    # Test: oneOf param with object value
-    my $params_with_object = {
-        operation => 'insert_at_line',
-        path => 'test.txt',
-        line => 1,
-        text => {key => 'value', nested => {data => 123}},
+    package MockOneOfTool;
+    use parent 'CLIO::Tools::Tool';
+
+    sub new {
+        my ($class, %opts) = @_;
+        my $self = $class->SUPER::new(
+            name => 'mock_oneof_tool',
+            description => 'Mock tool with oneOf parameters',
+            supported_operations => ['test_op'],
+            %opts,
+        );
+        return $self;
+    }
+
+    sub get_tool_definition {
+        return {
+            name => 'mock_oneof_tool',
+            description => 'Mock tool with oneOf parameters',
+            parameters => {
+                type => 'object',
+                required => ['operation'],
+                properties => {
+                    operation => { type => 'string' },
+                    data => {
+                        oneOf => [
+                            { type => 'string' },
+                            { type => 'object' },
+                        ],
+                        description => 'Accepts string or object',
+                    },
+                },
+            },
+        };
+    }
+
+    sub route_operation { return { success => 1 } }
+}
+
+use CLIO::Core::ToolExecutor;
+use CLIO::Tools::Registry;
+
+# Create tool registry with mock tool
+my $registry = CLIO::Tools::Registry->new(debug => 0);
+$registry->register_tool(MockOneOfTool->new(debug => 0));
+
+# Create ToolExecutor
+my $executor = CLIO::Core::ToolExecutor->new(
+    session => undef,
+    tool_registry => $registry,
+    debug => 0,
+);
+
+# Test 1-4: oneOf param with object value -> serialized to JSON string
+{
+    my $params = {
+        operation => 'test_op',
+        data => {key => 'value', nested => {num => 123}},
     };
-    
-    my $normalized = $executor->_normalize_oneof_params($params_with_object, 'file_operations');
-    
-    ok(exists $normalized->{text}, "text parameter exists after normalization");
-    ok(!ref($normalized->{text}), "text converted to string");
-    
-    my $decoded = decode_json($normalized->{text});
+
+    my $normalized = $executor->_normalize_oneof_params($params, 'mock_oneof_tool');
+
+    ok(exists $normalized->{data}, "data parameter exists after normalization");
+    ok(!ref($normalized->{data}), "object converted to string");
+
+    my $decoded = decode_json($normalized->{data});
     is($decoded->{key}, 'value', "JSON object correctly serialized");
-    is($decoded->{nested}{data}, 123, "Nested data preserved");
-    
-    # Test: oneOf param with JSON string value (should passthrough)
-    my $params_with_json_string = {
-        operation => 'insert_at_line',
-        path => 'test.txt',
-        line => 1,
-        text => '{"already": "json"}',
-    };
-    
-    my $normalized2 = $executor->_normalize_oneof_params($params_with_json_string, 'file_operations');
-    
-    is($normalized2->{text}, '{"already": "json"}', "JSON string passes through");
-    
-    # Test: oneOf param with plain text (not JSON)
-    my $params_with_plain_text = {
-        operation => 'insert_at_line',
-        path => 'test.txt',
-        line => 1,
-        text => 'Just plain text',
-    };
-    
-    my $normalized3 = $executor->_normalize_oneof_params($params_with_plain_text, 'file_operations');
-    
-    is($normalized3->{text}, 'Just plain text', "Plain text passes through");
+    is($decoded->{nested}{num}, 123, "Nested data preserved");
 }
 
-# Test 6-7: FileOperations tool definition
+# Test 5: JSON string passthrough
+{
+    my $params = {
+        operation => 'test_op',
+        data => '{"already": "json"}',
+    };
+
+    my $normalized = $executor->_normalize_oneof_params($params, 'mock_oneof_tool');
+    is($normalized->{data}, '{"already": "json"}', "JSON string passes through");
+}
+
+# Test 6: Plain text passthrough
+{
+    my $params = {
+        operation => 'test_op',
+        data => 'Just plain text',
+    };
+
+    my $normalized = $executor->_normalize_oneof_params($params, 'mock_oneof_tool');
+    is($normalized->{data}, 'Just plain text', "Plain text passes through");
+}
+
+# Test 7: Params without oneOf schema are untouched
 {
     use CLIO::Tools::FileOperations;
-    
-    my $tool = CLIO::Tools::FileOperations->new(debug => 0);
-    my $def = $tool->get_tool_definition();
-    
-    my $text_param = $def->{parameters}{properties}{text};
-    
-    ok($text_param->{oneOf}, "text parameter uses oneOf");
-}
+    $registry->register_tool(CLIO::Tools::FileOperations->new(debug => 0));
 
-print "\n All Phase 2 oneOf type tests passed!\n";
-print "\nPhase 2 Implementation Summary (REVISED):\n";
-print "- ToolExecutor.pm: _normalize_oneof_params() (standard JSON Schema) \n";
-print "- FileOperations.pm: text parameter uses oneOf \n";
-print "- PromptManager.pm: oneOf parameter guidance \n";
-print "\nUsing standard JSON Schema (oneOf) instead of custom types!\n";
+    my $params = {
+        operation => 'read_file',
+        path => '/tmp/test.txt',
+    };
+
+    my $normalized = $executor->_normalize_oneof_params($params, 'file_operations');
+    is($normalized->{path}, '/tmp/test.txt', "Non-oneOf params pass through unchanged");
+}

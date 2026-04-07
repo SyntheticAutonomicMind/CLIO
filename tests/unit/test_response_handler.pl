@@ -153,7 +153,7 @@ subtest 'handle_error_response - generic 500' => sub {
     );
 
     my $result = $handler->handle_error_response($resp, '{}', 0);
-    ok(!$result->{retryable}, 'Generic 500 is not retryable');
+    ok($result->{retryable}, 'Generic 500 is retryable (transient server error)');
 };
 
 # =============================================================================

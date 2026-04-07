@@ -647,7 +647,8 @@ Prompt the user to approve or deny a flagged command.
 
 Displays the security analysis and asks the user to confirm.
 Session-level grants are tracked so the user isn't re-prompted
-for the same category of command within a session.
+for the same category of command within a session. All risk levels
+(including critical) support session grants via (a)llow.
 
 Returns: 1 if approved, 0 if denied
 
@@ -661,14 +662,12 @@ sub _prompt_command_confirmation {
 
     my $is_critical = $analysis->{blocked} || ($analysis->{risk_level} eq 'critical');
 
-    # Check session-level grants first (skip for critical-risk commands)
-    unless ($is_critical) {
-        for my $flag (@{$analysis->{flags}}) {
-            my $cat = $flag->{category};
-            if ($_session_grants{$cat}) {
-                log_debug('TermOps', "Session grant exists for category '$cat' - auto-approving");
-                return 1;
-            }
+    # Check session-level grants first
+    for my $flag (@{$analysis->{flags}}) {
+        my $cat = $flag->{category};
+        if ($_session_grants{$cat}) {
+            log_debug('TermOps', "Session grant exists for category '$cat' - auto-approving");
+            return 1;
         }
     }
 
@@ -682,9 +681,9 @@ sub _prompt_command_confirmation {
     my $spinner = ($context && $context->{spinner}) ? $context->{spinner} : undef;
     $spinner->stop() if $spinner && $spinner->can('stop');
 
-    # Build prompt options - critical commands don't get session grant option
+    # Build prompt options
     my $options = $is_critical
-        ? '(y)es once | (n)o deny'
+        ? '(y)es once | (a)llow session | (n)o deny'
         : '(y)es once | (a)llow category | (n)o deny';
 
     # Use themed security prompt
@@ -736,8 +735,8 @@ sub _prompt_command_confirmation {
 
     if ($response eq 'y' || $response eq 'yes') {
         return 1;
-    } elsif (!$is_critical && ($response eq 'a' || $response eq 'allow')) {
-        # Session grants not available for critical-risk commands
+    } elsif ($response eq 'a' || $response eq 'allow') {
+        # Grant for the session - by category for all risk levels
         for my $flag (@{$analysis->{flags}}) {
             $_session_grants{$flag->{category}} = 1;
             log_info('TermOps', "Session grant added for category: $flag->{category}");
