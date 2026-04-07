@@ -226,9 +226,13 @@ Returns hashref:
       ...
     ],
     requires_confirmation => 0 | 1,
-    blocked     => 0 | 1,  # Only for critical/destructive commands
+    blocked     => 0 | 1,  # Advisory flag for critical/destructive commands (user still gets prompted)
     summary     => 'Brief text summary of findings',
   }
+
+Note: The C<blocked> flag indicates the command is classified as critical risk.
+The consuming tool (TerminalOperations) prompts the user with elevated warnings
+but the user always has final say. Critical commands cannot be session-granted.
 
 =cut
 
@@ -517,8 +521,8 @@ agent capability while providing false security.
 
 Instead, this module classifies B<intent> (network outbound, credential
 access, etc.) and lets the enforcement layer decide what to do. The user
-always has the final say - commands are never silently blocked for
-non-destructive categories.
+always has the final say - all commands prompt the user for approval,
+with critical-risk commands showing elevated warnings.
 
 =head1 SECURITY MODEL
 
