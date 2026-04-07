@@ -590,15 +590,23 @@ sub validate_command {
     );
 
     # Hard-blocked commands (critical risk - system destructive)
+    # Still prompt the user - they always have final say
     if ($analysis->{blocked}) {
         my @descs = map { $_->{description} } @{$analysis->{flags}};
         my $reason = join('; ', @descs);
-        log_warning('TermOps', "BLOCKED command: $reason");
-        return $self->error_result(
-            "Command blocked (critical risk): $reason\n\n" .
-            "This command was classified as system-destructive and cannot be executed.\n" .
-            "If you believe this is a false positive, the user can adjust the security level."
-        );
+        log_warning('TermOps', "CRITICAL risk command: $reason");
+
+        # Route through user confirmation with critical risk context
+        my $approved = $self->_prompt_command_confirmation($command, $analysis, $context);
+        unless ($approved) {
+            log_info('TermOps', "User DENIED critical command: $analysis->{summary}");
+            return $self->error_result(
+                "Command denied by user (critical risk).\n\n" .
+                "Security analysis: $reason\n" .
+                "The user chose not to allow this command. Try a different approach."
+            );
+        }
+        log_info('TermOps', "User APPROVED critical command: $analysis->{summary}");
     }
 
     # Commands requiring user confirmation
@@ -651,12 +659,16 @@ my %_session_grants;
 sub _prompt_command_confirmation {
     my ($self, $command, $analysis, $context) = @_;
 
-    # Check session-level grants first
-    for my $flag (@{$analysis->{flags}}) {
-        my $cat = $flag->{category};
-        if ($_session_grants{$cat}) {
-            log_debug('TermOps', "Session grant exists for category '$cat' - auto-approving");
-            return 1;
+    my $is_critical = $analysis->{blocked} || ($analysis->{risk_level} eq 'critical');
+
+    # Check session-level grants first (skip for critical-risk commands)
+    unless ($is_critical) {
+        for my $flag (@{$analysis->{flags}}) {
+            my $cat = $flag->{category};
+            if ($_session_grants{$cat}) {
+                log_debug('TermOps', "Session grant exists for category '$cat' - auto-approving");
+                return 1;
+            }
         }
     }
 
@@ -670,19 +682,32 @@ sub _prompt_command_confirmation {
     my $spinner = ($context && $context->{spinner}) ? $context->{spinner} : undef;
     $spinner->stop() if $spinner && $spinner->can('stop');
 
+    # Build prompt options - critical commands don't get session grant option
+    my $options = $is_critical
+        ? '(y)es once | (n)o deny'
+        : '(y)es once | (a)llow category | (n)o deny';
+
     # Use themed security prompt
     my $theme_mgr = $ui->{theme_mgr};
     if ($theme_mgr && $theme_mgr->can('get_security_prompt')) {
         my ($prompt_line, $input_line) = $theme_mgr->get_security_prompt(
             $command,
             $analysis->{flags},
-            '(y)es once | (a)llow category | (n)o deny',
+            $options,
         );
-        print "\n$prompt_line\n$input_line";
+        if ($is_critical) {
+            print "\n\e[1;31m⚠ CRITICAL RISK\e[0m\n$prompt_line\n$input_line";
+        } else {
+            print "\n$prompt_line\n$input_line";
+        }
     } else {
         # Minimal fallback if no theme available
         my $display_cmd = length($command) > 80 ? substr($command, 0, 77) . '...' : $command;
-        print "\n* Security | $display_cmd\n  (y)es once | (a)llow category | (n)o deny: ";
+        if ($is_critical) {
+            print "\n* CRITICAL RISK | $display_cmd\n  $options: ";
+        } else {
+            print "\n* Security | $display_cmd\n  $options: ";
+        }
     }
 
     # Suspend ALRM handler - Chat.pm's 1-second timer calls ReadKey(-1)
@@ -711,7 +736,8 @@ sub _prompt_command_confirmation {
 
     if ($response eq 'y' || $response eq 'yes') {
         return 1;
-    } elsif ($response eq 'a' || $response eq 'allow') {
+    } elsif (!$is_critical && ($response eq 'a' || $response eq 'allow')) {
+        # Session grants not available for critical-risk commands
         for my $flag (@{$analysis->{flags}}) {
             $_session_grants{$flag->{category}} = 1;
             log_info('TermOps', "Session grant added for category: $flag->{category}");
