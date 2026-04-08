@@ -50,7 +50,7 @@ APIManager handles all communication with AI provider APIs. It manages:
 - Error handling and retry logic
 - Rate limiting and request throttling
 
-This module supports multiple AI providers (GitHub Copilot, OpenAI, Anthropic, Google, etc.)
+This module supports multiple AI providers (GitHub Copilot, OpenAI, Google, MiniMax, etc.)
 and automatically handles provider-specific quirks like billing continuity
 and endpoint variations.
 

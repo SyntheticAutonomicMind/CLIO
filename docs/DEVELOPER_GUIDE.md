@@ -247,7 +247,6 @@ clio/
           Manager.pm        # Profile storage and injection
       Providers/            # Native API providers
           Base.pm           # Provider base class
-          Anthropic.pm      # Anthropic native API
           Google.pm         # Google Gemini native API
       MCP/                  # Model Context Protocol
           Manager.pm        # MCP server management
@@ -268,7 +267,7 @@ clio/
           JSON.pm           # JSON module selection (XS > PP fallback)
           GitIgnore.pm      # Auto-manage .clio/ in .gitignore
           InputHelpers.pm   # Terminal input utilities
-          AnthropicXMLParser.pm  # Anthropic XML tool call parsing
+          AnthropicXMLParser.pm  # XML-format tool call parser
           YAML.pm           # Lightweight YAML parser
           ConfigPath.pm     # Config path resolution
       Spec/                 # OpenSpec integration

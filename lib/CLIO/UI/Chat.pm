@@ -1249,7 +1249,6 @@ sub display_header {
         $provider_names{$pname} = $pdef->{name} if $pdef && $pdef->{name};
     }
     # Legacy aliases not in the registry
-    $provider_names{'claude'}  //= 'Anthropic Claude';
     $provider_names{'gemini'}  //= 'Google Gemini';
     $provider_names{'qwen'}    //= 'Qwen';
     $provider_names{'grok'}    //= 'xAI Grok';
@@ -2205,6 +2204,15 @@ sub display_help {
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/mcp add <name> <cmd>', 'help_command'), 'Add MCP server');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/mcp remove <name>', 'help_command'), 'Remove MCP server');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/mcp auth <name>', 'help_command'), 'Trigger OAuth authentication');
+    push @help_lines, "";
+    
+    push @help_lines, $self->colorize("PLUGINS", 'command_subheader');
+    push @help_lines, $self->colorize(box_char("horizontal") x 62, 'dim');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/plugin', 'help_command'), 'List installed plugins');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/plugin info <name>', 'help_command'), 'Show plugin details');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/plugin enable <name>', 'help_command'), 'Enable a plugin');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/plugin disable <name>', 'help_command'), 'Disable a plugin');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/plugin config <name> [k v]', 'help_command'), 'View/set plugin config');
     push @help_lines, "";
     
     push @help_lines, $self->colorize("TODO", 'command_subheader');

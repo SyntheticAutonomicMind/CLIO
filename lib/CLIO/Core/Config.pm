@@ -43,7 +43,7 @@ use constant LOG_LEVEL => {
 # Provider-specific defaults come from CLIO::Providers
 use constant DEFAULT_CONFIG => {
     api_key => '',
-    api_keys => {},  # Per-provider API keys: { anthropic => 'sk-ant-...', google => 'AIza...' }
+    api_keys => {},  # Per-provider API keys: { google => 'AIza...', minimax => '...' }
     provider => 'github_copilot',  # Default provider
     editor => $ENV{EDITOR} || $ENV{VISUAL} || 'vim',  # Default editor
     log_level => 'WARNING',  # Default log level: ERROR, WARNING, INFO, DEBUG
@@ -359,7 +359,7 @@ sub set_provider {
 Get the API key for a specific provider from per-provider storage.
 
 Arguments:
-- $provider: Provider name (e.g., 'anthropic', 'google')
+- $provider: Provider name (e.g., 'google', 'minimax')
 
 Returns: API key string or undef if not set
 
@@ -381,7 +381,7 @@ This stores the key in per-provider storage and also sets it as current
 if the provider matches the current provider.
 
 Arguments:
-- $provider: Provider name (e.g., 'anthropic', 'google')
+- $provider: Provider name (e.g., 'google', 'minimax')
 - $key: API key value
 
 Returns: 1 on success

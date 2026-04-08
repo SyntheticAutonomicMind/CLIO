@@ -6,7 +6,7 @@
 
 ## Quick Overview
 
-CLIO is a **terminal-first AI code assistant** built in Perl. It integrates AI models (GitHub Copilot, OpenAI, Anthropic, Google, OpenRouter) with local tools (file operations, git, terminal) to help developers work more effectively.
+CLIO is a **terminal-first AI code assistant** built in Perl. It integrates AI models (GitHub Copilot, OpenAI, Google, OpenRouter) with local tools (file operations, git, terminal) to help developers work more effectively.
 
 **Core concept:** User types → CLIO thinks → CLIO uses tools → Results displayed
 
@@ -97,7 +97,7 @@ Terminal Output
 | Logger | `Logger.pm` | Debug and trace output |
 
 **How it works:**
-1. APIManager connects to AI provider (GitHub Copilot, OpenAI, Anthropic, Google, OpenRouter)
+1. APIManager connects to AI provider (GitHub Copilot, OpenAI, Google, OpenRouter)
 2. WorkflowOrchestrator manages complex interactions, including:
    - Proactive context trimming before each API call (keeps messages at ≤75% of context)
    - Reactive trimming with 3-attempt escalation when the API rejects due to token overflow
@@ -239,7 +239,7 @@ Tools can be restricted via `--enable` (allowlist) or `--disable` (blocklist) CL
 | JSON Repair | `JSONRepair.pm` | Repair malformed JSON from AI responses |
 | Git Ignore | `GitIgnore.pm` | Auto-manage `.clio/` entries in `.gitignore` |
 | Input Helpers | `InputHelpers.pm` | Terminal input utilities |
-| Anthropic XML Parser | `AnthropicXMLParser.pm` | Parse Anthropic tool call XML format |
+| XML Tool Parser | `AnthropicXMLParser.pm` | Parse XML-format tool calls from AI responses |
 | YAML | `YAML.pm` | Lightweight YAML parser (no CPAN required) |
 
 **How it works:**
@@ -308,7 +308,6 @@ Tools can be restricted via `--enable` (allowlist) or `--disable` (blocklist) CL
 |-----------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------|
 | Provider Registry | `Providers.pm` | AI provider registration and lookup |
 | Base | `Base.pm` | Abstract base class for providers |
-| Anthropic | `Anthropic.pm` | Native Anthropic API (Claude) |
 | Google | `Google.pm` | Native Google Gemini API |
 
 **How it works:**
@@ -526,7 +525,7 @@ clio --new           # First run
 
 ```
 lib/CLIO/
-  Providers.pm             # AI provider registry (GitHub Copilot, OpenAI, Anthropic, etc.)
+  Providers.pm             # AI provider registry (GitHub Copilot, OpenAI, Google, etc.)
   Update.pm                # Self-update system
   UI/                      # Terminal interface
       Chat.pm              # Main interactive loop
@@ -649,7 +648,6 @@ lib/CLIO/
       Recall.pm            # Memory recall
   Providers/               # Native API provider modules
       Base.pm              # Provider base class
-      Anthropic.pm         # Anthropic native API
       Google.pm            # Google Gemini native API
   MCP/                     # Model Context Protocol
       Manager.pm           # MCP server management
@@ -677,7 +675,7 @@ lib/CLIO/
       JSON.pm              # JSON module selection
       ConfigPath.pm        # Config path resolution
       InputHelpers.pm      # Input helpers
-      AnthropicXMLParser.pm # Anthropic XML parsing
+      AnthropicXMLParser.pm # XML-format tool call parser
       YAML.pm              # Lightweight YAML parser (OpenSpec support)
       GitIgnore.pm         # Auto-manage .clio/ entries in .gitignore
   Spec/                    # OpenSpec integration

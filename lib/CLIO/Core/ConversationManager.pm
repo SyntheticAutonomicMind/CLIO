@@ -353,7 +353,7 @@ This function:
 
 Arguments:
 - $messages: Arrayref of messages
-- $provider: Provider name string (e.g., 'github_copilot', 'anthropic')
+- $provider: Provider name string (e.g., 'github_copilot', 'google')
 - %opts: Options hash
   - debug => 0|1
 

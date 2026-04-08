@@ -67,7 +67,7 @@ CLIO is a terminal-based AI code assistant that brings powerful AI capabilities 
 
 **AI Provider Requirements:**
 - GitHub Copilot subscription (recommended - includes GPT and Claude models), OR
-- API key from any supported provider: OpenAI, Anthropic, Google Gemini, DeepSeek, OpenRouter, MiniMax, OR
+- API key from any supported provider: OpenAI, Google Gemini, DeepSeek, OpenRouter, MiniMax, OR
 - Local model server: llama.cpp, LM Studio, or SAM (no API key needed)
 
 ### Installation Steps
@@ -1880,7 +1880,7 @@ CLIO automatically redacts sensitive information from tool output before it's se
 
 - **PII (Personally Identifiable Information):** Email addresses, phone numbers, SSN, credit cards
 - **Cryptographic Material:** Private keys, database connection strings with passwords
-- **API Keys:** AWS, GitHub, Stripe, OpenAI, Anthropic, Slack, Discord, etc.
+- **API Keys:** AWS, GitHub, Stripe, OpenAI, Slack, Discord, etc.
 - **Authentication Tokens:** JWT, Bearer tokens, Basic auth headers
 
 **Redaction Levels:**
@@ -2375,7 +2375,7 @@ git init
 
 **Q: Is CLIO free?**
 
-A: CLIO itself is open-source and free (GPL v3). You need access to an AI provider - GitHub Copilot (included with GitHub subscriptions), OpenAI, Anthropic, Google, DeepSeek, OpenRouter, MiniMax, or a local model (llama.cpp, LM Studio, SAM).
+A: CLIO itself is open-source and free (GPL v3). You need access to an AI provider - GitHub Copilot (included with GitHub subscriptions), OpenAI, Google, DeepSeek, OpenRouter, MiniMax, or a local model (llama.cpp, LM Studio, SAM).
 
 **Q: Does CLIO work offline?**
 
@@ -2383,7 +2383,7 @@ A: With cloud providers, you need an internet connection. With local providers (
 
 **Q: Can I use CLIO with ChatGPT/Claude directly?**
 
-A: Yes. CLIO supports 10 providers including OpenAI (GPT models directly), Anthropic (Claude directly), Google Gemini, DeepSeek, OpenRouter (access to hundreds of models), MiniMax, and local models. See [PROVIDERS.md](PROVIDERS.md) for setup.
+A: Yes. CLIO supports multiple providers including OpenAI (GPT models directly), Google Gemini, DeepSeek, OpenRouter (access to hundreds of models), MiniMax, and local models. See [PROVIDERS.md](PROVIDERS.md) for setup.
 
 **Q: Is CLIO safe to use with sensitive code?**
 
@@ -2418,7 +2418,7 @@ A: Not directly. Sessions are stored as local JSON files. However, you could sha
 
 **Q: What AI models does CLIO use?**
 
-A: CLIO supports models from 10 providers. Through GitHub Copilot you get access to GPT-5, Claude Opus and Sonnet, MiniMax, and more. Direct provider access gives you the full model catalog from OpenAI, Anthropic, Google, DeepSeek, OpenRouter, and MiniMax. Local models (llama.cpp, LM Studio) work for offline use.
+A: CLIO supports models from multiple providers. Through GitHub Copilot you get access to GPT-5, Claude Opus and Sonnet, MiniMax, and more. Direct provider access gives you the full model catalog from OpenAI, Google, DeepSeek, OpenRouter, and MiniMax. Local models (llama.cpp, LM Studio) work for offline use.
 
 **Q: How much does API usage cost?**
 
