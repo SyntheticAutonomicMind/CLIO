@@ -235,6 +235,44 @@ sub execute_tool {
         }
     }
     
+    # Check if this is a plugin tool (prefixed with plugin_)
+    if ($tool_name =~ /^plugin_/ && $self->{plugin_manager}) {
+        require CLIO::Tools::PluginBridge;
+        
+        log_debug('ToolExecutor', "Executing plugin tool: $tool_name");
+        
+        my $result = CLIO::Tools::PluginBridge->execute_tool(
+            $self->{plugin_manager}, $tool_name, $arguments
+        );
+        
+        my $execution_time_ms = int((time() - $start_time) * 1000);
+        
+        # Log the plugin tool operation
+        $self->_log_tool_operation({
+            tool_call_id     => $tool_call_id,
+            tool_name        => $tool_name,
+            operation        => 'plugin_call',
+            parameters       => $arguments,
+            output           => { text => $result->{output} || $result->{error} || '' },
+            action_description => $result->{action_description} || "Plugin tool: $tool_name",
+            sent_to_ai       => $result->{output} || $result->{error} || '',
+            success          => $result->{success} ? 1 : 0,
+            error            => $result->{error},
+            execution_time_ms => $execution_time_ms,
+        });
+        
+        if ($result->{success}) {
+            my $response = {
+                success            => 1,
+                output             => $result->{output} || '',
+                action_description => $result->{action_description} || "Plugin tool: $tool_name",
+            };
+            return encode_json($response);
+        } else {
+            return $self->_error_result($result->{error} || 'Plugin tool execution failed');
+        }
+    }
+    
     if (exists $TOOL_ALIASES{$tool_name}) {
         my $alias = $TOOL_ALIASES{$tool_name};
         log_debug('ToolExecutor', "Aliasing '$tool_name' -> '$alias->{tool}' with operation='$alias->{operation}'");

@@ -9,7 +9,7 @@ CLIO::Core::APIManager - AI provider API communication and request orchestration
 
 =head1 DESCRIPTION
 
-Manages communication with AI model providers (GitHub Copilot, Anthropic, Google).
+Manages communication with AI model providers (GitHub Copilot, Google, MiniMax, etc.).
 Handles streaming responses, tool call extraction, retry logic with exponential
 backoff, and token usage tracking. Central hub for all AI API interactions.
 
@@ -3315,7 +3315,7 @@ sub _get_native_provider {
 Send a streaming request using a native provider implementation.
 
 Arguments:
-- $provider: Native provider instance (e.g., CLIO::Providers::Anthropic)
+- $provider: Native provider instance (e.g., CLIO::Providers::Google)
 - $messages: Array of messages in OpenAI format
 - $tools: Array of tool definitions in OpenAI format
 - %opts: Options including callbacks (on_chunk, on_tool_call)

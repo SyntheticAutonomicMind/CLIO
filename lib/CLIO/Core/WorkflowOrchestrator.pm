@@ -152,6 +152,23 @@ sub new {
         log_warning('WorkflowOrchestrator', "MCP initialization failed: $@");
     }
     
+    # Initialize Plugin Manager
+    eval {
+        require CLIO::Core::PluginManager;
+        $self->{plugin_manager} = CLIO::Core::PluginManager->new(
+            config => $args{config},
+            debug  => $args{debug},
+        );
+        my $loaded = $self->{plugin_manager}->load_plugins();
+        if ($loaded > 0) {
+            # Pass plugin manager to tool executor for plugin tool calls
+            $self->{tool_executor}{plugin_manager} = $self->{plugin_manager};
+        }
+    };
+    if ($@) {
+        log_warning('WorkflowOrchestrator', "Plugin initialization failed: $@");
+    }
+    
     # Initialize prompt builder for system prompt construction
     $self->{prompt_builder} = CLIO::Core::PromptBuilder->new(
         debug           => $args{debug},
@@ -1012,6 +1029,27 @@ sub _build_turn_context {
             }
         };
         log_warning('WorkflowOrchestrator', "MCP tool definition error: $@") if $@;
+    }
+
+    if ($self->{plugin_manager}) {
+        eval {
+            require CLIO::Tools::PluginBridge;
+            my $plugin_defs = CLIO::Tools::PluginBridge->generate_tool_definitions($self->{plugin_manager});
+            if ($plugin_defs && @$plugin_defs) {
+                for my $plugin_def (@$plugin_defs) {
+                    push @$tools, {
+                        type     => 'function',
+                        function => {
+                            name        => $plugin_def->{name},
+                            description => $plugin_def->{description},
+                            parameters  => $plugin_def->{parameters},
+                        },
+                    };
+                }
+                log_debug('WorkflowOrchestrator', "Added " . scalar(@$plugin_defs) . " plugin tool(s) to API definitions");
+            }
+        };
+        log_warning('WorkflowOrchestrator', "Plugin tool definition error: $@") if $@;
     }
 
     log_debug('WorkflowOrchestrator', "Loaded " . scalar(@$tools) . " tool definitions");

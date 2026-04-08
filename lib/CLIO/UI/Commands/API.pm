@@ -147,7 +147,7 @@ sub _display_api_help {
     $self->display_command_row("/api show", "Display current API configuration", 40);
     $self->display_command_row("/api set model <name>", "Set AI model", 40);
     $self->display_command_row("/api set model <provider>/<model>", "Set model with provider prefix", 40);
-    $self->display_command_row("/api set provider <name>", "Set provider (anthropic, google, etc.)", 40);
+    $self->display_command_row("/api set provider <name>", "Set provider (google, minimax, etc.)", 40);
     $self->display_command_row("/api set base <url>", "Set API base URL", 40);
     $self->display_command_row("/api set key <value>", "Set API key (stored per-provider)", 40);
     $self->display_command_row("/api set thinking on|off", "Show model reasoning output", 40);
@@ -165,7 +165,6 @@ sub _display_api_help {
 
     $self->display_section_header("PROVIDERS");
     $self->display_command_row("github_copilot", "GitHub Copilot (OAuth login)", 40);
-    $self->display_command_row("anthropic", "Anthropic Claude (native API) [EXPERIMENTAL]", 40);
     $self->display_command_row("google", "Google Gemini (native API) [EXPERIMENTAL]", 40);
     $self->display_command_row("openai", "OpenAI (compatible API)", 40);
     $self->display_command_row("openrouter", "OpenRouter (multi-model gateway)", 40);

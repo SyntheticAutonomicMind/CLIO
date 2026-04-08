@@ -153,23 +153,6 @@ my %PROVIDERS = (
         },
     },
     
-    anthropic => {
-        name => 'Anthropic',
-        api_base => 'https://api.anthropic.com/v1/messages',
-        model => 'claude-sonnet-4-20250514',
-        requires_auth => 'apikey',
-        supports_tools => 1,
-        supports_streaming => 1,
-        native_api => 1,
-        provider_module => 'CLIO::Providers::Anthropic',
-        experimental => 1,
-        endpoint => {
-            path_suffix => '/messages',
-            temperature_range => [0.0, 1.0],
-            supports_tools => 1,
-        },
-    },
-    
     google => {
         name => 'Google Gemini',
         api_base => 'https://generativelanguage.googleapis.com/v1beta',

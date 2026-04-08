@@ -36,7 +36,7 @@ is($config->get_model_alias('FAST'), 'gpt-5-mini', 'Alias lookup is case-insensi
 
 # Test: set multiple
 $config->set_model_alias('thinking', 'openrouter/deepseek/deepseek-r1');
-$config->set_model_alias('sonnet', 'anthropic/claude-sonnet-4');
+$config->set_model_alias('sonnet', 'github_copilot/claude-sonnet-4');
 
 %aliases = $config->list_model_aliases();
 is(scalar keys %aliases, 3, 'Three aliases exist');

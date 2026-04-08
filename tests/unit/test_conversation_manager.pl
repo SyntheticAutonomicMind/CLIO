@@ -163,13 +163,13 @@ subtest 'enforce_message_alternation - preserves tool messages for all providers
     );
 
     # All modern providers support role=tool natively
-    my $result = enforce_message_alternation(\@messages, 'anthropic');
+    my $result = enforce_message_alternation(\@messages, 'github_copilot');
     my $tool_count = grep { $_->{role} eq 'tool' } @$result;
-    is($tool_count, 1, 'Tool messages preserved for anthropic provider');
+    is($tool_count, 1, 'Tool messages preserved for all providers');
 
     # tool_calls preserved on assistant messages
     my @assistants_with_tools = grep { $_->{role} eq 'assistant' && $_->{tool_calls} } @$result;
-    is(scalar @assistants_with_tools, 1, 'tool_calls preserved on assistant for anthropic');
+    is(scalar @assistants_with_tools, 1, 'tool_calls preserved on assistant messages');
 };
 
 subtest 'enforce_message_alternation - empty input' => sub {

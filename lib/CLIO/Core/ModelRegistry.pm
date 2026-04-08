@@ -13,7 +13,7 @@ CLIO::Core::ModelRegistry - Centralized model registry for multiple AI providers
 
 =head1 DESCRIPTION
 
-Aggregates available models from multiple AI providers (OpenAI, Anthropic, GitHub Copilot, etc.)
+Aggregates available models from multiple AI providers (OpenAI, Google, GitHub Copilot, MiniMax, etc.)
 and provides unified access to model capabilities and pricing information.
 
 Inspired by SAM's model management architecture.
@@ -65,7 +65,7 @@ Get all available models from all providers.
 Returns arrayref of model hashrefs, each containing:
 - id: Model identifier (e.g., 'gpt-4o')
 - name: Display name
-- provider: Provider name (openai, anthropic, github_copilot)
+- provider: Provider name (openai, google, github_copilot)
 - enabled: Boolean
 - pricing: {input_per_1k, output_per_1k} or '-' if unavailable
 - billing: {is_premium, multiplier} (GitHub Copilot specific)
@@ -94,7 +94,7 @@ sub get_all_models {
 Get all models for a specific provider.
 
 Arguments:
-- $provider: Provider name (openai, anthropic, github_copilot)
+- $provider: Provider name (openai, google, github_copilot)
 
 Returns arrayref of model hashrefs
 
@@ -232,8 +232,7 @@ All models are fetched dynamically from provider APIs. No hardcoded models.
 
 Currently supports:
 - GitHub Copilot: Fetched from their /models API with pricing/billing info
-- OpenAI: Requires API integration (future work)
-- Anthropic: Requires API integration (future work)
+- Other providers: Model lists from provider configuration
 
 =head1 SEE ALSO
 

@@ -288,7 +288,7 @@ tests/
 - **Reasoning:** Tests API provider integration
 - **New Location:** `tests/integration/api_provider_test.pl`
 - **Refactor Needed:**
-  - Add tests for other providers (OpenAI, Anthropic, etc.)
+  - Add tests for other providers (OpenAI, Google, MiniMax, etc.)
   - Test API error handling
   - Test rate limiting
 

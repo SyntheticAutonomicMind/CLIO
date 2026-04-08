@@ -197,10 +197,33 @@ sub handle_quota {
     } @args;
 
     my $provider = $self->{config}->get('provider') || '';
+    
+    # Route to provider-specific quota handlers
     if ($provider =~ /^minimax/) {
         $self->_handle_minimax_quota($refresh);
         return;
     }
+    
+    if ($provider eq 'github_copilot') {
+        $self->_handle_copilot_quota($refresh);
+        return;
+    }
+    
+    # Providers without quota APIs
+    my $provider_display = ucfirst($provider || 'Unknown');
+    eval { require CLIO::Providers; };
+    if (!$@) {
+        my $pdef = CLIO::Providers::get_provider($provider);
+        $provider_display = $pdef->{name} if $pdef && $pdef->{name};
+    }
+    
+    $self->display_system_message("$provider_display does not provide a quota API.");
+    $self->display_system_message("Use /billing to see session token usage.");
+    return;
+}
+
+sub _handle_copilot_quota {
+    my ($self, $refresh) = @_;
 
     eval { require CLIO::Core::CopilotUserAPI; };
     if ($@) {

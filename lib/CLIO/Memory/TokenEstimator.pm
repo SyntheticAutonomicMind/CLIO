@@ -43,7 +43,7 @@ ConversationManager and Session::State.
 # Default characters per token (conservative estimate)
 use constant DEFAULT_CHARS_PER_TOKEN => 4.0;
 
-# Per-message overhead constants (from OpenAI/Anthropic tokenizer analysis)
+# Per-message overhead constants (from OpenAI tokenizer analysis)
 # Every message costs additional tokens for role framing
 use constant TOKENS_PER_MESSAGE    => 3;   # role + delimiters
 use constant TOKENS_PER_NAME       => 1;   # tool_call_id or name field

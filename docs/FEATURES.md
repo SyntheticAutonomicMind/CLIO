@@ -77,7 +77,7 @@ Responses stream in real-time, token by token. You see the AI "thinking" as it t
 
 ### Thinking/Reasoning Display
 
-When using models that support extended thinking (OpenAI reasoning, Anthropic thinking blocks, Google thoughts, OpenRouter reasoning), CLIO can display the model's internal reasoning process:
+When using models that support extended thinking (OpenAI reasoning, Google thoughts, OpenRouter reasoning), CLIO can display the model's internal reasoning process:
 
 ```
 /api set thinking on     # Enable thinking display
@@ -216,7 +216,6 @@ CLIO supports 10 AI providers out of the box. Switch between them at any time - 
 |----------|------|---------------|
 | **GitHub Copilot** | Cloud | GitHub OAuth (device flow) |
 | **OpenAI** | Cloud | API key |
-| **Anthropic** | Cloud | API key |
 | **Google Gemini** | Cloud | API key |
 | **DeepSeek** | Cloud | API key |
 | **OpenRouter** | Cloud | API key |
