@@ -21,7 +21,7 @@ Providers handle the translation between CLIO's internal message format
 
 =head1 SYNOPSIS
 
-    package CLIO::Providers::Anthropic;
+    package CLIO::Providers::Google;
     use parent 'CLIO::Providers::Base';
     
     sub build_request { ... }
@@ -256,7 +256,7 @@ __END__
 
 =head1 EXAMPLE IMPLEMENTATION
 
-See CLIO::Providers::Anthropic for a complete implementation example.
+See CLIO::Providers::Google for a complete implementation example.
 
 =head1 AUTHOR
 

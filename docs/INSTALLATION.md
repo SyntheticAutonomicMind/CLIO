@@ -57,7 +57,7 @@ You need at least one AI provider. See [PROVIDERS.md](PROVIDERS.md) for the comp
 **Quick options:**
 - **GitHub Copilot** - Recommended, access to multiple models
 - **Local models** (free) - llama.cpp, LM Studio, or SAM
-- **API providers** - OpenAI, Anthropic, Google, DeepSeek, OpenRouter, MiniMax
+- **API providers** - OpenAI, Google, DeepSeek, OpenRouter, MiniMax
 
 ---
 
@@ -154,7 +154,7 @@ clio --new
 # Browser opens -> authorize -> done!
 ```
 
-### OpenAI / Anthropic / Other API Providers
+### OpenAI / Other API Providers
 
 ```bash
 /api set provider openai

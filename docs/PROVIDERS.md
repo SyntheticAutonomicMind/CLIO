@@ -10,7 +10,6 @@
 |----------|------------|-----------|
 | **GitHub Copilot** | `github_copilot` | OAuth |
 | **OpenAI** | `openai` | API Key |
-| **Anthropic** | `anthropic` | API Key |
 | **Google Gemini** | `google` | API Key |
 | **DeepSeek** | `deepseek` | API Key |
 | **OpenRouter** | `openrouter` | API Key |
@@ -60,7 +59,7 @@ All provider configuration is done with the `/api` command inside CLIO:
 
 ### GitHub Copilot (Recommended)
 
-**Best for:** Most users - single subscription gives access to models from OpenAI, Anthropic, MiniMax, and more.
+**Best for:** Most users - single subscription gives access to models from OpenAI, MiniMax, and more.
 
 **Get Access:**
 1. Subscribe to GitHub Copilot at [github.com/features/copilot](https://github.com/features/copilot)
@@ -105,27 +104,6 @@ clio --new
 ```
 
 **Available model families:** GPT, o-series reasoning models. Use `/api models` for the current list.
-
----
-
-### Anthropic
-
-**Best for:** Direct Claude API access, latest Claude features
-
-**Get API Key:**
-1. Create account at [console.anthropic.com](https://console.anthropic.com)
-2. Go to API Keys in settings
-3. Create new key
-
-**Configure CLIO:**
-```bash
-clio --new
-/api set provider anthropic
-/api set key sk-ant-...your-key...
-/config save
-```
-
-**Available model families:** Claude Opus, Claude Sonnet, Claude Haiku. Use `/api models` for the current list.
 
 ---
 
@@ -192,8 +170,8 @@ clio --new
 
 Models use the `provider/model` format:
 ```bash
-/api set model anthropic/<model-name>
 /api set model openai/<model-name>
+/api set model deepseek/<model-name>
 ```
 
 ---
@@ -372,7 +350,7 @@ Shows: current provider, model, API base URL, and authentication status.
 
 **"Model not found"**
 - Check exact model name with `/api models`
-- Some providers require full path (e.g., `openrouter/anthropic/model-name`)
+- Some providers require full path (e.g., `openrouter/deepseek/model-name`)
 
 ### Environment Variables
 
@@ -390,8 +368,8 @@ Configuration precedence: `/api set` commands > environment variables > defaults
 
 ## Provider Comparison
 
-| Feature | GitHub Copilot | OpenAI | Anthropic | Google | Local |
-|---------|---------------|--------|-----------|--------|-------|
+| Feature | GitHub Copilot | OpenAI | Google | DeepSeek | Local |
+|---------|---------------|--------|--------|----------|-------|
 | **Setup Ease** |  |  |  |  |  |
 | **Model Variety** |  |  |  |  |  |
 | **Privacy** | Cloud | Cloud | Cloud | Cloud |  |

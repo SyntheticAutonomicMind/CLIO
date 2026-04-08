@@ -353,6 +353,7 @@ sub _build_command_registry {
     $register->('update',    handler => sub { $self->{update_cmd}->handle_update_command(@_) });
     $register->('undo',      handler => sub { $self->handle_undo_command(@_) });
     $register->('mcp',       handler => sub { $self->handle_mcp_command(@_) });
+    $register->('plugin',    handler => sub { $self->handle_plugin_command(@_) });
     $register->('stats',     handler => sub { $self->{stats_cmd}->handle_stats_command(@_) });
     $register->([qw(context ctx)],
         handler => sub { $self->{context_cmd}->handle_context_command(@_) },
@@ -905,6 +906,205 @@ sub _remove_mcp_from_config {
     };
     if ($@) {
         log_warning('CommandHandler', "Failed to update MCP config: $@");
+    }
+}
+
+=head2 handle_plugin_command
+
+Manage CLIO plugins.
+
+Usage:
+    /plugin              - List installed plugins and their status
+    /plugin info <name>  - Show plugin details
+    /plugin enable <name>  - Enable a plugin
+    /plugin disable <name> - Disable a plugin
+    /plugin config <name> <key> <value> - Set plugin configuration
+    /plugin config <name> - Show plugin configuration
+
+=cut
+
+sub handle_plugin_command {
+    my ($self, @args) = @_;
+
+    my $chat = $self->{chat};
+    my $subcommand = $args[0] || '';
+
+    # Get or create plugin manager
+    my $plugin_manager;
+    eval {
+        require CLIO::Core::PluginManager;
+        $plugin_manager = CLIO::Core::PluginManager->instance();
+    };
+
+    unless ($plugin_manager) {
+        $chat->display_system_message("Plugin system not initialized.");
+        return;
+    }
+
+    if ($subcommand eq '' || $subcommand eq 'list') {
+        my $plugins = $plugin_manager->get_plugin_list();
+
+        unless ($plugins && @$plugins) {
+            $chat->display_system_message("No plugins installed.");
+            $chat->display_system_message("");
+            $chat->display_system_message("Install plugins by creating directories in:");
+            $chat->display_system_message("  ~/.clio/plugins/<name>/plugin.json   (global)");
+            $chat->display_system_message("  .clio/plugins/<name>/plugin.json     (project)");
+            return;
+        }
+
+        $chat->display_system_message("Installed Plugins:");
+        $chat->display_system_message("");
+
+        for my $p (@$plugins) {
+            my $status = $p->{enabled} ? "\x{2713}" : "\x{2212}";
+            my $tools = $p->{tools_count} || 0;
+            my $desc = $p->{description} || '';
+            my $ver = $p->{version} ? " v$p->{version}" : '';
+            my $instr = $p->{has_instructions} ? ', instructions' : '';
+            $chat->display_system_message("  $status $p->{name}${ver} - ${desc}");
+            $chat->display_system_message("    ${tools} tool(s)${instr} | $p->{path}");
+        }
+    }
+    elsif ($subcommand eq 'info') {
+        my $name = $args[1];
+        unless ($name) {
+            $chat->display_error_message("Usage: /plugin info <name>");
+            return;
+        }
+
+        my $plugin = $plugin_manager->get_plugin($name);
+        unless ($plugin) {
+            $chat->display_error_message("Plugin not found: $name");
+            return;
+        }
+
+        my $manifest = $plugin->{manifest};
+        $chat->display_system_message("Plugin: $name");
+        $chat->display_system_message("  Description: " . ($manifest->{description} || 'none'));
+        $chat->display_system_message("  Version: " . ($manifest->{version} || 'unknown'));
+        $chat->display_system_message("  Enabled: " . ($plugin->{enabled} ? 'yes' : 'no'));
+        $chat->display_system_message("  Path: $plugin->{path}");
+        $chat->display_system_message("  Instructions: " . ($plugin->{instructions} ? 'yes' : 'no'));
+
+        # Show tools
+        my @tools = @{$manifest->{tools} || []};
+        if (@tools) {
+            $chat->display_system_message("  Tools:");
+            for my $t (@tools) {
+                my $type = $t->{type} || 'http';
+                my $ops = $t->{operations} ? join(', ', sort keys %{$t->{operations}}) : 'none';
+                $chat->display_system_message("    plugin_${name}_$t->{name} ($type): $ops");
+            }
+        }
+
+        # Show config schema
+        my $config_schema = $manifest->{config} || {};
+        if (keys %$config_schema) {
+            $chat->display_system_message("  Configuration:");
+            my $resolved = $plugin_manager->get_plugin_config($name);
+            for my $key (sort keys %$config_schema) {
+                my $schema = $config_schema->{$key};
+                my $required = $schema->{required} ? ' (required)' : '';
+                my $is_secret = $schema->{secret};
+                my $current = $resolved->{$key};
+                my $display_val;
+                if (defined $current) {
+                    $display_val = $is_secret ? '****' : $current;
+                } else {
+                    $display_val = 'not set';
+                }
+                $chat->display_system_message("    $key = $display_val$required");
+                if ($schema->{description}) {
+                    $chat->display_system_message("      $schema->{description}");
+                }
+            }
+
+            # Validate
+            my ($valid, $missing) = $plugin_manager->validate_plugin_config($name);
+            unless ($valid) {
+                $chat->display_system_message("");
+                $chat->display_error_message("Missing required config: " . join(', ', @$missing));
+                $chat->display_system_message("Set with: /plugin config $name <key> <value>");
+            }
+        }
+    }
+    elsif ($subcommand eq 'enable') {
+        my $name = $args[1];
+        unless ($name) {
+            $chat->display_error_message("Usage: /plugin enable <name>");
+            return;
+        }
+
+        if ($plugin_manager->enable_plugin($name)) {
+            $chat->display_system_message("Enabled plugin: $name");
+            $chat->display_system_message("Plugin tools will be available in the next message.");
+        } else {
+            $chat->display_error_message("Plugin not found: $name");
+        }
+    }
+    elsif ($subcommand eq 'disable') {
+        my $name = $args[1];
+        unless ($name) {
+            $chat->display_error_message("Usage: /plugin disable <name>");
+            return;
+        }
+
+        if ($plugin_manager->disable_plugin($name)) {
+            $chat->display_system_message("Disabled plugin: $name");
+        } else {
+            $chat->display_error_message("Plugin not found: $name");
+        }
+    }
+    elsif ($subcommand eq 'config') {
+        my $name = $args[1];
+        unless ($name) {
+            $chat->display_error_message("Usage: /plugin config <name> [<key> <value>]");
+            return;
+        }
+
+        my $plugin = $plugin_manager->get_plugin($name);
+        unless ($plugin) {
+            $chat->display_error_message("Plugin not found: $name");
+            return;
+        }
+
+        my $key = $args[2];
+        unless ($key) {
+            # Show current config
+            my $resolved = $plugin_manager->get_plugin_config($name);
+            my $schema = $plugin->{manifest}{config} || {};
+
+            if (!keys %$schema) {
+                $chat->display_system_message("Plugin '$name' has no configurable settings.");
+                return;
+            }
+
+            $chat->display_system_message("Configuration for '$name':");
+            for my $k (sort keys %$schema) {
+                my $s = $schema->{$k};
+                my $current = $resolved->{$k};
+                my $display = defined($current) ? ($s->{secret} ? '****' : $current) : 'not set';
+                my $required = $s->{required} ? ' (required)' : '';
+                $chat->display_system_message("  $k = $display$required");
+            }
+            return;
+        }
+
+        my $value = join(' ', @args[3..$#args]);
+        unless (defined $value && length $value) {
+            $chat->display_error_message("Usage: /plugin config $name $key <value>");
+            return;
+        }
+
+        $plugin_manager->set_plugin_config($name, $key, $value);
+        my $is_secret = ($plugin->{manifest}{config}{$key} || {})->{secret};
+        my $display = $is_secret ? '****' : $value;
+        $chat->display_system_message("Set $name.$key = $display");
+    }
+    else {
+        $chat->display_error_message("Unknown plugin subcommand: $subcommand");
+        $chat->display_system_message("Usage: /plugin [list|info|enable|disable|config]");
     }
 }
 
