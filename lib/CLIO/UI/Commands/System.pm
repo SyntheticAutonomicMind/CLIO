@@ -66,6 +66,15 @@ Launch interactive shell session
 
 =cut
 
+sub _find_windows_bash {
+    # Check PATH for bash.exe (Git for Windows, BusyBox, MSYS2)
+    for my $dir (split /;/, $ENV{PATH} || '') {
+        my $bash = "$dir\\bash.exe";
+        return $bash if -x $bash;
+    }
+    return undef;
+}
+
 sub handle_shell_command {
     my ($self) = @_;
     
@@ -81,10 +90,12 @@ sub handle_shell_command {
         CLIO::Compat::Terminal::ReadMode(0);
     };
     
-    # Determine shell: $SHELL on Unix, $COMSPEC (cmd.exe) on Windows
+    # Determine shell: $SHELL on Unix, bash or cmd.exe on Windows
     my $shell;
     if ($^O eq 'MSWin32') {
-        $shell = $ENV{COMSPEC} || 'cmd.exe';
+        # Prefer bash from Git for Windows or BusyBox (added to PATH by MIRA)
+        my $bash = _find_windows_bash();
+        $shell = $bash || $ENV{COMSPEC} || 'cmd.exe';
     } else {
         $shell = $ENV{SHELL} || '/bin/bash';
     }
