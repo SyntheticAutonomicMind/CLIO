@@ -81,7 +81,14 @@ sub handle_shell_command {
         CLIO::Compat::Terminal::ReadMode(0);
     };
     
-    system($ENV{SHELL} || '/bin/bash');
+    # Determine shell: $SHELL on Unix, $COMSPEC (cmd.exe) on Windows
+    my $shell;
+    if ($^O eq 'MSWin32') {
+        $shell = $ENV{COMSPEC} || 'cmd.exe';
+    } else {
+        $shell = $ENV{SHELL} || '/bin/bash';
+    }
+    system($shell);
     
     # Restore terminal state after shell exits (shell may have changed settings)
     eval {
