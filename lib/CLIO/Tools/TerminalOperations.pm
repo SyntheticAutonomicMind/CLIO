@@ -175,6 +175,14 @@ commands (grep, cat, ls, perl, git, etc).
 
 =cut
 
+sub _find_windows_bash {
+    for my $dir (split /;/, $ENV{PATH} || '') {
+        my $bash = "$dir\\bash.exe";
+        return $bash if -x $bash;
+    }
+    return undef;
+}
+
 sub _execute_captured {
     my ($self, $command, $timeout, $display_cmd, $working_dir, $session) = @_;
     
@@ -192,10 +200,20 @@ sub _execute_captured {
     my $hard_ceiling = $ENV{CLIO_TERMINAL_MAX_TIMEOUT} || 600;
     
     if ($^O eq 'MSWin32') {
-        # Windows: no fork/exec, use system() with output redirect
+        # Windows: prefer bash (Git for Windows) for POSIX compatibility,
+        # fall back to cmd.exe
         my $escaped_log = $log_file;
         $escaped_log =~ s/"/\\"/g;
-        my $cmd = qq{cmd.exe /C "$command" > "$escaped_log" 2>&1};
+        my $cmd;
+        my $bash = _find_windows_bash();
+        if ($bash) {
+            # Use bash -c for POSIX command support
+            my $escaped_command = $command;
+            $escaped_command =~ s/'/'\\''/g;
+            $cmd = qq{"$bash" -c '$escaped_command' > "$escaped_log" 2>&1};
+        } else {
+            $cmd = qq{cmd.exe /C "$command" > "$escaped_log" 2>&1};
+        }
         eval {
             local $SIG{ALRM} = sub { die "alarm\n" };
             alarm($timeout) if $timeout;
@@ -371,10 +389,20 @@ sub _execute_passthrough {
     my $hard_ceiling = $ENV{CLIO_TERMINAL_MAX_TIMEOUT} || 600;
     
     if ($^O eq 'MSWin32') {
-        # Windows: no fork/exec, use system() with output redirect
+        # Windows: prefer bash (Git for Windows) for POSIX compatibility,
+        # fall back to cmd.exe
         my $escaped_log = $log_file;
         $escaped_log =~ s/"/\\"/g;
-        my $cmd = qq{cmd.exe /C "$command" > "$escaped_log" 2>&1};
+        my $cmd;
+        my $bash = _find_windows_bash();
+        if ($bash) {
+            # Use bash -c for POSIX command support
+            my $escaped_command = $command;
+            $escaped_command =~ s/'/'\\''/g;
+            $cmd = qq{"$bash" -c '$escaped_command' > "$escaped_log" 2>&1};
+        } else {
+            $cmd = qq{cmd.exe /C "$command" > "$escaped_log" 2>&1};
+        }
         eval {
             local $SIG{ALRM} = sub { die "alarm\n" };
             alarm($timeout) if $timeout;
