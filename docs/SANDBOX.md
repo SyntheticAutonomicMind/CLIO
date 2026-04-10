@@ -1,5 +1,8 @@
 # CLIO Sandbox Mode
 
+> **For the full security architecture overview, see [SECURITY.md](SECURITY.md).**
+> This document covers technical details and container isolation.
+
 CLIO provides two levels of isolation to help protect your system:
 
 | Mode | Method | Protection Level |
@@ -7,59 +10,7 @@ CLIO provides two levels of isolation to help protect your system:
 | **Soft Sandbox** | `--sandbox` flag | Prevents accidental file access |
 | **Container Sandbox** | `clio-container` script | True OS-level isolation |
 
----
-
-## Soft Sandbox (`--sandbox` flag)
-
-The `--sandbox` flag restricts file access to your project directory, helping prevent accidental changes outside your workspace.
-
-### Usage
-
-```bash
-# Start new session with sandbox enabled
-clio --sandbox --new
-
-# Resume session with sandbox enabled  
-clio --sandbox --resume
-```
-
-### What Gets Restricted
-
-| Tool | Restriction |
-|------|-------------|
-| **file_operations** | All paths must be within project directory |
-| **remote_execution** | Completely blocked |
-| **web_operations** | Completely blocked |
-| **version_control** | Repository path must be within project |
-| **terminal_operations** | All command risk levels escalated (see [SECURITY.md](SECURITY.md)) |
-
-### Error Messages
-
-When the agent tries to access a path outside the project:
-
-```
-Sandbox mode: Access denied to '/etc/passwd' - path is outside project directory '/home/user/myproject'
-```
-
-When remote execution is attempted:
-
-```
-Sandbox mode: Remote execution is disabled.
-
-The --sandbox flag blocks all remote operations. This is a security feature to prevent the agent from reaching outside the local project.
-```
-
-### Limitations
-
-**Important:** The soft sandbox restricts terminal operations but cannot fully prevent
-all shell-based access. Commands go through the CommandAnalyzer which flags network
-access, credential reading, and other risky intents - but determined code can find
-creative paths.
-
-For true isolation, use the `clio-container` script.
-
-**The soft sandbox prevents accidental access and prompts on risky commands, but is not
-a hard security boundary.** For untrusted code or maximum security, use container isolation.
+For details on soft sandbox restrictions and behavior, see [SECURITY.md Layer 6](SECURITY.md#layer-6-sandbox-mode).
 
 ---
 
