@@ -375,13 +375,15 @@ Determine if a model should use the Responses API (/responses) instead of
 Chat Completions API (/chat/completions).
 
 The GitHub Copilot /models endpoint returns a supported_endpoints array for each model.
-Models like gpt-5.x-codex only support ["/responses"], while older models may have
-empty arrays (default to /chat/completions) or support both.
+Routing is determined by the order of that array - the first relevant endpoint
+(/responses or /chat/completions) is the model's preferred API.
 
-Logic (matches vscode-copilot-chat reference implementation):
-- If supported_endpoints includes /responses AND does NOT include /chat/completions: use /responses
-- If supported_endpoints includes both: prefer /responses (newer API, better features)
-- Otherwise: use /chat/completions (default)
+- If /responses appears first (or only): use Responses API
+- If /chat/completions appears first (or only): use Chat Completions API
+
+This correctly handles models like gpt-5.4 that support both but list /responses
+first, avoiding parameter-name issues (max_tokens vs max_completion_tokens) by
+using the right API from the start rather than reacting to errors.
 
 Arguments:
 - $model_id: Model identifier
@@ -403,21 +405,24 @@ sub model_uses_responses_api {
     my @endpoints = @{$caps->{supported_endpoints}};
     return 0 unless @endpoints;
     
-    my $has_responses = grep { $_ eq '/responses' } @endpoints;
-    my $has_completions = grep { $_ eq '/chat/completions' } @endpoints;
-    
-    # Use Chat Completions whenever available - it's the stable, well-tested path
-    # Only fall back to Responses API when model ONLY supports /responses
-    if ($has_completions) {
-        log_debug('GitHubCopilotModelsAPI', "Model $model_id: using Chat Completions API (endpoints: " . join(', ', @endpoints) . ")");
-        return 0;
+    # Respect the order from the API - the first endpoint is the model's preferred API.
+    # If /responses appears before /chat/completions (or is the only option),
+    # use the Responses API. This correctly routes new-generation models like gpt-5.4
+    # that list /responses first but also support /chat/completions.
+    my $first_relevant;
+    for my $ep (@endpoints) {
+        if ($ep eq '/responses' || $ep eq '/chat/completions') {
+            $first_relevant = $ep;
+            last;
+        }
     }
     
-    if ($has_responses) {
-        log_debug('GitHubCopilotModelsAPI', "Model $model_id: only supports Responses API");
+    if ($first_relevant && $first_relevant eq '/responses') {
+        log_debug('GitHubCopilotModelsAPI', "Model $model_id: using Responses API (first in supported_endpoints: " . join(', ', @endpoints) . ")");
         return 1;
     }
     
+    log_debug('GitHubCopilotModelsAPI', "Model $model_id: using Chat Completions API (endpoints: " . join(', ', @endpoints) . ")");
     return 0;
 }
 
