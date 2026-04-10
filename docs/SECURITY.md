@@ -188,17 +188,54 @@ Security checks on outbound HTTP requests made via the `fetch_url` operation.
 **Flag:** `--sandbox`
 
 Restricts the agent to the project directory. See [SANDBOX.md](SANDBOX.md) for
-full details.
+full details including container isolation.
 
-**Summary of restrictions:**
+### Usage
+
+```bash
+# Start new session with sandbox enabled
+clio --sandbox --new
+
+# Resume session with sandbox enabled
+clio --sandbox --resume
+```
+
+### Tool Restrictions
 
 | Tool | Sandbox Behavior |
 |------|------------------|
 | `file_operations` | Blocked outside project directory |
-| `terminal_operations` | All risk levels escalated to require confirmation |
+| `terminal_operations` | All risk levels require user confirmation |
 | `web_operations` | Blocked entirely |
 | `remote_execution` | Blocked entirely |
 | `version_control` | Repository path must be within project |
+
+### Error Messages
+
+When the agent tries to access a path outside the project:
+
+```
+Sandbox mode: Access denied to '/etc/passwd' - path is outside project directory '/home/user/myproject'
+```
+
+When remote execution is attempted:
+
+```
+Sandbox mode: Remote execution is disabled.
+
+The --sandbox flag blocks all remote operations. This is a security feature to prevent the agent from reaching outside the local project.
+```
+
+### Limitations
+
+**Important:** The soft sandbox restricts terminal operations but cannot fully prevent
+all shell-based access. Commands go through CommandAnalyzer (Layer 4) which flags network
+access, credential reading, and other risky intents - but determined code can find
+creative paths.
+
+**The soft sandbox prevents accidental access and prompts on risky commands, but is not
+a hard security boundary.** For untrusted code or maximum security, use container isolation
+(`clio-container`).
 
 ---
 
