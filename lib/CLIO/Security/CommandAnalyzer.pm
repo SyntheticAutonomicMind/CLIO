@@ -232,7 +232,8 @@ Returns hashref:
 
 Note: The C<blocked> flag indicates the command is classified as critical risk.
 The consuming tool (TerminalOperations) prompts the user with elevated warnings
-but the user always has final say. Critical commands cannot be session-granted.
+but the user always has final say. Session grants are supported for all
+risk levels including critical commands.
 
 =cut
 
