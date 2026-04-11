@@ -151,7 +151,7 @@ This is perfect for: analyzing remote systems, running builds on specific hardwa
     );
 }
 
-sub route_operation {
+sub before_route {
     my ($self, $operation, $params, $context) = @_;
     
     # Sandbox mode: Block all remote execution
@@ -163,23 +163,19 @@ sub route_operation {
         );
     }
     
-    if ($operation eq 'execute_remote') {
-        return $self->execute_remote($params, $context);
-    } elsif ($operation eq 'execute_parallel') {
-        return $self->execute_parallel($params, $context);
-    } elsif ($operation eq 'prepare_remote') {
-        return $self->prepare_remote($params, $context);
-    } elsif ($operation eq 'cleanup_remote') {
-        return $self->cleanup_remote($params, $context);
-    } elsif ($operation eq 'check_remote') {
-        return $self->check_remote($params, $context);
-    } elsif ($operation eq 'transfer_files') {
-        return $self->transfer_files($params, $context);
-    } elsif ($operation eq 'retrieve_files') {
-        return $self->retrieve_files($params, $context);
-    }
-    
-    return $self->error_result("Operation not implemented: $operation");
+    return undef;
+}
+
+sub dispatch_table {
+    return {
+        execute_remote  => 'execute_remote',
+        execute_parallel => 'execute_parallel',
+        prepare_remote  => 'prepare_remote',
+        cleanup_remote  => 'cleanup_remote',
+        check_remote    => 'check_remote',
+        transfer_files  => 'transfer_files',
+        retrieve_files  => 'retrieve_files',
+    };
 }
 
 # Resolve device name to host - called early before execute methods

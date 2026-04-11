@@ -98,16 +98,11 @@ Operations:
     return $self;
 }
 
-sub route_operation {
-    my ($self, $operation, $params, $context) = @_;
-    
-    if ($operation eq 'list_usages') {
-        return $self->list_usages($params, $context);
-    } elsif ($operation eq 'search_history') {
-        return $self->search_history($params, $context);
-    }
-    
-    return $self->error_result("Operation not implemented: $operation");
+sub dispatch_table {
+    return {
+        list_usages    => 'list_usages',
+        search_history => 'search_history',
+    };
 }
 
 =head2 get_additional_parameters

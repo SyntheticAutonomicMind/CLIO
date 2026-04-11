@@ -136,14 +136,10 @@ Route to the appropriate handler based on operation.
 
 =cut
 
-sub route_operation {
-    my ($self, $operation, $params, $context) = @_;
-    
-    if ($operation eq 'request_input') {
-        return $self->request_input($params, $context);
-    }
-    
-    return $self->operation_error("Unknown operation: $operation");
+sub dispatch_table {
+    return {
+        request_input => 'request_input',
+    };
 }
 
 
