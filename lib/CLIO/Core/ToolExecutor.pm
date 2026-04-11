@@ -129,7 +129,16 @@ sub execute_tool {
     my $tool_name = $tool_call->{function}->{name};
     my $arguments_json = $tool_call->{function}->{arguments};
     
-    unless ($tool_name && $arguments_json) {
+    # Defensive: some servers (e.g., llama.cpp) send arguments as a parsed
+    # JSON object instead of a string.  Re-encode to a string if needed.
+    if (ref($arguments_json)) {
+        log_debug('ToolExecutor',
+            "Tool '$tool_name' arguments is " . ref($arguments_json) . " - re-encoding to JSON string");
+        $arguments_json = eval { encode_json($arguments_json) } // '{}';
+        $tool_call->{function}->{arguments} = $arguments_json;
+    }
+    
+    unless ($tool_name && defined $arguments_json) {
         return $self->_error_result("Missing tool name or arguments");
     }
     
@@ -706,10 +715,10 @@ sub _format_tool_result {
             # Extract content - try multiple fields
             # Priority order: content > processed_content > data > output
             my $content;
-            if ($result->{content}) {
+            if (defined $result->{content} && length($result->{content})) {
                 $content = $result->{content};
             }
-            elsif ($result->{processed_content}) {
+            elsif (defined $result->{processed_content} && length($result->{processed_content})) {
                 $content = $result->{processed_content};
             }
             elsif ($result->{data}) {
@@ -744,7 +753,7 @@ sub _format_tool_result {
             }
             
             # Process content through storage if it exists and we have tool_call_id
-            if ($content && $tool_call_id && $self->{session} && $self->{session}->{session_id}) {
+            if (defined($content) && length($content) && $tool_call_id && $self->{session} && $self->{session}->{session_id}) {
                 my $processed = $self->{storage}->process_result(
                     $tool_call_id,
                     $content,
@@ -752,13 +761,13 @@ sub _format_tool_result {
                 );
                 $tool_result->{content} = $processed;
             }
-            elsif ($content) {
+            elsif (defined($content) && length($content)) {
                 $tool_result->{content} = $content;
             }
             
             # Include metadata fields that are useful for AI
             for my $key (qw(message summary status files branch commits url status_code content_type title)) {
-                if ($result->{$key}) {
+                if (defined $result->{$key}) {
                     $tool_result->{$key} = $result->{$key};
                 }
             }
