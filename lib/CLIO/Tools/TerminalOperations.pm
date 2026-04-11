@@ -72,16 +72,12 @@ sub get_tool_definition {
     return $def;
 }
 
-sub route_operation {
-    my ($self, $operation, $params, $context) = @_;
-    
-    if ($operation eq 'execute' || $operation eq 'exec') {
-        return $self->execute_command($params, $context);
-    } elsif ($operation eq 'validate') {
-        return $self->validate_command($params, $context);
-    }
-    
-    return $self->error_result("Operation not implemented: $operation");
+sub dispatch_table {
+    return {
+        execute  => 'execute_command',
+        exec     => 'execute_command',
+        validate => 'validate_command',
+    };
 }
 
 sub execute_command {

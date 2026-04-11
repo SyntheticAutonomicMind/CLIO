@@ -38,13 +38,11 @@ tool name (e.g., file_operations with 16 operations instead of 16 separate tools
         );
     }
     
-    sub route_operation {
-        my ($self, $operation, $params, $context) = @_;
-        
-        if ($operation eq 'read_file') {
-            return $self->read_file($params, $context);
-        }
-        # ... etc
+    sub dispatch_table {
+        return {
+            read_file  => 'read_file',
+            write_file => 'write_file',
+        };
     }
 
 =cut
@@ -109,6 +107,45 @@ sub execute {
     return $self->route_operation($operation, $params, $context);
 }
 
+=head2 dispatch_table
+
+Return a hashref mapping operation names to method names or coderefs.
+Subclasses override this to define their dispatch table.
+
+Operations map to methods called with ($self, $params, $context).
+Aliases are supported by mapping multiple keys to the same method.
+
+Arguments:
+    None
+
+Returns: Hashref of { operation_name => 'method_name' } or { operation_name => \&coderef }
+
+=cut
+
+sub dispatch_table {
+    my ($self) = @_;
+    return {};
+}
+
+=head2 before_route
+
+Hook called before dispatching an operation. Override for pre-dispatch
+checks (sandbox validation, repo verification, etc).
+
+Arguments:
+- $operation: Operation name (already validated)
+- $params: Hashref of parameters
+- $context: Execution context
+
+Returns: undef to proceed, or a result hashref to short-circuit dispatch
+
+=cut
+
+sub before_route {
+    my ($self, $operation, $params, $context) = @_;
+    return undef;
+}
+
 =head2 validate_operation
 
 Check if an operation is supported by this tool.
@@ -128,7 +165,8 @@ sub validate_operation {
 
 =head2 route_operation
 
-Route to specific operation implementation. MUST be implemented by subclass.
+Route to specific operation handler via dispatch table. Subclasses
+define dispatch_table() instead of overriding this method directly.
 
 Arguments:
 - $operation: Operation name (already validated)
@@ -141,7 +179,28 @@ Returns: Hashref with success, output/error, metadata
 
 sub route_operation {
     my ($self, $operation, $params, $context) = @_;
-    croak "Subclass must implement route_operation()";
+    
+    # Pre-dispatch hook
+    my $guard = $self->before_route($operation, $params, $context);
+    return $guard if $guard;
+    
+    # Look up in dispatch table
+    my $table = $self->dispatch_table();
+    my $handler = $table->{$operation};
+    
+    if ($handler) {
+        if (ref($handler) eq 'CODE') {
+            return $handler->($self, $params, $context);
+        }
+        # String method name
+        my $method = $self->can($handler);
+        if ($method) {
+            return $method->($self, $params, $context);
+        }
+        croak "Dispatch table maps '$operation' to '$handler' but method does not exist";
+    }
+    
+    return $self->error_result("Operation not implemented: $operation");
 }
 
 =head2 operation_error
@@ -364,5 +423,3 @@ Major tools in SAM:
 - IMPLEMENTATION_PLAN_SAM_PATTERNS.md - Implementation roadmap
 
 =cut
-
-1;
