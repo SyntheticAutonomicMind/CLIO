@@ -1304,7 +1304,7 @@ sub _build_responses_api_payload {
     my $flush_tc = sub {
         push @input, map {{
             type => 'function_call', name => $_->{function}{name},
-            arguments => $_->{function}{arguments} || '{}', call_id => $_->{id},
+            arguments => $_->{function}{arguments} // '{}', call_id => $_->{id},
         }} @pending_tc;
         @pending_tc = ();
     };
@@ -2446,7 +2446,7 @@ sub _process_responses_api_event {
     elsif ($event_type eq 'response.function_call_arguments.delta') {
         my $idx = $data->{output_index} // 0;
         if ($ss->{tool_calls_acc}{$idx}) {
-            $ss->{tool_calls_acc}{$idx}{function}{arguments} .= ($data->{delta} || '');
+            $ss->{tool_calls_acc}{$idx}{function}{arguments} .= ($data->{delta} // '');
         }
     }
     elsif ($event_type eq 'response.output_item.done') {
@@ -2458,7 +2458,9 @@ sub _process_responses_api_event {
             if ($ss->{tool_calls_acc}{$idx}) {
                 $ss->{tool_calls_acc}{$idx}{id} = $item->{call_id} || $ss->{tool_calls_acc}{$idx}{id};
                 $ss->{tool_calls_acc}{$idx}{function}{name} = $item->{name} || $ss->{tool_calls_acc}{$idx}{function}{name};
-                $ss->{tool_calls_acc}{$idx}{function}{arguments} = $item->{arguments} || $ss->{tool_calls_acc}{$idx}{function}{arguments};
+                my $final_args = $item->{arguments} // $ss->{tool_calls_acc}{$idx}{function}{arguments};
+                $final_args = eval { encode_json($final_args) } // '{}' if ref($final_args);
+                $ss->{tool_calls_acc}{$idx}{function}{arguments} = $final_args;
             }
             log_debug('APIManager', "Responses API: function_call completed: " . ($item->{name} || '?'));
         }
@@ -2612,8 +2614,12 @@ sub _accumulate_tool_calls_delta {
                 $ss->{tool_calls_acc}{$index}{_name_complete} = 1;
                 $ss->{on_tool_call}->($ss->{tool_calls_acc}{$index}{function}{name}) if $ss->{on_tool_call};
             }
-            if ($tc_delta->{function}{arguments}) {
-                $ss->{tool_calls_acc}{$index}{function}{arguments} .= $tc_delta->{function}{arguments};
+            if (defined $tc_delta->{function}{arguments}) {
+                my $args_chunk = $tc_delta->{function}{arguments};
+                # Some servers send arguments as a parsed object; re-encode
+                $args_chunk = eval { encode_json($args_chunk) } // ''
+                    if ref($args_chunk);
+                $ss->{tool_calls_acc}{$index}{function}{arguments} .= $args_chunk;
             }
         }
 
@@ -3172,12 +3178,14 @@ sub _extract_response_content {
                 }
             }
             elsif ($type eq 'function_call') {
+                my $func_args = $item->{arguments} // '{}';
+                $func_args = eval { encode_json($func_args) } // '{}' if ref($func_args);
                 push @resp_tool_calls, {
                     id   => $item->{call_id} || '',
                     type => 'function',
                     function => {
                         name      => $item->{name}      || '',
-                        arguments => $item->{arguments}  || '{}',
+                        arguments => $func_args,
                     },
                 };
             }
@@ -3202,10 +3210,15 @@ sub _extract_response_content {
 
         if ($message->{tool_calls} && ref($message->{tool_calls}) eq 'ARRAY') {
             $tool_calls = $message->{tool_calls};
-            # Normalize non-OpenAI tool call IDs
+            # Normalize tool call IDs and arguments format
             for my $tc (@$tool_calls) {
                 if ($tc->{id} && $tc->{id} =~ /^function-call-(\d+)$/) {
                     $tc->{id} = 'call_' . substr($1, -24);
+                }
+                # Some servers (e.g., llama.cpp) send arguments as a parsed
+                # object instead of a JSON string - re-encode if needed
+                if ($tc->{function} && ref($tc->{function}{arguments})) {
+                    $tc->{function}{arguments} = eval { encode_json($tc->{function}{arguments}) } // '{}';
                 }
             }
         }
