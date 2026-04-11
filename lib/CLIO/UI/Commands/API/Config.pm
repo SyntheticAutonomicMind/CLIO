@@ -11,6 +11,7 @@ use parent 'CLIO::UI::Commands::Base';
 use Carp qw(croak);
 use CLIO::Core::Logger qw(log_debug log_warning);
 use CLIO::Util::JSON qw(decode_json);
+use CLIO::Providers qw(provider_exists);
 
 =head1 NAME
 
@@ -301,6 +302,9 @@ sub _set_model {
     $self->display_system_message("Model set to: $display_model" . ($session_only ? " (session only)" : " (saved)"));
     $self->_get_auth_helper()->reinit_api_manager();
 
+    # Update billing state for /usage
+    $self->_update_billing_state($full_model, $target_provider);
+
     # Post-set validation
     if ($self->{ai_agent} && $self->{ai_agent}->{api}) {
         eval {
@@ -348,6 +352,10 @@ sub _set_provider {
         }
     }
     $self->_get_auth_helper()->reinit_api_manager();
+
+    # Update billing state for /usage
+    my $new_model = $self->{config}->get('model') || '';
+    $self->_update_billing_state($new_model, $value);
 }
 
 sub _set_api_setting {
@@ -370,6 +378,76 @@ sub _set_api_setting {
             $state->{api_config}{$key} = $value;
             $self->{session}->save();
         }
+    }
+}
+
+# Update session billing state when provider or model changes mid-session.
+# Ensures /usage shows correct model name, billing rate, and quota without restart.
+sub _update_billing_state {
+    my ($self, $model, $provider) = @_;
+
+    return unless $self->{session};
+    my $state = $self->{session}->can('state') ? $self->{session}->state() : undef;
+    return unless $state && $state->{billing};
+
+    # Update model name
+    $state->{billing}{model} = $model if $model;
+
+    # Reset multiplier (will be re-fetched below for copilot)
+    $state->{billing}{multiplier} = 0;
+
+    # Update selected_provider for Billing.pm's _get_active_provider()
+    $state->{selected_provider} = $provider if $provider;
+
+    # Fetch billing multiplier for GitHub Copilot models
+    if ($provider && $provider eq 'github_copilot' && $model) {
+        eval {
+            require CLIO::Core::GitHubCopilotModelsAPI;
+            my $models_api = CLIO::Core::GitHubCopilotModelsAPI->new(debug => $self->{debug});
+
+            # Strip provider prefix for API lookup
+            my $api_model = $model;
+            if ($api_model =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i && provider_exists($1)) {
+                $api_model = $2;
+            }
+
+            my $billing = $models_api->get_model_billing($api_model);
+            if ($billing && defined $billing->{multiplier}) {
+                $state->{billing}{multiplier} = $billing->{multiplier};
+                log_debug('Config', "Updated billing: $api_model -> $billing->{multiplier}x");
+            }
+        };
+    }
+
+    # Refresh quota for GitHub Copilot
+    if ($provider && $provider eq 'github_copilot') {
+        eval {
+            require CLIO::Core::CopilotUserAPI;
+            my $user_api = CLIO::Core::CopilotUserAPI->new(debug => $self->{debug});
+            my $user_data = $user_api->get_cached_user();
+
+            if ($user_data) {
+                my $premium = $user_data->get_premium_quota();
+                if ($premium) {
+                    $state->{quota} = {
+                        entitlement       => $premium->{entitlement},
+                        used              => $premium->{used},
+                        available         => $premium->{entitlement} - $premium->{used},
+                        percent_remaining => $premium->{percent_remaining},
+                        overage_used      => $premium->{overage_count} || 0,
+                        overage_permitted => $premium->{overage_permitted},
+                        reset_date        => $user_data->{quota_reset_date_utc} || 'unknown',
+                        last_updated      => time(),
+                    };
+                }
+
+                $state->{copilot_user} = {
+                    login            => $user_data->{login},
+                    copilot_plan     => $user_data->{copilot_plan},
+                    access_type_sku  => $user_data->{access_type_sku},
+                };
+            }
+        };
     }
 }
 
