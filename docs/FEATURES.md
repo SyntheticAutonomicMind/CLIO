@@ -2,9 +2,21 @@
 
 **The complete guide to everything CLIO can do.**
 
-CLIO is a terminal-native AI coding assistant built in Perl. It uses less than 100MB of RAM, runs on everything from a RISC-V single-board computer to a full workstation, and requires zero external runtime dependencies beyond Perl and standard Unix tools.
+CLIO is a terminal-native AI coding tool. It can read code, edit files, run commands, use git, fetch information, remember project-specific knowledge, and work through tasks with you in the loop.
 
 This guide covers every feature, how the components work together, and how to get the most out of CLIO.
+
+If you are new to CLIO, the simple model is:
+
+- you describe a task in plain English
+- CLIO investigates the codebase and surrounding context
+- CLIO uses tools to do work in the repository
+- CLIO pauses when your judgment is needed
+- CLIO verifies results and reports back
+
+That makes CLIO useful for more than explanation. It can help with bug investigation, refactoring, documentation updates, test writing, repository exploration, remote diagnostics, and larger tasks split across sub-agents.
+
+This document is the deep reference - the place to understand the detailed capabilities after the basic product model makes sense.
 
 ---
 
@@ -37,6 +49,8 @@ This guide covers every feature, how the components work together, and how to ge
 ## 1. The AI Agent
 
 At its core, CLIO is an autonomous AI agent. You give it a task - "fix the bug in login.pm", "add tests for the parser", "refactor the database module" - and it works through it end-to-end. It reads code, makes changes, runs tests, commits results, and iterates on errors until the job is done.
+
+What makes this different from ordinary chat is that CLIO has structured tool access and a workflow built around investigation, execution, verification, and collaboration.
 
 ### How the Agent Works
 

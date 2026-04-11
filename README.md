@@ -1,12 +1,55 @@
 # CLIO - Command Line Intelligence Orchestrator
 
-**An AI code assistant for people who live in the terminal. Portable, privacy-first, and designed for real work.**
+**A terminal-native AI coding tool that can read your code, edit files, run commands, use git, and work through tasks with you.**
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## What CLIO Is
+
+CLIO is for people who already work in a shell and want AI help without leaving that workflow.
+
+It is not just chat in a terminal, and it is not just autocomplete. CLIO can inspect a real repository, use real tools, make changes, run commands, check git state, and keep working through a task with you in the loop.
+
+When you give it a task, CLIO can:
+
+- read files and search your codebase
+- edit files and apply patches
+- run shell commands, tests, and linters
+- inspect and manage git state
+- pause for approval at decision points
+- keep context across sessions
+- work on remote systems over SSH
+- coordinate parallel sub-agents for larger tasks
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## How CLIO Works
+
+The basic loop is simple:
+
+1. **You describe the task**
+2. **CLIO investigates** by reading code, searching files, or checking git state
+3. **CLIO proposes a plan** when your input matters
+4. **After approval, CLIO does the work** - edits files, runs commands, and verifies results
+5. **CLIO reports back** and asks before committing significant changes
+
+That makes CLIO closer to pair programming than prompt-and-response chat.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## Why People Use CLIO
+
+- **Terminal-native:** works in local shells, SSH sessions, tmux, GNU Screen, Zellij, containers, and headless servers
+- **Tool-powered:** uses files, git, terminal, web, memory, remote execution, and other tools instead of pretending
+- **Portable:** pure Perl with standard core modules - no CPAN, npm, or pip
+- **Persistent:** resumes sessions with history and project memory intact
+- **Private and controllable:** local-first workflow with secret redaction, path authorization, command analysis, and sandboxing
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## Why I Built CLIO
 
-I built CLIO for myself. As someone who prefers working in the terminal, I wanted an AI assistant that felt native to my workflow. One that respected my privacy, worked anywhere Perl runs, and gave me full control over my code and tools. I couldn't find anything that met those needs, so I created CLIO.
+I built CLIO for myself. As someone who prefers working in the terminal, I wanted an AI assistant that felt native to my workflow. One that respected my privacy, worked anywhere Perl runs, and gave me full control over my code and tools. I couldn't find anything that met those needs, so I created CLIO. Like most of my work, I build tools for myself first and release them as open source in the hope that they're useful to other people too.
 
 Starting with version 20260119.1, CLIO has been building itself. All of my development is now done through pair programming with AI agents using CLIO.
 
@@ -154,6 +197,20 @@ For detailed options, see [docs/INSTALLATION.md](docs/INSTALLATION.md).
 : /api set provider openai
 : /api set key YOUR_API_KEY
 : /config save
+```
+
+### First Prompt
+
+Start with something grounded in a real repository:
+
+```text
+Read this project and tell me how configuration is loaded.
+```
+
+Or give CLIO a real bug to investigate:
+
+```text
+Find the bug causing the login endpoint to return 500 when the session is expired.
 ```
 
 ### Start Using CLIO
