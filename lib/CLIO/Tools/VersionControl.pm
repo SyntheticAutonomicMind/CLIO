@@ -69,10 +69,9 @@ Use non-interactive flags or report what needs to be done instead.
     );
 }
 
-sub route_operation {
+sub before_route {
     my ($self, $operation, $params, $context) = @_;
     
-    # Verify git repository
     my $repo_path = $params->{repository_path} || '.';
     
     # Sandbox mode: Check if repository_path is within project directory
@@ -85,31 +84,23 @@ sub route_operation {
         return $self->error_result("Not a Git repository: $repo_path");
     }
     
-    if ($operation eq 'status') {
-        return $self->status($params, $context);
-    } elsif ($operation eq 'log') {
-        return $self->log($params, $context);
-    } elsif ($operation eq 'diff') {
-        return $self->diff($params, $context);
-    } elsif ($operation eq 'branch') {
-        return $self->branch($params, $context);
-    } elsif ($operation eq 'commit') {
-        return $self->commit($params, $context);
-    } elsif ($operation eq 'push') {
-        return $self->push($params, $context);
-    } elsif ($operation eq 'pull') {
-        return $self->pull($params, $context);
-    } elsif ($operation eq 'blame') {
-        return $self->blame($params, $context);
-    } elsif ($operation eq 'stash') {
-        return $self->stash($params, $context);
-    } elsif ($operation eq 'tag') {
-        return $self->tag($params, $context);
-    } elsif ($operation eq 'worktree') {
-        return $self->worktree($params, $context);
-    }
-    
-    return $self->error_result("Operation not implemented: $operation");
+    return undef;
+}
+
+sub dispatch_table {
+    return {
+        status   => 'status',
+        log      => 'log',
+        diff     => 'diff',
+        branch   => 'branch',
+        commit   => 'commit',
+        push     => 'push',
+        pull     => 'pull',
+        blame    => 'blame',
+        stash    => 'stash',
+        tag      => 'tag',
+        worktree => 'worktree',
+    };
 }
 
 sub status {

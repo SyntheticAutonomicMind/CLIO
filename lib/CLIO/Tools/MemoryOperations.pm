@@ -122,36 +122,21 @@ HOW TO USE:
     );
 }
 
-sub route_operation {
-    my ($self, $operation, $params, $context) = @_;
-    
-    if ($operation eq 'store') {
-        return $self->store($params, $context);
-    } elsif ($operation eq 'retrieve') {
-        return $self->retrieve($params, $context);
-    } elsif ($operation eq 'search') {
-        return $self->search($params, $context);
-    } elsif ($operation eq 'list') {
-        return $self->list_memories($params, $context);
-    } elsif ($operation eq 'delete') {
-        return $self->delete($params, $context);
-    } elsif ($operation eq 'recall_sessions') {
-        return $self->recall_sessions($params, $context);
-    } elsif ($operation eq 'add_discovery') {
-        return $self->add_discovery($params, $context);
-    } elsif ($operation eq 'add_solution') {
-        return $self->add_solution($params, $context);
-    } elsif ($operation eq 'add_pattern') {
-        return $self->add_pattern($params, $context);
-    } elsif ($operation eq 'update_ltm') {
-        return $self->update_ltm($params, $context);
-    } elsif ($operation eq 'prune_ltm') {
-        return $self->prune_ltm($params, $context);
-    } elsif ($operation eq 'ltm_stats') {
-        return $self->ltm_stats($params, $context);
-    }
-    
-    return $self->error_result("Operation not implemented: $operation");
+sub dispatch_table {
+    return {
+        store           => 'store',
+        retrieve        => 'retrieve',
+        search          => 'search',
+        list            => 'list_memories',
+        delete          => 'delete',
+        recall_sessions => 'recall_sessions',
+        add_discovery   => 'add_discovery',
+        add_solution    => 'add_solution',
+        add_pattern     => 'add_pattern',
+        update_ltm      => 'update_ltm',
+        prune_ltm       => 'prune_ltm',
+        ltm_stats       => 'ltm_stats',
+    };
 }
 
 =head2 get_additional_parameters
