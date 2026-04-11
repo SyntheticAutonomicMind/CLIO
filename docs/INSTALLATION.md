@@ -1,20 +1,44 @@
 # CLIO Installation Guide
 
-**Getting CLIO up and running on your system**
+**Install CLIO and get to a working first session quickly.**
+
+CLIO is a terminal-native AI coding tool. It runs in your shell, uses real tools to work with files and commands, and fits terminal-first workflows. This guide focuses on the fastest path from install to first use.
 
 ---
 
 ## Table of Contents
 
-1. [System Requirements](#system-requirements)
-2. [Quick Installation](#quick-installation)
-3. [Docker Installation](#docker-installation)
-4. [Installation Options](#installation-options)
-5. [First-Time Configuration](#first-time-configuration)
-6. [Verification](#verification)
-7. [Uninstallation](#uninstallation)
-8. [Troubleshooting](#troubleshooting)
-9. [Platform-Specific Notes](#platform-specific-notes)
+1. [Choose Your Install Path](#choose-your-install-path)
+2. [System Requirements](#system-requirements)
+3. [Quick Installation](#quick-installation)
+4. [Docker Installation](#docker-installation)
+5. [Installation Options](#installation-options)
+6. [First-Time Configuration](#first-time-configuration)
+7. [Verification](#verification)
+8. [Uninstallation](#uninstallation)
+9. [Troubleshooting](#troubleshooting)
+10. [Platform-Specific Notes](#platform-specific-notes)
+11. [Next Steps](#next-steps)
+
+---
+
+## Choose Your Install Path
+
+Most people should use one of these:
+
+- **Homebrew** - easiest on macOS and Linux with Homebrew installed
+- **Standard install** - best if you want `clio` available system-wide
+- **User install** - best if you do not want to use `sudo`
+- **Docker** - best if you want to try CLIO without installing Perl locally
+
+If you already have GitHub Copilot, the fastest path after installation is:
+
+```bash
+clio --new
+/api login
+```
+
+Then open any repository and give CLIO a real task.
 
 ---
 
@@ -52,16 +76,23 @@ CLIO uses only **core Perl modules** - no CPAN dependencies:
 
 ### AI Provider
 
-You need at least one AI provider. See [PROVIDERS.md](PROVIDERS.md) for the complete list.
+You need at least one AI provider. See [PROVIDERS.md](PROVIDERS.md) for the full list.
 
-**Quick options:**
-- **GitHub Copilot** - Recommended, access to multiple models
-- **Local models** (free) - llama.cpp, LM Studio, or SAM
-- **API providers** - OpenAI, Google, DeepSeek, OpenRouter, MiniMax
+**Common choices:**
+- **GitHub Copilot** - easiest starting point, access to multiple models
+- **Local models** - llama.cpp, LM Studio, or SAM
+- **API providers** - OpenAI, Google, DeepSeek, OpenRouter, MiniMax, DashScope
 
 ---
 
 ## Quick Installation
+
+### Homebrew
+
+```bash
+brew tap SyntheticAutonomicMind/homebrew-SAM
+brew install clio
+```
 
 ### Standard Install (Recommended)
 
@@ -140,7 +171,7 @@ See [SANDBOX.md](SANDBOX.md) for security details.
 
 ## First-Time Configuration
 
-After installation, configure your AI provider:
+After installation, start CLIO:
 
 ```bash
 clio --new
@@ -148,10 +179,12 @@ clio --new
 
 ### GitHub Copilot (Recommended)
 
+This is the easiest way to get started:
+
 ```bash
 /api set provider github_copilot
 /api login
-# Browser opens -> authorize -> done!
+# Browser opens -> authorize -> done
 ```
 
 ### OpenAI / Other API Providers
@@ -176,7 +209,7 @@ clio --new
 /api show
 ```
 
-**For detailed provider setup instructions, see [PROVIDERS.md](PROVIDERS.md).**
+For detailed provider setup instructions, see [PROVIDERS.md](PROVIDERS.md).
 
 ---
 
@@ -200,6 +233,20 @@ perl -MHTTP::Tiny -e 'print "OK\n"'
 
 ```bash
 clio --new --input "Hello, what's 2+2?" --exit
+```
+
+### Test a real workflow
+
+Inside a repository, try something like:
+
+```text
+Read this project and explain how configuration is loaded.
+```
+
+Or:
+
+```text
+Find the code path that handles authentication failures.
 ```
 
 ---
@@ -238,32 +285,15 @@ sudo ./install.sh
 | Fedora/RHEL | `sudo dnf install perl` |
 | Arch | `sudo pacman -S perl` |
 
-### "clio: command not found"
+### CLIO not found after `--user` install
+
+Make sure `~/.local/bin` is in your PATH:
 
 ```bash
-# Check symlink
-ls -l /usr/local/bin/clio
-
-# Create manually if missing
-sudo ln -s /opt/clio/clio /usr/local/bin/clio
-
-# Or add to PATH
-export PATH="/opt/clio:$PATH"
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
-### "API authentication failed"
-
-- Verify API key is correct
-- For GitHub Copilot: run `/api login` again
-- Check provider subscription is active
-- See [PROVIDERS.md](PROVIDERS.md) for provider-specific help
-
-### "Session directory not writable"
-
-```bash
-sudo chmod 755 /opt/clio/sessions
-sudo chown $USER /opt/clio/sessions
-```
+Add it to your shell profile if needed.
 
 ---
 
@@ -271,28 +301,21 @@ sudo chown $USER /opt/clio/sessions
 
 ### macOS
 
-Both system Perl (`/usr/bin/perl`) and Homebrew Perl work fine.
+Perl is usually preinstalled. Homebrew installation is the easiest path.
 
-### Linux with SELinux
+### Linux
 
-```bash
-# Check status
-getenforce
+Most distributions already include Perl and Git. Standard or user install both work well.
 
-# If enabled, set context
-sudo chcon -R -t bin_t /opt/clio/clio
-```
+### Windows
 
-### Windows (WSL)
-
-1. Install WSL: `wsl --install`
-2. Open Ubuntu terminal
-3. Follow Linux installation steps
+Use WSL for the smoothest experience. Native Windows support is improving, but WSL remains the better option for now.
 
 ---
 
 ## Next Steps
 
-- **[PROVIDERS.md](PROVIDERS.md)** - Complete provider configuration guide
-- **[USER_GUIDE.md](USER_GUIDE.md)** - Learn to use CLIO effectively
-- **[FEATURES.md](FEATURES.md)** - Explore all capabilities
+- Read the [User Guide](USER_GUIDE.md) for day-to-day usage
+- Check [PROVIDERS.md](PROVIDERS.md) to configure other AI providers
+- Explore [FEATURES.md](FEATURES.md) for a full tour of CLIO's capabilities
+- Review [SECURITY.md](SECURITY.md) and [SANDBOX.md](SANDBOX.md) if you want tighter controls
