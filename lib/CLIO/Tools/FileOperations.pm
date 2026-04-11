@@ -297,49 +297,27 @@ sub get_additional_parameters {
     };
 }
 
-sub route_operation {
-    my ($self, $operation, $params, $context) = @_;
-    
-    # Route to appropriate handler
-    if ($operation eq 'read_file') {
-        return $self->read_file($params, $context);
-    } elsif ($operation eq 'list_dir') {
-        return $self->list_dir($params, $context);
-    } elsif ($operation eq 'file_exists') {
-        return $self->file_exists($params, $context);
-    } elsif ($operation eq 'get_file_info') {
-        return $self->get_file_info($params, $context);
-    } elsif ($operation eq 'get_errors') {
-        return $self->get_errors($params, $context);
-    } elsif ($operation eq 'file_search') {
-        return $self->file_search($params, $context);
-    } elsif ($operation eq 'grep_search') {
-        return $self->grep_search($params, $context);
-    } elsif ($operation eq 'semantic_search') {
-        return $self->semantic_search($params, $context);
-    } elsif ($operation eq 'read_tool_result') {
-        return $self->read_tool_result($params, $context);
-    } elsif ($operation eq 'create_file') {
-        return $self->create_file($params, $context);
-    } elsif ($operation eq 'write_file') {
-        return $self->write_file($params, $context);
-    } elsif ($operation eq 'append_file') {
-        return $self->append_file($params, $context);
-    } elsif ($operation eq 'replace_string') {
-        return $self->replace_string($params, $context);
-    } elsif ($operation eq 'multi_replace_string') {
-        return $self->multi_replace_string($params, $context);
-    } elsif ($operation eq 'insert_at_line') {
-        return $self->insert_at_line($params, $context);
-    } elsif ($operation eq 'delete_file') {
-        return $self->delete_file($params, $context);
-    } elsif ($operation eq 'rename_file') {
-        return $self->rename_file($params, $context);
-    } elsif ($operation eq 'create_directory') {
-        return $self->create_directory($params, $context);
-    }
-    
-    return $self->error_result("Operation not implemented: $operation");
+sub dispatch_table {
+    return {
+        read_file           => 'read_file',
+        list_dir            => 'list_dir',
+        file_exists         => 'file_exists',
+        get_file_info       => 'get_file_info',
+        get_errors          => 'get_errors',
+        file_search         => 'file_search',
+        grep_search         => 'grep_search',
+        semantic_search     => 'semantic_search',
+        read_tool_result    => 'read_tool_result',
+        create_file         => 'create_file',
+        write_file          => 'write_file',
+        append_file         => 'append_file',
+        replace_string      => 'replace_string',
+        multi_replace_string => 'multi_replace_string',
+        insert_at_line      => 'insert_at_line',
+        delete_file         => 'delete_file',
+        rename_file         => 'rename_file',
+        create_directory    => 'create_directory',
+    };
 }
 
 #

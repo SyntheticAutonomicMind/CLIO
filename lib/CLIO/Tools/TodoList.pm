@@ -158,37 +158,45 @@ EOF
     );
 }
 
-sub route_operation {
-    my ($self, $operation, $params, $context) = @_;
-    
-    my $start_time = time();
-    
-    # Get session_id from context
-    my $session_id = $context->{session}{session_id} || $context->{session_id} || 'default';
-    
-    log_debug('TodoList', "Operation: $operation for session: $session_id");
-    
-    my $result;
-    if ($operation eq 'read') {
-        $result = $self->handle_read($session_id);
-    }
-    elsif ($operation eq 'write') {
-        $result = $self->handle_write($params, $session_id);
-    }
-    elsif ($operation eq 'update') {
-        $result = $self->handle_update($params, $session_id);
-    }
-    elsif ($operation eq 'add') {
-        $result = $self->handle_add($params, $session_id);
-    }
-    else {
-        $result = $self->operation_error("Unknown operation: $operation");
-    }
-    
-    my $execution_time = time() - $start_time;
-    log_debug('TodoList', "Operation $operation completed in ${execution_time}s");
-    
-    return $result;
+sub dispatch_table {
+    return {
+        read   => '_dispatch_read',
+        write  => '_dispatch_write',
+        update => '_dispatch_update',
+        add    => '_dispatch_add',
+    };
+}
+
+# Dispatch wrappers adapt the standard ($params, $context) signature
+# to TodoList's ($session_id) / ($params, $session_id) methods
+
+sub _dispatch_read {
+    my ($self, $params, $context) = @_;
+    my $session_id = $self->_session_id($context);
+    return $self->handle_read($session_id);
+}
+
+sub _dispatch_write {
+    my ($self, $params, $context) = @_;
+    my $session_id = $self->_session_id($context);
+    return $self->handle_write($params, $session_id);
+}
+
+sub _dispatch_update {
+    my ($self, $params, $context) = @_;
+    my $session_id = $self->_session_id($context);
+    return $self->handle_update($params, $session_id);
+}
+
+sub _dispatch_add {
+    my ($self, $params, $context) = @_;
+    my $session_id = $self->_session_id($context);
+    return $self->handle_add($params, $session_id);
+}
+
+sub _session_id {
+    my ($self, $context) = @_;
+    return $context->{session}{session_id} || $context->{session_id} || 'default';
 }
 
 sub get_additional_parameters {

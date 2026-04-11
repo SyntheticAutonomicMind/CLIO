@@ -136,51 +136,47 @@ sub schema {
     };
 }
 
-sub execute {
-    my ($self, $params, $context) = @_;
+sub before_route {
+    my ($self, $operation, $params, $context) = @_;
     
-    my $operation = $params->{operation} || '';
-    
-    # Get or create the SubAgent command handler from context
+    # Resolve SubAgent handler and stash for dispatch methods
     my $subagent_cmd = $self->_get_subagent_handler($context);
     unless ($subagent_cmd) {
         return $self->error_result("SubAgent system not available");
     }
+    $self->{_subagent_cmd} = $subagent_cmd;
     
-    if ($operation eq 'spawn') {
-        return $self->spawn($params, $subagent_cmd, $context);
-    }
-    elsif ($operation eq 'list') {
-        return $self->list($subagent_cmd);
-    }
-    elsif ($operation eq 'status') {
-        return $self->status($params, $subagent_cmd);
-    }
-    elsif ($operation eq 'kill') {
-        return $self->kill($params, $subagent_cmd);
-    }
-    elsif ($operation eq 'killall') {
-        return $self->killall($subagent_cmd);
-    }
-    elsif ($operation eq 'inbox') {
-        return $self->inbox($subagent_cmd);
-    }
-    elsif ($operation eq 'acknowledge') {
-        return $self->acknowledge($params, $subagent_cmd);
-    }
-    elsif ($operation eq 'history') {
-        return $self->history($subagent_cmd);
-    }
-    elsif ($operation eq 'send') {
-        return $self->send($params, $subagent_cmd);
-    }
-    elsif ($operation eq 'broadcast') {
-        return $self->broadcast($params, $subagent_cmd);
-    }
-    else {
-        return $self->error_result("Unknown operation: $operation");
-    }
+    return undef;
 }
+
+sub dispatch_table {
+    return {
+        spawn       => '_dispatch_spawn',
+        list        => '_dispatch_list',
+        status      => '_dispatch_status',
+        kill        => '_dispatch_kill',
+        killall     => '_dispatch_killall',
+        inbox       => '_dispatch_inbox',
+        acknowledge => '_dispatch_acknowledge',
+        history     => '_dispatch_history',
+        send        => '_dispatch_send',
+        broadcast   => '_dispatch_broadcast',
+    };
+}
+
+# Dispatch wrappers adapt the standard ($params, $context) signature
+# to SubAgentOperations' methods that take $subagent_cmd
+
+sub _dispatch_spawn       { my ($self, $params, $ctx) = @_; $self->spawn($params, $self->{_subagent_cmd}, $ctx) }
+sub _dispatch_list        { my ($self) = @_; $self->list($self->{_subagent_cmd}) }
+sub _dispatch_status      { my ($self, $params) = @_; $self->status($params, $self->{_subagent_cmd}) }
+sub _dispatch_kill        { my ($self, $params) = @_; $self->kill($params, $self->{_subagent_cmd}) }
+sub _dispatch_killall     { my ($self) = @_; $self->killall($self->{_subagent_cmd}) }
+sub _dispatch_inbox       { my ($self) = @_; $self->inbox($self->{_subagent_cmd}) }
+sub _dispatch_acknowledge { my ($self, $params) = @_; $self->acknowledge($params, $self->{_subagent_cmd}) }
+sub _dispatch_history     { my ($self) = @_; $self->history($self->{_subagent_cmd}) }
+sub _dispatch_send        { my ($self, $params) = @_; $self->send($params, $self->{_subagent_cmd}) }
+sub _dispatch_broadcast   { my ($self, $params) = @_; $self->broadcast($params, $self->{_subagent_cmd}) }
 
 sub _get_subagent_handler {
     my ($self, $context) = @_;

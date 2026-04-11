@@ -59,16 +59,11 @@ IMPORTANT - Configuration:
     );
 }
 
-sub route_operation {
-    my ($self, $operation, $params, $context) = @_;
-    
-    if ($operation eq 'fetch_url') {
-        return $self->fetch_url($params, $context);
-    } elsif ($operation eq 'search_web') {
-        return $self->search_web($params, $context);
-    }
-    
-    return $self->error_result("Operation not implemented: $operation");
+sub dispatch_table {
+    return {
+        fetch_url  => 'fetch_url',
+        search_web => 'search_web',
+    };
 }
 
 =head2 get_additional_parameters

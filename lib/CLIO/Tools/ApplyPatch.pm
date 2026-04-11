@@ -108,14 +108,10 @@ Route to the appropriate operation handler.
 
 =cut
 
-sub route_operation {
-    my ($self, $operation, $params, $context) = @_;
-    
-    if ($operation eq 'apply') {
-        return $self->_do_apply($params, $context);
-    }
-    
-    return $self->operation_error("Unknown operation: $operation. Available: apply");
+sub dispatch_table {
+    return {
+        apply => '_do_apply',
+    };
 }
 
 =head2 execute
