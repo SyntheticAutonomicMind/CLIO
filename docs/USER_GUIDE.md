@@ -27,19 +27,37 @@
 
 ### What is CLIO?
 
-CLIO is a terminal-based AI code assistant that brings powerful AI capabilities directly into your command-line workflow. Unlike browser-based tools, CLIO integrates with your filesystem, version control, and terminal environment to provide intelligent assistance without leaving your terminal.
+CLIO is a terminal-native AI coding tool. It works inside your shell, uses real tools to inspect and change a codebase, and stays collaborative while it works.
+
+You can ask CLIO to read files, explain code, search a repository, edit files, run tests, use git, fetch documentation, and work through development tasks step by step.
+
+CLIO is not just chat in a terminal, and it is not just autocomplete. It is built for people who want AI help without leaving a terminal-first workflow.
+
+### How CLIO Works
+
+A typical CLIO workflow looks like this:
+
+1. **You describe a task**
+2. **CLIO investigates** by reading files, searching code, or checking repository state
+3. **CLIO presents findings or a plan** when your input matters
+4. **After approval, CLIO does the work** using files, git, commands, web fetches, or other tools
+5. **CLIO verifies results** and reports back
+
+That means CLIO can help with real development work, not just produce text.
 
 ### Why Choose CLIO?
 
-**Terminal-Native**: Works entirely in your terminal—no browser tabs, no GUI overhead. If you live in the terminal, CLIO fits naturally into your workflow.
+**Terminal-Native**: CLIO works in local shells, SSH sessions, tmux, GNU Screen, Zellij, containers, and headless environments.
 
-**Tool-Powered**: CLIO doesn't hallucinate file contents or command output. It uses real tools to read files, execute commands, and interact with your system.
+**Tool-Powered**: CLIO uses real tools to read files, run commands, inspect git state, and modify a project. It does not need you to paste everything into chat.
 
-**Action Transparency**: Every operation shows exactly what it's doing. You always know what files CLIO is reading, what commands it's executing, and what changes it's making.
+**Action Transparency**: Every operation shows exactly what it is doing. You can see what CLIO reads, what commands it runs, and what changes it makes.
 
-**Persistent Context**: Conversations are saved automatically with full history. Resume any session exactly where you left off, even after days or weeks.
+**Persistent Context**: Conversations are saved automatically. You can resume later with full history, and long-term memory can carry useful discoveries and patterns forward.
 
-**Professional Output**: Beautiful markdown rendering in the terminal with syntax highlighting, tables, lists, and proper formatting.
+**Lightweight**: CLIO is written in Perl, uses core modules, and avoids heavy runtime dependencies.
+
+**Professional Output**: CLIO renders markdown, code blocks, tables, and structured output clearly in the terminal.
 
 ### What Can CLIO Do?
 
@@ -192,15 +210,37 @@ clio --new
 
 You'll see the welcome banner:
 ```
-------------------------------------------━━
+------------------------------------------
 CLIO - Command Line Intelligence Orchestrator
 Session ID: sess_20260118_143052
 You are connected to claude-sonnet-4
 Press "?" for a list of commands.
-------------------------------------------━━
+------------------------------------------
 
 YOU: 
 ```
+
+### A Good First Prompt
+
+Start with something grounded in a real project:
+
+```text
+Read this codebase and explain how configuration is loaded.
+```
+
+Or:
+
+```text
+Find the code path that handles failed authentication.
+```
+
+Or:
+
+```text
+Review the repository and tell me where tests are defined.
+```
+
+These kinds of prompts help you see how CLIO investigates before it changes anything.
 
 ### Keyboard Controls
 
@@ -210,7 +250,7 @@ YOU:
 |-----|--------|
 | `Space` / `Any Key` | Continue to next page (long responses) |
 | `q` / `Q` | Quit pagination, return to prompt |
-| `↑` / `↓` (Arrows) | Navigate pages (non-streaming mode) |
+| `Up` / `Down` (Arrows) | Navigate pages (non-streaming mode) |
 | `Ctrl+D` or `Ctrl+C` | Exit CLIO |
 | Any key | Interrupt workflow, return to prompt |
 
@@ -218,8 +258,8 @@ YOU:
 
 | Key | Action |
 |-----|--------|
-| `←` / `→` (Arrows) | Move cursor one character |
-| `Alt+←` / `Alt+→` | Jump by word |
+| `Left` / `Right` (Arrows) | Move cursor one character |
+| `Alt+Left` / `Alt+Right` | Jump by word |
 | `Home` / `End` | Move to start/end of line |
 | `Ctrl+A` / `Ctrl+E` | Start/end of line (emacs) |
 | `Tab` | Auto-complete commands/paths |
@@ -977,7 +1017,7 @@ Agent receives answer      -> Continues work with your guidance
 ```
 YOU: /subagent spawn "refactor auth module" --persistent
 
-CLIO:  Spawned sub-agent: agent-1 (PERSISTENT MODE)
+CLIO: [OK] Spawned sub-agent: agent-1 (PERSISTENT MODE)
       Task: refactor auth module
       Model: gpt-5-mini
 
@@ -1009,7 +1049,7 @@ CLIO: ────────────────────────�
 ```
 YOU: /subagent spawn "analyze lib/Module/A.pm" --model gpt-5
 
-CLIO: ✓ Spawned sub-agent: agent-1
+CLIO: [OK] Spawned sub-agent: agent-1
       Task: analyze lib/Module/A.pm and document key patterns
       Model: gpt-5
       
@@ -1017,7 +1057,7 @@ CLIO: ✓ Spawned sub-agent: agent-1
 
 YOU: /subagent spawn "create tests for lib/Module/B.pm" --model gpt-5-mini
 
-CLIO: ✓ Spawned sub-agent: agent-2
+CLIO: [OK] Spawned sub-agent: agent-2
       Task: create tests for lib/Module/B.pm
       Model: gpt-5-mini
 
@@ -1995,19 +2035,19 @@ For detailed information, see [docs/SANDBOX.md](SANDBOX.md).
 
 **Be Specific:**
 ```
-❌ "Fix the code"
-✅ "In auth.pm, add input validation to the login function to prevent SQL injection"
+[Bad] "Fix the code"
+[Good] "In auth.pm, add input validation to the login function to prevent SQL injection"
 ```
 
 **Provide Context:**
 ```
-❌ "Update the config"
-✅ "In config.yaml, change the database connection pool size from 10 to 20 to handle increased load"
+[Bad] "Update the config"
+[Good] "In config.yaml, change the database connection pool size from 10 to 20 to handle increased load"
 ```
 
 **Multi-Step Requests:**
 ```
-✅ "Create a new branch called feature/api-v2, refactor the API endpoints in lib/API.pm to use FastAPI instead of Flask, and commit the changes"
+[Good] "Create a new branch called feature/api-v2, refactor the API endpoints in lib/API.pm to use FastAPI instead of Flask, and commit the changes"
 ```
 
 CLIO handles multi-step workflows naturally. Don't break them down unless you need to review intermediate steps.
@@ -2119,7 +2159,7 @@ CLIO: Here's the execution flow and where the issue likely is:
 
 2. **Database/Users.pm:authenticate()** (line 89)
    - Queries database for user
-   - **❌ ISSUE:** Password comparison uses `eq` instead of secure compare
+   - **[ISSUE]:** Password comparison uses `eq` instead of secure compare
    - Returns user object if match
 
 3. **Session/Manager.pm:create_session()** (line 156)
