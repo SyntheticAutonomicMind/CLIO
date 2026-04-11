@@ -331,7 +331,7 @@ sub _format_multiplier {
 
 =head2 _display_premium_warning($multiplier)
 
-Display warning for premium model usage (Copilot only).
+Display informational billing rate notice (Copilot only).
 
 =cut
 
@@ -348,8 +348,8 @@ sub _display_premium_warning {
         $mult_display =~ s/\.?0+x$/x/;
     }
     
-    my $msg = "Premium Model Usage: $mult_display billing multiplier. Excessive use may impact your subscription.";
-    $self->{chat}->display_warning_message($msg);
+    my $msg = "This model has a $mult_display billing rate. You will be billed at this rate for all new user requests sent to the provider.";
+    $self->display_system_message($msg);
     $self->writeline("", markdown => 0);
 }
 
