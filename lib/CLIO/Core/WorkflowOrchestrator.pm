@@ -1178,7 +1178,8 @@ sub _execute_tool_round {
         }
         
         # Parse tool arguments early (needed for suppress_display and pre-action)
-        my $tool_args = eval { decode_json($tool_call->{function}->{arguments} || '{}') };
+        my $raw_args = $tool_call->{function}->{arguments};
+        my $tool_args = ref($raw_args) ? $raw_args : eval { decode_json($raw_args // '{}') };
         my $tool_operation = ($tool_args && $tool_args->{operation}) ? $tool_args->{operation} : '';
         
         # Skip display for internal-only operations and self-displaying tools
@@ -1477,8 +1478,19 @@ sub _prepare_tool_round {
     my $had_validation_errors = 0;
 
     for my $tool_call (@{$api_response->{tool_calls}}) {
-        my $tool_name = $tool_call->{function}->{name} || 'unknown';
-        my $arguments_str = $tool_call->{function}->{arguments} || '{}';
+       my $tool_name = $tool_call->{function}->{name} || 'unknown';
+        my $arguments_raw = $tool_call->{function}->{arguments};
+
+        # Defensive: some servers (e.g., llama.cpp) send arguments as a parsed
+        # JSON object instead of a string.  Re-encode to a string if needed.
+        if (ref($arguments_raw)) {
+            log_debug('WorkflowOrchestrator',
+                "Tool '$tool_name' arguments is " . ref($arguments_raw) . " - re-encoding to JSON string");
+            $arguments_raw = eval { encode_json($arguments_raw) } // '{}';
+            $tool_call->{function}->{arguments} = $arguments_raw;
+        }
+
+        my $arguments_str = $arguments_raw // '{}';
 
         my $arguments_valid = 0;
         eval {
