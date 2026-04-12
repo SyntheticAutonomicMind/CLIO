@@ -1382,46 +1382,62 @@ sub _check_auth_migration {
             return;
         }
         
+        # Check if tokens exist and are valid
+        my $tokens = $auth->load_tokens();
+        
+        if (!$tokens || !$tokens->{github_token}) {
+            # No tokens at all - prompt for login
+            log_info('Chat', "GitHub Copilot provider configured but no tokens found");
+            eval {
+                if ($self->{command_handler} && $self->{command_handler}{api_cmd}) {
+                    $self->{command_handler}{api_cmd}->check_github_auth();
+                } else {
+                    $self->display_system_message(
+                        "GitHub Copilot requires authentication. Please run /api login"
+                    );
+                }
+            };
+            if ($@) {
+                log_warning('Chat', "Auth prompt failed: $@");
+            }
+            return;
+        }
+        
         # Validate stored tokens are actually still valid
         # This catches the case where CLIO hasn't been used in a while
         # and the GitHub OAuth token has been revoked
-        my $tokens = $auth->load_tokens();
-        if ($tokens && $tokens->{github_token}) {
-            my $validation = $auth->validate_github_token();
+        my $validation = $auth->validate_github_token();
+        
+        if ($validation && !$validation->{valid}) {
+            my $status = $validation->{status} || 'unknown';
             
-            if ($validation && !$validation->{valid}) {
-                my $status = $validation->{status} || 'unknown';
+            if ($status == 401 || $status == 403) {
+                # Token is expired/revoked - clear and re-authenticate
+                $self->display_system_message(
+                    "Your GitHub authentication has expired (HTTP $status). "
+                    . "Starting re-authentication..."
+                );
                 
-                if ($status == 401 || $status == 403) {
-                    # Token is expired/revoked - offer re-authentication
-                    $self->display_system_message(
-                        "Your GitHub authentication has expired (HTTP $status). "
-                        . "Starting re-authentication..."
-                    );
-                    
-                    # Clear stale tokens
-                    $auth->clear_tokens();
-                    
-                    # Trigger login flow through Command handler
-                    eval {
-                        if ($self->{command_handler} && $self->{command_handler}{api_cmd}) {
-                            $self->{command_handler}{api_cmd}->handle_login_command();
-                        } else {
-                            $self->display_system_message(
-                                "Please run /api login to re-authenticate."
-                            );
-                        }
-                    };
-                    if ($@) {
-                        log_warning('Chat', "Auto re-auth failed: $@");
+                $auth->clear_tokens();
+                
+                eval {
+                    if ($self->{command_handler} && $self->{command_handler}{api_cmd}) {
+                        $self->{command_handler}{api_cmd}->handle_login_command();
+                    } else {
                         $self->display_system_message(
-                            "Automatic re-authentication failed. Please run /api login manually."
+                            "Please run /api login to re-authenticate."
                         );
                     }
-                } elsif ($validation->{error} && $validation->{error} =~ /Network/) {
-                    # Network error - silently skip (might be offline)
-                    log_debug('Chat', "Skipping token validation - network error");
+                };
+                if ($@) {
+                    log_warning('Chat', "Auto re-auth failed: $@");
+                    $self->display_system_message(
+                        "Automatic re-authentication failed. Please run /api login manually."
+                    );
                 }
+            } elsif ($validation->{error} && $validation->{error} =~ /Network/) {
+                # Network error - silently skip (might be offline)
+                log_debug('Chat', "Skipping token validation - network error");
             }
         }
     };
