@@ -149,7 +149,13 @@ sub _sanitize_payload_recursive {
         return [ map { _sanitize_payload_recursive($_) } @$data ];
     } elsif (!ref($data)) {
         # Scalar value - sanitize if it's a string
-        return sanitize_text($data);
+        # Only sanitize actual text strings. Numeric values must NOT be passed
+        # through sanitize_text() because that stringifies them - and JSON::XS
+        # (unlike JSON::PP) preserves the Perl string flag, causing integer fields
+        # like max_tokens to be encoded as "32768" (string) instead of 32768
+        # (integer), which the API rejects with a 400 validation error.
+        use Scalar::Util qw(looks_like_number);
+        return looks_like_number($data) ? $data : sanitize_text($data);
     } else {
         # Other ref types (CODE, GLOB, etc.) - return as-is
         return $data;
@@ -1276,7 +1282,9 @@ sub _get_max_output_tokens {
     my $caps = $self->get_model_capabilities($model);
     my $max = ($caps && $caps->{max_output_tokens}) ? $caps->{max_output_tokens} : 16384;
     # Enforce a minimum of 32768 to avoid unusably low limits
-    return $max < 32768 ? 32768 : $max;
+    # Force numeric context with +0 so JSON::XS encodes as integer (not string)
+    # when the value came from a JSON-decoded cache file.
+    return $max < 32768 ? 32768 : ($max + 0);
 }
 
 =head2 _build_responses_api_payload($messages, $model, $endpoint_config, %opts)
