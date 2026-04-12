@@ -882,7 +882,10 @@ if ($api && $api->can('set_reauth_callback')) {
             $auth->save_tokens($github_token, $copilot_token);
             
             if ($ui && $ui->can('display_system_message')) {
-                my $username = ($copilot_token && $copilot_token->{username}) || 'unknown';
+                my $validation = eval { $auth->validate_github_token() };
+                my $username = (!$@ && $validation && $validation->{username})
+                    ? $validation->{username}
+                    : (($copilot_token && $copilot_token->{username}) || 'unknown');
                 $ui->display_system_message("Re-authenticated successfully as: $username");
             }
             
