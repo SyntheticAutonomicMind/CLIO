@@ -404,7 +404,9 @@ sub reinit_api_manager {
 
     log_debug('API', "Re-initializing APIManager after config change");
 
-    my $broker_client = $self->{ai_agent}->{api} ? $self->{ai_agent}->{api}{broker_client} : undef;
+    my $old_api = $self->{ai_agent}->{api};
+    my $broker_client = $old_api ? $old_api->{broker_client} : undef;
+    my $reauth_callback = $old_api ? $old_api->{reauth_callback} : undef;
 
     require CLIO::Core::APIManager;
     my $new_api = CLIO::Core::APIManager->new(
@@ -413,6 +415,12 @@ sub reinit_api_manager {
         config        => $self->{config},
         broker_client => $broker_client,
     );
+
+    # Preserve the reauth callback so mid-session token recovery still works
+    if ($reauth_callback) {
+        $new_api->set_reauth_callback($reauth_callback);
+    }
+
     $self->{ai_agent}->{api} = $new_api;
 
     if ($self->{ai_agent}->{orchestrator}) {
