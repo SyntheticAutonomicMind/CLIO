@@ -542,7 +542,14 @@ sub get_username {
     
     my $tokens = $self->load_tokens();
     return undef unless $tokens;
-    return $tokens->{copilot_token}{username};
+
+    # Copilot token's username field is often null - validate via GitHub API
+    my $validation = eval { $self->validate_github_token() };
+    return $validation->{username} if !$@ && $validation && $validation->{username};
+
+    # Fall back to copilot token username if present
+    return $tokens->{copilot_token}{username} if $tokens->{copilot_token};
+    return undef;
 }
 
 =head2 clear_tokens
@@ -569,6 +576,9 @@ sub clear_tokens {
             log_debug('GitHubAuth', "Cleared models cache after sign out");
         }
     };
+
+    # Return 1 if token file is gone, 0 if it's still there (unlink failed)
+    return -f $self->{tokens_file} ? 0 : 1;
 }
 
 =head2 needs_reauth
