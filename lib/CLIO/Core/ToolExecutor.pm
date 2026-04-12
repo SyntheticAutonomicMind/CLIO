@@ -380,9 +380,15 @@ sub execute_tool {
         my $raw_output = $output;
         
         # Process via ToolResultStore (auto-persist if >8KB)
-        # Note: session object has 'session_id' not 'id'
+        # EXCEPT: read_tool_result output must NOT be re-persisted.
+        # It already returns chunked data; re-persisting creates an infinite
+        # loop where each chunk generates a new toolCallId that the model
+        # reads at offset=0, producing another >8KB result, ad infinitum.
+        my $operation = $arguments->{operation} || '';
+        my $skip_persist = ($operation eq 'read_tool_result');
+        
         my $session_id = $self->{session}->{session_id};
-        if ($session_id && $tool_call_id) {
+        if ($session_id && $tool_call_id && !$skip_persist) {
             $output = $self->{storage}->processToolResult(
                 $tool_call_id,
                 $output,

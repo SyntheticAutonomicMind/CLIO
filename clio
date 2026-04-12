@@ -526,34 +526,50 @@ if ($mode eq 'new') {
         $session_id = $session->{session_id} // ($session->{state} ? $session->{state}->{session_id} : undef);
         print "[DEBUG] Resumed session: $session_id\n" if $debug;
         
-        # CRITICAL: Apply session's saved model to config
-        # This ensures resumed sessions use the model they were using, not the global default
-        # Check both api_config{model} (from /api set) and selected_model (from API usage)
+        # CRITICAL: Apply session's saved model/provider to config, but ONLY
+        # if there are explicit session-only overrides (from /api set --session).
+        # Global config changes between sessions should always take effect.
+        # selected_model is a runtime record (not a user preference) and
+        # should not override global config.
         my $session_state = $session->state();
-        if ($session_state) {
-            # Priority: api_config{model} (explicit user setting) > selected_model (from API)
-            my $session_model = $session_state->{api_config}{model}
-                             // $session_state->{selected_model};
+        if ($session_state && $session_state->{api_config}) {
+            my $session_api = $session_state->{api_config};
             
-            if ($session_model) {
-                # Load provider config first (api_base, api_key), THEN set model
-                # set_provider() overwrites model with provider default, so model must come after
-                if ($session_model =~ m{^([a-z][a-z0-9_.-]*)/}i) {
-                    my $session_provider = $1;
+            # Only apply session overrides if they exist (session-only settings)
+            my $session_model = $session_api->{model};
+            my $session_provider = $session_api->{provider};
+            
+            if ($session_provider || $session_model) {
+                # Session has explicit overrides - apply them
+                if ($session_provider) {
                     require CLIO::Providers;
                     if (CLIO::Providers::provider_exists($session_provider)) {
                         $config->set_provider($session_provider);
-                        # Don't mark as user-set - this is session restore, not explicit user choice
                         delete $config->{user_set}->{provider};
                         delete $config->{user_set}->{api_base};
                         delete $config->{user_set}->{api_key};
-                        print STDERR "[DEBUG] Loaded api_key for provider '$session_provider' from session restore\n" if $debug;
+                        print STDERR "[DEBUG] Session override: provider '$session_provider'\n" if $debug;
                     }
                 }
                 
-                # Apply session model AFTER set_provider to avoid being overwritten
-                $config->set('model', $session_model, 0);  # 0 = don't mark as user-set
-                print STDERR "[DEBUG] Applied session model to config: $session_model\n" if $debug;
+                if ($session_model) {
+                    # If model has provider prefix, load that provider first
+                    if (!$session_provider && $session_model =~ m{^([a-z][a-z0-9_.-]*)/}i) {
+                        my $model_provider = $1;
+                        require CLIO::Providers;
+                        if (CLIO::Providers::provider_exists($model_provider)) {
+                            $config->set_provider($model_provider);
+                            delete $config->{user_set}->{provider};
+                            delete $config->{user_set}->{api_base};
+                            delete $config->{user_set}->{api_key};
+                        }
+                    }
+                    
+                    $config->set('model', $session_model, 0);
+                    print STDERR "[DEBUG] Session override: model '$session_model'\n" if $debug;
+                }
+            } else {
+                print STDERR "[DEBUG] No session-only overrides, using global config\n" if $debug;
             }
         }
     }

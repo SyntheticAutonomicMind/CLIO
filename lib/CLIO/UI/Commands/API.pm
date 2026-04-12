@@ -145,7 +145,7 @@ sub _display_api_help {
 
     $self->display_section_header("ALL COMMANDS");
     $self->display_command_row("/api show", "Display current API configuration", 40);
-    $self->display_command_row("/api set model <name>", "Set AI model", 40);
+    $self->display_command_row("/api set model <name>", "Set AI model (saved globally)", 40);
     $self->display_command_row("/api set model <provider>/<model>", "Set model with provider prefix", 40);
     $self->display_command_row("/api set provider <name>", "Set provider (google, minimax, etc.)", 40);
     $self->display_command_row("/api set base <url>", "Set API base URL", 40);
@@ -161,6 +161,14 @@ sub _display_api_help {
     $self->display_command_row("/api alias", "List model aliases", 40);
     $self->display_command_row("/api alias <name> <model>", "Create model alias", 40);
     $self->display_command_row("/api alias <name> --delete", "Remove alias", 40);
+    $self->writeline("", markdown => 0);
+
+    $self->display_section_header("SESSION OVERRIDES");
+    $self->writeline("  Add --session to set model/provider/base for this session only:", markdown => 0);
+    $self->display_command_row("/api set model <name> --session", "Set model for this session only", 40);
+    $self->display_command_row("/api set provider <name> --session", "Set provider for this session only", 40);
+    $self->display_command_row("/api set base <url> --session", "Set API base for this session only", 40);
+    $self->writeline("  Session overrides are shown in /api show and the session header.", markdown => 0);
     $self->writeline("", markdown => 0);
 
     $self->display_section_header("PROVIDERS");
