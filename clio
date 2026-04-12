@@ -831,8 +831,9 @@ $ai_agent->set_ui($ui) if $ai_agent;
 
 # Wire up automatic re-authentication callback on APIManager
 # When token expires/is revoked, this triggers the interactive login flow
+# reinit_api_manager() copies this callback to newly created APIManager instances
 if ($api && $api->can('set_reauth_callback')) {
-    $api->set_reauth_callback(sub {
+    my $reauth_cb = sub {
         print STDERR "[INFO] Token expired/revoked, triggering re-authentication\n" if should_log('INFO');
         
         # Display message to user
@@ -901,7 +902,9 @@ if ($api && $api->can('set_reauth_callback')) {
         }
         
         return 1;
-    });
+    };
+    # Set on current APIManager and keep reference for reinit_api_manager to copy
+    $api->set_reauth_callback($reauth_cb);
 }
 
 # Display repair notification if session history was cleaned up on resume
