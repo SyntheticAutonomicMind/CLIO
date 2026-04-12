@@ -183,9 +183,15 @@ sub handle_logout {
     }
 
     my $username = $auth->get_username() || 'unknown';
-    $auth->clear_tokens();
+    my $ok = $auth->clear_tokens();
+    if (!$ok) {
+        $self->display_error_message("Failed to delete token file - you may need to remove ~/.clio/github_tokens.json manually");
+        return;
+    }
     $self->display_system_message("Signed out from GitHub (was: $username)");
-    $self->display_system_message("Use /login to authenticate again");
+    $self->display_system_message("Use /api login to authenticate again");
+
+    $self->reinit_api_manager();
 }
 
 sub handle_quota {
