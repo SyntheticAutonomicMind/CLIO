@@ -468,6 +468,14 @@ sub get_copilot_token {
             };
             
             if ($@) {
+                # If the exchange failed with 401/403, the github_token itself is
+                # revoked - returning it would just cause another failure downstream.
+                # Return undef so the caller knows auth is broken.
+                if ($@ =~ /HTTP 40[13]/) {
+                    log_warning('GitHubAuth', "Token refresh failed (token revoked): $@");
+                    return undef;
+                }
+                # For other errors, fall back to the github_token
                 log_warning('GitHubAuth', "Token refresh failed: $@, using GitHub token");
                 $self->{using_exchanged_token} = 0;
                 return $tokens->{github_token};
@@ -490,7 +498,13 @@ sub get_copilot_token {
             return $exchanged->{token};
         }
         
-        # Exchange failed - use raw token (limited model access)
+        # If exchange failed with 401/403, token is revoked - don't return it
+        if ($@ && $@ =~ /HTTP 40[13]/) {
+            log_warning('GitHubAuth', "GitHub token revoked, cannot exchange");
+            return undef;
+        }
+        
+        # Exchange failed for other reasons (404, 5xx) - use raw token
         log_debug('GitHubAuth', "Exchange failed, using GitHub token directly");
         return $tokens->{github_token};
     }
