@@ -1368,7 +1368,7 @@ sub _check_auth_migration {
     my ($self) = @_;
     
     # Only check for GitHub Copilot provider
-    my $provider = $self->{config} ? $self->{config}->get('api_provider') : '';
+    my $provider = $self->{config} ? $self->{config}->get('provider') : '';
     return unless $provider && $provider eq 'github_copilot';
     
     eval {
@@ -1385,7 +1385,8 @@ sub _check_auth_migration {
         # Validate stored tokens are actually still valid
         # This catches the case where CLIO hasn't been used in a while
         # and the GitHub OAuth token has been revoked
-        if ($auth->is_authenticated()) {
+        my $tokens = $auth->load_tokens();
+        if ($tokens && $tokens->{github_token}) {
             my $validation = $auth->validate_github_token();
             
             if ($validation && !$validation->{valid}) {

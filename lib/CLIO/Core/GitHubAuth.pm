@@ -525,7 +525,6 @@ sub is_authenticated {
     my $tokens = $self->load_tokens();
     return 0 unless $tokens;
     return 0 unless $tokens->{github_token};
-    return 0 unless $tokens->{copilot_token};
     
     return 1;
 }
