@@ -981,6 +981,19 @@ sub get_model_capabilities {
     for my $model_info (@$models) {
         next unless $model_info->{id} eq $api_model;
 
+        # For local OpenAI-compatible servers (generic api_type), enrich model_info
+        # with the actual running context window from the llama.cpp /props endpoint.
+        # The /v1/models response only has n_ctx_train (model's training context), not
+        # the server's actual -c value. /props exposes default_generation_settings.n_ctx
+        # which reflects exactly what was passed with --ctx-size / -c at startup.
+        if ($api_type eq 'generic' && !$model_info->{context_window}) {
+            my $props_ctx = $self->_query_llama_props($api_base);
+            if ($props_ctx) {
+                $model_info->{context_window} = $props_ctx;
+                log_debug('APIManager', "llama.cpp /props n_ctx=$props_ctx for $api_model");
+            }
+        }
+
         my $capabilities = $self->_extract_model_capabilities($model_info, $api_type, $target_provider);
         $self->{_model_capabilities_cache} ||= {};
         $self->{_model_capabilities_cache}{$model} = $capabilities;
@@ -1045,6 +1058,52 @@ sub _extract_model_capabilities {
     }
 
     return $caps;
+}
+
+=head2 _query_llama_props($api_base)
+
+Query the llama.cpp /props endpoint to retrieve the actual running context window size.
+
+Returns the integer n_ctx value on success, or undef if the endpoint is unavailable
+or the response does not contain context information. This is used to supplement
+the /v1/models response which only exposes n_ctx_train (training context), not the
+server's runtime --ctx-size value.
+
+Only called for C<generic> api_type providers (local OpenAI-compatible servers).
+
+=cut
+
+sub _query_llama_props {
+    my ($self, $api_base) = @_;
+
+    # Derive the /props URL from the api_base
+    # e.g. http://localhost:9090/v1/chat/completions -> http://localhost:9090/props
+    my $props_url = $api_base;
+    $props_url =~ s{/+$}{};       # strip trailing slashes
+    $props_url =~ s{/v1(/.*)?$}{};  # strip /v1 and anything after it
+    $props_url .= '/props';
+
+    my $ua = CLIO::Compat::HTTP->new(timeout => 5);
+    my $resp = eval { $ua->get($props_url) };
+    if ($@ || !$resp || !$resp->is_success) {
+        log_debug('APIManager', "llama.cpp /props not available at $props_url");
+        return undef;
+    }
+
+    my $data = eval { decode_json($resp->decoded_content) };
+    if ($@) {
+        log_debug('APIManager', "llama.cpp /props parse error: $@");
+        return undef;
+    }
+
+    # /props exposes: default_generation_settings.n_ctx (actual runtime context window)
+    # This reflects the --ctx-size / -c value passed at server startup, not the model's
+    # training context (n_ctx_train) which is what /v1/models exposes.
+    my $n_ctx = $data->{default_generation_settings}{n_ctx}
+             || $data->{n_ctx};   # some older versions may expose it at top level
+
+    return $n_ctx if $n_ctx && $n_ctx > 0;
+    return undef;
 }
 
 =head2 _detect_api_type_and_url
