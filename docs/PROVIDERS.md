@@ -48,6 +48,14 @@ All provider configuration is done with the `/api` command inside CLIO:
 
 # View current configuration
 /api show
+```
+
+All `/api set` commands save globally. Add `--session` to override for the current session only:
+
+```bash
+/api set model gpt-4.1 --session       # This session only
+/api set provider llama.cpp --session   # This session only
+```
 
 # Save configuration
 /config save

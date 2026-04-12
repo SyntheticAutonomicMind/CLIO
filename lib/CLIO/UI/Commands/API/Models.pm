@@ -71,11 +71,13 @@ sub handle_model {
     $self->{config}->set('model', $full_model);
     $self->{config}->save();
 
+    # Clear any session-only model override so the global value takes effect
     if ($self->{session} && $self->{session}->state()) {
         my $state = $self->{session}->state();
-        $state->{api_config} ||= {};
-        $state->{api_config}{model} = $full_model;
-        $self->{session}->save();
+        if ($state->{api_config} && exists $state->{api_config}{model}) {
+            delete $state->{api_config}{model};
+            $self->{session}->save();
+        }
     }
 
     $self->display_system_message("Model set to: $full_model");

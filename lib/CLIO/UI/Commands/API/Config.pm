@@ -331,6 +331,19 @@ sub _set_provider {
             my $state = $self->{session}->state();
             $state->{api_config} ||= {};
             $state->{api_config}{provider} = $value;
+
+            # Also load the provider's api_base and api_key into config
+            # so the session can actually use this provider
+            my $provider_config = CLIO::Providers::get_provider($value);
+            if ($provider_config) {
+                $state->{api_config}{api_base} = $provider_config->{api_base};
+                # Load per-provider API key
+                my $provider_key = $self->{config}->get_provider_key($value);
+                if ($provider_key) {
+                    $state->{api_config}{api_key} = $provider_key;
+                }
+            }
+
             $self->{session}->save();
             $self->display_system_message("Provider set to: $value (session only)");
         }
@@ -344,6 +357,19 @@ sub _set_provider {
                 $self->display_system_message("  Model: " . $config->{model} . " (from provider)");
             } else {
                 $self->display_system_message("Switched to provider: $value (warning: failed to save)");
+            }
+
+            # Clear any session-only provider/api_base/api_key overrides
+            # so the new global values take effect immediately
+            if ($self->{session} && $self->{session}->state()) {
+                my $state = $self->{session}->state();
+                if ($state->{api_config}) {
+                    delete $state->{api_config}{provider};
+                    delete $state->{api_config}{api_base};
+                    delete $state->{api_config}{api_key};
+                    delete $state->{api_config}{model};
+                    $self->{session}->save();
+                }
             }
 
             if ($value eq 'github_copilot') {
@@ -362,6 +388,7 @@ sub _set_api_setting {
     my ($self, $key, $value, $session_only) = @_;
 
     if ($session_only) {
+        # Session-only: store in session state only (not global config)
         if ($self->{session} && $self->{session}->state()) {
             my $state = $self->{session}->state();
             $state->{api_config} ||= {};
@@ -369,14 +396,20 @@ sub _set_api_setting {
             $self->{session}->save();
         }
     } else {
+        # Global: save to config file only - do NOT write to session state.
+        # Session state should only contain explicit session-only overrides,
+        # not copies of global config (which creates stale values on resume).
         $self->{config}->set($key, $value);
         $self->{config}->save();
 
+        # If this key previously had a session-only override, clear it
+        # so the global value takes effect immediately
         if ($self->{session} && $self->{session}->state()) {
             my $state = $self->{session}->state();
-            $state->{api_config} ||= {};
-            $state->{api_config}{$key} = $value;
-            $self->{session}->save();
+            if ($state->{api_config} && exists $state->{api_config}{$key}) {
+                delete $state->{api_config}{$key};
+                $self->{session}->save();
+            }
         }
     }
 }
@@ -465,14 +498,32 @@ sub display_config {
         ? substr($api_key, 0, 8) . '...' . substr($api_key, -4)
         : 'not set';
 
-    $self->display_key_value("Provider", $provider, 16);
-    $self->display_key_value("Model",    $model,    16);
-    $self->display_key_value("API Base", $api_base, 16);
-    $self->display_key_value("API Key",  $display_key, 16);
+    # Check for session-only overrides
+    my %session_overrides;
+    if ($self->{session} && $self->{session}->state()) {
+        my $state = $self->{session}->state();
+        if ($state->{api_config}) {
+            for my $key (qw(provider model api_base api_key)) {
+                $session_overrides{$key} = 1 if exists $state->{api_config}{$key};
+            }
+        }
+    }
+
+    my $session_tag = sub { $session_overrides{$_[0]} ? $self->colorize(" (session)", 'SYSTEM') : "" };
+
+    $self->display_key_value("Provider", $provider . $session_tag->('provider'), 16);
+    $self->display_key_value("Model",    $model . $session_tag->('model'),       16);
+    $self->display_key_value("API Base", $api_base . $session_tag->('api_base'), 16);
+    $self->display_key_value("API Key",  $display_key . $session_tag->('api_key'), 16);
 
     # Show thinking setting
     my $thinking = $self->{config}->get('show_thinking') ? 'on' : 'off';
     $self->display_key_value("Thinking", $thinking, 16);
+
+    if (keys %session_overrides) {
+        $self->writeline("", markdown => 0);
+        $self->display_system_message("(session) = session-only override, use /api set <key> <value> to save globally");
+    }
 
     $self->writeline("", markdown => 0);
 }
