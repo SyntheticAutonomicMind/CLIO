@@ -1267,6 +1267,17 @@ sub display_header {
     }
     my $model_with_provider = "$display_model\@$provider_display";
     
+    # Add session override indicator when session-only settings are active
+    if ($self->{session}) {
+        my $state = $self->{session}->state();
+        if ($state && $state->{api_config}) {
+            my $ac = $state->{api_config};
+            if ($ac->{model} || $ac->{provider} || $ac->{api_base}) {
+                $model_with_provider .= " (session)";
+            }
+        }
+    }
+    
     print "\n";
     
     # Build session display: include friendly name if set

@@ -171,8 +171,16 @@ Use `/api` commands interactively:
 : /api set provider openai
 : /api set key YOUR_OPENAI_API_KEY
 : /api set model <model-name>
-: /config save  # Save to ~/.clio/config.json
 ```
+
+All `/api set` commands save globally by default. To set a value for the current session only, add `--session`:
+
+```bash
+: /api set model gpt-4.1 --session       # Only affects this session
+: /api set provider llama.cpp --session   # Only affects this session
+```
+
+Use `/api show` to see your current configuration and whether any values are session overrides.
 
 See [PROVIDERS.md](PROVIDERS.md) for setup instructions for all 10 providers.
 
@@ -406,19 +414,22 @@ CLIO provides 35+ powerful slash commands. Type `/help` in any session to see th
 | Command | Purpose |
 |---------|---------|
 | `/api` | Show API settings help |
-| `/api set provider <name>` | Change AI provider |
-| `/api set model <name>` | Set AI model |
-| `/api set key <value>` | Set API key |
+| `/api show` | Display current configuration (shows session overrides) |
+| `/api set provider <name>` | Change AI provider (saved globally) |
+| `/api set model <name>` | Set AI model (saved globally) |
+| `/api set key <value>` | Set API key (saved per-provider) |
+| `/api set base <url>` | Set API base URL (saved globally) |
 | `/api set thinking on\|off` | Toggle reasoning display |
+| `/api set <setting> <value> --session` | Set value for this session only |
 | `/api models` | List available models |
 | `/api alias <name> <model>` | Create a model alias |
 | `/api alias` | List all model aliases |
 | `/api alias <name> --delete` | Remove a model alias |
-| `/model <name>` | Quick model switch (resolves aliases) |
+| `/model <name>` | Quick model switch (saved globally) |
 | `/model` | Show current model and aliases |
 | `/api login` | Authenticate with GitHub Copilot |
 | `/api logout` | Sign out from GitHub |
-| `/config save` | Save configuration to file |
+| `/config save` | Save non-API config (theme, working directory) |
 | `/config show` | Display current configuration |
 
 ### Session Management
@@ -1577,31 +1588,42 @@ CLIO is designed to be configured **interactively** using slash commands:
 
 ```bash
 ./clio
-: /api set provider openai         # Set provider
-: /api set key YOUR_API_KEY        # Set API key
-: /api set model <model-name>           # Set model (optional)
-: /config save                     # Save to config file
+: /api set provider openai         # Set provider (saved globally)
+: /api set key YOUR_API_KEY        # Set API key (saved per-provider)
+: /api set model <model-name>      # Set model (saved globally)
 ```
 
 **Available `/api` commands:**
 
 ```bash
+/api show                       # Show current config (highlights session overrides)
 /api providers                  # List all available providers
 /api set provider <name>        # Set current provider
 /api set key <key>              # Set API key for current provider
 /api set model <model>          # Set model
+/api set base <url>             # Set API base URL
 /api models                     # List available models
 /api set thinking on            # Enable reasoning display
 /api alias <name> <model>       # Create model alias
 ```
 
+Add `--session` to any `/api set` command to apply it to the current session only:
+
+```bash
+/api set model gpt-4.1 --session      # Session-only override
+/api set provider llama.cpp --session  # Session-only override
+```
+
+Session overrides are visible in `/api show` and the session header.
+
 **Available `/config` commands:**
 
 ```bash
 /config show                    # Show current configuration
-/config save                    # Save to ~/.clio/config.json
-/config save session            # Save to current session only
+/config save                    # Save theme, working directory, etc.
 ```
+
+**Note:** `/api set` commands save automatically - you don't need `/config save` after changing API settings.
 
 ### Debug Output (Advanced)
 
@@ -2278,9 +2300,8 @@ GitHub Copilot authentication failed or not configured.
 ls ~/.clio/github_tokens.json
 
 # For other providers, use /api commands
-: /api provider openai
-: /api key YOUR_KEY
-: /config save
+: /api set provider openai
+: /api set key YOUR_KEY
 ```
 
 **Problem: "Rate limit exceeded"**
