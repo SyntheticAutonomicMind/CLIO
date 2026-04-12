@@ -38,7 +38,7 @@ by watching for title changes starting with "clio:".
         $proto->emit_status('thinking', model => 'gpt-4.1');
         $proto->emit_tool_start('file_operations', 'read_file');
         $proto->emit_tool_end('file_operations');
-        $proto->emit_tokens(used => 45000, limit => 128000, turn => 1200);
+        $proto->emit_tokens(prompt => 45000, completion => 1200, total => 46200, model => 'gpt-4.1');
     }
 
 =cut
