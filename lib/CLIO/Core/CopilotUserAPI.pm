@@ -137,7 +137,7 @@ sub fetch_user {
             $@ = "copilot_user: unexpected status code $status";
         }
         
-        log_error('CopilotUserAPI', "$@");
+        log_debug('CopilotUserAPI', "$@");
         return undef;
     }
     
