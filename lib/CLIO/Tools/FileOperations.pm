@@ -1377,8 +1377,9 @@ sub _detect_binary {
         return { is_binary => 1, type => $type };
     }
 
-    # High ratio of non-ASCII/control chars also indicates binary
-    my $non_text = () = $sample =~ /[\x01-\x08\x0e-\x1f\x7f-\x9f]/g;
+    # True control characters (not UTF-8 continuation bytes \x80-\xBF)
+    # \x01-\x08: control chars, \x0e-\x1f: formatting codes, \x7f: DEL
+    my $non_text = () = $sample =~ /[\x01-\x08\x0e-\x1f\x7f]/g;
     my $ratio = length($sample) > 0 ? $non_text / length($sample) : 0;
     if ($ratio > 0.10) {
         return { is_binary => 1, type => 'binary (high non-text ratio)' };
