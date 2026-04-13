@@ -44,6 +44,7 @@ use constant LOG_LEVEL => {
 use constant DEFAULT_CONFIG => {
     api_key => '',
     api_keys => {},  # Per-provider API keys: { google => 'AIza...', minimax => '...' }
+    api_bases => {},  # Per-provider API base URLs: { 'llama.cpp' => 'http://localhost:9090/...' }
     provider => 'github_copilot',  # Default provider
     editor => $ENV{EDITOR} || $ENV{VISUAL} || 'vim',  # Default editor
     log_level => 'WARNING',  # Default log level: ERROR, WARNING, INFO, DEBUG
@@ -170,8 +171,14 @@ sub load {
         if ($provider_config) {
             # Apply provider's api_base unless user explicitly set it
             unless ($self->{user_set}->{api_base}) {
-                # For GitHub Copilot, try to get user-specific API endpoint
-                if ($config{provider} eq 'github_copilot') {
+                # Check per-provider stored base URL first
+                my $api_bases = $config{api_bases} || {};
+                my $stored_base = $api_bases->{$config{provider}};
+                if ($stored_base) {
+                    $config{api_base} = $stored_base;
+                    log_debug('Config', "Using stored api_base for provider '$config{provider}': $config{api_base}");
+                } elsif ($config{provider} eq 'github_copilot') {
+                    # For GitHub Copilot, try to get user-specific API endpoint
                     my $user_api_base = $self->_get_copilot_user_api_endpoint();
                     if ($user_api_base) {
                         $config{api_base} = $user_api_base;
@@ -320,13 +327,31 @@ sub set_provider {
         return 0;
     }
     
+    # Save outgoing provider's custom api_base before switching
+    # If the user had set a custom api_base for the current provider,
+    # preserve it in per-provider storage so it survives the switch
+    my $old_provider = $self->get('provider');
+    if ($old_provider && $self->{user_set}->{api_base}) {
+        my $current_base = $self->{config}->{api_base};
+        if ($current_base) {
+            $self->set_provider_base($old_provider, $current_base);
+            log_debug('Config', "Saved custom api_base for outgoing provider '$old_provider'");
+        }
+    }
+    
     my $provider_config = get_provider($provider);
     
     # Set provider name (this IS user-set - they chose the provider)
     $self->set('provider', $provider, 1);  # Mark as user-set
     
-    # Apply provider defaults (these are NOT user-set - they come from provider definition)
-    $self->{config}->{api_base} = $provider_config->{api_base};
+    # Load the incoming provider's stored api_base, or fall back to provider default
+    my $provider_base = $self->get_provider_base($provider);
+    if ($provider_base) {
+        $self->{config}->{api_base} = $provider_base;
+        log_debug('Config', "Loaded custom api_base for provider '$provider' from api_bases");
+    } else {
+        $self->{config}->{api_base} = $provider_config->{api_base};
+    }
     
     # Store default model with provider prefix (e.g., "github_copilot/claude-haiku-4.5")
     my $default_model = $provider_config->{model};
@@ -353,7 +378,7 @@ sub set_provider {
     delete $self->{user_set}->{model};
     
     log_debug('Config', "Switched to provider: $provider");
-    log_debug('Config', "api_base: $provider_config->{api_base} (from provider)");
+    log_debug('Config', "api_base: " . $self->{config}->{api_base} . " (from " . ($provider_base ? "stored" : "provider") . ")");
     log_debug('Config', "model: $provider_config->{model} (from provider)");
     
     return 1;
@@ -431,6 +456,61 @@ sub list_provider_keys {
     
     my $api_keys = $self->{config}->{api_keys} || {};
     return sort keys %$api_keys;
+}
+
+=head2 get_provider_base($provider)
+
+Get the API base URL for a specific provider from per-provider storage.
+
+Arguments:
+- $provider: Provider name (e.g., 'llama.cpp', 'sam')
+
+Returns: API base URL string or undef if not set
+
+=cut
+
+sub get_provider_base {
+    my ($self, $provider) = @_;
+    
+    return unless $provider;
+    
+    my $api_bases = $self->{config}->{api_bases} || {};
+    return $api_bases->{$provider};
+}
+
+=head2 set_provider_base($provider, $url)
+
+Set the API base URL for a specific provider.
+This stores the URL in per-provider storage and also sets it as current
+if the provider matches the current provider.
+
+Arguments:
+- $provider: Provider name (e.g., 'llama.cpp', 'sam')
+- $url: API base URL value
+
+Returns: 1 on success
+
+=cut
+
+sub set_provider_base {
+    my ($self, $provider, $url) = @_;
+    
+    # Initialize api_bases hash if needed
+    $self->{config}->{api_bases} //= {};
+    
+    # Store the base URL
+    $self->{config}->{api_bases}{$provider} = $url;
+    $self->{user_set}->{api_bases} = 1;
+    
+    # If this is the current provider, also set api_base
+    my $current_provider = $self->get('provider');
+    if ($current_provider && $current_provider eq $provider) {
+        $self->{config}->{api_base} = $url;
+    }
+    
+    log_debug('Config', "Stored API base for provider '$provider': $url");
+    
+    return 1;
 }
 
 =head2 get_model_alias($name)
