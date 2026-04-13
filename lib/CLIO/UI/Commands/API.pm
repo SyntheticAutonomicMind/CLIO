@@ -151,6 +151,10 @@ sub _display_api_help {
     $self->display_command_row("/api set base <url>", "Set API base URL", 40);
     $self->display_command_row("/api set key <value>", "Set API key (stored per-provider)", 40);
     $self->display_command_row("/api set thinking on|off", "Show model reasoning output", 40);
+    $self->display_command_row("/api set thinking_effort low|medium|high", "Reasoning depth (default: medium)", 40);
+    $self->display_command_row("/api set temperature <value>", "Override sampling temperature", 40);
+    $self->display_command_row("/api set top_p <value>", "Override top_p sampling", 40);
+    $self->display_command_row("/api set top_k <value>", "Override top_k sampling", 40);
     $self->display_command_row("/api set github_pat <token>", "Set GitHub PAT for extended models", 40);
     $self->display_command_row("/api providers", "Show available providers", 40);
     $self->display_command_row("/api models", "List available models", 40);
