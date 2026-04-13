@@ -91,9 +91,37 @@ sub handle_set {
         my $state_label = $enabled ? "enabled" : "disabled";
         $self->display_system_message("Thinking/reasoning display $state_label" . ($session_only ? " (session only)" : " (saved)"));
     }
+    elsif ($setting eq 'thinking_effort') {
+        my $level = lc($value // '');
+        unless ($level =~ /^(low|medium|high)$/) {
+            $self->display_error_message("Invalid thinking_effort value: '$value'");
+            $self->writeline("Valid values: low, medium, high", markdown => 0);
+            return;
+        }
+        $self->{config}->set('thinking_effort', $level);
+        $self->{config}->save() unless $session_only;
+        $self->display_system_message("Thinking effort set to '$level'" . ($session_only ? " (session only)" : " (saved)"));
+    }
+    elsif ($setting =~ /^(temperature|top_p|top_k)$/) {
+        my $key = "sampling_$setting";
+        if (!defined $value || $value eq '' || $value =~ /^(reset|default|off)$/i) {
+            # Clear override - revert to provider defaults
+            $self->{config}->set($key, '');
+            $self->{config}->save() unless $session_only;
+            $self->display_system_message("$setting reset to provider default" . ($session_only ? " (session only)" : " (saved)"));
+        } else {
+            unless ($value =~ /^\d+(\.\d+)?$/) {
+                $self->display_error_message("Invalid $setting value: '$value' (must be a number)");
+                return;
+            }
+            $self->{config}->set($key, $value + 0);
+            $self->{config}->save() unless $session_only;
+            $self->display_system_message("$setting set to $value" . ($session_only ? " (session only)" : " (saved)"));
+        }
+    }
     else {
         $self->display_error_message("Unknown setting: $setting");
-        $self->writeline("Valid settings: model, provider, base, key, thinking, github_pat, serpapi_key, search_engine, search_provider", markdown => 0);
+        $self->writeline("Valid settings: model, provider, base, key, thinking, thinking_effort, temperature, top_p, top_k, github_pat, serpapi_key, search_engine, search_provider", markdown => 0);
     }
 }
 
@@ -516,9 +544,19 @@ sub display_config {
     $self->display_key_value("API Base", $api_base . $session_tag->('api_base'), 16);
     $self->display_key_value("API Key",  $display_key . $session_tag->('api_key'), 16);
 
-    # Show thinking setting
+    # Show thinking settings
     my $thinking = $self->{config}->get('show_thinking') ? 'on' : 'off';
+    my $effort    = $self->{config}->get('thinking_effort') // 'medium';
     $self->display_key_value("Thinking", $thinking, 16);
+    $self->display_key_value("Think Effort", $effort, 16);
+
+    # Show sampling overrides (only when set)
+    for my $param (qw(temperature top_p top_k)) {
+        my $val = $self->{config}->get("sampling_$param");
+        if (defined $val && $val ne '') {
+            $self->display_key_value(ucfirst($param), $val . " (override)", 16);
+        }
+    }
 
     if (keys %session_overrides) {
         $self->writeline("", markdown => 0);

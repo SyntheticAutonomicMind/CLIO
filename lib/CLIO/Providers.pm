@@ -177,6 +177,7 @@ my %PROVIDERS = (
         requires_auth => 'apikey',
         supports_tools => 1,
         supports_streaming => 1,
+        supports_reasoning => 1,
         max_context_tokens => 204800,
         max_output_tokens => 131072,
         endpoint => {
@@ -185,6 +186,8 @@ my %PROVIDERS = (
             supports_tools => 1,
             minimax => 1,
             no_system_role => 1,
+            # Recommended sampling params per MiniMax model card
+            sampling_defaults => { temperature => 1.0, top_p => 0.95, top_k => 40 },
         },
     },
     
@@ -195,6 +198,7 @@ my %PROVIDERS = (
         requires_auth => 'apikey',
         supports_tools => 1,
         supports_streaming => 1,
+        supports_reasoning => 1,
         max_context_tokens => 204800,
         max_output_tokens => 131072,
         endpoint => {
@@ -203,6 +207,8 @@ my %PROVIDERS = (
             supports_tools => 1,
             minimax => 1,
             no_system_role => 1,
+            # Recommended sampling params per MiniMax model card
+            sampling_defaults => { temperature => 1.0, top_p => 0.95, top_k => 40 },
         },
     },
 );
@@ -296,6 +302,11 @@ sub build_endpoint_config {
     my $endpoint = ($provider && $provider->{endpoint})
         ? { %{$provider->{endpoint}} }
         : { %$defaults };
+
+    # Propagate top-level provider flags into endpoint config for APIManager
+    if ($provider && $provider->{supports_reasoning}) {
+        $endpoint->{supports_reasoning} //= $provider->{supports_reasoning};
+    }
 
     # Add dynamic auth
     $endpoint->{auth_header} = 'Authorization';
