@@ -69,6 +69,11 @@ use constant DEFAULT_CONFIG => {
     file_umask => 0022,  # Default: 0022 (owner read/write, group/other read)
     # Reasoning/thinking display
     show_thinking => 0,         # Show model's reasoning/thinking output (default: off)
+    thinking_effort => 'medium', # Reasoning effort level: low, medium, high (default: medium)
+    # Sampling parameter overrides (empty string = use model/provider defaults)
+    sampling_temperature => '',  # Override temperature (e.g. 0.7); empty = use provider default
+    sampling_top_p => '',        # Override top_p (e.g. 0.9); empty = use provider default
+    sampling_top_k => '',        # Override top_k (e.g. 40); empty = use provider default
     # Agent iteration limit (0 = unlimited)
     max_iterations => 0,
     # Feature switches (tools available to agent)

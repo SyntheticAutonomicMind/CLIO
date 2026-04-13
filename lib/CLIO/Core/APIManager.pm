@@ -125,6 +125,11 @@ sub _model_supports_reasoning {
     if ($model =~ /^MiniMax-M2/i) {
         return 1;
     }
+    # Check provider registry for reasoning support (via endpoint_config if available on self)
+    # This is a last-resort fallback - prefer endpoint_config->{supports_reasoning} in callers
+    if ($self->{_current_endpoint_config} && $self->{_current_endpoint_config}{supports_reasoning}) {
+        return 1;
+    }
 
     # Default: don't send reasoning params for unknown models
     return 0;
@@ -702,8 +707,11 @@ sub adapt_request_for_endpoint {
     # Adding reasoning to non-thinking models causes provider errors (e.g. Google Vertex AI)
     if ($endpoint_config->{openrouter}) {
         my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
-        if ($show_thinking && $payload->{model} && $self->_model_supports_reasoning($payload->{model})) {
-            $payload->{reasoning} = { enabled => \1 };  # JSON true
+        my $model_supports = $endpoint_config->{supports_reasoning}
+            || ($payload->{model} && $self->_model_supports_reasoning($payload->{model}));
+        if ($show_thinking && $model_supports) {
+            my $thinking_effort = $self->{config} ? ($self->{config}->get('thinking_effort') // 'medium') : 'medium';
+            $payload->{reasoning} = { enabled => \1, effort => $thinking_effort };
         }
     }
     
@@ -711,11 +719,34 @@ sub adapt_request_for_endpoint {
     if ($endpoint_config->{minimax}) {
         $payload->{reasoning_split} = \1;  # JSON true
         
+        # Apply provider-recommended sampling defaults (from Providers.pm registry)
+        if (my $sd = $endpoint_config->{sampling_defaults}) {
+            for my $param (qw(temperature top_p top_k)) {
+                next unless defined $sd->{$param};
+                if (!exists $payload->{$param}) {
+                    $payload->{$param} = $sd->{$param};
+                } elsif ($param eq 'temperature' && $payload->{$param} == 0.2) {
+                    # Override CLIO's conservative default with provider recommendation
+                    $payload->{$param} = $sd->{$param};
+                }
+            }
+        }
+        
         # Transform tool messages to MiniMax format
         # MiniMax requires tool results as: content => [{name, type, text}]
         # and assistant messages with tool_calls must have content => ""
         if ($payload->{messages} && ref($payload->{messages}) eq 'ARRAY') {
             $payload->{messages} = _transform_messages_for_minimax($payload->{messages});
+        }
+    }
+
+    # Apply user-configured sampling overrides (highest priority - override everything)
+    if ($self->{config}) {
+        for my $param (qw(temperature top_p top_k)) {
+            my $val = $self->{config}->get("sampling_$param");
+            if (defined $val && $val ne '') {
+                $payload->{$param} = $val + 0;
+            }
         }
     }
     
@@ -1418,7 +1449,8 @@ sub _build_responses_api_payload {
     # ResponseHandler flags _no_reasoning when model rejects reasoning params
     if (!$self->{response_handler}{_no_reasoning}) {
         my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
-        my $reasoning_config = { effort => 'medium' };
+        my $thinking_effort = $self->{config} ? ($self->{config}->get('thinking_effort') // 'medium') : 'medium';
+        my $reasoning_config = { effort => $thinking_effort };
         if ($show_thinking) {
             $reasoning_config->{summary} = 'auto';
         }
