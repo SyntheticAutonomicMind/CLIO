@@ -210,7 +210,9 @@ sub _fetch_provider_models {
             { id => 'MiniMax-M2',             name => 'MiniMax M2',             description => 'Function calling, advanced reasoning (204.8k ctx, 131k out)' },
         ];
     } else {
-        my $api_base = $provider_def->{api_base} || '';
+        # Use per-provider stored base URL if available, otherwise provider default
+        my $stored_base = $self->{config}->get_provider_base($provider_name);
+        my $api_base = $stored_base || $provider_def->{api_base} || '';
 
         my $models_url;
         if ($api_base =~ m{openrouter\.ai}i) {

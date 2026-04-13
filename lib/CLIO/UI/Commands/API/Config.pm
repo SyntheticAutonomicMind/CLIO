@@ -249,6 +249,14 @@ sub _set_base {
         return;
     }
 
+    # Store per-provider when setting globally
+    unless ($session_only) {
+        my $current_provider = $self->{config}->get('provider');
+        if ($current_provider) {
+            $self->{config}->set_provider_base($current_provider, $value);
+        }
+    }
+
     $self->_set_api_setting('api_base', $value, $session_only);
     $self->display_system_message("API base set to: $value" . ($session_only ? " (session only)" : " (saved)"));
     $self->_get_auth_helper()->reinit_api_manager();
@@ -360,11 +368,12 @@ sub _set_provider {
             $state->{api_config} ||= {};
             $state->{api_config}{provider} = $value;
 
-            # Also load the provider's api_base and api_key into config
+            # Load the provider's api_base (per-provider stored or default) and api_key
             # so the session can actually use this provider
+            my $stored_base = $self->{config}->get_provider_base($value);
             my $provider_config = CLIO::Providers::get_provider($value);
             if ($provider_config) {
-                $state->{api_config}{api_base} = $provider_config->{api_base};
+                $state->{api_config}{api_base} = $stored_base || $provider_config->{api_base};
                 # Load per-provider API key
                 my $provider_key = $self->{config}->get_provider_key($value);
                 if ($provider_key) {
@@ -378,10 +387,12 @@ sub _set_provider {
     } else {
         if ($self->{config}->set_provider($value)) {
             my $config = $self->{config}->get_all();
+            my $has_stored_base = $self->{config}->get_provider_base($value);
+            my $base_source = $has_stored_base ? "stored" : "provider default";
 
             if ($self->{config}->save()) {
                 $self->display_system_message("Switched to provider: $value (saved)");
-                $self->display_system_message("  API Base: " . $config->{api_base} . " (from provider)");
+                $self->display_system_message("  API Base: " . $config->{api_base} . " (from $base_source)");
                 $self->display_system_message("  Model: " . $config->{model} . " (from provider)");
             } else {
                 $self->display_system_message("Switched to provider: $value (warning: failed to save)");
