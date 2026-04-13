@@ -91,14 +91,30 @@ Responses stream in real-time, token by token. You see the AI "thinking" as it t
 
 ### Thinking/Reasoning Display
 
-When using models that support extended thinking (OpenAI reasoning, Google thoughts, OpenRouter reasoning), CLIO can display the model's internal reasoning process:
+When using models that support extended thinking (OpenAI reasoning, Google thoughts, OpenRouter reasoning, MiniMax M2), CLIO can display the model's internal reasoning process and control how deeply it reasons:
 
 ```
-/api set thinking on     # Enable thinking display
-/api set thinking off    # Disable (default)
+/api set thinking on              # Enable thinking display
+/api set thinking off             # Disable (default)
+/api set thinking_effort low      # Fast, lightweight reasoning
+/api set thinking_effort medium   # Balanced (default)
+/api set thinking_effort high     # Deep, thorough reasoning
 ```
 
-When enabled, reasoning content appears in a distinct visual style before the main response, giving you visibility into the model's thought process.
+When enabled, reasoning content appears in a distinct visual style before the main response, giving you visibility into the model's thought process. Higher effort levels produce more thorough reasoning at the cost of speed and tokens.
+
+### Sampling Parameters
+
+CLIO uses conservative sampling defaults tuned for reliable tool use. When working with models that benefit from different settings (e.g. creative tasks, or providers like MiniMax that recommend higher temperature), you can override them:
+
+```
+/api set temperature 1.0     # Override temperature (empty = provider default)
+/api set top_p 0.95          # Override top_p
+/api set top_k 40            # Override top_k
+/api set temperature reset   # Revert to provider default
+```
+
+Overrides are saved globally and visible in `/api show`. Provider-recommended defaults (e.g. MiniMax's `temperature=1.0`) are applied automatically when no override is set - you only need to set these if you want to change from the provider recommendation.
 
 ### Iteration and Error Recovery
 
@@ -515,6 +531,11 @@ These send structured prompts to the AI:
 | `/api set provider <name>` | Switch AI provider |
 | `/api set model <name>` | Switch AI model |
 | `/api set key <key>` | Set API key |
+| `/api set thinking on\|off` | Toggle reasoning display |
+| `/api set thinking_effort low\|medium\|high` | Set reasoning depth (default: medium) |
+| `/api set temperature <value>` | Override sampling temperature |
+| `/api set top_p <value>` | Override top_p sampling |
+| `/api set top_k <value>` | Override top_k sampling |
 | `/api models` | List available models |
 | `/api status` | Show current provider status |
 | `/api alias <name> <model>` | Create a model alias |

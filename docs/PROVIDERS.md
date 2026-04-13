@@ -186,7 +186,7 @@ Models use the `provider/model` format:
 
 ### MiniMax
 
-**Best for:** High-throughput coding, large output windows
+**Best for:** High-throughput coding, large output windows, interleaved reasoning
 
 **Get API Key:**
 1. Create account at [platform.minimax.io](https://platform.minimax.io)
@@ -212,6 +212,15 @@ clio --new
 The only difference between `minimax` and `minimax_token` is the API endpoint.
 
 **Available model families:** MiniMax M2 series. Use `/api models` for the current list.
+
+**Sampling defaults:** CLIO automatically applies MiniMax's recommended sampling parameters (`temperature=1.0`, `top_p=0.95`, `top_k=40`) when using this provider. These can be overridden per-session or globally:
+
+```bash
+/api set temperature 0.7        # Custom temperature
+/api set temperature reset      # Revert to MiniMax default (1.0)
+```
+
+**Reasoning:** MiniMax M2 supports interleaved thinking natively. Enable display with `/api set thinking on` and control depth with `/api set thinking_effort low|medium|high`.
 
 **Check Quota (Token Plan only):**
 ```bash
