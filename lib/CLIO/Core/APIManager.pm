@@ -906,10 +906,15 @@ sub get_model_capabilities {
             # Same provider as currently configured - use user's api_base (may be overridden)
             $api_base = $self->{api_base};
         } else {
-            # Different provider - look up its default api_base
-            require CLIO::Providers;
-            my $provider_def = CLIO::Providers::get_provider($target_provider);
-            $api_base = $provider_def ? $provider_def->{api_base} : $self->{api_base};
+            # Different provider - check per-provider stored base, then provider default
+            my $stored_base = $self->{config} ? $self->{config}->get_provider_base($target_provider) : undef;
+            if ($stored_base) {
+                $api_base = $stored_base;
+            } else {
+                require CLIO::Providers;
+                my $provider_def = CLIO::Providers::get_provider($target_provider);
+                $api_base = $provider_def ? $provider_def->{api_base} : $self->{api_base};
+            }
         }
     } else {
         $api_base = $self->{api_base};
@@ -1513,9 +1518,15 @@ sub _prepare_endpoint_config {
         # Model specifies a different provider - resolve its config
         $endpoint_config = $self->_get_endpoint_config_for_provider($target_provider);
         
-        require CLIO::Providers;
-        my $provider_def = CLIO::Providers::get_provider($target_provider);
-        $endpoint = $provider_def ? $provider_def->{api_base} : $self->{api_base};
+        # Check per-provider stored base, then provider default
+        my $stored_base = $self->{config} ? $self->{config}->get_provider_base($target_provider) : undef;
+        if ($stored_base) {
+            $endpoint = $stored_base;
+        } else {
+            require CLIO::Providers;
+            my $provider_def = CLIO::Providers::get_provider($target_provider);
+            $endpoint = $provider_def ? $provider_def->{api_base} : $self->{api_base};
+        }
     } else {
         # Use current provider config
         $endpoint_config = $self->get_endpoint_config();
