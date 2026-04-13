@@ -420,6 +420,10 @@ CLIO provides 35+ powerful slash commands. Type `/help` in any session to see th
 | `/api set key <value>` | Set API key (saved per-provider) |
 | `/api set base <url>` | Set API base URL (saved globally) |
 | `/api set thinking on\|off` | Toggle reasoning display |
+| `/api set thinking_effort low\|medium\|high` | Set reasoning depth (default: medium) |
+| `/api set temperature <value>` | Override sampling temperature |
+| `/api set top_p <value>` | Override top_p sampling |
+| `/api set top_k <value>` | Override top_k sampling |
 | `/api set <setting> <value> --session` | Set value for this session only |
 | `/api models` | List available models |
 | `/api alias <name> <model>` | Create a model alias |
@@ -1596,15 +1600,20 @@ CLIO is designed to be configured **interactively** using slash commands:
 **Available `/api` commands:**
 
 ```bash
-/api show                       # Show current config (highlights session overrides)
-/api providers                  # List all available providers
-/api set provider <name>        # Set current provider
-/api set key <key>              # Set API key for current provider
-/api set model <model>          # Set model
-/api set base <url>             # Set API base URL
-/api models                     # List available models
-/api set thinking on            # Enable reasoning display
-/api alias <name> <model>       # Create model alias
+/api show                           # Show current config (highlights session overrides)
+/api providers                      # List all available providers
+/api set provider <name>            # Set current provider
+/api set key <key>                  # Set API key for current provider
+/api set model <model>              # Set model
+/api set base <url>                 # Set API base URL
+/api models                         # List available models
+/api set thinking on                # Enable reasoning display
+/api set thinking_effort high       # Deep reasoning (low|medium|high)
+/api set temperature 1.0            # Override sampling temperature
+/api set top_p 0.95                 # Override top_p
+/api set top_k 40                   # Override top_k
+/api set temperature reset          # Revert to provider default
+/api alias <name> <model>           # Create model alias
 ```
 
 Add `--session` to any `/api set` command to apply it to the current session only:
