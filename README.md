@@ -101,11 +101,15 @@ CLIO is part of the [Synthetic Autonomic Mind (SAM)](https://github.com/Syntheti
   <tr>
     <td width="50%">
       <h3>CLIO's Simple User Interface (1/2)</h3>
-      <img src=".images/clio1.png"/>
+      <a href="https://raw.githubusercontent.com/SyntheticAutonomicMind/CLIO/main/.images/clio1.png">
+        <img src=".images/clio1.png"/>
+      </a>
     </td>
     <td width="50%">
       <h3>CLIO's Simple User Interface (2/2)</h3>
-      <img src=".images/clio2.png"/>
+      <a href="https://raw.githubusercontent.com/SyntheticAutonomicMind/CLIO/main/.images/clio2.png">
+        <img src=".images/clio2.png"/>
+      </a>
     </td>
   </tr>
 </table>
