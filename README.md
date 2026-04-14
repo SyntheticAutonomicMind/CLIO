@@ -100,11 +100,11 @@ CLIO is part of the [Synthetic Autonomic Mind (SAM)](https://github.com/Syntheti
 <table>
   <tr>
     <td width="50%">
-      <h3>CLIO's Simple Interface</h3>
+      <h3>CLIO's Simple User Interface (1/2)</h3>
       <img src=".images/clio1.png"/>
     </td>
     <td width="50%">
-      <h3>Claude Haiku describing CLIO</h3>
+      <h3>CLIO's Simple User Interface (2/2)</h3>
       <img src=".images/clio2.png"/>
     </td>
   </tr>
