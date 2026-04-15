@@ -9,10 +9,11 @@
 # 5. Trigger GitHub Actions release workflow
 #
 # Usage:
-#   ./release.sh <version>
+#   make release VERSION=<version>
+#   scripts/release.sh <version>
 #
 # Example:
-#   ./release.sh 20260123.8
+#   make release VERSION=20260123.8
 
 set -e  # Exit on error
 
