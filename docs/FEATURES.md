@@ -739,6 +739,8 @@ Skills are stored per-project in `.clio/skills/`. You can share them across team
 
 CLIO can spawn sub-agents - independent AI processes that work in parallel on different tasks. Agents coordinate through a broker, communicate via messages, and report status through OSC events when running inside a host application.
 
+**Puppeteer mode** extends this to multi-project orchestration. When your working directory contains child projects with `.clio/` configurations, CLIO can delegate work to any of them - each sub-agent loads the target project's instructions, LTM, and conventions automatically. See [Puppeteer Mode](PUPPETEER_MODE.md).
+
 ### How It Works
 
 ```
