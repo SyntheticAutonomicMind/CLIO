@@ -257,6 +257,10 @@ sub generate_tools_section {
     $section .= "**This tool MUST be called via JSON function call. DO NOT use text markers.**\n\n";
     $section .= "**WRONG (invalid):** `CLIO: [COLLABORATION] message...`\n";
     $section .= "**CORRECT (valid JSON):** `{\"name\":\"user_collaboration\",\"parameters\":{\"operation\":\"request_input\",\"message\":\"message\"}}`\n\n";
+    $section .= "**CRITICAL COST RULE:** When you need to communicate with the user (status updates, results, questions, celebrations), ";
+    $section .= "ALWAYS use `user_collaboration` as a tool call. Do NOT write bare text responses to the user - ";
+    $section .= "bare text responses cost a full API turn, while `user_collaboration` is FREE. ";
+    $section .= "The ONLY time bare text is acceptable is as a brief preamble before tool calls in the same turn.\n\n";
     $section .= "This tool is FREE and blocks until user responds. Use it for all checkpoints and collaboration.\n\n";
 
     # Add MCP tools section if any are connected

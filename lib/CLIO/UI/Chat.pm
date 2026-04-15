@@ -5,7 +5,7 @@ package CLIO::UI::Chat;
 
 use strict;
 use warnings;
-use CLIO::Core::Logger qw(log_debug log_warning);
+use CLIO::Core::Logger qw(log_debug log_info log_warning);
 use CLIO::Security::InvisibleCharFilter qw(filter_invisible_chars has_invisible_chars);
 use CLIO::Util::TextSanitizer qw(sanitize_text set_sanitize_mode);
 use CLIO::UI::Markdown;
@@ -205,6 +205,25 @@ Return the agent display name (e.g. "CLIO" or "MIRA").
 
 sub agent_name {
     return $ENV{CLIO_AGENT_NAME} || 'CLIO';
+}
+
+=head2 _get_broker_client
+
+Resolve the broker client from available sources (ai_agent or subagent command handler).
+
+=cut
+
+sub _get_broker_client {
+    my ($self) = @_;
+    
+    if ($self->{ai_agent} && $self->{ai_agent}->can('broker_client')) {
+        my $bc = $self->{ai_agent}->broker_client();
+        return $bc if $bc;
+    }
+    if ($self->{command_handler} && $self->{command_handler}{subagent_cmd}) {
+        return $self->{command_handler}{subagent_cmd}{broker_client};
+    }
+    return undef;
 }
 
 =head2 streaming_controller
@@ -413,17 +432,10 @@ sub run {
         $self->check_for_update_notification();
         
         # Check for agent messages (if broker client available)
-        # Look in multiple places: ai_agent (for sub-agents) or subagent_cmd (for primary user)
-        my $broker_client;
-        if ($self->{ai_agent} && $self->{ai_agent}->can('broker_client')) {
-            $broker_client = $self->{ai_agent}->broker_client();
-        }
-        # Also check SubAgent command handler for primary user session
-        if (!$broker_client && $self->{command_handler} && $self->{command_handler}{subagent_cmd}) {
-            $broker_client = $self->{command_handler}{subagent_cmd}{broker_client};
-        }
-        if ($broker_client) {
-            $self->check_agent_messages($broker_client);
+        my $broker_client = $self->_get_broker_client();
+        if ($broker_client && !$self->{_broker_dead}) {
+            my $ok = $self->check_agent_messages($broker_client);
+            $self->{_broker_dead} = 1 unless $ok;
         }
         
         # Get user input
@@ -457,6 +469,28 @@ sub run {
             } else {
                 next;  # Command handled, get next input
             }
+        }
+        
+        # Handle @agent-N message routing (direct user-to-agent chat)
+        if ($input =~ /^\@(agent-\S+)\s+(.+)/s) {
+            my ($target_agent, $msg_text) = ($1, $2);
+            if ($broker_client) {
+                eval {
+                    $broker_client->send_message(
+                        to => $target_agent,
+                        content => $msg_text,
+                        message_type => 'guidance',
+                    );
+                };
+                if ($@) {
+                    $self->display_error_message("Failed to send to $target_agent: $@");
+                } else {
+                    print $self->colorize("YOU -> " . uc($target_agent) . ": ", 'USER'), $msg_text, "\n";
+                }
+            } else {
+                $self->display_error_message("No broker connection - spawn a sub-agent first");
+            }
+            next;
         }
         
         # Display user message (if not already from a command)
@@ -972,7 +1006,7 @@ Check for and display messages from sub-agents.
 sub check_agent_messages {
     my ($self, $broker_client) = @_;
     
-    return unless $broker_client;
+    return 0 unless $broker_client;
     
     # Poll user inbox
     my $messages = eval { $broker_client->poll_user_inbox() };
@@ -980,14 +1014,135 @@ sub check_agent_messages {
     # Handle errors gracefully
     if ($@) {
         log_warning('Chat', "Failed to poll agent inbox: $@");
-        return;
+        return 0;
     }
     
-    return unless $messages && @$messages;
+    return 1 unless $messages && @$messages;
     
-    # Display each message
+    # Track message IDs to acknowledge after handling
+    my @handled_ids;
+    
+    # Display each message, handling authorization requests specially
     for my $msg (@$messages) {
-        $self->display_agent_message($msg);
+        if ($msg->{type} eq 'authorization_request') {
+            $self->_handle_agent_authorization($msg, $broker_client);
+            push @handled_ids, $msg->{id} if $msg->{id};
+        } else {
+            $self->display_agent_message($msg);
+            push @handled_ids, $msg->{id} if $msg->{id};
+        }
+    }
+    
+    # Acknowledge all handled messages so they don't re-appear
+    if (@handled_ids) {
+        eval { $broker_client->acknowledge_messages(@handled_ids) };
+    }
+    
+    return 1;
+}
+
+=head2 _handle_agent_authorization($msg, $broker_client)
+
+Handle an authorization request from a child agent. Displays the security prompt
+to the user and sends the response back through the broker.
+
+=cut
+
+sub _handle_agent_authorization {
+    my ($self, $msg, $broker_client) = @_;
+    
+    my $from        = $msg->{from} || 'unknown';
+    my $request_id  = $msg->{request_id};
+    my $category    = $msg->{category} || 'unknown';
+    my $description = $msg->{description} || 'unknown';
+    my $risk_level  = $msg->{risk_level} || 'standard';
+    my $flags       = $msg->{flags} || [];
+    
+    my $is_critical = ($risk_level eq 'critical');
+    
+    # Ring bell to alert user
+    print "\a";
+    
+    # Display authorization request with agent context
+    my $theme_mgr = $self->{theme_mgr};
+    
+    # Build category label
+    my $cat_label = {
+        command_execution => 'Command',
+        script_creation   => 'Script',
+        web_fetch         => 'Web Request',
+    }->{$category} || ucfirst($category);
+    
+    # Build prompt options
+    my $options = '(y)es once | (a)llow session | (n)o deny';
+    
+    if ($theme_mgr && $theme_mgr->can('get_security_prompt')) {
+        my ($prompt_line, $input_line) = $theme_mgr->get_security_prompt(
+            $description,
+            $flags,
+            $options,
+        );
+        print "\n";
+        if ($is_critical) {
+            print "\e[1;31m[WARN] CRITICAL RISK\e[0m ";
+        }
+        print $self->colorize("[Agent: $from] ", 'CYAN');
+        print "$cat_label Authorization\n";
+        print "$prompt_line\n$input_line";
+    } else {
+        my $display = length($description) > 80 ? substr($description, 0, 77) . '...' : $description;
+        print "\n";
+        if ($is_critical) {
+            print "* CRITICAL RISK ";
+        } else {
+            print "* Security ";
+        }
+        print "[Agent: $from] $cat_label | $display\n  $options: ";
+    }
+    
+    # Read user response
+    require CLIO::Compat::Terminal;
+    
+    my $saved_alrm = $SIG{ALRM};
+    my $remaining_alarm = alarm(0);
+    
+    while (defined(eval { CLIO::Compat::Terminal::ReadKey(-1) })) { }
+    CLIO::Compat::Terminal::ReadMode(0);
+    
+    my $response = <STDIN>;
+    chomp($response) if defined $response;
+    $response = lc($response || 'n');
+    
+    CLIO::Compat::Terminal::ReadMode(1);
+    
+    $SIG{ALRM} = $saved_alrm || 'DEFAULT';
+    alarm($remaining_alarm) if $remaining_alarm;
+    
+    # Determine approval
+    my ($approved, $grant_type);
+    if ($response eq 'y' || $response eq 'yes') {
+        $approved = 1;
+        $grant_type = 'once';
+    } elsif ($response eq 'a' || $response eq 'allow') {
+        $approved = 1;
+        $grant_type = 'session';
+    } else {
+        $approved = 0;
+        $grant_type = 'denied';
+    }
+    
+    log_info('Chat', "Agent auth response for $request_id: approved=$approved grant=$grant_type");
+    
+    # Send response back through broker
+    eval {
+        $broker_client->send_authorization_response(
+            request_id => $request_id,
+            approved   => $approved,
+            grant_type => $grant_type,
+        );
+    };
+    if ($@) {
+        log_warning('Chat', "Failed to send authorization response: $@");
     }
 }
 
@@ -1003,70 +1158,38 @@ sub display_agent_message {
     my $from = $msg->{from} || 'unknown';
     my $type = $msg->{type} || 'generic';
     my $content = $msg->{content} || '';
-    my $time = localtime($msg->{timestamp}) if $msg->{timestamp};
-    my $id = $msg->{id};
     
-    # Color and icon by message type
-    my ($color, $icon, $label);
+    # Color by message type
+    my $color;
     if ($type eq 'question') {
         $color = 'YELLOW';
-        $icon = '[?]';
-        $label = 'QUESTION';
     } elsif ($type eq 'blocked') {
         $color = 'RED';
-        $icon = '[' . ui_char('cross_mark') . ']';
-        $label = 'BLOCKED';
     } elsif ($type eq 'complete') {
         $color = 'GREEN';
-        $icon = '[' . ui_char('check') . ']';
-        $label = 'COMPLETE';
-    } elsif ($type eq 'status') {
-        $color = 'CYAN';
-        $icon = ui_char("info");
-        $label = 'STATUS';
-    } elsif ($type eq 'discovery') {
-        $color = 'MAGENTA';
-        $icon = ui_char("lightbulb");
-        $label = 'DISCOVERY';
     } else {
-        $color = 'WHITE';
-        $icon = ui_char("envelope");
-        $label = uc($type);
+        $color = 'CYAN';
     }
     
-    # Print separator
-    print $self->colorize(box_char("horizontal") x 80, 'DIM'), "\n";
+    my $agent_label = uc($from);
+    print $self->colorize("$agent_label: ", $color);
     
-    # Print header
-    my $header = "$icon Agent Message: " . $self->colorize("$from", 'BOLD') . 
-                 " [$label]";
-    if ($time) {
-        $header .= $self->colorize(" ($time)", 'DIM');
-    }
-    print $header, "\n";
-    
-    # Print content
+    # Print content - full text, no truncation
     if (ref($content) eq 'HASH') {
-        # Structured content (e.g., status updates)
+        print "\n";
         for my $key (sort keys %$content) {
             next unless defined $content->{$key};
-            my $value = $content->{$key};
-            print "  " . $self->colorize("$key:", 'DIM') . " $value\n";
+            print "  $key: $content->{$key}\n";
         }
     } else {
-        # Simple text content
-        print $self->colorize($content, $color), "\n";
+        print "$content\n";
     }
     
-    # Print footer with reply hint for questions
+    # Bell and hint for actionable messages
     if ($type eq 'question' || $type eq 'blocked') {
-        # Ring terminal bell to alert user
         print "\a";  # Bell character
-        print $self->colorize("ACTION REQUIRED: ", 'YELLOW');
-        print "Reply with: " . $self->colorize("/subagent reply $from <your-response>", 'BOLD'), "\n";
+        print $self->colorize("  Reply with: \@$from <your-response>", 'DIM'), "\n";
     }
-    
-    print $self->colorize(box_char("horizontal") x 80, 'DIM'), "\n";
     print "\n";
 }
 
@@ -1642,7 +1765,32 @@ sub get_input {
     # Interactive mode with our custom readline and tab completion
     if ($self->{readline}) {
         my $prompt = $self->_build_prompt();
-        my $input = $self->{readline}->readline($prompt);
+        
+        # If broker is active, poll for agent messages during readline
+        my $input;
+        my $broker_client = $self->_get_broker_client();
+        if ($broker_client && !$self->{_broker_dead}) {
+            my $event_cb = sub {
+                my $events = $self->_poll_broker_events($broker_client);
+                return 0 unless $events && @$events;
+                for my $event (@$events) {
+                    if (($event->{message_type} || '') eq 'authorization_request') {
+                        print "\r\e[K";
+                        $self->_handle_agent_authorization($event->{_raw_msg}, $broker_client);
+                    } else {
+                        my $rendered = $self->_render_broker_event($event);
+                        if ($rendered) {
+                            print "\r\e[K";
+                            print $rendered;
+                        }
+                    }
+                }
+                return 1;
+            };
+            $input = $self->{readline}->readline($prompt, event_callback => $event_cb);
+        } else {
+            $input = $self->{readline}->readline($prompt);
+        }
         
         # Handle Ctrl-D (EOF)
         if (!defined $input) {
@@ -1904,7 +2052,8 @@ Returns: User's response string, or undef if cancelled
 =cut
 
 sub request_collaboration {
-    my ($self, $message, $context) = @_;
+    my ($self, $message, $context, $options) = @_;
+    $options ||= {};
     
     log_debug('Chat', "request_collaboration called");
     
@@ -2060,23 +2209,122 @@ sub request_collaboration {
     # Define the collaboration prompt (enhanced format with blue indicator)
     my $collab_prompt = $self->_build_prompt('collaboration');
     
-    # Loop to handle multiple inputs (slash commands return to prompt)
+    # Set up broker event multiplexing if requested
+    my $listen_broker = $options->{listen_broker};
+    my $broker_client = $options->{broker_client};
+    my @accumulated_events;
+    my $event_callback;
+    
+    # Resolve broker_client from SubAgent command handler if not explicitly provided
+    if ($listen_broker && !$broker_client) {
+        if ($self->{command_handler} && $self->{command_handler}{subagent_cmd}) {
+            $broker_client = $self->{command_handler}{subagent_cmd}{broker_client};
+        }
+    }
+    
+    if ($listen_broker && $broker_client) {
+        $event_callback = sub {
+            # Poll broker for events (request-response, not push)
+            my $events = $self->_poll_broker_events($broker_client);
+            return 0 unless $events && @$events;
+            
+            my $need_redraw = 0;
+            my $needs_ai_attention = 0;
+            for my $event (@$events) {
+                push @accumulated_events, $event;
+                
+                # Authorization requests need special interactive handling
+                if (($event->{message_type} || '') eq 'authorization_request') {
+                    # Clear readline, handle auth prompt, then redraw
+                    print "\r\e[K";
+                    $self->_handle_agent_authorization($event->{_raw_msg}, $broker_client);
+                    $need_redraw = 1;
+                } else {
+                    my $rendered = $self->_render_broker_event($event);
+                    if ($rendered) {
+                        print "\r\e[K";  # Clear current line
+                        print $rendered;
+                        $need_redraw = 1;
+                    }
+                    
+                    # Actionable agent messages should interrupt readline
+                    # so the AI can process them without waiting for user input
+                    if (($event->{type} || '') eq 'agent_message') {
+                        my $mt = $event->{message_type} || '';
+                        if ($mt eq 'question' || $mt eq 'complete' || $mt eq 'completion'
+                            || $mt eq 'blocked' || $mt eq 'discovery') {
+                            $needs_ai_attention = 1;
+                        }
+                    }
+                }
+            }
+            
+            # Return 'BREAK' to abort readline when agent needs AI attention
+            return 'BREAK' if $needs_ai_attention;
+            return $need_redraw;
+        };
+    }
+    
+    # Loop to handle multiple inputs (slash commands and @agent messages return to prompt)
+    my $prefill = '';  # Preserved input from interrupted readline
     while (1) {
         # ReadLine sets raw mode internally and restores to normal on exit.
         # Since we're in cbreak mode for agent interrupt detection, we need
         # to re-enter cbreak after each readline call.
-        my $response = $readline->readline($collab_prompt);
+        my $response;
+        if ($event_callback) {
+            $response = $readline->readline($collab_prompt,
+                event_callback => $event_callback,
+                prefill => $prefill,
+            );
+        } else {
+            $response = $readline->readline($collab_prompt);
+        }
+        $prefill = '';  # Reset prefill after each readline
         ReadMode(1);  # Re-enter cbreak for interrupt detection
+        
+        # Check for agent event interruption - readline was aborted because
+        # an actionable agent message arrived that needs AI attention
+        if (ref $response eq 'HASH' && ($response->{type} || '') eq '__AGENT_EVENT__') {
+            my $partial = $response->{partial_input} || '';
+            return { source => 'agent_event', input => undef, events => \@accumulated_events, partial_input => $partial };
+        }
         
         unless (defined $response) {
             print "\n";
+            if ($listen_broker) {
+                return { source => 'user', input => undef, events => \@accumulated_events };
+            }
             return undef;  # EOF or cancelled
         }
         
         # Handle empty response
         if (!length($response)) {
+            if ($listen_broker) {
+                # In broker mode, empty input is not cancellation - it's just enter
+                print $self->colorize("(Empty input - type a response or \@agent-N to message an agent)\n", 'DIM');
+                next;
+            }
             print $self->colorize("(No response provided - collaboration cancelled)\n", 'WARNING');
             return undef;
+        }
+        
+        # Handle @agent-N message routing (only when broker is active)
+        if ($listen_broker && $broker_client && $response =~ /^\@(agent-\S+)\s+(.+)/) {
+            my ($target_agent, $msg_text) = ($1, $2);
+            eval {
+                $broker_client->send_message(
+                    to => $target_agent,
+                    content => $msg_text,
+                    message_type => 'guidance',
+                );
+            };
+            if ($@) {
+                print $self->colorize("[error] Failed to send to $target_agent: $@\n", 'RED');
+            } else {
+                print $self->colorize("YOU -> " . uc($target_agent) . ": ", 'USER'), $msg_text, "\n";
+            }
+            next;  # Return to readline, don't return to caller
         }
         
         # Check for slash commands - process them and return to prompt
@@ -2097,6 +2345,9 @@ sub request_collaboration {
             # If command requested exit, cancel collaboration
             if (!$continue) {
                 print $self->colorize("(Collaboration ended by /exit command)\n", 'SYSTEM');
+                if ($listen_broker) {
+                    return { source => 'user', input => undef, events => \@accumulated_events };
+                }
                 return undef;
             }
             
@@ -2104,6 +2355,9 @@ sub request_collaboration {
             if ($ai_prompt) {
                 # Display the actual content, not the command
                 print $self->colorize("YOU: ", 'USER'), $ai_prompt, "\n";
+                if ($listen_broker) {
+                    return { source => 'user', input => $ai_prompt, events => \@accumulated_events };
+                }
                 return $ai_prompt;
             }
             
@@ -2116,8 +2370,244 @@ sub request_collaboration {
         
         # Regular response - display and return
         print $self->colorize("YOU: ", 'USER'), $response, "\n";
+        if ($listen_broker) {
+            return { source => 'user', input => $response, events => \@accumulated_events };
+        }
         return $response;
     }
+}
+
+=head2 _poll_broker_events
+
+Poll the broker client for pending events (messages, status updates, exits).
+Returns an arrayref of event hashrefs.
+
+=cut
+
+sub _poll_broker_events {
+    my ($self, $broker_client) = @_;
+    
+    my @events;
+    
+    # Track consecutive failures to avoid hammering a dead broker
+    $self->{_broker_poll_failures} //= 0;
+    if ($self->{_broker_poll_failures} > 3) {
+        # After 3 failures, stop polling entirely until reconnect or new agent spawn
+        return \@events;
+    }
+    
+    my $had_error = 0;
+    
+    # Poll user inbox for agent messages
+    my @message_ids;
+    eval {
+        my $messages = $broker_client->poll_user_inbox();
+        for my $msg (@$messages) {
+            push @message_ids, $msg->{id} if $msg->{id};
+            my $event = {
+                type => 'agent_message',
+                agent_id => $msg->{from} || 'unknown',
+                message_type => $msg->{type} || $msg->{message_type} || 'generic',
+                content => $msg->{content} || '',
+                timestamp => $msg->{timestamp} || time(),
+            };
+            # Preserve raw message for authorization handling
+            if (($msg->{type} || '') eq 'authorization_request') {
+                $event->{_raw_msg} = $msg;
+            }
+            push @events, $event;
+        }
+    };
+    if ($@) {
+        log_warning('Chat', "Error polling broker user inbox: $@");
+        $had_error = 1;
+    }
+    
+    # Acknowledge messages so they don't re-appear on next poll
+    if (@message_ids) {
+        eval { $broker_client->acknowledge_messages(@message_ids) };
+    }
+    
+    # Poll for status updates (agent state transitions)
+    eval {
+        if ($broker_client->can('poll_status_updates')) {
+            my $updates = $broker_client->poll_status_updates();
+            for my $update (@$updates) {
+                my $event_type = 'status_update';
+                if (($update->{status} || '') eq 'exited' || ($update->{status} || '') eq 'completed') {
+                    $event_type = 'agent_exit';
+                }
+                push @events, {
+                    type => $event_type,
+                    agent_id => $update->{agent_id} || 'unknown',
+                    status => $update->{status} || '',
+                    detail => $update->{detail} || '',
+                    timestamp => $update->{timestamp} || time(),
+                };
+            }
+        }
+    };
+    if ($@) {
+        log_warning('Chat', "Error polling broker status updates: $@");
+        $had_error = 1;
+    }
+    
+    # Poll for activity stream events
+    eval {
+        if ($broker_client->can('poll_activity')) {
+            my $activities = $broker_client->poll_activity();
+            for my $activity (@$activities) {
+                push @events, {
+                    type => 'activity',
+                    agent_id => $activity->{agent_id} || 'unknown',
+                    action => $activity->{action} || '',
+                    detail => $activity->{detail} || '',
+                    timestamp => $activity->{timestamp} || time(),
+                };
+            }
+        }
+    };
+    if ($@) {
+        log_warning('Chat', "Error polling broker activity: $@");
+        $had_error = 1;
+    }
+    
+    # Track failures for backoff
+    if ($had_error && !@events) {
+        $self->{_broker_poll_failures}++;
+    } else {
+        $self->{_broker_poll_failures} = 0;
+    }
+    
+    return \@events;
+}
+
+=head2 _render_broker_event
+
+Format a broker event for inline display during collaboration.
+Returns a colored string for terminal output.
+
+Event types:
+- agent_message: Message from an agent (question, completion, etc.)
+- agent_exit: Agent process exited
+- status_update: Agent state transition
+- activity: Tool usage or processing activity
+
+=cut
+
+sub _render_broker_event {
+    my ($self, $event) = @_;
+    
+    return unless $event && ref($event) eq 'HASH';
+    
+    my $type = $event->{type} || 'unknown';
+    my $agent_id = $event->{agent_id} || 'unknown';
+    my $content = $event->{content} || $event->{detail} || '';
+    
+    if ($type eq 'agent_message') {
+        my $msg_type = $event->{message_type} || 'generic';
+        my $agent_label = uc($agent_id);
+        
+        # Add project context to label if known
+        my $project = $self->get_agent_project($agent_id);
+        if ($project) {
+            $agent_label .= " ($project)";
+        }
+        
+        # Skip authorization_request - handled separately with interactive prompt
+        return undef if $msg_type eq 'authorization_request';
+        
+        # Strip HTML comments (e.g. <!--session:...--> markers from agent output)
+        if (!ref($content)) {
+            $content =~ s/<!--.*?-->//gs;
+            $content =~ s/^\s*\n//gm;  # Clean up blank lines left behind
+        }
+        
+        # Render like a chat participant: "AGENT-1: <full message>"
+        my $color = 'CYAN';
+        if ($msg_type eq 'completion' || $msg_type eq 'complete') {
+            $color = 'GREEN';
+        } elsif ($msg_type eq 'question') {
+            $color = 'YELLOW';
+        } elsif ($msg_type eq 'blocked') {
+            $color = 'RED';
+        }
+        
+        my $header = $self->colorize("$agent_label: ", $color);
+        
+        # Render content - full text, no truncation
+        if (ref($content) eq 'HASH') {
+            my @lines;
+            for my $key (sort keys %$content) {
+                next unless defined $content->{$key};
+                push @lines, "  $key: $content->{$key}";
+            }
+            my $indent = '    ';
+            return "\n$header\n" . join("\n", map { "$indent$_" } @lines) . "\n";
+        }
+        
+        # Render markdown for rich agent output
+        my $rendered_content = $self->render_markdown($content);
+        
+        # Indent content lines to match CLIO's own message formatting
+        my $indent = '    ';
+        my @lines = split /\n/, $rendered_content;
+        my $first = shift @lines // '';
+        my $output = "\n$header$first\n";
+        for my $line (@lines) {
+            $output .= "$indent$line\n";
+        }
+        return $output;
+    }
+    elsif ($type eq 'agent_exit') {
+        my $status = $event->{status} || 'exited';
+        my $agent_label = uc($agent_id);
+        my $project = $self->get_agent_project($agent_id);
+        $agent_label .= " ($project)" if $project;
+        return $self->colorize("$agent_label: ", 'GREEN') . $self->colorize("exited ($status)", 'DIM') . "\n";
+    }
+    elsif ($type eq 'status_update') {
+        my $status = $event->{status} || 'unknown';
+        # Brief inline status - keep dim and compact
+        return $self->colorize("[$agent_id] $status", 'DIM') . ($content ? " $content" : '') . "\n";
+    }
+    elsif ($type eq 'activity') {
+        my $action = $event->{action} || '';
+        # Brief inline activity - keep dim and compact
+        return $self->colorize("[$agent_id] $action", 'DIM') . ($content ? " $content" : '') . "\n";
+    }
+    
+    # Unknown event type
+    return $self->colorize("[$agent_id]", 'DIM') . " $content\n";
+}
+
+=head2 register_agent_project
+
+Register an agent's project context for display labels.
+Called by SubAgentOperations after spawning an agent.
+
+=cut
+
+sub register_agent_project {
+    my ($self, $agent_id, $project) = @_;
+    return unless $agent_id && $project;
+    $self->{_agent_projects} //= {};
+    # Extract just the project name from path (e.g. "./ALICE" -> "ALICE")
+    (my $name = $project) =~ s{^\.?/}{};
+    $name =~ s{/$}{};
+    $self->{_agent_projects}{$agent_id} = $name;
+}
+
+=head2 get_agent_project
+
+Get the project name for an agent, or undef if not known.
+
+=cut
+
+sub get_agent_project {
+    my ($self, $agent_id) = @_;
+    return unless $agent_id;
+    return ($self->{_agent_projects} || {})->{$agent_id};
 }
 
 =head2 display_paginated_list

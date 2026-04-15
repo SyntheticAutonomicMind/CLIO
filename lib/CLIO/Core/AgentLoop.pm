@@ -49,6 +49,7 @@ sub new {
         on_task => $on_task,
         initial_task => $args{initial_task},
         running => 1,
+        oneshot => $args{oneshot} || 0,
         current_task => undef,
         heartbeat_interval => $args{heartbeat_interval} || 30,
         poll_interval => $args{poll_interval} || 1,
@@ -241,6 +242,12 @@ sub process_current_task {
         
         # Clear current task
         $self->{current_task} = undef;
+        
+        # Oneshot agents exit after first task completion
+        if ($self->{oneshot}) {
+            $self->log_info("Oneshot mode: task delivered, exiting");
+            $self->{running} = 0;
+        }
     }
     elsif ($result && $result->{blocked}) {
         $self->log_info("Task blocked: $result->{reason}");

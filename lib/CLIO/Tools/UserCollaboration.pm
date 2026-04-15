@@ -161,6 +161,14 @@ sub get_additional_parameters {
             type => "string",
             description => "Optional additional context to help user understand",
         },
+        listen_broker => {
+            type => "boolean",
+            description => "Also listen for broker events while waiting for user input. When true, returns on agent events too. Use this as your main loop when managing agents.",
+        },
+        timeout => {
+            type => "number",
+            description => "Max seconds to wait when listen_broker is true (default: 300)",
+        },
     };
 }
 
@@ -263,7 +271,78 @@ sub request_input {
     
     # Request user input through UI
     # This will block until user responds
-    my $user_response = $ui->request_collaboration($message, $user_context);
+    my $user_response;
+    my $listen_broker = $params->{listen_broker};
+    
+    if ($listen_broker) {
+        # Multiplexed mode: listen for both user input AND broker events
+        # The broker_client is resolved by Chat.pm from its command handler
+        # (SubAgent command stores it at $self->{command_handler}{subagent_cmd}{broker_client})
+        my $result = $ui->request_collaboration($message, $user_context, {
+            listen_broker => 1,
+            timeout => $params->{timeout} || 300,
+        });
+        
+        # Result is a hashref with source, input, and events
+        if (ref($result) eq 'HASH') {
+            $user_response = $result->{input};
+            
+            # Build output with agent events context for the AI
+            my $output = $user_response // '';
+            my @events = @{$result->{events} || []};
+            my $source = $result->{source} || 'user';
+            
+            # When interrupted by agent event, format output for AI awareness
+            if ($source eq 'agent_event') {
+                $output = '';  # No user input - this was an agent interrupt
+            }
+            
+            if (@events) {
+                my @agent_msgs;
+                for my $evt (@events) {
+                    next unless ($evt->{type} || '') eq 'agent_message';
+                    my $agent = $evt->{agent_id} || 'unknown';
+                    my $msg_type = $evt->{message_type} || 'message';
+                    my $content = $evt->{content} || '';
+                    # Strip HTML comments (session markers etc.) from agent content
+                    $content =~ s/<!--.*?-->//gs if !ref($content);
+                    push @agent_msgs, "[$agent] ($msg_type): $content";
+                }
+                if (@agent_msgs) {
+                    my $prefix = $source eq 'agent_event'
+                        ? "Agent message received:\n"
+                        : "\n\nAgent messages received while waiting:\n";
+                    $output .= $prefix . join("\n", @agent_msgs);
+                }
+            }
+            
+            # Store collaboration in session history
+            if ($context->{session} && defined $user_response && $source ne 'agent_event') {
+                $context->{session}->add_message(
+                    'assistant',
+                    "[COLLABORATION] $message" . ($user_context ? "\n\nContext: $user_context" : "")
+                );
+                $context->{session}->add_message('user', $user_response);
+            }
+            
+            return {
+                success => 1,
+                output => $output,
+                metadata => {
+                    source => $source,
+                    agent_id => $result->{agent_id},
+                    events => \@events,
+                    collaboration_type => 'request_input',
+                },
+            };
+        }
+        
+        # Fallback: result was a plain string (shouldn't happen)
+        $user_response = $result;
+    } else {
+        # Standard mode: just wait for user
+        $user_response = $ui->request_collaboration($message, $user_context);
+    }
     
     unless (defined $user_response) {
         return {

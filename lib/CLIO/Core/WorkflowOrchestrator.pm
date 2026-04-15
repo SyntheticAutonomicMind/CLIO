@@ -102,7 +102,7 @@ sub new {
     # Apply default iteration limit for non-interactive mode
     # Prevents runaway oneshot agents that loop indefinitely
     if ($self->{non_interactive} && !$self->{max_iterations}) {
-        $self->{max_iterations} = 75;  # Generous limit for complex tasks
+        $self->{max_iterations} = 200;  # Generous limit for complex tasks
         log_debug('WorkflowOrchestrator', "Non-interactive mode: defaulting max_iterations to $self->{max_iterations}");
     }
     
@@ -430,10 +430,6 @@ sub process_input {
     my $session_error_count = $session->{_error_count} // 0;
     my $max_session_errors = 10;  # Hard limit per request processing
     
-    # Wall-clock timeout for sub-agents (10 minutes)
-    # Prevents sub-agents from running indefinitely on stuck API calls
-    my $max_wall_time = $self->{broker_client} ? 600 : 0;  # 0 = no limit for interactive
-    
     my $max_iter = $self->{max_iterations};
     while (!$max_iter || $iteration < $max_iter) {
         $iteration++;
@@ -448,17 +444,6 @@ sub process_input {
         if ($session && $session->state() && $session->state()->{user_interrupted}) {
             log_debug('WorkflowOrchestrator', "Clearing stale user_interrupted flag from previous iteration");
             $session->state()->{user_interrupted} = 0;
-        }
-        
-        # Check wall-clock timeout (sub-agents only)
-        if ($max_wall_time && (time() - $start_time) > $max_wall_time) {
-            log_warning('WorkflowOrchestrator', "Wall-clock timeout reached (" . int((time() - $start_time)) . "s). Forcing exit.");
-            return {
-                success => 0,
-                error => "Execution time limit reached (${max_wall_time}s). Partial results may be available.",
-                iterations => $iteration,
-                tool_calls_made => \@tool_calls_made
-            };
         }
         
         # Capture process stats at iteration boundary
@@ -1133,6 +1118,10 @@ sub _execute_tool_round {
             log_info('WorkflowOrchestrator', "Interrupt detected between tool executions, skipping remaining tools");
             last;
         }
+        
+        # Check for pending authorization requests from child agents
+        # This allows the primary to service auth prompts even during its own tool loop
+        $self->_check_authorization_requests();
 
         my $tool_call = $ordered_tools->[$i];
         my $tool_name = $tool_call->{function}->{name} || 'unknown';
@@ -2270,6 +2259,36 @@ Arguments:
 Returns:
 - 1 if interrupt detected and handled
 - 0 if no interrupt
+
+=head2 _check_authorization_requests
+
+Check for and process pending authorization requests from child agents.
+Delegates to Chat.pm's authorization handler if requests are pending.
+Only active for primary sessions that have a broker client and UI.
+
+=cut
+
+sub _check_authorization_requests {
+    my ($self) = @_;
+    
+    # Only for primary sessions with broker and UI
+    return unless $self->{ui} && $self->{broker_client};
+    
+    # Sub-agents have broker_client too, but no UI - skip them
+    return unless $self->{ui}->can('check_agent_messages');
+    
+    # Quick poll - non-blocking
+    eval {
+        $self->{ui}->check_agent_messages($self->{broker_client});
+    };
+    if ($@) {
+        log_warning('WorkflowOrchestrator', "Auth relay check failed: $@");
+    }
+}
+
+=head2 _check_and_handle_interrupt
+
+Check for and handle user interrupt between tool executions.
 
 =cut
 
