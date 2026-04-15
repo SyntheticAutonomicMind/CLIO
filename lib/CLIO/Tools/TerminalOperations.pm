@@ -698,7 +698,28 @@ sub _prompt_command_confirmation {
     my $ui = ($context && $context->{ui}) ? $context->{ui} : undef;
 
     unless ($ui && $ui->can('colorize')) {
-        log_warning('TermOps', "No UI for security prompt - denying command");
+        # No TTY - try broker relay for headless sub-agents
+        my $broker = ($context && $context->{broker_client}) ? $context->{broker_client} : undef;
+        if ($broker) {
+            log_info('TermOps', "No TTY - relaying command authorization through broker");
+            require CLIO::Security::AuthorizationRelay;
+            my $relay = CLIO::Security::AuthorizationRelay->new(broker_client => $broker);
+            if ($relay->available()) {
+                my $result = $relay->request_command_authorization($command, $analysis, $context);
+                if ($result->{approved}) {
+                    # Handle session grants from relay
+                    if ($result->{grant_type} eq 'session') {
+                        for my $flag (@{$analysis->{flags}}) {
+                            $_session_grants{$flag->{category}} = 1;
+                            log_info('TermOps', "Session grant (via relay) for: $flag->{category}");
+                        }
+                    }
+                    return 1;
+                }
+                return 0;
+            }
+        }
+        log_warning('TermOps', "No UI and no broker relay - denying command");
         return 0;
     }
 

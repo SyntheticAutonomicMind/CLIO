@@ -706,6 +706,12 @@ if ($input) {
     );
     $ai_agent->set_ui($cli_ui) if $ai_agent;
     
+    # Wire broker relay for puppeteer child agents
+    # This forwards HostProtocol state events through the broker to the primary agent
+    if ($broker_client && $ENV{CLIO_PUPPETEER} && $cli_ui->{host_proto}) {
+        $cli_ui->{host_proto}->set_broker_relay($broker_client);
+    }
+    
     # Handle protocol commands first (unchanged)
     if ($input =~ /^\[MEMORY:/) {
         my $resp = CLIO::Protocols::Manager->handle($input, $session);

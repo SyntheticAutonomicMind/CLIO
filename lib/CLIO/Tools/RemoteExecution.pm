@@ -15,6 +15,7 @@ use File::Path qw(make_path remove_tree);
 use feature 'say';
 use CLIO::Core::Logger qw(should_log log_debug);
 use Carp qw(croak);
+use Scalar::Util qw(blessed);
 
 
 =head1 NAME
@@ -213,6 +214,15 @@ sub _resolve_device {
     return { host => $name_or_host };
 }
 
+sub _get_host_proto {
+    my ($self, $context) = @_;
+    my $ui = $context->{ui} if $context;
+    if ($ui && blessed($ui) && $ui->{host_proto}) {
+        return $ui->{host_proto};
+    }
+    return undef;
+}
+
 =head2 execute_remote
 
 Execute a CLIO task on a remote system.
@@ -298,9 +308,29 @@ sub execute_remote {
     my $q_remote_staging = $self->_shell_quote($remote_staging);
     
     my $result;
+    my $host_proto = $self->_get_host_proto($context);
+    my $start_time = time();
+    
+    # Emit OSC remote start event
+    if ($host_proto && $host_proto->active()) {
+        $host_proto->emit_remote_event('start',
+            host  => $host,
+            task  => $command,
+            model => $model,
+        );
+    }
+    
     eval {
         # 1. Check remote connectivity
         log_debug('RemoteExecution', "Checking remote system: $host");
+        
+        if ($host_proto && $host_proto->active()) {
+            $host_proto->emit_remote_event('progress',
+                host    => $host,
+                stage   => 'connecting',
+                message => 'Checking remote system connectivity',
+            );
+        }
         my $check_result = $self->check_remote({
             host => $host,
             ssh_key => $ssh_key,
@@ -313,6 +343,14 @@ sub execute_remote {
         
         # 2. Download CLIO on remote
         log_debug('RemoteExecution', "Downloading CLIO on remote");
+        
+        if ($host_proto && $host_proto->active()) {
+            $host_proto->emit_remote_event('progress',
+                host    => $host,
+                stage   => 'staging',
+                message => 'Copying CLIO to remote system',
+            );
+        }
         my $install_result = $self->_copy_local_clio_to_remote(
             host => $host,
             ssh_key => $ssh_key,
@@ -344,6 +382,14 @@ sub execute_remote {
         
         # 4. Execute CLIO on remote
         log_debug('RemoteExecution', "Executing CLIO on remote: $command");
+        
+        if ($host_proto && $host_proto->active()) {
+            $host_proto->emit_remote_event('progress',
+                host    => $host,
+                stage   => 'executing',
+                message => 'Running task on remote system',
+            );
+        }
         my $exec_result = $self->_execute_clio_remote(
             host => $host,
             ssh_key => $ssh_key,
@@ -408,9 +454,29 @@ sub execute_remote {
             files_retrieved => [keys %retrieved_files],
             retrieved_files => \%retrieved_files,
         );
+        
+        # Emit OSC remote complete event
+        if ($host_proto && $host_proto->active()) {
+            $host_proto->emit_remote_event('complete',
+                host            => $host,
+                duration        => $execution_time,
+                files_retrieved => [keys %retrieved_files],
+            );
+        }
     };
     
     if ($@) {
+        my $error = "$@";
+        
+        # Emit OSC remote error event
+        if ($host_proto && $host_proto->active()) {
+            $host_proto->emit_remote_event('error',
+                host     => $host,
+                error    => $error,
+                duration => time() - $start_time,
+            );
+        }
+        
         # Attempt cleanup on error
         eval {
             $self->_ssh_exec(
@@ -421,7 +487,7 @@ sub execute_remote {
             ) if $cleanup;
         };
         
-        return $self->error_result("Remote execution failed: $@");
+        return $self->error_result("Remote execution failed: $error");
     }
     
     return $result;

@@ -46,8 +46,9 @@ by watching for title changes starting with "clio:".
 sub new {
     my ($class, %args) = @_;
     my $self = {
-        active => ($ENV{CLIO_HOST_PROTOCOL} ? 1 : 0),
-        debug  => $args{debug} || 0,
+        active       => ($ENV{CLIO_HOST_PROTOCOL} ? 1 : 0),
+        debug        => $args{debug} || 0,
+        broker_relay => undef,  # Set via set_broker_relay() for puppeteer forwarding
     };
     bless $self, $class;
 
@@ -58,21 +59,50 @@ sub new {
     return $self;
 }
 
-# Check if protocol is active
-sub active { return $_[0]->{active}; }
+# Check if protocol is active (OSC output or broker relay)
+sub active { return $_[0]->{active} || $_[0]->{broker_relay} ? 1 : 0; }
+
+# Set a broker client for relay mode (puppeteer child agents)
+# When set, state changes are forwarded to the broker as status_update messages
+sub set_broker_relay {
+    my ($self, $client) = @_;
+    $self->{broker_relay} = $client;
+    log_debug('HostProtocol', 'Broker relay mode enabled');
+}
 
 # Low-level: emit an OSC title message with clio: prefix
 # Format: ESC ] 0 ; clio:<type>:<json> BEL
+# Also forwards to broker if relay is set (puppeteer mode)
 sub _emit {
     my ($self, $type, $data) = @_;
-    return unless $self->{active};
+    
+    # OSC output (host app mode)
+    if ($self->{active}) {
+        my $payload = encode_json($data);
+        print "\x1b]0;clio:${type}:${payload}\x07";
+        STDOUT->flush() if STDOUT->can('flush');
+        log_debug('HostProtocol', "emit $type: $payload");
+    }
+    
+    # Broker relay (puppeteer child mode) - forward status-relevant events
+    if ($self->{broker_relay} && ($type eq 'status' || $type eq 'tool')) {
+        eval {
+            my $state = $type eq 'status' ? ($data->{state} || 'unknown') : 'tools';
+            my %update = (state => $state);
+            $update{tool} = $data->{name} if $data->{name};
+            $update{message} = $data->{label} if $data->{label};
+            $self->{broker_relay}->send_status_update(%update);
 
-    my $payload = encode_json($data);
-    # OSC 0 = set icon name and window title
-    print "\x1b]0;clio:${type}:${payload}\x07";
-    STDOUT->flush() if STDOUT->can('flush');
-
-    log_debug('HostProtocol', "emit $type: $payload");
+            # Also forward tool events as activity stream entries
+            if ($type eq 'tool') {
+                my $action = $data->{action} || 'unknown';
+                my $tool_name = $data->{name};
+                my $detail = $data->{op};
+                $self->{broker_relay}->send_activity($action, $tool_name, $detail);
+            }
+        };
+        log_debug('HostProtocol', "Broker relay error: $@") if $@;
+    }
 }
 
 # Status change: thinking, streaming, tools, idle
@@ -136,6 +166,27 @@ sub emit_title {
     return unless $self->{active};
     print "\x1b]0;${text}\x07";
     STDOUT->flush() if STDOUT->can('flush');
+}
+
+# Sub-agent lifecycle events
+# Actions: spawn, status, message, exit
+sub emit_agent_event {
+    my ($self, $action, %data) = @_;
+    $self->_emit('agent', { action => $action, %data });
+}
+
+# Remote execution lifecycle events
+# Actions: start, progress, complete, error
+sub emit_remote_event {
+    my ($self, $action, %data) = @_;
+    $self->_emit('remote', { action => $action, %data });
+}
+
+# Agent tree topology snapshot
+# Emitted on any topology change (spawn, exit) so host can render hierarchy
+sub emit_agent_tree {
+    my ($self, $tree) = @_;
+    $self->_emit('tree', $tree);
 }
 
 1;

@@ -70,9 +70,12 @@ sub new {
         warnings => [],
         next_lock_id => 1,
         
-        # Idle tracking: exit if no clients connect for this many seconds after startup
-        idle_timeout => $args{idle_timeout} || 300,  # 5 minutes
-        first_client_seen => 0,  # Set to 1 on first client connect
+        # Idle tracking
+        idle_timeout => $args{idle_timeout} || 300,    # 5 minutes after last client disconnects
+        no_idle_exit => $args{no_idle_exit} || 0,      # When true, never exit on idle
+        startup_grace => $args{startup_grace} || 120,  # 2 minutes for first client to connect
+        startup_time => time(),  # When the broker started
+        ever_connected => 0,  # Set to 1 when first client connects (never reset)
         last_client_time => time(),  # Updated on each connect/disconnect
         
         # Message bus (Phase 2)
@@ -84,7 +87,7 @@ sub new {
         # API Rate Limiting (Phase 3)
         # Modeled after VSCode's RequestRateLimiter
         api_rate_limit => {
-            max_parallel => $args{max_parallel_api} || 2,  # Max concurrent API requests
+            max_parallel => $args{max_parallel_api} || 32,  # Max concurrent API requests
             min_delay => 0.025,  # Minimum 25ms between requests (40/sec limit)
             last_request_time => 0,
             in_flight => 0,  # Current number of requests in progress
@@ -101,6 +104,13 @@ sub new {
             quota_timestamp => 0,
             target_quota => 80,    # Start throttling above this %
         },
+        
+        # Authorization relay: pending requests from child agents awaiting user response
+        # Maps request_id => { fd, agent_id, request_id, timestamp, ... }
+        authorization_pending => {},
+        
+        # Activity streaming: tool events from child agents
+        activity_log => [],
     };
     
     return bless $self, $class;
@@ -206,7 +216,7 @@ sub accept_client {
     };
     
     # Update idle tracking
-    $self->{first_client_seen} = 1;
+    $self->{ever_connected} = 1;
     $self->{last_client_time} = time();
     
     $self->log_debug("New connection: fd=$fd");
@@ -264,6 +274,15 @@ sub handle_disconnect {
     if ($agent_id) {
         $self->release_all_agent_locks($agent_id);
         delete $self->{agent_status}{$agent_id};
+        
+        # Clean up any pending authorization requests from this agent
+        for my $req_id (keys %{$self->{authorization_pending}}) {
+            if ($self->{authorization_pending}{$req_id}{fd} == $fd) {
+                delete $self->{authorization_pending}{$req_id};
+                $self->log_info("Cleaned up pending auth request $req_id for disconnected agent $agent_id");
+            }
+        }
+        
         $self->log_info("Agent disconnected: $agent_id");
     }
     
@@ -338,6 +357,24 @@ sub handle_message {
     }
     elsif ($type eq 'get_rate_limit_status') {
         $self->handle_get_rate_limit_status($fd);
+    }
+    elsif ($type eq 'status_update') {
+        $self->handle_status_update($fd, $msg);
+    }
+    elsif ($type eq 'poll_status_updates') {
+        $self->handle_poll_status_updates($fd);
+    }
+    elsif ($type eq 'authorization_request') {
+        $self->handle_authorization_request($fd, $msg);
+    }
+    elsif ($type eq 'authorization_response') {
+        $self->handle_authorization_response($fd, $msg);
+    }
+    elsif ($type eq 'activity_stream') {
+        $self->handle_activity_stream($fd, $msg);
+    }
+    elsif ($type eq 'poll_activity') {
+        $self->handle_poll_activity($fd);
     }
     else {
         $self->send_error($fd, "Unknown message type: $type");
@@ -771,25 +808,44 @@ sub do_maintenance {
     my ($self) = @_;
     
     my $now = time();
-    my $client_timeout = 120;
+    my $client_timeout = 30;  # Only for unregistered connections
     
     for my $fd (keys %{$self->{clients}}) {
         my $client = $self->{clients}{$fd};
+        # Never timeout registered clients (user or agents) - they go idle
+        # during LLM calls which can last minutes. Only timeout connections
+        # that never registered (stale/orphaned socket connections).
+        next if $client->{id};
         if ($now - $client->{last_activity} > $client_timeout) {
-            $self->log_warn("Client timeout: fd=$fd");
+            $self->log_warn("Unregistered client timeout: fd=$fd");
             $self->handle_disconnect($fd);
         }
     }
     
-    # Exit if idle: no connected clients and no registered agents for idle_timeout seconds.
-    # We only check after the first client has connected, to give agents time to start up.
-    if ($self->{first_client_seen}
-        && !%{$self->{clients}}
-        && !%{$self->{agent_status}}
-        && ($now - $self->{last_client_time}) > $self->{idle_timeout})
-    {
-        $self->log_info("Broker idle timeout - no clients for $self->{idle_timeout}s, exiting");
-        exit 0;
+    # Skip idle exit entirely when no_idle_exit is set (broker lives until session ends)
+    if ($self->{no_idle_exit}) {
+        return;
+    }
+    
+    # Idle timeout logic:
+    # - If no client has EVER connected, use startup_grace period (120s) to give
+    #   agents time to fork and connect. Broker should not exit prematurely.
+    # - Once at least one client has connected and then all clients disconnect,
+    #   use the normal idle_timeout (300s) before exiting.
+    if (!%{$self->{clients}} && !%{$self->{agent_status}}) {
+        if ($self->{ever_connected}) {
+            # Normal idle: all clients have disconnected after at least one connected
+            if (($now - $self->{last_client_time}) > $self->{idle_timeout}) {
+                $self->log_info("Broker idle timeout - no clients for $self->{idle_timeout}s after last disconnect, exiting");
+                exit 0;
+            }
+        } else {
+            # Startup grace: no client has ever connected
+            if (($now - $self->{startup_time}) > $self->{startup_grace}) {
+                $self->log_info("Broker startup grace expired - no clients connected within $self->{startup_grace}s, exiting");
+                exit 0;
+            }
+        }
     }
 }
 
@@ -800,13 +856,27 @@ sub send_message {
     
     my $json = encode_json($msg);
     my $socket = $self->{clients}{$fd}{socket};
+    my $data = "$json\n";
     
     eval {
-        $socket->print("$json\n");
+        # Must use blocking write to ensure complete delivery.
+        # Non-blocking print() does short writes on large messages,
+        # leaving partial JSON that the client can never parse.
+        $socket->blocking(1);
+        my $offset = 0;
+        my $len = length($data);
+        while ($offset < $len) {
+            my $written = syswrite($socket, $data, $len - $offset, $offset);
+            if (!defined $written) {
+                die "syswrite failed: $!";
+            }
+            $offset += $written;
+        }
+        $socket->blocking(0);
     };
     if ($@) {
+        eval { $socket->blocking(0) };  # Restore non-blocking on error
         $self->log_warn("Failed to send to fd=$fd: $@");
-        # Don't disconnect here - let the next read detect the problem
     }
 }
 
@@ -947,6 +1017,170 @@ sub handle_get_rate_limit_status {
         retry_until => $rl->{retry_until},
         quota_used => $rl->{quota_used},
         can_request => ($rl->{in_flight} < $rl->{max_parallel} && $now >= $rl->{retry_until}),
+    });
+}
+
+# Status update from sub-agent - stores for primary to poll
+# Used by child agents to report their state for OSC relay
+sub handle_status_update {
+    my ($self, $fd, $msg) = @_;
+    
+    my $agent_id = $msg->{agent_id} || 'unknown';
+    my $state = $msg->{state} || 'unknown';
+    
+    # Store in status_updates queue
+    $self->{status_updates} ||= [];
+    push @{$self->{status_updates}}, {
+        agent_id  => $agent_id,
+        state     => $state,
+        tool      => $msg->{tool},
+        message   => $msg->{message},
+        timestamp => time(),
+    };
+    
+    # Keep only the last 100 updates to prevent unbounded growth
+    if (scalar @{$self->{status_updates}} > 100) {
+        splice(@{$self->{status_updates}}, 0, scalar(@{$self->{status_updates}}) - 100);
+    }
+    
+    $self->send_message($fd, { type => 'ack', success => 1 });
+}
+
+# Poll status updates - returns and clears pending updates
+sub handle_poll_status_updates {
+    my ($self, $fd) = @_;
+    
+    my $updates = $self->{status_updates} || [];
+    $self->{status_updates} = [];
+    
+    $self->send_message($fd, {
+        type    => 'status_updates',
+        updates => $updates,
+        count   => scalar(@$updates),
+    });
+}
+
+sub handle_authorization_request {
+    my ($self, $fd, $msg) = @_;
+    
+    my $sender = $self->{clients}{$fd}{id};
+    unless ($sender) {
+        $self->send_error($fd, "Not registered");
+        return;
+    }
+    
+    my $request_id = $msg->{request_id};
+    unless ($request_id) {
+        $self->send_error($fd, "authorization_request requires 'request_id'");
+        return;
+    }
+    
+    # Store pending request with the requesting agent's fd for response routing
+    $self->{authorization_pending}{$request_id} = {
+        fd         => $fd,
+        agent_id   => $sender,
+        request_id => $request_id,
+        timestamp  => time(),
+    };
+    
+    # Route to user inbox as a special authorization_request message
+    my $message = {
+        id          => $self->{next_msg_id}++,
+        from        => $sender,
+        to          => 'user',
+        type        => 'authorization_request',
+        request_id  => $request_id,
+        category    => $msg->{category},
+        description => $msg->{description},
+        risk_level  => $msg->{risk_level},
+        flags       => $msg->{flags},
+        options     => $msg->{options},
+        timestamp   => time(),
+    };
+    
+    push @{$self->{user_inbox}}, $message;
+    push @{$self->{user_inbox_history}}, $message;
+    
+    $self->log_info("Authorization request $request_id from $sender queued for user");
+    
+    # Don't ack yet - the child agent is blocking on send_and_wait
+    # The response will come when the user responds via authorization_response
+}
+
+sub handle_authorization_response {
+    my ($self, $fd, $msg) = @_;
+    
+    my $request_id = $msg->{request_id};
+    unless ($request_id) {
+        $self->send_error($fd, "authorization_response requires 'request_id'");
+        return;
+    }
+    
+    my $pending = delete $self->{authorization_pending}{$request_id};
+    unless ($pending) {
+        $self->log_warn("Authorization response for unknown request: $request_id");
+        $self->send_message($fd, { type => 'ack', request_type => 'authorization_response' });
+        return;
+    }
+    
+    my $agent_fd = $pending->{fd};
+    my $approved = $msg->{approved} ? 1 : 0;
+    my $grant_type = $msg->{grant_type} || ($approved ? 'once' : 'denied');
+    
+    $self->log_info("Authorization $request_id: " . ($approved ? "APPROVED ($grant_type)" : "DENIED"));
+    
+    # Send response directly to the waiting child agent
+    $self->send_message($agent_fd, {
+        type        => 'authorization_response',
+        request_id  => $request_id,
+        approved    => $approved,
+        grant_type  => $grant_type,
+    });
+    
+    # Ack to the responder (primary session)
+    $self->send_message($fd, { type => 'ack', request_type => 'authorization_response' });
+}
+
+
+# Activity streaming: receive tool event from a child agent
+sub handle_activity_stream {
+    my ($self, $fd, $msg) = @_;
+
+    my $agent_id = $self->{clients}{$fd}{id} || $msg->{agent_id} || 'unknown';
+
+    my $entry = {
+        agent_id  => $agent_id,
+        action    => $msg->{action} || 'unknown',
+        tool_name => $msg->{tool_name},
+        detail    => $msg->{detail},
+        timestamp => time(),
+    };
+
+    push @{$self->{activity_log}}, $entry;
+
+    # Cap at 200 entries
+    if (scalar @{$self->{activity_log}} > 200) {
+        splice(@{$self->{activity_log}}, 0, scalar(@{$self->{activity_log}}) - 200);
+    }
+
+    $self->log_debug("Activity from $agent_id: $entry->{action}" . ($entry->{tool_name} ? " ($entry->{tool_name})" : ''));
+
+    $self->send_message($fd, { type => 'ack', request_type => 'activity_stream', success => \1 });
+}
+
+# Activity streaming: return and clear accumulated activity log
+sub handle_poll_activity {
+    my ($self, $fd) = @_;
+
+    my $log = $self->{activity_log};
+    $self->{activity_log} = [];
+
+    $self->log_debug("Activity poll: " . scalar(@$log) . " entries");
+
+    $self->send_message($fd, {
+        type     => 'activity',
+        entries  => $log,
+        count    => scalar(@$log),
     });
 }
 

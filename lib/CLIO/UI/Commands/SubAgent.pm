@@ -98,6 +98,9 @@ sub handle {
     elsif ($subcommand eq 'broadcast') {
         return $self->cmd_broadcast($args);
     }
+    elsif ($subcommand eq 'projects' || $subcommand eq 'proj') {
+        return $self->cmd_projects();
+    }
     elsif ($subcommand eq 'help' || $subcommand eq '?') {
         return $self->cmd_help();
     }
@@ -127,10 +130,8 @@ sub cmd_spawn {
         $self->{coordination_session_id} = $session_id;
     }
     
-    # Auto-start broker if needed
-    unless ($self->{broker_pid}) {
-        $self->start_broker($session_id);
-    }
+    # Auto-start broker if needed (ensure it's alive)
+    $self->ensure_broker($session_id);
     
     # Initialize manager if needed
     unless ($self->{manager}) {
@@ -141,9 +142,10 @@ sub cmd_spawn {
         );
     }
     
-    # Parse options (--model, --persistent, etc)
+    # Parse options (--model, --persistent, --dir, etc)
     my $model;  # default: inherit current session model
     my $persistent = 0;  # default to oneshot mode
+    my $working_dir;  # default: inherit parent's working directory
     
     if ($task =~ s/\s*--model\s+(\S+)\s*/ /) {
         $model = $1;
@@ -151,6 +153,33 @@ sub cmd_spawn {
     if ($task =~ s/\s*--persistent\s*/ /) {
         $persistent = 1;
     }
+    if ($task =~ s/\s*--dir\s+"([^"]+)"\s*/ / || $task =~ s/\s*--dir\s+(\S+)\s*/ /) {
+        $working_dir = $1;
+    }
+    if ($task =~ s/\s*--project\s+"([^"]+)"\s*/ / || $task =~ s/\s*--project\s+(\S+)\s*/ /) {
+        # Resolve project name to working directory via Puppeteer topology
+        my $project_name = $1;
+        my $resolve_error;
+        eval {
+            require CLIO::Protocols::Puppeteer;
+            my $pup = CLIO::Protocols::Puppeteer->new(root => '.');
+            my $project = $pup->get_project($project_name);
+            if ($project) {
+                $working_dir = $project->{path};
+            } else {
+                $resolve_error = "Unknown project '$project_name'. Use /subagent projects to see available projects.";
+            }
+        };
+        if ($@) {
+            return "ERROR: Could not load Puppeteer module: $@";
+        }
+        if ($resolve_error) {
+            return "ERROR: $resolve_error";
+        }
+    }
+    
+    # Persistent mode requires a running broker - default to oneshot
+    # Users can explicitly set persistent=true when a broker is available
     
     # If no model specified, inherit from the current session
     unless ($model) {
@@ -170,6 +199,7 @@ sub cmd_spawn {
         model => $model,
         persistent => $persistent,
         debug => $self->{debug},
+        ($working_dir ? (working_dir => $working_dir) : ()),
     );
     
     my $mode_str = $persistent ? 'persistent' : 'oneshot';
@@ -186,6 +216,10 @@ sub cmd_spawn {
         $self->display_key_value("Agent ID", $self->colorize($agent_id, 'BOLD'));
         $self->display_key_value("Mode", $self->colorize($mode_str, $persistent ? 'YELLOW' : 'CYAN'));
         $self->display_key_value("Model", $model);
+        
+        if ($working_dir) {
+            $self->display_key_value("Working Dir", $self->colorize($working_dir, 'CYAN'));
+        }
         
         if ($mux_pane_id) {
             my $mux_type = $self->_multiplexer()->type();
@@ -745,6 +779,51 @@ sub cmd_broadcast {
 
 # === End Message Bus Commands ===
 
+sub cmd_projects {
+    my ($self) = @_;
+    
+    eval {
+        require CLIO::Protocols::Puppeteer;
+    };
+    if ($@) {
+        return "Puppeteer module not available: $@";
+    }
+    
+    my $pup = CLIO::Protocols::Puppeteer->new(root => '.');
+    my $topology = $pup->detect_topology();
+    
+    $self->display_command_header("PROJECTS");
+    $self->writeline("", markdown => 0);
+    
+    if ($topology->{count} == 0) {
+        $self->writeline("No child projects detected.", markdown => 0);
+        $self->writeline("", markdown => 0);
+        $self->writeline($self->colorize("Tip: ", 'DIM') . "Projects are detected from .gitmodules and directories containing .clio/", markdown => 0);
+        return "";
+    }
+    
+    $self->writeline("Found $topology->{count} project(s):", markdown => 0);
+    $self->writeline("", markdown => 0);
+    
+    for my $name (sort keys %{$topology->{projects}}) {
+        my $p = $topology->{projects}{$name};
+        
+        my @flags;
+        push @flags, $self->colorize("LTM", 'GREEN') if $p->{has_ltm};
+        push @flags, $self->colorize("instructions", 'GREEN') if $p->{has_instructions};
+        push @flags, $self->colorize("submodule", 'CYAN') if $p->{source} eq 'submodule';
+        push @flags, $self->colorize("directory", 'DIM') if $p->{source} eq 'directory';
+        
+        my $flag_str = @flags ? " [" . join(", ", @flags) . "]" : "";
+        $self->writeline("  " . $self->colorize($name, 'BOLD') . " ($p->{path})$flag_str", markdown => 0);
+    }
+    
+    $self->writeline("", markdown => 0);
+    $self->writeline($self->colorize("Usage: ", 'DIM') . '/subagent spawn "task" --dir ./ProjectName', markdown => 0);
+    
+    return "";
+}
+
 sub cmd_help {
     my ($self) = @_;
     
@@ -779,6 +858,12 @@ sub cmd_help {
     $self->display_command_row("/subagent locks", "Show current file/git locks", 35);
     $self->display_command_row("/subagent discoveries", "Show shared discoveries", 35);
     $self->display_command_row("/subagent warnings", "Show shared warnings", 35);
+    $self->writeline("", markdown => 0);
+    
+    $self->display_section_header("PUPPETEER (MULTI-PROJECT)");
+    $self->display_command_row("/subagent projects", "List child projects with .clio/ context", 35);
+    $self->display_command_row("/subagent spawn <task> --dir <path>", "Spawn agent in project directory", 35);
+    $self->display_command_row("/subagent spawn <task> --project <name>", "Spawn agent by project name", 35);
     $self->writeline("", markdown => 0);
     
     $self->display_section_header("MODES");
@@ -843,6 +928,26 @@ Start the coordination broker if not already running.
 
 =cut
 
+sub ensure_broker {
+    my ($self, $session_id) = @_;
+    
+    # Check if broker is running and alive
+    if ($self->{broker_pid}) {
+        if (kill(0, $self->{broker_pid})) {
+            # Broker is alive
+            return 1;
+        }
+        # Broker died - clean up and restart
+        log_warning('SubAgent', "Broker PID $self->{broker_pid} is dead, restarting");
+        $self->{broker_pid} = undef;
+        $self->{broker_client} = undef;
+    }
+    
+    # Start a new broker
+    $self->start_broker($session_id);
+    return 1;
+}
+
 sub start_broker {
     my ($self, $session_id) = @_;
     
@@ -905,6 +1010,7 @@ sub start_broker {
             my $broker = CLIO::Coordination::Broker->new(
                 session_id => $session_id,
                 debug => 1,
+                no_idle_exit => 1,
             );
             
             log_debug('SubAgent', "Broker object created, calling run()");

@@ -257,6 +257,7 @@ Tools can be restricted via `--enable` (allowlist) or `--disable` (blocklist) CL
 | Validate | `Validate.pm` | Code validation |
 | RepoMap | `RepoMap.pm` | Repository mapping |
 | Recall | `Recall.pm` | Memory recall |
+| Puppeteer | `Puppeteer.pm` | Multi-project topology detection and delegation |
 | Handler | `Handler.pm` | Protocol base class |
 | Manager | `Manager.pm` | Protocol registry |
 
@@ -268,19 +269,24 @@ Tools can be restricted via `--enable` (allowlist) or `--disable` (blocklist) CL
 5. Results sent back to AI
 
 ### 10. Multi-Agent Coordination
-**Files:** `lib/CLIO/Coordination/`
+**Files:** `lib/CLIO/Coordination/`, `lib/CLIO/Protocols/Puppeteer.pm`, `lib/CLIO/UI/HostProtocol.pm`
 
 | Component | File | Purpose |
 |-----------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Broker | `Broker.pm` | Unix socket coordination server for agent communication |
+| Broker | `Broker.pm` | Unix socket coordination server (messaging, locks, status relay) |
 | Client | `Client.pm` | Broker connection API |
 | SubAgent | `SubAgent.pm` | Process spawning and lifecycle management |
+| Puppeteer | `Puppeteer.pm` | Topology detection and project-scoped agent delegation |
+| HostProtocol | `HostProtocol.pm` | OSC event emission and broker relay for agent status |
 
 **How it works:**
-1. Main session spawns sub-agents as separate processes
-2. Broker provides coordination via Unix socket (file locks, git locks, message bus)
-3. Agents communicate through the broker (questions, status updates, completions)
-4. API rate limiting is shared across all agents
+1. Puppeteer detects child projects via `.gitmodules` and `.clio/` directories
+2. PromptManager injects topology into the agent's system prompt
+3. Main session spawns sub-agents, optionally scoped to child projects (`--project` / `working_dir`)
+4. Child agents load the target project's `.clio/` context (LTM, instructions, memory)
+5. Broker provides coordination via Unix socket (file locks, git locks, message bus, status relay)
+6. Child agent status changes relay through broker to primary, then to host app via OSC events
+7. API rate limiting is shared across all agents
 
 ### 11. Terminal Multiplexer Integration
 **Files:** `lib/CLIO/UI/Multiplexer.pm`, `lib/CLIO/UI/Multiplexer/`

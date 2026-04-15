@@ -234,6 +234,21 @@ sub get_system_prompt {
     };
     log_debug('PromptManager', "Plugin instructions check: $@") if $@;
     
+    # Inject puppeteer topology if submodules or .clio/-enabled child projects exist
+    eval {
+        require CLIO::Protocols::Puppeteer;
+        my $pup = CLIO::Protocols::Puppeteer->new(root => '.');
+        my $topology = $pup->detect_topology();
+        if ($topology->{count} > 0) {
+            my $summary = $pup->project_summary();
+            $prompt .= "\n\n<puppeteerTopology>\n";
+            $prompt .= $summary;
+            $prompt .= "\n</puppeteerTopology>\n";
+            log_info('PromptManager', "Injected puppeteer topology: %d projects", $topology->{count});
+        }
+    };
+    log_debug('PromptManager', "Puppeteer topology check: $@") if $@;
+    
     return $prompt;
 }
 
@@ -831,15 +846,16 @@ sub _get_manager_instructions {
 | Assume agent failed without checking | Poll inbox, check agent status, read agent logs |
 
 **Manager workflow:**
-1. Spawn agents with specific tasks
-2. Wait (agents need time to run, typically 10-30 seconds each)
+1. Spawn agents with specific tasks (oneshot by default; use persistent=true for interactive agents)
+2. Wait for agents: `agent_operations(operation: "wait")` blocks until events arrive
 3. Check inbox for completion/question messages
 4. If questions, reply with `agent_operations(operation: "send")`
 5. When complete, verify results (read files, run tests)
 6. Report to user
 
 **Waiting for agents:**
-Sub-agents are separate processes that take time. After spawning:
+Sub-agents are separate processes that take time to complete. After spawning:
+- Use `agent_operations(operation: "wait")` to block until agent activity occurs
 - Use `agent_operations(operation: "list")` to check status
 - Poll `agent_operations(operation: "inbox")` for messages
 - Read agent logs if needed: `/tmp/clio-agent-<id>.log`
@@ -929,6 +945,35 @@ Your goal is to complete your assigned task efficiently.
 SUBAGENT_END
 }
 
+=head2 _get_puppeteer_child_instructions($project_name)
+
+Get additional instructions for an agent running as a puppeteer-delegated child.
+This agent is working in a specific project directory with that project's full context.
+
+=cut
+
+sub _get_puppeteer_child_instructions {
+    my ($self, $project_name) = @_;
+    
+    return <<"PUPPETEER_CHILD";
+
+## Puppeteer Delegation Context
+
+You are running as a **delegated agent** for the **$project_name** project.
+
+A primary orchestrator agent has delegated a specific task to you. You are running
+inside this project's directory with full access to its .clio/ context, LTM,
+instructions, and memory. Use this project's conventions and patterns.
+
+**Key behaviors:**
+- You own the scope of work within this project
+- Follow this project's coding conventions (from .clio/instructions.md and LTM)
+- Commit changes within this project's repository
+- Report results to the orchestrator via user_collaboration when complete
+- Do not modify files outside this project directory
+PUPPETEER_CHILD
+}
+
 =head2 _get_default_prompt_content
 
 Get the default CLIO system prompt (merged from VSCode + current).
@@ -943,8 +988,17 @@ sub _get_default_prompt_content {
     # Check if running as sub-agent (set by SubAgent.pm via IS_SUBAGENT env var)
     my $is_subagent = $ENV{IS_SUBAGENT} || 0;
     
+    # Check if running as a puppeteer-delegated agent (working in a specific project)
+    my $is_puppeteer = $ENV{CLIO_PUPPETEER} || 0;
+    my $puppeteer_project = $ENV{CLIO_PUPPETEER_PROJECT} || '';
+    
     # Build conditional sections
     my $multi_agent_section = $is_subagent ? $self->_get_subagent_instructions() : $self->_get_manager_instructions();
+    
+    # Add puppeteer delegation context
+    if ($is_puppeteer && $puppeteer_project) {
+        $multi_agent_section .= $self->_get_puppeteer_child_instructions($puppeteer_project);
+    }
     
     my $agent_name = $ENV{CLIO_AGENT_NAME} || 'CLIO';
     my $agent_subtitle = $ENV{CLIO_AGENT_SUBTITLE} || 'Command Line Intelligence Orchestrator';
@@ -1469,6 +1523,24 @@ When making multiple tool calls in sequence:
 - Ask questions only you can answer (API keys, preferences)
 
 **Use user_collaboration to KEEP WORKING, not to exit.** Unless user says "stop", "wait", or "that's all", continue with the next logical task.
+
+**Multiplexed Agent Chat Loop:**
+
+When managing sub-agents, use `user_collaboration(listen_broker: true)` as your main event loop. This multiplexes user input with broker events (agent messages, completions, exits). It returns when:
+- User types something (source: "user")
+- An agent sends a message (source: "agent_message")
+- An agent exits (source: "agent_exit")
+
+The user can type `\@agent-N message` to send directly to an agent. Events accumulate in the `events` array of the response metadata.
+
+Pattern for agent management:
+```
+1. Spawn agents
+2. Call user_collaboration(listen_broker: true)
+3. Process return (user input OR agent event)
+4. Take action (review work, answer questions, spawn more agents)
+5. Repeat from step 2
+```
 
 ---
 

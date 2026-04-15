@@ -175,4 +175,114 @@ use_ok('CLIO::UI::HostProtocol');
     like($output, qr/"model"\s*:\s*"gpt-4.1"/, 'Status includes extra model field');
 }
 
+# ============================================================================
+# Broker relay mode tests
+# ============================================================================
+
+# Mock broker client for relay testing
+{
+    package MockBrokerClient;
+    sub new { bless { updates => [] }, shift }
+    sub send_status_update {
+        my ($self, %args) = @_;
+        push @{$self->{updates}}, { %args };
+        return 1;
+    }
+    sub updates { @{$_[0]->{updates}} }
+    sub clear { $_[0]->{updates} = [] }
+}
+
+# Test 13: Broker relay mode activation
+{
+    local $ENV{CLIO_HOST_PROTOCOL};
+    delete $ENV{CLIO_HOST_PROTOCOL};
+    my $proto = CLIO::UI::HostProtocol->new();
+    ok(!$proto->active(), 'Inactive before relay set');
+    
+    my $mock_client = MockBrokerClient->new();
+    $proto->set_broker_relay($mock_client);
+    ok($proto->active(), 'Active after broker relay set');
+}
+
+# Test 14: Status events forwarded to broker relay
+{
+    local $ENV{CLIO_HOST_PROTOCOL};
+    delete $ENV{CLIO_HOST_PROTOCOL};
+    my $proto = CLIO::UI::HostProtocol->new();
+    my $mock_client = MockBrokerClient->new();
+    $proto->set_broker_relay($mock_client);
+    
+    my $output = '';
+    {
+        local *STDOUT;
+        open STDOUT, '>', \$output or die "Cannot redirect STDOUT: $!";
+        $proto->emit_status('thinking');
+    }
+    
+    is($output, '', 'No OSC output without CLIO_HOST_PROTOCOL');
+    is(scalar($mock_client->updates()), 1, 'One status update relayed');
+    is(($mock_client->updates())[0]->{state}, 'thinking', 'State forwarded correctly');
+}
+
+# Test 15: Tool events forwarded with tool name
+{
+    local $ENV{CLIO_HOST_PROTOCOL};
+    delete $ENV{CLIO_HOST_PROTOCOL};
+    my $proto = CLIO::UI::HostProtocol->new();
+    my $mock_client = MockBrokerClient->new();
+    $proto->set_broker_relay($mock_client);
+    
+    my $output = '';
+    {
+        local *STDOUT;
+        open STDOUT, '>', \$output or die "Cannot redirect STDOUT: $!";
+        $proto->emit_tool_start('file_operations');
+    }
+    
+    my @updates = $mock_client->updates();
+    is(scalar(@updates), 1, 'Tool start relayed');
+    is($updates[0]->{state}, 'tools', 'State is tools');
+    is($updates[0]->{tool}, 'file_operations', 'Tool name forwarded');
+}
+
+# Test 16: Non-relayed events (session, tokens) don't go to broker
+{
+    local $ENV{CLIO_HOST_PROTOCOL};
+    delete $ENV{CLIO_HOST_PROTOCOL};
+    my $proto = CLIO::UI::HostProtocol->new();
+    my $mock_client = MockBrokerClient->new();
+    $proto->set_broker_relay($mock_client);
+    
+    my $output = '';
+    {
+        local *STDOUT;
+        open STDOUT, '>', \$output or die "Cannot redirect STDOUT: $!";
+        $proto->emit_session(id => 'test');
+        $proto->emit_tokens(prompt => 100);
+        $proto->emit_todo({id => 1});
+        $proto->emit_spinner_start('Working...');
+    }
+    
+    is(scalar($mock_client->updates()), 0, 'Non-status/tool events not relayed');
+}
+
+# Test 17: Both OSC and relay work simultaneously
+{
+    local $ENV{CLIO_HOST_PROTOCOL} = '1';
+    my $proto = CLIO::UI::HostProtocol->new();
+    my $mock_client = MockBrokerClient->new();
+    $proto->set_broker_relay($mock_client);
+    
+    my $output = '';
+    {
+        local *STDOUT;
+        open STDOUT, '>', \$output or die "Cannot redirect STDOUT: $!";
+        $proto->emit_status('streaming');
+    }
+    
+    like($output, qr/clio:status:/, 'OSC output still emitted');
+    is(scalar($mock_client->updates()), 1, 'Relay also received update');
+    is(($mock_client->updates())[0]->{state}, 'streaming', 'Relay state correct');
+}
+
 done_testing();

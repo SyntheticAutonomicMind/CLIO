@@ -227,10 +227,17 @@ sub _redraw_from_cursor {
 }
 
 sub readline {
-    my ($self, $prompt) = @_;
+    my ($self, $prompt, %opts) = @_;
     
     $prompt //= $self->{prompt};
     
+    # Optional event multiplexing: when event_callback is provided, use select()
+    # on STDIN with a 1-second timeout, polling the callback each cycle.
+    # This is the "doevents()" pattern from PhotonBBS - the broker uses
+    # request-response protocol so we poll on a timer, not watch the socket fd.
+    my $event_callback = $opts{event_callback};  # coderef, returns true if redraw needed
+    my $prefill = $opts{prefill} || '';  # Pre-fill input buffer (restored after agent interrupt)
+
     # Reset display lines tracking for new input
     $self->{display_lines} = 1;
     $self->{last_cursor_row} = 0;
@@ -247,8 +254,8 @@ sub readline {
     # Set terminal to raw mode
     ReadMode('raw');
     
-    my $input = '';
-    my $cursor_pos = 0;  # Position in $input
+    my $input = $prefill;
+    my $cursor_pos = length($prefill);  # Position in $input
     my $completion_state = {
         active => 0,
         candidates => [],
@@ -256,16 +263,61 @@ sub readline {
         original_input => '',
     };
     
+    # If pre-filled, display the restored text
+    if (length $prefill) {
+        print $prefill;
+    }
+    
     while (1) {
-        my $char = ReadKey(0);  # Blocking read
-        
-        # Handle undefined - can happen if sysread is interrupted by signal
-        unless (defined $char) {
-            # ReadKey can return undef when sysread() is interrupted
-            # by a signal (EINTR). This is NORMAL and should just retry immediately.
-            # DO NOT SLEEP - that creates a busy-wait loop burning 100% CPU!
-            # The blocking sysread will properly wait when not interrupted.
-            next;
+        # Read next character - either blocking (normal) or multiplexed (with event_callback)
+        my $char;
+        if ($event_callback) {
+            # Multiplexed mode: use select() on STDIN with periodic callback
+            # Inspired by PhotonBBS's alarm(1) + doevents() pattern.
+            # The broker uses request-response protocol (not push), so we poll
+            # the callback on a timer rather than watching the broker fd.
+            while (!defined $char) {
+                my $rin = '';
+                vec($rin, fileno(STDIN), 1) = 1;
+                
+                # Wait up to 1 second for STDIN, then poll events
+                my $nfound = select(my $rout = $rin, undef, undef, 1.0);
+                
+                # Check STDIN for user keypress
+                if ($nfound > 0 && vec($rout, fileno(STDIN), 1)) {
+                    $char = ReadKey(-1);  # Non-blocking read, data should be available
+                }
+                
+                # Poll event callback (broker events, agent messages, etc.)
+                # Returns: 0 = nothing, 1 = redraw needed, "BREAK" = abort readline
+                my $cb_result = $event_callback->();
+                if ($cb_result && $cb_result eq 'BREAK') {
+                    # Agent event requires AI attention - abort readline
+                    if (length $input) {
+                        # User has typed something - don't interrupt them.
+                        # Redraw the prompt and their input after the event display.
+                        $self->_redraw_line_external($prompt, \$input, \$cursor_pos);
+                    } else {
+                        # No user input yet - safe to hand control to AI
+                        print "\r\n";
+                        ReadMode('restore');
+                        return { type => '__AGENT_EVENT__', partial_input => '' };
+                    }
+                }
+                if ($cb_result) {
+                    $self->_redraw_line_external($prompt, \$input, \$cursor_pos);
+                }
+            }
+        } else {
+            # Normal mode: blocking read (exact same behavior as before)
+            $char = ReadKey(0);
+            
+            # Handle undefined - can happen if sysread is interrupted by signal
+            unless (defined $char) {
+                # ReadKey can return undef when sysread() is interrupted
+                # by a signal (EINTR). This is NORMAL and should just retry.
+                next;
+            }
         }
         
         my $ord = ord($char);
@@ -1157,6 +1209,53 @@ sub redraw_line {
     # Save final cursor position for next redraw
     $self->{last_cursor_row} = $desired_row;
     $self->{last_cursor_col} = $desired_col;
+}
+
+=head2 _redraw_line_external
+
+Redraw the current prompt and input line after external output (e.g., broker
+events) has been printed above the input line. Moves cursor to column 0,
+reprints the prompt and input buffer, and repositions the cursor.
+
+This is used by the multiplexed event loop to restore the input line after
+displaying agent events inline.
+
+=cut
+
+sub _redraw_line_external {
+    my ($self, $prompt, $input_ref, $cursor_pos_ref) = @_;
+    
+    $prompt //= '';
+    
+    # Move to column 0, clear the line, reprint prompt + input
+    print "\r";
+    print "\e[J";  # Clear from cursor to end of screen
+    print $prompt, $$input_ref;
+    
+    # Reposition cursor to the correct location
+    my $term_width = $self->_get_term_width();
+    my $prompt_disp = $self->_get_prompt_disp($prompt);
+    my $input_disp = _display_width($$input_ref);
+    my $cursor_disp = _display_width(substr($$input_ref, 0, $$cursor_pos_ref));
+    
+    my $total_disp = $prompt_disp + $input_disp;
+    my $cursor_total = $prompt_disp + $cursor_disp;
+    
+    my $end_row = $total_disp > 0 ? int(($total_disp - 1) / $term_width) : 0;
+    my $cursor_row = $cursor_total > 0 ? int(($cursor_total - 1) / $term_width) : 0;
+    my $cursor_col = $cursor_total > 0 ? (($cursor_total - 1) % $term_width) + 1 : 0;
+    
+    # Move from end of input to cursor position
+    my $rows_up = $end_row - $cursor_row;
+    print "\e[${rows_up}A" if $rows_up > 0;
+    print "\r";
+    print "\e[${cursor_col}C" if $cursor_col > 0;
+    
+    # Update tracking
+    my $new_display_lines = $total_disp > 0 ? int(($total_disp - 1) / $term_width) + 1 : 1;
+    $self->{display_lines} = $new_display_lines;
+    $self->{last_cursor_row} = $cursor_row;
+    $self->{last_cursor_col} = $cursor_col > 0 ? $cursor_col : 1;
 }
 
 =head2 add_to_history

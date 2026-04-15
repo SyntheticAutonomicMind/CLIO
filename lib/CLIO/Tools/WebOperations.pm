@@ -865,7 +865,25 @@ sub _prompt_url_confirmation {
     my $ui = ($context && $context->{ui}) ? $context->{ui} : undef;
 
     unless ($ui && $ui->can('colorize')) {
-        log_warning('WebOps', "No UI for security prompt - denying URL fetch");
+        # No TTY - try broker relay for headless sub-agents
+        my $broker = ($context && $context->{broker_client}) ? $context->{broker_client} : undef;
+        if ($broker) {
+            log_info('WebOps', "No TTY - relaying URL authorization through broker");
+            require CLIO::Security::AuthorizationRelay;
+            my $relay = CLIO::Security::AuthorizationRelay->new(broker_client => $broker);
+            if ($relay->available()) {
+                my $result = $relay->request_url_authorization($url, $security_check, $context);
+                if ($result->{approved}) {
+                    if ($result->{grant_type} eq 'session') {
+                        $_url_session_grants{fetch_url} = 1;
+                        log_info('WebOps', "Session grant (via relay) for web fetch");
+                    }
+                    return 1;
+                }
+                return 0;
+            }
+        }
+        log_warning('WebOps', "No UI and no broker relay - denying URL fetch");
         return 0;
     }
 

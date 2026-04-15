@@ -16,7 +16,7 @@
 
 ```bash
 # 1. Install
-cd CLIO-dist
+cd CLIO
 sudo ./install.sh
 
 # 2. Start CLIO
@@ -41,7 +41,7 @@ clio --new
 ### Quick Install (System-Wide)
 
 ```bash
-cd CLIO-dist
+cd CLIO
 sudo ./install.sh
 ```
 
@@ -50,7 +50,7 @@ This installs CLIO to `/opt/clio` with a symlink at `/usr/local/bin/clio`.
 ### Quick Install (User Directory - No Sudo)
 
 ```bash
-cd CLIO-dist
+cd CLIO
 ./install.sh --user
 ```
 
@@ -268,11 +268,11 @@ Each provider keeps its own configuration (API keys, models, settings).
 
 **Solution:**
 ```bash
-# Option 1: Run from CLIO-dist directory
-cd CLIO-dist && ./clio --new
+# Option 1: Run from CLIO directory
+cd CLIO && ./clio --new
 
 # Option 2: Set PERL5LIB
-export PERL5LIB=/path/to/CLIO-dist/lib:$PERL5LIB
+export PERL5LIB=/path/to/CLIO/lib:$PERL5LIB
 clio --new
 ```
 

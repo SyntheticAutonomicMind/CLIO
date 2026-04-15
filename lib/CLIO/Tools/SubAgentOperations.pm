@@ -9,6 +9,7 @@ use utf8;
 
 use Carp qw(croak);
 use Scalar::Util qw(blessed);
+use CLIO::Util::JSON qw(encode_json);
 use parent 'CLIO::Tools::Tool';
 
 =head1 NAME
@@ -37,7 +38,7 @@ sub new {
     
     my $self = $class->SUPER::new(
         name => 'agent_operations',
-        supported_operations => [qw(spawn list status kill killall inbox acknowledge history send broadcast)],
+        supported_operations => [qw(spawn list status wait kill killall inbox acknowledge history send broadcast)],
         description => q{Sub-agent management for multi-agent coordination.
 
 Spawn and manage sub-agents to work on tasks in parallel.
@@ -47,7 +48,8 @@ Spawn and manage sub-agents to work on tasks in parallel.
    Parameters: 
      task (required): Natural language description of what the agent should do
      model (optional): AI model to use (default: current session model)
-     persistent (optional): Keep agent alive for multiple tasks (default: false)
+     persistent (optional, boolean): Keep agent alive for multiple tasks. Default is false (oneshot mode - agent exits after completing its task)
+     working_dir (optional): Run agent in this directory (loads that project's .clio/ context)
    Returns: Agent ID and confirmation
 
 ━━━━━━━━━━━━━━━━━━━━━ MANAGE (monitor/control) ━━━━━━━━━━━━━━━━━━━
@@ -58,6 +60,12 @@ Spawn and manage sub-agents to work on tasks in parallel.
 -  status - Get detailed status of a specific agent
    Parameters: agent_id (required)
    Returns: Detailed agent info including logs
+
+-  wait - Block until agent activity occurs (message, exit, status update)
+   Parameters:
+     timeout (optional, number): Max seconds to wait (default: 60)
+     poll_interval (optional, number): Seconds between checks (default: 5)
+   Returns: Events that occurred (messages, exits, status updates)
 
 -  kill - Terminate a specific agent
    Parameters: agent_id (required)
@@ -91,7 +99,7 @@ Spawn and manage sub-agents to work on tasks in parallel.
 
 EXAMPLE WORKFLOW:
 1. Spawn agents: agent_operations(operation: "spawn", task: "create file X")
-2. Monitor: agent_operations(operation: "list")
+2. Wait for activity: agent_operations(operation: "wait", timeout: 60)
 3. Check messages: agent_operations(operation: "inbox")
 4. Reply if needed: agent_operations(operation: "send", agent_id: "agent-1", message: "yes")
 5. Mark as read: agent_operations(operation: "acknowledge")
@@ -108,7 +116,7 @@ sub schema {
         properties => {
             operation => {
                 type => 'string',
-                enum => ['spawn', 'list', 'status', 'kill', 'killall', 'inbox', 'acknowledge', 'history', 'send', 'broadcast'],
+                enum => ['spawn', 'list', 'status', 'wait', 'kill', 'killall', 'inbox', 'acknowledge', 'history', 'send', 'broadcast'],
                 description => 'Operation to perform',
             },
             task => {
@@ -130,6 +138,18 @@ sub schema {
             message => {
                 type => 'string',
                 description => 'Message content for send/broadcast operations',
+            },
+            working_dir => {
+                type => 'string',
+                description => 'Working directory for the agent. When set, the agent runs in this directory and loads its local .clio/ context (instructions, LTM, memory). Used for multi-project orchestration.',
+            },
+            timeout => {
+                type => 'number',
+                description => 'Max seconds to wait for wait operation (default: 60)',
+            },
+            poll_interval => {
+                type => 'number',
+                description => 'Seconds between status checks for wait operation (default: 5)',
             },
         },
         required => ['operation'],
@@ -154,6 +174,7 @@ sub dispatch_table {
         spawn       => '_dispatch_spawn',
         list        => '_dispatch_list',
         status      => '_dispatch_status',
+        wait        => '_dispatch_wait',
         kill        => '_dispatch_kill',
         killall     => '_dispatch_killall',
         inbox       => '_dispatch_inbox',
@@ -170,9 +191,10 @@ sub dispatch_table {
 sub _dispatch_spawn       { my ($self, $params, $ctx) = @_; $self->spawn($params, $self->{_subagent_cmd}, $ctx) }
 sub _dispatch_list        { my ($self) = @_; $self->list($self->{_subagent_cmd}) }
 sub _dispatch_status      { my ($self, $params) = @_; $self->status($params, $self->{_subagent_cmd}) }
-sub _dispatch_kill        { my ($self, $params) = @_; $self->kill($params, $self->{_subagent_cmd}) }
-sub _dispatch_killall     { my ($self) = @_; $self->killall($self->{_subagent_cmd}) }
-sub _dispatch_inbox       { my ($self) = @_; $self->inbox($self->{_subagent_cmd}) }
+sub _dispatch_wait        { my ($self, $params, $ctx) = @_; $self->wait($params, $self->{_subagent_cmd}, $ctx) }
+sub _dispatch_kill        { my ($self, $params, $ctx) = @_; $self->kill($params, $self->{_subagent_cmd}, $ctx) }
+sub _dispatch_killall     { my ($self, $params, $ctx) = @_; $self->killall($self->{_subagent_cmd}, $ctx) }
+sub _dispatch_inbox       { my ($self, $params, $ctx) = @_; $self->inbox($self->{_subagent_cmd}, $ctx) }
 sub _dispatch_acknowledge { my ($self, $params) = @_; $self->acknowledge($params, $self->{_subagent_cmd}) }
 sub _dispatch_history     { my ($self) = @_; $self->history($self->{_subagent_cmd}) }
 sub _dispatch_send        { my ($self, $params) = @_; $self->send($params, $self->{_subagent_cmd}) }
@@ -254,6 +276,15 @@ sub _get_subagent_handler {
     return undef;
 }
 
+sub _get_host_proto {
+    my ($self, $context) = @_;
+    my $ui = $context->{ui} if $context;
+    if ($ui && blessed($ui) && $ui->{host_proto}) {
+        return $ui->{host_proto};
+    }
+    return undef;
+}
+
 sub spawn {
     my ($self, $params, $handler, $context) = @_;
     
@@ -263,14 +294,20 @@ sub spawn {
     # Use explicitly requested model, or inherit the current session model
     my $model = $params->{model} || ($context && $context->{current_model}) || 'unknown';
     my $persistent = $params->{persistent} ? 1 : 0;
+    my $working_dir = $params->{working_dir};
+    
+    # Persistent mode requires a running broker - default to oneshot
+    # Users can explicitly set persistent=true when a broker is available
     
     # Truncate task for display
     my $task_short = length($task) > 50 ? substr($task, 0, 47) . '...' : $task;
     my $action_desc = "spawning sub-agent ($model): $task_short";
+    $action_desc .= " in $working_dir" if $working_dir;
     
     # Build args string
     my $args = qq{"$task" --model $model};
     $args .= " --persistent" if $persistent;
+    $args .= qq{ --dir "$working_dir"} if $working_dir;
     
     # Suppress direct display - we'll return expanded_content instead
     $handler->{suppress_display} = 1;
@@ -293,6 +330,31 @@ sub spawn {
             sprintf("%-20s %s", "Model:", $model),
             sprintf("%-20s %s", "Task:", qq{"$task_short"}),
         );
+        if ($working_dir) {
+            push @expanded, sprintf("%-20s %s", "Working Dir:", $working_dir);
+        }
+        
+        # Register agent's project context with Chat for display labels
+        if ($working_dir && $context && $context->{ui}) {
+            my $ui = $context->{ui};
+            if ($ui->can('register_agent_project')) {
+                $ui->register_agent_project($agent_id, $working_dir);
+            }
+        }
+        
+        # Emit OSC agent event for host applications
+        my $host_proto = $self->_get_host_proto($context);
+        if ($host_proto && $host_proto->active()) {
+            $host_proto->emit_agent_event('spawn',
+                id    => $agent_id,
+                task  => $task_short,
+                model => $model,
+                mode  => $mode_str,
+                ($working_dir ? (working_dir => $working_dir) : ()),
+            );
+            # Emit updated agent tree
+            $self->_emit_agent_tree($host_proto, $handler);
+        }
         
         return $self->success_result(
             "Spawned sub-agent: $agent_id",
@@ -302,16 +364,167 @@ sub spawn {
             task => $task,
             model => $model,
             mode => $mode_str,
+            ($working_dir ? (working_dir => $working_dir) : ()),
         );
     }
     
     return $self->success_result("Sub-agent spawned", action_description => $action_desc, task => $task);
 }
 
+sub _emit_agent_tree {
+    my ($self, $host_proto, $handler) = @_;
+    return unless $host_proto && $host_proto->active() && $handler->{manager};
+    
+    my $agents = $handler->{manager}->list_agents();
+    my @agent_list;
+    for my $id (sort keys %$agents) {
+        my $agent = $agents->{$id};
+        push @agent_list, {
+            id     => $id,
+            parent => 'primary',
+            state  => $agent->{status},
+            ($agent->{working_dir} ? (project => $agent->{working_dir}) : ()),
+        };
+    }
+    
+    $host_proto->emit_agent_tree({
+        root   => 'primary',
+        agents => \@agent_list,
+    });
+}
+
+# Poll broker for status_update messages from child agents and re-emit as OSC events
+# This bridges the gap between child agent state and the host application's UI
+sub _relay_child_status {
+    my ($self, $handler) = @_;
+    
+    return unless $handler->{broker_client};
+    
+    my $updates = eval { $handler->{broker_client}->poll_status_updates() };
+    return unless $updates && @$updates;
+    
+    my $host_proto = $self->_get_host_proto();
+    return unless $host_proto;
+    
+    for my $update (@$updates) {
+        $host_proto->emit_agent_event('status',
+            agent_id => $update->{agent_id} || 'unknown',
+            state    => $update->{state}    || 'unknown',
+            ($update->{tool}    ? (tool    => $update->{tool})    : ()),
+            ($update->{message} ? (message => $update->{message}) : ()),
+        );
+    }
+}
+
+
+sub wait {
+    my ($self, $params, $handler, $context) = @_;
+
+    my $timeout = $params->{timeout} || 60;
+    my $poll_interval = $params->{poll_interval} || 5;
+
+    my $action_desc = "waiting for agent activity (${timeout}s timeout)";
+
+    unless ($handler->{manager}) {
+        return $self->error_result("No sub-agents spawned");
+    }
+
+    my $start = time();
+    my @events;
+
+    while ((time() - $start) < $timeout) {
+        # Relay child status updates via OSC
+        $self->_relay_child_status($handler);
+
+        # Check for new messages from agents
+        if ($handler->{broker_client}) {
+            my $messages = eval { $handler->{broker_client}->poll_user_inbox() };
+            if ($messages && @$messages) {
+                my @msg_ids;
+                for my $msg (@$messages) {
+                    push @msg_ids, $msg->{id} if $msg->{id};
+                    push @events, {
+                        type => 'message',
+                        from => $msg->{from},
+                        message_type => $msg->{type},
+                        content => $msg->{content},
+                        timestamp => $msg->{timestamp},
+                    };
+                }
+                # Acknowledge so they don't re-appear on next poll
+                if (@msg_ids) {
+                    eval { $handler->{broker_client}->acknowledge_messages(@msg_ids) };
+                }
+            }
+
+            # Check for status updates
+            my $updates = eval { $handler->{broker_client}->poll_status_updates() };
+            if ($updates && @$updates) {
+                for my $update (@$updates) {
+                    push @events, {
+                        type => 'status_update',
+                        agent_id => $update->{agent_id},
+                        state => $update->{state},
+                        ($update->{tool} ? (tool => $update->{tool}) : ()),
+                        ($update->{message} ? (message => $update->{message}) : ()),
+                        timestamp => $update->{timestamp},
+                    };
+                }
+            }
+        }
+
+        # Check for agent exits
+        my $agents = $handler->{manager}->list_agents();
+        for my $id (sort keys %$agents) {
+            my $agent = $agents->{$id};
+            if ($agent->{status} && $agent->{status} eq 'exited') {
+                push @events, {
+                    type => 'exit',
+                    agent_id => $id,
+                    task => $agent->{task},
+                };
+            }
+        }
+
+        # Return early if any events occurred
+        if (@events) {
+            my $elapsed = int(time() - $start);
+            my $count = scalar @events;
+            $action_desc = "received $count event(s) after ${elapsed}s";
+            return $self->success_result(
+                "Received $count event(s)",
+                action_description => $action_desc,
+                events => \@events,
+                count => $count,
+                elapsed => $elapsed,
+                timed_out => 0,
+            );
+        }
+
+        # Sleep before next poll
+        sleep($poll_interval);
+    }
+
+    # Timeout with no events
+    my $elapsed = int(time() - $start);
+    $action_desc = "wait timed out after ${elapsed}s with no events";
+    return $self->success_result(
+        "Wait timed out after ${elapsed}s with no events",
+        action_description => $action_desc,
+        events => [],
+        count => 0,
+        elapsed => $elapsed,
+        timed_out => 1,
+    );
+}
+
 sub list {
     my ($self, $handler) = @_;
     
     my $action_desc = "listing active sub-agents";
+    
+    # Poll broker for status updates from child agents and re-emit as OSC
+    $self->_relay_child_status($handler);
     
     unless ($handler->{manager}) {
         return $self->success_result("No sub-agents spawned", action_description => $action_desc, agents => []);
@@ -388,7 +601,7 @@ sub status {
 }
 
 sub kill {
-    my ($self, $params, $handler) = @_;
+    my ($self, $params, $handler, $context) = @_;
     
     my $agent_id = $params->{agent_id};
     return $self->error_result("Missing 'agent_id' parameter") unless $agent_id;
@@ -400,6 +613,15 @@ sub kill {
     }
     
     if ($handler->{manager}->kill_agent($agent_id)) {
+        # Emit OSC agent exit event
+        my $host_proto = $self->_get_host_proto($context);
+        if ($host_proto && $host_proto->active()) {
+            $host_proto->emit_agent_event('exit',
+                id     => $agent_id,
+                reason => 'killed',
+            );
+            $self->_emit_agent_tree($host_proto, $handler);
+        }
         return $self->success_result("Terminated agent: $agent_id", action_description => $action_desc, agent_id => $agent_id);
     }
     
@@ -407,7 +629,7 @@ sub kill {
 }
 
 sub killall {
-    my ($self, $handler) = @_;
+    my ($self, $handler, $context) = @_;
     
     my $action_desc = "terminating all sub-agents";
     
@@ -417,11 +639,24 @@ sub killall {
     
     my $agents = $handler->{manager}->list_agents();
     my $count = 0;
+    my $host_proto = $self->_get_host_proto($context);
     
     for my $agent_id (keys %$agents) {
         if ($handler->{manager}->kill_agent($agent_id)) {
             $count++;
+            # Emit OSC agent exit event for each killed agent
+            if ($host_proto && $host_proto->active()) {
+                $host_proto->emit_agent_event('exit',
+                    id     => $agent_id,
+                    reason => 'killed',
+                );
+            }
         }
+    }
+    
+    # Emit updated tree (should be empty now)
+    if ($host_proto && $host_proto->active()) {
+        $self->_emit_agent_tree($host_proto, $handler);
     }
     
     $action_desc = "terminated $count sub-agent(s)";
@@ -429,9 +664,12 @@ sub killall {
 }
 
 sub inbox {
-    my ($self, $handler) = @_;
+    my ($self, $handler, $context) = @_;
     
     my $action_desc = "checking agent inbox";
+    
+    # Poll broker for status updates from child agents and re-emit as OSC
+    $self->_relay_child_status($handler);
     
     unless ($handler->{broker_client}) {
         return $self->success_result("No messages (broker not active)", action_description => $action_desc, messages => []);
@@ -503,6 +741,18 @@ sub inbox {
     }
     push @output_lines, "";
     push @output_lines, "Call agent_operations(operation: 'acknowledge') to mark as read.";
+    
+    # Emit OSC events for each message so host apps can display them
+    my $host_proto = $self->_get_host_proto($context);
+    if ($host_proto && $host_proto->active()) {
+        for my $msg (@formatted) {
+            $host_proto->emit_agent_event('message',
+                id      => $msg->{from},
+                type    => $msg->{type},
+                content => ref($msg->{content}) ? encode_json($msg->{content}) : $msg->{content},
+            );
+        }
+    }
     
     return $self->success_result(
         join("\n", @output_lines),

@@ -83,11 +83,19 @@ sub spawn_agent {
         }
     }
     
+    my $working_dir = $options{working_dir};
+    
     my $pid = fork();
     croak "Fork failed: $!" unless defined $pid;
     
     if ($pid == 0) {
-        # Child process - become sub-agent
+        # Child process - chdir to working_dir if specified (puppeteer mode)
+        if ($working_dir) {
+            chdir($working_dir) or die "Cannot chdir to $working_dir: $!";
+            log_debug('SubAgent', "Agent $agent_id: chdir to $working_dir");
+        }
+        
+        # Become sub-agent
         $self->run_subagent($agent_id, $task, %options);
         exit 0;
     }
@@ -100,6 +108,7 @@ sub spawn_agent {
         status => 'running',
         mode => $mode,
         started => time(),
+        ($working_dir ? (working_dir => $working_dir) : ()),
     };
     
     return $agent_id;
@@ -142,6 +151,17 @@ sub run_subagent {
     print "Task: $task\n";
     print "Session: $self->{session_id}\n";
     
+    # Set puppeteer environment variables if working_dir was specified
+    if ($options{working_dir}) {
+        $ENV{CLIO_PUPPETEER} = 1;
+        # Extract project name from working_dir (last path component)
+        my $project = $options{working_dir};
+        $project =~ s{[/\\]+$}{};  # Strip trailing slashes
+        $project =~ s{.*/}{};       # Get last path component
+        $ENV{CLIO_PUPPETEER_PROJECT} = $project;
+        print "Puppeteer mode: project=$project dir=$options{working_dir}\n";
+    }
+    
     # Check if persistent mode requested
     if ($options{persistent}) {
         $self->run_persistent_agent($agent_id, $task, %options);
@@ -153,46 +173,31 @@ sub run_subagent {
 sub run_oneshot_agent {
     my ($self, $agent_id, $task, %options) = @_;
     
-    # Original exec-based implementation
-    
-    # Find CLIO executable
-    use FindBin;
-    my $clio_path = "$FindBin::Bin/clio";
-    unless (-x $clio_path) {
-        croak "Cannot find CLIO executable: $clio_path";
-    }
-    
-    # Set environment for broker connection and sub-agent mode
-    $ENV{CLIO_BROKER_SESSION} = $self->{session_id};
-    $ENV{CLIO_BROKER_AGENT_ID} = $agent_id;
-    $ENV{IS_SUBAGENT} = 1;  # Triggers sub-agent instructions in PromptManager
-    
-    # Build CLIO command
-    my $model = $options{model} || croak "No model specified for sub-agent";
-    my $debug = $options{debug} || 0;
-    my @cmd = (
-        $clio_path,
-        '--model', $model,
-        '--input', $task,
-        '--exit',
-    );
-    push @cmd, '--debug' if $debug;
-    
-    print "Model: $model\n";
-    print "Command: " . join(' ', @cmd) . "\n";
-    print "Env: CLIO_BROKER_SESSION=$ENV{CLIO_BROKER_SESSION}\n";
-    print "Env: CLIO_BROKER_AGENT_ID=$ENV{CLIO_BROKER_AGENT_ID}\n";
-    print "Env: IS_SUBAGENT=$ENV{IS_SUBAGENT}\n\n";
-    
-    # Execute (replaces this process entirely)
-    exec(@cmd) or die "Cannot exec CLIO: $!";
+    # Oneshot agents use the same robust AgentLoop as persistent agents.
+    # The only difference: oneshot=1 causes the loop to exit after the
+    # first task completes and the completion message is delivered.
+    $self->_run_agent_loop($agent_id, $task, oneshot => 1, %options);
 }
 
 sub run_persistent_agent {
     my ($self, $agent_id, $task, %options) = @_;
     
-    print "Mode: PERSISTENT\n";
-    print "Starting persistent agent loop\n\n";
+    $self->_run_agent_loop($agent_id, $task, oneshot => 0, %options);
+}
+
+sub _run_agent_loop {
+    my ($self, $agent_id, $task, %options) = @_;
+    
+    my $oneshot = delete $options{oneshot} // 0;
+    my $mode = $oneshot ? 'ONESHOT' : 'PERSISTENT';
+    
+    print "Mode: $mode\n";
+    print "Starting agent loop\n\n";
+    
+    # Set sub-agent environment (previously only set by the exec path)
+    $ENV{CLIO_BROKER_SESSION} = $self->{session_id};
+    $ENV{CLIO_BROKER_AGENT_ID} = $agent_id;
+    $ENV{IS_SUBAGENT} = 1;
     
     # Load required modules
     use CLIO::Core::AgentLoop;
@@ -209,8 +214,6 @@ sub run_persistent_agent {
         task => $task,
         debug => 1,
     );
-    
-    print "[INFO] Connected to broker\n" if $ENV{CLIO_LOG_LEVEL};
     
     # Create Config and Session (same as main CLIO initialization)
     my $config = CLIO::Core::Config->new();
@@ -237,6 +240,7 @@ sub run_persistent_agent {
         session => $session,   # Session for history tracking
         debug => $debug,
         broker_client => $client,  # Pass broker client for coordination
+        non_interactive => 1,      # Sub-agents are always non-interactive
     );
     
     # Custom instructions (including sub-agent mode) are automatically loaded
@@ -247,9 +251,6 @@ sub run_persistent_agent {
         my ($task_content, $loop) = @_;
         
         print "[AgentLoop] Processing task: $task_content\n";
-        
-        # Custom instructions (including sub-agent mode) automatically loaded via PromptManager
-        # No need to prepend here - system prompt handles it
         
         # Call AI to process task using SimpleAIAgent (same as main CLIO)
         my $result = $ai_agent->process_user_request($task_content, {
@@ -274,15 +275,14 @@ sub run_persistent_agent {
         }
     };
     
-    # Create and run agent loop
+    # Create and run agent loop (oneshot exits after first task, persistent loops)
     my $loop = CLIO::Core::AgentLoop->new(
         client => $client,
         initial_task => $task,
         on_task => $task_handler,
+        oneshot => $oneshot,
         debug => 1,
     );
-    
-    print "Starting agent loop\n";
     
     eval {
         $loop->run();
@@ -292,7 +292,7 @@ sub run_persistent_agent {
         die $@;
     }
     
-    print "Agent loop exited\n";
+    print "Agent loop exited ($mode)\n";
     $client->disconnect();
 }
 
