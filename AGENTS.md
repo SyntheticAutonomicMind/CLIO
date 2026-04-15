@@ -85,7 +85,7 @@ Terminal Output (with color/theme)
 | `lib/CLIO/Session/` | Session management |
 | `lib/CLIO/Memory/` | Context/memory system (YaRN, TokenEstimator) |
 | `lib/CLIO/Profile/` | User personality profile (Analyzer, Manager) |
-| `lib/CLIO/Protocols/` | Complex workflows (Architect, Editor) |
+| `lib/CLIO/Protocols/` | Complex workflows (Architect, Editor, Puppeteer) |
 | `lib/CLIO/Providers/` | Direct API providers (Anthropic, Google) |
 | `lib/CLIO/Coordination/` | Multi-agent coordination (Broker, Client) |
 | `lib/CLIO/MCP/` | Model Context Protocol (servers, transports, OAuth) |
@@ -183,7 +183,7 @@ log_error('ModuleName', 'something failed: %s', $error);
 | `CLIO::Coordination::` | Multi-agent coordination | Broker, Client |
 | `CLIO::MCP::` | Model Context Protocol | Manager, Client, Transport::Stdio, Auth::OAuth |
 | `CLIO::Profile::` | User profiling | Analyzer, Manager |
-| `CLIO::Protocols::` | Complex workflows | Architect, Editor, Validate |
+| `CLIO::Protocols::` | Complex workflows | Architect, Editor, Validate, Puppeteer |
 | `CLIO::Security::` | Auth/authz | Auth, Authz, Manager |
 | `CLIO::Logging::` | Structured logging | Logger |
 | `CLIO::Util::` | Utilities | PathResolver, TextSanitizer, JSONRepair, JSON, YAML |

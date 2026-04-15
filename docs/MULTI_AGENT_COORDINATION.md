@@ -2,36 +2,48 @@
 
 ## Overview
 
-**CLIO supports parallel multi-agent collaboration** where multiple AI agents work on the same codebase simultaneously without conflicts.
+CLIO supports parallel multi-agent collaboration where multiple AI agents work on the same codebase simultaneously without conflicts. The system spans three levels of coordination:
 
-This system enables:
-- Spawning multiple AI agents to work in parallel
-- File locking to prevent concurrent edits
-- Git locking to serialize commits
-- Knowledge sharing between agents
-- Message-based communication
+1. **Local sub-agents** - Parallel processes working on different tasks in the same project
+2. **Puppeteer orchestration** - Project-scoped agents that work inside child projects with their own LTM and instructions
+3. **Remote agents** - Agents running on remote machines via SSH
+
+All three levels share the same coordination infrastructure: broker messaging, file/git locking, status relay, and host protocol events.
 
 ---
 
 ## Architecture
 
-```mermaid
-graph TD
-    Main["Main CLIO Session<br/>- User interface<br/>- Primary AI agent<br/>- Auto-polls inbox for agent messages"]
-    Broker["Coordination Broker<br/>(Unix Socket)<br/>- Message bus<br/>- File locking<br/>- Git coordination<br/>- Discovery sharing"]
-    Agent1["Sub-Agent 1<br/>(Persistent)<br/>- Polls inbox<br/>- Sends messages<br/>- File locks<br/>- AI-powered"]
-    Agent2["Sub-Agent 2<br/>(Persistent)<br/>- Polls inbox<br/>- Sends messages<br/>- File locks<br/>- AI-powered"]
-    
-    Main --> Broker
-    Broker --> Agent1
-    Broker --> Agent2
-    Agent1 -.->|messages| Broker
-    Agent2 -.->|messages| Broker
-    
-    style Main fill:#e1f5ff
-    style Broker fill:#fff3e0
-    style Agent1 fill:#e8f5e9
-    style Agent2 fill:#e8f5e9
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  Host Application (MIRA, custom GUI)                             │
+│  ┌────────────────────────────────────────────────────────────┐  │
+│  │  OSC Events (clio:status, clio:agent, clio:tree)           │  │
+│  └────────────────────────────────────────────────────────────┘  │
+│                             ▲                                    │
+└─────────────────────────────┼────────────────────────────────────┘
+                              │ OSC 0 escape sequences
+┌─────────────────────────────┼────────────────────────────────────┐
+│  Primary CLIO Session       │                                    │
+│  ┌──────────────┐     ┌─────┴──────┐     ┌───────────────────┐  │
+│  │ PromptManager│────▶│HostProtocol│     │    Puppeteer      │  │
+│  │ (injects     │     │ (OSC emit) │     │ (topology detect) │  │
+│  │  topology)   │     └────────────┘     └───────────────────┘  │
+│  └──────────────┘           ▲                     │              │
+│         │                   │ relay               │ project info │
+│         ▼                   │                     ▼              │
+│  ┌──────────────────────────┴─────────────────────────────┐     │
+│  │              Coordination Broker                        │     │
+│  │  (Unix Socket - message bus, locks, status relay)       │     │
+│  └─────────┬──────────────┬──────────────┬────────────────┘     │
+│            │              │              │                        │
+└────────────┼──────────────┼──────────────┼───────────────────────┘
+             │              │              │
+    ┌────────▼───┐  ┌───────▼────┐  ┌─────▼──────────┐
+    │ Sub-Agent 1│  │ Sub-Agent 2│  │ Child Agent     │
+    │ (same dir) │  │ (same dir) │  │ (SAM/)      │
+    │            │  │            │  │ loads own .clio/ │
+    └────────────┘  └────────────┘  └─────────────────┘
 ```
 
 ---
@@ -40,11 +52,187 @@ graph TD
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| **Broker** | `lib/CLIO/Coordination/Broker.pm` | Central coordination server |
-| **Client** | `lib/CLIO/Coordination/Client.pm` | Broker connection API |
+| **Broker** | `lib/CLIO/Coordination/Broker.pm` | Central coordination server (messaging, locks, status relay) |
+| **Client** | `lib/CLIO/Coordination/Client.pm` | Broker connection API for agents |
 | **SubAgent** | `lib/CLIO/Coordination/SubAgent.pm` | Process spawning and management |
 | **AgentLoop** | `lib/CLIO/Core/AgentLoop.pm` | Persistent agent event loop |
-| **Commands** | `lib/CLIO/UI/Commands/SubAgent.pm` | User commands for multi-agent work |
+| **Puppeteer** | `lib/CLIO/Protocols/Puppeteer.pm` | Topology detection and project-scoped delegation |
+| **HostProtocol** | `lib/CLIO/UI/HostProtocol.pm` | OSC event emission and broker relay |
+| **PromptManager** | `lib/CLIO/Core/PromptManager.pm` | System prompt assembly with topology injection |
+| **Commands** | `lib/CLIO/UI/Commands/SubAgent.pm` | User commands (`/subagent`) |
+
+---
+
+## Puppeteer: Multi-Project Orchestration
+
+Puppeteer lets a primary CLIO session manage work across multiple child projects. Each child project can have its own `.clio/` directory with project-specific LTM, instructions, and memory. When work is delegated, the child agent starts inside that project's directory and loads its full context automatically.
+
+### How Topology Detection Works
+
+Puppeteer scans for child projects in two ways:
+
+1. **Git submodules** - Parses `.gitmodules` for submodule entries and checks each for a `.clio/` directory
+2. **Directory scanning** - Looks at top-level directories for any containing `.clio/`
+
+The scan runs at session start (via PromptManager) and populates the agent's system prompt with a list of available projects and their capabilities.
+
+### Example Topology
+
+```
+ecosystem/
+├── .clio/                    # Primary project config
+│   ├── instructions.md
+│   └── ltm.json
+├── .gitmodules               # Submodule definitions
+├── SAM/                  # Child project (submodule)
+│   └── .clio/
+│       ├── instructions.md   # SAM-specific dev instructions
+│       └── ltm.json          # SAM-specific learned patterns
+├── ALICE/                    # Child project (submodule)
+│   └── .clio/
+│       ├── instructions.md
+│       └── ltm.json
+└── utils/                    # Regular directory (no .clio/)
+```
+
+The primary agent's system prompt automatically includes:
+
+```
+## Puppeteer Topology
+
+This project manages 2 child project(s):
+
+- **ALICE** (ALICE) [LTM, instructions, submodule]
+- **SAM** (SAM) [LTM, instructions, submodule]
+
+To delegate work to a project, spawn a sub-agent with working_dir:
+agent_operations(operation: "spawn", task: "...", working_dir: "./SAM")
+The child agent will load that project's .clio/ context (LTM, instructions, memory).
+```
+
+### Spawning Project-Scoped Agents
+
+There are three ways to delegate work to a child project:
+
+**Via `/subagent` command with `--project`:**
+```
+/subagent spawn "run tests and fix failures" --project SAM
+```
+
+The `--project` flag resolves the project name through Puppeteer's topology, finds the absolute path, and sets the working directory.
+
+**Via `/subagent` command with `--dir`:**
+```
+/subagent spawn "check dependencies" --dir ../external-project
+```
+
+The `--dir` flag works with any directory, not just detected projects. This is useful for ad-hoc delegation to projects outside the topology.
+
+**Via AI tool call:**
+```json
+{
+  "operation": "spawn",
+  "task": "fix failing integration tests",
+  "working_dir": "./SAM"
+}
+```
+
+The AI can use this after reading the topology from its system prompt.
+
+### What the Child Agent Gets
+
+When a child agent starts in a project directory:
+
+1. **Working directory** is set to the project root
+2. **`.clio/instructions.md`** is loaded as project-specific instructions
+3. **`.clio/ltm.json`** is loaded as project-specific long-term memory
+4. **`.clio/memory/`** is available for session memory
+5. **`CLIO_PUPPETEER`** environment variable is set, telling the agent it was delegated
+6. The agent's system prompt includes delegation context about who spawned it and why
+
+### Listing Available Projects
+
+```
+/subagent projects
+```
+
+Shows all detected child projects with their capabilities:
+
+```
+  Puppeteer Topology
+
+  Project        Path       Source      LTM  Instructions
+  ALICE          ./ALICE    submodule    ✓       ✓
+  SAM        ./SAM  submodule    ✓       ✓
+```
+
+---
+
+## OSC Host Protocol and Agent Events
+
+### Status Relay Pipeline
+
+When sub-agents (especially project-scoped ones) run inside a session, their status changes flow back to the primary session and out to any host application through a relay pipeline:
+
+```
+Child Agent (SAM/)
+  │
+  │ HostProtocol detects broker relay mode
+  │ (no CLIO_HOST_PROTOCOL needed - broker client triggers relay)
+  │
+  ▼
+Broker (status_update message)
+  │
+  │ Primary session polls broker via poll_status_updates
+  │
+  ▼
+Primary CLIO Session
+  │
+  │ Re-emits as clio:agent status OSC events
+  │
+  ▼
+Host Application (MIRA, custom GUI)
+  │
+  │ Terminal title callback intercepts clio:agent events
+  │ Renders agent hierarchy with live status
+  │
+  ▼
+Native UI (agent cards, status indicators, tree view)
+```
+
+### Agent Events
+
+Three new OSC event types enable host applications to render full agent hierarchies:
+
+| Event | Actions | Payload |
+|-------|---------|---------|
+| `clio:agent` | `spawn`, `status`, `message`, `exit` | agent_id, task, state, tool, message |
+| `clio:remote` | `start`, `progress`, `complete`, `error` | host, task, progress, result |
+| `clio:tree` | (snapshot) | Full agent tree with hierarchy, status, and project info |
+
+**Example event payloads:**
+
+```json
+// Agent spawned
+clio:agent:{"action":"spawn","id":"agent-1","task":"fix tests","project":"SAM"}
+
+// Agent status change (relayed from broker)
+clio:agent:{"action":"status","id":"agent-1","state":"tools","tool":"terminal_operations"}
+
+// Agent completed
+clio:agent:{"action":"exit","id":"agent-1","exit_code":0}
+
+// Full tree snapshot
+clio:tree:{"primary":{"state":"idle"},"agents":[{"id":"agent-1","task":"fix tests","project":"SAM","state":"tools"}]}
+```
+
+### Broker Relay Details
+
+The relay works through two mechanisms:
+
+**Child side (automatic):** When SubAgent spawns a process, the child's HostProtocol gets a broker Client via `set_broker_relay()`. Every `emit_status()` and `emit_tool_start()` call additionally sends a `status_update` message to the broker. This requires no configuration - it happens automatically for any coordinated agent.
+
+**Primary side (polling):** The primary session's WorkflowOrchestrator periodically calls `poll_status_updates()` on the broker client. Any accumulated status updates are re-emitted as `clio:agent status` OSC events for the host application.
 
 ---
 
@@ -54,6 +242,8 @@ graph TD
 
 - Agent spawns, executes single task, exits
 - Uses `exec` to replace process with full CLIO
+- Default model: `gpt-5-mini`
+- Iteration limit: 75 (non-interactive default)
 - Good for: Independent parallel tasks
 
 ### Persistent Mode
@@ -77,7 +267,13 @@ graph TD
 /subagent spawn "refactor auth module" --persistent
 
 # Specify model
-/subagent spawn "add tests" --model gpt-5 --persistent
+/subagent spawn "add tests" --model gpt-5
+
+# Project-scoped (Puppeteer)
+/subagent spawn "run tests" --project SAM
+
+# Arbitrary directory
+/subagent spawn "check deps" --dir ../other-project
 ```
 
 ### Communication
@@ -110,6 +306,9 @@ graph TD
 
 # See shared discoveries
 /subagent discoveries
+
+# List child projects
+/subagent projects
 ```
 
 ---
@@ -149,7 +348,6 @@ graph TD
 **Example:**
 
 ```perl
-# In agent code
 $client->request_file_lock(["lib/Module.pm"]);
 # ... modify file ...
 $client->release_file_lock(["lib/Module.pm"]);
@@ -183,7 +381,7 @@ my $client = CLIO::Coordination::Client->new(
 ```perl
 # Send message
 $client->send_message(
-    to => 'user',              # or agent_id or 'all'
+    to => 'user',
     message_type => 'question',
     content => 'Should I proceed?',
 );
@@ -204,6 +402,24 @@ $client->send_question(
 
 $client->send_complete("Task finished successfully");
 $client->send_blocked("Waiting for API credentials");
+```
+
+### Status Relay
+
+```perl
+# Send status update (child agent -> broker -> primary)
+$client->send_status_update(
+    state => 'tools',
+    tool  => 'file_operations',
+    message => 'reading config files',
+);
+
+# Poll status updates (primary -> from broker)
+my $response = $client->poll_status_updates();
+for my $update (@{$response->{updates}}) {
+    printf "Agent %s: %s (%s)\n",
+        $update->{agent_id}, $update->{state}, $update->{tool} // '';
+}
 ```
 
 ### Coordination
@@ -233,25 +449,18 @@ For persistent agents that need to handle multiple tasks:
 ```perl
 use CLIO::Core::AgentLoop;
 
-# Define task handler
 my $task_handler = sub {
     my ($task, $loop) = @_;
-    
     # Process task...
-    
-    # Return status:
     return { completed => 1, message => "Done" };
-    # or: { blocked => 1, reason => "Need help" };
-    # or: { status => "working", progress => "50%" };
 };
 
-# Create and run loop
 my $loop = CLIO::Core::AgentLoop->new(
     client => $client,
     initial_task => $task,
     on_task => $task_handler,
-    poll_interval => 1,      # Check inbox every 1 sec
-    heartbeat_interval => 30, # Send heartbeat every 30 sec
+    poll_interval => 1,
+    heartbeat_interval => 30,
 );
 
 $loop->run();  # Blocks until stop message received
@@ -303,7 +512,7 @@ These tools work but coordinate through the broker:
 
 The broker starts automatically when you spawn a sub-agent. It runs as a separate background process connected via Unix socket.
 
-**Idle timeout:** After all agents disconnect, the broker waits 5 minutes (300 seconds) for a new connection. If no clients reconnect, it exits cleanly. This prevents orphaned broker processes from accumulating after CLIO sessions end.
+**Idle timeout:** After all agents disconnect, the broker waits 5 minutes (300 seconds) for a new connection. If no clients reconnect, it exits cleanly.
 
 ### Agent Crash
 
@@ -311,22 +520,33 @@ The broker starts automatically when you spawn a sub-agent. It runs as a separat
 - 120-second timeout releases locks from inactive agents
 - `/subagent list` shows agents that have exited
 
+### Status Relay Limits
+
+The broker caps accumulated status updates at 100 entries. Older entries are discarded. This prevents memory growth in long-running sessions with many agents. The primary session drains updates on each poll.
+
 ---
 
 ## Best Practices
 
 ### When to Use Multi-Agent
 
-✓ Large projects with independent modules
-✓ Parallel test suite execution
-✓ Refactoring multiple files simultaneously
-✓ Research + implementation (one agent researches, another codes)
+- Large projects with independent modules
+- Parallel test suite execution
+- Refactoring multiple files simultaneously
+- Research + implementation (one agent researches, another codes)
+
+### When to Use Puppeteer
+
+- Ecosystem projects with multiple repositories
+- Monorepos with independent services
+- Projects where each component has its own development conventions
+- When you want child agents to have project-specific context (LTM, instructions)
 
 ### When NOT to Use
 
-✗ Single file edits (overhead not worth it)
-✗ Sequential dependent tasks (use single agent)
-✗ Simple one-liners
+- Single file edits (overhead not worth it)
+- Sequential dependent tasks (use single agent)
+- Simple one-liners
 
 ### Coordination Tips
 
@@ -336,19 +556,30 @@ The broker starts automatically when you spawn a sub-agent. It runs as a separat
 4. Use oneshot mode (default) for focused single tasks; persistent mode for long-running agents
 5. Monitor `/subagent inbox` for questions - agents send messages when they need decisions
 6. Broadcast important updates to all agents with `/subagent broadcast <message>`
-
-### Oneshot Agent Behavior
-
-When you use `/subagent spawn <task>`, agents run in oneshot mode by default: they receive the task via `--input`, complete it, send a completion message to the broker, then exit. Key characteristics:
-
-- **Iteration limit:** 75 iterations maximum (non-interactive mode default)
-- **Completion message:** Agent sends a message to the parent's inbox when done
-- **Model:** Defaults to `gpt-5-mini` unless `--model` is specified
-- **No terminal:** Agent runs headless with no TTY; spinner is disabled
+7. Use `--project` for child projects with `.clio/` context, `--dir` for arbitrary directories
 
 ---
 
 ## Testing
+
+### Unit Tests
+
+```bash
+# Broker tests (27 subtests including status relay)
+perl -I./lib tests/unit/test_broker.pl
+
+# Host protocol tests (37 tests including broker relay)
+perl -I./lib tests/unit/test_host_protocol.pl
+
+# Puppeteer topology tests (11 subtests)
+perl -I./lib tests/unit/test_puppeteer.pl
+
+# SubAgent command parsing tests (11 subtests)
+perl -I./lib tests/unit/test_subagent_commands.pl
+
+# Client API tests
+perl -I./lib tests/unit/test_client.pl
+```
 
 ### Integration Tests
 
@@ -366,26 +597,17 @@ perl -I./lib tests/integration/test_collaborative_team.pl
 ### Manual Testing
 
 ```bash
-# Start CLIO
+# Start CLIO in a project with child directories
 ./clio --new
 
-# Spawn persistent agent
-/subagent spawn "create scratch/test.txt with content 'hello'" --persistent
+# Check detected topology
+/subagent projects
 
-# Check inbox (should see completion message)
+# Spawn project-scoped agent
+/subagent spawn "run tests" --project ChildProject
+
+# Check inbox for completion
 /subagent inbox
-
-# Send new task to same agent
-/subagent send agent-1 "now create scratch/test2.txt"
-
-# View discoveries
-/subagent discoveries
-```
-
-### Run Demo
-
-```bash
-perl tests/integration/demo_multi_agent_system.pl
 ```
 
 ---
@@ -405,8 +627,18 @@ All messages are newline-delimited JSON:
 {"type": "register", "id": "agent-1", "task": "Fix bug"}
 {"type": "request_file_lock", "files": ["lib/Module.pm"], "mode": "write"}
 {"type": "lock_granted", "files": ["lib/Module.pm"], "lock_id": 1}
-{"type": "discovery", "content": "Pattern found", "category": "pattern"}
+{"type": "status_update", "agent_id": "agent-1", "state": "tools", "tool": "file_operations"}
+{"type": "poll_status_updates"}
+{"type": "status_updates", "updates": [...], "count": 2}
 ```
+
+### Environment Variables
+
+| Variable | Purpose |
+|----------|---------|
+| `CLIO_HOST_PROTOCOL` | Enables OSC event emission (set by host app) |
+| `CLIO_PUPPETEER` | Set on child agents to indicate delegated context |
+| `CLIO_PARENT_SESSION` | Session ID of the spawning parent |
 
 ### Dependencies
 
@@ -422,6 +654,7 @@ All messages are newline-delimited JSON:
 - **Socket I/O:** <1ms latency (shared memory)
 - **Lock requests:** <5ms (no blocking)
 - **Broker overhead:** Minimal (<1% CPU)
+- **Status relay:** Buffered, polled by primary (no real-time push needed)
 - **Scalability:** Tested with 10 concurrent agents
 
 ### Security
@@ -430,44 +663,85 @@ All messages are newline-delimited JSON:
 - File permissions (0777 - writable by same user)
 - Process isolation (fork-based agents)
 - No sensitive data in messages
+- **Authorization relay** for security prompts (see below)
 
 ---
 
-## Troubleshooting
+## Authorization Relay
 
-### Broker not starting
+Sub-agents run headless (no TTY) so they cannot display interactive security prompts. When a child agent encounters a security-gated operation - risky shell commands, script creation with flagged content, or URL fetches requiring confirmation - the **Authorization Relay** routes the request to the primary session where the user can respond.
 
-```bash
-# Check if socket exists
-ls -la /dev/shm/clio/  # or /tmp/clio on macOS
+### Flow
 
-# Check broker log
-tail -f /tmp/clio-broker-test.log
+```
+Child agent tries risky operation
+  -> Tool detects no TTY, checks for broker_client
+  -> AuthorizationRelay sends authorization_request through broker
+  -> Broker queues request in user inbox
+  -> Primary session polls inbox, displays security prompt
+  -> User responds: (y)es once | (a)llow session | (n)o deny
+  -> Response flows back through broker to child agent
+  -> Child tool receives approval/denial, continues or aborts
 ```
 
-### Agent can't connect
+### Architecture
 
-```bash
-# Verify broker is running
-ps aux | grep broker
-
-# Check socket permissions
-ls -la /dev/shm/clio/broker-*.sock
+```
++------------------+     authorization_request     +--------+
+| Child Agent      | ---------------------------> | Broker  |
+| (no TTY)         | <--------------------------- |        |
+|                  |     authorization_response    |        |
+| AuthRelay -----> |                               |        |
+| TerminalOps      |                               |        |
+| FileOps          |                               |        |
+| WebOps           |                               |        |
++------------------+                               +--------+
+                                                      |  ^
+                                              inbox   |  |  response
+                                                      v  |
+                                                  +--------+
+                                                  | Primary |
+                                                  | Session |
+                                                  | (TTY)   |
+                                                  +--------+
 ```
 
-### Lock not released
+### Components
 
-- Automatic on disconnect (agent crash)
-- Timeout after 120 seconds (configurable)
+| Component | File | Role |
+|-----------|------|------|
+| `AuthorizationRelay` | `lib/CLIO/Security/AuthorizationRelay.pm` | Client-side relay (child agent) |
+| `Broker` | `lib/CLIO/Coordination/Broker.pm` | Routes requests/responses |
+| `Client` | `lib/CLIO/Coordination/Client.pm` | Transport methods |
+| `Chat` | `lib/CLIO/UI/Chat.pm` | Displays prompts, sends responses |
+| `WorkflowOrchestrator` | `lib/CLIO/Core/WorkflowOrchestrator.pm` | Polls for auth requests between tools |
+
+### Covered Security Prompts
+
+| Tool | Prompt Function | Category |
+|------|-----------------|----------|
+| TerminalOperations | `_prompt_command_confirmation` | `command_execution` |
+| FileOperations | `_prompt_script_confirmation` | `script_creation` |
+| WebOperations | `_prompt_url_confirmation` | `web_fetch` |
+
+### Behavior
+
+- **Timeout:** 60 seconds (configurable). If no response, the operation is denied.
+- **Session grants:** When the user selects "(a)llow session", the grant is stored in the child agent's process (same as interactive mode).
+- **Fallback:** If no broker is connected, operations are denied (same as pre-relay behavior).
+- **Cleanup:** Pending requests are cleaned up when a child agent disconnects.
+- **Polling:** The primary session checks for auth requests both in the input loop and between tool executions.
 
 ---
 
 ## See Also
 
+- [FEATURES.md](FEATURES.md) - Feature overview (sections 11, 16, 21)
+- [ARCHITECTURE.md](ARCHITECTURE.md) - System architecture
+- [REMOTE_EXECUTION.md](REMOTE_EXECUTION.md) - Remote agent execution
+- [USER_GUIDE.md](USER_GUIDE.md) - User documentation
 - [AGENTS.md](../AGENTS.md) - Development reference
-- [docs/ARCHITECTURE.md](ARCHITECTURE.md) - System architecture
-- [docs/USER_GUIDE.md](USER_GUIDE.md) - User documentation
 
 ---
 
-*Last updated: 2026-02-08*
+*Last updated: 2026-04-14*

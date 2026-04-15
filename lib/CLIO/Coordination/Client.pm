@@ -442,6 +442,39 @@ sub get_rate_limit_status {
     };
 }
 
+# Send a status_update to the broker for OSC forwarding to primary agent
+# Used by child agents in puppeteer mode to report their state
+sub send_status_update {
+    my ($self, %args) = @_;
+    
+    my $msg = {
+        type     => 'status_update',
+        agent_id => $self->{agent_id},
+        state    => $args{state} || 'unknown',
+    };
+    $msg->{tool}    = $args{tool}    if $args{tool};
+    $msg->{message} = $args{message} if $args{message};
+    
+    # Fire-and-forget (don't block on ack)
+    return $self->send($msg);
+}
+
+# Poll the broker for status_updates from child agents
+# Used by primary agent to collect updates for OSC re-emission
+sub poll_status_updates {
+    my ($self) = @_;
+    
+    my $result = $self->send_and_wait({
+        type => 'poll_status_updates',
+    }, 2);
+    
+    if ($result && $result->{type} eq 'status_updates') {
+        return $result->{updates} || [];
+    }
+    
+    return [];
+}
+
 sub wait_for_api_slot {
     my ($self, $max_wait) = @_;
     
@@ -479,22 +512,131 @@ sub wait_for_api_slot {
 
 # === End API Rate Limiting Methods ===
 
+# === Authorization Relay Methods ===
+
+# Send an authorization request through the broker and wait for user response
+# Used by child agents when they hit a security prompt with no TTY
+sub request_authorization {
+    my ($self, %args) = @_;
+    
+    my $result = $self->send_and_wait({
+        type        => 'authorization_request',
+        request_id  => $args{request_id},
+        agent_id    => $args{agent_id} || $self->{agent_id},
+        category    => $args{category},
+        description => $args{description},
+        risk_level  => $args{risk_level},
+        flags       => $args{flags},
+        options     => $args{options},
+    }, $args{timeout} || 60);
+    
+    return $result;
+}
+
+# Send an authorization response back through the broker
+# Used by primary session after getting user input
+sub send_authorization_response {
+    my ($self, %args) = @_;
+    
+    return $self->send_and_wait({
+        type        => 'authorization_response',
+        request_id  => $args{request_id},
+        approved    => $args{approved},
+        grant_type  => $args{grant_type},
+    }, 5);
+}
+
+# === End Authorization Relay Methods ===
+
+# === Activity Streaming Methods ===
+
+# Send a tool activity event to the broker
+# Used by child agents to stream tool execution events for real-time monitoring
+sub send_activity {
+    my ($self, $action, $tool, $detail) = @_;
+
+    my $msg = {
+        type      => 'activity_stream',
+        agent_id  => $self->{agent_id},
+        action    => $action || 'unknown',
+    };
+    $msg->{tool_name} = $tool   if defined $tool;
+    $msg->{detail}    = $detail if defined $detail;
+
+    # Fire-and-forget (don't block on ack)
+    return $self->send($msg);
+}
+
+# Poll the broker for accumulated activity log entries
+# Used by primary agent to collect tool events from all child agents
+sub poll_activity {
+    my ($self) = @_;
+
+    my $result = $self->send_and_wait({
+        type => 'poll_activity',
+    }, 2);
+
+    if ($result && $result->{type} eq 'activity') {
+        return $result->{entries} || [];
+    }
+
+    return [];
+}
+
+# === End Activity Streaming Methods ===
+
 
 sub send {
     my ($self, $msg) = @_;
     
-    return unless $self->{socket};
+    return 0 if $self->{_disconnected};
+    return 0 unless $self->{socket};
     
     my $json = encode_json($msg);
+    my $data = "$json\n";
     
     eval {
-        $self->{socket}->print("$json\n");
+        # Must use blocking write to ensure complete delivery.
+        # Non-blocking print() does short writes on large messages,
+        # leaving partial JSON that the broker can never parse.
+        $self->{socket}->blocking(1);
+        my $offset = 0;
+        my $len = length($data);
+        while ($offset < $len) {
+            my $written = syswrite($self->{socket}, $data, $len - $offset, $offset);
+            if (!defined $written) {
+                die "syswrite failed: $!";
+            }
+            $offset += $written;
+        }
+        $self->{socket}->blocking(0);
     };
     if ($@) {
+        eval { $self->{socket}->blocking(0) };  # Restore non-blocking on error
         CLIO::Core::Logger::log_warning("BrokerClient", "Failed to send message: $@");
         return 0;
     }
     
+    return 1;
+}
+
+sub reconnect {
+    my ($self) = @_;
+    
+    # Close old socket if any
+    eval { $self->{socket}->close() } if $self->{socket};
+    $self->{socket} = undef;
+    $self->{buffer} = '';
+    
+    # Try to reconnect
+    eval { $self->connect() };
+    if ($@) {
+        $self->{_disconnected} = 1;
+        return 0;
+    }
+    
+    $self->{_disconnected} = 0;
+    CLIO::Core::Logger::log_info("BrokerClient", "Reconnected to broker");
     return 1;
 }
 
@@ -503,10 +645,14 @@ sub send_and_wait {
     
     $timeout ||= 5;
     
+    # Circuit breaker: don't attempt if known disconnected
+    return undef if $self->{_disconnected};
+    
     $self->send($msg) or return undef;
     
     my $select = IO::Select->new($self->{socket});
     my $deadline = time() + $timeout;
+    my $reconnect_attempted = 0;
     
     while (time() < $deadline) {
         my $remaining = $deadline - time();
@@ -519,15 +665,25 @@ sub send_and_wait {
             my $bytes = $self->{socket}->sysread($data, 65536);
             
             if (!defined $bytes || $bytes == 0) {
-                CLIO::Core::Logger::log_warning("BrokerClient", "Broker disconnected");
+                # Broker disconnected - try to reconnect once only
+                if (!$reconnect_attempted && $self->reconnect()) {
+                    $reconnect_attempted = 1;
+                    $self->send($msg) or return undef;
+                    $select = IO::Select->new($self->{socket});
+                    $deadline = time() + $timeout;
+                    next;
+                }
+                # Reconnect already tried or failed - circuit breaker
+                $self->{_disconnected} = 1;
                 return undef;
             }
             
             $self->{buffer} .= $data;
             
             # Process complete messages
-            if ($self->{buffer} =~ s/^(.+?)\n//) {
+            if ($self->{buffer} =~ s/^(.+?\n)//) {
                 my $line = $1;
+                chomp $line;
                 my $response = eval { decode_json($line) };
                 return $response if $response;
             }
