@@ -1,11 +1,13 @@
 # CLIO Installation and Setup Guide
 
+> **See also:** [docs/INSTALLATION.md](docs/INSTALLATION.md) for a concise quick-start guide.
+
 ## Important: CLIO is Local-First
 
 **CLIO runs completely on your local machine.** You can:
 
 - [OK] Use CLIO entirely offline with local AI models (llama.cpp, LM Studio, SAM)
-- [OK] Optionally connect to cloud AI providers (GitHub Copilot, OpenAI, Anthropic, etc.)
+- [OK] Optionally connect to cloud AI providers (GitHub Copilot, OpenAI, etc.)
 - [OK] Switch between local and cloud providers at any time
 
 **You do NOT need the internet to use CLIO.** But if you want cloud AI, CLIO makes it easy to connect.
@@ -76,7 +78,7 @@ sudo ./install.sh --symlink /usr/bin/clio
 
 If the automatic installer doesn't work:
 
-1. **Check Perl version** (5.16+ required):
+1. **Check Perl version** (5.32+ required):
    ```bash
    perl -v
    ```
@@ -121,7 +123,6 @@ clio --new
 |----------|-------|-------|
 | **GitHub Copilot** | `/api login` then authorize in browser | Recommended, integrated OAuth |
 | **OpenAI** | `/api set provider openai` then `/api set key <key>` | Popular, many models |
-| **Anthropic** | `/api set provider anthropic` then `/api set key <key>` | Claude models |
 | **Google Gemini** | `/api set provider google` then `/api set key <key>` | Large context models |
 | **DeepSeek** | `/api set provider deepseek` then `/api set key <key>` | Cost-effective |
 | **OpenRouter** | `/api set provider openrouter` then `/api set key <key>` | Access to many models |
@@ -207,24 +208,6 @@ clio --new
 ```
 
 **Done!** CLIO now uses OpenAI.
-
-### Cloud: Anthropic
-
-**1. Get an Anthropic API key:**
-- Visit https://console.anthropic.com
-- Create new API key
-- Copy the key
-
-**2. Configure CLIO:**
-```bash
-clio --new
-: /api set provider anthropic
-: /api set key sk-ant-...  (paste your key)
-: /config save
-: /api show
-```
-
-**Done!** CLIO now uses Anthropic.
 
 ---
 
@@ -324,7 +307,7 @@ export LANG=en_US.UTF-8
 
 ### macOS
 
-Works out of the box. Perl 5.16+ is pre-installed.
+Works out of the box. Perl 5.32+ is pre-installed.
 
 ### Linux
 

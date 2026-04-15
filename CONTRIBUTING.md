@@ -6,8 +6,8 @@ Thank you for your interest in contributing to CLIO (Command Line Intelligence O
 
 ```bash
 # Clone the repository
-git clone https://github.com/fewtarius/clio.git
-cd clio
+git clone https://github.com/SyntheticAutonomicMind/CLIO.git
+cd CLIO
 
 # Check dependencies (pure Perl, minimal requirements)
 ./check-deps
