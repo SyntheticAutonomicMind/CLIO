@@ -86,7 +86,7 @@ Terminal Output (with color/theme)
 | `lib/CLIO/Memory/` | Context/memory system (YaRN, TokenEstimator) |
 | `lib/CLIO/Profile/` | User personality profile (Analyzer, Manager) |
 | `lib/CLIO/Protocols/` | Complex workflows (Architect, Editor, Puppeteer) |
-| `lib/CLIO/Providers/` | Direct API providers (Anthropic, Google) |
+| `lib/CLIO/Providers/` | Direct API providers (Google) |
 | `lib/CLIO/Coordination/` | Multi-agent coordination (Broker, Client) |
 | `lib/CLIO/MCP/` | Model Context Protocol (servers, transports, OAuth) |
 | `lib/CLIO/Security/` | Auth/authz |
@@ -179,7 +179,7 @@ log_error('ModuleName', 'something failed: %s', $error);
 | `CLIO::UI::Commands::` | Slash command handlers | API, Session, Config, Project |
 | `CLIO::Session::` | Session management | Manager, State, TodoStore, ToolResultStore |
 | `CLIO::Memory::` | Context/memory | ShortTerm, LongTerm, YaRN, TokenEstimator |
-| `CLIO::Providers::` | Direct API providers | Anthropic, Google, Base |
+| `CLIO::Providers::` | Direct API providers | Google, Base |
 | `CLIO::Coordination::` | Multi-agent coordination | Broker, Client |
 | `CLIO::MCP::` | Model Context Protocol | Manager, Client, Transport::Stdio, Auth::OAuth |
 | `CLIO::Profile::` | User profiling | Analyzer, Manager |

@@ -55,7 +55,6 @@ All `/api set` commands save globally. Add `--session` to override for the curre
 ```bash
 /api set model gpt-4.1 --session       # This session only
 /api set provider llama.cpp --session   # This session only
-```
 
 # Save configuration
 /config save

@@ -27,22 +27,23 @@ This document is the deep reference - the place to understand the detailed capab
 3. [AI Providers](#3-ai-providers)
 4. [Session Management](#4-session-management)
 5. [Memory System](#5-memory-system)
-5b. [User Profile](#5b-user-profile)
-6. [Context Management](#6-context-management)
-7. [Slash Commands](#7-slash-commands)
-8. [Hashtag Context Injection](#8-hashtag-context-injection)
-9. [Custom Instructions](#9-custom-instructions)
-10. [Skills System](#10-skills-system)
-11. [Multi-Agent Coordination](#11-multi-agent-coordination)
-12. [Remote Execution](#12-remote-execution)
-13. [MCP Integration](#13-mcp-integration)
-14. [Security](#14-security)
-15. [Themes and Styles](#15-themes-and-styles)
-16. [Protocols](#16-protocols)
-17. [Undo System](#17-undo-system)
-18. [Billing and Usage Tracking](#18-billing-and-usage-tracking)
-19. [How It All Comes Together](#19-how-it-all-comes-together)
-20. [OpenSpec Integration](#20-openspec-integration)
+6. [User Profile](#6-user-profile)
+7. [Context Management](#7-context-management)
+8. [Slash Commands](#8-slash-commands)
+9. [Hashtag Context Injection](#9-hashtag-context-injection)
+10. [Custom Instructions](#10-custom-instructions)
+11. [Skills System](#11-skills-system)
+12. [Multi-Agent Coordination](#12-multi-agent-coordination)
+13. [Remote Execution](#13-remote-execution)
+14. [MCP Integration](#14-mcp-integration)
+15. [Security](#15-security)
+16. [Themes and Styles](#16-themes-and-styles)
+17. [Protocols](#17-protocols)
+18. [Undo System](#18-undo-system)
+19. [Billing and Usage Tracking](#19-billing-and-usage-tracking)
+20. [Host Application Protocol](#20-host-application-protocol)
+21. [How It All Comes Together](#21-how-it-all-comes-together)
+22. [OpenSpec Integration](#22-openspec-integration)
 
 ---
 
@@ -410,7 +411,7 @@ This finds relevant conversations from past sessions, even if the current sessio
 
 ---
 
-## 5b. User Profile
+## 6. User Profile
 
 CLIO can learn your working style and personalize collaboration across all projects and sessions.
 
@@ -456,7 +457,7 @@ A typical profile includes:
 
 ---
 
-## 6. Context Management
+## 7. Context Management
 
 CLIO manages a limited context window (the amount of conversation the AI can "see" at once). This is critical for long sessions. For the full technical details, see [Memory Architecture](MEMORY.md).
 
@@ -494,7 +495,7 @@ CLIO estimates token counts using a learned character-to-token ratio that calibr
 
 ---
 
-## 7. Slash Commands
+## 8. Slash Commands
 
 CLIO has 40+ slash commands organized by category. Type `/help` for the full list.
 
@@ -613,7 +614,7 @@ These send structured prompts to the AI:
 
 ---
 
-## 8. Hashtag Context Injection
+## 9. Hashtag Context Injection
 
 Hashtags let you inject file contents, directory structures, or other context directly into your messages.
 
@@ -644,7 +645,7 @@ The AI sees the full file content in its context and can reference it directly.
 
 ---
 
-## 9. Custom Instructions
+## 10. Custom Instructions
 
 Every project can have custom instructions that tell CLIO how to work with that specific codebase.
 
@@ -687,7 +688,7 @@ Or use the `/init` command to have the AI generate instructions based on your co
 
 ---
 
-## 10. Skills System
+## 11. Skills System
 
 Skills are reusable prompt templates. Instead of typing the same complex instructions repeatedly, save them as skills and invoke them by name.
 
@@ -735,7 +736,7 @@ Skills are stored per-project in `.clio/skills/`. You can share them across team
 
 ---
 
-## 11. Multi-Agent Coordination
+## 12. Multi-Agent Coordination
 
 CLIO can spawn sub-agents - independent AI processes that work in parallel on different tasks. Agents coordinate through a broker, communicate via messages, and report status through OSC events when running inside a host application.
 
@@ -803,7 +804,7 @@ Sub-agents aren't just independent processes - they coordinate:
 
 ---
 
-## 12. Remote Execution
+## 13. Remote Execution
 
 CLIO can SSH into remote machines, deploy itself, run an AI task, and return the results.
 
@@ -858,7 +859,7 @@ The `execute_parallel` operation runs the same task on multiple devices at once 
 
 ---
 
-## 13. MCP Integration
+## 14. MCP Integration
 
 The [Model Context Protocol](https://modelcontextprotocol.io) (MCP) lets CLIO connect to external tool servers. This extends CLIO's capabilities beyond its built-in tools.
 
@@ -899,7 +900,7 @@ CLIO connects to MCP servers via stdio or HTTP transport. Tools from MCP servers
 
 ---
 
-## 14. Security
+## 15. Security
 
 ### Path Authorization
 
@@ -968,7 +969,7 @@ When invisible characters are detected, CLIO reports which characters were found
 
 ---
 
-## 15. Themes and Styles
+## 16. Themes and Styles
 
 CLIO separates **color** (themes) from **layout** (styles), giving you full control over appearance.
 
@@ -1040,7 +1041,7 @@ CLIO renders markdown in the terminal with full support for:
 
 ---
 
-## 16. Protocols
+## 17. Protocols
 
 Protocols are higher-level analysis frameworks that combine multiple tools for specific tasks. They're used internally by the AI and through custom instructions.
 
@@ -1057,7 +1058,7 @@ Protocols are invoked automatically when the AI determines they're needed, or ca
 
 ---
 
-## 17. Undo System
+## 18. Undo System
 
 CLIO automatically tracks every file change made by the AI agent, giving you instant undo capability at any time.
 
@@ -1094,7 +1095,7 @@ Changes made by **shell commands** (`terminal_operations`) are not tracked. If t
 
 ---
 
-## 18. Billing and Usage Tracking
+## 19. Billing and Usage Tracking
 
 CLIO tracks token usage and costs across providers:
 
@@ -1112,7 +1113,7 @@ For GitHub Copilot, CLIO tracks premium request quotas and warns when approachin
 
 ---
 
-## 21. Host Application Protocol
+## 20. Host Application Protocol
 
 When CLIO is embedded inside a GUI application, it emits structured events via OSC escape sequences that the host intercepts to drive native UI elements.
 
@@ -1175,7 +1176,7 @@ The host application's terminal title callback intercepts sequences starting wit
 
 ---
 
-## 19. How It All Comes Together
+## 21. How It All Comes Together
 
 CLIO's power comes from how these components integrate. Here's what happens during a typical session:
 
@@ -1268,7 +1269,7 @@ The result is an AI assistant that gets smarter with every session, works autono
 
 ---
 
-## 20. OpenSpec Integration
+## 22. OpenSpec Integration
 
 CLIO has native support for [OpenSpec](https://github.com/Fission-AI/OpenSpec), a spec-driven development framework that helps you and the AI agree on what to build before any code is written.
 
