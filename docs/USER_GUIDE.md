@@ -975,7 +975,9 @@ The AI generates a targeted patch with context anchors, making changes precise a
 
 ### Multi-Agent Coordination
 
-**NEW!** CLIO now supports spawning multiple AI agents that work in parallel while coordinating to prevent conflicts.
+CLIO supports spawning multiple AI agents that work in parallel while coordinating to prevent conflicts.
+
+**Puppeteer Mode:** If your working directory contains child projects (subdirectories with `.clio/`), CLIO activates puppeteer mode - orchestrating work across multiple repositories from a single session. See [Puppeteer Mode](PUPPETEER_MODE.md) for the full guide.
 
 **Sub-Agent Commands** (`/subagent` or `/agent`):
 
