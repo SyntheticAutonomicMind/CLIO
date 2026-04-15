@@ -28,11 +28,11 @@ sub ok {
         { role => 'user', content => 'Help me design a board layout' },
         { role => 'assistant', content => 'Sure, let me work on that.' },
         { role => 'assistant', content => '', tool_calls => [
-            { id => 'tc_1', function => { name => 'user_collaboration', arguments => '{"operation":"request_input","message":"Here is a 24-column board layout. What do you think?"}' } }
+            { id => 'tc_1', function => { name => 'interact', arguments => '{"operation":"request_input","message":"Here is a 24-column board layout. What do you think?"}' } }
         ]},
         { role => 'tool', tool_call_id => 'tc_1', content => 'Can we abbreviate the space names?' },
         { role => 'assistant', content => '', tool_calls => [
-            { id => 'tc_2', function => { name => 'user_collaboration', arguments => '{"operation":"request_input","message":"Good idea! GO|MA|CC|BA format?"}' } }
+            { id => 'tc_2', function => { name => 'interact', arguments => '{"operation":"request_input","message":"Good idea! GO|MA|CC|BA format?"}' } }
         ]},
         { role => 'tool', tool_call_id => 'tc_2', content => 'We may not fit a separator in 24 chars.' },
     );

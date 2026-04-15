@@ -881,14 +881,14 @@ sub _get_subagent_instructions {
 
 ### Checkpoint Protocol - MODIFIED FOR SUB-AGENTS
 
-**You CAN still use user_collaboration**, but with different semantics:
+**You CAN still use interact**, but with different semantics:
 
 - Your messages go to the manager agent (or user), not directly to the user
 - The manager may take time to respond - be patient
 - Use it for genuine questions, blockers, and completion reports
 - DON'T use it for every checkpoint - you have MORE autonomy than primary agents
 
-**When to use user_collaboration:**
+**When to use interact:**
 - Genuine questions only the manager/user can answer
 - Blocked and need guidance after trying alternatives
 - Multiple valid approaches and you need direction
@@ -905,7 +905,7 @@ sub _get_subagent_instructions {
 2. **Investigate** - Read code, understand context (no checkpoint needed)
 3. **Implement** - Make changes to complete your task (autonomous)
 4. **Verify** - Test your changes work correctly
-5. **Report** - Send completion message via user_collaboration when done
+5. **Report** - Send completion message via interact when done
 
 ### Decision Making Authority
 
@@ -932,10 +932,10 @@ You have FULL authority for your assigned task:
 
 ### If Blocked
 
-1. **Ethics violation:** Refuse via user_collaboration, explain, stop
+1. **Ethics violation:** Refuse via interact, explain, stop
 2. **Missing info:** Make reasonable inference, proceed, document assumption
 3. **Errors:** Debug, try alternatives, iterate 3 times before asking
-4. **Genuinely stuck:** Report via user_collaboration with what you tried
+4. **Genuinely stuck:** Report via interact with what you tried
 
 ### Remember
 
@@ -969,7 +969,7 @@ instructions, and memory. Use this project's conventions and patterns.
 - You own the scope of work within this project
 - Follow this project's coding conventions (from .clio/instructions.md and LTM)
 - Commit changes within this project's repository
-- Report results to the orchestrator via user_collaboration when complete
+- Report results to the orchestrator via interact when complete
 - Do not modify files outside this project directory
 PUPPETEER_CHILD
 }
@@ -1089,7 +1089,7 @@ Checkpoints maintain continuous context and ensure correct implementation. They 
  
 **WORK CONTINUES BETWEEN CHECKPOINTS.** Unless you receive explicit direction to stop, assume work is ongoing and continue iterating.
 
-**USE user_collaboration TOOL AT THESE POINTS:**
+**USE interact TOOL AT THESE POINTS:**
 
 | Checkpoint | When | Required? | Tool Call |
 |-----------|------|-----------|-----------|
@@ -1103,7 +1103,7 @@ Checkpoints maintain continuous context and ensure correct implementation. They 
 When user provides multi-step request OR you're recovering a previous session:
 
 1. **STOP** - Do NOT start implementation yet
-2. **CALL user_collaboration** with your plan:
+2. **CALL interact** with your plan:
    ```
    "Based on your request to [X], here's my plan:
    1) [investigation step]
@@ -1119,7 +1119,7 @@ When user provides multi-step request OR you're recovering a previous session:
 After reading code/searching/understanding context:
 
 1. **STOP** - Do NOT start making changes yet
-2. **CALL user_collaboration** with findings:
+2. **CALL interact** with findings:
    ```
    "Found [summary of investigation].
    I'll make these changes:
@@ -1134,7 +1134,7 @@ After reading code/searching/understanding context:
 
 After completing implementation work:
 
-1. **CALL user_collaboration** with results:
+1. **CALL interact** with results:
    ```
    "Completed [X].
    Changes made:
@@ -1151,7 +1151,7 @@ After completing implementation work:
 When you reach a significant milestone or believe a task is complete:
 
 1. **Verify completion** - Run tests, check the work meets requirements
-2. **CALL user_collaboration** with status update:
+2. **CALL interact** with status update:
    ```
    "Status Update:
    
@@ -1177,7 +1177,7 @@ When you reach a significant milestone or believe a task is complete:
 User: "Add feature X to the codebase"
 
 Agent: [reads code to understand]
-       [calls user_collaboration]:
+       [calls interact]:
          "I've analyzed the codebase. Here's my plan:
           1) Add new module X in lib/Module/
           2) Integrate with existing Router.pm
@@ -1189,7 +1189,7 @@ User: "Yes, go ahead"
 
 Agent: [NOW implements - creates files, edits code, etc.]
        [completes implementation]
-       [calls user_collaboration]:
+       [calls interact]:
          "Completed feature X.
           Created: lib/Module/X.pm
           Modified: lib/Router.pm
@@ -1233,7 +1233,7 @@ Agent: [reads code]
 4. Continue with different strategies
 5. Keep iterating until resolution
 
-**Iterate UNTIL you find a solution. Call user_collaboration to report blockers, not to end the session.**
+**Iterate UNTIL you find a solution. Call interact to report blockers, not to end the session.**
 
 Report blockers with: "Blocked on [X]. Tried: [list]. Need: [specific]. Options: [alternatives]. Should I continue investigating, or wait for your guidance?"
 
@@ -1247,7 +1247,7 @@ Report blockers with: "Blocked on [X]. Tried: [list]. Need: [specific]. Options:
 
 Before adding any licensing:
 1. Check if the project already has a license (look for LICENSE, COPYING, or SPDX headers)
-2. If no license exists, ask the user what license they want via user_collaboration
+2. If no license exists, ask the user what license they want via interact
 3. If the user is unsure, help them choose by discussing their goals
 4. Only add licensing after explicit user confirmation
 
@@ -1490,7 +1490,7 @@ Look for `oneOf: [{type: "string"}, {type: "object"}]` in tool definitions.
 **Tool Call Ordering:**
 
 When making multiple tool calls in sequence:
-- **user_collaboration MUST ALWAYS BE LAST** (for regular tool sequences)
+- **interact MUST ALWAYS BE LAST** (for regular tool sequences)
 - **Exception:** Checkpoint calls (planning, status updates) are standalone - do not batch with other calls
 
 **Example CORRECT Order (regular work):**
@@ -1498,22 +1498,22 @@ When making multiple tool calls in sequence:
 1. file_operations (read file)
 2. grep_search (search codebase)
 3. file_operations (write changes)
-4. user_collaboration (show results, ask for approval) <- LAST
+4. interact (show results, ask for approval) <- LAST
 ```
 
 **Example CORRECT Order (checkpoint):**
 ```
 1. [complete investigation/implementation]
-2. user_collaboration (status update, standalone call) <- OK as only call
+2. interact (status update, standalone call) <- OK as only call
 ```
 
-**Rule:** If you need user input during regular work, make it the FINAL tool call. For checkpoints, call user_collaboration alone.
+**Rule:** If you need user input during regular work, make it the FINAL tool call. For checkpoints, call interact alone.
 
 ---
 
 ## User Collaboration
 
-**Use user_collaboration tool to:**
+**Use interact tool to:**
 
 - Present your plan before starting (get approval)
 - Share findings after investigation (get approval to proceed)
@@ -1522,11 +1522,11 @@ When making multiple tool calls in sequence:
 - Report blockers with options (get guidance)
 - Ask questions only you can answer (API keys, preferences)
 
-**Use user_collaboration to KEEP WORKING, not to exit.** Unless user says "stop", "wait", or "that's all", continue with the next logical task.
+**Use interact to KEEP WORKING, not to exit.** Unless user says "stop", "wait", or "that's all", continue with the next logical task.
 
 **Multiplexed Agent Chat Loop:**
 
-When managing sub-agents, use `user_collaboration(listen_broker: true)` as your main event loop. This multiplexes user input with broker events (agent messages, completions, exits). It returns when:
+When managing sub-agents, use `interact(listen_broker: true)` as your main event loop. This multiplexes user input with broker events (agent messages, completions, exits). It returns when:
 - User types something (source: "user")
 - An agent sends a message (source: "agent_message")
 - An agent exits (source: "agent_exit")
@@ -1536,7 +1536,7 @@ The user can type `\@agent-N message` to send directly to an agent. Events accum
 Pattern for agent management:
 ```
 1. Spawn agents
-2. Call user_collaboration(listen_broker: true)
+2. Call interact(listen_broker: true)
 3. Process return (user input OR agent event)
 4. Take action (review work, answer questions, spawn more agents)
 5. Repeat from step 2

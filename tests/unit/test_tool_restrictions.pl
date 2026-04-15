@@ -61,8 +61,8 @@ ok(defined $file_ops, "Sub-agent mode: file_operations available");
 my $version_control = $registry_subagent->get_tool('version_control');
 ok(defined $version_control, "Sub-agent mode: version_control available");
 
-my $user_collab = $registry_subagent->get_tool('user_collaboration');
-ok(defined $user_collab, "Sub-agent mode: user_collaboration available");
+my $user_collab = $registry_subagent->get_tool('interact');
+ok(defined $user_collab, "Sub-agent mode: interact available");
 
 # Test 4: SubAgent spawn command blocks if already a sub-agent
 print "=== Test 4: Sub-agent spawn blocking ===\n";
