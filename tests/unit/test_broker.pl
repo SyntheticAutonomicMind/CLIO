@@ -46,12 +46,29 @@ sub fresh_broker {
     return $broker;
 }
 
+# Override send_message to use MockSocket->print instead of syswrite.
+# The real send_message uses syswrite() which requires a real file descriptor;
+# our MockSocket captures messages via print() for test inspection.
+{
+    no warnings 'redefine';
+    my $orig = \&CLIO::Coordination::Broker::send_message;
+    *CLIO::Coordination::Broker::send_message = sub {
+        my ($self, $fd, $msg) = @_;
+        return unless exists $self->{clients}{$fd};
+        my $json = CLIO::Util::JSON::encode_json($msg);
+        my $socket = $self->{clients}{$fd}{socket};
+        $socket->print("$json\n");
+    };
+}
+
 # Mock a connected client by inserting into {clients} with a fake socket
 # that captures sent messages
 {
     package MockSocket;
-    sub new { bless { messages => [] }, shift }
+    sub new { bless { messages => [], _blocking => 0 }, shift }
     sub print { push @{$_[0]->{messages}}, $_[1]; 1 }
+    sub blocking { my ($self, $val) = @_; $self->{_blocking} = $val if defined $val; $self->{_blocking} }
+    sub syswrite { my ($self, $data, $len, $offset) = @_; $offset //= 0; $len //= length($data) - $offset; push @{$self->{messages}}, substr($data, $offset, $len); return $len }
     sub close { 1 }
     sub messages { @{$_[0]->{messages}} }
     sub last_message {

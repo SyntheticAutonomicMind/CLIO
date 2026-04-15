@@ -739,8 +739,6 @@ Skills are stored per-project in `.clio/skills/`. You can share them across team
 
 CLIO can spawn sub-agents - independent AI processes that work in parallel on different tasks. Agents coordinate through a broker, communicate via messages, and report status through OSC events when running inside a host application.
 
-**Puppeteer mode** extends this to multi-project orchestration. When your working directory contains child projects with `.clio/` configurations, CLIO can delegate work to any of them - each sub-agent loads the target project's instructions, LTM, and conventions automatically. See [Puppeteer Mode](PUPPETEER_MODE.md).
-
 ### How It Works
 
 ```
@@ -755,39 +753,20 @@ Both work simultaneously, sending progress messages back to your session.
 
 ### Puppeteer Mode
 
-When a project contains git submodules or child directories with their own `.clio/` configurations, CLIO detects the topology automatically and can delegate work to those projects. Each child agent starts inside the project's directory and loads its own LTM, instructions, and memory.
+When your working directory contains child projects (subdirectories with their own `.clio/` configurations), CLIO activates puppeteer mode. You can delegate work to any child project - each sub-agent loads the target project's instructions, LTM, and conventions automatically.
 
 ```
-You: Run the SAM test suite and fix any failures
+You: Fix the authentication bug in the backend
 
 CLIO (in ecosystem project):
-  1. Detects SAM as a child project with .clio/ context
-  2. Spawns agent in SAM/ directory
-  3. Child agent loads SAM's LTM and instructions
-  4. Child agent runs tests, fixes failures
+  1. Detects backend as a child project with .clio/ context
+  2. Spawns agent in backend/ directory
+  3. Child agent loads backend's LTM and instructions
+  4. Child agent investigates, fixes, tests
   5. Reports results back to primary session
 ```
 
-This is useful for monorepos, multi-project ecosystems, and any setup where you manage several repositories that each have their own development conventions.
-
-**Project-scoped spawning:**
-
-```
-# Via /subagent command
-/subagent spawn "run tests and fix failures" --project SAM
-
-# Via arbitrary directory
-/subagent spawn "check dependencies" --dir ../external-project
-
-# Via AI tool call
-agent_operations(operation: "spawn", task: "...", working_dir: "./SAM")
-```
-
-**See what's available:**
-
-```
-/subagent projects     # Lists detected child projects with capabilities
-```
+This is useful for monorepos, multi-project ecosystems, and any setup where you manage several repositories that each have their own development conventions. See the full [Puppeteer Mode Guide](PUPPETEER_MODE.md) for setup instructions, model selection strategies, real-world examples, and troubleshooting.
 
 ### Coordination Features
 
