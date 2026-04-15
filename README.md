@@ -313,7 +313,7 @@ For more examples, see [docs/USER_GUIDE.md](docs/USER_GUIDE.md#usage-examples).
 | [Automation](docs/AUTOMATION.md) | CLIO-helper daemon and CI/CD integration |
 | [Style Guide](docs/STYLE_GUIDE.md) | Color themes and customization |
 | [Performance](docs/PERFORMANCE.md) | Benchmarks and optimization |
-| [Context Management](docs/CONTEXT_MANAGEMENT.md) | How CLIO handles long sessions and context limits |
+| [Context Management](docs/PERFORMANCE.md#context-window-management) | How CLIO handles long sessions and context limits |
 | [Security](docs/SECURITY.md) | Security model and secret redaction |
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -351,7 +351,7 @@ CLIO is a small open source project with no marketing budget. If it's been usefu
 
 ## Contributing
 
-Contributions welcome! See [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md) for guidelines.
+Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for quick start and [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md) for detailed guidelines.
 
 ```bash
 # Fork and clone

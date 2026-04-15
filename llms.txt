@@ -80,4 +80,4 @@ perl -I./lib tests/unit/test_feature.pl
 
 ## Dependencies
 
-Core Perl 5.32+ with minimal CPAN modules. See `check-deps` for verification.
+Core Perl 5.32+ with no external dependencies. See `check-deps` for verification.
