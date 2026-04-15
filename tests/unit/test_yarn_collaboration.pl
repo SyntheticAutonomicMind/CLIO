@@ -26,11 +26,11 @@ sub ok {
     my @messages = (
         { role => 'user', content => 'Help me design a board game layout' },
         { role => 'assistant', content => '', tool_calls => [
-            { id => 'tc_1', function => { name => 'user_collaboration', arguments => '{"operation":"request_input","message":"Here is my proposed layout:\\nGO|MA|CC|BA\\nWhat do you think?"}' } }
+            { id => 'tc_1', function => { name => 'interact', arguments => '{"operation":"request_input","message":"Here is my proposed layout:\\nGO|MA|CC|BA\\nWhat do you think?"}' } }
         ]},
         { role => 'tool', tool_call_id => 'tc_1', content => 'Can we abbreviate every space? Like GO|MA|CC|BA?' },
         { role => 'assistant', content => '', tool_calls => [
-            { id => 'tc_2', function => { name => 'user_collaboration', arguments => '{"operation":"request_input","message":"Good idea! Each space abbreviated to 2 chars. Fits in 24 columns."}' } }
+            { id => 'tc_2', function => { name => 'interact', arguments => '{"operation":"request_input","message":"Good idea! Each space abbreviated to 2 chars. Fits in 24 columns."}' } }
         ]},
         { role => 'tool', tool_call_id => 'tc_2', content => 'We may not be able to use a separator and stay inside our 24 chars though.' },
     );
@@ -69,7 +69,7 @@ sub ok {
     my @messages;
     for my $i (1..8) {
         push @messages, { role => 'assistant', content => '', tool_calls => [
-            { id => "tc_multi_$i", function => { name => 'user_collaboration', arguments => qq({"operation":"request_input","message":"Question $i about design"}) } }
+            { id => "tc_multi_$i", function => { name => 'interact', arguments => qq({"operation":"request_input","message":"Question $i about design"}) } }
         ]};
         push @messages, { role => 'tool', tool_call_id => "tc_multi_$i", content => "Response $i from user" };
     }

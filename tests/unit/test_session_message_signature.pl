@@ -46,7 +46,7 @@ use Test::More;
 # Test 3: Check that NO callers use the wrong hashref-style signature
 {
     my @files_to_check = qw(
-        lib/CLIO/Tools/UserCollaboration.pm
+        lib/CLIO/Tools/Interact.pm
         lib/CLIO/UI/Chat.pm
         lib/CLIO/UI/Display.pm
         lib/CLIO/Core/WorkflowOrchestrator.pm

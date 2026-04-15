@@ -1016,7 +1016,7 @@ When you spawn sub-agents, CLIO automatically starts a coordination broker that 
 **Communication Flow:**
 
 ```
-Agent has question         -> Uses user_collaboration tool
+Agent has question         -> Uses interact tool
                            -> Question routed to broker
                            -> Appears in your inbox
 
@@ -2040,7 +2040,7 @@ For persistent configuration:
 `--enable` and `--disable` are mutually exclusive. CLI flags override config values. Disabled tools never register, so the AI agent cannot call them at all.
 
 **Use cases:**
-- **Bot deployments**: disable `user_collaboration` for non-interactive mode
+- **Bot deployments**: disable `interact` for non-interactive mode
 - **Read-only analysis**: enable only `file_operations` and `code_intelligence`
 - **Network-restricted environments**: disable `web_operations` and `remote_execution`
 - **Minimal surface area**: enable only the tools you need

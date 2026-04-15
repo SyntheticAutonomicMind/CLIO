@@ -84,7 +84,7 @@ sub new {
         max_iterations => $args{max_iterations} // 0,  # 0 = unlimited (interactive); overridden below for non-interactive
         debug => $args{debug} || 0,
         ui => $args{ui},  # Store UI reference for buffer flushing
-        spinner => $args{spinner},  # Store spinner for interactive tools (user_collaboration)
+        spinner => $args{spinner},  # Store spinner for interactive tools (interact)
         skip_custom => $args{skip_custom} || 0,  # Skip custom instructions (--no-custom-instructions)
         skip_ltm => $args{skip_ltm} || 0,        # Skip LTM injection (--no-ltm)
         non_interactive => $args{non_interactive} || 0,  # Non-interactive mode (--input flag)
@@ -128,7 +128,7 @@ sub new {
         session => $args{session},
         tool_registry => $self->{tool_registry},
         config => $args{config},  # Forward config for web search API keys
-        ui => $args{ui},  # Forward UI for user_collaboration
+        ui => $args{ui},  # Forward UI for interact
         spinner => $args{spinner},  # Forward spinner for interactive tools
         broker_client => $args{broker_client},  # Forward broker client for coordination
         api_manager => $args{api_manager},  # Forward api_manager for current model info
@@ -301,7 +301,7 @@ sub _register_default_tools {
         { name => 'web_operations',     module => 'CLIO::Tools::WebOperations' },
         { name => 'todo_operations',    module => 'CLIO::Tools::TodoList' },
         { name => 'code_intelligence',  module => 'CLIO::Tools::CodeIntelligence' },
-        { name => 'user_collaboration', module => 'CLIO::Tools::UserCollaboration' },
+        { name => 'interact', module => 'CLIO::Tools::Interact' },
         { name => 'apply_patch',        module => 'CLIO::Tools::ApplyPatch' },
     );
     
@@ -1173,7 +1173,7 @@ sub _execute_tool_round {
         
         # Skip display for internal-only operations and self-displaying tools
         my $suppress_display = ($tool_name eq 'terminal_operations' && $tool_operation eq 'validate')
-                            || ($tool_name eq 'user_collaboration');
+                            || ($tool_name eq 'interact');
         
         # In inline mode, show a bullet for every tool call.
         # In box mode, only show header on tool group transitions.
@@ -1429,9 +1429,9 @@ sub _execute_tool_round {
     }
 
     # Print newline to separate tool output from next iteration
-    # Skip if last tool was user_collaboration (its output already provides separation)
+    # Skip if last tool was interact (its output already provides separation)
     my $last_tool = @$ordered_tools ? ($ordered_tools->[-1]->{function}->{name} || '') : '';
-    if ($last_tool ne 'user_collaboration') {
+    if ($last_tool ne 'interact') {
         print "\n";
         STDOUT->flush() if STDOUT->can('flush');
     }
@@ -1446,7 +1446,7 @@ sub _execute_tool_round {
 #   3. Tool alias resolution (e.g., 'file_search' -> 'file_operations')
 #   4. Argument parsing with Anthropic XML detection
 #   5. Classification into blocking/serial/parallel categories
-#   6. Ordering: other blocking -> serial -> parallel -> user_collaboration (last)
+#   6. Ordering: other blocking -> serial -> parallel -> interact (last)
 #
 # Args:
 #   $api_response - API response hashref with tool_calls array
@@ -1685,25 +1685,25 @@ sub _prepare_tool_round {
     }
 
     # ── Phase 4: Order for execution ──────────────────────────────────
-    # user_collaboration always last
-    my @user_collaboration_tools = ();
+    # interact always last
+    my @interact_tools = ();
     my @other_blocking_tools = ();
 
     for my $tool_call (@blocking_tools) {
         my $tool_name = $tool_call->{function}->{name} || 'unknown';
-        if ($tool_name eq 'user_collaboration') {
-            push @user_collaboration_tools, $tool_call;
+        if ($tool_name eq 'interact') {
+            push @interact_tools, $tool_call;
         } else {
             push @other_blocking_tools, $tool_call;
         }
     }
 
-    my @ordered_tool_calls = (@other_blocking_tools, @serial_tools, @parallel_tools, @user_collaboration_tools);
+    my @ordered_tool_calls = (@other_blocking_tools, @serial_tools, @parallel_tools, @interact_tools);
 
     log_debug('WorkflowOrchestrator', "Execution order: " . scalar(@other_blocking_tools) . " other blocking, " .
         scalar(@serial_tools) . " serial, " .
         scalar(@parallel_tools) . " parallel, " .
-        scalar(@user_collaboration_tools) . " user_collaboration (LAST)\n");
+        scalar(@interact_tools) . " interact (LAST)\n");
 
     return {
         ordered_tools => \@ordered_tool_calls,
@@ -2415,15 +2415,15 @@ sub _handle_interrupt {
         content => 
             box_char("hhorizontal") x 3 . " USER INTERRUPT " . box_char("hhorizontal") x 3 . "\n\n" .
             "You pressed ESC to get the agent's attention.\n\n" .
-            "AGENT: Stop your current work immediately and use the user_collaboration tool to ask what I need.\n\n" .
+            "AGENT: Stop your current work immediately and use the interact tool to ask what I need.\n\n" .
             "Example:\n" .
-            "user_collaboration(operation: 'request_input', message: 'You pressed ESC - what do you need?')\n\n" .
+            "interact(operation: 'request_input', message: 'You pressed ESC - what do you need?')\n\n" .
             "The full conversation context has been preserved. I may want to:\n" .
             "- Give you new instructions\n" .
             "- Ask about your progress\n" .
             "- Change the approach\n" .
             "- Provide additional information\n\n" .
-            "Please use user_collaboration to find out."
+            "Please use interact to find out."
     };
     
     push @$messages_ref, $interrupt_message;
@@ -2904,7 +2904,7 @@ sub _extract_conversation_topic {
     my @user_messages;
     my @assistant_snippets;
 
-    # Track tool_call IDs for user_collaboration
+    # Track tool_call IDs for interact
     my %pending_collab_ids;
 
     for my $msg (@recent) {
@@ -2916,7 +2916,7 @@ sub _extract_conversation_topic {
             if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
                 for my $tc (@{$msg->{tool_calls}}) {
                     my $name = $tc->{function}{name} || '';
-                    if ($name eq 'user_collaboration' && $tc->{id}) {
+                    if ($name eq 'interact' && $tc->{id}) {
                         my $args_str = $tc->{function}{arguments} || '{}';
                         if ($args_str =~ /"message"\s*:\s*"((?:[^"\\]|\\.)*)"/s) {
                             my $q = $1;

@@ -71,7 +71,7 @@ is checked against authorization rules.
 
 **Behavior:**
 - Files in the project directory: auto-authorized
-- Files outside the project: requires user permission (via `user_collaboration`)
+- Files outside the project: requires user permission (via `interact`)
 - In sandbox mode: all access outside project directory is blocked
 
 ---

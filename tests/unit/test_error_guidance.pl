@@ -9,9 +9,9 @@ use CLIO::Core::ToolErrorGuidance;
 # Test the error guidance system
 my $guidance = CLIO::Core::ToolErrorGuidance->new();
 
-# Simulate a user_collaboration error
+# Simulate a interact error
 my $user_collab_def = {
-    name => 'user_collaboration',
+    name => 'interact',
     description => 'Request user input',
     parameters => {
         type => 'object',
@@ -42,7 +42,7 @@ print "Test 1: Missing required parameter (message)\n";
 print "-" x 80 . "\n";
 my $enhanced1 = $guidance->enhance_tool_error(
     error => 'Missing required parameter: message',
-    tool_name => 'user_collaboration',
+    tool_name => 'interact',
     tool_definition => $user_collab_def,
     attempted_params => { operation => 'request_input' }
 );
@@ -54,7 +54,7 @@ print "Test 2: Invalid operation\n";
 print "-" x 80 . "\n";
 my $enhanced2 = $guidance->enhance_tool_error(
     error => 'Unknown operation: invalid_op',
-    tool_name => 'user_collaboration',
+    tool_name => 'interact',
     tool_definition => $user_collab_def,
     attempted_params => { operation => 'invalid_op' }
 );
