@@ -737,7 +737,7 @@ Skills are stored per-project in `.clio/skills/`. You can share them across team
 
 ## 11. Multi-Agent Coordination
 
-CLIO can spawn sub-agents - independent AI processes that work in parallel on different tasks.
+CLIO can spawn sub-agents - independent AI processes that work in parallel on different tasks. Agents coordinate through a broker, communicate via messages, and report status through OSC events when running inside a host application.
 
 ### How It Works
 
@@ -751,6 +751,42 @@ CLIO spawns:
 Both work simultaneously, sending progress messages back to your session.
 ```
 
+### Puppeteer Mode
+
+When a project contains git submodules or child directories with their own `.clio/` configurations, CLIO detects the topology automatically and can delegate work to those projects. Each child agent starts inside the project's directory and loads its own LTM, instructions, and memory.
+
+```
+You: Run the SAM test suite and fix any failures
+
+CLIO (in ecosystem project):
+  1. Detects SAM as a child project with .clio/ context
+  2. Spawns agent in SAM/ directory
+  3. Child agent loads SAM's LTM and instructions
+  4. Child agent runs tests, fixes failures
+  5. Reports results back to primary session
+```
+
+This is useful for monorepos, multi-project ecosystems, and any setup where you manage several repositories that each have their own development conventions.
+
+**Project-scoped spawning:**
+
+```
+# Via /subagent command
+/subagent spawn "run tests and fix failures" --project SAM
+
+# Via arbitrary directory
+/subagent spawn "check dependencies" --dir ../external-project
+
+# Via AI tool call
+agent_operations(operation: "spawn", task: "...", working_dir: "./SAM")
+```
+
+**See what's available:**
+
+```
+/subagent projects     # Lists detected child projects with capabilities
+```
+
 ### Coordination Features
 
 Sub-agents aren't just independent processes - they coordinate:
@@ -759,24 +795,30 @@ Sub-agents aren't just independent processes - they coordinate:
 - **Git locks** serialize commit operations to prevent conflicts
 - **API rate limiting** is shared across all agents to stay within provider limits
 - **Message bus** lets agents communicate (questions, status updates, completions)
+- **Status relay** forwards agent state changes to the primary session and host apps
+- **Authorization relay** routes security prompts from headless agents to the user
 
 ### Agent Commands
 
 ```
-/agent list              # Show running agents
-/agent status <id>       # Detailed agent info
-/agent send <id> <msg>   # Send guidance to an agent
-/agent kill <id>          # Terminate an agent
-/agent killall           # Terminate all agents
+/subagent list               # Show running agents
+/subagent status <id>        # Detailed agent info
+/subagent send <id> <msg>    # Send guidance to an agent
+/subagent kill <id>           # Terminate an agent
+/subagent killall            # Terminate all agents
+/subagent inbox              # View messages from agents
+/subagent projects           # List detected child projects
 ```
 
 ### Agent Lifecycle
 
 1. Main session spawns agents with specific tasks
 2. Each agent runs as a separate process with its own AI session
-3. Agents poll an inbox for messages and send updates back
-4. When complete, agents report results
-5. Main session verifies the work
+3. In Puppeteer mode, the agent starts in the target project's directory and loads its `.clio/` context
+4. Agents poll an inbox for messages and send updates back
+5. Status changes relay to the primary session and host apps via OSC events
+6. When complete, agents report results
+7. Main session verifies the work
 
 ---
 
@@ -1028,6 +1070,7 @@ Protocols are higher-level analysis frameworks that combine multiple tools for s
 | **Validate** | Comprehensive validation - syntax checking, style compliance, security scanning |
 | **RepoMap** | Repository structure analysis - builds a map of your codebase |
 | **Recall** | Historical context retrieval - finds relevant past work |
+| **Puppeteer** | Multi-project orchestration - detects child projects and delegates work to project-scoped agents |
 
 Protocols are invoked automatically when the AI determines they're needed, or can be triggered through natural language requests.
 
@@ -1090,23 +1133,64 @@ For GitHub Copilot, CLIO tracks premium request quotas and warns when approachin
 
 ## 21. Host Application Protocol
 
-When CLIO is embedded inside a GUI application, it can emit structured events via OSC escape sequences that the host intercepts to drive native UI elements.
+When CLIO is embedded inside a GUI application, it emits structured events via OSC escape sequences that the host intercepts to drive native UI elements.
 
 **Enable host protocol:**
 ```bash
 export CLIO_HOST_PROTOCOL=1
 ```
 
-**Events emitted:**
-- `status` - Agent state changes (thinking, streaming, tools, idle)
-- `tool_start` / `tool_end` - Tool execution lifecycle with descriptions
-- `spinner_start` / `spinner_stop` - Activity indicator events
-- `session` - Session metadata (ID, title, model)
-- `tokens` - Real-time token usage updates
-- `todo` - Todo list state changes
-- `title` - Conversation title updates
+### Core Events
 
-Events are encoded as `\033]0;clio:<event_type>:<json_payload>\007` in OSC 0 sequences. The host application's terminal title callback intercepts and parses these. Zero overhead when not in host mode - the module is a no-op when `CLIO_HOST_PROTOCOL` is unset.
+| Event Type | Description |
+|-----------|-------------|
+| `status` | Agent state changes (thinking, streaming, tools, idle) |
+| `tool` | Tool execution lifecycle (start/end with operation details) |
+| `spinner` | Activity indicator events (start/stop) |
+| `session` | Session metadata (ID, title, model) |
+| `tokens` | Real-time token usage updates |
+| `todo` | Todo list state changes |
+| `title` | Conversation title updates |
+
+### Agent Events
+
+These events track sub-agent and remote execution lifecycle, enabling host apps to render agent hierarchies and real-time status.
+
+| Event Type | Actions | Description |
+|-----------|---------|-------------|
+| `agent` | spawn, status, message, exit | Sub-agent lifecycle - spawned, state changes, inbox messages, termination |
+| `remote` | start, progress, complete, error | Remote execution lifecycle on SSH targets |
+| `tree` | (snapshot) | Full agent tree topology - emitted on any topology change so the host can render hierarchy |
+
+### Agent Status Relay
+
+When sub-agents run in Puppeteer mode (project-scoped child agents), their status changes are relayed back to the primary session through the coordination broker:
+
+```
+Child Agent (working in SAM/)
+  |-- HostProtocol detects broker relay mode
+  |-- Status changes (thinking, tools, idle) sent to broker
+  |
+Primary Session
+  |-- Polls broker for status updates
+  |-- Re-emits as clio:agent status events
+  |
+Host Application (MIRA, etc.)
+  |-- Receives clio:agent events
+  |-- Renders agent hierarchy with live status
+```
+
+This works transparently - the child agent doesn't need `CLIO_HOST_PROTOCOL` set. The broker relay handles forwarding.
+
+### Wire Format
+
+Events are encoded as OSC 0 title-change sequences with a `clio:` prefix:
+
+```
+\033]0;clio:<event_type>:<json_payload>\007
+```
+
+The host application's terminal title callback intercepts sequences starting with `clio:` and parses the JSON payload. Zero overhead when not in host mode - the module is a no-op when `CLIO_HOST_PROTOCOL` is unset.
 
 ---
 

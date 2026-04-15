@@ -514,6 +514,117 @@ subtest 'handle_message routes correctly' => sub {
     is($resp->{type}, 'error', 'handle_message returns error for unknown type');
 };
 
+# ============================================================================
+# 9. Status update relay (Puppeteer support)
+# ============================================================================
+
+subtest 'Status update storage and polling' => sub {
+    my $broker = fresh_broker();
+    my $sock_agent = register_agent($broker, 10, 'agent-1', 'test task');
+    my $sock_primary = register_agent($broker, 20, 'primary', 'manage');
+    
+    # Agent sends status update
+    $sock_agent->clear;
+    $broker->handle_status_update(10, {
+        agent_id => 'agent-1',
+        state    => 'thinking',
+        tool     => 'file_operations',
+    });
+    my $resp = $sock_agent->last_message;
+    is($resp->{type}, 'ack', 'Status update acknowledged');
+    ok($resp->{success}, 'Success flag set');
+    
+    # Send another update
+    $broker->handle_status_update(10, {
+        agent_id => 'agent-1',
+        state    => 'tools',
+        tool     => 'terminal_operations',
+        message  => 'running tests',
+    });
+    
+    # Primary polls for updates
+    $sock_primary->clear;
+    $broker->handle_poll_status_updates(20);
+    $resp = $sock_primary->last_message;
+    
+    is($resp->{type}, 'status_updates', 'Poll returns status_updates type');
+    is($resp->{count}, 2, 'Two updates accumulated');
+    is($resp->{updates}[0]{agent_id}, 'agent-1', 'First update has correct agent_id');
+    is($resp->{updates}[0]{state}, 'thinking', 'First update state correct');
+    is($resp->{updates}[0]{tool}, 'file_operations', 'First update tool correct');
+    is($resp->{updates}[1]{state}, 'tools', 'Second update state correct');
+    is($resp->{updates}[1]{message}, 'running tests', 'Second update message correct');
+    ok($resp->{updates}[0]{timestamp}, 'Update has timestamp');
+};
+
+subtest 'Status updates drain on poll' => sub {
+    my $broker = fresh_broker();
+    my $sock = register_agent($broker, 10, 'agent-1', 'test');
+    my $sock_primary = register_agent($broker, 20, 'primary', 'manage');
+    
+    # Send an update
+    $broker->handle_status_update(10, {
+        agent_id => 'agent-1',
+        state    => 'idle',
+    });
+    
+    # First poll gets the update
+    $sock_primary->clear;
+    $broker->handle_poll_status_updates(20);
+    my $resp = $sock_primary->last_message;
+    is($resp->{count}, 1, 'First poll has 1 update');
+    
+    # Second poll is empty (drained)
+    $sock_primary->clear;
+    $broker->handle_poll_status_updates(20);
+    $resp = $sock_primary->last_message;
+    is($resp->{count}, 0, 'Second poll is empty (drained)');
+    is_deeply($resp->{updates}, [], 'Updates array is empty');
+};
+
+subtest 'Status updates capped at 100' => sub {
+    my $broker = fresh_broker();
+    my $sock = register_agent($broker, 10, 'agent-1', 'test');
+    my $sock_primary = register_agent($broker, 20, 'primary', 'manage');
+    
+    # Send 120 updates
+    for my $i (1..120) {
+        $broker->handle_status_update(10, {
+            agent_id => 'agent-1',
+            state    => "state-$i",
+        });
+    }
+    
+    # Poll should only get the last 100
+    $sock_primary->clear;
+    $broker->handle_poll_status_updates(20);
+    my $resp = $sock_primary->last_message;
+    is($resp->{count}, 100, 'Capped at 100 updates');
+    is($resp->{updates}[0]{state}, 'state-21', 'Oldest retained is state-21');
+    is($resp->{updates}[99]{state}, 'state-120', 'Newest is state-120');
+};
+
+subtest 'handle_message routes status operations' => sub {
+    my $broker = fresh_broker();
+    my $sock = register_agent($broker, 10, 'agent-1', 'test');
+    
+    # Route status_update through handle_message
+    $sock->clear;
+    $broker->handle_message(10, {
+        type     => 'status_update',
+        agent_id => 'agent-1',
+        state    => 'streaming',
+    });
+    my $resp = $sock->last_message;
+    is($resp->{type}, 'ack', 'status_update routed correctly');
+    
+    # Route poll_status_updates
+    $sock->clear;
+    $broker->handle_message(10, { type => 'poll_status_updates' });
+    $resp = $sock->last_message;
+    is($resp->{type}, 'status_updates', 'poll_status_updates routed correctly');
+};
+
 done_testing();
 
 print "\n Broker behavioral tests PASSED\n";

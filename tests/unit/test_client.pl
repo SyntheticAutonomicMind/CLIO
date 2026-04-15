@@ -33,6 +33,12 @@ can_ok('CLIO::Coordination::Client', qw(new connect disconnect send_and_wait));
 can_ok('CLIO::Coordination::Client', qw(request_file_lock release_file_lock));
 can_ok('CLIO::Coordination::Client', qw(send_discovery send_warning get_status));
 
+# Test 4: Status relay methods exist (puppeteer support)
+can_ok('CLIO::Coordination::Client', qw(send_status_update poll_status_updates));
+
+# Test 5: Messaging convenience methods exist
+can_ok('CLIO::Coordination::Client', qw(send_question send_complete send_blocked send_status));
+
 done_testing();
 
 print "\n✓ Client unit tests PASSED\n";

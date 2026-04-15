@@ -2371,7 +2371,25 @@ sub _prompt_script_confirmation {
     my $ui = ($context && $context->{ui}) ? $context->{ui} : undef;
 
     unless ($ui && $ui->can('colorize')) {
-        log_warning('FileOp', "No UI for script security prompt - denying");
+        # No TTY - try broker relay for headless sub-agents
+        my $broker = ($context && $context->{broker_client}) ? $context->{broker_client} : undef;
+        if ($broker) {
+            log_info('FileOp', "No TTY - relaying script authorization through broker");
+            require CLIO::Security::AuthorizationRelay;
+            my $relay = CLIO::Security::AuthorizationRelay->new(broker_client => $broker);
+            if ($relay->available()) {
+                my $result = $relay->request_script_authorization($path, $scan_result, $context);
+                if ($result->{approved}) {
+                    if ($result->{grant_type} eq 'session') {
+                        $_script_write_grants{script_creation} = 1;
+                        log_info('FileOp', "Session grant (via relay) for script creation");
+                    }
+                    return 1;
+                }
+                return 0;
+            }
+        }
+        log_warning('FileOp', "No UI and no broker relay - denying script");
         return 0;
     }
 
