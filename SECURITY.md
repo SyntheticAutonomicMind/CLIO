@@ -56,7 +56,7 @@ CLIO implements a path authorization system:
 
 #### API Key Storage
 
-- API keys are stored in `~/.config/clio/config.json`
+- API keys are stored in `~/.clio/config.json`
 - File permissions should be set to user-only (recommended: `chmod 600`)
 - Keys are never logged or displayed in full
 
@@ -129,10 +129,6 @@ We welcome security testing and responsible disclosure. Areas of interest:
 - Terminal escape sequence injection
 - Prompt injection attacks
 - Session file manipulation
-
-## Changelog
-
-Security-related changes are noted in [CHANGELOG.md](CHANGELOG.md).
 
 ## Contact
 
