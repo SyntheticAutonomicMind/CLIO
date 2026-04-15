@@ -429,7 +429,7 @@ Permanent knowledge -> Detailed commit message (committed)
 | Use bare `die` in modules | Crashes AI loop ungracefully | Use `croak` from Carp, with eval for error handling |
 | Create giant modules (>1000 lines) | Hard to maintain and understand | Split into focused, cohesive modules |
 | Create summary docs in root | Clutters repository, wrong location | Use scratch/ for working documents |
-| Skip collaboration checkpoints | Violates Unbroken Method | Use user_collaboration at key decision points |
+| Skip collaboration checkpoints | Violates Unbroken Method | Use interact at key decision points |
 | Technical jargon in action_desc | Users don't care about implementation details | Use user-focused descriptions |
 
 **Technical jargon example:**
