@@ -54,7 +54,7 @@ subtest 'generate_non_interactive_section - content' => sub {
 
     ok(defined $section, 'Section generated');
     like($section, qr/Non-Interactive Mode/, 'Contains mode header');
-    like($section, qr/DO NOT use user_collaboration/, 'Contains collaboration restriction');
+    like($section, qr/DO NOT use interact/, 'Contains collaboration restriction');
     like($section, qr/DO NOT ask questions/, 'Contains question restriction');
     like($section, qr/DO complete the task/, 'Contains completion instruction');
 };

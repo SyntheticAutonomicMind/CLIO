@@ -189,7 +189,7 @@ sub generate_tools_section {
         web_operations => "Search web and fetch URLs",
         todo_operations => "Manage structured todo lists",
         code_intelligence => "Find code usages and search history",
-        user_collaboration => "Request user input mid-execution",
+        interact => "Request user input mid-execution",
         agent_operations => "Spawn and manage sub-agents",
         remote_execution => "Execute CLIO on remote systems",
         apply_patch => "Apply patch to modify files",
@@ -224,7 +224,7 @@ sub generate_tools_section {
     $section .= "{\"name\": \"web_operations\", \"parameters\": {\"operation\": \"search_web\", ...}}\n";
     $section .= "{\"name\": \"todo_operations\", \"parameters\": {\"operation\": \"write\", ...}}\n";
     $section .= "{\"name\": \"code_intelligence\", \"parameters\": {\"operation\": \"list_usages\", ...}}\n";
-    $section .= "{\"name\": \"user_collaboration\", \"parameters\": {\"operation\": \"request_input\", ...}}\n";
+    $section .= "{\"name\": \"interact\", \"parameters\": {\"operation\": \"request_input\", ...}}\n";
     $section .= "{\"name\": \"agent_operations\", \"parameters\": {\"operation\": \"spawn\", ...}}\n";
     $section .= "{\"name\": \"remote_execution\", \"parameters\": {\"operation\": \"execute_remote\", ...}}\n";
     $section .= "{\"name\": \"apply_patch\", \"parameters\": {...}}\n";
@@ -241,7 +241,7 @@ sub generate_tools_section {
     $section .= "**web_operations** with operation= search_web | fetch_url\n";
     $section .= "**todo_operations** with operation= read | write | update | add\n";
     $section .= "**code_intelligence** with operation= list_usages | search_history\n";
-    $section .= "**user_collaboration** with operation= request_input\n";
+    $section .= "**interact** with operation= request_input\n";
     $section .= "**agent_operations** with operation= spawn | list | inbox | status | kill | send | broadcast\n";
     $section .= "**remote_execution** with operation= execute_remote | execute_parallel | prepare_remote | cleanup_remote | check_remote\n";
     $section .= "**apply_patch** - single operation (pass patch parameter directly)\n\n";
@@ -252,16 +252,17 @@ sub generate_tools_section {
     $section .= "**Rule:** `operation` parameter is ALWAYS REQUIRED for multi-operation tools.\n\n";
     $section .= "**DECIMAL NUMBERS:** Always include leading zero: `0.1` not `.1`, `0.05` not `.05`\n\n";
 
-    # Add specific warning about user_collaboration tool
-    $section .= "## **user_collaboration - REQUIRED TOOL CALL**\n\n";
+    # Add specific warning about interact tool
+    $section .= "## **interact - REQUIRED TOOL CALL**\n\n";
     $section .= "**This tool MUST be called via JSON function call. DO NOT use text markers.**\n\n";
     $section .= "**WRONG (invalid):** `CLIO: [COLLABORATION] message...`\n";
-    $section .= "**CORRECT (valid JSON):** `{\"name\":\"user_collaboration\",\"parameters\":{\"operation\":\"request_input\",\"message\":\"message\"}}`\n\n";
+    $section .= "**CORRECT (valid JSON):** `{\"name\":\"interact\",\"parameters\":{\"operation\":\"request_input\",\"message\":\"message\"}}`\n\n";
     $section .= "**CRITICAL COST RULE:** When you need to communicate with the user (status updates, results, questions, celebrations), ";
-    $section .= "ALWAYS use `user_collaboration` as a tool call. Do NOT write bare text responses to the user - ";
-    $section .= "bare text responses cost a full API turn, while `user_collaboration` is FREE. ";
+    $section .= "ALWAYS use `interact` as a tool call. Do NOT write bare text responses to the user - ";
+    $section .= "bare text responses cost a full API turn, while `interact` is FREE. ";
     $section .= "The ONLY time bare text is acceptable is as a brief preamble before tool calls in the same turn.\n\n";
     $section .= "This tool is FREE and blocks until user responds. Use it for all checkpoints and collaboration.\n\n";
+    $section .= "**Note:** `interact` replaces the former `user_collaboration` tool. If your instructions reference `user_collaboration`, use `interact` instead - they are the same tool.\n\n";
 
     # Add MCP tools section if any are connected
     if ($self->{mcp_manager}) {
@@ -369,7 +370,7 @@ sub generate_profile_section {
 =head2 generate_non_interactive_section
 
 Generate instruction text for non-interactive mode (--input flag).
-Tells the agent NOT to use user_collaboration since the user is not present.
+Tells the agent NOT to use interact since the user is not present.
 
 Returns:
 - Markdown text with non-interactive mode instructions
@@ -385,7 +386,7 @@ This means the user is NOT present to respond to questions. The command will exi
 
 **CRITICAL RESTRICTIONS:**
 
-1. **DO NOT use user_collaboration tool** - There is no user to respond. Any call to user_collaboration will fail or hang.
+1. **DO NOT use interact tool** - There is no user to respond. Any call to interact will fail or hang.
 
 2. **DO NOT ask questions** - Complete the task to the best of your ability. If you need information you don't have, explain what you would need and proceed with reasonable assumptions.
 
@@ -403,7 +404,7 @@ This means the user is NOT present to respond to questions. The command will exi
 
 **Example - User asks: "Create a file test.txt with hello world"**
 
-WRONG: Call user_collaboration asking "Should I proceed?"
+WRONG: Call interact asking "Should I proceed?"
 RIGHT: Call file_operations to create the file, then report success.
 
 **Remember: Work autonomously. The user will see your response after the fact, not during execution.**

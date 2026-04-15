@@ -1,4 +1,4 @@
-package CLIO::Tools::UserCollaboration;
+package CLIO::Tools::Interact;
 
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (c) 2025 Andrew Wyatt (Fewtarius)
@@ -13,7 +13,7 @@ use feature 'say';
 
 =head1 NAME
 
-CLIO::Tools::UserCollaboration - Tool for mid-stream user collaboration
+CLIO::Tools::Interact - Tool for mid-stream user collaboration
 
 =head1 DESCRIPTION
 
@@ -32,9 +32,9 @@ KEY BENEFITS:
 
 =head1 SYNOPSIS
 
-    use CLIO::Tools::UserCollaboration;
+    use CLIO::Tools::Interact;
     
-    my $tool = CLIO::Tools::UserCollaboration->new(debug => 1);
+    my $tool = CLIO::Tools::Interact->new(debug => 1);
     
     my $result = $tool->execute(
         {
@@ -54,7 +54,7 @@ sub new {
     my ($class, %opts) = @_;
     
     my $self = $class->SUPER::new(
-        name => 'user_collaboration',
+        name => 'interact',
         description => q{Request user input, clarification, or decisions during task execution.
 
 **CRITICAL - THIS IS A JSON TOOL CALL, NOT TEXT:**
@@ -62,7 +62,7 @@ sub new {
 You MUST call this as a JSON function tool call. The correct format is:
 ```
 {
-  "name": "user_collaboration",
+  "name": "interact",
   "parameters": {
     "operation": "request_input",
     "message": "Your question here"
@@ -96,7 +96,7 @@ You MUST call this as a JSON function tool call. The correct format is:
 CORRECT (tool call):
 ```
 {
-  "name": "user_collaboration",
+  "name": "interact",
   "parameters": {
     "operation": "request_input",
     "message": "Found 3 bugs. Fix all at once or one at a time?"
@@ -145,7 +145,7 @@ sub dispatch_table {
 
 =head2 get_additional_parameters
 
-Define parameters for user_collaboration in JSON schema sent to AI.
+Define parameters for interact in JSON schema sent to AI.
 
 =cut
 
@@ -205,12 +205,12 @@ sub request_input {
     my $message = $params->{message};
     my $user_context = $params->{context} || '';
     
-    log_debug('UserCollaboration', "Requesting user input");
-    log_debug('UserCollaboration', "Message: $message");
+    log_debug('Interact', "Requesting user input");
+    log_debug('Interact', "Message: $message");
     
     # === SUB-AGENT MODE: Route to broker instead of interactive UI ===
     if ($context->{broker_client}) {
-        log_debug('UserCollaboration', "Sub-agent mode detected - routing to broker");
+        log_debug('Interact', "Sub-agent mode detected - routing to broker");
         return $self->_request_via_broker($params, $context);
     }
     
@@ -222,26 +222,26 @@ sub request_input {
     
     # Add detailed logging for spinner reference validation
     if (should_log('DEBUG')) {
-        log_debug('UserCollaboration', "UI reference: " . (defined $ui ? "DEFINED" : "UNDEFINED"));
-        log_debug('UserCollaboration', "Spinner reference from UI: " . (defined $spinner ? ref($spinner) : "UNDEFINED"));
+        log_debug('Interact', "UI reference: " . (defined $ui ? "DEFINED" : "UNDEFINED"));
+        log_debug('Interact', "Spinner reference from UI: " . (defined $spinner ? ref($spinner) : "UNDEFINED"));
         if ($spinner) {
             if (ref($spinner) eq 'CLIO::UI::ProgressSpinner') {
-                log_debug('UserCollaboration', "Spinner object: valid ProgressSpinner instance");
-                log_debug('UserCollaboration', "Spinner running state: " . ($spinner->is_running() ? "YES" : "NO"));
+                log_debug('Interact', "Spinner object: valid ProgressSpinner instance");
+                log_debug('Interact', "Spinner running state: " . ($spinner->is_running() ? "YES" : "NO"));
             } else {
-                log_debug('UserCollaboration', "ERROR - not a ProgressSpinner!");
+                log_debug('Interact', "ERROR - not a ProgressSpinner!");
             }
         } else {
-            log_debug('UserCollaboration', "Spinner is undefined (may not have been started yet)");
+            log_debug('Interact', "Spinner is undefined (may not have been started yet)");
         }
     }
     
     if ($spinner && $spinner->can('stop')) {
-        log_debug('UserCollaboration', "Stopping busy spinner before collaboration prompt");
+        log_debug('Interact', "Stopping busy spinner before collaboration prompt");
         $spinner->stop();
-        log_debug('UserCollaboration', "Spinner stopped successfully");
+        log_debug('Interact', "Spinner stopped successfully");
     } elsif (should_log('DEBUG')) {
-        log_debug('UserCollaboration', "Spinner not available or not running - skipping stop");
+        log_debug('Interact', "Spinner not available or not running - skipping stop");
     }
     
     # Get UI object from context
@@ -351,7 +351,7 @@ sub request_input {
         };
     }
     
-    log_debug('UserCollaboration', "User responded: $user_response");
+    log_debug('Interact', "User responded: $user_response");
     
     # Store collaboration in session history
     if ($context->{session}) {
@@ -403,7 +403,7 @@ sub _request_via_broker {
     my $message = $params->{message};
     my $user_context = $params->{context} || '';
     
-    log_debug('UserCollaboration', "Sending question to broker for user");
+    log_debug('Interact', "Sending question to broker for user");
     
     # Build full message with context
     my $full_message = $message;
@@ -418,14 +418,14 @@ sub _request_via_broker {
     );
     
     unless ($msg_id) {
-        log_error('UserCollaboration', "Failed to send question to broker");
+        log_error('Interact', "Failed to send question to broker");
         return {
             success => 0,
             error => "Failed to send question to broker"
         };
     }
     
-    log_debug('UserCollaboration', "Question sent (id: $msg_id), polling for response...");
+    log_debug('Interact', "Question sent (id: $msg_id), polling for response...");
     
     # Poll for response with timeout
     my $timeout = 300;  # 5 minutes max wait
@@ -440,12 +440,12 @@ sub _request_via_broker {
         for my $msg (@$messages) {
             my $type = $msg->{type} || '';
             
-            log_debug('UserCollaboration', "Polled message: type='$type' from='$msg->{from}'");
+            log_debug('Interact', "Polled message: type='$type' from='$msg->{from}'");
             
             # Accept clarification or guidance as response
             if ($type eq 'clarification' || $type eq 'guidance' || $type eq 'response') {
                 $response = ref($msg->{content}) ? $msg->{content} : $msg->{content};
-                log_info('UserCollaboration', "Received response: $response");
+                log_info('Interact', "Received response: $response");
                 last;
             }
             
@@ -465,7 +465,7 @@ sub _request_via_broker {
     }
     
     unless (defined $response) {
-        log_warning('UserCollaboration', "Timeout waiting for response from user");
+        log_warning('Interact', "Timeout waiting for response from user");
         return {
             success => 0,
             error => "Timeout waiting for user response via broker (waited ${timeout}s)"

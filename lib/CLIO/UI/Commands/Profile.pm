@@ -250,11 +250,11 @@ $samples
 
 ## Your Task
 
-Analyze the data above to identify the user's communication style, working preferences, technical focus, and collaboration patterns. Then use the user_collaboration tool to walk through your findings with the user.
+Analyze the data above to identify the user's communication style, working preferences, technical focus, and collaboration patterns. Then use the interact tool to walk through your findings with the user.
 
 ### Required Information to Gather
 
-Before writing the profile, you MUST ask the user (via user_collaboration) for:
+Before writing the profile, you MUST ask the user (via interact) for:
 
 1. **Name:** "What name would you like me to use in your profile?" (used as "The user's name is [Name]")
 2. **Licensing preference:** "What's your default license preference for new projects? (e.g., GPL-3.0, Apache-2.0, MIT, proprietary)" - If they're unsure, help them decide. Include SPDX header preference if applicable.
