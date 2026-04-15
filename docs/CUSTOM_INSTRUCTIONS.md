@@ -465,7 +465,7 @@ Define collaboration patterns:
 ```markdown
 ## Collaboration Checkpoints
 
-Use user_collaboration tool at:
+Use interact tool at:
 1. Session start - confirm direction
 2. After investigation - get approval before implementing
 3. After implementation - validate testing results

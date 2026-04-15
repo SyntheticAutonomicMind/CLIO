@@ -30,7 +30,7 @@ sub new {
         debug => $opts{debug} || 0,
         session => $opts{session},
         api => $opts{api},
-        ui => $opts{ui} || undef,  # UI reference for user_collaboration
+        ui => $opts{ui} || undef,  # UI reference for interact
         skip_custom => $opts{skip_custom} || 0,  # Skip custom instructions
         skip_ltm => $opts{skip_ltm} || 0,        # Skip LTM injection
         broker_client => $opts{broker_client},   # Broker client for multi-agent coordination
@@ -210,7 +210,7 @@ sub process_user_request {
                 api_manager => $self->{api},
                 session => $self->{session},
                 config => $self->{api}->{config},  # Pass config for web search API keys
-                ui => $context->{ui},  # Forward UI for user_collaboration
+                ui => $context->{ui},  # Forward UI for interact
                 spinner => $context->{spinner},  # Forward spinner for interactive tools
                 skip_custom => $self->{skip_custom},
                 skip_ltm => $self->{skip_ltm},
@@ -238,7 +238,7 @@ sub process_user_request {
         my $orchestrator = $self->{orchestrator};
         
         # Update orchestrator's spinner and UI references before processing
-        # This ensures interactive tools (like user_collaboration) have access to current spinner
+        # This ensures interactive tools (like interact) have access to current spinner
         if ($context->{spinner}) {
             $orchestrator->{spinner} = $context->{spinner};
             if ($orchestrator->{tool_executor}) {

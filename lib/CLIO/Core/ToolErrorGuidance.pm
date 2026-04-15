@@ -34,7 +34,7 @@ This prevents agents from abandoning tools after repeated failures.
     # When a tool returns an error:
     my $enhanced = $guidance->enhance_tool_error(
         error => "Missing required parameter: message",
-        tool_name => "user_collaboration",
+        tool_name => "interact",
         tool_definition => $tool_def,
         attempted_params => $params
     );
@@ -321,7 +321,7 @@ sub _get_examples_for_error {
                    '  {"operation": "grep_search", "query": "pattern", "pattern": "*.pm"}';
         },
         
-        user_collaboration => sub {
+        interact => sub {
             return "--- CORRECT USAGE EXAMPLES ---\n" .
                    "Requesting user input:\n" .
                    '  {"operation": "request_input", "message": "Which approach should I use?", "context": "Optional context here"}\n' .

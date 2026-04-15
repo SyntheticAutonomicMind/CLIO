@@ -281,8 +281,8 @@ sub compress_messages {
                     my $args_str = $tc->{function}{arguments} || '{}';
                     $tool_counts{$name}++;
 
-                    # Track user_collaboration calls to pair with responses
-                    if ($name eq 'user_collaboration' && $tc->{id}) {
+                    # Track interact calls to pair with responses
+                    if ($name eq 'interact' && $tc->{id}) {
                         my $question = '';
                         if ($args_str =~ /"message"\s*:\s*"((?:[^"\\]|\\.)*)"/s) {
                             $question = $1;

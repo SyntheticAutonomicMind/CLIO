@@ -496,7 +496,7 @@ These tools work but coordinate through the broker:
 |------|--------------|
 | `file_operations` (write) | Requests/releases file locks automatically |
 | `version_control commit` | Requests/releases git lock automatically |
-| `user_collaboration` | Routes questions through broker to user inbox |
+| `interact` | Routes questions through broker to user inbox |
 
 ---
 

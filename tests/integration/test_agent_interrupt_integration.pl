@@ -81,8 +81,8 @@ test("Interrupt message uses role=user (not system)", sub {
     # Verify content mentions interrupt
     die "Message doesn't mention interrupt" unless $msg->{content} =~ /interrupt/i;
     
-    # Verify content mentions user_collaboration
-    die "Message doesn't mention user_collaboration" unless $msg->{content} =~ /user_collaboration/i;
+    # Verify content mentions interact
+    die "Message doesn't mention interact" unless $msg->{content} =~ /interact/i;
 });
 
 # Test 3: Verify session state handling
@@ -181,7 +181,7 @@ test("Interrupt message has expected structure", sub {
     
     # Verify has required content
     die "Missing ESC mention" unless $msg->{content} =~ /ESC/;
-    die "Missing user_collaboration mention" unless $msg->{content} =~ /user_collaboration/;
+    die "Missing interact mention" unless $msg->{content} =~ /interact/;
     die "Missing 'operation: request_input'" unless $msg->{content} =~ /operation.*request_input/;
     die "Missing example" unless $msg->{content} =~ /Example:/i;
 });

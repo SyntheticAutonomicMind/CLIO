@@ -309,11 +309,11 @@ sub execute_tool {
     }
     
     # Execute tool with operation from arguments
-    if (should_log('DEBUG') && $tool_name eq 'user_collaboration') {
+    if (should_log('DEBUG') && $tool_name eq 'interact') {
         if ($self->{ui}) {
-            log_debug('ToolExecutor', "Executing user_collaboration with UI available");
+            log_debug('ToolExecutor', "Executing interact with UI available");
         } else {
-            log_debug('ToolExecutor', "ERROR: Executing user_collaboration but UI is undefined!");
+            log_debug('ToolExecutor', "ERROR: Executing interact but UI is undefined!");
         }
     }
     
@@ -327,7 +327,7 @@ sub execute_tool {
         session => $self->{session},
         config => $self->{config},  # Pass config for API keys (web search)
         tool_call_id => $tool_call_id,
-        ui => $self->{ui},  # Provide UI for user_collaboration
+        ui => $self->{ui},  # Provide UI for interact
         spinner => $self->{spinner},  # Provide spinner for interactive tools
         broker_client => $self->{broker_client},  # Provide broker for coordination
         file_vault => $self->{file_vault},  # FileVault for undo tracking

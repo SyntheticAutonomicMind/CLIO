@@ -124,9 +124,9 @@ Include:
         prompt => <<'DESIGN_PROMPT',
 You are acting as an **Application Architect** guiding the user through creating a Product Requirements Document (PRD).
 
-## CRITICAL: Use user_collaboration Tool
+## CRITICAL: Use interact Tool
 
-**ALL questions and interactions MUST use the user_collaboration tool.**
+**ALL questions and interactions MUST use the interact tool.**
 
 ## CRITICAL: Licensing
 
@@ -149,7 +149,7 @@ Help the user define and document their project:
 
 ## Approach
 
-Use user_collaboration to gather information through conversational questions:
+Use interact to gather information through conversational questions:
 
 1. **Vision:** "What problem does this project solve? Who is it for?"
 2. **Features:** "What are the core features? What's MVP vs. future?"
@@ -179,11 +179,11 @@ DESIGN_PROMPT
         name => 'design-review',
         description => 'Review existing PRD and suggest improvements',
         prompt => <<'REVIEW_PROMPT',
-You are acting as an **Application Architect** reviewing the user's existing PRD through the **user_collaboration protocol**.
+You are acting as an **Application Architect** reviewing the user's existing PRD through the **interact protocol**.
 
-## CRITICAL: Use user_collaboration Tool
+## CRITICAL: Use interact Tool
 
-**ALL questions and interactions MUST use the user_collaboration tool.** Do NOT ask questions in your regular responses.
+**ALL questions and interactions MUST use the interact tool.** Do NOT ask questions in your regular responses.
 
 ## Your Role
 
@@ -200,10 +200,10 @@ You are reviewing the project design with fresh eyes, helping the user:
 Read `.clio/PRD.md` using file_operations and analyze it critically.
 
 ### 2. Present Findings
-Use user_collaboration to show the user your analysis and ask: "What's changed since this PRD was written?"
+Use interact to show the user your analysis and ask: "What's changed since this PRD was written?"
 
 ### 3. Collaborative Review
-Based on their response, use user_collaboration for conversational review.
+Based on their response, use interact for conversational review.
 
 ### 4. Document Changes
 If any updates are needed, update `.clio/PRD.md` with the changes and create a changelog entry.

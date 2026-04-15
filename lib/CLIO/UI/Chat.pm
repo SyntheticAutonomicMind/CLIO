@@ -964,7 +964,7 @@ sub _process_ai_request {
     # In normal/canonical mode, keypresses are buffered until Enter and
     # sysread() (used by ReadKey) can't see them. Cbreak mode makes each
     # keypress immediately available so _check_for_user_interrupt works.
-    # ReadLine (for user_collaboration) manages its own mode internally.
+    # ReadLine (for interact) manages its own mode internally.
     ReadMode(1);
     
     # Process request with streaming callback (match clio script pattern)
@@ -980,7 +980,7 @@ sub _process_ai_request {
             conversation_history => $conversation_history,
             current_file => $self->{session}->{state}->{current_file},
             working_directory => $self->{session}->{state}->{working_directory},
-            ui => $self,  # Pass UI object for user_collaboration tool
+            ui => $self,  # Pass UI object for interact tool
             spinner => $spinner  # Pass spinner for interactive tools to stop
         });
     };
@@ -2040,7 +2040,7 @@ sub display_tip {
 =head2 request_collaboration
 
 Request user input mid-execution for agent collaboration.
-This is called by the user_collaboration tool to pause workflow
+This is called by the interact tool to pause workflow
 and get user response WITHOUT consuming additional premium requests.
 
 Arguments:
@@ -2151,13 +2151,13 @@ sub request_collaboration {
     }
     
     # Always display context indicator so users can identify collaboration tool usage
-    my $context_text = ($context && length($context) > 0) ? $context : '(user_collaboration)';
+    my $context_text = ($context && length($context) > 0) ? $context : '(interact)';
     {
         my $rendered_context = $self->render_markdown($context_text);
         my @context_lines = split /\n/, $rendered_context;
         
         # Display context header with color
-        my $context_line = $self->colorize("Context: ", 'SYSTEM');
+        my $context_line = $self->colorize("Session Interaction: ", 'SYSTEM');
         
         if (@context_lines) {
             $context_line .= shift(@context_lines);

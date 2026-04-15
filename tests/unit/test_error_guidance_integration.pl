@@ -16,7 +16,7 @@ my $registry = CLIO::Tools::Registry->new(debug => 0);
 
 # Register default tools
 require CLIO::Tools::FileOperations;
-require CLIO::Tools::UserCollaboration;
+require CLIO::Tools::Interact;
 require CLIO::Tools::VersionControl;
 require CLIO::Tools::TerminalOperations;
 require CLIO::Tools::MemoryOperations;
@@ -25,7 +25,7 @@ require CLIO::Tools::TodoList;
 require CLIO::Tools::CodeIntelligence;
 
 $registry->register_tool(CLIO::Tools::FileOperations->new(debug => 0));
-$registry->register_tool(CLIO::Tools::UserCollaboration->new(debug => 0));
+$registry->register_tool(CLIO::Tools::Interact->new(debug => 0));
 $registry->register_tool(CLIO::Tools::VersionControl->new(debug => 0));
 $registry->register_tool(CLIO::Tools::TerminalOperations->new(debug => 0));
 $registry->register_tool(CLIO::Tools::MemoryOperations->new(debug => 0));
@@ -36,8 +36,8 @@ $registry->register_tool(CLIO::Tools::CodeIntelligence->new(debug => 0));
 # Initialize error guidance (like WorkflowOrchestrator does)
 my $guidance = CLIO::Core::ToolErrorGuidance->new();
 
-# Test scenario: Agent tries to call user_collaboration without message parameter
-print "Scenario: Agent tries to use user_collaboration but forgets 'message' parameter\n\n";
+# Test scenario: Agent tries to call interact without message parameter
+print "Scenario: Agent tries to use interact but forgets 'message' parameter\n\n";
 
 print "WHAT AGENT DID:\n";
 my $bad_call = {
@@ -47,7 +47,7 @@ my $bad_call = {
 print "  " . encode_json($bad_call) . "\n\n";
 
 # Get the tool definition
-my $tool = $registry->get_tool('user_collaboration');
+my $tool = $registry->get_tool('interact');
 unless ($tool) {
     print "ERROR: Could not find tool in registry\n";
     exit 1;
@@ -61,7 +61,7 @@ my $error_message = 'Missing required parameter: message';
 # Get the enhanced guidance
 my $enhanced = $guidance->enhance_tool_error(
     error => $error_message,
-    tool_name => 'user_collaboration',
+    tool_name => 'interact',
     tool_definition => $tool_def,
     attempted_params => $bad_call
 );

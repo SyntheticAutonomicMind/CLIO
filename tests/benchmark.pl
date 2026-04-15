@@ -66,7 +66,7 @@ print "-" x 40 . "\n";
     require CLIO::Tools::WebOperations;
     require CLIO::Tools::TodoList;
     require CLIO::Tools::CodeIntelligence;
-    require CLIO::Tools::UserCollaboration;
+    require CLIO::Tools::Interact;
     
     # Session
     require CLIO::Session::Manager;

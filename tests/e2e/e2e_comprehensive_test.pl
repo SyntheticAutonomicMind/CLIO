@@ -88,7 +88,7 @@ print "=" x 70 . "\n";
 # Test 1: file_operations - create_file
 run_test(
     "file_operations: create_file",
-    "Create a file named test1.txt in scratch/ with content 'Hello, CLIO!'. Do not ask for confirmation, just do it. Do not use user_collaboration tool.",
+    "Create a file named test1.txt in scratch/ with content 'Hello, CLIO!'. Do not ask for confirmation, just do it. Do not use interact tool.",
     sub {
         my $out = shift;
         return 0 unless $out =~ /success|created|file/i;
@@ -101,7 +101,7 @@ run_test(
 # Test 2: file_operations - read_file  
 run_test(
     "file_operations: read_file",
-    "Read the file clio (the main executable) and tell me how many lines it has. Just give me the number. Do not use user_collaboration tool.",
+    "Read the file clio (the main executable) and tell me how many lines it has. Just give me the number. Do not use interact tool.",
     sub {
         my $out = shift;
         # Should mention a number of lines
@@ -113,7 +113,7 @@ run_test(
 # Test 3: file_operations - list_dir
 run_test(
     "file_operations: list_dir",
-    "List the contents of the lib/CLIO/Core directory. Just show me the filenames. Do not use user_collaboration tool.",
+    "List the contents of the lib/CLIO/Core directory. Just show me the filenames. Do not use interact tool.",
     sub {
         my $out = shift;
         # Should see some module names (with or without .pm suffix)
@@ -125,7 +125,7 @@ run_test(
 # Test 4: file_operations - grep_search
 run_test(
     "file_operations: grep_search",
-    "Search for 'sub new' in lib/CLIO/Core/Config.pm. Show me where you find it. Do not use user_collaboration tool.",
+    "Search for 'sub new' in lib/CLIO/Core/Config.pm. Show me where you find it. Do not use interact tool.",
     sub {
         my $out = shift;
         return $out =~ /sub new|found|match|line/i;
@@ -137,7 +137,7 @@ run_test(
 # Note: We run from project directory, not temp dir, for git commands
 run_test(
     "version_control: status",
-    "Show me the git status of this repository. Do not use user_collaboration tool.",
+    "Show me the git status of this repository. Do not use interact tool.",
     sub {
         my $out = shift;
         # May show branch name, clean, modified, changes, or error about not a git repo
@@ -149,7 +149,7 @@ run_test(
 # Test 6: version_control - log
 run_test(
     "version_control: log",
-    "Show me the last 3 git commits. Do not use user_collaboration tool.",
+    "Show me the last 3 git commits. Do not use interact tool.",
     sub {
         my $out = shift;
         return $out =~ /commit|feat|fix|refactor/i;
@@ -160,7 +160,7 @@ run_test(
 # Test 7: terminal_operations - exec
 run_test(
     "terminal_operations: exec",
-    "Run the command 'echo Hello from CLIO' and show me the output. Do not use user_collaboration tool.",
+    "Run the command 'echo Hello from CLIO' and show me the output. Do not use interact tool.",
     sub {
         my $out = shift;
         return $out =~ /Hello from CLIO/;
@@ -170,7 +170,7 @@ run_test(
 # Test 8: terminal_operations - validate
 run_test(
     "terminal_operations: validate",
-    "Validate if the command 'ls -la' is safe to run. Tell me if it's safe. Do not use user_collaboration tool.",
+    "Validate if the command 'ls -la' is safe to run. Tell me if it's safe. Do not use interact tool.",
     sub {
         my $out = shift;
         return $out =~ /safe|allowed|valid|permitted/i;
@@ -180,7 +180,7 @@ run_test(
 # Test 9: todo_operations
 run_test(
     "todo_operations: write",
-    "Create a todo list with 3 items: 1) Read docs, 2) Run tests, 3) Fix bugs. Mark the first one as in-progress. Do not use user_collaboration tool.",
+    "Create a todo list with 3 items: 1) Read docs, 2) Run tests, 3) Fix bugs. Mark the first one as in-progress. Do not use interact tool.",
     sub {
         my $out = shift;
         return $out =~ /todo|list|item|created|in.?progress/i;
@@ -190,7 +190,7 @@ run_test(
 # Test 10: memory_operations - store/retrieve
 run_test(
     "memory_operations: store and retrieve",
-    "Store a note with key 'test_note' and content 'This is a test note'. Then retrieve it. Do not use user_collaboration tool.",
+    "Store a note with key 'test_note' and content 'This is a test note'. Then retrieve it. Do not use interact tool.",
     sub {
         my $out = shift;
         return $out =~ /stored|saved|retrieved|test note/i;
@@ -208,7 +208,7 @@ print "=" x 70 . "\n";
 # Test 11: Code blocks
 run_test(
     "Markdown: code blocks",
-    "Show me an example of a Perl hello world program with syntax highlighting. Do not use user_collaboration tool.",
+    "Show me an example of a Perl hello world program with syntax highlighting. Do not use interact tool.",
     sub {
         my $out = shift;
         # Should have some code output
@@ -219,7 +219,7 @@ run_test(
 # Test 12: Tables
 run_test(
     "Markdown: tables",
-    "Create a table with 3 columns (Name, Type, Description) and 2 rows of data about CLIO modules. Do not use user_collaboration tool.",
+    "Create a table with 3 columns (Name, Type, Description) and 2 rows of data about CLIO modules. Do not use interact tool.",
     sub {
         my $out = shift;
         # Should have table-like output
@@ -230,7 +230,7 @@ run_test(
 # Test 13: Lists
 run_test(
     "Markdown: lists",
-    "List 5 features of CLIO as a numbered list. Do not use user_collaboration tool.",
+    "List 5 features of CLIO as a numbered list. Do not use interact tool.",
     sub {
         my $out = shift;
         # Should have numbers
@@ -249,7 +249,7 @@ print "=" x 70 . "\n";
 # Test 14: Context retention (requires session)
 run_test(
     "Context: remembering information",
-    "My name is TestUser and my favorite color is blue. What is my name and favorite color? Do not use user_collaboration tool.",
+    "My name is TestUser and my favorite color is blue. What is my name and favorite color? Do not use interact tool.",
     sub {
         my $out = shift;
         return $out =~ /TestUser|blue/i;
@@ -267,7 +267,7 @@ print "=" x 70 . "\n";
 # Test 15: Non-existent file
 run_test(
     "Error handling: file not found",
-    "Try to read the file /nonexistent/file/that/does/not/exist.txt and handle the error gracefully. Do not use user_collaboration tool.",
+    "Try to read the file /nonexistent/file/that/does/not/exist.txt and handle the error gracefully. Do not use interact tool.",
     sub {
         my $out = shift;
         return $out =~ /not found|doesn't exist|error|cannot|failed/i;
@@ -277,7 +277,7 @@ run_test(
 # Test 16: Invalid command
 run_test(
     "Error handling: unknown tool graceful handling",
-    "What tools do you have available? List them briefly. Do not use user_collaboration tool.",
+    "What tools do you have available? List them briefly. Do not use interact tool.",
     sub {
         my $out = shift;
         return $out =~ /file_operations|version_control|terminal|memory|todo/i;

@@ -7,7 +7,7 @@ test_autonomous_subagent.pl - Verify sub-agents work autonomously
 =head1 DESCRIPTION
 
 Spawns a sub-agent with a simple task and verifies:
-1. No user_collaboration calls in log
+1. No interact calls in log
 2. Task completes successfully
 3. Autonomous behavior throughout
 
@@ -88,8 +88,8 @@ if ($wait_time >= $max_wait) {
     print " WARN - Agent did not complete within ${max_wait}s\n";
 }
 
-# Check log for user_collaboration calls (should be NONE)
-print "\n [3/4] Checking for user_collaboration calls...\n";
+# Check log for interact calls (should be NONE)
+print "\n [3/4] Checking for interact calls...\n";
 if (-f $log_file) {
     my $log_content = do {
         open(my $fh, '<', $log_file) or die "Cannot read log: $!";
@@ -97,13 +97,13 @@ if (-f $log_file) {
         <$fh>;
     };
     
-    if ($log_content =~ /user_collaboration|USER_COLLABORATION|Requesting your input/m) {
-        print " FAIL - Found user_collaboration call in log\n";
+    if ($log_content =~ /interact|USER_COLLABORATION|Requesting your input/m) {
+        print " FAIL - Found interact call in log\n";
         print "Log excerpt:\n";
-        system("grep -A 3 -B 3 'user_collaboration\\|Requesting your input' $log_file");
+        system("grep -A 3 -B 3 'interact\\|Requesting your input' $log_file");
         exit 1;
     } else {
-        print " PASS - No user_collaboration calls found\n";
+        print " PASS - No interact calls found\n";
     }
 } else {
     print " WARN - Log file not found: $log_file\n";

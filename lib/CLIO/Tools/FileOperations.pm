@@ -1530,7 +1530,7 @@ sub create_file {
         return $self->error_result(
             "Authorization required: $auth_result->{reason}\n\n" .
             "This operation requires user permission because the path is outside the session directory.\n" .
-            "Use user_collaboration tool to request authorization."
+            "Use interact tool to request authorization."
         );
     } elsif ($auth_result->{status} eq 'denied') {
         return $self->error_result("Authorization denied: $auth_result->{reason}");
@@ -1628,7 +1628,7 @@ sub write_file {
     if ($auth_result->{status} eq 'requires_authorization') {
         return $self->error_result(
             "Authorization required: $auth_result->{reason}\n\n" .
-            "Use user_collaboration tool to request authorization."
+            "Use interact tool to request authorization."
         );
     } elsif ($auth_result->{status} eq 'denied') {
         return $self->error_result("Authorization denied: $auth_result->{reason}");
@@ -1720,7 +1720,7 @@ sub append_file {
     if ($auth_result->{status} eq 'requires_authorization') {
         return $self->error_result(
             "Authorization required: $auth_result->{reason}\n\n" .
-            "Use user_collaboration tool to request authorization."
+            "Use interact tool to request authorization."
         );
     } elsif ($auth_result->{status} eq 'denied') {
         return $self->error_result("Authorization denied: $auth_result->{reason}");
@@ -2094,7 +2094,7 @@ sub delete_file {
     if ($auth_result->{status} eq 'requires_authorization') {
         return $self->error_result(
             "Authorization required: $auth_result->{reason}\n\n" .
-            "Use user_collaboration tool to request authorization."
+            "Use interact tool to request authorization."
         );
     } elsif ($auth_result->{status} eq 'denied') {
         return $self->error_result("Authorization denied: $auth_result->{reason}");
@@ -2173,7 +2173,7 @@ sub rename_file {
         my $reason = $auth_old->{status} eq 'requires_authorization' ? $auth_old->{reason} : $auth_new->{reason};
         return $self->error_result(
             "Authorization required: $reason\n\n" .
-            "Use user_collaboration tool to request authorization."
+            "Use interact tool to request authorization."
         );
     }
     
@@ -2237,7 +2237,7 @@ sub create_directory {
     if ($auth_result->{status} eq 'requires_authorization') {
         return $self->error_result(
             "Authorization required: $auth_result->{reason}\n\n" .
-            "Use user_collaboration tool to request authorization."
+            "Use interact tool to request authorization."
         );
     } elsif ($auth_result->{status} eq 'denied') {
         return $self->error_result("Authorization denied: $auth_result->{reason}");

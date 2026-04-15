@@ -154,14 +154,16 @@ sub get_tool {
         'todos'           => { tool => 'todo_operations', operation => 'read' },
         'list_usages'    => { tool => 'code_intelligence', operation => 'list_usages' },
         'search_history'  => { tool => 'code_intelligence', operation => 'search_history' },
-        'ask'             => { tool => 'user_collaboration', operation => 'request_input' },
-        'collab'          => { tool => 'user_collaboration', operation => 'request_input' },
+        'ask'             => { tool => 'interact', operation => 'request_input' },
+        'collab'          => { tool => 'interact', operation => 'request_input' },
+        'interact'        => { tool => 'interact', operation => 'request_input' },
+        'user_collaboration' => { tool => 'interact', operation => 'request_input' },
         'spawn'           => { tool => 'agent_operations', operation => 'spawn' },
         'agents'          => { tool => 'agent_operations', operation => 'list' },
         'inbox'           => { tool => 'agent_operations', operation => 'inbox' },
         'patch'           => { tool => 'apply_patch', operation => 'patch' },
     );
-    
+
     # Check if name is an operation alias first
     if (exists $OPERATION_ALIASES{$name}) {
         my $alias = $OPERATION_ALIASES{$name};
@@ -237,14 +239,16 @@ sub get_alias_info {
         'todos'           => { tool => 'todo_operations', operation => 'read' },
         'list_usages'     => { tool => 'code_intelligence', operation => 'list_usages' },
         'search_history'   => { tool => 'code_intelligence', operation => 'search_history' },
-        'ask'             => { tool => 'user_collaboration', operation => 'request_input' },
-        'collab'          => { tool => 'user_collaboration', operation => 'request_input' },
+        'ask'             => { tool => 'interact', operation => 'request_input' },
+        'collab'          => { tool => 'interact', operation => 'request_input' },
+        'interact'        => { tool => 'interact', operation => 'request_input' },
+        'user_collaboration' => { tool => 'interact', operation => 'request_input' },
         'spawn'           => { tool => 'agent_operations', operation => 'spawn' },
         'agents'          => { tool => 'agent_operations', operation => 'list' },
         'inbox'           => { tool => 'agent_operations', operation => 'inbox' },
         'patch'           => { tool => 'apply_patch', operation => 'patch' },
     );
-    
+
     return $OPERATION_ALIASES{$name};
 }
 

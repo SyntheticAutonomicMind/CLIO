@@ -2,11 +2,11 @@
 
 =head1 NAME
 
-test_user_collaboration_broker.pl - Test user_collaboration tool broker routing
+test_user_collaboration_broker.pl - Test interact tool broker routing
 
 =head1 DESCRIPTION
 
-Tests that UserCollaboration tool correctly routes to broker when running
+Tests that Interact tool correctly routes to broker when running
 in sub-agent mode (broker_client present in context).
 
 =cut
@@ -15,15 +15,15 @@ use strict;
 use warnings;
 use lib './lib';
 use Test::More tests => 8;
-use CLIO::Tools::UserCollaboration;
+use CLIO::Tools::Interact;
 use CLIO::Coordination::Broker;
 use CLIO::Coordination::Client;
 use Time::HiRes qw(sleep);
 
-my $session_id = "test-uc-" . time();
+my $session_id = "test-interact-" . time();
 
 # Start broker
-print "\n=== UserCollaboration Broker Routing Test ===\n\n";
+print "\n=== Interact Broker Routing Test ===\n\n";
 print "Starting broker...\n";
 
 my $broker_pid = fork();
@@ -56,9 +56,9 @@ my $agent_client = CLIO::Coordination::Client->new(
 );
 ok($agent_client, "Agent client connected");
 
-# Create UserCollaboration tool
-my $tool = CLIO::Tools::UserCollaboration->new(debug => 1);
-ok($tool, "UserCollaboration tool created");
+# Create Interact tool
+my $tool = CLIO::Tools::Interact->new(debug => 1);
+ok($tool, "Interact tool created");
 
 # Test 1: Verify broker routing detection
 print "\n=== Test 1: Broker routing detection ===\n";
@@ -99,6 +99,6 @@ $agent_client->disconnect();
 kill 'TERM', $broker_pid;
 waitpid($broker_pid, 0);
 
-print "\n=== UserCollaboration Broker Routing Test Complete ===\n";
+print "\n=== Interact Broker Routing Test Complete ===\n";
 print " Broker routing detected correctly\n";
 print " Messages routed through broker\n\n";
