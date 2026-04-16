@@ -175,7 +175,7 @@ sub generate_tools_section {
 
     log_debug('PromptBuilder', "Generating tools section for $tool_count tools");
 
-    my $section = "## Available Tools - READ THIS CAREFULLY\n\n";
+    my $section = "CRITICAL: Always use the correct tool name and parameters as specified in the tool definitions.\n\n## Available Tools - READ THIS CAREFULLY\n\n";
     $section .= "You have access to exactly $tool_count function calling tools. ";
     $section .= "When users ask \"what tools do you have?\", list ALL $tool_count tools by name:\n\n";
 
@@ -455,3 +455,5 @@ Andrew Wyatt (Fewtarius)
 GPL-3.0-only
 
 =cut
+
+1;

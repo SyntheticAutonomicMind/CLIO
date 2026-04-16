@@ -15,6 +15,8 @@
 | **OpenRouter** | `openrouter` | API Key |
 | **MiniMax** | `minimax` | API Key |
 | **MiniMax Token Plan** | `minimax_token` | API Key |
+| **Z.AI** | `zai` | API Key |
+| **Z.AI Coding Plan** | `zai_coding` | API Key |
 | **llama.cpp** | `llama.cpp` | None |
 | **LM Studio** | `lmstudio` | None |
 | **SAM** | `sam` | API Key |
@@ -64,9 +66,9 @@ All `/api set` commands save globally. Add `--session` to override for the curre
 
 ## Cloud Providers
 
-### GitHub Copilot (Recommended)
+### GitHub Copilot
 
-**Best for:** Most users - single subscription gives access to models from OpenAI, MiniMax, and more.
+**Best for:** Users with existing Copilot subscription who want access to GPT, Claude, and MiniMax models.
 
 **Get Access:**
 1. Subscribe to GitHub Copilot at [github.com/features/copilot](https://github.com/features/copilot)
@@ -76,7 +78,7 @@ All `/api set` commands save globally. Add `--session` to override for the curre
 ```bash
 clio --new
 
-# Login via browser OAuth (recommended)
+# Login via browser OAuth
 /api set provider github_copilot
 /api login
 
@@ -90,6 +92,8 @@ clio --new
 /api models           # See what's available
 /api set model <name> # Switch models
 ```
+
+Note: For an alternative option, consider using OpenRouter with MiniMax instead.
 
 ---
 
@@ -225,6 +229,78 @@ The only difference between `minimax` and `minimax_token` is the API endpoint.
 ```bash
 /api quota
 ```
+
+---
+
+### Z.AI
+
+**Best for:** GLM-5.1 flagship model, vision, reasoning, long-horizon tasks (8-hour autonomous execution)
+
+**Get API Key:**
+1. Create account at [z.ai](https://z.ai)
+2. Go to API Keys in your dashboard
+3. Create new key
+
+**Configure CLIO:**
+```bash
+clio --new
+/api set provider zai
+/api set key <your-api-key>
+/config save
+```
+
+**Available models:**
+| Model | Context | Output | Pricing (1M tokens) |
+|-------|---------|--------|---------------------|
+| GLM-5.1 | 200K | 128K | $1.40 / $4.40 |
+| GLM-5 | 200K | 128K | $1.00 / $3.20 |
+| GLM-5-Turbo | 200K | 128K | $1.20 / $4.00 |
+| GLM-4.7 | 200K | 128K | $0.60 / $2.20 |
+| GLM-4.7-FlashX | 200K | 128K | $0.07 / $0.40 |
+| GLM-4.7-Flash | 200K | 128K | FREE |
+| GLM-4.6 | 200K | 128K | $0.60 / $2.20 |
+| GLM-4.5 | 128K | 96K | $0.60 / $2.20 |
+| GLM-4.5-X | 128K | 96K | $2.20 / $8.90 |
+| GLM-4.5-Air | 128K | 96K | $0.20 / $1.10 |
+| GLM-4.5-AirX | 128K | 96K | $1.10 / $4.50 |
+| GLM-4.5-Flash | 200K | 96K | FREE |
+| GLM-4-32B | 128K | 16K | $0.10 / $0.10 |
+
+**Vision models:**
+| Model | Context | Output | Pricing (1M tokens) |
+|-------|---------|--------|---------------------|
+| GLM-5V-Turbo | 200K | 128K | $1.20 / $4.00 |
+| GLM-4.6V | 128K | 32K | $0.30 / $0.90 |
+| GLM-4.6V-FlashX | 128K | 32K | $0.04 / $0.40 |
+| GLM-4.6V-Flash | 128K | 32K | FREE |
+| GLM-4.5V | 64K | 16K | $0.60 / $1.80 |
+
+**OCR:** GLM-OCR ($0.03 / 1M tokens)
+
+**Reasoning:** GLM-4.5+ supports chain-of-thought reasoning. Enable with `/api set thinking on` and control depth with `/api set thinking_effort low|medium|high`.
+
+---
+
+### Z.AI Coding Plan
+
+**Best for:** Free coding assistance with GLM-4.7, GLM-5.1, and GLM-5 models
+
+**Get Access:**
+1. Create account at [z.ai](https://z.ai/subscribe)
+2. Subscribe to a coding plan (Lite from $18/month)
+3. Get your API key from the coding plan dashboard
+
+**Configure CLIO:**
+```bash
+clio --new
+/api set provider zai_coding
+/api set key <your-coding-plan-key>
+/config save
+```
+
+**Available models:** GLM-5.1, GLM-5-Turbo, GLM-4.7, GLM-4.5-Air (all included in plan)
+
+**Note:** Coding plan provides quota-based access (not API billing). Limits: 80-1,600 prompts per 5 hours depending on plan. See [coding plan docs](https://docs.z.ai/devpack/overview) for details.
 
 ---
 

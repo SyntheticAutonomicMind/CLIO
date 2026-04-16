@@ -162,3 +162,5 @@ __END__
 L<CLIO::MCP::Manager>, L<CLIO::MCP::Client>
 
 =cut
+
+1;

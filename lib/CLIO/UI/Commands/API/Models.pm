@@ -209,6 +209,46 @@ sub _fetch_provider_models {
             { id => 'MiniMax-M2.1-highspeed',  name => 'MiniMax M2.1 Highspeed',  description => 'Same as M2.1, ~100 tps (204.8k ctx, 131k out)' },
             { id => 'MiniMax-M2',             name => 'MiniMax M2',             description => 'Function calling, advanced reasoning (204.8k ctx, 131k out)' },
         ];
+    } elsif ($provider_name eq 'zai') {
+        # Z.AI models - text and vision models
+        # API reference: https://docs.z.ai/api-reference/llm/chat-completion
+        $models = [
+            # GLM-5 Series (Flagship - Agentic Engineering)
+            { id => 'glm-5.1',       name => 'GLM-5.1',       description => 'SOTA coding, 8-hour autonomous tasks (200k ctx, $1.40/$4.40 per 1M)' },
+            { id => 'glm-5',         name => 'GLM-5',         description => 'Agentic Engineering, complex systems (200k ctx, $1.00/$3.20 per 1M)' },
+            { id => 'glm-5-turbo',   name => 'GLM-5-Turbo',   description => 'OpenClaw optimized, complex tasks (200k ctx, $1.20/$4.00 per 1M)' },
+            # GLM-4.7 Series
+            { id => 'glm-4.7',       name => 'GLM-4.7',       description => 'SOTA Performance, enhanced coding (200k ctx, $0.60/$2.20 per 1M)' },
+            { id => 'glm-4.7-flashx',name => 'GLM-4.7-FlashX',description => 'Lightweight high-speed (200k ctx, $0.07/$0.40 per 1M)' },
+            { id => 'glm-4.7-flash', name => 'GLM-4.7-Flash', description => 'Free lightweight (200k ctx, free)' },
+            # GLM-4.6 Series
+            { id => 'glm-4.6',       name => 'GLM-4.6',       description => 'High Performance, strong coding (200k ctx, $0.60/$2.20 per 1M)' },
+            # GLM-4.5 Series
+            { id => 'glm-4.5',       name => 'GLM-4.5',       description => 'Better Performance, strong reasoning (128k ctx, $0.60/$2.20 per 1M)' },
+            { id => 'glm-4.5-x',     name => 'GLM-4.5-X',     description => 'Ultra-Fast response (128k ctx, $2.20/$8.90 per 1M)' },
+            { id => 'glm-4.5-air',   name => 'GLM-4.5-Air',   description => 'Cost-Effective lightweight (128k ctx, $0.20/$1.10 per 1M)' },
+            { id => 'glm-4.5-airx',  name => 'GLM-4.5-AirX', description => 'Lightweight fast response (128k ctx, $1.10/$4.50 per 1M)' },
+            { id => 'glm-4.5-flash', name => 'GLM-4.5-Flash', description => 'Free lightweight (200k ctx, free)' },
+            # 32B Model
+            { id => 'glm-4-32b-0414-128k', name => 'GLM-4-32B', description => 'High intelligence at low cost (128k ctx, $0.10/$0.10 per 1M)' },
+            # Vision Models
+            { id => 'glm-5v-turbo',  name => 'GLM-5V-Turbo',  description => 'Multimodal coding, vision-based tasks (200k ctx, $1.20/$4.00 per 1M)' },
+            { id => 'glm-4.6v',       name => 'GLM-4.6V',      description => 'Vision with function calling (128k ctx, $0.30/$0.90 per 1M)' },
+            { id => 'glm-4.6v-flashx',name => 'GLM-4.6V-FlashX',description => 'Vision lightweight fast (128k ctx, $0.04/$0.40 per 1M)' },
+            { id => 'glm-4.6v-flash', name => 'GLM-4.6V-Flash',description => 'Vision free tier (128k ctx, free)' },
+            { id => 'glm-4.5v',       name => 'GLM-4.5V',      description => 'Vision multimodal (64k ctx, $0.60/$1.80 per 1M)' },
+            # OCR
+            { id => 'glm-ocr',       name => 'GLM-OCR',       description => 'Document parsing, information extraction ($0.03 per 1M)' },
+        ];
+    } elsif ($provider_name eq 'zai_coding') {
+        # Z.AI Coding Plan models - quota-based (not billed via API)
+        # See: https://docs.z.ai/devpack/overview
+        $models = [
+            { id => 'glm-5.1',       name => 'GLM-5.1',       description => 'SOTA coding model (200k ctx, plan quota)' },
+            { id => 'glm-5-turbo',   name => 'GLM-5-Turbo',   description => 'OpenClaw optimized (200k ctx, plan quota)' },
+            { id => 'glm-4.7',       name => 'GLM-4.7',       description => 'High Performance (200k ctx, plan quota)' },
+            { id => 'glm-4.5-air',   name => 'GLM-4.5-Air',   description => 'Cost-Effective (128k ctx, plan quota)' },
+        ];
     } else {
         # Use per-provider stored base URL if available, otherwise provider default
         my $stored_base = $self->{config}->get_provider_base($provider_name);
@@ -466,3 +506,5 @@ CLIO Development Team
 Same as CLIO.
 
 =cut
+
+1;

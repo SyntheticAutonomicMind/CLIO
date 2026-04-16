@@ -939,3 +939,5 @@ L<CLIO::Coordination::Broker> - Central coordination broker
 L<CLIO::Coordination::Client> - Broker client library
 
 =cut
+
+1;

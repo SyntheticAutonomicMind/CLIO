@@ -705,7 +705,7 @@ sub _execute_script_tool {
 
         my $pid = open my $pipe, '-|';
         if (!defined $pid) {
-            die "Cannot fork: $!";
+            croak "Cannot fork: $!";
         }
 
         if ($pid == 0) {
@@ -819,3 +819,5 @@ __END__
 L<CLIO::Tools::PluginBridge>, L<CLIO::MCP::Manager>
 
 =cut
+
+1;

@@ -546,3 +546,5 @@ build an impenetrable sandbox. True sandboxing requires OS-level
 isolation (containers, seccomp) which is out of scope.
 
 =cut
+
+1;

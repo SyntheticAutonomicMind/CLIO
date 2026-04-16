@@ -84,8 +84,9 @@ That means CLIO can help with real development work, not just produce text.
 - ANSI-compatible terminal emulator
 
 **AI Provider Requirements:**
-- GitHub Copilot subscription (recommended - includes GPT and Claude models), OR
-- API key from any supported provider: OpenAI, Google Gemini, DeepSeek, OpenRouter, MiniMax, OR
+- OpenRouter API key with MiniMax (recommended), OR
+- GitHub Copilot subscription (supports GPT, Claude, and more), OR
+- API key from any supported provider: OpenAI, Google Gemini, DeepSeek, MiniMax, OR
 - Local model server: llama.cpp, LM Studio, or SAM (no API key needed)
 
 ### Installation Steps
@@ -2490,7 +2491,7 @@ A: Not directly. Sessions are stored as local JSON files. However, you could sha
 
 **Q: What AI models does CLIO use?**
 
-A: CLIO supports models from multiple providers. Through GitHub Copilot you get access to GPT-5, Claude Opus and Sonnet, MiniMax, and more. Direct provider access gives you the full model catalog from OpenAI, Google, DeepSeek, OpenRouter, and MiniMax. Local models (llama.cpp, LM Studio) work for offline use.
+A: CLIO supports models from multiple providers. The recommended option is MiniMax via OpenRouter. GitHub Copilot gives you access to GPT-5, Claude Opus and Sonnet, MiniMax, and more. Direct provider access gives you the full model catalog from OpenAI, Google, DeepSeek, OpenRouter, and MiniMax. Local models (llama.cpp, LM Studio) work for offline use.
 
 **Q: How much does API usage cost?**
 
