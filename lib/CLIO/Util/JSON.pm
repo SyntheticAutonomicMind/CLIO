@@ -143,3 +143,5 @@ is already available on the system. JSON::PP is always available as it ships
 with Perl 5.14+.
 
 =cut
+
+1;

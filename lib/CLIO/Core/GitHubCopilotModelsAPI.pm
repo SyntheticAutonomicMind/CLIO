@@ -550,3 +550,5 @@ Token Types and Model Access:
 - This ensures users only see models they can actually use
 
 =cut
+
+1;

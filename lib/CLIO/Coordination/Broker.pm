@@ -126,7 +126,7 @@ sub run {
     };
     if ($@) {
         $self->log_warn("Broker fatal error: $@");
-        die $@;
+        croak $@;
     }
 }
 
@@ -868,7 +868,7 @@ sub send_message {
         while ($offset < $len) {
             my $written = syswrite($socket, $data, $len - $offset, $offset);
             if (!defined $written) {
-                die "syswrite failed: $!";
+                croak "syswrite failed: $!";
             }
             $offset += $written;
         }
@@ -1260,3 +1260,5 @@ Fewtarius
 
 See main CLIO LICENSE file.
 
+
+1;

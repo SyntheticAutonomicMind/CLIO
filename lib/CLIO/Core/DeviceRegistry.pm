@@ -534,3 +534,5 @@ Devices and groups are stored in ~/.clio/devices.json (or .clio/devices.json for
 CLIO Team
 
 =cut
+
+1;
