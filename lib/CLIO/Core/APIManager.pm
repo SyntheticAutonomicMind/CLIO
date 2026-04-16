@@ -45,6 +45,7 @@ use CLIO::Core::API::MessageValidator qw(
 use CLIO::Core::API::ResponseHandler;
 use CLIO::Util::TextSanitizer qw(sanitize_text);
 use CLIO::UI::Terminal qw(ui_char);
+use CLIO::Core::RateLimiter;
 
 # Define request states
 use constant {
@@ -257,6 +258,9 @@ sub new {
         
         # Token estimation with adaptive learning
         learned_token_ratio => 2.5,  # Start with 2.5, learn from API responses
+        
+        # Rate limiter for concurrent request limiting
+        rate_limiter => CLIO::Core::RateLimiter->get_instance(),
         
         %args,
     };
@@ -1815,6 +1819,69 @@ sub _build_request {
     return ($req, $final_endpoint);
 }
 
+=head2 _check_connectivity
+
+Check if we can reach the API endpoint after a network error.
+
+Based on VSCode's approach: ping CAPI to verify network is working before retrying.
+This avoids hammering a struggling server when the network itself is the problem.
+
+Uses exponential backoff delays: [1s, 10s, 10s] between checks.
+
+Arguments:
+- $endpoint: The API endpoint URL to check
+
+Returns: 1 if connectivity is restored, 0 otherwise
+
+=cut
+
+sub _check_connectivity {
+    my ($self, $endpoint) = @_;
+
+    # Delays between connectivity checks (seconds) - matches VSCode pattern
+    my @check_delays = (1, 10, 10);
+
+    for my $i (0 .. $#check_delays) {
+        # Wait before this check (skip first one)
+        if ($i > 0) {
+            log_info('APIManager', "Waiting ${check_delays[$i]}s before connectivity check...");
+            sleep($check_delays[$i]);
+        }
+
+        log_debug('APIManager', "Checking connectivity to API endpoint...");
+
+        my $ua = CLIO::Compat::HTTP->new(timeout => 10);
+        my %headers = (
+            'Authorization' => "Bearer $self->{api_key}",
+        );
+
+        # Add GitHub-specific headers if using Copilot
+        if ($self->{api_base} && $self->{api_base} =~ /githubcopilot\.com/) {
+            $headers{'Editor-Version'} = 'CLIO/1.0';
+        }
+
+        # Try a lightweight request - models list or health check
+        my $check_url = $endpoint;
+        $check_url =~ s{/chat/completions.*$}{};
+        $check_url =~ s{/completions.*$}{};
+        $check_url .= '/models';
+
+        my $resp = eval { $ua->get($check_url, headers => \%headers) };
+
+        if ($resp && $resp->is_success) {
+            log_info('APIManager', "Connectivity restored - API endpoint responding");
+            return 1;
+        }
+
+        my $err = $@ // 'unknown';
+        my $status = $resp ? $resp->code : 'no response';
+        log_debug('APIManager', "Connectivity check failed: $status ($err)");
+    }
+
+    log_warning('APIManager', "Connectivity check failed after " . scalar(@check_delays) . " attempts");
+    return 0;
+}
+
 # Apply rate limiting: broker coordination, local delay, and cooldown.
 #
 # Shared preamble for send_request and send_request_streaming.
@@ -2178,6 +2245,29 @@ sub send_request {
     my ($self, $input, %opts) = @_;
 
     my $ctx = $self->_prepare_api_request($input, %opts, is_streaming => 0);
+    
+    # Check rate limiter before making request
+    my $provider = lc($ctx->{provider_label});
+    my $wait = $self->{rate_limiter}->check_and_wait($provider);
+    if ($wait > 0) {
+        log_info('APIManager', "Rate limited by $provider, waiting ${wait}s...");
+        sleep($wait);
+   }
+   
+   # Acquire slot in rate limiter
+   unless ($self->{rate_limiter}->acquire($provider)) {
+       return { 
+           success => 0, 
+           error => "Concurrency limit reached for $provider, please try again",
+           retryable => 1,
+           retry_after => 1,
+           error_type => 'concurrency_limit'
+       };
+   }
+   
+    # Release slot for cached/early-return results (no actual request made)
+    $self->{rate_limiter}->release($provider);
+    
     return $ctx->{native_result} if $ctx->{native_result};
     return $ctx->{error_result}  if $ctx->{error_result};
 
@@ -2228,12 +2318,16 @@ sub _process_non_streaming_response {
     if (!$resp->is_success) {
         $self->_log_api_response($resp, $provider_label, 1);
         $self->{response_handler}->release_broker_slot($resp, $resp->code);
+        $self->{rate_limiter}->release($provider_label);
         return $self->{response_handler}->handle_error_response($resp, $json, 0,
-            attempt_token_recovery => sub { $self->_attempt_token_recovery() });
+            attempt_token_recovery => sub { $self->_attempt_token_recovery() },
+            headers => $resp->headers);
     }
 
     # Successful response
     $self->{response_handler}->process_rate_limit_headers($resp->headers);
+    $self->{rate_limiter}->update_from_headers($provider_label, $resp->headers);
+    $self->{rate_limiter}->release($provider_label);
     $self->_log_api_response($resp, $provider_label, 0);
 
     my $data = eval { decode_json($resp->decoded_content) };
@@ -2337,9 +2431,32 @@ sub send_request_streaming {
         _on_tool_call => $on_tool_call,
         _on_thinking  => $on_thinking,
     );
+    
+    # Check rate limiter before making request
+    my $provider = lc($ctx->{provider_label});
+    my $wait = $self->{rate_limiter}->check_and_wait($provider);
+    if ($wait > 0) {
+        log_info('APIManager', "Rate limited by $provider, waiting ${wait}s...");
+        sleep($wait);
+    }
+    
+   # Acquire slot in rate limiter
+   unless ($self->{rate_limiter}->acquire($provider)) {
+       return { 
+           success => 0, 
+           error => "Concurrency limit reached for $provider, please try again",
+           retryable => 1,
+           retry_after => 1,
+           error_type => 'concurrency_limit'
+       };
+   }
+   
+    # Release slot for cached/early-return results (no actual request made)
+    $self->{rate_limiter}->release($provider);
+    
     return $ctx->{native_result} if $ctx->{native_result};
     return $ctx->{error_result}  if $ctx->{error_result};
-
+    
     my $model             = $ctx->{model};
     my $endpoint_config   = $ctx->{endpoint_config};
     my $provider_label    = $ctx->{provider_label};
@@ -2372,6 +2489,8 @@ sub send_request_streaming {
     my $raw_response_body = '';
     my $resp;
     my $streaming_headers;
+
+    log_debug('APIManager', "send_request_streaming: HTTP client " . ref($ctx->{ua}));
 
     eval {
         $resp = $ctx->{ua}->request($ctx->{req}, sub {
@@ -2417,6 +2536,15 @@ sub send_request_streaming {
 
     # Post-streaming cleanup
     $self->_cleanup_streaming_state($ss);
+
+    # Ensure streaming_headers is populated from $resp if not captured in callback
+    # (needed for curl streaming where headers are parsed after streaming completes)
+    unless ($streaming_headers && ref($streaming_headers) && $streaming_headers->can('header')) {
+        if ($resp && ref($resp) && $resp->can('headers')) {
+            $streaming_headers = $resp->headers;
+            log_debug('APIManager', "Using headers from response object (callback didn't capture)");
+        }
+    }
 
     return $self->_finalize_streaming_response(
         resp                  => $resp,
@@ -2895,8 +3023,18 @@ sub _finalize_streaming_response {
 
     my $resp = $s{resp};
 
-    # Handle HTTP error responses
-    if (!$resp->is_success) {
+    # Determine status - handle both object and hash-style response objects
+    my $status = eval { $resp->{status} } // eval { $resp->code } // 0;
+
+    # Check success - use status code directly
+    my $is_error = defined($status) && $status !~ /^(2\d{2})$/;
+
+    # Set streaming headers BEFORE error check so rate limit detection can use them
+    $s{streaming_headers} //= $resp->headers if $resp->can('headers');
+
+    # Handle HTTP error responses based on status code
+    if ($is_error) {
+        # Pass streaming headers to error handler for rate limit header parsing
         return $self->_handle_streaming_http_error($resp, \%s);
     }
 
@@ -2955,6 +3093,14 @@ sub _finalize_streaming_response {
 
     $self->_log_streaming_response($response, $s{provider_label}, $tool_calls);
     $self->{response_handler}->release_broker_slot($resp, 200);
+    
+    # Update rate limit state and release slot
+    my $rl_headers = $s{streaming_headers};
+    unless (defined $rl_headers) {
+        $rl_headers = $resp->headers if $resp->can('headers');
+    }
+    $self->{rate_limiter}->update_from_headers($s{provider_label}, $rl_headers) if $rl_headers;
+    $self->{rate_limiter}->release($s{provider_label});
 
     return $response;
 }
@@ -2969,9 +3115,17 @@ sub _handle_streaming_http_error {
     my ($self, $resp, $s) = @_;
 
     $self->{response_handler}->release_broker_slot($resp, $resp->code);
+    
+    # Release rate limiter slot on error
+    $self->{rate_limiter}->release($s->{provider_label});
 
+    # For streaming errors, the body may be in accumulated_content (captured by SSE callback)
+    # or in raw_response_body/buffer (raw HTTP response)
     my $body = $resp->decoded_content;
-    $body = $s->{raw_response_body} // $s->{buffer} // '' unless $body && $body =~ /\S/;
+    $body = $s->{accumulated_content} unless $body && $body =~ /\S/;
+    $body = $s->{raw_response_body} unless $body && $body =~ /\S/;
+    $body = $s->{buffer} unless $body && $body =~ /\S/;
+    $body //= '';
 
     log_debug('APIManager', "[$s->{provider_label} STREAMING ERROR] " . $resp->status_line .
         " Body: " . substr($body, 0, 500));
@@ -2981,8 +3135,21 @@ sub _handle_streaming_http_error {
         $resp->{content} = $body;
     }
 
-    return $self->{response_handler}->handle_error_response($resp, $s->{json}, 1,
-        attempt_token_recovery => sub { $self->_attempt_token_recovery() });
+    # Use streaming headers if available (passed from _finalize_streaming_response)
+    my $headers = $s->{streaming_headers} || $resp->headers;
+
+    log_debug('APIManager', "handle_error_response returned, sending to error handler");
+    my $error_result = eval {
+        $self->{response_handler}->handle_error_response($resp, $s->{json}, 1,
+            attempt_token_recovery => sub { $self->_attempt_token_recovery() },
+            headers => $headers);
+    };
+    if ($@) {
+        log_error('APIManager', "_handle_streaming_http_error: handle_error_response threw: $@");
+        warn "_handle_streaming_http_error EXCEPTION: $@\n";  # Force to stderr
+        $error_result = { success => 0, error => "Error handler exception: $@", retryable => 0 };
+    }
+    return $error_result;
 }
 
 =head2 _check_200_body_error($resp, $s)

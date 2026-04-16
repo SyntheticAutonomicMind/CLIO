@@ -102,3 +102,5 @@ __END__
 L<CLIO::Core::PluginManager>, L<CLIO::Tools::MCPBridge>
 
 =cut
+
+1;

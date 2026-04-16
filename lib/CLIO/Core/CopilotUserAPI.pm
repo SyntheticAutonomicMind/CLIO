@@ -479,3 +479,5 @@ L<CLIO::Core::GitHubAuth> - Token management
 L<CLIO::Core::GitHubCopilotModelsAPI> - Model information
 
 =cut
+
+1;

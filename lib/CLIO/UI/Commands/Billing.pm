@@ -9,6 +9,7 @@ use utf8;
 use parent 'CLIO::UI::Commands::Base';
 
 use Carp qw(croak);
+use CLIO::Util::RateLimit qw(get_rate_limit_type_name);
 
 =head1 NAME
 
@@ -139,12 +140,13 @@ Display GitHub Copilot-specific billing with account info, multipliers, and quot
 sub _display_copilot_billing {
     my ($self, $billing) = @_;
     
-    # Try to fetch user data from CopilotUserAPI for richer info
+    # Try cache first, fall back to fresh fetch to ensure current quota data
+    # This is important when returning from a wait state or at session start
     my $user_data;
     eval {
         require CLIO::Core::CopilotUserAPI;
         my $user_api = CLIO::Core::CopilotUserAPI->new(debug => $self->{debug});
-        $user_data = $user_api->get_cached_user();
+        $user_data = $user_api->get_cached_user() || $user_api->fetch_user();
     };
     
     # Show account info
@@ -228,13 +230,76 @@ sub _display_copilot_billing {
             if ($reset_date && $reset_date ne 'unknown') {
                 my $reset_display = $reset_date;
                 $reset_display =~ s/T.*//;
-                $self->writeline(sprintf("  %-25s %s", 
-                    "Resets:", 
+                $self->writeline(sprintf("  %-25s %s",
+                    "Resets:",
                     $self->colorize($reset_display, 'DIM')), markdown => 0);
             }
         }
     }
-    
+
+    # Rate limit status section
+    # Check both session (direct) and session state (persisted)
+    my $rate_limit_used = $self->{session}{rate_limit_quota_used};
+    my $rate_limit_until = $self->{session}{rate_limit_until};
+    my $rate_limit_code = $self->{session}{rate_limit_code};
+
+    # Check session state for persisted rate limit info
+    if ($self->{session}->can('state')) {
+        my $state = $self->{session}->state();
+        $rate_limit_used = $state->{rate_limit_quota_used} if !defined $rate_limit_used && $state->{rate_limit_quota_used};
+        $rate_limit_until = $state->{rate_limit_until} if !$rate_limit_until && $state->{rate_limit_until};
+        $rate_limit_code = $state->{rate_limit_code} if !$rate_limit_code && $state->{rate_limit_code};
+    }
+
+    if (defined $rate_limit_used || $rate_limit_until || $rate_limit_code) {
+        $self->display_section_header("Rate Limit Status");
+
+        # Display rate limit type if available
+        if ($rate_limit_code) {
+            my $type_name = get_rate_limit_type_name($rate_limit_code);
+            $self->writeline(sprintf("  %-25s %s",
+                "Type:",
+                $self->colorize($type_name, 'WARN')), markdown => 0);
+        }
+
+        if (defined $rate_limit_used) {
+            my $rl_color = 'DATA';
+            if ($rate_limit_used >= 95) {
+                $rl_color = 'ERROR';
+            } elsif ($rate_limit_used >= 80) {
+                $rl_color = 'WARN';
+            }
+            $self->writeline(sprintf("  %-25s %s%%",
+                "Quota Used:",
+                $self->colorize(sprintf("%.1f%%", $rate_limit_used), $rl_color)), markdown => 0);
+        }
+
+        if ($rate_limit_until && $rate_limit_until > time()) {
+            my $wait_seconds = int($rate_limit_until - time());
+            
+            # Check if this is a weekly/monthly limit (not a retry cooldown)
+            if ($rate_limit_code && $rate_limit_code =~ /user_weekly_rate_limited|user_monthly_rate_limited/i) {
+                # Show "Weekly/Monthly Limit" instead of misleading cooldown countdown
+                $self->writeline(sprintf("  %-25s %s",
+                    "Status:",
+                    $self->colorize("Weekly/Monthly Limit Active", 'WARN')), markdown => 0);
+                $self->writeline(sprintf("  %-25s %s",
+                    "Note:",
+                    $self->colorize("Check API docs for reset time", 'DIM')), markdown => 0);
+            } else {
+                # Regular rate limit cooldown
+                my $wait_minutes = int($wait_seconds / 60);
+                my $wait_secs = $wait_seconds % 60;
+                my $wait_str = $wait_minutes > 0
+                    ? sprintf("%dm %02ds", $wait_minutes, $wait_secs)
+                    : sprintf("%ds", $wait_seconds);
+                $self->writeline(sprintf("  %-25s %s",
+                    "Cooldown Remaining:",
+                    $self->colorize($wait_str, 'WARN')), markdown => 0);
+            }
+        }
+    }
+
     # Token usage
     $self->_display_token_usage($billing);
     
@@ -431,6 +496,7 @@ sub _format_number {
     return $formatted;
 }
 
+
 1;
 
 __END__
@@ -444,3 +510,5 @@ CLIO Development Team
 Same as CLIO.
 
 =cut
+
+1;

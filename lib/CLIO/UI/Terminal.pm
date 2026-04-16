@@ -582,3 +582,5 @@ Terminal detection uses:
 L<CLIO::UI::ANSI>, L<CLIO::UI::Theme>
 
 =cut
+
+1;

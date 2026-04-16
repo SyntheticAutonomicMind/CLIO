@@ -181,6 +181,8 @@ sub _display_api_help {
     $self->display_command_row("openai", "OpenAI (compatible API)", 40);
     $self->display_command_row("openrouter", "OpenRouter (multi-model gateway)", 40);
     $self->display_command_row("minimax", "MiniMax (native API)", 40);
+    $self->display_command_row("zai", "Z.AI (GLM-5.1 flagship, vision, reasoning)", 40);
+    $self->display_command_row("zai_coding", "Z.AI Coding Plan (free GLM-4.7/5 for coding)", 40);
     $self->display_command_row("sam", "Local SAM server", 40);
     $self->display_command_row("llama.cpp", "Local llama.cpp server", 40);
     $self->display_command_row("lmstudio", "Local LM Studio server", 40);
@@ -208,3 +210,5 @@ CLIO Development Team
 Same as CLIO.
 
 =cut
+
+1;

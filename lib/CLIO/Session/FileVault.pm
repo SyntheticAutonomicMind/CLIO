@@ -986,3 +986,5 @@ CLIO Development Team
 GPL-3.0-only
 
 =cut
+
+1;

@@ -28,7 +28,7 @@ clio --new
 : /api providers
 
 # 4. Pick a provider and follow its setup instructions
-: /api providers github_copilot    # (or llama.cpp, openai, etc.)
+: /api providers openrouter    # (or minimax, openai, github_copilot, etc.)
 
 # 5. Start using CLIO!
 : explain how to use CLIO

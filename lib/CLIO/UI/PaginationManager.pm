@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: Copyright (c) 2026 Andrew Wyatt (Fewtarius)
+
 package CLIO::UI::PaginationManager;
 
 use strict;
@@ -566,3 +569,5 @@ __END__
 L<CLIO::UI::Chat> - parent module that delegates pagination
 
 =cut
+
+1;

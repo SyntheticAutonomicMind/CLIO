@@ -472,3 +472,5 @@ characters; on ASCII-only terminals they degrade to +, -, |.
 L<CLIO::UI::Terminal>, L<CLIO::UI::Theme>
 
 =cut
+
+1;

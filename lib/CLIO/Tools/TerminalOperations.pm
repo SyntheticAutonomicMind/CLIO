@@ -5,6 +5,7 @@ package CLIO::Tools::TerminalOperations;
 
 use strict;
 use warnings;
+use Carp qw(croak);
 use utf8;
 use parent 'CLIO::Tools::Tool';
 use Cwd 'getcwd';
@@ -235,7 +236,7 @@ sub _execute_captured {
     eval {
         my $pid = fork();
         if (!defined $pid) {
-            die "Fork failed: $!\n";
+            croak "Fork failed: $!\n";
         }
         
         if ($pid == 0) {
@@ -308,7 +309,7 @@ sub _execute_captured {
         }
         
         if ($timed_out) {
-            die "Command timeout after ${timeout}s idle\n";
+            croak "Command timeout after ${timeout}s idle\n";
         }
     };
     
@@ -419,7 +420,7 @@ sub _execute_passthrough {
         # Fork to get a child PID we can manage with process groups
         $child_pid = fork();
         if (!defined $child_pid) {
-            die "Fork failed: $!\n";
+            croak "Fork failed: $!\n";
         }
         
         if ($child_pid == 0) {
@@ -489,7 +490,7 @@ sub _execute_passthrough {
         }
         
         if ($timed_out) {
-            die "Command timeout after ${timeout}s idle\n";
+            croak "Command timeout after ${timeout}s idle\n";
         }
     };
     } # end Unix fork path

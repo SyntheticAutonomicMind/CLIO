@@ -411,3 +411,5 @@ L<CLIO::MCP::Client>, L<CLIO::MCP::Manager>
 MCP Streamable HTTP Transport: L<https://modelcontextprotocol.io/specification/2025-11-25/basic/transports>
 
 =cut
+
+1;

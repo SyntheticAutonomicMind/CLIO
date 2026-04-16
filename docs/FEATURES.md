@@ -272,8 +272,15 @@ Or within a conversation:
 
 ### GitHub Copilot Setup
 
-GitHub Copilot is the recommended provider. Authentication uses a secure device flow:
+GitHub Copilot is supported as an optional provider. For the recommended option, use OpenRouter with MiniMax:
 
+**Recommended: OpenRouter with MiniMax**
+```
+/api provider openrouter
+/api set key <your-openrouter-key>
+```
+
+**Optional: GitHub Copilot** (requires GitHub Copilot subscription)
 ```
 /api login
 ```

@@ -8,7 +8,8 @@ use warnings;
 use utf8;
 
 use CLIO::Core::Logger qw(should_log log_error log_warning log_info log_debug);
-use CLIO::Util::JSON qw(decode_json);
+use CLIO::Util::JSON qw(decode_json encode_json);
+use CLIO::Util::RateLimit qw(format_reset_message);
 use Scalar::Util qw(blessed);
 
 =head1 NAME
@@ -93,6 +94,124 @@ sub set_broker_request_id {
     $self->{_current_broker_request_id} = $id;
 }
 
+=head2 _get_rate_limit_user_message
+
+Generate a user-friendly message for rate limit errors based on error codes.
+
+Based on GitHub Copilot's error code hierarchy:
+- agent_mode_limit_exceeded: Agent mode specific rate limit
+- model_overloaded: Upstream model provider overloaded
+- upstream_provider_rate_limit: Upstream provider rate limit
+- user_global_rate_limited: Global user rate limit
+- user_model_rate_limited: Per-model rate limit
+- integration_rate_limited: Integration-wide rate limit
+
+Arguments:
+- $info: Hashref with optional 'code' and 'retry_after' fields
+
+Returns: User-friendly message string
+
+=cut
+
+sub _get_rate_limit_user_message {
+    my ($info) = @_;
+    return undef unless $info && $info->{code};
+
+    my $code           = $info->{code};
+    my $retry_after    = $info->{retry_after} // 0;
+    my $reset_timestamp = $info->{reset_timestamp};
+
+    # Agent mode rate limit exceeded
+    if ($code =~ /agent_mode_limit_exceeded/i) {
+        return "Sorry, you have exceeded the agent mode rate limit. Please switch to ask mode and try again.";
+    }
+
+    # Upstream model/provider overloaded
+    if ($code =~ /model_overloaded/i || $code =~ /upstream_provider_rate_limit/i) {
+        return "Sorry, the upstream model provider is currently experiencing high demand. Please try again.";
+    }
+
+    # User global rate limit
+    if ($code =~ /user_global_rate_limited/i) {
+        return "You've hit your global rate limit. Please upgrade your plan or wait before making more requests.";
+    }
+
+    # Per-model rate limit
+    if ($code =~ /user_model_rate_limited/i) {
+        return "You've hit the rate limit for this model. Please try again.";
+    }
+
+    # Integration-wide rate limit
+    if ($code =~ /integration_rate_limited/i) {
+        return "Sorry, GitHub Copilot is currently experiencing high demand. Please try again in a few moments.";
+    }
+
+    # Weekly rate limit - don't suggest retry time (it's weekly, not seconds)
+    if ($code =~ /user_weekly_rate_limited/i) {
+        return "Sorry, you've exceeded your weekly rate limit. Please review your usage.";
+    }
+
+    # Monthly rate limit - don't suggest retry time (it's monthly, not seconds)
+    if ($code =~ /user_monthly_rate_limited/i) {
+        return "Sorry, you've exceeded your monthly rate limit. Please review your usage.";
+    }
+
+    # Generic rate limit (no specific code match)
+    return undef;
+}
+
+=head2 _get_quota_exceeded_user_message
+
+Generate a user-friendly message for quota exceeded errors based on error codes.
+
+Based on GitHub Copilot's quota error code hierarchy:
+- free_quota_exceeded: Free tier quota exhausted
+- quota_exceeded: Premium quota exhausted
+- overage_limit_reached: Overage limit reached
+
+Arguments:
+- $info: Hashref with optional 'code' field
+- $copilot_plan: User's Copilot plan (free, individual, individual_pro)
+
+Returns: User-friendly message string
+
+=cut
+
+sub _get_quota_exceeded_user_message {
+    my ($info, $copilot_plan) = @_;
+
+    my $code = $info && $info->{code} ? $info->{code} : '';
+
+    # Free tier quota exceeded
+    if ($code eq 'free_quota_exceeded') {
+        return "You've reached your monthly chat messages quota. Upgrade to Copilot Pro (30-day free trial) or wait for your quota to reset.";
+    }
+
+    # General quota exceeded
+    if ($code eq 'quota_exceeded') {
+        if ($copilot_plan eq 'free') {
+            return "You've reached your monthly chat messages quota. Upgrade to Copilot Pro for higher limits.";
+        }
+        if ($copilot_plan eq 'individual' || $copilot_plan eq 'individual_pro') {
+            return "You've exhausted your premium model quota. Please enable additional paid premium requests or switch to Auto mode.";
+        }
+        return "You've exhausted your premium model quota. To continue working, switch to Auto mode.";
+    }
+
+    # Overage limit reached
+    if ($code eq 'overage_limit_reached') {
+        return "You cannot accrue additional premium requests at this time. Please contact GitHub Support if you need assistance.";
+    }
+
+    # Z.AI insufficient balance (code 1113)
+    if ($code eq '1113') {
+        return "Your Z.AI account has insufficient balance or no active resource package. Please recharge your account to continue.";
+    }
+
+    # Generic quota exceeded
+    return "You've reached your API quota limit. Please check your plan details.";
+}
+
 =head2 handle_error_response
 
 Classify and handle API error responses.
@@ -115,6 +234,7 @@ sub handle_error_response {
     my ($self, $resp, $json, $is_streaming, %opts) = @_;
 
     my $attempt_token_recovery = $opts{attempt_token_recovery};
+    my $passed_headers = $opts{headers};
 
     my $status = $resp->code;
     my $error_prefix = $is_streaming ? "Streaming request failed" : "Request failed";
@@ -166,6 +286,7 @@ sub handle_error_response {
             $status = 429;
             log_debug('ResponseHandler', "Detected rate limit via code '$error_obj->{code}', treating as 429");
         }
+
     }
 
     my $retryable = 0;
@@ -173,6 +294,7 @@ sub handle_error_response {
     my $retry_info = '';
     my $is_retryable_error = 0;
     my $error_type = undef;
+    my $detected_rate_limit_code = $error_obj->{code} if $error_obj && $error_obj->{code};
 
     # Handle rate limiting (429)
     if ($status == 429) {
@@ -181,16 +303,251 @@ sub handle_error_response {
         $retry_after = 60;
         $error_type = 'rate_limit';
 
-        if ($error =~ /retry in ([\d.]+)\s*s(?:econds?)?/i) {
-            $retry_after = int($1) + 1;
-        } elsif (my $header_value = $resp->header('Retry-After')) {
-            $retry_after = $header_value;
+        # Extract retry_after from multiple sources, in order of reliability
+        my $retry_source = 'default';
+        my $retry_after_header;
+        my $reset_timestamp = '';  # Initialize to avoid uninitialized warnings in log messages
+
+        # Extract reset/retry info from headers first (before main extraction loop)
+        if ($passed_headers) {
+            # Use headers passed directly (from streaming responses)
+            # $passed_headers may be a plain hash or a HTTP::Headers object
+            if (ref($passed_headers) eq 'HASH') {
+                $retry_after_header = $passed_headers->{'retry-after'} || $passed_headers->{'x-ratelimit-user-retry-after'};
+                $reset_timestamp = $passed_headers->{'x-ratelimit-reset'};
+            } elsif ($passed_headers->can('header')) {
+                $retry_after_header = $passed_headers->header('Retry-After') // $passed_headers->header('X-RateLimit-User-Retry-After');
+                $reset_timestamp = $passed_headers->header('X-RateLimit-Reset');
+            }
         }
 
-        $self->{rate_limit_until} = time() + $retry_after;
+        if ($error =~ /retry in ([\d.]+)\s*s(?:econds?)?/i) {
+            $retry_after = int($1) + 1;
+            $retry_source = 'error_message';
+        } elsif ($retry_after_header) {
+            $retry_after = $retry_after_header;
+            $retry_source = 'header';
+        }
+        # Also check for retryAfter in the error body (GitHub Copilot may return this)
+        elsif ($error_obj && $error_obj->{retryAfter}) {
+            $retry_after = $error_obj->{retryAfter};
+            $retry_source = 'body_retryAfter';
+        }
+        # Check for reset timestamp (GitHub may return epoch seconds)
+        elsif ($error_obj && $error_obj->{retryAfterTimestamp}) {
+            $retry_after = int($error_obj->{retryAfterTimestamp} - time());
+            $retry_after = 1 if $retry_after < 1;
+            $retry_source = 'body_timestamp';
+        }
+        
+        # Fallback: ensure retry_after has a value if not set by any branch
+        $retry_after //= 60;
+        
+        # Ensure reset_timestamp is defined for logging
+        $reset_timestamp //= '';
+        $retry_source //= 'unknown';
 
-        $retry_info = sprintf("API rate limit exceeded. Retrying in %d seconds.", $retry_after);
-        $error = $retry_info;
+        log_debug('ResponseHandler', "Rate limit detected (code=$detected_rate_limit_code), retry_after=$retry_after (source=$retry_source), reset_timestamp=$reset_timestamp");
+        # Log raw error body for debugging rate limit timing info
+        if ($content && ref($content) eq 'HASH') {
+            log_debug('ResponseHandler', "Rate limit error body: " . encode_json($content));
+        }
+
+        # Try to get user-friendly message based on error code
+        my $rate_limit_info = {
+            retry_after     => $retry_after,
+            code           => $detected_rate_limit_code,
+            reset_timestamp => $reset_timestamp,
+        };
+        my $user_message = _get_rate_limit_user_message($rate_limit_info);
+
+        # Weekly/monthly limits don't reset quickly - don't use misleading retry_after header
+        # The header might say "retry in 1 second" but the actual limit takes days to reset
+        log_debug('ResponseHandler', "Rate limit check: detected_code=$detected_rate_limit_code, retry_after=$retry_after, reset_ts=$reset_timestamp");
+        log_debug('ResponseHandler', "Rate limit error_obj: " . encode_json($error_obj)) if $error_obj;
+        if ($detected_rate_limit_code && $detected_rate_limit_code =~ /user_weekly_rate_limited|user_monthly_rate_limited/i) {
+            # For weekly/monthly limits, use reset_timestamp if available to get accurate time
+            my $actual_retry_after;
+            if ($reset_timestamp && $reset_timestamp =~ /^\d+$/ && $reset_timestamp > time()) {
+                $actual_retry_after = int($reset_timestamp - time());
+            } elsif (defined $self->{_rate_limit_reset_in} && $self->{_rate_limit_reset_in} > 0) {
+                # Use cached reset time from previous successful responses
+                $actual_retry_after = $self->{_rate_limit_reset_in};
+                log_info('ResponseHandler', "Using cached rate limit reset time: ${actual_retry_after}s");
+            } else {
+                # API didn't provide accurate reset time - don't show misleading value
+                log_info('ResponseHandler', "No reset time available: _rate_limit_reset_in=" . 
+                    (defined $self->{_rate_limit_reset_in} ? $self->{_rate_limit_reset_in} : 'undef'));
+                $actual_retry_after = undef;
+            }
+            $retry_after = 0;  # Don't suggest a retry time - it's not accurate
+            $is_retryable_error = 0;  # Don't retry weekly/monthly limits
+            $retryable = 0;
+            
+            # Build error message with expiration time if available
+            my $expiration_str = '';
+            if (defined($actual_retry_after) && $actual_retry_after > 0) {
+                my $days = int($actual_retry_after / 86400);
+                if ($days > 0) {
+                    $expiration_str = sprintf(" This limit expires in %ds (%d days).", $actual_retry_after, $days);
+                } else {
+                    $expiration_str = sprintf(" This limit expires in %ds.", $actual_retry_after);
+                }
+            }
+            
+            # Check if alternative providers are available for provider switch suggestion
+            my $provider_switch = '';
+            eval {
+                require CLIO::Providers;
+                my @providers = CLIO::Providers::list_providers();
+                if (@providers > 1) {
+                    $provider_switch = " Please switch to another provider to continue this session.";
+                }
+            };
+            
+            $error = "Sorry, you've exceeded your weekly rate limit.${provider_switch}${expiration_str}";
+            # Pass via error_obj for WorkflowOrchestrator to extract
+            $error_obj->{_preserved_retry_after} = $actual_retry_after if defined($actual_retry_after);
+            
+            # Don't set rate_limit_until for weekly/monthly limits - the short retry_after
+            # is misleading and the /usage display would show wrong info
+            $self->{rate_limit_until} = 0;
+            
+            # But DO propagate rate_limit_code to session for /usage display
+            if ($self->{session} && $self->{session}->can('state')) {
+                my $state = $self->{session}->state();
+                $state->{rate_limit_until} = 0;  # Clear cooldown - this is weekly/monthly
+                $state->{rate_limit_code} = $detected_rate_limit_code;
+            } elsif ($self->{session}) {
+                $self->{session}{rate_limit_until} = 0;
+                $self->{session}{rate_limit_code} = $detected_rate_limit_code;
+            }
+            
+            log_info('ResponseHandler', "Weekly/monthly rate limit detected: $detected_rate_limit_code" . 
+                (defined($actual_retry_after) ? ", expires in ${actual_retry_after}s" : " (reset time unknown)"));
+            
+            # Build result directly for weekly/monthly limits (skip else/elsif chains)
+            my $weekly_result = { success => 0, error => $error, _error => $error };
+            $weekly_result->{retryable} = 0;
+            $weekly_result->{error_type} = 'rate_limit';
+            $weekly_result->{rate_limit_code} = $detected_rate_limit_code if $detected_rate_limit_code;
+            $weekly_result->{error_obj} = $error_obj if $error_obj;
+            
+            log_debug('ResponseHandler', "Final error being returned: $error");
+            return $weekly_result;
+        }
+        # Handle Z.AI usage limit (code 1308) - non-retryable, resets at specific time
+        # Error message format: "Usage limit reached for 5 hour. Your limit will reset at 2026-04-17 07:03:43"
+        elsif ($detected_rate_limit_code && $detected_rate_limit_code == 1308) {
+            my $actual_retry_after;
+            my $reset_str;
+            
+            # Parse reset time from error message: "Your limit will reset at YYYY-MM-DD HH:MM:SS"
+            # Z.AI returns datetime in CST (Beijing Time, UTC+8)
+            if ($error =~ /reset at (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/) {
+                $reset_str = $1;
+                eval {
+                    require Time::Piece;
+                    # Parse as CST (UTC+8) explicitly by appending timezone marker
+                    my $reset_time = Time::Piece->strptime($reset_str . " +0800", "%Y-%m-%d %H:%M:%S %z");
+                    $actual_retry_after = int($reset_time->epoch - time());
+                    log_debug('ResponseHandler', "Parsed Z.AI reset time: $reset_str (CST) -> ${actual_retry_after}s until reset");
+                };
+                if ($@ || !defined($actual_retry_after)) {
+                    log_warning('ResponseHandler', "Failed to parse Z.AI reset time '$reset_str': $@");
+                    $actual_retry_after = undef;
+                }
+            } else {
+                log_debug('ResponseHandler', "No reset time found in Z.AI error message");
+            }
+            
+            $retry_after = 0;
+            $is_retryable_error = 0;
+            $retryable = 0;
+            
+            # Build error message with human-readable reset time and local time
+            my $expiration_str = '';
+            if (defined($actual_retry_after) && $actual_retry_after > 0) {
+                my $days = int($actual_retry_after / 86400);
+                my $hours = int(($actual_retry_after % 86400) / 3600);
+                my $mins = int(($actual_retry_after % 3600) / 60);
+                
+                my $delta_str;
+                if ($days > 0) {
+                    $delta_str = sprintf("%dd %dh", $days, $hours);
+                } elsif ($hours > 0) {
+                    $delta_str = sprintf("%dh %dm", $hours, $mins);
+                } else {
+                    $delta_str = sprintf("%dm", $mins);
+                }
+                
+                # Also show local time of reset for clarity
+                require Time::Piece;
+                my $reset_epoch = Time::Piece->strptime($reset_str . " +0800", "%Y-%m-%d %H:%M:%S %z")->epoch;
+                my $reset_local = Time::Piece->new($reset_epoch)->strftime("%H:%M %Z");
+                $expiration_str = sprintf(" This limit expires in %s (reset at %s local).", $delta_str, $reset_local);
+            }
+            
+            # Check if alternative providers are available
+            my $provider_switch = '';
+            eval {
+                require CLIO::Providers;
+                my @providers = CLIO::Providers::list_providers();
+                if (@providers > 1) {
+                    $provider_switch = " Please switch to another provider to continue this session.";
+                }
+            };
+            
+            $error = "Sorry, you've exceeded your Z.AI usage limit.${provider_switch}${expiration_str}";
+            
+            # Store reset info in session for /usage display
+            $error_obj->{_preserved_retry_after} = $actual_retry_after if defined($actual_retry_after);
+            $self->{rate_limit_until} = 0;
+            
+            if ($self->{session} && $self->{session}->can('state')) {
+                my $state = $self->{session}->state();
+                $state->{rate_limit_until} = 0;
+                $state->{rate_limit_code} = 'zai_usage_limit';
+            } elsif ($self->{session}) {
+                $self->{session}{rate_limit_until} = 0;
+                $self->{session}{rate_limit_code} = 'zai_usage_limit';
+            }
+            
+            log_info('ResponseHandler', "Z.AI usage limit detected (code=1308)" . 
+                (defined($actual_retry_after) ? ", expires in ${actual_retry_after}s" : " (reset time unknown)"));
+            
+            my $zai_result = { success => 0, error => $error, _error => $error };
+            $zai_result->{retryable} = 0;
+            $zai_result->{error_type} = 'rate_limit';
+            $zai_result->{rate_limit_code} = 'zai_usage_limit';
+            $zai_result->{error_obj} = $error_obj if $error_obj;
+            
+            log_debug('ResponseHandler', "Final error being returned: $error");
+            return $zai_result;
+        } elsif ($user_message) {
+            $retry_info = sprintf("%s Retrying in %d seconds.", $user_message, $retry_after);
+            $error = $retry_info;
+        } else {
+            $retry_info = sprintf("API rate limit exceeded. Retrying in %d seconds.", $retry_after);
+            $error = $retry_info;
+        }
+    }
+    # Handle quota exceeded errors (non-retryable - user must take action)
+    # Detected via semantic codes in error body, not HTTP status
+    elsif ($error_obj && $error_obj->{code} &&
+           ($error_obj->{code} eq 'quota_exceeded' ||
+            $error_obj->{code} eq 'free_quota_exceeded' ||
+            $error_obj->{code} eq 'overage_limit_reached' ||
+            $error_obj->{code} eq '1113')) {
+        $is_retryable_error = 0;
+        $retryable = 0;
+        $error_type = 'quota_exceeded';
+
+        # Get user-friendly message based on error code
+        my $copilot_plan = $self->{session}{copilot_plan} if $self->{session};
+        my $user_message = _get_quota_exceeded_user_message($error_obj, $copilot_plan);
+        $error = $user_message;
+        log_info('ResponseHandler', "Quota exceeded (code=$error_obj->{code}): $user_message");
     }
     # Handle authentication failures (401, 403)
     elsif ($status == 401 || $status == 403) {
@@ -314,6 +671,19 @@ sub handle_error_response {
         log_info('ResponseHandler', "Flagged model as not supporting reasoning - will strip from future requests");
     }
 
+    # Handle content filter errors (non-retryable)
+    # Content was flagged by the safety system - user needs to modify their request
+    elsif (($status == 400 || $status == 403) &&
+           ($error =~ /content.?filter|content.?policy|safety|harmful|inappropriate/i ||
+            ($error_obj && $error_obj->{code} && $error_obj->{code} =~ /content.?filter|content.?policy/i))) {
+        $is_retryable_error = 0;
+        $retryable = 0;
+        $error_type = 'content_filter';
+        $error = "Your request was flagged by the content safety system. "
+               . "Please modify your request to comply with the API's usage policies.";
+        log_info('ResponseHandler', "Content filter triggered: $error");
+    }
+
     # Handle generic 400 (transient backend error, content encoding issue, etc.)
     # These arrive with no recognizable error string - treat as retryable with short backoff.
     # The raw response body is logged to /tmp/clio_api_400.log for diagnosis.
@@ -374,6 +744,10 @@ sub handle_error_response {
         $result->{retryable} = 1;
         $result->{retry_after} = $retry_after if $retry_after;
         $result->{error_type} = $error_type if $error_type;
+        # Pass rate_limit_code for specific rate limit type messaging (e.g., user_weekly_rate_limited)
+        $result->{rate_limit_code} = $detected_rate_limit_code if $detected_rate_limit_code;
+        # Pass error_obj for richer error messaging (e.g. GitHub rate limit codes)
+        $result->{error_obj} = $error_obj if $error_obj;
         if ($self->{last_failed_tool}) {
             $result->{failed_tool} = $self->{last_failed_tool};
             delete $self->{last_failed_tool};
@@ -381,7 +755,15 @@ sub handle_error_response {
     } elsif ($error_type) {
         # Include error_type even for non-retryable errors (for classification)
         $result->{error_type} = $error_type;
+        $result->{retryable} = 0;  # Explicitly mark as non-retryable
+        log_debug('ResponseHandler', "Non-retryable error: retryable=0, error_type=$error_type");
     }
+
+    # Always pass rate_limit_code if detected (for routing decisions)
+    $result->{rate_limit_code} = $detected_rate_limit_code if $detected_rate_limit_code;
+    
+    # Debug: log the final error we're returning
+    log_debug('ResponseHandler', "Final error being returned: $error");
 
     return $result;
 }
@@ -437,6 +819,10 @@ sub process_rate_limit_headers {
                $lc_name eq 'x-quota-snapshot-premium_models') {
             $copilot_quota_header = $value;
         }
+        elsif ($lc_name eq 'x-github-total-quota-used') {
+            $rate_limit{quota_used} = $value;
+            $rate_limit{quota_timestamp} = time();
+        }
     });
 
     # Parse GitHub Copilot quota header if no standard headers
@@ -456,7 +842,8 @@ sub process_rate_limit_headers {
                 $rate_limit{_copilot_percent_remaining} = $value;
             }
             elsif ($key eq 'rst') {
-                $rate_limit{reset_requests} = $value;
+                # Store quota reset SEPARATELY - don't conflate with rate limit reset
+                $rate_limit{quota_reset} = $value;
             }
         }
     }
@@ -464,6 +851,19 @@ sub process_rate_limit_headers {
     return unless keys %rate_limit;
 
     $self->{_rate_limit_info} = \%rate_limit;
+
+    # Store quota_used in session for UI display (mirrors Broker.pm behavior)
+    if (defined $rate_limit{quota_used} && $self->{session}) {
+        if ($self->{session}->can('state')) {
+            my $state = $self->{session}->state();
+            $state->{rate_limit_quota_used} = $rate_limit{quota_used};
+            $state->{rate_limit_quota_timestamp} = $rate_limit{quota_timestamp};
+        } else {
+            $self->{session}{rate_limit_quota_used} = $rate_limit{quota_used};
+            $self->{session}{rate_limit_quota_timestamp} = $rate_limit{quota_timestamp};
+        }
+        log_debug('ResponseHandler', "Quota used: $rate_limit{quota_used}%");
+    }
 
     if (should_log('DEBUG')) {
         log_debug('ResponseHandler', "Rate limit headers received:");
@@ -483,6 +883,10 @@ sub process_rate_limit_headers {
         if ($limit > 0) {
             $percent_remaining = ($remaining / $limit) * 100;
         }
+    }
+    # Also consider x-github-total-quota-used header (percentage already used)
+    elsif (defined $rate_limit{quota_used}) {
+        $percent_remaining = 100 - $rate_limit{quota_used};
     }
 
     if (defined $percent_remaining) {
@@ -537,6 +941,13 @@ sub process_rate_limit_headers {
         my $retry_after = $rate_limit{retry_after};
         if ($retry_after =~ /^\d+$/) {
             $self->{rate_limit_until} = time() + $retry_after;
+            # Propagate to session state for /usage display
+            if ($self->{session} && $self->{session}->can('state')) {
+                my $state = $self->{session}->state();
+                $state->{rate_limit_until} = $self->{rate_limit_until};
+            } elsif ($self->{session}) {
+                $self->{session}{rate_limit_until} = $self->{rate_limit_until};
+            }
             log_info('ResponseHandler', "Retry-After header: waiting ${retry_after}s before next request");
         }
     }
@@ -860,3 +1271,5 @@ Andrew Wyatt (Fewtarius)
 GPL-3.0-only
 
 =cut
+
+1;

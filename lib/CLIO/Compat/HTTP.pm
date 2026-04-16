@@ -251,8 +251,9 @@ sub _request_via_curl {
     
     # Add request body for POST/PUT (use stdin to avoid shell escaping issues)
     my $content_fh;
+    my $content_file;
     if (defined $content && length($content) > 0) {
-        ($content_fh, my $content_file) = tempfile();
+        ($content_fh, $content_file) = tempfile();
         print $content_fh $content;
         close $content_fh;
         push @cmd, '--data-binary', "\@$content_file";
@@ -281,8 +282,11 @@ sub _request_via_curl {
         };
     }
     
+    # Clean up temp file used for POST data
+    unlink $content_file if $content_file;
+
     my $exit_code = $? >> 8;
-    
+
     # Parse HTTP response
     my ($status_line, $header_block, $body);
     if ($output =~ /^(HTTP\/[\d.]+\s+(\d+)\s*([^\r\n]*))\r?\n(.*?)\r?\n\r?\n(.*)$/s) {
@@ -370,6 +374,7 @@ sub _request_via_curl_streaming {
     my $content_file;
     if (defined $content && length($content) > 0) {
         my $content_fh;
+    my $content_file;
         ($content_fh, $content_file) = tempfile(UNLINK => 1);
         print $content_fh $content;
         close $content_fh;
@@ -807,6 +812,11 @@ sub scan {
     while (my ($key, $value) = each %{$self->{headers}}) {
         $callback->($key, $value);
     }
+}
+
+sub header {
+    my ($self, $name) = @_;
+    return $self->{headers}{lc($name)};
 }
 
 sub header_field_names {

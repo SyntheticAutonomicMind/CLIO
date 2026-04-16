@@ -263,3 +263,5 @@ See CLIO::Providers::Google for a complete implementation example.
 CLIO Project
 
 =cut
+
+1;

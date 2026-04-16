@@ -183,3 +183,5 @@ Anything that doesn't match known patterns.
 =back
 
 =cut
+
+1;

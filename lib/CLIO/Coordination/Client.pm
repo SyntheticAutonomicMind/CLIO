@@ -605,7 +605,7 @@ sub send {
         while ($offset < $len) {
             my $written = syswrite($self->{socket}, $data, $len - $offset, $offset);
             if (!defined $written) {
-                die "syswrite failed: $!";
+                croak "syswrite failed: $!";
             }
             $offset += $written;
         }
@@ -711,3 +711,5 @@ Fewtarius
 =head1 LICENSE
 
 See main CLIO LICENSE file.
+
+1;

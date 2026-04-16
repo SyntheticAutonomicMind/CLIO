@@ -289,7 +289,7 @@ sub _run_agent_loop {
     };
     if ($@) {
         print "Agent loop error: $@\n";
-        die $@;
+        croak $@;
     }
     
     print "Agent loop exited ($mode)\n";
@@ -370,3 +370,5 @@ Fewtarius
 =head1 LICENSE
 
 See main CLIO LICENSE file.
+
+1;

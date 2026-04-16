@@ -5,6 +5,7 @@ package CLIO::MCP::Transport::Stdio;
 
 use strict;
 use warnings;
+use Carp qw(croak);
 use utf8;
 
 =head1 NAME
@@ -96,7 +97,7 @@ sub connect {
         }
         
         exec @cmd;
-        die "exec failed: $!";
+        croak "exec failed: $!";
     }
     
     # Parent
@@ -304,3 +305,5 @@ __END__
 L<CLIO::MCP::Transport::HTTP>, L<CLIO::MCP::Client>
 
 =cut
+
+1;

@@ -179,3 +179,5 @@ Enable debug output:
 L<CLIO::Util::JSONRepair> - Complementary JSON repair utilities
 
 =cut
+
+1;

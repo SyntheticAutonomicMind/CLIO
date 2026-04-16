@@ -27,6 +27,7 @@ use CLIO::Core::API::MessageValidator qw(validate_and_truncate);
 use CLIO::Memory::TokenEstimator qw(estimate_tokens);
 use CLIO::Core::PromptBuilder;
 use CLIO::Util::JSON qw(encode_json decode_json);
+use CLIO::Util::RateLimit qw(get_rate_limit_type_name format_reset_message);
 use Encode qw(encode_utf8);  # For handling Unicode in JSON
 use Time::HiRes qw(time sleep);
 use Digest::MD5 qw(md5_hex);
@@ -759,8 +760,11 @@ sub process_input {
         # and the current response has no tool calls AND empty/minimal content,
         # this is likely a premature stop - not a genuine final answer.
         #
+        # Also detects mid-sentence truncation from providers like Z.AI and MiniMax
+        # that sometimes return finish_reason=stop after very short responses.
+        #
         # RECOVERY: Inject a continuation nudge and retry, up to a limit.
-        if (@tool_calls_made > 0 && $premature_stop_retries < $max_premature_stop_retries) {
+        if ($premature_stop_retries < $max_premature_stop_retries) {
             my $content = $api_response->{content} // '';
             my $content_length = length($content);
             
@@ -769,10 +773,20 @@ sub process_input {
             # Also detect responses that end mid-sentence (no terminal punctuation).
             my $looks_premature = 0;
             
-            if ($content_length == 0) {
+            if ($content_length == 0 && @tool_calls_made > 0) {
                 # Completely empty response after tool calls - definitely premature
                 $looks_premature = 1;
                 log_info('WorkflowOrchestrator', "Premature stop detected: empty response after " . scalar(@tool_calls_made) . " tool calls");
+            }
+            elsif ($content_length > 0 && $content_length < 200 && @tool_calls_made > 0) {
+                # Short response after tool calls - check if it looks mid-sentence
+                my $trimmed = $content;
+                $trimmed =~ s/\s+$//;
+                # Ends with colon, comma, or no terminal punctuation - likely mid-work
+                if ($trimmed =~ /[:]\s*$/ || $trimmed !~ /[.!?][)\]]*\s*$/) {
+                    $looks_premature = 1;
+                    log_info('WorkflowOrchestrator', "Premature stop detected: short mid-sentence response ($content_length chars) after " . scalar(@tool_calls_made) . " tool calls");
+                }
             }
             
             if ($looks_premature) {
@@ -1752,6 +1766,10 @@ sub _handle_api_error {
 
     my $error = $api_response->{error} || "Unknown API error";
 
+    # Debug: log full API response for troubleshooting
+    my $api_response_json = eval { encode_json($api_response) } // 'undef';
+    log_debug('WorkflowOrchestrator', "API response for retry check: $api_response_json (retryable=" . ($api_response->{retryable} // 'undef') . ")");
+
     # ── Retryable errors ──────────────────────────────────────────────
     if ($api_response->{retryable}) {
         $$retry_count_ref++;
@@ -1815,17 +1833,38 @@ sub _handle_api_error {
             };
         }
 
-        my $retry_delay = $api_response->{retry_after} || 2;
-        my $error_type  = $error =~ /rate limit/i ? "rate limit" : "server error";
+        my $retry_delay = $api_response->{retry_after} // 2;
+        my $error_type;
+        my $user_message = $api_response->{user_message};  # Detailed message from ResponseHandler
 
-        # Add 1s buffer for rate limits
-        if ($api_response->{error_type} && $api_response->{error_type} eq 'rate_limit' && $retry_delay > 0) {
-            $retry_delay += 1;
+        # Determine error type - use specific rate limit type if available
+        if ($api_response->{error_type} && $api_response->{error_type} eq 'rate_limit') {
+            my $rl_code = $api_response->{rate_limit_code} // '';
+            $error_type = get_rate_limit_type_name($rl_code);
+
+            # Weekly/monthly limits don't reset quickly - don't retry, just inform user
+            # Check both code and retryable flag to detect non-retryable rate limits
+            if (!$api_response->{retryable} || $rl_code =~ /user_weekly_rate_limited|user_monthly_rate_limited/i) {
+                my $reset_msg = $user_message // "Sorry, you've exceeded your weekly/monthly rate limit. Please review your usage.";
+                $self->_display_rate_limit_info($rl_code, $retry_delay);
+                return {
+                    success         => 0,
+                    error           => $reset_msg,
+                    iterations      => $iteration,
+                    tool_calls_made => $tool_calls_made,
+                    rate_limit_wait => $retry_delay,
+                };
+            }
+
+            # For short-term rate limits, don't add buffer since header value is accurate
+            # (removed: $retry_delay += 1)
+        } else {
+            $error_type = "server error";
         }
 
         # Format retry count display (show ∞ for infinite retries)
         my $retry_display = $allow_infinite_retry ? ui_char('infinity') : $retry_limit;
-        my $system_msg = "Temporary $error_type detected. Retrying in ${retry_delay}s... (attempt $$retry_count_ref" . ($allow_infinite_retry ? "" : "/$retry_display") . ")";
+        my $system_msg = ucfirst($error_type) . " detected. Retrying in ${retry_delay}s... (attempt $$retry_count_ref" . ($allow_infinite_retry ? "" : "/$retry_display") . ")";
 
         # ── Per-error-type handling ──
         if ($api_response->{error_type} && $api_response->{error_type} eq 'unsupported_param') {
@@ -1927,6 +1966,23 @@ sub _handle_api_error {
             # Cap backoff at 5 minutes
             $retry_delay = 300 if $retry_delay > 300;
 
+            # Before retrying after connection errors, verify connectivity is restored
+            # (Based on VSCode's approach: ping CAPI to avoid hammering a struggling server)
+            if ($api_response->{error_type} eq 'connection_error' && $$retry_count_ref == 1) {
+                log_info('WorkflowOrchestrator', "Connection error detected - verifying connectivity before retry...");
+                my $endpoint = $self->{api_manager}{api_base} || '';
+                my $connected = $self->{api_manager}->_check_connectivity($endpoint);
+                if (!$connected) {
+                    log_warning('WorkflowOrchestrator', "Connectivity check failed - skipping retry");
+                    return {
+                        success         => 0,
+                        error           => "Network connectivity check failed. Unable to reach the API endpoint. Please check your internet connection and try again.",
+                        iterations      => $iteration,
+                        tool_calls_made => $tool_calls_made,
+                    };
+                }
+            }
+
             $error_type = $api_response->{error_type} eq 'connection_error' ? "connection error" : "server error";
             $system_msg = "Temporary $error_type. Retrying in ${retry_delay}s with exponential backoff... (attempt $$retry_count_ref)";
             log_info('WorkflowOrchestrator', "Applying exponential backoff for server error: ${retry_delay}s delay");
@@ -1989,6 +2045,22 @@ sub _handle_api_error {
         }
 
         return 'retry';
+    }
+
+    # ── Non-retryable rate limit handling (weekly/monthly limits) ─────
+    # These don't reset quickly - return immediately with error, don't retry
+    if (defined($api_response->{error_type}) && $api_response->{error_type} eq 'rate_limit' && !$api_response->{retryable}) {
+        my $rl_code = $api_response->{rate_limit_code} // '';
+        if ($rl_code =~ /user_weekly_rate_limited|user_monthly_rate_limited/i) {
+            log_info('WorkflowOrchestrator', "Weekly/monthly rate limit detected ($rl_code) - returning error without retry");
+            return {
+                success         => 0,
+                error           => $api_response->{error},
+                iterations      => $iteration,
+                tool_calls_made => $tool_calls_made,
+                rate_limit_wait => 0,
+            };
+        }
     }
 
     # ── Non-retryable errors ──────────────────────────────────────────
@@ -3664,6 +3736,34 @@ sub _deduplicate_paragraphs {
     return $text;
 }
 
+=head2 _display_rate_limit_info
+
+Display rate limit information to the user via system message.
+
+Arguments:
+- $rl_code: Rate limit error code
+- $retry_after: Seconds until rate limit resets
+
+=cut
+
+sub _display_rate_limit_info {
+    my ($self, $rl_code, $retry_after) = @_;
+
+    my $message;
+    if ($rl_code =~ /user_weekly_rate_limited/i) {
+        my $reset_msg = format_reset_message($retry_after, undef);
+        $message = "Weekly rate limit reached. Please review your usage$reset_msg.";
+    } elsif ($rl_code =~ /user_monthly_rate_limited/i) {
+        my $reset_msg = format_reset_message($retry_after, undef);
+        $message = "Monthly rate limit reached. Please review your usage$reset_msg.";
+    } else {
+        $message = "Rate limit reached. Please wait before making more requests.";
+    }
+
+    log_info('WorkflowOrchestrator', "Rate limit info: $message");
+    return $message;
+}
+
 1;
 
 __END__
@@ -3713,9 +3813,14 @@ The orchestrator:
 
 =head1 INTEGRATION
 
-Task 1: ✓ Tool Registry (CLIO::Tools::Registry)
-Task 2: ✓ THIS MODULE (CLIO::Core::WorkflowOrchestrator)
-Task 3: ⏳ Enhance APIManager to send/parse tools
-Task 4: ⏳ Implement ToolExecutor to execute tools
-Task 5: ⏳ Testing
-Task 6: ⏳ Remove pattern matching, cleanup
+See L<CLIO::Tools::Registry> for tool registration,
+L<CLIO::Core::APIManager> for API communication,
+and L<CLIO::Core::ToolExecutor> for tool execution.
+
+=head1 LICENSE
+
+GPL-3.0-only
+
+=cut
+
+1;

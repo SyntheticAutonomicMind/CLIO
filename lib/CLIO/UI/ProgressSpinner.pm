@@ -301,3 +301,5 @@ This works on all terminals including Linux console, serial, and dumb.
 Themes can override with spinner_frames in their .style file.
 
 =cut
+
+1;
