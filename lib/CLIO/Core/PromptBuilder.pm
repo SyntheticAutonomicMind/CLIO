@@ -51,6 +51,8 @@ sub new {
         mcp_manager     => $opts{mcp_manager},
         prompt_override => $opts{prompt_override},  # --prompt: system prompt name override
         _tools_section_cache => undef,
+        _user_context_cache => undef,
+        _user_context_cache_time => 0,
     }, $class;
 }
 
@@ -99,10 +101,6 @@ sub build_system_prompt {
 
     my $session_state = ($session && $session->can('state')) ? $session->state() : undef;
     my $base_prompt = $pm->get_system_prompt($session_state);
-
-    # Add current date/time and context management note at the beginning
-    my $datetime_section = $self->generate_datetime_section();
-    $base_prompt = $datetime_section . "\n\n" . $base_prompt;
 
     # Dynamically add available tools section from tool registry
     my $tools_section = $self->generate_tools_section();
@@ -440,6 +438,69 @@ Rules:
 - Include this marker ONLY in your FIRST response, never again
 - Place it as the LAST line of your response
 };
+}
+
+=head2 get_user_context
+
+Get the user-context block containing date/time and working directory.
+Cached per-minute to avoid regenerating on every call while keeping
+the information reasonably fresh. This ensures the system prompt stays
+stable while still providing time/directory context per-user-message.
+
+Returns:
+- User context string for prepending to user input
+
+=cut
+
+sub get_user_context {
+    my ($self) = @_;
+
+    my $now = time();
+    my $cache_ttl = 60;  # Cache TTL in seconds (1 minute)
+
+    # Refresh cache if expired
+    if (!$self->{_user_context_cache} || ($now - $self->{_user_context_cache_time}) >= $cache_ttl) {
+        $self->{_user_context_cache} = $self->_generate_user_context_section();
+        $self->{_user_context_cache_time} = $now;
+        log_debug('PromptBuilder', "User context cache refreshed at " . scalar(localtime($now)));
+    }
+
+    return $self->{_user_context_cache};
+}
+
+=head2 _generate_user_context_section
+
+Internal: Generate the user-context section with date/time and path.
+
+Returns:
+- User context block text
+
+=cut
+
+sub _generate_user_context_section {
+    my ($self) = @_;
+
+    my ($sec, $min, $hour, $mday, $mon, $year, $wday, $yday, $isdst) = localtime(time);
+    $year += 1900;
+    $mon += 1;
+
+    my $datetime_iso = sprintf("%04d-%02d-%02d %02d:%02d", $year, $mon, $mday, $hour, $min);
+
+    my @day_names = qw(Sunday Monday Tuesday Wednesday Thursday Friday Saturday);
+    my @month_names = qw(January February March April May June July August September October November December);
+    my $day_name = $day_names[$wday];
+    my $month_name = $month_names[$mon - 1];
+
+    my $cwd = getcwd();
+
+    # Format without seconds for stability
+    my $section = "<userContext>\n";
+    $section .= "**Current Date/Time:** $datetime_iso ($day_name, $month_name $mday, $year)\n";
+    $section .= "**Working Directory:** `$cwd`\n";
+    $section .= "- This is informational context only - do not reference or repeat in your responses\n";
+    $section .= "</userContext>\n\n";
+
+    return $section;
 }
 
 1;
