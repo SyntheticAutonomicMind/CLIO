@@ -801,10 +801,11 @@ sub process_input {
                     };
                 }
                 
-                # Inject a system-level continuation nudge
+                # Inject a system-level continuation nudge (prefixed with user context for accurate time)
                 push @messages, {
                     role => 'user',
-                    content => "[SYSTEM: Your previous response ended without completing your work. " .
+                    content => $self->{prompt_builder}->get_user_context() .
+                               "[SYSTEM: Your previous response ended without completing your work. " .
                                "You were actively using tools and appear to have stopped mid-workflow. " .
                                "Please continue where you left off - review your recent tool results and proceed with your plan.]"
                 };
@@ -998,11 +999,14 @@ sub _build_turn_context {
         log_debug('WorkflowOrchestrator', "Loaded " . scalar(@$history) . " messages from history (after pre-flight trim)");
     }
 
-    push @messages, { role => 'user', content => $user_input };
+    # Get user context (date/time, working directory) - cached per-minute
+    my $user_context = $self->{prompt_builder}->get_user_context();
+
+    push @messages, { role => 'user', content => $user_context . $user_input };
 
     # Save user message to session history NOW (before processing)
     if ($session && $session->can('add_message')) {
-        $session->add_message('user', $user_input);
+        $session->add_message('user', $user_context . $user_input);
         log_debug('WorkflowOrchestrator', "Saved user message to session history");
     }
 
@@ -2662,7 +2666,7 @@ sub _trim_for_token_limit {
         }
 
         if (@dropped_messages) {
-            my $compressed = _compress_dropped_for_recovery(\@dropped_messages, $last_user_msg, $session, $messages);
+            my $compressed = _compress_dropped_for_recovery(\@dropped_messages, $last_user_msg, $session, $messages, $self->{prompt_builder});
             if ($compressed) {
                 push @non_system, $compressed;
                 log_info('WorkflowOrchestrator', "Injected compression summary for " . scalar(@dropped_messages) . " dropped messages");
@@ -2687,7 +2691,7 @@ sub _trim_for_token_limit {
         @non_system = @kept;
 
         if (@dropped_messages) {
-            my $compressed = _compress_dropped_for_recovery(\@dropped_messages, $last_user_msg, $session, $messages);
+            my $compressed = _compress_dropped_for_recovery(\@dropped_messages, $last_user_msg, $session, $messages, $self->{prompt_builder});
             if ($compressed) {
                 push @non_system, $compressed;
                 log_info('WorkflowOrchestrator', "Injected compression summary for " . scalar(@dropped_messages) . " dropped messages (retry 2)");
@@ -2709,7 +2713,7 @@ sub _trim_for_token_limit {
         @non_system = @kept;
 
         if (@dropped_messages > 2) {
-            my $compressed = _compress_dropped_for_recovery(\@dropped_messages, $last_user_msg, $session, $messages);
+            my $compressed = _compress_dropped_for_recovery(\@dropped_messages, $last_user_msg, $session, $messages, $self->{prompt_builder});
             if ($compressed) {
                 push @non_system, $compressed;
                 log_info('WorkflowOrchestrator', "Injected compression summary for " . scalar(@dropped_messages) . " dropped messages (retry 3 - minimal)");
@@ -2793,7 +2797,7 @@ sub _trim_for_token_limit {
 }
 
 sub _compress_dropped_for_recovery {
-    my ($dropped_messages, $last_user_msg, $session, $all_messages) = @_;
+    my ($dropped_messages, $last_user_msg, $session, $all_messages, $prompt_builder) = @_;
     
     return undef unless $dropped_messages && @$dropped_messages;
     
@@ -2920,9 +2924,13 @@ sub _compress_dropped_for_recovery {
     push @final_parts, "as if nothing changed. If you had a task in progress, continue it. If the user";
     push @final_parts, "asked a question, answer it. Use todo_operations and git tools for details.";
 
+    my $user_context = $prompt_builder ? $prompt_builder->get_user_context() : '';
     my $recovery_content = join("\n", @final_parts);
 
     log_debug('WorkflowOrchestrator', "Recovery context created: " . length($recovery_content) . " chars from " . scalar(@$dropped_messages) . " dropped messages");
+
+    # Prepend user context for accurate time during recovery work
+    $recovery_content = $user_context . $recovery_content;
 
     return {
         role => 'user',
