@@ -394,3 +394,5 @@ SPDX-License-Identifier: GPL-3.0-only
 Andrew Wyatt (Fewtarius) <andrew@fewtarius.dev>
 
 =cut
+
+1;

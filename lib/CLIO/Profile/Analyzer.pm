@@ -546,3 +546,5 @@ specific user's preferences. The AI handles synthesis; the Analyzer handles
 data collection.
 
 =cut
+
+1;

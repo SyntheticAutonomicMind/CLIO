@@ -7,6 +7,7 @@ use strict;
 use warnings;
 use utf8;
 use File::Spec;
+use Cwd qw(getcwd);
 use File::Basename qw(dirname);
 use File::Path qw(mkpath rmtree);
 use CLIO::Util::JSON qw(decode_json encode_json);
@@ -247,6 +248,12 @@ sub get_release_by_version {
     my ($self, $version) = @_;
     
     return undef unless $version;
+
+    # Validate version format (defense in depth - prevents injection via path)
+    unless ($version =~ /^[A-Za-z0-9._-]+$/) {
+        log_error("Update", "Invalid version format: $version");
+        return undef;
+    }
     
     # Try with 'v' prefix first (common convention), then without
     my @tags_to_try = ("v$version", $version);
@@ -306,6 +313,12 @@ sub download_version {
     my ($self, $version) = @_;
     
     return undef unless $version;
+
+    # Validate version format (defense in depth - prevents injection via path)
+    unless ($version =~ /^[A-Za-z0-9._-]+$/) {
+        log_error("Update", "Invalid version format: $version");
+        return undef;
+    }
     
     # Get release info for this version
     my $release = $self->get_release_by_version($version);
@@ -343,9 +356,14 @@ sub download_version {
     # Extract tarball
     log_debug('Update', "Extracting tarball");
     
-    my $extract_result = system("cd '$download_dir' && tar -xzf clio.tar.gz 2>$NULLDEV");
+    my $orig_dir = getcwd();
+    my $extract_ok = 0;
+    if (chdir($download_dir)) {
+        $extract_ok = (system("tar", "-xzf", "clio.tar.gz") == 0);
+        chdir($orig_dir) or log_warning("Update", "Cannot return to $orig_dir: $!");
+    }
     
-    if ($extract_result != 0) {
+    if (!$extract_ok) {
         log_error('Update', "Extraction failed");
         rmtree($download_dir);
         return undef;
@@ -754,9 +772,14 @@ sub download_latest {
     # Extract tarball
     log_debug('Update', "Extracting tarball");
     
-    my $extract_result = system("cd '$download_dir' && tar -xzf clio.tar.gz 2>$NULLDEV");
+    my $orig_dir = getcwd();
+    my $extract_ok = 0;
+    if (chdir($download_dir)) {
+        $extract_ok = (system("tar", "-xzf", "clio.tar.gz") == 0);
+        chdir($orig_dir) or log_warning("Update", "Cannot return to $orig_dir: $!");
+    }
     
-    if ($extract_result != 0) {
+    if (!$extract_ok) {
         log_error('Update', "Extraction failed");
         rmtree($download_dir);
         return undef;

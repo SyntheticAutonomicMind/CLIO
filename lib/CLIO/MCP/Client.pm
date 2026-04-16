@@ -312,3 +312,5 @@ L<CLIO::MCP::Transport::Stdio>, L<CLIO::MCP::Transport::HTTP>, L<CLIO::MCP::Mana
 MCP Specification: L<https://modelcontextprotocol.io/specification/2025-11-25>
 
 =cut
+
+1;

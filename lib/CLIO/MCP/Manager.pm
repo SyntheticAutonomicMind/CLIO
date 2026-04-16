@@ -545,3 +545,5 @@ __END__
 L<CLIO::MCP::Client>, L<CLIO::Tools::MCPBridge>
 
 =cut
+
+1;
