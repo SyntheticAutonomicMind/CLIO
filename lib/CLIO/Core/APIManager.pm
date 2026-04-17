@@ -742,6 +742,59 @@ sub adapt_request_for_endpoint {
         }
     }
 
+    # Z.AI-specific adaptations
+    # - Enable thinking parameter for chain-of-thought reasoning
+    # - Strip OpenAI-specific stream_options (not supported by Z.AI)
+    # - Apply provider-recommended sampling defaults
+    # - Clear thinking from prior turns (reduces context/cost unless user opts in)
+    if ($endpoint_config->{zai}) {
+        # Enable Z.AI thinking parameter for chain-of-thought
+        # Z.AI uses { thinking: { type: "enabled" } } (different from OpenRouter's reasoning)
+        my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
+        if ($show_thinking) {
+            $payload->{thinking} = { type => 'enabled' };
+        }
+
+        # Remove OpenAI-specific stream_options (Z.AI doesn't support it)
+        delete $payload->{stream_options};
+
+        # Apply provider-recommended sampling defaults (match Z.AI API recommendations)
+        if (my $sd = $endpoint_config->{sampling_defaults}) {
+            for my $param (qw(temperature top_p)) {
+                next unless defined $sd->{$param};
+                if ($param eq 'temperature' && $payload->{$param} == 0.2) {
+                    # Override CLIO's conservative default (0.2) with Z.AI recommendation (1.0)
+                    $payload->{$param} = $sd->{$param};
+                }
+            }
+        }
+
+        # Track peak-hour multiplier for Coding Plan users (GLM-5.x models cost 3x during peak)
+        # Peak hours: 14:00-18:00 CST (UTC+8) = 06:00-10:00 UTC
+        if ($endpoint_config->{coding_plan} && $payload->{model}) {
+            my $model_lc = lc($payload->{model});
+            if ($model_lc =~ /^glm-5/) {
+                my @now = gmtime(time());
+                my $utc_hour = $now[2];
+                my $cst_hour = ($utc_hour + 8) % 24;
+                if ($cst_hour >= 14 && $cst_hour < 18) {
+                    if ($self->{session}) {
+                        my $state = $self->{session}->can('state') ? $self->{session}->state() : $self->{session};
+                        $state->{zai_peak_hour} = 1;
+                        $state->{zai_peak_multiplier} = 3;
+                    }
+                    log_debug('APIManager', "Z.AI Coding Plan: Peak hours active (CST 14:00-18:00), GLM-5.x costs 3x quota");
+                } else {
+                    if ($self->{session}) {
+                        my $state = $self->{session}->can('state') ? $self->{session}->state() : $self->{session};
+                        $state->{zai_peak_hour} = 0;
+                        $state->{zai_peak_multiplier} = 2;
+                    }
+                }
+            }
+        }
+    }
+
     # Apply user-configured sampling overrides (highest priority - override everything)
     if ($self->{config}) {
         for my $param (qw(temperature top_p top_k)) {

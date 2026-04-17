@@ -85,6 +85,8 @@ sub handle_billing_command {
     # Route to provider-specific display
     if ($provider eq 'github_copilot') {
         $self->_display_copilot_billing($billing);
+    } elsif ($provider eq 'zai' || $provider eq 'zai_coding') {
+        $self->_display_zai_billing($billing, $provider, $provider_display);
     } else {
         $self->_display_generic_billing($billing, $provider, $provider_display);
     }
@@ -350,6 +352,153 @@ sub _display_generic_billing {
         $self->writeline("", markdown => 0);
         $self->writeline($self->colorize("Use /api quota for token plan balance and usage details.", 'DIM'), markdown => 0);
     }
+    
+    $self->writeline("", markdown => 0);
+}
+
+=head2 _display_zai_billing($billing, $provider, $provider_display)
+
+Display Z.AI-specific billing with plan info, peak hour status, and model cost multipliers.
+
+=cut
+
+sub _display_zai_billing {
+    my ($self, $billing, $provider, $provider_display) = @_;
+    
+    # Get model from session
+    my $model = $self->{session}{state}{billing}{model}
+             || $self->{session}{billing}{model}
+             || $self->{session}{selected_model}
+             || 'unknown';
+    
+    # Strip provider prefix for display
+    my $display_model = $model;
+    $display_model =~ s{^(?:zai|zai_coding)/}{};
+    
+    # Determine plan type
+    my $is_coding_plan = ($provider eq 'zai_coding');
+    my $plan_label = $is_coding_plan ? 'Coding Plan' : 'Pay-as-you-go';
+    
+    # Session summary
+    $self->display_section_header("Session Summary");
+    $self->writeline(sprintf("  %-25s %s", "Provider:", $self->colorize($provider_display, 'DATA')), markdown => 0);
+    $self->writeline(sprintf("  %-25s %s", "Plan:", $self->colorize($plan_label, 'DATA')), markdown => 0);
+    $self->writeline(sprintf("  %-25s %s", "Model:", $self->colorize($display_model, 'DATA')), markdown => 0);
+    
+    my $total_api_requests = $billing->{total_requests} || 0;
+    $self->writeline(sprintf("  %-25s %s", "API Requests:", $self->colorize($total_api_requests, 'DATA')), markdown => 0);
+    
+    # Peak hour and cost multiplier section (Coding Plan only)
+    if ($is_coding_plan) {
+        $self->display_section_header("Coding Plan Status");
+        
+        # Calculate CST time for peak hour detection
+        my @now = gmtime(time());
+        my $utc_hour = $now[2];
+        my $cst_hour = ($utc_hour + 8) % 24;
+        my $is_peak = ($cst_hour >= 14 && $cst_hour < 18);
+        
+        # Current CST time display
+        my $cst_time_str = sprintf("%02d:%02d CST (UTC+8)", $cst_hour, $now[1]);
+        $self->writeline(sprintf("  %-25s %s", "Current Time:",
+            $self->colorize($cst_time_str, 'DATA')), markdown => 0);
+        
+        # Peak hour status
+        if ($is_peak) {
+            $self->writeline(sprintf("  %-25s %s", "Peak Hours:",
+                $self->colorize("ACTIVE (14:00-18:00 CST)", 'WARN')), markdown => 0);
+        } else {
+            my $next_peak;
+            if ($cst_hour < 14) {
+                my $hours_until = 14 - $cst_hour;
+                $next_peak = sprintf("in %dh", $hours_until);
+            } else {
+                # After peak, next peak is tomorrow
+                my $hours_until = 24 - $cst_hour + 14;
+                $next_peak = sprintf("in %dh", $hours_until);
+            }
+            $self->writeline(sprintf("  %-25s %s", "Peak Hours:",
+                $self->colorize("Off-peak (next peak $next_peak)", 'DATA')), markdown => 0);
+        }
+        
+        # Model cost multiplier
+        my $model_lc = lc($display_model);
+        my $is_glm5 = ($model_lc =~ /^glm-5/);
+        my $cost_multiplier = $is_glm5 ? ($is_peak ? 3 : 2) : 1;
+        my $mult_color = $cost_multiplier >= 3 ? 'WARN' : $cost_multiplier >= 2 ? 'LABEL' : 'DATA';
+        my $mult_str = $cost_multiplier == 1 ? '1x (standard)' : "${cost_multiplier}x quota";
+        
+        $self->writeline(sprintf("  %-25s %s", "Cost Rate:",
+            $self->colorize($mult_str, $mult_color)), markdown => 0);
+        
+        # GLM-5.x off-peak promotion note (valid through April 2026)
+        if ($is_glm5 && !$is_peak) {
+            $self->writeline(sprintf("  %-25s %s", "Promo:",
+                $self->colorize("1x off-peak (through April)", 'DATA')), markdown => 0);
+        }
+        
+        # Quota window info
+        my $state = $self->{session}->can('state') ? $self->{session}->state() : $self->{session};
+        if ($state) {
+            my $peak_flag = $state->{zai_peak_hour};
+            my $peak_mult = $state->{zai_peak_multiplier};
+        }
+        
+        $self->writeline(sprintf("  %-25s %s", "Quota Window:",
+            $self->colorize("Rolling 5-hour", 'DATA')), markdown => 0);
+        $self->writeline("", markdown => 0);
+        $self->writeline($self->colorize("GLM-5.x models: 3x during peak (14:00-18:00 CST), 2x off-peak.", 'DIM'), markdown => 0);
+        $self->writeline($self->colorize("Use GLM-4.7 for routine tasks to conserve quota.", 'DIM'), markdown => 0);
+    }
+    
+    # Rate limit status section
+    my $rate_limit_until = $self->{session}{rate_limit_until};
+    my $rate_limit_code = $self->{session}{rate_limit_code};
+    
+    if ($self->{session}->can('state')) {
+        my $state = $self->{session}->state();
+        $rate_limit_until = $state->{rate_limit_until} if !$rate_limit_until && $state->{rate_limit_until};
+        $rate_limit_code = $state->{rate_limit_code} if !$rate_limit_code && $state->{rate_limit_code};
+    }
+    
+    if (defined $rate_limit_until || $rate_limit_code) {
+        $self->display_section_header("Rate Limit Status");
+        
+        if ($rate_limit_code) {
+            my $type_name = get_rate_limit_type_name($rate_limit_code);
+            $self->writeline(sprintf("  %-25s %s",
+                "Type:",
+                $self->colorize($type_name, 'WARN')), markdown => 0);
+        }
+        
+        if ($rate_limit_until && $rate_limit_until > time()) {
+            my $wait_seconds = int($rate_limit_until - time());
+            my $wait_minutes = int($wait_seconds / 60);
+            my $wait_secs = $wait_seconds % 60;
+            my $wait_str = $wait_minutes > 0
+                ? sprintf("%dm %02ds", $wait_minutes, $wait_secs)
+                : sprintf("%ds", $wait_seconds);
+            $self->writeline(sprintf("  %-25s %s",
+                "Cooldown:",
+                $self->colorize($wait_str, 'WARN')), markdown => 0);
+        }
+        
+        # Z.AI usage limit (code 1308) shows reset time from error message
+        if ($rate_limit_code && $rate_limit_code eq 'zai_usage_limit') {
+            my $state = $self->{session}->can('state') ? $self->{session}->state() : $self->{session};
+            if ($state && $state->{zai_reset_time}) {
+                $self->writeline(sprintf("  %-25s %s",
+                    "Resets At:",
+                    $self->colorize($state->{zai_reset_time}, 'DATA')), markdown => 0);
+            }
+        }
+    }
+    
+    # Token usage
+    $self->_display_token_usage($billing);
+    
+    # Recent requests
+    $self->_display_recent_requests($billing, show_rate => 0);
     
     $self->writeline("", markdown => 0);
 }

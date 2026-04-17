@@ -508,9 +508,22 @@ sub handle_error_response {
                 my $state = $self->{session}->state();
                 $state->{rate_limit_until} = 0;
                 $state->{rate_limit_code} = 'zai_usage_limit';
+                # Store human-readable reset time for /usage display
+                if ($reset_str) {
+                    $state->{zai_reset_time} = $reset_str . " CST";
+                }
+                if (defined $actual_retry_after) {
+                    $state->{zai_reset_in} = $actual_retry_after;
+                }
             } elsif ($self->{session}) {
                 $self->{session}{rate_limit_until} = 0;
                 $self->{session}{rate_limit_code} = 'zai_usage_limit';
+                if ($reset_str) {
+                    $self->{session}{zai_reset_time} = $reset_str . " CST";
+                }
+                if (defined $actual_retry_after) {
+                    $self->{session}{zai_reset_in} = $actual_retry_after;
+                }
             }
             
             log_info('ResponseHandler', "Z.AI usage limit detected (code=1308)" . 
@@ -524,6 +537,34 @@ sub handle_error_response {
             
             log_debug('ResponseHandler', "Final error being returned: $error");
             return $zai_result;
+        }
+        # Handle Z.AI concurrency/frequency limits (codes 1302, 1303, 1305)
+        # 1302 = High concurrency, 1303 = High frequency -> short retry (3-5s)
+        # 1305 = General rate limit -> medium retry (30s)
+        # These are retryable with shorter backoff than the default 60s
+        elsif ($detected_rate_limit_code &&
+               ($detected_rate_limit_code == 1302 ||
+                $detected_rate_limit_code == 1303 ||
+                $detected_rate_limit_code == 1305)) {
+            my $zai_rl_type;
+            if ($detected_rate_limit_code == 1302) {
+                $zai_rl_type = 'concurrency';
+                $retry_after = 3;
+            } elsif ($detected_rate_limit_code == 1303) {
+                $zai_rl_type = 'frequency';
+                $retry_after = 5;
+            } else {
+                $zai_rl_type = 'rate_limit';
+                $retry_after = 30;
+            }
+
+            $is_retryable_error = 1;
+            $retryable = 1;
+            $retry_info = sprintf("Z.AI %s limit (code %s). Retrying in %ds...",
+                $zai_rl_type, $detected_rate_limit_code, $retry_after);
+            $error = $retry_info;
+            log_info('ResponseHandler', "Z.AI $zai_rl_type limit (code=$detected_rate_limit_code), retry_after=${retry_after}s");
+        } elsif ($user_message) {
         } elsif ($user_message) {
             $retry_info = sprintf("%s Retrying in %d seconds.", $user_message, $retry_after);
             $error = $retry_info;
