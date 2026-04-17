@@ -64,6 +64,7 @@ sub new {
     
     my $self = {
         debug => $args{debug} // 0,
+        _dirty => 0,  # Lazy save: only write to disk when data changed
         
         # Core data structure
         patterns => {
@@ -140,6 +141,7 @@ sub add_discovery {
         timestamp => time(),
     };
     
+    $self->{_dirty} = 1;
     $self->{metadata}{last_updated} = time();
     log_debug('LTM', "Added discovery: $fact (confidence: $confidence)");
 }
@@ -183,6 +185,7 @@ sub add_problem_solution {
         timestamp => time(),
     };
     
+    $self->{_dirty} = 1;
     $self->{metadata}{last_updated} = time();
     log_debug('LTM', "Added problem-solution: $error -> $solution");
 }
@@ -225,6 +228,7 @@ sub add_code_pattern {
         timestamp => time(),
     };
     
+    $self->{_dirty} = 1;
     $self->{metadata}{last_updated} = time();
     log_debug('LTM', "Added code pattern: $pattern (confidence: $confidence)");
 }
@@ -263,6 +267,7 @@ sub update_entry {
                 $d->{fact} = $replacement;
                 $d->{updated} = $now;
                 $d->{search_count} = ($d->{search_count} || 0) + 1;
+                $self->{_dirty} = 1;
                 $self->{metadata}{last_updated} = $now;
                 log_debug('LTM', "Updated discovery: '$old' -> '$replacement'");
                 return { found => 1, type => 'discovery', old_text => $old, new_text => $replacement };
@@ -291,6 +296,7 @@ sub update_entry {
                 }
                 $s->{updated} = $now;
                 $s->{search_count} = ($s->{search_count} || 0) + 1;
+                $self->{_dirty} = 1;
                 $self->{metadata}{last_updated} = $now;
                 log_debug('LTM', "Updated solution: error '$old_error' -> '$s->{error}'");
                 return {
@@ -310,6 +316,7 @@ sub update_entry {
                 $p->{pattern} = $replacement;
                 $p->{updated} = $now;
                 $p->{search_count} = ($p->{search_count} || 0) + 1;
+                $self->{_dirty} = 1;
                 $self->{metadata}{last_updated} = $now;
                 log_debug('LTM', "Updated pattern: '$old' -> '$replacement'");
                 return { found => 1, type => 'pattern', old_text => $old, new_text => $replacement };
@@ -357,6 +364,7 @@ sub add_workflow {
         timestamp => time(),
     };
     
+    $self->{_dirty} = 1;
     $self->{metadata}{last_updated} = time();
     log_debug('LTM', "Added workflow: $seq_key");
 }
@@ -390,6 +398,7 @@ sub add_failure {
         timestamp => time(),
     };
     
+    $self->{_dirty} = 1;
     $self->{metadata}{last_updated} = time();
     log_debug('LTM', "Added failure: $what");
 }
@@ -410,6 +419,7 @@ sub add_context_rule {
     # Add if not already present
     unless (grep { $_ eq $rule } @{$self->{patterns}{context_rules}{$context}}) {
         push @{$self->{patterns}{context_rules}{$context}}, $rule;
+        $self->{_dirty} = 1;
         $self->{metadata}{last_updated} = time();
         log_debug('LTM', "Added context rule for $context: $rule");
     }
@@ -1197,6 +1207,7 @@ sub consolidate {
 
     # Update metadata
     $self->{metadata}{last_consolidated} = $now;
+    $self->{_dirty} = 1;
     $self->{metadata}{last_updated} = $now;
 
     my $total_changes = $stats->{removed} + $stats->{decayed} + $stats->{deduped};
@@ -1366,6 +1377,11 @@ sub save {
     
     return unless $file;
     
+    # Skip save if nothing changed since last save
+    unless ($self->{_dirty}) {
+        return;
+    }
+    
     # Ensure directory exists
     if ($file =~ m{^(.*)/[^/]+$}) {
         my $dir = $1;
@@ -1398,6 +1414,7 @@ sub save {
         croak $@;
     }
     
+    $self->{_dirty} = 0;  # Reset dirty flag after successful save
     log_debug('LTM', "Saved to $file");
 }
 
