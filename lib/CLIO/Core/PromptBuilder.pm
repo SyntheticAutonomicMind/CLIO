@@ -204,45 +204,16 @@ sub generate_tools_section {
     $section .= "\n**Important:** You HAVE all $tool_count of these tools. ";
     $section .= "Do NOT say you don't have a tool that's on this list!\n\n";
 
-    # Add explicit tool calling examples - MOST IMPORTANT FOR MINIMAX
-    $section .= "## **HOW TO CALL TOOLS - EXPLICIT EXAMPLES**\n\n";
-    $section .= "**WRONG (will fail):**\n";
+    # Add concise tool calling guide - focus on the key pattern, not exhaustive examples
+    $section .= "## **HOW TO CALL TOOLS**\n\n";
+    $section .= "Most tools use an **operation parameter** to select the action. ";
+    $section .= "Call the tool by name and pass `operation` as a parameter:\n\n";
     $section .= "```\n";
-    $section .= "{\"name\": \"grep_search\", \"parameters\": {...}}\n";
-    $section .= "{\"name\": \"file_search\", \"parameters\": {...}}\n";
-    $section .= "{\"name\": \"git\", \"parameters\": {...}}\n";
+    $section .= "{\"name\": \"file_operations\", \"parameters\": {\"operation\": \"grep_search\", \"query\": \"...\"}}\n";
+    $section .= "{\"name\": \"version_control\", \"parameters\": {\"operation\": \"status\"}}\n";
+    $section .= "{\"name\": \"apply_patch\", \"parameters\": {\"patch\": \"...\"}}\n";
     $section .= "```\n\n";
-    $section .= "**CORRECT (use these tool names):**\n";
-    $section .= "```\n";
-    $section .= "{\"name\": \"file_operations\", \"parameters\": {\"operation\": \"grep_search\", ...}}\n";
-    $section .= "{\"name\": \"file_operations\", \"parameters\": {\"operation\": \"file_search\", ...}}\n";
-    $section .= "{\"name\": \"version_control\", \"parameters\": {\"operation\": \"status\", ...}}\n";
-    $section .= "{\"name\": \"terminal_operations\", \"parameters\": {\"operation\": \"exec\", ...}}\n";
-    $section .= "{\"name\": \"memory_operations\", \"parameters\": {\"operation\": \"store\", ...}}\n";
-    $section .= "{\"name\": \"web_operations\", \"parameters\": {\"operation\": \"search_web\", ...}}\n";
-    $section .= "{\"name\": \"todo_operations\", \"parameters\": {\"operation\": \"write\", ...}}\n";
-    $section .= "{\"name\": \"code_intelligence\", \"parameters\": {\"operation\": \"list_usages\", ...}}\n";
-    $section .= "{\"name\": \"interact\", \"parameters\": {\"operation\": \"request_input\", ...}}\n";
-    $section .= "{\"name\": \"agent_operations\", \"parameters\": {\"operation\": \"spawn\", ...}}\n";
-    $section .= "{\"name\": \"remote_execution\", \"parameters\": {\"operation\": \"execute_remote\", ...}}\n";
-    $section .= "{\"name\": \"apply_patch\", \"parameters\": {...}}\n";
-    $section .= "```\n\n";
-
-    # Add operation-based tool explanation
-    $section .= "## **OPERATION-BASED PATTERN**\n\n";
-    $section .= "Most tools use an **operation parameter** to specify which action to perform.\n";
-    $section .= "The value after `operation=` is what GOES IN the operation parameter, NOT a tool name.\n\n";
-    $section .= "**file_operations** with operation= read_file | write_file | grep_search | file_search | list_dir | etc.\n";
-    $section .= "**version_control** with operation= status | log | diff | commit | push | pull | branch | stash | tag\n";
-    $section .= "**terminal_operations** with operation= exec | validate\n";
-    $section .= "**memory_operations** with operation= store | retrieve | search | list | delete | recall_sessions | add_discovery | add_solution | add_pattern | update_ltm | prune_ltm | ltm_stats\n";
-    $section .= "**web_operations** with operation= search_web | fetch_url\n";
-    $section .= "**todo_operations** with operation= read | write | update | add\n";
-    $section .= "**code_intelligence** with operation= list_usages | search_history\n";
-    $section .= "**interact** with operation= request_input\n";
-    $section .= "**agent_operations** with operation= spawn | list | inbox | status | kill | send | broadcast\n";
-    $section .= "**remote_execution** with operation= execute_remote | execute_parallel | prepare_remote | cleanup_remote | check_remote\n";
-    $section .= "**apply_patch** - single operation (pass patch parameter directly)\n\n";
+    $section .= "**Do NOT call operations as standalone tools** (e.g., `grep_search` is NOT a tool name - use `file_operations` with `operation: \"grep_search\"`).\n\n";
 
     # Add JSON formatting instruction
     $section .= "## **JSON FORMAT REQUIREMENT**\n\n";

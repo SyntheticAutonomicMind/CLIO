@@ -9,6 +9,7 @@ use utf8;
 use CLIO::Util::JSON qw(decode_json);
 use File::Spec;
 use POSIX qw(strftime);
+use CLIO::Util::AtomicWrite qw(atomic_write);
 use Carp qw(croak);
 
 
@@ -160,12 +161,7 @@ sub export_to_file {
     
     my $html = $self->export_html($state);
     
-    # Atomic write
-    my $temp = $filename . '.tmp';
-    open my $fh, '>:encoding(UTF-8)', $temp or croak "Cannot write to $temp: $!";
-    print $fh $html;
-    close $fh;
-    rename $temp, $filename or croak "Cannot rename $temp to $filename: $!";
+    atomic_write($filename, $html, encoding => 'UTF-8');
     
     return 1;
 }

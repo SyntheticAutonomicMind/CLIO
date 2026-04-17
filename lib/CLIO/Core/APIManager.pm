@@ -734,6 +734,11 @@ sub adapt_request_for_endpoint {
             }
         }
         
+        # MiniMax uses max_completion_tokens (not max_tokens)
+        if (exists $payload->{max_tokens}) {
+            $payload->{max_completion_tokens} = delete $payload->{max_tokens};
+        }
+        
         # Transform tool messages to MiniMax format
         # MiniMax requires tool results as: content => [{name, type, text}]
         # and assistant messages with tool_calls must have content => ""
@@ -2303,24 +2308,28 @@ sub send_request {
     if ($wait > 0) {
         log_info('APIManager', "Rate limited by $provider, waiting ${wait}s...");
         sleep($wait);
-   }
-   
-   # Acquire slot in rate limiter
-   unless ($self->{rate_limiter}->acquire($provider)) {
-       return { 
-           success => 0, 
-           error => "Concurrency limit reached for $provider, please try again",
-           retryable => 1,
-           retry_after => 1,
-           error_type => 'concurrency_limit'
-       };
-   }
-   
-    # Release slot for cached/early-return results (no actual request made)
-    $self->{rate_limiter}->release($provider);
+    }
     
-    return $ctx->{native_result} if $ctx->{native_result};
-    return $ctx->{error_result}  if $ctx->{error_result};
+    # Acquire slot in rate limiter
+    unless ($self->{rate_limiter}->acquire($provider)) {
+        return { 
+            success => 0, 
+            error => "Concurrency limit reached for $provider, please try again",
+            retryable => 1,
+            retry_after => 1,
+            error_type => 'concurrency_limit'
+        };
+    }
+    
+    # Release slot and return early for cached/pre-computed results (no HTTP request needed)
+    if ($ctx->{native_result}) {
+        $self->{rate_limiter}->release($provider);
+        return $ctx->{native_result};
+    }
+    if ($ctx->{error_result}) {
+        $self->{rate_limiter}->release($provider);
+        return $ctx->{error_result};
+    }
 
     my $perf_start_time = time();
 
@@ -2491,22 +2500,26 @@ sub send_request_streaming {
         sleep($wait);
     }
     
-   # Acquire slot in rate limiter
-   unless ($self->{rate_limiter}->acquire($provider)) {
-       return { 
-           success => 0, 
-           error => "Concurrency limit reached for $provider, please try again",
-           retryable => 1,
-           retry_after => 1,
-           error_type => 'concurrency_limit'
-       };
-   }
-   
-    # Release slot for cached/early-return results (no actual request made)
-    $self->{rate_limiter}->release($provider);
+    # Acquire slot in rate limiter
+    unless ($self->{rate_limiter}->acquire($provider)) {
+        return { 
+            success => 0, 
+            error => "Concurrency limit reached for $provider, please try again",
+            retryable => 1,
+            retry_after => 1,
+            error_type => 'concurrency_limit'
+        };
+    }
     
-    return $ctx->{native_result} if $ctx->{native_result};
-    return $ctx->{error_result}  if $ctx->{error_result};
+    # Release slot and return early for cached/pre-computed results (no HTTP request needed)
+    if ($ctx->{native_result}) {
+        $self->{rate_limiter}->release($provider);
+        return $ctx->{native_result};
+    }
+    if ($ctx->{error_result}) {
+        $self->{rate_limiter}->release($provider);
+        return $ctx->{error_result};
+    }
     
     my $model             = $ctx->{model};
     my $endpoint_config   = $ctx->{endpoint_config};

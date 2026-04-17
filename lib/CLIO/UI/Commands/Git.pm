@@ -12,6 +12,9 @@ use Carp qw(croak);
 use CLIO::UI::Terminal qw(box_char);
 use File::Spec ();
 
+# Shell-escape a value for safe interpolation in single-quoted contexts
+sub _sq { my $v = $_[0]; $v =~ s/'/'\\''/g; "'$v'" }
+
 =head1 NAME
 
 CLIO::UI::Commands::Git - Git commands for CLIO
@@ -286,7 +289,7 @@ sub handle_diff_command {
     my ($self, @args) = @_;
     
     my $file = join(' ', @args) || '';
-    my $cmd = $file ? "git diff -- '$file'" : "git diff";
+    my $cmd = $file ? "git diff -- " . _sq($file) : "git diff";
     
     my $output = `$cmd 2>&1`;
     my $exit_code = $? >> 8;
@@ -394,9 +397,7 @@ sub handle_commit_command {
         return;
     }
     
-    # Commit - escape single quotes in message
-    $message =~ s/'/'\\''/g;
-    my $commit_output = `git commit -m '$message' 2>&1`;
+    my $commit_output = `git commit -m @{[_sq($message)]} 2>&1`;
     $exit_code = $? >> 8;
     
     if ($exit_code != 0) {
@@ -448,7 +449,7 @@ sub handle_branch_command {
         }
         
         my $branch = $args[1];
-        my $output = `git branch -d '$branch' 2>&1`;
+        my $output = `git branch -d @{[_sq($branch)]} 2>&1`;
         my $exit_code = $? >> 8;
         
         if ($exit_code != 0) {
@@ -462,7 +463,7 @@ sub handle_branch_command {
     
     # Create new branch
     my $branch = join(' ', @args);
-    my $output = `git branch '$branch' 2>&1`;
+    my $output = `git branch @{[_sq($branch)]} 2>&1`;
     my $exit_code = $? >> 8;
     
     if ($exit_code != 0) {
@@ -488,7 +489,7 @@ sub handle_switch_command {
     }
     
     my $branch = join(' ', @args);
-    my $output = `git checkout '$branch' 2>&1`;
+    my $output = `git checkout @{[_sq($branch)]} 2>&1`;
     my $exit_code = $? >> 8;
     
     if ($exit_code != 0) {
@@ -517,8 +518,8 @@ sub handle_push_command {
     my $remote = $args[0] || 'origin';
     my $branch = $args[1] || '';
     
-    my $cmd = "git push $remote";
-    $cmd .= " $branch" if $branch;
+    my $cmd = "git push " . _sq($remote);
+    $cmd .= " " . _sq($branch) if $branch;
     $cmd .= " 2>&1";
     
     my $output = `$cmd`;
@@ -551,8 +552,8 @@ sub handle_pull_command {
     my $remote = $args[0] || 'origin';
     my $branch = $args[1] || '';
     
-    my $cmd = "git pull $remote";
-    $cmd .= " $branch" if $branch;
+    my $cmd = "git pull " . _sq($remote);
+    $cmd .= " " . _sq($branch) if $branch;
     $cmd .= " 2>&1";
     
     my $output = `$cmd`;
@@ -588,7 +589,7 @@ sub handle_blame_command {
     }
     
     my $file = join(' ', @args);
-    my $output = `git blame '$file' 2>&1`;
+    my $output = `git blame @{[_sq($file)]} 2>&1`;
     my $exit_code = $? >> 8;
     
     if ($exit_code != 0) {
@@ -644,7 +645,7 @@ sub handle_stash_command {
         my $message = join(' ', @args) || 'WIP';
         
         $message =~ s/'/'\\''/g;
-        my $output = `git stash save '$message' 2>&1`;
+        my $output = `git stash save @{[_sq($message)]} 2>&1`;
         my $exit_code = $? >> 8;
         
         if ($exit_code != 0) {
@@ -737,7 +738,7 @@ sub handle_tag_command {
         }
         
         my $tag = $args[1];
-        my $output = `git tag -d '$tag' 2>&1`;
+        my $output = `git tag -d @{[_sq($tag)]} 2>&1`;
         my $exit_code = $? >> 8;
         
         if ($exit_code != 0) {
@@ -751,7 +752,7 @@ sub handle_tag_command {
     
     # Create new tag
     my $tag = join(' ', @args);
-    my $output = `git tag '$tag' 2>&1`;
+    my $output = `git tag @{[_sq($tag)]} 2>&1`;
     my $exit_code = $? >> 8;
     
     if ($exit_code != 0) {
@@ -802,8 +803,8 @@ sub handle_worktree_command {
         my $path   = $args[1];
         my $branch = $args[2] || '';
         
-        my $cmd = "git worktree add '$path'";
-        $cmd .= " '$branch'" if $branch;
+        my $cmd = "git worktree add @{[_sq($path)]}";
+        $cmd .= " " . _sq($branch) if $branch;
         $cmd .= " 2>&1";
         
         my $output = `$cmd`;
@@ -833,7 +834,7 @@ sub handle_worktree_command {
         }
         
         my $path = $args[1];
-        my $output = `git worktree remove '$path' 2>&1`;
+        my $output = `git worktree remove @{[_sq($path)]} 2>&1`;
         my $exit_code = $? >> 8;
         
         if ($exit_code != 0) {
@@ -895,7 +896,7 @@ sub handle_worktree_command {
             return;
         }
 
-        my $output = `git merge '$branch' 2>&1`;
+        my $output = `git merge @{[_sq($branch)]} 2>&1`;
         my $exit_code = $? >> 8;
 
         if ($exit_code != 0) {

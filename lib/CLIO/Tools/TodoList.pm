@@ -59,99 +59,25 @@ sub new {
     return $class->SUPER::new(
         name => 'todo_operations',
         description => <<'EOF',
-Manage a structured todo list to track progress and plan tasks throughout your work session.
+Manage a structured todo list to track progress and plan tasks.
 
-**THIS IS A MANDATORY TOOL** - You MUST use it for multi-step tasks, not just "can use" or "should use".
-
-═══════════════════════════════════════════════════════════════
-
-MANDATORY USAGE - When You MUST Use This Tool:
-✓ User provides multiple tasks (numbered, comma-separated, or listed)
-✓ Complex work requiring investigation then implementation
-✓ Tasks spanning multiple tool calls or file operations
-✓ User says "do X, then Y, then Z"
-✓ Breaking down larger requests into logical steps
-
-Skip ONLY for:
-✗ Single, trivial tasks (one tool call)
-✗ Purely conversational questions
-✗ Simple explanations
-
-═══════════════════════════════════════════════════════════════
-
-CORRECT WORKFLOW (Follow Exactly):
-
-STEP 1 - CREATE THE LIST (Do This FIRST, Before Any Work):
-→ Call: write operation with todoList array
-→ Set first task as "in-progress" 
-→ Set remaining tasks as "not-started"
-→ Example: todoList: [{id:1, title:"Read code", status:"in-progress"}, {id:2, title:"Fix bug", status:"not-started"}]
-
-STEP 2 - DO THE WORK:
-→ Use appropriate tools (file_operations, terminal_operations, etc.)
-→ Complete the current in-progress task
-
-STEP 3 - MARK COMPLETE (Immediately After Finishing):
-→ Call: update operation with status="completed" for finished todo
-→ Example: todoUpdates: [{id:1, status:"completed"}]
-
-STEP 4 - START NEXT TODO:
-→ Call: update operation with status="in-progress" for next todo
-→ Example: todoUpdates: [{id:2, status:"in-progress"}]
-
-STEP 5 - REPEAT:
-→ Go back to STEP 2 until all todos completed
-
-═══════════════════════════════════════════════════════════════
-
-ANTI-PATTERNS (What NOT To Do):
-
-✗ NEVER say "I'll create a todo list..." without calling this tool
-✗ NEVER describe todos in text without creating them in the system
-✗ NEVER try to update todos that don't exist yet (create first!)
-✗ NEVER batch completions - mark each complete immediately after finishing
-✗ NEVER have multiple todos "in-progress" (max 1 at a time)
-✗ NEVER forget to call update - the system cannot infer status from your text
-
-═══════════════════════════════════════════════════════════════
-
-EXAMPLE - User says: "Create test.txt, read it back, create result.txt"
-
-CORRECT APPROACH:
-1. [Call todo_operations write with 3 todos, first as "in-progress"]
-2. [Call file_operations to create test.txt]
-3. [Call todo_operations update to mark todo #1 "completed"]
-4. [Call todo_operations update to mark todo #2 "in-progress"]
-5. [Call file_operations to read test.txt]
-6. [Call todo_operations update to mark todo #2 "completed"]
-7. [Call todo_operations update to mark todo #3 "in-progress"]
-8. [Call file_operations to create result.txt]
-9. [Call todo_operations update to mark todo #3 "completed"]
-
-WRONG APPROACH:
-"I'll create a todo list for this work:
-1. Create test.txt
-2. Read it back
-3. Create result.txt
-
-Let's get started..." 
-[Then does nothing - NO TOOL CALLS!]
-
-═══════════════════════════════════════════════════════════════
-
-STATUS VALUES:
--  not-started: Todo not yet begun
--  in-progress: Currently working (MAX 1 at a time)
--  completed: Fully finished with no blockers
--  blocked: Cannot proceed (awaiting user input or external dependency)
+**MANDATORY** for multi-step tasks. Skip only for single trivial tasks or conversational questions.
 
 OPERATIONS:
--  read: Get current todo list for this session
+-  read: Get current todo list
 -  write: Create/replace entire list (requires todoList array)
 -  update: Change status of existing todos (requires todoUpdates array)
 -  add: Append new todos to existing list (requires newTodos array)
 
-REMEMBER: This tool makes your work visible to the user. They can see your progress. Use it!
+STATUS VALUES: not-started, in-progress (MAX 1 at a time), completed, blocked
+
+WORKFLOW: Create list with write -> mark first in-progress -> do work -> mark completed -> mark next in-progress -> repeat.
+
+RULES:
+- Create todos FIRST before updating them
+- Mark each complete IMMEDIATELY after finishing (don't batch)
+- Max 1 todo in-progress at a time
+- Call update to change status (system cannot infer from text)
 EOF
         supported_operations => [qw(read write update add)],
         debug => $opts{debug} || 0,

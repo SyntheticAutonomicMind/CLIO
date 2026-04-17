@@ -12,6 +12,7 @@ use feature 'say';
 use File::Path qw(make_path);
 use File::Spec;
 use CLIO::Util::JSON qw(decode_json encode_json_pretty);
+use CLIO::Util::AtomicWrite qw(atomic_write);
 
 
 =head1 NAME
@@ -418,15 +419,7 @@ sub _save {
     my $file = $self->_todos_file();
     my $json = encode_json_pretty($data);
     
-    # Atomic write: write to temp file, then rename
-    # This prevents corruption if process is killed during write
-    my $temp_file = $file . '.tmp';
-    open my $fh, '>:encoding(UTF-8)', $temp_file or croak "Cannot create temp todos file: $!";
-    print $fh $json;
-    close $fh;
-    
-    # Atomic rename (overwrites target file atomically on Unix)
-    rename $temp_file, $file or croak "Cannot save todos (rename failed): $!";
+    atomic_write($file, $json, encoding => 'UTF-8');
     
     log_debug('TodoStore', "Saved to $file");
 }

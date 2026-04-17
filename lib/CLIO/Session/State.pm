@@ -38,6 +38,7 @@ use CLIO::Core::Logger qw(log_error log_warning log_debug log_info);
 use CLIO::Util::PathResolver;
 use File::Spec;
 use CLIO::Util::JSON qw(encode_json decode_json);
+use CLIO::Util::AtomicWrite qw(atomic_write);
 use Cwd qw(getcwd abs_path);
 use POSIX qw(strftime);
 use CLIO::Memory::ShortTerm;
@@ -170,24 +171,16 @@ sub save {
         }
     }
     
-    # Atomic write: write to temp file, then rename
-    # This prevents corruption if process is killed during write
-    # Use process ID in temp filename to prevent race conditions with multiple agents
-    my $temp_file = $self->{file} . '.tmp.' . $$;
-    open my $fh, '>', $temp_file or croak "Cannot create temp session file: $!";
-    chmod(0600, $temp_file);  # Ensure secure permissions before writing sensitive data
-    print $fh encode_json($data);
-    close $fh;
-    
-    # Atomic rename (overwrites target file atomically on Unix)
-    rename $temp_file, $self->{file} or croak "Cannot save session (rename failed): $!";
+    # Atomic write with secure permissions (encode_json produces UTF-8 bytes)
+    atomic_write($self->{file}, encode_json($data), mode => 0600);
 }
 sub load {
     my ($class, $session_id, %args) = @_;
     my $file = _session_file($session_id);
     log_debug('State::load', "called for session_id: $session_id, file: $file");
     return unless -e $file;
-    open my $fh, '<', $file or return;
+    # Use raw bytes mode - decode_json() expects UTF-8 bytes
+    open my $fh, '<:raw', $file or return;
     local $/; my $json = <$fh>; close $fh;
     my $data = eval { decode_json($json) };
     log_debug('SessionState', "State::load loaded data: " . (defined $data ? 'ok' : 'undef'));

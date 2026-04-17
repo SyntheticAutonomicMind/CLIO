@@ -11,6 +11,7 @@ use File::Spec;
 use File::Path qw(make_path);
 use CLIO::Core::Logger qw(log_debug log_info log_warning log_error);
 use CLIO::Util::JSON qw(encode_json decode_json);
+use CLIO::Util::AtomicWrite qw(atomic_write);
 
 =head1 NAME
 
@@ -792,11 +793,7 @@ sub _save_plugin_state {
         my $dir = File::Spec->catdir($ENV{HOME} || '.', '.clio', 'plugin_state');
         make_path($dir) unless -d $dir;
 
-        my $temp = "$state_file.tmp";
-        open my $fh, '>:encoding(UTF-8)', $temp or croak "Cannot write $temp: $!";
-        print $fh encode_json($state);
-        close $fh;
-        rename $temp, $state_file or croak "Cannot rename: $!";
+        atomic_write($state_file, encode_json($state), encoding => 'UTF-8');
     };
 
     if ($@) {

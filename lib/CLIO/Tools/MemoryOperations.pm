@@ -31,92 +31,25 @@ sub new {
         name => 'memory_operations',
         description => q{Memory and Long-Term Memory (LTM) operations.
 
-SESSION-LEVEL MEMORY (key-value pairs stored in .clio/memory/):
--  store - Store information with key and content
-   Parameters: key (required), content (required)
-   Returns: {success, key, path}
-   
--  retrieve - Get stored information by key
-   Parameters: key (required)
-   Returns: {success, content, timestamp}
-   
--  search - Find memories by keyword search
-   Parameters: query (required)
-   Returns: {success, matches[], count}
-   
--  list - List all stored memory keys
-   Returns: {success, memories[], count}
-   
--  delete - Remove a stored memory by key
-   Parameters: key (required)
-   Returns: {success}
+SESSION MEMORY (key-value, stored in .clio/memory/):
+-  store: key (required), content (required)
+-  retrieve: key (required)
+-  search: query (required)
+-  list: no params
+-  delete: key (required)
 
-PROJECT-LEVEL LTM RECALL (searches all previous sessions):
--  recall_sessions - Search all previous session history
-   Parameters: 
-     query (required) - Text to search for
-     max_sessions (optional, default 10) - How many recent sessions to search
-     max_results (optional, default 5) - Max matches to return
-   Returns: {success, matches[{session_id, role, message_index, preview}]}
-   Note: Searches newest sessions first, useful for remembering past work
+LTM RECALL (search previous sessions):
+-  recall_sessions: query (required), max_sessions (optional, default 10), max_results (optional, default 5)
 
-PROJECT-LEVEL LTM STORAGE (persists facts across all sessions):
--  add_discovery - Store a discovered fact to project LTM
-   Parameters:
-     fact (required) - The discovery statement
-     confidence (optional, 0.0-1.0, default 0.8) - Confidence in discovery
-   Returns: {success}
-   Example: Discovering that a code pattern exists, important behavior found
-   
--  add_solution - Store a problem-solution pair to project LTM
-   Parameters:
-     error (required) - The problem/error description
-     solution (required) - How to fix/solve it
-     examples (optional, array) - File paths where this applies
-   Returns: {success}
-   Example: "If you see X error, the solution is Y"
-   
--  add_pattern - Store a code/workflow pattern to project LTM
-   Parameters:
-     pattern (required) - Description of the pattern
-     confidence (optional, 0.0-1.0, default 0.7) - Pattern reliability
-     examples (optional, array) - Files demonstrating this pattern
-   Returns: {success}
-   Example: "Always check for X before doing Y"
+LTM STORAGE (persist facts across sessions):
+-  add_discovery: fact (required), confidence (optional, 0.0-1.0)
+-  add_solution: error (required), solution (required), examples (optional, array)
+-  add_pattern: pattern (required), confidence (optional, 0.0-1.0), examples (optional, array)
 
-LTM MAINTENANCE (agents can self-groom their memory):
--  update_ltm - Update an existing LTM entry (correct outdated information)
-   Parameters:
-     search_text (required) - Text to find in existing entry (substring match)
-     replacement (required) - New text to replace the entry with
-     entry_type (optional) - Limit to: discovery, solution, or pattern
-   Returns: {success, type, old_text, new_text}
-   Use when: LTM contains outdated info (e.g., "deploy to marvin" should be "deploy to zaphod")
-   Note: Prefer update_ltm over adding a new entry when correcting existing knowledge
-
--  prune_ltm - Remove old, low-confidence, or excess LTM entries
-   Parameters:
-     max_age_days (optional, default 90) - Remove entries older than this
-     min_confidence (optional, default 0.3) - Remove entries below this confidence
-     max_discoveries (optional, default 50) - Max discoveries to keep
-     max_solutions (optional, default 50) - Max solutions to keep
-     max_patterns (optional, default 30) - Max patterns to keep
-   Returns: {success, removed, remaining}
-   Use when: LTM seems cluttered or you want to clean up old/low-quality entries
-   
--  ltm_stats - Get statistics about the current LTM database
-   Parameters: none
-   Returns: {success, stats{discoveries, solutions, patterns, ...}}
-   Use when: Checking LTM size before adding more entries
-
-HOW TO USE:
-1. Use store/retrieve for temporary per-project notes
-2. Use recall_sessions to remember what you learned in previous sessions
-3. Use add_discovery/add_solution/add_pattern for important facts to keep
-4. Use update_ltm to correct outdated LTM entries instead of adding duplicates
-5. All LTM data persists in .clio/ltm.json and is automatically injected
-   into future sessions for context
-},
+LTM MAINTENANCE:
+-  update_ltm: search_text (required), replacement (required), entry_type (optional). Prefer over adding duplicates.
+-  prune_ltm: max_age_days, min_confidence, max_discoveries, max_solutions, max_patterns (all optional)
+-  ltm_stats: no params},
         supported_operations => [qw(store retrieve search list delete recall_sessions add_discovery add_solution add_pattern update_ltm prune_ltm ltm_stats)],
         %opts,
     );

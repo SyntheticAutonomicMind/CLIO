@@ -138,9 +138,9 @@ sub init {
     
     # Ensure socket directory exists
     unless (-d $self->{socket_dir}) {
-        make_path($self->{socket_dir}, { mode => 0777 });
+        make_path($self->{socket_dir}, { mode => 0700 });
     }
-    chmod 0777, $self->{socket_dir};
+    chmod 0700, $self->{socket_dir};
     
     # Clean up stale socket
     unlink $self->{socket_path} if -e $self->{socket_path};
@@ -152,7 +152,7 @@ sub init {
         Listen => $self->{max_clients},
     ) or croak "Cannot create socket at $self->{socket_path}: $!";
     
-    chmod 0777, $self->{socket_path};
+    chmod 0700, $self->{socket_path};
     
     $self->{server} = $server;
     $self->{select} = IO::Select->new($server);
@@ -1246,6 +1246,16 @@ sub log_debug {
     my ($self, $msg) = @_;
     return unless $self->{debug};
     CLIO::Core::Logger::log_debug('Broker', $msg);
+}
+
+sub DESTROY {
+    my ($self) = @_;
+    if ($self->{listener}) {
+        close($self->{listener});
+    }
+    if ($self->{socket_path} && -e $self->{socket_path}) {
+        unlink $self->{socket_path};
+    }
 }
 
 1;

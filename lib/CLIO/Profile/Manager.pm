@@ -10,6 +10,7 @@ use Carp qw(croak);
 use CLIO::Core::Logger qw(log_debug log_warning log_error);
 use File::Spec;
 use File::Path qw(make_path);
+use CLIO::Util::AtomicWrite qw(atomic_write);
 
 =head1 NAME
 
@@ -133,11 +134,7 @@ sub save_profile {
     }
 
     eval {
-        my $temp = $path . '.tmp.' . $$;
-        open my $fh, '>:encoding(UTF-8)', $temp or croak "Cannot write $temp: $!";
-        print $fh $content;
-        close $fh;
-        rename $temp, $path or croak "Cannot rename $temp to $path: $!";
+        atomic_write($path, $content, encoding => 'UTF-8');
     };
 
     if ($@) {

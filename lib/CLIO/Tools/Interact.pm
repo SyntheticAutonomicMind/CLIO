@@ -57,67 +57,15 @@ sub new {
         name => 'interact',
         description => q{Request user input, clarification, or decisions during task execution.
 
-**CRITICAL - THIS IS A JSON TOOL CALL, NOT TEXT:**
+THIS IS A JSON TOOL CALL, NOT TEXT. Do NOT use text markers like "[COLLABORATION]".
 
-You MUST call this as a JSON function tool call. The correct format is:
-```
-{
-  "name": "interact",
-  "parameters": {
-    "operation": "request_input",
-    "message": "Your question here"
-  }
-}
-```
+- FREE (does not consume API requests) and BLOCKING (pauses until user responds)
+- Use for: checkpoints, approvals, progress updates, questions, reporting blockers
+- Do NOT use for: questions answerable with tools, info already in conversation
 
-**ABSOLUTELY DO NOT USE TEXT MARKERS:** Do NOT write "[COLLABORATION]", "[COLLAB]", "CLIO: [COLLABORATION]...", or any similar text-based markers in your response. These are INVALID. Collaboration MUST be done via this tool call.
-
-**WHY THIS TOOL:**
-- FREE - Does not consume premium API requests
-- SYNCHRONOUS - Workflow continues in same API call
-- INTERACTIVE - User can guide agent in real-time
-- BLOCKING - Execution pauses until user responds
-
-**WHEN TO USE:**
-- Before implementing complex changes
-- When multiple valid approaches exist
-- To show findings and get approval
-- To report errors and ask for guidance
-- At any decision point
-- For progress checkpoints
-- When you need clarification
-
-**WHEN NOT TO USE:**
-- Questions answerable with available tools
-- Information already in conversation history
-
-**EXAMPLES OF CORRECT USAGE:**
-
-CORRECT (tool call):
-```
-{
-  "name": "interact",
-  "parameters": {
-    "operation": "request_input",
-    "message": "Found 3 bugs. Fix all at once or one at a time?"
-  }
-}
-```
-
-WRONG (text marker - INVALID):
-`CLIO: [COLLABORATION] Found 3 bugs...`
-
-**WORKFLOW:**
-1. Call this tool with message
-2. UI displays message with special styling
-3. User responds
-4. Response returned as tool result
-5. Continue in SAME API call (no extra cost!)
-
-**Parameters:**
+Parameters:
 - message (required): Your question/update for the user
-- context (optional): Additional context to help user understand
-},
+- context (optional): Additional context to help user understand},
         supported_operations => [qw(request_input)],
         
         # Execution control - MUST block and be interactive

@@ -128,10 +128,11 @@ sub execute_command {
         $session = $context->{ui}->{session};
     }
     
+    my $original_cwd = getcwd();
+    my $changed_dir = ($working_dir ne '.');
+    chdir $working_dir if $changed_dir;
+    
     eval {
-        my $original_cwd = getcwd();
-        chdir $working_dir if $working_dir ne '.';
-        
         my $start_time = Time::HiRes::time();
 
         if ($passthrough) {
@@ -153,9 +154,9 @@ sub execute_command {
                 $result->{output} = ($result->{output} // '') . $footer;
             }
         }
-
-        chdir $original_cwd if $working_dir ne '.';
     };
+    
+    chdir $original_cwd if $changed_dir;
     
     if ($@) {
         return $self->error_result("Command execution failed: $@");
@@ -685,7 +686,7 @@ my %_session_grants;
 sub _prompt_command_confirmation {
     my ($self, $command, $analysis, $context) = @_;
 
-    my $is_critical = $analysis->{blocked} || ($analysis->{risk_level} eq 'critical');
+    my $is_critical = ($analysis->{risk_level} && $analysis->{risk_level} eq 'critical') ? 1 : 0;
 
     # Check session-level grants first
     for my $flag (@{$analysis->{flags}}) {
