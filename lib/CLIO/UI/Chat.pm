@@ -954,7 +954,9 @@ sub _process_ai_request {
             }
         }
         
-        log_debug('Chat', "ALRM #$alarm_count - syscall interrupted for signal delivery");
+        # Only log ALRM every 10th interrupt to reduce log noise
+        log_debug('Chat', "ALRM #$alarm_count - syscall interrupted for signal delivery")
+            if $alarm_count % 10 == 1;
         alarm(1);  # Re-arm for next second
     };
     local $SIG{ALRM} = $alarm_handler;
