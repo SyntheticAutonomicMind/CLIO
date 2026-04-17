@@ -1988,7 +1988,7 @@ sub _handle_api_error {
             }
 
             $error_type = $api_response->{error_type} eq 'connection_error' ? "connection error" : "server error";
-            $system_msg = "Temporary $error_type. Retrying in ${retry_delay}s with exponential backoff... (attempt $$retry_count_ref)";
+            $system_msg = "Temporary $error_type. Retrying in ${retry_delay}s... (attempt $$retry_count_ref)";
             log_info('WorkflowOrchestrator', "Applying exponential backoff for server error: ${retry_delay}s delay");
         }
         elsif ($api_response->{error_type} && $api_response->{error_type} eq 'rate_limit') {
