@@ -526,7 +526,6 @@ sub get_current_model {
     if ($self->{config} && $self->{config}->can('get')) {
         my $model = $self->{config}->get('model');
         if ($model) {
-            log_debug('APIManager', "Using model from Config: $model");
             return $model;
         }
     }
@@ -545,7 +544,6 @@ sub get_current_provider {
     if ($self->{config} && $self->{config}->can('get')) {
         my $provider = $self->{config}->get('provider');
         if ($provider) {
-            log_debug('APIManager', "Using provider from Config: $provider");
             return $provider;
         }
     }
@@ -2589,9 +2587,14 @@ sub _process_sse_data {
         my $iteration = ($ss->{opts} && $ss->{opts}{tool_call_iteration}) || 1;
         $self->{response_handler}->store_stateful_marker($data->{stateful_marker}, $ss->{model}, $iteration);
     }
-    if ($data->{id} && $self->{session}) {
+    # Only store response_id when it changes (not every chunk)
+    if ($data->{id} && $self->{session} &&
+        (!defined($self->{session}{lastGitHubCopilotResponseId}) ||
+         $self->{session}{lastGitHubCopilotResponseId} ne $data->{id})) {
         $self->{session}{lastGitHubCopilotResponseId} = $data->{id};
-        log_debug('APIManager', "Stored response_id fallback: " . substr($data->{id}, 0, 30) . "...");
+        if (should_log('DEBUG')) {
+            log_debug('APIManager', "Stored response_id fallback: " . substr($data->{id}, 0, 30) . "...");
+        }
     }
 
     # Capture real usage from final streaming chunk
@@ -3412,10 +3415,12 @@ sub _extract_stateful_markers {
             $data->{choices}[0]{message}{stateful_marker}, $model, $iteration);
     }
 
-    # Fallback: store response id
+    # Fallback: store response id (guard log behind debug check)
     if ($data->{id} && $self->{session}) {
         $self->{session}{lastGitHubCopilotResponseId} = $data->{id};
-        log_debug('APIManager', "Stored response_id fallback: " . substr($data->{id}, 0, 30) . "...");
+        if (should_log('DEBUG')) {
+            log_debug('APIManager', "Stored response_id fallback: " . substr($data->{id}, 0, 30) . "...");
+        }
     }
 }
 
