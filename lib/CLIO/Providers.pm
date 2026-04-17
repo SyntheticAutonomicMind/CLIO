@@ -182,10 +182,9 @@ my %PROVIDERS = (
         max_output_tokens => 131072,
         endpoint => {
             path_suffix => '',
-            temperature_range => [0.01, 1.0],
+            temperature_range => [0.001, 1.0],
             supports_tools => 1,
             minimax => 1,
-            no_system_role => 1,
             # Recommended sampling params per MiniMax model card
             sampling_defaults => { temperature => 1.0, top_p => 0.95, top_k => 40 },
         },
@@ -203,10 +202,9 @@ my %PROVIDERS = (
         max_output_tokens => 131072,
         endpoint => {
             path_suffix => '',
-            temperature_range => [0.01, 1.0],
+            temperature_range => [0.001, 1.0],
             supports_tools => 1,
             minimax => 1,
-            no_system_role => 1,
             sampling_defaults => { temperature => 1.0, top_p => 0.95, top_k => 40 },
         },
     },

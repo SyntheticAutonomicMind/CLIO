@@ -43,7 +43,7 @@ ok($endpoint->{minimax}, 'MiniMax flag set in endpoint config');
 
 # Test 18: Temperature range excludes 0
 my ($min_temp, $max_temp) = @{$endpoint->{temperature_range}};
-ok($min_temp > 0, "Min temperature > 0 (got $min_temp) - MiniMax rejects temp=0");
+ok($min_temp > 0 && $min_temp <= 0.001, "Min temperature is 0.001 (got $min_temp) - MiniMax rejects temp=0");
 ok($max_temp == 1.0, "Max temperature is 1.0 (got $max_temp)");
 
 # Test 20: Auth header
