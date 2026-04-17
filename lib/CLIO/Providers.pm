@@ -229,6 +229,7 @@ my %PROVIDERS = (
             supports_tools => 1,
             zai => 1,
             reasoning_field => 'reasoning_content',
+            sampling_defaults => { temperature => 1.0, top_p => 0.95 },
         },
     },
     
@@ -251,6 +252,7 @@ my %PROVIDERS = (
             zai => 1,
             reasoning_field => 'reasoning_content',
             coding_plan => 1,
+            sampling_defaults => { temperature => 1.0, top_p => 0.95 },
         },
     },
 );
