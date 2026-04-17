@@ -145,7 +145,11 @@ sub execute_tool {
     log_debug('ToolExecutor', "Executing tool: $tool_name (id=$tool_call_id)");
     
     # Parse arguments with UTF-8 handling
+    # Reuse pre-parsed args from WorkflowOrchestrator when available
     my $arguments;
+    if ($tool_call->{_parsed_args}) {
+        $arguments = $tool_call->{_parsed_args};
+    } else {
     eval {
         # Repair malformed JSON from AI (e.g., "offset":, → "offset":null,)
         my $json_str = repair_malformed_json($arguments_json, should_log('DEBUG'));
@@ -158,7 +162,8 @@ sub execute_tool {
         }
         $arguments = decode_json($json_str);
     };
-    if ($@) {
+    }
+    if (!$arguments && $@) {
         my $error = $@;
         log_debug('ToolExecutor', "JSON parse error: $error");
         
@@ -195,14 +200,13 @@ sub execute_tool {
         return $self->_error_result("Tool registry not available");
     }
     
-    # Tool aliasing - map common operation names to their parent tool
-    # This handles cases where AI calls "grep_search" instead of "file_operations" with operation="grep_search"
-    my %TOOL_ALIASES = (
-        'grep_search' => { tool => 'file_operations', operation => 'grep_search' },
-        'semantic_search' => { tool => 'file_operations', operation => 'semantic_search' },
-        'file_search' => { tool => 'file_operations', operation => 'file_search' },
-        'read_file' => { tool => 'file_operations', operation => 'read_file' },
-    );
+    # Resolve tool aliases via the registry (single source of truth)
+    my $alias_info = $tool_registry->get_alias_info($tool_name);
+    if ($alias_info) {
+        log_debug('ToolExecutor', "Aliasing '$tool_name' -> '$alias_info->{tool}' with operation='$alias_info->{operation}'");
+        $tool_name = $alias_info->{tool};
+        $arguments->{operation} = $alias_info->{operation};
+    }
     
     my $original_tool_name = $tool_name;
     
@@ -280,13 +284,6 @@ sub execute_tool {
         } else {
             return $self->_error_result($result->{error} || 'Plugin tool execution failed');
         }
-    }
-    
-    if (exists $TOOL_ALIASES{$tool_name}) {
-        my $alias = $TOOL_ALIASES{$tool_name};
-        log_debug('ToolExecutor', "Aliasing '$tool_name' -> '$alias->{tool}' with operation='$alias->{operation}'");
-        $tool_name = $alias->{tool};
-        $arguments->{operation} = $alias->{operation};
     }
     
     my $tool = $tool_registry->get_tool($tool_name);

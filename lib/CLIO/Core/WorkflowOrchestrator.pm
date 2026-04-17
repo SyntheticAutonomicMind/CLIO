@@ -32,6 +32,7 @@ use Encode qw(encode_utf8);  # For handling Unicode in JSON
 use Time::HiRes qw(time sleep);
 use Digest::MD5 qw(md5_hex);
 use CLIO::Compat::Terminal qw(ReadKey ReadMode);  # For interrupt detection
+use CLIO::Util::AtomicWrite qw(atomic_write);
 use CLIO::Logging::ProcessStats;
 use POSIX qw(strftime);
 
@@ -707,22 +708,14 @@ sub process_input {
         }
         
         # Check if AI requested tool calls (structured or text-based)
-        my $assistant_msg_pending = undef;  # Will be set if we need delayed save
         
         # Extract session naming marker from response content (regardless of tool calls)
         # The AI may include the marker in its first response alongside tool calls
         # Always strip the marker and always set the name (allows renaming during session)
         if ($session && $session->can('session_name')) {
             my $content = $api_response->{content} // '';
-            if ($content =~ s/\s*<!--session:\{[^}]*"title"\s*:\s*"([^"]{3,80})"[^}]*\}-->\s*//s) {
-                $api_response->{content} = $content;
-                my $title = $1;
-                $title =~ s/^\s+|\s+$//g;
-                if (length($title) >= 3) {
-                    $session->session_name($title);
-                    log_info('WorkflowOrchestrator', "Session named by AI: $title");
-                }
-            }
+            my ($cleaned, $named) = $self->_extract_session_marker($content, $session);
+            $api_response->{content} = $cleaned if $named;
         }
 
         if ($api_response->{tool_calls} && @{$api_response->{tool_calls}}) {
@@ -835,17 +828,9 @@ sub process_input {
         my $final_content = $api_response->{content} || '';
         
         # Extract session naming marker before any other cleanup
-        # The AI includes <!--session:{"title":"..."}--> in its first response
-        # Always strip the marker and always set the name (allows renaming during session)
         if ($session && $session->can('session_name')) {
-            if ($final_content =~ s/\s*<!--session:\{[^}]*"title"\s*:\s*"([^"]{3,80})"[^}]*\}-->\s*//s) {
-                my $title = $1;
-                $title =~ s/^\s+|\s+$//g;
-                if (length($title) >= 3) {
-                    $session->session_name($title);
-                    log_info('WorkflowOrchestrator', "Session named by AI: $title");
-                }
-            }
+            my ($cleaned, $named) = $self->_extract_session_marker($final_content, $session);
+            $final_content = $cleaned if $named;
         }
 
         # Remove conversation tags if present
@@ -1500,11 +1485,10 @@ sub _prepare_tool_round {
         my $arguments_str = $arguments_raw // '{}';
 
         my $arguments_valid = 0;
+        my $parsed_args;
         eval {
-            use CLIO::Util::JSON qw(decode_json);
-            use Encode qw(encode_utf8);
             my $json_bytes = utf8::is_utf8($arguments_str) ? encode_utf8($arguments_str) : $arguments_str;
-            my $parsed = decode_json($json_bytes);
+            $parsed_args = decode_json($json_bytes);
             $arguments_valid = 1;
         };
 
@@ -1530,6 +1514,8 @@ sub _prepare_tool_round {
                 };
             }
         } else {
+            # Stash parsed args for downstream reuse (avoids re-parsing in Phase 3 and ToolExecutor)
+            $tool_call->{_parsed_args} = $parsed_args;
             push @validated_tool_calls, $tool_call;
         }
     }
@@ -1605,9 +1591,12 @@ sub _prepare_tool_round {
 
         my $tool = $self->{tool_registry}->get_tool($tool_name);
 
-        # Parse arguments for classification
+        # Parse arguments for classification (reuse Phase 1 result when available)
         my $params = {};
-        if ($tool_call->{function}->{arguments}) {
+        if ($tool_call->{_parsed_args} && !$alias_info) {
+            # Reuse pre-parsed args from Phase 1 validation (avoids redundant JSON decode)
+            $params = $tool_call->{_parsed_args};
+        } elsif ($tool_call->{function}->{arguments}) {
             eval {
                 my $json_str = $tool_call->{function}->{arguments};
 
@@ -3217,13 +3206,7 @@ sub _checkpoint_session_progress {
 
         my $content = join("\n", @parts);
 
-        # Atomic write
-        my $file = "$memory_dir/session_progress.md";
-        my $temp = "$file.tmp.$$";
-        open my $fh, '>:encoding(UTF-8)', $temp or croak "Cannot write: $!";
-        print $fh $content;
-        close $fh;
-        rename $temp, $file or croak "Cannot rename: $!";
+        atomic_write("$memory_dir/session_progress.md", $content, encoding => 'UTF-8');
 
         log_debug('WorkflowOrchestrator', "Session progress checkpoint saved (iteration $iteration, " . length($content) . " chars)");
     };
@@ -3772,6 +3755,20 @@ sub _display_rate_limit_info {
     return $message;
 }
 
+sub _extract_session_marker {
+    my ($self, $content, $session) = @_;
+    if ($content =~ s/\s*<!--session:\{[^}]*"title"\s*:\s*"([^"]{3,80})"[^}]*\}-->\s*//s) {
+        my $title = $1;
+        $title =~ s/^\s+|\s+$//g;
+        if (length($title) >= 3) {
+            $session->session_name($title);
+            log_info('WorkflowOrchestrator', "Session named by AI: $title");
+        }
+        return ($content, 1);
+    }
+    return ($content, 0);
+}
+
 1;
 
 __END__
@@ -3830,5 +3827,3 @@ and L<CLIO::Core::ToolExecutor> for tool execution.
 GPL-3.0-only
 
 =cut
-
-1;
