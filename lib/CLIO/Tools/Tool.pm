@@ -97,8 +97,10 @@ sub execute {
     # Validate operation
     unless ($self->validate_operation($operation)) {
         my $available = join(', ', @{$self->{supported_operations}});
+        my $suggestion = $self->_suggest_operation($operation);
+        my $hint = $suggestion ? " Did you mean: $suggestion?" : "";
         log_debug('Tool:$self->{name}', "Unknown operation: '$operation'. Available: $available");
-        return $self->operation_error("Unknown operation: $operation");
+        return $self->operation_error("Unknown operation: $operation.$hint Valid operations: $available");
     }
     
     # Route to operation handler
@@ -157,10 +159,43 @@ Returns: Boolean (1 if supported, 0 if not)
 
 =cut
 
+sub _suggest_operation {
+    my ($self, $bad_op) = @_;
+    return undef unless $bad_op && $self->{supported_operations};
+    
+    my $lc = lc($bad_op);
+    my @ops = @{$self->{supported_operations}};
+    
+    # Exact substring match (e.g., "write" matches "write_file")
+    my @substr_matches = grep { index(lc($_), $lc) >= 0 || index($lc, lc($_)) >= 0 } @ops;
+    return $substr_matches[0] if @substr_matches == 1;
+    
+    # Edit distance 1-2 (simple: check shared prefix >= 60% of length)
+    my $min_prefix = int(length($lc) * 0.6) || 1;
+    my @prefix_matches;
+    for my $op (@ops) {
+        my $lo = lc($op);
+        my $shared = 0;
+        for my $i (0 .. length($lc) - 1) {
+            last if $i >= length($lo) || substr($lc, $i, 1) ne substr($lo, $i, 1);
+            $shared++;
+        }
+        push @prefix_matches, $op if $shared >= $min_prefix;
+    }
+    return $prefix_matches[0] if @prefix_matches == 1;
+    return join(' or ', @prefix_matches) if @prefix_matches && @prefix_matches <= 3;
+    
+    return undef;
+}
+
 sub validate_operation {
     my ($self, $operation) = @_;
     
-    return grep { $_ eq $operation } @{$self->{supported_operations}};
+    # Build hash lookup on first call (avoids linear grep on every tool dispatch)
+    unless ($self->{_supported_ops_hash}) {
+        $self->{_supported_ops_hash} = { map { $_ => 1 } @{$self->{supported_operations}} };
+    }
+    return $self->{_supported_ops_hash}{$operation} ? 1 : 0;
 }
 
 =head2 route_operation

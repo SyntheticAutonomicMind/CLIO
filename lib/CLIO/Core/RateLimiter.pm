@@ -130,6 +130,7 @@ Returns: Max concurrent requests (default: 2)
 
 sub get_max_concurrent {
     my ($self, $provider) = @_;
+    $provider = lc($provider);
     return $self->{max_concurrent}{$provider} // DEFAULT_MAX_CONCURRENT;
 }
 
@@ -145,6 +146,7 @@ Arguments:
 
 sub set_max_concurrent {
     my ($self, $provider, $max) = @_;
+    $provider = lc($provider);
     $self->{max_concurrent}{$provider} = $max;
     log_debug('RateLimiter', "Set $provider max_concurrent=$max");
 }
@@ -163,7 +165,7 @@ Returns: 1 if acquired, 0 if at limit (caller should wait)
 
 sub acquire {
     my ($self, $provider) = @_;
-    
+    $provider = lc($provider);
     my $current = $self->{active_requests}{$provider} // 0;
     my $max = $self->get_max_concurrent($provider);
     
@@ -188,7 +190,7 @@ Arguments:
 
 sub release {
     my ($self, $provider) = @_;
-    
+    $provider = lc($provider);
     my $current = $self->{active_requests}{$provider} // 0;
     if ($current > 0) {
         $self->{active_requests}{$provider} = $current - 1;
@@ -208,7 +210,7 @@ Arguments:
 
 sub update_from_headers {
     my ($self, $provider, $headers) = @_;
-    
+    $provider = lc($provider);
     return unless $headers;
     
     my %rl_state = ();
@@ -357,7 +359,7 @@ Returns: Seconds to wait (0 = proceed immediately, >0 = sleep and retry)
 
 sub check_and_wait {
     my ($self, $provider) = @_;
-    
+    $provider = lc($provider);
     my $wait = 0;
     
     # Check Retry-After
@@ -402,6 +404,7 @@ Returns: Hashref of rate limit info, or undef if not available
 
 sub get_rate_limit_info {
     my ($self, $provider) = @_;
+    $provider = lc($provider);
     return $self->{rate_limit_state}{$provider};
 }
 
@@ -416,7 +419,7 @@ Arguments:
 
 sub clear_rate_limit {
     my ($self, $provider) = @_;
-    
+    $provider = lc($provider);
     # Decay the adaptive delay but don't clear completely
     my $rl_state = $self->{rate_limit_state}{$provider};
     if ($rl_state) {
@@ -447,6 +450,7 @@ Returns: Number of active requests
 
 sub get_active_count {
     my ($self, $provider) = @_;
+    $provider = lc($provider);
     return $self->{active_requests}{$provider} // 0;
 }
 

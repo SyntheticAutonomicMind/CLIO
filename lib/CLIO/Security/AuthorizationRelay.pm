@@ -151,7 +151,7 @@ Returns: 1 if approved, 0 if denied. Also handles session grants.
 sub request_command_authorization {
     my ($self, $command, $analysis, $context) = @_;
     
-    my $is_critical = $analysis->{blocked} || ($analysis->{risk_level} eq 'critical');
+    my $is_critical = ($analysis->{risk_level} && $analysis->{risk_level} eq 'critical') ? 1 : 0;
     
     my $result = $self->request_authorization(
         category    => 'command_execution',

@@ -14,7 +14,7 @@ use File::Spec;
 use File::Basename;
 use CLIO::Util::PathResolver qw(expand_tilde);
 use File::Path qw(make_path);
-use Cwd 'abs_path';
+use Cwd qw(abs_path getcwd);
 use Encode qw(decode);
 use feature 'say';
 use File::Glob qw(:bsd_glob);
@@ -98,33 +98,8 @@ AUTHORIZATION:
         Good for finding "where is X implemented?" or "files about Y"
 
 -  read_tool_result - Read persisted large tool results in chunks
-  
-  **When to Use**:
-  - Tool response contains [TOOL_RESULT_STORED] marker
-  - Tool response includes toolCallId and totalLength metadata
-  - You need to access large results from web_operations or other tools (>8KB)
-  
-  **How to Use Efficiently**:
-  - ALWAYS check if the first chunk contains a complete answer or summary
-  - If first chunk fully answers the user's question, respond immediately - DO NOT read more chunks
-  - Only continue reading additional chunks if:
-    * The summary/answer is incomplete or missing key details
-    * User explicitly requested the full/raw output
-    * You need specific information not in the first chunk
-  - Most results include complete summaries in first chunk - check before continuing
-  
-  **Chunked Retrieval**:
-  - Default chunk size: 8192 characters (8KB)
-  - Maximum chunk size: 32768 characters (32KB)
-  - Use offset + length for pagination
-  - Check hasMore in response to continue reading
-  
-  **Example Workflow**:
-  1. web_operations returns: "Preview: ... [TOOL_RESULT_STORED: toolCallId=abc123, totalLength=150000]"
-  2. Read first chunk: file_operations(operation: "read_tool_result", toolCallId: "abc123", offset: 0, length: 8192)
-  3. Read next chunk: file_operations(operation: "read_tool_result", toolCallId: "abc123", offset: 8192, length: 8192)
-  4. Continue until hasMore=false
-  
+  Use when tool response contains [TOOL_RESULT_STORED] marker.
+  Check first chunk for complete answer before reading more.
   Parameters: toolCallId (required), offset (optional, default: 0), length (optional, default: 8192, max: 32768)
 
 ━━━━━━━━━━━━━━━━━━━━━ WRITE (8 operations) ━━━━━━━━━━━━━━━━━━━━━
@@ -496,7 +471,6 @@ sub _check_sandbox {
     return { allowed => 1 } unless $sandbox_enabled;
     
     # Get project directory (working directory)
-    use Cwd qw(abs_path getcwd realpath);
     my $project_dir = getcwd();  # Default to current working directory
     
     # Try to get from session state if available
@@ -506,7 +480,7 @@ sub _check_sandbox {
     }
     
     # Resolve project directory to absolute path
-    $project_dir = realpath($project_dir) || abs_path($project_dir) || $project_dir;
+    $project_dir = abs_path($project_dir) || $project_dir;
     
     # Expand tilde in path
     $path = expand_tilde($path);
@@ -515,12 +489,11 @@ sub _check_sandbox {
     my $resolved_path;
     if ($path =~ m{^/}) {
         # Absolute path
-        $resolved_path = realpath($path) || $path;
+        $resolved_path = abs_path($path) || $path;
     } else {
         # Relative path - resolve against project directory
-        use File::Spec;
         my $full_path = File::Spec->rel2abs($path, $project_dir);
-        $resolved_path = realpath($full_path) || $full_path;
+        $resolved_path = abs_path($full_path) || $full_path;
     }
     
     # Normalize paths for comparison (ensure trailing slash handling)
@@ -1539,25 +1512,16 @@ sub create_file {
     # Security: scan script content for risky patterns
     my $scan = $self->_scan_script_content($path, $content, $context);
     if ($scan) {
-        if ($scan->{blocked}) {
-            log_warning('FileOp', "BLOCKED script creation: $scan->{summary}");
+        my $approved = $self->_prompt_script_confirmation($path, $scan, $context);
+        unless ($approved) {
+            log_info('FileOp', "User DENIED script creation: $path");
             return $self->error_result(
-                "Script creation blocked (critical risk): $scan->{summary}\n\n" .
-                "The file contains system-destructive commands and cannot be written."
+                "Script creation denied by user.\n\n" .
+                "Security analysis: $scan->{summary}\n" .
+                "The user chose not to allow this file. Try a different approach."
             );
         }
-        if ($scan->{requires_confirmation}) {
-            my $approved = $self->_prompt_script_confirmation($path, $scan, $context);
-            unless ($approved) {
-                log_info('FileOp', "User DENIED script creation: $path");
-                return $self->error_result(
-                    "Script creation denied by user.\n\n" .
-                    "Security analysis: $scan->{summary}\n" .
-                    "The user chose not to allow this file. Try a different approach."
-                );
-            }
-            log_info('FileOp', "User APPROVED script creation: $path");
-        }
+        log_info('FileOp', "User APPROVED script creation: $path");
     }
     
     # Multi-agent coordination: Request file lock via broker
@@ -1637,25 +1601,16 @@ sub write_file {
     # Security: scan script content for risky patterns
     my $scan = $self->_scan_script_content($path, $content, $context);
     if ($scan) {
-        if ($scan->{blocked}) {
-            log_warning('FileOp', "BLOCKED script write: $scan->{summary}");
+        my $approved = $self->_prompt_script_confirmation($path, $scan, $context);
+        unless ($approved) {
+            log_info('FileOp', "User DENIED script write: $path");
             return $self->error_result(
-                "Script write blocked (critical risk): $scan->{summary}\n\n" .
-                "The file contains system-destructive commands and cannot be written."
+                "Script write denied by user.\n\n" .
+                "Security analysis: $scan->{summary}\n" .
+                "The user chose not to allow this file. Try a different approach."
             );
         }
-        if ($scan->{requires_confirmation}) {
-            my $approved = $self->_prompt_script_confirmation($path, $scan, $context);
-            unless ($approved) {
-                log_info('FileOp', "User DENIED script write: $path");
-                return $self->error_result(
-                    "Script write denied by user.\n\n" .
-                    "Security analysis: $scan->{summary}\n" .
-                    "The user chose not to allow this file. Try a different approach."
-                );
-            }
-            log_info('FileOp', "User APPROVED script write: $path");
-        }
+        log_info('FileOp', "User APPROVED script write: $path");
     }
     
     # Multi-agent coordination: Request file lock via broker
@@ -1729,25 +1684,16 @@ sub append_file {
     # Security: scan script content for risky patterns
     my $scan = $self->_scan_script_content($path, $content, $context);
     if ($scan) {
-        if ($scan->{blocked}) {
-            log_warning('FileOp', "BLOCKED script append: $scan->{summary}");
+        my $approved = $self->_prompt_script_confirmation($path, $scan, $context);
+        unless ($approved) {
+            log_info('FileOp', "User DENIED script append: $path");
             return $self->error_result(
-                "Script append blocked (critical risk): $scan->{summary}\n\n" .
-                "The content contains system-destructive commands and cannot be appended."
+                "Script append denied by user.\n\n" .
+                "Security analysis: $scan->{summary}\n" .
+                "The user chose not to allow this content. Try a different approach."
             );
         }
-        if ($scan->{requires_confirmation}) {
-            my $approved = $self->_prompt_script_confirmation($path, $scan, $context);
-            unless ($approved) {
-                log_info('FileOp', "User DENIED script append: $path");
-                return $self->error_result(
-                    "Script append denied by user.\n\n" .
-                    "Security analysis: $scan->{summary}\n" .
-                    "The user chose not to allow this content. Try a different approach."
-                );
-            }
-            log_info('FileOp', "User APPROVED script append: $path");
-        }
+        log_info('FileOp', "User APPROVED script append: $path");
     }
     
     # Multi-agent coordination: Request file lock via broker
@@ -2276,7 +2222,10 @@ to be a script (by extension or shebang line). Uses the CommandAnalyzer
 to classify each significant line.
 
 Returns undef if content is safe, or a hashref describing the concern:
-  { blocked => 0|1, requires_confirmation => 0|1, summary => $text, flags => [...] }
+  { requires_confirmation => 1, summary => $text, flags => [...] }
+
+All flagged scripts route through user approval (via _prompt_script_confirmation
+or the broker relay for sub-agents). The user always has final authority.
 
 =cut
 
@@ -2351,8 +2300,10 @@ sub _scan_script_content {
     my $has_blocked = grep { $_->{severity} eq 'critical' } @all_flags;
     my $summary = "Script contains: " . join('; ', @descriptions);
 
+    # All flagged scripts route through user approval - the user is the
+    # final authority on what gets written to their system.  The scan
+    # results are informational to help them decide.
     return {
-        blocked              => $has_blocked ? 1 : 0,
         requires_confirmation => 1,
         summary              => $summary,
         flags                => \@all_flags,

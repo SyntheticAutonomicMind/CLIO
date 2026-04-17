@@ -210,7 +210,7 @@ sub fetch_models {
     my $resp = $ua->request($req);
     
     unless ($resp->is_success) {
-        log_error('GitHubCopilotModelsAPI', "Failed to fetch models: " . $resp->code . " " . $resp->message . "");
+        log_debug('GitHubCopilotModelsAPI', "Failed to fetch models: " . $resp->code . " " . $resp->message . "");
         return undef;
     }
     

@@ -1693,10 +1693,22 @@ sub _build_prompt {
     my $dir_name = basename($cwd);
     push @parts, $self->colorize($dir_name, 'prompt_directory');
     
-    # 3. Git branch (if in git repo)
-    my $nulldev = $^O eq 'MSWin32' ? 'nul' : '/dev/null';
-    my $branch = `git branch --show-current 2>$nulldev`;
-    chomp $branch if $branch;
+    # 3. Git branch (if in git repo) - read .git/HEAD directly (no subprocess)
+    my $now = time();
+    if (!defined $self->{_git_branch_cache} || ($now - ($self->{_git_branch_cache_time} || 0)) > 5) {
+        my $branch = '';
+        if (open my $fh, '<', '.git/HEAD') {
+            my $head = <$fh>;
+            close $fh;
+            chomp $head if $head;
+            if ($head && $head =~ m{^ref: refs/heads/(.+)$}) {
+                $branch = $1;
+            }
+        }
+        $self->{_git_branch_cache} = $branch;
+        $self->{_git_branch_cache_time} = $now;
+    }
+    my $branch = $self->{_git_branch_cache};
     if ($branch && length($branch) > 0) {
         push @parts, $self->colorize("($branch)", 'prompt_git_branch');
     }

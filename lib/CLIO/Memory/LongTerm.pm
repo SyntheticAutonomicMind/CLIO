@@ -7,6 +7,7 @@ use strict;
 use warnings;
 use CLIO::Core::Logger qw(log_debug log_info);
 use CLIO::Util::JSON qw(encode_json decode_json encode_json_pretty);
+use CLIO::Util::AtomicWrite qw(atomic_write);
 use utf8;
 use Carp qw(croak);
 use POSIX qw(strftime);
@@ -463,102 +464,21 @@ Query discoveries with optional limit
 
 =cut
 
-sub query_discoveries {
-    my ($self, %args) = @_;
+sub _query_category {
+    my ($self, $key, %args) = @_;
     my $limit = $args{limit} || 0;
-    
-    my @items = @{$self->{patterns}{discoveries}};
-    
+    my @items = @{$self->{patterns}{$key} // []};
     if ($limit > 0 && @items > $limit) {
         @items = @items[0..$limit-1];
     }
-    
     return \@items;
 }
 
-=head2 query_solutions
-
-Query problem solutions with optional limit
-
-    my $solutions = $ltm->query_solutions(limit => 5);
-
-=cut
-
-sub query_solutions {
-    my ($self, %args) = @_;
-    my $limit = $args{limit} || 0;
-    
-    my @items = @{$self->{patterns}{problem_solutions}};
-    
-    if ($limit > 0 && @items > $limit) {
-        @items = @items[0..$limit-1];
-    }
-    
-    return \@items;
-}
-
-=head2 query_patterns
-
-Query code patterns with optional limit
-
-    my $patterns = $ltm->query_patterns(limit => 5);
-
-=cut
-
-sub query_patterns {
-    my ($self, %args) = @_;
-    my $limit = $args{limit} || 0;
-    
-    my @items = @{$self->{patterns}{code_patterns}};
-    
-    if ($limit > 0 && @items > $limit) {
-        @items = @items[0..$limit-1];
-    }
-    
-    return \@items;
-}
-
-=head2 query_workflows
-
-Query workflows with optional limit
-
-    my $workflows = $ltm->query_workflows(limit => 5);
-
-=cut
-
-sub query_workflows {
-    my ($self, %args) = @_;
-    my $limit = $args{limit} || 0;
-    
-    my @items = @{$self->{patterns}{workflows}};
-    
-    if ($limit > 0 && @items > $limit) {
-        @items = @items[0..$limit-1];
-    }
-    
-    return \@items;
-}
-
-=head2 query_failures
-
-Query failure patterns with optional limit
-
-    my $failures = $ltm->query_failures(limit => 5);
-
-=cut
-
-sub query_failures {
-    my ($self, %args) = @_;
-    my $limit = $args{limit} || 0;
-    
-    my @items = @{$self->{patterns}{failures}};
-    
-    if ($limit > 0 && @items > $limit) {
-        @items = @items[0..$limit-1];
-    }
-    
-    return \@items;
-}
+sub query_discoveries   { $_[0]->_query_category('discoveries', @_[1..$#_]) }
+sub query_solutions     { $_[0]->_query_category('problem_solutions', @_[1..$#_]) }
+sub query_patterns      { $_[0]->_query_category('code_patterns', @_[1..$#_]) }
+sub query_workflows     { $_[0]->_query_category('workflows', @_[1..$#_]) }
+sub query_failures      { $_[0]->_query_category('failures', @_[1..$#_]) }
 
 =head2 query_context_rules
 
@@ -1396,23 +1316,7 @@ sub save {
         metadata => $self->{metadata},
     };
     
-    # Atomic write: write to temp file, then rename
-    # Use PID in temp filename to prevent race conditions with multiple agents
-    my $temp_file = $file . '.tmp.' . $$;  # $$ = process ID
-    
-    eval {
-        open my $fh, '>:encoding(UTF-8)', $temp_file or croak "Cannot create temp LTM file: $!";
-        print $fh encode_json_pretty($data);
-        close $fh;
-        
-        # Atomic rename (overwrites target file atomically on Unix)
-        rename $temp_file, $file or croak "Cannot save LTM (rename failed): $!";
-    };
-    if ($@) {
-        # Clean up temp file if it exists
-        unlink $temp_file if -f $temp_file;
-        croak $@;
-    }
+    atomic_write($file, encode_json_pretty($data), encoding => 'UTF-8');
     
     $self->{_dirty} = 0;  # Reset dirty flag after successful save
     log_debug('LTM', "Saved to $file");
