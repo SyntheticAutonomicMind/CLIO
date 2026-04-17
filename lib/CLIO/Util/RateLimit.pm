@@ -57,6 +57,16 @@ sub get_rate_limit_type_name {
         qr/user_weekly_rate_limited/i      => 'Weekly rate limit',
         qr/user_monthly_rate_limited/i     => 'Monthly rate limit',
         qr/integration_rate_limited/i      => 'Integration rate limit',
+        # Z.AI-specific rate limit codes
+        qr/^zai_usage_limit$/i               => 'Z.AI usage limit',
+        qr/^1302$/                            => 'Z.AI concurrency limit',
+        qr/^1303$/                            => 'Z.AI frequency limit',
+        qr/^1305$/                            => 'Z.AI rate limit',
+        qr/^1308$/                            => 'Z.AI usage limit',
+        qr/^1309$/                            => 'Z.AI plan expired',
+        qr/^1310$/                            => 'Z.AI weekly/monthly limit',
+        qr/^1311$/                            => 'Z.AI model not in plan',
+        qr/^1313$/                            => 'Z.AI fair use restriction',
     );
 
     for my $pattern (keys %type_map) {
