@@ -238,7 +238,8 @@ sub flush {
 
     # Flush markdown buffer
     if ($self->{markdown_buffer} =~ /\S/) {
-        $self->{markdown_buffer} =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;
+        $self->{markdown_buffer} =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;  # Structured
+        $self->{markdown_buffer} =~ s/\s*<!--session:[a-z][a-z0-9_-]{2,50}-->\s*//sgi;  # Simple
     }
     if ($self->{markdown_buffer} =~ /\S/) {
         log_debug('Chat', "Flushing markdown_buffer (" . length($self->{markdown_buffer}) . " bytes)");
@@ -256,7 +257,8 @@ sub flush {
 
     # Flush line buffer (incomplete final line)
     if ($self->{line_buffer} =~ /\S/) {
-        $self->{line_buffer} =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;
+        $self->{line_buffer} =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;  # Structured
+        $self->{line_buffer} =~ s/\s*<!--session:[a-z][a-z0-9_-]{2,50}-->\s*//sgi;  # Simple
     }
     if ($self->{line_buffer} =~ /\S/) {
         log_debug('Chat', "Flushing line_buffer (" . length($self->{line_buffer}) . " bytes)");
@@ -291,6 +293,8 @@ sub flush_for_tools {
     my $printed = 0;
 
     if ($self->{markdown_buffer} =~ /\S/) {
+        $self->{markdown_buffer} =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;  # Structured
+        $self->{markdown_buffer} =~ s/\s*<!--session:[a-z][a-z0-9_-]{2,50}-->\s*//sgi;  # Simple
         my $output = $self->{markdown_buffer};
         if ($ui->{enable_markdown}) {
             $output = $ui->render_markdown($self->{markdown_buffer});
@@ -304,7 +308,8 @@ sub flush_for_tools {
     }
 
     if ($self->{line_buffer} =~ /\S/) {
-        $self->{line_buffer} =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;
+        $self->{line_buffer} =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;  # Structured
+        $self->{line_buffer} =~ s/\s*<!--session:[a-z][a-z0-9_-]{2,50}-->\s*//sgi;  # Simple
     }
     if ($self->{line_buffer} =~ /\S/) {
         my $output = $self->{line_buffer};
