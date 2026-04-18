@@ -50,6 +50,7 @@ sub new {
         tool_registry   => $opts{tool_registry},
         mcp_manager     => $opts{mcp_manager},
         prompt_override => $opts{prompt_override},  # --prompt: system prompt name override
+        enable_tools    => $opts{enable_tools},     # Tool allowlist (for --chat mode)
         _tools_section_cache => undef,
         _user_context_cache => undef,
         _user_context_cache_time => 0,
@@ -165,10 +166,21 @@ sub generate_tools_section {
     my ($self) = @_;
 
     # Cache the tools section since tool registrations don't change during a session
-    return $self->{_tools_section_cache} if $self->{_tools_section_cache};
+    # But don't cache if there's an enable_tools filter (varies per session in multi-agent scenarios)
+    my $cache_key = $self->{enable_tools} ? '_filtered_' . $self->{enable_tools} : '';
+    return $self->{_tools_section_cache} if $self->{_tools_section_cache} && !$cache_key;
 
     # Get all registered tool OBJECTS (not just names)
-    my $tools = $self->{tool_registry}->get_all_tools();
+    my $all_tools = $self->{tool_registry}->get_all_tools();
+    
+    # Filter by enable_tools allowlist if set
+    my $tools = $all_tools;
+    if ($self->{enable_tools}) {
+        my %enabled = map { $_ => 1 } split(/\s*,\s*/, $self->{enable_tools});
+        $tools = [ grep { $enabled{$_->{name}} } @$all_tools ];
+        log_debug('PromptBuilder', 'Tools filtered by allowlist: ' . join(', ', sort keys %enabled));
+    }
+    
     my $tool_count = scalar(@$tools);
 
     log_debug('PromptBuilder', "Generating tools section for $tool_count tools");

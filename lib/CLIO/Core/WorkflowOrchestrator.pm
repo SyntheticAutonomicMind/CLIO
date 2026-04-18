@@ -180,6 +180,7 @@ sub new {
         tool_registry   => $self->{tool_registry},
         mcp_manager     => $self->{mcp_manager},
         prompt_override => $self->{prompt_override},
+        enable_tools    => $self->{enable_tools},  # Tool allowlist (for --chat mode)
     );
     
     # Initialize FileVault for targeted file backup and undo support
