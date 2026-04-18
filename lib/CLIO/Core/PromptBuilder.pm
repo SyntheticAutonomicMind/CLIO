@@ -404,11 +404,11 @@ The session name appears in the terminal header and session list, so it MUST be 
 for sessions to be identifiable. Include this HTML comment marker at the END of
 your response:
 
-<!--session:{"title":"3-6 word summary here"}-->
+<!--session:short-name-here-->
 
 **Examples of good session names:**
 - "saturday-morning-checkin"
-- "debug-session-naming-bug"
+- "debug-session-naming"
 - "plan-new-feature"
 - "research-api-ratelimits"
 

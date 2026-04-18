@@ -3757,6 +3757,8 @@ sub _display_rate_limit_info {
 
 sub _extract_session_marker {
     my ($self, $content, $session) = @_;
+    
+    # Try structured format first: <!--session:{"title":"name here"}-->
     if ($content =~ s/\s*<!--session:\{[^}]*"title"\s*:\s*"([^"]{3,80})"[^}]*\}-->\s*//s) {
         my $title = $1;
         $title =~ s/^\s+|\s+$//g;
@@ -3766,6 +3768,18 @@ sub _extract_session_marker {
         }
         return ($content, 1);
     }
+    
+    # Try simple format: <!--session:simple-name-->
+    if ($content =~ s/\s*<!--session:([a-z][a-z0-9_-]{2,50})-->\s*//si) {
+        my $title = $1;
+        $title =~ s/^\s+|\s+$//g;
+        if (length($title) >= 3) {
+            $session->session_name($title);
+            log_info('WorkflowOrchestrator', "Session named by AI: $title");
+        }
+        return ($content, 1);
+    }
+    
     return ($content, 0);
 }
 
