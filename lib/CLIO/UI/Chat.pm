@@ -405,15 +405,15 @@ sub run {
     
     # Emit session metadata to host application
     if ($self->{host_proto}->active() && $self->{session}) {
-        my $state = $self->{session}->state() || {};
+        my $session_name = $self->{session}->session_name() // '';
         $self->{host_proto}->emit_session(
             id   => $self->{session}->id() || '',
-            name => $state->{title} || $state->{name} || '',
-            dir  => $state->{working_directory} || '',
+            name => $session_name,
+            dir  => $self->{session}->state()->{working_directory} || '',
         );
         my $model = ($self->{config} ? $self->{config}->get('model') : '') || '';
         $self->{host_proto}->emit_title($self->agent_name() . " - " .
-            ($state->{title} || $state->{name} || 'New Session') .
+            ($session_name || 'New Session') .
             ($model ? " ($model)" : ''));
     }
     
@@ -3130,15 +3130,15 @@ sub repaint_screen {
     
     # Emit session metadata to host application
     if ($self->{host_proto}->active() && $self->{session}) {
-        my $state = $self->{session}->state() || {};
+        my $session_name = $self->{session}->session_name() // '';
         $self->{host_proto}->emit_session(
             id   => $self->{session}->id() || '',
-            name => $state->{title} || $state->{name} || '',
-            dir  => $state->{working_directory} || '',
+            name => $session_name,
+            dir  => $self->{session}->state()->{working_directory} || '',
         );
         my $model = ($self->{config} ? $self->{config}->get('model') : '') || '';
         $self->{host_proto}->emit_title($self->agent_name() . " - " .
-            ($state->{title} || $state->{name} || 'New Session') .
+            ($session_name || 'New Session') .
             ($model ? " ($model)" : ''));
     }
     
