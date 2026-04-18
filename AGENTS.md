@@ -1,7 +1,7 @@
 # AGENTS.md
 
-**Version:** 3.0  
-**Date:** 2026-04-01  
+**Version:** 3.1  
+**Date:** 2026-04-18  
 **Purpose:** Technical reference for CLIO development (methodology in .clio/instructions.md)
 
 ---
@@ -49,7 +49,7 @@ Tool Selection (WorkflowOrchestrator)
     v
 Tool Execution (ToolExecutor)
     |
-    +-- file_operations (18 operations)
+    +-- file_operations (17 operations)
     +-- version_control (git + worktrees)
     +-- terminal_operations (shell exec)
     +-- memory_operations (store/recall/LTM)
@@ -58,9 +58,9 @@ Tool Execution (ToolExecutor)
     +-- code_intelligence (search/analyze)
     +-- interact (checkpoints)
     +-- apply_patch (diff-based editing)
-    +-- remote_execution (SSH + parallel)
-    +-- agent_operations (multi-agent)
-    +-- MCPBridge (external tool servers)
+    +-- remote_execution (SSH + parallel) [requires: enable_remote config]
+    +-- agent_operations (multi-agent) [requires: enable_subagents config]
+    +-- MCPBridge (infrastructure: dynamically exposes MCP server tools)
     |
     v
 Result Processing
@@ -101,10 +101,10 @@ Terminal Output (with color/theme)
 **Key Files:**
 
 - `clio` - Main executable
-- `lib/CLIO/Core/WorkflowOrchestrator.pm` - Tool orchestration (3,544 lines)
-- `lib/CLIO/Core/APIManager.pm` - AI provider integration (3,450 lines)
-- `lib/CLIO/UI/Chat.pm` - Terminal interface (2,998 lines)
-- `lib/CLIO/Core/ToolExecutor.pm` - Tool invocation (1,051 lines)
+- `lib/CLIO/Core/WorkflowOrchestrator.pm` - Tool orchestration
+- `lib/CLIO/Core/APIManager.pm` - AI provider integration
+- `lib/CLIO/UI/Chat.pm` - Terminal interface
+- `lib/CLIO/Core/ToolExecutor.pm` - Tool invocation
 - `lib/CLIO/Tools/FileOperations.pm` - File system operations
 
 **Investigate, don't assume:** Use `git log --oneline -20`, `find lib -name "*.pm"`, read actual code.
@@ -362,28 +362,195 @@ rename $temp, $file or die;  # Atomic on Unix
 
 ---
 
-## Documentation
+## Documentation Standards
+
+### Writing User-Facing Docs (README.md, USER_GUIDE.md, INSTALLATION.md)
+
+**Tone:** Direct and concise. No corporate fluff.
+
+- WRONG: "It might be helpful if you could potentially try running the command with the debug flag to see if that provides any additional information that could help diagnose the issue."
+- RIGHT: "Run `--debug` to see diagnostic output."
+
+**Active voice:** "CLIO reads the file" not "The file will be read by CLIO"
+
+**Address user directly:** "Configure your API key" not "Users should configure their API keys"
+
+**Code blocks:** Always specify language for syntax highlighting:
+```markdown
+```bash
+./clio --new
+```
+
+```perl
+my $config = CLIO::Core::Config->new();
+```
+```
+
+**Examples:** Show both command AND expected output
+
+**Terminology (use consistently):**
+
+| Use This | Not This |
+|----------|----------|
+| API key | api key, API-key, api_key |
+| API provider | provider, api provider |
+| slash command | command, CLIO command |
+| configuration | config, settings |
+| file path | filepath, file-path |
+| session | conversation, chat |
+| terminal | console, command line |
+
+---
+
+### Writing Module Documentation (POD)
+
+Every `.pm` file needs POD with these sections:
+
+```perl
+=head1 NAME
+
+CLIO::Module::Name - Brief one-line description
+
+=head1 SYNOPSIS
+
+    use CLIO::Module::Name;
+    
+    my $obj = CLIO::Module::Name->new();
+    $obj->method();
+
+=head1 DESCRIPTION
+
+Detailed description of module purpose and behavior.
+What it does, why it exists, and how it fits in the architecture.
+
+=head1 METHODS
+
+=cut
+
+=head2 method_name
+
+What the method does.
+
+Arguments:
+    $arg1 - Description (required)
+    $arg2 - Description (optional, default: undef)
+
+Returns:
+    What it returns and its structure
+
+Example:
+    my $result = $obj->method_name($arg1);
+
+=cut
+
+sub method_name {
+    # ...
+}
+```
+
+**Internal methods** (not part of public API):
+```perl
+=head2 _internal_method (Internal)
+
+Do not call directly. Internal implementation detail.
+
+=cut
+
+sub _internal_method {
+    # ...
+}
+```
+
+---
+
+### UI/UX Patterns (Chat.pm, Themes, Commands)
+
+**Three-color rule for structured output:**
+- DIM (chrome) - Bullets, arrows, separators
+- ASSISTANT (names) - Headers, tool names
+- DATA (content) - Values, descriptions
+
+**Always use `colorize()`** - never hardcode ANSI codes:
+```perl
+# CORRECT
+print $ui->colorize($text, 'DATA');
+
+# WRONG - hardcoded ANSI
+my $red = "\e[91m";
+```
+
+**Theme tokens for slash commands:**
+
+| Token | Purpose | Default Color |
+|-------|---------|---------------|
+| `success_message` | Success | Green |
+| `error_message` | Errors | Red |
+| `warning_message` | Warnings | Yellow |
+| `info_message` | Info | Cyan |
+| `command_header` | Section headers | Bold Cyan |
+| `command_label` | Key labels | Cyan |
+| `command_value` | Values | White |
+
+**Command headers use borders (70 chars):**
+```perl
+$self->display_command_header("SECTION NAME");
+# ══════════════════════════════════════════════════════════════════════
+# SECTION NAME
+# ══════════════════════════════════════════════════════════════════════
+```
+
+**Slash commands:** Extend `CLIO::UI::Commands::Base`, use display helpers:
+```perl
+$self->display_key_value($label, $value);
+$self->display_success_message("Done");
+$self->display_error_message("Failed: $error");
+```
+
+---
 
 ### What Needs Documentation
 
 | Change Type | Required Documentation |
 |-------------|------------------------|
-| New feature | POD + update docs/ARCHITECTURE.md |
-| API change | Update POD + docs/USER_GUIDE.md |
-| User-facing | Update docs/USER_GUIDE.md |
-| Design decision | Add to PROJECT_DECISIONS.md |
-| Known issue | Update KNOWN_ISSUES.md |
+| New feature | POD + update AGENTS.md directory structure |
+| API change | Update POD + update relevant user-facing doc |
+| User-facing | Update USER_GUIDE.md or relevant feature doc |
+| Module rename/move | Update AGENTS.md + ARCHITECTURE.md |
 
 ### Documentation Files
 
-| File | Purpose | Audience |
-|------|---------|----------|
-| `README.md` | Project overview | Everyone |
-| `docs/ARCHITECTURE.md` | System design | Developers |
-| `docs/USER_GUIDE.md` | How to use | Users |
-| `docs/DEVELOPER_GUIDE.md` | How to extend | Contributors |
-| `.clio/instructions.md` | Project methodology | AI agents |
-| `AGENTS.md` | Technical reference | AI agents |
+| File | Purpose |
+|------|---------|
+| `README.md` | Project overview |
+| `docs/USER_GUIDE.md` | How to use CLIO |
+| `docs/FEATURES.md` | Complete feature reference |
+| `docs/ARCHITECTURE.md` | System design |
+| `docs/STYLE_QUICKREF.md` | UI styling quick reference |
+| `.clio/instructions.md` | Project methodology (Unbroken Method) |
+| `AGENTS.md` | This file - technical reference |
+
+**Full references for detailed guidance:**
+- `docs/DOCUMENTATION_GUIDE.md` - User-facing writing style
+- `docs/DEVELOPER_DOCUMENTATION_GUIDE.md` - POD templates and examples
+- `docs/STYLE_GUIDE.md` - UI/UX patterns
+- `docs/COMMAND_OUTPUT_STANDARDS.md` - Slash command patterns
+
+---
+
+### Keeping Documentation Current
+
+When changing code, update docs accordingly:
+
+1. **New tool/feature** - Add to FEATURES.md, update AGENTS.md tools list
+2. **API behavior change** - Update relevant user guide section
+3. **New module** - Add POD, update ARCHITECTURE.md module table
+4. **UI changes** - Update STYLE_QUICKREF.md if needed
+
+**Rule:** Full rewrite, never changelog patches. If a section needs updating, rewrite the entire section completely.
+
+**Test your docs:** Run `clio --input "read docs/YOUR_FILE.md" --exit` to verify rendering.
+
+---
 
 ### Working Documents (scratch/)
 
