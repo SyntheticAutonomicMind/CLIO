@@ -54,6 +54,25 @@ APIManager instance.
 
 =cut
 
+=head2 _get_current_provider
+
+Get the current provider from session state.
+
+Returns: Provider string (e.g. 'github_copilot', 'zai_coding') or 'unknown'
+
+=cut
+
+sub _get_current_provider {
+    my ($self) = @_;
+    if ($self->{session}) {
+        if ($self->{session}->can('state') && $self->{session}->state() && $self->{session}->state()->{selected_provider}) {
+            return $self->{session}->state()->{selected_provider};
+        }
+        return $self->{session}{selected_provider} if $self->{session}{selected_provider};
+    }
+    return 'unknown';
+}
+
 sub new {
     my ($class, %opts) = @_;
     return bless {
@@ -413,11 +432,14 @@ sub handle_error_response {
             # is misleading and the /usage display would show wrong info
             $self->{rate_limit_until} = 0;
             
-            # But DO propagate rate_limit_code to session for /usage display
+            # Store rate limit per-provider for /usage display
+            my $rl_provider = $self->_get_current_provider();
             if ($self->{session} && $self->{session}->can('state')) {
                 my $state = $self->{session}->state();
-                $state->{rate_limit_until} = 0;  # Clear cooldown - this is weekly/monthly
-                $state->{rate_limit_code} = $detected_rate_limit_code;
+                $state->{rate_limits} //= {};
+                $state->{rate_limits}{$rl_provider} //= {};
+                $state->{rate_limits}{$rl_provider}{rate_limit_until} = 0;
+                $state->{rate_limits}{$rl_provider}{rate_limit_code} = $detected_rate_limit_code;
             } elsif ($self->{session}) {
                 $self->{session}{rate_limit_until} = 0;
                 $self->{session}{rate_limit_code} = $detected_rate_limit_code;
@@ -506,8 +528,11 @@ sub handle_error_response {
             
             if ($self->{session} && $self->{session}->can('state')) {
                 my $state = $self->{session}->state();
-                $state->{rate_limit_until} = 0;
-                $state->{rate_limit_code} = 'zai_usage_limit';
+                my $rl_provider = $self->_get_current_provider();
+                $state->{rate_limits} //= {};
+                $state->{rate_limits}{$rl_provider} //= {};
+                $state->{rate_limits}{$rl_provider}{rate_limit_until} = 0;
+                $state->{rate_limits}{$rl_provider}{rate_limit_code} = 'zai_usage_limit';
                 # Store human-readable reset time for /usage display
                 if ($reset_str) {
                     $state->{zai_reset_time} = $reset_str . " CST";
@@ -895,10 +920,13 @@ sub process_rate_limit_headers {
 
     # Store quota_used in session for UI display (mirrors Broker.pm behavior)
     if (defined $rate_limit{quota_used} && $self->{session}) {
+        my $rl_provider = $self->_get_current_provider();
         if ($self->{session}->can('state')) {
             my $state = $self->{session}->state();
-            $state->{rate_limit_quota_used} = $rate_limit{quota_used};
-            $state->{rate_limit_quota_timestamp} = $rate_limit{quota_timestamp};
+            $state->{rate_limits} //= {};
+            $state->{rate_limits}{$rl_provider} //= {};
+            $state->{rate_limits}{$rl_provider}{rate_limit_quota_used} = $rate_limit{quota_used};
+            $state->{rate_limits}{$rl_provider}{rate_limit_quota_timestamp} = $rate_limit{quota_timestamp};
         } else {
             $self->{session}{rate_limit_quota_used} = $rate_limit{quota_used};
             $self->{session}{rate_limit_quota_timestamp} = $rate_limit{quota_timestamp};
@@ -982,10 +1010,13 @@ sub process_rate_limit_headers {
         my $retry_after = $rate_limit{retry_after};
         if ($retry_after =~ /^\d+$/) {
             $self->{rate_limit_until} = time() + $retry_after;
-            # Propagate to session state for /usage display
+            # Propagate to session state per-provider for /usage display
+            my $rl_provider = $self->_get_current_provider();
             if ($self->{session} && $self->{session}->can('state')) {
                 my $state = $self->{session}->state();
-                $state->{rate_limit_until} = $self->{rate_limit_until};
+                $state->{rate_limits} //= {};
+                $state->{rate_limits}{$rl_provider} //= {};
+                $state->{rate_limits}{$rl_provider}{rate_limit_until} = $self->{rate_limit_until};
             } elsif ($self->{session}) {
                 $self->{session}{rate_limit_until} = $self->{rate_limit_until};
             }
