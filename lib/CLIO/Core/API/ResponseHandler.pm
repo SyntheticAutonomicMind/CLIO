@@ -278,34 +278,39 @@ sub handle_error_response {
         }
     }
     if ($error_obj) {
-        $error = $error_obj->{message} || $error_obj || $error;
-        # Extract detailed error from OpenRouter metadata.raw for better user messages
-        if ($error_obj->{metadata} && $error_obj->{metadata}{raw}) {
-            my $raw = eval { decode_json($error_obj->{metadata}{raw}) };
-            if ($raw) {
-                my $inner_error;
-                if (ref($raw) eq 'ARRAY' && @$raw && ref($raw->[0]) eq 'HASH' && $raw->[0]{error}) {
-                    $inner_error = $raw->[0]{error};
-                } elsif (ref($raw) eq 'HASH' && $raw->{error}) {
-                    $inner_error = $raw->{error};
-                }
-                if ($inner_error && $inner_error->{message}) {
-                    $error = $inner_error->{message};
-                    log_debug('ResponseHandler', "Extracted inner error from provider metadata: $error");
+        # Handle both string errors ("Internal Server Error") and hash errors ({message => "...", code => ...})
+        if (ref($error_obj) eq 'HASH') {
+            $error = $error_obj->{message} // $error;
+            # Extract detailed error from OpenRouter metadata.raw for better user messages
+            if ($error_obj->{metadata} && ref($error_obj->{metadata}) eq 'HASH' && $error_obj->{metadata}{raw}) {
+                my $raw = eval { decode_json($error_obj->{metadata}{raw}) };
+                if ($raw) {
+                    my $inner_error;
+                    if (ref($raw) eq 'ARRAY' && @$raw && ref($raw->[0]) eq 'HASH' && $raw->[0]{error}) {
+                        $inner_error = $raw->[0]{error};
+                    } elsif (ref($raw) eq 'HASH' && $raw->{error}) {
+                        $inner_error = $raw->{error};
+                    }
+                    if ($inner_error && ref($inner_error) eq 'HASH' && $inner_error->{message}) {
+                        $error = $inner_error->{message};
+                        log_debug('ResponseHandler', "Extracted inner error from provider metadata: $error");
+                    }
                 }
             }
+            # Use embedded error code when HTTP status is uninformative (200 or 599)
+            if (($status == 200 || $status >= 500) && $error_obj->{code} && $error_obj->{code} =~ /^\d+$/) {
+                $status = int($error_obj->{code});
+                log_debug('ResponseHandler', "Using embedded error code $status from response body");
+            }
+            # Detect rate limit from semantic string codes (e.g. GitHub's user_model_rate_limited)
+            if ($status == 200 && $error_obj->{code} && $error_obj->{code} =~ /rate.lim/i) {
+                $status = 429;
+                log_debug('ResponseHandler', "Detected rate limit via code '$error_obj->{code}', treating as 429");
+            }
+        } else {
+            # $error_obj is a plain string error from the provider
+            $error = $error_obj;
         }
-        # Use embedded error code when HTTP status is uninformative (200 or 599)
-        if (($status == 200 || $status >= 500) && $error_obj->{code} && $error_obj->{code} =~ /^\d+$/) {
-            $status = int($error_obj->{code});
-            log_debug('ResponseHandler', "Using embedded error code $status from response body");
-        }
-        # Detect rate limit from semantic string codes (e.g. GitHub's user_model_rate_limited)
-        if ($status == 200 && $error_obj->{code} && $error_obj->{code} =~ /rate.lim/i) {
-            $status = 429;
-            log_debug('ResponseHandler', "Detected rate limit via code '$error_obj->{code}', treating as 429");
-        }
-
     }
 
     my $retryable = 0;
@@ -313,7 +318,7 @@ sub handle_error_response {
     my $retry_info = '';
     my $is_retryable_error = 0;
     my $error_type = undef;
-    my $detected_rate_limit_code = $error_obj->{code} if $error_obj && $error_obj->{code};
+    my $detected_rate_limit_code = (ref($error_obj) eq 'HASH' && $error_obj->{code}) ? $error_obj->{code} : undef;
 
     # Handle rate limiting (429)
     if ($status == 429) {
@@ -348,12 +353,12 @@ sub handle_error_response {
             $retry_source = 'header';
         }
         # Also check for retryAfter in the error body (GitHub Copilot may return this)
-        elsif ($error_obj && $error_obj->{retryAfter}) {
+        elsif (ref($error_obj) eq 'HASH' && $error_obj->{retryAfter}) {
             $retry_after = $error_obj->{retryAfter};
             $retry_source = 'body_retryAfter';
         }
         # Check for reset timestamp (GitHub may return epoch seconds)
-        elsif ($error_obj && $error_obj->{retryAfterTimestamp}) {
+        elsif (ref($error_obj) eq 'HASH' && $error_obj->{retryAfterTimestamp}) {
             $retry_after = int($error_obj->{retryAfterTimestamp} - time());
             $retry_after = 1 if $retry_after < 1;
             $retry_source = 'body_timestamp';
@@ -600,7 +605,7 @@ sub handle_error_response {
     }
     # Handle quota exceeded errors (non-retryable - user must take action)
     # Detected via semantic codes in error body, not HTTP status
-    elsif ($error_obj && $error_obj->{code} &&
+    elsif (ref($error_obj) eq 'HASH' && $error_obj->{code} &&
            ($error_obj->{code} eq 'quota_exceeded' ||
             $error_obj->{code} eq 'free_quota_exceeded' ||
             $error_obj->{code} eq 'overage_limit_reached' ||
@@ -741,7 +746,7 @@ sub handle_error_response {
     # Content was flagged by the safety system - user needs to modify their request
     elsif (($status == 400 || $status == 403) &&
            ($error =~ /content.?filter|content.?policy|safety|harmful|inappropriate/i ||
-            ($error_obj && $error_obj->{code} && $error_obj->{code} =~ /content.?filter|content.?policy/i))) {
+            (ref($error_obj) eq 'HASH' && $error_obj->{code} && $error_obj->{code} =~ /content.?filter|content.?policy/i))) {
         $is_retryable_error = 0;
         $retryable = 0;
         $error_type = 'content_filter';
