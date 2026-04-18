@@ -168,77 +168,85 @@ sub get_additional_parameters {
         # Common path parameters
         path => {
             type => "string",
-            description => "File or directory path. Used by most operations. Can be relative or absolute.",
+            description => "[REQUIRED for most operations] File or directory path. Used by read_file, list_dir, file_exists, get_file_info, write operations, etc.",
         },
         paths => {
             type => "array",
             items => { type => "string" },
-            description => "Multiple file paths. Used by get_errors, multi_replace_string.",
+            description => "[OPTIONAL] Multiple file paths for get_errors. Use when checking multiple files.",
         },
         
         # Read file parameters
         start_line => {
             type => "integer",
-            description => "Starting line number for read_file (1-indexed, inclusive).",
+            description => "[OPTIONAL] Starting line number for read_file (1-indexed, inclusive).",
         },
         end_line => {
             type => "integer",
-            description => "Ending line number for read_file (inclusive).",
+            description => "[OPTIONAL] Ending line number for read_file (inclusive).",
         },
         
         # List directory parameters
         recursive => {
             type => "boolean",
-            description => "Whether to list directory contents recursively (list_dir).",
+            description => "[OPTIONAL] Whether to list directory contents recursively (list_dir). Default: false.",
         },
         
         # Search parameters
         query => {
             type => "string",
-            description => "Search query or pattern. For semantic_search: use natural language keywords like 'authentication function' or 'error handling'. For grep_search: literal text or regex.",
+            description => "[REQUIRED for grep_search, semantic_search] Search query or pattern. For semantic_search: use natural language keywords like 'authentication function'. For grep_search: literal text or regex.",
         },
         pattern => {
             type => "string",
-            description => "Glob pattern to filter files. Used by file_search, grep_search.",
+            description => "[REQUIRED for file_search, OPTIONAL for grep_search] Glob pattern to filter which files to search (e.g., '**/*.pm', '*.pl').",
+        },
+        directory => {
+            type => "string",
+            description => "[OPTIONAL] Base directory for file_search. Default: current directory.",
         },
         is_regex => {
             type => "boolean",
-            description => "Whether query is a regex pattern (grep_search).",
+            description => "[OPTIONAL] Whether query is a regex pattern for grep_search. Default: false.",
+        },
+        scope => {
+            type => "string",
+            description => "[OPTIONAL] Directory to search for semantic_search. Default: current directory.",
         },
         max_results => {
             type => "integer",
-            description => "Maximum number of results to return from search.",
+            description => "[OPTIONAL] Maximum number of results to return from search.",
         },
         
         # Read tool result parameters (for chunked large results)
         toolCallId => {
             type => "string",
-            description => "Tool call ID to retrieve stored result chunks. Used by read_tool_result.",
+            description => "[REQUIRED for read_tool_result] Tool call ID to retrieve stored result chunks. Look for [TOOL_RESULT_STORED] marker in previous output.",
         },
         offset => {
             type => "integer",
-            description => "Byte offset to start reading from (read_tool_result). Defaults to 0.",
+            description => "[OPTIONAL] Byte offset to start reading from read_tool_result. Default: 0.",
         },
         length => {
             type => "integer",
-            description => "Number of bytes to read (read_tool_result). Defaults to 8192.",
+            description => "[OPTIONAL] Number of bytes to read for read_tool_result. Default: 8192, Max: 32768.",
         },
         
         # Write parameters - DUAL PARAMETER SUPPORT for JSON content
         # Agents can use EITHER content (string) OR content_json (object)
         %{$self->add_dual_json_parameters('content', {
-            description => 'File content to write. Used by create_file, write_file, append_file',
+            description => '[REQUIRED for create_file, write_file, append_file] File content to write.',
             string_format => 'any',
             example => 'Plain text, JSON (escaped), or code',
         })},
         
         old_string => {
             type => "string",
-            description => "Text to find and replace (replace_string, multi_replace_string).",
+            description => "[REQUIRED for replace_string] Text to find and replace.",
         },
         new_string => {
             type => "string",
-            description => "Replacement text (replace_string, multi_replace_string).",
+            description => "[REQUIRED for replace_string] Replacement text.",
         },
         replacements => {
             type => "array",
@@ -251,23 +259,23 @@ sub get_additional_parameters {
                 },
                 required => ["path", "old_string", "new_string"],
             },
-            description => "Array of replacement operations (multi_replace_string).",
+            description => "[REQUIRED for multi_replace_string] Array of {path, old_string, new_string} objects.",
         },
         
         # insert_at_line parameters
         line => {
             type => "integer",
-            description => "Line number to insert at (insert_at_line).",
+            description => "[REQUIRED for insert_at_line] Line number to insert at (1-indexed).",
         },
         
         # Rename parameters
         old_path => {
             type => "string",
-            description => "Old file path for rename_file operation.",
+            description => "[REQUIRED for rename_file] Original file path.",
         },
         new_path => {
             type => "string",
-            description => "New file path for rename_file operation.",
+            description => "[REQUIRED for rename_file] New file path.",
         },
     };
 }

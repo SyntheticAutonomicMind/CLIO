@@ -131,44 +131,44 @@ sub get_additional_parameters {
     return {
         todoList => {
             type => "array",
-            description => "Complete array of all todos (required for write operation)",
+            description => "[REQUIRED for write] Complete array of all todos. IDs will be auto-assigned if creating new list.",
             items => {
                 type => "object",
                 properties => {
                     id => {
                         type => "integer",
-                        description => "Unique ID (sequential numbers from 1)",
+                        description => "[REQUIRED] Unique ID (sequential numbers from 1).",
                     },
                     title => {
                         type => "string",
-                        description => "Todo label (3-7 words)",
+                        description => "[REQUIRED] Todo label (3-7 words).",
                     },
                     description => {
                         type => "string",
-                        description => "Context, requirements, file paths, etc.",
+                        description => "[REQUIRED] Context, requirements, file paths, etc.",
                     },
                     status => {
                         type => "string",
                         enum => ["not-started", "in-progress", "completed", "blocked"],
-                        description => "not-started | in-progress (max 1) | completed | blocked",
+                        description => "[REQUIRED] Status: not-started, in-progress, completed, blocked.",
                     },
                     priority => {
                         type => "string",
                         enum => ["low", "medium", "high", "critical"],
-                        description => "Priority level (optional)",
+                        description => "[OPTIONAL] Priority level.",
                     },
                     dependencies => {
                         type => "array",
                         items => { type => "integer" },
-                        description => "Array of todo IDs this task depends on (optional)",
+                        description => "[OPTIONAL] Array of todo IDs this task depends on.",
                     },
                     progress => {
                         type => "number",
-                        description => "Progress 0.0-1.0 as decimal (optional)",
+                        description => "[OPTIONAL] Progress 0.0-1.0 as decimal.",
                     },
                     blockedReason => {
                         type => "string",
-                        description => "Reason why task is blocked (required if status=blocked)",
+                        description => "[REQUIRED if status=blocked] Reason why task is blocked.",
                     },
                 },
                 required => ["id", "title", "description", "status"],
@@ -176,27 +176,27 @@ sub get_additional_parameters {
         },
         newTodos => {
             type => "array",
-            description => "New todos to add (required for add operation). IDs will be auto-assigned.",
+            description => "[REQUIRED for add] New todos to add. IDs will be auto-assigned.",
             items => {
                 type => "object",
                 properties => {
                     title => {
                         type => "string",
-                        description => "Todo label (3-7 words)",
+                        description => "[REQUIRED] Todo label (3-7 words).",
                     },
                     description => {
                         type => "string",
-                        description => "Context, requirements, file paths, etc.",
+                        description => "[REQUIRED] Context, requirements, file paths, etc.",
                     },
                     status => {
                         type => "string",
                         enum => ["not-started", "in-progress", "completed", "blocked"],
-                        description => "Status (default: not-started)",
+                        description => "[OPTIONAL] Status. Default: not-started.",
                     },
                     priority => {
                         type => "string",
                         enum => ["low", "medium", "high", "critical"],
-                        description => "Priority level (optional)",
+                        description => "[OPTIONAL] Priority level.",
                     },
                 },
                 required => ["title", "description"],
@@ -204,39 +204,39 @@ sub get_additional_parameters {
         },
         todoUpdates => {
             type => "array",
-            description => "Partial todo updates (required for update operation). Array of updates where each has 'id' (required) + fields to change.",
+            description => "[REQUIRED for update] Array of {id, ...fields to change} objects.",
             items => {
                 type => "object",
                 properties => {
                     id => {
                         type => "integer",
-                        description => "ID of todo to update (required)",
+                        description => "[REQUIRED] ID of todo to update.",
                     },
                     status => {
                         type => "string",
                         enum => ["not-started", "in-progress", "completed", "blocked"],
-                        description => "New status",
+                        description => "[OPTIONAL] New status.",
                     },
                     title => {
                         type => "string",
-                        description => "New title",
+                        description => "[OPTIONAL] New title.",
                     },
                     description => {
                         type => "string",
-                        description => "New description",
+                        description => "[OPTIONAL] New description.",
                     },
                     progress => {
                         type => "number",
-                        description => "New progress 0.0-1.0",
+                        description => "[OPTIONAL] New progress 0.0-1.0.",
                     },
                     priority => {
                         type => "string",
                         enum => ["low", "medium", "high", "critical"],
-                        description => "New priority",
+                        description => "[OPTIONAL] New priority.",
                     },
                     blockedReason => {
                         type => "string",
-                        description => "Reason for blocked status",
+                        description => "[OPTIONAL] Reason for blocked status.",
                     },
                 },
                 required => ["id"],

@@ -2,547 +2,378 @@
 
 **Complete reference for all CLIO tool operations**
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---
 
 ## Overview
 
 CLIO provides comprehensive tooling across multiple categories. Every tool operation displays an **action description** showing exactly what it's doing in real-time.
 
 **Tool Categories:**
-1. [File Operations](#file-operations) - 18 operations
-2. [Version Control](#version-control) - 10 operations
-3. [Terminal](#terminal-operations) - 2 operations
-4. [Memory](#memory-operations) - 11 operations (session + LTM)
-5. [Todo Lists](#todo-list-operations) - 4 operations (CRUD)
-6. [Web](#web-operations) - 2 operations
-7. Code Intelligence - 2 operations (list_usages, search_history)
-8. User Collaboration - 1 operation (request_input)
-9. Sub-Agent Operations - 10 operations (spawn, list, status, kill, etc.)
-10. Remote Execution - 7 operations (execute_remote, execute_parallel, etc.)
-11. Apply Patch - 1 operation (patch application)
+1. [file_operations](#file-operations) - 18 operations
+2. [version_control](#version-control) - 11 operations
+3. [terminal_operations](#terminal-operations) - 2 operations
+4. [memory_operations](#memory-operations) - 11 operations (session + LTM)
+5. [todo_operations](#todo-operations) - 4 operations (CRUD)
+6. [web_operations](#web-operations) - 2 operations
+7. [code_intelligence](#code-intelligence) - 2 operations
+8. [interact](#user-collaboration) - 1 operation
+9. [agent_operations](#sub-agent-operations) - 10 operations
+10. [remote_execution](#remote-execution) - 7 operations
+11. [apply_patch](#apply-patch) - 1 operation
 
-> **Note:** This document covers the original core tools in detail. For complete tool schemas including newer tools (code intelligence, user collaboration, sub-agents, remote execution, apply patch, MCP bridge), see the system prompt or `docs/DEVELOPER_GUIDE.md`.
+> **CRITICAL:** All tools use a unified `operation` parameter. Do NOT call individual operation names as separate tools (e.g., `git_status` is NOT valid). Always use the parent tool with `operation: "action"`.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---
 
-## File Operations
+## file_operations
 
-### read_file
+**Tool:** `file_operations`
 
-**Description:** Read contents of a file with optional line range.
+**Required Parameter:** `operation` (string)
 
-**Parameters:**
-- `path` (string, required) - File path to read
-- `start_line` (integer, optional) - Starting line number (1-indexed)
-- `end_line` (integer, optional) - Ending line number (inclusive)
+### Search Operations
 
-**Returns:** File contents as string
-
-**Action Description:** `reading {path} ({line_count} lines)`
-
-**Example:**
-```
-YOU: Show me the contents of src/main.c
-
-SYSTEM: [file_operations] - reading ./src/main.c (247 lines)
-```
-
-**Error Conditions:**
-- File not found
-- Permission denied
-- Invalid line range
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-### write_file / create_file
-
-**Description:** Create new file or overwrite existing file with content.
-
-**Parameters:**
-- `path` (string, required) - File path to write
-- `content` (string, required) - Content to write
-
-**Returns:** Success message with file path and size
-
-**Action Description:** `writing {path} ({byte_count} bytes)`
-
-**Example:**
-```
-YOU: Create a file called test.txt with content "Hello, world!"
-
-SYSTEM: [file_operations] - writing ./test.txt (13 bytes)
-```
-
-**Error Conditions:**
-- Permission denied
-- Invalid path
-- Disk full
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-### list_dir
-
-**Description:** List contents of a directory with file and directory counts.
-
-**Parameters:**
-- `path` (string, required) - Directory path to list
-
-**Returns:** Array of entries with names and types
-
-**Action Description:** `listing {path} ({file_count} files, {dir_count} directories)`
-
-**Example:**
-```
-YOU: List the files in lib/CLIO/
-
-SYSTEM: [file_operations] - listing ./lib/CLIO/ (5 files, 4 directories)
-```
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-### file_search
-
-**Description:** Find files matching a glob pattern.
-
-**Parameters:**
-- `pattern` (string, required) - Glob pattern (e.g., `**/*.pm`, `src/**/*.c`)
-- `base_path` (string, optional) - Base directory (default: current directory)
-
-**Returns:** Array of matching file paths
-
-**Action Description:** `searching {base_path} for pattern "{pattern}"`
-
-**Example:**
-```
-YOU: Find all Perl modules in the project
-
-SYSTEM: [file_operations] - searching ./ for pattern "**/*.pm" (42 files)
-```
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-### grep_search
+#### grep_search
 
 **Description:** Search file contents for a pattern (text or regex).
 
 **Parameters:**
-- `pattern` (string, required) - Search pattern
-- `path` (string, required) - File or directory to search
-- `is_regex` (boolean, optional) - Whether pattern is regex (default: false)
+- `query` (string, **required**) - Search term to find in files
+- `pattern` (string, optional) - Glob pattern to filter which files to search (e.g., `*.pm`, `**/*.pl`)
+- `path` (string, optional) - Directory to search (default: current directory)
+- `is_regex` (boolean, optional) - Whether `query` is a regex pattern (default: false)
 
-**Returns:** Array of matches with file paths, line numbers, and content
-
-**Action Description:** `searching {path} for pattern "{pattern}"`
-
-**Example:**
-```
-YOU: Search for all TODO comments in lib/
-
-SYSTEM: [file_operations] - searching ./lib for pattern "TODO" (18 files)
+**Example Call:**
+```json
+{"operation": "grep_search", "query": "TODO", "path": "lib", "pattern": "**/*.pm"}
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#### file_search
 
-### semantic_search
+**Description:** Find files matching a glob pattern.
+
+**Parameters:**
+- `pattern` (string, **required**) - Glob pattern (e.g., `**/*.pm`, `src/**/*.c`)
+- `directory` (string, optional) - Base directory (default: current directory)
+
+#### semantic_search
 
 **Description:** Natural language code search (AI-powered).
 
 **Parameters:**
-- `query` (string, required) - Natural language search query
-- `path` (string, optional) - Directory to search (default: current directory)
+- `query` (string, **required**) - Natural language search query
+- `scope` (string, optional) - Directory to search (default: current directory)
 
-**Returns:** Relevant code snippets ranked by relevance
+#### read_tool_result
 
-**Action Description:** `semantic search in {path} for "{query}"`
-
-**Example:**
-```
-YOU: Find functions that handle authentication
-
-SYSTEM: [file_operations] - semantic search in ./ for "authentication"
-```
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-### replace_string
-
-**Description:** Find and replace string in file.
+**Description:** Read persisted large tool results in chunks.
 
 **Parameters:**
-- `path` (string, required) - File to modify
-- `old_string` (string, required) - String to find
-- `new_string` (string, required) - Replacement string
+- `toolCallId` (string, **required**) - Tool call ID to retrieve stored result chunks
+- `offset` (integer, optional) - Byte offset to start reading from (default: 0)
+- `length` (integer, optional) - Number of bytes to read (default: 8192, max: 32768)
 
-**Returns:** Success message with number of replacements
+### Read Operations
 
-**Action Description:** `replacing string in {path} ({count} replacements)`
+#### read_file
 
-**Example:**
-```
-YOU: In config.yaml, replace port 8080 with 9000
-
-SYSTEM: [file_operations] - replacing string in ./config.yaml (1 replacement)
-```
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-### delete_file
-
-**Description:** Delete a file or directory.
+**Description:** Read contents of a file with optional line range.
 
 **Parameters:**
-- `path` (string, required) - Path to delete
+- `path` (string, **required**) - File path to read
+- `start_line` (integer, optional) - Starting line number (1-indexed, inclusive)
+- `end_line` (integer, optional) - Ending line number (inclusive)
 
-**Returns:** Success message
+#### list_dir
 
-**Action Description:** `deleting {path}`
-
-**Example:**
-```
-YOU: Delete the temp/ directory
-
-SYSTEM: [file_operations] - deleting ./temp/
-```
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-### Other File Operations
-
-**rename_file / move_file** - Rename or move files  
-**file_exists** - Check if file exists  
-**get_file_info** - Get file metadata (size, modified time)  
-**get_errors** - Get compilation/lint errors  
-**list_code_usages** - Find symbol references  
-**read_tool_result** - Read previous tool output  
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-## Version Control
-
-### git_status
-
-**Description:** Show working tree status.
-
-**Parameters:** None
-
-**Returns:** Git status output
-
-**Action Description:** `executing git status in {cwd}`
-
-**Example:**
-```
-YOU: What's the current git status?
-
-SYSTEM: [git] - executing git status in ./
-```
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-### git_diff
-
-**Description:** Show changes in working directory or between commits.
+**Description:** List contents of a directory.
 
 **Parameters:**
-- `commit1` (string, optional) - First commit (default: working directory)
-- `commit2` (string, optional) - Second commit
-- `path` (string, optional) - Specific file/directory
+- `path` (string, **required**) - Directory path to list
+- `recursive` (boolean, optional) - List recursively (default: false)
 
-**Returns:** Diff output
+#### file_exists
 
-**Action Description:** `executing git diff in {cwd}`
+**Description:** Check if file or directory exists.
 
-**Example:**
-```
-YOU: Show me what changed in the last commit
+**Parameters:** `path` (string, **required**)
 
-SYSTEM: [git] - executing git diff HEAD~1..HEAD in ./
-```
+#### get_file_info
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+**Description:** Get file metadata (size, type, modified time).
 
-### git_commit
+**Parameters:** `path` (string, **required**)
 
-**Description:** Create a new commit.
+#### get_errors
 
-**Parameters:**
-- `message` (string, required) - Commit message
-- `files` (array, optional) - Specific files to commit (default: all staged)
+**Description:** Get compilation/lint errors for file (Perl-specific).
 
-**Returns:** Commit SHA and message
+**Parameters:** `path` (string, **required**) or `paths` (array of strings)
 
-**Action Description:** `committing changes in {cwd}`
+### Write Operations
 
-**Example:**
-```
-YOU: Commit all changes with message "Fix authentication bug"
+#### create_file / write_file
 
-SYSTEM: [git] - staging all changes
-SYSTEM: [git] - committing with message "Fix authentication bug"
-```
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-### Other Git Operations
-
-**git_log** - Show commit history  
-**git_push** - Push commits to remote  
-**git_pull** - Pull changes from remote  
-**git_branch** - List/create/delete branches  
-**git_checkout** - Switch branches or restore files  
-**git_merge** - Merge branches  
-**git_reset** - Reset changes  
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-## Terminal Operations
-
-### execute_command
-
-**Description:** Execute a shell command.
+**Description:** Create new file or overwrite existing file.
 
 **Parameters:**
-- `command` (string, required) - Command to execute
-- `timeout` (integer, optional) - Timeout in seconds (default: 30)
+- `path` (string, **required**)
+- `content` (string, **required**) - File content
 
-**Returns:** Command output (stdout + stderr)
+#### append_file
 
-**Action Description:** `executing: {command}`
-
-**Example:**
-```
-YOU: Count the lines of code in all Perl files
-
-SYSTEM: [terminal] - executing: find lib -name "*.pm" -exec wc -l {} + | tail -1
-```
-
-**Security Note:** Use with caution. Validates input but user is responsible for command safety.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-### get_terminal_output
-
-**Description:** Get output from a previously executed command.
+**Description:** Append content to file.
 
 **Parameters:**
-- `command_id` (string, optional) - Specific command ID (default: last command)
+- `path` (string, **required**)
+- `content` (string, **required**)
 
-**Returns:** Stored command output
+#### replace_string
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-## Memory Operations
-
-### store
-
-**Description:** Store information for later retrieval.
+**Description:** Find and replace text in file.
 
 **Parameters:**
-- `key` (string, required) - Memory key/identifier
-- `value` (string, required) - Content to store
-- `metadata` (object, optional) - Additional metadata
+- `path` (string, **required**)
+- `old_string` (string, **required**)
+- `new_string` (string, **required**)
 
-**Returns:** Success message with key
+#### multi_replace_string
 
-**Action Description:** `storing memory: {key}`
-
-**Example:**
-```
-YOU: Remember that our API endpoint is https://api.example.com
-
-SYSTEM: [memory] - storing memory: api_endpoint
-```
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-### retrieve
-
-**Description:** Retrieve stored information by key.
+**Description:** Batch replace operations across multiple files.
 
 **Parameters:**
-- `key` (string, required) - Memory key
+- `replacements` (array, **required**) - Array of {path, old_string, new_string}
 
-**Returns:** Stored value and metadata
+#### insert_at_line
 
-**Action Description:** `retrieving memory: {key}`
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-### search
-
-**Description:** Search stored memories.
+**Description:** Insert content at specific line number.
 
 **Parameters:**
-- `query` (string, required) - Search query
+- `path` (string, **required**)
+- `line` (integer, **required**)
+- `content` (string, **required**)
 
-**Returns:** Matching memories with relevance scores
+#### delete_file
 
-**Action Description:** `searching memories for "{query}"`
-
-**Example:**
-```
-YOU: Find all information about database configuration
-
-SYSTEM: [memory] - searching memories for "database configuration"
-```
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-### Other Memory Operations
-
-**list_memories** - List all stored memories  
-**delete** - Delete a memory by key  
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-## Todo List Operations
-
-### manage_todo_list
-
-**Description:** Manage structured todo lists for task tracking.
-
-**Operations:** read, write, update, add
-
-**Read Operation:**
-
-**Parameters:** None  
-**Returns:** Current todo list  
-**Action Description:** `reading todo list`
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-**Write Operation:**
+**Description:** Delete file or directory.
 
 **Parameters:**
-- `todoList` (array, required) - Complete todo list
+- `path` (string, **required**)
+- `recursive` (boolean, optional) - Required for directories
 
-**Todo Item Format:**
+#### rename_file
+
+**Description:** Rename or move files.
+
+**Parameters:**
+- `old_path` (string, **required**)
+- `new_path` (string, **required**)
+
+#### create_directory
+
+**Description:** Create directory (with parents).
+
+**Parameters:**
+- `path` (string, **required**)
+- `recursive` (boolean, optional)
+
+---
+
+## version_control
+
+**Tool:** `version_control`
+
+**Required Parameter:** `operation` (string)
+
+| Operation | Description | Required Parameters |
+|-----------|-------------|---------------------|
+| `status` | Show working tree status | None |
+| `log` | Show commit history | `limit` (optional, default: 10) |
+| `diff` | Show changes between commits | `ref1` (optional), `ref2` (optional), `file` (optional) |
+| `branch` | List/create/delete/switch branches | `action` (optional): list, create, delete, switch |
+| `commit` | Create a new commit | `message` (required) |
+| `push` | Push commits to remote | `branch` (optional), `remote` (optional) |
+| `pull` | Pull changes from remote | `branch` (optional), `remote` (optional) |
+| `blame` | Show file annotation | `file` (required) |
+| `stash` | Stash operations | `action` (optional): save, list, apply, drop; `index` (optional) |
+| `tag` | Tag operations | `action` (optional): list, create, delete; `name` (optional) |
+| `worktree` | Worktree operations | `action` (optional): list, add, remove, prune |
+
+**Shared Parameters:**
+- `repository_path` (string, optional) - Git repo path (default: `.`)
+
+**Examples:**
 ```json
-{
-  "id": 1,
-  "title": "Task title (3-7 words)",
-  "description": "Detailed context and requirements",
-  "status": "not-started|in-progress|completed|blocked",
-  "priority": "low|medium|high|critical"
-}
+{"operation": "status"}
+{"operation": "log", "limit": 10}
+{"operation": "commit", "message": "fix: resolve bug"}
+{"operation": "diff", "ref1": "HEAD~1", "ref2": "HEAD"}
 ```
 
-**Action Description:** `writing todo list ({count} items)`
+---
 
-**Example:**
-```
-YOU: Create a todo list for this refactoring:
-1. Review current code
-2. Design new structure
-3. Implement changes
-4. Test thoroughly
+## terminal_operations
 
-SYSTEM: [todo_operations] - writing todo list (4 items)
-```
+**Tool:** `terminal_operations`
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+**Required Parameter:** `operation` (string)
 
-**Update Operation:**
+| Operation | Description | Required Parameters |
+|-----------|-------------|---------------------|
+| `exec` / `execute` | Execute a shell command | `command` |
+| `validate` | Check command safety before execution | `command` |
 
 **Parameters:**
-- `todoUpdates` (array, required) - Updates to apply
+- `command` (string, **required**) - Shell command to execute
+- `timeout` (integer, optional) - Timeout in seconds (default: 60)
+- `working_directory` (string, optional) - Working directory (default: `.`)
+- `passthrough` (boolean, optional) - Force direct terminal access
 
-**Update Format:**
+**Examples:**
 ```json
-{
-  "id": 2,
-  "status": "in-progress"
-}
+{"operation": "exec", "command": "ls -la"}
+{"operation": "exec", "command": "make test", "timeout": 120}
 ```
 
-**Action Description:** `updating todo items ({count} updates)`
+---
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## memory_operations
 
-**Add Operation:**
+**Tool:** `memory_operations`
+
+**Required Parameter:** `operation` (string)
+
+| Operation | Description | Required Parameters |
+|-----------|-------------|---------------------|
+| `store` | Store session memory | `key` (required), `content` (required) |
+| `retrieve` | Retrieve session memory | `key` (required) |
+| `search` | Search session memory | `query` (required) |
+| `list` | List all session memory | None |
+| `delete` | Delete session memory | `key` (required) |
+| `recall_sessions` | Search previous sessions | `query` (required), `max_sessions` (optional), `max_results` (optional) |
+| `add_discovery` | Store LTM discovery | `fact` (required), `confidence` (optional) |
+| `add_solution` | Store LTM solution | `error` (required), `solution` (required) |
+| `add_pattern` | Store LTM pattern | `pattern` (required), `confidence` (optional) |
+| `update_ltm` | Update existing LTM entry | `search_text` (required), `replacement` (required) |
+| `prune_ltm` | Clean old LTM entries | `max_age_days` (optional), `min_confidence` (optional) |
+
+---
+
+## todo_operations
+
+**Tool:** `todo_operations`
+
+**Required Parameter:** `operation` (string)
+
+| Operation | Description | Required Parameters |
+|-----------|-------------|---------------------|
+| `read` | Get current todo list | None |
+| `write` | Create/replace todo list | `todoList` (array, required) |
+| `update` | Update todo status | `todoUpdates` (array, required) |
+| `add` | Add new todos | `newTodos` (array, required) |
+
+---
+
+## web_operations
+
+**Tool:** `web_operations`
+
+**Required Parameter:** `operation` (string)
+
+| Operation | Description | Required Parameters |
+|-----------|-------------|---------------------|
+| `fetch_url` | Fetch content from URL | `url` (required), `timeout` (optional) |
+| `search_web` | Web search | `query` (required), `max_results` (optional) |
+
+---
+
+## code_intelligence
+
+**Tool:** `code_intelligence`
+
+**Required Parameter:** `operation` (string)
+
+| Operation | Description | Required Parameters |
+|-----------|-------------|---------------------|
+| `list_usages` | Find all usages of a symbol | `symbol_name` (required), `file_paths` (optional) |
+| `search_history` | Semantic search git history | `query` (required), `max_results` (optional), `since` (optional) |
+
+---
+
+## interact
+
+**Tool:** `interact`
+
+**Required Parameter:** `operation` (string)
+
+| Operation | Description | Required Parameters |
+|-----------|-------------|---------------------|
+| `request_input` | Request user input | `message` (required), `listen_broker` (optional), `timeout` (optional) |
+
+---
+
+## agent_operations
+
+**Tool:** `agent_operations`
+
+**Required Parameter:** `operation` (string)
+
+| Operation | Description | Required Parameters |
+|-----------|-------------|---------------------|
+| `spawn` | Create a new sub-agent | `task` (required), `model` (optional), `working_dir` (optional) |
+| `list` | List all active agents | None |
+| `status` | Get agent status | `agent_id` (required) |
+| `wait` | Wait for agent activity | `timeout` (optional), `poll_interval` (optional) |
+| `kill` | Terminate specific agent | `agent_id` (required) |
+| `killall` | Terminate all agents | None |
+| `inbox` | Check unread messages | None |
+| `acknowledge` | Mark messages as read | `message_ids` (optional) |
+| `history` | View all messages | None |
+| `send` | Send message to agent | `agent_id` (required), `message` (required) |
+| `broadcast` | Send message to all agents | `message` (required) |
+
+---
+
+## remote_execution
+
+**Tool:** `remote_execution`
+
+**Required Parameter:** `operation` (string)
+
+| Operation | Description | Required Parameters |
+|-----------|-------------|---------------------|
+| `execute_remote` | Run task on remote system | `host` (required), `command` (required) |
+| `execute_parallel` | Run task on multiple devices | `targets` (required), `command` (required) |
+| `prepare_remote` | Pre-stage CLIO on remote | `host` (required) |
+| `cleanup_remote` | Remove CLIO from remote | `host` (required) |
+| `check_remote` | Verify remote connectivity | `host` (required) |
+| `transfer_files` | Copy files to remote | `host` (required), `files` (required) |
+| `retrieve_files` | Fetch files from remote | `host` (required), `files` (required) |
+
+---
+
+## apply_patch
+
+**Tool:** `apply_patch`
+
+**Required Parameter:** `operation` (string)
 
 **Parameters:**
-- `newTodos` (array, required) - New todos to append
+- `patch` (string, **required**) - Patch text in format:
+  ```
+  *** Begin Patch
+  *** Add File: <path>
+  +new line content
+  *** Update File: <path>
+  @@ context line
+  -old line to remove
+  +new line to add
+   unchanged context line
+  *** Delete File: <path>
+  *** End Patch
+  ```
 
-**Action Description:** `adding {count} todos to list`
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-## Web Operations
-
-### fetch_webpage
-
-**Description:** Fetch and extract content from a webpage.
-
-**Parameters:**
-- `url` (string, required) - URL to fetch
-- `extract_text` (boolean, optional) - Extract text only (default: true)
-
-**Returns:** Page content
-
-**Action Description:** `fetching {url}`
-
-**Example:**
-```
-YOU: Fetch the documentation from https://docs.example.com/api
-
-SYSTEM: [web] - fetching https://docs.example.com/api
-```
-
-**Note:** Respects robots.txt and rate limiting.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-## Tool Result Storage
-
-All tool operations store their results for AI context. Results can be retrieved using `read_tool_result` operation.
-
-**Storage Format:**
-```json
-{
-  "tool": "file_operations",
-  "operation": "read_file",
-  "params": {...},
-  "result": {...},
-  "timestamp": "2026-01-18T14:30:52Z"
-}
-```
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-## Error Handling
-
-All tools return structured error responses:
-
-```json
-{
-  "success": false,
-  "error": "Error message",
-  "error_type": "permission_denied|not_found|invalid_input|timeout",
-  "details": {...}
-}
-```
-
-**Common Error Types:**
-- `permission_denied` - Insufficient permissions
-- `not_found` - File/resource not found
-- `invalid_input` - Invalid parameters
-- `timeout` - Operation timed out
-- `external_error` - External command/API failed
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-## Adding Custom Tools
-
-See [DEVELOPER_GUIDE.md](../DEVELOPER_GUIDE.md#adding-new-tools) for instructions on creating custom tools.
-
-**Tool Interface:**
-1. Extend `CLIO::Tools::Tool`
-2. Implement `route_operation()`
-3. Set action descriptions
-4. Return structured results
-5. Register in Registry
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---
 
 **For more information:**
 - [ARCHITECTURE.md](ARCHITECTURE.md) - System design

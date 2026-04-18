@@ -103,19 +103,19 @@ sub get_additional_parameters {
     return {
         message => {
             type => "string",
-            description => "Your question/update for the user (required)",
+            description => "[REQUIRED] Your question/update for the user.",
         },
         context => {
             type => "string",
-            description => "Optional additional context to help user understand",
+            description => "[OPTIONAL] Additional context to help user understand.",
         },
         listen_broker => {
             type => "boolean",
-            description => "Also listen for broker events while waiting for user input. When true, returns on agent events too. Use this as your main loop when managing agents.",
+            description => "[OPTIONAL] Also listen for broker events while waiting for user input. Use as main loop when managing agents.",
         },
         timeout => {
             type => "number",
-            description => "Max seconds to wait when listen_broker is true (default: 300)",
+            description => "[OPTIONAL] Max seconds to wait when listen_broker is true. Default: 300.",
         },
     };
 }
