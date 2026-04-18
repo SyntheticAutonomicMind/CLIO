@@ -117,39 +117,44 @@ sub schema {
             operation => {
                 type => 'string',
                 enum => ['spawn', 'list', 'status', 'wait', 'kill', 'killall', 'inbox', 'acknowledge', 'history', 'send', 'broadcast'],
-                description => 'Operation to perform',
+                description => '[REQUIRED] Operation to perform.',
             },
             task => {
                 type => 'string',
-                description => 'Task description for spawn operation',
+                description => '[REQUIRED for spawn] Natural language task description for the agent.',
             },
             model => {
                 type => 'string',
-                description => 'AI model for spawn (default: current session model)',
+                description => '[OPTIONAL] AI model to use for spawn. Default: current session model.',
             },
             persistent => {
                 type => 'boolean',
-                description => 'Keep agent alive for multiple tasks (spawn)',
+                description => '[OPTIONAL] Keep agent alive for multiple tasks. Default: false (oneshot mode).',
             },
             agent_id => {
                 type => 'string',
-                description => 'Agent ID for status/kill/send operations',
+                description => '[REQUIRED for status/kill/send, OPTIONAL for others] Agent ID.',
             },
             message => {
                 type => 'string',
-                description => 'Message content for send/broadcast operations',
+                description => '[REQUIRED for send/broadcast] Message content to send to agent.',
             },
             working_dir => {
                 type => 'string',
-                description => 'Working directory for the agent. When set, the agent runs in this directory and loads its local .clio/ context (instructions, LTM, memory). Used for multi-project orchestration.',
+                description => '[OPTIONAL] Working directory for agent. Loads that project\'s .clio/ context (LTM, instructions, memory).',
             },
             timeout => {
                 type => 'number',
-                description => 'Max seconds to wait for wait operation (default: 60)',
+                description => '[OPTIONAL] Max seconds to wait for wait operation. Default: 60.',
             },
             poll_interval => {
                 type => 'number',
-                description => 'Seconds between status checks for wait operation (default: 5)',
+                description => '[OPTIONAL] Seconds between status checks for wait operation. Default: 5.',
+            },
+            message_ids => {
+                type => 'array',
+                items => { type => 'string' },
+                description => '[OPTIONAL] Specific message IDs to acknowledge. Omit to acknowledge all.',
             },
         },
         required => ['operation'],

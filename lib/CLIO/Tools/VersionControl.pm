@@ -792,59 +792,59 @@ sub get_additional_parameters {
     return {
         repository_path => {
             type => "string",
-            description => "Path to git repository (default: '.')",
+            description => "[OPTIONAL] Path to git repository. Default: current directory.",
         },
         message => {
             type => "string",
-            description => "Commit message (required for commit operation)",
+            description => "[REQUIRED for commit] Commit message describing the changes.",
         },
         ref1 => {
             type => "string",
-            description => "First ref for diff (default: 'HEAD')",
+            description => "[OPTIONAL] First ref for diff. Default: 'HEAD' (working directory).",
         },
         ref2 => {
             type => "string",
-            description => "Second ref for diff (optional)",
+            description => "[OPTIONAL] Second ref for diff (e.g., 'HEAD~1').",
         },
         file => {
             type => "string",
-            description => "File path for diff or blame",
+            description => "[REQUIRED for blame, OPTIONAL for diff] File path to annotate or diff.",
         },
         action => {
             type => "string",
-            description => "Action for branch/stash/tag/worktree operations (list, create, delete, switch, save, apply, drop, clear, add, remove, prune, merge, pr)",
+            description => "[REQUIRED for branch/stash/tag/worktree] Action to perform: list, create, delete, switch, save, apply, drop, clear, add, remove, prune, merge, pr.",
         },
         name => {
             type => "string",
-            description => "Branch, tag, or stash name",
+            description => "[OPTIONAL] Branch, tag, or stash name. Required for create/delete operations.",
         },
         remote => {
             type => "string",
-            description => "Remote name (default: 'origin')",
+            description => "[OPTIONAL] Remote name for push/pull. Default: 'origin'.",
         },
         branch => {
             type => "string",
-            description => "Branch name for push/pull",
+            description => "[OPTIONAL] Branch name for push/pull or worktree operations.",
         },
         limit => {
             type => "integer",
-            description => "Limit for log entries (default: 10)",
+            description => "[OPTIONAL] Number of log entries to show. Default: 10.",
         },
         index => {
             type => "integer",
-            description => "Stash index for apply/drop",
+            description => "[OPTIONAL] Stash index for apply/drop operations (0 = most recent).",
         },
         worktree_path => {
             type => "string",
-            description => "Path for worktree add/remove operations",
+            description => "[REQUIRED for add/remove, OPTIONAL for other worktree actions] Path for worktree operations.",
         },
         create_branch => {
             type => "boolean",
-            description => "Create a new branch when adding a worktree (use with branch parameter)",
+            description => "[OPTIONAL] Create a new branch when adding a worktree. Use with branch parameter.",
         },
         force => {
             type => "boolean",
-            description => "Force removal of a worktree even if it has modifications",
+            description => "[OPTIONAL] Force removal of a worktree even if it has modifications.",
         },
     };
 }
