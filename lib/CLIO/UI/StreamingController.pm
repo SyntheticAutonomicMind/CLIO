@@ -162,10 +162,11 @@ sub make_on_chunk_callback {
             my $line = substr($self->{line_buffer}, 0, $pos);
             $self->{line_buffer} = substr($self->{line_buffer}, $pos + 1);
 
-            # Strip session naming markers
-            if ($line =~ /<!--session:\{/) {
-                my $had_content = ($line =~ /\S/ && $line !~ /^\s*<!--session:\{[^}]*\}-->\s*$/);
-                $line =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;
+            # Strip session naming markers (both formats)
+            if ($line =~ /<!--session:/) {
+                my $had_content = ($line =~ /\S/ && $line !~ /^\s*<!--session:[^>]*-->-->\s*$/);
+                $line =~ s/<!--session:\{[^}]*\}-->\s*//sg;  # Structured
+                $line =~ s/<!--session:[a-z][a-z0-9_-]{2,50}-->\s*//sgi;  # Simple
                 next if !$had_content && $line !~ /\S/;
             }
 
