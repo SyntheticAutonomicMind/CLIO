@@ -138,6 +138,22 @@ my %PROVIDERS = (
         },
     },
     
+    ollama_cloud => {
+        name => 'Ollama Cloud',
+        api_base => 'https://ollama.com/v1/chat/completions',
+        model => 'gemma4:31b',
+        requires_auth => 'apikey',
+        supports_tools => 1,
+        supports_streaming => 1,
+        supports_reasoning => 1,
+        max_context_tokens => 128000,
+        endpoint => {
+            path_suffix => '',
+            temperature_range => [0.0, 2.0],
+            supports_tools => 1,
+        },
+    },
+    
     openrouter => {
         name => 'OpenRouter',
         api_base => 'https://openrouter.ai/api/v1/chat/completions',
