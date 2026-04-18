@@ -7,6 +7,8 @@ use strict;
 use warnings;
 use Carp qw(croak);
 use utf8;
+binmode(STDOUT, ':encoding(UTF-8)');
+binmode(STDERR, ':encoding(UTF-8)');
 use parent 'CLIO::Tools::Tool';
 use Cwd 'getcwd';
 use feature 'say';
