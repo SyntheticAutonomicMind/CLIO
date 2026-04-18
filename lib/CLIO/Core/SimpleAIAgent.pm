@@ -44,7 +44,7 @@ sub new {
     bless $self, $class;
     
     # Chat mode: default to limited tool set and chat system prompt
-    my $chat_mode_tools = 'web_operations,file_operations,memory_operations,interact';
+    my $chat_mode_tools = 'web_operations,file_operations,memory_operations,interact,todo_operations';
     my $chat_mode_prompt = 'chat';
     
     # Apply chat mode defaults if enabled (but respect explicit --enable/--prompt overrides)
