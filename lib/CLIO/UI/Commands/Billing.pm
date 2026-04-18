@@ -141,7 +141,9 @@ Display GitHub Copilot-specific billing with account info, multipliers, and quot
 
 sub _display_copilot_billing {
     my ($self, $billing) = @_;
-    
+
+    my $provider = 'github_copilot';
+
     # Try cache first, fall back to fresh fetch to ensure current quota data
     # This is important when returning from a wait state or at session start
     my $user_data;
@@ -239,18 +241,15 @@ sub _display_copilot_billing {
         }
     }
 
-    # Rate limit status section
-    # Check both session (direct) and session state (persisted)
-    my $rate_limit_used = $self->{session}{rate_limit_quota_used};
-    my $rate_limit_until = $self->{session}{rate_limit_until};
-    my $rate_limit_code = $self->{session}{rate_limit_code};
+    # Rate limit status section (scoped to current provider)
+    my ($rate_limit_used, $rate_limit_until, $rate_limit_code);
 
-    # Check session state for persisted rate limit info
     if ($self->{session}->can('state')) {
         my $state = $self->{session}->state();
-        $rate_limit_used = $state->{rate_limit_quota_used} if !defined $rate_limit_used && $state->{rate_limit_quota_used};
-        $rate_limit_until = $state->{rate_limit_until} if !$rate_limit_until && $state->{rate_limit_until};
-        $rate_limit_code = $state->{rate_limit_code} if !$rate_limit_code && $state->{rate_limit_code};
+        my $rl = $state->{rate_limits} && $state->{rate_limits}{$provider} ? $state->{rate_limits}{$provider} : {};
+        $rate_limit_used = $rl->{rate_limit_quota_used};
+        $rate_limit_until = $rl->{rate_limit_until};
+        $rate_limit_code = $rl->{rate_limit_code};
     }
 
     if (defined $rate_limit_used || $rate_limit_until || $rate_limit_code) {
@@ -447,20 +446,18 @@ sub _display_zai_billing {
         $self->writeline(sprintf("  %-25s %s", "Quota Window:",
             $self->colorize("Rolling 5-hour", 'DATA')), markdown => 0);
         $self->writeline("", markdown => 0);
-        $self->writeline($self->colorize("GLM-5.x models: 3x during peak (14:00-18:00 CST), 2x off-peak.", 'DIM'), markdown => 0);
-        $self->writeline($self->colorize("Use GLM-4.7 for routine tasks to conserve quota.", 'DIM'), markdown => 0);
     }
-    
+
     # Rate limit status section
-    my $rate_limit_until = $self->{session}{rate_limit_until};
-    my $rate_limit_code = $self->{session}{rate_limit_code};
-    
+    my ($rate_limit_until, $rate_limit_code);
+
     if ($self->{session}->can('state')) {
         my $state = $self->{session}->state();
-        $rate_limit_until = $state->{rate_limit_until} if !$rate_limit_until && $state->{rate_limit_until};
-        $rate_limit_code = $state->{rate_limit_code} if !$rate_limit_code && $state->{rate_limit_code};
+        my $rl = $state->{rate_limits} && $state->{rate_limits}{$provider} ? $state->{rate_limits}{$provider} : {};
+        $rate_limit_until = $rl->{rate_limit_until};
+        $rate_limit_code = $rl->{rate_limit_code};
     }
-    
+
     if (defined $rate_limit_until || $rate_limit_code) {
         $self->display_section_header("Rate Limit Status");
         
