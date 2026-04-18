@@ -6,7 +6,7 @@
 
 ## Quick Overview
 
-CLIO is a **terminal-first AI code assistant** built in Perl. It integrates AI models (GitHub Copilot, OpenAI, Google, OpenRouter) with local tools (file operations, git, terminal) to help developers work more effectively.
+CLIO is a **terminal-first AI code assistant** built in Perl. It integrates AI models (GitHub Copilot, OpenAI, Google, OpenRouter, Ollama Cloud, MiniMax, Z.AI) with local tools (file operations, git, terminal) to help developers work more effectively.
 
 **Core concept:** User types → CLIO thinks → CLIO uses tools → Results displayed
 
@@ -97,7 +97,7 @@ Terminal Output
 | Logger | `Logger.pm` | Debug and trace output |
 
 **How it works:**
-1. APIManager connects to AI provider (GitHub Copilot, OpenAI, Google, OpenRouter)
+1. APIManager connects to AI provider (GitHub Copilot, OpenAI, Google, OpenRouter, MiniMax, Z.AI, Ollama Cloud, etc.)
 2. WorkflowOrchestrator manages complex interactions, including:
    - Proactive context trimming before each API call (keeps messages at ≤75% of context)
    - Reactive trimming with 3-attempt escalation when the API rejects due to token overflow
@@ -531,7 +531,7 @@ clio --new           # First run
 
 ```
 lib/CLIO/
-  Providers.pm             # AI provider registry (GitHub Copilot, OpenAI, Google, etc.)
+  Providers.pm             # AI provider registry (GitHub Copilot, OpenAI, Ollama, Z.AI, etc.)
   Update.pm                # Self-update system
   UI/                      # Terminal interface
       Chat.pm              # Main interactive loop
