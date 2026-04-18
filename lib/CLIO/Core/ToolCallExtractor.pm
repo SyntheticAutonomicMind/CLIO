@@ -80,6 +80,12 @@ sub extract {
         return $self->_extract_xml_format($content);
     }
     
+    # 1b. XML invoke format: <invoke name="...">...</invoke>
+    if ($content =~ /<invoke\s+name=/i) {
+        log_debug('ToolCallExtractor', "Detected XML invoke format");
+        return $self->_extract_invoke_format($content);
+    }
+    
     # 2. CLIO format: [tool_name operation]\n{...}
     if ($content =~ /\[(\w+)\s+(\w+)\]/) {
         log_debug('ToolCallExtractor', "Detected CLIO [tool_name operation] format");
@@ -166,6 +172,70 @@ sub _extract_xml_format {
         tool_calls => \@tool_calls,
         cleaned_content => $cleaned,
         format => 'xml'
+    };
+}
+
+=head2 _extract_invoke_format
+
+Extract <invoke name="...">...</invoke> XML format (used by MiniMax, etc.).
+
+Format:
+    <invoke name="file_operations">
+        <parameter name="operation">grep_search</parameter>
+        <parameter name="path">src/file.c</parameter>
+        <parameter name="pattern">search</parameter>
+    </invoke>
+
+=cut
+
+sub _extract_invoke_format {
+    my ($self, $content) = @_;
+    
+    my @tool_calls = ();
+    my $cleaned = $content;
+    
+    # Match <invoke name="tool_name">...</invoke>
+    # Using a non-greedy match that handles nested parameters
+    while ($content =~ /<invoke\s+name="([^"]+)"[^>]*>\s*(.*?)\s*<\/invoke>/gis) {
+        my ($tool_name, $params_xml) = ($1, $2);
+        
+        log_debug('ToolCallExtractor', "Found invoke format: $tool_name");
+        
+        # Extract <parameter name="key">value</parameter> pairs
+        my %params;
+        while ($params_xml =~ /<parameter\s+name="([^"]+)"[^>]*>([^<]*)<\/parameter>/gis) {
+            my ($key, $value) = ($1, $2);
+            $params{$key} = $value;
+        }
+        
+        # Also handle self-closing <parameter name="key" /> format
+        while ($params_xml =~ m{<parameter\s+name="([^"]+)"[^>]*\s*/>}gis) {
+            my $key = $1;
+            $params{$key} = '' unless exists $params{$key};
+        }
+        
+        next unless %params;
+        
+        my $arguments_json = encode_json(\%params);
+        
+        push @tool_calls, {
+            id => $self->_generate_id(),
+            type => 'function',
+            function => {
+                name => $tool_name,
+                arguments => $arguments_json
+            }
+        };
+    }
+    
+    # Remove invoke blocks from content
+    $cleaned =~ s/<invoke\s+name="[^"]+"[^>]*>.*?<\/invoke>//gis;
+    $cleaned =~ s/^\s+|\s+$//g;
+    
+    return {
+        tool_calls => \@tool_calls,
+        cleaned_content => $cleaned,
+        format => 'invoke'
     };
 }
 
