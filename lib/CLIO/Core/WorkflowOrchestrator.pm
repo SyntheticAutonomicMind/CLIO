@@ -1350,6 +1350,16 @@ sub _execute_tool_round {
             $ai_content = $enhanced_error_for_ai;
         } elsif ($result_data && ref($result_data) eq 'HASH' && exists $result_data->{output}) {
             $ai_content = $result_data->{output};
+            
+            # For interact tool results, extract session marker from user response
+            # and strip it from the content sent to AI
+            if ($tool_name eq 'interact' && $session && $session->can('session_name') && defined $ai_content) {
+                my ($cleaned, $named) = $self->_extract_session_marker($ai_content, $session);
+                if ($named) {
+                    $ai_content = $cleaned;
+                    log_debug('WorkflowOrchestrator', "Extracted session marker from interact output");
+                }
+            }
         }
 
         # Track tool calls made
