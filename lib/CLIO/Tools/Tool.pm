@@ -21,7 +21,7 @@ tool with operation-based routing. Pattern inspired by SAM's MCPFramework
 ConsolidatedMCP protocol.
 
 Tools reduce system prompt size by grouping related operations under one
-tool name (e.g., file_operations with 16 operations instead of 16 separate tools).
+tool name (e.g., file_operations with 17 operations instead of 17 separate tools).
 
 =head1 SYNOPSIS
 
@@ -447,7 +447,7 @@ This pattern is inspired by SAM's ConsolidatedMCP protocol, which reduced
 SAM's tool count from ~39 individual tools to 15 tools (62% reduction).
 
 Major tools in SAM:
-- file_operations (16 operations)
+- file_operations (17 operations)
 - memory_operations (3 operations)
 - terminal_operations (11+ operations)
 - todo_operations (4 operations)
