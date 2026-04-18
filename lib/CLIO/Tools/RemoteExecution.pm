@@ -6,6 +6,8 @@ package CLIO::Tools::RemoteExecution;
 use strict;
 use warnings;
 use utf8;
+binmode(STDOUT, ':encoding(UTF-8)');
+binmode(STDERR, ':encoding(UTF-8)');
 use parent 'CLIO::Tools::Tool';
 use Cwd 'getcwd';
 use CLIO::Util::JSON qw(encode_json decode_json);
