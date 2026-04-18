@@ -819,19 +819,19 @@ sub get_additional_parameters {
     return {
         command => {
             type => "string",
-            description => "Shell command to execute",
+            description => "[REQUIRED for exec, validate] Shell command to execute.",
         },
         timeout => {
             type => "integer",
-            description => "Idle timeout in seconds (default: 60). Command is killed only after this many seconds with no output. Active commands keep running.",
+            description => "[OPTIONAL] Idle timeout in seconds. Default: 60. Command is killed only after this many seconds with no output. Active commands keep running.",
         },
         working_directory => {
             type => "string",
-            description => "Working directory for command execution (default: '.')",
+            description => "[OPTIONAL] Working directory for command execution. Default: current directory.",
         },
         passthrough => {
             type => "boolean",
-            description => "Force passthrough mode (direct terminal access, no output capture). Overrides config settings.",
+            description => "[OPTIONAL] Force passthrough mode (direct terminal access, no output capture). Overrides config settings.",
         },
     };
 }

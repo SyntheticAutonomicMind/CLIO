@@ -2306,8 +2306,8 @@ sub send_request {
 
     my $ctx = $self->_prepare_api_request($input, %opts, is_streaming => 0);
     
-    # Check rate limiter before making request
-    my $provider = lc($ctx->{provider_label});
+    # Check rate limiter before making request (provider_label may be undefined for early returns)
+    my $provider = lc($ctx->{provider_label} // 'unknown');
     my $wait = $self->{rate_limiter}->check_and_wait($provider);
     if ($wait > 0) {
         log_info('APIManager', "Rate limited by $provider, waiting ${wait}s...");
@@ -2496,8 +2496,8 @@ sub send_request_streaming {
         _on_thinking  => $on_thinking,
     );
     
-    # Check rate limiter before making request
-    my $provider = lc($ctx->{provider_label});
+    # Check rate limiter before making request (provider_label may be undefined for early returns)
+    my $provider = lc($ctx->{provider_label} // 'unknown');
     my $wait = $self->{rate_limiter}->check_and_wait($provider);
     if ($wait > 0) {
         log_info('APIManager', "Rate limited by $provider, waiting ${wait}s...");

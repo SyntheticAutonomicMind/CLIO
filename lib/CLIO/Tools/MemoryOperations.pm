@@ -84,80 +84,80 @@ sub get_additional_parameters {
     return {
         key => {
             type => "string",
-            description => "Memory key for store/retrieve/delete operations",
+            description => "[REQUIRED for store/retrieve/delete] Memory key for store/retrieve/delete operations.",
         },
         content => {
             type => "string",
-            description => "Content to store (for store operation)",
+            description => "[REQUIRED for store] Content to store in session memory.",
         },
         query => {
             type => "string",
-            description => "Search query (for search/recall_sessions operations)",
+            description => "[REQUIRED for search/recall_sessions] Search query for memory lookups.",
         },
         max_sessions => {
             type => "integer",
-            description => "Maximum number of sessions to search (for recall_sessions, default: 10)",
+            description => "[OPTIONAL] Maximum number of sessions to search for recall_sessions. Default: 10.",
         },
         max_results => {
             type => "integer",
-            description => "Maximum results to return (for recall_sessions, default: 5)",
+            description => "[OPTIONAL] Maximum results to return for recall_sessions. Default: 5.",
         },
         fact => {
             type => "string",
-            description => "Discovery fact to store (for add_discovery operation)",
+            description => "[REQUIRED for add_discovery] Discovery fact to store in LTM.",
         },
         confidence => {
             type => "number",
-            description => "Confidence level 0.0-1.0 (for add_discovery/add_pattern operations)",
+            description => "[OPTIONAL] Confidence level 0.0-1.0 for add_discovery/add_pattern. Default: 0.8.",
         },
         error => {
             type => "string",
-            description => "Error/problem description (for add_solution operation)",
+            description => "[REQUIRED for add_solution] Error/problem description.",
         },
         solution => {
             type => "string",
-            description => "Solution description (for add_solution operation)",
+            description => "[REQUIRED for add_solution] Solution description.",
         },
         pattern => {
             type => "string",
-            description => "Pattern description (for add_pattern operation)",
+            description => "[REQUIRED for add_pattern] Pattern description to store in LTM.",
         },
         examples => {
             type => "array",
             items => { type => "string" },
-            description => "Example file paths (for add_solution/add_pattern operations)",
+            description => "[OPTIONAL] Example file paths for add_solution/add_pattern.",
         },
         max_age_days => {
             type => "integer",
-            description => "Max age in days for LTM entries (for prune_ltm, default: 90)",
+            description => "[OPTIONAL] Max age in days for prune_ltm. Default: 90.",
         },
         min_confidence => {
             type => "number",
-            description => "Minimum confidence threshold (for prune_ltm, default: 0.3)",
+            description => "[OPTIONAL] Minimum confidence threshold for prune_ltm. Default: 0.3.",
         },
         max_discoveries => {
             type => "integer",
-            description => "Max discoveries to keep (for prune_ltm, default: 50)",
+            description => "[OPTIONAL] Max discoveries to keep for prune_ltm. Default: 50.",
         },
         max_solutions => {
             type => "integer",
-            description => "Max solutions to keep (for prune_ltm, default: 50)",
+            description => "[OPTIONAL] Max solutions to keep for prune_ltm. Default: 50.",
         },
         max_patterns => {
             type => "integer",
-            description => "Max patterns to keep (for prune_ltm, default: 30)",
+            description => "[OPTIONAL] Max patterns to keep for prune_ltm. Default: 30.",
         },
         search_text => {
             type => "string",
-            description => "Text to search for in existing LTM entry (for update_ltm operation)",
+            description => "[REQUIRED for update_ltm] Text to search for in existing LTM entry.",
         },
         replacement => {
             type => "string",
-            description => "New text to replace the matched entry with (for update_ltm operation)",
+            description => "[REQUIRED for update_ltm] New text to replace the matched entry with.",
         },
         entry_type => {
             type => "string",
-            description => "Type of entry to update: discovery, solution, or pattern (for update_ltm, optional - searches all types if omitted)",
+            description => "[OPTIONAL] Type of entry to update: discovery, solution, or pattern. Searches all types if omitted.",
         },
     };
 }

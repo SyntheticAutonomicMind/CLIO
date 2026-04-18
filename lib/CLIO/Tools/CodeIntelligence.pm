@@ -118,34 +118,34 @@ sub get_additional_parameters {
         # list_usages parameters
         symbol_name => {
             type => "string",
-            description => "Symbol to search for (required for list_usages)",
+            description => "[REQUIRED for list_usages] Symbol to search for (function, variable, class, etc.).",
         },
         file_paths => {
             type => "array",
             items => { type => "string" },
-            description => "Array of paths to search in (optional, default: current directory)",
+            description => "[OPTIONAL] Array of paths to search in. Default: current directory.",
         },
         context_lines => {
             type => "integer",
-            description => "Number of context lines around match (optional, default: 0)",
+            description => "[OPTIONAL] Number of context lines around match. Default: 0.",
         },
         
         # search_history parameters
         query => {
             type => "string",
-            description => "Natural language search query for git history (required for search_history). Examples: 'authentication fixes', 'refactored error handling', 'performance improvements'",
+            description => "[REQUIRED for search_history] Natural language search query. Examples: 'authentication fixes', 'performance improvements'.",
         },
         max_results => {
             type => "integer",
-            description => "Maximum number of commits to return (optional, default: 20)",
+            description => "[OPTIONAL] Maximum number of commits to return. Default: 20.",
         },
         since => {
             type => "string",
-            description => "Only search commits after this date, YYYY-MM-DD format (optional)",
+            description => "[OPTIONAL] Only search commits after this date. Format: YYYY-MM-DD.",
         },
         author => {
             type => "string",
-            description => "Filter by commit author name or email (optional)",
+            description => "[OPTIONAL] Filter by commit author name or email.",
         },
     };
 }

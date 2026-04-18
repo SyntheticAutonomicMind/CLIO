@@ -1645,53 +1645,58 @@ sub get_additional_parameters {
     return {
         host => {
             type => "string",
-            description => "SSH connection target (user\@hostname)",
+                    description => "[REQUIRED for execute_remote, prepare_remote, cleanup_remote, check_remote] SSH connection target (e.g., user at hostname).",
         },
         command => {
             type => "string",
-            description => "Task description for remote CLIO",
+            description => "[REQUIRED for execute_remote, execute_parallel] Natural language task description for remote CLIO.",
         },
         model => {
             type => "string",
-            description => "AI model to use on remote (e.g., gpt-4.1)",
+            description => "[OPTIONAL] AI model to use on remote (e.g., gpt-4.1). Default: same as current session.",
         },
         api_key => {
             type => "string",
-            description => "API key for remote provider (auto-populated from GitHub Copilot token if not provided)",
+            description => "[OPTIONAL] API key for remote provider. Auto-populated from GitHub Copilot token if not provided.",
         },
         timeout => {
             type => "integer",
-            description => "Execution timeout in seconds (default: 300)",
+            description => "[OPTIONAL] Execution timeout in seconds. Default: 300.",
         },
         cleanup => {
             type => "boolean",
-            description => "Delete CLIO after execution (default: true)",
+            description => "[OPTIONAL] Delete CLIO after execution. Default: true.",
         },
         ssh_key => {
             type => "string",
-            description => "Path to SSH private key (optional)",
+            description => "[OPTIONAL] Path to SSH private key.",
         },
         ssh_port => {
             type => "integer",
-            description => "SSH port (default: 22)",
+            description => "[OPTIONAL] SSH port. Default: 22.",
         },
         output_files => {
             type => "array",
             items => { type => "string" },
-            description => "Array of output files to retrieve from remote",
+            description => "[OPTIONAL] Array of output file paths to retrieve from remote after execution.",
         },
         api_provider => {
             type => "string",
-            description => "API provider (default: github_copilot)",
+            description => "[OPTIONAL] API provider. Default: github_copilot.",
         },
         working_dir => {
             type => "string",
-            description => "Working directory on remote (default: /tmp)",
+            description => "[OPTIONAL] Working directory on remote. Default: /tmp.",
         },
         targets => {
             type => "array",
             items => { type => "string" },
-            description => "Device names, group name, or 'all' for parallel execution",
+            description => "[REQUIRED for execute_parallel] Device names, group name, or 'all' for parallel execution.",
+        },
+        files => {
+            type => "array",
+            items => { type => "string" },
+            description => "[REQUIRED for transfer_files, retrieve_files] Array of file paths to transfer/retrieve.",
         },
     };
 }
