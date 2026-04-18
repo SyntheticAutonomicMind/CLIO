@@ -164,10 +164,19 @@ sub make_on_chunk_callback {
 
             # Strip session naming markers (both formats)
             if ($line =~ /<!--session:/) {
-                my $had_content = ($line =~ /\S/ && $line !~ /^\s*<!--session:[^>]*-->-->\s*$/);
-                $line =~ s/<!--session:\{[^}]*\}-->\s*//sg;  # Structured
-                $line =~ s/<!--session:[a-z][a-z0-9_-]{2,50}-->\s*//sgi;  # Simple
-                next if !$had_content && $line !~ /\S/;
+                # Extract content before the marker
+                my $content_before = $line;
+                $content_before =~ s/<!--session:\{[^}]*\}-->\s*//sg;  # Structured
+                $content_before =~ s/<!--session:[a-z][a-z0-9_-]{2,50}-->\s*//sgi;  # Simple
+                $content_before =~ s/\s+$//;
+                
+                # If nothing before the marker, skip this line
+                if ($content_before !~ /\S/) {
+                    next;
+                }
+                
+                # Otherwise, print the content (marker was already stripped)
+                $line = $content_before;
             }
 
             # Track markdown context
