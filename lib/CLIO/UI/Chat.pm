@@ -783,10 +783,6 @@ sub _handle_ai_response {
         $self->add_to_buffer('assistant', $accumulated_content);
     }
     
-    if ($self->{session} && !$self->{session}->session_name()) {
-        $self->_auto_name_session();
-    }
-    
     if (!$result || !$result->{success}) {
         my $error_msg = $result->{error} || $result->{final_response} || "No response received from AI";
         log_debug('Chat', "Error occurred: $error_msg");
