@@ -396,18 +396,27 @@ Returns:
 =cut
 
 sub generate_session_naming_section {
-    return q{## Session Title (First Response Only)
+    return q{## Session Naming
 
-This is a NEW conversation with no title yet. Include the following marker at the very END of your response (after all other content, on its own line):
+**CRITICAL: Give every session a meaningful name.**
 
-<!--session:{"title":"your 3-6 word summary here"}-->
+The session name appears in the terminal header and session list, so it MUST be set
+for sessions to be identifiable. Include this HTML comment marker at the END of
+your response:
 
-Rules:
-- Title must be 3-6 words summarizing the conversation topic
-- Use lowercase except proper nouns
-- Be specific: "fix session naming bug" not "help with code"
-- Include this marker ONLY in your FIRST response, never again
-- Place it as the LAST line of your response
+<!--session:{"title":"3-6 word summary here"}-->
+
+**Examples of good session names:**
+- "saturday-morning-checkin"
+- "debug-session-naming-bug"
+- "plan-new-feature"
+- "research-api-ratelimits"
+
+**Important rules:**
+- Title must be 3-6 words, lowercase (except proper nouns)
+- Be specific: "fix-clio-bug" not "help"
+- The session name can be updated later as the conversation evolves
+- Place the marker as the LAST line of your response
 };
 }
 

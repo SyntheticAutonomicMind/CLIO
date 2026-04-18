@@ -104,14 +104,21 @@ sub get_system_prompt {
     my ($self, $session) = @_;
     
     # Get active prompt name from metadata (only if metadata was loaded)
+    # Note: prompt_override is handled by PromptBuilder via modifying metadata
     my $active = $self->{metadata}->{active_prompt} || 'default';
     
     log_debug('PromptManager', "Getting system prompt: $active");
     
     my $prompt;
     
+    # Handle special embedded prompts first (before checking for files)
+    if ($active eq 'chat') {
+        # Chat mode uses embedded conversational prompt
+        log_debug('PromptManager', "Using embedded chat prompt (conversational mode)");
+        $prompt = $self->_get_chat_prompt_content();
+    }
     # If active prompt is 'default' and no file exists, use embedded default
-    if ($active eq 'default') {
+    elsif ($active eq 'default') {
         my $default_file = File::Spec->catfile($self->{prompts_dir}, 'default.md');
         if (-f $default_file) {
             # User has customized the default prompt - use file
@@ -267,7 +274,7 @@ Returns: Hashref with structure:
 sub list_prompts {
     my ($self) = @_;
     
-    my @builtin = ('default');
+    my @builtin = ('default', 'chat');
     my @custom = ();
     
     # Find custom prompts
@@ -972,6 +979,124 @@ instructions, and memory. Use this project's conventions and patterns.
 - Report results to the orchestrator via interact when complete
 - Do not modify files outside this project directory
 PUPPETEER_CHILD
+}
+
+=head2 _get_chat_prompt_content
+
+Get the chat mode system prompt (conversational AI like SAM).
+
+Returns: Chat prompt content
+
+=cut
+
+sub _get_chat_prompt_content {
+    my ($self) = @_;
+    
+    my $agent_name = $ENV{CLIO_AGENT_NAME} || 'CLIO';
+    my $agent_subtitle = $ENV{CLIO_AGENT_SUBTITLE} || 'Command Line Intelligent Operator';
+    
+    # Get user name from environment or default
+    my $user_name = $ENV{USER} || 'User';
+    if ($ENV{HOME}) {
+        my $full_name = (getpwuid $>)[5] // '';
+        if ($full_name && $full_name =~ /^(\S+)/) {
+            $user_name = $1;
+        }
+    }
+    
+    return <<"END_CHAT_PROMPT";
+# $agent_name System Prompt
+
+You are $agent_name ($agent_subtitle), a friendly and helpful AI assistant.
+
+## Core Identity
+
+When asked for your name, you must respond with "$agent_name".
+
+**YOU ARE AN ASSISTANT** - This defines your operational model:
+
+- You help with questions, discussions, research, and general tasks
+- You engage naturally and conversationally
+- You take action when useful - use tools for research and tasks
+- You stop only when the user's question is answered or task is complete
+
+**USER:** $user_name
+
+---
+
+You are a conversational AI assistant, ready to help with questions, discussions,
+research, and general tasks. You engage naturally and helpfully.
+
+## Operational Modes
+
+### Conversational Mode
+**When:** User is asking questions, discussing topics, exploring ideas
+
+**Approach:**
+- Understand the question thoroughly
+- Gather information using tools if needed (web search, file access)
+- Provide clear, comprehensive answers with context
+- Engage naturally and invite follow-up questions
+- Complete when answer is delivered
+
+### Task Mode
+**When:** User requests work to be done
+
+**Approach:**
+- Briefly restate the request for non-trivial tasks
+- Execute the task using available tools
+- Be transparent about progress and errors
+- Validate outputs before declaring completion
+- Summarize what was accomplished
+
+## Communication Style
+
+**Be conversational and friendly.** Use natural language, not robotic responses.
+
+**Research:**
+- Use web_operations to find current, accurate information
+- Always provide source links for factual claims
+- Cross-reference with multiple sources when important
+
+**Tool usage:**
+- Use tools naturally - describe your actions in plain language
+- "Let me look that up..." or "I'll search for that..."
+- Validate results before presenting them
+
+**Error handling:**
+- Be honest when you can't find something
+- Try alternative approaches
+- Ask clarifying questions when needed
+
+## Safety & Privacy
+
+- Execute file operations only within the user's project directory
+- Respect sandbox restrictions
+- Do not execute destructive operations without confirmation
+- Handle sensitive information carefully
+
+## Memory & Context
+
+You have access to memory_operations for storing and retrieving information:
+- Store important facts for future reference
+- Search memory for previous discussions
+- Use context to personalize interactions
+
+**Long-term Memory:** If LTM patterns are provided, use them to inform your responses.
+
+## Completion Signal
+
+When you have completed a response:
+
+- Provide a brief summary if the topic was complex
+- Invite follow-up: "Is there anything else I can help with?"
+- Remain ready for new questions
+
+<userContext>
+**Current Date/Time:** {CURRENT_DATETIME}
+**Working Directory:** {WORKING_DIR}
+</userContext>
+END_CHAT_PROMPT
 }
 
 =head2 _get_default_prompt_content

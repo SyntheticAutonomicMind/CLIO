@@ -16,7 +16,7 @@ use CLIO::Util::JSON qw(encode_json decode_json);
 use CLIO::UI::Terminal qw(detect_capabilities configure_io_encoding);
 use CLIO::UI::Chat;
 use CLIO::Util::PathResolver;
-use CLIO::Core::Logger qw(should_log log_info);
+use CLIO::Core::Logger qw(should_log log_info log_debug);
 
 # Detect terminal capabilities and set IO encoding early
 # This must happen before any module sets binmode
@@ -66,6 +66,7 @@ OPTIONS:
     --enable <tools>   Only enable these tools (comma-separated)
     --disable <tools>  Disable these tools (comma-separated)
     --sandbox          Restrict file access to project directory only
+    --chat             Chat mode: conversational AI with web access (sandboxed)
     --config <path>    Use custom config directory (for isolated testing)
     --no-color         Disable ANSI color output (for CI/workflows)
     --no-custom-instructions  Skip .clio/instructions.md
@@ -86,6 +87,7 @@ EXAMPLES:
     clio --enable file_operations,terminal_operations --input "list files"
     clio --disable web_operations,remote_execution --new
     clio --incognito --new        # Fresh audit without project knowledge
+    clio --chat --new             # Conversational chat mode (sandboxed)
     clio --config /tmp/clio-test  # Use isolated config for testing
     clio --no-color --input "hi"  # Non-interactive without color
 
@@ -196,6 +198,11 @@ for (my $i = 0; $i < @ARGV; $i++) {
     if ($ARGV[$i] eq '--sandbox') {
         $sandbox_mode = 1;
     }
+    if ($ARGV[$i] eq '--chat') {
+        $mode = 'chat';
+        # Chat mode auto-enables sandbox for safety
+        $sandbox_mode = 1;
+    }
     if ($ARGV[$i] eq '--model' && defined $ARGV[$i+1]) {
         $model_override = $ARGV[$i+1];
     }
@@ -230,20 +237,20 @@ if (!$input && !-t STDIN) {
     }
     $input = $piped_input;
     chomp $input;
-    print STDERR "[DEBUG] Read " . length($input) . " bytes from piped STDIN\n" if $debug;
+    log_debug('Main', 'Read ' . length($input) . ' bytes from piped STDIN');
 }
 
 # Default to 'new' mode if not specified
 if (!$mode) {
-    print STDERR "[TRACE] No mode specified, defaulting to 'new'\n" if $debug;
+    log_debug('Main', "No mode specified, defaulting to 'new'");
     $mode = 'new';
 }
-print STDERR "[TRACE] Mode before session creation: $mode\n" if $debug;
+log_debug('Main', "Mode before session creation: $mode");
 
 # Set sandbox mode in config (runtime only, not persisted)
 if ($sandbox_mode) {
     $config->set('sandbox', 1, 0);  # 0 = don't mark as user-set (not persisted)
-    print STDERR "[INFO] Sandbox mode enabled - file access restricted to project directory\n";
+    log_debug('Main', 'Sandbox mode enabled - file access restricted to project directory');
 }
 
 # Handle --sessions mode (list and exit)
@@ -417,7 +424,8 @@ if ($mode eq 'list_models') {
 }
 
 # Create or load session
-if ($mode eq 'new') {
+# Both 'new' and 'chat' modes create a new session
+if ($mode eq 'new' || $mode eq 'chat') {
     my $eval_err;
     eval {
         $session = CLIO::Session::Manager->create(
@@ -428,21 +436,28 @@ if ($mode eq 'new') {
     $eval_err = $@;
     if ($debug) {
         require Data::Dumper;
-        print STDERR "[DEBUG] Session object after create: " . Data::Dumper::Dumper($session);
-        print STDERR "[DEBUG] session_id after create: ", (defined $session ? $session->{session_id} // '[undef]' : '[no session]'), "\n";
-        print STDERR "[TRACE][EVAL] Error during create: $eval_err\n" if $eval_err;
+        log_debug('Main', 'Session object after create: ' . Data::Dumper::Dumper($session));
+        log_debug('Main', 'session_id after create: ' . (defined $session ? $session->{session_id} // '[undef]' : '[no session]'));
+        log_debug('Main', "Error during create: $eval_err") if $eval_err;
     }
     $session_id = $session->{session_id} // ($session->{state} ? $session->{state}->{session_id} : undef) if $session;
-    print "[DEBUG] Created new session: $session_id\n" if $debug && $session_id;
-    print STDERR "[TRACE] After new: session defined? ", (defined $session ? 'yes' : 'no'), "\n" if $debug;
+    log_debug('Main', "Created new session: $session_id") if $session_id;
+    log_debug('Main', 'After new: session defined? ' . (defined $session ? 'yes' : 'no'));
     
     # Add system prompt to session history ONCE at session start (not on every request!)
     if ($session) {
         use CLIO::Core::PromptManager;
         my $pm = CLIO::Core::PromptManager->new(debug => $debug, skip_custom => $skip_custom);
+        
+        # For chat mode, use chat prompt and skip custom instructions
+        if ($mode eq 'chat') {
+            $pm->{metadata}->{active_prompt} = 'chat';
+            log_debug('Main', "Chat mode: set active_prompt to 'chat'");
+        }
+        
         my $system_prompt = $pm->get_system_prompt($session);  # Pass session for LTM injection
         $session->add_message('system', $system_prompt);
-        print STDERR "[DEBUG] Added system prompt to session history (" . length($system_prompt) . " chars)\n" if $debug;
+        log_debug('Main', 'Added system prompt to session history (' . length($system_prompt) . ' chars)');
     }
 } elsif ($mode eq 'resume') {
     my $eval_err;
@@ -455,8 +470,8 @@ if ($mode eq 'new') {
                 $session = CLIO::Session::Manager->load($session_id, debug => $debug);
             };
             $eval_err = $@;
-            print STDERR "[TRACE][EVAL] Error during load by id: $eval_err\n" if $debug;
-            print STDERR "[TRACE] After load by id: session defined? ", (defined $session ? 'yes' : 'no'), "\n" if $debug;
+            log_debug('Main', "Error during load by id: $eval_err") if $eval_err;
+            log_debug('Main', 'After load by id: session defined? ' . (defined $session ? 'yes' : 'no'));
             if (!$session) {
                 print "[ERROR] Failed to load session $session_id\n";
             }
@@ -495,8 +510,8 @@ if ($mode eq 'new') {
                     $session = CLIO::Session::Manager->load($session_id, debug => $debug);
                 };
                 $eval_err = $@;
-                print STDERR "[TRACE][EVAL] Error during load most recent: $eval_err\n" if $debug;
-                print STDERR "[TRACE] After load most recent: session defined? ", (defined $session ? 'yes' : 'no'), "\n" if $debug;
+                log_debug('Main', "Error during load most recent: $eval_err") if $eval_err;
+                log_debug('Main', 'After load most recent: session defined? ' . (defined $session ? 'yes' : 'no'));
                 if (!$session) {
                     print "[ERROR] Failed to load most recent session $session_id\n";
                 }
@@ -510,21 +525,27 @@ if ($mode eq 'new') {
         };
         $eval_err = $@;
         $session_id = $session->{session_id} // ($session->{state} ? $session->{state}->{session_id} : undef) if $session;
-        print "[DEBUG] Created new session (fallback): $session_id\n" if $debug && $session_id;
-        print STDERR "[TRACE][EVAL] Error during fallback create: $eval_err\n" if $debug;
-        print STDERR "[TRACE] After fallback create: session defined? ", (defined $session ? 'yes' : 'no'), "\n" if $debug;
+        log_debug('Main', "Created new session (fallback): $session_id") if $session_id;
+        log_debug('Main', "Error during fallback create: $eval_err") if $eval_err;
+        log_debug('Main', 'After fallback create: session defined? ' . (defined $session ? 'yes' : 'no'));
         
         # Add system prompt to fallback session (same as regular new session)
         if ($session) {
             use CLIO::Core::PromptManager;
             my $pm = CLIO::Core::PromptManager->new(debug => $debug, skip_custom => $skip_custom);
+            
+            # For chat mode, use chat prompt and skip custom instructions
+            if ($mode eq 'chat') {
+                $pm->{metadata}->{active_prompt} = 'chat';
+            }
+            
             my $system_prompt = $pm->get_system_prompt($session);  # Pass session for LTM injection
             $session->add_message('system', $system_prompt);
-            print STDERR "[DEBUG] Added system prompt to fallback session (" . length($system_prompt) . " chars)\n" if $debug;
+            log_debug('Main', 'Added system prompt to fallback session (' . length($system_prompt) . ' chars)');
         }
     } else {
         $session_id = $session->{session_id} // ($session->{state} ? $session->{state}->{session_id} : undef);
-        print "[DEBUG] Resumed session: $session_id\n" if $debug;
+        log_debug('Main', "Resumed session: $session_id");
         
         # CRITICAL: Apply session's saved model/provider to config, but ONLY
         # if there are explicit session-only overrides (from /api set --session).
@@ -548,7 +569,7 @@ if ($mode eq 'new') {
                         delete $config->{user_set}->{provider};
                         delete $config->{user_set}->{api_base};
                         delete $config->{user_set}->{api_key};
-                        print STDERR "[DEBUG] Session override: provider '$session_provider'\n" if $debug;
+                        log_debug('Main', "Session override: provider '$session_provider'");
                     }
                 }
                 
@@ -566,33 +587,33 @@ if ($mode eq 'new') {
                     }
                     
                     $config->set('model', $session_model, 0);
-                    print STDERR "[DEBUG] Session override: model '$session_model'\n" if $debug;
+                    log_debug('Main', "Session override: model '$session_model'");
                 }
             } else {
-                print STDERR "[DEBUG] No session-only overrides, using global config\n" if $debug;
+                log_debug('Main', 'No session-only overrides, using global config');
             }
         }
     }
 }
 
-print STDERR "[TRACE] Before session check: session defined? ", (defined $session ? 'yes' : 'no'), "\n" if $debug;
+log_debug('Main', 'Before session check: session defined? ' . (defined $session ? 'yes' : 'no'));
 if (!$session) {
     print "[ERROR] Could not create or load a session. Exiting.\n";
     exit 2;
 }
-print "[SESSION] Using session: $session_id\n" if $debug;
+log_debug('Main', "Using session: $session_id");
 
 # Check for broker coordination (sub-agent mode)
 my $broker_client;
 my $broker_session = $ENV{CLIO_BROKER_SESSION} || '';
 my $broker_agent_id = $ENV{CLIO_BROKER_AGENT_ID} || '';
 
-print STDERR "[TRACE][BROKER] Checking env vars: SESSION=$broker_session, AGENT=$broker_agent_id\n" if should_log('TRACE');
+log_debug('Broker', "Checking env vars: SESSION=$broker_session, AGENT=$broker_agent_id");
 
 if ($broker_session && $broker_agent_id) {
-    print STDERR "[INFO] Detected sub-agent mode (broker env vars present)\n" if should_log('INFO');
-    print STDERR "[INFO] Broker session: $broker_session\n" if should_log('INFO');
-    print STDERR "[INFO] Agent ID: $broker_agent_id\n" if should_log('INFO');
+    log_info('Broker', 'Detected sub-agent mode (broker env vars present)');
+    log_info('Broker', "Broker session: $broker_session");
+    log_info('Broker', "Agent ID: $broker_agent_id");
     
     eval {
         require CLIO::Coordination::Client;
@@ -602,14 +623,14 @@ if ($broker_session && $broker_agent_id) {
             task => $input || "Unnamed task",
             debug => $debug,
         );
-        print STDERR "[INFO] Connected to broker successfully\n" if should_log('INFO');
+        log_info('Broker', 'Connected to broker successfully');
     };
     if ($@) {
-        print STDERR "[WARN] Could not connect to broker: $@\n" if should_log('WARN');
-        print STDERR "[WARN] Continuing without coordination\n" if should_log('WARN');
+        log_warning('Broker', "Could not connect to broker: $@");
+        log_warning('Broker', 'Continuing without coordination');
     }
 } else {
-    print STDERR "[TRACE][BROKER] No broker env vars, running standalone\n" if should_log('TRACE');
+    log_debug('Broker', 'No broker env vars, running standalone');
 }
 
 # Ensure model has provider/ prefix (backward compatibility for bare model names)
@@ -627,7 +648,7 @@ if ($broker_session && $broker_agent_id) {
         unless ($has_prefix) {
             my $full_model = "$current_provider/$current_model";
             $config->set('model', $full_model, 0);
-            print STDERR "[DEBUG] Added provider prefix to model: $full_model\n" if $debug;
+            log_debug('Main', "Added provider prefix to model: $full_model");
         }
     }
 }
@@ -654,7 +675,7 @@ if ($model_override) {
     delete $config->{user_set}->{provider};
     delete $config->{user_set}->{api_base};
     delete $config->{user_set}->{model};
-    print STDERR "[DEBUG] Loaded provider '$target_provider' config including api_key\n" if $debug;
+    log_debug('Main', "Loaded provider '$target_provider' config including api_key");
     
     # Apply model override with provider prefix
     $model_override = "$target_provider/$model_override";
@@ -680,14 +701,15 @@ my $ai_agent = CLIO::Core::SimpleAIAgent->new(
     enable_tools => $enable_tools,      # --enable: allowlist of tools
     disable_tools => $disable_tools,    # --disable: blocklist of tools
     prompt_override => $prompt_override, # --prompt: system prompt name override
+    chat_mode => ($mode eq 'chat' ? 1 : 0),  # Chat mode flag
 );
 
 if ($debug) {
     my $cfg = $config->get_all();
-    print "[DEBUG] API base: " . ($cfg->{api_base} || '(not set)') . "\n";
-    print "[DEBUG] Model: " . ($cfg->{model} || '(not set)') . "\n";
+    log_debug('Main', 'API base: ' . ($cfg->{api_base} || '(not set)'));
+    log_debug('Main', 'Model: ' . ($cfg->{model} || '(not set)'));
     if ($skip_custom || $skip_ltm) {
-        print "[DEBUG] Incognito mode: skip_custom=$skip_custom, skip_ltm=$skip_ltm\n";
+        log_debug('Main', "Incognito mode: skip_custom=$skip_custom, skip_ltm=$skip_ltm");
     }
 }
 
@@ -716,7 +738,7 @@ if ($input) {
     if ($input =~ /^\[MEMORY:/) {
         my $resp = CLIO::Protocols::Manager->handle($input, $session);
         $session->save();
-        print "[DEBUG] Session saved to $session->{state}->{file}\n" if $debug;
+        log_debug('Main', "Session saved to $session->{state}->{file}");
         require Data::Dumper;
         print Data::Dumper::Dumper($resp);
         exit 0;
@@ -781,7 +803,7 @@ if ($input) {
             print "[RESPONSE] $rendered_response\n";
             
             if ($debug && @{$result->{protocols_used}}) {
-                print "[DEBUG] Protocols used: " . join(", ", @{$result->{protocols_used}}) . "\n";
+                log_debug('Main', 'Protocols used: ' . join(", ", @{$result->{protocols_used}}));
             }
         } else {
             my $error_msg = "[ERROR] " . join("; ", @{$result->{errors}});
@@ -840,7 +862,7 @@ $ai_agent->set_ui($ui) if $ai_agent;
 # reinit_api_manager() copies this callback to newly created APIManager instances
 if ($api && $api->can('set_reauth_callback')) {
     my $reauth_cb = sub {
-        print STDERR "[INFO] Token expired/revoked, triggering re-authentication\n" if should_log('INFO');
+        log_info('Auth', 'Token expired/revoked, triggering re-authentication');
         
         # Display message to user
         if ($ui && $ui->can('display_system_message')) {
@@ -900,7 +922,7 @@ if ($api && $api->can('set_reauth_callback')) {
         };
         
         if ($@) {
-            print STDERR "[ERROR] Re-authentication failed: $@\n" if should_log('ERROR');
+            log_error('Auth', "Re-authentication failed: $@");
             if ($ui && $ui->can('display_error_message')) {
                 $ui->display_error_message("Re-authentication failed: $@");
             }
@@ -977,10 +999,10 @@ if ($session && $session->can('state') && $session->state()) {
                     print "SYSTEM: Session saved.\n";
                 };
                 if ($@) {
-                    print STDERR "[ERROR] Failed to save session: $@\n";
+                    log_error('Session', "Failed to save session: $@");
                 }
             } else {
-                print STDERR "[WARN] No session to save (session object is undefined)\n";
+                log_warning('Session', 'No session to save (session object is undefined)');
             }
         }
         
@@ -1029,7 +1051,7 @@ if ($ui && $ui->can('display_system_messages')) {
         print "SYSTEM: $msg\n";
     }
 }
-print "[DEBUG] Session saved after interactive mode\n" if $debug;
+log_debug('Main', 'Session saved after interactive mode');
 
 # Resolve session identifier: UUID, friendly name, or list number
 # Returns the actual session UUID, or undef if not found
@@ -1076,7 +1098,7 @@ sub _resolve_session_id {
     # 2. UUID prefix match
     my @uuid_matches = grep { index($_->{id}, $identifier) == 0 } @sessions;
     if (@uuid_matches == 1) {
-        print STDERR "[DEBUG] Resolved UUID prefix '$identifier' -> $uuid_matches[0]->{id}\n" if $debug;
+        log_debug('Main', "Resolved UUID prefix '$identifier' -> $uuid_matches[0]->{id}");
         return $uuid_matches[0]->{id};
     }
     
@@ -1084,7 +1106,7 @@ sub _resolve_session_id {
     if ($identifier =~ /^\d+$/) {
         my $idx = $identifier - 1;
         if ($idx >= 0 && $idx < @sessions) {
-            print STDERR "[DEBUG] Resolved list number $identifier -> $sessions[$idx]->{id}\n" if $debug;
+            log_debug('Main', "Resolved list number $identifier -> $sessions[$idx]->{id}");
             return $sessions[$idx]->{id};
         }
     }
@@ -1093,7 +1115,7 @@ sub _resolve_session_id {
     for my $s (@sessions) {
         next unless $s->{name};
         if (lc($s->{name}) eq lc($identifier)) {
-            print STDERR "[DEBUG] Resolved name '$identifier' -> $s->{id}\n" if $debug;
+            log_debug('Main', "Resolved name '$identifier' -> $s->{id}");
             return $s->{id};
         }
     }
@@ -1102,14 +1124,14 @@ sub _resolve_session_id {
     my $lc_id = lc($identifier);
     my @name_matches = grep { $_->{name} && index(lc($_->{name}), $lc_id) == 0 } @sessions;
     if (@name_matches == 1) {
-        print STDERR "[DEBUG] Resolved name prefix '$identifier' -> $name_matches[0]->{id}\n" if $debug;
+        log_debug('Main', "Resolved name prefix '$identifier' -> $name_matches[0]->{id}");
         return $name_matches[0]->{id};
     }
     
     # 6. Friendly name substring match (case-insensitive)
     my @substr_matches = grep { $_->{name} && index(lc($_->{name}), $lc_id) >= 0 } @sessions;
     if (@substr_matches == 1) {
-        print STDERR "[DEBUG] Resolved name substring '$identifier' -> $substr_matches[0]->{id}\n" if $debug;
+        log_debug('Main', "Resolved name substring '$identifier' -> $substr_matches[0]->{id}");
         return $substr_matches[0]->{id};
     }
     
