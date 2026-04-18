@@ -1219,6 +1219,7 @@ sub _detect_api_type_and_url {
         'dashscope-intl' => ['dashscope', 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models'],
         'sam'            => ['sam', 'http://localhost:8080/v1/models'],
         'lmstudio'       => ['lmstudio', 'http://localhost:1234/v1/models'],
+        'ollama-cloud'   => ['ollama-cloud', 'https://ollama.com/v1/models'],
         'openrouter'     => ['openrouter', 'https://openrouter.ai/api/v1/models'],
     );
     
@@ -1239,6 +1240,9 @@ sub _detect_api_type_and_url {
         return ('openrouter', 'https://openrouter.ai/api/v1/models');
     } elsif ($api_base =~ m{api\.minimax\.io}i) {
         return ('minimax', 'https://api.minimax.io/v1/models');
+    } elsif ($api_base =~ m{ollama\.com}i) {
+        # Ollama Cloud
+        return ('ollama-cloud', 'https://ollama.com/v1/models');
     } elsif ($api_base =~ m{localhost:1234}i || $api_base =~ m{127\.0\.0\.1:1234}i) {
         # LM Studio running locally
         return ('lmstudio', 'http://localhost:1234/v1/models');
