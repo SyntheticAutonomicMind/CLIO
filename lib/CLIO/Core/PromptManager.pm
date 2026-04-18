@@ -995,15 +995,6 @@ sub _get_chat_prompt_content {
     my $agent_name = $ENV{CLIO_AGENT_NAME} || 'CLIO';
     my $agent_subtitle = $ENV{CLIO_AGENT_SUBTITLE} || 'Command Line Intelligent Operator';
     
-    # Get user name from environment or default
-    my $user_name = $ENV{USER} || 'User';
-    if ($ENV{HOME}) {
-        my $full_name = (getpwuid $>)[5] // '';
-        if ($full_name && $full_name =~ /^(\S+)/) {
-            $user_name = $1;
-        }
-    }
-    
     return <<"END_CHAT_PROMPT";
 # $agent_name System Prompt
 
@@ -1019,8 +1010,6 @@ When asked for your name, you must respond with "$agent_name".
 - You engage naturally and conversationally
 - You take action when useful - use tools for research and tasks
 - You stop only when the user's question is answered or task is complete
-
-**USER:** $user_name
 
 ---
 
