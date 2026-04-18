@@ -166,9 +166,10 @@ sub generate_tools_section {
     my ($self) = @_;
 
     # Cache the tools section since tool registrations don't change during a session
-    # But don't cache if there's an enable_tools filter (varies per session in multi-agent scenarios)
-    my $cache_key = $self->{enable_tools} ? '_filtered_' . $self->{enable_tools} : '';
-    return $self->{_tools_section_cache} if $self->{_tools_section_cache} && !$cache_key;
+    # Only use cache if there's no enable_tools filter (which varies per session)
+    if (!$self->{enable_tools} && $self->{_tools_section_cache}) {
+        return $self->{_tools_section_cache};
+    }
 
     # Get all registered tool OBJECTS (not just names)
     my $all_tools = $self->{tool_registry}->get_all_tools();

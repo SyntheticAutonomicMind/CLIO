@@ -765,17 +765,24 @@ sub _handle_ai_response {
     }
     
     if ($accumulated_content) {
-        $accumulated_content =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;
+        $accumulated_content =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;  # Structured
+        $accumulated_content =~ s/\s*<!--session:[a-z][a-z0-9_-]{2,50}-->\s*//sgi;  # Simple
     }
     
     if ($result && $result->{messages_saved_during_workflow}) {
         log_debug('Chat', "Skipping session save - messages already saved during workflow");
-        $self->add_to_buffer('assistant', $result->{final_response} // '') if $result->{final_response};
+        my $display_response = $result->{final_response} // '';
+        $display_response =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;  # Structured
+        $display_response =~ s/\s*<!--session:[a-z][a-z0-9_-]{2,50}-->\s*//sgi;  # Simple
+        $self->add_to_buffer('assistant', $display_response) if $display_response;
     } elsif ($result && $result->{final_response}) {
         log_debug('Chat', "Storing final_response in session (length=" . length($result->{final_response}) . ")");
         my $sanitized = sanitize_text($result->{final_response});
         $self->{session}->add_message('assistant', $sanitized);
-        $self->add_to_buffer('assistant', $result->{final_response});
+        my $display_response = $result->{final_response};
+        $display_response =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;  # Structured
+        $display_response =~ s/\s*<!--session:[a-z][a-z0-9_-]{2,50}-->\s*//sgi;  # Simple
+        $self->add_to_buffer('assistant', $display_response);
     } elsif ($accumulated_content) {
         log_debug('Chat', "Storing accumulated_content in session (length=" . length($accumulated_content) . ")");
         my $sanitized = sanitize_text($accumulated_content);
