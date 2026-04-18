@@ -13,6 +13,7 @@
 | **Google Gemini** | `google` | API Key |
 | **DeepSeek** | `deepseek` | API Key |
 | **OpenRouter** | `openrouter` | API Key |
+| **Ollama Cloud** | `ollama_cloud` | API Key |
 | **MiniMax** | `minimax` | API Key |
 | **MiniMax Token Plan** | `minimax_token` | API Key |
 | **Z.AI** | `zai` | API Key |
@@ -184,6 +185,39 @@ Models use the `provider/model` format:
 /api set model openai/<model-name>
 /api set model deepseek/<model-name>
 ```
+
+---
+
+### Ollama Cloud
+
+**Best for:** Access to open-source models (Qwen, Gemma, DeepSeek, etc.) with API convenience
+
+**Get API Key:**
+1. Create account at [ollama.com](https://ollama.com)
+2. Go to your account settings
+3. Create an API key
+
+**Configure CLIO:**
+```bash
+clio --new
+/api set provider ollama_cloud
+/api set key <your-api-key>
+/config save
+```
+
+**Available model families:** Qwen, Gemma, DeepSeek, Mistral, Llama, and more. Use `/api models` for the current list.
+
+**Features:**
+- Supports tools/function calling
+- Streaming responses
+- Reasoning models (for thinking-enabled models)
+
+**Example models:**
+| Model | Size | Best For |
+|-------|------|----------|
+| gemma4:31b | 31B | Balanced performance |
+| qwen3:8b | 8B | Fast, low memory |
+| deepseek-v3.2 | - | Coding, reasoning |
 
 ---
 

@@ -117,6 +117,24 @@ CLIO uses conservative sampling defaults tuned for reliable tool use. When worki
 
 Overrides are saved globally and visible in `/api show`. Provider-recommended defaults (e.g. MiniMax's `temperature=1.0`) are applied automatically when no override is set - you only need to set these if you want to change from the provider recommendation.
 
+### Chat Mode
+
+For conversational AI without file modifications, use chat mode:
+
+```
+clio --chat --new
+```
+
+Chat mode:
+- Auto-enables sandbox mode for safety
+- Restricts tools to: web, file read, memory, interact, todos
+- Uses a lighter system prompt optimized for chat
+
+This is useful for:
+- Quick questions without modifying code
+- Web searches and research
+- Explaining concepts or debugging help
+
 ### Iteration and Error Recovery
 
 When something goes wrong - a syntax error, a failed test, an unexpected file structure - CLIO doesn't stop. It reads the error, adjusts its approach, and tries again. In interactive mode CLIO has no iteration limit. In non-interactive mode (scripting, sub-agents) a default of 75 iterations applies. Both are configurable.
@@ -241,7 +259,7 @@ Connect to external tool servers via the Model Context Protocol. See [MCP Integr
 
 ## 3. AI Providers
 
-CLIO supports 10 AI providers out of the box. Switch between them at any time - even mid-session.
+CLIO supports 13 AI providers out of the box. Switch between them at any time - even mid-session.
 
 | Provider | Type | Authentication |
 |----------|------|---------------|
@@ -250,7 +268,10 @@ CLIO supports 10 AI providers out of the box. Switch between them at any time - 
 | **Google Gemini** | Cloud | API key |
 | **DeepSeek** | Cloud | API key |
 | **OpenRouter** | Cloud | API key |
+| **Ollama Cloud** | Cloud | API key |
 | **MiniMax** | Cloud | API key (Token Plan support) |
+| **Z.AI** | Cloud | API key |
+| **Z.AI Coding Plan** | Cloud | API key |
 | **llama.cpp** | Local | None |
 | **LM Studio** | Local | None |
 | **SAM** | Local | API key (optional) |

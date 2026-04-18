@@ -2001,6 +2001,30 @@ clio --sandbox --new
 - Version control: limited to project repository
 - Terminal operations: NOT restricted
 
+### Chat Mode (`--chat` flag)
+
+A conversational AI mode optimized for quick questions and web access. Chat mode:
+
+- Auto-enables sandbox mode for safety
+- Restricts tools to: web, file read, memory, interact, todos
+- Uses a lighter system prompt optimized for chat
+
+```bash
+clio --chat --new
+```
+
+**When to use Chat Mode:**
+- Quick questions without modifying code
+- Web searches and research
+- Explaining concepts or code
+- General debugging help
+
+**When to use Agent Mode (default):**
+- Making changes to files
+- Running commands
+- Multi-step refactoring
+- Autonomous task completion
+
 ### Container Sandbox (Docker)
 
 For complete isolation, run CLIO in a container:

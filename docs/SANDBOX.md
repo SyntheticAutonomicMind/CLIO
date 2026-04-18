@@ -120,6 +120,7 @@ This handles:
 
 | Scenario | Recommendation |
 |----------|----------------|
+| Conversational AI, quick questions | `--chat` flag |
 | Trusted local environment | No sandbox needed |
 | Exploring unfamiliar codebase | `--sandbox` flag |
 | Working on sensitive project | `--sandbox` flag |
