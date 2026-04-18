@@ -78,19 +78,19 @@ sub get_additional_parameters {
     return {
         url => {
             type => "string",
-            description => "URL to fetch (for fetch_url operation, required)",
+            description => "[REQUIRED for fetch_url] URL to fetch.",
         },
         query => {
             type => "string",
-            description => "Search query (for search_web operation, required)",
+            description => "[REQUIRED for search_web] Search query.",
         },
         timeout => {
             type => "integer",
-            description => "Timeout in seconds (optional, default: 30)",
+            description => "[OPTIONAL] Timeout in seconds for fetch_url. Default: 30.",
         },
         max_results => {
             type => "integer",
-            description => "Maximum search results to return (for search_web, default: 10)",
+            description => "[OPTIONAL] Maximum search results for search_web. Default: 10.",
         },
     };
 }

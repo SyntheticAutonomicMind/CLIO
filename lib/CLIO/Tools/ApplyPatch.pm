@@ -77,7 +77,7 @@ sub get_tool_definition {
             properties => {
                 patch => {
                     type => 'string',
-                    description => 'The patch text. Format:
+                    description => '[REQUIRED] The patch text. Format:
 
 *** Begin Patch
 *** Add File: <path>
