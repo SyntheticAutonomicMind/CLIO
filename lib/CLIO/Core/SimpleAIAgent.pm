@@ -38,9 +38,23 @@ sub new {
         enable_tools => $opts{enable_tools},     # --enable: allowlist of tools
         disable_tools => $opts{disable_tools},   # --disable: blocklist of tools
         prompt_override => $opts{prompt_override}, # --prompt: system prompt name override
+        chat_mode => $opts{chat_mode} || 0,      # Chat mode flag
     };
     
     bless $self, $class;
+    
+    # Chat mode: default to limited tool set and chat system prompt
+    my $chat_mode_tools = 'web_operations,file_operations,memory_operations,interact';
+    my $chat_mode_prompt = 'chat';
+    
+    # Apply chat mode defaults if enabled (but respect explicit --enable/--prompt overrides)
+    my $effective_enable_tools = $self->{enable_tools};
+    my $effective_prompt_override = $self->{prompt_override};
+    
+    if ($self->{chat_mode}) {
+        $effective_enable_tools //= $chat_mode_tools;
+        $effective_prompt_override //= $chat_mode_prompt;
+    }
     
     # Initialize orchestrator immediately so it's available for /todo and other commands
     # even before the first user request
@@ -57,11 +71,11 @@ sub new {
             broker_client => $self->{broker_client},  # Pass broker client to orchestrator
             non_interactive => $self->{non_interactive},  # Pass non-interactive mode
             max_iterations => $self->{api}->{config}->get('max_iterations'),
-            enable_tools => $self->{enable_tools},      # Tool allowlist
+            enable_tools => $effective_enable_tools,      # Tool allowlist
             disable_tools => $self->{disable_tools},    # Tool blocklist
-            prompt_override => $self->{prompt_override}, # System prompt override
+            prompt_override => $effective_prompt_override, # System prompt override
         );
-        log_debug('SimpleAIAgent', "Orchestrator initialized in constructor");
+        log_debug('SimpleAIAgent', "Orchestrator initialized in constructor (chat_mode=$self->{chat_mode})");
     };
     if ($@) {
         log_error('SimpleAIAgent', "Failed to initialize orchestrator: $@");

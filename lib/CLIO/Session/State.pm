@@ -117,26 +117,7 @@ sub save {
         }
     }
     
-    # Prepare data to save
-    # Safety net: ensure session has a name if it has user messages
-    # This catches edge cases where AI marker wasn't included and
-    # the Chat.pm fallback didn't fire (e.g., interrupted sessions)
-    if (!$self->{session_name} && $self->{history} && @{$self->{history}}) {
-        for my $msg (@{$self->{history}}) {
-            next unless ref($msg) eq 'HASH';
-            next unless ($msg->{role} || '') eq 'user';
-            my $text = $msg->{content} || '';
-            next unless length($text) > 0;
-            my $name = _generate_fallback_name($text);
-            if ($name) {
-                $self->{session_name} = $name;
-                log_debug('State', "Generated fallback session name: $name");
-            }
-            last;
-        }
-    }
-
-    my $data = {
+my $data = {
         history => $self->{history},
         stm     => $self->{stm}->{history},
         # LTM is now saved separately to .clio/ltm.json (project-level, not session-level)
