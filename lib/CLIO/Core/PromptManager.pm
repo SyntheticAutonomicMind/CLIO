@@ -6,7 +6,7 @@ package CLIO::Core::PromptManager;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Logger qw(log_error log_debug log_warning);
+use CLIO::Core::Logger qw(log_error log_debug log_warning log_info);
 use CLIO::Util::ConfigPath qw(get_config_file);
 use CLIO::Util::TextSanitizer qw(sanitize_text);
 use Carp qw(croak);
