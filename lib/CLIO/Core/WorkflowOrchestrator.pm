@@ -985,15 +985,21 @@ sub _build_turn_context {
         log_debug('WorkflowOrchestrator', "Loaded " . scalar(@$history) . " messages from history (after pre-flight trim)");
     }
 
-    # Get user context (date/time, working directory) - cached per-minute
+    # Get user context (date/time, working directory) - cached per‑minute
+    # The context is useful for the LLM but should not be persisted as part of the
+    # raw user message in the session history.  Persisting the context would
+    # duplicate information (the same context is already added to the message
+    # payload sent to the model) and breaks the expectation that the session
+    # stores exactly what the user typed.  Therefore we store only the plain
+    # user input in the session history.
     my $user_context = $self->{prompt_builder}->get_user_context();
 
     push @messages, { role => 'user', content => $user_context . $user_input };
 
     # Save user message to session history NOW (before processing)
     if ($session && $session->can('add_message')) {
-        $session->add_message('user', $user_context . $user_input);
-        log_debug('WorkflowOrchestrator', "Saved user message to session history");
+        $session->add_message('user', $user_input);
+        log_debug('WorkflowOrchestrator', "Saved user message to session history (raw input)");
     }
 
     # Build tool definitions

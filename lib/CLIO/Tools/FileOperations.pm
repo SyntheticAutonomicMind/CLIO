@@ -2310,14 +2310,21 @@ sub _scan_script_content {
     my $has_blocked = grep { $_->{severity} eq 'critical' } @all_flags;
     my $summary = "Script contains: " . join('; ', @descriptions);
 
-    # All flagged scripts route through user approval - the user is the
-    # final authority on what gets written to their system.  The scan
-    # results are informational to help them decide.
-    return {
+    # If any flag is marked as critical (e.g., destructive commands like
+    # "rm -rf /"), we treat the script as blocked.  The caller can inspect
+    # the `blocked` key to reject the write outright without prompting the
+    # user for confirmation.
+    my $result = {
         requires_confirmation => 1,
-        summary              => $summary,
-        flags                => \@all_flags,
+        summary                => $summary,
+        flags                  => \@all_flags,
     };
+
+    if ($has_blocked) {
+        $result->{blocked} = 1;
+    }
+
+    return $result;
 }
 
 =head2 _prompt_script_confirmation
