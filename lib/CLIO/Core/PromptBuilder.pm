@@ -414,22 +414,22 @@ sub generate_session_naming_section {
 **CRITICAL: Give every session a meaningful name.**
 
 The session name appears in the terminal header and session list, so it MUST be set
-for sessions to be identifiable. Include this HTML comment marker at the END of
-your response:
+for sessions to be identifiable. Include this HTML comment marker **in your FIRST response only**
+response only** and place it at the **LAST line** of that response:
 
 <!--session:short-name-here-->
 
 **Examples of good session names:**
-- "saturday-morning-checkin"
-- "debug-session-naming"
-- "plan-new-feature"
-- "research-api-ratelimits"
+ - "saturday-morning-checkin"
+ - "debug-session-naming"
+ - "plan-new-feature"
+ - "research-api-ratelimits"
 
 **Important rules:**
-- Title must be 3-6 words, lowercase (except proper nouns)
-- Be specific: "fix-clio-bug" not "help"
-- The session name can be updated later as the conversation evolves
-- Place the marker as the LAST line of your response
+ - Title must be 3-6 words, lowercase (except proper nouns)
+ - Be specific: "fix-clio-bug" not "help"
+ - The session name can be updated later as the conversation evolves
+ - Place the marker as the LAST line of your response
 };
 }
 
