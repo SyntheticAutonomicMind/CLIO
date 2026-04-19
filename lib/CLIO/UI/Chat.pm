@@ -1503,6 +1503,17 @@ sub _check_auth_migration {
         require CLIO::Core::GitHubAuth;
         my $auth = CLIO::Core::GitHubAuth->new(debug => 0);
         
+        # Check if a static API key is configured - if so, skip auth checks
+        # The api_key could be set via /api set key or stored in api_keys for provider
+        my $static_key = $self->{config}->get('api_key');
+        my $api_keys = $self->{config}->get('api_keys') || {};
+        $static_key ||= $api_keys->{$provider};
+        
+        if ($static_key) {
+            log_info('Chat', "Static API key configured for github_copilot, skipping GitHub auth");
+            return;
+        }
+        
         # Check for migration needs first
         my $reason = $auth->needs_reauth();
         if ($reason) {
@@ -1642,7 +1653,9 @@ sub _prepopulate_session_data {
             if ($model =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i && CLIO::Providers::provider_exists($1)) {
                 $model_provider = $1;
             }
-            if ($provider eq 'github_copilot' && (!$model_provider || $model_provider eq 'github_copilot')) {
+            # Get billing multiplier only for GitHub Copilot provider
+            # Check both config provider AND model prefix (--model github_copilot/...)
+            if (($provider eq 'github_copilot' || $model_provider eq 'github_copilot') && (!$model_provider || $model_provider eq 'github_copilot')) {
                 eval {
                     require CLIO::Core::GitHubCopilotModelsAPI;
                     my $models_api = CLIO::Core::GitHubCopilotModelsAPI->new(debug => $self->{debug});
