@@ -403,9 +403,9 @@ sub _request_via_curl_streaming {
     
     # Read and deliver chunks incrementally
     my $accumulated_content = '';
-    my $resp_obj;
     my $read_buf;
     my $chunk_size = 4096;  # Read in 4KB chunks for responsive streaming
+    my @chunks;  # Buffer chunks to deliver after headers are parsed
     
     # sysread on the pipe will block until data arrives or be interrupted by signals
     # The ALRM signal handler (set by Chat.pm) fires every second, causing EINTR
@@ -423,23 +423,7 @@ sub _request_via_curl_streaming {
         last if $bytes == 0;  # EOF
         
         $accumulated_content .= $read_buf;
-        
-        # Create response object lazily (we don't have headers yet from pipe mode)
-        if (!$resp_obj) {
-            $resp_obj = bless {
-                success => 1,  # Assume success, will verify later
-                status => 200,
-                reason => 'OK',
-                content => '',
-                headers => {},
-            }, 'CLIO::Compat::HTTP::Response';
-        }
-        
-        # Deliver chunk to callback
-        eval { $callback->($read_buf, $resp_obj, undef); };
-        if ($@) {
-            log_warning('HTTP::curl_streaming', "Callback error: $@");
-        }
+        push @chunks, $read_buf;  # Buffer chunk for later delivery
     }
     
     close($curl_fh);
@@ -466,9 +450,11 @@ sub _request_via_curl_streaming {
     my %resp_headers;
     
     if (open(my $hfh, '<', $hdr_file)) {
+        log_debug('HTTP::curl_streaming', "Parsing headers from $hdr_file");
         while (my $line = <$hfh>) {
             chomp $line;
             $line =~ s/\r$//;
+            log_debug('HTTP::curl_streaming', "Header line: $line");
             if ($line =~ /^HTTP\/[\d.]+\s+(\d+)\s*(.*)$/) {
                 $status = $1;
                 $reason = $2 // '';
@@ -477,6 +463,9 @@ sub _request_via_curl_streaming {
             }
         }
         close $hfh;
+        log_debug('HTTP::curl_streaming', "Parsed " . scalar(keys %resp_headers) . " headers: " . join(", ", keys %resp_headers));
+    } else {
+        log_debug('HTTP::curl_streaming', "Failed to open header file $hdr_file: $!");
     }
     
     # If no HTTP status was parsed from headers, check curl exit code
@@ -514,13 +503,27 @@ sub _request_via_curl_streaming {
         log_debug('HTTP', "Streaming complete: status=$status, " . length($accumulated_content) . " bytes, exit_code=$exit_code");
     }
     
-    return {
+    # Create response object with correct headers (parsed from header file)
+    # and deliver buffered chunks to callback
+    my $final_response = bless {
         success => ($status >= 200 && $status < 300),
         status => $status,
         reason => $reason,
         headers => \%resp_headers,
         content => $accumulated_content,
-    };
+    }, 'CLIO::Compat::HTTP::Response';
+    
+    # Deliver buffered chunks to callback with correct response object
+    if ($callback) {
+        for my $chunk (@chunks) {
+            eval { $callback->($chunk, $final_response, undef); };
+            if ($@) {
+                log_warning('HTTP::curl_streaming', "Callback error: $@");
+            }
+        }
+    }
+    
+    return $final_response;
 }
 
 =head2 request

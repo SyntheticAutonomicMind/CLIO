@@ -344,6 +344,24 @@ sub handle_error_response {
                 $reset_timestamp = $passed_headers->header('X-RateLimit-Reset');
             }
         }
+        
+        # Debug: log all rate limit headers for weekly/monthly limit diagnosis
+        if ($detected_rate_limit_code && $detected_rate_limit_code =~ /user_weekly_rate_limited|user_monthly_rate_limited/i) {
+            my $header_debug = 'Rate limit headers debug: ';
+            if (ref($passed_headers) eq 'HASH') {
+                $header_debug .= "hash{retry-after}=$passed_headers->{'retry-after'}, ";
+                $header_debug .= "hash{x-ratelimit-user-retry-after}=$passed_headers->{'x-ratelimit-user-retry-after'}, ";
+                $header_debug .= "hash{x-ratelimit-reset}=$passed_headers->{'x-ratelimit-reset'}";
+            } elsif (ref($passed_headers) && $passed_headers->can('header')) {
+                $header_debug .= "object{" . ref($passed_headers) . "}";
+                $header_debug .= " Retry-After=" . (defined($passed_headers->header('Retry-After')) ? "'" . $passed_headers->header('Retry-After') . "'" : 'undef');
+                $header_debug .= " X-RateLimit-User-Retry-After=" . (defined($passed_headers->header('X-RateLimit-User-Retry-After')) ? "'" . $passed_headers->header('X-RateLimit-User-Retry-After') . "'" : 'undef');
+                $header_debug .= " X-RateLimit-Reset=" . (defined($passed_headers->header('X-RateLimit-Reset')) ? "'" . $passed_headers->header('X-RateLimit-Reset') . "'" : 'undef');
+            } else {
+                $header_debug .= "passed_headers is " . (defined($passed_headers) ? "'$passed_headers' (" . ref($passed_headers) . ")" : 'undef');
+            }
+            log_info('ResponseHandler', $header_debug);
+        }
 
         if ($error =~ /retry in ([\d.]+)\s*s(?:econds?)?/i) {
             $retry_after = int($1) + 1;
@@ -390,9 +408,23 @@ sub handle_error_response {
         log_debug('ResponseHandler', "Rate limit check: detected_code=$detected_rate_limit_code, retry_after=$retry_after, reset_ts=$reset_timestamp");
         log_debug('ResponseHandler', "Rate limit error_obj: " . encode_json($error_obj)) if $error_obj;
         if ($detected_rate_limit_code && $detected_rate_limit_code =~ /user_weekly_rate_limited|user_monthly_rate_limited/i) {
-            # For weekly/monthly limits, use reset_timestamp if available to get accurate time
+            # For weekly/monthly limits, we need the actual reset time from x-ratelimit-user-retry-after
+            # The short retry-after header (e.g., "4") is misleading for weekly limits
             my $actual_retry_after;
-            if ($reset_timestamp && $reset_timestamp =~ /^\d+$/ && $reset_timestamp > time()) {
+            my $long_retry_header;
+            
+            # Try to get the long-duration retry header specifically
+            if (ref($passed_headers) eq 'HASH') {
+                $long_retry_header = $passed_headers->{'x-ratelimit-user-retry-after'};
+            } elsif ($passed_headers && $passed_headers->can('header')) {
+                $long_retry_header = $passed_headers->header('X-RateLimit-User-Retry-After');
+            }
+            
+            if ($long_retry_header && $long_retry_header =~ /^\d+$/) {
+                # x-ratelimit-user-retry-after is already in seconds
+                $actual_retry_after = int($long_retry_header);
+                log_info('ResponseHandler', "Using x-ratelimit-user-retry-after: ${actual_retry_after}s");
+            } elsif ($reset_timestamp && $reset_timestamp =~ /^\d+$/ && $reset_timestamp > time()) {
                 $actual_retry_after = int($reset_timestamp - time());
             } elsif (defined $self->{_rate_limit_reset_in} && $self->{_rate_limit_reset_in} > 0) {
                 # Use cached reset time from previous successful responses
@@ -400,7 +432,10 @@ sub handle_error_response {
                 log_info('ResponseHandler', "Using cached rate limit reset time: ${actual_retry_after}s");
             } else {
                 # API didn't provide accurate reset time - don't show misleading value
-                log_info('ResponseHandler', "No reset time available: _rate_limit_reset_in=" . 
+                log_info('ResponseHandler', "No reset time available: long_retry_header=" . 
+                    (defined $long_retry_header ? $long_retry_header : 'undef') . 
+                    ", retry_after_header=" . (defined $retry_after_header ? $retry_after_header : 'undef') .
+                    ", reset_timestamp=$reset_timestamp, _rate_limit_reset_in=" . 
                     (defined $self->{_rate_limit_reset_in} ? $self->{_rate_limit_reset_in} : 'undef'));
                 $actual_retry_after = undef;
             }
@@ -412,10 +447,13 @@ sub handle_error_response {
             my $expiration_str = '';
             if (defined($actual_retry_after) && $actual_retry_after > 0) {
                 my $days = int($actual_retry_after / 86400);
+                my $hours = int(($actual_retry_after % 86400) / 3600);
                 if ($days > 0) {
-                    $expiration_str = sprintf(" This limit expires in %ds (%d days).", $actual_retry_after, $days);
+                    $expiration_str = sprintf(" This limit expires in ~%d hours (%d days).", $actual_retry_after / 3600, $days);
+                } elsif ($hours > 0) {
+                    $expiration_str = sprintf(" This limit expires in ~%d hours.", $hours);
                 } else {
-                    $expiration_str = sprintf(" This limit expires in %ds.", $actual_retry_after);
+                    $expiration_str = sprintf(" This limit expires in ~%d minutes.", int($actual_retry_after / 60));
                 }
             }
             
@@ -451,7 +489,7 @@ sub handle_error_response {
             }
             
             log_info('ResponseHandler', "Weekly/monthly rate limit detected: $detected_rate_limit_code" . 
-                (defined($actual_retry_after) ? ", expires in ${actual_retry_after}s" : " (reset time unknown)"));
+                (defined($actual_retry_after) ? sprintf(", expires in %d seconds (~%.1f hours)", $actual_retry_after, $actual_retry_after / 3600) : " (reset time unknown)"));
             
             # Build result directly for weekly/monthly limits (skip else/elsif chains)
             my $weekly_result = { success => 0, error => $error, _error => $error };
@@ -463,9 +501,10 @@ sub handle_error_response {
             log_debug('ResponseHandler', "Final error being returned: $error");
             return $weekly_result;
         }
-        # Handle Z.AI usage limit (code 1308) - non-retryable, resets at specific time
+        # Handle Z.AI usage limit (codes 1308 and 1310) - non-retryable, resets at specific time
         # Error message format: "Usage limit reached for 5 hour. Your limit will reset at 2026-04-17 07:03:43"
-        elsif ($detected_rate_limit_code && $detected_rate_limit_code == 1308) {
+        # Code 1310: "Weekly/Monthly Limit Exhausted. Your limit will reset at 2026-04-24 02:02:21"
+        elsif ($detected_rate_limit_code && ($detected_rate_limit_code == 1308 || $detected_rate_limit_code == 1310)) {
             my $actual_retry_after;
             my $reset_str;
             
@@ -556,8 +595,8 @@ sub handle_error_response {
                 }
             }
             
-            log_info('ResponseHandler', "Z.AI usage limit detected (code=1308)" . 
-                (defined($actual_retry_after) ? ", expires in ${actual_retry_after}s" : " (reset time unknown)"));
+            log_info('ResponseHandler', "Z.AI usage limit detected (code=$detected_rate_limit_code)" . 
+                (defined($actual_retry_after) ? sprintf(", expires in %d seconds (~%.1f hours)", $actual_retry_after, $actual_retry_after / 3600) : " (reset time unknown)"));
             
             my $zai_result = { success => 0, error => $error, _error => $error };
             $zai_result->{retryable} = 0;
@@ -594,7 +633,6 @@ sub handle_error_response {
                 $zai_rl_type, $detected_rate_limit_code, $retry_after);
             $error = $retry_info;
             log_info('ResponseHandler', "Z.AI $zai_rl_type limit (code=$detected_rate_limit_code), retry_after=${retry_after}s");
-        } elsif ($user_message) {
         } elsif ($user_message) {
             $retry_info = sprintf("%s Retrying in %d seconds.", $user_message, $retry_after);
             $error = $retry_info;

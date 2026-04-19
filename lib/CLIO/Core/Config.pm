@@ -178,14 +178,27 @@ sub load {
                     $config{api_base} = $stored_base;
                     log_debug('Config', "Using stored api_base for provider '$config{provider}': $config{api_base}");
                 } elsif ($config{provider} eq 'github_copilot') {
-                    # For GitHub Copilot, try to get user-specific API endpoint
-                    my $user_api_base = $self->_get_copilot_user_api_endpoint();
-                    if ($user_api_base) {
-                        $config{api_base} = $user_api_base;
-                        log_debug('Config', "Using user-specific GitHub Copilot API: $config{api_base}");
+                    # Check if a static PAT is configured for this provider
+                    # ghu_ tokens are fine-grained PATs that work with individual endpoint
+                    my $api_keys = $config{api_keys} || {};
+                    my $provider_key = $api_keys->{$config{provider}};
+                    my $direct_key = $config{api_key};
+                    my $static_pat = $provider_key || $direct_key;
+                    
+                    if ($static_pat && $static_pat =~ /^ghu_/) {
+                        # Fine-grained PAT (ghu_) - use individual endpoint directly
+                        $config{api_base} = 'https://api.individual.githubcopilot.com';
+                        log_debug('Config', "Using individual endpoint for fine-grained PAT");
                     } else {
-                        $config{api_base} = $provider_config->{api_base};
-                        log_debug('Config', "Using default GitHub Copilot API: $config{api_base}");
+                        # For GitHub Copilot, try to get user-specific API endpoint
+                        my $user_api_base = $self->_get_copilot_user_api_endpoint();
+                        if ($user_api_base) {
+                            $config{api_base} = $user_api_base;
+                            log_debug('Config', "Using user-specific GitHub Copilot API: $config{api_base}");
+                        } else {
+                            $config{api_base} = $provider_config->{api_base};
+                            log_debug('Config', "Using default GitHub Copilot API: $config{api_base}");
+                        }
                     }
                 } else {
                     $config{api_base} = $provider_config->{api_base};
