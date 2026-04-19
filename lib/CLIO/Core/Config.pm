@@ -502,6 +502,11 @@ sub set_provider_base {
     $self->{config}->{api_bases}{$provider} = $url;
     $self->{user_set}->{api_bases} = 1;
     
+    # Clear the flat api_base from user_set so it doesn't get saved as a
+    # top-level key and override per-provider api_bases on next load.
+    # The per-provider storage in api_bases is the authoritative source.
+    delete $self->{user_set}->{api_base};
+    
     # If this is the current provider, also set api_base
     my $current_provider = $self->get('provider');
     if ($current_provider && $current_provider eq $provider) {
