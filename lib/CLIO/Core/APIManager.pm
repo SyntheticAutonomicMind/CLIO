@@ -394,8 +394,18 @@ sub _attempt_token_recovery {
     
     log_info('APIManager', "Attempting token recovery after auth failure");
     
-    # Step 1: Try a simple refresh (re-exchange existing GitHub token)
+    # Determine if this is a GitHub Copilot provider (check both api_base URL and provider name)
+    my $is_copilot_provider = 0;
     if ($self->{api_base} && $self->{api_base} =~ /githubcopilot\.com/) {
+        $is_copilot_provider = 1;
+    }
+    if (!$is_copilot_provider && $self->{config} && $self->{config}->can('get')) {
+        my $provider = $self->{config}->get('provider') || '';
+        $is_copilot_provider = ($provider eq 'github_copilot');
+    }
+    
+    # Step 1: Try a simple refresh (re-exchange existing GitHub token)
+    if ($is_copilot_provider) {
         my $step1_success = 0;
         eval {
             require CLIO::Core::GitHubAuth;
@@ -466,7 +476,19 @@ sub _get_api_key {
     my ($self) = @_;
     
     # Priority 1: Check for GitHub Copilot authentication
+    # Must check BOTH api_base URL AND provider name because users may override
+    # api_base to a proxy (e.g. http://flip:9090) while still using GitHub auth.
+    my $is_copilot_provider = 0;
     if ($self->{api_base} && $self->{api_base} =~ /githubcopilot\.com/) {
+        $is_copilot_provider = 1;
+    }
+    # Also check by provider name (handles custom api_base proxies)
+    if (!$is_copilot_provider && $self->{config} && $self->{config}->can('get')) {
+        my $provider = $self->{config}->get('provider') || '';
+        $is_copilot_provider = ($provider eq 'github_copilot');
+    }
+    
+    if ($is_copilot_provider) {
         my $github_token;
         eval {
             require CLIO::Core::GitHubAuth;
