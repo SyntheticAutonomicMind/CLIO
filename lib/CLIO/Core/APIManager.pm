@@ -511,16 +511,18 @@ sub _get_api_key {
             return $github_token;
         }
         
-        # GitHub Copilot provider requires GitHub authentication
-        log_warning('APIManager', "GitHub Copilot not authenticated");
-        return '';
+        # GitHub Copilot not authenticated via GitHub - will fall through to check static key
+        log_info('APIManager', "GitHub Copilot not authenticated via GitHub, checking for static key");
     }
     
-    # Priority 2: Config api_key (for non-GitHub Copilot providers)
+    # Priority 2: Config api_key (fallback for GitHub Copilot or primary for other providers)
     if ($self->{config} && $self->{config}->can('get')) {
         my $key = $self->{config}->get('api_key');
         if ($key && length($key) > 0) {
             log_debug('APIManager', "Using API key from Config");
+            # Set using_exchanged_token so Editor-Version header is sent
+            # This is needed for github_copilot to recognize the PAT properly
+            $self->{using_exchanged_token} = 1 if $is_copilot_provider;
             return $key;
         }
     }
@@ -3232,6 +3234,33 @@ sub _handle_streaming_http_error {
 
     # Use streaming headers if available (passed from _finalize_streaming_response)
     my $headers = $s->{streaming_headers} || $resp->headers;
+
+    # Debug: log ALL headers from the response to see what's actually available
+    if ($headers && ref($headers) && $headers->can('header')) {
+        my @header_names = $headers->header_field_names();
+        if (@header_names) {
+            my $all_headers_str = join(", ", map { "$_=" . (defined($headers->header($_)) ? "'" . $headers->header($_) . "'" : 'undef') } @header_names);
+            log_debug('APIManager', "All response headers (${\scalar(@header_names)}): $all_headers_str");
+        } else {
+            log_info('APIManager', "Headers object exists but has NO fields - headers hash dump:");
+            # Dump the internal hash directly to see what it actually contains
+            if (ref($headers) eq 'CLIO::Compat::HTTP::Headers') {
+                my %h = %{$headers->{headers}} if ref($headers->{headers}) eq 'HASH';
+                while (my ($k, $v) = each %h) {
+                    log_info('APIManager', "  header[$k] = $v");
+                }
+            }
+        }
+    } else {
+        log_debug('APIManager', "Headers object: " . (defined($headers) ? (ref($headers) || $headers) : 'undef'));
+    }
+    
+    # Also check what streaming_headers contains
+    if ($s->{streaming_headers}) {
+        log_debug('APIManager', "streaming_headers ref: " . ref($s->{streaming_headers}));
+    } else {
+        log_debug('APIManager', "streaming_headers is undef");
+    }
 
     log_debug('APIManager', "handle_error_response returned, sending to error handler");
     my $error_result = eval {
