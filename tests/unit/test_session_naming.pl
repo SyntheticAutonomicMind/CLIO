@@ -16,7 +16,7 @@ subtest 'generate_session_naming_section' => sub {
     ok(length($section) > 100, "Section has meaningful content");
     like($section, qr/<!--session:/, "Contains marker format example");
     like($section, qr/3-6 words/, "Contains word count instruction");
-    like($section, qr/FIRST response/, "Specifies first response only");
+    like($section, qr/session name can be updated/, "Mentions name can be updated");
     like($section, qr/LAST line/, "Specifies placement at end");
 };
 

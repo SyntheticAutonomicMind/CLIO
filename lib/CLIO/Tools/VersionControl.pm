@@ -681,7 +681,7 @@ sub worktree {
             worktree_path => $worktree_path,
         );
     };
-    my $main_error = $@;
+    $main_error = $@;
     }); # end _in_repo
 
     # Release git lock if acquired

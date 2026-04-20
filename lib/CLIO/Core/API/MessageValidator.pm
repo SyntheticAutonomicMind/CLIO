@@ -80,11 +80,11 @@ sub validate_and_truncate {
     my $model = $args{model} || 'unknown';
     
     # Determine max prompt tokens
+    require CLIO::Core::Defaults;
     my $max_prompt;
     if ($caps && $caps->{max_prompt_tokens}) {
         $max_prompt = $caps->{max_prompt_tokens};
     } else {
-        require CLIO::Core::Defaults;
         my $provider = ($config && $config->can('get')) ? ($config->get('provider') || '') : '';
         
         if ($provider =~ /^(sam|llama\.cpp|lmstudio)$/i || 
