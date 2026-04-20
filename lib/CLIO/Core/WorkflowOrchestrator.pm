@@ -994,6 +994,13 @@ sub _build_turn_context {
     # user input in the session history.
     my $user_context = $self->{prompt_builder}->get_user_context();
 
+    # Append turn-specific instructions to user context (not system prompt) for cacheability
+    # Non-interactive mode instruction (only with --input flag)
+    if ($self->{non_interactive}) {
+        $user_context .= CLIO::Core::PromptBuilder::generate_non_interactive_section() . "\n\n";
+        log_debug('WorkflowOrchestrator', "Added non-interactive instruction to user context");
+    }
+
     push @messages, { role => 'user', content => $user_context . $user_input };
 
     # Save user message to session history NOW (before processing)

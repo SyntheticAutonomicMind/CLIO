@@ -131,21 +131,10 @@ sub build_system_prompt {
         log_debug('PromptBuilder', "Added user profile section to prompt");
     }
 
-    # Add non-interactive mode instruction if running with --input flag
-    if ($self->{non_interactive}) {
-        my $non_interactive_section = generate_non_interactive_section();
-        $base_prompt .= "\n\n$non_interactive_section";
-        log_debug('PromptBuilder', "Added non-interactive mode section to prompt");
-    }
-
-    # Add session naming instruction for new unnamed sessions
-    # Only injected on the first exchange - once the session has a name,
-    # this instruction is never sent again (saves ~150 tokens per turn)
-    if ($session && $session->can('session_name') && !$session->session_name()) {
-        my $naming_section = generate_session_naming_section();
-        $base_prompt .= "\n\n$naming_section";
-        log_debug('PromptBuilder', "Added session naming instruction (new unnamed session)");
-    }
+    # Session naming instruction - always present for cacheability.
+    # The instruction itself tells the AI to only act on it for the first response.
+    my $naming_section = generate_session_naming_section();
+    $base_prompt .= "\n\n$naming_section";
 
     log_debug('PromptBuilder', "Added dynamic tools section to prompt");
 
@@ -414,8 +403,8 @@ sub generate_session_naming_section {
 **CRITICAL: Give every session a meaningful name.**
 
 The session name appears in the terminal header and session list, so it MUST be set
-for sessions to be identifiable. Include this HTML comment marker **in your FIRST response only**
-response only** and place it at the **LAST line** of that response:
+for sessions to be identifiable. Include this HTML comment marker at the END of
+your response:
 
 <!--session:short-name-here-->
 

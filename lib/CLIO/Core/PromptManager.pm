@@ -1080,11 +1080,6 @@ When you have completed a response:
 - Provide a brief summary if the topic was complex
 - Invite follow-up: "Is there anything else I can help with?"
 - Remain ready for new questions
-
-<userContext>
-**Current Date/Time:** {CURRENT_DATETIME}
-**Working Directory:** {WORKING_DIR}
-</userContext>
 END_CHAT_PROMPT
 }
 
