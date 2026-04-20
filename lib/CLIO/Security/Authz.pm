@@ -387,7 +387,7 @@ Fewtarius
 
 =head1 COPYRIGHT
 
-Copyright (c) 2025 CLIO Project. All rights reserved.
+Copyright (c) 2026 CLIO Project. All rights reserved.
 
 =cut
 
