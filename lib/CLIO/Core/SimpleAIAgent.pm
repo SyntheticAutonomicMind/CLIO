@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-# SPDX-FileCopyrightText: Copyright (c) 2025 Andrew Wyatt (Fewtarius)
+# SPDX-FileCopyrightText: Copyright (c) 2026 Andrew Wyatt (Fewtarius)
 
 package CLIO::Core::SimpleAIAgent;
 
