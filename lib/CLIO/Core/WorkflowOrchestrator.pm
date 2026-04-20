@@ -33,6 +33,7 @@ use Time::HiRes qw(time sleep);
 use Digest::MD5 qw(md5_hex);
 use CLIO::Compat::Terminal qw(ReadKey ReadMode);  # For interrupt detection
 use CLIO::Util::AtomicWrite qw(atomic_write);
+use CLIO::Core::Defaults qw(DEFAULT_CONTEXT_WINDOW DEFAULT_MAX_RESPONSE_TOKENS);
 use CLIO::Logging::ProcessStats;
 use POSIX qw(strftime);
 
@@ -974,8 +975,8 @@ sub _build_turn_context {
         $history = trim_conversation_for_api(
             $history,
             $system_prompt,
-            model_context_window => $model_caps->{max_context_window_tokens} // 128000,
-            max_response_tokens  => $model_caps->{max_output_tokens} // 16000,
+            model_context_window => $model_caps->{max_context_window_tokens} // CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW,
+            max_response_tokens  => $model_caps->{max_output_tokens} // CLIO::Core::Defaults::DEFAULT_MAX_RESPONSE_TOKENS,
             debug => $self->{debug},
         );
     }
@@ -2627,7 +2628,7 @@ sub _trim_for_token_limit {
         # First retry: keep recent messages that fit in 40% of model context
         my $_retry_caps = $self->{api_manager}
             ? ($self->{api_manager}->get_model_capabilities() || {}) : {};
-        my $max_ctx     = $_retry_caps->{max_prompt_tokens} || 128000;
+        my $max_ctx     = $_retry_caps->{max_prompt_tokens} || DEFAULT_CONTEXT_WINDOW;
         my $keep_budget = int($max_ctx * 0.40);
         $keep_budget = 40000 if $keep_budget < 40000;
 

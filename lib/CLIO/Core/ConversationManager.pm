@@ -268,8 +268,9 @@ sub trim_conversation_for_api {
     return $history unless $history && @$history;
 
     my $debug = $opts{debug} // 0;
-    my $model_context = $opts{model_context_window} // 128000;
-    my $max_response = $opts{max_response_tokens} // 16000;
+    require CLIO::Core::Defaults;
+    my $model_context = $opts{model_context_window} // CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW();
+    my $max_response = $opts{max_response_tokens} // CLIO::Core::Defaults::DEFAULT_MAX_RESPONSE_TOKENS();
 
     # Calculate dynamic safe threshold based on model's context window
     # Uses shared constant from TokenEstimator for consistency with State::add_message trim
