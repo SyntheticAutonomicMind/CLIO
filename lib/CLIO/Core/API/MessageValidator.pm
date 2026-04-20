@@ -84,14 +84,15 @@ sub validate_and_truncate {
     if ($caps && $caps->{max_prompt_tokens}) {
         $max_prompt = $caps->{max_prompt_tokens};
     } else {
+        require CLIO::Core::Defaults;
         my $provider = ($config && $config->can('get')) ? ($config->get('provider') || '') : '';
         
         if ($provider =~ /^(sam|llama\.cpp|lmstudio)$/i || 
             $api_base =~ m{localhost:[0-9]+}i ||
             $api_base =~ m{127\.0\.0\.1:[0-9]+}i) {
-            $max_prompt = 32000;
+            $max_prompt = CLIO::Core::Defaults::DEFAULT_LOCAL_CONTEXT_WINDOW();
         } else {
-            $max_prompt = 128000;
+            $max_prompt = CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW();
         }
         
         log_debug('MessageValidator', "Using fallback token limit for $model: $max_prompt");
@@ -176,7 +177,7 @@ sub validate_and_truncate {
     # immediate re-saturation on the very next large file read post-trim.
     my $post_trim_keep_limit = int($max_prompt * 0.50);
     $post_trim_keep_limit = $effective_limit if $post_trim_keep_limit < $effective_limit * 0.5;
-    $post_trim_keep_limit = 32000 if $post_trim_keep_limit < 32000;
+    $post_trim_keep_limit = CLIO::Core::Defaults::DEFAULT_POST_TRIM_FLOOR() if $post_trim_keep_limit < CLIO::Core::Defaults::DEFAULT_POST_TRIM_FLOOR();
     log_debug('MessageValidator', "Post-trim keep target: $post_trim_keep_limit tokens (50% of $max_prompt)");
 
     # DIAGNOSTIC: Append post_trim_keep_limit to the validator diagnostic (CLIO_TRIM_DIAG=1 to enable)

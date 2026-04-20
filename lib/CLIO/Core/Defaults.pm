@@ -1,0 +1,97 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: Copyright (c) 2026 Andrew Wyatt (Fewtarius)
+
+package CLIO::Core::Defaults;
+
+use strict;
+use warnings;
+use utf8;
+use Exporter 'import';
+
+=head1 NAME
+
+CLIO::Core::Defaults - Centralized default values and fallback constants
+
+=head1 DESCRIPTION
+
+Single source of truth for all fallback/default values used across CLIO.
+Eliminates scattered magic numbers and makes tuning straightforward.
+
+All values here are last-resort fallbacks - actual values should come from
+model capabilities reported by the API whenever possible.
+
+=head1 SYNOPSIS
+
+    use CLIO::Core::Defaults qw(
+        DEFAULT_CONTEXT_WINDOW
+        DEFAULT_LOCAL_CONTEXT_WINDOW
+        DEFAULT_MAX_OUTPUT_TOKENS
+        default_chunk_size
+    );
+
+=cut
+
+our @EXPORT_OK = qw(
+    DEFAULT_CONTEXT_WINDOW
+    DEFAULT_LOCAL_CONTEXT_WINDOW
+    DEFAULT_MAX_OUTPUT_TOKENS
+    DEFAULT_MAX_RESPONSE_TOKENS
+    DEFAULT_BINARY_SAMPLE_SIZE
+    DEFAULT_POST_TRIM_FLOOR
+    TOOL_RESULT_MAX_CHUNK
+    default_chunk_size
+);
+
+our %EXPORT_TAGS = (all => \@EXPORT_OK);
+
+# Context window fallbacks (tokens)
+# Used when model capabilities are unavailable from the API
+use constant DEFAULT_CONTEXT_WINDOW       => 128000;  # Cloud models
+use constant DEFAULT_LOCAL_CONTEXT_WINDOW => 32000;   # Local models (SAM, llama.cpp, LM Studio)
+
+# Output token fallbacks
+use constant DEFAULT_MAX_OUTPUT_TOKENS    => 16384;   # When no output limit is known
+use constant DEFAULT_MAX_RESPONSE_TOKENS  => 16000;   # Response budget for conversation management
+
+# Tool result chunking
+use constant TOOL_RESULT_MAX_CHUNK        => 32768;   # Hard ceiling per chunk (bytes)
+
+# File operations
+use constant DEFAULT_BINARY_SAMPLE_SIZE   => 8192;    # Bytes to sample for binary detection
+
+# Conversation management
+use constant DEFAULT_POST_TRIM_FLOOR      => 32000;   # Minimum tokens to keep after trimming
+
+=head2 default_chunk_size($context_window)
+
+Calculate the default chunk size for read_tool_result based on the model's
+context window. Larger context models can handle bigger chunks, reducing
+round-trips.
+
+Arguments:
+    $context_window - Model's context window in tokens (optional, defaults to DEFAULT_CONTEXT_WINDOW)
+
+Returns:
+    Chunk size in bytes (between 8192 and TOOL_RESULT_MAX_CHUNK)
+
+=cut
+
+sub default_chunk_size {
+    my ($context_window) = @_;
+    $context_window //= DEFAULT_CONTEXT_WINDOW;
+
+    # Heuristic: ~4 chars per token, use ~2% of context for a single chunk
+    # This keeps chunks well within budget while scaling with capability
+    #   32k ctx  -> ~2500 tokens -> ~10k bytes -> clamp to 8192
+    #   128k ctx -> ~10k tokens  -> ~40k bytes -> clamp to 32768
+    #   200k ctx -> ~16k tokens  -> ~64k bytes -> clamp to 32768
+    my $size = int($context_window * 4 * 0.02);
+
+    # Floor at 8192, ceiling at TOOL_RESULT_MAX_CHUNK
+    $size = 8192 if $size < 8192;
+    $size = TOOL_RESULT_MAX_CHUNK if $size > TOOL_RESULT_MAX_CHUNK;
+
+    return $size;
+}
+
+1;

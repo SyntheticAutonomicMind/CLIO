@@ -248,6 +248,8 @@ sub get_model_billing {
     my $models_data = $self->fetch_models();
     return {is_premium => 0, multiplier => 0} unless $models_data && $models_data->{data};
     
+    require CLIO::Core::Defaults;
+
     # Find model by ID
     for my $model (@{$models_data->{data}}) {
         if ($model->{id} eq $model_id) {
@@ -328,6 +330,8 @@ sub get_model_capabilities {
     my $models_data = $self->fetch_models();
     return undef unless $models_data && $models_data->{data};
     
+    require CLIO::Core::Defaults;
+
     # Find model by ID
     for my $model (@{$models_data->{data}}) {
         if ($model->{id} eq $model_id) {
@@ -352,9 +356,9 @@ sub get_model_capabilities {
                 # Use max_prompt_tokens as the enforced limit
                 # Fallback to max_context_window_tokens if max_prompt_tokens unavailable
                 $caps->{max_prompt_tokens} = $limits->{max_prompt_tokens} || 
-                                              $limits->{max_context_window_tokens} || 128000;
-                $caps->{max_output_tokens} = $limits->{max_output_tokens} || 4096;
-                $caps->{max_context_window_tokens} = $limits->{max_context_window_tokens} || 128000;
+                                              $limits->{max_context_window_tokens} || CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW();
+                $caps->{max_output_tokens} = $limits->{max_output_tokens} || CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS();
+                $caps->{max_context_window_tokens} = $limits->{max_context_window_tokens} || CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW();
                 
                 log_debug('GitHubCopilotModelsAPI', "Capabilities for $model_id: " . "max_prompt=" . ($caps->{max_prompt_tokens} || 'N/A') . ", " .
                     "max_output=" . ($caps->{max_output_tokens} || 'N/A') . ", " .
