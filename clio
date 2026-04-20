@@ -715,6 +715,10 @@ if ($debug) {
 
 # Handle command line input if provided
 if ($input) {
+    # Detach STDIN from TTY in --input mode to prevent terminal I/O
+    # interference (ReadKey, cbreak mode, etc.) that causes hangs
+    open(STDIN, '<', '/dev/null') if -t STDIN;
+    
     my $last_response = '';  # Track last response for broker completion
     
     # Create UI for tool output formatting even in --input mode
