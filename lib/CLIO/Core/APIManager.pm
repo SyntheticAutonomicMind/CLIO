@@ -1056,7 +1056,7 @@ sub get_model_capabilities {
                     my $ctx = $pdef->{max_context_tokens};
                     my $capabilities = {
                         max_prompt_tokens          => $ctx,
-                        max_output_tokens          => $pdef->{max_output_tokens} || 4096,
+                        max_output_tokens          => $pdef->{max_output_tokens} || CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS(),
                         max_context_window_tokens  => $ctx,
                     };
                     $self->{_model_capabilities_cache} ||= {};
@@ -1136,10 +1136,13 @@ Handles GitHub Copilot, Google, OpenRouter, SAM, and standard OpenAI formats.
 sub _extract_model_capabilities {
     my ($self, $info, $api_type, $target_provider) = @_;
 
+    require CLIO::Core::Defaults;
     my $limits = ($info->{capabilities} && $info->{capabilities}{limits}) || {};
 
     # Local models: smaller context to avoid OOM
-    my $fallback_ctx = ($api_type =~ /^(sam|lmstudio|llama\.cpp)$/i) ? 32000 : 128000;
+    my $fallback_ctx = ($api_type =~ /^(sam|lmstudio|llama\.cpp)$/i)
+        ? CLIO::Core::Defaults::DEFAULT_LOCAL_CONTEXT_WINDOW()
+        : CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW();
 
     # Provider-level output fallback
     my $provider_max_output;
@@ -1156,7 +1159,7 @@ sub _extract_model_capabilities {
             || $info->{context_window} || $fallback_ctx,
         max_output_tokens => $info->{max_completion_tokens}
             || $limits->{max_output_tokens} || $limits->{max_completion_tokens}
-            || $provider_max_output || 4096,
+            || $provider_max_output || CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS(),
         max_context_window_tokens => $info->{context_window}
             || $limits->{max_context_window_tokens} || $limits->{context_window}
             || $fallback_ctx,
@@ -1463,11 +1466,11 @@ sub _model_uses_responses_api {
 sub _get_max_output_tokens {
     my ($self, $model) = @_;
     my $caps = $self->get_model_capabilities($model);
-    my $max = ($caps && $caps->{max_output_tokens}) ? $caps->{max_output_tokens} : 16384;
-    # Enforce a minimum of 32768 to avoid unusably low limits
+    require CLIO::Core::Defaults;
+    my $max = ($caps && $caps->{max_output_tokens}) ? $caps->{max_output_tokens} : CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS();
     # Force numeric context with +0 so JSON::XS encodes as integer (not string)
     # when the value came from a JSON-decoded cache file.
-    return $max < 32768 ? 32768 : ($max + 0);
+    return $max + 0;
 }
 
 =head2 _build_responses_api_payload($messages, $model, $endpoint_config, %opts)
