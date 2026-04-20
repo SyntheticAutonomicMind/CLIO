@@ -421,8 +421,15 @@ sub list_usages {
     my ($self, $params, $context) = @_;
     
     my $symbol_name = $params->{symbol_name};
-    my $file_paths = $params->{file_paths} || ['.'];
+    my $file_paths = $params->{file_paths};
     my $context_lines = $params->{context_lines} || 0;
+    
+    # Default to git repo root if no paths specified
+    if (!$file_paths || !@$file_paths) {
+        my $git_root = `git rev-parse --show-toplevel 2>$NULLDEV`;
+        chomp $git_root if $git_root;
+        $file_paths = [$git_root || '.'];
+    }
     
     return $self->error_result("Missing 'symbol_name' parameter", 
         action_description => "Error: Missing 'symbol_name' parameter"
