@@ -330,6 +330,7 @@ sub execute_tool {
         file_vault => $self->{file_vault},  # FileVault for undo tracking
         vault_turn_id => $self->{vault_turn_id},  # Current turn ID for vault
         current_model => $current_model,  # Current session model for sub-agents
+        api_manager => $self->{api_manager},  # For model capabilities (dynamic chunk sizing)
     });
     
     my $execution_time_ms = int((time() - $start_time) * 1000);
@@ -523,7 +524,7 @@ Arguments format:
     {
         "tool_call_id": "call_abc123",
         "offset": 0 (optional),
-        "length": 8192 (optional)
+        "length": 8192 (optional, scales with model context)
     }
 
 =cut
@@ -542,7 +543,17 @@ sub _execute_read_tool_result {
     }
     
     my $offset = $args->{offset} || 0;
-    my $length = $args->{length} || 8192;
+
+    # Default chunk size scales with model context window
+    my $default_chunk = 8192;
+    if ($self->{api_manager} && $self->{api_manager}->can('get_model_capabilities')) {
+        my $caps = eval { $self->{api_manager}->get_model_capabilities() };
+        if ($caps && $caps->{max_prompt_tokens}) {
+            require CLIO::Core::Defaults;
+            $default_chunk = CLIO::Core::Defaults::default_chunk_size($caps->{max_prompt_tokens});
+        }
+    }
+    my $length = $args->{length} || $default_chunk;
     
     log_debug('ToolExecutor', "Reading tool result: $tool_call_id, offset=$offset, length=$length");
     

@@ -228,7 +228,8 @@ sub _display_memory_stats {
     my $active_tokens = $state->get_conversation_size();
     
     # Get actual model max_tokens from APIManager
-    my $max_tokens = 128000;  # Default fallback
+    require CLIO::Core::Defaults;
+    my $max_tokens = CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW();
     if ($self->{api_manager}) {
         my $model = $self->{api_manager}->get_current_model();
         my $caps = $self->{api_manager}->get_model_capabilities($model);

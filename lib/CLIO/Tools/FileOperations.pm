@@ -102,7 +102,7 @@ AUTHORIZATION:
 -  read_tool_result - Read persisted large tool results in chunks
   Use when tool response contains [TOOL_RESULT_STORED] marker.
   Check first chunk for complete answer before reading more.
-  Parameters: toolCallId (required), offset (optional, default: 0), length (optional, default: 8192, max: 32768)
+  Parameters: toolCallId (required), offset (optional, default: 0), length (optional, default: dynamic based on model context, max: 32768)
 
 ━━━━━━━━━━━━━━━━━━━━━ WRITE (8 operations) ━━━━━━━━━━━━━━━━━━━━━
 -  create_file - Create new file with content
@@ -231,7 +231,7 @@ sub get_additional_parameters {
         },
         length => {
             type => "integer",
-            description => "[OPTIONAL] Number of bytes to read for read_tool_result. Default: 8192, Max: 32768.",
+            description => "[OPTIONAL] Number of bytes to read for read_tool_result. Default: dynamic (scales with model context). Max: 32768.",
         },
         
         # Write parameters - DUAL PARAMETER SUPPORT for JSON content
@@ -1376,7 +1376,17 @@ sub read_tool_result {
     
     my $toolCallId = $params->{toolCallId} || $params->{tool_call_id};
     my $offset = $params->{offset} // 0;
-    my $length = $params->{length} // 8192;
+
+    # Default chunk size scales with model context window
+    my $default_chunk = 8192;
+    if ($context && $context->{api_manager} && $context->{api_manager}->can('get_model_capabilities')) {
+        my $caps = eval { $context->{api_manager}->get_model_capabilities() };
+        if ($caps && $caps->{max_prompt_tokens}) {
+            require CLIO::Core::Defaults;
+            $default_chunk = CLIO::Core::Defaults::default_chunk_size($caps->{max_prompt_tokens});
+        }
+    }
+    my $length = $params->{length} // $default_chunk;
     
     # Validation
     return $self->error_result("Missing 'toolCallId' parameter") unless $toolCallId;
@@ -1389,8 +1399,9 @@ sub read_tool_result {
         return $self->error_result("length must be > 0");
     }
     
-    # Enforce maximum chunk size (32KB like SAM)
-    my $max_chunk_size = 32_768;
+    # Enforce maximum chunk size
+    require CLIO::Core::Defaults;
+    my $max_chunk_size = CLIO::Core::Defaults::TOOL_RESULT_MAX_CHUNK();
     if ($length > $max_chunk_size) {
         log_debug('FileOp', "Requested length $length exceeds max $max_chunk_size, capping to $max_chunk_size");
         $length = $max_chunk_size;
