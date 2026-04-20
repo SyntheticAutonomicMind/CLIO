@@ -245,6 +245,9 @@ sub _execute_captured {
         if ($pid == 0) {
             # Child: create new process group so we can kill the entire tree
             POSIX::setpgid(0, 0);
+            # Detach from parent's STDIN to prevent child from competing
+            # for terminal input (causes hangs when child also reads TTY)
+            open(STDIN, '<', '/dev/null') or POSIX::_exit(126);
             my $escaped_log = _shell_escape($log_file);
             exec("/bin/sh", "-c", "($command) > $escaped_log 2>&1")
                 or POSIX::_exit(127);  # exec failed
