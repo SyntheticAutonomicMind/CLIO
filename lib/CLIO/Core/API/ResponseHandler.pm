@@ -403,6 +403,18 @@ sub handle_error_response {
         };
         my $user_message = _get_rate_limit_user_message($rate_limit_info);
 
+        # Also check for Copilot-style quota messages ("You've used X% of your session rate limit")
+        # These come in error_obj.message or error_obj.reason and should be preserved as system_message
+        if (!$user_message && $error_obj && ref($error_obj) eq 'HASH') {
+            my $quota_msg = $error_obj->{message} // $error_obj->{reason} // '';
+            # Match both "you've used" and "you have used" patterns
+            if ($quota_msg =~ /you(?:'ve| have) used \d+%? of your? (session )?rate limit/i ||
+                $quota_msg =~ /percent_remaining/i) {
+                $user_message = $quota_msg;
+                log_info('ResponseHandler', "Captured Copilot quota message: $quota_msg");
+            }
+        }
+
         # Weekly/monthly limits don't reset quickly - don't use misleading retry_after header
         # The header might say "retry in 1 second" but the actual limit takes days to reset
         log_debug('ResponseHandler', "Rate limit check: detected_code=$detected_rate_limit_code, retry_after=$retry_after, reset_ts=$reset_timestamp");
@@ -640,6 +652,27 @@ sub handle_error_response {
             $retry_info = sprintf("API rate limit exceeded. Retrying in %d seconds.", $retry_after);
             $error = $retry_info;
         }
+
+        # Handle Copilot-style quota messages ("You've used X% of your session rate limit")
+        # These are non-retryable - the user needs to wait for reset, can't fix with retry
+        if ($user_message && $user_message =~ /you(?:'ve| have) used \d+%? of your? (session )?rate limit/i) {
+            $is_retryable_error = 0;
+            $retryable = 0;
+            $retry_after = 0;
+            $error_type = 'rate_limit';
+            $error = $user_message;  # Return the message directly, no "Retrying in X seconds"
+            log_info('ResponseHandler', "Copilot session rate limit detected (non-retryable): $user_message");
+
+            my $copilot_result = { success => 0, error => $error, _error => $error };
+            $copilot_result->{retryable} = 0;
+            $copilot_result->{retry_after} = 0;
+            $copilot_result->{error_type} = 'rate_limit';
+            $copilot_result->{rate_limit_code} = 'copilot_session_limit';
+            $copilot_result->{system_message} = $user_message;
+            $copilot_result->{error_obj} = $error_obj if $error_obj;
+            log_debug('ResponseHandler', "Final error being returned: $error");
+            return $copilot_result;
+        }
     }
     # Handle quota exceeded errors (non-retryable - user must take action)
     # Detected via semantic codes in error body, not HTTP status
@@ -659,25 +692,63 @@ sub handle_error_response {
         log_info('ResponseHandler', "Quota exceeded (code=$error_obj->{code}): $user_message");
     }
     # Handle authentication failures (401, 403)
+    # RFC 9110: 401 = "I don't know you" (invalid credentials), 403 = "I know you but you're not allowed"
+    # We treat these differently:
+    #   - 401: Token is invalid, recovery makes sense
+    #   - 403: Check if it's a permanent failure (subscription required, model unavailable) before recovering
     elsif ($status == 401 || $status == 403) {
-        log_info('ResponseHandler', "Authentication error ($status), attempting token recovery");
+        # For 403, check if the error message indicates a permanent failure that token recovery won't fix
+        my $is_permanent_auth_failure = 0;
+        my $original_error_msg = $error;  # Preserve original error for permanent failures
 
-        my $recovered = 0;
-        if ($attempt_token_recovery) {
-            $recovered = $attempt_token_recovery->();
+        if ($status == 403) {
+            # Check for subscription/upgrade/payment required errors
+            # These are permanent - retrying won't help
+            # Handle both hash errors ({message => "...", code => "..."}) and plain string errors
+            my $err_msg = '';
+            if (ref($error_obj) eq 'HASH') {
+                $err_msg = $error_obj->{message} // '';
+            } elsif (!ref($error_obj)) {
+                # Plain string error - use the error string directly
+                $err_msg = "$error_obj";
+            }
+
+            if ($err_msg =~ /subscription|upgrade|paid|requires? (a |the )?(subscription|model|plan)/i) {
+                $is_permanent_auth_failure = 1;
+                log_info('ResponseHandler', "403 permanent auth failure detected (subscription/upgrade required): $err_msg");
+            }
         }
 
-        if ($recovered) {
-            $is_retryable_error = 1;
-            $retryable = 1;
-            $retry_after = 1;
-            $error_type = 'auth_recovered';
-            $retry_info = "Authentication token refreshed. Retrying request...";
-            $error = $retry_info;
-        } else {
-            $error = "Authentication failed (HTTP $status). Your token may have expired or been revoked. "
-                   . "Please run /api logout then /api login to re-authenticate.";
+        if ($is_permanent_auth_failure) {
+            # Permanent failure - don't attempt recovery, just report the original error
+            $is_retryable_error = 0;
+            $retryable = 0;
             $error_type = 'auth_failed';
+            # Preserve the actual provider error message
+            $error = $original_error_msg;
+            log_info('ResponseHandler', "Returning permanent 403 error without recovery attempt");
+        }
+        else {
+            # Potentially transient auth failure (401, or 403 without subscription keywords)
+            log_info('ResponseHandler', "Authentication error ($status), attempting token recovery");
+
+            my $recovered = 0;
+            if ($attempt_token_recovery) {
+                $recovered = $attempt_token_recovery->();
+            }
+
+            if ($recovered) {
+                $is_retryable_error = 1;
+                $retryable = 1;
+                $retry_after = 1;
+                $error_type = 'auth_recovered';
+                $retry_info = "Authentication token refreshed. Retrying request...";
+                $error = $retry_info;
+            } else {
+                $error = "Authentication failed (HTTP $status). Your token may have expired or been revoked. "
+                       . "Please run /api logout then /api login to re-authenticate.";
+                $error_type = 'auth_failed';
+            }
         }
     }
     # Handle transient server errors (5xx except 599 which is handled as connection_error)
