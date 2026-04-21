@@ -1991,18 +1991,14 @@ sub _handle_api_error {
                 my $endpoint = $self->{api_manager}{api_base} || '';
                 my $connected = $self->{api_manager}->_check_connectivity($endpoint);
                 if (!$connected) {
-                    log_warning('WorkflowOrchestrator', "Connectivity check failed - skipping retry");
-                    return {
-                        success         => 0,
-                        error           => "Network connectivity check failed. Unable to reach the API endpoint. Please check your internet connection and try again.",
-                        iterations      => $iteration,
-                        tool_calls_made => $tool_calls_made,
-                    };
+                    log_warning('WorkflowOrchestrator', "Connectivity check failed - continuing with retry path");
+                    $system_msg = "Network connectivity issue detected. Retrying anyway... (attempt $$retry_count_ref/$max_retries)";
+                    # Don't return - fall through to retry logic
                 }
             }
 
             $error_type = $api_response->{error_type} eq 'connection_error' ? "connection error" : "server error";
-            $system_msg = "Temporary $error_type. Retrying in ${retry_delay}s... (attempt $$retry_count_ref)";
+            $system_msg //= "Temporary $error_type. Retrying in ${retry_delay}s... (attempt $$retry_count_ref)";
             log_info('WorkflowOrchestrator', "Applying exponential backoff for server error: ${retry_delay}s delay");
         }
         elsif ($api_response->{error_type} && $api_response->{error_type} eq 'rate_limit') {

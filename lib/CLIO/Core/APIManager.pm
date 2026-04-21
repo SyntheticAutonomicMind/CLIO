@@ -1925,8 +1925,8 @@ Returns: 1 if connectivity is restored, 0 otherwise
 sub _check_connectivity {
     my ($self, $endpoint) = @_;
 
-    # Delays between connectivity checks (seconds) - matches VSCode pattern
-    my @check_delays = (1, 10, 10);
+    # Quick connectivity check with short delays - we retry regardless
+    my @check_delays = (1, 2);
 
     for my $i (0 .. $#check_delays) {
         # Wait before this check (skip first one)
