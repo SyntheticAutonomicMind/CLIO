@@ -324,4 +324,90 @@ subtest 'handle_error_response - status 0 (bogus HTTP/2 status)' => sub {
     is($result->{error_type}, 'connection_error', 'Error type is connection_error');
 };
 
+# =============================================================================
+# 401/403 handling tests
+# =============================================================================
+
+subtest 'handle_error_response - 403 subscription required (permanent failure)' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 403,
+        status_line => '403 Forbidden',
+        content => '{"error":{"message":"this model requires a subscription, upgrade for access: https://ollama.com/upgrade","code":"subscription_required"}}',
+    );
+
+    # No recovery callback - should return immediately with the subscription error
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{retryable}, 0, 'Subscription 403 is NOT retryable');
+    is($result->{error_type}, 'auth_failed', 'Error type is auth_failed');
+    like($result->{error}, qr/subscription|upgrade/i, 'Error contains subscription message');
+};
+
+subtest 'handle_error_response - 403 plain string error (ollama style)' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    # Simulate Ollama's plain string error - error_obj is just a string, not a hash
+    my $resp = MockResponse->new(
+        code => 403,
+        status_line => '403 Forbidden',
+        content => '{"error":"this model requires a subscription, upgrade for access: https://ollama.com/upgrade"}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{retryable}, 0, 'Subscription 403 is NOT retryable (plain string error)');
+    is($result->{error_type}, 'auth_failed', 'Error type is auth_failed');
+    like($result->{error}, qr/subscription|upgrade/i, 'Error contains subscription message');
+};
+
+subtest 'handle_error_response - 403 with recovery callback (transient auth issue)' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 403,
+        status_line => '403 Forbidden',
+        content => '{"error":{"message":"Token invalid","code":"token_invalid"}}',
+    );
+
+    # With recovery callback that succeeds
+    my $result = $handler->handle_error_response($resp, '{}', 0,
+        attempt_token_recovery => sub { return 1; }
+    );
+    is($result->{retryable}, 1, '403 with recovery is retryable');
+    is($result->{error_type}, 'auth_recovered', 'Error type is auth_recovered');
+    like($result->{error}, qr/refreshed/i, 'Error says token refreshed');
+};
+
+subtest 'handle_error_response - 401 with recovery (invalid token)' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 401,
+        status_line => '401 Unauthorized',
+        content => '{"error":{"message":"Invalid token"}}',
+    );
+
+    # With recovery callback that succeeds
+    my $result = $handler->handle_error_response($resp, '{}', 0,
+        attempt_token_recovery => sub { return 1; }
+    );
+    is($result->{retryable}, 1, '401 with recovery is retryable');
+    is($result->{error_type}, 'auth_recovered', 'Error type is auth_recovered');
+};
+
+# =============================================================================
+# Copilot session rate limit tests
+# =============================================================================
+
+subtest 'handle_error_response - Copilot session rate limit message' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 429,
+        status_line => '429 Too Many Requests',
+        content => '{"error":{"message":"You have used 51% of your session rate limit","code":"session_limit"}}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{retryable}, 0, 'Copilot session limit is NOT retryable');
+    is($result->{error_type}, 'rate_limit', 'Error type is rate_limit');
+    is($result->{rate_limit_code}, 'copilot_session_limit', 'Rate limit code is copilot_session_limit');
+    like($result->{error}, qr/51%.*session.*rate.*limit/i, 'Error contains the quota message');
+};
+
 done_testing();

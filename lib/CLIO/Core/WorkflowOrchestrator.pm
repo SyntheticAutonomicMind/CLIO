@@ -2065,12 +2065,12 @@ sub _handle_api_error {
         return 'retry';
     }
 
-    # ── Non-retryable rate limit handling (weekly/monthly limits) ─────
+    # ── Non-retryable rate limit handling (weekly/monthly limits and Copilot session limits) ─────
     # These don't reset quickly - return immediately with error, don't retry
     if (defined($api_response->{error_type}) && $api_response->{error_type} eq 'rate_limit' && !$api_response->{retryable}) {
         my $rl_code = $api_response->{rate_limit_code} // '';
-        if ($rl_code =~ /user_weekly_rate_limited|user_monthly_rate_limited/i) {
-            log_info('WorkflowOrchestrator', "Weekly/monthly rate limit detected ($rl_code) - returning error without retry");
+        if ($rl_code =~ /user_weekly_rate_limited|user_monthly_rate_limited|copilot_session_limit/i) {
+            log_info('WorkflowOrchestrator', "Non-retryable rate limit detected ($rl_code) - returning error without retry");
             return {
                 success         => 0,
                 error           => $api_response->{error},
@@ -2079,6 +2079,18 @@ sub _handle_api_error {
                 rate_limit_wait => 0,
             };
         }
+    }
+
+    # ── Non-retryable auth failures (403 subscription errors) ──────────────────────────────────
+    # These are permanent failures - token recovery won't help
+    if (defined($api_response->{error_type}) && $api_response->{error_type} eq 'auth_failed') {
+        log_info('WorkflowOrchestrator', "Permanent auth failure detected - returning error immediately");
+        return {
+            success         => 0,
+            error           => $api_response->{error},
+            iterations      => $iteration,
+            tool_calls_made => $tool_calls_made,
+        };
     }
 
     # ── Non-retryable errors ──────────────────────────────────────────
