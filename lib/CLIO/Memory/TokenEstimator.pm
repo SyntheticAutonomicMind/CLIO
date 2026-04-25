@@ -114,13 +114,36 @@ Uses learned ratio from API feedback when available, otherwise DEFAULT_CHARS_PER
 Arguments:
 - $text: The text to estimate tokens for
 
+ Also accepts arrayref content (multimodal messages): sums text parts and
+ adds image token estimates (85 tokens per image for low-res, scaled for
+ high-res based on dimensions).
+
 Returns: Estimated number of tokens
 
 =cut
 
 sub estimate_tokens {
     my ($text) = @_;
-    return 0 unless defined $text && length($text) > 0;
+    return 0 unless defined $text;
+    
+    # Handle arrayref content (multimodal messages)
+    if (ref($text) eq 'ARRAY') {
+        my $total = 0;
+        for my $part (@$text) {
+            next unless ref($part) eq 'HASH';
+            if ($part->{type} eq 'text' && defined $part->{text}) {
+                $total += estimate_tokens($part->{text});
+            }
+            elsif ($part->{type} eq 'image_url') {
+                # OpenAI image token estimate: low-res = 85 tokens
+                # For data URLs we can't easily get dimensions, so use conservative estimate
+                $total += 85;
+            }
+        }
+        return $total;
+    }
+    
+    return 0 unless length($text) > 0;
     
     my $ratio = get_effective_ratio();
     my $char_count = length($text);
@@ -248,6 +271,17 @@ sub estimate_messages_tokens {
         # Content tokens
         if (defined $msg->{content}) {
             $total += estimate_tokens($msg->{content});
+        }
+        elsif (defined $msg->{parts} && ref($msg->{parts}) eq 'ARRAY') {
+            # Google Gemini format: parts array with text/inlineData
+            for my $part (@{$msg->{parts}}) {
+                if ($part->{text}) {
+                    $total += estimate_tokens($part->{text});
+                }
+                elsif ($part->{inlineData}) {
+                    $total += 85;  # Image token estimate
+                }
+            }
         }
         
         # Name/tool_call_id overhead

@@ -413,9 +413,10 @@ sub process_input {
     my $on_tool_call_from_ui = $opts{on_tool_call};  # Tool call tracker from UI
     my $on_tool_end_from_ui = $opts{on_tool_end};    # Tool end tracker from UI
     my $on_thinking = $opts{on_thinking};  # Callback for reasoning/thinking content
-    
+    my $image_attachments = $opts{image_attachments};  # Array of ImageAttachment objects
+
     # Build messages array (system prompt + history + user input) and tool definitions
-    my ($messages_ref, $tools) = $self->_build_turn_context($user_input, $session);
+    my ($messages_ref, $tools) = $self->_build_turn_context($user_input, $session, $image_attachments);
     my @messages = @$messages_ref;
     
     # Main workflow loop
@@ -920,14 +921,14 @@ sub process_input {
 
 Build the messages array and tool definitions for a new turn.
 Handles vault snapshot, system prompt, history loading/trimming,
-user message injection, and MCP tool merging.
+user message injection, image attachments, and MCP tool merging.
 
 Returns: ($messages_arrayref, $tools_arrayref)
 
 =cut
 
 sub _build_turn_context {
-    my ($self, $user_input, $session) = @_;
+    my ($self, $user_input, $session, $image_attachments) = @_;
 
     # Start a new vault turn before processing
     if ($self->{file_vault}) {
@@ -1004,9 +1005,32 @@ sub _build_turn_context {
 
     push @messages, { role => 'user', content => $user_context . $user_input };
 
+    # If image attachments are present, convert user message to array-format content
+    if ($image_attachments && @$image_attachments) {
+        my $last_msg = $messages[-1];
+        if ($last_msg && $last_msg->{role} eq 'user') {
+            my @content_parts = (
+                { type => 'text', text => $last_msg->{content} },
+            );
+            for my $attachment (@$image_attachments) {
+                my $part = $attachment->to_openai_part();
+                if ($part) {
+                    push @content_parts, $part;
+                    log_debug('WorkflowOrchestrator', "Added image attachment: " . $attachment->file_path);
+                }
+            }
+            $last_msg->{content} = \@content_parts;
+        }
+    }
+
     # Save user message to session history NOW (before processing)
     if ($session && $session->can('add_message')) {
-        $session->add_message('user', $user_input);
+        # Store text description of images for session history (not base64 data)
+        my $history_content = $user_input;
+        if ($image_attachments && @$image_attachments) {
+            $history_content .= "\n\n" . join("\n", map { $_->to_text_description() } @$image_attachments);
+        }
+        $session->add_message('user', $history_content);
         log_debug('WorkflowOrchestrator', "Saved user message to session history (raw input)");
     }
 

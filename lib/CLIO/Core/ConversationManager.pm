@@ -384,9 +384,23 @@ sub enforce_message_alternation {
         # Check if same role as previous (needs merging)
         # Do NOT merge tool messages - each has unique tool_call_id
         if (defined $last_role && $role eq $last_role && $role ne 'tool') {
-            if ($msg->{content} && length($msg->{content}) > 0) {
+            my $has_content = 0;
+            if (defined $msg->{content}) {
+                if (!ref($msg->{content})) {
+                    $has_content = length($msg->{content}) > 0;
+                } elsif (ref($msg->{content}) eq 'ARRAY') {
+                    $has_content = @$msg->{content} > 0;
+                }
+            }
+            if ($has_content) {
                 $accumulated_content .= "\n\n" if length($accumulated_content) > 0;
-                $accumulated_content .= $msg->{content};
+                if (!ref($msg->{content})) {
+                    $accumulated_content .= $msg->{content};
+                }
+                # Note: arrayref content is not merged textually; it stays as-is
+                # in the flushed message. This is a simplification - in practice
+                # multimodal messages shouldn't need merging with other same-role
+                # messages because they're constructed as single messages.
             }
 
             if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
@@ -419,7 +433,11 @@ sub enforce_message_alternation {
 
             # Start new accumulation
             $last_role = $role;
-            $accumulated_content = $msg->{content} || '';
+            if (!ref($msg->{content})) {
+                $accumulated_content = $msg->{content} // '';
+            } else {
+                $accumulated_content = '';
+            }
             $accumulated_tool_calls = $msg->{tool_calls} ? [@{$msg->{tool_calls}}] : [];
             $accumulated_tool_call_id = $msg->{tool_call_id};
             $accumulated_reasoning_details = $msg->{reasoning_details};
