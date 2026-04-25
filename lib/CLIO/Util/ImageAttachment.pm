@@ -146,6 +146,9 @@ Returns: Base64 string, or undef on error
 sub to_base64 {
     my ($self) = @_;
     
+    # Return cached base64 if already encoded
+    return $self->{_cached_base64} if defined $self->{_cached_base64};
+    
     my $path = $self->{file_path};
     
     open my $fh, '<:raw', $path or do {
@@ -163,7 +166,8 @@ sub to_base64 {
     }
     
     require MIME::Base64;
-    return MIME::Base64::encode_base64($data, '');  # no line breaks
+    $self->{_cached_base64} = MIME::Base64::encode_base64($data, '');  # no line breaks
+    return $self->{_cached_base64};
 }
 
 =head2 to_data_url
@@ -284,6 +288,17 @@ sub _format_bytes {
     return "$bytes bytes";
 }
 
+sub _looks_like_image_path {
+    my ($path) = @_;
+    return 0 unless defined $path && length($path) > 0;
+    # Check if the path ends with a recognized image extension
+    if ($path =~ /\.([a-zA-Z0-9]+)$/) {
+        my $ext = lc($1);
+        return 1 if exists $MIME_TYPES{$ext};
+    }
+    return 0;
+}
+
 =head2 parse_attachments_from_text($text)
 
 Scan text for @path/to/image.png references and return:
@@ -302,13 +317,26 @@ sub parse_attachments_from_text {
     my @attachments;
     my $cleaned = $text;
     
-    # Match @path/to/file.png or @"path with spaces.png"
-    # Pattern: @ followed by non-whitespace (or quoted string)
-    while ($cleaned =~ s/\s*@"([^"]+)"//) {
-        push @attachments, $1;
+    # Match @"path with spaces.png" - only strip if it looks like an image path
+    while ($cleaned =~ /@"([^"]+)"/) {
+        my $path = $1;
+        if (_looks_like_image_path($path)) {
+            # Remove the @"..." pattern from text
+            my $quoted = '@"' . $path . '"';
+            $cleaned =~ s/\s*\Q$quoted\E//;
+            push @attachments, $path;
+        } else {
+            last;  # Non-image quoted path - stop to avoid infinite loop
+        }
     }
-    while ($cleaned =~ s/\s*@(\S+)//) {
-        push @attachments, $1;
+    
+    # Match @path/to/file.png - only strip if it has an image extension
+    # This avoids stripping email addresses, @mentions, etc.
+    while ($cleaned =~ /\s*\@(\S+\.(?:png|jpe?g|gif|webp|bmp))/i) {
+        my $path = $1;
+        my $full = '@' . $path;
+        $cleaned =~ s/\s*\Q$full\E//;
+        push @attachments, $path;
     }
     
     # Clean up extra whitespace
@@ -317,8 +345,6 @@ sub parse_attachments_from_text {
     
     return ($cleaned, @attachments);
 }
-
-1;
 
 =head1 AUTHOR
 
@@ -329,4 +355,5 @@ CLIO Project
 GPL-3.0
 
 =cut
+
 1;

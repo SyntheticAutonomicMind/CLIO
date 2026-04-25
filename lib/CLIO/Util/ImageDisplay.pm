@@ -99,8 +99,16 @@ sub show_image {
     
     return (0, { error => 'No image data' }) unless defined $data && length($data) > 0;
     
-    # Detect if data is base64 or raw binary
-    my $is_base64 = ($data =~ /^[A-Za-z0-9+\/\s]+={0,2}$/ && length($data) > 100);
+    # Determine if data is base64 or raw binary
+    # Prefer explicit flag from caller; fall back to heuristic
+    my $is_base64;
+    if (defined $opts{is_base64}) {
+        $is_base64 = $opts{is_base64};
+    } else {
+        # Heuristic: base64 data is ASCII-safe chars only, typically longer than 100 bytes
+        # and contains no high-bit characters (0x80-0xFF) that raw binary would have
+        $is_base64 = ($data =~ /^[A-Za-z0-9+\/\n\r]+={0,2}$/ && length($data) > 100);
+    }
     my $binary_data = $is_base64 ? _decode_base64($data) : $data;
     
     unless ($binary_data && length($binary_data) > 0) {
@@ -178,21 +186,25 @@ sub _display_kitty {
     my ($self, $data, $mime_type, %opts) = @_;
     
     # kitty graphics protocol: transmit image data in chunks
-    # Format: \e_Gf=100,s=<size>,m=1;<base64_data>\e\\
-    # f=100 means PNG (we send raw data with f=100 for PNG, or use actual format)
+    # Format codes: 100=RGB, 102=JPEG, 103=PNG
+    # We always send base64-encoded data, so use the appropriate format code
     
     require MIME::Base64;
     my $base64 = MIME::Base64::encode_base64($data, '');
     
-    # Determine format code
-    my $format = 100;  # PNG default
-    $format = 100 if $mime_type eq 'image/png';
-    $format = 100 if $mime_type eq 'image/jpeg';  # kitty supports JPEG too
+    # Determine format code based on actual image format
+    my $format = 100;  # default: RGB (raw pixels)
+    $format = 103 if $mime_type eq 'image/png';
+    $format = 102 if $mime_type eq 'image/jpeg';
     
-    # Get image dimensions if possible (optional)
+    # Get image dimensions if possible (optional but helps kitty scale)
     my ($width, $height) = _get_image_dimensions($data, $mime_type);
     
-    # Build kitty control sequence
+    # kitty graphics protocol: transmit then place
+    # Step 1: Transmit image data (a=T)
+    # Step 2: Place image (a=p) at cursor position
+    
+    # Build transmit control sequence
     # a=T (transmit), f=format, s=width, v=height, m=1 (more data follows)
     my $ctrl = "a=T,f=$format";
     $ctrl .= ",s=$width" if $width;
@@ -202,22 +214,26 @@ sub _display_kitty {
     my $chunk_size = 4096;
     my $pos = 0;
     my $total = length($base64);
+    my $image_id = int(rand(1000000));  # Unique ID for placement reference
     
     while ($pos < $total) {
         my $chunk = substr($base64, $pos, $chunk_size);
         my $more = ($pos + $chunk_size < $total) ? 1 : 0;
         
-        my $seq = $KITTY_ESC . $ctrl . ",m=$more;" . $chunk . $KITTY_ST;
+        my $seq = $KITTY_ESC . $ctrl . ",i=$image_id,m=$more;" . $chunk . $KITTY_ST;
         print $seq;
         
         $pos += $chunk_size;
         $ctrl = '';  # Only first chunk needs control data
     }
     
+    # Step 2: Place the transmitted image at cursor position
+    my $place_seq = $KITTY_ESC . "a=p,i=$image_id" . $KITTY_ST;
+    print $place_seq;
     print "\n";
     STDOUT->flush() if STDOUT->can('flush');
     
-    log_debug('ImageDisplay', "Displayed image via kitty protocol (" . length($data) . " bytes)");
+    log_debug('ImageDisplay', "Displayed image via kitty protocol (" . length($data) . " bytes, id=$image_id)");
     return 1;
 }
 
@@ -333,8 +349,6 @@ sub _get_image_dimensions {
     return (undef, undef);
 }
 
-1;
-
 =head1 AUTHOR
 
 CLIO Project
@@ -344,4 +358,5 @@ CLIO Project
 GPL-3.0
 
 =cut
+
 1;

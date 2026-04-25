@@ -968,6 +968,26 @@ sub model_supports_tools {
     return 1;
 }
 
+sub model_supports_vision {
+    my ($self, $model) = @_;
+    $model ||= $self->get_current_model();
+    
+    # Check cached capabilities first
+    if ($self->{_model_capabilities_cache} && $self->{_model_capabilities_cache}{$model}) {
+        my $caps = $self->{_model_capabilities_cache}{$model};
+        return $caps->{supports_vision} if defined $caps->{supports_vision};
+    }
+    
+    # Fetch capabilities (will populate cache)
+    my $caps = $self->get_model_capabilities($model);
+    if ($caps && defined $caps->{supports_vision}) {
+        return $caps->{supports_vision};
+    }
+    
+    # Default: assume no vision support (safe fallback)
+    return 0;
+}
+
 sub get_model_capabilities {
     my ($self, $model) = @_;
     

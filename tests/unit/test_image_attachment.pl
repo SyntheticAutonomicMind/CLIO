@@ -115,4 +115,37 @@ subtest 'text description' => sub {
     unlink $tmpfile;
 };
 
+# Test that @mentions and emails are NOT treated as image attachments
+subtest 'parse_attachments rejects non-image @references' => sub {
+    # Email address should NOT be stripped
+    my ($text, @paths) = CLIO::Util::ImageAttachment::parse_attachments_from_text('Send to user@example.com please');
+    is($text, 'Send to user@example.com please', 'email: text preserved');
+    is_deeply(\@paths, [], 'email: no attachments');
+    
+    # @mention should NOT be stripped
+    ($text, @paths) = CLIO::Util::ImageAttachment::parse_attachments_from_text('Hey @agent-1 check this');
+    is($text, 'Hey @agent-1 check this', 'mention: text preserved');
+    is_deeply(\@paths, [], 'mention: no attachments');
+    
+    # @main (not an image extension) should NOT be stripped
+    ($text, @paths) = CLIO::Util::ImageAttachment::parse_attachments_from_text('Use the @main branch');
+    is($text, 'Use the @main branch', 'non-image: text preserved');
+    is_deeply(\@paths, [], 'non-image: no attachments');
+    
+    # But @photo.png SHOULD be stripped (image extension)
+    ($text, @paths) = CLIO::Util::ImageAttachment::parse_attachments_from_text('Look at @photo.png');
+    is($text, 'Look at', 'image: text stripped');
+    is_deeply(\@paths, ['photo.png'], 'image: path extracted');
+    
+    # @"/path with spaces.jpg" SHOULD be stripped (image extension)
+    ($text, @paths) = CLIO::Util::ImageAttachment::parse_attachments_from_text('See @"/path/to/my image.jpg" now');
+    is($text, 'See now', 'quoted image: text stripped');
+    is_deeply(\@paths, ['/path/to/my image.jpg'], 'quoted image: path extracted');
+    
+    # @"/path with spaces.txt" should NOT be stripped (not an image extension)
+    ($text, @paths) = CLIO::Util::ImageAttachment::parse_attachments_from_text('Read @"/path/to/my file.txt" now');
+    is($text, 'Read @"/path/to/my file.txt" now', 'quoted non-image: text preserved');
+    is_deeply(\@paths, [], 'quoted non-image: no attachments');
+};
+
 done_testing();
