@@ -550,3 +550,52 @@ sub clear_thinking {
 
 1;
 
+=head2 display_image($image_data, $mime_type, %opts)
+
+Display an image inline in the terminal or save to file.
+
+Arguments:
+- $image_data: Raw binary image data or base64 string
+- $mime_type: MIME type (e.g., 'image/png')
+- %opts: Optional parameters (width, height, filename)
+
+Returns: (success, \%info) where info contains inline, path, or error
+
+=cut
+
+sub display_image {
+    my ($self, $image_data, $mime_type, %opts) = @_;
+    
+    return (0, { error => 'No image data provided' })
+        unless defined $image_data && length($image_data) > 0;
+    
+    eval {
+        require CLIO::Util::ImageDisplay;
+    };
+    if ($@) {
+        log_warning('Display', "ImageDisplay module not available: $@");
+        return (0, { error => 'Image display not available' });
+    }
+    
+    my $display = CLIO::Util::ImageDisplay->new();
+    my ($ok, $info) = $display->show_image($image_data, $mime_type, %opts);
+    
+    if ($ok && $info->{inline}) {
+        # Image displayed inline - nothing more to print
+        return ($ok, $info);
+    } elsif ($ok && $info->{path}) {
+        # Image saved to file - show path
+        my $chat = $self->{chat};
+        print $chat->colorize("[Image saved: ", 'DIM');
+        print $chat->colorize($info->{path}, 'DATA');
+        print $chat->colorize("]", 'DIM'), "\n";
+        return ($ok, $info);
+    } else {
+        # Failed
+        my $error = $info->{error} || 'Unknown error';
+        log_warning('Display', "Failed to display image: $error");
+        return (0, $info);
+    }
+}
+
+1;

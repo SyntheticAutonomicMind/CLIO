@@ -1511,7 +1511,21 @@ sub _build_responses_api_payload {
             push @input, { role => 'developer', content => [{ type => 'input_text', text => $content }] };
         }
         elsif ($role eq 'user') {
-            push @input, { role => 'user', content => [{ type => 'input_text', text => $content }] };
+            my @parts;
+            if (ref($content) eq 'ARRAY') {
+                # Multimodal content: array of text/image parts
+                for my $part (@$content) {
+                    if ($part->{type} eq 'text') {
+                        push @parts, { type => 'input_text', text => $part->{text} };
+                    }
+                    elsif ($part->{type} eq 'image_url') {
+                        push @parts, { type => 'input_image', image_url => $part->{image_url}{url} };
+                    }
+                }
+            } else {
+                push @parts, { type => 'input_text', text => $content };
+            }
+            push @input, { role => 'user', content => \@parts };
         }
         elsif ($role eq 'assistant') {
             $flush_tc->() if @pending_tc;
@@ -1817,11 +1831,21 @@ sub _build_payload {
         my $start = $msg_count > 4 ? $msg_count - 4 : 0;
         for (my $i = $start; $i < $msg_count; $i++) {
             my $msg = $payload->{messages}[$i];
-            my $preview = substr($msg->{content} || '', 0, 60);
+            my $preview;
+            if (ref($msg->{content}) eq 'ARRAY') {
+                # Multimodal content: show text parts + image count
+                my @text_parts = grep { $_->{type} eq 'text' } @{$msg->{content}};
+                my $image_count = scalar(grep { $_->{type} eq 'image_url' } @{$msg->{content}});
+                $preview = join(' ', map { $_->{text} // '' } @text_parts);
+                $preview .= " [$image_count image(s)]" if $image_count > 0;
+            } else {
+                $preview = $msg->{content} // '';
+            }
+            $preview = substr($preview, 0, 60);
             $preview =~ s/\n/ /g;
             log_debug('APIManager', sprintf("  [%d] %s: %s%s",
                 $i, $msg->{role}, $preview,
-                (length($msg->{content} || '') > 60 ? '...' : '')));
+                (length($preview) >= 60 ? '...' : '')));
             if ($msg->{tool_calls}) {
                 log_debug('APIManager', sprintf("       HAS %d tool_calls", scalar(@{$msg->{tool_calls}})));
             }
