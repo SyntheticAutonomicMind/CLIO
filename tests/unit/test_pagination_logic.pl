@@ -30,6 +30,7 @@ package TestChat {
             _tools_invoked_this_request => 0,
             line_count => 0,
             terminal_height => 24,
+            _is_terminal => 1,  # Override for test environment
         }, $class;
     }
     
@@ -42,7 +43,7 @@ package TestChat {
     sub _should_pagination_trigger {
         my ($self) = @_;
         
-        return 0 unless -t STDIN;  # Not interactive
+        return 0 unless $self->{_is_terminal};  # Test-friendly terminal check
         return 0 unless $self->{pagination_enabled};  # Pagination disabled
         return 0 if $self->{_tools_invoked_this_request};  # During tool execution
         

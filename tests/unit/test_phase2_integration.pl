@@ -55,6 +55,7 @@ if ($count == 3) {
 # Test 1.3: Pagination trigger logic
 my $current_threshold = $chat->_get_pagination_threshold();
 my $pager = $chat->{pager};
+$pager->{is_terminal} = 1;  # Override for test environment (not a real terminal)
 $pager->{line_count} = $current_threshold + 1;  # Over threshold
 $pager->{pagination_enabled} = 1;
 $chat->{_tools_invoked_this_request} = 0;

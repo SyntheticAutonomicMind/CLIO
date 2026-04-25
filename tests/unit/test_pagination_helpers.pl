@@ -54,6 +54,7 @@ print "\n";
 # Test 3: _should_pagination_trigger (state now on pager)
 print "Test 3: _should_pagination_trigger\n";
 my $pager = $chat->{pager};
+$pager->{is_terminal} = 1;  # Override for test environment (not a real terminal)
 $pager->reset();
 my $result = $chat->_should_pagination_trigger();
 print "  With pagination disabled: " . ($result ? "FAIL (triggered)" : "PASS (not triggered)") . "\n";

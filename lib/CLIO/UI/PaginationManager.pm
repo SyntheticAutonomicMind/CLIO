@@ -167,7 +167,7 @@ Options:
 sub should_trigger {
     my ($self, %opts) = @_;
 
-    return 0 unless -t STDIN;
+    return 0 unless $self->{is_terminal} // (-t STDIN);
     return 0 unless $self->{pagination_enabled} || $opts{force};
 
     # During tool execution, only streaming text gets paginated

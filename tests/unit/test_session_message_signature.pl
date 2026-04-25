@@ -94,7 +94,8 @@ use Test::More;
     close $fh;
     
     # Check that WorkflowOrchestrator adds user message to session
-    like($content, qr/\$session->add_message\('user',\s*\$user_input\)/,
+    # The variable name may differ (e.g., $history_content when images are attached)
+    like($content, qr/\$session->add_message\('user',\s*\$\w+\)/,
         "WorkflowOrchestrator adds user message with correct signature");
     
     # Check for the comment explaining centralized management
