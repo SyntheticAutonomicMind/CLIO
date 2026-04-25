@@ -1006,20 +1006,36 @@ sub _build_turn_context {
     push @messages, { role => 'user', content => $user_context . $user_input };
 
     # If image attachments are present, convert user message to array-format content
+    # Only build multimodal content if the model supports vision
     if ($image_attachments && @$image_attachments) {
-        my $last_msg = $messages[-1];
-        if ($last_msg && $last_msg->{role} eq 'user') {
-            my @content_parts = (
-                { type => 'text', text => $last_msg->{content} },
-            );
-            for my $attachment (@$image_attachments) {
-                my $part = $attachment->to_openai_part();
-                if ($part) {
-                    push @content_parts, $part;
-                    log_debug('WorkflowOrchestrator', "Added image attachment: " . $attachment->file_path);
+        my $supports_vision = 0;
+        if ($self->{api_manager} && $self->{api_manager}->can('model_supports_vision')) {
+            $supports_vision = $self->{api_manager}->model_supports_vision();
+        }
+        
+        if ($supports_vision) {
+            my $last_msg = $messages[-1];
+            if ($last_msg && $last_msg->{role} eq 'user') {
+                my @content_parts = (
+                    { type => 'text', text => $last_msg->{content} },
+                );
+                for my $attachment (@$image_attachments) {
+                    my $part = $attachment->to_openai_part();
+                    if ($part) {
+                        push @content_parts, $part;
+                        log_debug('WorkflowOrchestrator', "Added image attachment: " . $attachment->file_path);
+                    }
                 }
+                $last_msg->{content} = \@content_parts;
             }
-            $last_msg->{content} = \@content_parts;
+        } else {
+            log_warning('WorkflowOrchestrator', "Model does not support vision - image attachments will be sent as text descriptions");
+            # Append text descriptions of images to the user message instead
+            my $last_msg = $messages[-1];
+            if ($last_msg && $last_msg->{role} eq 'user') {
+                my $descriptions = join("\n", map { $_->to_text_description() } @$image_attachments);
+                $last_msg->{content} .= "\n\n$descriptions";
+            }
         }
     }
 
