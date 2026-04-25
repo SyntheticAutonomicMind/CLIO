@@ -866,7 +866,11 @@ sub _handle_ai_response {
 Detect image URLs or base64 data in assistant response text and display them.
 Handles markdown image syntax ![alt](url) and data URLs.
 
-Returns the text with image references replaced by display status.
+Only removes markdown image syntax when the image is successfully displayed
+inline or saved. If display fails, the original markdown is preserved so the
+user can still see the reference.
+
+Returns the text with successfully displayed image references removed.
 
 =cut
 
@@ -875,28 +879,37 @@ sub _detect_and_display_images {
     
     return $text unless defined $text && length($text) > 0;
     
+    # Quick check: skip processing if no image patterns are present
+    return $text unless $text =~ /!\[|data:image\//;
+    
     eval {
         require CLIO::Util::ImageDisplay;
     };
     return $text if $@;  # ImageDisplay not available
     
-    my $display = CLIO::Util::ImageDisplay->new();
-    my $modified = 0;
+    # Cache ImageDisplay instance on Chat object to avoid re-creating per response
+    $self->{_image_display} //= CLIO::Util::ImageDisplay->new();
+    my $display = $self->{_image_display};
     
     # Pattern 1: Markdown image syntax ![alt](url)
-    while ($text =~ s/!\[([^\]]*)\]\(([^\)]+)\)//) {
+    # Only remove the markdown if the image was successfully displayed
+    while ($text =~ /!\[([^\]]*)\]\(([^)]+)\)/) {
         my ($alt, $url) = ($1, $2);
-        $modified = 1;
+        my $markdown = "!\[$alt\]($url)";
+        my $displayed = 0;
         
         if ($url =~ /^data:image\/([^;]+);base64,(.+)/) {
-            # Data URL - display directly
+            # Data URL - display directly (data is base64-encoded)
             my ($fmt, $b64) = ($1, $2);
             my $mime = "image/$fmt";
-            my ($ok, $info) = $display->show_image($b64, $mime, filename => $alt);
-            if ($ok && $info->{path}) {
-                print $self->colorize("[Image: ", 'DIM');
-                print $self->colorize($info->{path}, 'DATA');
-                print $self->colorize("]", 'DIM'), "\n";
+            my ($ok, $info) = $display->show_image($b64, $mime, filename => $alt, is_base64 => 1);
+            if ($ok) {
+                $displayed = 1;
+                if ($info->{path}) {
+                    print $self->colorize("[Image: ", 'DIM');
+                    print $self->colorize($info->{path}, 'DATA');
+                    print $self->colorize("]", 'DIM'), "\n";
+                }
             }
         } elsif ($url =~ /^https?:\/\//) {
             # HTTP URL - download and display
@@ -910,10 +923,13 @@ sub _detect_and_display_images {
                     my ($ok, $info) = $display->show_image(
                         $response->{content}, $mime, filename => $alt
                     );
-                    if ($ok && $info->{path}) {
-                        print $self->colorize("[Image: ", 'DIM');
-                        print $self->colorize($info->{path}, 'DATA');
-                        print $self->colorize("]", 'DIM'), "\n";
+                    if ($ok) {
+                        $displayed = 1;
+                        if ($info->{path}) {
+                            print $self->colorize("[Image: ", 'DIM');
+                            print $self->colorize($info->{path}, 'DATA');
+                            print $self->colorize("]", 'DIM'), "\n";
+                        }
                     }
                 } else {
                     log_warning('Chat', "Failed to download image $url: $response->{status} $response->{reason}");
@@ -923,16 +939,28 @@ sub _detect_and_display_images {
                 log_warning('Chat', "Error downloading image $url: $@");
             }
         }
+        
+        # Only remove markdown if image was successfully displayed
+        if ($displayed) {
+            $text =~ s/\Q$markdown\E//;
+        } else {
+            last;  # Stop processing - can't match same pattern again safely
+        }
     }
     
     # Pattern 2: Standalone data URLs not in markdown
-    while ($text =~ s/(^|\s)(data:image\/([^;]+);base64,([A-Za-z0-9+\/=]+))($|\s)/$1$5/) {
-        my ($fmt, $b64) = ($3, $4);
-        $modified = 1;
+    # Only remove if successfully displayed
+    while ($text =~ /(^|\s)(data:image\/([^;]+);base64,([A-Za-z0-9+\/=]+))($|\s)/) {
+        my ($prefix, $full_data_url, $fmt, $b64, $suffix) = ($1, $2, $3, $4, $5);
         my $mime = "image/$fmt";
-        my ($ok, $info) = $display->show_image($b64, $mime);
-        if ($ok && $info->{path}) {
-            print $self->colorize("[Image displayed]", 'DIM'), "\n";
+        my ($ok, $info) = $display->show_image($b64, $mime, is_base64 => 1);
+        if ($ok) {
+            $text =~ s/\Q$full_data_url\E//;
+            if ($info->{path}) {
+                print $self->colorize("[Image displayed]", 'DIM'), "\n";
+            }
+        } else {
+            last;  # Stop if display failed
         }
     }
     
