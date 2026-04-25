@@ -1577,6 +1577,46 @@ Want me to create a complete example FastAPI application for you?
 
 ---------------------------------------------------
 
+### Example 7: Working with Images
+
+**Analyzing a screenshot:**
+
+```
+YOU: What does this error say? @screenshot.png
+
+CLIO: [Image: screenshot.png (image/png, 245KB)]
+
+      The error is a "Connection refused" on port 5432. This means your
+      PostgreSQL server isn't running. Start it with:
+
+      sudo systemctl start postgresql
+```
+
+**Comparing two images:**
+
+```
+YOU: What's different between these? @before.png and @after.png
+
+CLIO: [Image: before.png (image/png, 120KB)]
+      [Image: after.png (image/png, 125KB)]
+
+      The after image has a new "Settings" button in the top-right corner
+      that wasn't present in the before image.
+```
+
+**Attaching images with spaces in the path:**
+
+```
+YOU: Analyze @"/path/to/my screenshot.png"
+```
+
+Images are sent to vision-capable models automatically. CLIO detects whether
+your current model supports images and handles the encoding. On kitty or
+iTerm terminals, images from the model are displayed inline. On other
+terminals, they're saved to `~/.clio/images/`.
+
+---------------------------------------------------
+
 ## Configuration
 
 ### Interactive Configuration (Recommended)

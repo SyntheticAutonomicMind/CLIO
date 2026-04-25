@@ -335,6 +335,28 @@ The `/model` command is a shortcut for model switching that resolves aliases. It
 
 For complete privacy, use local providers (llama.cpp, LM Studio, SAM). Your data never leaves your machine. Local models work with smaller context windows, so CLIO automatically adjusts its trimming thresholds.
 
+### Vision and Image Support
+
+CLIO supports sending images to vision-capable models. Attach images using the `@path` syntax:
+
+```
+Describe what you see in @screenshot.png
+Compare these two images: @before.png and @after.png
+Analyze @"/path/with spaces/image.jpg"
+```
+
+When you attach an image, CLIO:
+1. Reads and validates the image file
+2. Converts it to base64 for the API
+3. Sends it in the multimodal format the model expects
+4. Stores a text description in session history (not the full image data)
+
+Supported image formats: PNG, JPEG, GIF, WebP.
+
+Vision support depends on the model. Most modern models (GPT-4o, Gemini 2.5, Claude 3.5, GLM-5.x) support images. CLIO automatically detects vision capability from the model's metadata and only sends images when the model supports them.
+
+For terminals that support inline images (kitty, iTerm), CLIO can also display images received from the model inline. On other terminals, images are saved to `~/.clio/images/` and the path is shown.
+
 ---
 
 ## 4. Session Management
