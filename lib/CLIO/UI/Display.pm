@@ -585,10 +585,13 @@ sub display_image {
         return ($ok, $info);
     } elsif ($ok && $info->{path}) {
         # Image saved to file - show path
-        my $chat = $self->{chat};
-        print $chat->colorize("[Image saved: ", 'DIM');
-        print $chat->colorize($info->{path}, 'DATA');
-        print $chat->colorize("]", 'DIM'), "\n";
+        if (my $chat = $self->{chat}) {
+            print $chat->colorize("[Image saved: ", 'DIM');
+            print $chat->colorize($info->{path}, 'DATA');
+            print $chat->colorize("]", 'DIM'), "\n";
+        } else {
+            log_info('Display', "Image saved: $info->{path}");
+        }
         return ($ok, $info);
     } else {
         # Failed
