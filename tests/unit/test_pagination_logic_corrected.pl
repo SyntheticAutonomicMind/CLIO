@@ -25,6 +25,7 @@ package TestChat {
             _tools_invoked_this_request => 0,
             line_count => 0,
             terminal_height => 24,
+            _is_terminal => 1,  # Override for test environment
         }, $class;
     }
     
@@ -36,7 +37,7 @@ package TestChat {
     sub _should_pagination_trigger {
         my ($self) = @_;
         
-        return 0 unless -t STDIN;
+        return 0 unless $self->{_is_terminal};
         return 0 unless $self->{pagination_enabled};
         return 0 if $self->{_tools_invoked_this_request};  # Blocks on tool execution
         
@@ -49,7 +50,7 @@ package TestChat {
     sub _should_pagination_trigger_for_agent_streaming {
         my ($self) = @_;
         
-        return 0 unless -t STDIN;
+        return 0 unless $self->{_is_terminal};
         return 0 unless $self->{pagination_enabled};
         # NOTE: Do NOT check _tools_invoked_this_request for agent streaming
         
@@ -98,10 +99,3 @@ ok(!$chat->_should_pagination_trigger_for_agent_streaming(),
    "No pagination when below threshold");
 ok(!$chat->_should_pagination_trigger(), 
    "No pagination when below threshold");
-
-print "\n All corrected pagination logic tests passed!\n";
-print "\nKey findings:\n";
-print "1. Agent streaming uses dedicated method (_should_pagination_trigger_for_agent_streaming)\n";
-print "2. Agent text paginated even during tool execution\n";
-print "3. Tool output blocked from pagination during tool execution\n";
-print "4. Both work normally after tools complete\n";
