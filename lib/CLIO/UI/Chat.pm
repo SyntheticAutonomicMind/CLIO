@@ -440,10 +440,33 @@ sub run {
         
         # Get user input
         my $input = $self->get_input();
-        
+
+        # Parse image attachments from input (@path/to/image.png syntax)
+        my @image_attachments;
+        if (defined $input && length($input) > 0) {
+            eval {
+                require CLIO::Util::ImageAttachment;
+                my ($cleaned, @paths) = CLIO::Util::ImageAttachment::parse_attachments_from_text($input);
+                if (@paths) {
+                    $input = $cleaned;
+                    for my $path (@paths) {
+                        my $attachment = CLIO::Util::ImageAttachment->new($path);
+                        if ($attachment) {
+                            push @image_attachments, $attachment;
+                        } else {
+                            $self->display_error_message("Cannot attach image: $path");
+                        }
+                    }
+                }
+            };
+            if ($@) {
+                log_warning('Chat', "Image attachment parsing failed: $@");
+            }
+        }
+
         # Handle empty input
         next unless defined $input && length($input) > 0;
-        
+
         # Sync readline history to session state for persistence (cap at 500 entries)
         if ($self->{readline} && $self->{session} && $self->{session}->state()) {
             my @hist = @{$self->{readline}->{history}};
@@ -507,7 +530,7 @@ sub run {
         
         # Process with AI agent (using streaming)
         if ($self->{ai_agent}) {
-            $self->_process_ai_request($input);
+            $self->_process_ai_request($input, \@image_attachments);
         } else {
             $self->display_error_message("AI agent not initialized");
         }
@@ -774,6 +797,7 @@ sub _handle_ai_response {
         my $display_response = $result->{final_response} // '';
         $display_response =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;  # Structured
         $display_response =~ s/\s*<!--session:[a-z][a-z0-9_-]{2,50}-->\s*//sgi;  # Simple
+        $display_response = $self->_detect_and_display_images($display_response);
         $self->add_to_buffer('assistant', $display_response) if $display_response;
     } elsif ($result && $result->{final_response}) {
         log_debug('Chat', "Storing final_response in session (length=" . length($result->{final_response}) . ")");
@@ -782,11 +806,13 @@ sub _handle_ai_response {
         my $display_response = $result->{final_response};
         $display_response =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;  # Structured
         $display_response =~ s/\s*<!--session:[a-z][a-z0-9_-]{2,50}-->\s*//sgi;  # Simple
+        $display_response = $self->_detect_and_display_images($display_response);
         $self->add_to_buffer('assistant', $display_response);
     } elsif ($accumulated_content) {
         log_debug('Chat', "Storing accumulated_content in session (length=" . length($accumulated_content) . ")");
         my $sanitized = sanitize_text($accumulated_content);
         $self->{session}->add_message('assistant', $sanitized);
+        $accumulated_content = $self->_detect_and_display_images($accumulated_content);
         $self->add_to_buffer('assistant', $accumulated_content);
     }
     
@@ -835,8 +861,86 @@ sub _handle_ai_response {
     $self->hide_busy_indicator();
 }
 
+=head2 _detect_and_display_images($text)
+
+Detect image URLs or base64 data in assistant response text and display them.
+Handles markdown image syntax ![alt](url) and data URLs.
+
+Returns the text with image references replaced by display status.
+
+=cut
+
+sub _detect_and_display_images {
+    my ($self, $text) = @_;
+    
+    return $text unless defined $text && length($text) > 0;
+    
+    eval {
+        require CLIO::Util::ImageDisplay;
+    };
+    return $text if $@;  # ImageDisplay not available
+    
+    my $display = CLIO::Util::ImageDisplay->new();
+    my $modified = 0;
+    
+    # Pattern 1: Markdown image syntax ![alt](url)
+    while ($text =~ s/!\[([^\]]*)\]\(([^\)]+)\)//) {
+        my ($alt, $url) = ($1, $2);
+        $modified = 1;
+        
+        if ($url =~ /^data:image\/([^;]+);base64,(.+)/) {
+            # Data URL - display directly
+            my ($fmt, $b64) = ($1, $2);
+            my $mime = "image/$fmt";
+            my ($ok, $info) = $display->show_image($b64, $mime, filename => $alt);
+            if ($ok && $info->{path}) {
+                print $self->colorize("[Image: ", 'DIM');
+                print $self->colorize($info->{path}, 'DATA');
+                print $self->colorize("]", 'DIM'), "\n";
+            }
+        } elsif ($url =~ /^https?:\/\//) {
+            # HTTP URL - download and display
+            eval {
+                require HTTP::Tiny;
+                my $http = HTTP::Tiny->new(timeout => 30);
+                my $response = $http->get($url);
+                if ($response->{success}) {
+                    my $mime = $response->{headers}{'content-type'} || 'image/png';
+                    $mime =~ s/;.*$//;  # Remove charset
+                    my ($ok, $info) = $display->show_image(
+                        $response->{content}, $mime, filename => $alt
+                    );
+                    if ($ok && $info->{path}) {
+                        print $self->colorize("[Image: ", 'DIM');
+                        print $self->colorize($info->{path}, 'DATA');
+                        print $self->colorize("]", 'DIM'), "\n";
+                    }
+                } else {
+                    log_warning('Chat', "Failed to download image $url: $response->{status} $response->{reason}");
+                }
+            };
+            if ($@) {
+                log_warning('Chat', "Error downloading image $url: $@");
+            }
+        }
+    }
+    
+    # Pattern 2: Standalone data URLs not in markdown
+    while ($text =~ s/(^|\s)(data:image\/([^;]+);base64,([A-Za-z0-9+\/=]+))($|\s)/$1$5/) {
+        my ($fmt, $b64) = ($3, $4);
+        $modified = 1;
+        my $mime = "image/$fmt";
+        my ($ok, $info) = $display->show_image($b64, $mime);
+        if ($ok && $info->{path}) {
+            print $self->colorize("[Image displayed]", 'DIM'), "\n";
+        }
+    }
+    
+    return $text;
+}
+
 sub _process_ai_request {
-    my ($self, $input) = @_;
+    my ($self, $input, $image_attachments) = @_;
 
     log_debug("Chat", "About to process user input with AI agent");
 
@@ -986,7 +1090,8 @@ sub _process_ai_request {
             current_file => $self->{session}->{state}->{current_file},
             working_directory => $self->{session}->{state}->{working_directory},
             ui => $self,  # Pass UI object for interact tool
-            spinner => $spinner  # Pass spinner for interactive tools to stop
+            spinner => $spinner,  # Pass spinner for interactive tools to stop
+            image_attachments => $image_attachments,
         });
     };
     my $process_error = $@;
@@ -1974,6 +2079,18 @@ Display an informational message
 sub display_info_message {
     my ($self, @args) = @_;
     return $self->{display}->display_info_message(@args);
+}
+
+=head2 display_image
+
+Display an image inline in the terminal or save to file.
+Delegates to Display::display_image.
+
+=cut
+
+sub display_image {
+    my ($self, @args) = @_;
+    return $self->{display}->display_image(@args);
 }
 
 =head2 display_command_header

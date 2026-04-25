@@ -289,6 +289,7 @@ sub process_user_request {
             on_system_message => $context->{on_system_message},  # Pass through system message callback for rate limits
             on_tool_call => $context->{on_tool_call},  # Pass through tool call tracker
             on_thinking => $context->{on_thinking},  # Pass through thinking/reasoning content callback
+            image_attachments => $context->{image_attachments},
         );
         
         if ($orchestrator_result && $orchestrator_result->{success}) {

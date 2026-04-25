@@ -107,6 +107,26 @@ Terminal Output (with color/theme)
 - `lib/CLIO/Core/ToolExecutor.pm` - Tool invocation
 - `lib/CLIO/Tools/FileOperations.pm` - File system operations
 
+## Image Support
+
+CLIO supports multimodal image upload and display:
+
+**Upload (User -> Model):**
+- `lib/CLIO/Util/ImageAttachment.pm` - Reads, validates, base64-encodes image files
+- `lib/CLIO/UI/Chat.pm` - Parses `@path/to/image.png` syntax from user input
+- `lib/CLIO/Core/WorkflowOrchestrator.pm` - Builds multimodal messages with array-format content
+- `lib/CLIO/Core/APIManager.pm` - Handles arrayref content in Chat Completions and Responses API payloads
+
+**Display (Model -> User):**
+- `lib/CLIO/Util/ImageDisplay.pm` - Displays images inline via kitty/iTerm protocols, or saves to file
+- `lib/CLIO/UI/Terminal.pm` - Detects terminal image protocol support (kitty, iTerm, sixel)
+
+**Token Estimation:**
+- `lib/CLIO/Memory/TokenEstimator.pm` - Estimates tokens for multimodal content (85 tokens per image)
+
+**Message Handling:**
+- `lib/CLIO/Core/ConversationManager.pm` - Handles arrayref content in message merging and truncation
+
 **Investigate, don't assume:** Use `git log --oneline -20`, `find lib -name "*.pm"`, read actual code.
 
 ---
@@ -197,6 +217,9 @@ log_error('ModuleName', 'something failed: %s', $error);
 | `CLIO::Protocols::` | Complex workflows | Architect, Editor, Validate, Puppeteer |
 | `CLIO::Security::` | Auth/authz | Auth, Authz, Manager |
 | `CLIO::Logging::` | Structured logging | Logger |
+| `CLIO::Compat::` | Compatibility | Terminal (ReadKey, ReadMode) |
+
+---
 | `CLIO::Util::` | Utilities | PathResolver, TextSanitizer, JSONRepair, JSON, YAML |
 | `CLIO::Spec::` | OpenSpec integration | Manager (spec lifecycle management) |
 | `CLIO::Compat::` | Compatibility | Terminal (ReadKey, ReadMode) |

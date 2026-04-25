@@ -20,6 +20,8 @@ our @EXPORT_OK = qw(
     terminal_type
     box_char
     ui_char
+    supports_inline_images
+    terminal_image_protocol
 );
 
 # binmode set by configure_io_encoding() after detection, not here
@@ -58,6 +60,7 @@ my %caps = (
     color_256  => undef,
     ansi       => undef,
     term_type  => undef,  # 'graphical', 'console', 'serial', 'dumb'
+    image_protocol => undef,  # 'kitty', 'iterm', 'sixel', or undef
 );
 
 =head2 detect_capabilities()
@@ -75,6 +78,7 @@ sub detect_capabilities {
         $caps{truecolor}  = _detect_truecolor();
         $caps{color_256}  = _detect_256color();
         $caps{detected}   = 1;
+        $caps{image_protocol} = _detect_image_protocol();
 
         # Log capabilities for debugging (uses require to avoid circular deps)
         eval {
@@ -82,9 +86,9 @@ sub detect_capabilities {
             my $lang = $ENV{LANG} // $ENV{LC_ALL} // $ENV{LC_CTYPE} // '(unset)';
             my $term = $ENV{TERM} // '(unset)';
             CLIO::Core::Logger::log_debug('Terminal',
-                sprintf('Capabilities: type=%s unicode=%d cp437=%d ansi=%d truecolor=%d 256=%d LANG=%s TERM=%s',
+                sprintf('Capabilities: type=%s unicode=%d cp437=%d ansi=%d truecolor=%d 256=%d image=%s LANG=%s TERM=%s',
                     $caps{term_type}, $caps{unicode}, $caps{cp437},
-                    $caps{ansi}, $caps{truecolor}, $caps{color_256},
+                    $caps{ansi}, $caps{truecolor}, $caps{color_256}, $caps{image_protocol} // 'none',
                     $lang, $term));
         };
     }
@@ -138,6 +142,53 @@ sub color_depth {
 }
 
 sub terminal_type { _ensure(); return $caps{term_type} }
+
+# ─────────────────────────────────────────────────────────────
+# Inline image protocol detection
+# ─────────────────────────────────────────────────────────────
+
+=head2 supports_inline_images()
+
+Returns true if the terminal supports displaying inline images.
+Checks for kitty graphics protocol, iTerm inline images, or sixel.
+
+=cut
+
+sub supports_inline_images {
+    _ensure();
+    return 1 if ($caps{image_protocol} // '') ne '';
+    return 0;
+}
+
+=head2 terminal_image_protocol()
+
+Returns the detected image protocol: 'kitty', 'iterm', 'sixel', or undef.
+
+=cut
+
+sub terminal_image_protocol {
+    _ensure();
+    return $caps{image_protocol};
+}
+
+sub _detect_image_protocol {
+    # kitty graphics protocol
+    my $term = $ENV{TERM} // '';
+    my $tp = $ENV{TERM_PROGRAM} // '';
+    
+    if ($tp eq 'iTerm.app' || $tp eq 'WezTerm' || $ENV{ITERM_SESSION_ID}) {
+        return 'iterm';
+    }
+    if ($term =~ /^xterm-kitty/ || $ENV{KITTY_WINDOW_ID}) {
+        return 'kitty';
+    }
+    # Sixel detection is tricky - most terminals don't advertise it
+    # Only enable if explicitly requested via env var
+    if ($ENV{CLIO_ENABLE_SIXEL}) {
+        return 'sixel';
+    }
+    return undef;
+}
 
 sub _ensure { detect_capabilities() unless $caps{detected} }
 
