@@ -131,10 +131,10 @@ sub estimate_tokens {
         my $total = 0;
         for my $part (@$text) {
             next unless ref($part) eq 'HASH';
-            if ($part->{type} eq 'text' && defined $part->{text}) {
+            if ((($part->{type} // '') eq 'text') && defined $part->{text}) {
                 $total += estimate_tokens($part->{text});
             }
-            elsif ($part->{type} eq 'image_url') {
+            elsif (($part->{type} // '') eq 'image_url') {
                 # OpenAI image token estimate: low-res = 85 tokens
                 # For data URLs we can't easily get dimensions, so use conservative estimate
                 $total += 85;

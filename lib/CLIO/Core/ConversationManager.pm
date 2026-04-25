@@ -374,22 +374,25 @@ sub enforce_message_alternation {
     my @alternating = ();
     my $last_role = undef;
     my $accumulated_content = '';
+    my $accumulated_arrayref = undef;  # Preserve arrayref content (multimodal)
     my $accumulated_tool_calls = [];
     my $accumulated_tool_call_id = undef;
     my $accumulated_reasoning_details = undef;  # MiniMax interleaved thinking
 
     for my $msg (@$messages) {
         my $role = $msg->{role};
+        my $is_arrayref = ref($msg->{content}) eq 'ARRAY';
 
         # Check if same role as previous (needs merging)
         # Do NOT merge tool messages - each has unique tool_call_id
-        if (defined $last_role && $role eq $last_role && $role ne 'tool') {
+        # Do NOT merge arrayref content into string - preserve it as a separate message
+        if (defined $last_role && $role eq $last_role && $role ne 'tool' && !$is_arrayref) {
             my $has_content = 0;
             if (defined $msg->{content}) {
                 if (!ref($msg->{content})) {
                     $has_content = length($msg->{content}) > 0;
                 } elsif (ref($msg->{content}) eq 'ARRAY') {
-                    $has_content = @$msg->{content} > 0;
+                    $has_content = @{$msg->{content}} > 0;
                 }
             }
             if ($has_content) {
@@ -397,10 +400,6 @@ sub enforce_message_alternation {
                 if (!ref($msg->{content})) {
                     $accumulated_content .= $msg->{content};
                 }
-                # Note: arrayref content is not merged textually; it stays as-is
-                # in the flushed message. This is a simplification - in practice
-                # multimodal messages shouldn't need merging with other same-role
-                # messages because they're constructed as single messages.
             }
 
             if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
@@ -409,11 +408,11 @@ sub enforce_message_alternation {
 
             log_debug('ConversationManager', "Merged consecutive $role message");
         } else {
-            # Different role - flush accumulated message if any
+            # Different role, arrayref content, or tool message - flush accumulated message
             if (defined $last_role) {
                 my $flushed = {
                     role => $last_role,
-                    content => $accumulated_content
+                    content => $accumulated_arrayref // $accumulated_content
                 };
 
                 if (@$accumulated_tool_calls) {
@@ -433,10 +432,12 @@ sub enforce_message_alternation {
 
             # Start new accumulation
             $last_role = $role;
-            if (!ref($msg->{content})) {
-                $accumulated_content = $msg->{content} // '';
-            } else {
+            if ($is_arrayref) {
                 $accumulated_content = '';
+                $accumulated_arrayref = $msg->{content};
+            } else {
+                $accumulated_content = $msg->{content} // '';
+                $accumulated_arrayref = undef;
             }
             $accumulated_tool_calls = $msg->{tool_calls} ? [@{$msg->{tool_calls}}] : [];
             $accumulated_tool_call_id = $msg->{tool_call_id};
@@ -448,7 +449,7 @@ sub enforce_message_alternation {
     if (defined $last_role) {
         my $flushed = {
             role => $last_role,
-            content => $accumulated_content
+            content => $accumulated_arrayref // $accumulated_content
         };
 
         if (@$accumulated_tool_calls) {
