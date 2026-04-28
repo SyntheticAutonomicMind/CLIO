@@ -68,6 +68,10 @@ use constant DEFAULT_CONFIG => {
     # Value is octal as integer: 0077 (restrictive), 0022 (standard), 0000 (permissive)
     # Setting this to 0077 ensures files are only readable/writable by owner
     file_umask => 0022,  # Default: 0022 (owner read/write, group/other read)
+    # HTTP proxy for API requests and update checks
+    # Supports: http://, https://, socks5://, socks5h://, socks4://
+    # Falls back to HTTPS_PROXY, HTTP_PROXY, ALL_PROXY environment variables
+    http_proxy => '',
     # Reasoning/thinking display
     show_thinking => 0,         # Show model's reasoning/thinking output (default: off)
     thinking_effort => 'medium', # Reasoning effort level: low, medium, high (default: medium)
