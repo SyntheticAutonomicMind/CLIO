@@ -46,6 +46,7 @@ use CLIO::Core::API::ResponseHandler;
 use CLIO::Util::TextSanitizer qw(sanitize_text);
 use CLIO::UI::Terminal qw(ui_char);
 use CLIO::Core::RateLimiter;
+use CLIO::Compat::HTTP;
 
 # Define request states
 use constant {
@@ -101,6 +102,14 @@ sub _generate_uuid {
     substr($uuid, 14, 1) = '4';
     substr($uuid, 19, 1) = $hex[8 + int(rand(4))];
     return $uuid;
+}
+
+# Create an HTTP client with proxy config from CLIO config
+sub _create_http_client {
+    my ($self, %opts) = @_;
+    my $proxy = $self->{config} ? ($self->{config}->get('http_proxy') || '') : '';
+    $opts{proxy} = $proxy if $proxy;
+    return CLIO::Compat::HTTP->new(%opts);
 }
 
 # Check if a model supports reasoning/thinking parameters via models API
@@ -1052,7 +1061,7 @@ sub get_model_capabilities {
     
     # If we didn't get models from GitHubCopilotModelsAPI, fetch directly
     unless (@$models) {
-        my $ua = CLIO::Compat::HTTP->new(timeout => 30);
+        my $ua = $self->_create_http_client(timeout => 30);
         my %headers = (
             'Authorization' => "Bearer $self->{api_key}",
         );
@@ -1226,7 +1235,7 @@ sub _query_llama_props {
     $props_url =~ s{/v1(/.*)?$}{};  # strip /v1 and anything after it
     $props_url .= '/props';
 
-    my $ua = CLIO::Compat::HTTP->new(timeout => 5);
+    my $ua = $self->_create_http_client(timeout => 5);
     my $resp = eval { $ua->get($props_url) };
     if ($@ || !$resp || !$resp->is_success) {
         log_debug('APIManager', "llama.cpp /props not available at $props_url");
@@ -1981,7 +1990,7 @@ sub _check_connectivity {
 
         log_debug('APIManager', "Checking connectivity to API endpoint...");
 
-        my $ua = CLIO::Compat::HTTP->new(timeout => 10);
+        my $ua = $self->_create_http_client(timeout => 10);
         my %headers = (
             'Authorization' => "Bearer $self->{api_key}",
         );
@@ -2235,7 +2244,7 @@ sub _prepare_api_request {
 
     # Create HTTP client
     my $ua_timeout = $is_streaming ? 300 : 60;
-    my $ua = CLIO::Compat::HTTP->new(
+    my $ua = $self->_create_http_client(
         timeout  => $ua_timeout,
         agent    => 'GitHubCopilotChat/0.22.4',
         ssl_opts => { verify_hostname => 1 }
@@ -3811,7 +3820,7 @@ sub _send_native_streaming {
     my $buffer = '';
     
     # Create HTTP client
-    my $ua = CLIO::Compat::HTTP->new(
+    my $ua = $self->_create_http_client(
         timeout => 300,
         agent => 'CLIO/1.0',
         ssl_opts => { verify_hostname => 1 },

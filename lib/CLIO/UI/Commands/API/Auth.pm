@@ -321,7 +321,10 @@ sub _handle_minimax_quota {
         return;
     }
 
-    my $ua = CLIO::Compat::HTTP->new(timeout => 15);
+    my $proxy = $self->{config} ? ($self->{config}->get('http_proxy') || '') : '';
+    my %http_opts = (timeout => 15);
+    $http_opts{proxy} = $proxy if $proxy;
+    my $ua = CLIO::Compat::HTTP->new(%http_opts);
     my $url = 'https://api.minimax.io/v1/token_plan/usage';
     my $resp = $ua->get($url, headers => {
         'Authorization' => "Bearer $api_key",
