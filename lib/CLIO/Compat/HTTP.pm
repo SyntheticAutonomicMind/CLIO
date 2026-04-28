@@ -46,6 +46,12 @@ For HTTPS support:
 - Prefers HTTP::Tiny with IO::Socket::SSL (if available)
 - Falls back to system curl command (portable, works everywhere)
 
+Proxy support:
+- HTTP proxies: http://host:port
+- SOCKS proxies: socks5://host:port, socks5h://host:port, socks4://host:port
+- Configured via constructor `proxy` option or environment variables
+- Environment variables checked (in order): HTTPS_PROXY, HTTP_PROXY, ALL_PROXY
+
 Also provides HTTP::Request-like interface for compatibility.
 
 =head1 METHODS
@@ -56,9 +62,13 @@ sub new {
     my ($class, %opts) = @_;
     
     my $timeout = $opts{timeout} || 30;
+    my $proxy = $opts{proxy} || '';
     my $agent = $opts{agent} || 'CLIO/1.0';
     my $default_headers = $opts{default_headers} || {};
     my $ssl_opts = $opts{ssl_opts} || { verify_SSL => 1 };
+    
+    # Resolve proxy: explicit parameter > environment variables
+    my $resolved_proxy = _resolve_proxy($proxy);
     
     my $self = {
         timeout => $timeout,
@@ -66,6 +76,7 @@ sub new {
         http => undef,
         default_headers => $default_headers,
         use_curl_for_https => !$HAS_SSL && $HAS_CURL,
+        proxy => $resolved_proxy,
     };
     
     # Initialize HTTP::Tiny
@@ -87,9 +98,74 @@ sub new {
     }
     
     # Always create HTTP::Tiny instance (needed for HTTP URLs even with curl for HTTPS)
+    # Pass proxy to HTTP::Tiny if configured
+    if ($self->{proxy}) {
+        $http_tiny_opts{proxy} = $self->{proxy};
+    }
+    
     $self->{http} = HTTP::Tiny->new(%http_tiny_opts);
     
     return bless $self, $class;
+}
+
+=head2 _resolve_proxy
+
+Resolve proxy URL from explicit parameter or environment variables.
+Checks standard proxy environment variables in order of precedence.
+
+Arguments:
+- $explicit: Explicitly configured proxy URL (from config or constructor)
+
+Returns: Proxy URL string, or empty string if no proxy configured
+
+=cut
+
+sub _resolve_proxy {
+    my ($explicit) = @_;
+    
+    # Explicit parameter takes precedence
+    return $explicit if $explicit && $explicit =~ m{^https?://} || $explicit && $explicit =~ m{^socks[45]h?://};
+    
+    # Check environment variables (standard convention, uppercase preferred)
+    for my $env (qw(HTTPS_PROXY HTTP_PROXY ALL_PROXY https_proxy http_proxy all_proxy)) {
+        if ($ENV{$env} && $ENV{$env} =~ m{^https?://} || $ENV{$env} && $ENV{$env} =~ m{^socks[45]h?://}) {
+            return $ENV{$env};
+        }
+    }
+    
+    return '';
+}
+
+=head2 proxy
+
+Get or set the proxy URL.
+
+Arguments:
+- $url: New proxy URL (optional)
+
+Returns: Current proxy URL
+
+=cut
+
+sub proxy {
+    my ($self, $url) = @_;
+    if (defined $url) {
+        $self->{proxy} = $url;
+        # Update HTTP::Tiny proxy too
+        if ($self->{http}) {
+            # HTTP::Tiny doesn't support changing proxy after construction,
+            # so recreate it with the new proxy
+            my %opts = (
+                timeout => $self->{timeout},
+                agent => $self->{agent},
+                default_headers => $self->{default_headers},
+            );
+            $opts{verify_SSL} = 1 if $HAS_SSL;
+            $opts{proxy} = $url if $url;
+            $self->{http} = HTTP::Tiny->new(%opts);
+        }
+    }
+    return $self->{proxy};
 }
 
 =head2 default_header
@@ -238,6 +314,9 @@ sub _request_via_curl {
     # Add timeout
     push @cmd, '--max-time', $self->{timeout} if $self->{timeout};
     
+    # Add proxy if configured
+    push @cmd, '--proxy', $self->{proxy} if $self->{proxy};
+    
     # Add CA bundle for HTTPS (iOS/a-Shell compatibility)
     my $ca_bundle = $self->_find_ca_bundle();
     if ($ca_bundle) {
@@ -358,6 +437,9 @@ sub _request_via_curl_streaming {
     
     # Add timeout
     push @cmd, '--max-time', $self->{timeout} if $self->{timeout};
+    
+    # Add proxy if configured
+    push @cmd, '--proxy', $self->{proxy} if $self->{proxy};
     
     # Add CA bundle for HTTPS (iOS/a-Shell compatibility)
     my $ca_bundle = $self->_find_ca_bundle();

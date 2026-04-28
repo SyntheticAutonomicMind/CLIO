@@ -15,6 +15,23 @@ use CLIO::Core::Logger qw(log_debug log_error log_warning);
 
 my $NULLDEV = $^O eq 'MSWin32' ? 'nul' : '/dev/null';
 
+# Get proxy arguments for curl commands
+sub _proxy_arg {
+    for my $env (qw(HTTPS_PROXY HTTP_PROXY ALL_PROXY https_proxy http_proxy all_proxy)) {
+        if ($ENV{$env} && ($ENV{$env} =~ m{^https?://} || $ENV{$env} =~ m{^socks[45]h?://})) {
+            return ('--proxy', $ENV{$env});
+        }
+    }
+    return ();
+}
+
+# Get proxy flag string for shell-based curl calls
+sub _proxy_shell_arg {
+    my @args = _proxy_arg();
+    return '' unless @args;
+    return join(' ', map { "'$_'" } @args) . ' ';
+}
+
 =head1 NAME
 
 CLIO::Update - Update checking and installation management
@@ -125,7 +142,7 @@ sub get_latest_version {
     log_debug('Update', "Fetching latest release from: $api_url");
     
     # Use curl for HTTP request (more reliable than LWP)
-    my $response = `curl -s -m $self->{timeout} -H "Accept: application/vnd.github+json" "$api_url" 2>$NULLDEV`;
+    my $response = `curl -s -m $self->{timeout} @{[_proxy_shell_arg()]}-H "Accept: application/vnd.github+json" "$api_url" 2>$NULLDEV`;
     
     if ($? != 0) {
         log_debug('Update', "curl failed with exit code: " . ($? >> 8));
@@ -191,7 +208,7 @@ sub get_all_releases {
     log_debug('Update', "Fetching releases from: $api_url");
     
     # Use curl for HTTP request
-    my $response = `curl -s -m $self->{timeout} -H "Accept: application/vnd.github+json" "$api_url" 2>$NULLDEV`;
+    my $response = `curl -s -m $self->{timeout} @{[_proxy_shell_arg()]}-H "Accept: application/vnd.github+json" "$api_url" 2>$NULLDEV`;
     
     if ($? != 0) {
         log_debug('Update', "curl failed with exit code: " . ($? >> 8));
@@ -267,7 +284,7 @@ sub get_release_by_version {
         
         log_debug('Update', "Fetching release by tag: $tag");
         
-        my $response = `curl -s -m $self->{timeout} -H "Accept: application/vnd.github+json" "$api_url" 2>$NULLDEV`;
+        my $response = `curl -s -m $self->{timeout} @{[_proxy_shell_arg()]}-H "Accept: application/vnd.github+json" "$api_url" 2>$NULLDEV`;
         
         next if $? != 0;
         
@@ -345,7 +362,7 @@ sub download_version {
     my $tarball_path = "$download_dir/clio.tar.gz";
     log_debug('Update', "Downloading version $version from: $tarball_url");
     
-    my $curl_result = system("curl", "-sL", "-m", "30", "-o", $tarball_path, $tarball_url);
+    my $curl_result = system("curl", "-sL", "-m", "30", _proxy_arg(), "-o", $tarball_path, $tarball_url);
     
     if ($curl_result != 0) {
         log_error('Update', "Download failed");
@@ -761,7 +778,7 @@ sub download_latest {
     my $tarball_path = "$download_dir/clio.tar.gz";
     log_debug('Update', "Downloading from: $tarball_url");
     
-    my $curl_result = system("curl", "-sL", "-m", "30", "-o", $tarball_path, $tarball_url);
+    my $curl_result = system("curl", "-sL", "-m", "30", _proxy_arg(), "-o", $tarball_path, $tarball_url);
     
     if ($curl_result != 0) {
         log_error('Update', "Download failed");
