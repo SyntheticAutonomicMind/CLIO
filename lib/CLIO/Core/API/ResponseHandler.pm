@@ -318,7 +318,7 @@ sub handle_error_response {
     my $retry_info = '';
     my $is_retryable_error = 0;
     my $error_type = undef;
-    my $detected_rate_limit_code = (ref($error_obj) eq 'HASH' && $error_obj->{code}) ? $error_obj->{code} : undef;
+    my $detected_rate_limit_code = (ref($error_obj) eq 'HASH' && $error_obj->{code}) ? $error_obj->{code} : '';
 
     # Handle rate limiting (429)
     if ($status == 429) {
