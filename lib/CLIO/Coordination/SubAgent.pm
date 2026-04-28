@@ -9,6 +9,12 @@ use utf8;
 use CLIO::Coordination::Broker;
 use CLIO::Coordination::Client;
 use CLIO::Core::Logger qw(log_debug log_warning);
+use POSIX qw(WNOHANG);
+
+# Auto-reap zombie children to prevent process table exhaustion.
+# This ensures forked sub-agents are properly reaped by the parent.
+$SIG{CHLD} = sub { 1 while waitpid(-1, WNOHANG) > 0 };
+
 use POSIX qw(setsid);
 use Carp qw(croak);
 
