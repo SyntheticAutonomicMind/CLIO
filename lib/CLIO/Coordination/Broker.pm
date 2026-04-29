@@ -10,7 +10,7 @@ use IO::Socket::UNIX;
 use IO::Select;
 use CLIO::Util::JSON qw(encode_json decode_json);
 use Time::HiRes qw(time);
-use POSIX qw(strftime);
+use POSIX qw(strftime WNOHANG);
 use Carp qw(croak);
 use File::Path qw(make_path);
 require CLIO::Core::Logger;
@@ -185,6 +185,7 @@ sub event_loop {
             }
             
             if (time() - $last_maintenance > 10) {
+                1 while waitpid(-1, WNOHANG) > 0;  # Reap any zombie children
                 $self->do_maintenance();
                 $last_maintenance = time();
             }

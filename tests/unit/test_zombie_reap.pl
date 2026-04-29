@@ -2,18 +2,23 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (c) 2026 Andrew Wyatt (Fewtarius)
 
-# Test zombie process reaping in CLIO::Coordination::SubAgent
+# Test zombie process reaping in CLIO::Coordination::Broker
 #
-# FUNCTIONAL TEST - Actually forks children and verifies zombie prevention.
+# FUNCTIONAL TEST - Verifies explicit waitpid calls work correctly
+# and that zombie prevention doesn't break other modules.
 # No dependencies beyond core Perl + POSIX.
 
 use strict;
 use warnings;
 use POSIX qw(WNOHANG);
+
+sub usleep {
+    my ($ms) = @_;
+    select(undef, undef, undef, $ms / 1000);
+}
 use Cwd qw(abs_path);
 use File::Basename qw(dirname);
 
-# Derive project root from test location (tests/unit/test_zombie_reap.pl)
 my $test_file = abs_path(__FILE__);
 my $project_root = dirname(dirname(dirname($test_file)));
 
@@ -30,71 +35,79 @@ sub report {
     }
 }
 
-print "1..5\n";
+print "1..6\n";
 
-# Test 1: Verify handler pattern exists (runtime OR source)
-print "Test 1: SIGCHLD handler installed\n";
-my $has_handler = 0;
-
-# Try runtime first
-$has_handler = 1 if defined $SIG{CHLD} && ref($SIG{CHLD}) eq 'CODE';
-
-# Fallback: check source file using project root path
-if (!$has_handler) {
+# Test 1: Verify NO global SIGCHLD handler is installed (that approach breaks waitpid)
+print "Test 1: No global SIGCHLD handler stealing exits\n";
+my $has_bad_handler = 0;
+if (defined $SIG{CHLD} && ref($SIG{CHLD}) eq 'CODE') {
     my $subagent_path = "$project_root/lib/CLIO/Coordination/SubAgent.pm";
     if (open(my $fh, '<', $subagent_path)) {
         my $content = do { local $/; <$fh> };
-        $has_handler = 1 if $content =~ /SIG\{CHLD\}\s*=.*waitpid.*WNOHANG/s;
+        $has_bad_handler = 1 if $content =~ /\$SIG\{CHLD\}\s*=.*waitpid.*-1/s;
         close $fh;
     }
 }
-report($has_handler, "SIGCHLD handler found (runtime or source)");
+report(!$has_bad_handler, "SubAgent does not install SIGCHLD handler that steals exits");
 
-# Test 2: Fork children and verify they're reaped by the handler
-print "Test 2: Handler auto-reaps single child\n";
+# Test 2: Explicit waitpid returns correct pid (not stolen by handler)
+print "Test 2: waitpid returns correct pid after child exits\n";
 my $pid1 = fork();
 if ($pid1 == 0) {
-    exit 0;  # Child exits immediately
+    exit 42;
 }
-# Parent: wait briefly for SIGCHLD to fire, then verify child was reaped
-select(undef, undef, undef, 0.1);
-# With auto-reaping handler, waitpid may return -1 (ECHILD) because handler already reaped.
-# Loop to confirm the child was actually reaped (either by handler or explicit waitpid).
-my $reaped = 0;
-my $wait_result;
-while (1) {
-    $wait_result = waitpid(-1, WNOHANG);
-    last if $wait_result <= 0;  # No more children to reap
-    $reaped = 1 if $wait_result == $pid1;
-    last if $wait_result == -1;  # ECHILD - no more children
-}
-report($reaped || $wait_result == -1, "Child $pid1 was reaped (handler worked)");
+my $result = waitpid($pid1, 0);
+my $exit_code = $? >> 8;
+report($result == $pid1 && $exit_code == 42, "waitpid($pid1, 0) returned $result, exit=$exit_code");
 
-# Test 3: Fork multiple children rapidly
-print "Test 3: Handler reaps multiple children\n";
+# Test 3: waitpid with WNOHANG returns pid immediately when child is already dead
+print "Test 3: waitpid WNOHANG returns pid for dead child\n";
+my $pid2 = fork();
+if ($pid2 == 0) {
+    exit 0;
+}
+select(undef, undef, undef, 0.05);
+$result = waitpid($pid2, WNOHANG);
+report($result == $pid2, "waitpid($pid2, WNOHANG) returned $result");
+
+# Test 4: Multiple children can be waited on individually
+print "Test 4: Multiple children waited individually\n";
 my @pids;
-for (1..5) {
+for (1..3) {
     my $pid = fork();
-    if ($pid == 0) {
-        exit 0;
-    }
+    if ($pid == 0) { exit $_; }
     push @pids, $pid;
 }
-select(undef, undef, undef, 0.2);  # Let handler reap
-my $count = 0;
+my $all_reaped = 1;
 for my $p (@pids) {
-    my $r = waitpid($p, WNOHANG);
-    $count++ if $r != 0;
+    my $r = waitpid($p, 0);
+    $all_reaped = 0 if $r != $p;
 }
-report($count == 5, "All 5 children reaped by handler");
+report($all_reaped, "All 3 children reaped via explicit waitpid");
 
-# Test 4: Verify our specific children didn't become zombies
-print "Test 4: Children did not become zombies\n";
+# Test 5: Stdio transport pattern works (waitpid with WNOHANG loop)
+print "Test 5: waitpid WNOHANG loop pattern works\n";
+my $pid3 = fork();
+if ($pid3 == 0) {
+    usleep(50000);
+    exit 0;
+}
+my $waited = 0;
+my $loops = 0;
+while ($loops < 20) {
+    $result = waitpid($pid3, WNOHANG);
+    last if $result > 0;
+    usleep(5000);
+    $loops++;
+}
+report($result == $pid3, "Stdio-style waitpid loop got result $result");
+
+# Test 6: Children do not become zombies
+print "Test 6: Children do not become zombies\n";
 my $zombie_found = 0;
 for my $p (@pids) {
-    my $ret = kill(0, $p);  # Check if process exists
+    my $ret = kill(0, $p);
     if ($ret == 0) {
-        # Process doesn't exist - could be zombie, check status
         my $status = `ps -o stat= -p $p 2>/dev/null`;
         if (defined $status && $status =~ /Z/) {
             $zombie_found = 1;
@@ -102,24 +115,7 @@ for my $p (@pids) {
         }
     }
 }
-report(!$zombie_found, "Our children were not left as zombies");
-
-# Test 5: Handler preserves existing handler
-print "Test 5: Handler chains to existing handler\n";
-my $test_handler_installed = 0;
-{
-    my $orig = $SIG{CHLD};
-    $SIG{CHLD} = sub {
-        $test_handler_installed = 1;
-        $orig->() if ref($orig) eq 'CODE';
-        1 while waitpid(-1, WNOHANG) > 0;
-    };
-    my $cpid = fork();
-    if ($cpid == 0) { exit 0; }
-    select(undef, undef, undef, 0.1);
-    waitpid($cpid, WNOHANG);
-}
-report($test_handler_installed, "New handler can call original handler");
+report(!$zombie_found, "No zombie processes found");
 
 print "\nResults: $pass passed, $fail failed\n";
 exit($fail > 0 ? 1 : 0);

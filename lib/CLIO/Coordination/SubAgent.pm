@@ -9,18 +9,8 @@ use utf8;
 use CLIO::Coordination::Broker;
 use CLIO::Coordination::Client;
 use CLIO::Core::Logger qw(log_debug log_warning);
-use POSIX qw(setsid WNOHANG);
+use POSIX qw(setsid);
 use Carp qw(croak);
-
-# Auto-reap zombie children to prevent process table exhaustion.
-# Chain any pre-existing handler to avoid clobbering it.
-my $orig_chld = $SIG{CHLD};
-$SIG{CHLD} = sub {
-    local $!;
-    local $?;
-    1 while waitpid(-1, WNOHANG) > 0;
-    $orig_chld->() if ref($orig_chld) eq 'CODE';
-};
 
 
 =head1 NAME
