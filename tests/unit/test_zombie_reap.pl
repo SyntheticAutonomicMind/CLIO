@@ -11,22 +11,11 @@ use strict;
 use warnings;
 use POSIX qw(WNOHANG);
 use Cwd qw(abs_path);
+use File::Basename qw(dirname);
 
-# Auto-discover JSON::PP path if not available
-BEGIN {
-    unless (eval { require JSON::PP; 1 }) {
-        my @json_paths = (
-            '/home/linuxbrew/.linuxbrew/lib/perl5/site_perl/5.42',
-            '/home/linuxbrew/.linuxbrew/lib/perl5/5.42',
-        );
-        for my $path (@json_paths) {
-            if (-f "$path/JSON/PP.pm") {
-                unshift @INC, $path;
-                last;
-            }
-        }
-    }
-}
+# Derive project root from test location (tests/unit/test_zombie_reap.pl)
+my $test_file = abs_path(__FILE__);
+my $project_root = dirname(dirname(dirname($test_file)));
 
 my ($pass, $fail) = (0, 0);
 
@@ -50,11 +39,9 @@ my $has_handler = 0;
 # Try runtime first
 $has_handler = 1 if defined $SIG{CHLD} && ref($SIG{CHLD}) eq 'CODE';
 
-# Fallback: check source file
+# Fallback: check source file using project root path
 if (!$has_handler) {
-    my $test_file = abs_path(__FILE__);
-    $test_file =~ s!/tests/unit/test_zombie_reap\.pl$!!;
-    my $subagent_path = "$test_file/lib/CLIO/Coordination/SubAgent.pm";
+    my $subagent_path = "$project_root/lib/CLIO/Coordination/SubAgent.pm";
     if (open(my $fh, '<', $subagent_path)) {
         my $content = do { local $/; <$fh> };
         $has_handler = 1 if $content =~ /SIG\{CHLD\}\s*=.*waitpid.*WNOHANG/s;
@@ -69,10 +56,19 @@ my $pid1 = fork();
 if ($pid1 == 0) {
     exit 0;  # Child exits immediately
 }
-# Parent: wait briefly for SIGCHLD to fire, then check
+# Parent: wait briefly for SIGCHLD to fire, then verify child was reaped
 select(undef, undef, undef, 0.1);
-my $reaped = waitpid($pid1, WNOHANG);
-report($reaped == $pid1 || $reaped == -1, "Child $pid1 was reaped (handler worked)");
+# With auto-reaping handler, waitpid may return -1 (ECHILD) because handler already reaped.
+# Loop to confirm the child was actually reaped (either by handler or explicit waitpid).
+my $reaped = 0;
+my $wait_result;
+while (1) {
+    $wait_result = waitpid(-1, WNOHANG);
+    last if $wait_result <= 0;  # No more children to reap
+    $reaped = 1 if $wait_result == $pid1;
+    last if $wait_result == -1;  # ECHILD - no more children
+}
+report($reaped || $wait_result == -1, "Child $pid1 was reaped (handler worked)");
 
 # Test 3: Fork multiple children rapidly
 print "Test 3: Handler reaps multiple children\n";
