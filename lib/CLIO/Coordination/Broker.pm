@@ -185,7 +185,7 @@ sub event_loop {
             }
             
             if (time() - $last_maintenance > 10) {
-                1 while waitpid(-1, WNOHANG) > 0;  # Reap any zombie children
+                1 while waitpid(-1, WNOHANG) > 0;  # Clean up any zombie children that accumulated
                 $self->do_maintenance();
                 $last_maintenance = time();
             }
