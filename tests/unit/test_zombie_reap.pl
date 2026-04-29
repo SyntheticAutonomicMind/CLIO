@@ -105,10 +105,11 @@ report($result == $pid3, "Stdio-style waitpid loop got result $result");
 # Test 6: Children do not become zombies
 print "Test 6: Children do not become zombies\n";
 my $zombie_found = 0;
+my $ps_opt = $^O eq 'darwin' ? 'state' : 'stat';
 for my $p (@pids) {
     my $ret = kill(0, $p);
     if ($ret == 0) {
-        my $status = `ps -o stat= -p $p 2>/dev/null`;
+        my $status = `ps -o $ps_opt= -p $p 2>/dev/null`;
         if (defined $status && $status =~ /Z/) {
             $zombie_found = 1;
             last;
