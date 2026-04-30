@@ -201,7 +201,7 @@ sub update {
         my $found = 0;
         
         foreach my $todo (@$todos) {
-            if ($todo->{id} == $todo_id) {
+            if (defined $todo->{id} && $todo->{id} == $todo_id) {
                 # Apply updates
                 foreach my $key (keys %$update) {
                     next if $key eq 'id';  # Don't update ID

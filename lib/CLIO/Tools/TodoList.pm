@@ -269,11 +269,11 @@ sub handle_read {
     
     # Generate summary
     my $total = scalar(@$todos);
-    my @completed = grep { $_->{status} eq 'completed' } @$todos;
-    my @in_progress = grep { $_->{status} eq 'in-progress' } @$todos;
-    my @not_started = grep { $_->{status} eq 'not-started' } @$todos;
-    my @blocked = grep { $_->{status} eq 'blocked' } @$todos;
-    
+    my @completed = grep { defined $_->{status} && $_->{status} eq 'completed' } @$todos;
+    my @in_progress = grep { defined $_->{status} && $_->{status} eq 'in-progress' } @$todos;
+    my @not_started = grep { defined $_->{status} && $_->{status} eq 'not-started' } @$todos;
+    my @blocked = grep { defined $_->{status} && $_->{status} eq 'blocked' } @$todos;
+
     my $output = "Todo list: $total items\n\n";
     $output .= "STATUS SUMMARY:\n";
     $output .= "  ✓ Completed: " . scalar(@completed) . "\n";
@@ -346,7 +346,7 @@ sub handle_write {
     
     # Get existing stats for comparison
     my $existing_todos = $store->read();
-    my $existing_completed = scalar(grep { $_->{status} eq 'completed' } @$existing_todos);
+    my $existing_completed = scalar(grep { defined $_->{status} && $_->{status} eq 'completed' } @$existing_todos);
     
     my ($success, $error) = $store->write($todo_list);
     
@@ -355,10 +355,10 @@ sub handle_write {
     }
     
     my $total = scalar(@$todo_list);
-    my @completed = grep { $_->{status} eq 'completed' } @$todo_list;
-    my @in_progress = grep { $_->{status} eq 'in-progress' } @$todo_list;
-    my @not_started = grep { $_->{status} eq 'not-started' } @$todo_list;
-    
+    my @completed = grep { defined $_->{status} && $_->{status} eq 'completed' } @$todo_list;
+    my @in_progress = grep { defined $_->{status} && $_->{status} eq 'in-progress' } @$todo_list;
+    my @not_started = grep { defined $_->{status} && $_->{status} eq 'not-started' } @$todo_list;
+
     my $output = "Todo list updated: $total items\n\n";
     
     if ($existing_completed > 0) {
@@ -443,10 +443,10 @@ sub handle_update {
     
     # Show current state
     my $todos = $store->read();
-    my @completed = grep { $_->{status} eq 'completed' } @$todos;
-    my @in_progress = grep { $_->{status} eq 'in-progress' } @$todos;
-    my @not_started = grep { $_->{status} eq 'not-started' } @$todos;
-    
+    my @completed = grep { defined $_->{status} && $_->{status} eq 'completed' } @$todos;
+    my @in_progress = grep { defined $_->{status} && $_->{status} eq 'in-progress' } @$todos;
+    my @not_started = grep { defined $_->{status} && $_->{status} eq 'not-started' } @$todos;
+
     $output .= "CURRENT STATE:\n";
     $output .= "  ✓ Completed: " . scalar(@completed) . "\n";
     $output .= "  🔄 In Progress: " . scalar(@in_progress) . "\n";
@@ -461,7 +461,7 @@ sub handle_update {
     foreach my $update (@$updates) {
         my $todo_id = $update->{id};
         # Find the actual todo to get its title
-        my ($todo) = grep { $_->{id} == $todo_id } @$todos;
+        my ($todo) = grep { defined $_->{id} && $_->{id} == $todo_id } @$todos;
         my $title = $todo ? $todo->{title} : "unknown";
         
         # Determine what changed
