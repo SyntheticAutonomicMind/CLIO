@@ -333,7 +333,7 @@ sub validate {
     my @in_progress = grep { defined $_->{status} && $_->{status} eq 'in-progress' } @$todos;
     if (@in_progress > 1) {
         push @errors, "Multiple todos marked as in-progress (only 1 allowed): " . 
-            join(", ", map { "#$_->{id}" } @in_progress);
+            join(", ", map { defined $_->{id} ? "#$_->{id}" : "#(unknown)" } @in_progress);
     }
     
     # Validate each todo
