@@ -37,6 +37,7 @@ use CLIO::Util::JSON qw(encode_json decode_json);
 use MIME::Base64;
 use Digest::SHA qw(sha256);
 use File::Spec;
+use POSIX qw(_exit);
 use CLIO::Core::Logger qw(log_debug log_error);
 
 sub new {
@@ -235,7 +236,17 @@ sub _open_browser {
     my $cmd = ($^O eq 'darwin') ? 'open' : ($^O eq 'MSWin32') ? 'start' : ($^O eq 'linux') ? 'xdg-open' : undef;
     return unless $cmd;
     my $nulldev = $^O eq 'MSWin32' ? 'nul' : '/dev/null';
-    if (fork() == 0) { open STDOUT, '>', $nulldev; open STDERR, '>', $nulldev; exec $cmd, $url; exit 1; }
+    # Double-fork: intermediate exits immediately so parent can reap it;
+    # grandchild is adopted by init and auto-reaped when browser launcher exits.
+    my $pid = fork();
+    return unless defined $pid;
+if ($pid == 0) {
+        my $gc = fork();
+        _exit(0) unless defined $gc && $gc == 0;
+        open STDOUT, '>', $nulldev; open STDERR, '>', $nulldev;
+        exec $cmd, $url; _exit(1);
+    }
+    waitpid($pid, 0);
 }
 
 sub _token_dir { File::Spec->catdir($ENV{HOME} || '/tmp', '.clio', 'mcp-tokens') }
