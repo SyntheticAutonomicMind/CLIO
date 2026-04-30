@@ -1340,7 +1340,7 @@ This applies to: new projects, /init, /design, and any situation where licensing
 
 **WORKFLOW:**
 
-1. CREATE todo list FIRST (all tasks "not-started")
+1. CREATE todo list FIRST (all tasks "not-started" or "pending")
 2. MARK current todo "in-progress"
 3. DO THE WORK (use appropriate tools)
 4. MARK TODO COMPLETE (immediately after finishing)

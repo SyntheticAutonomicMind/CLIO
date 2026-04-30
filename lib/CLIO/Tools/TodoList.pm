@@ -43,12 +43,12 @@ STEP 5 - REPEAT:
 
 **OPERATIONS:**
 - read: Get current todo list
-- write: Create/replace entire list (requires todoList array)
+- write: Create/replace entire list (requires todoList array, IDs auto-assigned)
 - update: Partial updates (requires todoUpdates array)
-- add: Append new todos to existing list (requires newTodos array)
+- add: Append new todos to existing list (requires newTodos array, IDs auto-assigned)
 
 **STATUS VALUES:**
-- not-started: Todo not yet begun
+- not-started: Todo not yet begun (alias: pending)
 - in-progress: Currently working (max 1 at a time)
 - completed: Fully finished
 - blocked: Blocked on external dependency
@@ -67,11 +67,11 @@ Manage a structured todo list to track progress and plan tasks.
 
 OPERATIONS:
 -  read: Get current todo list
--  write: Create/replace entire list (requires todoList array)
+-  write: Create/replace entire list (requires todoList array, IDs auto-assigned if omitted)
 -  update: Change status of existing todos (requires todoUpdates array)
--  add: Append new todos to existing list (requires newTodos array)
+-  add: Append new todos to existing list (requires newTodos array, IDs auto-assigned)
 
-STATUS VALUES: not-started, in-progress (MAX 1 at a time), completed, blocked
+STATUS VALUES: not-started, pending (alias for not-started), in-progress (MAX 1 at a time), completed, blocked
 
 WORKFLOW: Create list with write -> mark first in-progress -> do work -> mark completed -> mark next in-progress -> repeat.
 
@@ -133,13 +133,13 @@ sub get_additional_parameters {
     return {
         todoList => {
             type => "array",
-            description => "[REQUIRED for write] Complete array of all todos. IDs will be auto-assigned if creating new list.",
+            description => "[REQUIRED for write] Complete array of all todos. IDs are auto-assigned if omitted.",
             items => {
                 type => "object",
                 properties => {
                     id => {
                         type => "integer",
-                        description => "[REQUIRED] Unique ID (sequential numbers from 1).",
+                        description => "[OPTIONAL] Unique ID. Auto-assigned if omitted (sequential from 1).",
                     },
                     title => {
                         type => "string",
@@ -151,8 +151,8 @@ sub get_additional_parameters {
                     },
                     status => {
                         type => "string",
-                        enum => ["not-started", "in-progress", "completed", "blocked"],
-                        description => "[REQUIRED] Status: not-started, in-progress, completed, blocked.",
+                        enum => ["not-started", "pending", "in-progress", "completed", "blocked"],
+                        description => "[REQUIRED] Status. 'pending' is an alias for 'not-started'.",
                     },
                     priority => {
                         type => "string",
@@ -174,11 +174,12 @@ sub get_additional_parameters {
                     },
                 },
                 required => ["id", "title", "description", "status"],
+                required => ["title", "description", "status"],
             },
         },
         newTodos => {
             type => "array",
-            description => "[REQUIRED for add] New todos to add. IDs will be auto-assigned.",
+            description => "[REQUIRED for add] New todos to append to existing list. IDs are auto-assigned.",
             items => {
                 type => "object",
                 properties => {
@@ -192,8 +193,8 @@ sub get_additional_parameters {
                     },
                     status => {
                         type => "string",
-                        enum => ["not-started", "in-progress", "completed", "blocked"],
-                        description => "[OPTIONAL] Status. Default: not-started.",
+                        enum => ["not-started", "pending", "in-progress", "completed", "blocked"],
+                        description => "[OPTIONAL] Status. Default: not-started. 'pending' is an alias for 'not-started'.",
                     },
                     priority => {
                         type => "string",
@@ -216,8 +217,8 @@ sub get_additional_parameters {
                     },
                     status => {
                         type => "string",
-                        enum => ["not-started", "in-progress", "completed", "blocked"],
-                        description => "[OPTIONAL] New status.",
+                        enum => ["not-started", "pending", "in-progress", "completed", "blocked"],
+                        description => "[OPTIONAL] New status. 'pending' is an alias for 'not-started'.",
                     },
                     title => {
                         type => "string",
