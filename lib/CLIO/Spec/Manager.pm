@@ -322,7 +322,7 @@ sub change_status {
     for my $req (@$apply_requires) {
         my $found = 0;
         for my $s (@status) {
-            if ($s->{id} eq $req && $s->{status} eq 'done') {
+            if (defined $s->{id} && $s->{id} eq $req && defined $s->{status} && $s->{status} eq 'done') {
                 $found = 1;
                 last;
             }
@@ -551,7 +551,7 @@ sub get_spec_context {
         for my $c (@changes) {
             my $status = $self->change_status($c->{name});
             my $arts = $status->{artifacts} || [];
-            my $done = grep { $_->{status} eq 'done' } @$arts;
+            my $done = grep { defined $_->{status} && $_->{status} eq 'done' } @$arts;
             my $total = scalar @$arts;
             push @lines, "- **$c->{name}** ($done/$total artifacts) - schema: $c->{schema}";
         }
