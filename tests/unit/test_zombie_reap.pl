@@ -13,8 +13,8 @@ use warnings;
 use POSIX qw(WNOHANG);
 
 sub usleep {
-    my ($ms) = @_;
-    select(undef, undef, undef, $ms / 1000);
+    my ($us) = @_;
+    select(undef, undef, undef, $us / 1_000_000);
 }
 use Cwd qw(abs_path);
 use File::Basename qw(dirname);

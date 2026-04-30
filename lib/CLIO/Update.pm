@@ -499,19 +499,25 @@ sub check_for_updates_async {
     
     log_debug('Update', "Starting background update check");
     
-    # Fork to background
-    my $pid = fork();
+    # Double-fork to prevent zombie accumulation.
+    # Intermediate child exits immediately; grandchild is adopted by init
+    # and auto-reaped when done. Parent waits only for the fast intermediate.
+    my $intermediate = fork();
     
-    if (!defined $pid) {
+    if (!defined $intermediate) {
         # Fork failures during background update check are not critical
         # Only log in debug mode to avoid alarming users
         log_debug('Update', "Failed to fork for background update check");
         return;
     }
     
-    if ($pid == 0) {
-        # Child process - CRITICAL: Reset terminal state while connected to parent TTY
-        # This must happen BEFORE any file descriptor operations
+    if ($intermediate == 0) {
+        # Intermediate child: fork grandchild, then exit immediately
+        my $grandchild = fork();
+        exit 0 unless defined $grandchild && $grandchild == 0;
+        
+        # Grandchild: do the actual update check (adopted by init on intermediate exit)
+        # CRITICAL: Reset terminal state while still connected to parent TTY
         eval {
             require CLIO::Compat::Terminal;
             CLIO::Compat::Terminal::reset_terminal();
@@ -549,10 +555,11 @@ sub check_for_updates_async {
             close $fh;
         }
         
-        exit 0;  # Child exits
+        exit 0;  # Grandchild exits (reaped by init)
     }
     
-    # Parent continues immediately (non-blocking)
+    # Parent waits for intermediate (exits immediately, no blocking)
+    waitpid($intermediate, 0);
 }
 
 =head2 get_available_update

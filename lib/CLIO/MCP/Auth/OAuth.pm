@@ -205,7 +205,8 @@ sub _wait_for_callback {
         my $client = $server->accept();
         if ($client) {
             my $req = '';
-            while (my $line = <$client>) { $req .= $line; last if $line =~ /^?
+            while (my $line = <$client>) { $req .= $line; last if $line =~ /^
+?
 $/; }
             if ($req =~ /^GET\s+([^\s]+)/) {
                 my %params;
@@ -235,7 +236,17 @@ sub _open_browser {
     my $cmd = ($^O eq 'darwin') ? 'open' : ($^O eq 'MSWin32') ? 'start' : ($^O eq 'linux') ? 'xdg-open' : undef;
     return unless $cmd;
     my $nulldev = $^O eq 'MSWin32' ? 'nul' : '/dev/null';
-    if (fork() == 0) { open STDOUT, '>', $nulldev; open STDERR, '>', $nulldev; exec $cmd, $url; exit 1; }
+    # Double-fork: intermediate exits immediately so parent can reap it;
+    # grandchild is adopted by init and auto-reaped when browser launcher exits.
+    my $pid = fork();
+    return unless defined $pid;
+    if ($pid == 0) {
+        my $gc = fork();
+        exit 0 unless defined $gc && $gc == 0;
+        open STDOUT, '>', $nulldev; open STDERR, '>', $nulldev;
+        exec $cmd, $url; exit 1;
+    }
+    waitpid($pid, 0);
 }
 
 sub _token_dir { File::Spec->catdir($ENV{HOME} || '/tmp', '.clio', 'mcp-tokens') }

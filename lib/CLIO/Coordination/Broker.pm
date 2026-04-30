@@ -10,7 +10,7 @@ use IO::Socket::UNIX;
 use IO::Select;
 use CLIO::Util::JSON qw(encode_json decode_json);
 use Time::HiRes qw(time);
-use POSIX qw(strftime WNOHANG);
+use POSIX qw(strftime);
 use Carp qw(croak);
 use File::Path qw(make_path);
 require CLIO::Core::Logger;
@@ -32,17 +32,6 @@ Provides:
 - Agent status tracking
 
 Based on the proven PhotonMUD broker architecture.
-
-=head1 ZOMBIE REAPING
-
-The Broker performs periodic zombie process cleanup via C<waitpid(-1, WNOHANG)>
-calls during maintenance intervals. This prevents zombie accumulation in long-running
-CLIO sessions without interfering with explicit C<waitpid($pid, ...)> calls in
-other modules (Stdio, ProgressSpinner, SubAgent).
-
-This is safe because the Broker runs with C<local $SIG{CHLD} = 'IGNORE'> which
-blocks SIGCHLD signals during the event loop, preventing race conditions with
-explicit waitpid callers.
 
 =cut
 
@@ -196,7 +185,6 @@ sub event_loop {
             }
             
             if (time() - $last_maintenance > 10) {
-                1 while waitpid(-1, WNOHANG) > 0;  # Clean up any zombie children that accumulated
                 $self->do_maintenance();
                 $last_maintenance = time();
             }
