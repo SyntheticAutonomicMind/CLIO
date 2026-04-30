@@ -13,6 +13,7 @@ use CLIO::UI::ANSI;
 use CLIO::UI::Theme;
 use CLIO::UI::Terminal qw(box_char ui_char);
 use CLIO::UI::ProgressSpinner;
+use POSIX qw(_exit);
 use CLIO::UI::CommandHandler;
 use CLIO::UI::Display;
 use CLIO::UI::HostProtocol;
@@ -1383,17 +1384,23 @@ sub check_for_updates_async {
         log_debug('Chat', "Skipping async update check on Windows (no fork)");
         return;
     }
-    my $pid = fork();
+    # Double-fork: intermediate exits immediately so parent can reap it;
+    # grandchild is adopted by init and auto-reaped when the check finishes.
+    my $intermediate = fork();
     
-    if (!defined $pid) {
+    if (!defined $intermediate) {
         # Fork failed - silently continue
         log_warning('Chat', "Failed to fork update checker: $!");
         return;
     }
     
-    if ($pid == 0) {
-        # Child process - check for updates
-                # Reset terminal state first, while still connected to parent TTY
+    if ($intermediate == 0) {
+        # Intermediate child: fork grandchild, then exit immediately
+        my $grandchild = fork();
+        _exit(0) unless defined $grandchild && $grandchild == 0;
+        
+        # Grandchild: check for updates (adopted by init on intermediate exit)
+        # Reset terminal state first, while still connected to parent TTY
         # This must happen BEFORE closing any file descriptors
         # Use light reset - no ANSI codes needed since we're about to close output
         eval {
@@ -1402,8 +1409,6 @@ sub check_for_updates_async {
         };
         
         # Close stdin/stdout/stderr to avoid interfering with parent's terminal
-        # The child doesn't need terminal I/O and keeping these open can cause
-        # readline issues in the parent process (e.g., Ctrl-D hanging on first input)
         close(STDIN);
         close(STDOUT);
         close(STDERR);
@@ -1411,11 +1416,11 @@ sub check_for_updates_async {
         eval {
             $updater->check_for_updates();
         };
-        # Can't print errors since STDERR is closed, just exit
-        exit 0;  # Child exits
+        _exit(0);  # Grandchild exits (reaped by init)
     }
     
-    # Parent continues - don't wait for child
+    # Parent waits for intermediate (exits immediately, no blocking)
+    waitpid($intermediate, 0);
 }
 
 =head2 check_for_update_notification
