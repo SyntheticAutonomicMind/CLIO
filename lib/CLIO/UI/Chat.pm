@@ -1397,7 +1397,7 @@ sub check_for_updates_async {
     if ($intermediate == 0) {
         # Intermediate child: fork grandchild, then exit immediately
         my $grandchild = fork();
-        POSIX::_exit(0) unless defined $grandchild && $grandchild == 0;
+        _exit(0) unless defined $grandchild && $grandchild == 0;
         
         # Grandchild: check for updates (adopted by init on intermediate exit)
         # Reset terminal state first, while still connected to parent TTY
@@ -1416,7 +1416,7 @@ sub check_for_updates_async {
         eval {
             $updater->check_for_updates();
         };
-        POSIX::_exit(0);  # Grandchild exits (reaped by init)
+        _exit(0);  # Grandchild exits (reaped by init)
     }
     
     # Parent waits for intermediate (exits immediately, no blocking)

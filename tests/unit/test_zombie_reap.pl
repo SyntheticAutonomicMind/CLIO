@@ -99,12 +99,16 @@ print "1..7\n";
 print "Test 1: No global SIGCHLD handler that steals exits from callers\n";
 my $has_bad_handler = 0;
 my $subagent_path = "$project_root/lib/CLIO/Coordination/SubAgent.pm";
+my $file_open_failed = 0;
 if (open(my $fh, '<', $subagent_path)) {
     my $content = do { local $/; <$fh> };
     $has_bad_handler = 1 if $content =~ /\$SIG\{CHLD\}\s*=.*waitpid.*-1/s;
     close $fh;
+} else {
+    $file_open_failed = 1;
+    print "  ERROR - Could not open $subagent_path: $!\n";
 }
-report(!$has_bad_handler, "SubAgent.pm has no global SIGCHLD handler using waitpid(-1,...)");
+report(!$has_bad_handler && !$file_open_failed, "SubAgent.pm has no global SIGCHLD handler using waitpid(-1,...)");
 
 # ── Test 2: Explicit waitpid($pid, 0) returns correct pid and exit code ───────
 # Validates the tracked-fork pattern used by ProgressSpinner, Stdio transport,

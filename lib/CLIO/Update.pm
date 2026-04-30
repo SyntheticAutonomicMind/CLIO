@@ -515,7 +515,7 @@ sub check_for_updates_async {
     if ($intermediate == 0) {
         # Intermediate child: fork grandchild, then exit immediately
         my $grandchild = fork();
-        POSIX::_exit(0) unless defined $grandchild && $grandchild == 0;
+        _exit(0) unless defined $grandchild && $grandchild == 0;
         
         # Grandchild: do the actual update check (adopted by init on intermediate exit)
         # CRITICAL: Reset terminal state while still connected to parent TTY
@@ -540,18 +540,18 @@ sub check_for_updates_async {
         
         if ($result && !$result->{error} && $result->{update_available}) {
             # Update available - cache the version
-            open my $fh, '>', $cache_file or POSIX::_exit(1);
+            open my $fh, '>', $cache_file or _exit(1);
             print $fh $result->{latest_version} . "\n";
             close $fh;
             
             # Also write detailed info
             my $info_file = File::Spec->catfile($self->{cache_dir}, 'update_info');
-            open my $info_fh, '>', $info_file or POSIX::_exit(1);
+            open my $info_fh, '>', $info_file or _exit(1);
             print $info_fh encode_json($result->{release_info} || {});
             close $info_fh;
         } else {
             # No update available or error - touch cache file to mark check complete
-            open my $fh, '>', $cache_file or POSIX::_exit(1);
+            open my $fh, '>', $cache_file or _exit(1);
             print $fh "up-to-date\n";
             close $fh;
         }
