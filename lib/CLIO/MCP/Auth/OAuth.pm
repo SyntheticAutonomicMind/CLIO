@@ -205,8 +205,7 @@ sub _wait_for_callback {
         my $client = $server->accept();
         if ($client) {
             my $req = '';
-            while (my $line = <$client>) { $req .= $line; last if $line =~ /^
-?
+            while (my $line = <$client>) { $req .= $line; last if $line =~ /^?
 $/; }
             if ($req =~ /^GET\s+([^\s]+)/) {
                 my %params;
