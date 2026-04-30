@@ -40,13 +40,12 @@ sub new {
 
 Operations:
 -  exec - Run command and capture output
--  execute - Alias for 'exec'
 -  validate - Check command safety before execution
 },
 # Timeout is an idle timeout: if the command produces no output for
 # $timeout seconds it is killed. Active commands that keep writing
 # output will not be killed until the hard ceiling (10min default).
-        supported_operations => [qw(exec execute validate)],
+        supported_operations => [qw(exec validate)],
         %opts,
     );
 }
@@ -54,6 +53,7 @@ Operations:
 =head2 get_tool_definition
 
 Override to mark command parameter as required for exec/execute operations.
+Override to mark command parameter as required for exec operations.
 
 Returns: Hashref with complete tool definition
 
@@ -67,9 +67,9 @@ sub get_tool_definition {
     # Mark command as required for exec and execute operations
     $def->{parameters}{required} = ["operation"];
     
-    # Add conditional requirement: command is required for exec/execute
+    # Mark command as required for exec operations
     $def->{parameters}{description} = 
-        "For exec/execute: 'command' parameter is required. " .
+        "For exec: 'command' parameter is required. " .
         "For validate: 'command' parameter is required.";
     
     return $def;
@@ -77,7 +77,6 @@ sub get_tool_definition {
 
 sub dispatch_table {
     return {
-        execute  => 'execute_command',
         exec     => 'execute_command',
         validate => 'validate_command',
     };
