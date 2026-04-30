@@ -240,7 +240,7 @@ sub _open_browser {
     # grandchild is adopted by init and auto-reaped when browser launcher exits.
     my $pid = fork();
     return unless defined $pid;
-if ($pid == 0) {
+    if ($pid == 0) {
         my $gc = fork();
         _exit(0) unless defined $gc && $gc == 0;
         open STDOUT, '>', $nulldev; open STDERR, '>', $nulldev;
