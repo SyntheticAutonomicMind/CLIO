@@ -327,8 +327,8 @@ sub validate {
     return \@errors unless $todos && @$todos;
     
     # Build ID set for quick lookups
-    my %todo_ids = map { $_->{id} => 1 } @$todos;
-    
+    my %todo_ids = map { defined $_->{id} ? ($_->{id} => 1) : () } @$todos;
+
     # Count in-progress todos
     my @in_progress = grep { defined $_->{status} && $_->{status} eq 'in-progress' } @$todos;
     if (@in_progress > 1) {
@@ -433,7 +433,7 @@ sub _has_circular_dependency {
     return 1 if $visited->{$todo_id};
     
     # Find the todo
-    my ($todo) = grep { $_->{id} == $todo_id } @$todos;
+    my ($todo) = grep { defined $_->{id} && $_->{id} == $todo_id } @$todos;
     return 0 unless $todo;
     
     # If no dependencies, no cycle
