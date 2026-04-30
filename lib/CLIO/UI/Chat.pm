@@ -13,6 +13,7 @@ use CLIO::UI::ANSI;
 use CLIO::UI::Theme;
 use CLIO::UI::Terminal qw(box_char ui_char);
 use CLIO::UI::ProgressSpinner;
+use POSIX qw(_exit);
 use CLIO::UI::CommandHandler;
 use CLIO::UI::Display;
 use CLIO::UI::HostProtocol;
@@ -1396,7 +1397,7 @@ sub check_for_updates_async {
     if ($intermediate == 0) {
         # Intermediate child: fork grandchild, then exit immediately
         my $grandchild = fork();
-        exit 0 unless defined $grandchild && $grandchild == 0;
+        POSIX::_exit(0) unless defined $grandchild && $grandchild == 0;
         
         # Grandchild: check for updates (adopted by init on intermediate exit)
         # Reset terminal state first, while still connected to parent TTY
@@ -1415,7 +1416,7 @@ sub check_for_updates_async {
         eval {
             $updater->check_for_updates();
         };
-        exit 0;  # Grandchild exits (reaped by init)
+        POSIX::_exit(0);  # Grandchild exits (reaped by init)
     }
     
     # Parent waits for intermediate (exits immediately, no blocking)

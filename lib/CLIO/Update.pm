@@ -12,6 +12,7 @@ use File::Basename qw(dirname);
 use File::Path qw(mkpath rmtree);
 use CLIO::Util::JSON qw(decode_json encode_json);
 use CLIO::Core::Logger qw(log_debug log_error log_warning);
+use POSIX qw(_exit);
 
 my $NULLDEV = $^O eq 'MSWin32' ? 'nul' : '/dev/null';
 
@@ -514,7 +515,7 @@ sub check_for_updates_async {
     if ($intermediate == 0) {
         # Intermediate child: fork grandchild, then exit immediately
         my $grandchild = fork();
-        exit 0 unless defined $grandchild && $grandchild == 0;
+        POSIX::_exit(0) unless defined $grandchild && $grandchild == 0;
         
         # Grandchild: do the actual update check (adopted by init on intermediate exit)
         # CRITICAL: Reset terminal state while still connected to parent TTY
@@ -539,23 +540,23 @@ sub check_for_updates_async {
         
         if ($result && !$result->{error} && $result->{update_available}) {
             # Update available - cache the version
-            open my $fh, '>', $cache_file or exit 1;
+            open my $fh, '>', $cache_file or POSIX::_exit(1);
             print $fh $result->{latest_version} . "\n";
             close $fh;
             
             # Also write detailed info
             my $info_file = File::Spec->catfile($self->{cache_dir}, 'update_info');
-            open my $info_fh, '>', $info_file or exit 1;
+            open my $info_fh, '>', $info_file or POSIX::_exit(1);
             print $info_fh encode_json($result->{release_info} || {});
             close $info_fh;
         } else {
             # No update available or error - touch cache file to mark check complete
-            open my $fh, '>', $cache_file or exit 1;
+            open my $fh, '>', $cache_file or POSIX::_exit(1);
             print $fh "up-to-date\n";
             close $fh;
         }
         
-        exit 0;  # Grandchild exits (reaped by init)
+        POSIX::_exit(0);  # Grandchild exits (reaped by init)
     }
     
     # Parent waits for intermediate (exits immediately, no blocking)

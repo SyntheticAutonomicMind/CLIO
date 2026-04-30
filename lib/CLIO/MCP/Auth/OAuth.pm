@@ -37,6 +37,7 @@ use CLIO::Util::JSON qw(encode_json decode_json);
 use MIME::Base64;
 use Digest::SHA qw(sha256);
 use File::Spec;
+use POSIX qw(_exit);
 use CLIO::Core::Logger qw(log_debug log_error);
 
 sub new {

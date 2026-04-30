@@ -64,7 +64,7 @@
 
 use strict;
 use warnings;
-use POSIX qw(WNOHANG);
+use POSIX qw(WNOHANG ECHILD);
 use Cwd qw(abs_path);
 use File::Basename qw(dirname);
 
@@ -237,8 +237,9 @@ usleep(500_000);
 # Grandchild was adopted by init; our process has no children left.
 # waitpid(-1, WNOHANG) must return -1 (ECHILD): no zombie in our process.
 my $reap = waitpid(-1, WNOHANG);
-report($reap == -1 || $reap == 0,
-    "Double-fork: waitpid(-1,WNOHANG)=$reap after slow child finished (no zombie; -1=ECHILD expected)");
+my $echild = ($reap == -1 && $! == ECHILD);
+report($echild,
+    "Double-fork: waitpid(-1,WNOHANG) returned -1 with ECHILD (no zombie in our process)");
 
 print "\nResults: $pass passed, $fail failed\n";
 exit($fail > 0 ? 1 : 0);
