@@ -173,6 +173,9 @@ report($result == $pid3,
 # exit WITHOUT calling waitpid, then checks ps for Z state. Expects a zombie.
 print "Test 6: PROOF OF PROBLEM - naive fire-and-forget fork creates zombie\n";
 my $ps_opt = $^O eq 'darwin' ? 'state' : 'stat';
+my $old_sigchld = $SIG{CHLD};
+$SIG{CHLD} = 'DEFAULT';
+
 my $naive_pid = fork();
 if ($naive_pid == 0) {
     # Simulate slow background work: HTTP request, browser exec, update check
@@ -181,14 +184,24 @@ if ($naive_pid == 0) {
 }
 # Parent "returns" from fire-and-forget call. No waitpid. No signal handler.
 # With 'local $SIG{CHLD}="IGNORE"', the handler would have reverted here.
-usleep(200_000);  # Let slow child finish and become a zombie
+usleep(250_000);  # Let slow child finish
 
+# Primary proof (portable): an unreaped dead child is returned by WNOHANG.
+# This is the zombie state from the parent's perspective.
+my $probe = waitpid($naive_pid, WNOHANG);
+
+# Secondary signal (best effort): visible Z state in ps output.
 my $naive_stat = `ps -o $ps_opt= -p $naive_pid 2>/dev/null`;
-my $is_zombie = defined($naive_stat) && $naive_stat =~ /Z/;
-waitpid($naive_pid, 0);  # Clean up so we don't leave a zombie after the test
+my $is_zombie_in_ps = defined($naive_stat) && $naive_stat =~ /Z/;
 
-report($is_zombie,
-    "Naive fork() with no waitpid left pid=$naive_pid in Z (zombie) state - problem confirmed");
+# If still running (unlikely), block once to clean up.
+waitpid($naive_pid, 0) if $probe == 0;
+
+$SIG{CHLD} = $old_sigchld;
+
+my $problem_confirmed = ($probe == $naive_pid) || $is_zombie_in_ps;
+report($problem_confirmed,
+    "Naive fork() without waitpid shows unreaped child (waitpid probe=$probe, ps='$naive_stat')");
 
 # ── Test 7: PROOF OF FIX - double-fork prevents zombie for slow child ─────────
 # This is the fix applied to Update.pm, MCP::Auth::OAuth::_open_browser,
