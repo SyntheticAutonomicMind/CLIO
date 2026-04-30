@@ -27,10 +27,11 @@ Based on SAM's TodoManager pattern.
 **Storage Location**: sessions/<session_id>/todos.json
 
 **Todo Item Structure**:
-- id: Integer (sequential, starts at 1)
+- id: Integer (sequential, starts at 1, auto-assigned if omitted)
 - title: String (3-7 words, concise label)
 - description: String (detailed context, requirements, file paths)
-- status: String (not-started | in-progress | completed | blocked)
+- status: String (not-started | pending | in-progress | completed | blocked)
+  - 'pending' is an alias for 'not-started', normalized on input
 - priority: String (low | medium | high | critical) - optional
 - dependencies: Array of todo IDs - optional
 - progress: Number 0.0-1.0 - optional
@@ -121,8 +122,11 @@ sub read {
 
 Write complete todo list (replaces entire list).
 
+IDs are auto-assigned to any todo items that don't have one.
+The 'pending' status is normalized to 'not-started'.
+
 Arguments:
-- todos: Arrayref of todo items
+- todos: Arrayref of todo items (id field optional, auto-assigned)
 
 Returns: (success_bool, error_message_or_undef)
 
@@ -132,6 +136,24 @@ sub write {
     my ($self, $todos) = @_;
     
     $todos ||= [];
+    
+    # Auto-assign IDs to todos that don't have them
+    my $max_id = 0;
+    foreach my $todo (@$todos) {
+        $max_id = $todo->{id} if defined $todo->{id} && $todo->{id} > $max_id;
+    }
+    foreach my $todo (@$todos) {
+        unless (defined $todo->{id}) {
+            $max_id++;
+            $todo->{id} = $max_id;
+        }
+        # Normalize 'pending' to 'not-started'
+        if (defined $todo->{status} && $todo->{status} eq 'pending') {
+            $todo->{status} = 'not-started';
+        }
+        # Default status
+        $todo->{status} ||= 'not-started';
+    }
     
     # Validate the todo list
     my $errors = $self->validate($todos);
@@ -198,6 +220,12 @@ sub update {
         }
         
         my $todo_id = $update->{id};
+        
+        # Normalize 'pending' to 'not-started'
+        if (defined $update->{status} && $update->{status} eq 'pending') {
+            $update->{status} = 'not-started';
+        }
+        
         my $found = 0;
         
         foreach my $todo (@$todos) {
@@ -281,6 +309,10 @@ sub add {
     foreach my $new_todo (@$new_todos) {
         $max_id++;
         $new_todo->{id} = $max_id;
+        # Normalize 'pending' to 'not-started'
+        if (defined $new_todo->{status} && $new_todo->{status} eq 'pending') {
+            $new_todo->{status} = 'not-started';
+        }
         $new_todo->{status} ||= 'not-started';
         $new_todo->{createdAt} = $now;
         $new_todo->{updatedAt} = $now;
@@ -360,7 +392,7 @@ sub validate {
         
         # Status validation
         if ($todo->{status}) {
-            unless ($todo->{status} =~ /^(not-started|in-progress|completed|blocked)$/) {
+            unless ($todo->{status} =~ /^(not-started|pending|in-progress|completed|blocked)$/) {
                 push @errors, "Todo #$id has invalid status '$todo->{status}'";
             }
         }
