@@ -573,7 +573,7 @@ sub check_for_updates_async {
             close $fh;
         }
         
-        POSIX::_exit(0);  # Grandchild exits (reaped by init)
+        _exit(0);  # Grandchild exits (reaped by init)
     }
     
     # Parent waits for intermediate (exits immediately, no blocking)
