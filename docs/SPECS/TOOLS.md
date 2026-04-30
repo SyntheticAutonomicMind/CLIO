@@ -268,9 +268,9 @@ CLIO provides comprehensive tooling across multiple categories. Every tool opera
 | Operation | Description | Required Parameters |
 |-----------|-------------|---------------------|
 | `read` | Get current todo list | None |
-| `write` | Create/replace todo list | `todoList` (array, required) |
+| `write` | Create/replace todo list | `todoList` (array, required; IDs auto-assigned if omitted) |
 | `update` | Update todo status | `todoUpdates` (array, required) |
-| `add` | Add new todos | `newTodos` (array, required) |
+| `add` | Add new todos | `newTodos` (array, required; IDs auto-assigned) |
 
 ---
 

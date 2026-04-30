@@ -407,7 +407,7 @@ The AI uses todo lists to track progress on multi-step tasks:
 /todo add "Fix tests"    # Add a task manually
 ```
 
-Todos have statuses (not-started, in-progress, completed, blocked), priorities (low/medium/high/critical), and descriptions. The AI updates them as it works.
+Todos have statuses (not-started/pending, in-progress, completed, blocked), priorities (low/medium/high/critical), and descriptions. The AI updates them as it works.
 
 ---
 
