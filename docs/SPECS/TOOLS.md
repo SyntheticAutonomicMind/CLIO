@@ -220,7 +220,7 @@ CLIO provides comprehensive tooling across multiple categories. Every tool opera
 
 | Operation | Description | Required Parameters |
 |-----------|-------------|---------------------|
-| `exec` / `execute` | Execute a shell command | `command` |
+| `exec` | Execute a shell command | `command` |
 | `validate` | Check command safety before execution | `command` |
 
 **Parameters:**
