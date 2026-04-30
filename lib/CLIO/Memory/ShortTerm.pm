@@ -90,7 +90,7 @@ sub get_recent_user_messages {
     my ($self, $count) = @_;
     $count //= 10;
     
-    my @user_messages = grep { $_->{role} eq 'user' } @{$self->{history}};
+    my @user_messages = grep { defined $_->{role} && $_->{role} eq 'user' } @{$self->{history}};
     
     # Return last N messages
     my $start = @user_messages > $count ? @user_messages - $count : 0;
@@ -131,7 +131,7 @@ Get the most recent user message
 sub get_last_user_message {
     my ($self) = @_;
     
-    my @user_messages = grep { $_->{role} eq 'user' } @{$self->{history}};
+    my @user_messages = grep { defined $_->{role} && $_->{role} eq 'user' } @{$self->{history}};
     return undef unless @user_messages;
     
     return $user_messages[-1];

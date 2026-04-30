@@ -138,7 +138,7 @@ sub _cmd_overview {
         for my $c (@changes) {
             my $status = $mgr->change_status($c->{name});
             my $arts = $status->{artifacts} || [];
-            my $done = grep { $_->{status} eq 'done' } @$arts;
+            my $done = grep { defined $_->{status} && $_->{status} eq 'done' } @$arts;
             my $total = scalar @$arts;
             my $progress = $total > 0 ? "$done/$total" : "0/0";
             my $ready = $status->{apply_ready} ? $self->colorize(" ready", 'success') : '';

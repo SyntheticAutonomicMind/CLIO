@@ -644,9 +644,9 @@ sub trim_context {
     # current work was dropped.
     
     # Separate system messages (prompt, previous trim notices) from conversation
-    my @system = grep { $_->{role} eq 'system' } @messages;
-    my @non_system = grep { $_->{role} ne 'system' } @messages;
-    
+    my @system = grep { defined $_->{role} && $_->{role} eq 'system' } @messages;
+    my @non_system = grep { defined $_->{role} && $_->{role} ne 'system' } @messages;
+
     # Keep the most recent non-system messages (the tail of the conversation)
     my $keep_recent = 10;
     my @recent = @non_system >= $keep_recent 
