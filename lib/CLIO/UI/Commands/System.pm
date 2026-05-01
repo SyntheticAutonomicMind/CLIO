@@ -93,7 +93,7 @@ sub handle_shell_command {
     # Determine shell: $SHELL on Unix, bash or cmd.exe on Windows
     my $shell;
     if ($^O eq 'MSWin32') {
-        # Prefer bash from Git for Windows or BusyBox (added to PATH by MIRA)
+        # Prefer bash from Git for Windows or BusyBox (added to PATH by host application)
         my $bash = _find_windows_bash();
         $shell = $bash || $ENV{COMSPEC} || 'cmd.exe';
     } else {
