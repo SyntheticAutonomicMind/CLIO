@@ -16,7 +16,7 @@ All three levels share the same coordination infrastructure: broker messaging, f
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│  Host Application (MIRA, custom GUI)                             │
+│  Host Application (custom GUI)                                  │
 │  ┌────────────────────────────────────────────────────────────┐  │
 │  │  OSC Events (clio:status, clio:agent, clio:tree)           │  │
 │  └────────────────────────────────────────────────────────────┘  │
@@ -191,7 +191,7 @@ Primary CLIO Session
   │ Re-emits as clio:agent status OSC events
   │
   ▼
-Host Application (MIRA, custom GUI)
+Host Application (custom GUI)
   │
   │ Terminal title callback intercepts clio:agent events
   │ Renders agent hierarchy with live status
