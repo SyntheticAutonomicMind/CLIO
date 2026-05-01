@@ -610,7 +610,7 @@ sub get_all {
 
 Return the agent display name. Defaults to "CLIO" unless overridden
 by the CLIO_AGENT_NAME environment variable (used by host applications
-like MIRA to rebrand the interface).
+to rebrand the interface).
 
 =cut
 

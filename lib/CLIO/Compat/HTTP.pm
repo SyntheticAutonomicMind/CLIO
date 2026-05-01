@@ -279,7 +279,7 @@ Returns: Path to CA bundle file, or undef
 sub _find_ca_bundle {
     my ($self) = @_;
     
-    # Check environment variable first (set by MIRA/bundled runtimes)
+    # Check environment variable first (set by bundled runtimes)
     if ($ENV{SSL_CERT_FILE} && -f $ENV{SSL_CERT_FILE} && -r $ENV{SSL_CERT_FILE}) {
         return $ENV{SSL_CERT_FILE};
     }

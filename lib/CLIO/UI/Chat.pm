@@ -200,7 +200,7 @@ sub flush_output_buffer {
 
 =head2 agent_name
 
-Return the agent display name (e.g. "CLIO" or "MIRA").
+Return the agent display name (e.g. "CLIO").
 
 =cut
 

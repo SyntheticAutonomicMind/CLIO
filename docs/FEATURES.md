@@ -1207,7 +1207,7 @@ Primary Session
   |-- Polls broker for status updates
   |-- Re-emits as clio:agent status events
   |
-Host Application (MIRA, etc.)
+Host Application (host GUI, etc.)
   |-- Receives clio:agent events
   |-- Renders agent hierarchy with live status
 ```

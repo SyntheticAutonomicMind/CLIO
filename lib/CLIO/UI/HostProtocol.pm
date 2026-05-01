@@ -15,7 +15,7 @@ CLIO::UI::HostProtocol - Structured communication with host applications
 
 =head1 DESCRIPTION
 
-When CLIO runs inside a host application such as MIRA (detected via
+When CLIO runs inside a host application (detected via
 CLIO_HOST_PROTOCOL=1 environment variable), this module emits OSC
 escape sequences carrying structured metadata. The host intercepts
 these to drive native UI elements like spinners, status bars, todo
