@@ -536,6 +536,13 @@ sub _get_api_key {
         }
     }
     
+    # Priority 3: Environment variable (for remote execution and CI/CD)
+    if ($ENV{CLIO_API_KEY} && length($ENV{CLIO_API_KEY}) > 0) {
+        log_debug('APIManager', "Using API key from CLIO_API_KEY environment variable");
+        $self->{using_exchanged_token} = 1 if $is_copilot_provider;
+        return $ENV{CLIO_API_KEY};
+    }
+    
     # No API key available - only warn if provider actually requires one
     my $provider = ($self->{config} && $self->{config}->can('get'))
         ? ($self->{config}->get('provider') || '') : '';

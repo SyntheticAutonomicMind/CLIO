@@ -10,6 +10,7 @@ binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use parent 'CLIO::Tools::Tool';
 use Cwd 'getcwd';
+use File::Basename 'dirname';
 use CLIO::Util::JSON qw(encode_json decode_json);
 use File::Temp qw(tempdir);
 use File::Spec;
@@ -52,17 +53,21 @@ Execute a CLIO task on a remote system.
 Parameters:
 - host (required): SSH connection target (user@hostname)
 - command (required): Task description for remote CLIO
-- model (required): AI model to use on remote
-- api_key (required): API key for remote provider
+- model (optional): AI model to use on remote (defaults to current session model)
+- api_key (optional): API key for remote provider (auto-populated from session)
 - timeout (optional): Execution timeout in seconds (default: 300)
 - cleanup (optional): Delete CLIO after execution (default: 1)
 - ssh_key (optional): Path to SSH private key
 - ssh_port (optional): SSH port (default: 22)
 - output_files (optional): Array of files to retrieve from remote
 - working_dir (optional): Working directory on remote (default: /tmp)
+- api_provider (optional): API provider (defaults to current session provider)
 
 Note: CLIO is copied from the local system to the remote, ensuring
 version consistency and eliminating dependency on GitHub releases.
+
+The harness auto-populates model, api_key, and api_provider from the
+current session. The AI agent never needs to specify these.
 
 =item prepare_remote
 
@@ -105,12 +110,12 @@ CLIO Distribution Method:
 
 Operations:
 -  execute_remote - Run a CLIO task on a remote system (PRIMARY OPERATION)
-   Takes: host, command, model (api_key auto-populated from GitHub token)
+   Takes: host, command
    Returns: Task output and any retrieved files
-   Security: API key passed via environment variable, never persisted on remote
-   
+   Security: API key auto-populated from session, never exposed to agent
+
 -  execute_parallel - Run task on MULTIPLE devices simultaneously
-   Takes: targets (device names, group name, or 'all'), command, model
+   Takes: targets (device names, group name, or 'all'), command
    Returns: Aggregated results from all devices
    Example: targets: "handhelds", command: "check disk space"
 
@@ -128,20 +133,17 @@ QUICK START:
   operation: "execute_remote"
   host: "user@hostname"  (SSH connection target)
   command: "Natural language description of task"
-  model: "gpt-4.1"  (or your preferred model)
-  (api_key: auto-populated from GitHub Copilot token - no need to specify)
+  (model and api_key are auto-populated from your session)
   
 PARALLEL EXECUTION:
   operation: "execute_parallel"
   targets: "handhelds"  (group name, or array of device names, or "all")
   command: "report disk space"
-  model: "gpt-4.1"
   
 The tool will automatically:
 - SSH into the host
-- Download CLIO from GitHub
-- Create minimal configuration
-- Auto-populate API key from current GitHub token
+- Copy CLIO from local system to remote
+- Auto-populate API key and model from current session
 - Execute your task with the remote LLM
 - Return results
 - Clean up automatically
@@ -253,7 +255,8 @@ sub execute_remote {
     my $ssh_port = $params->{ssh_port} || 22;
     my $output_files = $params->{output_files} || [];
     my $working_dir = $params->{working_dir} || '/tmp';
-    my $api_provider = $params->{api_provider} || 'github_copilot';
+    my $api_provider = $params->{api_provider};
+    my $api_base = $params->{api_base};
     
     # Resolve device name to host if needed
     my $resolved = $self->_resolve_device($host);
@@ -265,33 +268,85 @@ sub execute_remote {
         $model ||= $resolved->{default_model} if $resolved->{default_model};
     }
     
-    # Auto-populate API key from context config if not provided
-    unless ($api_key) {
-        if ($context && $context->{config}) {
-            # Try standard api_key first
-            $api_key = $context->{config}->get('api_key');
-            
-            # For GitHub Copilot, try to get the GitHub token
-            if (!$api_key && $api_provider eq 'github_copilot') {
-                eval {
-                    require CLIO::Core::GitHubAuth;
-                    my $auth = CLIO::Core::GitHubAuth->new();
-                    my $tokens = $auth->load_tokens();
-                    $api_key = $tokens->{github_token} if $tokens && $tokens->{github_token};
-                };
-            }
+    # Auto-populate model from current session if not specified
+    # The harness injects this so the agent never needs to care about it
+    unless ($model) {
+        if ($context && $context->{api_manager} && $context->{api_manager}->can('get_current_model')) {
+            $model = $context->{api_manager}->get_current_model();
+        } elsif ($context && $context->{current_model}) {
+            $model = $context->{current_model};
         }
     }
     
-    # Validate parameters (now with potentially-populated API key)
+    # Model is required - must come from params, context, or device config
+    unless ($model) {
+        return $self->error_result("Missing required parameter: model. Specify a model or run from a session with a configured model.");
+    }
+    
+    # Auto-populate API provider from current session
+    unless ($api_provider && $api_provider ne 'github_copilot') {
+        if ($context && $context->{api_manager} && $context->{api_manager}->can('get_current_provider')) {
+            my $session_provider = $context->{api_manager}->get_current_provider();
+            $api_provider = $session_provider if $session_provider;
+        } elsif ($context && $context->{config}) {
+            my $config_provider = $context->{config}->get('provider');
+            $api_provider = $config_provider if $config_provider;
+        }
+    }
+    
+    # Auto-populate API base from current session (for custom proxies)
+    unless ($api_base) {
+        if ($context && $context->{api_manager} && $context->{api_manager}->{api_base}) {
+            $api_base = $context->{api_manager}->{api_base};
+        } elsif ($context && $context->{config}) {
+            $api_base = $context->{config}->get('api_base');
+        }
+    }
+    
+    # Auto-populate API key from current session - the harness injects this
+    # so the agent never needs to know about or handle API keys
+    unless ($api_key) {
+        # Priority 1: Get from the live api_manager (has the resolved/authenticated key)
+        if ($context && $context->{api_manager} && $context->{api_manager}->{api_key}) {
+            $api_key = $context->{api_manager}->{api_key};
+            log_debug('RemoteExecution', "Auto-populated api_key from api_manager (length=" . length($api_key) . ")");
+        }
+        # Priority 2: Get from config
+        elsif ($context && $context->{config}) {
+            $api_key = $context->{config}->get('api_key');
+            log_debug('RemoteExecution', "Auto-populated api_key from config (length=" . length($api_key // '') . ")");
+        }
+        # Priority 3: For GitHub Copilot, get from GitHubAuth
+        if (!$api_key && $api_provider eq 'github_copilot') {
+            eval {
+                require CLIO::Core::GitHubAuth;
+                my $auth = CLIO::Core::GitHubAuth->new();
+                my $tokens = $auth->load_tokens();
+                $api_key = $tokens->{github_token} if $tokens && $tokens->{github_token};
+                log_debug('RemoteExecution', "Auto-populated api_key from GitHubAuth") if $api_key;
+            };
+        }
+    }
+    
+    log_debug('RemoteExecution', "Auto-populated: model=$model, provider=$api_provider, api_key_length=" . length($api_key // ''));
+    
+    # Validate parameters (now with auto-populated values)
     my $validation = $self->_validate_execute_params({ 
         host => $host,
         command => $command,
-        model => $model,
         api_key => $api_key
     });
     unless ($validation->{success}) {
         return $validation;
+    }
+    
+    # API key is critical for remote execution - fail early if missing
+    unless ($api_key) {
+        return $self->error_result(
+            "No API key available for remote execution. " .
+            "The session must have a configured API key. " .
+            "Use /api key <value> or /api provider <name> to configure."
+        );
     }
     
     # Validate SSH setup before attempting execution
@@ -376,6 +431,7 @@ sub execute_remote {
             api_provider => $api_provider,
             model => $model,
             api_key => $api_key,
+            api_base => $api_base,
         );
         
         unless ($config_result->{success}) {
@@ -502,7 +558,7 @@ Execute a command on multiple devices in parallel.
 Parameters:
 - targets (required): Array of device names, group name, or 'all'
 - command (required): Task description for CLIO
-- model (required): AI model to use
+- model (optional): AI model to use (defaults to current session model)
 - timeout (optional): Timeout per device (default: 300)
 
 Returns aggregated results from all devices.
@@ -517,11 +573,62 @@ sub execute_parallel {
     my $model = $params->{model};
     my $timeout = $params->{timeout} || 300;
     my $api_key = $params->{api_key};
-    my $api_provider = $params->{api_provider} || 'github_copilot';
+    my $api_provider = $params->{api_provider};
+    my $api_base = $params->{api_base};
     
     # Validate required params
-    unless ($targets && $command && $model) {
-        return $self->error_result("Missing required parameters: targets, command, model");
+    unless ($targets && $command) {
+        return $self->error_result("Missing required parameters: targets, command");
+    }
+    
+    # Auto-populate model from current session if not specified
+    unless ($model) {
+        if ($context && $context->{api_manager} && $context->{api_manager}->can('get_current_model')) {
+            $model = $context->{api_manager}->get_current_model();
+        } elsif ($context && $context->{current_model}) {
+            $model = $context->{current_model};
+        }
+    }
+    
+    # Model is required - must come from params, context, or device config
+    unless ($model) {
+        return $self->error_result("Missing required parameter: model. Specify a model or run from a session with a configured model.");
+    }
+    
+    # Auto-populate API provider from current session
+    unless ($api_provider) {
+        if ($context && $context->{api_manager} && $context->{api_manager}->can('get_current_provider')) {
+            $api_provider = $context->{api_manager}->get_current_provider();
+        } elsif ($context && $context->{config}) {
+            $api_provider = $context->{config}->get('provider');
+        }
+        $api_provider ||= 'github_copilot';  # Fallback default
+    }
+    
+    # Auto-populate API base from current session (for custom proxies)
+    unless ($api_base) {
+        if ($context && $context->{api_manager} && $context->{api_manager}->{api_base}) {
+            $api_base = $context->{api_manager}->{api_base};
+        } elsif ($context && $context->{config}) {
+            $api_base = $context->{config}->get('api_base');
+        }
+    }
+    
+    # Auto-populate API key from current session - the harness injects this
+    unless ($api_key) {
+        if ($context && $context->{api_manager} && $context->{api_manager}->{api_key}) {
+            $api_key = $context->{api_manager}->{api_key};
+        } elsif ($context && $context->{config}) {
+            $api_key = $context->{config}->get('api_key');
+        }
+        if (!$api_key && $api_provider eq 'github_copilot') {
+            eval {
+                require CLIO::Core::GitHubAuth;
+                my $auth = CLIO::Core::GitHubAuth->new();
+                my $tokens = $auth->load_tokens();
+                $api_key = $tokens->{github_token} if $tokens && $tokens->{github_token};
+            };
+        }
     }
     
     # Resolve targets to list of devices
@@ -532,21 +639,6 @@ sub execute_parallel {
     }
     
     log_debug('RemoteExecution', "Parallel execution on " . scalar(@devices) . " device(s)");
-    
-    # Auto-populate API key if needed
-    unless ($api_key) {
-        if ($context && $context->{config}) {
-            $api_key = $context->{config}->get('api_key');
-            if (!$api_key && $api_provider eq 'github_copilot') {
-                eval {
-                    require CLIO::Core::GitHubAuth;
-                    my $auth = CLIO::Core::GitHubAuth->new();
-                    my $tokens = $auth->load_tokens();
-                    $api_key = $tokens->{github_token} if $tokens && $tokens->{github_token};
-                };
-            }
-        }
-    }
     
     # Execute on all devices
     # For simplicity and reliability, execute sequentially for now
@@ -565,6 +657,7 @@ sub execute_parallel {
                 model => $model,
                 api_key => $api_key,
                 api_provider => $api_provider,
+                api_base => $api_base,
                 timeout => $timeout,
                 ssh_port => $device->{ssh_port} || 22,
                 ssh_key => $device->{ssh_key},
@@ -1050,12 +1143,18 @@ sub _validate_path {
 sub _validate_execute_params {
     my ($self, $params) = @_;
     
-    my $required = [qw(host command model api_key)];
+    # host and command are required; api_key is auto-populated from session
+    my $required = [qw(host command)];
     
     for my $param (@$required) {
         unless ($params->{$param}) {
             return $self->error_result("Missing required parameter: $param");
         }
+    }
+    
+    # Warn if api_key is empty (but don't fail - some providers don't need keys)
+    unless ($params->{api_key}) {
+        log_warning('RemoteExecution', "No API key available for remote execution - remote CLIO may fail to authenticate");
     }
     
     return $self->success_result("Parameters valid");
@@ -1358,15 +1457,27 @@ sub _copy_local_clio_to_remote {
         log_debug('RemoteExecution', "Copying local CLIO to remote: $host:$remote_dir");
     }
     
-    # Find the local CLIO directory
-    # We're running from the CLIO directory, so use current directory
+    # Find the local CLIO directory by searching up from CWD
+    # The agent may be running from a subdirectory (e.g., scratch/), so we
+    # need to walk up to find the root containing both 'clio' and 'lib/'
     my $local_clio_dir = getcwd();
+    unless (-f "$local_clio_dir/clio" && -d "$local_clio_dir/lib") {
+        # Walk up directories looking for CLIO root
+        my $search_dir = $local_clio_dir;
+        while ($search_dir ne '/') {
+            if (-f "$search_dir/clio" && -d "$search_dir/lib") {
+                $local_clio_dir = $search_dir;
+                last;
+            }
+            $search_dir = dirname($search_dir);
+        }
+    }
     
     # Verify we have clio executable and lib directory
     unless (-f "$local_clio_dir/clio" && -d "$local_clio_dir/lib") {
         return {
             success => 0,
-            error => "Local CLIO not found (expected $local_clio_dir/clio and $local_clio_dir/lib)",
+            error => "Local CLIO not found (searched from " . getcwd() . " up to /). Expected to find 'clio' executable and 'lib/' directory.",
         };
     }
     
@@ -1462,22 +1573,28 @@ sub _create_remote_config {
     my $api_provider = $args{api_provider} || 'github_copilot';
     my $model = $args{model};
     my $api_key = $args{api_key} || '';
+    my $api_base = $args{api_base} || '';
     
     # Create minimal config directory
     my $config_dir = "$remote_dir/.clio";
     my $q_config_dir = $self->_shell_quote($config_dir);
     
-    # Escape api_key for JSON
+    # Escape values for JSON
     my $escaped_api_key = $api_key;
     $escaped_api_key =~ s/\\/\\\\/g;
     $escaped_api_key =~ s/"/\\"/g;
+    my $escaped_api_base = $api_base;
+    $escaped_api_base =~ s/\\/\\\\/g;
+    $escaped_api_base =~ s/"/\\"/g;
     
     # Build config creation script
     # For GitHub Copilot, we need to also create the tokens file
     my $config_script;
     
     if ($api_provider eq 'github_copilot' && $api_key) {
-        # Create both config.json and github_tokens.json for GitHub Copilot
+        # GitHub Copilot: create config with provider/model and github_tokens.json
+        # API key passed via CLIO_API_KEY env var, not written to files
+        my $api_base_json = $api_base ? ",\n    \"api_base\": \"$escaped_api_base\"" : '';
         $config_script = <<"SCRIPT";
 set -e
 mkdir -p $q_config_dir
@@ -1485,31 +1602,24 @@ mkdir -p $q_config_dir
 cat > $q_config_dir/config.json << 'CONFEOF'
 {
     "provider": "$api_provider",
-    "model": "$model"
+    "model": "$model"$api_base_json
 }
 CONFEOF
-
-cat > $q_config_dir/github_tokens.json << 'TOKEOF'
-{
-    "github_token": "$escaped_api_key",
-    "copilot_token": null,
-    "saved_at": 0
-}
-TOKEOF
 
 echo "CONFIG_DIR=$config_dir"
 SCRIPT
     } else {
-        # Standard config with api_key
+        # Standard config: provider, model, api_base
+        # API key passed via CLIO_API_KEY env var, not written to config file
+        my $api_base_json = $api_base ? ",\n    \"api_base\": \"$escaped_api_base\"" : '';
         $config_script = <<"SCRIPT";
 set -e
 mkdir -p $q_config_dir
 
 cat > $q_config_dir/config.json << 'CONFEOF'
 {
-    "api_key": "$escaped_api_key",
     "provider": "$api_provider",
-    "model": "$model"
+    "model": "$model"$api_base_json
 }
 CONFEOF
 
@@ -1518,6 +1628,15 @@ SCRIPT
     }
     
     # Execute config creation
+    log_debug('RemoteExecution', "Creating config: provider=$api_provider, model=$model, api_key_length=" . length($api_key // ''));
+    
+    # Debug: show the actual config script content
+    if (should_log('DEBUG')) {
+        my $debug_script = $config_script;
+        $debug_script =~ s/("api_key":\s*)"[^"]*"/$1"***REDACTED***"/;
+        log_debug('RemoteExecution', "Config script:\n$debug_script");
+    }
+    
     my $result = $self->_ssh_exec(
         host => $host,
         ssh_key => $ssh_key,
@@ -1550,6 +1669,7 @@ sub _execute_clio_remote {
     my $timeout = $args{timeout} || 300;
     my $remote_dir = $args{remote_dir};
     my $model = $args{model};
+    my $api_key = $args{api_key};
     
     # Validate paths used in shell script
     for my $path ($clio_path, $config_dir, $remote_dir) {
@@ -1567,12 +1687,20 @@ sub _execute_clio_remote {
     # Escape command for shell single-quote embedding
     $command =~ s/'/'\\''/g;
     
-    # Build execution script with quoted values
+    # Build execution script
+    # API key is passed via environment variable, never written to config file
+    # This ensures the key exists only in memory on the remote system
+    my $env_exports = "export HOME=$q_remote_dir\nexport CLIO_HOME=$q_config_dir";
+    if ($api_key) {
+        # Shell-quote the API key for safe env var passing
+        my $q_api_key = $self->_shell_quote($api_key);
+        $env_exports .= "\nexport CLIO_API_KEY=$q_api_key";
+    }
+    
     my $exec_script = <<"SHELL";
 #!/bin/bash
 set -e
-export HOME=$q_remote_dir
-export CLIO_HOME=$q_config_dir
+$env_exports
 
 cd $q_remote_dir
 
@@ -1647,7 +1775,7 @@ sub get_additional_parameters {
     return {
         host => {
             type => "string",
-                    description => "[REQUIRED for execute_remote, prepare_remote, cleanup_remote, check_remote] SSH connection target (e.g., user at hostname).",
+            description => "[REQUIRED for execute_remote, prepare_remote, cleanup_remote, check_remote] SSH connection target (e.g., user\@hostname).",
         },
         command => {
             type => "string",
@@ -1655,11 +1783,11 @@ sub get_additional_parameters {
         },
         model => {
             type => "string",
-            description => "[OPTIONAL] AI model to use on remote (e.g., gpt-4.1). Default: same as current session.",
+            description => "[OPTIONAL] AI model to use on remote. Auto-populated from current session model.",
         },
         api_key => {
             type => "string",
-            description => "[OPTIONAL] API key for remote provider. Auto-populated from GitHub Copilot token if not provided.",
+            description => "[OPTIONAL] API key for remote provider. Auto-populated from current session credentials.",
         },
         timeout => {
             type => "integer",
@@ -1684,7 +1812,11 @@ sub get_additional_parameters {
         },
         api_provider => {
             type => "string",
-            description => "[OPTIONAL] API provider. Default: github_copilot.",
+            description => "[OPTIONAL] API provider. Auto-populated from current session.",
+        },
+        api_base => {
+            type => "string",
+            description => "[OPTIONAL] API base URL. Auto-populated from current session (for custom proxies).",
         },
         working_dir => {
             type => "string",
@@ -1721,10 +1853,10 @@ Key design decisions:
 
 =head1 SECURITY CONSIDERATIONS
 
-- API keys passed via SSH_CLIO_API_KEY environment variable only
-- No persistent config files on remote after execution
+- API keys are written to a temporary config directory on the remote system
+- Config directory is cleaned up after execution by default (cleanup => 1)
 - Temporary directories with restricted permissions
-- Full cleanup of remote state by default
+- API keys are auto-populated from the current session - never exposed to the AI agent
 - SSH channel used for all credential transport
 
 =head1 SEE ALSO
