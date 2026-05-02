@@ -461,6 +461,11 @@ sub handle_update {
     my @action_details;
     foreach my $update (@$updates) {
         my $todo_id = $update->{id};
+        # Skip updates without valid todo_id
+        unless (defined $todo_id) {
+            push @action_details, "update with missing todo id skipped";
+            next;
+        }
         # Find the actual todo to get its title
         my ($todo) = grep { defined $_->{id} && $_->{id} == $todo_id } @$todos;
         my $title = $todo ? $todo->{title} : "unknown";
