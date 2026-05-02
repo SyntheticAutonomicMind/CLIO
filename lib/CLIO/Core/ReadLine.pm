@@ -326,7 +326,7 @@ sub readline {
         
         # Tab key (completion)
         if ($ord == 9) {
-            $self->handle_tab(\$input, \$cursor_pos, $completion_state);
+            $self->handle_tab(\$input, \$cursor_pos, $completion_state, $prompt);
             next;
         }
         
@@ -592,7 +592,7 @@ Handle tab completion
 =cut
 
 sub handle_tab {
-    my ($self, $input_ref, $cursor_pos_ref, $state) = @_;
+    my ($self, $input_ref, $cursor_pos_ref, $state, $prompt) = @_;
     
     return unless $self->{completer};
     
@@ -624,7 +624,7 @@ sub handle_tab {
         if (@candidates == 1) {
             $$input_ref = $candidates[0];
             $$cursor_pos_ref = length($$input_ref);
-            $self->redraw_line($input_ref, $cursor_pos_ref, $self->{prompt});
+            $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
             $state->{active} = 0;  # Done
             log_debug('ReadLine', "Single match, completed to: '$$input_ref'");
             return;
@@ -633,7 +633,7 @@ sub handle_tab {
         # Multiple candidates - show first one
         $$input_ref = $candidates[0];
         $$cursor_pos_ref = length($$input_ref);
-        $self->redraw_line($input_ref, $cursor_pos_ref, $self->{prompt});
+        $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
         log_debug('ReadLine', "Multiple matches, showing first: '$$input_ref'");
         
     } else {
@@ -652,7 +652,7 @@ sub handle_tab {
         }
         
         $$cursor_pos_ref = length($$input_ref);
-        $self->redraw_line($input_ref, $cursor_pos_ref, $self->{prompt});
+        $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
     }
 }
 
