@@ -173,7 +173,6 @@ sub get_additional_parameters {
                         description => "[REQUIRED if status=blocked] Reason why task is blocked.",
                     },
                 },
-                required => ["id", "title", "description", "status"],
                 required => ["title", "description", "status"],
             },
         },
@@ -337,6 +336,25 @@ sub handle_write {
     
     unless (ref $todo_list eq 'ARRAY') {
         return $self->error_result("'todoList' must be an array");
+    }
+
+    # Pre-validate required fields before sending to store
+    for my $i (0 .. $#$todo_list) {
+        my $todo = $todo_list->[$i];
+        my $num = $i + 1;
+        my @missing;
+        push @missing, 'title' unless $todo->{title};
+        push @missing, 'description' unless $todo->{description};
+        push @missing, 'status' unless $todo->{status};
+        if (@missing) {
+            my $got = join(", ", sort keys %$todo) || "(empty)";
+            return $self->error_result(
+                "todoList item #$num is missing required field(s): " .
+                join(", ", @missing) . ". " .
+                "Got fields: $got. " .
+                "Each todoList item MUST have 'title', 'description', and 'status'."
+            );
+        }
     }
     
     my $store = CLIO::Session::TodoStore->new(
@@ -506,6 +524,27 @@ sub handle_add {
     
     unless (ref $new_todos eq 'ARRAY') {
         return $self->error_result("'newTodos' must be an array");
+    }
+
+    # Pre-validate required fields before sending to store
+    # This gives the model a clearer error than the generic validation
+    for my $i (0 .. $#$new_todos) {
+        my $todo = $new_todos->[$i];
+        my $num = $i + 1;
+        my @missing;
+        push @missing, 'title' unless $todo->{title};
+        push @missing, 'description' unless $todo->{description};
+        if (@missing) {
+            my $got = join(", ", sort keys %$todo) || "(empty)";
+            return $self->error_result(
+                "newTodos item #$num is missing required field(s): " .
+                join(", ", @missing) . ". " .
+                "Got fields: $got. " .
+                "Each newTodos item MUST have 'title' (3-7 word label) and 'description' (details/context)."
+            );
+        }
+        # Remove id if present - add() auto-assigns IDs
+        delete $todo->{id};
     }
     
     my $store = CLIO::Session::TodoStore->new(
