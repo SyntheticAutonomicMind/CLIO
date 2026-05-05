@@ -119,6 +119,9 @@ sub handle_skills_command {
     elsif ($action eq 'install') {
         $self->_install_skill($sm, @args);
     }
+    elsif ($action eq 'repo') {
+        $self->_handle_repo_command($sm, @args);
+    }
     elsif ($action eq 'help') {
         $self->_show_help();
     }
@@ -155,6 +158,15 @@ sub _show_help {
     $self->display_section_header("CATALOG");
     $self->{chat}->display_command_row("/skills search [query]", "Search skills catalog", 35);
     $self->{chat}->display_command_row("/skills install <name>", "Install skill from catalog", 35);
+    $self->writeline("", markdown => 0);
+    
+    $self->display_section_header("REPOSITORIES");
+    $self->{chat}->display_command_row("/skills repo add <name> <url>", "Add skill repository", 35);
+    $self->{chat}->display_command_row("/skills repo remove <name>", "Remove repository", 35);
+    $self->{chat}->display_command_row("/skills repo list", "List configured repos", 35);
+    $self->{chat}->display_command_row("/skills repo sync [name]", "Sync repositories", 35);
+    $self->{chat}->display_command_row("/skills repo enable <name>", "Enable repository", 35);
+    $self->{chat}->display_command_row("/skills repo disable <name>", "Disable repository", 35);
     $self->writeline("", markdown => 0);
     
     $self->display_section_header("MODES");
@@ -238,6 +250,23 @@ sub _list_skills {
     }
     $self->writeline("", markdown => 0);
     
+    # Repository skills section
+    $self->display_section_header("REPOSITORY SKILLS");
+    
+    if (@{$skills->{repository}}) {
+        for my $name (sort @{$skills->{repository}}) {
+            my $s = $sm->get_skill($name);
+            my $desc = $s->{description} || '(no description)';
+            my $repo = $s->{source_repo} || '';
+            my $indicator = $loaded_names{$name} ? ' [loaded]' : '';
+            my $source = $repo ? " ($repo)" : '';
+            $self->display_key_value($name, $desc . $source . $indicator, 16);
+        }
+    } else {
+        $self->writeline("  " . $self->colorize("(none - use /skills repo add)", 'DIM'), markdown => 0);
+    }
+    $self->writeline("", markdown => 0);
+    
     # Built-in skills section
     $self->display_section_header("BUILT-IN SKILLS");
     
@@ -252,11 +281,13 @@ sub _list_skills {
     print "\n";
     my $custom_count = scalar(@{$skills->{custom}});
     my $builtin_count = scalar(@{$skills->{builtin}});
+    my $repo_count = scalar(@{$skills->{repository}});
     my $loaded_count = scalar(@$loaded);
-    my $total = $custom_count + $builtin_count;
+    my $total = $custom_count + $builtin_count + $repo_count;
     
     my $summary = $self->colorize("Total: ", 'LABEL') .
                   $self->colorize("$custom_count", 'DATA') . " custom, " .
+                  $self->colorize("$repo_count", 'DATA') . " repo, " .
                   $self->colorize("$builtin_count", 'DATA') . " built-in" .
                   " (" . $self->colorize("$total", 'SUCCESS') . " total)";
     $summary .= " | " . $self->colorize("$loaded_count", 'DATA') . " loaded" if $loaded_count > 0;
@@ -275,6 +306,15 @@ sub _list_skills {
     $self->display_section_header("CATALOG");
     $self->{chat}->display_command_row("/skills search [query]", "Search skills catalog", 35);
     $self->{chat}->display_command_row("/skills install <name>", "Install skill from catalog", 35);
+    $self->writeline("", markdown => 0);
+    
+    $self->display_section_header("REPOSITORIES");
+    $self->{chat}->display_command_row("/skills repo add <name> <url>", "Add skill repository", 35);
+    $self->{chat}->display_command_row("/skills repo remove <name>", "Remove repository", 35);
+    $self->{chat}->display_command_row("/skills repo list", "List configured repos", 35);
+    $self->{chat}->display_command_row("/skills repo sync [name]", "Sync repositories", 35);
+    $self->{chat}->display_command_row("/skills repo enable <name>", "Enable repository", 35);
+    $self->{chat}->display_command_row("/skills repo disable <name>", "Disable repository", 35);
     $self->writeline("", markdown => 0);
 }
 
@@ -577,6 +617,320 @@ sub _delete_skill {
     
     if ($result->{success}) {
         $self->display_system_message("Deleted skill '$name'");
+    } else {
+        $self->display_error_message($result->{error});
+    }
+}
+
+=head2 _handle_repo_command($sm, @args)
+
+Handle /skills repo subcommands.
+
+=cut
+
+sub _handle_repo_command {
+    my ($self, $sm, @args) = @_;
+    
+    my $subaction = shift @args || 'list';
+    
+    my $repo_mgr = $sm->get_repo_manager();
+    unless ($repo_mgr) {
+        $self->display_error_message("Skill repositories not available");
+        return;
+    }
+    
+    if ($subaction eq 'add') {
+        $self->_repo_add($sm, $repo_mgr, @args);
+    }
+    elsif ($subaction eq 'remove' || $subaction eq 'rm') {
+        $self->_repo_remove($repo_mgr, @args);
+    }
+    elsif ($subaction eq 'list' || $subaction eq 'ls') {
+        $self->_repo_list($repo_mgr);
+    }
+    elsif ($subaction eq 'sync') {
+        $self->_repo_sync($sm, $repo_mgr, @args);
+    }
+    elsif ($subaction eq 'enable') {
+        $self->_repo_enable($repo_mgr, @args);
+    }
+    elsif ($subaction eq 'disable') {
+        $self->_repo_disable($repo_mgr, @args);
+    }
+    else {
+        $self->display_error_message("Unknown repo action: $subaction");
+        $self->writeline("Use: /skills repo add|remove|list|sync|enable|disable", markdown => 0);
+    }
+    
+    return;
+}
+
+=head2 _repo_add($sm, $repo_mgr, @args)
+
+Add a skill repository.
+
+=cut
+
+sub _repo_add {
+    my ($self, $sm, $repo_mgr, @args) = @_;
+    
+    my $name = shift @args;
+    my $url = shift @args;
+    
+    unless ($name && $url) {
+        $self->display_error_message("Usage: /skills repo add <name> <url>");
+        $self->writeline("", markdown => 0);
+        $self->writeline("  name: Short identifier (alphanumeric, hyphens)", markdown => 0);
+        $self->writeline("  url:  Git repository URL", markdown => 0);
+        $self->writeline("", markdown => 0);
+        $self->writeline("Example:", markdown => 0);
+        $self->writeline("  /skills repo add awesome https://github.com/ComposioHQ/awesome-claude-skills", markdown => 0);
+        return;
+    }
+    
+    # Parse optional flags
+    my %opts;
+    while (@args) {
+        my $arg = shift @args;
+        if ($arg eq '--branch' && @args) {
+            $opts{branch} = shift @args;
+        }
+        elsif ($arg eq '--subpath' && @args) {
+            $opts{subpath} = shift @args;
+        }
+    }
+    
+    $self->display_command_header("ADDING REPOSITORY");
+    $self->writeline("Name:   $name", markdown => 0);
+    $self->writeline("URL:    $url", markdown => 0);
+    $self->writeline("Branch: " . ($opts{branch} || 'main'), markdown => 0);
+    $self->writeline("", markdown => 0);
+    
+    my $result = $repo_mgr->add_repo($name, $url, %opts);
+    
+    if ($result->{success}) {
+        $self->display_success_message("Repository '$name' added");
+        $self->writeline("", markdown => 0);
+        $self->writeline("Syncing repository...", markdown => 0);
+        
+        my $sync_result = $repo_mgr->sync_repo($name);
+        if ($sync_result->{success}) {
+            $self->display_success_message("Synced '$name': $sync_result->{skill_count} skills found");
+            
+            # Reload repository skills into SkillManager
+            $sm->reload_repository_skills();
+        } else {
+            $self->display_error_message("Sync failed: $sync_result->{error}");
+        }
+    } else {
+        $self->display_error_message($result->{error});
+    }
+}
+
+=head2 _repo_remove($repo_mgr, @args)
+
+Remove a skill repository.
+
+=cut
+
+sub _repo_remove {
+    my ($self, $repo_mgr, @args) = @_;
+    
+    my $name = shift @args;
+    
+    unless ($name) {
+        $self->display_error_message("Usage: /skills repo remove <name>");
+        return;
+    }
+    
+    my $repo = $repo_mgr->get_repo($name);
+    unless ($repo) {
+        $self->display_error_message("Repository '$name' not found");
+        return;
+    }
+    
+    # Confirm removal
+    my $prompt = $self->{chat}{theme_mgr}->get_confirmation_prompt(
+        "Remove repository '$name' and its cached skills?",
+        "yes/no",
+        "cancel"
+    );
+    
+    print $prompt;
+    my $confirm = <STDIN>;
+    chomp $confirm if defined $confirm;
+    
+    unless ($confirm && $confirm =~ /^y(es)?$/i) {
+        $self->display_system_message("Removal cancelled");
+        return;
+    }
+    
+    my $result = $repo_mgr->remove_repo($name);
+    
+    if ($result->{success}) {
+        $self->display_success_message("Removed repository '$name'");
+    } else {
+        $self->display_error_message($result->{error});
+    }
+}
+
+=head2 _repo_list($repo_mgr)
+
+List configured skill repositories.
+
+=cut
+
+sub _repo_list {
+    my ($self, $repo_mgr) = @_;
+    
+    my $repos = $repo_mgr->list_repos();
+    
+    $self->display_command_header("SKILL REPOSITORIES");
+    
+    unless (@$repos) {
+        $self->writeline("  No repositories configured.", markdown => 0);
+        $self->writeline("", markdown => 0);
+        $self->writeline("  Add one with: /skills repo add <name> <url>", markdown => 0);
+        $self->writeline("", markdown => 0);
+        return;
+    }
+    
+    for my $repo (@$repos) {
+        my $status = $repo->{enabled} ? 
+            $self->colorize("enabled", 'SUCCESS') : 
+            $self->colorize("disabled", 'WARNING');
+        my $sync_status = $repo->{last_sync} ? 
+            scalar(localtime($repo->{last_sync})) : 
+            $self->colorize("never synced", 'DIM');
+        
+        $self->display_key_value("Name", $repo->{name}, 12);
+        $self->display_key_value("URL", $repo->{url}, 12);
+        $self->display_key_value("Branch", $repo->{branch} || 'main', 12);
+        $self->display_key_value("Status", $status, 12);
+        $self->display_key_value("Skills", $repo->{skill_count} || 0, 12);
+        $self->display_key_value("Last Sync", $sync_status, 12);
+        $self->writeline("", markdown => 0);
+    }
+    
+    my $total_skills = 0;
+    my $enabled = 0;
+    for my $repo (@$repos) {
+        $total_skills += $repo->{skill_count} || 0;
+        $enabled++ if $repo->{enabled};
+    }
+    
+    my $summary = $self->colorize("Total: ", 'LABEL') .
+                  $self->colorize(scalar(@$repos), 'DATA') . " repos, " .
+                  $self->colorize($enabled, 'DATA') . " enabled, " .
+                  $self->colorize($total_skills, 'DATA') . " skills";
+    $self->writeline($summary, markdown => 0);
+}
+
+=head2 _repo_sync($sm, $repo_mgr, @args)
+
+Sync skill repositories.
+
+=cut
+
+sub _repo_sync {
+    my ($self, $sm, $repo_mgr, @args) = @_;
+    
+    my $name = shift @args;
+    
+    if ($name) {
+        # Sync specific repository
+        $self->display_command_header("SYNCING REPOSITORY");
+        $self->writeline("Syncing '$name'...", markdown => 0);
+        
+        my $result = $repo_mgr->sync_repo($name);
+        
+        if ($result->{success}) {
+            my $status = $result->{updated} ? "updated" : "no changes";
+            $self->display_success_message("'$name': $status, $result->{skill_count} skills");
+            
+            # Reload repository skills
+            $sm->reload_repository_skills();
+        } else {
+            $self->display_error_message($result->{error});
+        }
+    }
+    else {
+        # Sync all enabled repositories
+        $self->display_command_header("SYNCING ALL REPOSITORIES");
+        
+        my $results = $repo_mgr->sync_all();
+        
+        unless (@$results) {
+            $self->writeline("  No enabled repositories to sync.", markdown => 0);
+            return;
+        }
+        
+        my $total_skills = 0;
+        for my $entry (@$results) {
+            my $r = $entry->{result};
+            if ($r->{success}) {
+                my $status = $r->{updated} ? "updated" : "no changes";
+                $self->display_key_value($entry->{name}, "$status, $r->{skill_count} skills", 16);
+                $total_skills += $r->{skill_count};
+            } else {
+                $self->display_key_value($entry->{name}, $self->colorize("failed: $r->{error}", 'ERROR'), 16);
+            }
+        }
+        
+        $self->writeline("", markdown => 0);
+        $self->writeline($self->colorize("Total: ", 'LABEL') . 
+            $self->colorize($total_skills, 'DATA') . " skills across all repos", markdown => 0);
+        
+        # Reload repository skills
+        $sm->reload_repository_skills();
+    }
+}
+
+=head2 _repo_enable($repo_mgr, @args)
+
+Enable a disabled repository.
+
+=cut
+
+sub _repo_enable {
+    my ($self, $repo_mgr, @args) = @_;
+    
+    my $name = shift @args;
+    
+    unless ($name) {
+        $self->display_error_message("Usage: /skills repo enable <name>");
+        return;
+    }
+    
+    my $result = $repo_mgr->enable_repo($name);
+    
+    if ($result->{success}) {
+        $self->display_success_message("Repository '$name' enabled");
+    } else {
+        $self->display_error_message($result->{error});
+    }
+}
+
+=head2 _repo_disable($repo_mgr, @args)
+
+Disable a repository.
+
+=cut
+
+sub _repo_disable {
+    my ($self, $repo_mgr, @args) = @_;
+    
+    my $name = shift @args;
+    
+    unless ($name) {
+        $self->display_error_message("Usage: /skills repo disable <name>");
+        return;
+    }
+    
+    my $result = $repo_mgr->disable_repo($name);
+    
+    if ($result->{success}) {
+        $self->display_success_message("Repository '$name' disabled");
     } else {
         $self->display_error_message($result->{error});
     }
