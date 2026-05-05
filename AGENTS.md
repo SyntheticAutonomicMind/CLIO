@@ -80,6 +80,8 @@ Terminal Output (with color/theme)
 |------|---------|
 | `lib/CLIO/Core/` | System core (APIs, workflow, config) |
 | `lib/CLIO/Core/API/` | APIManager sub-modules (ResponseHandler, MessageValidator, etc.) |
+| `lib/CLIO/Core/SkillRepository.pm` | Skill repository configuration and management |
+| `lib/CLIO/Core/RepositoryLoader.pm` | Load skills from cached Git repositories |
 | `lib/CLIO/Tools/` | AI-callable tools |
 | `lib/CLIO/UI/` | Terminal UI (Chat, Markdown, Theme, Commands) |
 | `lib/CLIO/Session/` | Session management |

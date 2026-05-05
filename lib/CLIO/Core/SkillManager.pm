@@ -583,6 +583,8 @@ sub new {
         session_skills_file => $opts{session_skills_file},
         skills => {},
         active_prompt => undef,
+        repo_mgr => undef,
+        repo_loader => undef,
     };
     
     bless $self, $class;
@@ -603,13 +605,16 @@ sub _load_skills {
     # Load built-in skills first (lowest priority)
     $self->{skills} = { %BUILTIN_PROMPTS };
     
-    # Load user skills (low priority)
+    # Load repository skills (low-medium priority)
+    $self->_load_repository_skills();
+    
+    # Load user skills (medium priority)
     if (-f $self->{user_skills_file}) {
         my $user_prompts = $self->_read_skills_file($self->{user_skills_file});
         %{$self->{skills}} = (%{$self->{skills}}, %$user_prompts);
     }
     
-    # Load project skills (medium priority)
+    # Load project skills (high priority)
     if (-f $self->{project_skills_file}) {
         my $project_prompts = $self->_read_skills_file($self->{project_skills_file});
         %{$self->{skills}} = (%{$self->{skills}}, %$project_prompts);
@@ -622,6 +627,84 @@ sub _load_skills {
     }
     
     log_debug('SkillManager', "Loaded " . scalar(keys %{$self->{skills}}) . " skills");
+}
+
+=head2 _load_repository_skills
+
+Load skills from configured skill repositories.
+
+=cut
+
+sub _load_repository_skills {
+    my ($self) = @_;
+    
+    eval {
+        require CLIO::Core::SkillRepository;
+        require CLIO::Core::RepositoryLoader;
+    };
+    if ($@) {
+        log_debug('SkillManager', "Repository modules not available: $@");
+        return;
+    }
+    
+    $self->{repo_mgr} = CLIO::Core::SkillRepository->new(debug => $self->{debug});
+    $self->{repo_loader} = CLIO::Core::RepositoryLoader->new(debug => $self->{debug});
+    
+    my $repo_skills = $self->{repo_loader}->load_all_skills($self->{repo_mgr});
+    
+    # Repository skills override built-in but are overridden by custom
+    %{$self->{skills}} = (%{$self->{skills}}, %$repo_skills);
+    
+    my $count = scalar(keys %$repo_skills);
+    log_debug('SkillManager', "Loaded $count repository skills") if $count;
+}
+
+=head2 get_repo_manager
+
+Get the SkillRepository manager instance.
+
+Returns: CLIO::Core::SkillRepository instance or undef
+
+=cut
+
+sub get_repo_manager {
+    my ($self) = @_;
+    return $self->{repo_mgr};
+}
+
+=head2 get_repo_loader
+
+Get the RepositoryLoader instance.
+
+Returns: CLIO::Core::RepositoryLoader instance or undef
+
+=cut
+
+sub get_repo_loader {
+    my ($self) = @_;
+    return $self->{repo_loader};
+}
+
+=head2 reload_repository_skills
+
+Reload skills from all configured repositories.
+Useful after adding/removing/syncing repositories.
+
+=cut
+
+sub reload_repository_skills {
+    my ($self) = @_;
+    
+    # Remove existing repository skills
+    for my $name (keys %{$self->{skills}}) {
+        delete $self->{skills}{$name} if $self->{skills}{$name}{type} eq 'repository';
+    }
+    
+    # Reload
+    $self->_load_repository_skills();
+    
+    log_debug('SkillManager', "Reloaded repository skills, total: " . 
+        scalar(keys %{$self->{skills}}));
 }
 
 =head2 _read_skills_file
@@ -744,6 +827,13 @@ sub delete_skill {
         };
     }
     
+    if ($self->{skills}{$name}{type} eq 'repository') {
+        return { 
+            success => 0, 
+            error => "Cannot delete repository skill. Remove the repository or disable it instead." 
+        };
+    }
+    
     delete $self->{skills}{$name};
     $self->_save_skills();
     
@@ -782,10 +872,12 @@ sub list_skills {
     
     my @custom = grep { $self->{skills}{$_}{type} eq 'custom' } keys %{$self->{skills}};
     my @builtin = grep { $self->{skills}{$_}{type} eq 'builtin' } keys %{$self->{skills}};
+    my @repository = grep { $self->{skills}{$_}{type} eq 'repository' } keys %{$self->{skills}};
     
     return {
         custom => \@custom,
         builtin => \@builtin,
+        repository => \@repository,
         all => [keys %{$self->{skills}}]
     };
 }

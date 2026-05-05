@@ -757,6 +757,42 @@ Skills are reusable prompt templates. Instead of typing the same complex instruc
 /skills install <name>   # Install a skill from the catalog
 ```
 
+### Skill Repositories
+
+Add external Git repositories as skill sources. Skills from all configured repositories are available alongside built-in and custom skills.
+
+```
+/skills repo add <name> <url>    # Add a skill repository
+/skills repo remove <name>       # Remove a repository and its cache
+/skills repo list                 # List configured repositories
+/skills repo sync [name]         # Sync all repos (or a specific one)
+/skills repo enable <name>       # Enable a disabled repository
+/skills repo disable <name>      # Disable without removing
+```
+
+Example - add the ComposioHQ skills collection:
+
+```
+/skills repo add awesome https://github.com/ComposioHQ/awesome-claude-skills
+```
+
+CLIO clones the repository to a local cache (`~/.clio/skill-cache/`) and scans for `SKILL.md` files. Three repository layouts are supported:
+
+| Layout | Structure | Example |
+|--------|-----------|---------|
+| Root-level | `repo/skill-name/SKILL.md` | ComposioHQ/awesome-claude-skills |
+| Subdirectory | `repo/.github/skills/name/SKILL.md` | Claude Code default |
+| Single skill | `repo/SKILL.md` | Individual skill repos |
+
+Optional flags when adding a repository:
+
+```
+/skills repo add my-skills https://github.com/user/skills --branch develop
+/skills repo add nested https://github.com/user/skills --subpath .github/skills
+```
+
+Repository skills are read-only. They appear in `/skills list` under the "REPOSITORY SKILLS" section with their source repository shown. Custom skills override repository skills with the same name.
+
 ### Skill Loading vs Execution
 
 Skills can be used in two ways:
@@ -779,6 +815,16 @@ Provide fixes for each issue found.
 ```
 
 When you run `/skills use code-review`, CLIO prompts you for `{{file}}` and substitutes your answer.
+
+### Skill Priority
+
+When skills have the same name across sources, the priority order is:
+
+1. **Session** skills (highest - current session only)
+2. **Project** skills (`.clio/skills.json`)
+3. **User** skills (`~/.clio/skills.json`)
+4. **Repository** skills (from configured Git repos)
+5. **Built-in** skills (lowest - shipped with CLIO)
 
 ### Built-in vs Custom
 
