@@ -285,6 +285,18 @@ sudo ./install.sh
 | Fedora/RHEL | `sudo dnf install perl` |
 | Arch | `sudo pacman -S perl` |
 
+### "Connection refused" or API timeout
+
+If you're behind a corporate proxy or firewall:
+
+```bash
+# Set proxy for API requests
+/config set http_proxy http://proxy.example.com:8080
+
+# Or use environment variables
+export HTTPS_PROXY=http://proxy.example.com:8080
+```
+
 ### CLIO not found after `--user` install
 
 Make sure `~/.local/bin` is in your PATH:

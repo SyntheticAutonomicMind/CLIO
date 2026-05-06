@@ -220,7 +220,7 @@ log_error('ModuleName', 'something failed: %s', $error);
 | `CLIO::Security::` | Auth/authz | Auth, Authz, Manager |
 | `CLIO::Logging::` | Structured logging | Logger |
 | `CLIO::Compat::` | Compatibility | Terminal (ReadKey, ReadMode) |
-| `CLIO::Util::` | Utilities | PathResolver, TextSanitizer, JSONRepair, JSON, YAML, ImageAttachment, ImageDisplay |
+| `CLIO::Util::` | Utilities | PathResolver, TextSanitizer, JSONRepair, JSON, YAML, ImageAttachment, ImageDisplay, ConfigPath, AtomicWrite, RateLimit, GitIgnore |
 | `CLIO::Spec::` | OpenSpec integration | Manager (spec lifecycle management) |
 
 ---

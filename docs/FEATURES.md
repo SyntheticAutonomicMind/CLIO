@@ -143,7 +143,7 @@ When something goes wrong - a syntax error, a failed test, an unexpected file st
 
 ## 2. Tools
 
-Tools are CLIO's hands and eyes. They let the AI interact with your filesystem, terminal, version control, and more. CLIO has 13 built-in tools with over 70 operations between them.
+Tools are CLIO's hands and eyes. They let the AI interact with your filesystem, terminal, version control, and more. CLIO has 11 core tools (plus dynamic MCP and plugin bridges) with over 80 operations between them.
 
 ### File Operations
 
@@ -173,7 +173,7 @@ The most-used tool. 17 operations for working with files:
 
 ### Version Control (Git)
 
-A dedicated git tool with 10 operations - not just "run git via shell" but structured operations with proper output parsing:
+A dedicated git tool with 11 operations - not just "run git via shell" but structured operations with proper output parsing:
 
 | Operation | What It Does |
 |-----------|-------------|
@@ -186,6 +186,7 @@ A dedicated git tool with 10 operations - not just "run git via shell" but struc
 | `pull` | Pull from remote |
 | `blame` | File annotation/blame |
 | `stash` | Save, list, apply, or drop stashed changes |
+| `tag` | List, create, or delete tags |
 | `worktree` | Manage git worktrees (list, add, remove) |
 
 **Unified diff display:** When CLIO shows diffs (via `/status`, `/diff`, `git diff`, or the undo system), it renders them with syntax coloring - additions in green, deletions in red, context in dim, and hunk headers highlighted. This makes reviewing changes significantly easier in the terminal.
@@ -269,7 +270,8 @@ CLIO supports 13 AI providers out of the box. Switch between them at any time - 
 | **DeepSeek** | Cloud | API key |
 | **OpenRouter** | Cloud | API key |
 | **Ollama Cloud** | Cloud | API key |
-| **MiniMax** | Cloud | API key (Token Plan support) |
+| **MiniMax** | Cloud | API key |
+| **MiniMax Token Plan** | Cloud | API key (usage-based) |
 | **Z.AI** | Cloud | API key |
 | **Z.AI Coding Plan** | Cloud | API key |
 | **llama.cpp** | Local | None |
@@ -334,6 +336,36 @@ The `/model` command is a shortcut for model switching that resolves aliases. It
 ### Local Models
 
 For complete privacy, use local providers (llama.cpp, LM Studio, SAM). Your data never leaves your machine. Local models work with smaller context windows, so CLIO automatically adjusts its trimming thresholds.
+
+### Proxy Support
+
+CLIO supports routing all outbound requests (API calls, model listing, update checks) through an HTTP or SOCKS proxy. This is useful in corporate environments, restricted networks, or when routing through a VPN.
+
+**Configure via command:**
+
+```
+/config set http_proxy http://proxy.example.com:8080
+```
+
+**Configure via environment variable:**
+
+```bash
+export HTTPS_PROXY=http://proxy.example.com:8080
+export HTTP_PROXY=http://proxy.example.com:8080
+export ALL_PROXY=socks5://proxy.example.com:1080
+```
+
+**Supported proxy URL formats:**
+
+| Format | Protocol |
+|--------|----------|
+| `http://host:port` | HTTP proxy |
+| `https://host:port` | HTTPS proxy |
+| `socks5://host:port` | SOCKS5 proxy (DNS resolved locally) |
+| `socks5h://host:port` | SOCKS5 proxy (DNS resolved remotely) |
+| `socks4://host:port` | SOCKS4 proxy |
+
+**Precedence:** Config `http_proxy` > `HTTPS_PROXY` > `HTTP_PROXY` > `ALL_PROXY`. The config setting takes priority over environment variables.
 
 ### Vision and Image Support
 
@@ -632,6 +664,8 @@ These send structured prompts to the AI:
 | `/init` | Initialize project instructions |
 | `/design` | Start a design/PRD session |
 | `/skills` | Manage reusable prompt templates |
+| `/skills repo add <name> <url>` | Add a skill repository |
+| `/skills repo list` | List configured repositories |
 | `/spec` | OpenSpec spec-driven development |
 
 ### Other Commands
@@ -661,6 +695,9 @@ These send structured prompts to the AI:
 | `/prompt` | View/edit system prompt |
 | `/profile build` | Analyze sessions and build user profile |
 | `/profile show` | Display current profile |
+| `/file read <path>` | Read and display a file |
+| `/file edit <path>` | Open file in external editor |
+| `/file list [path]` | List directory contents |
 
 ---
 

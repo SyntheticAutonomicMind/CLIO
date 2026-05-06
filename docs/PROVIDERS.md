@@ -63,6 +63,21 @@ All `/api set` commands save globally. Add `--session` to override for the curre
 /config save
 ```
 
+### Proxy Configuration
+
+If you need to route API requests through a proxy (corporate network, VPN, etc.):
+
+```bash
+# Via config command (persists)
+/config set http_proxy http://proxy.example.com:8080
+
+# Via environment variable (session-scoped)
+export HTTPS_PROXY=http://proxy.example.com:8080
+export ALL_PROXY=socks5://proxy.example.com:1080
+```
+
+Supported formats: `http://`, `https://`, `socks5://`, `socks5h://`, `socks4://`. Config `http_proxy` takes priority over environment variables.
+
 ---
 
 ## Cloud Providers
