@@ -162,7 +162,12 @@ clio/
           AgentLoop.pm      # Persistent agent execution loop
           DeviceRegistry.pm # Named devices for remote execution
           SkillManager.pm   # AI skill management
+          SkillRepository.pm # Skill repository configuration
+          RepositoryLoader.pm # Load skills from Git repos
           PerformanceMonitor.pm  # Performance tracking
+          RateLimiter.pm    # API rate limiting
+          PluginManager.pm  # Plugin system
+          Defaults.pm       # Default configuration values
           API/              # API sub-modules
               MessageValidator.pm  # Message validation and proactive trimming
               ResponseHandler.pm   # AI provider response parsing
@@ -179,7 +184,7 @@ clio/
           TodoList.pm
           WebOperations.pm
           CodeIntelligence.pm   # Code analysis
-          UserCollaboration.pm  # User interaction
+          Interact.pm  # User interaction
           SubAgentOperations.pm # Multi-agent
           RemoteExecution.pm    # Remote SSH execution
           ApplyPatch.pm         # Patch application
