@@ -119,7 +119,7 @@ sub _categorize_error {
     return 'edit_content_mismatch' if $error =~ /cannot find match position for chunk/i;
     return 'edit_ambiguous_match' if $error =~ /old_?string found multiple times|multiple matches/i;
     
-    return 'missing_required' if $error =~ /missing required parameter/i;
+    return 'missing_required' if $error =~ /missing required (?:parameter|field)/i;
     return 'invalid_operation' if $error =~ /unknown operation|unsupported.*operation/i;
     return 'invalid_json' if $error =~ /json|parse error/i;
     return 'missing_ui' if $error =~ /ui.*not available/i;
@@ -161,12 +161,23 @@ sub _get_category_guidance {
         },
         
         missing_required => sub {
-            my @missing = $error =~ /parameter[s]?:\s*([a-z_]+)/gi;
-            my $params_str = join(', ', @missing);
+            # Try to extract the missing fields from the error message
+            # Pattern 1: "missing required field(s): description, title"
+            # Pattern 2: "missing required parameter: message"
+            # Pattern 3: "missing required parameters: foo, bar"
+            my @missing;
+            if ($error =~ /missing required (?:parameter|field)\(s\):\s*([a-z_, ]+?)(?:\.\s|$)/i) {
+                @missing = split(/\s*,\s*/, $1);
+            }
+            elsif ($error =~ /missing required (?:parameter|field)s?:\s*([a-z_, ]+?)(?:\.\s|$)/i) {
+                @missing = split(/\s*,\s*/, $1);
+            }
+            my $params_str = @missing ? join(', ', @missing) : 'see schema below';
             
-            return "WHAT WENT WRONG: You didn't include the required parameter(s): $params_str\n" .
-                   "HOW TO FIX: Include these required parameters in your tool call.\n" .
-                   "REQUIRED: All parameters marked 'required' in the schema MUST be included.";
+            return "WHAT WENT WRONG: You didn't include the required field(s): $params_str\n" .
+                   "HOW TO FIX: Include ALL required fields in your tool call.\n" .
+                   "REQUIRED: Every field marked 'required' in the schema MUST be included, including fields inside array items (like todoList items, newTodos items, etc.).\n" .
+                   "COMMON MISTAKE: Omitting 'description' in todo items - it is REQUIRED, not optional.";
         },
         
         invalid_operation => sub {
@@ -291,6 +302,23 @@ sub _format_schema_help {
             if (($param->{type} || '') eq 'array' && $param->{items}) {
                 my $item_type = $param->{items}->{type} || 'unknown';
                 push @help, "    Array of: $item_type";
+                
+                # Show nested required fields inside array items
+                if ($param->{items}->{type} eq 'object' && $param->{items}->{properties}) {
+                    my $item_required = $param->{items}->{required} || [];
+                    my %item_req_map = map { $_ => 1 } @$item_required;
+                    
+                    if (@$item_required) {
+                        push @help, "    Required fields in each item: " . join(', ', @$item_required);
+                    }
+                    
+                    foreach my $item_prop (sort keys %{$param->{items}->{properties}}) {
+                        my $item_field = $param->{items}->{properties}->{$item_prop};
+                        my $req = $item_req_map{$item_prop} ? ' [REQUIRED]' : ' [optional]';
+                        my $desc = $item_field->{description} || '';
+                        push @help, "      $item_prop$req: $desc";
+                    }
+                }
             }
         }
     }
@@ -348,6 +376,17 @@ sub _get_examples_for_error {
                    "\n" .
                    "Validate command safety:\n" .
                    '  {"operation": "validate", "command": "npm install"}';
+       },
+
+        todo_operations => sub {
+            return "--- CORRECT USAGE EXAMPLES ---\n" .
+                   "Write a todo list (EVERY item needs title, description, AND status):\n" .
+                   '  {"operation": "write", "todoList": [{"title": "Fix bug", "description": "Fix the null pointer in module X", "status": "not-started"}]}' . "\n" .
+                   "\n" .
+                   "Add new todos (EVERY item needs title AND description):\n" .
+                   '  {"operation": "add", "newTodos": [{"title": "Write tests", "description": "Unit tests for module Y"}]}' . "\n" .
+                   "\n" .
+                   "CRITICAL: The 'description' field is REQUIRED for every todo item. Never omit it.";
         },
     );
     
