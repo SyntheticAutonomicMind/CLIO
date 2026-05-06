@@ -951,6 +951,23 @@ YOU: Prepare CLIO on dev@buildserver for repeated tasks
 
 Remote execution enables powerful distributed workflows - run analysis on servers, build on specific hardware, gather diagnostics from multiple systems, and more. See [Remote Execution Guide](REMOTE_EXECUTION.md) for complete documentation.
 
+**Device Registry** - Register named devices for quick access:
+
+```bash
+: /device add staging user@staging.example.com
+: /device add prod user@prod.example.com
+: /device list
+```
+
+**Device Groups** - Group devices for parallel execution:
+
+```bash
+: /group create webservers staging prod
+: /device list
+```
+
+The `execute_parallel` operation runs the same task on multiple devices at once and aggregates results.
+
 ### Code Intelligence
 
 **list_usages** - Find all references to a symbol across the codebase
@@ -1727,6 +1744,21 @@ clio --prompt minimal --new
 /prompt list
 ```
 
+**Proxy Configuration:**
+
+Route all outbound requests through an HTTP or SOCKS proxy:
+
+```bash
+# Via config command (persists)
+/config set http_proxy http://proxy.example.com:8080
+
+# Via environment variable (session-scoped)
+export HTTPS_PROXY=http://proxy.example.com:8080
+export ALL_PROXY=socks5://proxy.example.com:1080
+```
+
+Supported proxy formats: `http://`, `https://`, `socks5://`, `socks5h://`, `socks4://`. Config `http_proxy` takes priority over environment variables.
+
 ### Configuration File
 
 CLIO can also be configured via a config file at `~/.clio/config.yaml`:
@@ -1749,7 +1781,10 @@ tools:
     - memory
     - todo
     - web
-  
+
+network:
+  http_proxy: ""    # HTTP/SOCKS proxy URL (empty = no proxy)
+
 logging:
   level: info
   file: ~/.clio/logs/clio.log
@@ -1904,7 +1939,7 @@ Skills are specialized prompt templates that give CLIO expertise in specific tas
 ### Viewing Available Skills
 
 ```bash
-: /skills                    # List all skills (built-in and custom)
+: /skills                    # List all skills (built-in, custom, and repository)
 : /skills show <name>        # Display skill details
 ```
 
@@ -1943,6 +1978,42 @@ CLIO includes a curated skills catalog you can browse and install:
 3. Review the skill content before confirming installation
 4. Use with `/skills use <name>`
 
+### Skill Repositories
+
+Add external Git repositories as skill sources. This lets you use community skill collections like ComposioHQ/awesome-claude-skills alongside built-in and custom skills.
+
+```bash
+: /skills repo add <name> <url>    # Add a skill repository
+: /skills repo remove <name>       # Remove a repository and its cache
+: /skills repo list                 # List configured repositories
+: /skills repo sync [name]         # Sync all repos (or a specific one)
+: /skills repo enable <name>       # Enable a disabled repository
+: /skills repo disable <name>      # Disable without removing
+```
+
+**Adding a repository:**
+
+```bash
+: /skills repo add awesome https://github.com/ComposioHQ/awesome-claude-skills
+```
+
+CLIO clones the repository to a local cache (`~/.clio/skill-cache/`) and scans for `SKILL.md` files. Three repository layouts are supported:
+
+| Layout | Structure | Example |
+|--------|-----------|---------|
+| Root-level | `repo/skill-name/SKILL.md` | ComposioHQ/awesome-claude-skills |
+| Subdirectory | `repo/.github/skills/name/SKILL.md` | Claude Code default |
+| Single skill | `repo/SKILL.md` | Individual skill repos |
+
+Optional flags when adding a repository:
+
+```bash
+: /skills repo add my-skills https://github.com/user/skills --branch develop
+: /skills repo add nested https://github.com/user/skills --subpath .github/skills
+```
+
+Repository skills are read-only. They appear in `/skills list` under the "REPOSITORY SKILLS" section with their source repository shown. Custom skills override repository skills with the same name.
+
 ### Custom Skills
 
 Create your own skills:
@@ -1950,6 +2021,16 @@ Create your own skills:
 ```bash
 : /skills add my-skill "Review code for ${lang} best practices: ${code}"
 ```
+
+### Skill Priority
+
+When skills have the same name across sources, the priority order is:
+
+1. **Session** skills (highest - current session only)
+2. **Project** skills (`.clio/skills.json`)
+3. **User** skills (`~/.clio/skills.json`)
+4. **Repository** skills (from configured Git repos)
+5. **Built-in** skills (lowest - shipped with CLIO)
 
 
 
