@@ -13,6 +13,20 @@ use Carp qw(croak);
 use CLIO::Core::Logger qw(log_debug log_warning);
 use CLIO::Util::JSON qw(decode_json);
 
+# Format token counts for display (e.g., 204800 -> "205k", 1000000 -> "1.0M")
+sub _format_tokens {
+    my ($tokens) = @_;
+    return 'N/A' unless defined $tokens && $tokens > 0;
+    if ($tokens >= 1_000_000) {
+        return sprintf("%.1fM", $tokens / 1_000_000);
+    }
+    elsif ($tokens >= 1000) {
+        my $k = $tokens / 1000;
+        return $k == int($k) ? int($k) . "k" : sprintf("%.1fk", $k);
+    }
+    return $tokens;
+}
+
 =head1 NAME
 
 CLIO::UI::Commands::API::Models - Model listing and selection commands
@@ -96,8 +110,11 @@ sub handle_models {
     my ($self, @args) = @_;
 
     my $refresh = 0;
+    my $show_capabilities = 0;
     @args = grep {
-        if ($_ eq '--refresh') { $refresh = 1; 0; } else { 1; }
+        if ($_ eq '--refresh')       { $refresh = 1; 0; }
+        elsif ($_ eq '--capabilities') { $show_capabilities = 1; 0; }
+        else { 1; }
     } @args;
 
     my @all_models;
@@ -111,12 +128,10 @@ sub handle_models {
 
         my $api_key = $self->{config}->get_provider_key($provider_name);
         my $has_auth = $api_key
-            || $provider_name eq 'github_copilot'
-            || $provider_name eq 'sam'
-            || $provider_name eq 'llama.cpp'
-            || $provider_name eq 'lmstudio';
+            || ($provider_def->{requires_auth} && $provider_def->{requires_auth} eq 'copilot')
+            || ($provider_def->{requires_auth} && $provider_def->{requires_auth} eq 'none');
 
-        if ($provider_name eq 'github_copilot' && !$api_key) {
+        if ($provider_def->{requires_auth} && $provider_def->{requires_auth} eq 'copilot' && !$api_key) {
             eval {
                 require CLIO::Core::GitHubAuth;
                 my $auth = CLIO::Core::GitHubAuth->new(debug => 0);
@@ -146,7 +161,11 @@ sub handle_models {
         return;
     }
 
-    $self->_display_multi_provider_models(\@all_models);
+    if ($show_capabilities) {
+        $self->_display_capabilities_view(\@all_models);
+    } else {
+        $self->_display_multi_provider_models(\@all_models);
+    }
 }
 
 sub _fetch_provider_models {
@@ -154,7 +173,7 @@ sub _fetch_provider_models {
 
     my $models = [];
 
-    if ($provider_name eq 'github_copilot') {
+    if ($provider_def->{copilot_models}) {
         eval {
             require CLIO::Core::GitHubCopilotModelsAPI;
             my $cache_ttl = $refresh ? 0 : undef;
@@ -169,7 +188,7 @@ sub _fetch_provider_models {
         if ($@) {
             log_warning('API', "Failed to fetch GitHub Copilot models: $@");
         }
-    } elsif ($provider_def->{native_api} && $provider_name eq 'google') {
+    } elsif ($provider_def->{native_api}) {
         my $api_base = $provider_def->{api_base} || 'https://generativelanguage.googleapis.com/v1beta';
         $api_base =~ s{/+$}{};
         my $models_url = "$api_base/models?key=$api_key";
@@ -188,8 +207,10 @@ sub _fetch_provider_models {
                     push @$models, {
                         id          => $model_id,
                         name        => $m->{displayName} || $model_id,
-                        description => $m->{description} || '',
-                        _supports_tools => (grep { $_ eq 'generateContent' } @methods) ? 1 : 0,
+                        _context_tokens  => $m->{inputTokenLimit},
+                        _output_tokens   => $m->{outputTokenLimit},
+                        _supports_tools  => (grep { $_ eq 'generateContent' } @methods) ? 1 : 0,
+                        _supports_vision => (grep { $_ eq 'imageUnderstanding' } @methods) ? 1 : 0,
                     };
                 }
             } else {
@@ -199,56 +220,8 @@ sub _fetch_provider_models {
         if ($@) {
             log_warning('API', "Failed to fetch Google models: $@");
         }
-    } elsif ($provider_name =~ /^minimax/) {
-        $models = [
-            { id => 'MiniMax-M2.7',           name => 'MiniMax M2.7',           description => 'Recursive self-improvement, ~60 tps (204.8k ctx, 131k out)' },
-            { id => 'MiniMax-M2.7-highspeed',  name => 'MiniMax M2.7 Highspeed',  description => 'Same as M2.7, ~100 tps (204.8k ctx, 131k out)' },
-            { id => 'MiniMax-M2.5',           name => 'MiniMax M2.5',           description => 'Code generation and refactoring, ~60 tps (204.8k ctx, 131k out)' },
-            { id => 'MiniMax-M2.5-highspeed',  name => 'MiniMax M2.5 Highspeed',  description => 'Same as M2.5, ~100 tps (204.8k ctx, 131k out)' },
-            { id => 'MiniMax-M2.1',           name => 'MiniMax M2.1',           description => '230B params, code + reasoning, ~60 tps (204.8k ctx, 131k out)' },
-            { id => 'MiniMax-M2.1-highspeed',  name => 'MiniMax M2.1 Highspeed',  description => 'Same as M2.1, ~100 tps (204.8k ctx, 131k out)' },
-            { id => 'MiniMax-M2',             name => 'MiniMax M2',             description => 'Function calling, advanced reasoning (204.8k ctx, 131k out)' },
-        ];
-    } elsif ($provider_name eq 'zai') {
-        # Z.AI models - text and vision models
-        # API reference: https://docs.z.ai/api-reference/llm/chat-completion
-        $models = [
-            # GLM-5 Series (Flagship - Agentic Engineering)
-            { id => 'glm-5.1',       name => 'GLM-5.1',       description => 'SOTA coding, 8-hour autonomous tasks (200k ctx, $1.40/$4.40 per 1M)' },
-            { id => 'glm-5',         name => 'GLM-5',         description => 'Agentic Engineering, complex systems (200k ctx, $1.00/$3.20 per 1M)' },
-            { id => 'glm-5-turbo',   name => 'GLM-5-Turbo',   description => 'OpenClaw optimized, complex tasks (200k ctx, $1.20/$4.00 per 1M)' },
-            # GLM-4.7 Series
-            { id => 'glm-4.7',       name => 'GLM-4.7',       description => 'SOTA Performance, enhanced coding (200k ctx, $0.60/$2.20 per 1M)' },
-            { id => 'glm-4.7-flashx',name => 'GLM-4.7-FlashX',description => 'Lightweight high-speed (200k ctx, $0.07/$0.40 per 1M)' },
-            { id => 'glm-4.7-flash', name => 'GLM-4.7-Flash', description => 'Free lightweight (200k ctx, free)' },
-            # GLM-4.6 Series
-            { id => 'glm-4.6',       name => 'GLM-4.6',       description => 'High Performance, strong coding (200k ctx, $0.60/$2.20 per 1M)' },
-            # GLM-4.5 Series
-            { id => 'glm-4.5',       name => 'GLM-4.5',       description => 'Better Performance, strong reasoning (128k ctx, $0.60/$2.20 per 1M)' },
-            { id => 'glm-4.5-x',     name => 'GLM-4.5-X',     description => 'Ultra-Fast response (128k ctx, $2.20/$8.90 per 1M)' },
-            { id => 'glm-4.5-air',   name => 'GLM-4.5-Air',   description => 'Cost-Effective lightweight (128k ctx, $0.20/$1.10 per 1M)' },
-            { id => 'glm-4.5-airx',  name => 'GLM-4.5-AirX', description => 'Lightweight fast response (128k ctx, $1.10/$4.50 per 1M)' },
-            { id => 'glm-4.5-flash', name => 'GLM-4.5-Flash', description => 'Free lightweight (200k ctx, free)' },
-            # 32B Model
-            { id => 'glm-4-32b-0414-128k', name => 'GLM-4-32B', description => 'High intelligence at low cost (128k ctx, $0.10/$0.10 per 1M)' },
-            # Vision Models
-            { id => 'glm-5v-turbo',  name => 'GLM-5V-Turbo',  description => 'Multimodal coding, vision-based tasks (200k ctx, $1.20/$4.00 per 1M)' },
-            { id => 'glm-4.6v',       name => 'GLM-4.6V',      description => 'Vision with function calling (128k ctx, $0.30/$0.90 per 1M)' },
-            { id => 'glm-4.6v-flashx',name => 'GLM-4.6V-FlashX',description => 'Vision lightweight fast (128k ctx, $0.04/$0.40 per 1M)' },
-            { id => 'glm-4.6v-flash', name => 'GLM-4.6V-Flash',description => 'Vision free tier (128k ctx, free)' },
-            { id => 'glm-4.5v',       name => 'GLM-4.5V',      description => 'Vision multimodal (64k ctx, $0.60/$1.80 per 1M)' },
-            # OCR
-            { id => 'glm-ocr',       name => 'GLM-OCR',       description => 'Document parsing, information extraction ($0.03 per 1M)' },
-        ];
-    } elsif ($provider_name eq 'zai_coding') {
-        # Z.AI Coding Plan models - quota-based (not billed via API)
-        # See: https://docs.z.ai/devpack/overview
-        $models = [
-            { id => 'glm-5.1',       name => 'GLM-5.1',       description => 'SOTA coding model (200k ctx, plan quota)' },
-            { id => 'glm-5-turbo',   name => 'GLM-5-Turbo',   description => 'OpenClaw optimized (200k ctx, plan quota)' },
-            { id => 'glm-4.7',       name => 'GLM-4.7',       description => 'High Performance (200k ctx, plan quota)' },
-            { id => 'glm-4.5-air',   name => 'GLM-4.5-Air',   description => 'Cost-Effective (128k ctx, plan quota)' },
-        ];
+    } elsif ($provider_def->{static_models}) {
+        $models = $self->_get_static_models($provider_name);
     } else {
         # Use per-provider stored base URL if available, otherwise provider default
         my $stored_base = $self->{config}->get_provider_base($provider_name);
@@ -271,7 +244,20 @@ sub _fetch_provider_models {
 
             if ($resp->is_success) {
                 my $data = decode_json($resp->decoded_content);
-                $models = $data->{data} || [];
+                for my $m (@{$data->{data} || []}) {
+                    my $ctx = $m->{context_length} || ($m->{top_provider} && $m->{top_provider}{context_length});
+                    my $out = $m->{top_provider} && $m->{top_provider}{max_completion_tokens};
+                    my $arch = $m->{architecture} || {};
+                    my $modalities = $arch->{input_modalities} || [];
+                    push @$models, {
+                        id               => $m->{id},
+                        name             => $m->{name} || $m->{id},
+                        _context_tokens  => $ctx,
+                        _output_tokens   => $out,
+                        _supports_vision => (grep { /image|vision/i } @$modalities) ? 1 : 0,
+                        billing          => $m->{billing},
+                    };
+                }
             }
         };
         if ($@) {
@@ -280,6 +266,55 @@ sub _fetch_provider_models {
     }
 
     return $models;
+}
+
+sub _get_static_models {
+    my ($self, $provider_name) = @_;
+
+    if ($provider_name =~ /^minimax/) {
+        return [
+            { id => 'MiniMax-M2.7',           name => 'MiniMax M2.7',           _context_tokens => 204800, _output_tokens => 131072 },
+            { id => 'MiniMax-M2.7-highspeed',  name => 'MiniMax M2.7 Highspeed',  _context_tokens => 204800, _output_tokens => 131072 },
+            { id => 'MiniMax-M2.5',           name => 'MiniMax M2.5',           _context_tokens => 204800, _output_tokens => 131072 },
+            { id => 'MiniMax-M2.5-highspeed',  name => 'MiniMax M2.5 Highspeed',  _context_tokens => 204800, _output_tokens => 131072 },
+            { id => 'MiniMax-M2.1',           name => 'MiniMax M2.1',           _context_tokens => 204800, _output_tokens => 131072 },
+            { id => 'MiniMax-M2.1-highspeed',  name => 'MiniMax M2.1 Highspeed',  _context_tokens => 204800, _output_tokens => 131072 },
+            { id => 'MiniMax-M2',             name => 'MiniMax M2',             _context_tokens => 204800, _output_tokens => 131072 },
+        ];
+    }
+    elsif ($provider_name eq 'zai') {
+        return [
+            { id => 'glm-5.1',        _context_tokens => 200000, _output_tokens => 131072 },
+            { id => 'glm-5',          _context_tokens => 200000, _output_tokens => 131072 },
+            { id => 'glm-5-turbo',    _context_tokens => 200000, _output_tokens => 131072 },
+            { id => 'glm-4.7',        _context_tokens => 200000, _output_tokens => 131072 },
+            { id => 'glm-4.7-flashx', _context_tokens => 200000, _output_tokens => 131072 },
+            { id => 'glm-4.7-flash',  _context_tokens => 200000, _output_tokens => 131072 },
+            { id => 'glm-4.6',        _context_tokens => 200000, _output_tokens => 131072 },
+            { id => 'glm-4.5',        _context_tokens => 128000, _output_tokens => 16384 },
+            { id => 'glm-4.5-x',      _context_tokens => 128000, _output_tokens => 16384 },
+            { id => 'glm-4.5-air',    _context_tokens => 128000, _output_tokens => 16384 },
+            { id => 'glm-4.5-airx',   _context_tokens => 128000, _output_tokens => 16384 },
+            { id => 'glm-4.5-flash',  _context_tokens => 200000, _output_tokens => 131072 },
+            { id => 'glm-4-32b-0414-128k', _context_tokens => 128000, _output_tokens => 131072 },
+            { id => 'glm-5v-turbo',   _context_tokens => 200000, _output_tokens => 131072, _supports_vision => 1 },
+            { id => 'glm-4.6v',       _context_tokens => 128000, _output_tokens => 16384, _supports_vision => 1 },
+            { id => 'glm-4.6v-flashx',_context_tokens => 128000, _output_tokens => 16384, _supports_vision => 1 },
+            { id => 'glm-4.6v-flash', _context_tokens => 128000, _output_tokens => 16384, _supports_vision => 1 },
+            { id => 'glm-4.5v',       _context_tokens => 64000,  _output_tokens => 16384, _supports_vision => 1 },
+            { id => 'glm-ocr',        _context_tokens => 32000,  _output_tokens => 8192 },
+        ];
+    }
+    elsif ($provider_name eq 'zai_coding') {
+        return [
+            { id => 'glm-5.1',       _context_tokens => 200000, _output_tokens => 131072 },
+            { id => 'glm-5-turbo',   _context_tokens => 200000, _output_tokens => 131072 },
+            { id => 'glm-4.7',       _context_tokens => 200000, _output_tokens => 131072 },
+            { id => 'glm-4.5-air',   _context_tokens => 128000, _output_tokens => 16384 },
+        ];
+    }
+
+    return [];
 }
 
 sub _display_multi_provider_models {
@@ -292,9 +327,11 @@ sub _display_multi_provider_models {
     }
 
     my @provider_order = sort {
-        return -1 if $a eq 'github_copilot';
-        return 1 if $b eq 'github_copilot';
-        return $a cmp $b;
+        my $a_def = CLIO::Providers::get_provider($a);
+        my $b_def = CLIO::Providers::get_provider($b);
+        my $a_pri = ($a_def && $a_def->{priority_display}) ? 0 : 1;
+        my $b_pri = ($b_def && $b_def->{priority_display}) ? 0 : 1;
+        return $a_pri <=> $b_pri || $a cmp $b;
     } keys %by_provider;
 
     $self->refresh_terminal_size();
@@ -312,39 +349,43 @@ sub _display_multi_provider_models {
     for my $provider_name (@provider_order) {
         my $models = $by_provider{$provider_name};
         my $display_name = $models->[0]{_provider_display} || $provider_name;
-        my $count = scalar @$models;
+
+        # Filter out embedding models and router entries
+        my @chat_models = grep {
+            my $id = $_->{id} || '';
+            $id !~ /embedding|embed/i && !($id =~ m{/routers/})
+        } @$models;
+
+        # Deduplicate by model ID (keep first occurrence)
+        my %seen;
+        my @unique;
+        for my $m (sort { $a->{id} cmp $b->{id} } @chat_models) {
+            my $id = $m->{_full_id} || $m->{id};
+            # Strip provider prefix for dedup (e.g., github_copilot/gpt-4 -> gpt-4)
+            my $base_id = $id;
+            $base_id =~ s{^\Q$provider_name\E/}{};
+            next if $seen{lc($base_id)}++;
+            push @unique, $m;
+        }
+
+        my $count = scalar @unique;
+
+        # Fixed column width for model IDs (long names truncated with ellipsis)
+        my $max_id_width = 30;
 
         push @lines, "";
-        push @lines, $self->colorize("$display_name ($count models)", 'THEME');
+        push @lines, $self->colorize("$display_name ($provider_name)", 'THEME');
         push @lines, "  " . (box_char("horizontal") x 72);
 
-        my @sorted = sort { $a->{id} cmp $b->{id} } @$models;
+        # Column headers
+        push @lines, $self->colorize(
+            sprintf("  %-30s %6s %6s  %-5s %5s", "Model", "Ctx", "Out", "Cap", "Cost"),
+            'DIM'
+        );
 
-        for my $model (@sorted) {
-            my $full_id = $model->{_full_id} || $model->{id};
-            my $billing_info = '';
-
-            if ($model->{billing} && defined $model->{billing}{multiplier}) {
-                my $mult = $model->{billing}{multiplier};
-                if    ($mult == 0)              { $billing_info = 'FREE'; }
-                elsif ($mult == int($mult))     { $billing_info = int($mult) . 'x'; }
-                else                            { $billing_info = sprintf("%.1fx", $mult); }
-            }
-
-            my $max_name = $billing_info ? 62 : 74;
-            my $display_id = $full_id;
-            if (length($display_id) > $max_name) {
-                $display_id = substr($display_id, 0, $max_name - 3) . "...";
-            }
-
-            if ($billing_info) {
-                my $colored = $self->colorize($display_id, 'USER');
-                my $pad = $max_name - length($display_id);
-                $pad = 1 if $pad < 1;
-                push @lines, sprintf("  %s%s %10s", $colored, ' ' x $pad, $billing_info);
-            } else {
-                push @lines, "  " . $self->colorize($display_id, 'USER');
-            }
+        for my $model (@unique) {
+            my $line = $self->_format_model_line($model, $provider_name, $max_id_width);
+            push @lines, $line;
         }
     }
 
@@ -355,6 +396,291 @@ sub _display_multi_provider_models {
     push @lines, $self->colorize("Usage: /api set model <provider>/<model>", 'SYSTEM');
     push @lines, $self->colorize("  e.g.: /api set model github_copilot/gpt-4.1", 'SYSTEM');
     push @lines, $self->colorize("  e.g.: /api set model openrouter/deepseek/deepseek-r1-0528", 'SYSTEM');
+    push @lines, "";
+
+    for my $line (@lines) {
+        last unless $self->writeline($line);
+    }
+    $self->{chat}->{pager}->disable();
+}
+
+sub _format_model_line {
+    my ($self, $model, $provider_name, $max_id_width) = @_;
+
+    $max_id_width //= 30;
+
+    my $full_id = $model->{_full_id} || $model->{id};
+
+    # Strip provider prefix from display ID (it's already in the section header)
+    my $display_id = $full_id;
+    if ($provider_name) {
+        $display_id =~ s{^\Q$provider_name\E/}{};
+    }
+
+    # Context tokens - check multiple sources
+    my $ctx = $model->{_context_tokens};
+    if (!$ctx && $model->{capabilities} && $model->{capabilities}{limits}) {
+        $ctx = $model->{capabilities}{limits}{max_context_window_tokens}
+            || $model->{capabilities}{limits}{max_prompt_tokens};
+    }
+    my $ctx_str = $ctx ? _format_tokens($ctx) : "-";
+
+    # Output tokens
+    my $out = $model->{_output_tokens};
+    if (!$out && $model->{capabilities} && $model->{capabilities}{limits}) {
+        $out = $model->{capabilities}{limits}{max_output_tokens};
+    }
+    my $out_str = $out ? _format_tokens($out) : "-";
+
+    # Feature flags (abbreviated for compact display)
+    my @features;
+    push @features, "t" if $model->{_supports_tools};
+    push @features, "v" if $model->{_supports_vision};
+    push @features, "r" if $model->{_supports_reasoning};
+
+    # Check Copilot capabilities supports hash
+    if ($model->{capabilities} && $model->{capabilities}{supports}) {
+        my $s = $model->{capabilities}{supports};
+        push @features, "t" if $s->{tool_calls} && !grep { $_ eq 't' } @features;
+        push @features, "v" if $s->{vision} && !grep { $_ eq 'v' } @features;
+    }
+
+    my $features_str = join("", @features);
+
+    # Billing info
+    my $billing_info = '';
+    if ($model->{billing} && defined $model->{billing}{multiplier}) {
+        my $mult = $model->{billing}{multiplier};
+        if    ($mult == 0)              { $billing_info = 'FREE'; }
+        elsif ($mult == int($mult))     { $billing_info = int($mult) . 'x'; }
+        else                            { $billing_info = sprintf("%.1fx", $mult); }
+    }
+
+    # Build colorized data fields (padded to fixed widths on plain text)
+    my $ctx_padded = sprintf("%6s", $ctx_str);
+    my $out_padded = sprintf("%6s", $out_str);
+    my $feat_padded = sprintf("%-5s", $features_str);
+    my $cost_padded = sprintf("%5s", $billing_info);
+
+    my $data_line = " " .
+        $self->colorize($ctx_padded, 'DATA') . " " .
+        $self->colorize($out_padded, 'DATA') . "  " .
+        $self->colorize($feat_padded, 'DIM') . " " .
+        $self->colorize($cost_padded, 'HIGHLIGHT');
+
+    # If model ID fits in column, single line
+    if (length($display_id) <= $max_id_width) {
+        my $id_padded = sprintf("%-30s", $display_id);
+        return "  " . $self->colorize($id_padded, 'USER') . $data_line;
+    }
+
+    # Model ID too long - wrap to continuation line
+    # First line: first 30 chars of ID + data columns
+    # Second line: rest of ID (padded to 30) + empty data columns
+    my $first_part = substr($display_id, 0, $max_id_width);
+    my $rest = substr($display_id, $max_id_width);
+
+    my $first_id = sprintf("%-30s", $first_part);
+    my $line1 = "  " . $self->colorize($first_id, 'USER') . $data_line;
+
+    # Continuation lines: rest of ID in model column, empty data
+    my @lines = ($line1);
+    while (length($rest) > 0) {
+        my $chunk;
+        if (length($rest) > $max_id_width) {
+            $chunk = substr($rest, 0, $max_id_width);
+            $rest = substr($rest, $max_id_width);
+        } else {
+            $chunk = $rest;
+            $rest = '';
+        }
+        my $cont_id = sprintf("%-30s", $chunk);
+        push @lines, "  " . $self->colorize($cont_id, 'USER');
+    }
+
+    return join("\n", @lines);
+}
+
+sub _format_capabilities_line {
+    my ($self, $model, $provider_name, $max_id_width, $mcm, $has_cap_map) = @_;
+
+    $max_id_width //= 30;
+
+    my $model_id = $model->{id};
+    my $full_id = $model->{_full_id} || $model_id;
+
+    # Strip provider prefix
+    my $display_id = $full_id;
+    $display_id =~ s{^\Q$provider_name\E/}{};
+
+    # Truncate long model IDs with ellipsis
+    if (length($display_id) > $max_id_width) {
+        $display_id = substr($display_id, 0, $max_id_width - 1) . "\x{2026}";
+    }
+
+    # Context tokens from model data or MCM
+    my $ctx = $model->{_context_tokens};
+    if (!$ctx && $model->{capabilities} && $model->{capabilities}{limits}) {
+        $ctx = $model->{capabilities}{limits}{max_context_window_tokens}
+            || $model->{capabilities}{limits}{max_prompt_tokens};
+    }
+    if ($has_cap_map && !$ctx) {
+        my $caps = $mcm->get_capabilities($provider_name, $model_id);
+        $ctx = $caps->{context_window} if $caps;
+    }
+    my $ctx_str = $ctx ? _format_tokens($ctx) : "-";
+
+    # Output tokens
+    my $out = $model->{_output_tokens};
+    if (!$out && $model->{capabilities} && $model->{capabilities}{limits}) {
+        $out = $model->{capabilities}{limits}{max_output_tokens};
+    }
+    my $out_str = $out ? _format_tokens($out) : "-";
+
+    # Feature flags (abbreviated for compact display)
+    my @features;
+    push @features, "t" if $model->{_supports_tools};
+    push @features, "v" if $model->{_supports_vision};
+    push @features, "r" if $model->{_supports_reasoning};
+
+    # Check Copilot capabilities supports hash
+    if ($model->{capabilities} && $model->{capabilities}{supports}) {
+        my $s = $model->{capabilities}{supports};
+        push @features, "t" if $s->{tool_calls} && !grep { $_ eq 't' } @features;
+        push @features, "v" if $s->{vision} && !grep { $_ eq 'v' } @features;
+        push @features, "s" if $s->{streaming};
+    }
+
+    # MCM capabilities for providers with capability maps
+    if ($has_cap_map) {
+        my $caps = $mcm->get_capabilities($provider_name, $model_id);
+        if ($caps) {
+            push @features, "t" if $caps->{supports_tools} && !grep { $_ eq 't' } @features;
+            push @features, "v" if $caps->{supports_vision} && !grep { $_ eq 'v' } @features;
+            push @features, "r" if $caps->{supports_reasoning} && !grep { $_ eq 'r' } @features;
+            push @features, "s" if $caps->{supports_streaming} && !grep { $_ eq 's' } @features;
+        }
+    }
+
+    my $features_str = join("", @features);
+
+    # Build colorized data fields (padded to fixed widths on plain text)
+    my $ctx_padded = sprintf("%6s", $ctx_str);
+    my $out_padded = sprintf("%6s", $out_str);
+    my $feat_padded = sprintf("%-5s", $features_str);
+
+    my $data_line = " " .
+        $self->colorize($ctx_padded, 'DATA') . " " .
+        $self->colorize($out_padded, 'DATA') . "  " .
+        $self->colorize($feat_padded, 'DIM');
+
+    # If model ID fits in column, single line
+    if (length($display_id) <= $max_id_width) {
+        my $id_padded = sprintf("%-30s", $display_id);
+        return "  " . $self->colorize($id_padded, 'USER') . $data_line;
+    }
+
+    # Model ID too long - wrap to continuation line
+    my $first_part = substr($display_id, 0, $max_id_width);
+    my $rest = substr($display_id, $max_id_width);
+
+    my $first_id = sprintf("%-30s", $first_part);
+    my $line1 = "  " . $self->colorize($first_id, 'USER') . $data_line;
+
+    my @lines = ($line1);
+    while (length($rest) > 0) {
+        my $chunk;
+        if (length($rest) > $max_id_width) {
+            $chunk = substr($rest, 0, $max_id_width);
+            $rest = substr($rest, $max_id_width);
+        } else {
+            $chunk = $rest;
+            $rest = '';
+        }
+        my $cont_id = sprintf("%-30s", $chunk);
+        push @lines, "  " . $self->colorize($cont_id, 'USER');
+    }
+
+    return join("\n", @lines);
+}
+
+sub _display_capabilities_view {
+    my ($self, $all_models) = @_;
+
+    require CLIO::Core::ModelCapabilitiesManager;
+    my $mcm = CLIO::Core::ModelCapabilitiesManager->new(debug => 0);
+
+    my %by_provider;
+    for my $model (@$all_models) {
+        my $provider = $model->{_provider} || 'unknown';
+        push @{$by_provider{$provider}}, $model;
+    }
+
+    my @provider_order = sort {
+        my $a_def = CLIO::Providers::get_provider($a);
+        my $b_def = CLIO::Providers::get_provider($b);
+        my $a_pri = ($a_def && $a_def->{priority_display}) ? 0 : 1;
+        my $b_pri = ($b_def && $b_def->{priority_display}) ? 0 : 1;
+        return $a_pri <=> $b_pri || $a cmp $b;
+    } keys %by_provider;
+
+    $self->refresh_terminal_size();
+    $self->{chat}->{pager}->reset();
+    $self->{chat}->{pager}->enable();
+
+    my @lines;
+
+    push @lines, "";
+    push @lines, box_char("hhorizontal") x 76;
+    push @lines, $self->colorize("MODEL CAPABILITIES", 'DATA') . " (" . scalar(@provider_order) . " providers)";
+    push @lines, box_char("hhorizontal") x 76;
+
+    for my $provider_name (@provider_order) {
+        my $models = $by_provider{$provider_name};
+        my $display_name = $models->[0]{_provider_display} || $provider_name;
+
+        require CLIO::Providers;
+        my $provider_def = CLIO::Providers::get_provider($provider_name);
+        my $has_cap_map = $provider_def && $provider_def->{capability_map};
+
+        # Filter out embedding models and router entries
+        my @chat_models = grep {
+            my $id = $_->{id} || '';
+            $id !~ /embedding|embed/i && !($id =~ m{/routers/})
+        } @$models;
+
+        # Deduplicate by model ID
+        my %seen;
+        my @unique;
+        for my $m (sort { $a->{id} cmp $b->{id} } @chat_models) {
+            my $id = $m->{_full_id} || $m->{id};
+            my $base_id = $id;
+            $base_id =~ s{^\Q$provider_name\E/}{};
+            next if $seen{lc($base_id)}++;
+            push @unique, $m;
+        }
+
+        push @lines, "";
+        push @lines, $self->colorize("$display_name ($provider_name)", 'THEME');
+        push @lines, "  " . (box_char("horizontal") x 72);
+
+        # Fixed column width for model IDs (long names truncated with ellipsis)
+        my $max_id_width = 30;
+
+        # Column headers
+        push @lines, $self->colorize(
+            sprintf("  %-30s %6s %6s  %-5s", "Model", "Ctx", "Out", "Cap"),
+            'DIM'
+        );
+
+        for my $model (@unique) {
+            my $line = $self->_format_capabilities_line($model, $provider_name, $max_id_width, $mcm, $has_cap_map);
+            push @lines, $line;
+        }
+    }
+
+    push @lines, "";
+    push @lines, box_char("hhorizontal") x 76;
     push @lines, "";
 
     for my $line (@lines) {
@@ -400,26 +726,25 @@ sub _display_models_list {
     my @lines;
 
     push @lines, "";
-    push @lines, box_char("hhorizontal") x 54;
+    push @lines, box_char("hhorizontal") x 76;
     push @lines, $self->colorize("AVAILABLE MODELS", 'DATA') . " (" . $self->colorize($api_base, 'THEME') . ")";
-    push @lines, box_char("hhorizontal") x 54;
-    push @lines, "";
+    push @lines, box_char("hhorizontal") x 76;
 
-    if ($has_billing) {
-        my $header = sprintf("  %-64s %12s", "Model", "Rate");
-        push @lines, $self->colorize($header, 'THEME');
-        push @lines, sprintf("  %-64s %12s", box_char("hhorizontal") x 64, box_char("hhorizontal") x 12);
-    } else {
-        my $header = sprintf("  %-70s", "Model");
-        push @lines, $self->colorize($header, 'THEME');
-        push @lines, sprintf("  %-70s", box_char("hhorizontal") x 70);
-    }
+    # Fixed column width for model IDs (long names truncated with ellipsis)
+    my $max_id_width = 30;
+
+    # Column headers
+    push @lines, "";
+    push @lines, $self->colorize(
+        sprintf("  %-30s %6s %6s  %-5s %5s", "Model", "Ctx", "Out", "Cap", "Cost"),
+        'DIM'
+    );
 
     if (@free_models) {
         push @lines, "";
         push @lines, $self->colorize("FREE MODELS", 'THEME');
         for my $model (@free_models) {
-            push @lines, "  " . $self->_format_model_for_display($model, $has_billing);
+            push @lines, $self->_format_model_line($model, undef, $max_id_width);
         }
     }
 
@@ -427,7 +752,7 @@ sub _display_models_list {
         push @lines, "";
         push @lines, $self->colorize("PREMIUM MODELS", 'THEME');
         for my $model (@premium_models) {
-            push @lines, "  " . $self->_format_model_for_display($model, $has_billing);
+            push @lines, $self->_format_model_line($model, undef, $max_id_width);
         }
     }
 
@@ -435,12 +760,12 @@ sub _display_models_list {
         push @lines, "";
         push @lines, $self->colorize($has_billing ? 'OTHER MODELS' : 'ALL MODELS', 'THEME');
         for my $model (@unknown_models) {
-            push @lines, "  " . $self->_format_model_for_display($model, $has_billing);
+            push @lines, $self->_format_model_line($model, undef, $max_id_width);
         }
     }
 
     push @lines, "";
-    push @lines, box_char("hhorizontal") x 54;
+    push @lines, box_char("hhorizontal") x 76;
     push @lines, sprintf("Total: %d models available", scalar(@$models));
 
     if ($has_billing) {
@@ -457,42 +782,6 @@ sub _display_models_list {
     $self->{chat}->{pager}->disable();
 }
 
-sub _format_model_for_display {
-    my ($self, $model, $has_billing) = @_;
-
-    my $name = $model->{id} || 'Unknown';
-
-    my $max_name_length = $has_billing ? 62 : 68;
-    if (length($name) > $max_name_length) {
-        $name = substr($name, 0, $max_name_length - 3) . "...";
-    }
-
-    if ($has_billing) {
-        my $billing_rate = '-';
-
-        if ($model->{billing} && defined $model->{billing}{multiplier}) {
-            my $mult = $model->{billing}{multiplier};
-            if    ($mult == 0)           { $billing_rate = 'FREE'; }
-            elsif ($mult == int($mult))  { $billing_rate = int($mult) . 'x'; }
-            else                         { $billing_rate = sprintf("%.2fx", $mult); }
-        } elsif (defined $model->{premium_multiplier}) {
-            my $mult = $model->{premium_multiplier};
-            if    ($mult == 0)           { $billing_rate = 'FREE'; }
-            elsif ($mult == int($mult))  { $billing_rate = int($mult) . 'x'; }
-            else                         { $billing_rate = sprintf("%.2fx", $mult); }
-        }
-
-        my $colored_name = $self->colorize($name, 'USER');
-        my $name_display_width = length($name);
-        my $padding = $max_name_length - $name_display_width;
-        $padding = 1 if $padding < 1;
-
-        return sprintf("%s%s %10s", $colored_name, ' ' x $padding, $billing_rate);
-    } else {
-        return $self->colorize($name, 'USER');
-    }
-}
-
 1;
 
 __END__
@@ -506,5 +795,3 @@ CLIO Development Team
 Same as CLIO.
 
 =cut
-
-1;

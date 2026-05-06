@@ -410,7 +410,9 @@ sub _attempt_token_recovery {
     }
     if (!$is_copilot_provider && $self->{config} && $self->{config}->can('get')) {
         my $provider = $self->{config}->get('provider') || '';
-        $is_copilot_provider = ($provider eq 'github_copilot');
+        require CLIO::Providers;
+        my $pdef = CLIO::Providers::get_provider($provider);
+        $is_copilot_provider = 1 if $pdef && $pdef->{requires_auth} && $pdef->{requires_auth} eq 'copilot';
     }
     
     # Step 1: Try a simple refresh (re-exchange existing GitHub token)
@@ -494,7 +496,9 @@ sub _get_api_key {
     # Also check by provider name (handles custom api_base proxies)
     if (!$is_copilot_provider && $self->{config} && $self->{config}->can('get')) {
         my $provider = $self->{config}->get('provider') || '';
-        $is_copilot_provider = ($provider eq 'github_copilot');
+        require CLIO::Providers;
+        my $pdef = CLIO::Providers::get_provider($provider);
+        $is_copilot_provider = 1 if $pdef && $pdef->{requires_auth} && $pdef->{requires_auth} eq 'copilot';
     }
     
     if ($is_copilot_provider) {
@@ -1018,6 +1022,43 @@ sub get_model_capabilities {
         return $self->{_model_capabilities_cache}{$model};
     }
     
+    # Use ModelCapabilitiesManager for providers with static capability maps
+    my $eff_provider = $target_provider || ($self->{config} ? ($self->{config}->get('provider') || '') : '');
+    
+    my $use_mcm = 0;
+    if ($eff_provider) {
+        eval {
+            require CLIO::Providers;
+            my $pdef = CLIO::Providers::get_provider($eff_provider);
+            $use_mcm = $pdef && $pdef->{capability_map};
+        };
+    }
+    
+    if ($use_mcm) {
+        eval {
+            require CLIO::Core::ModelCapabilitiesManager;
+            my $mcm = CLIO::Core::ModelCapabilitiesManager->new(debug => $self->{debug});
+            my $caps = $mcm->get_capabilities($eff_provider, $api_model);
+            if ($caps) {
+                my $normalized = {
+                    max_prompt_tokens          => $caps->{max_prompt_tokens} || $caps->{context_window},
+                    max_output_tokens          => $caps->{max_output_tokens},
+                    max_context_window_tokens  => $caps->{context_window},
+                    supports_tools              => $caps->{supports_tools},
+                    supports_vision             => $caps->{supports_vision},
+                    supports_reasoning          => $caps->{supports_reasoning},
+                };
+                $self->{_model_capabilities_cache} ||= {};
+                $self->{_model_capabilities_cache}{$model} = $normalized;
+                log_debug('APIManager', "MCM capability for $model: ctx=$caps->{context_window}, tools=$caps->{supports_tools}");
+                return $normalized;
+            }
+        };
+        if ($@) {
+            log_debug('APIManager', "MCM failed for $model: $@");
+        }
+    }
+    
     # Determine API base for the model's provider
     my $api_base;
     if ($target_provider) {
@@ -1470,7 +1511,10 @@ sub _model_uses_responses_api {
     
     # Only applies to GitHub Copilot provider
     my $provider = $self->{config} ? $self->{config}->get('provider') : '';
-    return 0 unless $provider && $provider eq 'github_copilot';
+    return 0 unless $provider;
+    require CLIO::Providers;
+    my $pdef = CLIO::Providers::get_provider($provider);
+    return 0 unless $pdef && $pdef->{requires_auth} && $pdef->{requires_auth} eq 'copilot';
     
     # Cache the result per model to avoid repeated API lookups
     $self->{_responses_api_cache} ||= {};
@@ -1726,8 +1770,10 @@ sub _get_endpoint_config_for_provider {
     # Resolve API key for the target provider
     my $api_key = $self->{config}->get_provider_key($provider_name);
     
-    # For github_copilot, use OAuth token
-    if ($provider_name eq 'github_copilot' && !$api_key) {
+    # For copilot auth providers, use OAuth token
+    require CLIO::Providers;
+    my $provider_def = CLIO::Providers::get_provider($provider_name);
+    if ($provider_def && $provider_def->{requires_auth} && $provider_def->{requires_auth} eq 'copilot' && !$api_key) {
         eval {
             require CLIO::Core::GitHubAuth;
             my $auth = CLIO::Core::GitHubAuth->new(debug => $self->{debug});
