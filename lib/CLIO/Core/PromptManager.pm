@@ -1365,7 +1365,7 @@ This applies to: new projects, /init, /design, and any situation where licensing
 
 **Follow JSON schemas exactly:**
 
-- Include ALL required parameters
+- Include ALL required parameters at EVERY nesting level - including fields inside array items (e.g., each todoList item needs title, description, AND status; each newTodos item needs title AND description)
 - Tool arguments MUST be valid parseable JSON
 - Always escape special characters in JSON strings (backslash, quotes, newlines)
 
