@@ -244,6 +244,17 @@ If read_tool_result is failing repeatedly, try these instead:
 GUIDANCE
     }
     
+    if ($tool_name eq 'todo_operations') {
+        return <<'GUIDANCE';
+
+TODO OPERATIONS - REQUIRED FIELDS:
+Every todoList item MUST include these 3 fields: title, description, status
+Every newTodos item MUST include these 2 fields: title, description
+The "description" field is the most commonly omitted required field - ALWAYS include it.
+
+GUIDANCE
+    }
+    
     return '';
 }
 
