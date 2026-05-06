@@ -92,6 +92,7 @@ CLIO is part of the [Synthetic Autonomic Mind (SAM)](https://github.com/Syntheti
 | **Web** | Fetch and analyze web content |
 | **MCP** | Connect to external tool servers via [Model Context Protocol](docs/MCP.md) |
 | **AI Providers** | GitHub Copilot, OpenAI, Google Gemini, DeepSeek, OpenRouter, Ollama Cloud, MiniMax, Z.AI, llama.cpp, LM Studio, SAM |
+| **Proxy Support** | HTTP and SOCKS proxy for corporate/restricted networks |
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -246,7 +247,7 @@ Find the bug causing the login endpoint to return 500 when the session is expire
 | `/agent` | Spawn and manage sub-agents |
 | `/mux` | Terminal multiplexer panes (tmux/screen/Zellij) |
 | `/mcp` | Model Context Protocol servers |
-| `/skill` | Custom skill system |
+| `/skills` | Custom skill system and repositories |
 | `/update` | Check for and install updates |
 | `/usage` | API billing and quota tracking |
 | `/stats` | Memory and performance stats |

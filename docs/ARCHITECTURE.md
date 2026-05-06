@@ -1,6 +1,6 @@
 # CLIO Architecture
 
-**Last Updated:** April 2026
+**Last Updated:** May 2026
 
 ---------------------------------------------------
 
@@ -82,6 +82,8 @@ Terminal Output
 | Hashtag Parser | `HashtagParser.pm` | Parse hashtag commands |
 | Tab Completion | `TabCompletion.pm` | Tab completion support |
 | Skill Manager | `SkillManager.pm` | Manage AI skills |
+| Skill Repository | `SkillRepository.pm` | Skill repository configuration and management |
+| Repository Loader | `RepositoryLoader.pm` | Load skills from cached Git repositories |
 | Copilot User API | `CopilotUserAPI.pm` | GitHub Copilot user management |
 | Device Registry | `DeviceRegistry.pm` | Named devices and groups for remote execution |
 | Agent Loop | `AgentLoop.pm` | Persistent agent execution loop |
@@ -94,6 +96,9 @@ Terminal Output
 | GitHub Auth | `GitHubAuth.pm` | GitHub OAuth authentication |
 | GitHub Copilot Models API | `GitHubCopilotModelsAPI.pm` | Access GitHub Copilot models |
 | Performance Monitor | `PerformanceMonitor.pm` | Track timing metrics |
+| Rate Limiter | `RateLimiter.pm` | API rate limit tracking and enforcement |
+| Plugin Manager | `PluginManager.pm` | Plugin system management |
+| Defaults | `Defaults.pm` | Default configuration values |
 | Logger | `Logger.pm` | Debug and trace output |
 
 **How it works:**
@@ -112,13 +117,13 @@ Terminal Output
 | Tool | File | Operations |
 |------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | File Operations | `FileOperations.pm` | read, write, search, create, delete, rename, etc. |
-| Version Control | `VersionControl.pm` | git status, log, diff, commit, branch, push, pull |
+| Version Control | `VersionControl.pm` | git status, log, diff, commit, branch, push, pull, blame, stash, tag, worktree |
 | Terminal | `TerminalOperations.pm` | exec - run shell commands safely (fork+process group, ESC-interruptible) |
 | Memory | `MemoryOperations.pm` | store, retrieve, search, list, delete |
 | Todo | `TodoList.pm` | create, update, complete, list, track tasks |
 | Code Intelligence | `CodeIntelligence.pm` | list_usages, search_history |
 | Web | `WebOperations.pm` | fetch_url, search_web |
-| User Collaboration | `UserCollaboration.pm` | request_input - checkpoint prompts |
+| Interact | `Interact.pm` | request_input - checkpoint prompts |
 | Sub-Agent Operations | `SubAgentOperations.pm` | Spawn and manage parallel agents |
 | Remote Execution | `RemoteExecution.pm` | Execute AI tasks on remote systems |
 | Apply Patch | `ApplyPatch.pm` | Apply lightweight diff patches |
@@ -567,7 +572,7 @@ lib/CLIO/
           Project.pm       # Project setup commands (/design, /init)
           Prompt.pm        # Prompt commands (/prompt)
           Session.pm       # Session management commands (/session)
-          Skills.pm        # Skill system commands (/skill)
+          Skills.pm        # Skill system commands (/skills)
           Spec.pm          # OpenSpec commands (/spec)
           Stats.pm         # Stats commands (/stats)
           SubAgent.pm      # Sub-agent commands (/subagent)
@@ -597,12 +602,17 @@ lib/CLIO/
       HashtagParser.pm     # Hashtag commands
       TabCompletion.pm     # Tab completion
       SkillManager.pm      # AI skills
+      SkillRepository.pm   # Skill repository config
+      RepositoryLoader.pm  # Load skills from Git repos
       GitHubAuth.pm        # OAuth
       GitHubCopilotModelsAPI.pm # Copilot models
       CopilotUserAPI.pm    # Copilot user API
       DeviceRegistry.pm    # Device management
       AgentLoop.pm         # Persistent agent loop
       PerformanceMonitor.pm # Performance tracking
+      RateLimiter.pm       # API rate limiting
+      PluginManager.pm     # Plugin system
+      Defaults.pm          # Default configuration values
       Logger.pm            # Logging
       API/                 # API sub-modules
           MessageValidator.pm # Message format validation and proactive trimming
@@ -617,7 +627,7 @@ lib/CLIO/
       MemoryOperations.pm  # Memory operations
       TodoList.pm          # Todo tracking
       CodeIntelligence.pm  # Code analysis
-      UserCollaboration.pm # User checkpoints
+      Interact.pm          # User checkpoints
       SubAgentOperations.pm # Multi-agent management
       RemoteExecution.pm   # Remote SSH execution
       ApplyPatch.pm        # Patch application
@@ -684,6 +694,10 @@ lib/CLIO/
       AnthropicXMLParser.pm # XML-format tool call parser
       YAML.pm              # Lightweight YAML parser (OpenSpec support)
       GitIgnore.pm         # Auto-manage .clio/ entries in .gitignore
+      AtomicWrite.pm       # Atomic file writes
+      RateLimit.pm         # Rate limiting
+      ImageAttachment.pm   # Image file handling
+      ImageDisplay.pm      # Inline image display
   Spec/                    # OpenSpec integration
       Manager.pm           # Spec lifecycle management
   Test/                    # Testing utilities
@@ -694,7 +708,7 @@ lib/CLIO/
   Util/                    # Utility modules
       PathResolver.pm      # Path resolution
       TextSanitizer.pm     # Text sanitization
-      ... (other utilities)
+      ... (other utilities - see detailed listing above)
   NaturalLanguage/         # NL processing
       ... (NL modules)
   Compat/                  # Compatibility layer
