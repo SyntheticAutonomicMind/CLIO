@@ -45,6 +45,7 @@ Users can override any setting via /api commands, but these are the defaults.
 #   - supports_tools: Whether provider supports function calling
 #   - supports_streaming: Whether provider supports streaming responses
 #   - chat_endpoint_suffix: Path to append to api_base for chat (if not already in api_base)
+#   - slow_api: Flag for local inference providers requiring longer HTTP timeouts (default: 300s, slow_api: 600s)
 
 my %PROVIDERS = (
     sam => {
@@ -55,6 +56,7 @@ my %PROVIDERS = (
         supports_tools => 1,
         supports_streaming => 1,
         max_context_tokens => 32000,
+        slow_api => 1,  # Local inference is significantly slower than cloud APIs
         endpoint => {
             path_suffix => '',
             temperature_range => [0.0, 2.0],
@@ -118,6 +120,7 @@ my %PROVIDERS = (
         supports_tools => 1,
         supports_streaming => 1,
         max_context_tokens => 32000,
+        slow_api => 1,  # Local inference is significantly slower than cloud APIs
         endpoint => {
             path_suffix => '',
             temperature_range => [0.0, 2.0],
@@ -133,6 +136,7 @@ my %PROVIDERS = (
         supports_tools => 1,
         supports_streaming => 1,
         max_context_tokens => 32000,
+        slow_api => 1,  # Local inference is significantly slower than cloud APIs
         endpoint => {
             path_suffix => '',
             temperature_range => [0.0, 2.0],
