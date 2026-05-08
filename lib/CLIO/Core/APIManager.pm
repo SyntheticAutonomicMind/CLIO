@@ -2295,8 +2295,10 @@ sub _prepare_api_request {
     my $json = $self->_encode_payload_json($payload, $is_streaming);
     return { error_result => $json } if ref($json) eq 'HASH' && !$json->{success};
 
-    # Create HTTP client
-    my $ua_timeout = $is_streaming ? 300 : 60;
+    # Create HTTP client with extended timeout for slow local inference (llama.cpp, SAM, LM Studio)
+    my $default_timeout = 300;  # Fast API (cloud) default
+    my $slow_timeout = 600;      # Slow API (local inference) default
+    my $ua_timeout = $endpoint_config->{slow_api} ? $slow_timeout : $default_timeout;
     my $ua = $self->_create_http_client(
         timeout  => $ua_timeout,
         agent    => 'GitHubCopilotChat/0.22.4',
