@@ -219,7 +219,14 @@ sub update {
             next;
         }
         
-        my $todo_id = $update->{id};
+       my $todo_id = $update->{id};
+        
+        # Validate that todo_id is a positive integer to prevent
+        # "isn't numeric" warnings when comparing string IDs
+        unless (defined $todo_id && $todo_id =~ /^\d+$/ && $todo_id > 0) {
+            push @failed, "Invalid todo ID '$todo_id': must be a positive integer";
+            next;
+        }
         
         # Normalize 'pending' to 'not-started'
         if (defined $update->{status} && $update->{status} eq 'pending') {
@@ -460,6 +467,9 @@ sub _has_circular_dependency {
     my ($self, $todo_id, $todos, $visited) = @_;
     
     $visited ||= {};
+    
+    # Guard against non-numeric todo_id
+    return 0 unless defined $todo_id && $todo_id =~ /^\d+$/;
     
     # If we've already visited this node, we found a cycle
     return 1 if $visited->{$todo_id};
