@@ -2003,7 +2003,7 @@ sub _build_request {
     # Add OpenRouter-specific headers
     # Required for app identification (prevents 401 errors)
     if ($final_endpoint =~ m{openrouter\.ai}i) {
-        $req->header('HTTP-Referer' => 'https://github.com/fewtarius/CLIO');
+        $req->header('HTTP-Referer' => 'https://github.com/SyntheticAutonomicMind/CLIO');
         $req->header('X-Title' => 'CLIO');
     }
     
