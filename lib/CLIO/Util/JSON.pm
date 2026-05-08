@@ -32,12 +32,13 @@ No CPAN installation required. Simply uses whatever is already on the system.
 =cut
 
 use Exporter 'import';
-our @EXPORT_OK = qw(encode_json decode_json encode_json_pretty JSON_BACKEND);
+our @EXPORT_OK = qw(encode_json decode_json encode_json_pretty encode_json_canonical JSON_BACKEND);
 
 # Detect the best available JSON backend at compile time
 my $_backend;
 my $_encode;
 my $_decode;
+my $_backend_obj;
 
 BEGIN {
     # Try JSON::XS first (fastest, C-based)
@@ -45,12 +46,14 @@ BEGIN {
         $_backend = 'JSON::XS';
         $_encode = \&JSON::XS::encode_json;
         $_decode = \&JSON::XS::decode_json;
+        $_backend_obj = JSON::XS->new->utf8;
     }
     # Try Cpanel::JSON::XS (fast C-based fork)
     elsif (eval { require Cpanel::JSON::XS; 1 }) {
         $_backend = 'Cpanel::JSON::XS';
         $_encode = \&Cpanel::JSON::XS::encode_json;
         $_decode = \&Cpanel::JSON::XS::decode_json;
+        $_backend_obj = Cpanel::JSON::XS->new->utf8;
     }
     # Fall back to JSON::PP (always available in Perl 5.14+)
     else {
@@ -58,6 +61,7 @@ BEGIN {
         $_backend = 'JSON::PP';
         $_encode = \&JSON::PP::encode_json;
         $_decode = \&JSON::PP::decode_json;
+        $_backend_obj = JSON::PP->new->utf8;
     }
 }
 
@@ -70,7 +74,11 @@ Encode a Perl data structure to a JSON string.
 =cut
 
 sub encode_json {
-    goto &$_encode;
+    my ($data) = @_;
+    # Use canonical mode for deterministic output (critical for KV cache efficiency)
+    # This ensures consistent key ordering across requests, maximizing cache hits
+    # when the semantic content is identical
+    return $_backend_obj->canonical->encode($data);
 }
 
 =head2 decode_json
@@ -104,6 +112,27 @@ sub encode_json_pretty {
     } else {
         return JSON::PP->new->utf8->pretty->canonical->encode($data);
     }
+}
+
+=head2 encode_json_canonical
+
+Encode a Perl data structure to a JSON string with canonical (sorted) key ordering.
+
+This ensures deterministic JSON output regardless of hash key insertion order,
+which is critical for KV cache efficiency when sending tool definitions to
+language models. Non-deterministic ordering causes cache misses even when
+the semantic content is identical.
+
+    my $json = encode_json_canonical($hashref);
+
+Uses the backend's canonical (sort_keys) mode for consistent key ordering.
+
+=cut
+
+sub encode_json_canonical {
+    my ($data) = @_;
+    # All backends support canonical mode for deterministic output
+    return $_backend_obj->canonical->encode($data);
 }
 
 =head2 JSON_BACKEND

@@ -212,7 +212,7 @@ sub get_additional_parameters {
                 properties => {
                     id => {
                         type => "integer",
-                        description => "[REQUIRED] ID of todo to update.",
+                        description => "[REQUIRED] ID of todo to update. Must be a positive integer (1, 2, 3...). IDs are auto-assigned when creating todos with the write operation.",
                     },
                     status => {
                         type => "string",
@@ -482,6 +482,11 @@ sub handle_update {
         # Skip updates without valid todo_id
         unless (defined $todo_id) {
             push @action_details, "update with missing todo id skipped";
+            next;
+        }
+        # Validate that todo_id is a positive integer
+        unless ($todo_id =~ /^\d+$/ && $todo_id > 0) {
+            push @action_details, "update with invalid todo id '$todo_id' skipped";
             next;
         }
         # Find the actual todo to get its title
