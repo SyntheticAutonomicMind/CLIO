@@ -123,9 +123,9 @@ sub edit_multiline {
         print $fh $initial_content;
     } else {
         # Add helpful comment
-        print $fh "# Enter your multi-line prompt below.\n";
-        print $fh "# Lines starting with # will be preserved.\n";
-        print $fh "# Save and close editor to send to CLIO.\n\n";
+	print $fh "\n\n# Enter your multi-line prompt above.\n";
+        print $fh "# Save and close editor to send to CLIO.\n";
+	print $fh "# Commented lines will not be sent to the agent.\n";
     }
     close $fh;
     
