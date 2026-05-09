@@ -39,9 +39,12 @@ sub new {
         description => q{Execute shell commands safely with validation and timeout.
 
 Operations:
--  exec - Run command and capture output
--  validate - Check command safety before execution
-},
+-  exec - Run command and capture output. Returns {output, exit_code, action_description}.
+-  validate - Check command safety before execution.
+
+Behavior: Commands run in captured mode by default (output to file, no pty).
+Use passthrough=true for interactive TTY access. Multiplexer panes used when available.
+Timeout is idle: command killed after N seconds with no output. Active commands run until hard ceiling (10min).},
 # Timeout is an idle timeout: if the command produces no output for
 # $timeout seconds it is killed. Active commands that keep writing
 # output will not be killed until the hard ceiling (10min default).
@@ -823,7 +826,7 @@ sub get_additional_parameters {
     return {
         command => {
             type => "string",
-            description => "[REQUIRED for exec, validate] Shell command to execute.",
+            description => "[REQUIRED for exec, validate] Shell command to execute. Returns {output, exit_code, action_description} on success.",
         },
         timeout => {
             type => "integer",

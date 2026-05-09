@@ -47,14 +47,15 @@ LTM RECALL:
     match +2pts, assistant/user role +0.3/+0.2.
 
 LTM STORAGE (persist facts across sessions):
--  add_discovery: fact (required), confidence (optional, 0.0-1.0)
--  add_solution: error (required), solution (required), examples (optional, array)
--  add_pattern: pattern (required), confidence (optional, 0.0-1.0), examples (optional, array)
+-  add_discovery: fact (required), confidence (optional). Stores to .clio/ltm.json. Returns success confirmation.
+-  add_solution: error + solution (required), examples (optional). Stores to .clio/ltm.json. Returns success confirmation.
+-  add_pattern: pattern (required), confidence (optional). Stores to .clio/ltm.json. Returns success confirmation.
 
 LTM MAINTENANCE:
--  update_ltm: search_text (required), replacement (required), entry_type (optional). Prefer over adding duplicates.
--  prune_ltm: max_age_days, min_confidence, max_discoveries, max_solutions, max_patterns (all optional)
--  ltm_stats: no params},
+-  update_ltm: search_text + replacement (required), entry_type (optional). Updates existing entry. Returns {updated, count}.
+-  prune_ltm: age/limits optional. Removes old entries. Returns {pruned, remaining}.
+-  ltm_stats: no params. Returns {discoveries, solutions, patterns, workflows, failures, rules}
+},
         supported_operations => [qw(store retrieve search list delete recall_sessions add_discovery add_solution add_pattern update_ltm prune_ltm ltm_stats)],
         %opts,
     );
@@ -109,19 +110,19 @@ sub get_additional_parameters {
         },
         fact => {
             type => "string",
-            description => "[REQUIRED for add_discovery] Discovery fact to store in LTM.",
+            description => "[REQUIRED for add_discovery] Discovery fact to store in LTM. Auto-saves to .clio/ltm.json.",
         },
         confidence => {
             type => "number",
-            description => "[OPTIONAL] Confidence level 0.0-1.0 for add_discovery/add_pattern. Default: 0.8.",
+            description => "[OPTIONAL] Confidence level 0.0-1.0. Default: 0.8. Used for add_discovery/add_pattern.",
         },
         error => {
             type => "string",
-            description => "[REQUIRED for add_solution] Error/problem description.",
+            description => "[REQUIRED for add_solution] Error/problem description. Stored in .clio/ltm.json.",
         },
         solution => {
             type => "string",
-            description => "[REQUIRED for add_solution] Solution description.",
+            description => "[REQUIRED for add_solution] Solution description. Stored in .clio/ltm.json.",
         },
         pattern => {
             type => "string",
@@ -154,15 +155,15 @@ sub get_additional_parameters {
         },
         search_text => {
             type => "string",
-            description => "[REQUIRED for update_ltm] Text to search for in existing LTM entry.",
+            description => "[REQUIRED for update_ltm] Text to search for in LTM. Updates matching entry.",
         },
         replacement => {
             type => "string",
-            description => "[REQUIRED for update_ltm] New text to replace the matched entry with.",
+            description => "[REQUIRED for update_ltm] Replacement text.",
         },
         entry_type => {
             type => "string",
-            description => "[OPTIONAL] Type of entry to update: discovery, solution, or pattern. Searches all types if omitted.",
+            description => "[OPTIONAL] LTM entry type to update: discovery, solution, pattern. Searches all if omitted.",
         },
     };
 }
