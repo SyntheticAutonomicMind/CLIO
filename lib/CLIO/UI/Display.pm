@@ -119,6 +119,9 @@ sub display_user_message {
     # Add to screen buffer (original text for buffer)
     $chat->add_to_buffer('user', $message);
     
+    # Display with role label using inline three-color format
+    my $prefix = $chat->colorize("YOU: ", 'user_text');
+    $chat->writeline($prefix . $message, markdown => 0);
 }
 
 =head2 display_assistant_message($message)
