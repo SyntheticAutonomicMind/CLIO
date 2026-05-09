@@ -196,16 +196,16 @@ sub dispatch_table {
 # to SubAgentOperations' methods that take $subagent_cmd
 
 sub _dispatch_spawn       { my ($self, $params, $ctx) = @_; $self->spawn($params, $self->{_subagent_cmd}, $ctx) }
-sub _dispatch_list        { my ($self) = @_; $self->list($self->{_subagent_cmd}) }
-sub _dispatch_status      { my ($self, $params) = @_; $self->status($params, $self->{_subagent_cmd}) }
+sub _dispatch_list        { my ($self, $params, $ctx) = @_; $self->list($self->{_subagent_cmd}, $ctx) }
+sub _dispatch_status      { my ($self, $params, $ctx) = @_; $self->status($params, $self->{_subagent_cmd}) }
 sub _dispatch_wait        { my ($self, $params, $ctx) = @_; $self->wait($params, $self->{_subagent_cmd}, $ctx) }
 sub _dispatch_kill        { my ($self, $params, $ctx) = @_; $self->kill($params, $self->{_subagent_cmd}, $ctx) }
 sub _dispatch_killall     { my ($self, $params, $ctx) = @_; $self->killall($self->{_subagent_cmd}, $ctx) }
 sub _dispatch_inbox       { my ($self, $params, $ctx) = @_; $self->inbox($self->{_subagent_cmd}, $ctx) }
-sub _dispatch_acknowledge { my ($self, $params) = @_; $self->acknowledge($params, $self->{_subagent_cmd}) }
-sub _dispatch_history     { my ($self) = @_; $self->history($self->{_subagent_cmd}) }
-sub _dispatch_send        { my ($self, $params) = @_; $self->send($params, $self->{_subagent_cmd}) }
-sub _dispatch_broadcast   { my ($self, $params) = @_; $self->broadcast($params, $self->{_subagent_cmd}) }
+sub _dispatch_acknowledge { my ($self, $params, $ctx) = @_; $self->acknowledge($params, $self->{_subagent_cmd}) }
+sub _dispatch_history     { my ($self, $params, $ctx) = @_; $self->history($self->{_subagent_cmd}) }
+sub _dispatch_send        { my ($self, $params, $ctx) = @_; $self->send($params, $self->{_subagent_cmd}) }
+sub _dispatch_broadcast   { my ($self, $params, $ctx) = @_; $self->broadcast($params, $self->{_subagent_cmd}) }
 
 sub _get_subagent_handler {
     my ($self, $context) = @_;
@@ -272,11 +272,22 @@ sub _get_subagent_handler {
         $mock_chat->{writeline} = sub { };
         $mock_chat->{colorize} = sub { return $_[1] };
         
+        # Create a minimal broker_client stub for non-UI contexts
+        # This prevents "can't call method on undef" errors when broker isn't running
+        my $mock_broker_client = {
+            poll_status_updates  => sub { [] },
+            poll_user_inbox      => sub { [] },
+            acknowledge_messages => sub { 1 },  # Return success
+            send_message         => sub { undef },  # No-op
+        };
+        
         # Cache the handler so subsequent calls reuse the same instance
         $self->{_subagent_handler} = CLIO::UI::Commands::SubAgent->new(
             chat => $mock_chat,
             debug => $self->{debug},
         );
+        # Inject mock broker_client so inbox/relay don't crash
+        $self->{_subagent_handler}{broker_client} = $mock_broker_client;
         return $self->{_subagent_handler};
     }
     
@@ -403,14 +414,14 @@ sub _emit_agent_tree {
 # Poll broker for status_update messages from child agents and re-emit as OSC events
 # This bridges the gap between child agent state and the host application's UI
 sub _relay_child_status {
-    my ($self, $handler) = @_;
+    my ($self, $handler, $context) = @_;
     
     return unless $handler->{broker_client};
     
     my $updates = eval { $handler->{broker_client}->poll_status_updates() };
     return unless $updates && @$updates;
     
-    my $host_proto = $self->_get_host_proto();
+    my $host_proto = $self->_get_host_proto($context);
     return unless $host_proto;
     
     for my $update (@$updates) {
@@ -436,12 +447,12 @@ sub wait {
         return $self->error_result("No sub-agents spawned");
     }
 
-    my $start = time();
-    my @events;
-
-    while ((time() - $start) < $timeout) {
-        # Relay child status updates via OSC
-        $self->_relay_child_status($handler);
+        my $start = time();
+        my @events;
+        
+        while ((time() - $start) < $timeout) {
+            # Relay child status updates via OSC
+            $self->_relay_child_status($handler, $context);
 
         # Check for new messages from agents
         if ($handler->{broker_client}) {
@@ -526,12 +537,12 @@ sub wait {
 }
 
 sub list {
-    my ($self, $handler) = @_;
+    my ($self, $handler, $context) = @_;
     
     my $action_desc = "listing active sub-agents";
     
     # Poll broker for status updates from child agents and re-emit as OSC
-    $self->_relay_child_status($handler);
+    $self->_relay_child_status($handler, $context);
     
     unless ($handler->{manager}) {
         return $self->success_result("No sub-agents spawned", action_description => $action_desc, agents => []);
@@ -676,7 +687,7 @@ sub inbox {
     my $action_desc = "checking agent inbox";
     
     # Poll broker for status updates from child agents and re-emit as OSC
-    $self->_relay_child_status($handler);
+    $self->_relay_child_status($handler, $context);
     
     unless ($handler->{broker_client}) {
         return $self->success_result("No messages (broker not active)", action_description => $action_desc, messages => []);
@@ -759,6 +770,13 @@ sub inbox {
                 content => ref($msg->{content}) ? encode_json($msg->{content}) : $msg->{content},
             );
         }
+    }
+    
+    # Auto-acknowledge messages so they don't accumulate in the broker.
+    # The AI can still see them in this response before they're cleared.
+    my @msg_ids = map { $_->{id} } @formatted;
+    if (@msg_ids && $handler->{broker_client}) {
+        eval { $handler->{broker_client}->acknowledge_messages(@msg_ids) };
     }
     
     return $self->success_result(
