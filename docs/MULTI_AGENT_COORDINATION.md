@@ -242,7 +242,7 @@ The relay works through two mechanisms:
 
 - Agent spawns, executes single task, exits
 - Uses `exec` to replace process with full CLIO
-- Default model: `gpt-5-mini`
+- Default model: `gpt-4.1` (via GitHub Copilot) or `minimax-m2.7` (via MiniMax)
 - Iteration limit: 75 (non-interactive default)
 - Good for: Independent parallel tasks
 
@@ -267,7 +267,7 @@ The relay works through two mechanisms:
 /subagent spawn "refactor auth module" --persistent
 
 # Specify model
-/subagent spawn "add tests" --model gpt-5
+/subagent spawn "add tests" --model minimax/minimax-m2.7
 
 # Project-scoped (Puppeteer)
 /subagent spawn "run tests" --project SAM

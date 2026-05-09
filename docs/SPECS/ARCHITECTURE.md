@@ -144,12 +144,23 @@ flowchart TD
 - Error handling and retries
 
 **Supported Providers:**
-- GitHub Copilot (GPT-4o, Claude 3.5, o1) - default
-- OpenAI (GPT-4, GPT-3.5-turbo, etc.)
-- DeepSeek (deepseek-coder)
+- GitHub Copilot (default)
+- OpenAI
+- Google Gemini
+- DeepSeek
+- OpenRouter
+- Ollama Cloud
+- MiniMax
+- Z.AI
+- SAM (local inference)
 - llama.cpp (local inference)
-- SAM (local assistant)
-- Extensible for future providers
+- LM Studio (local inference)
+- Additional providers configurable
+
+**Provider Configuration:**
+Configure via `/api set provider <name>` or environment variables. Run `/api list` to see available providers. Model selection is provider-specific - use `/api set model <model>` to choose.
+
+**Note:** Specific models vary by provider and change over time. Configure the model that fits your needs after selecting a provider.
 
 **Provider Detection:**
 ```perl
@@ -166,7 +177,7 @@ if ($ENV{GITHUB_COPILOT_TOKEN}) {
 **Request Format:**
 ```json
 {
-  "model": "gpt-5",
+  "model": "<configured-model>",
   "messages": [...],
   "tools": [...],
   "stream": true
@@ -221,7 +232,7 @@ $registry->register_tool(CLIO::Tools::TerminalOperations->new());
 {
   "id": "sess_20260118_143052",
   "created_at": "2026-01-18T14:30:52Z",
-  "model": "gpt-5",
+  "model": "<configured-model>",
   "conversation": [
     {
       "role": "user",
@@ -367,21 +378,45 @@ sub route_operation {
 **VersionControl** (`lib/CLIO/Tools/VersionControl.pm`)
 - git_status, git_diff, git_log
 - git_commit, git_push, git_pull
-- git_branch, git_checkout, git_merge, git_reset
+- git_branch, git_checkout, git_merge, git_reset, git_blame, git_stash, git_tag, git_worktree
 
 **TerminalOperations** (`lib/CLIO/Tools/TerminalOperations.pm`)
-- execute_command
-- get_terminal_output
+- execute_command (with ESC interrupt and process group isolation)
+- validate_command
 
 **MemoryOperations** (`lib/CLIO/Tools/MemoryOperations.pm`)
-- store, retrieve, search
-- list_memories, delete
+- store, retrieve, search, list, delete
+- recall_sessions, add_discovery, add_solution, add_pattern
+- update_ltm, prune_ltm, ltm_stats
 
 **TodoList** (`lib/CLIO/Tools/TodoList.pm`)
 - read, write, update, add
 
 **WebOperations** (`lib/CLIO/Tools/WebOperations.pm`)
-- fetch_webpage
+- fetch_url, search_web
+
+**CodeIntelligence** (`lib/CLIO/Tools/CodeIntelligence.pm`)
+- list_usages, search_history
+
+**Interact** (`lib/CLIO/Tools/Interact.pm`)
+- request_input (collaboration checkpoints)
+
+**SubAgentOperations** (`lib/CLIO/Tools/SubAgentOperations.pm`)
+- spawn, list, status, wait, kill, killall
+- inbox, acknowledge, history, send, broadcast
+
+**RemoteExecution** (`lib/CLIO/Tools/RemoteExecution.pm`)
+- execute_remote, execute_parallel, prepare_remote
+- cleanup_remote, check_remote, transfer_files, retrieve_files
+
+**ApplyPatch** (`lib/CLIO/Tools/ApplyPatch.pm`)
+- apply_patch (diff-based file editing)
+
+**MCPBridge** (`lib/CLIO/Tools/MCPBridge.pm`)
+- Bridge to MCP tool servers
+
+**PluginBridge** (`lib/CLIO/Tools/PluginBridge.pm`)
+- Plugin system integration
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -436,7 +471,7 @@ CLIO_LOG_LEVEL        # Debug level (automatically set by --debug flag)
 **Optional YAML config** (`~/.clio/config.yaml`):
 ```yaml
 ai_provider: github_copilot
-model: gpt-5
+model: <model-name>
 session:
   directory: ~/.clio/sessions
 logging:
@@ -444,6 +479,8 @@ logging:
 ```
 
 **Precedence:** Environment variables > Config file > Defaults
+
+**Note:** Use `/api list` to see available providers and `/api help` for configuration guidance. Model availability depends on the selected provider.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -498,15 +535,33 @@ while (my $chunk = read_stream()) {
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-## Future Architecture Enhancements
+## Implemented Features
 
-### Planned Improvements
+The following were previously listed as future enhancements but are now implemented:
 
-1. **Plugin System** - Dynamic tool loading
-2. **Protocol Layer** - Higher-level abstractions over tools
-3. **Caching Layer** - Cache frequent operations
-4. **Background Jobs** - Async tool execution
-5. **Multi-Session** - Work with multiple sessions simultaneously
+1. **Plugin System** - Implemented via PluginManager.pm and PluginBridge.pm
+2. **Protocol Layer** - Implemented via lib/CLIO/Protocols/ (Architect, Editor, Validate, RepoMap, Recall, Puppeteer)
+3. **Multi-Session** - Managed via Session/Manager.pm with session locking
+4. **MCP Integration** - Model Context Protocol support via lib/CLIO/MCP/
+
+## Extension Points
+
+### Adding Tools
+
+1. Create `lib/CLIO/Tools/NewTool.pm` extending `Tool.pm`
+2. Implement `route_operation()` method
+3. Register in `Registry.pm`
+
+### Adding AI Providers
+
+1. Add provider configuration in `lib/CLIO/Providers.pm`
+2. Implement provider-specific handling in `APIManager.pm` if needed
+
+### Adding UI Themes
+
+1. Define color scheme in `Theme.pm`
+2. Add templates for output formats
+3. Switch via `/theme` command
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

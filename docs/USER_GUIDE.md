@@ -935,7 +935,7 @@ YOU: Summarize the content of https://blog.example.com/article
 **execute_remote** - Run AI tasks on remote systems via SSH
 ```
 YOU: Use remote execution to check the disk space on myserver
-YOU: Execute on admin@webserver with gpt-5: create a system health report
+YOU: Execute on admin@webserver: create a system health report
 YOU: Remote execute on builder@arm-device: compile the project and report any errors
 ```
 
@@ -1054,7 +1054,7 @@ YOU: /subagent spawn "refactor auth module" --persistent
 
 CLIO: [OK] Spawned sub-agent: agent-1 (PERSISTENT MODE)
       Task: refactor auth module
-      Model: gpt-5-mini
+      Model: minimax-m2.7
 
 [Agent works autonomously... then has a question]
 
@@ -1082,19 +1082,19 @@ CLIO: ────────────────────────�
 **Example Multi-Agent Workflow:**
 
 ```
-YOU: /subagent spawn "analyze lib/Module/A.pm" --model gpt-5
+YOU: /subagent spawn "analyze lib/Module/A.pm" --model minimax/minimax-m2.7
 
 CLIO: [OK] Spawned sub-agent: agent-1
       Task: analyze lib/Module/A.pm and document key patterns
-      Model: gpt-5
+      Model: minimax/minimax-m2.7
       
       Use /subagent list to monitor progress
 
-YOU: /subagent spawn "create tests for lib/Module/B.pm" --model gpt-5-mini
+YOU: /subagent spawn "create tests for lib/Module/B.pm" --model github_copilot/claude-sonnet-4
 
 CLIO: [OK] Spawned sub-agent: agent-2
       Task: create tests for lib/Module/B.pm
-      Model: gpt-5-mini
+      Model: github_copilot/claude-sonnet-4
 
 YOU: /subagent list
 

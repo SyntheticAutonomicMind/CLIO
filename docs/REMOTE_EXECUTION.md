@@ -304,7 +304,7 @@ Execute an AI-powered task on a remote system.
 |-----------|----------|---------|-------------|
 | `host` | Yes | - | SSH target (user@hostname) |
 | `command` | Yes | - | Natural language task description |
-| `model` | Yes | - | AI model to use (e.g., gpt-5) |
+| `model` | No | Current model | AI model to use (e.g., minimax/minimax-m2.7) |
 | `api_key` | No | Auto | API key (auto-populated from GitHub token) |
 | `timeout` | No | 300 | Max execution time in seconds |
 | `cleanup` | No | true | Delete CLIO after execution |
@@ -315,7 +315,7 @@ Execute an AI-powered task on a remote system.
 **Example:**
 
 ```
-Execute on user@mydevice with gpt-5: analyze the system hardware and create a detailed report
+Execute on user@mydevice: analyze the system hardware and create a detailed report
 ```
 
 ### check_remote
@@ -356,21 +356,21 @@ Transfer files to/from remote systems before or after execution.
 ### System Diagnostics
 
 ```
-Use remote_execution on admin@webserver with gpt-5:
+Use remote_execution on admin@webserver:
 Create a system health report including CPU, memory, disk, and network status
 ```
 
 ### Code Analysis on Remote
 
 ```
-Execute remotely on dev@buildserver with gpt-5:
+Execute remotely on dev@buildserver:
 Analyze the Python project in ~/myproject and identify potential security issues
 ```
 
 ### Multi-Step Remote Task
 
 ```
-On user@handheld with gpt-5:
+On user@handheld:
 1. Check what games are installed in ~/Games
 2. Report disk usage by game
 3. Identify the largest game and when it was last played
@@ -387,7 +387,7 @@ Format as a markdown table.
 ### Build on Specific Architecture
 
 ```
-Execute on builder@arm-device with gpt-5:
+Execute on builder@arm-device:
 Clone https://github.com/example/project, build for ARM64, and report any compilation errors
 ```
 
@@ -397,7 +397,7 @@ Clone https://github.com/example/project, build for ARM64, and report any compil
 
 ### Credential Handling
 
-1. **API keys are never written to disk on remote systems**
+1. **API keys are not permanently stored on remote systems**
    - For GitHub Copilot: Token is written to a temporary `github_tokens.json` file
    - File is deleted immediately after execution completes
    - Even on execution failure, cleanup attempts to remove credentials
@@ -524,7 +524,11 @@ Manage named devices and groups for quick access:
 Run the same task on multiple devices simultaneously:
 
 ```
-Execute on all handhelds with gpt-5: report CPU architecture and available disk space
+Execute on all handhelds: report CPU architecture and available disk space
+```
+Omit the model specification to use your configured default, or specify explicitly:
+```
+Execute on all handhelds with minimax/minimax-m2.7: report disk space
 ```
 
 This uses `execute_parallel` internally, forking one process per target and aggregating results.
@@ -571,7 +575,7 @@ When disabled, the `remote_execution` tool is not available to the AI agent.
   "operation": "execute_remote",
   "host": "user@hostname",
   "command": "task description",
-  "model": "gpt-5",
+  "model": "minimax/minimax-m2.7",
   "api_key": "auto-populated",
   "api_provider": "github_copilot",
   "timeout": 300,
