@@ -82,13 +82,13 @@ sub default_chunk_size {
 
     # Heuristic: ~4 chars per token, use ~2% of context for a single chunk
     # This keeps chunks well within budget while scaling with capability
-    #   32k ctx  -> ~2500 tokens -> ~10k bytes -> clamp to 8192
+    #   32k ctx  -> ~2500 tokens -> ~10k bytes -> clamp to 16384
     #   128k ctx -> ~10k tokens  -> ~40k bytes -> clamp to 32768
     #   200k ctx -> ~16k tokens  -> ~64k bytes -> clamp to 32768
     my $size = int($context_window * 4 * 0.02);
 
-    # Floor at 8192, ceiling at TOOL_RESULT_MAX_CHUNK
-    $size = 8192 if $size < 8192;
+    # Floor at 16384, ceiling at TOOL_RESULT_MAX_CHUNK
+    $size = 16384 if $size < 16384;
     $size = TOOL_RESULT_MAX_CHUNK if $size > TOOL_RESULT_MAX_CHUNK;
 
     return $size;

@@ -1427,7 +1427,10 @@ sub _execute_tool_round {
                     $session->add_message(
                         'assistant',
                         $$pending_msg_ref->{content},
-                        { tool_calls => $$pending_msg_ref->{tool_calls} }
+                        {
+                            tool_calls => $$pending_msg_ref->{tool_calls},
+                            reasoning_content => $$pending_msg_ref->{reasoning_content}
+                        }
                     );
                     log_debug('WorkflowOrchestrator', "Saved assistant message with tool_calls to session (on first tool result)");
                     $$pending_msg_ref = undef;
@@ -1593,6 +1596,8 @@ sub _prepare_tool_round {
     };
     if ($api_response->{reasoning_details}) {
         $assistant_msg->{reasoning_details} = $api_response->{reasoning_details};
+        # Also set reasoning_content for DeepSeek API compatibility
+        $assistant_msg->{reasoning_content} = $api_response->{reasoning_content} // $api_response->{accumulated_reasoning};
     }
     push @$messages, $assistant_msg;
 
@@ -1604,6 +1609,9 @@ sub _prepare_tool_round {
     };
     if ($api_response->{reasoning_details}) {
         $assistant_msg_pending->{reasoning_details} = $api_response->{reasoning_details};
+    }
+    if ($api_response->{reasoning_content} || $api_response->{accumulated_reasoning}) {
+        $assistant_msg_pending->{reasoning_content} = $api_response->{reasoning_content} // $api_response->{accumulated_reasoning};
     }
 
     log_debug('WorkflowOrchestrator', "Delaying save of assistant message with tool_calls until first tool result completes");

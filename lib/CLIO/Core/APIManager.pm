@@ -844,6 +844,15 @@ sub adapt_request_for_endpoint {
         }
     }
 
+    # DeepSeek-specific adaptations
+    # - Enable reasoning_split so reasoning comes back via reasoning_details field
+    #   (not raw streaming field, making it easier to track and pass back)
+    # - Strip OpenAI-specific stream_options (not supported by DeepSeek)
+    if ($endpoint_config->{deepseek}) {
+        # Remove stream_options (DeepSeek doesn't support it)
+        delete $payload->{stream_options};
+    }
+    
     # Apply user-configured sampling overrides (highest priority - override everything)
     if ($self->{config}) {
         for my $param (qw(temperature top_p top_k)) {
@@ -3297,6 +3306,12 @@ sub _finalize_streaming_response {
 
     if (length($s{accumulated_reasoning} // '')) {
         $response->{reasoning_details} = [{ type => 'reasoning.text', text => $s{accumulated_reasoning} }];
+        # Also set reasoning_content for DeepSeek API compatibility
+        # (DeepSeek uses reasoning_content in assistant messages per their API spec)
+        $response->{reasoning_content} = $s{accumulated_reasoning};
+        # Also pass accumulated_reasoning as a string for easier downstream handling
+        # (ConversationManager and other consumers can use whichever format they prefer)
+        $response->{accumulated_reasoning} = $s{accumulated_reasoning};
     }
 
     $self->_log_streaming_response($response, $s{provider_label}, $tool_calls);
