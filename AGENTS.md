@@ -206,7 +206,7 @@ log_error('ModuleName', 'something failed: %s', $error);
 | Prefix | Purpose | Examples |
 |--------|---------|----------|
 | `CLIO::Core::` | System core | APIManager, WorkflowOrchestrator, ToolExecutor |
-| `CLIO::Core::API::` | APIManager sub-modules | ResponseHandler, MessageValidator, StreamProcessor |
+| `CLIO::Core::API::` | APIManager sub-modules | ResponseHandler, MessageValidator, ErrorHandler |
 | `CLIO::Tools::` | AI-callable tools | FileOperations, VersionControl, TerminalOperations |
 | `CLIO::UI::` | Terminal interface | Chat, Markdown, Theme, ToolOutputFormatter |
 | `CLIO::UI::Commands::` | Slash command handlers | API, Session, Config, Project |

@@ -103,7 +103,11 @@ After aggressive context trimming, the AI might otherwise "forget" what it was w
 3. The current todo/task state
 4. Recent git activity (commits, working tree status)
 
-This is why CLIO agents can work for hours on complex tasks across multiple topic transitions without losing track of their current objectives. In long sessions where early work is long done and the agent has moved through several task transitions, the original session-start message is intentionally NOT re-injected - it's stale and misleading. The thread_summary already captures it. The most recent user message represents the actual current work.
+With YaRN compression plus the recovery injection system, CLIO agents maintain continuity through context trimming. The system provides:
+1. A merged summary of everything dropped (accumulated across trim cycles)
+2. The current task anchor (most recent user message - what was being worked on NOW, not at session start)
+3. The current todo/task state
+4. Recent git activity (commits, working tree status)
 
 ---
 
@@ -389,13 +393,13 @@ The `.clio/ltm.json` file contains:
 
 ## Design Principles
 
-### Nothing Is Lost
+### Preserved in Compressed Form
 
-Messages trimmed from the active context are preserved in YaRN threads and session history. The full conversation is always available on disk, even when the AI can only "see" a window of it.
+Messages trimmed from the active context are preserved in YaRN threads and session history. While the original detail is compressed into summaries, the compressed record remains available on disk and can be searched via recall_sessions.
 
-### Learn Once, Remember Always
+### Accumulated Knowledge
 
-When an agent discovers something about your codebase - a coding convention, a bug fix pattern, a module relationship - it stores it in LTM. Every future session benefits from that knowledge without re-discovery.
+When an agent discovers something about your codebase - a coding convention, a bug fix pattern, a module relationship - it stores it in LTM. Future sessions can benefit from that accumulated knowledge, reducing redundant investigation.
 
 ### Graceful Degradation
 
