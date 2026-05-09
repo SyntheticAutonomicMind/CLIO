@@ -80,11 +80,11 @@ sub get_additional_parameters {
     return {
         url => {
             type => "string",
-            description => "[REQUIRED for fetch_url] URL to fetch.",
+            description => "[REQUIRED for fetch_url] URL to fetch. Returns {content, status, content_type} on success.",
         },
         query => {
             type => "string",
-            description => "[REQUIRED for search_web] Search query.",
+            description => "[REQUIRED for search_web] Search query. Returns array of {title, url, snippet}.",
         },
         timeout => {
             type => "integer",
