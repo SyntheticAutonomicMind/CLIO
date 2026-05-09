@@ -62,24 +62,35 @@ sub new {
 
 ━━━━━━━━━━━━━━━━━━━━━ QUERY (3 operations) ━━━━━━━━━━━━━━━━━━━━━
 -  status - Repository status and changes
+   Returns: {clean, branch, files[{file, status}]}
 -  log - Git commit history
+   Returns: {commits[{hash, date, author, subject, body}], count}
 -  diff - Show differences between commits/branches
+   Returns: diff output (unified format). Use ref1/ref2 to specify range.
 
 ━━━━━━━━━━━━━━━━━━━━━ BRANCH (2 operations) ━━━━━━━━━━━━━━━━━━━━━
 -  branch - Branch operations (list, create, switch, delete)
+   Returns: list [{name, current}] or operation confirmation
 -  commit - Create commits
+   Returns: {success, hash, message} on success
 
 ━━━━━━━━━━━━━━━━━━━━━ REMOTE (2 operations) ━━━━━━━━━━━━━━━━━━━━━
 -  push - Push changes to remote
+   Returns: {success, output} with push details
 -  pull - Pull changes from remote
+   Returns: {success, output} with pull details
 
 ━━━━━━━━━━━━━━━━━━━━━ HISTORY (3 operations) ━━━━━━━━━━━━━━━━━━━━━
 -  blame - Show file annotation/blame
+   Returns: [{line, author, date, commit_hash, content}]
 -  stash - Stash operations (save, list, apply, drop)
+   Returns: list [{index, message, date}] or operation confirmation
 -  tag - Tag operations (list, create, delete)
+   Returns: list [{name, commit, date}] or operation confirmation
 
 ━━━━━━━━━━━━━━━━━━━━━ WORKTREE (1 operation) ━━━━━━━━━━━━━━━━━━━━━
 -  worktree - Worktree operations (list, add, remove, prune, merge, pr)
+   Returns: list [{path, branch}] or operation confirmation
 
 [CRITICAL WARNING] ⚠️  NEVER USE INTERACTIVE OPERATIONS:
 -  git rebase -i / --interactive (BREAKS TERMINAL UI - FORBIDDEN)
