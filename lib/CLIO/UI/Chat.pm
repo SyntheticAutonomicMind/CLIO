@@ -704,6 +704,9 @@ sub _make_thinking_callback {
             my $line = substr($line_buffer, 0, $nl_pos);
             $line_buffer = substr($line_buffer, $nl_pos + 1);
             
+            # Strip HTML session comment markers (e.g. <!--session:test-->)
+            $line =~ s/<!--session:[a-z0-9_-]+-->\s*//gi;
+            
             $print_wrapped_line->($line);
             print "\n";
         }
