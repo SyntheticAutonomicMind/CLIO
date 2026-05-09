@@ -583,12 +583,13 @@ sub process_input {
         # The API call can take 30-60+ seconds, so this is a critical check point
         # Also check if interrupt was detected during streaming (via _interrupt_pending flag)
         if ($self->{_interrupt_pending} || $self->_check_and_handle_interrupt($session, \@messages)) {
-            # If interrupt was pending from streaming, we still need to handle it
-            if ($self->{_interrupt_pending} && !grep { $_->{content} && $_->{content} =~ /USER INTERRUPT/ } @messages) {
-                $self->_handle_interrupt($session, \@messages);
-            }
-            # Interrupt detected - skip tool execution and go straight to next iteration
-            # which will send the interrupt message to the AI
+            # _handle_interrupt was called (either by _check_and_handle_interrupt or below)
+            # It called interact directly and added user's response to messages
+            # Clear the pending flag since we've handled it
+            $self->{_interrupt_pending} = 0;
+            
+            # Interrupt detected - skip tool execution and go to next iteration
+            # which will send the user's interrupt response to the AI
             $iteration--;  # Don't count this iteration
             next;
         }
@@ -2066,10 +2067,11 @@ sub _check_for_user_interrupt {
 
 =head2 _handle_interrupt
 
-Handle user interrupt by injecting message into conversation.
+Handle user interrupt by calling interact tool directly (forced).
 
-Uses role=user (not role=system) to maintain message alternation.
-Follows existing error message pattern from line 393-401.
+Instead of injecting a message and hoping the AI calls interact,
+we call interact directly. This ensures the user ALWAYS gets prompted
+for input when they press ESC, regardless of what the AI was doing.
 
 Arguments:
 - $session: Session object
@@ -2082,16 +2084,83 @@ Returns: Nothing (modifies messages array in place)
 sub _handle_interrupt {
     my ($self, $session, $messages_ref) = @_;
     
-    log_info('WorkflowOrchestrator', "Handling user interrupt");
+    log_info('WorkflowOrchestrator', "Handling user interrupt via forced interact");
     
     # Clear interrupt flag (it's been handled)
     if ($session && $session->state()) {
         $session->state()->{user_interrupted} = 0;
     }
     
-    # Add interrupt message to conversation
-    # Use role=user (not role=system) to maintain alternation
-    # This follows the existing error message pattern (line 393-401)
+    # Stop spinner before showing interact prompt
+    if ($self->{spinner} && $self->{spinner}->can('stop')) {
+        $self->{spinner}->stop();
+    }
+    
+    # Build the interrupt message for the user
+    my $interrupt_text = 
+        "You pressed ESC to interrupt the agent.\n\n" .
+        "What do you need? (new instructions, progress check, approach change, additional info, etc.)";
+    
+    log_debug('WorkflowOrchestrator', "Calling interact tool directly for user input");
+    
+    # Get the Interact tool from the registry and call it directly
+    my $tool_registry = $self->{tool_registry};
+    if ($tool_registry) {
+        my $interact_tool = $tool_registry->get_tool('interact');
+        if ($interact_tool) {
+            # Call interact directly - this is a forced call, not from AI
+            my $result = $interact_tool->execute(
+                { operation => 'request_input', message => $interrupt_text },
+                {
+                    session => $session,
+                    config => $self->{config},
+                    ui => $self->{ui},
+                    spinner => $self->{spinner},
+                    broker_client => $self->{broker_client},
+                }
+            );
+            
+            if ($result && $result->{success} && $result->{output}) {
+                my $user_response = $result->{output};
+                
+                # Add user's response as a user message
+                push @$messages_ref, {
+                    role => 'user',
+                    content => $user_response,
+                };
+                
+                # Also save to session for persistence
+                if ($session) {
+                    eval {
+                        $session->add_message('user', $user_response);
+                        $session->save();
+                    };
+                    if ($@) {
+                        log_warning('WorkflowOrchestrator', "Failed to save interrupt response to session: $@");
+                    }
+                }
+                
+                log_info('WorkflowOrchestrator', "User responded to interrupt, continuing workflow");
+                return;
+            } else {
+                log_warning('WorkflowOrchestrator', "Interact returned no output or was cancelled");
+                # User cancelled or interact failed - add a placeholder message
+                push @$messages_ref, {
+                    role => 'user',
+                    content => "[No response - user cancelled interrupt]",
+                };
+                return;
+            }
+        } else {
+            log_warning('WorkflowOrchestrator', "Interuct tool not found in registry");
+        }
+    } else {
+        log_warning('WorkflowOrchestrator', "Tool registry not available for interrupt handling");
+    }
+    
+    # Fallback: if tool registry is not available, inject message and let AI handle it
+    # (This preserves the old behavior as a fallback)
+    log_warning('WorkflowOrchestrator', "Falling back to message injection for interrupt");
     my $interrupt_message = {
         role => 'user',
         content => 
@@ -2107,22 +2176,7 @@ sub _handle_interrupt {
             "- Provide additional information\n\n" .
             "Please use interact to find out."
     };
-    
     push @$messages_ref, $interrupt_message;
-    
-    # Save interrupt message to session
-    if ($session) {
-        eval {
-            $session->add_message('user', $interrupt_message->{content});
-            $session->save();
-        };
-        
-        if ($@) {
-            log_warning('WorkflowOrchestrator', "Failed to save interrupt message to session: $@");
-        }
-    }
-    
-    log_info('WorkflowOrchestrator', "Interrupt message added to conversation");
 }
 
 =head2 _compress_dropped_for_recovery
