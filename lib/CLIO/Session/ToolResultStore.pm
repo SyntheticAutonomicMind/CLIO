@@ -29,7 +29,7 @@ markers that the AI can use to retrieve the full content via read_tool_result.
 
 **Thresholds**:
 - MAX_INLINE_SIZE: 8192 bytes (8KB) - results larger than this are persisted
-- PREVIEW_SIZE: 8192 bytes - preview shown in stored result marker
+- PREVIEW_SIZE: 16384 bytes - preview shown in stored result marker
 
 **Storage Location**: sessions/<session_id>/tool_results/<toolCallId>.txt
 
@@ -53,8 +53,8 @@ Total content size remains unchanged, only newlines are added.
 =cut
 
 # Storage thresholds (matches SAM)
-our $MAX_INLINE_SIZE = 8192;  # 8KB
-our $PREVIEW_SIZE = 8192;     # 8KB preview
+our $MAX_INLINE_SIZE = 16384;  # 16KB
+our $PREVIEW_SIZE = 16384;    # 16KB preview
 
 =head2 new
 

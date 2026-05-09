@@ -119,19 +119,6 @@ sub display_user_message {
     # Add to screen buffer (original text for buffer)
     $chat->add_to_buffer('user', $message);
     
-    # NOTE: Session history is managed by WorkflowOrchestrator (WorkflowOrchestrator.pm:318)
-    # Do NOT add message here - that would create duplicates
-    # WorkflowOrchestrator adds the message to session before processing with API
-    
-    # Render markdown for display only (not for AI)
-    my $display_message = $message;
-    if ($chat->{enable_markdown}) {
-        $display_message = $chat->render_markdown($message);
-    }
-    
-    # Display with role label using writeline (markdown already rendered above)
-    my $line = $chat->colorize("YOU: ", 'USER') . $display_message;
-    $chat->writeline($line, markdown => 0);
 }
 
 =head2 display_assistant_message($message)
