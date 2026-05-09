@@ -2533,8 +2533,7 @@ sub request_collaboration {
             
             # If command generated an AI prompt (e.g., /multi-line), display and return it
             if ($ai_prompt) {
-                # Display the actual content, not the command
-                print $self->colorize("YOU: ", 'USER'), $ai_prompt, "\n";
+                # Return the prompt without echoing it back
                 if ($listen_broker) {
                     return { source => 'user', input => $ai_prompt, events => \@accumulated_events };
                 }
@@ -2549,7 +2548,7 @@ sub request_collaboration {
         }
         
         # Regular response - display and return
-        print $self->colorize("YOU: ", 'USER'), $response, "\n";
+        # Return user response without echoing
         if ($listen_broker) {
             return { source => 'user', input => $response, events => \@accumulated_events };
         }
@@ -3313,7 +3312,7 @@ sub repaint_screen {
     
     for my $msg (@{$self->{screen_buffer}}) {
         if ($msg->{type} eq 'user') {
-            print $self->colorize("YOU: ", 'USER'), $msg->{content}, "\n";
+            # User messages are not echoed on repaint
         }
         elsif ($msg->{type} eq 'assistant') {
             my $content = $msg->{content};
