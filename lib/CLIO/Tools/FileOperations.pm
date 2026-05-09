@@ -976,6 +976,18 @@ sub grep_search {
     my $is_regex = $params->{is_regex} || 0;
     my $max_results = $params->{max_results} || 50;  # Prevent runaway searches
     
+    # Auto-detect regex intent when query contains metacharacters
+    # Agents often pass regex patterns (e.g., "sdl|SDL") without setting is_regex
+    if (!$is_regex && $query =~ /[|\(\)\[\]\{\}\+\^\\\$]/) {
+        $is_regex = 1;
+        log_debug('FileOp', "Auto-detected regex intent (query contains metacharacters): $query");
+    }
+    
+    # Reject obviously dangerous regex patterns
+    if ($is_regex && $query =~ /\(\?\{/) {
+        return $self->error_result("Regex with code execution blocks is not allowed");
+    }
+    
     # Safeguards to prevent hangs on binary/large/problematic files
     my $MAX_FILE_SIZE    = 1_048_576;  # 1MB - skip files larger than this
     my $MAX_LINE_LENGTH  = 10_240;     # 10KB - skip file if any line exceeds this

@@ -479,6 +479,12 @@ sub add_message {
         log_debug('State::add_message', "Added tool_call_id=$opts->{tool_call_id} to message");
     }
     
+    # Add reasoning_content if provided (for DeepSeek thinking mode)
+    if ($opts && $opts->{reasoning_content}) {
+        $message->{reasoning_content} = $opts->{reasoning_content};
+        log_debug('State::add_message', "Added reasoning_content to message");
+    }
+    
     # Add provider response ID if available (for assistant messages)
     if ($role eq 'assistant' && $self->{lastGitHubCopilotResponseId}) {
         $message->{metadata}{providerResponseId} = $self->{lastGitHubCopilotResponseId};

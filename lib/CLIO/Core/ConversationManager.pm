@@ -150,11 +150,13 @@ sub load_conversation_history {
             log_debug('ConversationManager', "Preserving assistant message with " .
                 scalar(@{$msg->{tool_calls}}) . " tool_calls for API correlation");
 
-            push @valid_messages, {
+            my $assistant_msg = {
                 role => $msg->{role},
                 content => $msg->{content} || '',
                 tool_calls => $msg->{tool_calls}
             };
+            $assistant_msg->{reasoning_details} = $msg->{reasoning_details} if $msg->{reasoning_details};
+            push @valid_messages, $assistant_msg;
         } else {
             next unless $msg->{content} || $msg->{role} eq 'tool';
 
@@ -163,6 +165,11 @@ sub load_conversation_history {
                 content => $msg->{content} || ''
             };
         }
+    }
+    
+    # Log if reasoning_details was present in any assistant message (for debugging)
+    if (grep { $_->{reasoning_details} && $_->{role} eq 'assistant' } @valid_messages) {
+        log_debug('ConversationManager', "Preserved reasoning_details in assistant message from history");
     }
 
     # PASS 1: Validate assistant messages with tool_calls have corresponding tool_results
@@ -378,6 +385,7 @@ sub enforce_message_alternation {
     my $accumulated_tool_calls = [];
     my $accumulated_tool_call_id = undef;
     my $accumulated_reasoning_details = undef;  # MiniMax interleaved thinking
+    my $accumulated_reasoning_content = undef;  # DeepSeek reasoning_content
 
     for my $msg (@$messages) {
         my $role = $msg->{role};
@@ -405,6 +413,7 @@ sub enforce_message_alternation {
             if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
                 push @$accumulated_tool_calls, @{$msg->{tool_calls}};
             }
+            $accumulated_reasoning_content = $msg->{reasoning_content} if $msg->{reasoning_content};
 
             log_debug('ConversationManager', "Merged consecutive $role message");
         } else {
@@ -426,6 +435,12 @@ sub enforce_message_alternation {
                 if ($accumulated_reasoning_details) {
                     $flushed->{reasoning_details} = $accumulated_reasoning_details;
                 }
+                # Set reasoning_content: prefer direct value, fallback to details->text
+                if ($accumulated_reasoning_content) {
+                    $flushed->{reasoning_content} = $accumulated_reasoning_content;
+                } elsif ($accumulated_reasoning_details) {
+                    $flushed->{reasoning_content} = $accumulated_reasoning_details->[0]->{text};
+                }
 
                 push @alternating, $flushed;
             }
@@ -442,6 +457,7 @@ sub enforce_message_alternation {
             $accumulated_tool_calls = $msg->{tool_calls} ? [@{$msg->{tool_calls}}] : [];
             $accumulated_tool_call_id = $msg->{tool_call_id};
             $accumulated_reasoning_details = $msg->{reasoning_details};
+            $accumulated_reasoning_content = $msg->{reasoning_content};
         }
     }
 
@@ -463,11 +479,16 @@ sub enforce_message_alternation {
         if ($accumulated_reasoning_details) {
             $flushed->{reasoning_details} = $accumulated_reasoning_details;
         }
+        if ($accumulated_reasoning_content) {
+            $flushed->{reasoning_content} = $accumulated_reasoning_content;
+        } elsif ($accumulated_reasoning_details) {
+            $flushed->{reasoning_content} = $accumulated_reasoning_details->[0]->{text};
+        }
 
         push @alternating, $flushed;
     }
 
-    log_debug('ConversationManager', "Alternation complete: " . scalar(@$messages) . " -> " . scalar(@alternating) . " messages");
+        log_debug('ConversationManager', "Alternation complete: " . scalar(@$messages) . " -> " . scalar(@alternating) . " messages");
 
     return \@alternating;
 }
