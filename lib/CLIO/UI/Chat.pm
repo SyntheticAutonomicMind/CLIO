@@ -2592,9 +2592,6 @@ sub request_collaboration {
             }
             
             # If command generated an AI prompt (e.g., /multi-line), display and return it
-            # Note: Multiline content returned from /multi or // goes through the main input
-            # loop which displays it. Only commands that don't flow through the main loop
-            # need explicit display here.
             if ($ai_prompt) {
                 # Return the prompt without echoing it back
                 if ($listen_broker) {
