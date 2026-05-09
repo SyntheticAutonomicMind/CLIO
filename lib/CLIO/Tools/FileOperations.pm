@@ -901,6 +901,7 @@ sub file_search {
             my %skip_dirs = map { $_ => 1 } qw(
                 .git .svn .hg .bzr node_modules __pycache__ .tox .venv
                 .mypy_cache .pytest_cache .coverage vendor .bundle
+                .clio
             );
             
             File::Find::find({
