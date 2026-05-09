@@ -2593,6 +2593,9 @@ sub request_collaboration {
             
             # If command generated an AI prompt (e.g., /multi-line), display and return it
             if ($ai_prompt) {
+                # Display the multiline content so it appears in chat history
+                $self->display_user_message($ai_prompt);
+                
                 # Return the prompt without echoing it back
                 if ($listen_broker) {
                     return { source => 'user', input => $ai_prompt, events => \@accumulated_events };
