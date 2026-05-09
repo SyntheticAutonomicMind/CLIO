@@ -77,8 +77,8 @@ my $config = CLIO::Core::Config->new();
 
 ```json
 {
-  "provider": "github_copilot",
-  "model": "gpt-5"
+  "provider": "minimax",
+  "model": "minimax-m2.7"
 }
 ```
 ````
@@ -239,8 +239,8 @@ Check your current configuration:
 Output:
 ```
 API Configuration:
-  Provider: github_copilot
-  Model: gpt-5
+  Provider: minimax
+  Model: minimax-m2.7
 ```
 ```
 
@@ -379,7 +379,7 @@ You should see detailed logs:
 ```
 [DEBUG][Config] Loading configuration from ~/.clio/config.json
 [DEBUG][Config] Provider: github_copilot
-[DEBUG][APIManager] Initializing with model gpt-5
+[DEBUG][APIManager] Initializing with model minimax-m2.7
 ```
 ```
 
