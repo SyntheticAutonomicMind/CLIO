@@ -133,7 +133,7 @@ sub get_additional_parameters {
     return {
         todoList => {
             type => "array",
-            description => "[REQUIRED for write] Complete array of all todos. IDs are auto-assigned if omitted.",
+            description => "[REQUIRED for write - full list replacement] Complete array of all todos. IDs auto-assigned if omitted. Use write to create or replace entire list; use add to append.",
             items => {
                 type => "object",
                 properties => {
@@ -178,7 +178,7 @@ sub get_additional_parameters {
         },
         newTodos => {
             type => "array",
-            description => "[REQUIRED for add] New todos to append to existing list. IDs are auto-assigned.",
+            description => "[REQUIRED for add - append to list] New todos to append to existing list. IDs auto-assigned if omitted. Use write to replace entire list; use add to append.",
             items => {
                 type => "object",
                 properties => {

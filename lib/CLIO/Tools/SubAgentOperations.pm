@@ -123,7 +123,7 @@ sub schema {
             },
             task => {
                 type => 'string',
-                description => '[REQUIRED for spawn] Natural language task description for the agent.',
+                description => '[REQUIRED for spawn - agent will fail without this] Natural language task description for the agent.',
             },
             model => {
                 type => 'string',
@@ -135,7 +135,7 @@ sub schema {
             },
             agent_id => {
                 type => 'string',
-                description => '[REQUIRED for status/kill/send, OPTIONAL for others] Agent ID.',
+                description => '[REQUIRED for status/kill/send operations] Agent ID to target. Omit for list/inbox/broadcast/spawn operations.',
             },
             message => {
                 type => 'string',

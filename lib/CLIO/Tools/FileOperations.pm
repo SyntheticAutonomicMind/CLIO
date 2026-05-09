@@ -237,7 +237,7 @@ sub get_additional_parameters {
         # Write parameters - DUAL PARAMETER SUPPORT for JSON content
         # Agents can use EITHER content (string) OR content_json (object)
         %{$self->add_dual_json_parameters('content', {
-            description => '[REQUIRED for create_file, write_file, append_file] File content to write.',
+            description => '[REQUIRED for create_file, write_file, append_file, insert_at_line] File content to write.',
             string_format => 'any',
             example => 'Plain text, JSON (escaped), or code',
         })},
