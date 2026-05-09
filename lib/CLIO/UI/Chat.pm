@@ -1984,9 +1984,7 @@ sub get_input {
                 if ($result->{success} && $result->{content} && length($result->{content}) > 0) {
                     my $multiline_content = $result->{content};
                     
-                    # Display the multiline content to user so it appears in chat history
-                    $self->display_user_message($multiline_content);
-                    
+                    # Return the multiline content - main input loop will display it
                     log_debug('Chat', "Multiline input received, length=" . length($multiline_content));
                     return $multiline_content;
                 }
@@ -2594,10 +2592,10 @@ sub request_collaboration {
             }
             
             # If command generated an AI prompt (e.g., /multi-line), display and return it
+            # Note: Multiline content returned from /multi or // goes through the main input
+            # loop which displays it. Only commands that don't flow through the main loop
+            # need explicit display here.
             if ($ai_prompt) {
-                # Display the multiline content to user so it appears in chat history
-                $self->display_user_message($ai_prompt);
-                
                 # Return the prompt without echoing it back
                 if ($listen_broker) {
                     return { source => 'user', input => $ai_prompt, events => \@accumulated_events };
