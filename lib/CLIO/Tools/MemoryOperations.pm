@@ -40,8 +40,11 @@ SESSION MEMORY (key-value, stored in .clio/memory/):
 -  list: no params
 -  delete: key (required)
 
-LTM RECALL (search previous sessions):
--  recall_sessions: query (required), max_sessions (optional, default 10), max_results (optional, default 5)
+LTM RECALL:
+-  recall_sessions: Search previous sessions. Returns scored matches {session_id,
+    session_title, role, message_index, preview, score, keyword_hits}.
+    Searches newest first. Scoring: exact phrase +3pts, keyword +1pt, title
+    match +2pts, assistant/user role +0.3/+0.2.
 
 LTM STORAGE (persist facts across sessions):
 -  add_discovery: fact (required), confidence (optional, 0.0-1.0)
@@ -93,16 +96,16 @@ sub get_additional_parameters {
             description => "[REQUIRED for store] Content to store in session memory.",
         },
         query => {
-            type => "string",
-            description => "[REQUIRED for search/recall_sessions] Search query for memory lookups.",
+            type        => "string",
+            description => "[REQUIRED] Search query for session history. Returns scored matches sorted by relevance.",
         },
         max_sessions => {
-            type => "integer",
-            description => "[OPTIONAL] Maximum number of sessions to search for recall_sessions. Default: 10.",
+            type        => "integer",
+            description => "[OPTIONAL] Max sessions to search (newest first). Default: 10.",
         },
         max_results => {
-            type => "integer",
-            description => "[OPTIONAL] Maximum results to return for recall_sessions. Default: 5.",
+            type        => "integer",
+            description => "[OPTIONAL] Max matches to return. Default: 5.",
         },
         fact => {
             type => "string",
