@@ -2571,6 +2571,37 @@ sub request_collaboration {
         if ($response =~ /^\//) {
             log_debug('Chat', "Slash command in collaboration: $response");
             
+            # Check for // shortcut to launch multiline editor (before command handling)
+            if ($response eq '//') {
+                log_debug('Chat', "// shortcut detected, launching multiline editor");
+                
+                require CLIO::Core::Editor;
+                my $editor = CLIO::Core::Editor->new(
+                    config => $self->{config},
+                    debug => $self->{debug}
+                );
+                
+                if ($editor->check_editor_available()) {
+                    my $result = $editor->edit_multiline();
+                    if ($result->{success} && $result->{content} && length($result->{content}) > 0) {
+                        my $multiline_content = $result->{content};
+                        
+                        # Display the multiline content so it appears in chat history
+                        $self->display_user_message($multiline_content);
+                        
+                        log_debug('Chat', "Multiline input received, length=" . length($multiline_content));
+                        if ($listen_broker) {
+                            return { source => 'user', input => $multiline_content, events => \@accumulated_events };
+                        }
+                        return $multiline_content;
+                    }
+                } else {
+                    $self->display_system_message("Editor not available. Set \$EDITOR or /config editor <editor>");
+                }
+                # Empty or cancelled - continue to prompt
+                next;
+            }
+            
             # Suspend ALRM timer and cbreak mode before running the command.
             # Interactive commands like /shell, /exec need normal terminal input.
             # The ALRM handler calls ReadKey(-1) which does sysread(STDIN) -
