@@ -1967,7 +1967,38 @@ sub get_input {
         }
         
         chomp $input;
-        return _sanitize_user_input($input);
+        my $sanitized = _sanitize_user_input($input);
+        
+        # Check for // shortcut to launch multiline editor (before returning)
+        if ($sanitized eq '//') {
+            log_debug('Chat', "// shortcut detected, launching multiline editor");
+            
+            require CLIO::Core::Editor;
+            my $editor = CLIO::Core::Editor->new(
+                config => $self->{config},
+                debug => $self->{debug}
+            );
+            
+            if ($editor->check_editor_available()) {
+                my $result = $editor->edit_multiline();
+                if ($result->{success} && $result->{content} && length($result->{content}) > 0) {
+                    my $multiline_content = $result->{content};
+                    
+                    # Display the multiline content to user so it appears in chat history
+                    $self->display_user_message($multiline_content);
+                    
+                    log_debug('Chat', "Multiline input received, length=" . length($multiline_content));
+                    return $multiline_content;
+                }
+            } else {
+                $self->display_system_message("Editor not available. Set \$EDITOR or /config editor <editor>");
+            }
+            
+            # Empty or cancelled - return empty to prompt for new input
+            return '';
+        }
+        
+        return $sanitized;
     }
     
     # Fallback to basic input if readline not available
@@ -1982,7 +2013,38 @@ sub get_input {
     }
     
     chomp $input;
-    return _sanitize_user_input($input);
+    $input = _sanitize_user_input($input);
+    
+    # Check for // shortcut to launch multiline editor
+    if ($input eq '//') {
+        log_debug('Chat', "// shortcut detected, launching multiline editor");
+        
+        require CLIO::Core::Editor;
+        my $editor = CLIO::Core::Editor->new(
+            config => $self->{config},
+            debug => $self->{debug}
+        );
+        
+        if ($editor->check_editor_available()) {
+            my $result = $editor->edit_multiline();
+            if ($result->{success} && $result->{content} && length($result->{content}) > 0) {
+                my $multiline_content = $result->{content};
+                
+                # Display the multiline content to user so it appears in chat history
+                $self->display_user_message($multiline_content);
+                
+                log_debug('Chat', "Multiline input received, length=" . length($multiline_content));
+                return $multiline_content;
+            }
+        } else {
+            $self->display_system_message("Editor not available. Set \$EDITOR or /config editor <editor>");
+        }
+        
+        # Empty or cancelled - return empty to prompt for new input
+        return '';
+    }
+    
+    return $input;
 }
 
 =head2 display_user_message
@@ -2998,7 +3060,7 @@ sub display_help {
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/stats history', 'help_command'), 'Memory usage timeline');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/context', 'help_command'), 'Manage context files');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/exec <cmd>', 'help_command'), 'Run shell command');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/multi, /ml', 'help_command'), 'Open editor for multi-line input');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/multi, /ml, //', 'help_command'), 'Open editor for multi-line input');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/style, /theme', 'help_command'), 'Appearance settings');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/debug', 'help_command'), 'Toggle debug mode');
     push @help_lines, "";
