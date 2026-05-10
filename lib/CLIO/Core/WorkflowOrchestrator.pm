@@ -2152,7 +2152,7 @@ sub _handle_interrupt {
                 return;
             }
         } else {
-            log_warning('WorkflowOrchestrator', "Interuct tool not found in registry");
+            log_warning('WorkflowOrchestrator', "Interact tool not found in registry");
         }
     } else {
         log_warning('WorkflowOrchestrator', "Tool registry not available for interrupt handling");

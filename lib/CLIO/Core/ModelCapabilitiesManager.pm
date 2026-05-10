@@ -825,6 +825,16 @@ sub _fetch_openai_compatible_capabilities {
             $context_window = $permuted_model->{context_window};
         }
         
+        # For local llama.cpp servers, /v1/models only exposes n_ctx_train (training context),
+        # not the server's actual --ctx-size runtime value. Query /props to get the real n_ctx.
+        if (!$context_window || $api_base =~ m{localhost:|127\.0\.0\.1:}i) {
+            my $props_ctx = $self->_query_llama_props($api_base);
+            if ($props_ctx && $props_ctx > 0) {
+                $context_window = $props_ctx;
+                log_debug('ModelCapabilitiesManager', "llama.cpp /props n_ctx=$props_ctx for $model (overriding training context)");
+            }
+        }
+        
         # Get max completion tokens
         my $output_tokens = $m->{max_completion_tokens}
             || $m->{max_output_tokens}
@@ -880,6 +890,52 @@ sub _format_tokens {
     else {
         return "$tokens";
     }
+}
+
+=head2 _query_llama_props
+
+Query the llama.cpp /props endpoint to retrieve the actual running context window size.
+
+Returns the integer n_ctx value on success, or undef if the endpoint is unavailable
+or the response does not contain context information. This is used to supplement
+the /v1/models response which only exposes n_ctx_train (training context), not the
+server's runtime --ctx-size value.
+
+Only called for local OpenAI-compatible servers (localhost/127.0.0.1).
+
+=cut
+
+sub _query_llama_props {
+    my ($self, $api_base) = @_;
+    
+    # Derive the /props URL from the api_base
+    # e.g. http://localhost:9090/v1/chat/completions -> http://localhost:9090/props
+    my $props_url = $api_base;
+    $props_url =~ s{/+$}{};       # strip trailing slashes
+    $props_url =~ s{/v1(/.*)?$}{};  # strip /v1 and anything after it
+    $props_url .= '/props';
+    
+    my $ua = $self->get_http();
+    my $resp = eval { $ua->get($props_url) };
+    if ($@ || !$resp || !$resp->{success}) {
+        log_debug('ModelCapabilitiesManager', "llama.cpp /props not available at $props_url");
+        return undef;
+    }
+    
+    my $data = eval { decode_json($resp->{content}) };
+    if ($@) {
+        log_debug('ModelCapabilitiesManager', "llama.cpp /props parse error: $@");
+        return undef;
+    }
+    
+    # /props exposes: default_generation_settings.n_ctx (actual runtime context window)
+    # This reflects the --ctx-size / -c value passed at server startup, not the model's
+    # training context (n_ctx_train) which is what /v1/models exposes.
+    my $n_ctx = $data->{default_generation_settings}{n_ctx}
+             || $data->{n_ctx};   # some older versions may expose it at top level
+    
+    return $n_ctx if $n_ctx && $n_ctx > 0;
+    return undef;
 }
 
 1;
