@@ -904,30 +904,41 @@ sub file_search {
                 .clio
             );
             
-            File::Find::find({
-                wanted => sub {
-                return unless -f $_;  # Only match files
-                
-                # Get path relative to search directory
-                my $rel_path = $File::Find::name;
-                $rel_path =~ s{^\Q$directory\E/?}{};
-                
-                return unless $rel_path;  # Skip the root directory itself
-                
-                if ($rel_path =~ /$regex_pattern/) {
-                    push @matches, {
-                        path => $rel_path,
-                        type => 'file',
-                        size => -s $File::Find::name,
-                    };
-                    # Stop if we hit the limit
-                    $File::Find::prune = 1 if @matches >= $max_results;
-                }
-                },
-                preprocess => sub {
-                    return grep { !$skip_dirs{$_} } @_;
-                },
-            }, $directory);
+            # Silence File::Find's "Can't cd to" warnings for permission-denied dirs
+            # These are informational only - the find continues despite them
+            open my $devnull, '>', '/dev/null' or die "Cannot open /dev/null: $!";
+            my $old_stderr = \*STDERR;
+            {
+                local *STDERR = $devnull;
+                eval {
+                    File::Find::find({
+                        wanted => sub {
+                        return unless -f $_;  # Only match files
+                        
+                        # Get path relative to search directory
+                        my $rel_path = $File::Find::name;
+                        $rel_path =~ s{^\Q$directory\E/?}{};
+                        
+                        return unless $rel_path;  # Skip the root directory itself
+                        
+                        if ($rel_path =~ /$regex_pattern/) {
+                            push @matches, {
+                                path => $rel_path,
+                                type => 'file',
+                                size => -s $File::Find::name,
+                            };
+                            # Stop if we hit the limit
+                            $File::Find::prune = 1 if @matches >= $max_results;
+                        }
+                        },
+                        preprocess => sub {
+                            return grep { !$skip_dirs{$_} } @_;
+                        },
+                    }, $directory);
+                };
+            }
+            # STDERR automatically restored here (even if eval dies)
+            *STDERR = $old_stderr;
         } else {
             # Use File::Glob for non-recursive patterns (faster)
             # GLOB_BRACE allows {a,b} syntax, GLOB_NOCHECK returns pattern if no matches
