@@ -3840,11 +3840,21 @@ sub _get_native_provider {
         return undef;
     }
     
+    # Use user-configured api_base if available, otherwise provider default
+    my $effective_api_base = $self->{api_base} // $provider_config->{api_base};
+    
+    # Build custom headers from endpoint config (e.g., Anthropic's anthropic-version)
+    my %custom_headers;
+    if ($provider_config->{endpoint} && $provider_config->{endpoint}{extra_headers}) {
+        %custom_headers = %{$provider_config->{endpoint}{extra_headers}};
+    }
+    
     my $provider = $module->new(
         api_key => $self->{api_key},
-        api_base => $provider_config->{api_base},
+        api_base => $effective_api_base,
         model => $self->{model},
         debug => $self->{debug},
+        custom_headers => \%custom_headers,
     );
     
     log_debug('APIManager', "Using native provider: $module");
@@ -3888,6 +3898,7 @@ sub _send_native_streaming {
     my $current_tool_call;
     my $token_count = 0;
     my $buffer = '';
+    my %usage_tracking = (input_tokens => 0, output_tokens => 0);
     
     # Create HTTP client
     my $ua = $self->_create_http_client(
@@ -3963,6 +3974,11 @@ sub _send_native_streaming {
                 elsif ($type eq 'error') {
                     croak "API Error: $event->{message}";
                 }
+                elsif ($type eq 'usage') {
+                    # Track token usage from native providers (Anthropic, Google)
+                    $usage_tracking{input_tokens} += ($event->{input_tokens} // 0);
+                    $usage_tracking{output_tokens} += ($event->{output_tokens} // 0);
+                }
             }
         });
     };
@@ -3984,7 +4000,11 @@ sub _send_native_streaming {
         metrics => { ttft => ($first_token_time ? $first_token_time - $start_time : $duration),
                      tps => ($duration > 0 ? $token_count / $duration : 0),
                      tokens => $token_count, duration => $duration },
-        usage => { prompt_tokens => 0, completion_tokens => $token_count, total_tokens => $token_count },
+        usage => {
+            prompt_tokens => $usage_tracking{input_tokens} || 0,
+            completion_tokens => $usage_tracking{output_tokens} || $token_count,
+            total_tokens => ($usage_tracking{input_tokens} || 0) + ($usage_tracking{output_tokens} || $token_count),
+        },
         finish_reason => (@tool_calls ? 'tool_calls' : 'stop'),
     };
     $result->{tool_calls} = \@tool_calls if @tool_calls;

@@ -6,7 +6,7 @@
 
 ## Quick Overview
 
-CLIO is a **terminal-first AI code assistant** built in Perl. It integrates AI models (GitHub Copilot, OpenAI, Google, OpenRouter, Ollama Cloud, MiniMax, Z.AI) with local tools (file operations, git, terminal) to help developers work more effectively.
+CLIO is a **terminal-first AI code assistant** built in Perl. It integrates AI models (GitHub Copilot, Anthropic, OpenAI, Google, OpenRouter, Ollama Cloud, MiniMax, Z.AI) with local tools (file operations, git, terminal) to help developers work more effectively.
 
 **Core concept:** User types → CLIO thinks → CLIO uses tools → Results displayed
 
@@ -319,6 +319,7 @@ Tools can be restricted via `--enable` (allowlist) or `--disable` (blocklist) CL
 |-----------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------|
 | Provider Registry | `Providers.pm` | AI provider registration and lookup |
 | Base | `Base.pm` | Abstract base class for providers |
+| Anthropic | `Anthropic.pm` | Native Anthropic Messages API |
 | Google | `Google.pm` | Native Google Gemini API |
 
 **How it works:**
@@ -664,6 +665,7 @@ lib/CLIO/
       Recall.pm            # Memory recall
   Providers/               # Native API provider modules
       Base.pm              # Provider base class
+      Anthropic.pm         # Anthropic Messages API
       Google.pm            # Google Gemini native API
   MCP/                     # Model Context Protocol
       Manager.pm           # MCP server management

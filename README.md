@@ -91,7 +91,7 @@ CLIO is part of the [Synthetic Autonomic Mind (SAM)](https://github.com/Syntheti
 | **Todos** | Manage tasks within your workflow |
 | **Web** | Fetch and analyze web content |
 | **MCP** | Connect to external tool servers via [Model Context Protocol](docs/MCP.md) |
-| **AI Providers** | GitHub Copilot, OpenAI, Google Gemini, DeepSeek, OpenRouter, Ollama Cloud, MiniMax, Z.AI, llama.cpp, LM Studio, SAM |
+| **AI Providers** | GitHub Copilot, Anthropic, OpenAI, Google Gemini, DeepSeek, OpenRouter, Ollama Cloud, MiniMax, Z.AI, llama.cpp, LM Studio, SAM |
 | **Proxy Support** | HTTP and SOCKS proxy for corporate/restricted networks |
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
