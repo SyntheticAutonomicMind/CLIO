@@ -280,7 +280,33 @@ my %PROVIDERS = (
             zai => 1,
             reasoning_field => 'reasoning_content',
             coding_plan => 1,
-            sampling_defaults => { temperature => 1.0, top_p => 0.95 },
+        sampling_defaults => { temperature => 1.0, top_p => 0.95 },
+        },
+    },
+    
+    anthropic => {
+        name => 'Anthropic',
+        api_base => 'https://api.anthropic.com/v1/messages',
+        model => 'claude-sonnet-4-20250514',
+        requires_auth => 'apikey',
+        supports_tools => 1,
+        supports_streaming => 1,
+        supports_reasoning => 1,
+        supports_vision => 1,
+        max_context_tokens => 200000,
+        max_output_tokens => 8192,
+        native_api => 1,
+        provider_module => 'CLIO::Providers::Anthropic',
+        endpoint => {
+            path_suffix => '',
+            temperature_range => [0.0, 1.0],
+            supports_tools => 1,
+            anthropic => 1,
+            auth_header => 'x-api-key',
+            auth_value_format => '{api_key}',
+            extra_headers => {
+                'anthropic-version' => '2023-06-01',
+            },
         },
     },
 );
@@ -383,6 +409,16 @@ sub build_endpoint_config {
     # Add dynamic auth
     $endpoint->{auth_header} = 'Authorization';
     $endpoint->{auth_value}  = "Bearer $api_key";
+
+    # Handle Anthropic-specific auth (x-api-key header instead of Bearer)
+    if ($endpoint->{anthropic}) {
+        $endpoint->{auth_header} = 'x-api-key';
+        $endpoint->{auth_value}  = $api_key;
+        # Merge extra_headers into endpoint config for APIManager
+        if ($provider && $provider->{endpoint} && $provider->{endpoint}{extra_headers}) {
+            $endpoint->{extra_headers} = { %{$provider->{endpoint}{extra_headers}} };
+        }
+    }
 
     return $endpoint;
 }

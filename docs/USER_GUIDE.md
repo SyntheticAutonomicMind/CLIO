@@ -86,7 +86,7 @@ That means CLIO can help with real development work, not just produce text.
 **AI Provider Requirements:**
 - OpenRouter API key with MiniMax (recommended), OR
 - GitHub Copilot subscription (supports GPT, Claude, and more), OR
-- API key from any supported provider: OpenAI, Google Gemini, DeepSeek, MiniMax, OR
+- API key from any supported provider: OpenAI, Anthropic, Google Gemini, DeepSeek, MiniMax, OR
 - Local model server: llama.cpp, LM Studio, or SAM (no API key needed)
 
 ### Installation Steps
@@ -183,7 +183,7 @@ All `/api set` commands save globally by default. To set a value for the current
 
 Use `/api show` to see your current configuration and whether any values are session overrides.
 
-See [PROVIDERS.md](PROVIDERS.md) for setup instructions for all 10 providers.
+See [PROVIDERS.md](PROVIDERS.md) for setup instructions for all 14 providers.
 
 **Optional Environment Variables**
 
@@ -2593,7 +2593,7 @@ git init
 
 **Q: Is CLIO free?**
 
-A: CLIO itself is open-source and free (GPL v3). You need access to an AI provider - GitHub Copilot (included with GitHub subscriptions), OpenAI, Google, DeepSeek, OpenRouter, MiniMax, or a local model (llama.cpp, LM Studio, SAM).
+A: CLIO itself is open-source and free (GPL v3). You need access to an AI provider - GitHub Copilot (included with GitHub subscriptions), Anthropic, OpenAI, Google, DeepSeek, OpenRouter, MiniMax, or a local model (llama.cpp, LM Studio, SAM).
 
 **Q: Does CLIO work offline?**
 
@@ -2601,7 +2601,7 @@ A: With cloud providers, you need an internet connection. With local providers (
 
 **Q: Can I use CLIO with ChatGPT/Claude directly?**
 
-A: Yes. CLIO supports multiple providers including OpenAI (GPT models directly), Google Gemini, DeepSeek, OpenRouter (access to hundreds of models), MiniMax, and local models. See [PROVIDERS.md](PROVIDERS.md) for setup.
+A: Yes. CLIO supports multiple providers including Anthropic (Claude models directly), OpenAI (GPT models directly), Google Gemini, DeepSeek, OpenRouter (access to hundreds of models), MiniMax, and local models. See [PROVIDERS.md](PROVIDERS.md) for setup.
 
 **Q: Is CLIO safe to use with sensitive code?**
 

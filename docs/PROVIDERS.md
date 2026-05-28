@@ -9,6 +9,7 @@
 | Provider | Short Name | Auth Type |
 |----------|------------|-----------|
 | **GitHub Copilot** | `github_copilot` | OAuth |
+| **Anthropic** | `anthropic` | API Key |
 | **OpenAI** | `openai` | API Key |
 | **Google Gemini** | `google` | API Key |
 | **DeepSeek** | `deepseek` | API Key |
@@ -131,6 +132,45 @@ clio --new
 ```
 
 **Available model families:** GPT, o-series reasoning models. Use `/api models` for the current list.
+
+---
+
+### Anthropic
+
+**Best for:** Claude models, enterprise proxy endpoints, extended thinking
+
+**Get API Key:**
+1. Go to [console.anthropic.com](https://console.anthropic.com)
+2. Navigate to API Keys
+3. Create new key
+
+**Configure CLIO:**
+```bash
+clio --new
+/api set provider anthropic
+/api set key sk-ant-...your-key...
+/config save
+```
+
+**Proxy/Custom Endpoints:**
+
+Anthropic supports proxy endpoints for enterprise deployments. Set a custom base URL:
+
+```bash
+/api set base https://your-proxy.example.com/v1/messages
+/config save
+```
+
+Or use environment variables:
+```bash
+export ANTHROPIC_BASE_URL=https://your-proxy.example.com/v1/messages
+export ANTHROPIC_API_KEY=sk-ant-...your-key...
+export ANTHROPIC_CUSTOM_HEADERS='{"X-Custom-Auth":"token123"}'
+```
+
+**Available model families:** Claude Sonnet, Claude Opus, Claude Haiku. Use `/api models` for the current list.
+
+> **Note:** Anthropic is a native API provider (not OpenAI-compatible). CLIO handles the format translation automatically.
 
 ---
 
@@ -509,12 +549,12 @@ Configuration precedence: `/api set` commands > environment variables > defaults
 
 ## Provider Comparison
 
-| Feature | GitHub Copilot | OpenAI | Google | DeepSeek | Local |
-|---------|---------------|--------|--------|----------|-------|
-| **Setup Ease** |  |  |  |  |  |
-| **Model Variety** |  |  |  |  |  |
-| **Privacy** | Cloud | Cloud | Cloud | Cloud |  |
-| **Offline** | No | No | No | No | Yes |
+| Feature | GitHub Copilot | Anthropic | OpenAI | Google | DeepSeek | Local |
+|---------|---------------|----------|-------|--------|----------|-------|
+| **Setup Ease** |  |  |  |  |  |  |
+| **Model Variety** |  |  |  |  |  |  |
+| **Privacy** | Cloud | Cloud | Cloud | Cloud | Cloud |  |
+| **Offline** | No | No | No | No | No | Yes |
 
 ---
 
