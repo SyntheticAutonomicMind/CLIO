@@ -1,80 +1,37 @@
 # CLIO - Command Line Intelligence Orchestrator
 
-**A terminal-native AI coding tool that can read your code, edit files, run commands, use git, and work through tasks with you.**
+**A terminal-native AI coding tool that reads your code, edits files, runs commands, uses git, and works through tasks with you.**
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+I built CLIO for myself. I spend more time in terminal sessions than I do using GUIs, and I wanted a terminal-first AI development tool that worked the way I work. It didn't really exist, so I built it. Starting with version 20260119.1, CLIO has been building itself - all development on SAM, CLIO, and ALICE is done through pair programming with AI agents using CLIO.
 
-## What CLIO Is
+CLIO is part of [Synthetic Autonomic Mind](https://github.com/SyntheticAutonomicMind).
 
-CLIO is for people who already work in a shell and want AI help without leaving that workflow.
-
-It is not just chat in a terminal, and it is not just autocomplete. CLIO can inspect a real repository, use real tools, make changes, run commands, check git state, and keep working through a task with you in the loop.
-
-When you give it a task, CLIO can:
-
-- read files and search your codebase
-- edit files and apply patches
-- run shell commands, tests, and linters
-- inspect and manage git state
-- pause for approval at decision points
-- keep context across sessions
-- work on remote systems over SSH
-- coordinate parallel sub-agents for larger tasks
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---
 
 ## How CLIO Works
 
-The basic loop is simple:
-
 1. **You describe the task**
-2. **CLIO investigates** by reading code, searching files, or checking git state
+2. **CLIO investigates** - reads code, searches files, checks git state
 3. **CLIO proposes a plan** when your input matters
-4. **After approval, CLIO does the work** - edits files, runs commands, and verifies results
+4. **After approval, CLIO does the work** - edits files, runs commands, verifies results
 5. **CLIO reports back** and asks before committing significant changes
 
 That makes CLIO closer to pair programming than prompt-and-response chat.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---
 
-## Why People Use CLIO
+## What You Can Do With CLIO
 
-- **Terminal-native:** works in local shells, SSH sessions, tmux, GNU Screen, Zellij, containers, and headless servers
-- **Tool-powered:** uses files, git, terminal, web, memory, remote execution, and other tools instead of pretending
-- **Portable:** pure Perl with standard core modules - no CPAN, npm, or pip
-- **Persistent:** resumes sessions with history and project memory intact
-- **Private and controllable:** local-first workflow with secret redaction, path authorization, command analysis, and sandboxing
+- **Give it a task, it does the work** - CLIO investigates your codebase, proposes a plan, you approve, it implements. Edits files, runs tests, commits changes.
+- **Work from anywhere** - Local shells, SSH sessions, tmux, Docker, headless servers. Anywhere Perl runs.
+- **Zero dependencies** - Pure Perl with standard core modules. No CPAN, no npm, no pip. Install and run.
+- **Pick up where you left off** - Persistent sessions with full history. Long-term memory carries across projects.
+- **Coordinate parallel agents** - Spawn sub-agents with file locks, git locks, and rate limiting.
+- **Run across your fleet** - SSH into any machine, deploy CLIO, run a task, get results.
+- **Stay private** - Secret redaction catches API keys and tokens before they reach the AI. Your code stays on your machine.
+- **Interrupt anytime** - Press any key to stop mid-task. CLIO pauses, asks what you need, and adapts.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-## Why I Built CLIO
-
-I built CLIO for myself. As someone who prefers working in the terminal, I wanted an AI assistant that felt native to my workflow. One that respected my privacy, worked anywhere Perl runs, and gave me full control over my code and tools. I couldn't find anything that met those needs, so I created CLIO. Like most of my work, I build tools for myself first and release them as open source in the hope that they're useful to other people too.
-
-Starting with version 20260119.1, CLIO has been building itself. All of my development is now done through pair programming with AI agents using CLIO.
-
-CLIO is part of the [Synthetic Autonomic Mind (SAM)](https://github.com/SyntheticAutonomicMind) organization, which is dedicated to building user-first, privacy-respecting AI tools. If you value transparency, portability, and the power of the command line, CLIO is for you.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-## What Makes CLIO Different
-
-- **Terminal-First Experience:** Runs entirely in your terminal with professional markdown rendering, color themes, and streaming output
-- **Light & Nimble:** ~50 MB at startup, grows moderately with session activity. Works on everything from a ClockworkPi uConsole R01 to an M4-powered Mac.
-- **Portable & Minimal:** Works with standard Unix tools (git, curl, etc.) - no heavy frameworks or package managers required. See [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) for details.
-- **Actually Autonomous:** CLIO doesn't just suggest code - it reads, writes, tests, commits, and iterates. Give it a task and it works through it end-to-end.
-- **Tool-Powered:** Real file, git, and terminal operations with real-time action descriptions
-- **Privacy & Control:** Your code stays on your machine - only minimum context sent to AI providers. Built-in secret redaction catches API keys, tokens, PII, and credentials before they reach the AI.
-- **Persistent Sessions:** Pick up exactly where you left off with full conversation history
-- **Scriptable & Extensible:** Fits into your workflow, not the other way around
-- **Remote Execution:** SSH into any machine, deploy CLIO, run an AI task, and get results back - across your entire fleet in parallel
-- **Multi-Agent Coordination:** Spawn parallel agents with file locks, git locks, and coordinated API rate limiting for safe collaboration
-- **Multiplexer Integration:** When running inside tmux, GNU Screen, or Zellij, sub-agent output streams live in separate panes
-- **Long-Term Memory:** Discoveries, solutions, and patterns persist across your project history and are automatically injected into every conversation
-- **User Profile:** CLIO learns your communication style, preferences, and working patterns from session history and personalizes every interaction
-- **Interrupt Anytime:** Press any key to stop the agent mid-task. CLIO pauses, asks what you need, and adapts - like tapping your pair programmer on the shoulder
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---
 
 ## Core Features
 
@@ -94,7 +51,41 @@ CLIO is part of the [Synthetic Autonomic Mind (SAM)](https://github.com/Syntheti
 | **AI Providers** | GitHub Copilot, Anthropic, OpenAI, Google Gemini, DeepSeek, OpenRouter, Ollama Cloud, MiniMax, Z.AI, llama.cpp, LM Studio, SAM |
 | **Proxy Support** | HTTP and SOCKS proxy for corporate/restricted networks |
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---
+
+## Performance
+
+CLIO is built to run for hours without issues:
+
+```
+Session 1 - Active development (1h, 244 turns):
+  Baseline: 46 MB | RSS: 73 MB | Tool calls: 244
+
+Session 2 - Heavy multi-hour session:
+  Typical range: 50-100 MB depending on context size
+```
+
+Starts at ~50 MB, grows gradually as context accumulates. Multi-hour sessions with hundreds of tool calls typically stay under 100 MB. No memory leaks, no degradation, no restart needed.
+
+### Billing Awareness
+
+CLIO tracks your API usage in real time with `/usage`:
+
+```
+Premium Quota
+──────────────────────────────────────────────────────────────
+  Status:                   891 used of 1500 (59.3%)
+  Resets:                   2026-03-01
+Token Usage
+──────────────────────────────────────────────────────────────
+  Total Tokens:             13,428,981
+    Prompt:                 13,422,054 tokens
+    Completion:             6,927 tokens
+```
+
+See quota consumption, billing multipliers for premium models, per-request token counts, and reset dates. CLIO warns you when premium models cost extra so you can make informed choices.
+
+---
 
 ## Screenshots
 
@@ -115,41 +106,7 @@ CLIO is part of the [Synthetic Autonomic Mind (SAM)](https://github.com/Syntheti
   </tr>
 </table>
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-## Real-World Performance
-
-CLIO is built to run for hours without breaking a sweat. These are stats from real development sessions:
-
-```
-Session 1 - Active development (1h, 244 turns):
-  Baseline: 46 MB | RSS: 73 MB | Tool calls: 244
-
-Session 2 - Heavy multi-hour session:
-  Typical range: 50-100 MB depending on context size
-```
-
-CLIO starts at ~50 MB and grows gradually as session context accumulates. Multi-hour sessions with hundreds of tool calls typically stay under 100 MB. No memory leaks, no degradation, no restart needed.
-
-### Billing Awareness
-
-CLIO tracks your API usage in real time with `/usage`:
-
-```
-Premium Quota
-──────────────────────────────────────────────────────────────
-  Status:                   891 used of 1500 (59.3%)
-  Resets:                   2026-03-01
-Token Usage
-──────────────────────────────────────────────────────────────
-  Total Tokens:             13,428,981
-    Prompt:                 13,422,054 tokens
-    Completion:             6,927 tokens
-```
-
-No surprises at the end of the month. See your quota consumption, billing multipliers for premium models, per-request token counts, and reset dates. CLIO warns you when premium models cost extra so you can make informed choices.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---
 
 ## Quick Start
 
@@ -228,9 +185,9 @@ Find the bug causing the login endpoint to return 500 when the session is expire
 ./clio --disable web_operations  # Block specific tools
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---
 
-## Slash Commands (Quick Reference)
+## Slash Commands
 
 | Command | Description |
 |---------|-------------|
@@ -258,32 +215,7 @@ Find the bug causing the login endpoint to return 500 when the session is expire
 
 For complete command reference, see [docs/USER_GUIDE.md](docs/USER_GUIDE.md#slash-commands).
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-## Example Usage
-
-```
-You: Read the main config file and explain its structure
-
-CLIO: [Reading lib/CLIO/Core/Config.pm]
-
-The Config module handles CLIO's configuration system. Key sections:
-- **Defaults**: Provider settings, model preferences
-- **Persistence**: JSON-based storage in ~/.clio/config.json
-- **Runtime overrides**: Environment variables and CLI flags
-
-You: Fix the bug in the login function
-
-CLIO: [Reading lib/CLIO/Security/Auth.pm]
-      [Identified issue: token validation missing null check]
-      [Writing fix to lib/CLIO/Security/Auth.pm]
-      
-Fixed the bug. The issue was...
-```
-
-For more examples, see [docs/USER_GUIDE.md](docs/USER_GUIDE.md#usage-examples).
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---
 
 ## Requirements
 
@@ -292,44 +224,29 @@ For more examples, see [docs/USER_GUIDE.md](docs/USER_GUIDE.md#usage-examples).
 - **Git** (for version control operations)
 - **ANSI-compatible terminal**
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---
 
 ## Documentation
 
-| Document | Description |
-|----------|-------------|
+| Document | What You'll Find |
+|----------|-----------------|
 | [User Guide](docs/USER_GUIDE.md) | Complete usage guide with examples |
-| [Feature Guide](docs/FEATURES.md) | Every feature explained in detail |
+| [Features](docs/FEATURES.md) | Every feature explained in detail |
 | [Installation](docs/INSTALLATION.md) | Getting started with CLIO |
 | [Providers](docs/PROVIDERS.md) | AI provider configuration guide |
 | [Dependencies](docs/DEPENDENCIES.md) | System requirements and verification |
 | [Sandbox Mode](docs/SANDBOX.md) | Security isolation options |
 | [Architecture](docs/ARCHITECTURE.md) | System design and internals |
-| [Memory Architecture](docs/MEMORY.md) | How CLIO remembers and learns across sessions |
+| [Memory](docs/MEMORY.md) | How CLIO remembers and learns across sessions |
 | [Developer Guide](docs/DEVELOPER_GUIDE.md) | Contributing and extending CLIO |
 | [Remote Execution](docs/REMOTE_EXECUTION.md) | Distributed AI workflows |
 | [Multi-Agent](docs/MULTI_AGENT_COORDINATION.md) | Parallel agent coordination |
 | [MCP Integration](docs/MCP.md) | Model Context Protocol support |
 | [Custom Instructions](docs/CUSTOM_INSTRUCTIONS.md) | Per-project AI customization |
-| [Automation](docs/AUTOMATION.md) | CLIO-helper daemon and CI/CD integration |
-| [Style Guide](docs/STYLE_GUIDE.md) | Color themes and customization |
-| [Performance](docs/PERFORMANCE.md) | Benchmarks and optimization |
-| [Context Management](docs/PERFORMANCE.md#context-window-management) | How CLIO handles long sessions and context limits |
 | [Security](docs/SECURITY.md) | Security model and secret redaction |
+| [Performance](docs/PERFORMANCE.md) | Benchmarks and optimization |
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-## Design Philosophy
-
-CLIO is built around these principles:
-
-1. **Terminal Native**: Your terminal is your IDE
-2. **Zero Dependencies**: Pure Perl - no CPAN, npm, or pip
-3. **Tool Transparency**: See every action as it happens
-4. **Local First**: Your code and data stay on your machine
-5. **Session Continuity**: Never lose context
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---
 
 ## Part of the Ecosystem
 
@@ -339,46 +256,17 @@ CLIO is part of [Synthetic Autonomic Mind](https://github.com/SyntheticAutonomic
 - **[ALICE](https://github.com/SyntheticAutonomicMind/ALICE)** - Local Stable Diffusion server with web interface and OpenAI-compatible API
 - **[SAM-Web](https://github.com/SyntheticAutonomicMind/SAM-web)** - Access SAM from iPad, iPhone, or any browser
 
-CLIO can use SAM as an AI provider. All three tools share the same commitment to privacy and local-first operation.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-## Spread the Word
-
-CLIO is a small open source project with no marketing budget. If it's been useful to you, the best way to help is to tell someone about it - a blog post, a tweet, a recommendation to a colleague, or a star on GitHub. Word of mouth is how projects like this grow.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-## Contributing
-
-Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for quick start and [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md) for detailed guidelines.
-
-```bash
-# Fork and clone
-git clone https://github.com/YOUR_USERNAME/CLIO.git
-cd CLIO
-
-# Run tests
-find lib -name "*.pm" -exec perl -I./lib -c {} \;
-
-# Submit PR
-git push origin your-feature-branch
-```
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---
 
 ## License
 
-GPL-3.0 - See [LICENSE](LICENSE) for details.
+**GPL-3.0** - See [LICENSE](LICENSE) for details.
 
-**Created by:** Andrew Wyatt (Fewtarius)  
-**Website:** [syntheticautonomicmind.org](https://www.syntheticautonomicmind.org)  
-**Repository:** [github.com/SyntheticAutonomicMind/CLIO](https://github.com/SyntheticAutonomicMind/CLIO)
+Created by Andrew Wyatt (Fewtarius) · [syntheticautonomicmind.org](https://www.syntheticautonomicmind.org) · [github.com/SyntheticAutonomicMind/CLIO](https://github.com/SyntheticAutonomicMind/CLIO)
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---
 
 ## Support
 
-- **Discussions**: [Join the conversation](https://github.com/orgs/SyntheticAutonomicMind/discussions)
-- **GitHub Issues**: [Report bugs or request features](https://github.com/SyntheticAutonomicMind/CLIO/issues)
-
+- **Discussions:** [Join the conversation](https://github.com/orgs/SyntheticAutonomicMind/discussions)
+- **Issues:** [Report bugs or request features](https://github.com/SyntheticAutonomicMind/CLIO/issues)
