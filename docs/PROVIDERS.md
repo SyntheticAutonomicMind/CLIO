@@ -551,9 +551,9 @@ Configuration precedence: `/api set` commands > environment variables > defaults
 
 | Feature | GitHub Copilot | Anthropic | OpenAI | Google | DeepSeek | Local |
 |---------|---------------|----------|-------|--------|----------|-------|
-| **Setup Ease** |  |  |  |  |  |  |
-| **Model Variety** |  |  |  |  |  |  |
-| **Privacy** | Cloud | Cloud | Cloud | Cloud | Cloud |  |
+| **Setup Ease** | OAuth login | API key | API key | API key | API key | Run server |
+| **Model Variety** | Multiple | Claude family | GPT + o-series | Gemini family | DeepSeek family | Any GGUF |
+| **Privacy** | Cloud | Cloud | Cloud | Cloud | Cloud | Local |
 | **Offline** | No | No | No | No | No | Yes |
 
 ---

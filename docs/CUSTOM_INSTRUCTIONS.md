@@ -110,6 +110,7 @@ If you want instructions that work across multiple AI tools:
 cat > AGENTS.md << 'EOF'
 # AGENTS.md
 
+```
 ## Setup Commands
 
 - Install: `pip install -r requirements.txt`
@@ -121,8 +122,9 @@ cat > AGENTS.md << 'EOF'
 - Follow PEP 8
 - Use type hints
 EOF
-```
+```text
 
+```
 ### Option 2: Use Both (Recommended for CLIO Power Users)
 
 If you want both universal instructions AND CLIO-specific behavior:
@@ -132,6 +134,7 @@ If you want both universal instructions AND CLIO-specific behavior:
 cat > AGENTS.md << 'EOF'
 # AGENTS.md
 
+```
 ## Project Overview
 ...
 EOF
@@ -144,8 +147,9 @@ cat > .clio/instructions.md << 'EOF'
 ## Methodology
 This project uses The Unbroken Method...
 EOF
-```
+```text
 
+```
 ### Option 3: Use .clio/instructions.md Only
 
 If you only use CLIO (not other AI tools):
@@ -264,7 +268,7 @@ Every completed task should feel satisfying:
 
 Keep it simple:
 - Use Perl core modules only (no CPAN)
-- Maintain backwards compatibility with Perl 5.16+
+- Maintain backwards compatibility with Perl 5.32+
 - Document complex sections
 - Test on Linux and macOS before committing
 
@@ -279,7 +283,7 @@ When in doubt, follow the existing code patterns.
 
 Your custom instructions are automatically appended to CLIO's system prompt:
 
-```
+```text
 [CLIO System Prompt - defines CLIO's behavior]
 ...
 
@@ -381,7 +385,7 @@ clio --incognito --new
 4. **Enable debug mode**: `clio --debug --new` to see loading details
 
 Output will show:
-```
+```text
 [DEBUG][InstructionsReader] Checking for instructions at: /path/to/project/.clio/instructions.md
 [DEBUG][InstructionsReader] Successfully loaded instructions (1234 bytes)
 ```
@@ -516,4 +520,4 @@ Your profile lives at `~/.clio/profile.md` and is injected alongside project ins
 3. **LTM patterns** - Learned project knowledge
 4. **User Profile** - Personal working style
 
-See [FEATURES.md](FEATURES.md#5b-user-profile) for full profile documentation.
+See [FEATURES.md](FEATURES.md#6-user-profile) for full profile documentation.

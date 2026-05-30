@@ -23,7 +23,7 @@ CLIO's remote execution system enables a local agent to execute tasks on remote 
 
 Remote execution uses **rsync** to copy the local CLIO installation to the remote system:
 
-```
+```text
 Local CLIO install --rsync--> /tmp/clio-<random>/ on remote
 ```
 
@@ -124,7 +124,7 @@ The `execute_parallel` operation accepts group names or device names as targets.
 
 Remote execution can be disabled via configuration:
 
-```
+```text
 /config set enable_remote off
 ```
 
@@ -134,7 +134,7 @@ When disabled, the `remote_execution` tool is not registered in the tool registr
 
 ## Data Flow
 
-```
+```text
 User/Agent Request
     │
     ▼

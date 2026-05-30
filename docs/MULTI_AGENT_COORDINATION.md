@@ -14,7 +14,7 @@ All three levels share the same coordination infrastructure: broker messaging, f
 
 ## Architecture
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────────┐
 │  Host Application (custom GUI)                                  │
 │  ┌────────────────────────────────────────────────────────────┐  │
@@ -78,7 +78,7 @@ The scan runs at session start (via PromptManager) and populates the agent's sys
 
 ### Example Topology
 
-```
+```text
 ecosystem/
 ├── .clio/                    # Primary project config
 │   ├── instructions.md
@@ -97,6 +97,7 @@ ecosystem/
 
 The primary agent's system prompt automatically includes:
 
+```text
 ```
 ## Puppeteer Topology
 
@@ -108,21 +109,22 @@ This project manages 2 child project(s):
 To delegate work to a project, spawn a sub-agent with working_dir:
 agent_operations(operation: "spawn", task: "...", working_dir: "./SAM")
 The child agent will load that project's .clio/ context (LTM, instructions, memory).
-```
+```text
 
+```
 ### Spawning Project-Scoped Agents
 
 There are three ways to delegate work to a child project:
 
 **Via `/subagent` command with `--project`:**
-```
+```bash
 /subagent spawn "run tests and fix failures" --project SAM
 ```
 
 The `--project` flag resolves the project name through Puppeteer's topology, finds the absolute path, and sets the working directory.
 
 **Via `/subagent` command with `--dir`:**
-```
+```bash
 /subagent spawn "check dependencies" --dir ../external-project
 ```
 
@@ -152,13 +154,13 @@ When a child agent starts in a project directory:
 
 ### Listing Available Projects
 
-```
+```text
 /subagent projects
 ```
 
 Shows all detected child projects with their capabilities:
 
-```
+```text
   Puppeteer Topology
 
   Project        Path       Source      LTM  Instructions
@@ -174,7 +176,7 @@ Shows all detected child projects with their capabilities:
 
 When sub-agents (especially project-scoped ones) run inside a session, their status changes flow back to the primary session and out to any host application through a relay pipeline:
 
-```
+```text
 Child Agent (SAM/)
   │
   │ HostProtocol detects broker relay mode
@@ -673,7 +675,7 @@ Sub-agents run headless (no TTY) so they cannot display interactive security pro
 
 ### Flow
 
-```
+```text
 Child agent tries risky operation
   -> Tool detects no TTY, checks for broker_client
   -> AuthorizationRelay sends authorization_request through broker
@@ -686,7 +688,7 @@ Child agent tries risky operation
 
 ### Architecture
 
-```
+```text
 +------------------+     authorization_request     +--------+
 | Child Agent      | ---------------------------> | Broker  |
 | (no TTY)         | <--------------------------- |        |

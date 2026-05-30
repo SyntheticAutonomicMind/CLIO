@@ -81,7 +81,7 @@ You need at least one AI provider. See [PROVIDERS.md](PROVIDERS.md) for the full
 **Common choices:**
 - **GitHub Copilot** - easiest starting point, access to multiple models
 - **Local models** - llama.cpp, LM Studio, or SAM
-- **API providers** - OpenAI, Google, DeepSeek, OpenRouter, MiniMax, DashScope
+- **API providers** - OpenAI, Google, DeepSeek, OpenRouter, MiniMax, Z.AI
 
 ---
 
@@ -331,3 +331,10 @@ Use WSL for the smoothest experience. Native Windows support is improving, but W
 - Check [PROVIDERS.md](PROVIDERS.md) to configure other AI providers
 - Explore [FEATURES.md](FEATURES.md) for a full tour of CLIO's capabilities
 - Review [SECURITY.md](SECURITY.md) and [SANDBOX.md](SANDBOX.md) if you want tighter controls
+
+## See Also
+
+- [Dependencies](DEPENDENCIES.md) - Required and optional dependencies
+- [User Guide](USER_GUIDE.md) - Getting started guide
+- [Providers](PROVIDERS.md) - API provider setup
+

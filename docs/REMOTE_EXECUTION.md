@@ -6,7 +6,7 @@
 
 ## Overview
 
-CLIO's remote execution capability allows you to run AI-powered tasks on remote systems via SSH. This transforms CLIO from a local development assistant into a distributed orchestration platform.
+CLIO's remote execution capability allows you to run AI-powered tasks on remote systems via SSH. This extends CLIO beyond a local development assistant into a distributed orchestration platform.
 
 ### Key Capabilities
 
@@ -25,7 +25,7 @@ CLIO's remote execution capability allows you to run AI-powered tasks on remote 
 | **Multi-Environment Testing** | Run tests across different OS/hardware configurations |
 | **Remote Debugging** | Investigate issues on production or staging systems |
 | **Infrastructure Management** | Audit and analyze multiple systems from one location |
-| **Hardware-Specific Tasks** | Utilize GPU, ARM, or specialized hardware on remote systems |
+| **Hardware-Specific Tasks** | Use GPU, ARM, or specialized hardware on remote systems |
 
 ---
 
@@ -35,7 +35,7 @@ CLIO's remote execution capability allows you to run AI-powered tasks on remote 
 
 The simplest way to execute a remote task:
 
-```
+```text
 Use remote_execution to check the disk space on myserver
 ```
 
@@ -137,7 +137,7 @@ ssh-add -l
 ```
 
 You should see output like:
-```
+```text
 256 SHA256:xxxxx... your_email@example.com (ED25519)
 ```
 
@@ -162,7 +162,7 @@ CLIO automatically validates SSH setup before executing remote tasks:
 
 **Example Error:**
 
-```
+```text
 SSH agent not running. Remote execution requires SSH agent or explicit key.
 
 Setup guide:
@@ -314,7 +314,7 @@ Execute an AI-powered task on a remote system.
 
 **Example:**
 
-```
+```text
 Execute on user@mydevice: analyze the system hardware and create a detailed report
 ```
 
@@ -330,7 +330,7 @@ Verify a remote system is ready for CLIO execution.
 
 **Example:**
 
-```
+```text
 Check if server@production is ready for remote execution
 ```
 
@@ -355,21 +355,21 @@ Transfer files to/from remote systems before or after execution.
 
 ### System Diagnostics
 
-```
+```text
 Use remote_execution on admin@webserver:
 Create a system health report including CPU, memory, disk, and network status
 ```
 
 ### Code Analysis on Remote
 
-```
+```text
 Execute remotely on dev@buildserver:
 Analyze the Python project in ~/myproject and identify potential security issues
 ```
 
 ### Multi-Step Remote Task
 
-```
+```text
 On user@handheld:
 1. Check what games are installed in ~/Games
 2. Report disk usage by game
@@ -378,7 +378,7 @@ On user@handheld:
 
 ### Hardware Inventory
 
-```
+```text
 Remote execution on admin@server1:
 List all hardware including CPU model, RAM size, disk drives, and network adapters.
 Format as a markdown table.
@@ -386,7 +386,7 @@ Format as a markdown table.
 
 ### Build on Specific Architecture
 
-```
+```text
 Execute on builder@arm-device:
 Clone https://github.com/example/project, build for ARM64, and report any compilation errors
 ```
@@ -409,7 +409,7 @@ Clone https://github.com/example/project, build for ARM64, and report any compil
 3. **SSH-based security**
    - All communication uses your existing SSH infrastructure
    - No additional ports or services required
-   - Leverages your SSH key authentication
+   - Uses your SSH key authentication
 
 ### Best Practices
 
@@ -425,7 +425,7 @@ Clone https://github.com/example/project, build for ARM64, and report any compil
 ### Common Issues
 
 **SSH Connection Failed**
-```
+```text
 Error: SSH connection failed
 ```
 - Verify SSH key authentication works: `ssh user@host echo "test"`
@@ -433,21 +433,21 @@ Error: SSH connection failed
 - Verify SSH port if non-standard
 
 **Perl Not Available**
-```
+```perl
 Error: Perl not available on remote
 ```
 - Install Perl 5.32+ on the remote system
 - Check PATH includes Perl: `ssh user@host "which perl"`
 
 **Insufficient Disk Space**
-```
+```text
 Error: Insufficient disk space: only XMB available in /tmp
 ```
 - Clear space in /tmp on the remote system
 - Use `working_dir` parameter to specify alternative directory
 
 **Rsync Failed**
-```
+```text
 Error: Could not transfer CLIO to remote
 ```
 - Verify rsync is installed on both local and remote
@@ -506,14 +506,14 @@ Manage named devices and groups for quick access:
 
 ### Adding Devices
 
-```
+```text
 /device add steam-deck deck@steamdeck.local
 /device add build-server admin@build.internal --key ~/.ssh/build_key
 ```
 
 ### Device Groups
 
-```
+```text
 /device group create handhelds
 /device group add handhelds steam-deck
 /device group add handhelds legion-go
@@ -523,11 +523,11 @@ Manage named devices and groups for quick access:
 
 Run the same task on multiple devices simultaneously:
 
-```
+```text
 Execute on all handhelds: report CPU architecture and available disk space
 ```
 Omit the model specification to use your configured default, or specify explicitly:
-```
+```text
 Execute on all handhelds with minimax/minimax-m2.7: report disk space
 ```
 
@@ -541,7 +541,7 @@ Devices and groups are stored in `~/.clio/devices.json`.
 
 Remote execution can be disabled:
 
-```
+```text
 /config set enable_remote off
 ```
 

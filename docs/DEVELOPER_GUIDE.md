@@ -105,7 +105,7 @@ graph TD
 ### Data Flow
 
 **User Input Flow:**
-```
+```text
 User Input → Chat → WorkflowOrchestrator → APIManager → AI Provider
                                      ↓
                               Tool Selection
@@ -122,7 +122,7 @@ User Input → Chat → WorkflowOrchestrator → APIManager → AI Provider
 ```
 
 **Tool Execution Flow:**
-```
+```text
 AI Request → Tool Registry → Route to Tool → Execute Operation
                                                     ↓
                                               Return Result
@@ -138,7 +138,7 @@ AI Request → Tool Registry → Route to Tool → Execute Operation
 
 ### Directory Structure
 
-```
+```text
 clio/
   clio                      # Main executable
   install.sh                # Installation script
@@ -478,6 +478,7 @@ Edit `lib/CLIO/Tools/Registry.pm`:
 
 ```perl
 use CLIO::Tools::MyNewTool;
+```
 
 Tool registration in WorkflowOrchestrator is data-driven. Add your tool to the `@tool_defs` array in `_register_default_tools()`:
 
@@ -1012,7 +1013,7 @@ git commit -m "feat(tools): add MyNewTool for X functionality
 ```
 
 **Commit message format:**
-```
+```text
 type(scope): brief description
 
 **Problem:**

@@ -10,7 +10,7 @@ CLIO has a three-tier memory system designed to give AI agents the ability to le
 
 Unlike most AI assistants that start fresh every conversation, CLIO accumulates project-specific knowledge that persists indefinitely. An agent working on your codebase today benefits from everything learned in previous sessions - discovered patterns, solved problems, and established conventions.
 
-```
+```text
                        CLIO Memory Architecture
 
  Within a Session                    Across Sessions
@@ -149,7 +149,7 @@ LTM injection can be disabled with `--no-ltm` or `--incognito` flags for session
 
 During a session, the AI adds new entries via the `memory_operations` tool:
 
-```
+```text
 # Discover a fact about the codebase
 memory_operations(operation: "add_discovery", fact: "Config uses YAML not JSON", confidence: 0.9)
 
@@ -172,7 +172,7 @@ Agents are instructed to add LTM entries when they discover something significan
 
 Old or low-confidence entries are cleaned up to keep LTM focused:
 
-```
+```text
 memory_operations(operation: "prune_ltm", max_age_days: 90, min_confidence: 0.3)
 memory_operations(operation: "ltm_stats")  # Check current LTM size
 ```
@@ -194,7 +194,7 @@ The session-level store is a simple key-value system for temporary notes, invest
 
 Agents store working notes during complex investigations:
 
-```
+```text
 # Store investigation findings
 memory_operations(operation: "store",
     key: "auth_bug_analysis",
@@ -228,7 +228,7 @@ The session-level store is also used for automatic checkpoints. Before context t
 
 **Operation:** `memory_operations(operation: "recall_sessions")`
 
-Cross-session recall lets agents search through **all previous session transcripts** for relevant context. This is one of CLIO's most powerful memory features - it means knowledge isn't limited to what's in LTM. Anything discussed in any previous session is searchable.
+Cross-session recall lets agents search through **all previous session transcripts** for relevant context. Knowledge isn't limited to what's in LTM - anything discussed in any previous session is searchable.
 
 ### How It Works
 
@@ -245,7 +245,7 @@ Cross-session recall lets agents search through **all previous session transcrip
 
 Agents use recall_sessions in several situations:
 
-```
+```text
 # After context trimming - recover lost information
 memory_operations(operation: "recall_sessions",
     query: "authentication refactor approach",
@@ -277,7 +277,7 @@ AI models have a fixed context window (e.g., 128K tokens for Claude Sonnet, 200K
 
 ### Three-Stage Trimming
 
-```
+```text
 Stage 1: Proactive Trim (before API call, every iteration)
   WorkflowOrchestrator checks messages against 75% of context window
   If over: MessageValidator drops oldest message units (budget-walk newest to oldest)
@@ -320,7 +320,7 @@ When messages must be dropped, CLIO prioritizes keeping:
 
 All memory data is stored in the `.clio/` directory within the project root:
 
-```
+```text
 .clio/
   ltm.json                          # Long-Term Memory (project knowledge)
   memory/

@@ -27,7 +27,7 @@ CLIO uses **only core Perl modules** (standard library). No CPAN dependencies re
 
 ### 2. Tool-Powered Architecture
 
-AI doesn't hallucinate system state—it uses **real tools** to interact with the environment.
+AI doesn't hallucinate system state - it uses **real tools** to interact with the environment.
 
 **Benefits:**
 - Accurate file contents (read_file tool)
@@ -40,7 +40,7 @@ AI doesn't hallucinate system state—it uses **real tools** to interact with th
 Every tool operation shows **exactly what it's doing** via action descriptions.
 
 **Example:**
-```
+```bash
 SYSTEM: [file_operations] - Reading ./src/main.c (247 lines)
 SYSTEM: [git] - Executing git status in ./
 SYSTEM: [terminal] - Executing: perl -c lib/Module.pm
@@ -251,7 +251,7 @@ $registry->register_tool(CLIO::Tools::TerminalOperations->new());
 ```
 
 **Session Lifecycle:**
-```
+```text
 Create → Add Messages → Execute Tools → Save → [Resume] → Continue
 ```
 

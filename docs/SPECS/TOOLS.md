@@ -9,17 +9,17 @@
 CLIO provides comprehensive tooling across multiple categories. Every tool operation displays an **action description** showing exactly what it's doing in real-time.
 
 **Tool Categories:**
-1. [file_operations](#file-operations) - 18 operations
-2. [version_control](#version-control) - 11 operations
-3. [terminal_operations](#terminal-operations) - 2 operations
-4. [memory_operations](#memory-operations) - 11 operations (session + LTM)
-5. [todo_operations](#todo-operations) - 4 operations (CRUD)
-6. [web_operations](#web-operations) - 2 operations
-7. [code_intelligence](#code-intelligence) - 2 operations
-8. [interact](#user-collaboration) - 1 operation
-9. [agent_operations](#sub-agent-operations) - 10 operations
-10. [remote_execution](#remote-execution) - 7 operations
-11. [apply_patch](#apply-patch) - 1 operation
+1. [file_operations](#file_operations) - 18 operations
+2. [version_control](#version_control) - 11 operations
+3. [terminal_operations](#terminal_operations) - 2 operations
+4. [memory_operations](#memory_operations) - 11 operations (session + LTM)
+5. [todo_operations](#todo_operations) - 4 operations (CRUD)
+6. [web_operations](#web_operations) - 2 operations
+7. [code_intelligence](#code_intelligence) - 2 operations
+8. [interact](#interact) - 1 operation
+9. [agent_operations](#agent_operations) - 11 operations
+10. [remote_execution](#remote_execution) - 7 operations
+11. [apply_patch](#apply_patch) - 1 operation
 
 > **CRITICAL:** All tools use a unified `operation` parameter. Do NOT call individual operation names as separate tools (e.g., `git_status` is NOT valid). Always use the parent tool with `operation: "action"`.
 
@@ -379,3 +379,10 @@ CLIO provides comprehensive tooling across multiple categories. Every tool opera
 - [ARCHITECTURE.md](ARCHITECTURE.md) - System design
 - [DEVELOPER_GUIDE.md](../DEVELOPER_GUIDE.md) - Extension guide
 - [USER_GUIDE.md](../USER_GUIDE.md) - Usage examples
+
+## See Also
+
+- [Architecture Spec](ARCHITECTURE.md) - Architecture specifications
+- [Protocols Spec](PROTOCOLS.md) - Protocol specifications
+- [Developer Guide](../DEVELOPER_GUIDE.md) - Development standards
+

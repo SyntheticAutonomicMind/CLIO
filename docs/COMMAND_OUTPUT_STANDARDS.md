@@ -32,7 +32,7 @@ All display helpers are available on `$self` via delegation - no need to access 
 
 Commands are registered in the command registry (`CLIO::UI::Commands`) and dispatched by name. Larger command families (like `/api`) are split into submodules:
 
-```
+```text
 lib/CLIO/UI/Commands/
 ├── Base.pm           # Base class with display helpers
 ├── API.pm            # /api dispatcher
@@ -52,7 +52,7 @@ lib/CLIO/UI/Commands/
 
 CLIO uses a layered theming system:
 
-```
+```text
 Style (colors) + Theme (templates) = Rendered Output
 ```
 

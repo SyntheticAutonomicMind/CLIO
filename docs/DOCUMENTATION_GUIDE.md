@@ -214,7 +214,6 @@ Every feature should include at least one example:
 - **Don't:** "Use `/api provider` to set your provider."
 - **Do:**
 
-```markdown
 Set your provider:
 
 ```bash
@@ -223,13 +222,11 @@ Set your provider:
 ```
 
 CLIO will authenticate via device flow and store your token.
-```
 
 ### Show Both Command and Output
 
 When demonstrating commands, show both input and expected output:
 
-```markdown
 Check your current configuration:
 
 ```bash
@@ -237,11 +234,10 @@ Check your current configuration:
 ```
 
 Output:
-```
+```text
 API Configuration:
   Provider: minimax
   Model: minimax-m2.7
-```
 ```
 
 ---
@@ -280,24 +276,26 @@ When introducing technical terms, define them:
 
 Document commands with this structure:
 
-```markdown
-### `/command [args]`
+```text
+### /command [args]
 
 **Description:** Brief explanation of what the command does.
 
 **Arguments:**
-- `arg1` - Description of argument (required)
-- `arg2` - Description of argument (optional)
+- arg1 - Description of argument (required)
+- arg2 - Description of argument (optional)
+```
 
 **Example:**
+
 ```bash
 /command arg1 arg2
 ```
 
 **Output:**
-```
+
+```text
 Example output here
-```
 ```
 
 ### Use Placeholders Correctly
@@ -335,40 +333,40 @@ Read lib/CLIO/Core/Config.pm and explain how provider configuration works.
 
 Don't just show isolated commands - show complete workflows:
 
-```markdown
+```text
 ## Setting Up GitHub Copilot
 
-1. **Start CLIO:**
-   ```bash
-   ./clio --new
-   ```
+1. Start CLIO
+2. Log in
+3. Follow the device flow
+4. Verify the connection
+5. Test it
+```
 
-2. **Log in:**
-   ```bash
-   /api login
-   ```
+Step by step:
 
-3. **Follow the device flow:**
-   - Open the URL shown in your browser
-   - Enter the code displayed
-   - Authorize the application
+```bash
+./clio --new
+```
 
-4. **Verify the connection:**
-   ```bash
-   /models
-   ```
+```bash
+/api login
+```
 
-5. **Test it:**
-   ```
-   What is 2+2?
-   ```
+Follow the device flow: open the URL in your browser, enter the code, authorize.
+
+```bash
+/models
+```
+
+```text
+What is 2+2?
 ```
 
 ### Include Expected Output
 
 Always show what users should expect to see:
 
-```markdown
 Run CLIO in debug mode:
 
 ```bash
@@ -376,11 +374,11 @@ Run CLIO in debug mode:
 ```
 
 You should see detailed logs:
-```
+
+```text
 [DEBUG][Config] Loading configuration from ~/.clio/config.json
 [DEBUG][Config] Provider: github_copilot
 [DEBUG][APIManager] Initializing with model minimax-m2.7
-```
 ```
 
 ---
@@ -509,29 +507,39 @@ Before publishing documentation, verify:
 
 ### Formatting Cheat Sheet
 
-```markdown
+```text
 # H1 Title
 ## H2 Section
 ### H3 Subsection
+```
 
+```text
 **Bold text**
 *Italic text*
 `Inline code`
+```
 
 ```bash
 Code block
 ```
 
+```text
 - Unordered list item
 1. Ordered list item
+```
 
+```text
 [Link text](URL)
+```
 
+```text
 | Table | Header |
 |-------|--------|
 | Cell  | Cell   |
+```
 
-> **Note:** Important information
+```text
+> Note: Important information
 ```
 
 ---

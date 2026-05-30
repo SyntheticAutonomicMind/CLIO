@@ -23,20 +23,20 @@ CLIO supports two tool display formats, configured per-theme via `tool_display_f
 
 Compact, single-line tool output using bullet and arrow symbols:
 
-```
+```text
 ∙ FILE OPERATIONS → reading lib/CLIO/Core/Config.pm (1247 bytes)
 ```
 
 Multiple calls to the same tool collapse under one header:
 
-```
+```text
 ∙ FILE OPERATIONS → reading lib/CLIO/UI/Chat.pm (5832 bytes)
                   → writing lib/CLIO/UI/Chat.pm (5891 bytes)
 ```
 
 Expanded content (diffs, key-value data) is indented below with hrule separators:
 
-```
+```text
 ∙ FILE OPERATIONS → replaced 1 occurrence in lib/CLIO/Core/Config.pm
     ────────────────────────────────────
     (expanded content here)
@@ -47,14 +47,14 @@ Expanded content (diffs, key-value data) is indented below with hrule separators
 
 Traditional box-drawing structure:
 
-```
+```text
 ┌──┤ FILE OPERATIONS
 └─ reading lib/CLIO/Core/Config.pm (1247 bytes)
 ```
 
 Multi-line:
 
-```
+```text
 ┌──┤ FILE OPERATIONS
 ├─ reading lib/CLIO/UI/Chat.pm (5832 bytes)
 ├─ writing lib/CLIO/UI/Chat.pm (5891 bytes)
@@ -65,7 +65,7 @@ Multi-line:
 
 All shipped themes default to `inline`. To use box format, set in your theme file:
 
-```
+```text
 tool_display_format=box
 ```
 
@@ -157,7 +157,7 @@ my $dim = "\e[2m";  # Use colorize() instead
 
 Agent responses are displayed with a `CLIO: ` prefix and 4-space indentation on continuation lines:
 
-```
+```text
 CLIO: First line of response
     Second line indented by 4 spaces
     Third line also indented
@@ -172,7 +172,7 @@ The prefix uses ASSISTANT color. Response text is rendered through the Markdown 
 When models provide reasoning content (toggle with `/api set thinking on`):
 
 **Inline format:**
-```
+```text
 ∙ THINKING ->
     ────────────────────────────────────
     reasoning content indented by 4 spaces
@@ -181,7 +181,7 @@ When models provide reasoning content (toggle with `/api set thinking on`):
 ```
 
 **Box format:**
-```
+```text
 ┌──┤ THINKING
     reasoning content indented by 4 spaces
     continues here...
@@ -198,7 +198,7 @@ When models provide reasoning content (toggle with `/api set thinking on`):
 
 System messages (errors, warnings, collaboration prompts) use box-drawing format regardless of the tool display format setting:
 
-```
+```text
 ┌──┤ HEADER
 └─ message content
 ```
@@ -210,12 +210,12 @@ System messages (errors, warnings, collaboration prompts) use box-drawing format
 ### Two-Part Structure
 
 **Part 1: Hint (first time only)**
-```
+```text
 ┌──┤ ^/v Pages - Q Quits - Any key for more
 ```
 
 **Part 2: Progress Indicator (every subsequent page)**
-```
+```text
 └─┤ 1/13 │ ^v Q ▸
 ```
 
@@ -223,13 +223,13 @@ System messages (errors, warnings, collaboration prompts) use box-drawing format
 
 ## Error Messages
 
-```
+```text
 ERROR: descriptive error message here
 ```
 
 Use `ERROR` style. Multi-line:
 
-```
+```text
 ERROR: Primary error message
   Context line 1
   Context line 2

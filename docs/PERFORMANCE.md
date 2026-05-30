@@ -29,7 +29,7 @@ perl tests/benchmark.pl --verbose
 
 CLIO includes built-in performance monitoring via the `/stats` command:
 
-```
+```text
 /stats
 ```
 
@@ -88,14 +88,14 @@ If an API call returns `token_limit_exceeded` despite proactive trimming:
 2. **Escalation 2:** Aggressive trim with compressed recovery context
 3. **Escalation 3:** Emergency reset to system prompt + last user message
 
-Each escalation injects a thread summary and recovery context (git state, todo state) so the agent can continue seamlessly.
+Each escalation injects a thread summary and recovery context (git state, todo state) so the agent can continue without interruption.
 
 ### Key Design Decisions
 
 - The **most recent** user message is always preserved (not the first)
 - Thread summaries extract file paths, git commits, and collaboration decisions
 - Recovery injection includes git recent commits and working tree status
-- The agent is instructed to continue seamlessly without announcing recovery
+- The agent is instructed to continue without announcing recovery
 
 ## Memory Usage
 
