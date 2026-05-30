@@ -10,7 +10,7 @@ CLIO is a **terminal-first AI code assistant** built in Perl. It integrates AI m
 
 **Core concept:** User types → CLIO thinks → CLIO uses tools → Results displayed
 
-```
+```text
 User Input
    ↓
 Terminal UI (Chat.pm)
@@ -473,20 +473,23 @@ clio --new           # First run
 
 ## Testing
 
-### Test Framework
-- `lib/CLIO/Test/Framework.pm` - Test utilities
+### Test Infrastructure
+- `lib/CLIO/Test/MockAPI.pm` - Mock API for testing
 - `tests/run_all_tests.pl` - Test runner
-- `tests/**/*.t` - Individual test files
+- `tests/unit/*.pl` - Unit tests
+- `tests/integration/*.pl` - Integration tests
+- `tests/e2e/*.pl` - End-to-end tests
 
-### Current Coverage
-- ✅ Encoding tests: 171/171 PASS
-- ✅ CLI tests: 9/9 PASS
-- ⚠️ Tool operations: Basic coverage
-- ⚠️ Integration: Spot checks only
-
-### Run Tests
+### Running Tests
 ```bash
+# Run all tests
 ./tests/run_all_tests.pl --all
+
+# Run a specific unit test
+perl -I./lib tests/unit/test_json_repair.pl
+
+# Syntax check a module
+perl -I./lib -c lib/CLIO/Core/Config.pm
 ```
 
 ---------------------------------------------------
@@ -535,7 +538,7 @@ clio --new           # First run
 
 ## Module Organization
 
-```
+```text
 lib/CLIO/
   Providers.pm             # AI provider registry (GitHub Copilot, OpenAI, Ollama, Z.AI, etc.)
   Update.pm                # Self-update system

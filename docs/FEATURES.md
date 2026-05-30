@@ -64,7 +64,7 @@ When you type a message, CLIO sends it to an AI model along with:
 
 The AI responds with either a text message or **tool calls** - requests to perform actions. CLIO executes each tool call, feeds the results back to the AI, and the cycle continues until the AI has a complete answer.
 
-```
+```text
 You type a message
     |
     v
@@ -94,7 +94,7 @@ Responses stream in real-time, token by token. You see the AI "thinking" as it t
 
 When using models that support extended thinking (OpenAI reasoning, Google thoughts, OpenRouter reasoning, MiniMax M2), CLIO can display the model's internal reasoning process and control how deeply it reasons:
 
-```
+```text
 /api set thinking on              # Enable thinking display
 /api set thinking off             # Disable (default)
 /api set thinking_effort low      # Fast, lightweight reasoning
@@ -108,7 +108,7 @@ When enabled, reasoning content appears in a distinct visual style before the ma
 
 CLIO uses conservative sampling defaults tuned for reliable tool use. When working with models that benefit from different settings (e.g. creative tasks, or providers like MiniMax that recommend higher temperature), you can override them:
 
-```
+```text
 /api set temperature 1.0     # Override temperature (empty = provider default)
 /api set top_p 0.95          # Override top_p
 /api set top_k 40            # Override top_k
@@ -121,7 +121,7 @@ Overrides are saved globally and visible in `/api show`. Provider-recommended de
 
 For conversational AI without file modifications, use chat mode:
 
-```
+```bash
 clio --chat --new
 ```
 
@@ -169,7 +169,7 @@ The most-used tool. 17 operations for working with files:
 | `grep_search` | Search file contents with text or regex |
 | `semantic_search` | Hybrid keyword + symbol search across the codebase |
 
-**Semantic search** is particularly powerful - it understands code structure. Asking "where is authentication implemented" will find relevant files even if they don't contain the word "authentication."
+**Semantic search** understands code structure. Asking "where is authentication implemented" will find relevant files even if they don't contain the word "authentication."
 
 ### Version Control (Git)
 
@@ -209,7 +209,7 @@ Commands are validated before execution. CLIO shows the command text before runn
 
 A lightweight diff-based tool for efficient multi-file changes. Instead of rewriting entire files, CLIO can apply surgical patches:
 
-```
+```text
 *** Update File: lib/auth.pm
 @@ sub validate_token
 -    return 0 if !$token;
@@ -246,15 +246,15 @@ A structured way for the AI to ask you questions or present options during a tas
 
 ### Sub-Agent Operations
 
-Spawn additional AI agents to work in parallel. See [Multi-Agent Coordination](#11-multi-agent-coordination).
+Spawn additional AI agents to work in parallel. See [Multi-Agent Coordination](#12-multi-agent-coordination).
 
 ### Remote Execution
 
-Run CLIO on remote machines via SSH. See [Remote Execution](#12-remote-execution).
+Run CLIO on remote machines via SSH. See [Remote Execution](#13-remote-execution).
 
 ### MCP Bridge
 
-Connect to external tool servers via the Model Context Protocol. See [MCP Integration](#13-mcp-integration).
+Connect to external tool servers via the Model Context Protocol. See [MCP Integration](#14-mcp-integration).
 
 ---
 
@@ -281,7 +281,7 @@ CLIO supports 14 AI providers out of the box. Switch between them at any time - 
 
 ### Switching Providers
 
-```
+```text
 /api set provider openai
 /api set key sk-your-key-here
 /config save
@@ -290,7 +290,7 @@ CLIO supports 14 AI providers out of the box. Switch between them at any time - 
 See [PROVIDERS.md](PROVIDERS.md) for complete setup instructions for each provider.
 
 Or within a conversation:
-```
+```text
 /api provider github_copilot
 ```
 
@@ -299,13 +299,13 @@ Or within a conversation:
 GitHub Copilot is supported as an optional provider. For the recommended option, use OpenRouter with MiniMax:
 
 **Recommended: OpenRouter with MiniMax**
-```
+```text
 /api provider openrouter
 /api set key <your-openrouter-key>
 ```
 
 **Optional: GitHub Copilot** (requires GitHub Copilot subscription)
-```
+```text
 /api login
 ```
 
@@ -315,7 +315,7 @@ This opens a browser for GitHub authorization. Once authenticated, tokens are ma
 
 Each provider offers multiple models. CLIO automatically queries available models:
 
-```
+```text
 /api models              # List available models
 /api set model <model-name>   # Switch to a specific model
 ```
@@ -324,7 +324,7 @@ Each provider offers multiple models. CLIO automatically queries available model
 
 Create short aliases for frequently-used models:
 
-```
+```text
 /api alias fast <model-name>    # Create alias 'fast'
 /api alias                      # List all aliases
 /model fast                     # Quick switch to 'fast' model (resolves alias)
@@ -344,7 +344,7 @@ CLIO supports routing all outbound requests (API calls, model listing, update ch
 
 **Configure via command:**
 
-```
+```text
 /config set http_proxy http://proxy.example.com:8080
 ```
 
@@ -372,7 +372,7 @@ export ALL_PROXY=socks5://proxy.example.com:1080
 
 CLIO supports sending images to vision-capable models. Attach images using the `@path` syntax:
 
-```
+```text
 Describe what you see in @screenshot.png
 Compare these two images: @before.png and @after.png
 Analyze @"/path/with spaces/image.jpg"
@@ -435,7 +435,7 @@ If a session file gets corrupted (e.g., from a crash), CLIO automatically detect
 
 The AI uses todo lists to track progress on multi-step tasks:
 
-```
+```text
 /todo                    # Show current todo list
 /todo add "Fix tests"    # Add a task manually
 ```
@@ -452,7 +452,7 @@ CLIO has a three-tier memory system that gives it continuity across sessions. Fo
 
 Key-value storage within a session. The AI stores temporary notes, investigation findings, and working data:
 
-```
+```text
 # AI calls internally:
 memory_operations(operation: "store", key: "auth_bug_root_cause", content: "Missing null check in token validation")
 memory_operations(operation: "retrieve", key: "auth_bug_root_cause")
@@ -476,7 +476,7 @@ LTM entries have confidence scores (0.0-1.0) that increase when patterns are con
 
 Search through previous session transcripts:
 
-```
+```text
 # AI calls internally:
 memory_operations(operation: "recall_sessions", query: "authentication refactor")
 ```
@@ -485,7 +485,7 @@ This finds relevant conversations from past sessions, even if the current sessio
 
 ### Memory Commands
 
-```
+```text
 /memory list             # Show stored memories
 /memory search <query>   # Search memory
 /memory stats            # LTM statistics
@@ -759,6 +759,7 @@ mkdir -p .clio
 cat > .clio/instructions.md << 'EOF'
 # Project Instructions
 
+```
 ## Code Style
 - Use 4 spaces for indentation
 - Follow PEP 8 naming conventions
@@ -770,10 +771,11 @@ cat > .clio/instructions.md << 'EOF'
 ## Commit Format
 - Use conventional commits: type(scope): description
 EOF
-```
+```text
 
 Or use the `/init` command to have the AI generate instructions based on your codebase analysis.
 
+```
 ---
 
 ## 11. Skills System
@@ -782,7 +784,7 @@ Skills are reusable prompt templates. Instead of typing the same complex instruc
 
 ### Managing Skills
 
-```
+```text
 /skills list             # Show all skills
 /skills add              # Create a new skill
 /skills delete <name>    # Remove a skill
@@ -799,7 +801,7 @@ Skills are reusable prompt templates. Instead of typing the same complex instruc
 
 Add external Git repositories as skill sources. Skills from all configured repositories are available alongside built-in and custom skills.
 
-```
+```text
 /skills repo add <name> <url>    # Add a skill repository
 /skills repo remove <name>       # Remove a repository and its cache
 /skills repo list                 # List configured repositories
@@ -810,7 +812,7 @@ Add external Git repositories as skill sources. Skills from all configured repos
 
 Example - add the ComposioHQ skills collection:
 
-```
+```text
 /skills repo add awesome https://github.com/ComposioHQ/awesome-claude-skills
 ```
 
@@ -824,7 +826,7 @@ CLIO clones the repository to a local cache (`~/.clio/skill-cache/`) and scans f
 
 Optional flags when adding a repository:
 
-```
+```text
 /skills repo add my-skills https://github.com/user/skills --branch develop
 /skills repo add nested https://github.com/user/skills --subpath .github/skills
 ```
@@ -876,7 +878,7 @@ CLIO can spawn sub-agents - independent AI processes that work in parallel on di
 
 ### How It Works
 
-```
+```text
 You: Spawn two agents - one to write tests for auth.pm and one to update the documentation
 
 CLIO spawns:
@@ -890,7 +892,7 @@ Both work simultaneously, sending progress messages back to your session.
 
 When your working directory contains child projects (subdirectories with their own `.clio/` configurations), CLIO activates puppeteer mode. You can delegate work to any child project - each sub-agent loads the target project's instructions, LTM, and conventions automatically.
 
-```
+```text
 You: Fix the authentication bug in the backend
 
 CLIO (in ecosystem project):
@@ -916,7 +918,7 @@ Sub-agents aren't just independent processes - they coordinate:
 
 ### Agent Commands
 
-```
+```text
 /subagent list               # Show running agents
 /subagent status <id>        # Detailed agent info
 /subagent send <id> <msg>    # Send guidance to an agent
@@ -946,7 +948,7 @@ CLIO can SSH into remote machines, deploy itself, run an AI task, and return the
 
 The AI handles this automatically when you ask it to work on remote systems:
 
-```
+```text
 You: Check disk usage on staging-server and clean up old logs
 
 CLIO:
@@ -961,7 +963,7 @@ CLIO:
 
 Register named devices for quick access:
 
-```
+```text
 /device add staging user@staging.example.com
 /device add prod user@prod.example.com
 /device list
@@ -971,13 +973,13 @@ Register named devices for quick access:
 
 Group devices for parallel execution:
 
-```
+```text
 /group create webservers staging prod
 ```
 
 Now you can run tasks across all web servers simultaneously:
 
-```
+```text
 You: Check the nginx config on all webservers
 ```
 
@@ -1022,7 +1024,7 @@ Add MCP servers to `.clio/mcp.json`:
 
 ### Management Commands
 
-```
+```text
 /mcp status              # Show connected MCP servers
 /mcp add <name> <cmd>    # Add a new MCP server
 /mcp remove <name>       # Remove an MCP server
@@ -1077,7 +1079,7 @@ Four pattern categories, each with multiple specific patterns:
 
 #### Configuration
 
-```
+```text
 /config set redact_level standard    # Redact everything
 /config set redact_level pii         # Only PII (default)
 /config set redact_level off         # Disable redaction
@@ -1118,7 +1120,7 @@ CLIO separates **color** (themes) from **layout** (styles), giving you full cont
 | `verbose` | Rich, detailed color coding |
 | `console` | Classic console look |
 
-```
+```text
 /theme default
 /theme compact
 ```
@@ -1155,7 +1157,7 @@ CLIO separates **color** (themes) from **layout** (styles), giving you full cont
 | `photon` | Clean, modern |
 | `console` | Simple console |
 
-```
+```text
 /style dracula
 /style matrix
 ```
@@ -1202,7 +1204,7 @@ Before the AI modifies any file through its tools (file operations, apply_patch)
 
 ### Commands
 
-```
+```text
 /undo              # Revert all file changes from the last AI turn
 /undo list         # Show recent turns with file change counts
 /undo diff         # Preview what would be reverted (unified diff)
@@ -1233,7 +1235,7 @@ Changes made by **shell commands** (`terminal_operations`) are not tracked. If t
 
 CLIO tracks token usage and costs across providers:
 
-```
+```text
 /billing           # Show current billing summary
 /billing detail    # Detailed breakdown
 /billing reset     # Reset counters
@@ -1282,7 +1284,7 @@ These events track sub-agent and remote execution lifecycle, enabling host apps 
 
 When sub-agents run in Puppeteer mode (project-scoped child agents), their status changes are relayed back to the primary session through the coordination broker:
 
-```
+```text
 Child Agent (working in SAM/)
   |-- HostProtocol detects broker relay mode
   |-- Status changes (thinking, tools, idle) sent to broker
@@ -1302,7 +1304,7 @@ This works transparently - the child agent doesn't need `CLIO_HOST_PROTOCOL` set
 
 Events are encoded as OSC 0 title-change sequences with a `clio:` prefix:
 
-```
+```text
 \033]0;clio:<event_type>:<json_payload>\007
 ```
 
@@ -1415,7 +1417,7 @@ CLIO's integration is file-format compatible with the OpenSpec Node.js CLI. You 
 
 ### The Workflow
 
-```
+```text
 /spec init               Set up openspec/ directory
     |
 /spec propose <name>     Create a change + AI generates planning artifacts
@@ -1450,7 +1452,7 @@ This is different from `/design`, which creates a single monolithic PRD at `.cli
 
 ### Directory Structure
 
-```
+```text
 openspec/
   config.yaml              Project config (schema, context, rules)
   specs/                   Source of truth - how your system currently works

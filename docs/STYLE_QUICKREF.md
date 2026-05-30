@@ -10,7 +10,7 @@
 
 ## Creating a Style - Minimal Template
 
-```
+```text
 # Required metadata
 name=my-theme
 
@@ -70,7 +70,7 @@ spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏
 
 ## ANSI Color Codes
 
-```
+```text
 Basic:        Bright:
 @BLACK@       @BRIGHT_BLACK@
 @RED@         @BRIGHT_RED@
@@ -98,7 +98,7 @@ Modifiers:
 ## Common Patterns
 
 **Monochrome:** One color, varied brightness
-```
+```text
 primary=@BOLD@@BRIGHT_GREEN@
 secondary=@BRIGHT_GREEN@
 normal=@GREEN@
@@ -106,7 +106,7 @@ muted=@DIM@@GREEN@
 ```
 
 **Duo-tone:** Base + accent
-```
+```text
 primary=@BOLD@@BRIGHT_CYAN@     # Primary color
 secondary=@BRIGHT_CYAN@
 normal=@WHITE@                  # Neutral
@@ -114,7 +114,7 @@ command=@BRIGHT_GREEN@          # Accent
 ```
 
 **Professional:** Blues/grays
-```
+```text
 primary=@BOLD@@BRIGHT_BLUE@
 secondary=@BLUE@
 normal=@WHITE@

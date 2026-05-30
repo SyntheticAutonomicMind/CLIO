@@ -6,7 +6,7 @@
 
 ## Overview
 
-**Current Status:** The protocol layer is **implemented and active**. CLIO uses protocols for higher-level AI-driven workflows including architecture analysis, code editing, validation, and repository mapping.
+**Current Status:** CLIO has protocol modules for structured workflows (Architect, Editor, Validate, RepoMap, Recall, Puppeteer). The base64-encoded protocol format described below is a planned extension for tool composition and parameter encoding.
 
 **What Are Protocols?**
 
@@ -18,31 +18,31 @@ Protocols are higher-level abstractions over tools, providing semantic grouping 
 
 ### General Structure
 
-```
+```text
 [PROTOCOL_NAME:param1=value1:param2=value2:...]
 ```
 
 **Parameters are base64-encoded for safety:**
-```
+```text
 path=ZmlsZS50eHQ=  # "file.txt" encoded
 ```
 
 ### Example Protocols
 
 **FILE_OP Protocol:**
-```
+```text
 [FILE_OP:action=read:path=Li9zcmMvbWFpbi5j]
 [FILE_OP:action=write:path=Y29uZmlnLnlhbWw=:content=...]
 ```
 
 **GIT Protocol:**
-```
+```text
 [GIT:action=status]
 [GIT:action=commit:message=Rml4IGJ1Zw==]
 ```
 
 **RAG Protocol:**
-```
+```text
 [RAG:action=search:query=YXV0aGVudGljYXRpb24=]
 [RAG:action=index:path=Li9saWI=]
 ```
@@ -229,7 +229,7 @@ sub parse_params {
 
 AI automatically detects protocols in responses:
 
-```
+```text
 User: Read the config file
 
 AI generates:
@@ -292,13 +292,13 @@ Protocol Manager:
 
 **As of January 2026:**
 
-CLIO uses **tool-based architecture exclusively**. The protocol layer is not yet implemented.
-
+CLIO uses **tool-based architecture** with protocol modules for structured workflows. The base64-encoded protocol format is not yet implemented.
 **What works today:**
 - Direct tool calls via AI
 - Tool registry
 - Action descriptions
 - Structured tool results
+- Protocol modules (Architect, Editor, Validate, RepoMap, Recall, Puppeteer)
 
 **What's planned:**
 - Protocol handlers
@@ -348,4 +348,4 @@ CLIO uses **tool-based architecture exclusively**. The protocol layer is not yet
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-**Note:** Protocol layer is planned future architecture. Current CLIO uses tool-based approach which works excellently for all current use cases. Protocols will be added when advanced features require them.
+**Note:** CLIO has active protocol modules (Architect, Editor, Validate, RepoMap, Recall, Puppeteer) that provide structured workflows. The base64-encoded protocol format for tool composition is planned future architecture that will be added when advanced features require it.
