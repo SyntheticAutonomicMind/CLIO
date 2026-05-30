@@ -428,7 +428,7 @@ CHANGES:
 
 Technical specifications in `docs/SPECS/` should follow this structure:
 
-```markdown
+```text
 # Module/Feature Specification
 
 **Status:** [Design | In Progress | Implemented | Deprecated]
@@ -437,30 +437,20 @@ Technical specifications in `docs/SPECS/` should follow this structure:
 ---------------------------------------------------
 
 ## Overview
-
 [Brief description of the module/feature and its purpose]
 
 ## Requirements
-
 ### Functional Requirements
-
-1. **Requirement Name**
-   - Description
-   - Acceptance criteria
-
-2. **Another Requirement**
-   - Description
-   - Acceptance criteria
+1. **Requirement Name** - Description, Acceptance criteria
+2. **Another Requirement** - Description, Acceptance criteria
 
 ### Non-Functional Requirements
-
 - Performance expectations
 - Security considerations
 - Scalability requirements
+```
 
-## Architecture
-
-[System diagram or architecture description]
+The Architecture section can include a Mermaid diagram:
 
 ```mermaid
 graph TB
@@ -468,39 +458,39 @@ graph TB
     B --> C[Component]
 ```
 
-## API Specification
+The API Specification section documents each method:
 
-### Methods
-
-#### `method_name`
+```text
+#### method_name
 
 **Purpose:** [What it does]
 
 **Parameters:**
-- `param1` (Type) - Description
-- `param2` (Type, optional) - Description
+- param1 (Type) - Description
+- param2 (Type, optional) - Description
 
 **Returns:** Description of return value
+```
 
-**Example:**
+With a code example:
+
 ```perl
 my $result = $obj->method_name($param1, $param2);
 ```
 
-## Implementation Notes
+The remaining sections:
 
+```text
+## Implementation Notes
 [Important details, gotchas, design decisions]
 
 ## Testing Strategy
-
 [How to test this module/feature]
 
 ## Dependencies
-
 [What this depends on]
 
 ## Future Work
-
 [Planned enhancements, known limitations]
 ```
 
@@ -525,7 +515,6 @@ my $result = $obj->method_name($param1, $param2);
 
 **Flowcharts** for process flow:
 
-```markdown
 ```mermaid
 flowchart LR
     A[User Input] --> B{Valid?}
@@ -533,11 +522,9 @@ flowchart LR
     B -->|No| D[Error]
     C --> E[Output]
 ```
-```
 
 **Sequence diagrams** for interactions:
 
-```markdown
 ```mermaid
 sequenceDiagram
     participant User
@@ -549,11 +536,9 @@ sequenceDiagram
     API-->>CLIO: Streaming response
     CLIO-->>User: Display response
 ```
-```
 
 **Class diagrams** for architecture:
 
-```markdown
 ```mermaid
 classDiagram
     class APIManager {
@@ -569,7 +554,6 @@ classDiagram
     }
     
     APIManager --> Config
-```
 ```
 
 ---------------------------------------------------
@@ -676,7 +660,7 @@ print STDERR "[ERROR][Protocol] Invalid protocol format: expected [PROTO:key=val
 
 ### Commit Message Format
 
-```
+```text
 type(scope): brief description
 
 **Problem:**
@@ -706,7 +690,7 @@ type(scope): brief description
 
 **Examples:**
 
-```
+```text
 feat(providers): add CLIO::Providers module as single source of truth
 
 **Problem:**
@@ -723,7 +707,7 @@ Refactored Config.pm to use Providers for all provider data.
 ✅ Edge cases: Invalid provider names, missing provider data
 ```
 
-```
+```text
 fix(models): use standard writeline pagination instead of custom function
 
 **Problem:**

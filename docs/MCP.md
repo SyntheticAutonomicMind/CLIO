@@ -117,7 +117,7 @@ MCP servers are configured in `~/.clio/config.json` under the `mcp` key:
 
 Show connection status of all configured MCP servers:
 
-```
+```text
 ✓ filesystem (MCP Filesystem Server) - 11 tool(s)
 ✗ broken-server (failed: Connection refused)
 − disabled-server (disabled)
@@ -127,7 +127,7 @@ Show connection status of all configured MCP servers:
 
 List all tools from all connected MCP servers:
 
-```
+```text
 MCP Tools (14 total):
 
   [filesystem]
@@ -146,7 +146,7 @@ MCP Tools (14 total):
 
 Add and connect to a new MCP server:
 
-```
+```text
 # Local server (stdio)
 /mcp add filesystem npx -y @modelcontextprotocol/server-filesystem /tmp
 
@@ -160,7 +160,7 @@ This also saves the server to your config for persistence across sessions.
 
 Disconnect and remove an MCP server:
 
-```
+```text
 /mcp remove filesystem
 ```
 
@@ -181,7 +181,7 @@ Disconnect and remove an MCP server:
 
 MCP tools are namespaced to prevent collisions:
 
-```
+```text
 mcp_<servername>_<toolname>
 ```
 
@@ -271,7 +271,7 @@ CLIO supports OAuth 2.0 with PKCE for MCP servers that require authentication:
 On first connection, CLIO opens a browser for authorization. Tokens are cached at `~/.clio/mcp-tokens/<servername>.json` (permissions 0600) and refreshed automatically.
 
 To re-authenticate manually:
-```
+```text
 /mcp auth <servername>
 ```
 

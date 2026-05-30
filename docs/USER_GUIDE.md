@@ -16,8 +16,8 @@
 8. [Configuration](#configuration)
 9. [Customization](#customization)
 10. [Skills](#skills)
-11. [Security & Sandbox Mode](#security--sandbox-mode)
-12. [Tips & Best Practices](#tips--best-practices)
+11. [Security & Sandbox Mode](#security-sandbox-mode)
+12. [Tips & Best Practices](#tips-best-practices)
 13. [Troubleshooting](#troubleshooting)
 14. [FAQ](#faq)
 
@@ -117,7 +117,7 @@ clio --help
 ```
 
 You should see:
-```
+```bash
 CLIO - Command Line Intelligence Orchestrator
 AI-Powered Development Assistant
 
@@ -141,7 +141,7 @@ No environment variables needed! Just start CLIO and login:
 
 **Want More AI Models?**
 
-The default OAuth authentication provides access to dozens of models. To unlock additional preview models, you can use a Personal Access Token (PAT):
+The default OAuth authentication provides access to dozens of models. For additional preview models, use a Personal Access Token (PAT):
 
 1. **Create a PAT at GitHub:**
    - Go to https://github.com/settings/tokens
@@ -218,7 +218,7 @@ clio --new
 ```
 
 You'll see the welcome banner:
-```
+```text
 ------------------------------------------
 CLIO - Command Line Intelligence Orchestrator
 Session ID: sess_20260118_143052
@@ -277,12 +277,12 @@ These kinds of prompts help you see how CLIO investigates before it changes anyt
 ### Input Modes
 
 **Single-Line Input (Default):**
-```
+```text
 : Your question here...
 ```
 
 **Multi-Line Input** - Open your editor for complex prompts:
-```
+```text
 : /multiline
 # or
 : /ml
@@ -302,7 +302,7 @@ This means you can stay focused - no constant prompts during tool work, but clea
 
 **Try a simple command:**
 
-```
+```text
 YOU: Please list the files in this directory
 
 SYSTEM: [file_operations] - listing ./ (15 files, 8 directories)
@@ -324,7 +324,7 @@ CLIO: I can see you have several files and directories here:
 
 **Ask CLIO to read a file:**
 
-```
+```text
 YOU: Show me the contents of README.md
 
 SYSTEM: [file_operations] - Reading ./README.md (466 lines)
@@ -339,7 +339,7 @@ CLIO: Here's the README.md file:
 
 **Make a code change:**
 
-```
+```text
 YOU: In lib/CLIO/Core/Main.pm, change the timeout from 30 to 60 seconds
 
 SYSTEM: [file_operations] - Reading lib/CLIO/Core/Main.pm
@@ -369,7 +369,7 @@ ls sessions/
 ```
 
 Output:
-```
+```text
 sess_20260118_143052.json
 sess_20260118_150234.json
 sess_20260118_163421.json
@@ -387,7 +387,7 @@ Your entire conversation history, including all tool operations and responses, w
 
 ## Slash Commands Reference
 
-CLIO provides 35+ powerful slash commands. Type `/help` in any session to see the full list.
+CLIO provides 35+ slash commands. Type `/help` in any session to see the full list.
 
 ### Basics
 
@@ -626,7 +626,7 @@ CLIO interacts with your system through **tools**. When you ask CLIO to do somet
 
 **Tool Transparency:**
 Every tool operation shows an action description:
-```
+```text
 SYSTEM: [file_operations] - Reading ./src/main.c (247 lines)
 SYSTEM: [git] - Executing git status in ./
 SYSTEM: [terminal] - Executing: find lib -name "*.pm" | wc -l
@@ -636,7 +636,7 @@ SYSTEM: [terminal] - Executing: find lib -name "*.pm" | wc -l
 
 Action descriptions tell you **exactly** what CLIO is doing:
 
-```
+```text
 SYSTEM: [file_operations] - Reading ./config.yaml (45 lines)
 SYSTEM: [file_operations] - Writing ./config.yaml (47 lines)
 SYSTEM: [git] - Creating branch feature/new-feature
@@ -659,7 +659,7 @@ CLIO provides real-time streaming for all AI responses:
 - Code blocks appear with syntax highlighting
 
 **Tool Operations Show Live:**
-```
+```text
 SYSTEM: [file_operations] - Reading ./lib/Main.pm (245 lines)
 SYSTEM: [git] - Executing git status in ./
 SYSTEM: [terminal] - Running: perl -I./lib -c lib/Main.pm
@@ -672,7 +672,7 @@ Every action is transparent and immediate - no hidden work, no waiting.
 CLIO renders responses as formatted markdown in your terminal:
 
 **Headers:**
-```
+```text
 # Large Header
 ## Medium Header
 ### Small Header
@@ -688,21 +688,21 @@ sub hello {
 ````
 
 **Lists:**
-```
+```text
 - Item 1
 - Item 2
   - Nested item
 ```
 
 **Tables:**
-```
+```text
 | Column 1 | Column 2 |
 |----------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------|
 | Data 1   | Data 2   |
 ```
 
 **Emphasis:**
-```
+```text
 **Bold text**
 *Italic text*
 `Inline code`
@@ -715,12 +715,12 @@ All of these render beautifully in your terminal with proper colors, indentation
 CLIO can **remember** information across sessions:
 
 **Store information:**
-```
+```text
 YOU: Remember that our production API endpoint is https://api.example.com/v2
 ```
 
 **Recall later (even in a different session):**
-```
+```text
 YOU: What's our production API endpoint?
 
 CLIO: Your production API endpoint is https://api.example.com/v2 
@@ -728,7 +728,7 @@ CLIO: Your production API endpoint is https://api.example.com/v2
 ```
 
 **Search memories:**
-```
+```text
 YOU: What do I know about database configuration?
 
 CLIO: I found 3 memories related to database configuration:
@@ -744,169 +744,169 @@ CLIO: I found 3 memories related to database configuration:
 ### File Operations
 
 **read_file** - Read file contents
-```
+```text
 YOU: Show me the contents of src/auth.pm
 ```
 
 **write_file** - Create or overwrite a file
-```
+```bash
 YOU: Create a new file called test.txt with the content "Hello, world!"
 ```
 
 **create_file** - Create a new file with content
-```
+```bash
 YOU: Create a Python script that prints the Fibonacci sequence
 ```
 
 **delete_file** - Delete a file or directory
-```
+```bash
 YOU: Delete the temp/ directory
 ```
 
 **rename_file / move_file** - Rename or move files
-```
+```text
 YOU: Rename config.yaml to config.yaml.backup
 ```
 
 **list_dir** - List directory contents
-```
+```bash
 YOU: What files are in the lib/ directory?
 ```
 
 **file_search** - Find files by name pattern
-```
+```text
 YOU: Find all Perl modules in the project
 ```
 
 **grep_search** - Search file contents for patterns
-```
+```text
 YOU: Search for all TODO comments in the codebase
 ```
 
 **semantic_search** - Natural language code search
-```
+```text
 YOU: Find functions that handle authentication
 ```
 
 **replace_string** - Find and replace in files
-```
+```text
 YOU: In config.yaml, replace the port number 8080 with 9000
 ```
 
 **get_errors** - Get compilation or linting errors
-```
+```text
 YOU: Check for syntax errors in all Perl modules
 ```
 
 **get_file_info** - Get file metadata
-```
+```text
 YOU: What's the size and modification date of README.md?
 ```
 
 **file_exists** - Check if file exists
-```
+```bash
 YOU: Does config.yaml exist?
 ```
 
 ### Version Control (Git)
 
 **git_status** - Show working tree status
-```
+```text
 YOU: What's the current git status?
 ```
 
 **git_diff** - Show changes
-```
+```text
 YOU: Show me what changed in the last commit
 YOU: What are my uncommitted changes?
 ```
 
 **git_log** - Show commit history
-```
+```text
 YOU: Show me the last 10 commits
 YOU: Show commits from the last week
 ```
 
 **git_commit** - Create a commit
-```
+```bash
 YOU: Commit all changes with message "Fix authentication bug"
 ```
 
 **git_push** - Push changes to remote
-```
+```text
 YOU: Push my commits to origin
 ```
 
 **git_pull** - Pull changes from remote
-```
+```text
 YOU: Pull the latest changes from main branch
 ```
 
 **git_branch** - Branch operations
-```
+```text
 YOU: Create a new branch called feature/new-login
 YOU: List all branches
 ```
 
 **git_checkout** - Switch branches or restore files
-```
+```text
 YOU: Switch to the main branch
 YOU: Restore the file config.yaml from the last commit
 ```
 
 **git_merge** - Merge branches
-```
+```text
 YOU: Merge the feature/new-login branch into main
 ```
 
 **git_reset** - Reset changes
-```
+```text
 YOU: Undo the last commit but keep the changes
 ```
 
 ### Terminal Operations
 
 **execute_command** - Run a shell command
-```
+```bash
 YOU: Run the test suite
 YOU: Count the lines of code in all Perl files
 YOU: Show me the current disk usage
 ```
 
 **get_terminal_output** - Get output from a previous command
-```
+```bash
 YOU: What was the output of the last command?
 ```
 
 ### Memory Operations
 
 **store_memory** - Store information
-```
+```text
 YOU: Remember that the database password is in /etc/secrets/db.conf
 ```
 
 **retrieve_memory** - Recall specific information
-```
+```text
 YOU: What did I store about the database password?
 ```
 
 **search_memory** - Search stored memories
-```
+```text
 YOU: Find all information about API endpoints
 ```
 
 **list_memories** - List all stored memories
-```
+```text
 YOU: Show me everything you remember
 ```
 
 **delete_memory** - Forget stored information
-```
+```text
 YOU: Forget the information about the old API endpoint
 ```
 
 **Long-Term Memory (LTM) Management:**
-```
+```text
 /memory stats    # Show LTM statistics (entry counts, timestamps)
 /memory prune    # Remove old/low-confidence entries (default 90 days)
 /memory prune 30 # Remove entries older than 30 days
@@ -915,7 +915,7 @@ YOU: Forget the information about the old API endpoint
 ### Todo List Operations
 
 **manage_todo_list** - Create and manage tasks
-```
+```bash
 YOU: Create a todo list for this refactoring project
 YOU: Mark task 3 as complete
 YOU: Show me all remaining tasks
@@ -925,7 +925,7 @@ YOU: Add a new task to implement caching
 ### Web Operations
 
 **fetch_webpage** - Fetch and analyze web content
-```
+```text
 YOU: Fetch the documentation from https://docs.example.com/api
 YOU: Summarize the content of https://blog.example.com/article
 ```
@@ -933,23 +933,23 @@ YOU: Summarize the content of https://blog.example.com/article
 ### Remote Execution
 
 **execute_remote** - Run AI tasks on remote systems via SSH
-```
+```bash
 YOU: Use remote execution to check the disk space on myserver
 YOU: Execute on admin@webserver: create a system health report
 YOU: Remote execute on builder@arm-device: compile the project and report any errors
 ```
 
 **check_remote** - Verify remote system is ready for execution
-```
+```bash
 YOU: Check if server@production is ready for remote CLIO execution
 ```
 
 **prepare_remote** - Pre-stage CLIO on a remote system
-```
+```text
 YOU: Prepare CLIO on dev@buildserver for repeated tasks
 ```
 
-Remote execution enables powerful distributed workflows - run analysis on servers, build on specific hardware, gather diagnostics from multiple systems, and more. See [Remote Execution Guide](REMOTE_EXECUTION.md) for complete documentation.
+Remote execution enables distributed workflows - run analysis on servers, build on specific hardware, gather diagnostics from multiple systems, and more. See [Remote Execution Guide](REMOTE_EXECUTION.md) for complete documentation.
 
 **Device Registry** - Register named devices for quick access:
 
@@ -971,12 +971,12 @@ The `execute_parallel` operation runs the same task on multiple devices at once 
 ### Code Intelligence
 
 **list_usages** - Find all references to a symbol across the codebase
-```
+```text
 YOU: Find all usages of the function validate_token
 ```
 
 **search_history** - Semantic search through git commit messages
-```
+```text
 YOU: When did we fix the authentication bug?
 YOU: Show me commits related to performance improvements
 ```
@@ -984,7 +984,7 @@ YOU: Show me commits related to performance improvements
 ### Apply Patch
 
 A lightweight diff-based tool for efficient multi-file changes. The AI can apply surgical patches rather than rewriting entire files:
-```
+```text
 YOU: Fix the off-by-one error in the loop on line 42 of parser.pm
 ```
 The AI generates a targeted patch with context anchors, making changes precise and reviewable.
@@ -1035,7 +1035,7 @@ When you spawn sub-agents, CLIO automatically starts a coordination broker that 
 
 **Communication Flow:**
 
-```
+```text
 Agent has question         -> Uses interact tool
                            -> Question routed to broker
                            -> Appears in your inbox
@@ -1049,7 +1049,7 @@ Agent receives answer      -> Continues work with your guidance
 
 **Example with Messaging:**
 
-```
+```text
 YOU: /subagent spawn "refactor auth module" --persistent
 
 CLIO: [OK] Spawned sub-agent: agent-1 (PERSISTENT MODE)
@@ -1081,7 +1081,7 @@ CLIO: ────────────────────────�
 
 **Example Multi-Agent Workflow:**
 
-```
+```text
 YOU: /subagent spawn "analyze lib/Module/A.pm" --model minimax/minimax-m2.7
 
 CLIO: [OK] Spawned sub-agent: agent-1
@@ -1154,7 +1154,7 @@ For more details, see the Multi-Agent Coordination documentation.
 
 **Starting a new project with `/design`:**
 
-```
+```text
 YOU: /design
 
 CLIO: Let's design your application together. Tell me about your project 
@@ -1266,7 +1266,7 @@ CLIO: Project initialized! I've created custom instructions that include:
 
 **Later, updating the design:**
 
-```
+```text
 YOU: /design
 
 SYSTEM: [file_operations] - Reading .clio/PRD.md
@@ -1333,7 +1333,7 @@ CLIO: Instructions updated! Now includes:
 
 **Understanding a new codebase:**
 
-```
+```text
 YOU: I'm new to this project. Can you give me an overview of the codebase structure?
 
 SYSTEM: [file_operations] - listing ./ (15 files, 8 directories)
@@ -1372,7 +1372,7 @@ Would you like me to explain any specific component in detail?
 
 **Improving error handling:**
 
-```
+```text
 YOU: Find all database query functions and add try-catch error handling
 
 SYSTEM: [file_operations] - Searching for pattern "query|execute" in ./lib
@@ -1381,8 +1381,10 @@ SYSTEM: [file_operations] - Replacing string in lib/CLIO/Database/Connection.pm
 
 CLIO: I found 8 database query functions and added comprehensive error 
 handling to all of them. Here's an example of the changes:
+```
 
 **Before:**
+
 ```perl
 sub get_user {
     my ($self, $user_id) = @_;
@@ -1393,6 +1395,7 @@ sub get_user {
 ```
 
 **After:**
+
 ```perl
 sub get_user {
     my ($self, $user_id) = @_;
@@ -1414,13 +1417,12 @@ All 8 functions now have:
 - eval blocks to catch exceptions
 - Error logging to STDERR
 - Graceful failure with undef return
-```
 
 ### Example 3: Git Workflow
 
 **Feature branch workflow:**
 
-```
+```text
 YOU: Create a new feature branch, add logging to the APIManager, and commit the changes
 
 SYSTEM: [git] - Creating branch feature/add-api-logging
@@ -1452,7 +1454,7 @@ Date:   Sat Jan 18 14:30:52 2026
     - Response metrics
     - Error context
     - Token usage
-```
+```bash
 
 The branch is ready for review or testing.
 ```
@@ -1461,7 +1463,7 @@ The branch is ready for review or testing.
 
 **Creating comprehensive documentation:**
 
-```
+```text
 YOU: Create API documentation for all public methods in lib/CLIO/Tools/FileOperations.pm
 
 SYSTEM: [file_operations] - Reading lib/CLIO/Tools/FileOperations.pm
@@ -1502,7 +1504,7 @@ Would you like me to generate similar documentation for other modules?
 
 **Security audit:**
 
-```
+```text
 YOU: Analyze the codebase for potential security issues: SQL injection, command injection, and insecure file operations
 
 SYSTEM: [file_operations] - Searching for SQL patterns
@@ -1547,15 +1549,17 @@ Would you like me to implement these fixes?
 
 **Investigating a framework:**
 
-```
+```text
 YOU: Fetch the FastAPI documentation and explain how to create a REST API endpoint
 
 SYSTEM: [web] - Fetching https://fastapi.tiangolo.com/tutorial/first-steps/
 SYSTEM: [web] - Fetching https://fastapi.tiangolo.com/tutorial/path-params/
 
 CLIO: Based on the FastAPI documentation, here's how to create a REST API endpoint:
+```
 
 **Basic Endpoint:**
+
 ```python
 from fastapi import FastAPI
 
@@ -1567,6 +1571,7 @@ def read_root():
 ```
 
 **With Path Parameters:**
+
 ```python
 @app.get("/items/{item_id}")
 def read_item(item_id: int, q: str = None):
@@ -1581,6 +1586,7 @@ def read_item(item_id: int, q: str = None):
 4. **Documentation:** Auto-generated OpenAPI/Swagger docs at /docs
 
 **Running the server:**
+
 ```bash
 uvicorn main:app --reload
 ```
@@ -1590,7 +1596,6 @@ uvicorn main:app --reload
 - Query: `/items?q=search` - Optional, key=value after ?
 
 Want me to create a complete example FastAPI application for you?
-```
 
 ---------------------------------------------------
 
@@ -1598,7 +1603,7 @@ Want me to create a complete example FastAPI application for you?
 
 **Analyzing a screenshot:**
 
-```
+```bash
 YOU: What does this error say? @screenshot.png
 
 CLIO: [Image: screenshot.png (image/png, 245KB)]
@@ -1611,7 +1616,7 @@ CLIO: [Image: screenshot.png (image/png, 245KB)]
 
 **Comparing two images:**
 
-```
+```text
 YOU: What's different between these? @before.png and @after.png
 
 CLIO: [Image: before.png (image/png, 120KB)]
@@ -1623,7 +1628,7 @@ CLIO: [Image: before.png (image/png, 120KB)]
 
 **Attaching images with spaces in the path:**
 
-```
+```text
 YOU: Analyze @"/path/to/my screenshot.png"
 ```
 
@@ -2032,8 +2037,6 @@ When skills have the same name across sources, the priority order is:
 4. **Repository** skills (from configured Git repos)
 5. **Built-in** skills (lowest - shipped with CLIO)
 
-
-
 ### System Prompts
 
 System prompts define CLIO's base behavior and personality. You can customize them per project.
@@ -2181,7 +2184,7 @@ clio --disable web_operations,remote_execution --new
 ```
 
 For persistent configuration:
-```
+```text
 /config set disabled_tools web_operations,remote_execution
 ```
 
@@ -2213,19 +2216,19 @@ For detailed information, see [docs/SANDBOX.md](SANDBOX.md).
 ### Effective Prompting
 
 **Be Specific:**
-```
+```text
 [Bad] "Fix the code"
 [Good] "In auth.pm, add input validation to the login function to prevent SQL injection"
 ```
 
 **Provide Context:**
-```
+```text
 [Bad] "Update the config"
 [Good] "In config.yaml, change the database connection pool size from 10 to 20 to handle increased load"
 ```
 
 **Multi-Step Requests:**
-```
+```text
 [Good] "Create a new branch called feature/api-v2, refactor the API endpoints in lib/API.pm to use FastAPI instead of Flask, and commit the changes"
 ```
 
@@ -2260,7 +2263,7 @@ rm sessions/sess_2026011*.json  # Delete old sessions
 ### Managing Complex Tasks
 
 **Use Todo Lists:**
-```
+```text
 YOU: Create a todo list for this refactoring project with these tasks:
 1. Read and understand current authentication flow
 2. Design new JWT-based auth system
@@ -2280,7 +2283,7 @@ YOU: What's next on the list?
 
 **Break Down Large Changes:**
 For complex refactoring, ask CLIO to show you the plan first:
-```
+```text
 YOU: I want to refactor the database layer to use an ORM. Show me a plan for how to do this without breaking existing code.
 
 [CLIO provides plan]
@@ -2291,7 +2294,7 @@ YOU: Good, let's implement step 1 first.
 ### Code Review with CLIO
 
 **Before Committing:**
-```
+```text
 YOU: Review my changes before I commit. Look for:
 - Potential bugs
 - Security issues
@@ -2322,7 +2325,7 @@ CLIO: I reviewed your changes. Here's what I found:
 ### Debugging with CLIO
 
 **Trace Execution:**
-```
+```text
 YOU: Help me debug why the authentication is failing. Trace the code execution from login endpoint to database query.
 
 SYSTEM: [file_operations] - Reading lib/API/Auth.pm

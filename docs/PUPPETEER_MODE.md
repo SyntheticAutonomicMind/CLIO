@@ -27,7 +27,7 @@ Think of it as a team lead sitting at a desk, dispatching work to specialists wh
 
 Puppeteer mode needs a parent directory with child projects. Each child project that should be delegatable needs a `.clio/` directory:
 
-```
+```text
 my-ecosystem/
 ├── .clio/
 │   ├── instructions.md       # Orchestration-level instructions
@@ -59,7 +59,7 @@ The fastest way to set up puppeteer mode is with CLIO's built-in `/design` and `
 
 Start CLIO in the parent directory (the one containing your child projects) and use `/design` to create a PRD:
 
-```
+```bash
 cd ~/my-ecosystem
 clio
 
@@ -72,7 +72,7 @@ CLIO walks you through an interactive design session. Describe your ecosystem - 
 
 Once the PRD looks right, run `/init`:
 
-```
+```text
 [claude-sonnet-4] my-ecosystem: /init
 ```
 
@@ -86,7 +86,7 @@ This is the same workflow used to create the Synthetic Autonomic Mind puppeteer 
 
 From here, you're in puppeteer mode. CLIO detects the child projects and you can start delegating:
 
-```
+```text
 [claude-sonnet-4] my-ecosystem: Fix the rate limiting bug in the backend API
 ```
 
@@ -150,7 +150,7 @@ When you start CLIO in a puppeteer directory, you'll see the detected topology i
 ### Delegating Tasks
 
 **Talk naturally:**
-```
+```text
 [claude-sonnet-4] my-ecosystem: Fix the authentication bug in the backend
   - users are getting 401 errors on valid tokens.
 ```
@@ -158,13 +158,13 @@ When you start CLIO in a puppeteer directory, you'll see the detected topology i
 CLIO will spawn a sub-agent in `./backend` with the task, the backend's instructions and LTM loaded automatically.
 
 **Be specific about the project:**
-```
+```text
 [claude-sonnet-4] my-ecosystem: In the frontend, update the login form to
   show better error messages when the API returns 401.
 ```
 
 **Coordinate across projects:**
-```
+```text
 [claude-sonnet-4] my-ecosystem: The shared-lib date formatting is wrong -
   it's breaking both the backend API responses and the frontend display.
   Fix it in shared-lib, then verify both backend and frontend tests still pass.
@@ -175,22 +175,22 @@ CLIO will typically spawn agents in sequence or parallel depending on dependenci
 ### Using Slash Commands
 
 List available projects:
-```
+```text
 /subagent projects
 ```
 
 Spawn a sub-agent in a specific project:
-```
+```text
 /subagent spawn "run the test suite and fix any failures" --project backend
 ```
 
 Spawn in an arbitrary directory:
-```
+```bash
 /subagent spawn "check for dependency updates" --dir ../other-project
 ```
 
 Check on running agents:
-```
+```bash
 /subagent list
 /subagent inbox
 ```
@@ -208,7 +208,7 @@ Check on running agents:
 
 Different tasks need different capability levels. You can specify the model when spawning:
 
-```
+```text
 /subagent spawn "audit the codebase for SQL injection" --project backend --model gpt-4.1
 ```
 
@@ -228,7 +228,7 @@ When the AI is orchestrating, it can also select models per-agent based on task 
 
 Here's a real workflow from a session managing 12 projects:
 
-```
+```text
 User: We renamed user_collaboration to interact in CLIO. Check all the
       other projects for stale references and update them.
 
@@ -245,7 +245,7 @@ Total time: ~3 minutes for work across 6 repositories
 
 Another example - parallel QA:
 
-```
+```text
 User: Run a security audit across all backend services.
 
 CLIO's approach:
