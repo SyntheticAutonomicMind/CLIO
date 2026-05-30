@@ -30,7 +30,7 @@ lib/CLIO/Memory/     # Context/memory system (YaRN, TokenEstimator)
 lib/CLIO/Security/   # Auth, sandbox, secret redaction
 lib/CLIO/Util/       # Utilities (JSON, PathResolver, YAML)
 lib/CLIO/Coordination/ # Multi-agent broker/client
-tests/unit/          # Unit tests (~88 tests)
+tests/unit/          # Unit tests (~109 tests)
 tests/integration/   # Integration tests (~32 tests)
 tests/e2e/           # End-to-end tests (~6 tests)
 ```

@@ -10,7 +10,7 @@ CLIO now renders LaTeX mathematical formulas with Unicode symbol conversion, mak
 
 Use `$...$` for inline mathematical notation:
 
-```
+```text
 Einstein's famous equation is $E = mc^2$ relating energy and mass.
 
 The quadratic formula: $x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}$
@@ -25,7 +25,7 @@ Inline formulas are rendered with:
 
 Use `$$...$$` on its own line for prominent mathematical blocks:
 
-```
+```text
 $$\int_0^{\infty} e^{-x^2} dx = \frac{\sqrt{\pi}}{2}$$
 ```
 
@@ -92,7 +92,7 @@ Display formulas render with:
 
 ### Simple Physics
 
-```
+```text
 Newton's second law: $F = ma$
 
 The gravitational force: $F = G\frac{m_1 m_2}{r^2}$
@@ -100,20 +100,20 @@ The gravitational force: $F = G\frac{m_1 m_2}{r^2}$
 
 ### Statistics
 
-```
+```text
 The standard normal distribution: $\phi(x) = \frac{1}{\sqrt{2\pi}} e^{-\frac{x^2}{2}}$
 ```
 
 ### Calculus
 
-```
+```text
 Integration by parts:
 $$\int u \, dv = uv - \int v \, du$$
 ```
 
 ### Linear Algebra
 
-```
+```text
 Matrix multiplication: $(AB)_{ij} = \sum_{k} A_{ik} B_{kj}$
 ```
 

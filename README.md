@@ -4,19 +4,7 @@
 
 I built CLIO for myself. I spend more time in terminal sessions than I do using GUIs, and I wanted a terminal-first AI development tool that worked the way I work. It didn't really exist, so I built it. Starting with version 20260119.1, CLIO has been building itself - all development on SAM, CLIO, and ALICE is done through pair programming with AI agents using CLIO.
 
-CLIO is part of [Synthetic Autonomic Mind](https://github.com/SyntheticAutonomicMind).
-
----
-
-## How CLIO Works
-
-1. **You describe the task**
-2. **CLIO investigates** - reads code, searches files, checks git state
-3. **CLIO proposes a plan** when your input matters
-4. **After approval, CLIO does the work** - edits files, runs commands, verifies results
-5. **CLIO reports back** and asks before committing significant changes
-
-That makes CLIO closer to pair programming than prompt-and-response chat.
+[![GPL-3.0 License](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE) [![Perl 5.32+](https://img.shields.io/badge/perl-5.32%2B-blue)](docs/DEPENDENCIES.md) [![Discussions](https://img.shields.io/badge/discussions-join-brightgreen)](https://github.com/orgs/SyntheticAutonomicMind/discussions)
 
 ---
 
@@ -30,6 +18,8 @@ That makes CLIO closer to pair programming than prompt-and-response chat.
 - **Run across your fleet** - SSH into any machine, deploy CLIO, run a task, get results.
 - **Stay private** - Secret redaction catches API keys and tokens before they reach the AI. Your code stays on your machine.
 - **Interrupt anytime** - Press any key to stop mid-task. CLIO pauses, asks what you need, and adapts.
+
+CLIO works like pair programming, not prompt-and-response chat. You describe the task, CLIO investigates your code, proposes a plan, and implements after your approval.
 
 ---
 
@@ -48,42 +38,27 @@ That makes CLIO closer to pair programming than prompt-and-response chat.
 | **Todos** | Manage tasks within your workflow |
 | **Web** | Fetch and analyze web content |
 | **MCP** | Connect to external tool servers via [Model Context Protocol](docs/MCP.md) |
-| **AI Providers** | GitHub Copilot, Anthropic, OpenAI, Google Gemini, DeepSeek, OpenRouter, Ollama Cloud, MiniMax, Z.AI, llama.cpp, LM Studio, SAM |
 | **Proxy Support** | HTTP and SOCKS proxy for corporate/restricted networks |
 
 ---
 
-## Performance
+## AI Providers
 
-CLIO is built to run for hours without issues:
+| Provider | Auth | Best For |
+|----------|------|----------|
+| **GitHub Copilot** | OAuth | Multiple models, easiest setup |
+| **Anthropic** | API Key | Claude models, extended thinking |
+| **OpenAI** | API Key | GPT and o-series models |
+| **Google Gemini** | API Key | Large context, multimodal |
+| **DeepSeek** | API Key | Coding, reasoning |
+| **OpenRouter** | API Key | Access to hundreds of models |
+| **MiniMax** | API Key | High-throughput coding |
+| **Z.AI** | API Key | GLM-5 models, long-horizon tasks |
+| **llama.cpp** | None | Local, offline, privacy-first |
+| **LM Studio** | None | GUI-based local model management |
+| **SAM** | API Key | Integration with SAM ecosystem |
 
-```
-Session 1 - Active development (1h, 244 turns):
-  Baseline: 46 MB | RSS: 73 MB | Tool calls: 244
-
-Session 2 - Heavy multi-hour session:
-  Typical range: 50-100 MB depending on context size
-```
-
-Starts at ~50 MB, grows gradually as context accumulates. Multi-hour sessions with hundreds of tool calls typically stay under 100 MB. No memory leaks, no degradation, no restart needed.
-
-### Billing Awareness
-
-CLIO tracks your API usage in real time with `/usage`:
-
-```
-Premium Quota
-──────────────────────────────────────────────────────────────
-  Status:                   891 used of 1500 (59.3%)
-  Resets:                   2026-03-01
-Token Usage
-──────────────────────────────────────────────────────────────
-  Total Tokens:             13,428,981
-    Prompt:                 13,422,054 tokens
-    Completion:             6,927 tokens
-```
-
-See quota consumption, billing multipliers for premium models, per-request token counts, and reset dates. CLIO warns you when premium models cost extra so you can make informed choices.
+See [docs/PROVIDERS.md](docs/PROVIDERS.md) for setup instructions.
 
 ---
 
@@ -185,35 +160,11 @@ Find the bug causing the login endpoint to return 500 when the session is expire
 ./clio --disable web_operations  # Block specific tools
 ```
 
----
+### Slash Commands
 
-## Slash Commands
+Type `/help` in any session for the full list. Key commands: `/api` (providers), `/config` (settings), `/session` (history), `/memory` (long-term memory), `/agent` (sub-agents), `/undo` (revert changes), `/usage` (billing), `/stats` (performance).
 
-| Command | Description |
-|---------|-------------|
-| `/help` | Show available commands |
-| `/api` | Configure AI providers and models |
-| `/config` | View/edit configuration |
-| `/session` | Session management |
-| `/file` | File operations |
-| `/git` | Git operations |
-| `/undo` | Revert AI changes from last turn |
-| `/memory` | Long-term memory system |
-| `/profile` | Build and manage user personality profile |
-| `/todo` | Task management |
-| `/agent` | Spawn and manage sub-agents |
-| `/mux` | Terminal multiplexer panes (tmux/screen/Zellij) |
-| `/mcp` | Model Context Protocol servers |
-| `/skills` | Custom skill system and repositories |
-| `/update` | Check for and install updates |
-| `/usage` | API billing and quota tracking |
-| `/stats` | Memory and performance stats |
-| `/device` | Remote device management |
-| `/theme` | Change color theme |
-| `/clear` | Clear screen |
-| `/exit` | Exit CLIO |
-
-For complete command reference, see [docs/USER_GUIDE.md](docs/USER_GUIDE.md#slash-commands).
+See [docs/USER_GUIDE.md](docs/USER_GUIDE.md#slash-commands) for the complete reference.
 
 ---
 
@@ -223,6 +174,31 @@ For complete command reference, see [docs/USER_GUIDE.md](docs/USER_GUIDE.md#slas
 - **Perl 5.32+** (included with most systems)
 - **Git** (for version control operations)
 - **ANSI-compatible terminal**
+
+---
+
+## Privacy and Security
+
+CLIO runs with defense-in-depth security:
+
+- **Secret redaction** - API keys, tokens, and credentials are stripped from AI context before it reaches the model
+- **Command analysis** - Shell commands are classified by risk level (network, credential access, destructive) and require your approval for high-risk operations
+- **Path authorization** - File access outside the project directory requires your permission
+- **Sandbox mode** - `--sandbox` restricts all operations to the project directory
+- **Container isolation** - `clio-container` provides full OS-level isolation via Docker
+- **Invisible character filtering** - Unicode-based prompt injection attacks are blocked automatically
+
+See [docs/SECURITY.md](docs/SECURITY.md) and [docs/SANDBOX.md](docs/SANDBOX.md) for details.
+
+---
+
+## Part of the Ecosystem
+
+CLIO is part of [Synthetic Autonomic Mind](https://github.com/SyntheticAutonomicMind) - a family of open source AI tools:
+
+- **[SAM](https://github.com/SyntheticAutonomicMind/SAM)** - Native macOS AI assistant with voice control, document analysis, and image generation
+- **[ALICE](https://github.com/SyntheticAutonomicMind/ALICE)** - Local Stable Diffusion server with web interface and OpenAI-compatible API
+- **[SAM-Web](https://github.com/SyntheticAutonomicMind/SAM-web)** - Access SAM from iPad, iPhone, or any browser
 
 ---
 
@@ -245,24 +221,15 @@ For complete command reference, see [docs/USER_GUIDE.md](docs/USER_GUIDE.md#slas
 | [Custom Instructions](docs/CUSTOM_INSTRUCTIONS.md) | Per-project AI customization |
 | [Security](docs/SECURITY.md) | Security model and secret redaction |
 | [Performance](docs/PERFORMANCE.md) | Benchmarks and optimization |
-
----
-
-## Part of the Ecosystem
-
-CLIO is part of [Synthetic Autonomic Mind](https://github.com/SyntheticAutonomicMind) - a family of open source AI tools:
-
-- **[SAM](https://github.com/SyntheticAutonomicMind/SAM)** - Native macOS AI assistant with voice control, document analysis, and image generation
-- **[ALICE](https://github.com/SyntheticAutonomicMind/ALICE)** - Local Stable Diffusion server with web interface and OpenAI-compatible API
-- **[SAM-Web](https://github.com/SyntheticAutonomicMind/SAM-web)** - Access SAM from iPad, iPhone, or any browser
+| [Style Guide](docs/STYLE_GUIDE.md) | Color themes and customization |
+| [Automation](docs/AUTOMATION.md) | CLIO-helper daemon and CI/CD integration |
+| [Puppeteer Mode](docs/PUPPETEER_MODE.md) | Multi-project orchestration |
 
 ---
 
 ## License
 
-**GPL-3.0** - See [LICENSE](LICENSE) for details.
-
-Created by Andrew Wyatt (Fewtarius) · [syntheticautonomicmind.org](https://www.syntheticautonomicmind.org) · [github.com/SyntheticAutonomicMind/CLIO](https://github.com/SyntheticAutonomicMind/CLIO)
+GPL-3.0-or-later - See [LICENSE](LICENSE) for details. · Created by Andrew Wyatt (Fewtarius) · [syntheticautonomicmind.org](https://www.syntheticautonomicmind.org) · [GitHub](https://github.com/SyntheticAutonomicMind/CLIO)
 
 ---
 

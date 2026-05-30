@@ -61,7 +61,7 @@ For complete filesystem isolation, use the `clio-container` wrapper script. It r
 
 ### Container Image
 
-```
+```text
 ghcr.io/syntheticautonomicmind/clio:latest
 ```
 
@@ -148,7 +148,7 @@ clio --disable web_operations,remote_execution --new
 Tool filtering is applied at registration time - disabled tools never load, so the AI agent cannot call them at all. This is a hard restriction, unlike sandbox mode which gates specific operations within tools.
 
 For persistent configuration:
-```
+```text
 /config set disabled_tools web_operations,remote_execution
 ```
 
@@ -156,7 +156,7 @@ For persistent configuration:
 
 CLIO automatically detects and redacts secrets (API keys, tokens, passwords) from AI context. Configure the level:
 
-```
+```text
 /config set redact_level standard   # Redacts PII, crypto, API keys, tokens
 /config set redact_level pii        # Only PII (default)
 /config set redact_level off        # Disable redaction
@@ -189,4 +189,4 @@ Outside sandbox mode, CLIO uses a session-level path authorization system (`CLIO
 
 - [USER_GUIDE.md](USER_GUIDE.md) - General usage guide
 - [REMOTE_EXECUTION.md](REMOTE_EXECUTION.md) - Remote execution (blocked in sandbox)
-- [SECURITY.md](../SECURITY.md) - Security policy
+- [SECURITY.md](SECURITY.md) - Security policy
