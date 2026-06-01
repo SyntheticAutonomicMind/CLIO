@@ -75,9 +75,9 @@ sub new {
             total_completion_tokens => 0,
             total_tokens => 0,
             total_requests => 0,
-            total_premium_requests => 0,  # GitHub Copilot premium requests charged
+            total_premium_requests => 0,  # GitHub Copilot AI Credits charged
             model => undef,  # Current model being used
-            multiplier => 0,  # Billing multiplier from GitHub Copilot
+            multiplier => 0,  # Credit rate from GitHub Copilot
             requests => [],  # Array of individual request billing records
         },
         # Context files
@@ -236,7 +236,7 @@ sub load {
             total_completion_tokens => 0,
             total_tokens => 0,
             total_requests => 0,
-            total_premium_requests => 0,  # GitHub Copilot premium requests charged
+            total_premium_requests => 0,  # GitHub Copilot AI Credits charged
             model => undef,
             multiplier => 0,
             requests => [],
@@ -777,14 +777,14 @@ sub record_api_usage {
         total_tokens => $total_tokens,
     };
     
-    # Charge the multiplier upfront on the FIRST premium request so the user
+    # Charge the multiplier upfront on the FIRST credit-charging request so the user
     # sees an immediate count (not 0). ResponseHandler will reconcile this
     # with the first non-zero quota header delta to avoid double-counting.
     # After reconciliation, only quota header deltas drive the count.
     if ($multiplier > 0 && ($self->{billing}{total_premium_requests} || 0) == 0) {
         $self->{billing}{total_premium_requests} = $multiplier;
         $self->{billing}{_initial_premium_charged} = 1;  # Flag for reconciliation
-        log_debug('SessionState', "Initial premium charge: ${multiplier}x (pending reconciliation with quota headers)");
+        log_debug('SessionState', "Initial credit charge: ${multiplier}x (pending reconciliation with quota headers)");
     }
     
     if ($ENV{CLIO_DEBUG} || $self->{debug}) {

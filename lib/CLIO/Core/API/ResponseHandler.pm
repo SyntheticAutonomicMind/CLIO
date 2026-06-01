@@ -185,7 +185,7 @@ Generate a user-friendly message for quota exceeded errors based on error codes.
 
 Based on GitHub Copilot's quota error code hierarchy:
 - free_quota_exceeded: Free tier quota exhausted
-- quota_exceeded: Premium quota exhausted
+- quota_exceeded: AI Credits exhausted
 - overage_limit_reached: Overage limit reached
 
 Arguments:
@@ -212,14 +212,14 @@ sub _get_quota_exceeded_user_message {
             return "You've reached your monthly chat messages quota. Upgrade to Copilot Pro for higher limits.";
         }
         if ($copilot_plan eq 'individual' || $copilot_plan eq 'individual_pro') {
-            return "You've exhausted your premium model quota. Please enable additional paid premium requests or switch to Auto mode.";
+            return "You've exhausted your AI Credits. Please enable additional paid usage or switch to Auto mode.";
         }
-        return "You've exhausted your premium model quota. To continue working, switch to Auto mode.";
+        return "You've exhausted your AI Credits. To continue working, switch to Auto mode.";
     }
 
     # Overage limit reached
     if ($code eq 'overage_limit_reached') {
-        return "You cannot accrue additional premium requests at this time. Please contact GitHub Support if you need assistance.";
+        return "You cannot accrue additional AI Credits at this time. Please contact GitHub Support if you need assistance.";
     }
 
     # Z.AI insufficient balance (code 1113)
@@ -1143,7 +1143,7 @@ sub process_rate_limit_headers {
 
 Process GitHub Copilot quota tracking headers.
 
-Extracts premium request usage, calculates deltas, and stores quota
+Extracts AI Credit usage, calculates deltas, and stores quota
 information in the session for UI display and billing tracking.
 
 Arguments:
@@ -1229,7 +1229,7 @@ sub process_quota_headers {
 
         if ($delta > 0) {
             my $percent_used = 100.0 - $percent_remaining;
-            my $charge_msg = sprintf("+%d premium request%s charged (%d/%s - %.1f%% used)",
+            my $charge_msg = sprintf("+%d AI Credit%s charged (%d/%s - %.1f%% used)",
                 $delta,
                 $delta > 1 ? "s" : "",
                 $used,
@@ -1240,7 +1240,7 @@ sub process_quota_headers {
         } elsif ($delta < 0) {
             log_warning('ResponseHandler', "Quota decreased by $delta (unexpected)");
         } else {
-            log_info('ResponseHandler', "+0 premium requests (session continuity working)");
+            log_info('ResponseHandler', "+0 AI Credits (session continuity working)");
         }
     } else {
         log_info('ResponseHandler', "Initial request - establishing baseline");
@@ -1257,11 +1257,11 @@ sub process_quota_headers {
                 # First non-zero delta: the upfront charge already covers this,
                 # so skip this delta to avoid double-counting.
                 # After this, all future deltas are tracked normally.
-                log_info('ResponseHandler', "Reconciled initial premium charge with first quota delta ($delta)");
+                log_info('ResponseHandler', "Reconciled initial credit charge with first quota delta ($delta)");
             } else {
                 # Normal operation: increment by actual charge from quota headers
                 $state->{billing}{total_premium_requests} += $delta;
-                log_info('ResponseHandler', "+$delta premium request(s) charged from quota headers");
+                log_info('ResponseHandler', "+$delta AI Credit(s) charged from quota headers");
             }
         }
     }
@@ -1272,7 +1272,7 @@ sub process_quota_headers {
     }
 
     my $req_id_short = $response_id ? substr($response_id, 0, 8) : 'unknown';
-    log_info('ResponseHandler', "GitHub Copilot Premium Quota [req:$req_id_short]:");
+    log_info('ResponseHandler', "GitHub Copilot AI Credits [req:$req_id_short]:");
     log_info('ResponseHandler', "- Entitlement: " . ($entitlement == -1 ? "Unlimited" : $entitlement));
     log_info('ResponseHandler', "- Used: $used");
     log_info('ResponseHandler', "- Remaining: " . sprintf("%.1f%%", $percent_remaining) . " ($available available)");
@@ -1280,9 +1280,9 @@ sub process_quota_headers {
     log_info('ResponseHandler', "- Reset Date: $reset_date");
 
     if ($available < 10 && $available > 0) {
-        log_warning('ResponseHandler', "Only $available premium requests remaining!");
+        log_warning('ResponseHandler', "Only $available AI Credits remaining!");
     } elsif ($available <= 0 && !$overage_permitted) {
-        log_debug('ResponseHandler', "Premium quota exhausted! Requests may fail.");
+        log_debug('ResponseHandler', "AI Credits exhausted! Requests may fail.");
     }
 }
 
