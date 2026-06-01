@@ -32,7 +32,7 @@ CLIO::UI::Commands::Billing - Usage and billing commands for CLIO
 Handles usage and billing tracking commands for CLIO.
 Provider-aware: displays relevant statistics based on the active provider.
 
-- GitHub Copilot: Account info, premium request multipliers, quota status
+- GitHub Copilot: Account info, AI Credit rates, quota status
 - MiniMax: Token usage summary (quota via /api quota)
 - Other providers: Generic token usage summary
 
@@ -101,12 +101,25 @@ Determine the active provider from config or session state.
 sub _get_active_provider {
     my ($self) = @_;
     
-    # Check session state first (may have been set during model selection)
+    # 1. Derive from current model's provider prefix (most reliable)
+    # e.g., "ollama_cloud/glm-5.1" -> "ollama_cloud"
+    my $model = $self->{session}{state}{billing}{model}
+             || $self->{session}{billing}{model}
+             || $self->{session}{selected_model}
+             || '';
+    if ($model =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i) {
+        require CLIO::Providers;
+        if (CLIO::Providers::provider_exists($1)) {
+            return $1;
+        }
+    }
+    
+    # 2. Check session state (may have been set during model selection)
     if ($self->{session}{state} && $self->{session}{state}{selected_provider}) {
         return $self->{session}{state}{selected_provider};
     }
     
-    # Fall back to config
+    # 3. Fall back to config
     my $chat = $self->{chat};
     if ($chat && $chat->{config}) {
         return $chat->{config}->get('provider') || 'unknown';
@@ -135,7 +148,10 @@ sub _get_provider_display_name {
 
 =head2 _display_copilot_billing($billing)
 
-Display GitHub Copilot-specific billing with account info, multipliers, and quota.
+Display GitHub Copilot-specific billing with account info, credit rates, and quota.
+
+GitHub Copilot uses AI Credits (usage-based billing since June 2026).
+Credits are consumed based on token usage at model-specific rates.
 
 =cut
 
@@ -173,7 +189,7 @@ sub _display_copilot_billing {
         $self->writeline(sprintf("  %-25s %s", "Plan:", $self->colorize($plan || 'unknown', 'DATA')), markdown => 0);
     }
     
-    # Get model and multiplier
+    # Get model and credit rate (multiplier represents credit cost per request)
     my $model = $self->{session}{state}{billing}{model} 
              || $self->{session}{billing}{model}
              || 'unknown';
@@ -181,18 +197,18 @@ sub _display_copilot_billing {
                   || $self->{session}{billing}{multiplier}
                   || 0;
     
-    my $multiplier_str = $self->_format_multiplier($multiplier);
+    my $rate_str = $self->_format_credit_rate($multiplier);
     
     # Session summary
     $self->display_section_header("Session Summary");
     $self->writeline(sprintf("  %-25s %s", "Model:", $self->colorize($model, 'DATA')), markdown => 0);
-    $self->writeline(sprintf("  %-25s %s", "Billing Rate:", $self->colorize($multiplier_str, 'DATA')), markdown => 0);
+    $self->writeline(sprintf("  %-25s %s", "Credit Rate:", $self->colorize($rate_str, 'DATA')), markdown => 0);
     
     my $total_api_requests = $billing->{total_requests} || 0;
-    my $total_premium_charged = $billing->{total_premium_requests} || 0;
+    my $total_credits_charged = $billing->{total_premium_requests} || 0;
     
     $self->writeline(sprintf("  %-25s %s", "API Requests:", $self->colorize($total_api_requests, 'DATA')), markdown => 0);
-    $self->writeline(sprintf("  %-25s %s", "Premium Requests Charged:", $self->colorize($total_premium_charged, 'DATA')), markdown => 0);
+    $self->writeline(sprintf("  %-25s %s", "AI Credits Charged:", $self->colorize($total_credits_charged, 'DATA')), markdown => 0);
     
     # Quota section
     my $quota = $self->{session}{quota} 
@@ -205,7 +221,7 @@ sub _display_copilot_billing {
         my $reset_date = $quota->{reset_date} || '';
         
         if ($entitlement > 0) {
-            $self->display_section_header("Premium Quota");
+            $self->display_section_header("AI Credits");
             
             my $status_color = 'DATA';
             if ($percent_used >= 95) {
@@ -304,15 +320,15 @@ sub _display_copilot_billing {
     # Token usage
     $self->_display_token_usage($billing);
     
-    # Premium warning
-    $self->_display_premium_warning($multiplier);
+    # Credit rate notice
+    $self->_display_credit_rate_notice($multiplier);
     
-    # Recent requests with multipliers
+    # Recent requests with credit rates
     $self->_display_recent_requests($billing, show_rate => 1);
     
     $self->writeline("", markdown => 0);
-    $self->writeline($self->colorize("Multipliers indicate premium model usage relative to free models.", 'DIM'), markdown => 0);
-    $self->writeline($self->colorize("Use /api quota for detailed quota status.", 'DIM'), markdown => 0);
+    $self->writeline($self->colorize("Credit rates indicate AI Credit cost per request relative to base models.", 'DIM'), markdown => 0);
+    $self->writeline($self->colorize("Use /api quota for detailed credit status.", 'DIM'), markdown => 0);
     $self->writeline("", markdown => 0);
 }
 
@@ -520,46 +536,46 @@ sub _display_token_usage {
     $self->writeline(sprintf("  %-25s %s", "  Output:", _format_number($completion) . " tokens"), markdown => 0);
 }
 
-=head2 _format_multiplier($multiplier)
+=head2 _format_credit_rate($multiplier)
 
-Format multiplier as display string.
+Format credit rate as display string.
 
 =cut
 
-sub _format_multiplier {
+sub _format_credit_rate {
     my ($self, $multiplier) = @_;
     
     if ($multiplier == 0) {
-        return "Free (0x)";
+        return "Included (0x)";
     } elsif ($multiplier == int($multiplier)) {
-        return sprintf("%dx Premium", $multiplier);
+        return sprintf("%dx Credits", $multiplier);
     } else {
-        my $str = sprintf("%.2fx Premium", $multiplier);
+        my $str = sprintf("%.2fx Credits", $multiplier);
         $str =~ s/\.?0+x/x/;
         return $str;
     }
 }
 
-=head2 _display_premium_warning($multiplier)
+=head2 _display_credit_rate_notice($multiplier)
 
-Display informational billing rate notice (Copilot only).
+Display informational credit rate notice (Copilot only).
 
 =cut
 
-sub _display_premium_warning {
+sub _display_credit_rate_notice {
     my ($self, $multiplier) = @_;
     
     return if $multiplier == 0;
     
-    my $mult_display;
+    my $rate_display;
     if ($multiplier == int($multiplier)) {
-        $mult_display = sprintf("%dx", $multiplier);
+        $rate_display = sprintf("%dx", $multiplier);
     } else {
-        $mult_display = sprintf("%.2fx", $multiplier);
-        $mult_display =~ s/\.?0+x$/x/;
+        $rate_display = sprintf("%.2fx", $multiplier);
+        $rate_display =~ s/\.?0+x$/x/;
     }
     
-    my $msg = "This model has a $mult_display billing rate. You will be billed at this rate for all new user requests sent to the provider.";
+    my $msg = "This model has a ${rate_display} credit rate. Each request consumes ${rate_display} AI Credits relative to base models.";
     $self->display_system_message($msg);
     $self->writeline("", markdown => 0);
 }
@@ -569,7 +585,7 @@ sub _display_premium_warning {
 Display recent requests table.
 
 Options:
-  show_rate => 1  - Show billing rate column (Copilot only)
+  show_rate => 1  - Show credit rate column (Copilot only)
 
 =cut
 
@@ -588,7 +604,7 @@ sub _display_recent_requests {
     
     if ($show_rate) {
         $self->writeline($self->colorize(sprintf("  %-5s %-25s %-12s %-12s", 
-            "#", "Model", "Tokens", "Rate"), 'LABEL'), markdown => 0);
+            "#", "Model", "Tokens", "Credits"), 'LABEL'), markdown => 0);
     } else {
         $self->writeline($self->colorize(sprintf("  %-5s %-25s %-12s %-12s", 
             "#", "Model", "Input", "Output"), 'LABEL'), markdown => 0);
@@ -603,7 +619,7 @@ sub _display_recent_requests {
             my $req_multiplier = $req->{multiplier} || 0;
             my $rate_str;
             if ($req_multiplier == 0) {
-                $rate_str = "Free (0x)";
+                $rate_str = "Included";
             } elsif ($req_multiplier == int($req_multiplier)) {
                 $rate_str = sprintf("%dx", $req_multiplier);
             } else {

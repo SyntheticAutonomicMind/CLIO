@@ -41,7 +41,7 @@ Based on reference implementation from onwatch (internal/api/copilot_client.go).
     # Fetch complete user data
     my $user = $api->fetch_user();
     
-    # Get quota for premium requests
+    # Get quota for AI Credits
     my $quota = $user->get_quota('premium_interactions');
     print "Used: ", $quota->{used}, " of ", $quota->{entitlement}, "\n";
     
@@ -366,7 +366,7 @@ sub get_quota {
 
 =head2 get_premium_quota()
 
-Get the premium interactions quota (most commonly needed).
+Get the AI Credits quota (most commonly needed).
 
 Returns: Quota hashref from get_quota('premium_interactions'), or undef.
 
@@ -410,7 +410,8 @@ Get human-readable display name for a quota type.
 =cut
 
 my %DISPLAY_NAMES = (
-    premium_interactions => 'Premium Requests',
+    premium_interactions => 'AI Credits',
+    premium_models => 'AI Credits',
     chat => 'Chat',
     completions => 'Completions',
 );

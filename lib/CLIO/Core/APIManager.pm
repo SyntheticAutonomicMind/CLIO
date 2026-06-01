@@ -1871,7 +1871,7 @@ sub _build_payload {
         $payload->{copilot_thread_id} = $self->{session}{session_id};
         log_debug('APIManager', "Including copilot_thread_id: $payload->{copilot_thread_id}");
     } else {
-        log_warning('APIManager', "NO copilot_thread_id - session will be treated as NEW (charges premium quota!)");
+        log_warning('APIManager', "NO copilot_thread_id - session will be treated as NEW (charges AI Credits!)");
         log_debug('APIManager', "session=" . (defined $self->{session} ? "defined" : "undef") .
                      ", session_id=" . (defined $self->{session}{session_id} ? $self->{session}{session_id} : "undef"));
     }
