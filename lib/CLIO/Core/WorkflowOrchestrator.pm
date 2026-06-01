@@ -853,7 +853,7 @@ sub process_input {
         
         # NOTE: We previously tracked lastResponseHadTools here, but it's no longer needed.
         # previous_response_id should ALWAYS be included when available (see APIManager.pm).
-        # Skipping it for tool calls was causing premium charges.
+        # Skipping it for tool calls was causing unnecessary credit charges.
         
         # Include metrics if streaming was used
         if ($api_response->{metrics}) {
