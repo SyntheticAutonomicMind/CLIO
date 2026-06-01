@@ -454,7 +454,7 @@ sub _set_api_setting {
 }
 
 # Update session billing state when provider or model changes mid-session.
-# Ensures /usage shows correct model name, billing rate, and quota without restart.
+# Ensures /usage shows correct model name, credit rate, and quota without restart.
 sub _update_billing_state {
     my ($self, $model, $provider) = @_;
 

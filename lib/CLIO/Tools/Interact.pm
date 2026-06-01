@@ -27,7 +27,7 @@ execution. Agents should use this tool for ALL collaboration instead of
 providing summary responses.
 
 KEY BENEFITS:
-- FREE - Does not consume premium requests
+- FREE - Does not consume AI Credits
 - SYNCHRONOUS - Workflow continues in same API call
 - INTERACTIVE - User can guide agent in real-time
 - EFFICIENT - Reduces back-and-forth API calls
