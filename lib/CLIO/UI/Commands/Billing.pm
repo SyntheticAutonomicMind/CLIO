@@ -104,7 +104,6 @@ sub _get_active_provider {
     # 1. Derive from current model's provider prefix (most reliable)
     # e.g., "ollama_cloud/glm-5.1" -> "ollama_cloud"
     my $model = $self->{session}{state}{billing}{model}
-             || $self->{session}{billing}{model}
              || $self->{session}{selected_model}
              || '';
     if ($model =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i) {
@@ -191,10 +190,8 @@ sub _display_copilot_billing {
     
     # Get model and billing info
     my $model = $self->{session}{state}{billing}{model} 
-             || $self->{session}{billing}{model}
              || 'unknown';
     my $multiplier = $self->{session}{state}{billing}{multiplier} 
-                  || $self->{session}{billing}{multiplier}
                   || 0;
     
     # Session summary
@@ -205,7 +202,7 @@ sub _display_copilot_billing {
     
     # AI Credits: prefer per-token copilot_usage totals, fall back to PRU counter
     my $total_credits_charged;
-    my $sb = $self->{session}{billing} || $self->{session}{state}{billing};
+    my $sb = $self->{session}{state}{billing};
     if ($sb && $sb->{total_ai_credits} && $sb->{total_ai_credits} > 0) {
         $total_credits_charged = sprintf("%.4f", $sb->{total_ai_credits});
     } else {
@@ -263,7 +260,7 @@ sub _display_copilot_billing {
     }
 
     # AI Credit costs from copilot_usage (June 2026+ per-token billing)
-    my $session_billing = $self->{session}{billing} || $self->{session}{state}{billing};
+    my $session_billing = $self->{session}{state}{billing};
     if ($session_billing && $session_billing->{copilot_usage}) {
         my $cu = $session_billing->{copilot_usage};
         $self->display_section_header("AI Credit Costs (per-token)");
@@ -386,7 +383,6 @@ sub _display_generic_billing {
     
     # Get model from session
     my $model = $self->{session}{state}{billing}{model} 
-             || $self->{session}{billing}{model}
              || 'unknown';
     
     # Session summary
@@ -424,7 +420,6 @@ sub _display_zai_billing {
     
     # Get model from session
     my $model = $self->{session}{state}{billing}{model}
-             || $self->{session}{billing}{model}
              || $self->{session}{selected_model}
              || 'unknown';
     
@@ -578,58 +573,12 @@ sub _display_token_usage {
     $self->writeline(sprintf("  %-25s %s", "  Output:", _format_number($completion) . " tokens"), markdown => 0);
 }
 
-=head2 _format_credit_rate($multiplier)
-
-Format credit rate as display string. Legacy method, kept for backward
-compatibility with providers that still use multiplier-based billing.
-
-=cut
-
-sub _format_credit_rate {
-    my ($self, $multiplier) = @_;
-    
-    if ($multiplier == 0) {
-        return "Included (0x)";
-    } elsif ($multiplier == int($multiplier)) {
-        return sprintf("%dx Credits", $multiplier);
-    } else {
-        my $str = sprintf("%.2fx Credits", $multiplier);
-        $str =~ s/\.?0+x/x/;
-        return $str;
-    }
-}
-
-=head2 _display_credit_rate_notice($multiplier)
-
-Display informational credit rate notice. Legacy method, no longer called
-by default for GitHub Copilot (June 2026+ uses per-token billing).
-
-=cut
-
-sub _display_credit_rate_notice {
-    my ($self, $multiplier) = @_;
-    
-    return if $multiplier == 0;
-    
-    my $rate_display;
-    if ($multiplier == int($multiplier)) {
-        $rate_display = sprintf("%dx", $multiplier);
-    } else {
-        $rate_display = sprintf("%.2fx", $multiplier);
-        $rate_display =~ s/\.?0+x$/x/;
-    }
-    
-    my $msg = "This model has a ${rate_display} credit rate. Each request consumes ${rate_display} AI Credits relative to base models.";
-    $self->display_system_message($msg);
-    $self->writeline("", markdown => 0);
-}
-
 =head2 _display_recent_requests($billing, %opts)
 
 Display recent requests table.
 
 Options:
-  show_rate => 1  - Show category column (Copilot only)
+  show_rate => 1  - Show credits column (Copilot only)
 
 =cut
 
