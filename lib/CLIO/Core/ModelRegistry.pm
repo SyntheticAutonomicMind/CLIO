@@ -157,6 +157,8 @@ sub _get_github_copilot_models {
             billing => {
                 is_premium => $billing->{is_premium} || 0,
                 multiplier => $billing->{multiplier} || 0,
+                category => $model->{model_picker_category},
+                vendor => $model->{vendor},
             },
             capabilities => {
                 max_prompt_tokens => $limits->{max_prompt_tokens},
