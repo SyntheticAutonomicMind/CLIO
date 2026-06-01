@@ -3879,9 +3879,12 @@ sub _process_copilot_usage {
         }
     }
 
+    my $state = $self->{session}->can('state') ? $self->{session}->state() : $self->{session};
+
+    return unless $state && ref($state);
+
     # Store in session billing
-    my $state = $self->{session};
-    if ($state && ref($state) && $state->{billing}) {
+    if ($state->{billing}) {
         $state->{billing}{copilot_usage} = {
             total_nano_aiu => $total_nano_aiu,
             ai_credits     => $ai_credits,
@@ -3908,7 +3911,7 @@ sub _process_copilot_usage {
         $ai_credits, $cost_usd, $input_tokens, $output_tokens, $cached_tokens));
 
     # Persist session
-    if ($state && ref($state) && blessed($state) && $state->can('save')) {
+    if (blessed($state) && $state->can('save')) {
         $state->save();
     }
 }
