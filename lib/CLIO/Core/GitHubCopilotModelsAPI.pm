@@ -79,7 +79,7 @@ Version headers can be updated via config to match latest vscode-copilot-chat:
     my $api = CLIO::Core::GitHubCopilotModelsAPI->new(debug => 1);
     my $billing = $api->get_model_billing('gpt-4.1');
     
-    print "Model: $billing->{is_premium} ? 'Premium' : 'Free'\n";
+    print "Model: $billing->{is_premium} ? 'Credit-rated' : 'Included'\n";
     print "Multiplier: ", $billing->{multiplier} || 0, "x\n";
 
 =cut
@@ -536,9 +536,9 @@ API Response Structure:
 ```
 
 Multiplier Meanings:
-- 0x or null: Free (included in subscription)
-- 1x: Standard premium rate
-- 3x: 3x premium rate
+- 0x or null: Included (no AI Credits consumed)
+- 1x: Standard credit rate
+- 3x: 3x credit rate
 - 20x: Very expensive models
 
 Cache Strategy:
