@@ -135,12 +135,12 @@ CLIO supports multimodal image upload and display:
 
 ## Model Selection
 
-**Use MiniMax for all sub-agents:**
+**Use MiniMax M3 for all sub-agents:**
 ```
-agent_operations(operation: "spawn", task: "...", working_dir: "./CLIO", model: "minimax/minimax-m2.7")
+agent_operations(operation: "spawn", task: "...", working_dir: "./CLIO", model: "minimax/MiniMax-M3")
 ```
 
-MiniMax-M2.7 via MiniMax is the recommended default for all standard tasks: investigation, QA, implementation, code review, refactoring, documentation.
+MiniMax-M3 via MiniMax is the recommended default for all standard tasks: investigation, QA, implementation, code review, refactoring, documentation.
 
 ---
 

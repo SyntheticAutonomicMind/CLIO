@@ -131,8 +131,8 @@ sub _model_supports_reasoning {
     }
 
     # Pattern-based fallback for known reasoning models
-    # MiniMax M2.x models support interleaved thinking natively
-    if ($model =~ /^MiniMax-M2/i) {
+    # MiniMax M2.x and M3 models support interleaved thinking natively
+    if ($model =~ /^MiniMax-M[23]/i) {
         return 1;
     }
     # Check provider registry for reasoning support (via endpoint_config if available on self)
@@ -764,6 +764,17 @@ sub adapt_request_for_endpoint {
     # Add reasoning_split for MiniMax to separate thinking into reasoning_details field
     if ($endpoint_config->{minimax}) {
         $payload->{reasoning_split} = \1;  # JSON true
+        
+        # MiniMax-M3 uses thinking: {type: "adaptive"} for deep reasoning
+        # M2.x models use interleaved thinking via <think> tags (handled by _process_think_tags)
+        if ($payload->{model} && $payload->{model} =~ /^MiniMax-M3/i) {
+            my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
+            if ($show_thinking) {
+                $payload->{thinking} = { type => 'adaptive' };
+            } else {
+                $payload->{thinking} = { type => 'disabled' };
+            }
+        }
         
         # Apply provider-recommended sampling defaults (from Providers.pm registry)
         if (my $sd = $endpoint_config->{sampling_defaults}) {
