@@ -467,7 +467,7 @@ sub display_usage_summary {
     
     # Format cost display - show AI credit cost from copilot_usage
     my $cost_str = '';
-    my $session_billing = $chat->{session}{state}{billing} || $chat->{session}{billing};
+    my $session_billing = $chat->{session}{state}{billing};
     if ($session_billing && $session_billing->{copilot_usage}) {
         my $cu = $session_billing->{copilot_usage};
         my $ai_credits = $cu->{ai_credits} || 0;
