@@ -80,6 +80,7 @@ Version headers can be updated via config to match latest vscode-copilot-chat:
     my $billing = $api->get_model_billing('gpt-4.1');
     
     print "Model: $billing->{is_premium} ? 'Credit-rated' : 'Included'\n";
+    print "Category: $billing->{category} || 'unknown'\n";
     print "Multiplier: ", $billing->{multiplier} || 0, "x\n";
 
 =cut
@@ -235,38 +236,53 @@ Arguments:
 - $model_id: Model identifier (e.g., 'gpt-4.1')
 
 Returns:
-- Hashref: {is_premium => 0/1, multiplier => number}
-- Defaults to {is_premium => 0, multiplier => 0} if model not found
+- Hashref: {is_premium => 0/1, multiplier => number, category => string, vendor => string}
+  - category: model_picker_category (powerful/versatile/lightweight), undef if absent
+  - vendor: Model vendor name (Anthropic, OpenAI, Google, etc.), undef if absent
+- Defaults to {is_premium => 0, multiplier => 0, category => undef, vendor => undef} if model not found
+
+Note: As of June 2026, all models have is_premium=1 and multiplier=1 (usage-based billing).
+The category field (powerful/versatile/lightweight) replaces the free/premium distinction.
 
 =cut
 
 sub get_model_billing {
     my ($self, $model_id) = @_;
     
-    return {is_premium => 0, multiplier => 0} unless $model_id;
+    return {is_premium => 0, multiplier => 0, category => undef, vendor => undef} unless $model_id;
     
     my $models_data = $self->fetch_models();
-    return {is_premium => 0, multiplier => 0} unless $models_data && $models_data->{data};
+    return {is_premium => 0, multiplier => 0, category => undef, vendor => undef} unless $models_data && $models_data->{data};
     
     require CLIO::Core::Defaults;
 
     # Find model by ID
     for my $model (@{$models_data->{data}}) {
         if ($model->{id} eq $model_id) {
+            my $category = $model->{model_picker_category};
+            my $vendor = $model->{vendor};
+            
             if ($model->{billing}) {
                 log_debug('GitHubCopilotModelsAPI', "Found billing for $model_id: " . "premium=" . ($model->{billing}{is_premium} || 0) . ", " .
-                    "multiplier=" . ($model->{billing}{multiplier} || 0) . "\n");
+                    "multiplier=" . ($model->{billing}{multiplier} || 0) . ", category=" . ($category || 'none') . ", vendor=" . ($vendor || 'none'));
                 
                 return {
                     is_premium => $model->{billing}{is_premium} || 0,
-                    multiplier => $model->{billing}{multiplier} || 0
+                    multiplier => $model->{billing}{multiplier} || 0,
+                    category   => $category,
+                    vendor     => $vendor,
                 };
             } else {
                 # Model exists but API doesn't provide billing info
-                # This shouldn't happen with correct headers, but handle gracefully
-                log_warning('GitHubCopilotModelsAPI', "Model $model_id has no billing data in API response");
+                # Use model_picker_category as fallback (June 2026+ usage-based billing)
+                log_debug('GitHubCopilotModelsAPI', "Model $model_id has no billing data, using category=" . ($category || 'none'));
                 
-                return {is_premium => 0, multiplier => 0};  # Default to free if unknown
+                return {
+                    is_premium => 0,
+                    multiplier => 0,
+                    category   => $category,
+                    vendor     => $vendor,
+                };
             }
         }
     }
@@ -274,7 +290,7 @@ sub get_model_billing {
     # Model not found in API response
     log_warning('GitHubCopilotModelsAPI', "Model $model_id not found in API response");
     
-    return {is_premium => 0, multiplier => 0};  # Default to free if unknown
+    return {is_premium => 0, multiplier => 0, category => undef, vendor => undef};
 }
 
 =head2 _get_hardcoded_multiplier
@@ -314,7 +330,24 @@ Returns:
   - max_prompt_tokens: Maximum prompt tokens (THE enforced limit)
   - max_output_tokens: Maximum completion tokens
   - max_context_window_tokens: Total context window (for reference only)
+  - max_non_streaming_output_tokens: Max output without streaming (optional)
   - family: Model family (optional)
+  - category: Model picker category (powerful/versatile/lightweight, optional)
+  - vendor: Model vendor name (optional)
+  - picker_enabled: Whether shown in model picker (optional)
+  - preview: Whether model is in preview (optional)
+  - supports_tools: Boolean (optional)
+  - supports_streaming: Boolean (optional)
+  - supports_vision: Boolean (optional)
+  - supports_adaptive_thinking: Boolean (optional)
+  - supports_parallel_tool_calls: Boolean (optional)
+  - supports_structured_outputs: Boolean (optional)
+  - max_thinking_budget: Integer (optional)
+  - min_thinking_budget: Integer (optional)
+  - reasoning_effort: Arrayref of strings (optional)
+  - vision_max_image_size: Max image size in bytes (optional)
+  - vision_max_images: Max number of images (optional)
+  - vision_media_types: Arrayref of supported MIME types (optional)
 - Returns undef if model not found
 
 IMPORTANT: GitHub Copilot enforces max_prompt_tokens, NOT max_context_window_tokens.
@@ -340,6 +373,14 @@ sub get_model_capabilities {
                 # Include supported_endpoints from the API response
                 # This is used to determine whether to use /chat/completions or /responses
                 supported_endpoints => $model->{supported_endpoints} || [],
+                # Model picker category (powerful/versatile/lightweight)
+                category => $model->{model_picker_category},
+                # Model vendor (Anthropic, OpenAI, Google, etc.)
+                vendor => $model->{vendor},
+                # Whether model is shown in the picker
+                picker_enabled => $model->{model_picker_enabled},
+                # Preview flag
+                preview => $model->{preview},
             };
             
             # Extract per-model feature support flags
@@ -348,6 +389,12 @@ sub get_model_capabilities {
                 $caps->{supports_tools} = $supports->{tool_calls} ? 1 : 0;
                 $caps->{supports_streaming} = $supports->{streaming} ? 1 : 0;
                 $caps->{supports_vision} = $supports->{vision} ? 1 : 0;
+                $caps->{supports_adaptive_thinking} = $supports->{adaptive_thinking} ? 1 : 0;
+                $caps->{supports_parallel_tool_calls} = $supports->{parallel_tool_calls} ? 1 : 0;
+                $caps->{supports_structured_outputs} = $supports->{structured_outputs} ? 1 : 0;
+                $caps->{max_thinking_budget} = $supports->{max_thinking_budget};
+                $caps->{min_thinking_budget} = $supports->{min_thinking_budget};
+                $caps->{reasoning_effort} = $supports->{reasoning_effort} if ref($supports->{reasoning_effort}) eq 'ARRAY';
             }
             
             if ($model->{capabilities} && $model->{capabilities}{limits}) {
@@ -359,10 +406,19 @@ sub get_model_capabilities {
                                               $limits->{max_context_window_tokens} || CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW();
                 $caps->{max_output_tokens} = $limits->{max_output_tokens} || CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS();
                 $caps->{max_context_window_tokens} = $limits->{max_context_window_tokens} || CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW();
+                $caps->{max_non_streaming_output_tokens} = $limits->{max_non_streaming_output_tokens};
+                
+                # Vision limits
+                if ($limits->{vision}) {
+                    $caps->{vision_max_image_size} = $limits->{vision}{max_prompt_image_size};
+                    $caps->{vision_max_images} = $limits->{vision}{max_prompt_images};
+                    $caps->{vision_media_types} = $limits->{vision}{supported_media_types} if ref($limits->{vision}{supported_media_types}) eq 'ARRAY';
+                }
                 
                 log_debug('GitHubCopilotModelsAPI', "Capabilities for $model_id: " . "max_prompt=" . ($caps->{max_prompt_tokens} || 'N/A') . ", " .
                     "max_output=" . ($caps->{max_output_tokens} || 'N/A') . ", " .
-                    "endpoints=" . join(',', @{$caps->{supported_endpoints}}) . "\n");
+                    "category=" . ($caps->{category} || 'none') . ", " .
+                    "endpoints=" . join(',', @{$caps->{supported_endpoints}}));
             }
             
             return $caps;
@@ -535,11 +591,13 @@ API Response Structure:
 }
 ```
 
-Multiplier Meanings:
+Multiplier Meanings (legacy, pre-June 2026):
 - 0x or null: Included (no AI Credits consumed)
-- 1x: Standard credit rate
-- 3x: 3x credit rate
-- 20x: Very expensive models
+- 1x: Standard credit rate (all models as of June 2026)
+
+As of June 2026, all models use per-token billing via copilot_usage.
+The model_picker_category field (powerful/versatile/lightweight) replaces
+the multiplier for display purposes.
 
 Cache Strategy:
 - Cache file: ~/.clio/models_cache.json

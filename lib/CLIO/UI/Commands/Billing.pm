@@ -32,7 +32,7 @@ CLIO::UI::Commands::Billing - Usage and billing commands for CLIO
 Handles usage and billing tracking commands for CLIO.
 Provider-aware: displays relevant statistics based on the active provider.
 
-- GitHub Copilot: Account info, AI Credit rates, quota status
+- GitHub Copilot: Account info, AI Credit costs, quota status
 - MiniMax: Token usage summary (quota via /api quota)
 - Other providers: Generic token usage summary
 
@@ -148,7 +148,7 @@ sub _get_provider_display_name {
 
 =head2 _display_copilot_billing($billing)
 
-Display GitHub Copilot-specific billing with account info, credit rates, and quota.
+Display GitHub Copilot-specific billing with account info, AI Credit costs, and quota.
 
 GitHub Copilot uses AI Credits (usage-based billing since June 2026).
 Credits are consumed based on token usage at model-specific rates.
@@ -189,23 +189,33 @@ sub _display_copilot_billing {
         $self->writeline(sprintf("  %-25s %s", "Plan:", $self->colorize($plan || 'unknown', 'DATA')), markdown => 0);
     }
     
-    # Get model and credit rate (multiplier represents credit cost per request)
+    # Get model and billing info
     my $model = $self->{session}{state}{billing}{model} 
              || $self->{session}{billing}{model}
              || 'unknown';
     my $multiplier = $self->{session}{state}{billing}{multiplier} 
                   || $self->{session}{billing}{multiplier}
                   || 0;
-    
-    my $rate_str = $self->_format_credit_rate($multiplier);
+    my $category = $self->{session}{state}{billing}{category}
+                || $self->{session}{billing}{category};
     
     # Session summary
     $self->display_section_header("Session Summary");
     $self->writeline(sprintf("  %-25s %s", "Model:", $self->colorize($model, 'DATA')), markdown => 0);
-    $self->writeline(sprintf("  %-25s %s", "Credit Rate:", $self->colorize($rate_str, 'DATA')), markdown => 0);
+    if ($category) {
+        $self->writeline(sprintf("  %-25s %s", "Category:", $self->colorize($category, 'DATA')), markdown => 0);
+    }
     
     my $total_api_requests = $billing->{total_requests} || 0;
-    my $total_credits_charged = $billing->{total_premium_requests} || 0;
+    
+    # AI Credits: prefer per-token copilot_usage totals, fall back to PRU counter
+    my $total_credits_charged;
+    my $sb = $self->{session}{billing} || $self->{session}{state}{billing};
+    if ($sb && $sb->{total_ai_credits} && $sb->{total_ai_credits} > 0) {
+        $total_credits_charged = sprintf("%.4f", $sb->{total_ai_credits});
+    } else {
+        $total_credits_charged = $billing->{total_premium_requests} || 0;
+    }
     
     $self->writeline(sprintf("  %-25s %s", "API Requests:", $self->colorize($total_api_requests, 'DATA')), markdown => 0);
     $self->writeline(sprintf("  %-25s %s", "AI Credits Charged:", $self->colorize($total_credits_charged, 'DATA')), markdown => 0);
@@ -254,6 +264,47 @@ sub _display_copilot_billing {
                     "Resets:",
                     $self->colorize($reset_display, 'DIM')), markdown => 0);
             }
+        }
+    }
+
+    # AI Credit costs from copilot_usage (June 2026+ per-token billing)
+    my $session_billing = $self->{session}{billing} || $self->{session}{state}{billing};
+    if ($session_billing && $session_billing->{copilot_usage}) {
+        my $cu = $session_billing->{copilot_usage};
+        $self->display_section_header("AI Credit Costs (per-token)");
+
+        $self->writeline(sprintf("  %-25s %s", "Last Request:",
+            $self->colorize(sprintf("%.6f credits (\$%.6f)", $cu->{ai_credits} || 0, $cu->{cost_usd} || 0), 'DATA')), markdown => 0);
+
+        if ($cu->{model}) {
+            $self->writeline(sprintf("  %-25s %s", "Model:",
+                $self->colorize($cu->{model}, 'DATA')), markdown => 0);
+        }
+
+        my $td = $cu->{token_details} || {};
+        if ($td->{input} && $td->{input}{count} > 0) {
+            my $price_str = $td->{input}{price_per_m_usd}
+                ? sprintf(" (\$%.2f/M)", $td->{input}{price_per_m_usd})
+                : "";
+            $self->writeline(sprintf("  %-25s %s", "Input Tokens:",
+                $self->colorize($td->{input}{count} . $price_str, 'DATA')), markdown => 0);
+        }
+        if ($td->{output} && $td->{output}{count} > 0) {
+            my $price_str = $td->{output}{price_per_m_usd}
+                ? sprintf(" (\$%.2f/M)", $td->{output}{price_per_m_usd})
+                : "";
+            $self->writeline(sprintf("  %-25s %s", "Output Tokens:",
+                $self->colorize($td->{output}{count} . $price_str, 'DATA')), markdown => 0);
+        }
+        if ($td->{cache_read} && $td->{cache_read}{count} > 0) {
+            $self->writeline(sprintf("  %-25s %s", "Cached Tokens:",
+                $self->colorize($td->{cache_read}{count}, 'DATA')), markdown => 0);
+        }
+
+        # Session totals
+        if ($session_billing->{total_ai_credits} && $session_billing->{total_ai_credits} > 0) {
+            $self->writeline(sprintf("  %-25s %s", "Session Total:",
+                $self->colorize(sprintf("%.6f credits (\$%.6f)", $session_billing->{total_ai_credits}, $session_billing->{total_cost_usd} || 0), 'HIGHLIGHT')), markdown => 0);
         }
     }
 
@@ -320,14 +371,11 @@ sub _display_copilot_billing {
     # Token usage
     $self->_display_token_usage($billing);
     
-    # Credit rate notice
-    $self->_display_credit_rate_notice($multiplier);
-    
-    # Recent requests with credit rates
+    # Recent requests with categories
     $self->_display_recent_requests($billing, show_rate => 1);
     
     $self->writeline("", markdown => 0);
-    $self->writeline($self->colorize("Credit rates indicate AI Credit cost per request relative to base models.", 'DIM'), markdown => 0);
+    $self->writeline($self->colorize("Categories: powerful = highest cost, versatile = mid, lightweight = lowest", 'DIM'), markdown => 0);
     $self->writeline($self->colorize("Use /api quota for detailed credit status.", 'DIM'), markdown => 0);
     $self->writeline("", markdown => 0);
 }
@@ -538,7 +586,8 @@ sub _display_token_usage {
 
 =head2 _format_credit_rate($multiplier)
 
-Format credit rate as display string.
+Format credit rate as display string. Legacy method, kept for backward
+compatibility with providers that still use multiplier-based billing.
 
 =cut
 
@@ -558,7 +607,8 @@ sub _format_credit_rate {
 
 =head2 _display_credit_rate_notice($multiplier)
 
-Display informational credit rate notice (Copilot only).
+Display informational credit rate notice. Legacy method, no longer called
+by default for GitHub Copilot (June 2026+ uses per-token billing).
 
 =cut
 
@@ -585,7 +635,7 @@ sub _display_credit_rate_notice {
 Display recent requests table.
 
 Options:
-  show_rate => 1  - Show credit rate column (Copilot only)
+  show_rate => 1  - Show category column (Copilot only)
 
 =cut
 
@@ -604,7 +654,7 @@ sub _display_recent_requests {
     
     if ($show_rate) {
         $self->writeline($self->colorize(sprintf("  %-5s %-25s %-12s %-12s", 
-            "#", "Model", "Tokens", "Credits"), 'LABEL'), markdown => 0);
+            "#", "Model", "Tokens", "Category"), 'LABEL'), markdown => 0);
     } else {
         $self->writeline($self->colorize(sprintf("  %-5s %-25s %-12s %-12s", 
             "#", "Model", "Input", "Output"), 'LABEL'), markdown => 0);
@@ -617,21 +667,28 @@ sub _display_recent_requests {
         
         if ($show_rate) {
             my $req_multiplier = $req->{multiplier} || 0;
-            my $rate_str;
+            my $cat_str;
             if ($req_multiplier == 0) {
-                $rate_str = "Included";
-            } elsif ($req_multiplier == int($req_multiplier)) {
-                $rate_str = sprintf("%dx", $req_multiplier);
+                $cat_str = "included";
             } else {
-                $rate_str = sprintf("%.2fx", $req_multiplier);
-                $rate_str =~ s/\.?0+x$/x/;
+                # Infer category from model name since all are 1x now
+                my $id = $req->{model} || '';
+                if ($id =~ /opus|gpt-5\.[2-5](?!-mini)|codex/i) {
+                    $cat_str = "powerful";
+                } elsif ($id =~ /sonnet|gpt-4\.1(?!-mini)|gpt-4o(?!-mini)|prime/i) {
+                    $cat_str = "versatile";
+                } elsif ($id =~ /haiku|mini|flash|3\.5-turbo/i) {
+                    $cat_str = "lightweight";
+                } else {
+                    $cat_str = "standard";
+                }
             }
             
             $self->writeline(sprintf("  %-5s %-25s %-12s %-12s",
                 $count,
                 $req_model,
                 $req->{total_tokens},
-                $rate_str), markdown => 0);
+                $cat_str), markdown => 0);
         } else {
             $self->writeline(sprintf("  %-5s %-25s %-12s %-12s",
                 $count,
