@@ -988,6 +988,8 @@ sub grep_search {
     my $is_regex = $params->{is_regex} || 0;
     my $max_results = $params->{max_results} || 50;  # Prevent runaway searches
     
+    return $self->error_result("Missing 'query' parameter") unless defined $query && length($query);
+    
     # Auto-detect regex intent when query contains metacharacters
     # Agents often pass regex patterns (e.g., "sdl|SDL") without setting is_regex
     if (!$is_regex && $query =~ /[|\(\)\[\]\{\}\+\^\\\$]/) {
@@ -1005,8 +1007,6 @@ sub grep_search {
     my $MAX_LINE_LENGTH  = 10_240;     # 10KB - skip file if any line exceeds this
     my $SEARCH_TIMEOUT   = 120;        # 2 minutes wall-clock limit
     my $BINARY_CHECK_SIZE = 8_192;     # 8KB sample for null byte detection
-    
-    return $self->error_result("Missing 'query' parameter") unless $query;
     
     log_debug('FileOp', "Grep search: query=$query, pattern=$pattern, regex=$is_regex, max_results=$max_results");
     
