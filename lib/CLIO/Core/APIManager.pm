@@ -2566,6 +2566,11 @@ sub _process_non_streaming_response {
     $self->_extract_stateful_markers($data, $opts);
     $self->{response_handler}->process_quota_headers($resp->headers, $data->{id}) if $endpoint_config->{requires_copilot_headers};
 
+    # Parse copilot_usage from response body (June 2026+ AI Credit billing)
+    if ($endpoint_config->{requires_copilot_headers} && $data->{copilot_usage}) {
+        $self->_process_copilot_usage($data->{copilot_usage}, $data->{model});
+    }
+
     # Extract content
     my ($content, $tool_calls, $reasoning_details) =
         $self->_extract_response_content($data, $use_responses_api, $opts);
@@ -2832,6 +2837,12 @@ sub _process_sse_data {
         $ss->{streaming_usage}{total_tokens} ||=
             $ss->{streaming_usage}{prompt_tokens} + $ss->{streaming_usage}{completion_tokens};
         log_debug('APIManager', "Streaming usage: prompt=$ss->{streaming_usage}{prompt_tokens}, completion=$ss->{streaming_usage}{completion_tokens}");
+    }
+
+    # Capture copilot_usage from final streaming chunk (June 2026+ AI Credit billing)
+    if ($data->{copilot_usage}) {
+        $ss->{copilot_usage} = $data->{copilot_usage};
+        $ss->{model} //= $data->{model};
     }
 
     # Extract content delta and tool_calls delta
@@ -3292,6 +3303,11 @@ sub _finalize_streaming_response {
     if ($s{endpoint_config}{requires_copilot_headers} && $headers) {
         my $response_id = $self->{session}{lastGitHubCopilotResponseId} || 'unknown';
         $self->{response_handler}->process_quota_headers($headers, $response_id);
+    }
+
+    # Parse copilot_usage from streaming response body (June 2026+ AI Credit billing)
+    if ($s{endpoint_config}{requires_copilot_headers} && $s{copilot_usage}) {
+        $self->_process_copilot_usage($s{copilot_usage}, $s{model});
     }
 
     # Resolve or estimate usage for billing
@@ -3814,6 +3830,87 @@ sub _extract_usage_tokens {
         $data->{usage}{prompt_tokens}     || $data->{usage}{input_tokens}  || 0,
         $data->{usage}{completion_tokens} || $data->{usage}{output_tokens} || 0,
     );
+}
+
+=head2 _process_copilot_usage
+
+Process copilot_usage from GitHub Copilot response body.
+As of June 2026, GitHub Copilot returns per-token billing data in the
+response body via the copilot_usage field, replacing the legacy
+premium request unit (PRU) quota headers.
+
+Arguments:
+- $copilot_usage: Hashref from response body {token_details => [...], total_nano_aiu => int}
+- $model: Model identifier string
+
+=cut
+
+sub _process_copilot_usage {
+    my ($self, $copilot_usage, $model) = @_;
+
+    return unless $copilot_usage && ref($copilot_usage) eq 'HASH';
+
+    my $total_nano_aiu = $copilot_usage->{total_nano_aiu} || 0;
+    my $token_details  = $copilot_usage->{token_details} || [];
+
+    # Convert nano AI units to AI credits and USD
+    # 1 nano AIU = 10^-9 AI credits, 1 AI credit = $0.01 USD
+    my $ai_credits = $total_nano_aiu / 1_000_000_000.0;
+    my $cost_usd   = $ai_credits * 0.01;
+
+    # Parse token details
+    my %token_info;
+    for my $detail (@$token_details) {
+        my $token_type  = $detail->{token_type} || 'unknown';
+        my $token_count = $detail->{token_count} || 0;
+        my $batch_size  = $detail->{batch_size} || 0;
+        my $cost_per_batch = $detail->{cost_per_batch} || 0;
+
+        $token_info{$token_type} = {
+            count         => $token_count,
+            batch_size    => $batch_size,
+            cost_per_batch => $cost_per_batch,
+        };
+
+        # Calculate price per million tokens in USD
+        if ($batch_size > 0 && $cost_per_batch > 0) {
+            my $price_per_m = ($cost_per_batch / 1_000_000_000.0) * 0.01 * (1_000_000.0 / $batch_size);
+            $token_info{$token_type}{price_per_m_usd} = $price_per_m;
+        }
+    }
+
+    # Store in session billing
+    my $state = $self->{session};
+    if ($state && ref($state) && $state->{billing}) {
+        $state->{billing}{copilot_usage} = {
+            total_nano_aiu => $total_nano_aiu,
+            ai_credits     => $ai_credits,
+            cost_usd       => $cost_usd,
+            token_details  => \%token_info,
+            model          => $model,
+            timestamp      => time(),
+        };
+
+        # Accumulate session totals
+        $state->{billing}{total_ai_credits} //= 0;
+        $state->{billing}{total_ai_credits} += $ai_credits;
+
+        $state->{billing}{total_cost_usd} //= 0;
+        $state->{billing}{total_cost_usd} += $cost_usd;
+    }
+
+    # Log the usage
+    my $input_tokens  = $token_info{input}{count}  || 0;
+    my $output_tokens = $token_info{output}{count} || 0;
+    my $cached_tokens = $token_info{cache_read}{count} || 0;
+
+    log_info('APIManager', sprintf("Copilot AI Credits [%.6f credits, \$%.6f]: %d in, %d out, %d cached",
+        $ai_credits, $cost_usd, $input_tokens, $output_tokens, $cached_tokens));
+
+    # Persist session
+    if ($state && ref($state) && blessed($state) && $state->can('save')) {
+        $state->save();
+    }
 }
 
 sub _error {

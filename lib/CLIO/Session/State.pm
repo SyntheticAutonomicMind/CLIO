@@ -77,7 +77,7 @@ sub new {
             total_requests => 0,
             total_premium_requests => 0,  # GitHub Copilot AI Credits charged
             model => undef,  # Current model being used
-            multiplier => 0,  # Credit rate from GitHub Copilot
+            multiplier => 0,  # Billing multiplier from GitHub Copilot (legacy, all 1x as of June 2026)
             requests => [],  # Array of individual request billing records
         },
         # Context files
@@ -769,6 +769,12 @@ sub record_api_usage {
                 if ($billing_info && defined $billing_info->{multiplier}) {
                     $multiplier = $billing_info->{multiplier};
                     $self->{billing}{multiplier} = $multiplier;
+                }
+                if ($billing_info && $billing_info->{category}) {
+                    $self->{billing}{category} = $billing_info->{category};
+                }
+                if ($billing_info && $billing_info->{vendor}) {
+                    $self->{billing}{vendor} = $billing_info->{vendor};
                 }
             }
         }

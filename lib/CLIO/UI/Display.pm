@@ -460,23 +460,32 @@ sub display_usage_summary {
     return unless $billing;
     
     my $model = $billing->{model} || 'unknown';
-    my $multiplier = $billing->{multiplier} || 0;
-    
-    # Only display for premium models (multiplier > 0)
-    return if $multiplier == 0;
+    my $category = $billing->{category};
     
     # Only display if there was an ACTUAL charge in the last request (delta > 0)
     my $delta = $chat->{session}{_last_quota_delta} || 0;
     return if $delta <= 0;
     
-    # Format multiplier
-    my $cost_str;
-    if ($multiplier == int($multiplier)) {
-        $cost_str = sprintf("Cost: %dx", $multiplier);
-    } else {
-        $cost_str = sprintf("Cost: %.2fx", $multiplier);
-        $cost_str =~ s/\.?0+x$/x/;
+    # Format cost display - show category and AI credit cost
+    my $cost_str = '';
+    if ($category) {
+        $cost_str = $category;
     }
+    
+    # Add AI Credit cost from copilot_usage if available
+    my $session_billing = $chat->{session}{state}{billing} || $chat->{session}{billing};
+    if ($session_billing && $session_billing->{copilot_usage}) {
+        my $cu = $session_billing->{copilot_usage};
+        my $ai_credits = $cu->{ai_credits} || 0;
+        if ($ai_credits > 0) {
+            $cost_str .= sprintf(" %.4f credits", $ai_credits);
+            $cost_str =~ s/^\s+//;
+        }
+    }
+    
+    # Skip if nothing to show
+    return unless $cost_str;
+    
     my $quota_info = '';
     
     # Get quota status if available
