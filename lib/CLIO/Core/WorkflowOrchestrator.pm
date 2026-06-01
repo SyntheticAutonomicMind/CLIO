@@ -942,13 +942,26 @@ sub _build_turn_context {
 
     inject_context_files($session, \@messages, debug => $self->{debug});
 
+    my $model_caps = {};
+    if ($self->{api_manager}) {
+        $model_caps = $self->{api_manager}->get_model_capabilities() || {};
+    }
+    
+    # Update session state's max_tokens to match model's actual context window.
+    # This ensures State::add_message trims at the correct threshold instead
+    # of the default 128k, which would underutilize large-context models.
+    my $ctx_window = $model_caps->{max_context_window_tokens};
+    if ($ctx_window && $session && $session->can('state')) {
+        my $state = $session->state();
+        if ($state && ($state->{max_tokens} // 0) != $ctx_window) {
+            $state->{max_tokens} = $ctx_window;
+            log_debug('WorkflowOrchestrator', "Updated session max_tokens to $ctx_window (model context window)");
+        }
+    }
+    
     my $history = load_conversation_history($session, debug => $self->{debug});
 
     if ($history && @$history) {
-        my $model_caps = {};
-        if ($self->{api_manager}) {
-            $model_caps = $self->{api_manager}->get_model_capabilities() || {};
-        }
         $history = trim_conversation_for_api(
             $history,
             $system_prompt,
