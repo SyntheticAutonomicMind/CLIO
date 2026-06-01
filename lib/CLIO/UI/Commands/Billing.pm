@@ -196,15 +196,10 @@ sub _display_copilot_billing {
     my $multiplier = $self->{session}{state}{billing}{multiplier} 
                   || $self->{session}{billing}{multiplier}
                   || 0;
-    my $category = $self->{session}{state}{billing}{category}
-                || $self->{session}{billing}{category};
     
     # Session summary
     $self->display_section_header("Session Summary");
     $self->writeline(sprintf("  %-25s %s", "Model:", $self->colorize($model, 'DATA')), markdown => 0);
-    if ($category) {
-        $self->writeline(sprintf("  %-25s %s", "Category:", $self->colorize($category, 'DATA')), markdown => 0);
-    }
     
     my $total_api_requests = $billing->{total_requests} || 0;
     
@@ -371,11 +366,10 @@ sub _display_copilot_billing {
     # Token usage
     $self->_display_token_usage($billing);
     
-    # Recent requests with categories
+    # Recent requests
     $self->_display_recent_requests($billing, show_rate => 1);
     
     $self->writeline("", markdown => 0);
-    $self->writeline($self->colorize("Categories: powerful = highest cost, versatile = mid, lightweight = lowest", 'DIM'), markdown => 0);
     $self->writeline($self->colorize("Use /api quota for detailed credit status.", 'DIM'), markdown => 0);
     $self->writeline("", markdown => 0);
 }
@@ -654,7 +648,7 @@ sub _display_recent_requests {
     
     if ($show_rate) {
         $self->writeline($self->colorize(sprintf("  %-5s %-25s %-12s %-12s", 
-            "#", "Model", "Tokens", "Category"), 'LABEL'), markdown => 0);
+            "#", "Model", "Tokens", "Credits"), 'LABEL'), markdown => 0);
     } else {
         $self->writeline($self->colorize(sprintf("  %-5s %-25s %-12s %-12s", 
             "#", "Model", "Input", "Output"), 'LABEL'), markdown => 0);
@@ -666,29 +660,18 @@ sub _display_recent_requests {
         $req_model = substr($req_model, 0, 23) . ".." if length($req_model) > 25;
         
         if ($show_rate) {
-            my $req_multiplier = $req->{multiplier} || 0;
-            my $cat_str;
-            if ($req_multiplier == 0) {
-                $cat_str = "included";
-            } else {
-                # Infer category from model name since all are 1x now
-                my $id = $req->{model} || '';
-                if ($id =~ /opus|gpt-5\.[2-5](?!-mini)|codex/i) {
-                    $cat_str = "powerful";
-                } elsif ($id =~ /sonnet|gpt-4\.1(?!-mini)|gpt-4o(?!-mini)|prime/i) {
-                    $cat_str = "versatile";
-                } elsif ($id =~ /haiku|mini|flash|3\.5-turbo/i) {
-                    $cat_str = "lightweight";
-                } else {
-                    $cat_str = "standard";
-                }
+            my $credits_str = '-';
+            if ($req->{ai_credits}) {
+                $credits_str = sprintf("%.4f", $req->{ai_credits});
+            } elsif ($req->{multiplier} && $req->{multiplier} == 0) {
+                $credits_str = 'included';
             }
             
             $self->writeline(sprintf("  %-5s %-25s %-12s %-12s",
                 $count,
                 $req_model,
                 $req->{total_tokens},
-                $cat_str), markdown => 0);
+                $credits_str), markdown => 0);
         } else {
             $self->writeline(sprintf("  %-5s %-25s %-12s %-12s",
                 $count,
