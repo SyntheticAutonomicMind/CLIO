@@ -455,6 +455,7 @@ sub _set_api_setting {
 
 # Update session billing state when provider or model changes mid-session.
 # Ensures /usage shows correct model name, credit rate, and quota without restart.
+# Also updates max_tokens so State::add_message trims at the correct threshold.
 sub _update_billing_state {
     my ($self, $model, $provider) = @_;
 
@@ -470,6 +471,21 @@ sub _update_billing_state {
 
     # Update selected_provider for Billing.pm's _get_active_provider()
     $state->{selected_provider} = $provider if $provider;
+
+    # Update max_tokens from model capabilities so State::add_message
+    # trims at the correct threshold for the model's context window
+    if ($model) {
+        eval {
+            my $api_manager = $self->{api_manager};
+            if ($api_manager && $api_manager->can('get_model_capabilities')) {
+                my $caps = $api_manager->get_model_capabilities($model);
+                if ($caps && $caps->{max_context_window_tokens}) {
+                    $state->{max_tokens} = $caps->{max_context_window_tokens};
+                    log_debug('Config', "Updated session max_tokens to $caps->{max_context_window_tokens} (model context window)");
+                }
+            }
+        };
+    }
 
     # Fetch billing multiplier for GitHub Copilot models
     if ($provider && $provider eq 'github_copilot' && $model) {

@@ -83,7 +83,7 @@ sub new {
         # Context files
         context_files => [],
         # Context management configuration
-        max_tokens => $args{max_tokens} // 128000,           # API hard limit
+        max_tokens => $args{max_tokens} // 128000,           # Model context window (updated at runtime)
     };
     bless $self, $class;
     if ($ENV{CLIO_DEBUG} || $self->{debug}) {
@@ -128,6 +128,7 @@ my $data = {
         _stateful_markers => $self->{_stateful_markers} || [],  # GitHub Copilot session continuation
         billing => $self->{billing},  # Save billing data
         quota => $self->{quota},  # Save quota snapshot (from GitHub Copilot headers)
+        max_tokens => $self->{max_tokens},  # Model context window for trim threshold
         context_files => $self->{context_files} || [],  # Save context files
         selected_model => $self->{selected_model},  # Save currently selected model
         api_config => $self->{api_config} || {},  # Save API config (from /api set --session)
@@ -255,7 +256,7 @@ sub load {
         # Load stateful markers for GitHub Copilot session continuation
         _stateful_markers => $data->{_stateful_markers} || [],
         # Context management configuration
-        max_tokens => $args{max_tokens} // 128000,
+        max_tokens => $args{max_tokens} // $data->{max_tokens} // 128000,
         # Human-friendly session name
         session_name => $data->{session_name} // undef,
         # Loaded skills (merged into system prompt)
@@ -639,6 +640,14 @@ sub trim_context {
     my @messages = @{$self->{history}};
     return unless @messages > 15;  # Don't trim very short conversations
     
+    # Scale keep_recent based on model context window.
+    # Default 128k context: 10 messages. 1M context: ~78 messages.
+    # This ensures large-context models retain proportionally more history.
+    my $max_tokens = $self->{max_tokens} // 128000;
+    my $keep_recent = int(10 * ($max_tokens / 128000));
+    $keep_recent = 10 if $keep_recent < 10;     # Minimum 10 messages
+    $keep_recent = 100 if $keep_recent > 100;    # Cap at 100 messages
+    
     # Simple tail-preserving trim strategy:
     # Keep system messages + last N non-system messages.
     # The proactive trim in MessageValidator handles sophisticated compression
@@ -654,7 +663,6 @@ sub trim_context {
     my @non_system = grep { defined $_->{role} && $_->{role} ne 'system' } @messages;
 
     # Keep the most recent non-system messages (the tail of the conversation)
-    my $keep_recent = 10;
     my @recent = @non_system >= $keep_recent 
         ? @non_system[-$keep_recent .. -1] 
         : @non_system;
