@@ -20,7 +20,7 @@ CLIO::Tools::Interact - Tool for mid-stream user collaboration
 =head1 DESCRIPTION
 
 Enables agents to pause execution and request user input, clarification,
-or decisions without consuming additional premium API requests.
+or decisions without consuming additional AI Credits.
 
 This is the PRIMARY mechanism for agent-user communication during task
 execution. Agents should use this tool for ALL collaboration instead of
