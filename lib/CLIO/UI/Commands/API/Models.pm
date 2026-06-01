@@ -751,7 +751,7 @@ sub _display_models_list {
 
     if (@premium_models) {
         push @lines, "";
-        push @lines, $self->colorize("PREMIUM MODELS", 'THEME');
+        push @lines, $self->colorize("CREDIT-RATED MODELS", 'THEME');
         for my $model (@premium_models) {
             push @lines, $self->_format_model_line($model, undef, $max_id_width);
         }
@@ -771,9 +771,9 @@ sub _display_models_list {
 
     if ($has_billing) {
         push @lines, "";
-        push @lines, $self->colorize("Note: Subscription-based billing", 'SYSTEM');
-        push @lines, "      " . $self->colorize("FREE = Included in subscription", 'SYSTEM');
-        push @lines, "      " . $self->colorize("1x/3x/10x = Premium multiplier on usage", 'SYSTEM');
+        push @lines, $self->colorize("Note: AI Credits billing", 'SYSTEM');
+        push @lines, "      " . $self->colorize("FREE = Included (no credits consumed)", 'SYSTEM');
+        push @lines, "      " . $self->colorize("1x/3x/10x = Credit rate per request", 'SYSTEM');
     }
     push @lines, "";
 
