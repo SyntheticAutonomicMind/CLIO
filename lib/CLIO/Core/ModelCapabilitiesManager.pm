@@ -667,6 +667,14 @@ sub _fetch_minimax_capabilities {
     
     # MiniMax models static capability map
     my %minimax_models = (
+        'MiniMax-M3' => {
+            context_window => 1000000,
+            max_output_tokens => 131072,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 1,
+            supports_reasoning => 1,
+        },
         'MiniMax-M2.7' => {
             context_window => 204800,
             max_output_tokens => 131072,

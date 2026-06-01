@@ -273,6 +273,7 @@ sub _get_static_models {
 
     if ($provider_name =~ /^minimax/) {
         return [
+            { id => 'MiniMax-M3',              name => 'MiniMax M3',              _context_tokens => 1000000, _output_tokens => 131072, _supports_vision => 1 },
             { id => 'MiniMax-M2.7',           name => 'MiniMax M2.7',           _context_tokens => 204800, _output_tokens => 131072 },
             { id => 'MiniMax-M2.7-highspeed',  name => 'MiniMax M2.7 Highspeed',  _context_tokens => 204800, _output_tokens => 131072 },
             { id => 'MiniMax-M2.5',           name => 'MiniMax M2.5',           _context_tokens => 204800, _output_tokens => 131072 },
