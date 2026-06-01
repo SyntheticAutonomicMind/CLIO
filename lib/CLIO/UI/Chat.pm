@@ -1810,6 +1810,12 @@ sub _prepopulate_session_data {
                         $state->{billing}{multiplier} = $billing->{multiplier};
                         log_debug('Chat', "Prepopulated model billing: $api_model -> " . "$billing->{multiplier}x");
                     }
+                    if ($billing && $billing->{category}) {
+                        $state->{billing}{category} = $billing->{category};
+                    }
+                    if ($billing && $billing->{vendor}) {
+                        $state->{billing}{vendor} = $billing->{vendor};
+                    }
                 };
                 # Ignore errors - just means no multiplier info
             }

@@ -454,7 +454,7 @@ sub _set_api_setting {
 }
 
 # Update session billing state when provider or model changes mid-session.
-# Ensures /usage shows correct model name, credit rate, and quota without restart.
+# Ensures /usage shows correct model name, category, and quota without restart.
 # Also updates max_tokens so State::add_message trims at the correct threshold.
 sub _update_billing_state {
     my ($self, $model, $provider) = @_;
@@ -503,6 +503,12 @@ sub _update_billing_state {
             if ($billing && defined $billing->{multiplier}) {
                 $state->{billing}{multiplier} = $billing->{multiplier};
                 log_debug('Config', "Updated billing: $api_model -> $billing->{multiplier}x");
+            }
+            if ($billing && $billing->{category}) {
+                $state->{billing}{category} = $billing->{category};
+            }
+            if ($billing && $billing->{vendor}) {
+                $state->{billing}{vendor} = $billing->{vendor};
             }
         };
     }
