@@ -2284,7 +2284,7 @@ sub display_tip {
 
 Request user input mid-execution for agent collaboration.
 This is called by the interact tool to pause workflow
-and get user response WITHOUT consuming additional premium requests.
+and get user response WITHOUT consuming additional AI Credits.
 
 Arguments:
 - $message: The collaboration message/question from agent

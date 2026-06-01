@@ -268,7 +268,7 @@ sub _handle_copilot_quota {
         my $entitlement = $pu->{entitlement} // 0;
         my $overage = $pu->{overage_enabled} ? 'enabled' : 'disabled';
 
-        $self->display_section_header("Premium Quota");
+        $self->display_section_header("AI Credits");
 
         my $pct = $entitlement > 0 ? sprintf("%.1f%%", ($used / $entitlement) * 100) : 'N/A';
         my $pct_color = 'PROMPT';

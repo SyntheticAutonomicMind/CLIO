@@ -726,7 +726,7 @@ sub process_input {
         # PROBLEM: Upstream APIs sometimes return finish_reason=stop with empty or
         # minimal content when the model is mid-workflow (actively using tools).
         # This causes the workflow loop to exit prematurely, leaving work incomplete.
-        # The user then has to spend another premium request to say "continue".
+        # The user then has to spend another API request to say "continue".
         #
         # DETECTION: If previous iterations executed tool calls (workflow was active)
         # and the current response has no tool calls AND empty/minimal content,
