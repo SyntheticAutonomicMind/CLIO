@@ -380,7 +380,7 @@ sub _display_multi_provider_models {
 
         # Column headers
         push @lines, $self->colorize(
-            sprintf("  %-30s %6s %6s  %-5s %12s", "Model", "Ctx", "Out", "Cap", "Category"),
+            sprintf("  %-30s %6s %6s  %-5s", "Model", "Ctx", "Out", "Cap"),
             'DIM'
         );
 
@@ -448,42 +448,15 @@ sub _format_model_line {
 
     my $features_str = join("", @features);
 
-    # Category info (replaces billing multiplier for June 2026+ usage-based billing)
-    my $category_info = '';
-    my $category = $model->{model_picker_category};
-    if ($category && $category =~ /^(powerful|versatile|lightweight)$/) {
-        $category_info = $category;
-    } elsif ($model->{billing} && defined $model->{billing}{multiplier}) {
-        # Legacy models without category: infer from model name or show dash
-        my $mult = $model->{billing}{multiplier};
-        if ($mult == 0) {
-            $category_info = 'free';
-        } else {
-            # All models are now 1x under per-token billing - infer category from name
-            my $id = $model->{id} || '';
-            if ($id =~ /opus|gpt-5\.[2-5](?!-mini)|codex/i) {
-                $category_info = 'powerful';
-            } elsif ($id =~ /sonnet|gpt-4\.1(?!-mini)|gpt-4o(?!-mini)|prime/i) {
-                $category_info = 'versatile';
-            } elsif ($id =~ /haiku|mini|flash|3\.5-turbo/i) {
-                $category_info = 'lightweight';
-            } else {
-                $category_info = '-';
-            }
-        }
-    }
-
     # Build colorized data fields (padded to fixed widths on plain text)
     my $ctx_padded = sprintf("%6s", $ctx_str);
     my $out_padded = sprintf("%6s", $out_str);
     my $feat_padded = sprintf("%-5s", $features_str);
-    my $cat_padded = sprintf("%-12s", $category_info);
 
     my $data_line = " " .
         $self->colorize($ctx_padded, 'DATA') . " " .
         $self->colorize($out_padded, 'DATA') . "  " .
-        $self->colorize($feat_padded, 'DIM') . " " .
-        $self->colorize($cat_padded, 'HIGHLIGHT');
+        $self->colorize($feat_padded, 'DIM');
 
     # If model ID fits in column, single line
     if (length($display_id) <= $max_id_width) {
@@ -709,27 +682,7 @@ sub _display_capabilities_view {
 sub _display_models_list {
     my ($self, $models, $api_base) = @_;
 
-    # Group models by model_picker_category (powerful/versatile/lightweight)
-    # Models without a category (legacy) go into an "other" group
-    my %category_models;
-    my @other_models;
-
-    for my $model (@$models) {
-        my $category = $model->{model_picker_category};
-        if ($category && $category =~ /^(powerful|versatile|lightweight)$/) {
-            push @{$category_models{$category}}, $model;
-        } else {
-            push @other_models, $model;
-        }
-    }
-
-    # Sort each group by model ID
-    for my $cat (keys %category_models) {
-        @{$category_models{$cat}} = sort { $a->{id} cmp $b->{id} } @{$category_models{$cat}};
-    }
-    @other_models = sort { $a->{id} cmp $b->{id} } @other_models;
-
-    my $has_categories = scalar(keys %category_models) > 0;
+    my @sorted_models = sort { $a->{id} cmp $b->{id} } @$models;
 
     $self->refresh_terminal_size();
     $self->{chat}->{pager}->reset();
@@ -748,43 +701,17 @@ sub _display_models_list {
     # Column headers
     push @lines, "";
     push @lines, $self->colorize(
-        sprintf("  %-30s %6s %6s  %-5s %-12s", "Model", "Ctx", "Out", "Cap", "Category"),
+        sprintf("  %-30s %6s %6s  %-5s", "Model", "Ctx", "Out", "Cap"),
         'DIM'
     );
 
-    # Display in order: powerful, versatile, lightweight, other
-    my %category_labels = (
-        powerful   => "POWERFUL MODELS",
-        versatile  => "VERSATILE MODELS",
-        lightweight => "LIGHTWEIGHT MODELS",
-    );
-
-    for my $cat (qw(powerful versatile lightweight)) {
-        next unless $category_models{$cat} && @{$category_models{$cat}};
-        push @lines, "";
-        push @lines, $self->colorize($category_labels{$cat}, 'THEME');
-        for my $model (@{$category_models{$cat}}) {
-            push @lines, $self->_format_model_line($model, undef, $max_id_width);
-        }
-    }
-
-    if (@other_models) {
-        push @lines, "";
-        push @lines, $self->colorize($has_categories ? 'OTHER MODELS' : 'ALL MODELS', 'THEME');
-        for my $model (@other_models) {
-            push @lines, $self->_format_model_line($model, undef, $max_id_width);
-        }
+    for my $model (@sorted_models) {
+        push @lines, $self->_format_model_line($model, undef, $max_id_width);
     }
 
     push @lines, "";
     push @lines, box_char("hhorizontal") x 76;
     push @lines, sprintf("Total: %d models available", scalar(@$models));
-
-    if ($has_categories) {
-        push @lines, "";
-        push @lines, $self->colorize("Note: AI Credits billing (per-token)", 'SYSTEM');
-        push @lines, "      " . $self->colorize("powerful = highest cost, versatile = mid, lightweight = lowest", 'SYSTEM');
-    }
     push @lines, "";
 
     for my $line (@lines) {
