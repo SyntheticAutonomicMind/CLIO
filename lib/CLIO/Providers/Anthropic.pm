@@ -59,7 +59,7 @@ use constant ANTHROPIC_VERSION => '2023-06-01';
 
 # Default values
 use constant DEFAULT_MODEL => 'claude-sonnet-4-20250514';
-use constant DEFAULT_MAX_TOKENS => 8192;
+use constant DEFAULT_MAX_TOKENS => 16384;
 use constant DEFAULT_API_BASE => 'https://api.anthropic.com/v1/messages';
 
 sub new {
@@ -194,22 +194,42 @@ sub build_request {
     # $options->{thinking} is a hashref built by APIManager describing what thinking
     # configuration the caller wants. Shape:
     #   { enabled => 1, effort => 'low|medium|high', budget_tokens => N, mode => 'enabled|adaptive' }
-    # If $options->{thinking} is absent, we still enable thinking by default when the
-    # model supports it (Anthropic extended thinking is the strongest reasoning path).
+    # When APIManager passes thinking => { enabled => 0 }, thinking is fully disabled.
+    # When no thinking option is passed, we enable thinking by default for models that
+    # support it (Anthropic extended thinking is the strongest reasoning path).
     my $thinking = $options->{thinking};
     my $model = $effective_model;
-    unless ($thinking && ref($thinking) eq 'HASH') {
+    my $thinking_enabled = 0;
+
+    if ($thinking && ref($thinking) eq 'HASH') {
+        # Caller provided explicit thinking config
+        if ($thinking->{enabled}) {
+            # Fill in defaults for partial configs
+            $thinking = $self->_default_thinking_config($model, $thinking);
+            $thinking_enabled = 1;
+        }
+        # else: enabled => 0, thinking is fully disabled
+    }
+    else {
+        # No thinking option passed - enable by default for models that support it
         $thinking = $self->_default_thinking_config($model);
+        $thinking_enabled = $thinking->{enabled} ? 1 : 0;
     }
-    if ($thinking && $thinking->{enabled} && !$thinking->{mode}) {
-        # Caller passed a simple flag, fill in defaults
-        $thinking = $self->_default_thinking_config($model, $thinking);
-    }
-    if ($thinking && $thinking->{enabled} && $thinking->{mode}) {
+
+    # Apply thinking to payload when enabled
+    if ($thinking_enabled && $thinking->{mode}) {
         if ($thinking->{mode} eq 'enabled') {
+            # Anthropic requires max_tokens > budget_tokens. Ensure the output
+            # budget covers both thinking and response tokens.
+            my $budget = $thinking->{budget_tokens};
+            my $min_max_tokens = $budget + 4096;  # 4096 minimum response budget
+            if ($payload->{max_tokens} <= $budget) {
+                log_debug('Anthropic', "Adjusting max_tokens from $payload->{max_tokens} to $min_max_tokens (budget_tokens=$budget + 4096 response)");
+                $payload->{max_tokens} = $min_max_tokens;
+            }
             $payload->{thinking} = {
                 type => 'enabled',
-                budget_tokens => $thinking->{budget_tokens},
+                budget_tokens => $budget,
             };
         }
         elsif ($thinking->{mode} eq 'adaptive') {
@@ -965,6 +985,8 @@ sub _default_thinking_config {
     # 'enabled' mode: budget maps from effort. Anthropic docs recommend
     # 1024 minimum, 16k+ for complex tasks. We use 4k/10k/20k for
     # low/medium/high (clamped to model max).
+    # Note: build_request() ensures max_tokens > budget_tokens + 4096
+    # (minimum response budget) as a safety net.
     my %effort_to_budget = (
         low    => 4096,
         medium => 10240,

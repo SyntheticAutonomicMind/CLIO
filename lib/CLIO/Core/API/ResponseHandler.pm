@@ -866,6 +866,24 @@ sub handle_error_response {
         log_info('ResponseHandler', "Anthropic requires temperature=1 with thinking - will correct on retry");
     }
 
+    # Handle max_tokens must be greater than thinking.budget_tokens (Anthropic 400)
+    # When extended thinking is enabled, Anthropic requires max_tokens > budget_tokens.
+    # The Anthropic provider should handle this in build_request, but catch it here
+    # as a safety net so we can retry with thinking disabled.
+    elsif ($status == 400 && $error =~ /max_tokens.*(?:must be greater|greater than).*budget_tokens/i) {
+        $is_retryable_error = 1;
+        $retryable = 1;
+        $retry_after = 0;
+        $error_type = 'param_conflict';
+
+        # Flag that thinking params caused a conflict - retry without thinking
+        $self->{_no_reasoning} = 1;
+
+        $retry_info = "max_tokens must be greater than thinking budget_tokens. Retrying without extended thinking.";
+        $error = $retry_info;
+        log_info('ResponseHandler', "Anthropic max_tokens/budget_tokens conflict - disabling thinking for retry");
+    }
+
     # Handle content filter errors (non-retryable)
     # Content was flagged by the safety system - user needs to modify their request
     elsif (($status == 400 || $status == 403) &&
