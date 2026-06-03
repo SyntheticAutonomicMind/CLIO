@@ -363,7 +363,7 @@ sub handle_error_response {
             log_info('ResponseHandler', $header_debug);
         }
 
-        if ($error =~ /retry in ([\d.]+)\s*s(?:econds?)?/i) {
+        if ($error =~ /(?:retry\s+in|please\s+wait)\s+([\d.]+)\s*s(?:econds?)?/i) {
             $retry_after = int($1) + 1;
             $retry_source = 'error_message';
         } elsif ($retry_after_header) {

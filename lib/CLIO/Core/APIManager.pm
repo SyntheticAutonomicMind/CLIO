@@ -4282,8 +4282,65 @@ sub _send_native_streaming {
     }
 
     if (!$response->is_success) {
-        log_error('APIManager', "Native API error " . $response->code . ": " . ($response->decoded_content // ''));
-        return { success => 0, error => "HTTP " . $response->code, retryable => ($response->code == 429 || $response->code >= 500) };
+        my $status = $response->code;
+        my $error_body = $response->decoded_content // '';
+        log_error('APIManager', "Native API error $status: $error_body");
+
+        # Parse the JSON error body to extract structured error info.
+        # Without this, 429 responses from Anthropic proxies return a bare
+        # "HTTP 429" string with no error_type or retry_after, causing
+        # ResponseHandler to treat them as generic server errors (max 3 retries,
+        # 2s delay) instead of rate limits (infinite retries, proper backoff).
+        my $result = { success => 0, error => "HTTP $status", retryable => ($status == 429 || $status >= 500) };
+
+        if ($status == 429) {
+            $result->{error_type} = 'rate_limit';
+            # Try to extract retry_after from the error body.
+            # Anthropic proxy format: {"error": {"code": "RateLimitReached", "message": "Please wait 38 seconds..."}}
+            my $error_obj = eval { decode_json($error_body) };
+            if ($@ || ref($error_obj) ne 'HASH') {
+                $error_obj = undef;
+            }
+            my $err_msg = '';
+            if ($error_obj) {
+                # Navigate to the error message (various formats)
+                if (ref($error_obj->{error}) eq 'HASH') {
+                    $err_msg = $error_obj->{error}{message} // '';
+                } else {
+                    $err_msg = ($error_obj->{error} // '') . ($error_obj->{message} // '');
+                }
+            }
+            # Extract wait time from patterns like "Please wait 38 seconds" or "retry in 30 seconds"
+            if ($err_msg =~ /(?:please\s+wait|retry\s+in)\s+([\d.]+)\s*s(?:econds?)?/i) {
+                $result->{retry_after} = int($1) + 1;
+            }
+            # Also check Retry-After header
+            elsif (my $retry_after_header = $response->header('Retry-After')) {
+                $result->{retry_after} = int($retry_after_header) + 1;
+            }
+            else {
+                $result->{retry_after} = 60;  # Default backoff
+            }
+        }
+        elsif ($status == 400) {
+            # Parse 400 errors for structured error info
+            my $error_obj = eval { decode_json($error_body) };
+            if ($@ || ref($error_obj) ne 'HASH') {
+                $error_obj = undef;
+            }
+            my $err_msg = '';
+            if ($error_obj) {
+                if (ref($error_obj->{error}) eq 'HASH') {
+                    $err_msg = $error_obj->{error}{message} // '';
+                } else {
+                    $err_msg = ($error_obj->{error} // '') . ($error_obj->{message} // '');
+                }
+            }
+            # Use the full error message for better diagnostics
+            $result->{error} = $err_msg || "HTTP 400";
+        }
+
+        return $result;
     }
 
     # Build result
