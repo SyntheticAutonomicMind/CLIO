@@ -1059,6 +1059,7 @@ sub get_model_capabilities {
     }
     
     # Use ModelCapabilitiesManager for providers with static capability maps
+    # or native APIs that have their own capability fetcher (Anthropic, Google)
     my $eff_provider = $target_provider || ($self->{config} ? ($self->{config}->get('provider') || '') : '');
     
     my $use_mcm = 0;
@@ -1066,7 +1067,8 @@ sub get_model_capabilities {
         eval {
             require CLIO::Providers;
             my $pdef = CLIO::Providers::get_provider($eff_provider);
-            $use_mcm = $pdef && $pdef->{capability_map};
+            # Use MCM for providers with static maps OR native APIs with dedicated fetchers
+            $use_mcm = ($pdef && ($pdef->{capability_map} || $pdef->{native_api})) ? 1 : 0;
         };
     }
     
@@ -4163,20 +4165,32 @@ sub _send_native_streaming {
     # build_request translates this into the native format.
     my $thinking_opt;
     if ($self->_endpoint_supports_thinking()) {
+        # If a previous request flagged that reasoning/thinking is not supported
+        # by this model, don't send thinking params again.
+        my $reasoning_blocked = $self->{response_handler} && $self->{response_handler}{_no_reasoning};
         my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
         my $effort = $self->{config} ? ($self->{config}->get('thinking_effort') // 'medium') : 'medium';
         my $provider_supports = $self->_model_supports_reasoning($opts{model} // $self->{model});
-        if ($show_thinking && $provider_supports) {
+        if ($reasoning_blocked) {
+            # Model rejected reasoning params on a previous request - disable
+            $thinking_opt = { enabled => 0 };
+        }
+        elsif ($show_thinking && $provider_supports) {
             # User wants to see thinking and the model supports it.
             $thinking_opt = {
                 enabled => 1,
                 effort  => $effort,
             };
         }
-        # When show_thinking is off, we don't pass a thinking option.
-        # The provider's build_request will apply its own default (which
-        # may still enable thinking for round-trip purposes, but without
-        # surfacing it to the UI).
+        elsif (!$show_thinking) {
+            # User explicitly disabled thinking. Pass enabled => 0 so the
+            # provider knows not to enable it by default.
+            $thinking_opt = {
+                enabled => 0,
+            };
+        }
+        # When show_thinking is on but model doesn't support reasoning,
+        # don't pass any thinking option (provider will skip it).
     }
 
     # Build the request using the native provider
