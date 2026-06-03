@@ -780,10 +780,10 @@ sub adapt_request_for_endpoint {
             }
         }
         elsif ($payload->{model} && $payload->{model} =~ /^MiniMax-M2/i) {
-            # M2.x: enable interleaved thinking. Show thinking only if the
-            # user has the flag set, but always request the protocol so the
-            # model can return structured reasoning_details (which the
-            # harness then round-trips correctly).
+            # M2.x: enable interleaved thinking only when the user opts in.
+            # When disabled, the model skips reasoning tokens entirely (saving
+            # cost). When enabled, the model emits structured reasoning_details
+            # which the harness captures and round-trips correctly.
             my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
             if ($show_thinking) {
                 $payload->{thinking} = { type => 'enabled' };
@@ -4154,16 +4154,18 @@ sub _send_native_streaming {
     if ($self->_endpoint_supports_thinking()) {
         my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
         my $effort = $self->{config} ? ($self->{config}->get('thinking_effort') // 'medium') : 'medium';
-        # If show_thinking is off and the provider doesn't have a useful
-        # default, we let the provider decide. If the model explicitly
-        # supports reasoning, default to enabled.
         my $provider_supports = $self->_model_supports_reasoning($opts{model} // $self->{model});
-        if ($provider_supports) {
+        if ($show_thinking && $provider_supports) {
+            # User wants to see thinking and the model supports it.
             $thinking_opt = {
                 enabled => 1,
                 effort  => $effort,
             };
         }
+        # When show_thinking is off, we don't pass a thinking option.
+        # The provider's build_request will apply its own default (which
+        # may still enable thinking for round-trip purposes, but without
+        # surfacing it to the UI).
     }
 
     # Build the request using the native provider

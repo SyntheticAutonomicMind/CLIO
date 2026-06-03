@@ -282,7 +282,9 @@ sub parse_stream_event {
     
     # Process content parts first (finishReason may appear alongside parts in same chunk)
     if ($content && $content->{parts}) {
-        for my $part (@{$content->{parts}}) {
+        my $last_event;
+        my $first_event;
+        PART: for my $part (@{$content->{parts}}) {
             # Text part (may be regular text or thought/reasoning)
             if (defined $part->{text}) {
                 if ($part->{thought}) {
@@ -305,27 +307,35 @@ sub parse_stream_event {
                         push @{$self->{_thought_parts}}, $self->{_current_thought};
                         $self->{_current_thought} = undef;
                     }
-                    return {
+                    # Record the event but continue processing remaining parts
+                    # (e.g., a standalone thoughtSignature part may follow).
+                    $last_event = {
                         type => 'thinking',
                         content => $part->{text},
                     };
+                    $first_event //= $last_event;
+                    next PART;
                 }
-                return {
+                $last_event = {
                     type => 'text',
                     content => $part->{text},
                 };
+                $first_event //= $last_event;
+                next PART;
             }
 
             # Function call part
             if ($part->{functionCall}) {
                 my $fc = $part->{functionCall};
                 my $id = $fc->{id} // "call_" . (++$self->{_tool_call_counter}) . "_" . time();
-                return {
+                $last_event = {
                     type => 'tool_end',
                     id => $id,
                     name => $fc->{name},
                     arguments => $fc->{args} // {},
                 };
+                $first_event //= $last_event;
+                next PART;
             }
 
             # Standalone thoughtSignature-only part (Google sometimes streams
@@ -336,6 +346,10 @@ sub parse_stream_event {
                 $self->{_current_thought} = undef;
             }
         }
+        # Return the first meaningful event from this chunk (preserving
+        # original behavior). All parts have been processed for bookkeeping
+        # (signatures, etc.) even if we only return one event.
+        return $first_event if $first_event;
     }
 
     # Check for finish reason (after processing parts). Flush any pending
@@ -538,7 +552,7 @@ sub _convert_assistant_message {
             if (($block->{type} // '') eq 'thought') {
                 my $part = {
                     thought => JSON::PP::true,
-                    text => $block->{text} // $block->{thought} // '',
+                    text => $block->{text} // '',
                 };
                 $part->{thoughtSignature} = $block->{signature} if $block->{signature};
                 push @parts, $part;

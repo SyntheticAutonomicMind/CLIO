@@ -131,6 +131,9 @@ sub build_request {
     
     $options //= {};
     
+    # Resolve the effective model for this request (may differ from instance default)
+    my $effective_model = $options->{model} // $self->{model};
+    
     # Separate system prompt from messages
     my ($system_prompt, $conversation) = $self->_separate_system_prompt($messages);
     
@@ -139,7 +142,7 @@ sub build_request {
     
     # Build request payload
     my $payload = {
-        model => $options->{model} // $self->{model},
+        model => $effective_model,
         max_tokens => $options->{max_tokens} // $self->{max_tokens},
         stream => JSON::PP::true,
         messages => $anthropic_messages,
@@ -173,7 +176,7 @@ sub build_request {
     # If $options->{thinking} is absent, we still enable thinking by default when the
     # model supports it (Anthropic extended thinking is the strongest reasoning path).
     my $thinking = $options->{thinking};
-    my $model = $options->{model} // $self->{model};
+    my $model = $effective_model;
     unless ($thinking && ref($thinking) eq 'HASH') {
         $thinking = $self->_default_thinking_config($model);
     }
@@ -206,21 +209,28 @@ sub build_request {
     return {
         url => $self->{api_base},
         method => 'POST',
-        headers => $self->get_headers(),
+        headers => $self->get_headers($effective_model),
         body => encode_json($payload),
     };
 }
 
-=head2 get_headers()
+=head2 get_headers($model)
 
 Get HTTP headers for Anthropic API requests.
+
+Arguments:
+  $model - Optional model name override. When provided, used to determine
+           whether the interleaved-thinking beta header is needed. Falls
+           back to the instance default model.
 
 Returns: Hashref of HTTP headers
 
 =cut
 
 sub get_headers {
-    my ($self) = @_;
+    my ($self, $model) = @_;
+    
+    $model //= $self->{model};
 
     my %headers = (
         'Content-Type' => 'application/json',
@@ -239,7 +249,7 @@ sub get_headers {
     # Interleaved thinking beta header. Required for Sonnet 4.5 / Opus 4.5 / Opus 4.1
     # (and earlier) to use thinking blocks before tool calls and to round-trip the
     # signature on subsequent turns. 4.6+ models support this without the beta header.
-    if ($self->_needs_interleaved_thinking_beta($self->{model})) {
+    if ($self->_needs_interleaved_thinking_beta($model)) {
         my $betas = $headers{'anthropic-beta'};
         my @beta_list = $betas ? split(/\s*,\s*/, $betas) : ();
         push @beta_list, 'interleaved-thinking-2025-05-14' unless grep { $_ eq 'interleaved-thinking-2025-05-14' } @beta_list;
