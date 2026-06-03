@@ -851,6 +851,21 @@ sub handle_error_response {
         log_info('ResponseHandler', "Flagged model as not supporting reasoning - will strip from future requests");
     }
 
+    # Handle temperature incompatible with thinking (Anthropic 400)
+    # When extended thinking is enabled, Anthropic requires temperature=1 and
+    # forbids top_k. This should be handled in Anthropic.pm's build_request,
+    # but catch it here as a safety net so we retry with corrected params.
+    elsif ($status == 400 && $error =~ /temperature.*only.*be set to 1.*thinking/i) {
+        $is_retryable_error = 1;
+        $retryable = 1;
+        $retry_after = 0;
+        $error_type = 'unsupported_param';
+
+        $retry_info = "Temperature must be 1 when thinking is enabled. Retrying with corrected parameters.";
+        $error = $retry_info;
+        log_info('ResponseHandler', "Anthropic requires temperature=1 with thinking - will correct on retry");
+    }
+
     # Handle content filter errors (non-retryable)
     # Content was flagged by the safety system - user needs to modify their request
     elsif (($status == 400 || $status == 403) &&
