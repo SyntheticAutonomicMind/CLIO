@@ -2029,11 +2029,11 @@ sub _check_and_handle_interrupt {
 
 =head2 _check_for_user_interrupt
 
-Check for any keypress (user interrupt) non-blocking.
+Check for user interrupt (ESC or Ctrl+C) non-blocking.
 
-Any keypress during agent execution triggers an interrupt. This is more
-reliable than ESC-only detection since terminal escape sequences can be
-ambiguous and ESC may be consumed by the terminal multiplexer.
+Only ESC (char 27) and Ctrl+C (char 3) trigger interrupts. Other
+characters (mouse events, focus events, resize sequences, etc.) are
+drained and ignored to prevent false interrupts.
 
 Arguments:
 - $session: Session object (to check and set interrupt flag)
@@ -2068,30 +2068,53 @@ sub _check_for_user_interrupt {
         return 0;
     }
     
-    # Any keypress triggers an interrupt
+    # Only ESC (27) and Ctrl+C (3) trigger interrupts.
+    # Other characters (mouse events, focus events, resize sequences,
+    # random terminal control chars) should NOT interrupt the agent.
     if (defined $key) {
-        my $key_desc = (ord($key) == 27) ? 'ESC' : 
-                       (ord($key) < 32)  ? sprintf('Ctrl+%c', ord($key) + 64) :
-                       "'$key'";
-        log_info('WorkflowOrchestrator', "User interrupt detected ($key_desc key pressed)");
+        my $ord = ord($key);
         
-        # Drain any remaining buffered input (e.g. escape sequences)
-        while (defined(eval { ReadKey(-1) })) { }
-        
-        # Set interrupt flag in session
-        if ($session && $session->state()) {
-            $session->state()->{user_interrupted} = 1;
-            
-            eval {
-                $session->save();
-            };
-            
-            if ($@) {
-                log_warning('WorkflowOrchestrator', "Failed to save interrupt flag to session: $@");
+        if ($ord == 27) {
+            # ESC key or escape sequence. Check if more characters follow
+            # immediately - if so, this is a terminal escape sequence
+            # (mouse event, focus event, arrow key, etc.) not a standalone ESC.
+            my $next = eval { ReadKey(0.05) };  # 50ms wait for sequence chars
+            if (defined $next) {
+                # Escape sequence - drain remaining chars and ignore
+                log_debug('WorkflowOrchestrator', "Escape sequence detected, draining (next: 0x" . sprintf("%02x", ord($next)) . ")");
+                while (defined(eval { ReadKey(-1) })) { }
+                return 0;  # Not an interrupt
+            } else {
+                # Standalone ESC - this is an interrupt
+                log_info('WorkflowOrchestrator', "User interrupt detected (ESC key pressed)");
+                while (defined(eval { ReadKey(-1) })) { }
+                if ($session && $session->state()) {
+                    $session->state()->{user_interrupted} = 1;
+                    eval { $session->save(); };
+                    log_warning('WorkflowOrchestrator', "Failed to save interrupt flag to session: $@") if $@;
+                }
+                return 1;  # Interrupt detected
             }
+        } elsif ($ord == 3) {
+            # Ctrl+C - interrupt
+            log_info('WorkflowOrchestrator', "User interrupt detected (Ctrl+C pressed)");
+            while (defined(eval { ReadKey(-1) })) { }
+            if ($session && $session->state()) {
+                $session->state()->{user_interrupted} = 1;
+                eval { $session->save(); };
+                log_warning('WorkflowOrchestrator', "Failed to save interrupt flag to session: $@") if $@;
+            }
+            return 1;  # Interrupt detected
+        } else {
+            # Any other key - drain but do NOT trigger interrupt.
+            # Mouse events, focus events, resize events, and other terminal
+            # control sequences should not interrupt the agent.
+            my $key_desc = ($ord < 32) ? sprintf('Ctrl+%c (0x%02x)', $ord + 64, $ord) :
+                           sprintf('0x%02x', $ord);
+            log_debug('WorkflowOrchestrator', "Non-interrupt key ($key_desc), draining");
+            while (defined(eval { ReadKey(-1) })) { }
+            return 0;  # Not an interrupt
         }
-        
-        return 1;  # Interrupt detected
     }
     
     return 0;  # No interrupt
@@ -2161,17 +2184,6 @@ sub _handle_interrupt {
                     content => $user_response,
                 };
                 
-                # Also save to session for persistence
-                if ($session) {
-                    eval {
-                        $session->add_message('user', $user_response);
-                        $session->save();
-                    };
-                    if ($@) {
-                        log_warning('WorkflowOrchestrator', "Failed to save interrupt response to session: $@");
-                    }
-                }
-                
                 log_info('WorkflowOrchestrator', "User responded to interrupt, continuing workflow");
                 return;
             } else {
@@ -2195,18 +2207,13 @@ sub _handle_interrupt {
     log_warning('WorkflowOrchestrator', "Falling back to message injection for interrupt");
     my $interrupt_message = {
         role => 'user',
-        content => 
-            box_char("hhorizontal") x 3 . " USER INTERRUPT " . box_char("hhorizontal") x 3 . "\n\n" .
-            "You pressed ESC to get the agent's attention.\n\n" .
-            "AGENT: Stop your current work immediately and use the interact tool to ask what I need.\n\n" .
-            "Example:\n" .
-            "interact(operation: 'request_input', message: 'You pressed ESC - what do you need?')\n\n" .
-            "The full conversation context has been preserved. I may want to:\n" .
-            "- Give you new instructions\n" .
-            "- Ask about your progress\n" .
-            "- Change the approach\n" .
-            "- Provide additional information\n\n" .
-            "Please use interact to find out."
+        content =>
+            "You pressed ESC to interrupt the agent.\n\n" .
+            "Use the interact tool to ask what the user needs.\n\n" .
+            "The user may want to: give new instructions, check progress, change approach, or provide additional information.",
+        metadata => {
+            collaboration => 'interrupt',
+        },
     };
     push @$messages_ref, $interrupt_message;
 }
@@ -2447,6 +2454,13 @@ sub _extract_conversation_topic {
                         }
                     }
                 }
+            }
+
+            # Check for collaboration metadata (forced interrupts, etc.)
+            if ($msg->{metadata} && $msg->{metadata}{collaboration}) {
+                my $truncated = substr($content, 0, 2000);
+                $truncated .= '...' if length($content) > 2000;
+                push @collab_questions, $truncated;
             }
 
             # Non-empty assistant content (could be mid-conversation text)

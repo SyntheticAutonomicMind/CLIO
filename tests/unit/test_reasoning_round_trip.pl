@@ -16,7 +16,7 @@
 use strict;
 use warnings;
 use lib './lib';
-use Test::More tests => 100;
+use Test::More tests => 101;
 use JSON::PP qw(encode_json decode_json);
 
 use_ok('CLIO::Providers::Anthropic');
@@ -168,7 +168,7 @@ use_ok('CLIO::Core::APIManager');
         model => 'gpt-4o',
         config => $config,
     );
-    ok(!$mgr->_endpoint_supports_thinking(), 'github_copilot does not support native thinking');
+    ok($mgr->_endpoint_supports_thinking(), 'github_copilot supports thinking (via OpenAI reasoning_effort)');
 
     $mgr = CLIO::Core::APIManager->new(
         provider => 'google',
@@ -358,12 +358,22 @@ use_ok('CLIO::Core::APIManager');
     my $req = $p->build_request(
         [{ role => 'user', content => 'test' }],
         [],
-        { thinking => { enabled => 1, mode => 'enabled', budget_tokens => 8000, effort => 'medium' } },
+        { thinking => { enabled => 1, mode => 'enabled', effort => 'medium' } },
     );
     my $body = decode_json($req->{body});
     ok($body->{thinking}, 'Anthropic: thinking key in payload');
     is($body->{thinking}{type}, 'enabled', 'Anthropic: thinking type=enabled');
-    is($body->{thinking}{budget_tokens}, 8000, 'Anthropic: budget_tokens in payload');
+    # Budget is derived from effort by _default_thinking_config; medium => 10240.
+    is($body->{thinking}{budget_tokens}, 10240, 'Anthropic: budget_tokens derived from effort=medium');
+
+    # effort=low yields 4096
+    $req = $p->build_request(
+        [{ role => 'user', content => 'test' }],
+        [],
+        { thinking => { enabled => 1, mode => 'enabled', effort => 'low' } },
+    );
+    $body = decode_json($req->{body});
+    is($body->{thinking}{budget_tokens}, 4096, 'Anthropic: budget_tokens derived from effort=low');
 }
 
 # ── 17. Google build_request sets thinkingConfig in payload ───────────

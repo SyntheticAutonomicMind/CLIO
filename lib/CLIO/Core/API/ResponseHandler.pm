@@ -1003,7 +1003,7 @@ sub process_rate_limit_headers {
     my %rate_limit = ();
     my $copilot_quota_header = undef;
 
-    $headers->scan(sub {
+    my $scan_cb = sub {
         my ($name, $value) = @_;
         my $lc_name = lc($name);
 
@@ -1036,7 +1036,13 @@ sub process_rate_limit_headers {
             $rate_limit{quota_used} = $value;
             $rate_limit{quota_timestamp} = time();
         }
-    });
+    };
+
+    if (ref($headers) eq 'HASH') {
+        $scan_cb->($_, $headers->{$_}) for keys %$headers;
+    } else {
+        $headers->scan($scan_cb);
+    }
 
     # Parse GitHub Copilot quota header if no standard headers
     if ($copilot_quota_header && !$rate_limit{limit_requests}) {
@@ -1102,7 +1108,20 @@ sub process_rate_limit_headers {
     }
     # Also consider x-github-total-quota-used header (percentage already used)
     elsif (defined $rate_limit{quota_used}) {
-        $percent_remaining = 100 - $rate_limit{quota_used};
+       $percent_remaining = 100 - $rate_limit{quota_used};
+   }
+
+    # Token quota throttling (Azure APIM proxies rate-limit by uncached input tokens)
+    if (defined $rate_limit{limit_tokens} && defined $rate_limit{remaining_tokens}) {
+        my $limit = $rate_limit{limit_tokens};
+        my $remaining = $rate_limit{remaining_tokens};
+        if ($limit > 0) {
+            my $token_pct = ($remaining / $limit) * 100;
+            if (!defined $percent_remaining || $token_pct < $percent_remaining) {
+                $percent_remaining = $token_pct;
+                log_debug('ResponseHandler', sprintf("Token quota: %.1f%% remaining (%d/%d)", $token_pct, $remaining, $limit));
+            }
+        }
     }
 
     if (defined $percent_remaining) {
@@ -1191,10 +1210,10 @@ sub process_quota_headers {
     return unless $self->{session};
 
     my $premium_models;
-    my $premium_interactions;
-    my $chat_quota;
+   my $premium_interactions;
+   my $chat_quota;
 
-    $headers->scan(sub {
+    my $quota_scan = sub {
         my ($name, $value) = @_;
         if ($name =~ /^x-quota-snapshot-premium_models$/i) {
             $premium_models = $value;
@@ -1205,7 +1224,13 @@ sub process_quota_headers {
         elsif ($name =~ /^x-quota-snapshot-chat$/i) {
             $chat_quota = $value;
         }
-    });
+    };
+
+    if (ref($headers) eq 'HASH') {
+        $quota_scan->($_, $headers->{$_}) for keys %$headers;
+    } else {
+        $headers->scan($quota_scan);
+    }
 
     my $quota_header = $premium_models || $premium_interactions || $chat_quota;
     my $quota_source;
