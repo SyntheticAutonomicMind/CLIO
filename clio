@@ -286,17 +286,22 @@ if ($mode eq 'list_sessions') {
         my $msg_count = 0;
         my $total_tokens = 0;
         eval {
-            open my $fh, '<', $file_path or die;
+            open my $fh, '<:raw', $file_path or die;
             local $/;
             my $json = <$fh>;
             close $fh;
-            my $data = decode_json($json);
-            $name = $data->{session_name} if $data->{session_name};
-            $msg_count = scalar(@{$data->{history} || []});
-            if ($data->{billing}) {
-                $model = $data->{billing}{model};
-                $total_tokens = $data->{billing}{total_tokens} || 0;
+            # Regex extraction avoids full decode_json on every file
+            if ($json =~ /"session_name"\s*:\s*"((?:[^"\\]|\\.)*)"/) {
+                $name = $1;
             }
+            if ($json =~ /"billing"\s*:\s*\{[^}]*?"model"\s*:\s*"((?:[^"\\]|\\.)*)"/s) {
+                $model = $1;
+            }
+            if ($json =~ /"total_requests"\s*:\s*(\d+)\s*,\s*"total_tokens"\s*:\s*(\d+)/s) {
+                $total_tokens = $2;
+            }
+            # Count messages by counting "role" keys in history
+            $msg_count = () = $json =~ /"role"\s*:/g;
         };
         
         push @sessions_info, {
@@ -1078,15 +1083,16 @@ sub _resolve_session_id {
         my @stat = stat($file_path);
         my $mtime = $stat[9] // 0;
         
-        # Read session name from file
+        # Extract session name via regex (avoids full decode_json on every file)
         my $name = undef;
         eval {
-            open my $fh, '<', $file_path or die;
+            open my $fh, '<:raw', $file_path or die;
             local $/;
             my $json = <$fh>;
             close $fh;
-            my $data = decode_json($json);
-            $name = $data->{session_name} if $data->{session_name};
+            if ($json =~ /"session_name"\s*:\s*"((?:[^"\\]|\\.)*)"/) {
+                $name = $1;
+            }
         };
         
         push @sessions, { id => $sid, name => $name, mtime => $mtime };
