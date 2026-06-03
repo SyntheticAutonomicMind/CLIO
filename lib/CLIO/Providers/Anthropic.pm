@@ -83,7 +83,7 @@ sub new {
     
     $self->{model} //= DEFAULT_MODEL;
     $self->{max_tokens} = $opts{max_tokens} // DEFAULT_MAX_TOKENS;
-    
+
     # Custom headers: merge provider config headers with environment variable headers
     my %all_custom_headers;
     if ($opts{custom_headers} && ref($opts{custom_headers}) eq 'HASH') {
@@ -105,7 +105,11 @@ sub new {
     # Track current tool call being streamed
     $self->{_current_tool_call} = undef;
     $self->{_accumulated_json} = '';
-    
+    # Track current thinking block being streamed (signature captured here)
+    $self->{_current_thinking} = undef;
+    # Accumulated thinking blocks (with signature + redacted_thinking data) for round-trip
+    $self->{_thinking_blocks} = [];
+
     return $self;
 }
 
@@ -162,11 +166,41 @@ sub build_request {
         $payload->{top_p} = $options->{top_p};
     }
     
-    # Extended thinking support
-    if ($options->{thinking} && ref($options->{thinking}) eq 'HASH') {
-        $payload->{thinking} = $options->{thinking};
+    # Extended thinking support.
+    # $options->{thinking} is a hashref built by APIManager describing what thinking
+    # configuration the caller wants. Shape:
+    #   { enabled => 1, effort => 'low|medium|high', budget_tokens => N, mode => 'enabled|adaptive' }
+    # If $options->{thinking} is absent, we still enable thinking by default when the
+    # model supports it (Anthropic extended thinking is the strongest reasoning path).
+    my $thinking = $options->{thinking};
+    my $model = $options->{model} // $self->{model};
+    unless ($thinking && ref($thinking) eq 'HASH') {
+        $thinking = $self->_default_thinking_config($model);
     }
-    
+    if ($thinking && $thinking->{enabled} && !$thinking->{mode}) {
+        # Caller passed a simple flag, fill in defaults
+        $thinking = $self->_default_thinking_config($model, $thinking);
+    }
+    if ($thinking && $thinking->{enabled} && $thinking->{mode}) {
+        if ($thinking->{mode} eq 'enabled') {
+            $payload->{thinking} = {
+                type => 'enabled',
+                budget_tokens => $thinking->{budget_tokens},
+            };
+        }
+        elsif ($thinking->{mode} eq 'adaptive') {
+            # Adaptive thinking: just type + effort, no budget_tokens
+            $payload->{thinking} = {
+                type => 'adaptive',
+            };
+            if ($thinking->{effort} && $thinking->{effort} ne 'medium') {
+                # Anthropic only accepts 'low'|'medium'|'high' for adaptive effort;
+                # 'medium' is the default and may be omitted.
+                $payload->{thinking}{effort} = $thinking->{effort};
+            }
+        }
+    }
+
     $self->debug("Built Anthropic request with " . scalar(@$anthropic_messages) . " messages");
     
     return {
@@ -187,22 +221,55 @@ Returns: Hashref of HTTP headers
 
 sub get_headers {
     my ($self) = @_;
-    
+
     my %headers = (
         'Content-Type' => 'application/json',
         'x-api-key' => $self->{api_key},
         'anthropic-version' => ANTHROPIC_VERSION,
         'Accept' => 'text/event-stream',
     );
-    
+
     # Merge custom headers (for proxy endpoints, etc.)
     if ($self->{custom_headers} && keys %{$self->{custom_headers}}) {
         for my $key (keys %{$self->{custom_headers}}) {
             $headers{$key} = $self->{custom_headers}{$key};
         }
     }
-    
+
+    # Interleaved thinking beta header. Required for Sonnet 4.5 / Opus 4.5 / Opus 4.1
+    # (and earlier) to use thinking blocks before tool calls and to round-trip the
+    # signature on subsequent turns. 4.6+ models support this without the beta header.
+    if ($self->_needs_interleaved_thinking_beta($self->{model})) {
+        my $betas = $headers{'anthropic-beta'};
+        my @beta_list = $betas ? split(/\s*,\s*/, $betas) : ();
+        push @beta_list, 'interleaved-thinking-2025-05-14' unless grep { $_ eq 'interleaved-thinking-2025-05-14' } @beta_list;
+        $headers{'anthropic-beta'} = join(',', @beta_list);
+    }
+
     return \%headers;
+}
+
+=head2 get_thinking_blocks()
+
+Return the arrayref of thinking blocks (with signature) accumulated during the
+current streaming response. Caller should clear them via clear_thinking_blocks
+after persisting to the assistant message.
+
+Returns: Arrayref of thinking blocks; each is either:
+  { type => 'thinking', signature => '...' }  (text captured via on_thinking)
+  { type => 'redacted_thinking', data => '...' }
+
+=cut
+
+sub get_thinking_blocks {
+    my ($self) = @_;
+    return $self->{_thinking_blocks} || [];
+}
+
+sub clear_thinking_blocks {
+    my ($self) = @_;
+    $self->{_thinking_blocks} = [];
+    $self->{_current_thinking} = undef;
 }
 
 =head2 parse_stream_event($line)
@@ -285,17 +352,39 @@ sub parse_stream_event {
             };
         }
         elsif ($block_type eq 'thinking') {
-            # Extended thinking block starting
-            return {
+            # Extended thinking block starting. Anthropic may include a 'signature'
+            # on the initial content_block_start; if so, capture it for round-trip
+            # (the model requires the signature on the previous turn's thinking block
+            # when interleaved thinking is enabled).
+            $self->{_current_thinking} = {
                 type => 'thinking',
-                content => undef,
+                signature => $block->{signature},
+            };
+            return {
+                type => 'thinking_start',
+                content => '',
+            };
+        }
+        elsif ($block_type eq 'redacted_thinking') {
+            # Anthropic may redact thinking blocks (when safety filtering trips).
+            # The encrypted 'data' blob must be passed back verbatim on subsequent
+            # turns, or the API rejects the request.
+            my $rb = {
+                type => 'redacted_thinking',
+                data => $block->{data} // '',
+            };
+            push @{$self->{_thinking_blocks}}, $rb;
+            $self->{_current_thinking} = undef;
+            return {
+                type => 'thinking_redacted',
+                data => $rb->{data},
             };
         }
     }
     elsif ($event_type eq 'content_block_delta') {
         my $delta = $data->{delta};
         my $delta_type = $delta->{type} // '';
-        
+
         if ($delta_type eq 'text_delta') {
             return {
                 type => 'text',
@@ -317,8 +406,24 @@ sub parse_stream_event {
                 content => $delta->{thinking} // '',
             };
         }
+        elsif ($delta_type eq 'signature_delta') {
+            # Anthropic streams the signature as a separate delta after the thinking
+            # content. Capture it so we can round-trip it.
+            $self->{_current_thinking}{signature} = $delta->{signature}
+                if $self->{_current_thinking};
+            return undef;  # internal bookkeeping only
+        }
     }
     elsif ($event_type eq 'content_block_stop') {
+        # If we just finished a thinking block, persist it for round-trip.
+        if ($self->{_current_thinking} && $self->{_current_thinking}{type} eq 'thinking') {
+            push @{$self->{_thinking_blocks}}, $self->{_current_thinking};
+            $self->{_current_thinking} = undef;
+            return {
+                type => 'thinking_end',
+            };
+        }
+
         # Check if we were accumulating a tool call
         if ($self->{_current_tool_call}) {
             my $tool_call = $self->{_current_tool_call};
@@ -600,9 +705,44 @@ sub _convert_user_message {
 
 sub _convert_assistant_message {
     my ($self, $msg) = @_;
-    
+
     my @content;
-    
+
+    # Anthropic requires thinking blocks to come FIRST in the content array,
+    # in the order they were emitted, with their original signatures preserved.
+    # Without the signature the API rejects the request on subsequent turns
+    # (when extended thinking + tool use is enabled).
+    if ($msg->{reasoning_blocks} && ref($msg->{reasoning_blocks}) eq 'ARRAY') {
+        for my $block (@{$msg->{reasoning_blocks}}) {
+            next unless ref($block) eq 'HASH';
+            if (($block->{type} // '') eq 'redacted_thinking') {
+                push @content, {
+                    type => 'redacted_thinking',
+                    data => $block->{data} // '',
+                };
+            }
+            elsif (($block->{type} // '') eq 'thinking') {
+                # Thinking blocks need both the text AND the signature.
+                # Text comes from reasoning_content (set by WorkflowOrchestrator)
+                # or from the block's own text field.
+                my $thinking_text = $block->{text} // $msg->{reasoning_content} // '';
+                push @content, {
+                    type => 'thinking',
+                    thinking => $thinking_text,
+                    signature => $block->{signature} // '',
+                };
+            }
+        }
+    }
+    elsif ($msg->{reasoning_content} && $msg->{reasoning_signature}) {
+        # Legacy single-block round-trip (no reasoning_blocks array).
+        push @content, {
+            type => 'thinking',
+            thinking => $msg->{reasoning_content},
+            signature => $msg->{reasoning_signature},
+        };
+    }
+
     # Add text content
     if ($msg->{content}) {
         push @content, {
@@ -610,7 +750,7 @@ sub _convert_assistant_message {
             text => $msg->{content},
         };
     }
-    
+
     # Add tool calls (convert from OpenAI to Anthropic format)
     if ($msg->{tool_calls}) {
         for my $tool_call (@{$msg->{tool_calls}}) {
@@ -620,7 +760,7 @@ sub _convert_assistant_message {
                 eval { $arguments = decode_json($arguments); };
                 $arguments = {} if $@;
             }
-            
+
             push @content, {
                 type => 'tool_use',
                 id => $tool_call->{id},
@@ -629,7 +769,7 @@ sub _convert_assistant_message {
             };
         }
     }
-    
+
     # Anthropic requires content to be an array when tool_use is present,
     # but can be a simple string for text-only responses
     if (@content == 1 && $content[0]{type} eq 'text') {
@@ -638,7 +778,7 @@ sub _convert_assistant_message {
             content => $content[0]{text},
         };
     }
-    
+
     return {
         role => 'assistant',
         content => \@content,
@@ -669,15 +809,135 @@ sub _convert_tool_result_message {
 
 sub _map_stop_reason {
     my ($self, $anthropic_reason) = @_;
-    
+
     my %reason_map = (
         'end_turn' => 'stop',
         'stop_sequence' => 'stop',
         'tool_use' => 'tool_calls',
         'max_tokens' => 'length',
     );
-    
+
     return $reason_map{$anthropic_reason} // 'stop';
+}
+
+=head2 _supports_adaptive_thinking($model)
+
+Returns true if the given Anthropic model supports the adaptive thinking
+mode (4.6+ family). Adaptive drops the budget_tokens field and lets the
+model decide based on the effort hint.
+
+=cut
+
+sub _supports_adaptive_thinking {
+    my ($self, $model) = @_;
+    return 0 unless defined $model && length $model;
+    # 4.6+ family: claude-{family}-{major}-6, -7, -8, plus non-versioned names
+    # (e.g. claude-mythos). 4.5 and earlier use the older enabled+budget_tokens
+    # form. Be conservative: anything we don't recognize as 4.6+ uses 'enabled'.
+    return 1 if $model =~ /-(?:opus|sonnet|haiku)-4-(?:[6-9]|\d{2,})$/i;
+    return 1 if $model =~ /^claude-mythos/i;
+    return 0;
+}
+
+=head2 _needs_interleaved_thinking_beta($model)
+
+Anthropic's interleaved-thinking beta header is required for Sonnet 4.5,
+Opus 4.5, and Opus 4.1 to use extended thinking across tool calls. Models
+released after 4.5 accept the parameter natively without the header; for
+those models this returns false.
+
+=cut
+
+sub _needs_interleaved_thinking_beta {
+    my ($self, $model) = @_;
+    return 0 unless defined $model && length $model;
+    # 4.6+ family doesn't need the beta header.
+    return 0 if $self->_supports_adaptive_thinking($model);
+    # 4.5 and earlier (including 4.0, 4.1, 3.x) need it.
+    return 1 if $model =~ /-(?:opus|sonnet|haiku)-4-[0-5]$/i;
+    return 1 if $model =~ /-(?:opus|sonnet|haiku)-4-\d+-\d{8}$/i;  # dated 4.x
+    return 1 if $model =~ /^claude-(?:opus|sonnet|haiku)-3/i;       # 3.x family
+    # Unknown - default to requiring the beta header (safer).
+    return 1;
+}
+
+=head2 _max_thinking_budget_for_model($model)
+
+Returns the maximum thinking budget in tokens for the given model. For
+4.6+ (adaptive) this is informational only - the API no longer uses it.
+
+Anthropic spec:
+  - 4.5 family (Sonnet/Opus/Haiku): 32k for Sonnet/Opus, 8k for Haiku 4.5
+  - 4.0/4.1: 32k
+  - 3.7 Sonnet: 64k
+  - 3.x (older): 32k recommended
+
+=cut
+
+sub _max_thinking_budget_for_model {
+    my ($self, $model) = @_;
+    return 32000 unless defined $model && length $model;
+    return 8000 if $model =~ /-haiku-4-5$/i;
+    return 64000 if $model =~ /-3-7-sonnet/i;
+    return 32000;
+}
+
+=head2 _default_thinking_config($model, $opts)
+
+Build a default thinking config hashref for the given model and effort.
+
+Inputs:
+  $model - Anthropic model name
+  $opts  - optional hashref with { enabled => 1, effort => 'low|medium|high' }
+
+Returns a hashref with:
+  enabled       - 1/0
+  mode          - 'enabled' or 'adaptive' (or undef if disabled)
+  effort        - 'low'|'medium'|'high' (for adaptive) or for budget sizing
+  budget_tokens - integer for 'enabled' mode (clamped to model max)
+
+When called without $opts, returns the default config (enabled, medium effort).
+
+=cut
+
+sub _default_thinking_config {
+    my ($self, $model, $opts) = @_;
+    $opts //= {};
+
+    my $enabled = exists $opts->{enabled} ? $opts->{enabled} : 1;
+    return { enabled => 0 } unless $enabled;
+
+    my $effort = $opts->{effort} // 'medium';
+    $effort = 'medium' unless $effort =~ /^(?:low|medium|high)$/;
+
+    my $max = $self->_max_thinking_budget_for_model($model);
+
+    if ($self->_supports_adaptive_thinking($model)) {
+        return {
+            enabled => 1,
+            mode    => 'adaptive',
+            effort  => $effort,
+        };
+    }
+
+    # 'enabled' mode: budget maps from effort. Anthropic docs recommend
+    # 1024 minimum, 16k+ for complex tasks. We use 4k/10k/20k for
+    # low/medium/high (clamped to model max).
+    my %effort_to_budget = (
+        low    => 4096,
+        medium => 10240,
+        high   => 20480,
+    );
+    my $budget = $effort_to_budget{$effort};
+    $budget = $max if $budget > $max;
+    $budget = 1024 if $budget < 1024;
+
+    return {
+        enabled       => 1,
+        mode          => 'enabled',
+        effort        => $effort,
+        budget_tokens => $budget,
+    };
 }
 
 1;

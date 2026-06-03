@@ -60,7 +60,12 @@ sub new {
     # Track current tool call being streamed
     $self->{_current_tool_call} = undef;
     $self->{_tool_call_counter} = 0;
-    
+    # Accumulated thought parts with thoughtSignature for round-trip.
+    # Google's API requires the thoughtSignature from a previous turn to be
+    # passed back when interleaved thinking is enabled.
+    $self->{_thought_parts} = [];
+    $self->{_current_thought} = undef;
+
     return $self;
 }
 
@@ -115,9 +120,21 @@ sub build_request {
     if (defined $options->{temperature}) {
         $payload->{generationConfig}{temperature} = $options->{temperature};
     }
-    
+
     if (defined $options->{top_p}) {
         $payload->{generationConfig}{topP} = $options->{top_p};
+    }
+
+    # Extended thinking support.
+    # Google's thinkingConfig takes a thinkingBudget (in tokens). -1 means
+    # dynamic (the model decides), 0 disables thinking, positive integer sets
+    # a token budget. We always includeThoughts: true so we can capture
+    # thought text and thoughtSignature for round-trip.
+    my $thinking = $options->{thinking};
+    my $thinking_config = $self->_build_thinking_config($model, $thinking);
+    if ($thinking_config) {
+        $payload->{generationConfig}{thinkingConfig} = $thinking_config;
+        $self->debug("Google thinkingConfig enabled (budget=" . ($thinking_config->{thinkingBudget} // 'dynamic') . ")");
     }
     
     # Build URL with model and streaming endpoint
@@ -144,10 +161,84 @@ Get HTTP headers for Google API requests.
 
 sub get_headers {
     my ($self) = @_;
-    
+
     return {
         'Content-Type' => 'application/json',
         'Accept' => 'text/event-stream',
+    };
+}
+
+=head2 get_thinking_blocks()
+
+Return the arrayref of thought parts (with thoughtSignature) accumulated
+during the current streaming response. Each entry is { text, signature }.
+
+=cut
+
+sub get_thinking_blocks {
+    my ($self) = @_;
+    return $self->{_thought_parts} || [];
+}
+
+sub clear_thinking_blocks {
+    my ($self) = @_;
+    $self->{_thought_parts} = [];
+    $self->{_current_thought} = undef;
+}
+
+=head2 _build_thinking_config($model, $opts)
+
+Build Google's thinkingConfig from caller options. Returns undef if the
+model does not support thinking, or if thinking is explicitly disabled.
+
+Opts shape:
+  enabled => 1/0
+  effort  => 'low'|'medium'|'high' (mapped to thinkingBudget in tokens)
+  budget  => integer override (clamped to model limits)
+
+For Gemini 2.5 Pro/Flash: thinkingBudget is the token count the model may
+use for thought. -1 = dynamic (model decides).
+
+=cut
+
+sub _build_thinking_config {
+    my ($self, $model, $opts) = @_;
+    $opts //= {};
+
+    # Default: thinking enabled at medium effort.
+    my $enabled = exists $opts->{enabled} ? $opts->{enabled} : 1;
+    return undef unless $enabled;
+
+    # Known unsupported models. We err on the side of NOT enabling thinking
+    # for models that don't support it (Gemini 1.x, etc).
+    return undef if $model =~ /^gemini-1\./i;
+    return undef if $model =~ /^gemini-2\.0/i;
+
+    # Per Google docs, all 2.5+ models support thinkingConfig. We require
+    # includeThoughts: true so we can capture thought text and the
+    # thoughtSignature for round-trip.
+    my $budget;
+    if (defined $opts->{budget} && $opts->{budget} =~ /^-?\d+$/) {
+        $budget = $opts->{budget} + 0;
+    }
+    else {
+        my $effort = $opts->{effort} // 'medium';
+        $effort = 'medium' unless $effort =~ /^(?:low|medium|high)$/;
+        my %effort_to_budget = (
+            low    => 1024,    # minimal thinking
+            medium => 8192,    # default-ish
+            high   => 24576,   # max recommended
+        );
+        $budget = $effort_to_budget{$effort};
+    }
+
+    # Clamp to safe range (Google requires non-negative; -1 means dynamic).
+    if ($budget < -1) { $budget = -1; }
+    if ($budget == 0) { $budget = 1024; }  # 0 would disable thinking
+
+    return {
+        includeThoughts => JSON::PP::true,
+        thinkingBudget  => $budget,
     };
 }
 
@@ -195,6 +286,25 @@ sub parse_stream_event {
             # Text part (may be regular text or thought/reasoning)
             if (defined $part->{text}) {
                 if ($part->{thought}) {
+                    # Capture thought signature for round-trip. The signature
+                    # may appear on the same chunk as the thought text, or
+                    # in a subsequent chunk on the same part. We track the
+                    # current thought part so signature_delta-style events
+                    # can update it.
+                    my $sig = $part->{thoughtSignature};
+                    $self->{_current_thought} = {
+                        type => 'thought',
+                        text => $part->{text},
+                        signature => $sig,
+                    };
+                    # Only persist once we see the signature (or the block
+                    # ends); for now, we don't push to _thought_parts here
+                    # because the API may stream the signature in a follow-up
+                    # chunk. Pushing on signature is handled below.
+                    if ($sig) {
+                        push @{$self->{_thought_parts}}, $self->{_current_thought};
+                        $self->{_current_thought} = undef;
+                    }
                     return {
                         type => 'thinking',
                         content => $part->{text},
@@ -217,11 +327,25 @@ sub parse_stream_event {
                     arguments => $fc->{args} // {},
                 };
             }
+
+            # Standalone thoughtSignature-only part (Google sometimes streams
+            # the signature in a follow-up event after the thought text).
+            if ($part->{thoughtSignature} && $self->{_current_thought}) {
+                $self->{_current_thought}{signature} = $part->{thoughtSignature};
+                push @{$self->{_thought_parts}}, $self->{_current_thought};
+                $self->{_current_thought} = undef;
+            }
         }
     }
 
-    # Check for finish reason (after processing parts)
+    # Check for finish reason (after processing parts). Flush any pending
+    # thought (without signature) so the caller can still round-trip what
+    # they have.
     if ($candidate->{finishReason}) {
+        if ($self->{_current_thought}) {
+            push @{$self->{_thought_parts}}, $self->{_current_thought};
+            $self->{_current_thought} = undef;
+        }
         return {
             type => 'stop',
             stop_reason => $self->_map_stop_reason($candidate->{finishReason}),
@@ -401,14 +525,40 @@ sub _convert_user_message {
 
 sub _convert_assistant_message {
     my ($self, $msg) = @_;
-    
+
     my @parts;
-    
+
+    # Round-trip thought parts (with thoughtSignature) FIRST. Google's
+    # multi-turn thinking protocol requires the exact thought signature from
+    # the previous turn to be passed back; without it the API rejects the
+    # request (or downgrades reasoning quality).
+    if ($msg->{reasoning_blocks} && ref($msg->{reasoning_blocks}) eq 'ARRAY') {
+        for my $block (@{$msg->{reasoning_blocks}}) {
+            next unless ref($block) eq 'HASH';
+            if (($block->{type} // '') eq 'thought') {
+                my $part = {
+                    thought => JSON::PP::true,
+                    text => $block->{text} // $block->{thought} // '',
+                };
+                $part->{thoughtSignature} = $block->{signature} if $block->{signature};
+                push @parts, $part;
+            }
+        }
+    }
+    elsif ($msg->{reasoning_signature} && $msg->{reasoning_content}) {
+        # Legacy single-block round-trip.
+        push @parts, {
+            thought => JSON::PP::true,
+            text => $msg->{reasoning_content},
+            thoughtSignature => $msg->{reasoning_signature},
+        };
+    }
+
     # Add text content
     if ($msg->{content}) {
         push @parts, { text => $msg->{content} };
     }
-    
+
     # Add tool calls (function calls in Google format)
     if ($msg->{tool_calls}) {
         for my $tool_call (@{$msg->{tool_calls}}) {
@@ -418,7 +568,7 @@ sub _convert_assistant_message {
                 eval { $arguments = decode_json($arguments); };
                 $arguments = {} if $@;
             }
-            
+
             push @parts, {
                 functionCall => {
                     name => $tool_call->{function}{name},
@@ -427,7 +577,7 @@ sub _convert_assistant_message {
             };
         }
     }
-    
+
     return {
         role => 'model',  # Google uses 'model' instead of 'assistant'
         parts => \@parts,
