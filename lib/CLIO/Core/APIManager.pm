@@ -764,13 +764,29 @@ sub adapt_request_for_endpoint {
     # Add reasoning_split for MiniMax to separate thinking into reasoning_details field
     if ($endpoint_config->{minimax}) {
         $payload->{reasoning_split} = \1;  # JSON true
-        
+
         # MiniMax-M3 uses thinking: {type: "adaptive"} for deep reasoning
-        # M2.x models use interleaved thinking via <think> tags (handled by _process_think_tags)
+        # M2.x models (2.0+) also support interleaved thinking natively via
+        # {type: "enabled"} per MiniMax's docs. With this enabled, the model
+        # emits structured reasoning into reasoning_details which the harness
+        # captures and round-trips properly (vs the <think> text tag approach
+        # which is fragile).
         if ($payload->{model} && $payload->{model} =~ /^MiniMax-M3/i) {
             my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
             if ($show_thinking) {
                 $payload->{thinking} = { type => 'adaptive' };
+            } else {
+                $payload->{thinking} = { type => 'disabled' };
+            }
+        }
+        elsif ($payload->{model} && $payload->{model} =~ /^MiniMax-M2/i) {
+            # M2.x: enable interleaved thinking. Show thinking only if the
+            # user has the flag set, but always request the protocol so the
+            # model can return structured reasoning_details (which the
+            # harness then round-trips correctly).
+            my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
+            if ($show_thinking) {
+                $payload->{thinking} = { type => 'enabled' };
             } else {
                 $payload->{thinking} = { type => 'disabled' };
             }
@@ -1630,6 +1646,42 @@ sub _build_responses_api_payload {
         elsif ($role eq 'assistant') {
             $flush_tc->() if @pending_tc;
             @pending_tc = @{$msg->{tool_calls}} if $msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY';
+
+            # Round-trip reasoning items. The Responses API requires the
+            # complete reasoning item (with encrypted_content) be sent back
+            # as input on the next turn so the model can resume from the same
+            # reasoning state. We accept two shapes on the assistant message:
+            #   1. reasoning_blocks (arrayref of native provider blocks -
+            #      Anthropic thinking, Google thought, etc.)
+            #   2. responses_reasoning_items (arrayref of pre-shaped Responses
+            #      API items captured from response.output_item.done)
+            if ($msg->{responses_reasoning_items} && ref($msg->{responses_reasoning_items}) eq 'ARRAY') {
+                for my $ri (@{$msg->{responses_reasoning_items}}) {
+                    next unless ref($ri) eq 'HASH';
+                    next unless ($ri->{type} // '') eq 'reasoning';
+                    next unless defined $ri->{encrypted_content};
+                    # Phase field (commentary/final_answer) must be preserved
+                    # verbatim. This is what the Responses API uses to
+                    # distinguish preambles before tool calls from final
+                    # answers after the last tool result.
+                    my $item = {
+                        type              => 'reasoning',
+                        encrypted_content => $ri->{encrypted_content},
+                    };
+                    $item->{id}      = $ri->{id}      if $ri->{id};
+                    $item->{summary} = $ri->{summary} if $ri->{summary};
+                    $item->{phase}   = $ri->{phase}   if defined $ri->{phase};
+                    push @input, $item;
+                }
+            }
+            elsif ($msg->{reasoning_blocks} && ref($msg->{reasoning_blocks}) eq 'ARRAY') {
+                # If the model returns thinking blocks from a native provider
+                # (Anthropic, Google), we don't have an encrypted_content
+                # blob to send back, so we skip them for Responses API. The
+                # reasoning.effort setting will be re-instructed on the next
+                # turn via the reasoning param.
+            }
+
             if (defined $content && length($content)) {
                 push @input, {
                     role => 'assistant', type => 'message', id => 'msg_placeholder', status => 'completed',
@@ -2572,7 +2624,7 @@ sub _process_non_streaming_response {
     }
 
     # Extract content
-    my ($content, $tool_calls, $reasoning_details) =
+    my ($content, $tool_calls, $reasoning_details, $responses_reasoning_items) =
         $self->_extract_response_content($data, $use_responses_api, $opts);
     my ($tokens_in, $tokens_out) = $self->_extract_usage_tokens($data, $use_responses_api);
 
@@ -2598,6 +2650,7 @@ sub _process_non_streaming_response {
         my $result = { content => $content, usage => $data->{usage} };
         $result->{tool_calls} = $tool_calls if $tool_calls;
         $result->{reasoning_details} = $reasoning_details if $reasoning_details;
+        $result->{responses_reasoning_items} = $responses_reasoning_items if $responses_reasoning_items;
         $self->{response_handler}->release_broker_slot($resp, 200);
         return $result;
     }
@@ -2605,7 +2658,9 @@ sub _process_non_streaming_response {
     # Tool-calls-only (no text)
     if ($tool_calls && @$tool_calls) {
         $self->{response_handler}->release_broker_slot($resp, 200);
-        return { content => '', tool_calls => $tool_calls, usage => $data->{usage} };
+        my $tc_result = { content => '', tool_calls => $tool_calls, usage => $data->{usage} };
+        $tc_result->{responses_reasoning_items} = $responses_reasoning_items if $responses_reasoning_items;
+        return $tc_result;
     }
 
     log_error('APIManager', "No message content in response") if $self->{debug};
@@ -2917,13 +2972,27 @@ sub _process_responses_api_event {
         }
         elsif ($item_type eq 'reasoning') {
             $ss->{reasoning_active} = 1;
-            log_debug('APIManager', "Responses API: reasoning started");
+            # Capture the reasoning item id so we can correlate subsequent
+            # encrypted_content/phase fields to the same item.
+            $ss->{_last_reasoning_idx} = $data->{output_index};
+            log_debug('APIManager', "Responses API: reasoning started (idx=" . $data->{output_index} . ")");
         }
     }
     elsif ($event_type eq 'response.function_call_arguments.delta') {
         my $idx = $data->{output_index} // 0;
         if ($ss->{tool_calls_acc}{$idx}) {
             $ss->{tool_calls_acc}{$idx}{function}{arguments} .= ($data->{delta} // '');
+        }
+    }
+    elsif ($event_type eq 'response.reasoning.delta') {
+        # Raw reasoning text delta. Responses API streams reasoning text
+        # in this event for models without summary mode, or alongside
+        # summary for verbose models. We accumulate it and surface it
+        # to on_thinking so the UI displays it like summary deltas.
+        if ($ss->{on_thinking} && defined $data->{delta} && length $data->{delta}) {
+            $ss->{reasoning_active} = 1;
+            $ss->{on_thinking}->($data->{delta});
+            $ss->{accum_reasoning} .= $data->{delta};
         }
     }
     elsif ($event_type eq 'response.output_item.done') {
@@ -2946,12 +3015,28 @@ sub _process_responses_api_event {
                 $ss->{on_thinking}->(undef, 'end');
             }
             $ss->{reasoning_active} = 0;
+            # Capture encrypted_content + summary + phase for round-trip on the
+            # next turn. Per Responses API docs, the complete reasoning item
+            # (including encrypted_content) must be sent back as input so the
+            # model can resume from the same reasoning state. The phase field
+            # distinguishes 'commentary' (preamble) from 'final_answer' parts.
+            if (defined $item->{encrypted_content} && length $item->{encrypted_content}) {
+                $ss->{_reasoning_items} ||= [];
+                push @{$ss->{_reasoning_items}}, {
+                    type              => 'reasoning',
+                    id                => $item->{id},
+                    encrypted_content => $item->{encrypted_content},
+                    summary           => $item->{summary} || [],
+                    phase             => $item->{phase} // 'commentary',
+                };
+            }
         }
     }
     elsif ($event_type eq 'response.reasoning_summary_text.delta') {
         if ($ss->{on_thinking} && defined $data->{delta}) {
             $ss->{reasoning_active} = 1;
             $ss->{on_thinking}->($data->{delta});
+            $ss->{accum_reasoning} .= $data->{delta};
         }
     }
     elsif ($event_type eq 'response.completed') {
@@ -3341,6 +3426,14 @@ sub _finalize_streaming_response {
         $response->{accumulated_reasoning} = $s{accumulated_reasoning};
     }
 
+    # Persist captured Responses API reasoning items (with encrypted_content
+    # + phase) so they can be round-tripped on the next turn. The caller
+    # should attach this to the assistant message and pass it back through
+    # _build_responses_api_payload on the following request.
+    if ($s{_reasoning_items} && ref($s{_reasoning_items}) eq 'ARRAY' && @{$s{_reasoning_items}}) {
+        $response->{responses_reasoning_items} = $s{_reasoning_items};
+    }
+
     $self->_log_streaming_response($response, $s{provider_label}, $tool_calls);
     $self->{response_handler}->release_broker_slot($resp, 200);
     
@@ -3700,11 +3793,17 @@ sub _extract_stateful_markers {
 
 =head2 _extract_response_content($data, $use_responses_api, $opts)
 
-Extract message content, tool_calls, and reasoning_details from a decoded
-API response hash. Handles Responses API, Chat Completions, text completion,
-direct content, message array, and nested response formats.
+Extract message content, tool_calls, reasoning_details, and Responses API
+reasoning items from a decoded API response hash. Handles Responses API,
+Chat Completions, text completion, direct content, message array, and
+nested response formats.
 
-Returns: ($content, $tool_calls_aref_or_undef, $reasoning_details_aref_or_undef)
+Returns: ($content, $tool_calls_aref_or_undef, $reasoning_details_aref_or_undef, $responses_reasoning_items_aref_or_undef)
+  - $content                          : extracted text
+  - $tool_calls                       : arrayref of tool calls (Chat Completions shape)
+  - $reasoning_details                : arrayref of OpenRouter/MiniMax reasoning_details
+  - $responses_reasoning_items        : arrayref of Responses API reasoning items with
+                                        encrypted_content + phase for round-trip
 
 =cut
 
@@ -3714,8 +3813,9 @@ sub _extract_response_content {
     my $content = '';
     my $tool_calls = undef;
     my $reasoning_details = undef;
+    my $responses_reasoning_items = undef;
 
-    return ($content, $tool_calls, $reasoning_details) unless ref $data eq 'HASH';
+    return ($content, $tool_calls, $reasoning_details, $responses_reasoning_items) unless ref $data eq 'HASH';
 
     # Responses API format (codex models, etc.)
     if ($use_responses_api && $data->{output} && ref($data->{output}) eq 'ARRAY') {
@@ -3723,6 +3823,7 @@ sub _extract_response_content {
 
         my @text_parts;
         my @resp_tool_calls;
+        my @reasoning_items;
 
         for my $item (@{$data->{output}}) {
             my $type = $item->{type} || '';
@@ -3745,10 +3846,28 @@ sub _extract_response_content {
                     },
                 };
             }
+            elsif ($type eq 'reasoning') {
+                # Per Responses API docs, the model emits reasoning items that
+                # may carry encrypted_content (opaque blob representing the
+                # model's internal state). When include: ['reasoning.encrypted_content']
+                # is set, this is populated and MUST be sent back on the next
+                # turn to preserve reasoning continuity. The phase field
+                # distinguishes 'commentary' from 'final_answer' parts.
+                if (defined $item->{encrypted_content} && length $item->{encrypted_content}) {
+                    push @reasoning_items, {
+                        type              => 'reasoning',
+                        id                => $item->{id},
+                        encrypted_content => $item->{encrypted_content},
+                        summary           => $item->{summary} || [],
+                        phase             => $item->{phase} // 'commentary',
+                    };
+                }
+            }
         }
 
         $content    = join('', @text_parts)    if @text_parts;
         $tool_calls = \@resp_tool_calls        if @resp_tool_calls;
+        my $resp_reasoning_items = \@reasoning_items if @reasoning_items;
 
         # Store response.id as stateful marker for billing continuity
         if ($data->{id} && $self->{session}) {
@@ -3757,7 +3876,9 @@ sub _extract_response_content {
             $self->{session}{lastGitHubCopilotResponseId} = $data->{id};
         }
 
-        log_debug('APIManager', "Responses API: content=" . length($content) . " chars, tool_calls=" . scalar(@{$tool_calls || []}));
+        log_debug('APIManager', "Responses API: content=" . length($content) . " chars, tool_calls=" . scalar(@{$tool_calls || []}) . ", reasoning_items=" . scalar(@{$resp_reasoning_items || []}));
+
+        return ($content, $tool_calls, undef, $resp_reasoning_items);
     }
     # Chat Completions format
     elsif ($data->{choices} && @{$data->{choices}} && $data->{choices}[0]{message}) {
@@ -3801,7 +3922,7 @@ sub _extract_response_content {
         $content = $data->{response}{content};
     }
 
-    return ($content, $tool_calls, $reasoning_details);
+    return ($content, $tool_calls, $reasoning_details, $responses_reasoning_items);
 }
 
 =head2 _extract_usage_tokens($data, $use_responses_api)
@@ -3922,6 +4043,37 @@ sub _error {
     return { error => 1, message => $msg };
 }
 
+=head2 _endpoint_supports_thinking()
+
+Check if the current provider endpoint supports thinking/reasoning natively.
+Used to decide whether to pass a `thinking` option to the provider's
+build_request. Returns true for native providers (Anthropic, Google) that
+have first-class thinking support, and for endpoints with the
+`supports_reasoning` flag.
+
+=cut
+
+sub _endpoint_supports_thinking {
+    my ($self) = @_;
+
+    my $provider_name = $self->{provider} // '';
+    return 1 if $provider_name eq 'anthropic';
+    return 1 if $provider_name eq 'google';
+
+    # Resolve via provider registry (handles google_vertex etc.)
+    if ($provider_name) {
+        my $provider_config = get_provider($provider_name);
+        return 1 if $provider_config && $provider_config->{supports_reasoning};
+    }
+
+    # Fall back to endpoint config if available.
+    if ($self->{_current_endpoint_config} && $self->{_current_endpoint_config}{supports_reasoning}) {
+        return 1;
+    }
+
+    return 0;
+}
+
 =head2 _get_native_provider()
 
 Check if the current provider uses a native (non-OpenAI-compatible) API
@@ -3933,7 +4085,7 @@ Returns: Provider instance if native, undef if OpenAI-compatible
 
 sub _get_native_provider {
     my ($self) = @_;
-    
+
     # Get provider configuration
     my $provider_name = $self->{provider} // 'github_copilot';
     my $provider_config = get_provider($provider_name);
@@ -3989,16 +4141,37 @@ Returns: Same format as send_request_streaming
 
 sub _send_native_streaming {
     my ($self, $provider, $messages, $tools, %opts) = @_;
-    
+
     my $on_chunk = $opts{on_chunk};
     my $on_tool_call = $opts{on_tool_call};
     my $on_thinking = $opts{on_thinking};
-    
+
+    # Build thinking config for providers that support it. The harness
+    # knows the user's preference (show_thinking, thinking_effort) and the
+    # endpoint config (which provider we're talking to). The provider's
+    # build_request translates this into the native format.
+    my $thinking_opt;
+    if ($self->_endpoint_supports_thinking()) {
+        my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
+        my $effort = $self->{config} ? ($self->{config}->get('thinking_effort') // 'medium') : 'medium';
+        # If show_thinking is off and the provider doesn't have a useful
+        # default, we let the provider decide. If the model explicitly
+        # supports reasoning, default to enabled.
+        my $provider_supports = $self->_model_supports_reasoning($opts{model} // $self->{model});
+        if ($provider_supports) {
+            $thinking_opt = {
+                enabled => 1,
+                effort  => $effort,
+            };
+        }
+    }
+
     # Build the request using the native provider
     my $request = $provider->build_request($messages, $tools, {
         model => $opts{model} // $self->{model},
         max_tokens => $opts{max_tokens} // $self->_get_max_output_tokens($opts{model} // $self->{model}),
         temperature => $opts{temperature} // 0.2,
+        ($thinking_opt ? (thinking => $thinking_opt) : ()),
     });
     
     # Initialize tracking
@@ -4056,9 +4229,11 @@ sub _send_native_streaming {
                 }
                 elsif ($type =~ /^thinking/) {
                     if ($on_thinking) {
-                        $type eq 'thinking'       ? $on_thinking->($event->{content})
-                      : $type eq 'thinking_start' ? $on_thinking->(undef, 'start')
-                      :                             $on_thinking->(undef, 'end');
+                        $type eq 'thinking'         ? $on_thinking->($event->{content})
+                      : $type eq 'thinking_start'   ? $on_thinking->(undef, 'start')
+                      : $type eq 'thinking_end'     ? $on_thinking->(undef, 'end')
+                      : $type eq 'thinking_redacted' ? $on_thinking->(undef, 'redacted')
+                      :                               $on_thinking->(undef, 'end');
                     }
                 }
                 elsif ($type eq 'tool_start') {
@@ -4119,6 +4294,17 @@ sub _send_native_streaming {
         finish_reason => (@tool_calls ? 'tool_calls' : 'stop'),
     };
     $result->{tool_calls} = \@tool_calls if @tool_calls;
+
+    # Capture thinking blocks (with signature / redacted_thinking / thoughtSignature)
+    # from the provider so the caller can persist them to the assistant message
+    # for multi-turn round-trip.
+    if ($provider->can('get_thinking_blocks')) {
+        my $blocks = $provider->get_thinking_blocks();
+        if ($blocks && ref($blocks) eq 'ARRAY' && @$blocks) {
+            $result->{reasoning_blocks} = $blocks;
+        }
+        $provider->clear_thinking_blocks() if $provider->can('clear_thinking_blocks');
+    }
 
     return $result;
 }

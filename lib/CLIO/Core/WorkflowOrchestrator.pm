@@ -1613,6 +1613,19 @@ sub _prepare_tool_round {
         # Also set reasoning_content for DeepSeek API compatibility
         $assistant_msg->{reasoning_content} = $api_response->{reasoning_content} // $api_response->{accumulated_reasoning};
     }
+    # Native providers (Anthropic, Google) capture thinking blocks with
+    # signature / redacted_thinking / thoughtSignature for multi-turn round-trip.
+    # The OpenAI-format providers carry reasoning_details; the native ones
+    # carry reasoning_blocks. Both are persisted here and replayed by the
+    # provider's convert_messages for the next turn.
+    if ($api_response->{reasoning_blocks} && ref($api_response->{reasoning_blocks}) eq 'ARRAY') {
+        $assistant_msg->{reasoning_blocks} = $api_response->{reasoning_blocks};
+    }
+    # Responses API: encrypted_content + phase for the next-turn replay
+    # (used by Responses API endpoints like codex, gpt-5.x).
+    if ($api_response->{responses_reasoning_items} && ref($api_response->{responses_reasoning_items}) eq 'ARRAY') {
+        $assistant_msg->{responses_reasoning_items} = $api_response->{responses_reasoning_items};
+    }
     push @$messages, $assistant_msg;
 
     # Delayed save: assistant message saved with first tool result to prevent orphans
@@ -1626,6 +1639,12 @@ sub _prepare_tool_round {
     }
     if ($api_response->{reasoning_content} || $api_response->{accumulated_reasoning}) {
         $assistant_msg_pending->{reasoning_content} = $api_response->{reasoning_content} // $api_response->{accumulated_reasoning};
+    }
+    if ($api_response->{reasoning_blocks} && ref($api_response->{reasoning_blocks}) eq 'ARRAY') {
+        $assistant_msg_pending->{reasoning_blocks} = $api_response->{reasoning_blocks};
+    }
+    if ($api_response->{responses_reasoning_items} && ref($api_response->{responses_reasoning_items}) eq 'ARRAY') {
+        $assistant_msg_pending->{responses_reasoning_items} = $api_response->{responses_reasoning_items};
     }
 
     log_debug('WorkflowOrchestrator', "Delaying save of assistant message with tool_calls until first tool result completes");
