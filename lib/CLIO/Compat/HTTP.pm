@@ -65,7 +65,14 @@ sub new {
     my $proxy = $opts{proxy} || '';
     my $agent = $opts{agent} || 'CLIO/1.0';
     my $default_headers = $opts{default_headers} || {};
-    my $ssl_opts = $opts{ssl_opts} || { verify_SSL => 1 };
+    
+    # CLIO_TLS_VERIFY=0 disables SSL certificate verification (for self-signed certs)
+    # Env var wins when ssl_opts doesn't explicitly set verify_SSL
+    my $tls_verify = (exists $opts{ssl_opts} && defined $opts{ssl_opts}{verify_SSL})
+        ? $opts{ssl_opts}{verify_SSL}
+        : defined $ENV{CLIO_TLS_VERIFY} ? ($ENV{CLIO_TLS_VERIFY} ? 1 : 0)
+        : 1;
+    my $ssl_opts = $opts{ssl_opts} || { verify_SSL => $tls_verify };
     
     # Resolve proxy: explicit parameter > environment variables
     my $resolved_proxy = _resolve_proxy($proxy);
@@ -77,6 +84,7 @@ sub new {
         default_headers => $default_headers,
         use_curl_for_https => !$HAS_SSL && $HAS_CURL,
         proxy => $resolved_proxy,
+        tls_verify => $tls_verify,
     };
     
     # Initialize HTTP::Tiny
@@ -89,9 +97,7 @@ sub new {
     
     # Add SSL verification option only if SSL is available
     if ($HAS_SSL) {
-        # Use defined-or with proper precedence
-        my $verify = defined($ssl_opts->{verify_SSL}) ? $ssl_opts->{verify_SSL} : 1;
-        $http_tiny_opts{verify_SSL} = $verify;
+        $http_tiny_opts{verify_SSL} = $tls_verify;
     } elsif (!$HAS_CURL) {
         # Only warn if neither SSL nor curl is available - this is a real problem
         log_warning('HTTP', "Neither IO::Socket::SSL nor curl available - HTTPS will not work!");
@@ -323,6 +329,9 @@ sub _request_via_curl {
         push @cmd, '--cacert', $ca_bundle;
     }
     
+    # Disable TLS verification if requested
+    push @cmd, '--insecure' unless $self->{tls_verify};
+    
     # Add headers
     for my $header (keys %$headers) {
         push @cmd, '-H', "$header: $headers->{$header}";
@@ -447,6 +456,9 @@ sub _request_via_curl_streaming {
         push @cmd, '--cacert', $ca_bundle;
     }
     
+    # Disable TLS verification if requested
+    push @cmd, '--insecure' unless $self->{tls_verify};
+    
     # Add headers
     for my $header (keys %$headers) {
         push @cmd, '-H', "$header: $headers->{$header}";
@@ -487,7 +499,7 @@ sub _request_via_curl_streaming {
     my $accumulated_content = '';
     my $read_buf;
     my $chunk_size = 4096;  # Read in 4KB chunks for responsive streaming
-    my @chunks;  # Buffer chunks to deliver after headers are parsed
+    my $preliminary_response;  # Created on first chunk for real-time delivery
     
     # sysread on the pipe will block until data arrives or be interrupted by signals
     # The ALRM signal handler (set by Chat.pm) fires every second, causing EINTR
@@ -505,7 +517,21 @@ sub _request_via_curl_streaming {
         last if $bytes == 0;  # EOF
         
         $accumulated_content .= $read_buf;
-        push @chunks, $read_buf;  # Buffer chunk for later delivery
+        
+        # Deliver chunk immediately to callback (real-time streaming)
+        if ($callback) {
+            $preliminary_response //= bless {
+                success => 1,
+                status => 200,
+                reason => 'OK',
+                headers => {},
+                content => '',
+            }, 'CLIO::Compat::HTTP::Response';
+            eval { $callback->($read_buf, $preliminary_response, undef); };
+            if ($@) {
+                log_warning('HTTP::curl_streaming', "Callback error: $@");
+            }
+        }
     }
     
     close($curl_fh);
@@ -586,7 +612,6 @@ sub _request_via_curl_streaming {
     }
     
     # Create response object with correct headers (parsed from header file)
-    # and deliver buffered chunks to callback
     my $final_response = bless {
         success => ($status >= 200 && $status < 300),
         status => $status,
@@ -594,16 +619,6 @@ sub _request_via_curl_streaming {
         headers => \%resp_headers,
         content => $accumulated_content,
     }, 'CLIO::Compat::HTTP::Response';
-    
-    # Deliver buffered chunks to callback with correct response object
-    if ($callback) {
-        for my $chunk (@chunks) {
-            eval { $callback->($chunk, $final_response, undef); };
-            if ($@) {
-                log_warning('HTTP::curl_streaming', "Callback error: $@");
-            }
-        }
-    }
     
     return $final_response;
 }

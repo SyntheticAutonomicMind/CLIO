@@ -77,6 +77,16 @@ sub new {
         $self->{api_base} //= DEFAULT_API_BASE;
     }
     
+    # Normalize api_base: if it doesn't contain a versioned path (i.e. it's
+    # just a root URL like https://proxy.example.com or
+    # https://proxy.example.com:8443), append the standard Anthropic
+    # messages path.
+    if ($self->{api_base} && $self->{api_base} !~ m{/v\d+/}) {
+        $self->{api_base} =~ s{/+$}{};
+        $self->{api_base} .= '/v1/messages';
+        log_debug('Anthropic', "Normalized api_base to: $self->{api_base}");
+    }
+    
     if ($ENV{ANTHROPIC_API_KEY}) {
         $self->{api_key} = $ENV{ANTHROPIC_API_KEY};
     }
@@ -97,7 +107,18 @@ sub new {
             }
         };
         if ($@) {
-            log_warning('Anthropic', "Failed to parse ANTHROPIC_CUSTOM_HEADERS: $@");
+            # Fallback: try newline-separated "key: value" format
+            my %parsed;
+            for my $line (split /\\n|\n/, $ENV{ANTHROPIC_CUSTOM_HEADERS}) {
+                if ($line =~ /^([^:]+):\s*(.*)$/) {
+                    $parsed{$1} = $2;
+                }
+            }
+            if (%parsed) {
+                %all_custom_headers = (%all_custom_headers, %parsed);
+            } else {
+                log_warning('Anthropic', "Failed to parse ANTHROPIC_CUSTOM_HEADERS: $@");
+            }
         }
     }
     $self->{custom_headers} = \%all_custom_headers;
