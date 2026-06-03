@@ -225,6 +225,17 @@ sub build_request {
         }
     }
 
+    # When thinking is enabled, Anthropic requires temperature=1 and forbids
+    # top_k. top_p is allowed but only in the range [0.95, 1]. Remove
+    # incompatible sampling parameters to avoid 400 errors.
+    if ($payload->{thinking}) {
+        $payload->{temperature} = 1;
+        delete $payload->{top_k};
+        if (exists $payload->{top_p} && $payload->{top_p} < 0.95) {
+            $payload->{top_p} = 0.95;
+        }
+    }
+
     $self->debug("Built Anthropic request with " . scalar(@$anthropic_messages) . " messages");
     
     return {
