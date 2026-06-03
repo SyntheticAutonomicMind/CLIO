@@ -2079,6 +2079,13 @@ sub _build_request {
         $req->header('X-Title' => 'CLIO');
     }
     
+    # Apply provider extra headers (e.g., anthropic-version for Anthropic-compatible proxies)
+    if ($endpoint_config && $endpoint_config->{extra_headers} && ref($endpoint_config->{extra_headers}) eq 'HASH') {
+        for my $header (keys %{$endpoint_config->{extra_headers}}) {
+            $req->header($header => $endpoint_config->{extra_headers}{$header});
+        }
+    }
+    
     $req->content($json);
     
     return ($req, $final_endpoint);
@@ -4086,12 +4093,16 @@ Returns: Provider instance if native, undef if OpenAI-compatible
 sub _get_native_provider {
     my ($self) = @_;
 
-    # Get provider configuration
-    my $provider_name = $self->{provider} // 'github_copilot';
+    # Get provider configuration. Priority: config -> $self->{provider} (used by
+    # sub-agents) -> 'github_copilot' (last resort).
+    my $provider_name = $self->{config} ? $self->{config}->get('provider') : undef;
+    $provider_name //= $self->{provider} // 'github_copilot';
     my $provider_config = get_provider($provider_name);
     
     return undef unless $provider_config;
     return undef unless $provider_config->{native_api};
+    
+    log_debug('APIManager', "_get_native_provider: provider=$provider_name, native_api=1");
     
     my $module = $provider_config->{provider_module};
     return undef unless $module;
@@ -4193,26 +4204,20 @@ sub _send_native_streaming {
         ssl_opts => { verify_hostname => 1 },
     );
     
-    # Build HTTP request
-    require HTTP::Request;
-    my $http_req = HTTP::Request->new(
-        $request->{method} => $request->{url}
-    );
-    
-    for my $header (keys %{$request->{headers}}) {
-        $http_req->header($header => $request->{headers}{$header});
-    }
-    $http_req->content($request->{body});
-    
     log_debug('APIManager', "Native request to: $request->{url}");
     
-    # Make streaming request
+    # Make streaming request using curl-based streaming (no HTTP::Request dependency)
     my $response;
     eval {
-        $response = $ua->request($http_req, sub {
-            my ($chunk, $resp, $proto) = @_;
-            
-            $buffer .= $chunk;
+        $response = $ua->_request_via_curl_streaming(
+            $request->{method},
+            $request->{url},
+            $request->{headers},
+            $request->{body},
+            sub {
+                my ($chunk, $resp, $proto) = @_;
+                
+                $buffer .= $chunk;
             
             # Normalize CRLF to LF for providers that use \r\n line endings
             $buffer =~ s/\r\n/\n/g;
