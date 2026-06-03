@@ -182,6 +182,7 @@ my %PROVIDERS = (
         requires_auth => 'apikey',
         supports_tools => 1,
         supports_streaming => 1,
+        supports_reasoning => 1,
         native_api => 1,
         provider_module => 'CLIO::Providers::Google',
         max_context_tokens => 1048576,
@@ -189,6 +190,7 @@ my %PROVIDERS = (
             path_suffix => '/openai/chat/completions',
             temperature_range => [0.0, 2.0],
             supports_tools => 1,
+            google => 1,
         },
     },
     
