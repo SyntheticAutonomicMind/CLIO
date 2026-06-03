@@ -59,7 +59,7 @@ sub new {
         name => 'interact',
         description => q{Request user input, clarification, or decisions during task execution.
 
-THIS IS A JSON TOOL CALL, NOT TEXT. Do NOT use text markers like "[COLLABORATION]".
+THIS IS A JSON TOOL CALL, NOT TEXT. Always call via JSON function call, never as plain text.
 
 - FREE (does not consume API requests) and BLOCKING (pauses until user responds)
 - Use for: checkpoints, approvals, progress updates, questions, reporting blockers
@@ -270,7 +270,8 @@ sub request_input {
             if ($context->{session} && defined $user_response && $source ne 'agent_event') {
                 $context->{session}->add_message(
                     'assistant',
-                    "[COLLABORATION] $message" . ($user_context ? "\n\nContext: $user_context" : "")
+                    $message . ($user_context ? "\n\nContext: $user_context" : ""),
+                    { collaboration => 'request_input' }
                 );
                 $context->{session}->add_message('user', $user_response);
             }
@@ -308,7 +309,8 @@ sub request_input {
         # Add agent message (the request)
         $context->{session}->add_message(
             'assistant',
-            "[COLLABORATION] $message" . ($user_context ? "\n\nContext: $user_context" : "")
+            $message . ($user_context ? "\n\nContext: $user_context" : ""),
+            { collaboration => 'request_input' }
         );
         
         # Add user response

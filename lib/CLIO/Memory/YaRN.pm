@@ -267,8 +267,15 @@ sub compress_messages {
             push @user_requests, $summary;
         }
         elsif ($role eq 'assistant') {
-            # Collaboration/decision messages (from session add_message)
-            if ($content =~ /\[COLLABORATION\](.{1,300})/s) {
+            # Collaboration/decision messages (identified by metadata or legacy text prefix)
+            my $collab_type = $msg->{metadata} && $msg->{metadata}{collaboration};
+            if ($collab_type) {
+                # Modern: collaboration metadata on message
+                my $dec = substr($content, 0, 300);
+                $dec =~ s/\s+/ /g;
+                push @decisions, substr($dec, 0, 250);
+            } elsif ($content =~ /\[COLLABORATION\](.{1,300})/s) {
+                # Legacy: [COLLABORATION] text prefix (backward compat)
                 my $dec = $1;
                 $dec =~ s/\s+/ /g;
                 push @decisions, substr($dec, 0, 250);

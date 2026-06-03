@@ -266,6 +266,7 @@ sub parse_stream_event {
     # Parse JSON
     my $data;
     eval {
+        utf8::encode($line) if utf8::is_utf8($line);
         $data = decode_json($line);
     };
     if ($@) {
@@ -579,7 +580,10 @@ sub _convert_assistant_message {
             my $arguments = $tool_call->{function}{arguments};
             # Parse if string
             if (!ref($arguments)) {
-                eval { $arguments = decode_json($arguments); };
+                eval {
+                    utf8::encode($arguments) if utf8::is_utf8($arguments);
+                    $arguments = decode_json($arguments);
+                };
                 $arguments = {} if $@;
             }
 

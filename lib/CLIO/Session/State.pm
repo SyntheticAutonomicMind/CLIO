@@ -464,6 +464,10 @@ sub add_message {
         metadata => {
             sessionId => $self->{session_id},  # SAM compatibility
             source => $opts->{source} || 'primary',  # Track message origin (primary, subagent, etc.)
+            collaboration => $opts->{collaboration} || undef,  # Mark collaboration exchanges
+            # Values: 'request_input', 'interrupt', 'checkpoint', etc.
+            # Used by YaRN to identify and preserve collaboration exchanges
+            # during context trimming (replaces [COLLABORATION] text prefix)
             unix_timestamp => time(),  # Keep Unix timestamp for backwards compatibility
         },
     };

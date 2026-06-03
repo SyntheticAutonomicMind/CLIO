@@ -760,7 +760,37 @@ sub adapt_request_for_endpoint {
             $payload->{reasoning} = { enabled => \1, effort => $thinking_effort };
         }
     }
-    
+
+    # Add reasoning_effort for OpenAI native provider (o-series, gpt-5+).
+    # The /chat/completions endpoint accepts reasoning_effort on reasoning-capable
+    # models; sending it to non-reasoning models (gpt-4o, gpt-4.1) is rejected
+    # with "Unknown parameter". Pattern match keeps the param off non-reasoning models.
+    # The /responses path (codex, gpt-5+) builds its own payload and is unaffected.
+    if ($endpoint_config->{openai} && !$endpoint_config->{openrouter}) {
+        my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
+        my $model = $payload->{model} // '';
+        if ($show_thinking && $model =~ /^(?:o\d|gpt-5)/i) {
+            my $thinking_effort = $self->{config} ? ($self->{config}->get('thinking_effort') // 'medium') : 'medium';
+            $payload->{reasoning_effort} = $thinking_effort;
+            log_debug('APIManager', "OpenAI: added reasoning_effort=$thinking_effort for $model");
+        }
+    }
+
+    # Add reasoning_effort for GitHub Copilot /chat/completions path.
+    # Copilot exposes OpenAI o-series, gpt-5, and Claude 4 reasoning models
+    # through the chat completions endpoint. The /responses path is handled
+    # separately in _build_responses_api_payload (not affected here).
+    if ($endpoint_config->{requires_copilot_headers} && !$endpoint_config->{openai}) {
+        my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
+        my $model = $payload->{model} // '';
+        # Match: o-series (o1, o3, o4, ...), gpt-5+, and Claude 4 family
+        if ($show_thinking && $model =~ /^(?:o\d|gpt-5|claude-(?:sonnet|opus|haiku)-4)/i) {
+            my $thinking_effort = $self->{config} ? ($self->{config}->get('thinking_effort') // 'medium') : 'medium';
+            $payload->{reasoning_effort} = $thinking_effort;
+            log_debug('APIManager', "GitHub Copilot: added reasoning_effort=$thinking_effort for $model");
+        }
+    }
+
     # Add reasoning_split for MiniMax to separate thinking into reasoning_details field
     if ($endpoint_config->{minimax}) {
         $payload->{reasoning_split} = \1;  # JSON true
@@ -4308,32 +4338,48 @@ sub _send_native_streaming {
         my $result = { success => 0, error => "HTTP $status", retryable => ($status == 429 || $status >= 500) };
 
         if ($status == 429) {
-            $result->{error_type} = 'rate_limit';
-            # Try to extract retry_after from the error body.
-            # Anthropic proxy format: {"error": {"code": "RateLimitReached", "message": "Please wait 38 seconds..."}}
-            my $error_obj = eval { decode_json($error_body) };
-            if ($@ || ref($error_obj) ne 'HASH') {
-                $error_obj = undef;
+           $result->{error_type} = 'rate_limit';
+           # Try to extract retry_after from the error body.
+           # Anthropic proxy format: {"error": {"code": "RateLimitReached", "message": "Please wait 38 seconds..."}}
+           my $error_obj = eval { decode_json($error_body) };
+           if ($@ || ref($error_obj) ne 'HASH') {
+               $error_obj = undef;
+           }
+           my $err_msg = '';
+           if ($error_obj) {
+               # Navigate to the error message (various formats)
+               if (ref($error_obj->{error}) eq 'HASH') {
+                   $err_msg = $error_obj->{error}{message} // '';
+               } else {
+                   $err_msg = ($error_obj->{error} // '') . ($error_obj->{message} // '');
+               }
+           }
+            # Check Retry-After header first (authoritative for Azure APIM proxies),
+            # then fall back to body text extraction.
+            my $resp_headers = $response->can("headers") ? $response->headers : undef;
+            my $header_retry;
+            if (ref($resp_headers) eq 'HASH') {
+                $header_retry = $resp_headers->{'retry-after'};
+            } elsif ($resp_headers && $resp_headers->can("header")) {
+                $header_retry = $resp_headers->header("Retry-After");
             }
-            my $err_msg = '';
-            if ($error_obj) {
-                # Navigate to the error message (various formats)
-                if (ref($error_obj->{error}) eq 'HASH') {
-                    $err_msg = $error_obj->{error}{message} // '';
-                } else {
-                    $err_msg = ($error_obj->{error} // '') . ($error_obj->{message} // '');
-                }
-            }
-            # Extract wait time from patterns like "Please wait 38 seconds" or "retry in 30 seconds"
-            if ($err_msg =~ /(?:please\s+wait|retry\s+in)\s+([\d.]+)\s*s(?:econds?)?/i) {
+            if ($header_retry && $header_retry =~ /^([\d.]+)$/) {
                 $result->{retry_after} = int($1) + 1;
             }
-            # Also check Retry-After header
+            # Fall back to body text if header didn't provide retry_after
+            elsif ($err_msg =~ /(?:please\s+wait|retry\s+in)\s+([\d.]+)\s*s(?:econds?)?/i) {
+                $result->{retry_after} = int($1) + 1;
+            }
+            # Also check Retry-After header via response object (fallback)
             elsif (my $retry_after_header = $response->header('Retry-After')) {
                 $result->{retry_after} = int($retry_after_header) + 1;
             }
             else {
                 $result->{retry_after} = 60;  # Default backoff
+            }
+            # Process rate limit headers from 429 responses too
+            if ($self->{response_handler} && $resp_headers) {
+                $self->{response_handler}->process_rate_limit_headers($resp_headers);
             }
         }
         elsif ($status == 400) {
@@ -4355,6 +4401,12 @@ sub _send_native_streaming {
         }
 
         return $result;
+   }
+
+    # Process rate limit headers on successful responses too (proactive token quota tracking)
+    if ($self->{response_handler}) {
+        my $resp_headers = $response->can("headers") ? $response->headers : undef;
+        $self->{response_handler}->process_rate_limit_headers($resp_headers) if $resp_headers;
     }
 
     # Build result

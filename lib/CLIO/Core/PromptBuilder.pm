@@ -226,7 +226,7 @@ sub generate_tools_section {
     # Add specific warning about interact tool
     $section .= "## **interact - REQUIRED TOOL CALL**\n\n";
     $section .= "**This tool MUST be called via JSON function call. DO NOT use text markers.**\n\n";
-    $section .= "**WRONG (invalid):** `CLIO: [COLLABORATION] message...`\n";
+    $section .= "**WRONG (invalid):** Writing a message to the user in plain text instead of calling interact.\n";
     $section .= "**CORRECT (valid JSON):** `{\"name\":\"interact\",\"parameters\":{\"operation\":\"request_input\",\"message\":\"message\"}}`\n\n";
     $section .= "**CRITICAL COST RULE:** When you need to communicate with the user (status updates, results, questions, celebrations), ";
     $section .= "ALWAYS use `interact` as a tool call. Do NOT write bare text responses to the user - ";
