@@ -400,6 +400,8 @@ sub _fetch_provider_capabilities {
         return $self->_fetch_github_copilot_capabilities($model);
     }
     elsif ($provider_def->{native_api}) {
+        # Route native_api providers to their specific fetchers
+        return $self->_fetch_anthropic_capabilities($model) if $provider =~ /^anthropic$/i;
         return $self->_fetch_google_capabilities($model);
     }
     elsif ($provider_def->{capability_map}) {
@@ -446,6 +448,104 @@ sub _fetch_github_copilot_capabilities {
     }
     
     return $caps;
+}
+
+=head2 _fetch_anthropic_capabilities
+
+Fetch capabilities from Anthropic API.
+
+Arguments:
+- $model: Model identifier (e.g. 'claude-sonnet-4-20250514')
+
+Returns:
+- Hashref with capability data
+
+=cut
+
+sub _fetch_anthropic_capabilities {
+    my ($self, $model) = @_;
+    
+    # Anthropic /v1/models/{model_id} endpoint
+    # Response format (from Anthropic SDK):
+    #   { id, display_name, created_at, type: "model",
+    #     max_input_tokens, max_tokens,
+    #     capabilities: { thinking: { supported, types: { adaptive, enabled } },
+    #                     effort: { supported, ... },
+    #                     image_input: { supported }, ... } }
+    my $api_base = 'https://api.anthropic.com/v1/models';
+    
+    # Get API key for Anthropic
+    my $api_key;
+    eval {
+        require CLIO::Core::Config;
+        my $config = CLIO::Core::Config->new();
+        $api_key = $config->get_provider_key('anthropic');
+    };
+    
+    return undef unless $api_key;
+    
+    my $http = $self->get_http();
+    my $url = "$api_base/$model";
+    
+    my $resp = $http->get($url, headers => {
+        'x-api-key' => $api_key,
+        'anthropic-version' => '2023-06-01',
+        'Accept' => 'application/json',
+    });
+    
+    unless ($resp->{success}) {
+        log_debug('ModelCapabilitiesManager', "Anthropic models API failed for $model: HTTP $resp->{status}");
+        return undef;
+    }
+    
+    my $data;
+    eval {
+        $data = decode_json($resp->{content});
+    };
+    if ($@) {
+        log_debug('ModelCapabilitiesManager', "Failed to parse Anthropic response: $@");
+        return undef;
+    }
+    
+    return undef unless $data && $data->{id};
+    
+    # Extract capabilities from the API response
+    my $caps = $data->{capabilities} || {};
+    my $thinking = $caps->{thinking} || {};
+    my $effort = $caps->{effort} || {};
+    my $image_input = $caps->{image_input} || {};
+    
+    # max_tokens from the API is the maximum value for the max_tokens parameter
+    # (i.e., max output tokens). max_input_tokens is the context window.
+    my $max_output = $data->{max_tokens};
+    my $context_window = $data->{max_input_tokens};
+    
+    # Fallback to provider-level defaults if API doesn't provide specifics
+    require CLIO::Providers;
+    my $pdef = CLIO::Providers::get_provider('anthropic');
+    $max_output //= $pdef->{max_output_tokens} if $pdef;
+    $context_window //= $pdef->{max_context_tokens} if $pdef;
+    
+    return {
+        provider              => 'anthropic',
+        model                 => $data->{id} // $model,
+        context_window        => $context_window,
+        max_prompt_tokens     => $context_window,
+        max_output_tokens     => $max_output,
+        supports_tools        => 1,  # All Claude models support tools
+        supports_streaming    => 1,
+        supports_vision       => ($image_input->{supported} ? 1 : 0),
+        supports_reasoning    => ($thinking->{supported} ? 1 : 0),
+        supports_adaptive_thinking => ($thinking->{types} && $thinking->{types}{adaptive} && $thinking->{types}{adaptive}{supported} ? 1 : 0),
+        supports_enabled_thinking  => ($thinking->{types} && $thinking->{types}{enabled} && $thinking->{types}{enabled}{supported} ? 1 : 0),
+        embeddings_dimension  => undef,
+        architecture          => 'claude',
+        quantization          => undef,
+        parameters            => undef,
+        capabilities          => [],
+        size_bytes            => undef,
+        raw                   => $data,
+    };
 }
 
 =head2 _fetch_google_capabilities
