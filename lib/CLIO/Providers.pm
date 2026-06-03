@@ -72,6 +72,7 @@ my %PROVIDERS = (
         requires_auth => 'copilot',
         supports_tools => 1,
         supports_streaming => 1,
+        supports_reasoning => 1,  # Claude 4, GPT-5, o-series exposed via /chat/completions
         chat_endpoint_suffix => '/chat/completions',
         copilot_models => 1,
         priority_display => 1,
@@ -90,10 +91,12 @@ my %PROVIDERS = (
         requires_auth => 'apikey',
         supports_tools => 1,
         supports_streaming => 1,
+        supports_reasoning => 1,  # o-series and gpt-5 accept reasoning_effort
         endpoint => {
             path_suffix => '/chat/completions',
             temperature_range => [0.0, 2.0],
             supports_tools => 1,
+            openai => 1,  # Marker for APIManager.adapt_request_for_endpoint
         },
     },
     
@@ -151,7 +154,6 @@ my %PROVIDERS = (
         requires_auth => 'apikey',
         supports_tools => 1,
         supports_streaming => 1,
-        supports_reasoning => 1,
         max_context_tokens => 128000,
         endpoint => {
             path_suffix => '',

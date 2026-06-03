@@ -1080,16 +1080,38 @@ sub _process_ai_request {
             !$self->{session}->state()->{user_interrupted}) {
             my $key = eval { ReadKey(-1) };
             if (defined $key) {
-                my $key_desc = (ord($key) == 27) ? 'ESC' : 
-                               (ord($key) < 32)  ? sprintf('Ctrl+%c', ord($key) + 64) :
-                               "'$key'";
-                log_debug('Chat', "ALRM interrupt: keypress detected ($key_desc)");
+                my $ord = ord($key);
                 
-                # Drain remaining buffered input
-                while (defined(eval { ReadKey(-1) })) { }
-                
-                # Set interrupt flag - WorkflowOrchestrator will pick this up
-                $self->{session}->state()->{user_interrupted} = 1;
+                if ($ord == 27) {
+                    # ESC key or escape sequence. Check if more characters
+                    # follow immediately - if so, this is a terminal escape
+                    # sequence (mouse event, focus event, arrow key, etc.)
+                    # not a standalone ESC keypress.
+                    my $next = eval { ReadKey(0.05) };  # 50ms wait for sequence chars
+                    if (defined $next) {
+                        # Escape sequence - drain remaining chars and ignore
+                        log_debug('Chat', "ALRM: escape sequence detected, draining");
+                        while (defined(eval { ReadKey(-1) })) { }
+                    } else {
+                        # Standalone ESC - this is an interrupt
+                        log_debug('Chat', "ALRM interrupt: ESC key detected");
+                        while (defined(eval { ReadKey(-1) })) { }
+                        $self->{session}->state()->{user_interrupted} = 1;
+                    }
+                } elsif ($ord == 3) {
+                    # Ctrl+C - interrupt
+                    log_debug('Chat', "ALRM interrupt: Ctrl+C detected");
+                    while (defined(eval { ReadKey(-1) })) { }
+                    $self->{session}->state()->{user_interrupted} = 1;
+                } else {
+                    # Any other key - drain but do NOT trigger interrupt.
+                    # Mouse events, focus events, resize events, and other
+                    # terminal control sequences should not interrupt the agent.
+                    my $key_desc = ($ord < 32) ? sprintf('Ctrl+%c', $ord + 64) :
+                                   sprintf('0x%02x', $ord);
+                    log_debug('Chat', "ALRM: non-interrupt key ($key_desc), draining");
+                    while (defined(eval { ReadKey(-1) })) { }
+                }
             }
         }
         
