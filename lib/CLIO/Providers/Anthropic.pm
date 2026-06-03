@@ -9,6 +9,7 @@ use utf8;
 use parent 'CLIO::Providers::Base';
 use CLIO::Util::JSON qw(encode_json decode_json);
 use CLIO::Core::Logger qw(log_debug log_warning);
+use CLIO::Core::Logger qw(log_debug log_warning);
 
 =head1 NAME
 
@@ -171,12 +172,20 @@ sub build_request {
     
     # Add system prompt if present
     if ($system_prompt) {
-        $payload->{system} = $system_prompt;
+        $payload->{system} = [{
+            type          => 'text',
+            text          => $system_prompt,
+            cache_control => { type => 'ephemeral' },
+        }];
     }
     
     # Add tools if present
     if ($tools && @$tools) {
-        $payload->{tools} = [ map { $self->convert_tool($_) } @$tools ];
+        my @converted_tools = map { $self->convert_tool($_) } @$tools;
+        if (@converted_tools) {
+            $converted_tools[-1]{cache_control} = { type => 'ephemeral' };
+            $payload->{tools} = \@converted_tools;
+        }
         # Default to auto tool choice
         $payload->{tool_choice} = { type => 'auto' };
     }
@@ -195,8 +204,9 @@ sub build_request {
     # configuration the caller wants. Shape:
     #   { enabled => 1, effort => 'low|medium|high', budget_tokens => N, mode => 'enabled|adaptive' }
     # When APIManager passes thinking => { enabled => 0 }, thinking is fully disabled.
-    # When no thinking option is passed, we enable thinking by default for models that
-    # support it (Anthropic extended thinking is the strongest reasoning path).
+# When no thinking option is passed, thinking defaults to disabled. The caller
+# (APIManager._send_native_streaming) owns the decision and always passes an
+# explicit thinking config when it wants thinking enabled.
     my $thinking = $options->{thinking};
     my $model = $effective_model;
     my $thinking_enabled = 0;
@@ -211,9 +221,10 @@ sub build_request {
         # else: enabled => 0, thinking is fully disabled
     }
     else {
-        # No thinking option passed - enable by default for models that support it
-        $thinking = $self->_default_thinking_config($model);
-        $thinking_enabled = $thinking->{enabled} ? 1 : 0;
+        # No thinking option passed - default to disabled. The caller should
+        # always pass an explicit thinking config when it wants thinking enabled.
+        $thinking = { enabled => 0 };
+        $thinking_enabled = 0;
     }
 
     # Apply thinking to payload when enabled
@@ -370,6 +381,7 @@ sub parse_stream_event {
     # Parse JSON
     my $data;
     eval {
+        utf8::encode($line) if utf8::is_utf8($line);
         $data = decode_json($line);
     };
     if ($@) {
@@ -495,7 +507,9 @@ sub parse_stream_event {
             my $arguments = {};
             if ($self->{_accumulated_json}) {
                 eval {
-                    $arguments = decode_json($self->{_accumulated_json});
+                    my $json_str = $self->{_accumulated_json};
+                    utf8::encode($json_str) if utf8::is_utf8($json_str);
+                    $arguments = decode_json($json_str);
                 };
                 if ($@) {
                     log_warning('Anthropic', "Failed to parse tool arguments: $@");
@@ -819,7 +833,10 @@ sub _convert_assistant_message {
             my $arguments = $tool_call->{function}{arguments};
             # Parse if string
             if (!ref($arguments)) {
-                eval { $arguments = decode_json($arguments); };
+                eval {
+                    utf8::encode($arguments) if utf8::is_utf8($arguments);
+                    $arguments = decode_json($arguments);
+                };
                 $arguments = {} if $@;
             }
 
