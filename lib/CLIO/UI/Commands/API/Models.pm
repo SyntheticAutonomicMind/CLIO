@@ -189,36 +189,78 @@ sub _fetch_provider_models {
             log_warning('API', "Failed to fetch GitHub Copilot models: $@");
         }
     } elsif ($provider_def->{native_api}) {
-        my $api_base = $provider_def->{api_base} || 'https://generativelanguage.googleapis.com/v1beta';
-        $api_base =~ s{/+$}{};
-        my $models_url = "$api_base/models?key=$api_key";
+        if ($provider_def->{endpoint} && $provider_def->{endpoint}{anthropic}) {
+            # Anthropic-compatible provider: use x-api-key auth and /v1/models endpoint
+            my $stored_base = $self->{config}->get_provider_base($provider_name);
+            my $env_base = $ENV{ANTHROPIC_BASE_URL};
+            my $def_base = $provider_def->{api_base} // 'https://api.anthropic.com/v1/messages';
+            my $api_base = $stored_base || $env_base || $def_base;
 
-        eval {
-            require CLIO::Compat::HTTP;
-            my $ua = CLIO::Compat::HTTP->new(timeout => 30);
-            my $resp = $ua->get($models_url, headers => { 'Accept' => 'application/json' });
+            # Derive the models URL: strip any path suffix and use /v1/models
+            (my $base_root = $api_base) =~ s{/v\d+/.*$}{};
+            my $models_url = "$base_root/v1/models";
 
-            if ($resp->is_success) {
-                my $data = decode_json($resp->decoded_content);
-                for my $m (@{$data->{models} || []}) {
-                    my @methods = @{$m->{supportedGenerationMethods} || []};
-                    next unless grep { $_ eq 'generateContent' } @methods;
-                    (my $model_id = $m->{name}) =~ s{^models/}{};
-                    push @$models, {
-                        id          => $model_id,
-                        name        => $m->{displayName} || $model_id,
-                        _context_tokens  => $m->{inputTokenLimit},
-                        _output_tokens   => $m->{outputTokenLimit},
-                        _supports_tools  => (grep { $_ eq 'generateContent' } @methods) ? 1 : 0,
-                        _supports_vision => (grep { $_ eq 'imageUnderstanding' } @methods) ? 1 : 0,
-                    };
+            eval {
+                require CLIO::Compat::HTTP;
+                my $ua = CLIO::Compat::HTTP->new(timeout => 30);
+                my %headers = (
+                    'x-api-key'        => $api_key,
+                    'anthropic-version' => '2023-06-01',
+                    'Accept'           => 'application/json',
+                );
+                my $resp = $ua->get($models_url, headers => \%headers);
+                if ($resp->is_success) {
+                    my $data = decode_json($resp->decoded_content);
+                    for my $m (@{$data->{data} || []}) {
+                        push @$models, {
+                            id               => $m->{id},
+                            name             => $m->{display_name} || $m->{id},
+                            _context_tokens  => 200000,
+                            _output_tokens   => 32000,
+                            _supports_tools  => 1,
+                            _supports_vision => 1,
+                        };
+                    }
+                } else {
+                    log_warning('API', "Failed to fetch Anthropic models: HTTP " . $resp->code . " " . ($resp->decoded_content // ''));
                 }
-            } else {
-                log_warning('API', "Failed to fetch Google models: HTTP " . $resp->code . " " . ($resp->decoded_content // ''));
+            };
+            if ($@) {
+                log_warning('API', "Failed to fetch Anthropic models: $@");
             }
-        };
-        if ($@) {
-            log_warning('API', "Failed to fetch Google models: $@");
+        } else {
+            # Google native provider
+            my $api_base = $provider_def->{api_base} || 'https://generativelanguage.googleapis.com/v1beta';
+            $api_base =~ s{/+$}{};
+            my $models_url = "$api_base/models?key=$api_key";
+
+            eval {
+                require CLIO::Compat::HTTP;
+                my $ua = CLIO::Compat::HTTP->new(timeout => 30);
+                my $resp = $ua->get($models_url, headers => { 'Accept' => 'application/json' });
+
+                if ($resp->is_success) {
+                    my $data = decode_json($resp->decoded_content);
+                    for my $m (@{$data->{models} || []}) {
+                        my @methods = @{$m->{supportedGenerationMethods} || []};
+                        next unless grep { $_ eq 'generateContent' } @methods;
+                        (my $model_id = $m->{name}) =~ s{^models/}{};
+                        push @$models, {
+                            id          => $model_id,
+                            name        => $m->{displayName} || $model_id,
+                            _context_tokens  => $m->{inputTokenLimit},
+                            _output_tokens   => $m->{outputTokenLimit},
+                            _supports_tools  => (grep { $_ eq 'generateContent' } @methods) ? 1 : 0,
+                            _supports_vision => (grep { $_ eq 'imageUnderstanding' } @methods) ? 1 : 0,
+                        };
+                    }
+                } else {
+                    log_warning('API', "Failed to fetch Google models: HTTP " . $resp->code . " " . ($resp->decoded_content // ''));
+                }
+            };
+            if ($@) {
+                log_warning('API', "Failed to fetch Google models: $@");
+            }
         }
     } elsif ($provider_def->{static_models}) {
         $models = $self->_get_static_models($provider_name);
