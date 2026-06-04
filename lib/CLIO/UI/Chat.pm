@@ -91,10 +91,11 @@ sub new {
         theme => $args{theme} || $saved_theme,
     );
     
-    # Initialize markdown renderer with theme manager
+    # Initialize markdown renderer with theme manager and terminal width
     $self->{markdown_renderer} = CLIO::UI::Markdown->new(
         debug => $args{debug},
         theme_mgr => $self->{theme_mgr},
+        terminal_width => $self->{terminal_width},
     );
     
     # Initialize host protocol (structured GUI communication)
@@ -106,6 +107,9 @@ sub new {
         $self->{terminal_width} = $width if $width && $width > 0;
         $self->{terminal_height} = $height if $height && $height > 0;
     };
+    
+    # Update markdown renderer with actual terminal width
+    $self->{markdown_renderer}{terminal_width} = $self->{terminal_width};
     
     # Fallback to LINES environment variable if available
     if ($ENV{LINES} && $ENV{LINES} > 0) {
@@ -180,6 +184,9 @@ sub refresh_terminal_size {
     if ($ENV{LINES} && $ENV{LINES} > 0) {
         $self->{terminal_height} = $ENV{LINES};
     }
+    
+    # Update markdown renderer with new terminal width
+    $self->{markdown_renderer}{terminal_width} = $self->{terminal_width} if $self->{markdown_renderer};
 }
 
 =head2 flush_output_buffer

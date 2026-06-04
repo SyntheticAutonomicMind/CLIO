@@ -381,21 +381,285 @@ sub render_table {
         $is_header = 0;  # Only first row is header
     }
     
-    # Build formatted table
+    # Calculate total table width to decide if wrapping is needed
+    # Format: | content | content | = 1 (left border) + sum(width + 3 per col)
+    # Each cell: " " + content + " " + "|" = width + 3 chars
+    my $num_cols = scalar @col_widths;
+    
+    my $term_width = $self->{terminal_width} || 80;
+    
+    # If table fits, render normally
+    my $table_width = 1;  # Left border
+    for my $w (@col_widths) {
+        $table_width += $w + 3;  # space + content + space + border
+    }
+    
+    if ($table_width <= $term_width) {
+        # Table fits - render without wrapping
+        return $self->_render_table_formatted(\@parsed_rows, \@col_widths);
+    }
+    
+    # Table is too wide - need to wrap columns
+    # Strategy: reduce column widths to fit, wrapping cell content
+    # First, determine how much space we have for content
+    # Available = term_width - 1 (left border) - 3 per col (space, space, border)
+    my $available_for_content = $term_width - 1 - (3 * $num_cols);
+    $available_for_content = $num_cols if $available_for_content < $num_cols;  # At least 1 per col
+    
+    # Distribute available width proportionally, with minimum widths
+    # Minimum width for each column is the length of the header text (or 1)
+    my @min_widths;
+    for my $i (0 .. $#col_widths) {
+        if ($parsed_rows[0] && $parsed_rows[0]{cells}[$i]) {
+            $min_widths[$i] = $self->_visual_length($parsed_rows[0]{cells}[$i]);
+            $min_widths[$i] = 3 if $min_widths[$i] < 3;  # At least 3 chars
+        } else {
+            $min_widths[$i] = 3;
+        }
+    }
+    
+    # Calculate target widths: proportional to original, but respecting minimums
+    my @target_widths;
+    my $total_min = 0;
+    for my $i (0 .. $#col_widths) {
+        $total_min += $min_widths[$i];
+    }
+    
+    if ($total_min <= $available_for_content) {
+        # Minimums fit - distribute remaining space proportionally
+        my $remaining = $available_for_content - $total_min;
+        my $total_original = 0;
+        for my $i (0 .. $#col_widths) {
+            $total_original += ($col_widths[$i] - $min_widths[$i]);
+        }
+        
+        for my $i (0 .. $#col_widths) {
+            if ($total_original > 0) {
+                my $proportion = ($col_widths[$i] - $min_widths[$i]) / $total_original;
+                $target_widths[$i] = $min_widths[$i] + int($remaining * $proportion);
+            } else {
+                $target_widths[$i] = $min_widths[$i];
+            }
+        }
+        
+        # Distribute rounding remainder
+        my $current_total = 0;
+        for my $w (@target_widths) { $current_total += $w; }
+        my $rounding_remainder = $available_for_content - $current_total;
+        for my $i (0 .. $#col_widths) {
+            if ($rounding_remainder <= 0) { last; }
+            $target_widths[$i]++;
+            $rounding_remainder--;
+        }
+
+        # Safety: if rounding pushed total above available (e.g. min_widths
+        # sum already exceeds available), trim from the largest column down
+        # until we fit. This ensures the table width never exceeds the
+        # terminal width (5-char discrepancy bug fix).
+        $current_total = 0;
+        for my $w (@target_widths) { $current_total += $w; }
+        if ($current_total > $available_for_content) {
+            my $over = $current_total - $available_for_content;
+            # Sort column indices by width descending
+            my @order = sort { $target_widths[$b] <=> $target_widths[$a] } 0 .. $#target_widths;
+            for my $idx (@order) {
+                last if $over <= 0;
+                while ($target_widths[$idx] > $min_widths[$idx] && $over > 0) {
+                    $target_widths[$idx]--;
+                    $over--;
+                }
+            }
+        }
+    } else {
+        # Minimums don't fit (e.g. one column's header is wider than the
+        # available terminal). Compress widths proportionally to the
+        # available space so the table fits the terminal, with cells
+        # wrapping to honor the compressed width. Apply a hard floor
+        # of 1 to keep every column at least one cell wide.
+        my $scale = $available_for_content / $total_min;
+        my @floored;
+        my $floor_total = 0;
+        for my $i (0 .. $#min_widths) {
+            my $scaled = int($min_widths[$i] * $scale);
+            $scaled = 1 if $scaled < 1;
+            $floored[$i] = $scaled;
+            $floor_total += $scaled;
+        }
+        
+        if ($floor_total > $available_for_content) {
+            # Rounding pushed us over. Trim from the largest column down
+            # until we fit.
+            my @order = sort { $floored[$b] <=> $floored[$a] } 0 .. $#floored;
+            for my $idx (@order) {
+                last if $floor_total <= $available_for_content;
+                if ($floored[$idx] > 1) {
+                    $floored[$idx]--;
+                    $floor_total--;
+                }
+            }
+        }
+        
+        @target_widths = @floored;
+    }
+    
+    # Now wrap cell content to fit target widths
+    my @wrapped_rows;
+    for my $row (@parsed_rows) {
+        my @cell_wraps;
+        for my $i (0 .. $#{$row->{cells}}) {
+            my $cell = $row->{cells}[$i];
+            my $target = $target_widths[$i];
+            my @lines = $self->_wrap_text($cell, $target);
+            push @cell_wraps, \@lines;
+        }
+        
+        # Find max number of lines in any cell for this row
+        my $max_lines = 1;
+        for my $wrap (@cell_wraps) {
+            $max_lines = scalar(@$wrap) if scalar(@$wrap) > $max_lines;
+        }
+        
+        # Create wrapped row entries
+        for my $line_num (0 .. $max_lines - 1) {
+            my @line_cells;
+            for my $i (0 .. $#cell_wraps) {
+                $line_cells[$i] = $cell_wraps[$i][$line_num] // '';
+            }
+            push @wrapped_rows, {
+                cells => \@line_cells,
+                is_header => ($row->{is_header} && $line_num == 0),
+                is_continuation => ($line_num > 0),
+            };
+        }
+    }
+    
+    # Recalculate column widths based on wrapped content
+    my @new_col_widths;
+    for my $i (0 .. $#target_widths) {
+        $new_col_widths[$i] = $target_widths[$i];
+    }
+    
+    return $self->_render_table_formatted(\@wrapped_rows, \@new_col_widths);
+}
+
+=head2 _wrap_text
+
+Wrap text to fit within a specified width, breaking at word boundaries.
+Returns a list of lines that fit within the width.
+
+=cut
+
+sub _wrap_text {
+    my ($self, $text, $width) = @_;
+    
+    return ('') unless defined $text && length($text);
+    return ($text) if $self->_visual_length($text) <= $width;
+    
+    my @lines;
+    my $current_line = '';
+    my $current_len = 0;
+    
+    # Split text into words, preserving spaces
+    my @words = split(/(\s+)/, $text);
+    
+    for my $word (@words) {
+        next unless defined $word && length($word) > 0;
+        
+        my $word_len = $self->_visual_length($word);
+        
+        # If word itself is wider than the column, we need to break it
+        if ($word_len > $width) {
+            # If we have content on the current line, push it first
+            if ($current_len > 0) {
+                push @lines, $current_line;
+                $current_line = '';
+                $current_len = 0;
+            }
+            
+            # Break the long word character by character
+            my $partial = '';
+            my $partial_len = 0;
+            for my $char (split //, $word) {
+                my $char_width = $self->_visual_length($char);
+                if ($partial_len + $char_width > $width) {
+                    push @lines, $partial;
+                    $partial = $char;
+                    $partial_len = $char_width;
+                } else {
+                    $partial .= $char;
+                    $partial_len += $char_width;
+                }
+            }
+            if (length($partial) > 0) {
+                $current_line = $partial;
+                $current_len = $partial_len;
+            }
+            next;
+        }
+        
+        # Check if adding this word would exceed the width
+        my $new_len = $current_len + $word_len;
+        # Add a space if we already have content and this isn't whitespace
+        my $separator = '';
+        if ($current_len > 0 && $word !~ /^\s+$/) {
+            $separator = ' ';
+            $new_len += 1;
+        }
+        
+        if ($new_len <= $width) {
+            $current_line .= $separator . $word;
+            $current_len = $new_len;
+        } else {
+            # Start a new line
+            if ($current_len > 0) {
+                push @lines, $current_line;
+            }
+            # Skip whitespace at line start
+            if ($word !~ /^\s+$/) {
+                $current_line = $word;
+                $current_len = $word_len;
+            } else {
+                $current_line = '';
+                $current_len = 0;
+            }
+        }
+    }
+    
+    # Push remaining content
+    if ($current_len > 0) {
+        push @lines, $current_line;
+    }
+    
+    # Ensure at least one line
+    push @lines, '' unless @lines;
+    
+    return @lines;
+}
+
+=head2 _render_table_formatted
+
+Render a parsed table with the given column widths. Handles both normal
+and wrapped (multi-line) rows.
+
+=cut
+
+sub _render_table_formatted {
+    my ($self, $parsed_rows, $col_widths) = @_;
+    
     my @output;
     
     # Top border
     my $h = box_char('horizontal');
-    my $top_border = box_char('topleft') . join(box_char('tdown'), map { $h x ($_ + 2) } @col_widths) . box_char('topright');
+    my $top_border = box_char('topleft') . join(box_char('tdown'), map { $h x ($_ + 2) } @$col_widths) . box_char('topright');
     push @output, $self->color('table_border') . $top_border . '@RESET@';
     
-    for my $i (0 .. $#parsed_rows) {
-        my $row = $parsed_rows[$i];
+    for my $i (0 .. $#{$parsed_rows}) {
+        my $row = $parsed_rows->[$i];
         my $line = box_char('vertical');
         
         for my $j (0 .. $#{$row->{cells}}) {
             my $cell = $row->{cells}[$j];
-            my $width = $col_widths[$j];
+            my $width = $col_widths->[$j];
             
             # Calculate visual length for padding (before adding ANSI codes)
             my $visual_len = $self->_visual_length($cell);
@@ -421,15 +685,16 @@ sub render_table {
         
         push @output, $line;
         
-        # Add separator after header
-        if ($row->{is_header}) {
-            my $sep = box_char('tright') . join(box_char('cross'), map { $h x ($_ + 2) } @col_widths) . box_char('tleft');
+        # Add separator between distinct rows only
+        # Skip separators between wrapped continuations of the same logical row
+        if ($i < $#{$parsed_rows} && !$parsed_rows->[$i + 1]{is_continuation}) {
+            my $sep = box_char('tright') . join(box_char('cross'), map { $h x ($_ + 2) } @$col_widths) . box_char('tleft');
             push @output, $self->color('table_border') . $sep . '@RESET@';
         }
     }
     
     # Bottom border
-    my $bottom_border = box_char('bottomleft') . join(box_char('tup'), map { $h x ($_ + 2) } @col_widths) . box_char('bottomright');
+    my $bottom_border = box_char('bottomleft') . join(box_char('tup'), map { $h x ($_ + 2) } @$col_widths) . box_char('bottomright');
     push @output, $self->color('table_border') . $bottom_border . '@RESET@';
     
     return join("\n", @output);
