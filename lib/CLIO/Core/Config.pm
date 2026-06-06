@@ -380,19 +380,15 @@ sub set_provider {
     }
     
     # When switching providers, load the per-provider API key if available
-    # This enables seamless switching between providers with stored keys
+    # Switching between providers with stored keys
     my $provider_key = $self->get_provider_key($provider);
     if ($provider_key) {
         $self->{config}->{api_key} = $provider_key;
         log_debug('Config', "Loaded API key for provider '$provider' from api_keys");
-    } else {
-        # Clear old API key when switching providers (no stored key)
-        # Each provider has its own authentication mechanism
-        # (SAM uses api_key, GitHub Copilot uses OAuth tokens, etc.)
-        delete $self->{config}->{api_key};
-        delete $self->{user_set}->{api_key};
-        log_debug('Config', "No stored API key for provider '$provider'");
     }
+    # When no per-provider key exists, keep existing api_key.
+    # It may be valid for the new provider. Providers that use other
+    # auth (GitHub Copilot OAuth) will handle that in APIManager.
     
     # Remove api_base and model from user_set if they were there
     # (user is now using provider defaults, not custom values)

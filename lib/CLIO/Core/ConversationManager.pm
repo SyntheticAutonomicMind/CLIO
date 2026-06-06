@@ -138,7 +138,7 @@ sub load_conversation_history {
             next;
         }
 
-        # Preserve message structure for proper API correlation
+        # Preserve message structure for API correlation
         if ($msg->{role} eq 'tool') {
             push @valid_messages, {
                 role => $msg->{role},
@@ -352,9 +352,9 @@ sub trim_conversation_for_api {
 
 =head2 enforce_message_alternation
 
-Enforce strict user/assistant alternation for provider compatibility.
+Enforce strict user/assistant alternation.
 
-Some providers (like Claude via GitHub Copilot) require alternating roles.
+Some providers require alternating roles.
 This function:
 1. Merges consecutive same-role messages into one
 2. Preserves tool messages with their tool_call_ids
@@ -376,7 +376,7 @@ sub enforce_message_alternation {
 
     return $messages unless $messages && @$messages;
 
-    log_debug('ConversationManager', "Enforcing message alternation (Claude compatibility)");
+    log_debug('ConversationManager', "Enforcing message alternation");
 
     my @alternating = ();
     my $last_role = undef;

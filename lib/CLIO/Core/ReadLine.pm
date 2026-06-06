@@ -1114,7 +1114,7 @@ sub redraw_line {
         $$cursor_pos_ref = $input_len;
     }
 
-    # Get terminal width for proper wrapping
+    # Get terminal width for wrapping
     my $term_width = $self->_get_term_width();
     my $prompt_disp = $self->_get_prompt_disp($prompt);
 
