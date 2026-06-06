@@ -260,7 +260,7 @@ Connect to external tool servers via the Model Context Protocol. See [MCP Integr
 
 ## 3. AI Providers
 
-CLIO supports 14 AI providers out of the box. Switch between them at any time - even mid-session.
+CLIO supports 15 AI providers out of the box. Switch between them at any time - even mid-session.
 
 | Provider | Type | Authentication |
 |----------|------|---------------|
@@ -275,6 +275,7 @@ CLIO supports 14 AI providers out of the box. Switch between them at any time - 
 | **MiniMax Token Plan** | Cloud | API key (usage-based) |
 | **Z.AI** | Cloud | API key |
 | **Z.AI Coding Plan** | Cloud | API key |
+| **NVIDIA NIM** | Cloud | API key |
 | **llama.cpp** | Local | None |
 | **LM Studio** | Local | None |
 | **SAM** | Local | API key (optional) |
@@ -987,6 +988,17 @@ You: Check the nginx config on all webservers
 
 The `execute_parallel` operation runs the same task on multiple devices at once and aggregates results.
 
+### Auto-Populated Configuration
+
+When executing remotely, CLIO automatically populates the remote agent's configuration from the current session:
+
+- **Model** - Current session's model
+- **API Provider** - Current session's provider
+- **API Key** - Current session's API key (passed via `CLIO_API_KEY` environment variable, never written to disk)
+- **API Base** - Current session's API base URL
+
+The remote config.json contains only provider, model, and api_base (no secrets). The API key exists only in process memory on the remote system.
+
 ### Security
 
 - API keys are passed as environment variables, never written to disk on remote systems
@@ -1241,11 +1253,25 @@ CLIO tracks token usage and costs across providers:
 /billing reset     # Reset counters
 ```
 
-For GitHub Copilot, CLIO tracks premium request quotas and warns when approaching limits. It shows:
+For GitHub Copilot, CLIO tracks AI Credit usage and warns when approaching limits. It shows:
 - Total tokens used (input and output)
 - Cost estimates per provider
-- Premium request counts
-- Model-specific multipliers
+- AI Credit usage (total_nano_aiu, token_details)
+- Model-specific categories (powerful, versatile, lightweight)
+
+### Z.AI Coding Plan
+
+The Z.AI Coding Plan provides quota-based access (not API billing) with specific limits:
+
+**Peak Hours:** 14:00-18:00 CST (UTC+8) - GLM-5.x models cost 3x quota; 2x off-peak.
+
+**Quota Limits:** 80-1,600 prompts per 5 hours depending on plan tier.
+
+**Models Included:** GLM-5.1, GLM-5-Turbo, GLM-4.7, GLM-4.5-Air (all included in plan).
+
+CLIO handles rate limits automatically and displays human-readable reset times when limits are reached.
+
+See [coding plan docs](https://docs.z.ai/devpack/overview) for details.
 
 ---
 

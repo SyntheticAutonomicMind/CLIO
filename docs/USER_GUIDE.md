@@ -524,6 +524,54 @@ Your profile lives at `~/.clio/profile.md` and is never stored in any git repo. 
 
 OpenSpec integration lets you define structured requirements (proposal, specs, design, tasks) before implementation. The AI sees spec context automatically and implements against the agreed plan. See [FEATURES.md](FEATURES.md#20-openspec-integration) for the full guide.
 
+### Device Registry
+
+| Command | Purpose |
+|---------|---------|
+| `/device add <name> <host>` | Register a named device for remote execution |
+| `/device list` | List all registered devices |
+| `/device remove <name>` | Remove a device from registry |
+| `/device show <name>` | Show device details |
+
+**Example:**
+```bash
+: /device add staging user@staging.example.com
+: /device add prod user@prod.example.com
+: /device list
+```
+
+### Device Groups
+
+| Command | Purpose |
+|---------|---------|
+| `/group create <name> <devices...>` | Create a device group for parallel execution |
+| `/group list` | List all device groups |
+| `/group remove <name>` | Remove a device group |
+
+**Example:**
+```bash
+: /group create webservers staging prod
+: /group list
+```
+
+### MCP (Model Context Protocol)
+
+| Command | Purpose |
+|---------|---------|
+| `/mcp status` | Show connected MCP servers |
+| `/mcp add <name> <command> [args...]` | Add a new MCP server |
+| `/mcp remove <name>` | Remove an MCP server |
+| `/mcp tools <name>` | List tools from an MCP server |
+
+**Example:**
+```bash
+: /mcp add filesystem npx -y @modelcontextprotocol/server-filesystem /path/to/files
+: /mcp status
+: /mcp tools filesystem
+```
+
+MCP servers extend CLIO's capabilities with external tools. Tools from MCP servers are available as `mcp_<server>_<tool>`. See [FEATURES.md](FEATURES.md#14-mcp-integration) for details.
+
 ### Developer Tools
 
 | Command | Purpose |
@@ -565,6 +613,13 @@ OpenSpec integration lets you define structured requirements (proposal, specs, d
 | `/subagent list` | List active sub-agents |
 | `/subagent inbox` | View messages from sub-agents |
 | `/subagent send <id> <msg>` | Send message to sub-agent |
+| `/subagent status <id>` | Show detailed agent status |
+| `/subagent kill <id>` | Terminate an agent |
+| `/subagent killall` | Terminate all agents |
+| `/subagent projects` | List detected child projects (puppeteer mode) |
+| `/subagent locks` | Show file/git locks held by agents |
+| `/subagent discoveries` | Show shared discoveries from agents |
+| `/subagent warnings` | Show shared warnings from agents |
 
 ### Stats & Performance
 
@@ -2018,6 +2073,16 @@ Optional flags when adding a repository:
 ```
 
 Repository skills are read-only. They appear in `/skills list` under the "REPOSITORY SKILLS" section with their source repository shown. Custom skills override repository skills with the same name.
+
+### Skill Priority
+
+When skills have the same name across sources, the priority order is:
+
+1. **Session** skills (highest - current session only)
+2. **Project** skills (`.clio/skills.json`)
+3. **User** skills (`~/.clio/skills.json`)
+4. **Repository** skills (from configured Git repos)
+5. **Built-in** skills (lowest - shipped with CLIO)
 
 ### Custom Skills
 
