@@ -291,11 +291,12 @@ sub _visual_length {
         $code
     }ge;
     
-    # Remove links [text](url) -> text
-    $clean =~ s/\[([^\]]+)\]\([^\)]+\)/$1/g;
-    
-    # Remove images ![alt](url) -> alt
-    $clean =~ s/!\[([^\]]*)\]\([^\)]+\)/$1/g;
+    # Links and images are expanded in process_inline_formatting to include
+    # " -> URL". We need to account for this in visual length calculation.
+    # Process links: [text](url) -> text -> url
+    $clean =~ s/\[([^\]]+)\]\(([^\)]+)\)/$1 -> $2/g;
+    # Process images: ![alt](url) -> alt -> url
+    $clean =~ s/!\[([^\]]*)\]\(([^\)]+)\)/$1 -> $2/g;
     
     # Now strip any ANSI escape codes
     $clean =~ s/\e\[[0-9;]*m//g;
