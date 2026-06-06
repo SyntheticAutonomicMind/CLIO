@@ -670,17 +670,23 @@ if ($model_override) {
         $model_override = $2;  # Strip prefix; will be re-added below
     }
     
+    # If no provider prefix, use current config provider (consistent with /api set model)
+    $target_provider //= $config->get('provider');
+    
     unless ($target_provider) {
         die "--model requires provider/model format (e.g. --model github_copilot/gpt-4.1)\n";
     }
     
-    # Load provider config (api_base, api_key, etc.)
-    $config->set_provider($target_provider);
-    # Remove user_set flags so the temporary switch isn't persisted to config file
-    delete $config->{user_set}->{provider};
-    delete $config->{user_set}->{api_base};
-    delete $config->{user_set}->{model};
-    log_debug('Main', "Loaded provider '$target_provider' config including api_key");
+    # Load provider config (api_base, api_key, etc.) only if switching providers
+    my $current_provider = $config->get('provider');
+    if ($target_provider ne ($current_provider // '')) {
+        $config->set_provider($target_provider);
+        # Remove user_set flags so the temporary switch isn't persisted to config file
+        delete $config->{user_set}->{provider};
+        delete $config->{user_set}->{api_base};
+        delete $config->{user_set}->{model};
+        log_debug('Main', "Loaded provider '$target_provider' config including api_key");
+    }
     
     # Apply model override with provider prefix
     $model_override = "$target_provider/$model_override";

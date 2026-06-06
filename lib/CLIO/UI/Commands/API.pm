@@ -93,6 +93,7 @@ sub handle_api_command {
     if ($action eq 'logout')    { $self->{auth}->handle_logout(@args); return; }
     if ($action eq 'quota')     { $self->{auth}->handle_quota(@args); return; }
     if ($action eq 'alias')     { $self->{cfg}->handle_alias(@args); return; }
+    if ($action eq 'remove' || $action eq 'rm') { $self->{cfg}->handle_remove(@args); return; }
 
     # Backward compatibility
     if ($action eq 'key') {
@@ -165,6 +166,7 @@ sub _display_api_help {
     $self->display_command_row("/api alias", "List model aliases", 40);
     $self->display_command_row("/api alias <name> <model>", "Create model alias", 40);
     $self->display_command_row("/api alias <name> --delete", "Remove alias", 40);
+    $self->display_command_row("/api remove <provider>", "Remove stored credentials for a provider", 40);
     $self->writeline("", markdown => 0);
 
     $self->display_section_header("SESSION OVERRIDES");
@@ -176,17 +178,22 @@ sub _display_api_help {
     $self->writeline("", markdown => 0);
 
     $self->display_section_header("PROVIDERS");
+    $self->display_command_row("anthropic", "Anthropic (native API, Claude models)", 40);
+    $self->display_command_row("deepseek", "DeepSeek (compatible API)", 40);
     $self->display_command_row("github_copilot", "GitHub Copilot (OAuth login)", 40);
     $self->display_command_row("google", "Google Gemini (native API) [EXPERIMENTAL]", 40);
+    $self->display_command_row("minimax", "MiniMax (native API)", 40);
+    $self->display_command_row("minimax_token", "MiniMax Token Plan", 40);
+    $self->display_command_row("nvidia", "NVIDIA NIM (compatible API)", 40);
+    $self->display_command_row("ollama_cloud", "Ollama Cloud (compatible API)", 40);
     $self->display_command_row("openai", "OpenAI (compatible API)", 40);
     $self->display_command_row("openrouter", "OpenRouter (multi-model gateway)", 40);
-    $self->display_command_row("minimax", "MiniMax (native API)", 40);
     $self->display_command_row("zai", "Z.AI (GLM-5.1 flagship, vision, reasoning)", 40);
     $self->display_command_row("zai_coding", "Z.AI Coding Plan (free GLM-4.7/5 for coding)", 40);
-    $self->display_command_row("sam", "Local SAM server", 40);
+    $self->display_command_row("custom", "Custom OpenAI-compatible API", 40);
     $self->display_command_row("llama.cpp", "Local llama.cpp server", 40);
     $self->display_command_row("lmstudio", "Local LM Studio server", 40);
-    $self->display_command_row("custom", "Custom OpenAI-compatible API", 40);
+    $self->display_command_row("sam", "Local SAM server", 40);
     $self->writeline("", markdown => 0);
 
     $self->display_section_header("EXAMPLES");
