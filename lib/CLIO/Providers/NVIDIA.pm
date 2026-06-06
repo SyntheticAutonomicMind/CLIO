@@ -57,8 +57,10 @@ sub new {
     # Store custom headers if provided (e.g., from APIManager)
     $self->{custom_headers} = $opts{custom_headers} // {};
     
-    # Debug: check if debug flag is set
-    warn "NVIDIA provider new() - debug flag: " . ($self->{debug} ? 'true' : 'false') . ", custom_headers: " . encode_json($self->{custom_headers});
+    if ($self->{debug}) {
+        require CLIO::Core::Logger;
+        CLIO::Core::Logger::log_debug('NVIDIA', "NVIDIA provider new() - debug flag: true, custom_headers: " . encode_json($self->{custom_headers}));
+    }
     
     return $self;
 }
@@ -183,6 +185,9 @@ sub parse_stream_event {
         return undef;
     }
     
+    # Debug: log the raw response data
+    $self->debug("NVIDIA response data: " . encode_json($data));
+    
     # Check for error
     if ($data->{error}) {
         return {
@@ -223,16 +228,33 @@ sub parse_stream_event {
             };
         }
         elsif (defined $tool_call->{function}{arguments}) {
-            # Tool arguments delta
-            return {
+            # Tool arguments delta - check if tool_end is also signalled
+            my $event = {
                 type => 'tool_args',
                 content => $tool_call->{function}{arguments},
             };
+            # NVIDIA sends finish_reason alongside the last tool_calls delta.
+            # Signal to the streaming handler that tool_end should fire after
+            # this event is processed.
+            if (defined $choice->{finish_reason} && $choice->{finish_reason} eq 'tool_calls') {
+                $event->{also_tool_end} = 1;
+            }
+            return $event;
         }
         elsif ($tool_call->{index} == $index) {
             # Tool call continuation (no new data)
             return undef;
         }
+        
+        # If we got here with finish_reason=tool_calls but no delta data,
+        # return tool_end directly (handled by the check below).
+    }
+    
+    # Handle tool call completion (finish_reason == "tool_calls")
+    if (defined $choice->{finish_reason} && $choice->{finish_reason} eq 'tool_calls') {
+        return {
+            type => 'tool_end',
+        };
     }
     
     # Check for finish reason

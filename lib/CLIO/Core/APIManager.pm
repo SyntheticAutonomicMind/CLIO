@@ -1103,12 +1103,13 @@ sub get_model_capabilities {
     }
     
     if ($use_mcm) {
-        eval {
+        my $normalized = eval {
             require CLIO::Core::ModelCapabilitiesManager;
             my $mcm = CLIO::Core::ModelCapabilitiesManager->new(debug => $self->{debug});
             my $caps = $mcm->get_capabilities($eff_provider, $api_model);
+            log_debug('APIManager', "MCM get_capabilities for $eff_provider/$api_model: " . ($caps ? "found" : "undef"));
             if ($caps) {
-                my $normalized = {
+                my $n = {
                     max_prompt_tokens          => $caps->{max_prompt_tokens} || $caps->{context_window},
                     max_output_tokens          => $caps->{max_output_tokens},
                     max_context_window_tokens  => $caps->{context_window},
@@ -1117,14 +1118,16 @@ sub get_model_capabilities {
                     supports_reasoning          => $caps->{supports_reasoning},
                 };
                 $self->{_model_capabilities_cache} ||= {};
-                $self->{_model_capabilities_cache}{$model} = $normalized;
+                $self->{_model_capabilities_cache}{$model} = $n;
                 log_debug('APIManager', "MCM capability for $model: ctx=$caps->{context_window}, tools=$caps->{supports_tools}");
-                return $normalized;
+                return $n;
             }
+            return undef;
         };
         if ($@) {
             log_debug('APIManager', "MCM failed for $model: $@");
         }
+        return $normalized if $normalized;
     }
     
     # Determine API base for the model's provider
@@ -1826,6 +1829,7 @@ sub _prepare_endpoint_config {
         config => $endpoint_config,
         endpoint => $endpoint,
         model => $api_model,
+        target_provider => $target_provider // $self->{config}->get('provider'),
     };
 }
 
@@ -1851,12 +1855,19 @@ sub _parse_model_provider {
     require CLIO::Providers;
     
     if ($model =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i) {
-        my ($prefix, $rest) = ($1, $2);
-        
-        if (CLIO::Providers::provider_exists($prefix)) {
-            return ($prefix, $rest);
-        }
-    }
+       my ($prefix, $rest) = ($1, $2);
+       
+       if (CLIO::Providers::provider_exists($prefix)) {
+            # Some providers (NVIDIA NIM) use the provider name as part of the
+            # genuine model ID namespace (e.g., "nvidia/llama-3.1-nemotron-nano-8b-v1").
+            # For these providers, don't strip the prefix - return the full model name.
+            my $provider_def = CLIO::Providers::get_provider($prefix);
+            if ($provider_def && $provider_def->{keep_model_prefix}) {
+                return ($prefix, $model);
+            }
+           return ($prefix, $rest);
+       }
+   }
     
     # No explicit provider prefix - caller uses current provider
     return (undef, $model);
@@ -2270,6 +2281,7 @@ sub _prepare_api_request {
     my $endpoint_config = $ep->{config};
     my $endpoint = $ep->{endpoint};
     my $model = $ep->{model};
+    my $target_provider = $ep->{target_provider};
 
     # Proactive per-model throttle
     if (my $throttle_delay = $self->_model_throttle_check($model)) {
@@ -2282,7 +2294,7 @@ sub _prepare_api_request {
     my $messages = $self->_prepare_messages($input, %opts);
 
     # Check for native provider (non-OpenAI-compatible API)
-    my $native_provider = $self->_get_native_provider();
+    my $native_provider = $self->_get_native_provider($target_provider);
     if ($native_provider) {
         my $result = $self->_send_native_streaming(
             $native_provider,
@@ -4113,22 +4125,29 @@ sub _endpoint_supports_thinking {
     return 0;
 }
 
-=head2 _get_native_provider()
+=head2 _get_native_provider($target_provider)
 
-Check if the current provider uses a native (non-OpenAI-compatible) API
+Check if the provider uses a native (non-OpenAI-compatible) API
 and return the provider handler instance if so.
+
+Arguments:
+  $target_provider - Provider name to use (from _prepare_endpoint_config).
+                     Falls back to config provider, then $self->{provider}.
 
 Returns: Provider instance if native, undef if OpenAI-compatible
 
 =cut
 
 sub _get_native_provider {
-    my ($self) = @_;
+    my ($self, $target_provider) = @_;
 
-    # Get provider configuration. Priority: config -> $self->{provider} (used by
-    # sub-agents) -> 'github_copilot' (last resort).
-    my $provider_name = $self->{config} ? $self->{config}->get('provider') : undef;
-    $provider_name //= $self->{provider} // 'github_copilot';
+    # Determine which provider to check. Priority:
+    # 1. $target_provider from _prepare_endpoint_config (cross-provider routing)
+    # 2. Config provider
+    # 3. $self->{provider} from sub-agents
+    my $provider_name = $target_provider;
+    $provider_name //= $self->{config} ? $self->{config}->get('provider') : undef;
+    $provider_name //= $self->{provider};
     my $provider_config = get_provider($provider_name);
     
     return undef unless $provider_config;
@@ -4146,8 +4165,18 @@ sub _get_native_provider {
         return undef;
     }
     
-    # Use user-configured api_base if available, otherwise provider default
-    my $effective_api_base = $self->{api_base} // $provider_config->{api_base};
+    # Use the target provider's default api_base when doing cross-provider routing,
+    # otherwise fall back to the user-configured api_base (which may differ from
+    # the provider default, e.g., for proxies).
+    my $effective_api_base;
+    if ($target_provider) {
+        # Cross-provider routing: use the target provider's default base,
+        # but allow user overrides via per-provider stored base.
+        my $stored_base = $self->{config} ? $self->{config}->get_provider_base($target_provider) : undef;
+        $effective_api_base = $stored_base // $provider_config->{api_base};
+    } else {
+        $effective_api_base = $self->{api_base} // $provider_config->{api_base};
+    }
     
     # Build custom headers from endpoint config (e.g., Anthropic's anthropic-version)
     my %custom_headers;
@@ -4157,10 +4186,20 @@ sub _get_native_provider {
     
     log_debug('APIManager', "Creating native provider $module with custom_headers: " . encode_json(\%custom_headers));
     
+    # Resolve API key for the native provider. When routing cross-provider
+    # (e.g., using a NVIDIA model while the main provider is GitHub Copilot),
+    # $self->{api_key} contains the main provider's key, not the target's.
+    # Load the target provider's key from config.
+    my $native_api_key = $self->{api_key};
+    if ($target_provider && $self->{config}) {
+        my $target_key = $self->{config}->get_provider_key($target_provider);
+        $native_api_key = $target_key if $target_key;
+    }
+    
     my $provider = $module->new(
-        api_key => $self->{api_key},
+        api_key => $native_api_key,
         api_base => $effective_api_base,
-        model => $self->{model},
+        model => $self->get_current_model(),
         debug => $self->{debug},
         custom_headers => \%custom_headers,
     );
@@ -4226,9 +4265,11 @@ sub _send_native_streaming {
     }
 
     # Build the request using the native provider
+    # Use get_current_model() for full model ID with prefix (required by native providers like NVIDIA)
+    my $full_model = $self->get_current_model();
     my $request = $provider->build_request($messages, $tools, {
-        model => $opts{model} // $self->{model},
-        max_tokens => $opts{max_tokens} // $self->_get_max_output_tokens($opts{model} // $self->{model}),
+        model => $full_model,
+        max_tokens => $opts{max_tokens} // $self->_get_max_output_tokens($full_model),
         temperature => $opts{temperature} // 0.2,
         ($thinking_opt ? (thinking => $thinking_opt) : ()),
     });
@@ -4295,6 +4336,14 @@ sub _send_native_streaming {
                 }
                 elsif ($type eq 'tool_args' && $current_tool_call) {
                     $current_tool_call->{function}{arguments} .= $event->{content};
+                    # NVIDIA sends finish_reason alongside the last tool_calls delta.
+                    # The provider sets also_tool_end to signal that this event
+                    # completes the tool call - finalize it immediately.
+                    if ($event->{also_tool_end}) {
+                        push @tool_calls, $current_tool_call;
+                        $on_tool_call->($current_tool_call) if $on_tool_call;
+                        $current_tool_call = undef;
+                    }
                 }
                 elsif ($type eq 'tool_end') {
                     # Google sends complete tool calls as single tool_end (no prior tool_start)

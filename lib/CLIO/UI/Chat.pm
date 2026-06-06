@@ -3009,6 +3009,7 @@ sub display_help {
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/api models', 'help_command'), 'List available models');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/model <name>', 'help_command'), 'Quick model switch (alias-aware)');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/api alias <name> <model>', 'help_command'), 'Create model alias');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api remove <provider>', 'help_command'), 'Remove provider credentials');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('/config', 'help_command'), 'Global configuration');
     push @help_lines, "";
     

@@ -228,7 +228,7 @@ sub _fetch_provider_models {
             if ($@) {
                 log_warning('API', "Failed to fetch Anthropic models: $@");
             }
-        } else {
+        } elsif ($provider_def->{endpoint} && $provider_def->{endpoint}{google}) {
             # Google native provider
             my $api_base = $provider_def->{api_base} || 'https://generativelanguage.googleapis.com/v1beta';
             $api_base =~ s{/+$}{};
@@ -260,6 +260,42 @@ sub _fetch_provider_models {
             };
             if ($@) {
                 log_warning('API', "Failed to fetch Google models: $@");
+            }
+        } else {
+            # OAI-compatible native provider (NVIDIA, etc.)
+            # Uses standard /v1/models endpoint with Bearer auth
+            my $api_base = $provider_def->{api_base} || '';
+            my $models_url;
+            if ($api_base =~ m{^(https?://[^/]+)(.*)}) {
+                # Use the root host + /v1/models path
+                $models_url = "$1/v1/models";
+            }
+            
+            return [] unless $models_url && $api_key;
+            
+            eval {
+                require CLIO::Compat::HTTP;
+                my $ua = CLIO::Compat::HTTP->new(timeout => 30);
+                my %headers = ('Authorization' => "Bearer $api_key");
+                my $resp = $ua->get($models_url, headers => \%headers);
+                
+                if ($resp->is_success) {
+                    my $data = decode_json($resp->decoded_content);
+                    for my $m (@{$data->{data} || []}) {
+                        push @$models, {
+                            id               => $m->{id},
+                            name             => $m->{id},
+                            # NVIDIA /v1/models doesn't include token limits
+                            _context_tokens  => $m->{context_length} || $m->{max_input_tokens},
+                            _output_tokens   => $m->{max_completion_tokens} || $m->{max_tokens},
+                        };
+                    }
+                } else {
+                    log_warning('API', "Failed to fetch $provider_name models: HTTP " . $resp->code . " " . ($resp->decoded_content // ''));
+                }
+            };
+            if ($@) {
+                log_warning('API', "Failed to fetch models from $provider_name: $@");
             }
         }
     } elsif ($provider_def->{static_models}) {

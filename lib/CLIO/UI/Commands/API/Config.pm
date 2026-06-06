@@ -633,14 +633,14 @@ sub display_providers {
         }
 
         my $auth_status = $has_key
-            ? $self->colorize("", 'PROMPT')
-            : $self->colorize("", 'DIM');
+            ? $self->colorize("\x{2713} ", 'SUCCESS')
+            : $self->colorize("  ", 'DIM');
 
         my $auth_req = $self->_format_auth_requirement($provider);
 
-        $self->writeline(sprintf("  %s %-20s %s%s",
-            $auth_status, $self->colorize($name, 'USER'),
-            $self->colorize($auth_req, 'DIM'), $marker), markdown => 0);
+        # Pad name first (plain text), then colorize, to avoid ANSI codes breaking alignment
+        my $padded_name = sprintf("%-18s", $name);
+        $self->writeline("  " . $auth_status . $self->colorize($padded_name, 'USER') . " " . $self->colorize($auth_req, 'DIM') . $marker, markdown => 0);
     }
 
     $self->writeline("", markdown => 0);
@@ -697,12 +697,11 @@ sub _show_provider_details {
 sub _format_auth_requirement {
     my ($self, $provider) = @_;
 
-    return 'None' unless $provider->{auth};
-
-    my $type = $provider->{auth}{type} || '';
-    return 'API Key' if $type eq 'api_key';
-    return 'OAuth (GitHub)' if $type eq 'oauth_device';
-    return $type || 'Unknown';
+    my $req = $provider->{requires_auth} || '';
+    return 'API Key'        if $req eq 'apikey';
+    return 'OAuth (GitHub)' if $req eq 'copilot';
+    return 'None'           if $req eq 'none';
+    return 'API Key';  # default for unknown
 }
 
 sub handle_alias {
@@ -768,6 +767,85 @@ sub handle_alias {
     $self->{config}->set_model_alias($name, $value);
     $self->{config}->save();
     $self->display_system_message("Alias set: $name -> $value");
+
+=head2 handle_remove(@args)
+
+Handle /api remove <provider> - Remove a provider's stored credentials and custom base.
+
+Removes stored API key, custom base URL, and if the provider is the current one,
+resets to the default provider.
+
+=cut
+
+sub handle_remove {
+    my ($self, @args) = @_;
+
+    my $provider = shift @args // '';
+
+    unless ($provider && $provider !~ /^\s*$/) {
+        $self->display_error_message("Usage: /api remove <provider>");
+        $self->display_system_message("Removes stored credentials and custom base for a provider");
+
+        # Show which providers have stored data
+        my @stored = $self->{config}->list_provider_keys();
+        if (@stored) {
+            $self->writeline("", markdown => 0);
+            $self->display_system_message("Providers with stored keys: " . join(', ', @stored));
+        }
+        return;
+    }
+
+    # Validate provider exists in registry
+    require CLIO::Providers;
+    unless (CLIO::Providers::provider_exists($provider)) {
+        $self->display_error_message("Unknown provider: $provider");
+        my @providers = CLIO::Providers::list_providers();
+        $self->display_system_message("Available: " . join(', ', @providers));
+        return;
+    }
+
+    my $removed = 0;
+
+    # Remove stored API key
+    {
+        my $api_keys = $self->{config}{config}{api_keys} // {};
+        if (exists $api_keys->{$provider}) {
+            delete $api_keys->{$provider};
+            $removed++;
+            $self->display_system_message("Removed API key for '$provider'");
+        }
+    }
+
+    # Remove stored API base
+    {
+        my $api_bases = $self->{config}{config}{api_bases} // {};
+        if (exists $api_bases->{$provider}) {
+            delete $api_bases->{$provider};
+            $removed++;
+            $self->display_system_message("Removed custom API base for '$provider'");
+        }
+    }
+
+    unless ($removed) {
+        $self->display_system_message("No stored credentials or custom base found for '$provider'");
+        return;
+    }
+
+    # If the removed provider is the current one, switch to default
+    my $current = $self->{config}->get('provider');
+    if ($current && $current eq $provider) {
+        require CLIO::Providers;
+        my $default = 'github_copilot';
+        # Don't switch to the provider being removed
+        $default = 'openai' if $default eq $provider;
+        $self->{config}->set_provider($default);
+        $self->{config}->save();
+        $self->display_system_message("Switched to default provider '$default' (was current)");
+    } else {
+        $self->{config}->save();
+    }
+}
+
 }
 
 # Validation helpers
