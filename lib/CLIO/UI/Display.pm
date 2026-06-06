@@ -346,7 +346,8 @@ sub display_section_header {
     my $underline = box_char('horizontal') x $width;
     
     # Blank line before section for visual separation from previous content
-    # Use writeline to ensure proper output handling (UTF-8, color codes, etc.)
+    # Use writeline (UTF-8, color codes, etc.)
+    # Use writeline (UTF-8, color codes, etc.)
     $chat->writeline('', markdown => 0);
     $chat->writeline($chat->colorize($text, 'command_subheader'), markdown => 0);
     $chat->writeline($chat->colorize($underline, 'dim'), markdown => 0);
@@ -503,7 +504,8 @@ sub display_usage_summary {
         $quota_info = sprintf(" Status: %s/%s Used: %.1f%%", $used_fmt, $ent_display, $percent_used);
     }
     
-    # Build complete line with all components and display via writeline for consistency
+    # Build complete line and display via writeline
+    # Build complete line and display via writeline
     my $line = $chat->colorize(box_char("hhorizontal") . " SERVER " . box_char("hhorizontal") . " ", "SYSTEM") . $cost_str . $quota_info . " " . $chat->colorize(box_char("hhorizontal"), "SYSTEM");
     $chat->writeline($line, markdown => 0);
 }

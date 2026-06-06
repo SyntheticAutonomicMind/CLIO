@@ -28,7 +28,7 @@ use utf8;
 use CLIO::Core::Logger qw(should_log log_debug log_error log_info log_warning);
 use CLIO::Core::ErrorContext qw(classify_error format_error);
 use CLIO::Util::ConfigPath qw(get_config_dir);
-use CLIO::Providers qw(get_provider list_providers);
+use CLIO::Providers qw(get_provider list_providers provider_from_url);
 use POSIX ":sys_wait_h"; # For WNOHANG
 use Time::HiRes qw(time sleep);  # High resolution time and sleep
 use CLIO::Util::JSON qw(encode_json decode_json);
@@ -405,7 +405,8 @@ sub _attempt_token_recovery {
     
     # Determine if this is a GitHub Copilot provider (check both api_base URL and provider name)
     my $is_copilot_provider = 0;
-    if ($self->{api_base} && $self->{api_base} =~ /githubcopilot\.com/) {
+    my $detected = provider_from_url($self->{api_base} // '');
+    if ($detected && $detected eq 'github-copilot') {
         $is_copilot_provider = 1;
     }
     if (!$is_copilot_provider && $self->{config} && $self->{config}->can('get')) {
@@ -490,7 +491,8 @@ sub _get_api_key {
     # Must check BOTH api_base URL AND provider name because users may override
     # api_base to a proxy (e.g. http://flip:9090) while still using GitHub auth.
     my $is_copilot_provider = 0;
-    if ($self->{api_base} && $self->{api_base} =~ /githubcopilot\.com/) {
+    my $detected_provider = provider_from_url($self->{api_base} // '');
+    if ($detected_provider && $detected_provider eq 'github-copilot') {
         $is_copilot_provider = 1;
     }
     # Also check by provider name (handles custom api_base proxies)
@@ -1406,28 +1408,27 @@ sub _detect_api_type_and_url {
         return @{$api_configs{$api_base}};
     }
     
-    # Try to detect from URL pattern
-    if ($api_base =~ m{githubcopilot\.com}i) {
-        return ('github-copilot', 'https://api.githubcopilot.com/models');
-    } elsif ($api_base =~ m{openai\.com}i) {
-        return ('openai', 'https://api.openai.com/v1/models');
-    } elsif ($api_base =~ m{generativelanguage\.googleapis\.com}i) {
-        # Google Gemini: models endpoint uses the native API format with API key as URL param
-        return ('google', 'https://generativelanguage.googleapis.com/v1beta/models');
-    } elsif ($api_base =~ m{openrouter\.ai}i) {
-        return ('openrouter', 'https://openrouter.ai/api/v1/models');
-    } elsif ($api_base =~ m{api\.minimax\.io}i) {
-        return ('minimax', 'https://api.minimax.io/v1/models');
-    } elsif ($api_base =~ m{ollama\.com}i) {
-        # Ollama Cloud
-        return ('ollama-cloud', 'https://ollama.com/v1/models');
-    } elsif ($api_base =~ m{localhost:1234}i || $api_base =~ m{127\.0\.0\.1:1234}i) {
-        # LM Studio running locally
-        return ('lmstudio', 'http://localhost:1234/v1/models');
-    } elsif ($api_base =~ m{localhost:8080}i || $api_base =~ m{127\.0\.0\.1:8080}i) {
-        # SAM or llama.cpp running locally
-        return ('sam', 'http://localhost:8080/v1/models');
-    } elsif ($api_base =~ m{dashscope.*\.aliyuncs\.com}i) {
+    # Try to detect provider from URL pattern using centralized registry
+    my $provider_name = provider_from_url($api_base);
+    
+    # Map provider names to (api_type, models_url)
+    my %provider_models_urls = (
+        'github-copilot' => ['github-copilot', 'https://api.githubcopilot.com/models'],
+        'openai'         => ['openai', 'https://api.openai.com/v1/models'],
+        'google'         => ['google', 'https://generativelanguage.googleapis.com/v1beta/models'],
+        'openrouter'     => ['openrouter', 'https://openrouter.ai/api/v1/models'],
+        'minimax'        => ['minimax', 'https://api.minimax.io/v1/models'],
+        'ollama-cloud'   => ['ollama-cloud', 'https://ollama.com/v1/models'],
+        'lmstudio'       => ['lmstudio', 'http://localhost:1234/v1/models'],
+        'sam'            => ['sam', 'http://localhost:8080/v1/models'],
+    );
+
+    if ($provider_name && exists $provider_models_urls{$provider_name}) {
+        return @{$provider_models_urls{$provider_name}};
+    }
+
+    # Handle DashScope variants (unified under 'dashscope' provider)
+    if ($api_base =~ m{dashscope.*\.aliyuncs\.com}i) {
         my $base_url = $api_base;
         $base_url =~ s{/+$}{};
         $base_url =~ s{/compatible-mode/v1.*$}{};
@@ -1776,7 +1777,7 @@ sub _build_responses_api_payload {
     }
     
     # Responses API uses previous_response_id from the stateful marker (response.id)
-    # This enables billing continuity - subsequent turns in same conversation are not re-charged
+    # Billing continuity - subsequent turns not re-charged
     # Skip if model has rejected previous_response_id (flagged by ResponseHandler)
     if (!$self->{response_handler}{_no_previous_response_id}) {
         my $prev_resp_id = $self->{response_handler}->get_stateful_marker_for_model($model);
@@ -2174,7 +2175,8 @@ sub _check_connectivity {
         );
 
         # Add GitHub-specific headers if using Copilot
-        if ($self->{api_base} && $self->{api_base} =~ /githubcopilot\.com/) {
+        my $detected = provider_from_url($self->{api_base} // '');
+        if ($detected && $detected eq 'github-copilot') {
             $headers{'Editor-Version'} = 'CLIO/1.0';
         }
 
@@ -3473,7 +3475,7 @@ sub _finalize_streaming_response {
     if (length($s{accumulated_reasoning} // '')) {
         $response->{reasoning_details} = [{ type => 'reasoning.text', text => $s{accumulated_reasoning} }];
         # Also set reasoning_content for DeepSeek API compatibility
-        # (DeepSeek uses reasoning_content in assistant messages per their API spec)
+        # Also set reasoning_content (DeepSeek API format)
         $response->{reasoning_content} = $s{accumulated_reasoning};
         # Also pass accumulated_reasoning as a string for easier downstream handling
         # (ConversationManager and other consumers can use whichever format they prefer)

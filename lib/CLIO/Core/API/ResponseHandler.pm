@@ -1393,10 +1393,9 @@ sub release_broker_slot {
 
 =head2 store_stateful_marker
 
-Store stateful_marker for session continuation and billing optimization.
+Store stateful_marker for session continuation and billing.
 
-The stateful_marker from GitHub Copilot API responses enables session
-continuation, preventing multiple credit charges for the same conversation.
+Stateful marker for session continuation, preventing duplicate credit charges.
 
 Arguments:
 - $marker: The stateful_marker string from API response

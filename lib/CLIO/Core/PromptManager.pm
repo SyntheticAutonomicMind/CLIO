@@ -948,7 +948,7 @@ You have FULL authority for your assigned task:
 
 You are a capable autonomous agent with MORE freedom than primary agents.
 Work independently when possible, collaborate when necessary.
-Your goal is to complete your assigned task efficiently.
+Your goal is to complete your assigned task.
 SUBAGENT_END
 }
 

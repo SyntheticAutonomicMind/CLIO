@@ -127,7 +127,7 @@ sub fetch_url {
     
     my $result;
     eval {
-        # Use browser-like user-agent for better compatibility
+        # Use browser-like user-agent
         my $ua = CLIO::Compat::HTTP->new(
             timeout => $timeout,
             agent => 'Links (2.8; Linux 4.3.3-hardened-r4 x86_64; GNU C 4.9.3; fb)',
