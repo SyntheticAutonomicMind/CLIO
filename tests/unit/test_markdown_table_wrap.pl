@@ -248,4 +248,109 @@ print "Max line width: $max9 (terminal: 40)\n";
 print "Oversized lines: $over9\n";
 print ($over9 == 0 ? "PASS - No line exceeds terminal width\n\n" : "FAIL - Table overflows terminal\n\n");
 
+# Test 10: Tables with links - visual length must account for " -> URL" expansion
+print "=" x 70, "\n";
+print "Test 10: Tables with links (visual length accounts for URL expansion)\n";
+print "=" x 70, "\n";
+
+my $md10 = CLIO::UI::Markdown->new(
+    theme_mgr => $theme_mgr,
+    terminal_width => 60
+);
+
+my $link_table = <<'EOF';
+|NAME|LINK|DESC|
+|----|----|----|
+|Test|[Google](https://www.google.com)|A search engine|
+|Another|[GitHub](https://github.com)|Code hosting|
+EOF
+
+my $result10 = $md10->render($link_table);
+print "$result10\n\n";
+
+my $clean10 = $result10;
+$clean10 =~ s/\e\[[0-9;]*m//g;
+$clean10 =~ s/\e\]8;;[^\e]*\e\\//g;
+$clean10 =~ s/@[A-Z_]+@//g;
+my $max10 = 0;
+my $over10 = 0;
+for my $line (split /\n/, $clean10) {
+    my $w = length($line);
+    $max10 = $w if $w > $max10;
+    $over10++ if $w > 60;
+}
+print "Max line width: $max10 (terminal: 60)\n";
+print "Oversized lines: $over10\n";
+print ($over10 == 0 ? "PASS - Links fit within terminal width\n\n" : "FAIL - Links overflow terminal\n\n");
+
+# Test 11: Tables with images - visual length must account for " -> URL" expansion
+print "=" x 70, "\n";
+print "Test 11: Tables with images (visual length accounts for URL expansion)\n";
+print "=" x 70, "\n";
+
+my $md11 = CLIO::UI::Markdown->new(
+    theme_mgr => $theme_mgr,
+    terminal_width => 50
+);
+
+my $image_table = <<'EOF';
+|NAME|IMAGE|
+|----|-----|
+|Test|![Alt text](https://example.com/image.png)|
+|Another|![Another image](https://example.com/very/long/path/to/image.jpg)|
+EOF
+
+my $result11 = $md11->render($image_table);
+print "$result11\n\n";
+
+my $clean11 = $result11;
+$clean11 =~ s/\e\[[0-9;]*m//g;
+$clean11 =~ s/\e\]8;;[^\e]*\e\\//g;
+$clean11 =~ s/@[A-Z_]+@//g;
+my $max11 = 0;
+my $over11 = 0;
+for my $line (split /\n/, $clean11) {
+    my $w = length($line);
+    $max11 = $w if $w > $max11;
+    $over11++ if $w > 50;
+}
+print "Max line width: $max11 (terminal: 50)\n";
+print "Oversized lines: $over11\n";
+print ($over11 == 0 ? "PASS - Images fit within terminal width\n\n" : "FAIL - Images overflow terminal\n\n");
+
+# Test 12: Mixed markdown in table cells (bold + link)
+print "=" x 70, "\n";
+print "Test 12: Mixed markdown in table cells (bold + link)\n";
+print "=" x 70, "\n";
+
+my $md12 = CLIO::UI::Markdown->new(
+    theme_mgr => $theme_mgr,
+    terminal_width => 60
+);
+
+my $mixed_table = <<'EOF';
+|NAME|DESC|
+|----|----|
+|Test|**Bold** and [link](https://example.com/very/long/url/path/here)|
+|Another|*Italic* with [another](https://github.com/user/repo)|
+EOF
+
+my $result12 = $md12->render($mixed_table);
+print "$result12\n\n";
+
+my $clean12 = $result12;
+$clean12 =~ s/\e\[[0-9;]*m//g;
+$clean12 =~ s/\e\]8;;[^\e]*\e\\//g;
+$clean12 =~ s/@[A-Z_]+@//g;
+my $max12 = 0;
+my $over12 = 0;
+for my $line (split /\n/, $clean12) {
+    my $w = length($line);
+    $max12 = $w if $w > $max12;
+    $over12++ if $w > 60;
+}
+print "Max line width: $max12 (terminal: 60)\n";
+print "Oversized lines: $over12\n";
+print ($over12 == 0 ? "PASS - Mixed markdown fits within terminal width\n\n" : "FAIL - Mixed markdown overflows terminal\n\n");
+
 print "All tests completed.\n";
