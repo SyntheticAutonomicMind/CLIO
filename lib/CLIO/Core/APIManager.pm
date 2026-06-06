@@ -1304,13 +1304,13 @@ sub _extract_model_capabilities {
     my $caps = {
         max_prompt_tokens => $info->{max_request_tokens}
             || $limits->{max_prompt_tokens} || $limits->{max_context_window_tokens}
-            || $info->{context_window} || $fallback_ctx,
+            || $info->{context_length} || $info->{context_window} || $fallback_ctx,
         max_output_tokens => $info->{max_completion_tokens}
             || $limits->{max_output_tokens} || $limits->{max_completion_tokens}
             || $provider_max_output || CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS(),
         max_context_window_tokens => $info->{context_window}
             || $limits->{max_context_window_tokens} || $limits->{context_window}
-            || $fallback_ctx,
+            || $info->{context_length} || $fallback_ctx,
     };
 
     # Per-model tool support (GitHub Copilot)
