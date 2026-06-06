@@ -19,6 +19,7 @@
 | **MiniMax Token Plan** | `minimax_token` | API Key |
 | **Z.AI** | `zai` | API Key |
 | **Z.AI Coding Plan** | `zai_coding` | API Key |
+| **NVIDIA NIM** | `nvidia` | API Key |
 | **llama.cpp** | `llama.cpp` | None |
 | **LM Studio** | `lmstudio` | None |
 | **SAM** | `sam` | API Key |
@@ -102,6 +103,13 @@ clio --new
 # Follow the browser prompts to authenticate
 # Token is stored securely and auto-refreshes
 ```
+
+**Billing (AI Credits):**
+As of June 2026, GitHub Copilot uses **AI Credits** (usage-based billing) instead of Premium Requests. All models are credit-rated with per-token pricing. See [GitHub's usage-based billing documentation](https://docs.github.com/en/copilot/concepts/billing/usage-based-billing-for-individuals) for current rates.
+
+Models are categorized by `model_picker_category`: `powerful`, `versatile`, `lightweight`. Only 3 models have `model_picker_enabled=true` (shown by default): `claude-haiku-4.5`, `gpt-5-mini`, `oswe-vscode-prime`.
+
+CLIO tracks AI Credit usage via the `copilot_usage` field in responses (`total_nano_aiu`, `token_details`).
 
 **Available model families:** GPT, Claude Opus and Sonnet, MiniMax, and more. Use `/api models` for the current list.
 
@@ -368,6 +376,18 @@ clio --new
 
 **Reasoning:** GLM-4.5+ supports chain-of-thought reasoning. Enable with `/api set thinking on` and control depth with `/api set thinking_effort low|medium|high`.
 
+**Rate Limits:** Z.AI uses numeric error codes in JSON response body (no standard headers):
+- `1302` - Concurrency limit
+- `1303` - Frequency limit  
+- `1305` - Rate limit
+- `1308` - Usage limit (includes reset datetime in CST/Beijing Time, UTC+8)
+- `1310` - Weekly/monthly limit
+- `1113` - Insufficient balance
+
+CLIO parses these and displays human-readable reset times.
+
+**Peak Hours (Coding Plan):** 14:00-18:00 CST (UTC+8) - GLM-5.x models cost 3x quota; 2x off-peak.
+
 ---
 
 ### Z.AI Coding Plan
@@ -390,6 +410,42 @@ clio --new
 **Available models:** GLM-5.1, GLM-5-Turbo, GLM-4.7, GLM-4.5-Air (all included in plan)
 
 **Note:** Coding plan provides quota-based access (not API billing). Limits: 80-1,600 prompts per 5 hours depending on plan. See [coding plan docs](https://docs.z.ai/devpack/overview) for details.
+
+---
+
+### NVIDIA NIM
+
+**Best for:** Enterprise-grade inference, Nemotron models, high-throughput production workloads
+
+**Get API Key:**
+1. Create account at [build.nvidia.com](https://build.nvidia.com)
+2. Go to API Keys in your dashboard
+3. Create new key
+
+**Configure CLIO:**
+```bash
+clio --new
+/api set provider nvidia
+/api set key <your-api-key>
+/config save
+```
+
+**Default endpoint:** `https://integrate.api.nvidia.com/v1`
+
+**Available model families:** Nemotron, Llama, and other NVIDIA-optimized models. Use `/api models` for the current list.
+
+**Features:**
+- OpenAI-compatible API
+- Streaming responses
+- Function calling support
+- High throughput for production workloads
+
+**Example models:**
+| Model | Context | Best For |
+|-------|---------|----------|
+| nvidia/nemotron-3-ultra-550b-a55b | 128K | Flagship reasoning |
+| nvidia/nemotron-3-ultra-550b-a55b | 128K | Coding, analysis |
+| meta/llama-3.1-405b-instruct | 128K | General purpose |
 
 ---
 
@@ -549,12 +605,12 @@ Configuration precedence: `/api set` commands > environment variables > defaults
 
 ## Provider Comparison
 
-| Feature | GitHub Copilot | Anthropic | OpenAI | Google | DeepSeek | Local |
-|---------|---------------|----------|-------|--------|----------|-------|
-| **Setup Ease** | OAuth login | API key | API key | API key | API key | Run server |
-| **Model Variety** | Multiple | Claude family | GPT + o-series | Gemini family | DeepSeek family | Any GGUF |
-| **Privacy** | Cloud | Cloud | Cloud | Cloud | Cloud | Local |
-| **Offline** | No | No | No | No | No | Yes |
+| Feature | GitHub Copilot | Anthropic | OpenAI | Google | DeepSeek | NVIDIA NIM | Local |
+|---------|---------------|----------|-------|--------|----------|------------|-------|
+| **Setup Ease** | OAuth login | API key | API key | API key | API key | API key | Run server |
+| **Model Variety** | Multiple | Claude family | GPT + o-series | Gemini family | DeepSeek family | Nemotron, Llama | Any GGUF |
+| **Privacy** | Cloud | Cloud | Cloud | Cloud | Cloud | Cloud | Local |
+| **Offline** | No | No | No | No | No | No | Yes |
 
 ---
 
