@@ -371,8 +371,13 @@ sub set_provider {
     }
     
     # Store default model with provider prefix (e.g., "github_copilot/claude-haiku-4.5")
+    # Some providers (github_copilot, nvidia) already include the prefix in their default model
     my $default_model = $provider_config->{model};
-    $self->{config}->{model} = "$provider/$default_model";
+    if ($default_model =~ m{^\Q$provider\E/}) {
+        $self->{config}->{model} = $default_model;
+    } else {
+        $self->{config}->{model} = "$provider/$default_model";
+    }
     
     # When switching providers, load the per-provider API key if available
     # This enables seamless switching between providers with stored keys
