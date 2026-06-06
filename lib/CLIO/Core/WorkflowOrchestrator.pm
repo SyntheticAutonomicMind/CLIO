@@ -951,11 +951,13 @@ sub _build_turn_context {
     # This ensures State::add_message trims at the correct threshold instead
     # of the default 128k, which would underutilize large-context models.
     my $ctx_window = $model_caps->{max_context_window_tokens};
+    log_info('WorkflowOrchestrator', "State max_tokens check: ctx_window=" . ($ctx_window // 'undef') . ", session=" . (defined $session ? ref($session) : 'undef'));
     if ($ctx_window && $session && $session->can('state')) {
         my $state = $session->state();
+        log_info('WorkflowOrchestrator', "State object: " . (defined $state ? ref($state) . ", max_tokens=" . ($state->{max_tokens} // 'undef') : 'undef'));
         if ($state && ($state->{max_tokens} // 0) != $ctx_window) {
             $state->{max_tokens} = $ctx_window;
-            log_debug('WorkflowOrchestrator', "Updated session max_tokens to $ctx_window (model context window)");
+            log_info('WorkflowOrchestrator', "Updated session max_tokens to $ctx_window (model context window)");
         }
     }
     
