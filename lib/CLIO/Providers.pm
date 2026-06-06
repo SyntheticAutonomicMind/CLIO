@@ -315,6 +315,24 @@ my %PROVIDERS = (
             },
         },
     },
+    
+    nvidia => {
+        name => 'NVIDIA NIM',
+        api_base => 'https://integrate.api.nvidia.com/v1',
+        model => 'nvidia/nemotron-3-ultra-550b-a55b',
+        requires_auth => 'apikey',
+        supports_tools => 1,
+        supports_streaming => 1,
+        supports_reasoning => 0,  # NVIDIA NIM doesn't expose reasoning_effort parameter
+        native_api => 1,
+        provider_module => 'CLIO::Providers::NVIDIA',
+        endpoint => {
+            path_suffix => '',
+            temperature_range => [0.0, 2.0],
+            supports_tools => 1,
+            nvidia => 1,  # Marker for APIManager.adapt_request_for_endpoint
+        },
+    },
 );
 
 =head2 get_provider
