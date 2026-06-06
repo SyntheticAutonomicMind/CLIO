@@ -4155,6 +4155,8 @@ sub _get_native_provider {
         %custom_headers = %{$provider_config->{endpoint}{extra_headers}};
     }
     
+    log_debug('APIManager', "Creating native provider $module with custom_headers: " . encode_json(\%custom_headers));
+    
     my $provider = $module->new(
         api_key => $self->{api_key},
         api_base => $effective_api_base,

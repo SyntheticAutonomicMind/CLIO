@@ -331,6 +331,9 @@ my %PROVIDERS = (
             temperature_range => [0.0, 2.0],
             supports_tools => 1,
             nvidia => 1,  # Marker for APIManager.adapt_request_for_endpoint
+            extra_headers => {
+                'Accept' => 'text/event-stream',
+            },
         },
     },
 );
