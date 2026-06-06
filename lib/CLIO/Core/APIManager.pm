@@ -1085,7 +1085,7 @@ sub get_model_capabilities {
     # Check cache first (cache by full model name including provider prefix)
     if ($self->{_model_capabilities_cache} && 
         $self->{_model_capabilities_cache}{$model}) {
-        log_info('APIManager', "Model caps for $model (cached): prompt=" . ($self->{_model_capabilities_cache}{$model}{max_prompt_tokens} // 'undef') . ", ctx_window=" . ($self->{_model_capabilities_cache}{$model}{max_context_window_tokens} // 'undef'));
+        log_debug('APIManager', "Model caps for $model (cached): prompt=" . ($self->{_model_capabilities_cache}{$model}{max_prompt_tokens} // 'undef') . ", ctx_window=" . ($self->{_model_capabilities_cache}{$model}{max_context_window_tokens} // 'undef'));
         return $self->{_model_capabilities_cache}{$model};
     }
     
@@ -1267,15 +1267,13 @@ sub get_model_capabilities {
         $self->{_model_capabilities_cache} ||= {};
         $self->{_model_capabilities_cache}{$model} = $capabilities;
 
-        log_info('APIManager', "Model caps for $model: prompt=$capabilities->{max_prompt_tokens}, output=$capabilities->{max_output_tokens}, ctx_window=$capabilities->{max_context_window_tokens}");
-        log_debug('APIManager', "Model caps for $model: prompt=$capabilities->{max_prompt_tokens}, output=$capabilities->{max_output_tokens}");
+        log_debug('APIManager', "Model caps for $model: prompt=$capabilities->{max_prompt_tokens}, output=$capabilities->{max_output_tokens}, ctx_window=$capabilities->{max_context_window_tokens}");
         return $capabilities;
     }
     
-    log_info('APIManager', "Model $api_model not found in /models response, falling back to default context window");
-    log_debug('APIManager', "Model $api_model not found in /models response (using fallback token limits)");
+    log_debug('APIManager', "Model $api_model not found in /models response, falling back to default context window");
     
-    log_info('APIManager', "get_model_capabilities returning undef for $model");
+    log_debug('APIManager', "get_model_capabilities returning undef for $model");
     return undef;
 }
 
