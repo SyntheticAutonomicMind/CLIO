@@ -377,263 +377,222 @@ sub _display_multi_provider_models {
         return $a_pri <=> $b_pri || $a cmp $b;
     } keys %by_provider;
 
-    $self->refresh_terminal_size();
-    $self->{chat}->{pager}->reset();
-    $self->{chat}->{pager}->enable();
+   $self->refresh_terminal_size();
+   $self->{chat}->{pager}->reset();
+   $self->{chat}->{pager}->enable();
 
-    my @lines;
-    my $total_count = scalar @$all_models;
+   my @lines;
+   my $total_count = scalar @$all_models;
 
-    push @lines, "";
-    push @lines, box_char("hhorizontal") x 76;
-    push @lines, $self->colorize("AVAILABLE MODELS", 'DATA') . " (" . scalar(@provider_order) . " providers, $total_count models)";
-    push @lines, box_char("hhorizontal") x 76;
+   # Calculate dynamic model column width based on terminal width
+   # Leave space for other columns: 2 spaces + 6 (Ctx) + 1 space + 6 (Out) + 2 spaces + 5 (Cap) + buffer = ~25 chars
+   my $available_width = $self->{chat}->{terminal_width} || 80;
+   my $max_id_width = $available_width - 25;
+   # Ensure reasonable bounds
+   $max_id_width = 20 if $max_id_width < 20;
+   $max_id_width = 50 if $max_id_width > 50;
 
-    for my $provider_name (@provider_order) {
-        my $models = $by_provider{$provider_name};
-        my $display_name = $models->[0]{_provider_display} || $provider_name;
+   push @lines, "";
+   push @lines, box_char("hhorizontal") x $available_width;
+   push @lines, $self->colorize("AVAILABLE MODELS", 'DATA') . " (" . scalar(@provider_order) . " providers, $total_count models)";
+   push @lines, box_char("hhorizontal") x $available_width;
 
-        # Filter out embedding models and router entries
-        my @chat_models = grep {
-            my $id = $_->{id} || '';
-            $id !~ /embedding|embed/i && !($id =~ m{/routers/})
-        } @$models;
+   for my $provider_name (@provider_order) {
+       my $models = $by_provider{$provider_name};
+       my $display_name = $models->[0]{_provider_display} || $provider_name;
 
-        # Deduplicate by model ID (keep first occurrence)
-        my %seen;
-        my @unique;
-        for my $m (sort { $a->{id} cmp $b->{id} } @chat_models) {
-            my $id = $m->{_full_id} || $m->{id};
-            # Strip provider prefix for dedup (e.g., github_copilot/gpt-4 -> gpt-4)
-            my $base_id = $id;
-            $base_id =~ s{^\Q$provider_name\E/}{};
-            next if $seen{lc($base_id)}++;
-            push @unique, $m;
-        }
+       # Filter out embedding models and router entries
+       my @chat_models = grep {
+           my $id = $_->{id} || '';
+           $id !~ /embedding|embed/i && !($id =~ m{/routers/})
+       } @$models;
 
-        my $count = scalar @unique;
+       # Deduplicate by model ID (keep first occurrence)
+       my %seen;
+       my @unique;
+       for my $m (sort { $a->{id} cmp $b->{id} } @chat_models) {
+           my $id = $m->{_full_id} || $m->{id};
+           # Strip provider prefix for dedup (e.g., github_copilot/gpt-4 -> gpt-4)
+           my $base_id = $id;
+           $base_id =~ s{^\Q$provider_name\E/}{};
+           next if $seen{lc($base_id)}++;
+           push @unique, $m;
+       }
 
-        # Fixed column width for model IDs (long names truncated with ellipsis)
-        my $max_id_width = 30;
+       my $count = scalar @unique;
 
-        push @lines, "";
-        push @lines, $self->colorize("$display_name ($provider_name)", 'THEME');
-        push @lines, "  " . (box_char("horizontal") x 72);
+       push @lines, "";
+       push @lines, $self->colorize("$display_name ($provider_name)", 'THEME');
+       push @lines, "  " . (box_char("horizontal") x ($available_width - 2));
 
-        # Column headers
-        push @lines, $self->colorize(
-            sprintf("  %-30s %6s %6s  %-5s", "Model", "Ctx", "Out", "Cap"),
-            'DIM'
-        );
+       # Column headers
+       push @lines, $self->colorize(
+           sprintf("  %-${max_id_width}s %6s %6s  %-5s", "Model", "Ctx", "Out", "Cap"),
+           'DIM'
+       );
 
-        for my $model (@unique) {
-            my $line = $self->_format_model_line($model, $provider_name, $max_id_width);
-            push @lines, $line;
-        }
-    }
+       for my $model (@unique) {
+           my $line = $self->_format_model_line($model, $provider_name, $max_id_width);
+           push @lines, $line;
+       }
+   }
 
-    push @lines, "";
-    push @lines, box_char("hhorizontal") x 76;
-    push @lines, sprintf("Total: %d models across %d providers", $total_count, scalar(@provider_order));
-    push @lines, "";
-    push @lines, $self->colorize("Usage: /api set model <provider>/<model>", 'SYSTEM');
-    push @lines, $self->colorize("  e.g.: /api set model github_copilot/gpt-4.1", 'SYSTEM');
-    push @lines, $self->colorize("  e.g.: /api set model openrouter/deepseek/deepseek-r1-0528", 'SYSTEM');
-    push @lines, "";
+   push @lines, "";
+   push @lines, box_char("hhorizontal") x $available_width;
+   push @lines, sprintf("Total: %d models across %d providers", $total_count, scalar(@provider_order));
+   push @lines, "";
+   push @lines, $self->colorize("Usage: /api set model <provider>/<model>", 'SYSTEM');
+   push @lines, $self->colorize("  e.g.: /api set model github_copilot/gpt-4.1", 'SYSTEM');
+   push @lines, $self->colorize("  e.g.: /api set model openrouter/deepseek/deepseek-r1-0528", 'SYSTEM');
+   push @lines, "";
 
-    for my $line (@lines) {
-        last unless $self->writeline($line);
-    }
-    $self->{chat}->{pager}->disable();
+   for my $line (@lines) {
+       last unless $self->writeline($line);
+   }
+   $self->{chat}->{pager}->disable();
 }
 
 sub _format_model_line {
-    my ($self, $model, $provider_name, $max_id_width) = @_;
+   my ($self, $model, $provider_name, $max_id_width) = @_;
 
-    $max_id_width //= 30;
+   $max_id_width //= 30;
 
-    my $full_id = $model->{_full_id} || $model->{id};
+   my $full_id = $model->{_full_id} || $model->{id};
 
-    # Strip provider prefix from display ID (it's already in the section header)
-    my $display_id = $full_id;
-    if ($provider_name) {
-        $display_id =~ s{^\Q$provider_name\E/}{};
-    }
+   # Strip provider prefix from display ID (it's already in the section header)
+   my $display_id = $full_id;
+   if ($provider_name) {
+       $display_id =~ s{^\Q$provider_name\E/}{};
+   }
 
-    # Context tokens - check multiple sources
-    my $ctx = $model->{_context_tokens};
-    if (!$ctx && $model->{capabilities} && $model->{capabilities}{limits}) {
-        $ctx = $model->{capabilities}{limits}{max_context_window_tokens}
-            || $model->{capabilities}{limits}{max_prompt_tokens};
-    }
-    my $ctx_str = $ctx ? _format_tokens($ctx) : "-";
+   # Context tokens - check multiple sources
+   my $ctx = $model->{_context_tokens};
+   if (!$ctx && $model->{capabilities} && $model->{capabilities}{limits}) {
+       $ctx = $model->{capabilities}{limits}{max_context_window_tokens}
+           || $model->{capabilities}{limits}{max_prompt_tokens};
+   }
+   my $ctx_str = $ctx ? _format_tokens($ctx) : "-";
 
-    # Output tokens
-    my $out = $model->{_output_tokens};
-    if (!$out && $model->{capabilities} && $model->{capabilities}{limits}) {
-        $out = $model->{capabilities}{limits}{max_output_tokens};
-    }
-    my $out_str = $out ? _format_tokens($out) : "-";
+   # Output tokens
+   my $out = $model->{_output_tokens};
+   if (!$out && $model->{capabilities} && $model->{capabilities}{limits}) {
+       $out = $model->{capabilities}{limits}{max_output_tokens};
+   }
+   my $out_str = $out ? _format_tokens($out) : "-";
 
-    # Feature flags (abbreviated for compact display)
-    my @features;
-    push @features, "t" if $model->{_supports_tools};
-    push @features, "v" if $model->{_supports_vision};
-    push @features, "r" if $model->{_supports_reasoning};
+   # Feature flags (abbreviated for compact display)
+   my @features;
+   push @features, "t" if $model->{_supports_tools};
+   push @features, "v" if $model->{_supports_vision};
+   push @features, "r" if $model->{_supports_reasoning};
 
-    # Check Copilot capabilities supports hash
-    if ($model->{capabilities} && $model->{capabilities}{supports}) {
-        my $s = $model->{capabilities}{supports};
-        push @features, "t" if $s->{tool_calls} && !grep { $_ eq 't' } @features;
-        push @features, "v" if $s->{vision} && !grep { $_ eq 'v' } @features;
-    }
+   # Check Copilot capabilities supports hash
+   if ($model->{capabilities} && $model->{capabilities}{supports}) {
+       my $s = $model->{capabilities}{supports};
+       push @features, "t" if $s->{tool_calls} && !grep { $_ eq 't' } @features;
+       push @features, "v" if $s->{vision} && !grep { $_ eq 'v' } @features;
+   }
 
-    my $features_str = join("", @features);
+   my $features_str = join("", @features);
 
-    # Build colorized data fields (padded to fixed widths on plain text)
-    my $ctx_padded = sprintf("%6s", $ctx_str);
-    my $out_padded = sprintf("%6s", $out_str);
-    my $feat_padded = sprintf("%-5s", $features_str);
+   # Build colorized data fields (padded to fixed widths on plain text)
+   my $ctx_padded = sprintf("%6s", $ctx_str);
+   my $out_padded = sprintf("%6s", $out_str);
+   my $feat_padded = sprintf("%-5s", $features_str);
 
-    my $data_line = " " .
-        $self->colorize($ctx_padded, 'DATA') . " " .
-        $self->colorize($out_padded, 'DATA') . "  " .
-        $self->colorize($feat_padded, 'DIM');
+   my $data_line = " " .
+       $self->colorize($ctx_padded, 'DATA') . " " .
+       $self->colorize($out_padded, 'DATA') . "  " .
+       $self->colorize($feat_padded, 'DIM');
 
-    # If model ID fits in column, single line
-    if (length($display_id) <= $max_id_width) {
-        my $id_padded = sprintf("%-30s", $display_id);
-        return "  " . $self->colorize($id_padded, 'USER') . $data_line;
-    }
+   # If model ID fits in column, single line
+   if (length($display_id) <= $max_id_width) {
+       my $id_padded = sprintf("%-${max_id_width}s", $display_id);
+       return "  " . $self->colorize($id_padded, 'USER') . $data_line;
+   }
 
-    # Model ID too long - wrap to continuation line
-    # First line: first 30 chars of ID + data columns
-    # Second line: rest of ID (padded to 30) + empty data columns
-    my $first_part = substr($display_id, 0, $max_id_width);
-    my $rest = substr($display_id, $max_id_width);
-
-    my $first_id = sprintf("%-30s", $first_part);
-    my $line1 = "  " . $self->colorize($first_id, 'USER') . $data_line;
-
-    # Continuation lines: rest of ID in model column, empty data
-    my @lines = ($line1);
-    while (length($rest) > 0) {
-        my $chunk;
-        if (length($rest) > $max_id_width) {
-            $chunk = substr($rest, 0, $max_id_width);
-            $rest = substr($rest, $max_id_width);
-        } else {
-            $chunk = $rest;
-            $rest = '';
-        }
-        my $cont_id = sprintf("%-30s", $chunk);
-        push @lines, "  " . $self->colorize($cont_id, 'USER');
-    }
-
-    return join("\n", @lines);
+   # Model ID too long - truncate with ellipsis to keep columns aligned
+   my $truncated = substr($display_id, 0, $max_id_width - 1) . "\x{2026}";
+   my $id_padded = sprintf("%-${max_id_width}s", $truncated);
+   return "  " . $self->colorize($id_padded, 'USER') . $data_line;
 }
 
 sub _format_capabilities_line {
-    my ($self, $model, $provider_name, $max_id_width, $mcm, $has_cap_map) = @_;
+   my ($self, $model, $provider_name, $max_id_width, $mcm, $has_cap_map) = @_;
 
-    $max_id_width //= 30;
+   $max_id_width //= 30;
 
-    my $model_id = $model->{id};
-    my $full_id = $model->{_full_id} || $model_id;
+   my $model_id = $model->{id};
+   my $full_id = $model->{_full_id} || $model_id;
 
-    # Strip provider prefix
-    my $display_id = $full_id;
-    $display_id =~ s{^\Q$provider_name\E/}{};
+   # Strip provider prefix
+   my $display_id = $full_id;
+   $display_id =~ s{^\Q$provider_name\E/}{};
 
-    # Truncate long model IDs with ellipsis
-    if (length($display_id) > $max_id_width) {
-        $display_id = substr($display_id, 0, $max_id_width - 1) . "\x{2026}";
-    }
+   # Truncate long model IDs with ellipsis
+   if (length($display_id) > $max_id_width) {
+       $display_id = substr($display_id, 0, $max_id_width - 1) . "\x{2026}";
+   }
 
-    # Context tokens from model data or MCM
-    my $ctx = $model->{_context_tokens};
-    if (!$ctx && $model->{capabilities} && $model->{capabilities}{limits}) {
-        $ctx = $model->{capabilities}{limits}{max_context_window_tokens}
-            || $model->{capabilities}{limits}{max_prompt_tokens};
-    }
-    if ($has_cap_map && !$ctx) {
-        my $caps = $mcm->get_capabilities($provider_name, $model_id);
-        $ctx = $caps->{context_window} if $caps;
-    }
-    my $ctx_str = $ctx ? _format_tokens($ctx) : "-";
+   # Context tokens from model data or MCM
+   my $ctx = $model->{_context_tokens};
+   if (!$ctx && $model->{capabilities} && $model->{capabilities}{limits}) {
+       $ctx = $model->{capabilities}{limits}{max_context_window_tokens}
+           || $model->{capabilities}{limits}{max_prompt_tokens};
+   }
+   if ($has_cap_map && !$ctx) {
+       my $caps = $mcm->get_capabilities($provider_name, $model_id);
+       $ctx = $caps->{context_window} if $caps;
+   }
+   my $ctx_str = $ctx ? _format_tokens($ctx) : "-";
 
-    # Output tokens
-    my $out = $model->{_output_tokens};
-    if (!$out && $model->{capabilities} && $model->{capabilities}{limits}) {
-        $out = $model->{capabilities}{limits}{max_output_tokens};
-    }
-    my $out_str = $out ? _format_tokens($out) : "-";
+   # Output tokens
+   my $out = $model->{_output_tokens};
+   if (!$out && $model->{capabilities} && $model->{capabilities}{limits}) {
+       $out = $model->{capabilities}{limits}{max_output_tokens};
+   }
+   my $out_str = $out ? _format_tokens($out) : "-";
 
-    # Feature flags (abbreviated for compact display)
-    my @features;
-    push @features, "t" if $model->{_supports_tools};
-    push @features, "v" if $model->{_supports_vision};
-    push @features, "r" if $model->{_supports_reasoning};
+   # Feature flags (abbreviated for compact display)
+   my @features;
+   push @features, "t" if $model->{_supports_tools};
+   push @features, "v" if $model->{_supports_vision};
+   push @features, "r" if $model->{_supports_reasoning};
 
-    # Check Copilot capabilities supports hash
-    if ($model->{capabilities} && $model->{capabilities}{supports}) {
-        my $s = $model->{capabilities}{supports};
-        push @features, "t" if $s->{tool_calls} && !grep { $_ eq 't' } @features;
-        push @features, "v" if $s->{vision} && !grep { $_ eq 'v' } @features;
-        push @features, "s" if $s->{streaming};
-    }
+   # Check Copilot capabilities supports hash
+   if ($model->{capabilities} && $model->{capabilities}{supports}) {
+       my $s = $model->{capabilities}{supports};
+       push @features, "t" if $s->{tool_calls} && !grep { $_ eq 't' } @features;
+       push @features, "v" if $s->{vision} && !grep { $_ eq 'v' } @features;
+       push @features, "s" if $s->{streaming};
+   }
 
-    # MCM capabilities for providers with capability maps
-    if ($has_cap_map) {
-        my $caps = $mcm->get_capabilities($provider_name, $model_id);
-        if ($caps) {
-            push @features, "t" if $caps->{supports_tools} && !grep { $_ eq 't' } @features;
-            push @features, "v" if $caps->{supports_vision} && !grep { $_ eq 'v' } @features;
-            push @features, "r" if $caps->{supports_reasoning} && !grep { $_ eq 'r' } @features;
-            push @features, "s" if $caps->{supports_streaming} && !grep { $_ eq 's' } @features;
-        }
-    }
+   # MCM capabilities for providers with capability maps
+   if ($has_cap_map) {
+       my $caps = $mcm->get_capabilities($provider_name, $model_id);
+       if ($caps) {
+           push @features, "t" if $caps->{supports_tools} && !grep { $_ eq 't' } @features;
+           push @features, "v" if $caps->{supports_vision} && !grep { $_ eq 'v' } @features;
+           push @features, "r" if $caps->{supports_reasoning} && !grep { $_ eq 'r' } @features;
+           push @features, "s" if $caps->{supports_streaming} && !grep { $_ eq 's' } @features;
+       }
+   }
 
-    my $features_str = join("", @features);
+   my $features_str = join("", @features);
 
-    # Build colorized data fields (padded to fixed widths on plain text)
-    my $ctx_padded = sprintf("%6s", $ctx_str);
-    my $out_padded = sprintf("%6s", $out_str);
-    my $feat_padded = sprintf("%-5s", $features_str);
+   # Build colorized data fields (padded to fixed widths on plain text)
+   my $ctx_padded = sprintf("%6s", $ctx_str);
+   my $out_padded = sprintf("%6s", $out_str);
+   my $feat_padded = sprintf("%-5s", $features_str);
 
-    my $data_line = " " .
-        $self->colorize($ctx_padded, 'DATA') . " " .
-        $self->colorize($out_padded, 'DATA') . "  " .
-        $self->colorize($feat_padded, 'DIM');
+   my $data_line = " " .
+       $self->colorize($ctx_padded, 'DATA') . " " .
+       $self->colorize($out_padded, 'DATA') . "  " .
+       $self->colorize($feat_padded, 'DIM');
 
-    # If model ID fits in column, single line
-    if (length($display_id) <= $max_id_width) {
-        my $id_padded = sprintf("%-30s", $display_id);
-        return "  " . $self->colorize($id_padded, 'USER') . $data_line;
-    }
-
-    # Model ID too long - wrap to continuation line
-    my $first_part = substr($display_id, 0, $max_id_width);
-    my $rest = substr($display_id, $max_id_width);
-
-    my $first_id = sprintf("%-30s", $first_part);
-    my $line1 = "  " . $self->colorize($first_id, 'USER') . $data_line;
-
-    my @lines = ($line1);
-    while (length($rest) > 0) {
-        my $chunk;
-        if (length($rest) > $max_id_width) {
-            $chunk = substr($rest, 0, $max_id_width);
-            $rest = substr($rest, $max_id_width);
-        } else {
-            $chunk = $rest;
-            $rest = '';
-        }
-        my $cont_id = sprintf("%-30s", $chunk);
-        push @lines, "  " . $self->colorize($cont_id, 'USER');
-    }
-
-    return join("\n", @lines);
+   # Single line with dynamic width
+   my $id_padded = sprintf("%-${max_id_width}s", $display_id);
+   return "  " . $self->colorize($id_padded, 'USER') . $data_line;
 }
 
 sub _display_capabilities_view {
@@ -660,65 +619,68 @@ sub _display_capabilities_view {
     $self->{chat}->{pager}->reset();
     $self->{chat}->{pager}->enable();
 
-    my @lines;
+   my @lines;
 
-    push @lines, "";
-    push @lines, box_char("hhorizontal") x 76;
-    push @lines, $self->colorize("MODEL CAPABILITIES", 'DATA') . " (" . scalar(@provider_order) . " providers)";
-    push @lines, box_char("hhorizontal") x 76;
+   # Calculate dynamic model column width based on terminal width
+   my $available_width = $self->{chat}->{terminal_width} || 80;
+   my $max_id_width = $available_width - 25;
+   $max_id_width = 20 if $max_id_width < 20;
+   $max_id_width = 50 if $max_id_width > 50;
 
-    for my $provider_name (@provider_order) {
-        my $models = $by_provider{$provider_name};
-        my $display_name = $models->[0]{_provider_display} || $provider_name;
+   push @lines, "";
+   push @lines, box_char("hhorizontal") x $available_width;
+   push @lines, $self->colorize("MODEL CAPABILITIES", 'DATA') . " (" . scalar(@provider_order) . " providers)";
+   push @lines, box_char("hhorizontal") x $available_width;
 
-        require CLIO::Providers;
-        my $provider_def = CLIO::Providers::get_provider($provider_name);
-        my $has_cap_map = $provider_def && $provider_def->{capability_map};
+   for my $provider_name (@provider_order) {
+       my $models = $by_provider{$provider_name};
+       my $display_name = $models->[0]{_provider_display} || $provider_name;
 
-        # Filter out embedding models and router entries
-        my @chat_models = grep {
-            my $id = $_->{id} || '';
-            $id !~ /embedding|embed/i && !($id =~ m{/routers/})
-        } @$models;
+       require CLIO::Providers;
+       my $provider_def = CLIO::Providers::get_provider($provider_name);
+       my $has_cap_map = $provider_def && $provider_def->{capability_map};
 
-        # Deduplicate by model ID
-        my %seen;
-        my @unique;
-        for my $m (sort { $a->{id} cmp $b->{id} } @chat_models) {
-            my $id = $m->{_full_id} || $m->{id};
-            my $base_id = $id;
-            $base_id =~ s{^\Q$provider_name\E/}{};
-            next if $seen{lc($base_id)}++;
-            push @unique, $m;
-        }
+       # Filter out embedding models and router entries
+       my @chat_models = grep {
+           my $id = $_->{id} || '';
+           $id !~ /embedding|embed/i && !($id =~ m{/routers/})
+       } @$models;
 
-        push @lines, "";
-        push @lines, $self->colorize("$display_name ($provider_name)", 'THEME');
-        push @lines, "  " . (box_char("horizontal") x 72);
+       # Deduplicate by model ID
+       my %seen;
+       my @unique;
+       for my $m (sort { $a->{id} cmp $b->{id} } @chat_models) {
+           my $id = $m->{_full_id} || $m->{id};
+           my $base_id = $id;
+           $base_id =~ s{^\Q$provider_name\E/}{};
+           next if $seen{lc($base_id)}++;
+           push @unique, $m;
+       }
 
-        # Fixed column width for model IDs (long names truncated with ellipsis)
-        my $max_id_width = 30;
+       push @lines, "";
+       push @lines, $self->colorize("$display_name ($provider_name)", 'THEME');
+       push @lines, "  " . (box_char("horizontal") x ($available_width - 2));
 
-        # Column headers
-        push @lines, $self->colorize(
-            sprintf("  %-30s %6s %6s  %-5s", "Model", "Ctx", "Out", "Cap"),
-            'DIM'
-        );
+       # Column headers
+       push @lines, $self->colorize(
+           sprintf("  %-${max_id_width}s %6s %6s  %-5s", "Model", "Ctx", "Out", "Cap"),
+           'DIM'
+       );
 
-        for my $model (@unique) {
-            my $line = $self->_format_capabilities_line($model, $provider_name, $max_id_width, $mcm, $has_cap_map);
-            push @lines, $line;
-        }
-    }
+       for my $model (@unique) {
+           my $line = $self->_format_capabilities_line($model, $provider_name, $max_id_width, $mcm, $has_cap_map);
+           push @lines, $line;
+       }
+   }
 
-    push @lines, "";
-    push @lines, box_char("hhorizontal") x 76;
-    push @lines, "";
-
-    for my $line (@lines) {
-        last unless $self->writeline($line);
-    }
-    $self->{chat}->{pager}->disable();
+   push @lines, "";
+   push @lines, box_char("hhorizontal") x $available_width;
+   push @lines, "";
+   
+   for my $line (@lines) {
+       last unless $self->writeline($line);
+   }
+   $self->{chat}->{pager}->disable();
 }
 
 sub _display_models_list {
@@ -732,18 +694,21 @@ sub _display_models_list {
 
     my @lines;
 
-    push @lines, "";
-    push @lines, box_char("hhorizontal") x 76;
-    push @lines, $self->colorize("AVAILABLE MODELS", 'DATA') . " (" . $self->colorize($api_base, 'THEME') . ")";
-    push @lines, box_char("hhorizontal") x 76;
+    # Calculate dynamic model column width based on terminal width
+    my $available_width = $self->{chat}->{terminal_width} || 80;
+    my $max_id_width = $available_width - 25;
+    $max_id_width = 20 if $max_id_width < 20;
+    $max_id_width = 50 if $max_id_width > 50;
 
-    # Fixed column width for model IDs (long names truncated with ellipsis)
-    my $max_id_width = 30;
+    push @lines, "";
+    push @lines, box_char("hhorizontal") x $available_width;
+    push @lines, $self->colorize("AVAILABLE MODELS", 'DATA') . " (" . $self->colorize($api_base, 'THEME') . ")";
+    push @lines, box_char("hhorizontal") x $available_width;
 
     # Column headers
     push @lines, "";
     push @lines, $self->colorize(
-        sprintf("  %-30s %6s %6s  %-5s", "Model", "Ctx", "Out", "Cap"),
+        sprintf("  %-${max_id_width}s %6s %6s  %-5s", "Model", "Ctx", "Out", "Cap"),
         'DIM'
     );
 
@@ -752,7 +717,7 @@ sub _display_models_list {
     }
 
     push @lines, "";
-    push @lines, box_char("hhorizontal") x 76;
+    push @lines, box_char("hhorizontal") x $available_width;
     push @lines, sprintf("Total: %d models available", scalar(@$models));
     push @lines, "";
 

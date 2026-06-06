@@ -402,7 +402,8 @@ sub _fetch_provider_capabilities {
     elsif ($provider_def->{native_api}) {
         # Route native_api providers to their specific fetchers
         return $self->_fetch_anthropic_capabilities($model) if $provider =~ /^anthropic$/i;
-        return $self->_fetch_google_capabilities($model);
+        return $self->_fetch_google_capabilities($model) if $provider =~ /^google$/i;
+        return $self->_fetch_nvidia_capabilities($model) if $provider =~ /^nvidia$/i;
     }
     elsif ($provider_def->{capability_map}) {
         return $self->_fetch_zai_capabilities($model) if $provider =~ /^zai/;
@@ -629,6 +630,128 @@ sub _fetch_google_capabilities {
     }
     
     return undef;
+}
+
+=head2 _fetch_nvidia_capabilities
+
+Fetch capabilities from NVIDIA NIM API.
+
+Arguments:
+- $model: Model identifier
+
+Returns:
+- Hashref with capability data
+
+=cut
+
+sub _fetch_nvidia_capabilities {
+    my ($self, $model) = @_;
+    
+    # NVIDIA NIM models static capability map
+    # Based on NVIDIA NIM API documentation and known models
+    my %nvidia_models = (
+        'nemotron-3-ultra-550b-a55b' => {
+            context_window => 128000,
+            max_output_tokens => 8192,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 0,
+        },
+        'nemotron-3-ultra' => {
+            context_window => 128000,
+            max_output_tokens => 8192,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 0,
+        },
+        'nemotron-3-8b' => {
+            context_window => 128000,
+            max_output_tokens => 8192,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 0,
+        },
+        'nemotron-4-340b' => {
+            context_window => 128000,
+            max_output_tokens => 8192,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 0,
+        },
+        'llama-3.1-405b' => {
+            context_window => 128000,
+            max_output_tokens => 8192,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 0,
+        },
+        'llama-3.1-70b' => {
+            context_window => 128000,
+            max_output_tokens => 8192,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 0,
+        },
+        'llama-3.1-8b' => {
+            context_window => 128000,
+            max_output_tokens => 8192,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 0,
+        },
+        'mistral-large' => {
+            context_window => 128000,
+            max_output_tokens => 8192,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 0,
+        },
+        'mixtral-8x7b' => {
+            context_window => 32768,
+            max_output_tokens => 8192,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 0,
+        },
+    );
+    
+    # Try exact match first
+    my $model_data = $nvidia_models{$model};
+    
+    # Try without nvidia/ prefix
+    if (!$model_data && $model =~ s{^nvidia/}{}) {
+        $model_data = $nvidia_models{$model};
+    }
+    
+    return undef unless $model_data;
+    
+    return {
+        provider              => 'nvidia',
+        model                 => $model,
+        context_window        => $model_data->{context_window},
+        max_prompt_tokens     => $model_data->{context_window},
+        max_output_tokens     => $model_data->{max_output_tokens},
+        supports_tools        => $model_data->{supports_tools},
+        supports_streaming    => $model_data->{supports_streaming},
+        supports_vision       => $model_data->{supports_vision},
+        supports_reasoning    => $model_data->{supports_reasoning},
+        embeddings_dimension  => undef,
+        architecture          => 'nvidia',
+        quantization          => undef,
+        parameters            => undef,
+        capabilities          => [],
+        size_bytes            => undef,
+        raw                   => $model_data,
+    };
 }
 
 =head2 _fetch_zai_capabilities

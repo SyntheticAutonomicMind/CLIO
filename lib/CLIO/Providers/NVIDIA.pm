@@ -54,6 +54,12 @@ sub new {
     $self->{model} //= DEFAULT_MODEL;
     $self->{max_tokens} = $opts{max_tokens} // DEFAULT_MAX_TOKENS;
     
+    # Store custom headers if provided (e.g., from APIManager)
+    $self->{custom_headers} = $opts{custom_headers} // {};
+    
+    # Debug: check if debug flag is set
+    warn "NVIDIA provider new() - debug flag: " . ($self->{debug} ? 'true' : 'false') . ", custom_headers: " . encode_json($self->{custom_headers});
+    
     return $self;
 }
 
@@ -69,6 +75,9 @@ sub build_request {
     $options //= {};
     
     my $model = $options->{model} // $self->{model};
+    
+    # NVIDIA NIM API expects the full model ID (e.g., "nvidia/nemotron-3-ultra-550b-a55b")
+    # Do NOT strip the prefix - the API uses the full ID
     
     # Build request payload (OpenAI format)
     my $payload = {
@@ -107,12 +116,16 @@ sub build_request {
     # Build URL
     my $url = "$self->{api_base}/chat/completions";
     
+    my $headers = $self->get_headers();
     $self->debug("Built NVIDIA request for model $model");
+    $self->debug("Request URL: $url");
+    $self->debug("Request headers: " . encode_json($headers));
+    $self->debug("Request payload: " . encode_json($payload));
     
     return {
         url => $url,
         method => 'POST',
-        headers => $self->get_headers(),
+        headers => $headers,
         body => encode_json($payload),
     };
 }
@@ -126,11 +139,18 @@ Get HTTP headers for NVIDIA API requests.
 sub get_headers {
     my ($self) = @_;
 
-    return {
+    my %headers = (
         'Content-Type' => 'application/json',
         'Accept' => 'application/json',
         'Authorization' => "Bearer $self->{api_key}",
-    };
+    );
+    
+    # Merge custom headers (e.g., from APIManager)
+    for my $key (keys %{$self->{custom_headers} // {}}) {
+        $headers{$key} = $self->{custom_headers}{$key};
+    }
+    
+    return \%headers;
 }
 
 =head2 parse_stream_event($line)
