@@ -77,11 +77,14 @@ say "=" x 80;
 say "";
 
 # Mock session for tools that need it
-my $mock_session = {
+my $mock_session = bless {
     session_id => 'encoding_test',
     working_directory => $test_dir,
     session_dir => $test_dir,
-};
+    state => { user_interrupted => 0 },
+}, 'MockSession';
+
+sub MockSession::state { shift->{state} }
 
 # Get all encoding samples
 my $samples = TestData::all_encoding_samples();
@@ -259,9 +262,9 @@ sub test_terminal_operations_with_encoding {
         
         # Read it back with cat
         my $result = $tool->execute({
-            operation => 'execute',
+            operation => 'exec',
             command => "cat '$test_file'",
-        }, $mock_session);
+        }, { session => $mock_session });
         
         assert_true($result->{success}, "[$encoding_name] execute (terminal) succeeds");
         
