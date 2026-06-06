@@ -8,7 +8,7 @@ use warnings;
 use utf8;
 use Exporter 'import';
 
-our @EXPORT_OK = qw(get_provider list_providers provider_exists build_endpoint_config DEFAULT_MODEL);
+our @EXPORT_OK = qw(get_provider list_providers provider_exists build_endpoint_config DEFAULT_MODEL provider_from_url);
 
 # Fallback model when no model is configured anywhere.
 # This should rarely be reached - Config and provider defaults take priority.
@@ -476,6 +476,45 @@ sub validate_provider {
     my @providers = list_providers();
     my $providers_str = join(', ', @providers);
     return (0, "Provider '$provider_name' not found. Available: $providers_str");
+}
+
+=head2 provider_from_url($url)
+
+Detect provider name from an API base URL.
+
+Arguments:
+  $url - API base URL (e.g., 'https://api.githubcopilot.com')
+
+Returns:
+  Provider name string, or undef if no match
+
+=cut
+
+sub provider_from_url {
+    my ($url) = @_;
+    return unless defined $url;
+
+    # Standard API providers
+    return 'github-copilot' if $url =~ m{githubcopilot\.com}i;
+    return 'openai'         if $url =~ m{api\.openai\.com}i;
+    return 'google'         if $url =~ m{generativelanguage\.googleapis\.com}i;
+    return 'openrouter'     if $url =~ m{openrouter\.ai}i;
+    return 'minimax'        if $url =~ m{api\.minimax\.io}i;
+    return 'ollama-cloud'   if $url =~ m{ollama\.com}i;
+    return 'deepseek'       if $url =~ m{api\.deepseek\.com}i;
+    return 'anthropic'      if $url =~ m{api\.anthropic\.com}i;
+    return 'zai-coding'     if $url =~ m{api\.z\.ai.*coding}i;
+    return 'zai'            if $url =~ m{api\.z\.ai}i;
+    return 'nvidia'         if $url =~ m{integrate\.api\.nvidia\.com}i;
+
+    # Local/self-hosted providers
+    return 'lmstudio'       if $url =~ m{(?:localhost|127\.0\.0\.1):1234}i;
+    return 'sam'            if $url =~ m{(?:localhost|127\.0\.0\.1):8080}i;
+
+    # DashScope variants
+    return 'dashscope'      if $url =~ m{dashscope.*\.aliyuncs\.com}i;
+
+    return;
 }
 
 1;
