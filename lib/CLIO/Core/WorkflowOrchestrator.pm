@@ -54,7 +54,7 @@ CLIO::Core::WorkflowOrchestrator - Autonomous tool calling workflow orchestrator
 =head1 DESCRIPTION
 
 Implements the main workflow loop for OpenAI-compatible tool calling.
-This replaces fragile pattern matching with intelligent tool use by the AI.
+This replaces pattern matching with tool use by the AI.
 
 The orchestrator:
 1. Sends user input to AI with available tools
@@ -490,7 +490,7 @@ sub process_input {
             }
         }
 
-        # Enforce message alternation for Claude compatibility
+        # Enforce message alternation
         # Must be done before EVERY API call, as messages array is modified during tool calling
         my $provider = $self->{api_manager}->get_current_provider() || 'github_copilot';
         my $alternated_messages = enforce_message_alternation(\@messages, $provider, debug => $self->{debug});
@@ -508,7 +508,7 @@ sub process_input {
             }
         }
         
-        # Send to AI with tools (ALWAYS use streaming for proper quota headers from GitHub Copilot)
+        # Send to AI with tools (streaming required for GitHub Copilot quota headers)
         my $api_response = eval {
             # Use streaming mode always (GitHub Copilot requires stream:true for real quota data)
             # If no callback provided, use a no-op callback
@@ -1342,7 +1342,7 @@ sub _execute_tool_round {
         # Display action detail
         my $printed_action = 0;
         # For tools with pre-action printed (apply_patch), convert the result's
-        # action_description into expanded_content for proper hrule formatting
+        # action_description into expanded_content for hrule formatting
         if ($pre_action_printed && $action_detail && !$suppress_display && $tool_name eq 'apply_patch') {
             my $expanded_content;
             if ($result_data && ref($result_data) eq 'HASH') {
@@ -2360,7 +2360,7 @@ sub _compress_dropped_for_recovery {
     # system messages). As a user message, the agent MUST respond to it.
     my @final_parts = ();
     push @final_parts, "Older conversation history has been summarized below to free context space.";
-    push @final_parts, "Continue your current work seamlessly - do not announce or acknowledge this summary.";
+    push @final_parts, "Continue your current work - do not announce or acknowledge this summary.";
     push @final_parts, "";
     push @final_parts, @recovery_parts;
     push @final_parts, "";
@@ -2965,7 +2965,7 @@ NEW (Tool Calling):
     User → WorkflowOrchestrator → AI with Tools → Tool Execution → AI → Response
 
 The orchestrator:
-- Replaces pattern matching with intelligent AI decisions
+- AI-directed tool decisions
 - Enables multi-turn tool use (tool → tool → answer)
 - Scales to any number of tools
 - Follows industry standard (OpenAI format)

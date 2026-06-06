@@ -191,7 +191,7 @@ sub refresh_terminal_size {
 
 =head2 flush_output_buffer
 
-Flush any pending streaming output to ensure message ordering.
+Flush pending streaming output.
 Called by WorkflowOrchestrator before executing tools to prevent
 tool output from appearing before agent text.
 
@@ -390,7 +390,8 @@ sub hide_busy_indicator {
     }
     
     # Stop spinner if it exists and is running
-    # Use is_running() for robust check (validates child process is alive)
+    # Use is_running() (validates child process is alive)
+    # Use is_running() (validates child process is alive)
     if ($self->{spinner} && $self->{spinner}->is_running()) {
         $self->{spinner}->stop();
         log_debug('Chat', "Busy indicator stopped");
@@ -3600,8 +3601,7 @@ sub render_markdown {
 
 Get the threshold at which pagination should pause (internal helper).
 
-Returns the line count threshold based on terminal height. Centralized
-to ensure streaming and writeline use the same pagination point.
+Returns the line count threshold based on terminal height. Centralized so streaming and writeline use the same pagination point.
 
 =cut
 
