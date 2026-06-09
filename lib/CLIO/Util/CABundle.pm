@@ -37,6 +37,41 @@ our @EXPORT_OK = qw(find_ca_bundle);
 our $CA_BUNDLE_PATH;
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# _search_ca_locations must be defined ABOVE the BEGIN block
+# because it's called at compile time (before the rest of
+# the file is parsed).
+sub _search_ca_locations {
+    my @paths = (
+        # Environment variable (runtime override, checked separately above)
+        ($ENV{SSL_CERT_FILE} && -f $ENV{SSL_CERT_FILE} && -r $ENV{SSL_CERT_FILE})
+            ? $ENV{SSL_CERT_FILE} : (),
+        # Debian/Ubuntu and derivatives
+        '/etc/ssl/certs/ca-certificates.crt',
+        # RHEL/CentOS/Fedora
+        '/etc/pki/tls/certs/ca-bundle.crt',
+        # OpenBSD / macOS default
+        '/etc/ssl/cert.pem',
+        # macOS Homebrew (Intel)
+        '/usr/local/etc/openssl/cert.pem',
+        # macOS Homebrew (Apple Silicon)
+        '/opt/homebrew/etc/openssl@3/cert.pem',
+        # iOS / a-Shell
+        "$ENV{HOME}/Documents/cacert.pem",
+        "$ENV{HOME}/../cacert.pem",
+        '/tmp/cacert.pem',
+    );
+    
+    for my $path (@paths) {
+        next unless defined $path && length $path;
+        if (-f $path && -r $path) {
+            return $path;
+        }
+    }
+    
+    return undef;
+}
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Set PERL_LWP_SSL_CA_FILE at compile time so LWP sees it
 # before any HTTPS connection is attempted.
 BEGIN {
@@ -78,43 +113,6 @@ sub find_ca_bundle {
     
     $CA_BUNDLE_PATH = _search_ca_locations();
     return $CA_BUNDLE_PATH;
-}
-
-=head2 _search_ca_locations (Internal)
-
-Search known platform-specific CA bundle locations.
-
-=cut
-
-sub _search_ca_locations {
-    my @paths = (
-        # Environment variable (runtime override, checked separately above)
-        ($ENV{SSL_CERT_FILE} && -f $ENV{SSL_CERT_FILE} && -r $ENV{SSL_CERT_FILE})
-            ? $ENV{SSL_CERT_FILE} : (),
-        # Debian/Ubuntu and derivatives
-        '/etc/ssl/certs/ca-certificates.crt',
-        # RHEL/CentOS/Fedora
-        '/etc/pki/tls/certs/ca-bundle.crt',
-        # OpenBSD / macOS default
-        '/etc/ssl/cert.pem',
-        # macOS Homebrew (Intel)
-        '/usr/local/etc/openssl/cert.pem',
-        # macOS Homebrew (Apple Silicon)
-        '/opt/homebrew/etc/openssl@3/cert.pem',
-        # iOS / a-Shell
-        "$ENV{HOME}/Documents/cacert.pem",
-        "$ENV{HOME}/../cacert.pem",
-        '/tmp/cacert.pem',
-    );
-    
-    for my $path (@paths) {
-        next unless defined $path && length $path;
-        if (-f $path && -r $path) {
-            return $path;
-        }
-    }
-    
-    return undef;
 }
 
 1;
