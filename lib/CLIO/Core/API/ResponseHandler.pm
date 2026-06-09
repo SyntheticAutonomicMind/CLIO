@@ -8,7 +8,7 @@ use warnings;
 use utf8;
 
 use CLIO::Core::Logger qw(should_log log_error log_warning log_info log_debug);
-use CLIO::Util::JSON qw(decode_json encode_json);
+use CLIO::Util::JSON qw(decode_json encode_json safe_decode_json safe_encode_json);
 use CLIO::Util::RateLimit qw(format_reset_message);
 use Scalar::Util qw(blessed);
 
@@ -263,11 +263,11 @@ sub handle_error_response {
     # Providers return errors in different formats:
     #   OpenAI/OpenRouter: {"error": {"message": "...", "code": 400}}
     #   Google native:     [{"error": {"message": "...", "code": 429, "status": "RESOURCE_EXHAUSTED"}}]
-    my $content = eval { decode_json($resp->decoded_content) };
+    my $content = safe_decode_json($resp->decoded_content);
     # For streaming errors, decoded_content may be empty because the body was
     # captured in raw_response_body and injected as $resp->{content} by APIManager.
     if (!$content && $resp->{content}) {
-        $content = eval { decode_json($resp->{content}) };
+        $content = safe_decode_json($resp->{content});
     }
     my $error_obj;
     if ($content) {
@@ -283,7 +283,7 @@ sub handle_error_response {
             $error = $error_obj->{message} // $error;
             # Extract detailed error from OpenRouter metadata.raw for better user messages
             if ($error_obj->{metadata} && ref($error_obj->{metadata}) eq 'HASH' && $error_obj->{metadata}{raw}) {
-                my $raw = eval { decode_json($error_obj->{metadata}{raw}) };
+                my $raw = safe_decode_json($error_obj->{metadata}{raw});
                 if ($raw) {
                     my $inner_error;
                     if (ref($raw) eq 'ARRAY' && @$raw && ref($raw->[0]) eq 'HASH' && $raw->[0]{error}) {

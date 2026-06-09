@@ -8,7 +8,7 @@ use warnings;
 use utf8;
 use IO::Socket::UNIX;
 use IO::Select;
-use CLIO::Util::JSON qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json);
 use Carp qw(croak);
 use Time::HiRes qw(time sleep);
 require CLIO::Core::Logger;
@@ -684,7 +684,7 @@ sub send_and_wait {
             if ($self->{buffer} =~ s/^(.+?\n)//) {
                 my $line = $1;
                 chomp $line;
-                my $response = eval { decode_json($line) };
+                my $response = safe_decode_json($line);
                 return $response if $response;
             }
         }

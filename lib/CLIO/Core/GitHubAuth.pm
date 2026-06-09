@@ -8,7 +8,7 @@ use warnings;
 use utf8;
 use CLIO::Core::Logger qw(log_debug log_error log_info log_warning);
 use CLIO::Util::ConfigPath qw(get_config_file get_config_dir);
-use CLIO::Util::JSON qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json);
 use CLIO::Compat::HTTP;
 use Time::HiRes qw(sleep time);
 use Carp qw(croak);
@@ -677,7 +677,7 @@ sub validate_github_token {
     my $status = $response->code;
     
     if ($response->is_success) {
-        my $data = eval { decode_json($response->decoded_content) };
+        my $data = safe_decode_json($response->decoded_content);
         my $username = $data ? ($data->{login} || 'unknown') : 'unknown';
         log_debug('GitHubAuth', "GitHub token validated - user: $username");
         return { valid => 1, username => $username, status => $status };

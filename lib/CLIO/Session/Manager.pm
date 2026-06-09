@@ -19,8 +19,7 @@ use CLIO::Memory::YaRN;
 use File::Spec;
 use File::Basename;
 use Cwd;
-use Digest::SHA qw(sha256_hex);
-use Time::HiRes qw(gettimeofday);
+use CLIO::Util::UUID qw(uuid_v4);
 
 =head1 NAME
 
@@ -173,7 +172,7 @@ sub new {
     my $working_dir = $args{working_directory} || Cwd::getcwd();
     
     my $self = {
-        session_id => $args{session_id} // _generate_id(),
+        session_id => $args{session_id} // uuid_v4(),
         state      => undef,
         debug      => $args{debug} // 0,
         stm        => undef,
@@ -204,30 +203,6 @@ sub new {
         log_debug('Manager::new', "returning self: $self");
     }
     return $self;
-}
-
-sub _generate_id {
-    # Generate UUID v4-like identifier using available Perl core modules
-    # Format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
-    # Uses Digest::SHA (core since 5.10) for randomness
-    
-    my ($s, $us) = gettimeofday();
-    my $pid = $$;
-    my $random = rand();
-    
-    # Create pseudo-random data using time, PID, and random
-    my $data = "$s$us$pid$random" . join('', map { rand() } 1..16);
-    my $hash = sha256_hex($data);
-    
-    # Extract parts from hash (32 hex chars)
-    my $time_low = substr($hash, 0, 8);
-    my $time_mid = substr($hash, 8, 4);
-    my $time_hi_version = '4' . substr($hash, 13, 3);  # Version 4
-    my $clk_seq = sprintf('%x', (hex(substr($hash, 16, 2)) & 0x3F) | 0x80);  # Variant bits
-    my $clk_seq_low = substr($hash, 18, 2);
-    my $node = substr($hash, 20, 12);
-    
-    return "$time_low-$time_mid-$time_hi_version-$clk_seq$clk_seq_low-$node";
 }
 
 sub create {

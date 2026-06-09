@@ -26,7 +26,7 @@ use CLIO::Core::ConversationManager qw(
 );
 use CLIO::Core::API::MessageValidator qw(validate_and_truncate);
 use CLIO::Core::PromptBuilder;
-use CLIO::Util::JSON qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json safe_encode_json);
 use CLIO::Core::Diagnostics qw(dump_diagnostic deduplicate_paragraphs);
 use CLIO::Core::API::ErrorHandler;
 use Encode qw(encode_utf8);  # For handling Unicode in JSON
@@ -1219,7 +1219,7 @@ sub _execute_tool_round {
         
         # Parse tool arguments early (needed for suppress_display and pre-action)
         my $raw_args = $tool_call->{function}->{arguments};
-        my $tool_args = ref($raw_args) ? $raw_args : eval { decode_json($raw_args // '{}') };
+        my $tool_args = ref($raw_args) ? $raw_args : safe_decode_json($raw_args // '{}');
         my $tool_operation = ($tool_args && $tool_args->{operation}) ? $tool_args->{operation} : '';
         
         # Skip display for internal-only operations and self-displaying tools
@@ -1539,7 +1539,7 @@ sub _prepare_tool_round {
         if (ref($arguments_raw)) {
             log_debug('WorkflowOrchestrator',
                 "Tool '$tool_name' arguments is " . ref($arguments_raw) . " - re-encoding to JSON string");
-            $arguments_raw = eval { encode_json($arguments_raw) } // '{}';
+            $arguments_raw = safe_encode_json($arguments_raw, '{}');
             $tool_call->{function}->{arguments} = $arguments_raw;
         }
 
