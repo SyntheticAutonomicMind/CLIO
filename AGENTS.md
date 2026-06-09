@@ -625,6 +625,7 @@ Permanent knowledge -> Detailed commit message (committed)
 | Label bugs as "out of scope" | Violates Complete Ownership principle | Fix bugs you find in your scope |
 | Leave `TODO` comments in code | Creates technical debt, incomplete work | Finish implementation before committing |
 | Assume code behavior | Causes bugs, breaks things | Read the code, investigate first |
+| Create duplicate utility code | Re-implements existing solutions, creates inconsistency | Search codebase for existing implementations before writing new code |
 | Commit without testing | Breaks builds, wastes time | Test syntax, run integration tests |
 | Use bare `die` in modules | Crashes AI loop ungracefully | Use `croak` from Carp, with eval for error handling |
 | Create giant modules (>1000 lines) | Hard to maintain and understand | Split into focused, cohesive modules |
