@@ -103,7 +103,7 @@ sub handle {
         my $proto = $1;
         my $handler_class = $class->get_handler($proto);
         if ($handler_class) {
-            eval "require $handler_class";
+            eval { (my $f = "$handler_class.pm") =~ s{::}{/}g; require $f };
             if ($@) {
                 log_error("Protocols", "Failed to load handler $handler_class: $@");
                 return { success => 0, error => "Handler load failed: $@" };

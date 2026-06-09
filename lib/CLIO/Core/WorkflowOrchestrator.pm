@@ -39,14 +39,6 @@ use CLIO::Logging::ProcessStats;
 use POSIX qw(strftime);
 
 # ANSI color codes for terminal output - FALLBACK only when UI is unavailable
-# The preferred approach is using $self->{ui}->colorize() which respects theme settings
-my %COLORS = (
-    RESET     => "\e[0m",
-    SYSTEM    => "\e[36m",    # Cyan - System messages (fallback matches Theme.pm system_message)
-    TOOL      => "\e[1;36m",  # Bright Cyan - Tool names
-    DETAIL    => "\e[2;37m",  # Dim White - Action details
-);
-
 =head1 NAME
 
 CLIO::Core::WorkflowOrchestrator - Autonomous tool calling workflow orchestrator
@@ -306,7 +298,7 @@ sub _register_default_tools {
             log_debug('WorkflowOrchestrator', "Skipped $tool_def->{name}: filtered by --enable/--disable");
             next;
         }
-        eval "require $tool_def->{module}";
+        eval { (my $f = "$tool_def->{module}.pm") =~ s{::}{/}g; require $f };
         if ($@) {
             log_warning('WorkflowOrchestrator', "Failed to load $tool_def->{module}: $@");
             next;
@@ -339,7 +331,7 @@ sub _register_default_tools {
             next;
         }
         
-        eval "require $tool_def->{module}";
+        eval { (my $f = "$tool_def->{module}.pm") =~ s{::}{/}g; require $f };
         if ($@) {
             log_warning('WorkflowOrchestrator', "Failed to load $tool_def->{module}: $@");
             next;
