@@ -8,7 +8,7 @@ use warnings;
 use utf8;
 use CLIO::Core::Logger qw(log_debug log_info log_warning log_error);
 use CLIO::Util::ConfigPath qw(get_config_file);
-use CLIO::Util::JSON qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json);
 use CLIO::Compat::HTTP;
 use Fcntl qw(LOCK_EX LOCK_UN LOCK_NB);
 
@@ -1153,7 +1153,7 @@ sub _query_llama_props {
         return undef;
     }
     
-    my $data = eval { decode_json($resp->{content}) };
+    my $data = safe_decode_json($resp->{content});
     if ($@) {
         log_debug('ModelCapabilitiesManager', "llama.cpp /props parse error: $@");
         return undef;

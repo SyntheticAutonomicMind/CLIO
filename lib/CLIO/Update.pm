@@ -11,6 +11,7 @@ use Cwd qw(getcwd);
 use File::Basename qw(dirname);
 use File::Path qw(mkpath rmtree);
 use CLIO::Util::JSON qw(decode_json encode_json);
+use CLIO::Util::Proxy qw(resolve_proxy_url);
 use CLIO::Core::Logger qw(log_debug log_error log_warning);
 use POSIX qw(_exit);
 
@@ -18,10 +19,9 @@ my $NULLDEV = $^O eq 'MSWin32' ? 'nul' : '/dev/null';
 
 # Get proxy arguments for curl commands
 sub _proxy_arg {
-    for my $env (qw(HTTPS_PROXY HTTP_PROXY ALL_PROXY https_proxy http_proxy all_proxy)) {
-        if ($ENV{$env} && ($ENV{$env} =~ m{^https?://} || $ENV{$env} =~ m{^socks[45]h?://})) {
-            return ('--proxy', $ENV{$env});
-        }
+    my $proxy = resolve_proxy_url();
+    if ($proxy) {
+        return ('--proxy', $proxy);
     }
     return ();
 }

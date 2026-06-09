@@ -8,7 +8,7 @@ use warnings;
 use utf8;
 use base 'CLIO::Protocols::Handler';
 use MIME::Base64;
-use CLIO::Util::JSON qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json);
 use Time::HiRes qw(time);
 
 =head1 NAME
@@ -108,7 +108,7 @@ sub process_request {
         if ($@) {
             return $self->handle_errors("Failed to decode context: $@");
         }
-        $context = eval { decode_json($context_json) };
+        $context = safe_decode_json($context_json);
         if ($@) {
             return $self->handle_errors("Invalid context JSON: $@");
         }
@@ -121,7 +121,7 @@ sub process_request {
         if ($@) {
             return $self->handle_errors("Failed to decode options: $@");
         }
-        $options = eval { decode_json($options_json) };
+        $options = safe_decode_json($options_json);
         if ($@) {
             return $self->handle_errors("Invalid options JSON: $@");
         }

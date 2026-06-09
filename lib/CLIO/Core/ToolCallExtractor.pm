@@ -6,7 +6,7 @@ package CLIO::Core::ToolCallExtractor;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Util::JSON qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json);
 use CLIO::Core::Logger qw(log_debug log_warning);
 
 =head1 NAME
@@ -140,7 +140,7 @@ sub _extract_xml_format {
         log_debug('ToolCallExtractor', "Found XML tool_call block");
         
         # Parse JSON
-        my $data = eval { decode_json($json_str) };
+        my $data = safe_decode_json($json_str);
         if ($@) {
             log_warning('ToolCallExtractor', "Failed to parse XML tool_call JSON: $@");
             next;
@@ -265,7 +265,7 @@ sub _extract_clio_format {
         log_debug('ToolCallExtractor', "Found CLIO format: [$tool_name $operation]");
         
         # The JSON might already contain the operation, or we need to wrap it
-        my $arguments_data = eval { decode_json($json_str) };
+        my $arguments_data = safe_decode_json($json_str);
         if ($@) {
             log_warning('ToolCallExtractor', "Failed to parse CLIO format JSON: $@");
             next;
@@ -325,7 +325,7 @@ sub _extract_call_format {
         log_debug('ToolCallExtractor', "Found CALL format: CALL $tool_name");
         
         # Validate JSON
-        my $arguments_data = eval { decode_json($json_str) };
+        my $arguments_data = safe_decode_json($json_str);
         if ($@) {
             log_warning('ToolCallExtractor', "Failed to parse CALL format JSON: $@");
             next;
@@ -379,7 +379,7 @@ sub _extract_json_blocks {
         log_debug('ToolCallExtractor', "Found JSON code block");
         
         # Parse JSON
-        my $data = eval { decode_json($json_str) };
+        my $data = safe_decode_json($json_str);
         if ($@) {
             log_debug('ToolCallExtractor', "Not a valid JSON block: $@");
             next;

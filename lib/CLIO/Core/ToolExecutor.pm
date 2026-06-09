@@ -10,7 +10,7 @@ use Encode qw(decode encode);
 use CLIO::Core::Logger qw(should_log log_debug);
 use CLIO::Core::ErrorContext qw(classify_error format_error);
 use CLIO::Util::JSONRepair qw(repair_malformed_json);
-use CLIO::Util::JSON qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json safe_encode_json);
 use MIME::Base64 qw(encode_base64 decode_base64);
 use CLIO::Session::ToolResultStore;
 use CLIO::Logging::ToolLogger;
@@ -134,7 +134,7 @@ sub execute_tool {
     if (ref($arguments_json)) {
         log_debug('ToolExecutor',
             "Tool '$tool_name' arguments is " . ref($arguments_json) . " - re-encoding to JSON string");
-        $arguments_json = eval { encode_json($arguments_json) } // '{}';
+        $arguments_json = safe_encode_json($arguments_json, '{}');
         $tool_call->{function}->{arguments} = $arguments_json;
     }
     
@@ -812,7 +812,7 @@ sub _format_tool_result {
     }
     
     # Convert to JSON
-    my $json = eval { encode_json($tool_result) };
+    my $json = safe_encode_json($tool_result);
     if ($@) {
         log_debug('ToolExecutor', "Failed to encode result: $@");
         return encode_json({
@@ -1010,7 +1010,7 @@ sub _normalize_oneof_params {
         }
         elsif (!ref($param_value)) {
             # Already a string - optionally validate it's valid JSON
-            my $parsed = eval { decode_json($param_value) };
+            my $parsed = safe_decode_json($param_value);
             if ($@) {
                 # Not JSON or invalid - that's OK, might be plain text
                 log_debug('ToolExecutor', "oneOf param '$param_name': plain string (not JSON)");

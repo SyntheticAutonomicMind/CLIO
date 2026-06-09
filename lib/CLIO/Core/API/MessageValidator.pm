@@ -8,7 +8,7 @@ use warnings;
 use utf8;
 use CLIO::Core::Logger qw(should_log log_debug log_info log_warning);
 use CLIO::Memory::TokenEstimator qw(estimate_tokens);
-use CLIO::Util::JSON qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json safe_encode_json);
 use POSIX qw(strftime);
 
 
@@ -454,7 +454,7 @@ sub _calculate_tool_tokens {
     
     my $total = 0;
     for my $tool (@$tools) {
-        my $tool_json = eval { encode_json($tool) };
+        my $tool_json = safe_encode_json($tool);
         if ($tool_json) {
             $total += int(length($tool_json) / 2.5);
         } else {
@@ -480,7 +480,7 @@ sub _estimate_tokens {
         $total += estimate_tokens($msg->{content} || '');
         if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
             for my $tc (@{$msg->{tool_calls}}) {
-                my $json = eval { encode_json($tc) };
+                my $json = safe_encode_json($tc);
                 $total += estimate_tokens($json || '');
             }
         }
@@ -508,7 +508,7 @@ sub _group_into_units {
             # Include tool_call JSON tokens in the unit's token count
             my $tc_tokens = 0;
             for my $tc (@{$msg->{tool_calls}}) {
-                my $json = eval { encode_json($tc) } // '';
+                my $json = safe_encode_json($tc, '');
                 $tc_tokens += estimate_tokens($json);
             }
             $current_unit = { messages => [$msg], tokens => $msg_tokens + $tc_tokens, tool_call_ids => {} };

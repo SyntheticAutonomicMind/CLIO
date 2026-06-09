@@ -31,7 +31,7 @@ use CLIO::Util::ConfigPath qw(get_config_dir);
 use CLIO::Providers qw(get_provider list_providers provider_from_url);
 use POSIX ":sys_wait_h"; # For WNOHANG
 use Time::HiRes qw(time sleep);  # High resolution time and sleep
-use CLIO::Util::JSON qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json safe_encode_json);
 use Carp qw(croak);
 use CLIO::Compat::HTTP;
 BEGIN { require CLIO::Compat::HTTP; CLIO::Compat::HTTP->import(); }
@@ -48,6 +48,7 @@ use CLIO::Util::TextSanitizer qw(sanitize_text);
 use CLIO::UI::Terminal qw(ui_char);
 use CLIO::Core::RateLimiter;
 use CLIO::Compat::HTTP;
+use CLIO::Util::CABundle;
 
 # Define request states
 use constant {
@@ -61,33 +62,6 @@ use constant {
 use constant {
     DEFAULT_ENDPOINT => 'https://api.openai.com/v1',
 };
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-BEGIN {
-    unless ($ENV{PERL_LWP_SSL_CA_FILE}) {
-        my @ca_candidates;
-        # Check SSL_CERT_FILE first (set by bundled runtimes)
-        push @ca_candidates, $ENV{SSL_CERT_FILE} if $ENV{SSL_CERT_FILE};
-        push @ca_candidates, (
-            '/etc/ssl/cert.pem',
-            '/opt/homebrew/etc/openssl@3/cert.pem',
-        );
-        my $ca_file;
-        for my $candidate (@ca_candidates) {
-            if (-e $candidate) {
-                $ca_file = $candidate;
-                last;
-            }
-        }
-        if ($ca_file) {
-            $ENV{PERL_LWP_SSL_CA_FILE} = $ca_file;
-        } else {
-            # Only warn if explicitly debugging - this is a system configuration issue
-            # most users won't see this anyway since CA bundles are usually available
-            log_warning('APIManager', "No CA bundle found in common locations. HTTPS requests may fail.");
-        }
-    }
-}
 
 # No external dependencies, only core Perl
 
@@ -1190,7 +1164,7 @@ sub get_model_capabilities {
             return undef;
         }
         
-        my $data = eval { decode_json($resp->decoded_content) };
+        my $data = safe_decode_json($resp->decoded_content);
         if ($@) {
             if (should_log('WARNING')) {
                 log_warning('APIManager', "Failed to parse models response from $models_url");
@@ -1336,7 +1310,7 @@ sub _query_llama_props {
         return undef;
     }
 
-    my $data = eval { decode_json($resp->decoded_content) };
+    my $data = safe_decode_json($resp->decoded_content);
     if ($@) {
         log_debug('APIManager', "llama.cpp /props parse error: $@");
         return undef;
@@ -2073,7 +2047,7 @@ sub _build_request {
         $req->header('x-initiator' => $initiator);
         
         # Generate per-request UUID for tracking
-        my $request_id = _generate_uuid();
+        my $request_id = uuid_v4();
         
         # Required headers per VS Code Copilot Chat reference
         $req->header('X-GitHub-Api-Version' => '2025-05-01');
@@ -2627,7 +2601,7 @@ sub _process_non_streaming_response {
     $self->{rate_limiter}->release($provider_label);
     $self->_log_api_response($resp, $provider_label, 0);
 
-    my $data = eval { decode_json($resp->decoded_content) };
+    my $data = safe_decode_json($resp->decoded_content);
     if ($@) {
         log_error('APIManager', "[$provider_label] Invalid response: $@");
         return $self->_error("Invalid response format: $@");
@@ -2830,7 +2804,7 @@ sub send_request_streaming {
                     my $data_json = $1;
                     next if $data_json eq '[DONE]';
 
-                    my $data = eval { decode_json($data_json) };
+                    my $data = safe_decode_json($data_json);
                     if ($@) {
                         log_warning('APIManager', "Failed to parse SSE chunk: $@");
                         next;
@@ -3031,7 +3005,7 @@ sub _process_responses_api_event {
                 $ss->{tool_calls_acc}{$idx}{id} = $item->{call_id} || $ss->{tool_calls_acc}{$idx}{id};
                 $ss->{tool_calls_acc}{$idx}{function}{name} = $item->{name} || $ss->{tool_calls_acc}{$idx}{function}{name};
                 my $final_args = $item->{arguments} // $ss->{tool_calls_acc}{$idx}{function}{arguments};
-                $final_args = eval { encode_json($final_args) } // '{}' if ref($final_args);
+                $final_args = safe_encode_json($final_args, '{}') if ref($final_args);
                 $ss->{tool_calls_acc}{$idx}{function}{arguments} = $final_args;
             }
             log_debug('APIManager', "Responses API: function_call completed: " . ($item->{name} || '?'));
@@ -3205,7 +3179,7 @@ sub _accumulate_tool_calls_delta {
             if (defined $tc_delta->{function}{arguments}) {
                 my $args_chunk = $tc_delta->{function}{arguments};
                 # Some servers send arguments as a parsed object; re-encode
-                $args_chunk = eval { encode_json($args_chunk) } // ''
+                $args_chunk = safe_encode_json($args_chunk, '')
                     if ref($args_chunk);
                 $ss->{tool_calls_acc}{$index}{function}{arguments} .= $args_chunk;
             }
@@ -3862,7 +3836,7 @@ sub _extract_response_content {
             }
             elsif ($type eq 'function_call') {
                 my $func_args = $item->{arguments} // '{}';
-                $func_args = eval { encode_json($func_args) } // '{}' if ref($func_args);
+                $func_args = safe_encode_json($func_args, '{}') if ref($func_args);
                 push @resp_tool_calls, {
                     id   => $item->{call_id} || '',
                     type => 'function',
@@ -3921,7 +3895,7 @@ sub _extract_response_content {
                 # Some servers (e.g., llama.cpp) send arguments as a parsed
                 # object instead of a JSON string - re-encode if needed
                 if ($tc->{function} && ref($tc->{function}{arguments})) {
-                    $tc->{function}{arguments} = eval { encode_json($tc->{function}{arguments}) } // '{}';
+                    $tc->{function}{arguments} = safe_encode_json($tc->{function}{arguments}, '{}');
                 }
             }
         }
@@ -4367,7 +4341,7 @@ sub _send_native_streaming {
            $result->{error_type} = 'rate_limit';
            # Try to extract retry_after from the error body.
            # Anthropic proxy format: {"error": {"code": "RateLimitReached", "message": "Please wait 38 seconds..."}}
-           my $error_obj = eval { decode_json($error_body) };
+           my $error_obj = safe_decode_json($error_body);
            if ($@ || ref($error_obj) ne 'HASH') {
                $error_obj = undef;
            }
@@ -4410,7 +4384,7 @@ sub _send_native_streaming {
         }
         elsif ($status == 400) {
             # Parse 400 errors for structured error info
-            my $error_obj = eval { decode_json($error_body) };
+            my $error_obj = safe_decode_json($error_body);
             if ($@ || ref($error_obj) ne 'HASH') {
                 $error_obj = undef;
             }

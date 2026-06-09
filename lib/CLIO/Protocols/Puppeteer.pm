@@ -9,7 +9,7 @@ use utf8;
 
 use Cwd qw(abs_path getcwd);
 use File::Spec;
-use CLIO::Util::JSON qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json);
 use CLIO::Core::Logger qw(log_debug log_info log_warning);
 
 =head1 NAME
@@ -235,7 +235,7 @@ sub read_project_ltm {
     my $content = do { local $/; <$fh> };
     close $fh;
     
-    return eval { decode_json($content) };
+    return safe_decode_json($content);
 }
 
 # Parse .gitmodules file into array of { name, path, url }

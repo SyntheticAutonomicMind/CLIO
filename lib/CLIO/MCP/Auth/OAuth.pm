@@ -180,7 +180,7 @@ sub _token_request {
         log_error('OAuth', 'Token request failed: ' . $r->{status} . ' ' . $r->{reason});
         return undef;
     }
-    my $d = eval { decode_json($r->{content}) };
+    my $d = safe_decode_json($r->{content});
     return undef if $@ || !$d->{access_token};
     $d->{expires_at} = time() + $d->{expires_in} if $d->{expires_in};
     $self->{_token_data} = $d;

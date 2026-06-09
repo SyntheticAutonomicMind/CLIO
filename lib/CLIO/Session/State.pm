@@ -35,9 +35,10 @@ use warnings;
 use utf8;
 use Carp qw(croak);
 use CLIO::Core::Logger qw(log_error log_warning log_debug log_info);
+use CLIO::Util::UUID qw(uuid_v4);
 use CLIO::Util::PathResolver;
 use File::Spec;
-use CLIO::Util::JSON qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json);
 use Fcntl qw(:flock);
 use CLIO::Util::AtomicWrite qw(atomic_write);
 use Cwd qw(getcwd abs_path);
@@ -180,7 +181,7 @@ sub load {
     # Acquire shared lock for reading (prevents reading during a concurrent write)
     flock($fh, LOCK_SH);
     local $/; my $json = <$fh>; close $fh;
-    my $data = eval { decode_json($json) };
+    my $data = safe_decode_json($json);
     log_debug('SessionState', "State::load loaded data: " . (defined $data ? 'ok' : 'undef'));
     return unless $data;
     
@@ -469,7 +470,7 @@ sub add_message {
     $content = strip_conversation_tags($content);
     
     # Generate unique turn ID (SAM compatibility)
-    my $turn_id = $self->_generate_turn_id();
+    my $turn_id = uuid_v4();
     
     # Build message with SAM-compatible metadata
     my $message = { 
@@ -547,19 +548,6 @@ sub add_message {
         }
         $self->trim_context();
     }
-}
-
-# Generate unique turn ID (UUID-like format)
-sub _generate_turn_id {
-    my ($self) = @_;
-    my $uuid = sprintf('%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
-        int(rand(0x10000)), int(rand(0x10000)),
-        int(rand(0x10000)),
-        int(rand(0x10000)) | 0x4000,
-        int(rand(0x10000)) | 0x8000,
-        int(rand(0x10000)), int(rand(0x10000)), int(rand(0x10000))
-    );
-    return $uuid;
 }
 
 =head2 calculate_message_importance

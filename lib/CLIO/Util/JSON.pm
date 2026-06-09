@@ -32,7 +32,9 @@ No CPAN installation required. Simply uses whatever is already on the system.
 =cut
 
 use Exporter 'import';
-our @EXPORT_OK = qw(encode_json decode_json encode_json_pretty encode_json_canonical JSON_BACKEND);
+our @EXPORT_OK = qw(encode_json decode_json encode_json_pretty encode_json_canonical JSON_BACKEND
+    safe_decode_json safe_encode_json
+);
 
 # Detect the best available JSON backend at compile time
 my $_backend;
@@ -133,6 +135,50 @@ sub encode_json_canonical {
     my ($data) = @_;
     # All backends support canonical mode for deterministic output
     return $_backend_obj->canonical->encode($data);
+}
+
+=head2 safe_decode_json
+
+Decode a JSON string to a Perl data structure, returning a default value on failure.
+
+    my $data = safe_decode_json($json_string);
+    my $data = safe_decode_json($json_string, {});   # Default on failure
+    my $data = safe_decode_json($json_string, 'fallback');
+
+Arguments:
+    $json_str - JSON string to decode (required)
+    $default  - Value to return on parse failure (optional, default: undef)
+
+Returns: Decoded data structure, or C<$default> if parsing fails
+
+=cut
+
+sub safe_decode_json {
+    my ($json_str, $default) = @_;
+    my $result = eval { decode_json($json_str) };
+    return defined $result ? $result : $default;
+}
+
+=head2 safe_encode_json
+
+Encode a Perl data structure to a JSON string, returning a default value on failure.
+
+    my $json = safe_encode_json($data);
+    my $json = safe_encode_json($data, '');    # Empty string on failure
+    my $json = safe_encode_json($data, '{}');  # Valid JSON on failure
+
+Arguments:
+    $data    - Data structure to encode (required)
+    $default - Value to return on encode failure (optional, default: undef)
+
+Returns: JSON string, or C<$default> if encoding fails
+
+=cut
+
+sub safe_encode_json {
+    my ($data, $default) = @_;
+    my $result = eval { encode_json($data) };
+    return defined $result ? $result : $default;
 }
 
 =head2 JSON_BACKEND

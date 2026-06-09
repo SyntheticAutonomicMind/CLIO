@@ -10,7 +10,7 @@ use Carp qw(croak);
 use File::Spec;
 use File::Path qw(make_path);
 use CLIO::Core::Logger qw(log_debug log_info log_warning log_error);
-use CLIO::Util::JSON qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json);
 use CLIO::Util::AtomicWrite qw(atomic_write);
 
 =head1 NAME
@@ -623,7 +623,7 @@ sub _execute_http_tool {
 
     # Try to parse JSON response
     my $parsed;
-    eval { $parsed = decode_json($body_text) };
+    $parsed = safe_decode_json($body_text);
 
     my $output;
     if ($parsed) {
@@ -741,7 +741,7 @@ sub _execute_script_tool {
 
     # Try to parse JSON output
     my $parsed;
-    eval { $parsed = decode_json($output) };
+    $parsed = safe_decode_json($output);
 
     if ($parsed && ref($parsed) eq 'HASH') {
         return {

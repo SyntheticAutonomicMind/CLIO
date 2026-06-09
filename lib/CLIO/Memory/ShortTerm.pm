@@ -30,7 +30,7 @@ use warnings;
 use utf8;
 use Carp qw(croak);
 use CLIO::Core::Logger qw(log_debug);
-use CLIO::Util::JSON qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json);
 
 log_debug('ShortTerm', "CLIO::Memory::ShortTerm loaded");
 
@@ -157,7 +157,7 @@ sub load {
     return unless -e $file;
     open my $fh, '<', $file or return;
     local $/; my $json = <$fh>; close $fh;
-    my $history = eval { decode_json($json) };
+    my $history = safe_decode_json($json);
     return $class->new(history => $history, %args);
 }
 

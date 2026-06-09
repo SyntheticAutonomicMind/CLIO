@@ -9,7 +9,7 @@ use utf8;
 use base 'CLIO::Protocols::Handler';
 use MIME::Base64;
 use File::Temp qw(tempfile);
-use CLIO::Util::JSON qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json);
 
 =head1 NAME
 
@@ -96,7 +96,7 @@ sub process_request {
         if ($@) {
             return $self->handle_errors("Failed to decode options: $@");
         }
-        $options = eval { decode_json($options_json) };
+        $options = safe_decode_json($options_json);
         if ($@) {
             return $self->handle_errors("Invalid options JSON: $@");
         }

@@ -12,7 +12,7 @@ use File::Spec;
 use File::Path qw(make_path remove_tree);
 use File::Copy qw(copy);
 use File::Basename qw(dirname);
-use CLIO::Util::JSON qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json);
 use Cwd qw(getcwd abs_path);
 use CLIO::Core::Logger qw(should_log log_debug);
 
@@ -837,7 +837,7 @@ sub _read_manifest {
     };
     return undef if $@;
 
-    my $manifest = eval { decode_json($content) };
+    my $manifest = safe_decode_json($content);
     return undef if $@;
 
     return $manifest;

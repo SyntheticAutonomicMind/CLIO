@@ -41,7 +41,8 @@ Supports:
 
 =cut
 
-use CLIO::Util::JSON qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json);
+use CLIO::Util::Curl qw(locate_curl);
 use CLIO::Core::Logger qw(log_debug log_error log_warning);
 
 sub new {
@@ -75,7 +76,7 @@ sub connect {
     
     # Locate curl lazily (avoids constructor-time PATH issues)
     unless ($self->{curl_path}) {
-        $self->{curl_path} = $self->_locate_curl();
+        $self->{curl_path} = locate_curl();
     }
     
     unless ($self->{curl_path}) {
@@ -157,7 +158,7 @@ sub send_request {
     }
     elsif ($content_type =~ m{application/json}) {
         # Direct JSON response
-        my $response = eval { decode_json($result->{body}) };
+        my $response = safe_decode_json($result->{body});
         if ($@) {
             log_error('MCP:HTTP', "JSON parse error: $@");
             return undef;
@@ -167,7 +168,7 @@ sub send_request {
     else {
         log_warning('MCP:HTTP', "Unexpected content-type: $content_type");
         # Try parsing as JSON anyway
-        my $response = eval { decode_json($result->{body}) };
+        my $response = safe_decode_json($result->{body});
         return $response if $response;
         return undef;
     }
@@ -368,7 +369,7 @@ sub _parse_sse_response {
     for my $event (@events) {
         next unless $event->{data};
         
-        my $msg = eval { decode_json($event->{data}) };
+        my $msg = safe_decode_json($event->{data});
         next unless $msg;
         
         # Return the first response matching our ID
@@ -383,20 +384,6 @@ sub _parse_sse_response {
     }
     
     log_warning('MCP:HTTP', "No matching response found in SSE stream for id=$expected_id");
-    return undef;
-}
-
-sub _locate_curl {
-    my ($class_or_self) = @_;
-    # Check PATH
-    for my $dir (split /:/, $ENV{PATH} || '') {
-        my $path = "$dir/curl";
-        return $path if -x $path && !-d $path;
-    }
-    # Check common locations as fallback
-    for my $path ('/usr/bin/curl', '/usr/local/bin/curl', '/opt/homebrew/bin/curl') {
-        return $path if -x $path;
-    }
     return undef;
 }
 
