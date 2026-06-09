@@ -294,7 +294,7 @@ sub _detect {
     return unless $type;
 
     my $module = $DRIVER_MODULES{$type};
-    eval "require $module";
+    eval { (my $f = "$module.pm") =~ s{::}{/}g; require $f };
     if ($@) {
         log_warning('Multiplexer', "Detected $type but failed to load driver: $@");
         return;
