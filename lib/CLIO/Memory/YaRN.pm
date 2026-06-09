@@ -197,7 +197,7 @@ sub load {
     return unless -e $file;
     open my $fh, '<', $file or return;
     local $/; my $json = <$fh>; close $fh;
-    my $threads = eval { decode_json($json) };
+    my $threads = safe_decode_json($json);
     return $class->new(threads => $threads, %args);
 }
 

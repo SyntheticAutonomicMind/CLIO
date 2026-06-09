@@ -8,7 +8,7 @@ use warnings;
 use utf8;
 use CLIO::Core::Logger qw(log_debug log_info log_error log_warning);
 use CLIO::Util::ConfigPath qw(get_config_dir);
-use CLIO::Util::JSON qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json);
 use File::Spec;
 use File::Path qw(make_path);
 use Carp qw(croak);
@@ -439,7 +439,7 @@ sub _load_config {
     my $json = do { local $/; <$fh> };
     close $fh;
     
-    my $data = eval { decode_json($json) };
+    my $data = safe_decode_json($json);
     if ($@) {
         log_error('SkillRepository', "Failed to parse config: $@");
         return;

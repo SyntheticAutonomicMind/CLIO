@@ -11,26 +11,16 @@ use File::Temp qw(tempfile);
 use POSIX qw(:errno_h);
 use CLIO::Util::JSON qw(decode_json encode_json);
 use CLIO::Core::Logger qw(should_log log_debug log_warning);
+use CLIO::Util::CABundle qw(find_ca_bundle);
+use CLIO::Util::Proxy qw(resolve_proxy_url);
+use CLIO::Util::Curl qw(locate_curl);
 
 # Check if SSL is available for HTTP::Tiny
 our $HAS_SSL;
 our $HAS_CURL;
 BEGIN {
     $HAS_SSL = eval { require IO::Socket::SSL; require Net::SSLeay; 1 };
-    
-    # Check for curl: filesystem paths on Unix, PATH search on Windows
-    if ($^O eq 'MSWin32') {
-        my $where_curl = `where curl 2>nul`;
-        $HAS_CURL = ($where_curl && $where_curl =~ /curl/);
-    } else {
-        $HAS_CURL = -x '/usr/bin/curl' || -x '/bin/curl' || -x '/usr/local/bin/curl';
-        unless ($HAS_CURL) {
-            # iOS/a-Shell pattern: curl is an ios_system command, not a filesystem path
-            my $nulldev = $^O eq 'MSWin32' ? 'nul' : '/dev/null';
-            my $which_curl = `which curl 2>$nulldev`;
-            $HAS_CURL = ($which_curl && $which_curl =~ /curl/);
-        }
-    }
+    $HAS_CURL = defined locate_curl();
 }
 
 =head1 NAME
@@ -128,18 +118,7 @@ Returns: Proxy URL string, or empty string if no proxy configured
 
 sub _resolve_proxy {
     my ($explicit) = @_;
-    
-    # Explicit parameter takes precedence
-    return $explicit if $explicit && $explicit =~ m{^https?://} || $explicit && $explicit =~ m{^socks[45]h?://};
-    
-    # Check environment variables (standard convention, uppercase preferred)
-    for my $env (qw(HTTPS_PROXY HTTP_PROXY ALL_PROXY https_proxy http_proxy all_proxy)) {
-        if ($ENV{$env} && $ENV{$env} =~ m{^https?://} || $ENV{$env} && $ENV{$env} =~ m{^socks[45]h?://}) {
-            return $ENV{$env};
-        }
-    }
-    
-    return '';
+    return resolve_proxy_url($explicit);
 }
 
 =head2 proxy
@@ -275,7 +254,7 @@ Returns: Hash ref compatible with HTTP::Tiny response format
 
 Find platform-appropriate CA certificate bundle for curl.
 
-Searches for CA certificates in standard Unix locations and iOS locations.
+Searches for CA certificates using the centralized CLIO::Util::CABundle module.
 Returns undef if no bundle is found.
 
 Returns: Path to CA bundle file, or undef
@@ -284,31 +263,7 @@ Returns: Path to CA bundle file, or undef
 
 sub _find_ca_bundle {
     my ($self) = @_;
-    
-    # Check environment variable first (set by bundled runtimes)
-    if ($ENV{SSL_CERT_FILE} && -f $ENV{SSL_CERT_FILE} && -r $ENV{SSL_CERT_FILE}) {
-        return $ENV{SSL_CERT_FILE};
-    }
-    
-    # Standard Unix/Linux/macOS paths
-    my @paths = (
-        '/etc/ssl/certs/ca-certificates.crt',     # Debian/Ubuntu
-        '/etc/pki/tls/certs/ca-bundle.crt',       # RHEL/CentOS
-        '/etc/ssl/cert.pem',                       # OpenBSD/macOS
-        '/usr/local/etc/openssl/cert.pem',        # macOS Homebrew
-        # iOS/a-Shell specific paths
-        "$ENV{HOME}/Documents/cacert.pem",         # User Documents
-        "$ENV{HOME}/../cacert.pem",                # a-Shell app bundle
-        '/tmp/cacert.pem',                         # Temporary location
-    );
-    
-    for my $path (@paths) {
-        if (-f $path && -r $path) {
-            return $path;
-        }
-    }
-    
-    return undef;
+    return find_ca_bundle();
 }
 
 sub _request_via_curl {

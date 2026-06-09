@@ -8,7 +8,7 @@ use warnings;
 use utf8;
 use base 'CLIO::Protocols::Handler';
 use MIME::Base64;
-use CLIO::Util::JSON qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json);
 use File::Find;
 use File::Spec;
 use Cwd;
@@ -138,7 +138,7 @@ sub process_request {
         
         # Try to parse as JSON, fallback to string
         if ($params_str =~ /^\s*\{/) {
-            $params = eval { decode_json($params_str) };
+            $params = safe_decode_json($params_str);
             if ($@) {
                 $params = { query => $params_str };
             }
@@ -154,7 +154,7 @@ sub process_request {
         if ($@) {
             return $self->handle_errors("Failed to decode options: $@");
         }
-        $options = eval { decode_json($options_json) };
+        $options = safe_decode_json($options_json);
         if ($@) {
             return $self->handle_errors("Invalid options JSON: $@");
         }

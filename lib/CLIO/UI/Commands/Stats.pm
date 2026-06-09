@@ -9,7 +9,7 @@ use utf8;
 use parent 'CLIO::UI::Commands::Base';
 
 use Carp qw(croak);
-use CLIO::Util::JSON qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json safe_encode_json);
 use CLIO::UI::Terminal qw(box_char);
 
 =head1 NAME
@@ -271,7 +271,7 @@ sub _show_log {
     $self->writeline("", markdown => 0);
     
     for my $entry (@recent) {
-        my $json = eval { encode_json($entry) };
+        my $json = safe_encode_json($entry);
         $self->writeline("  $json", markdown => 0) if $json;
     }
     
@@ -514,7 +514,7 @@ sub _read_log_entries {
         while (my $line = <$fh>) {
             chomp $line;
             next unless $line =~ /\S/;
-            my $entry = eval { decode_json($line) };
+            my $entry = safe_decode_json($line);
             push @entries, $entry if $entry;
         }
         close $fh;

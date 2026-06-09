@@ -12,7 +12,7 @@ use Cwd;
 use Carp qw(croak confess);
 use parent 'CLIO::Tools::Tool';
 use CLIO::Util::ConfigPath qw(get_config_dir);
-use CLIO::Util::JSON qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json);
 use File::Spec;
 use feature 'say';
 
@@ -272,7 +272,7 @@ sub search {
                 my $json = do { local $/; <$fh> };
                 close $fh;
                 
-                my $data = eval { decode_json($json) };
+                my $data = safe_decode_json($json);
                 next unless $data;
                 
                 if ($data->{content} =~ /\Q$query\E/i || $data->{key} =~ /\Q$query\E/i) {
@@ -462,7 +462,7 @@ sub recall_sessions {
             };
             next SESSION if $@;
             
-            my $session_data = eval { decode_json($json) };
+            my $session_data = safe_decode_json($json);
             next SESSION unless $session_data && $session_data->{history};
             
             $sessions_searched++;

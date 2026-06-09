@@ -8,33 +8,12 @@ use warnings;
 use utf8;
 use CLIO::Core::Logger qw(log_error log_warning log_debug);
 use CLIO::Util::ConfigPath qw(get_config_dir get_config_file);
-use CLIO::Util::JSON qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json);
 use CLIO::Compat::HTTP;
 use File::Spec;
 use File::Basename;
-
-# SSL CA bundle setup
-BEGIN {
-    unless ($ENV{PERL_LWP_SSL_CA_FILE}) {
-        my @ca_candidates;
-        # Check SSL_CERT_FILE first (set by bundled runtimes)
-        push @ca_candidates, $ENV{SSL_CERT_FILE} if $ENV{SSL_CERT_FILE};
-        push @ca_candidates, (
-            '/etc/ssl/cert.pem',
-            '/opt/homebrew/etc/openssl@3/cert.pem',
-        );
-        my $ca_file;
-        for my $candidate (@ca_candidates) {
-            if (-e $candidate) {
-                $ca_file = $candidate;
-                last;
-            }
-        }
-        if ($ca_file) {
-            $ENV{PERL_LWP_SSL_CA_FILE} = $ca_file;
-        }
-    }
-}
+use CLIO::Util::CABundle;
+use CLIO::Util::UUID qw(uuid_v4);
 
 =head1 NAME
 
@@ -204,7 +183,7 @@ sub fetch_models {
     $req->header('Editor-Version' => $self->{editor_version});
     $req->header('Editor-Plugin-Version' => $self->{plugin_version});
     $req->header('Copilot-Language-Server-Version' => $self->{copilot_language_server_version});
-    $req->header('X-Request-Id' => $self->_generate_uuid());
+    $req->header('X-Request-Id' => uuid_v4());
     $req->header('OpenAI-Intent' => 'model-access');  # Required for billing metadata
     $req->header('X-GitHub-Api-Version' => $self->{github_api_version});
     
@@ -214,7 +193,7 @@ sub fetch_models {
         return undef;
     }
     
-    my $data = eval { decode_json($resp->decoded_content) };
+    my $data = safe_decode_json($resp->decoded_content);
     if ($@) {
         log_error('GitHubCopilotModelsAPI', "Failed to parse JSON: $@");
         return undef;
@@ -511,7 +490,7 @@ sub _load_cache {
     my $json = <$fh>;
     close $fh;
     
-    return eval { decode_json($json) };
+    return safe_decode_json($json);
 }
 
 =head2 _save_cache
@@ -544,19 +523,6 @@ sub _save_cache {
     close $fh;
     
     log_debug('GitHubCopilotModelsAPI', "Saved models cache to $self->{cache_file}");
-}
-
-sub _generate_uuid {
-    my ($self) = @_;
-    
-    # Simple UUID v4 generation (good enough for X-Request-Id)
-    my @chars = ('a'..'f', '0'..'9');
-    my $uuid = '';
-    for my $i (1..32) {
-        $uuid .= $chars[rand @chars];
-        $uuid .= '-' if $i == 8 || $i == 12 || $i == 16 || $i == 20;
-    }
-    return $uuid;
 }
 
 1;

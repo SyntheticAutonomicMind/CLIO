@@ -10,7 +10,7 @@ use Carp qw(croak);
 
 use CLIO::Core::Logger qw(log_debug log_error log_warning);
 use CLIO::Util::ConfigPath qw(get_config_file);
-use CLIO::Util::JSON qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json);
 use CLIO::Compat::HTTP;
 
 =head1 NAME
@@ -149,7 +149,7 @@ sub fetch_user {
         return undef;
     }
     
-    my $data = eval { decode_json($body) };
+    my $data = safe_decode_json($body);
     if ($@) {
         $@ = "$ERR_INVALID_RESPONSE: $@";
         return undef;

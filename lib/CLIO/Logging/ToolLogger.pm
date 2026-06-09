@@ -8,7 +8,7 @@ use warnings;
 use utf8;
 use Carp qw(croak);
 use feature 'say';
-use CLIO::Util::JSON qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json);
 use File::Path qw(make_path);
 use File::Spec;
 use POSIX qw(strftime);
@@ -190,7 +190,7 @@ sub get_recent {
             chomp $line;
             next unless $line;
             
-            my $entry = eval { decode_json($line) };
+            my $entry = safe_decode_json($line);
             next unless $entry;
             
             # Apply filters
@@ -253,7 +253,7 @@ sub filter {
             chomp $line;
             next unless $line;
             
-            my $entry = eval { decode_json($line) };
+            my $entry = safe_decode_json($line);
             next unless $entry;
             
             # Apply all filters
@@ -310,7 +310,7 @@ sub search {
             chomp $line;
             next unless $line;
             
-            my $entry = eval { decode_json($line) };
+            my $entry = safe_decode_json($line);
             next unless $entry;
             
             # Search in multiple fields
