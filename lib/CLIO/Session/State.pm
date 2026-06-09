@@ -38,6 +38,7 @@ use CLIO::Core::Logger qw(log_error log_warning log_debug log_info);
 use CLIO::Util::PathResolver;
 use File::Spec;
 use CLIO::Util::JSON qw(encode_json decode_json);
+use Fcntl qw(:flock);
 use CLIO::Util::AtomicWrite qw(atomic_write);
 use Cwd qw(getcwd abs_path);
 use POSIX qw(strftime);
@@ -143,6 +144,16 @@ my $data = {
         log_debug('SessionState', "[STATE][DEBUG] Data to save: " . Data::Dumper::Dumper($data) . "");
     }
     
+    # Acquire exclusive lock to prevent concurrent writes from multiple processes
+    # sharing the same session file. The lock is on the target file path itself.
+    my $lock_fh;
+    open($lock_fh, '>>', $self->{file}) or do {
+        log_warning('State', "Cannot open session file for locking: $!");
+    };
+    if ($lock_fh) {
+        flock($lock_fh, LOCK_EX) or log_warning('State', "Cannot acquire exclusive lock: $!");
+    }
+
     # Ensure session directory exists before writing with secure permissions
     my $dir = File::Basename::dirname($self->{file});
     unless (-d $dir) {
@@ -155,6 +166,9 @@ my $data = {
     
     # Atomic write with secure permissions (encode_json produces UTF-8 bytes)
     atomic_write($self->{file}, encode_json($data), mode => 0600);
+
+    # Release lock (close releases flock)
+    close($lock_fh) if $lock_fh;
 }
 sub load {
     my ($class, $session_id, %args) = @_;
@@ -163,6 +177,8 @@ sub load {
     return unless -e $file;
     # Use raw bytes mode - decode_json() expects UTF-8 bytes
     open my $fh, '<:raw', $file or return;
+    # Acquire shared lock for reading (prevents reading during a concurrent write)
+    flock($fh, LOCK_SH);
     local $/; my $json = <$fh>; close $fh;
     my $data = eval { decode_json($json) };
     log_debug('SessionState', "State::load loaded data: " . (defined $data ? 'ok' : 'undef'));

@@ -35,13 +35,14 @@ use CLIO::Util::JSON qw(encode_json decode_json);
 use Carp qw(croak);
 use CLIO::Compat::HTTP;
 BEGIN { require CLIO::Compat::HTTP; CLIO::Compat::HTTP->import(); }
-use Scalar::Util qw(blessed);
+use Scalar::Util qw(blessed looks_like_number);
 use CLIO::Core::PerformanceMonitor;
 use CLIO::Core::API::MessageValidator qw(
     validate_and_truncate
     validate_tool_message_pairs
     preflight_validate
 );
+use CLIO::Core::API::PayloadSanitizer qw(sanitize_payload);
 use CLIO::Core::API::ResponseHandler;
 use CLIO::Util::TextSanitizer qw(sanitize_text);
 use CLIO::UI::Terminal qw(ui_char);
@@ -146,37 +147,6 @@ sub _model_supports_reasoning {
 }
 
 # Recursive sanitization of data structures before JSON encoding
-# Removes problematic UTF-8 characters (emojis, bullets, etc.) that cause API 400 errors
-sub _sanitize_payload_recursive {
-    my ($data) = @_;
-    
-    if (!defined $data) {
-        return undef;
-    } elsif (ref($data) eq 'HASH') {
-        # Recursively sanitize hash values
-        my %sanitized;
-        for my $key (keys %$data) {
-            $sanitized{$key} = _sanitize_payload_recursive($data->{$key});
-        }
-        return \%sanitized;
-    } elsif (ref($data) eq 'ARRAY') {
-        # Recursively sanitize array elements
-        return [ map { _sanitize_payload_recursive($_) } @$data ];
-    } elsif (!ref($data)) {
-        # Scalar value - sanitize if it's a string
-        # Only sanitize actual text strings. Numeric values must NOT be passed
-        # through sanitize_text() because that stringifies them - and JSON::XS
-        # (unlike JSON::PP) preserves the Perl string flag, causing integer fields
-        # like max_tokens to be encoded as "32768" (string) instead of 32768
-        # (integer), which the API rejects with a 400 validation error.
-        use Scalar::Util qw(looks_like_number);
-        return looks_like_number($data) ? $data : sanitize_text($data);
-    } else {
-        # Other ref types (CODE, GLOB, etc.) - return as-is
-        return $data;
-    }
-}
-
 # Configuration validation and display
 sub validate_configuration {
     my ($class, $config) = @_;
@@ -1791,7 +1761,7 @@ sub _build_responses_api_payload {
     }
     
     # Sanitize the payload
-    $payload = _sanitize_payload_recursive($payload);
+    $payload = sanitize_payload($payload);
     
     log_debug('APIManager', "Responses API payload: model=$model, input_items=" . scalar(@input) . ", stream=$stream");
     
@@ -2011,7 +1981,7 @@ sub _build_payload {
     $payload = $self->adapt_request_for_endpoint($payload, $endpoint_config);
     
     # Sanitize entire payload to remove problematic UTF-8 characters
-    $payload = _sanitize_payload_recursive($payload);
+    $payload = sanitize_payload($payload);
     
     # Log session continuity fields for billing tracking
     if ($self->{debug}) {
@@ -4164,7 +4134,7 @@ sub _get_native_provider {
     return undef unless $module;
     
     # Load and instantiate the provider module
-    eval "require $module";
+    eval { (my $f = "$module.pm") =~ s{::}{/}g; require $f };
     if ($@) {
         log_error('APIManager', "Failed to load native provider $module: $@");
         return undef;
