@@ -10,7 +10,7 @@ This project follows **The Unbroken Method** for human-AI collaboration. This is
 
 1. **Continuous Context** - Never break the conversation. Maintain momentum through collaboration checkpoints.
 2. **Complete Ownership** - If you find a bug, fix it. No "out of scope."
-3. **Investigation First** - Read code before changing it. Never assume.
+3. **Investigation First** - Read code before changing it. Search for existing implementations before writing new code. Never assume or re-implement.
 4. **Root Cause Focus** - Fix problems, not symptoms.
 5. **Complete Deliverables** - No partial solutions. Finish what you start.
 6. **Structured Handoffs** - Document everything for the next session.
@@ -24,7 +24,7 @@ This project follows **The Unbroken Method** for human-AI collaboration. This is
 1. Read code first (investigation)
 2. Use collaboration tool (get approval)
 3. Make changes (implementation)
-4. Test thoroughly (verify)
+4. Test thoroughly in conditions that match the target environment (verify). A passing test on your machine is not a passing test everywhere.
 5. Commit with clear message (handoff)
 ```
 
