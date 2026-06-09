@@ -10,7 +10,7 @@ use parent 'CLIO::UI::Commands::Base';
 
 use Carp qw(croak);
 use File::Spec;
-use CLIO::Util::JSON qw(decode_json);
+use CLIO::Util::JSON qw(decode_json safe_decode_json);
 
 =head1 NAME
 
@@ -969,7 +969,7 @@ sub _search_skills {
         return;
     }
     
-    my $skills = eval { decode_json($resp->decoded_content) };
+    my $skills = safe_decode_json($resp->decoded_content);
     if ($@) {
         $self->display_error_message("Failed to parse skills catalog: $@");
         return;

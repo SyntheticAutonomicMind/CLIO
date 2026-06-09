@@ -8,7 +8,7 @@ use warnings;
 use utf8;
 use Exporter 'import';
 use POSIX qw(strftime);
-use CLIO::Util::JSON qw(encode_json);
+use CLIO::Util::JSON qw(encode_json safe_encode_json);
 use CLIO::Memory::TokenEstimator qw(estimate_tokens get_effective_ratio);
 use CLIO::Core::Logger qw(log_warning log_info log_debug);
 use CLIO::Util::RateLimit qw(format_reset_message);
@@ -125,7 +125,7 @@ sub dump_diagnostic {
             next if $key eq 'content';  # Skip large content
             my $val = $api_response->{$key};
             if (ref($val)) {
-                $val = eval { encode_json($val) } // ref($val);
+                $val = safe_encode_json($val, ref($val));
                 $val = substr($val, 0, 500) . "..." if length($val) > 500;
             }
             $val //= 'undef';
@@ -150,7 +150,7 @@ sub dump_diagnostic {
                 if (ref($val) eq 'ARRAY') {
                     $val = '[' . join(', ', @$val) . ']';
                 } elsif (ref($val)) {
-                    $val = eval { encode_json($val) } // ref($val);
+                    $val = safe_encode_json($val, ref($val));
                 }
                 print $fh "  $key: $val\n";
             }
@@ -203,7 +203,7 @@ sub dump_diagnostic {
         if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
             $tc_count = scalar(@{$msg->{tool_calls}});
             for my $tc (@{$msg->{tool_calls}}) {
-                my $json = eval { encode_json($tc) } // '';
+                my $json = safe_encode_json($tc, '');
                 $tc_tokens += estimate_tokens($json);
             }
             $msg_tokens += $tc_tokens;

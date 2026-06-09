@@ -6,7 +6,7 @@ package CLIO::Memory::LongTerm;
 use strict;
 use warnings;
 use CLIO::Core::Logger qw(log_debug log_info);
-use CLIO::Util::JSON qw(encode_json decode_json encode_json_pretty);
+use CLIO::Util::JSON qw(encode_json decode_json encode_json_pretty safe_decode_json);
 use CLIO::Util::AtomicWrite qw(atomic_write);
 use utf8;
 use Carp qw(croak);
@@ -1344,7 +1344,7 @@ sub load {
     my $json = <$fh>;
     close $fh;
     
-    my $data = eval { decode_json($json) };
+    my $data = safe_decode_json($json);
     if ($@) {
         log_debug('LTM', "Failed to parse $file: $@");
         return $class->new(%args);

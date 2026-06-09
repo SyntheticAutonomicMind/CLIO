@@ -22,7 +22,7 @@ allowing the Client to use either transport transparently.
 
 =cut
 
-use CLIO::Util::JSON qw(encode_json decode_json);
+use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json safe_encode_json);
 use IO::Select;
 use POSIX qw(WNOHANG);
 use CLIO::Core::Logger qw(log_debug log_error log_warning);
@@ -230,7 +230,7 @@ sub _write_message {
     my $fh = $self->{stdin_fh};
     return 0 unless $fh;
     
-    my $json = eval { encode_json($message) };
+    my $json = safe_encode_json($message);
     return 0 if $@;
     
     log_debug('MCP', ">> $json") if $self->{debug};
@@ -263,7 +263,7 @@ sub _read_response {
             
             log_debug('MCP', "<< $line") if $self->{debug};
             
-            my $msg = eval { decode_json($line) };
+            my $msg = safe_decode_json($line);
             next if $@;
             
             return $msg if defined $msg->{id} && $msg->{id} == $expected_id;
