@@ -783,11 +783,34 @@ if ($input) {
     }
     else {
         # Send input directly to AI agent
-        my $result = $ai_agent->process_user_request($input, {
+        # Set up callbacks for host protocol events (OSC) and tool tracking
+        # These are normally set up in Chat.pm::_process_and_respond but
+        # --input mode bypasses that path
+        my %agent_context = (
             current_file => $session->{state}->{current_file},
             working_directory => $session->{state}->{working_directory},
-            conversation_history => $session->{state}->{history}
-        });
+            conversation_history => $session->{state}->{history},
+        );
+        
+        # Wire up host protocol callbacks when the protocol is active
+        if ($cli_ui && $cli_ui->{host_proto} && $cli_ui->{host_proto}->active()) {
+            my $current_tool = '';
+            $agent_context{on_tool_call} = sub {
+                my ($tool_name) = @_;
+                return unless defined $tool_name;
+                return if $tool_name eq $current_tool;
+                $current_tool = $tool_name;
+                $cli_ui->{host_proto}->emit_status('tools');
+                $cli_ui->{host_proto}->emit_tool_start($tool_name);
+            };
+            $agent_context{on_tool_end} = sub {
+                my ($tool_name) = @_;
+                return unless defined $tool_name;
+                $cli_ui->{host_proto}->emit_tool_end($tool_name);
+            };
+        }
+        
+        my $result = $ai_agent->process_user_request($input, \%agent_context);
         
         if ($result->{success}) {
             my $response = $result->{final_response};
@@ -816,6 +839,21 @@ if ($input) {
             $rendered_response = $ansi->parse($rendered_response);
             
             print "[RESPONSE] $rendered_response\n";
+            
+            # Emit token usage via host protocol (OSC) for embedding/monitoring
+            if ($cli_ui && $cli_ui->{host_proto} && $cli_ui->{host_proto}->active()) {
+                my $billing = $session->{state}->{billing};
+                if ($billing && $billing->{requests} && @{$billing->{requests}}) {
+                    my $last = $billing->{requests}[-1];
+                    $cli_ui->{host_proto}->emit_tokens(
+                        prompt     => $last->{prompt_tokens} || 0,
+                        completion => $last->{completion_tokens} || 0,
+                        total      => $last->{total_tokens} || 0,
+                        model      => $billing->{model} || '',
+                    );
+                }
+                $cli_ui->{host_proto}->emit_status('idle');
+            }
             
             if ($debug && @{$result->{protocols_used}}) {
                 log_debug('Main', 'Protocols used: ' . join(", ", @{$result->{protocols_used}}));

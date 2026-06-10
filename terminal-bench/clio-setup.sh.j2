@@ -1,0 +1,51 @@
+#!/bin/bash
+# Install CLIO in the Docker container for Terminal-Bench evaluation.
+#
+# This script:
+# 1. Installs Perl and required system dependencies
+# 2. Sets up CLIO from the pre-copied source tree at /opt/clio
+# 3. Makes the 'clio' executable available in PATH
+#
+# The CLIO source tree is copied into the container by ClioAgent.perform_task()
+# before this script runs.
+
+set -e
+
+# --- Install system dependencies ---
+apt-get update
+apt-get install -y \
+    perl \
+    git \
+    curl \
+    ca-certificates \
+    2>/dev/null || {
+        # Fallback: try individual packages
+        apt-get update
+        for pkg in perl git curl ca-certificates; do
+            apt-get install -y "$pkg" 2>/dev/null || true
+        done
+    }
+
+# Verify Perl version (need 5.32+)
+PERL_VERSION=$(perl -e 'print $]')
+echo "Perl version: $PERL_VERSION"
+
+# --- Set up CLIO ---
+CLIO_DIR="/opt/clio"
+
+if [ -d "$CLIO_DIR" ]; then
+    echo "Setting up CLIO from $CLIO_DIR"
+    chmod +x "$CLIO_DIR/clio"
+    ln -sf "$CLIO_DIR/clio" /usr/local/bin/clio
+else
+    echo "ERROR: CLIO source not found at $CLIO_DIR"
+    echo "The ClioAgent should have copied the source tree before running this script."
+    exit 1
+fi
+
+# Verify installation
+if clio --help > /dev/null 2>&1; then
+    echo "CLIO installed successfully"
+else
+    echo "WARNING: 'clio --help' failed. Check installation."
+fi
