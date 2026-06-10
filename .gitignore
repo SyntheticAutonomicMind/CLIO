@@ -23,6 +23,7 @@ Thumbs.db
 
 # Transient data
 scratch/
+tb-results/
 reference/
 /*.txt
 !llms.txt
