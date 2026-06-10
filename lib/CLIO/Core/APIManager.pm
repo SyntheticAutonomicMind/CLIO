@@ -1233,25 +1233,6 @@ sub get_model_capabilities {
     
     log_debug('APIManager', "Model $api_model not found in /models response, falling back to default context window");
 
-    # For local OpenAI-compatible servers (llama.cpp, LM Studio, SAM), try /props
-    # as a fallback. The /v1/models response might use the actual model filename but
-    # CLIO sends "local_model" — the name mismatch prevents capability detection.
-    # /props exposes the runtime n_ctx which is sufficient for token budgeting.
-    if ($api_type =~ /^(generic|sam|lmstudio)$/i) {
-        my $props_ctx = $self->_query_llama_props($api_base);
-        if ($props_ctx && $props_ctx > 0) {
-            my $capabilities = {
-                max_prompt_tokens          => $props_ctx,
-                max_output_tokens          => CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS(),
-                max_context_window_tokens  => $props_ctx,
-            };
-            $self->{_model_capabilities_cache} ||= {};
-            $self->{_model_capabilities_cache}{$model} = $capabilities;
-            log_debug('APIManager', "llama.cpp /props fallback n_ctx=$props_ctx for $api_model (not found in /v1/models)");
-            return $capabilities;
-        }
-    }
-
     log_debug('APIManager', "get_model_capabilities returning undef for $model");
     return undef;
 }
@@ -1311,6 +1292,51 @@ sub _extract_model_capabilities {
     }
 
     return $caps;
+}
+
+=head2 _resolve_local_model($api_base, $api_id)
+
+Query /v1/models from a local llama.cpp server to resolve the actual
+model name from the local_model/local-model sentinel.
+
+When the user specifies C<llama.cpp/local_model> (or C<local-model>), the
+real model name is unknown until the server is queried. This method hits
+C</v1/models> and returns the first model's ID, stripping the C<.gguf>
+extension if present.
+
+Only queries localhost addresses to avoid hitting remote servers.
+
+Returns: resolved model name string, or undef if resolution fails.
+
+=cut
+
+sub _resolve_local_model {
+    my ($self, $api_base, $api_id) = @_;
+
+    return undef unless $api_base =~ /localhost|127\.0\.0\.1/;
+
+    my $models_url = $api_base;
+    $models_url =~ s{/+$}{};
+    $models_url =~ s{/v1(/.*)?$}{};
+    $models_url .= '/v1/models';
+
+    my $ua = $self->_create_http_client(timeout => 5);
+    my $resp = eval { $ua->get($models_url) };
+    return undef if $@ || !$resp || !$resp->is_success;
+
+    my $data = safe_decode_json($resp->decoded_content);
+    return undef unless $data;
+
+    my $models = $data->{data} || [];
+    return undef unless @$models;
+
+    my $model_name = $models->[0]{id};
+    return undef unless $model_name;
+
+    $model_name =~ s/\.gguf$//i;
+
+    log_debug('APIManager', "Resolved local_model to: $model_name");
+    return $model_name;
 }
 
 =head2 _query_llama_props($api_base)
@@ -1804,6 +1830,27 @@ sub _prepare_endpoint_config {
         # Use current provider config
         $endpoint_config = $self->get_endpoint_config();
         $endpoint = $self->{api_base};
+    }
+    
+    # Resolve local_model/local-model sentinel for llama.cpp and LM Studio providers.
+    # These providers use a placeholder model name; the real name comes from /v1/models.
+    if ($target_provider && $api_model =~ /^local[-_]model$/i) {
+        my $resolved = $self->_resolve_local_model($endpoint, $api_model);
+        if ($resolved) {
+            $api_model = $resolved;
+            my $full_resolved = "$target_provider/$resolved";
+            # Update config so get_current_model() returns the resolved name
+            # Do NOT mark as user-set: the resolved name is dynamic and should
+            # re-resolve if the server restarts with a different model.
+            if ($self->{config} && $self->{config}->can('set')) {
+                $self->{config}->set('model', $full_resolved, 0);
+            }
+            # Update session for persistence across restarts
+            if ($self->{session}) {
+                $self->{session}{selected_model} = $full_resolved;
+            }
+            log_debug('APIManager', "Resolved local_model to: $full_resolved");
+        }
     }
     
     return {
