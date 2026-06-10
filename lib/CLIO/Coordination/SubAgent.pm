@@ -12,6 +12,22 @@ use CLIO::Core::Logger qw(log_debug log_warning);
 use POSIX qw(setsid);
 use Carp qw(croak);
 
+# Parse provider prefix from model name (e.g., "minimax/MiniMax-M3")
+# Returns ($provider, $api_model) where $provider may be undef
+sub _parse_model_provider {
+    my ($model) = @_;
+    
+    if ($model && $model =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i) {
+        my ($prefix, $rest) = ($1, $2);
+        require CLIO::Providers;
+        if (CLIO::Providers::provider_exists($prefix)) {
+            return ($prefix, $rest);
+        }
+    }
+    
+    return (undef, $model);
+}
+
 
 =head1 NAME
 
@@ -219,6 +235,23 @@ sub _run_agent_loop {
     my $config = CLIO::Core::Config->new();
     my $model = $options{model} || croak "No model specified for sub-agent";
     my $debug = $options{debug} || 0;
+    
+    # Configure the sub-agent's model and provider on the Config object.
+    # Without this, get_current_model() reads the main session's model from
+    # Config, causing all sub-agents to use the parent's model regardless of
+    # what was specified at spawn time.
+    my ($model_provider, $model_name) = _parse_model_provider($model);
+    if ($model_provider) {
+        # Model has explicit provider prefix (e.g., "minimax/MiniMax-M3")
+        # Use set_provider to properly configure api_base, api_key, and model
+        $config->set_provider($model_provider);
+        $config->set('model', $model, 1);  # Set full model with prefix
+    } else {
+        # No provider prefix - just set the model on the existing provider
+        $config->set('model', $model, 1);
+    }
+    
+    log_debug('SubAgent', "Agent $agent_id configured: model=$model provider=" . ($model_provider // $config->get('provider')));
     
     # Create a session for this agent (required for API tracking, history, etc.)
     my $session = CLIO::Session::Manager->create(
