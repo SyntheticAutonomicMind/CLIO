@@ -1990,13 +1990,18 @@ sub _build_payload {
     }
     
     # Add copilot_thread_id for session continuity (GitHub Copilot requirement)
-    if ($self->{session} && $self->{session}{session_id}) {
-        $payload->{copilot_thread_id} = $self->{session}{session_id};
-        log_debug('APIManager', "Including copilot_thread_id: $payload->{copilot_thread_id}");
-    } else {
-        log_warning('APIManager', "NO copilot_thread_id - session will be treated as NEW (charges AI Credits!)");
-        log_debug('APIManager', "session=" . (defined $self->{session} ? "defined" : "undef") .
-                     ", session_id=" . (defined $self->{session}{session_id} ? $self->{session}{session_id} : "undef"));
+    if ($endpoint_config->{requires_copilot_headers}) {
+        # copilot_thread_id and previous_response_id are GitHub Copilot billing fields.
+        # They are deleted for non-Copilot providers (see adapt_request_for_endpoint).
+        # Only warn about their absence when using Copilot, where they affect billing.
+        if ($self->{session} && $self->{session}{session_id}) {
+            $payload->{copilot_thread_id} = $self->{session}{session_id};
+            log_debug('APIManager', "Including copilot_thread_id: $payload->{copilot_thread_id}");
+        } else {
+            log_warning('APIManager', "NO copilot_thread_id - session will be treated as NEW (charges AI Credits!)");
+            log_debug('APIManager', "session=" . (defined $self->{session} ? "defined" : "undef") .
+                         ", session_id=" . (defined $self->{session}{session_id} ? $self->{session}{session_id} : "undef"));
+        }
     }
 
     # Inject llama_user_id for local SSD-backed inference servers (llama.cpp,
@@ -2017,7 +2022,7 @@ sub _build_payload {
 
     # Add previous_response_id for GitHub Copilot billing continuity
     # Skip if model has rejected previous_response_id (flagged by ResponseHandler)
-    if (!$self->{response_handler}{_no_previous_response_id}) {
+    if ($endpoint_config->{requires_copilot_headers} && !$self->{response_handler}{_no_previous_response_id}) {
         my $previous_response_id = $self->{response_handler}->get_stateful_marker_for_model($model);
         
         if ($previous_response_id) {
