@@ -283,6 +283,14 @@ sub _visual_length {
     $clean =~ s/(?<!\*)\*([^\*]+)\*(?!\*)/$1/g;
     $clean =~ s/(^|[\s\(])_([^_]+)_(?=[\s\)\.\,\!\?\:\;]|$)/$1$2/g;
     
+    # Strip any remaining orphaned formatting markers. When content is
+    # wrapped across lines, paired **bold** or __underline__ markers get
+    # split, leaving orphaned markers that inflate visual length. These
+    # markers have zero visual width after processing so they must not
+    # count here.
+    $clean =~ s/\*\*//g;   # Orphaned bold markers
+    $clean =~ s/__//g;     # Orphaned underline markers
+    
     # Handle inline code specially: remove backticks but preserve @-codes as literal text
     # Replace @-codes inside backticks with a placeholder before general @-code stripping
     $clean =~ s{`([^`]+)`}{
@@ -395,7 +403,7 @@ sub render_table {
         $table_width += $w + 3;  # space + content + space + border
     }
     
-    if ($table_width <= $term_width) {
+    if ($table_width < $term_width) {
         # Table fits - render without wrapping
         return $self->_render_table_formatted(\@parsed_rows, \@col_widths);
     }
@@ -403,8 +411,8 @@ sub render_table {
     # Table is too wide - need to wrap columns
     # Strategy: reduce column widths to fit, wrapping cell content
     # First, determine how much space we have for content
-    # Available = term_width - 1 (left border) - 3 per col (space, space, border)
-    my $available_for_content = $term_width - 1 - (3 * $num_cols);
+    # Available = term_width - 2 (left border + 1-char right margin) - 3 per col (space, space, border)
+    my $available_for_content = $term_width - 2 - (3 * $num_cols);
     $available_for_content = $num_cols if $available_for_content < $num_cols;  # At least 1 per col
     
     # Distribute available width proportionally, with minimum widths
@@ -662,8 +670,19 @@ sub _render_table_formatted {
             my $cell = $row->{cells}[$j];
             my $width = $col_widths->[$j];
             
+            # Strip orphaned markdown bold markers that span across
+            # wrapped lines. When ** text ** is split by _wrap_text,
+            # process_inline_formatting can't convert the orphaned
+            # markers, and they remain visible, adding 2 chars to the
+            # visual width and pushing the right border off-screen.
+            my $clean_cell = $cell;
+            my $bold_markers = () = $clean_cell =~ /\*\*/g;
+            $clean_cell =~ s/\*\*//g if $bold_markers % 2 == 1;
+            my $ul_markers = () = $clean_cell =~ /__/g;
+            $clean_cell =~ s/__//g if $ul_markers % 2 == 1;
+            
             # Calculate visual length for padding (before adding ANSI codes)
-            my $visual_len = $self->_visual_length($cell);
+            my $visual_len = $self->_visual_length($clean_cell);
             
             # Apply formatting (this adds ANSI codes)
             # Process inline formatting for both headers and data cells
@@ -671,11 +690,11 @@ sub _render_table_formatted {
             my $formatted;
             if ($row->{is_header}) {
                 # First process inline formatting (bold, italic, code, links)
-                my $processed = $self->process_inline_formatting($cell);
+                my $processed = $self->process_inline_formatting($clean_cell);
                 # Then wrap with header color
                 $formatted = $self->color('table_header') . $processed . '@RESET@';
             } else {
-                $formatted = $self->process_inline_formatting($cell);
+                $formatted = $self->process_inline_formatting($clean_cell);
             }
             
             # Pad cell based on visual length, not formatted string length
