@@ -95,7 +95,7 @@ sub new {
     $self->{markdown_renderer} = CLIO::UI::Markdown->new(
         debug => $args{debug},
         theme_mgr => $self->{theme_mgr},
-        terminal_width => $self->{terminal_width},
+        terminal_width => $self->{terminal_width} - 4,  # 4-space indent used by writeline/writeagent
     );
     
     # Initialize host protocol (structured GUI communication)
@@ -109,7 +109,7 @@ sub new {
     };
     
     # Update markdown renderer with actual terminal width
-    $self->{markdown_renderer}{terminal_width} = $self->{terminal_width};
+    $self->{markdown_renderer}{terminal_width} = $self->{terminal_width} - 4;  # 4-space indent
     
     # Fallback to LINES environment variable if available
     if ($ENV{LINES} && $ENV{LINES} > 0) {
@@ -186,7 +186,7 @@ sub refresh_terminal_size {
     }
     
     # Update markdown renderer with new terminal width
-    $self->{markdown_renderer}{terminal_width} = $self->{terminal_width} if $self->{markdown_renderer};
+    $self->{markdown_renderer}{terminal_width} = $self->{terminal_width} - 4 if $self->{markdown_renderer};  # 4-space indent
 }
 
 =head2 flush_output_buffer
