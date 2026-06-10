@@ -512,7 +512,13 @@ sub _get_api_key {
 sub get_current_model {
     my ($self) = @_;
     
-    # Config is the authority
+    # Priority 1: Explicit model set on this instance (e.g., sub-agent model)
+    # This takes precedence over Config, which may contain the parent session's model.
+    if ($self->{model}) {
+        return $self->{model};
+    }
+    
+    # Priority 2: Config is the authority for the main session
     if ($self->{config} && $self->{config}->can('get')) {
         my $model = $self->{config}->get('model');
         if ($model) {
@@ -530,11 +536,19 @@ sub get_current_model {
 sub get_current_provider {
     my ($self) = @_;
     
-    # Config is the authority
+    # Config is the authority (set_provider configures this correctly)
     if ($self->{config} && $self->{config}->can('get')) {
         my $provider = $self->{config}->get('provider');
         if ($provider) {
             return $provider;
+        }
+    }
+    
+    # Fallback: infer provider from model prefix (e.g., "minimax/MiniMax-M3")
+    if ($self->{model} && $self->{model} =~ m{^([a-z][a-z0-9_.-]*)/}i) {
+        require CLIO::Providers;
+        if (CLIO::Providers::provider_exists($1)) {
+            return $1;
         }
     }
     
@@ -4290,7 +4304,7 @@ sub _send_native_streaming {
                     # completes the tool call - finalize it immediately.
                     if ($event->{also_tool_end}) {
                         push @tool_calls, $current_tool_call;
-                        $on_tool_call->($current_tool_call) if $on_tool_call;
+                        $on_tool_call->($current_tool_call->{function}{name}) if $on_tool_call;
                         $current_tool_call = undef;
                     }
                 }
@@ -4304,7 +4318,7 @@ sub _send_native_streaming {
                         $current_tool_call->{function}{arguments} = encode_json($event->{arguments})
                             if $event->{arguments};
                         push @tool_calls, $current_tool_call;
-                        $on_tool_call->($current_tool_call) if $on_tool_call;
+                        $on_tool_call->($current_tool_call->{function}{name}) if $on_tool_call;
                         $current_tool_call = undef;
                     }
                 }
