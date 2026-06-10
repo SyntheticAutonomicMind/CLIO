@@ -1232,7 +1232,26 @@ sub get_model_capabilities {
     }
     
     log_debug('APIManager', "Model $api_model not found in /models response, falling back to default context window");
-    
+
+    # For local OpenAI-compatible servers (llama.cpp, LM Studio, SAM), try /props
+    # as a fallback. The /v1/models response might use the actual model filename but
+    # CLIO sends "local_model" — the name mismatch prevents capability detection.
+    # /props exposes the runtime n_ctx which is sufficient for token budgeting.
+    if ($api_type =~ /^(generic|sam|lmstudio)$/i) {
+        my $props_ctx = $self->_query_llama_props($api_base);
+        if ($props_ctx && $props_ctx > 0) {
+            my $capabilities = {
+                max_prompt_tokens          => $props_ctx,
+                max_output_tokens          => CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS(),
+                max_context_window_tokens  => $props_ctx,
+            };
+            $self->{_model_capabilities_cache} ||= {};
+            $self->{_model_capabilities_cache}{$model} = $capabilities;
+            log_debug('APIManager', "llama.cpp /props fallback n_ctx=$props_ctx for $api_model (not found in /v1/models)");
+            return $capabilities;
+        }
+    }
+
     log_debug('APIManager', "get_model_capabilities returning undef for $model");
     return undef;
 }
