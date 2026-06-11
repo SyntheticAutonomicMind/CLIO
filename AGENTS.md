@@ -632,6 +632,7 @@ Permanent knowledge -> Detailed commit message (committed)
 | Create summary docs in root | Clutters repository, wrong location | Use scratch/ for working documents |
 | Skip collaboration checkpoints | Violates Unbroken Method | Use interact at key decision points |
 | Technical jargon in action_desc | Users don't care about implementation details | Use user-focused descriptions |
+| Changelog-style comments in code | Git history explains why; comments should describe what | Write comments for current state, not history |
 
 **Technical jargon example:**
 - WRONG: `"searching codebase (hybrid keyword+symbols)"` 
@@ -640,6 +641,62 @@ Permanent knowledge -> Detailed commit message (committed)
 The `action_description` appears in user-facing tool output. Keep it simple and focused on results, not implementation.
 
 **Remember:** If you find yourself doing any of these, STOP and do it correctly.
+
+---
+
+## Maintenance Routines
+
+These are recurring tasks that must be performed periodically to keep CLIO's
+static data current. When starting a session, check if any of these are due.
+
+### Model Capability Maps
+
+Several providers don't return model metadata from their APIs, so CLIO maintains
+static capability maps in `ModelCapabilitiesManager.pm`. These drift as providers
+add and remove models.
+
+**Providers with static maps:**
+
+| Provider | Method | File Location | Last Updated |
+|----------|--------|---------------|-------------|
+| NVIDIA NIM | `_fetch_nvidia_capabilities` + `_nvidia_model_heuristics` | `lib/CLIO/Core/ModelCapabilitiesManager.pm` ~line 647 | 2026-06-11 |
+| Z.AI | `_fetch_zai_capabilities` | Same file ~line 1412 | Check date |
+| MiniMax | `_fetch_minimax_capabilities` | Same file ~line 1531 | Check date |
+
+**How to update:**
+
+1. Check the provider's model listing page:
+   - NVIDIA NIM: https://build.nvidia.com/explore/discover
+   - Z.AI: https://open.bigmodel.cn/dev/api/normal-model/glm-4
+   - MiniMax: https://platform.minimaxi.com/document/Models
+2. Cross-reference with OpenRouter's `/api/v1/models` endpoint (returns context_window and max_output_tokens)
+3. Add new models to the static map with accurate context_window and max_output_tokens
+4. Update heuristic patterns if new model families appear
+5. Remove models that are no longer listed on the provider's site
+6. Run the MCM test to verify all entries resolve:
+   ```bash
+   perl -I./lib -e '
+     use CLIO::Core::ModelCapabilitiesManager;
+     my $mcm = CLIO::Core::ModelCapabilitiesManager->new();
+     my $caps = $mcm->get_capabilities("nvidia", "deepseek-ai/deepseek-v4-flash");
+     print "ctx=$caps->{context_window} out=$caps->{max_output_tokens}\n";
+   '
+   ```
+7. Update the "Last Updated" date in the table above
+
+**When to update:**
+- When a user reports a model showing "-" for context/output in `/api models`
+- When a new model family appears (e.g., a new Llama or DeepSeek generation)
+- Periodically (roughly monthly) as part of routine maintenance
+- When adding a new provider that lacks API metadata
+
+### Provider Defaults
+
+Provider-level defaults in `lib/CLIO/Providers.pm` and `lib/CLIO/Core/Defaults.pm`
+should be reviewed when:
+- A provider changes their default model
+- Context window norms shift (e.g., 128K becomes the new minimum)
+- New providers are added
 
 ---
 
