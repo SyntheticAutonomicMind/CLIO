@@ -97,7 +97,7 @@ sub connect {
         }
         
         exec @cmd;
-        croak "exec failed: $!";
+        exit(1);  # exec replaces process; only reached on failure
     }
     
     # Parent
