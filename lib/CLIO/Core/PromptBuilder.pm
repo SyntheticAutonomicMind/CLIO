@@ -424,10 +424,10 @@ your response:
 
 =head2 get_user_context
 
-Get the user-context block containing date/time and working directory.
+Get the user-context block containing date/time, working directory, and language.
 Cached per-minute to avoid regenerating on every call while keeping
 the information reasonably fresh. This ensures the system prompt stays
-stable while still providing time/directory context per-user-message.
+stable while still providing time/directory/language context per-user-message.
 
 Returns:
 - User context string for prepending to user input
@@ -450,9 +450,73 @@ sub get_user_context {
     return $self->{_user_context_cache};
 }
 
+=head2 _detect_user_language
+
+Detect the user's preferred language from environment variables.
+Parses $LANG, $LC_ALL, $LC_MESSAGES, or $LANGUAGE to extract
+the ISO 639-1 language code and map it to a human-readable name.
+
+Returns:
+- Hashref with keys: code (e.g., 'en'), name (e.g., 'English'), locale (e.g., 'en_US.UTF-8')
+
+=cut
+
+sub _detect_user_language {
+    my ($self) = @_;
+
+    # Try locale environment variables in priority order
+    my $locale = $ENV{LC_ALL}
+              || $ENV{LANG}
+              || $ENV{LC_MESSAGES}
+              || $ENV{LANGUAGE}
+              || '';
+
+    # LANGUAGE can be colon-separated priority list (e.g., "en:fr:de")
+    $locale = (split /:/, $locale)[0] if $locale =~ /:/;
+
+    # Extract language code: "en_US.UTF-8" -> "en", "zh_CN" -> "zh"
+    my $code = lc($locale);
+    $code =~ s/\.[^.]+$//;    # Strip encoding (.UTF-8, .utf8)
+    $code =~ s/_.*$//;        # Strip country (_US, _CN)
+    $code =~ s/[^a-z]//g;     # Remove anything unexpected
+
+    # Fallback to English if no locale detected or C/POSIX locale
+    $code ||= 'en';
+    $code = 'en' if $code eq 'c' || $code eq 'posix';
+
+    my $name = _language_name($code);
+
+    return {
+        code   => $code,
+        name   => $name,
+        locale => $locale || "${code}_*",
+    };
+}
+
+# ISO 639-1 to language name lookup for the most common codes.
+# Covers ~95% of users. Unknown codes fall back to the code itself.
+my %LANGUAGE_NAMES = (
+    en => 'English',    zh => 'Chinese',    ja => 'Japanese',
+    ko => 'Korean',     de => 'German',     fr => 'French',
+    es => 'Spanish',    it => 'Italian',    pt => 'Portuguese',
+    ru => 'Russian',    ar => 'Arabic',     hi => 'Hindi',
+    nl => 'Dutch',     pl => 'Polish',     tr => 'Turkish',
+    sv => 'Swedish',    da => 'Danish',     no => 'Norwegian',
+    fi => 'Finnish',   cs => 'Czech',      th => 'Thai',
+    vi => 'Vietnamese', id => 'Indonesian', uk => 'Ukrainian',
+    he => 'Hebrew',    el => 'Greek',      ro => 'Romanian',
+    hu => 'Hungarian', sk => 'Slovak',     bg => 'Bulgarian',
+    ca => 'Catalan',   eu => 'Basque',
+);
+
+sub _language_name {
+    my ($code) = @_;
+    return $LANGUAGE_NAMES{$code} // $code;
+}
+
 =head2 _generate_user_context_section
 
-Internal: Generate the user-context section with date/time and path.
+Internal: Generate the user-context section with date/time, path, and language.
 
 Returns:
 - User context block text
@@ -475,10 +539,14 @@ sub _generate_user_context_section {
 
     my $cwd = getcwd();
 
+    # Detect user language for response language directive
+    my $lang = $self->_detect_user_language();
+
     # Format without seconds for stability
     my $section = "<userContext>\n";
     $section .= "**Current Date/Time:** $datetime_iso ($day_name, $month_name $mday, $year)\n";
     $section .= "**Working Directory:** `$cwd`\n";
+    $section .= "**Language:** $lang->{name} ($lang->{locale}) - Always respond in $lang->{name} unless the user specifies otherwise\n";
     $section .= "- This is informational context only - do not reference or repeat in your responses\n";
     $section .= "</userContext>\n\n";
 
