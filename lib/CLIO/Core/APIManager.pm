@@ -1250,7 +1250,7 @@ sub _extract_model_capabilities {
     require CLIO::Core::Defaults;
     my $limits = ($info->{capabilities} && $info->{capabilities}{limits}) || {};
 
-    # Local models: smaller context to avoid OOM
+    # Local models: conservative context to avoid OOM
     my $fallback_ctx = ($api_type =~ /^(sam|lmstudio|llama\.cpp)$/i)
         ? CLIO::Core::Defaults::DEFAULT_LOCAL_CONTEXT_WINDOW()
         : CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW();

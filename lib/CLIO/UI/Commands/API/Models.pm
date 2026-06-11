@@ -27,6 +27,25 @@ sub _format_tokens {
     return $tokens;
 }
 
+# Lazy-loaded MCM instance for capability lookups in display methods
+my $_mcm_instance;
+
+sub _get_mcm_capabilities {
+    my ($self, $provider_name, $model_id) = @_;
+    
+    return undef unless $provider_name && $model_id;
+    
+    # Only look up for providers known to lack /v1/models metadata
+    return undef unless $provider_name eq 'nvidia';
+    
+    $_mcm_instance //= do {
+        require CLIO::Core::ModelCapabilitiesManager;
+        CLIO::Core::ModelCapabilitiesManager->new(debug => 0);
+    };
+    
+    return $_mcm_instance->get_capabilities($provider_name, $model_id);
+}
+
 =head1 NAME
 
 CLIO::UI::Commands::API::Models - Model listing and selection commands
@@ -507,12 +526,21 @@ sub _format_model_line {
        $ctx = $model->{capabilities}{limits}{max_context_window_tokens}
            || $model->{capabilities}{limits}{max_prompt_tokens};
    }
+   # Fallback to MCM for providers that don't return context in /v1/models (e.g., NVIDIA NIM)
+   if (!$ctx && $provider_name) {
+       my $caps = $self->_get_mcm_capabilities($provider_name, $full_id);
+       $ctx = $caps->{context_window} if $caps;
+   }
    my $ctx_str = $ctx ? _format_tokens($ctx) : "-";
 
    # Output tokens
    my $out = $model->{_output_tokens};
    if (!$out && $model->{capabilities} && $model->{capabilities}{limits}) {
        $out = $model->{capabilities}{limits}{max_output_tokens};
+   }
+   if (!$out && $provider_name) {
+       my $caps = $self->_get_mcm_capabilities($provider_name, $full_id);
+       $out = $caps->{max_output_tokens} if $caps;
    }
    my $out_str = $out ? _format_tokens($out) : "-";
 
@@ -527,6 +555,16 @@ sub _format_model_line {
        my $s = $model->{capabilities}{supports};
        push @features, "t" if $s->{tool_calls} && !grep { $_ eq 't' } @features;
        push @features, "v" if $s->{vision} && !grep { $_ eq 'v' } @features;
+   }
+
+   # Fallback to MCM for feature flags
+   if (!@features && $provider_name) {
+       my $caps = $self->_get_mcm_capabilities($provider_name, $full_id);
+       if ($caps) {
+           push @features, "t" if $caps->{supports_tools};
+           push @features, "v" if $caps->{supports_vision};
+           push @features, "r" if $caps->{supports_reasoning};
+       }
    }
 
    my $features_str = join("", @features);
