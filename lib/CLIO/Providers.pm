@@ -57,6 +57,7 @@ my %PROVIDERS = (
         supports_streaming => 1,
         max_context_tokens => 32000,
         slow_api => 1,  # Local inference is significantly slower than cloud APIs
+        llama_user_id_supported => 1,
         endpoint => {
             path_suffix => '',
             temperature_range => [0.0, 2.0],
@@ -124,13 +125,20 @@ my %PROVIDERS = (
         supports_streaming => 1,
         max_context_tokens => 32000,
         slow_api => 1,  # Local inference is significantly slower than cloud APIs
+        # Per-session SSD cache directory on the inference server. CLIO
+        # injects the session_id as llama_user_id so each session gets
+        # its own ssd-cache/u/<hash>/ dir, preventing cross-session
+        # checkpoint contamination (all CLIO sessions with the same
+        # model share the same conv_hash, so continuation matching
+        # would otherwise pull checkpoints from unrelated sessions).
+        llama_user_id_supported => 1,
         endpoint => {
             path_suffix => '',
             temperature_range => [0.0, 2.0],
             supports_tools => 1,
         },
     },
-    
+
     lmstudio => {
         name => 'LM Studio',
         api_base => 'http://localhost:1234/v1/chat/completions',
@@ -140,6 +148,7 @@ my %PROVIDERS = (
         supports_streaming => 1,
         max_context_tokens => 32000,
         slow_api => 1,  # Local inference is significantly slower than cloud APIs
+        llama_user_id_supported => 1,
         endpoint => {
             path_suffix => '',
             temperature_range => [0.0, 2.0],
@@ -430,6 +439,11 @@ sub build_endpoint_config {
     # Propagate top-level provider flags into endpoint config for APIManager
     if ($provider && $provider->{supports_reasoning}) {
         $endpoint->{supports_reasoning} //= $provider->{supports_reasoning};
+    }
+    # Propagate llama_user_id_supported so APIManager can inject the
+    # session_id as llama_user_id for SSD-backed local inference servers.
+    if ($provider && $provider->{llama_user_id_supported}) {
+        $endpoint->{llama_user_id_supported} = 1;
     }
 
     # Add dynamic auth
