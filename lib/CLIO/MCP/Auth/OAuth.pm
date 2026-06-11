@@ -244,7 +244,7 @@ sub _open_browser {
         my $gc = fork();
         _exit(0) unless defined $gc && $gc == 0;
         open STDOUT, '>', $nulldev; open STDERR, '>', $nulldev;
-        exec $cmd, $url; _exit(1);
+        exec $cmd, $url; exit(1);  # exec replaces process; only reached on failure
     }
     waitpid($pid, 0);
 }

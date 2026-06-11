@@ -47,7 +47,7 @@ our %EXPORT_TAGS = (all => \@EXPORT_OK);
 # Context window fallbacks (tokens)
 # Used when model capabilities are unavailable from the API
 use constant DEFAULT_CONTEXT_WINDOW       => 128000;  # Cloud models
-use constant DEFAULT_LOCAL_CONTEXT_WINDOW => 32000;   # Local models (SAM, llama.cpp, LM Studio)
+use constant DEFAULT_LOCAL_CONTEXT_WINDOW => 65536;   # Local models (SAM, llama.cpp, LM Studio)
 
 # Output token fallbacks
 use constant DEFAULT_MAX_OUTPUT_TOKENS    => 16384;   # When no output limit is known

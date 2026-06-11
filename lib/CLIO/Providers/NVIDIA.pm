@@ -42,7 +42,7 @@ as OpenAI's API. The main differences are:
 
 # Default values
 use constant DEFAULT_MODEL => 'nvidia/nemotron-3-ultra-550b-a55b';
-use constant DEFAULT_MAX_TOKENS => 8192;
+use constant DEFAULT_MAX_TOKENS => 16384;
 use constant DEFAULT_API_BASE => 'https://integrate.api.nvidia.com/v1';
 
 sub new {

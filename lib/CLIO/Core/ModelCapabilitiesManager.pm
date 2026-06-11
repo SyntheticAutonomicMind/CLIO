@@ -647,89 +647,355 @@ Returns:
 sub _fetch_nvidia_capabilities {
     my ($self, $model) = @_;
     
-    # NVIDIA NIM models static capability map
-    # Based on NVIDIA NIM API documentation and known models
+    # NVIDIA NIM /v1/models returns only model IDs with no metadata.
+    # This static capability map provides context windows and output limits
+    # sourced from OpenRouter, build.nvidia.com specs, and model documentation.
+    # Keys use the full model ID as returned by the NIM API (e.g., "deepseek-ai/deepseek-v4-flash").
     my %nvidia_models = (
-        'nemotron-3-ultra-550b-a55b' => {
-            context_window => 128000,
-            max_output_tokens => 8192,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 0,
+        # --- DeepSeek ---
+        'deepseek-ai/deepseek-v4-flash' => {
+            context_window => 1048576, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
         },
-        'nemotron-3-ultra' => {
-            context_window => 128000,
-            max_output_tokens => 8192,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 0,
+        'deepseek-ai/deepseek-v4-pro' => {
+            context_window => 1048576, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
         },
-        'nemotron-3-8b' => {
-            context_window => 128000,
-            max_output_tokens => 8192,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 0,
+        'deepseek-ai/deepseek-coder-6.7b-instruct' => {
+            context_window => 16384, max_output_tokens => 8192,
+            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
         },
-        'nemotron-4-340b' => {
-            context_window => 128000,
-            max_output_tokens => 8192,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 0,
+        
+        # --- Google ---
+        'google/gemma-2-2b-it' => {
+            context_window => 8192, max_output_tokens => 8192,
+            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
         },
-        'llama-3.1-405b' => {
-            context_window => 128000,
-            max_output_tokens => 8192,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 0,
+        'google/gemma-3-4b-it' => {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 1, supports_reasoning => 0,
         },
-        'llama-3.1-70b' => {
-            context_window => 128000,
-            max_output_tokens => 8192,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 0,
+        'google/gemma-3-12b-it' => {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 1, supports_reasoning => 0,
         },
-        'llama-3.1-8b' => {
-            context_window => 128000,
-            max_output_tokens => 8192,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 0,
+        'google/gemma-3n-e2b-it' => {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 1, supports_reasoning => 0,
         },
-        'mistral-large' => {
-            context_window => 128000,
-            max_output_tokens => 8192,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 0,
+        'google/gemma-4-31b-it' => {
+            context_window => 262144, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 1, supports_reasoning => 0,
         },
-        'mixtral-8x7b' => {
-            context_window => 32768,
-            max_output_tokens => 8192,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 0,
+        'google/codegemma-7b' => {
+            context_window => 8192, max_output_tokens => 8192,
+            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        'google/codegemma-1.1-7b' => {
+            context_window => 8192, max_output_tokens => 8192,
+            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        
+        # --- IBM ---
+        'ibm/granite-3.0-8b-instruct' => {
+            context_window => 131072, max_output_tokens => 8192,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        'ibm/granite-34b-code-instruct' => {
+            context_window => 131072, max_output_tokens => 8192,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        
+        # --- Meta Llama ---
+        'meta/llama-3.1-8b-instruct' => {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        'meta/llama-3.1-70b-instruct' => {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        'meta/llama-3.2-1b-instruct' => {
+            context_window => 131072, max_output_tokens => 8192,
+            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        'meta/llama-3.2-3b-instruct' => {
+            context_window => 131072, max_output_tokens => 8192,
+            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        'meta/llama-3.2-11b-vision-instruct' => {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 1, supports_reasoning => 0,
+        },
+        'meta/llama-3.2-90b-vision-instruct' => {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 1, supports_reasoning => 0,
+        },
+        'meta/llama-3.3-70b-instruct' => {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        'meta/llama-4-maverick-17b-128e-instruct' => {
+            context_window => 1048576, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 1, supports_reasoning => 0,
+        },
+        'meta/codellama-70b' => {
+            context_window => 16384, max_output_tokens => 8192,
+            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        
+        # --- Microsoft ---
+        'microsoft/phi-4-mini-instruct' => {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        'microsoft/phi-4-multimodal-instruct' => {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 1, supports_reasoning => 0,
+        },
+        'microsoft/phi-3.5-moe-instruct' => {
+            context_window => 32768, max_output_tokens => 8192,
+            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        'microsoft/phi-3-vision-128k-instruct' => {
+            context_window => 131072, max_output_tokens => 8192,
+            supports_tools => 0, supports_streaming => 1, supports_vision => 1, supports_reasoning => 0,
+        },
+        
+        # --- MiniMax ---
+        'minimaxai/minimax-m2.7' => {
+            context_window => 1048576, max_output_tokens => 131072,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
+        },
+        
+        # --- Mistral ---
+        'mistralai/mistral-large-3-675b-instruct-2512' => {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        'mistralai/mistral-small-4-119b-2603' => {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        'mistralai/mistral-medium-3.5-128b' => {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        'mistralai/mistral-nemotron' => {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        'mistralai/codestral-22b-instruct-v0.1' => {
+            context_window => 32768, max_output_tokens => 8192,
+            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        'mistralai/ministral-14b-instruct-2512' => {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        'mistralai/mistral-7b-instruct-v0.3' => {
+            context_window => 32768, max_output_tokens => 8192,
+            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        'mistralai/mixtral-8x22b-v0.1' => {
+            context_window => 65536, max_output_tokens => 8192,
+            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        'mistralai/mixtral-8x7b-instruct-v0.1' => {
+            context_window => 32768, max_output_tokens => 8192,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        'nv-mistralai/mistral-nemo-12b-instruct' => {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        
+        # --- Moonshot ---
+        'moonshotai/kimi-k2.6' => {
+            context_window => 262144, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 1, supports_reasoning => 1,
+        },
+        
+        # --- NVIDIA Nemotron ---
+        'nvidia/nemotron-3-ultra-550b-a55b' => {
+            context_window => 1048576, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
+        },
+        'nvidia/nemotron-3-super-120b-a12b' => {
+            context_window => 1048576, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
+        },
+        'nvidia/nemotron-3-nano-30b-a3b' => {
+            context_window => 262144, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning' => {
+            context_window => 256000, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 1, supports_reasoning => 1,
+        },
+        'nvidia/nemotron-4-340b-instruct' => {
+            context_window => 131072, max_output_tokens => 8192,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        'nvidia/nemotron-mini-4b-instruct' => {
+            context_window => 131072, max_output_tokens => 8192,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        'nvidia/nemotron-nano-12b-v2-vl' => {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 1, supports_reasoning => 0,
+        },
+        'nvidia/nvidia-nemotron-nano-9b-v2' => {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
+        },
+        
+        # --- NVIDIA Nemotron (Llama-derived) ---
+        'nvidia/llama-3.1-nemotron-ultra-253b-v1' => {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
+        },
+        'nvidia/llama-3.3-nemotron-super-49b-v1.5' => {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
+        },
+        'nvidia/llama-3.3-nemotron-super-49b-v1' => {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
+        },
+        'nvidia/llama-3.1-nemotron-70b-instruct' => {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        'nvidia/llama-3.1-nemotron-51b-instruct' => {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        'nvidia/llama-3.1-nemotron-nano-8b-v1' => {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
+        },
+        'nvidia/llama-3.1-nemotron-nano-vl-8b-v1' => {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 1, supports_reasoning => 1,
+        },
+        'nvidia/llama3-chatqa-1.5-70b' => {
+            context_window => 131072, max_output_tokens => 8192,
+            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        'nvidia/mistral-nemo-minitron-8b-8k-instruct' => {
+            context_window => 8192, max_output_tokens => 8192,
+            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        'nvidia/nemotron-nano-3-30b-a3b' => {
+            context_window => 262144, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        'nvidia/cosmos-reason2-8b' => {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 0, supports_streaming => 1, supports_vision => 1, supports_reasoning => 0,
+        },
+        
+        # --- OpenAI ---
+        'openai/gpt-oss-120b' => {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        'openai/gpt-oss-20b' => {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        
+        # --- Qwen ---
+        'qwen/qwen3-next-80b-a3b-instruct' => {
+            context_window => 262144, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
+        },
+        'qwen/qwen3.5-122b-a10b' => {
+            context_window => 262144, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 1, supports_reasoning => 1,
+        },
+        'qwen/qwen3.5-397b-a17b' => {
+            context_window => 262144, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 1, supports_reasoning => 1,
+        },
+        
+        # --- Z.AI ---
+        'z-ai/glm-5.1' => {
+            context_window => 200000, max_output_tokens => 131072,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
+        },
+        
+        # --- Bytedance ---
+        'bytedance/seed-oss-36b-instruct' => {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        
+        # --- StepFun ---
+        'stepfun-ai/step-3.5-flash' => {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        'stepfun-ai/step-3.7-flash' => {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        
+        # --- Writer ---
+        'writer/palmyra-creative-122b' => {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        'writer/palmyra-fin-70b-32k' => {
+            context_window => 32768, max_output_tokens => 8192,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        'writer/palmyra-med-70b' => {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        'writer/palmyra-med-70b-32k' => {
+            context_window => 32768, max_output_tokens => 8192,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        
+        # --- SarvamAI ---
+        'sarvamai/sarvam-m' => {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        
+        # --- 01.AI ---
+        '01-ai/yi-large' => {
+            context_window => 32768, max_output_tokens => 8192,
+            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        
+        # --- Stockmark ---
+        'stockmark/stockmark-2-100b-instruct' => {
+            context_window => 32768, max_output_tokens => 8192,
+            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        },
+        
+        # --- Upstage ---
+        'upstage/solar-10.7b-instruct' => {
+            context_window => 32768, max_output_tokens => 8192,
+            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
         },
     );
     
-    # Try exact match first
+    # Try exact match first (full model ID with org prefix)
     my $model_data = $nvidia_models{$model};
     
-    # Try without nvidia/ prefix
+    # Try without nvidia/ prefix (for models under nvidia/ namespace)
     if (!$model_data && $model =~ s{^nvidia/}{}) {
         $model_data = $nvidia_models{$model};
+    }
+    
+    # If no exact match, try pattern-based heuristics for model families
+    if (!$model_data) {
+        $model_data = $self->_nvidia_model_heuristics($model);
     }
     
     return undef unless $model_data;
@@ -752,6 +1018,383 @@ sub _fetch_nvidia_capabilities {
         size_bytes            => undef,
         raw                   => $model_data,
     };
+}
+
+=head2 _nvidia_model_heuristics (Internal)
+
+Pattern-based heuristics for NIM models not in the static map.
+Infers capabilities from model ID naming conventions.
+
+Arguments:
+- $model: Model identifier (may or may not have nvidia/ prefix)
+
+Returns:
+- Hashref with capability data, or undef if no pattern matches
+
+=cut
+
+sub _nvidia_model_heuristics {
+    my ($self, $model) = @_;
+    
+    # Strip nvidia/ prefix for pattern matching
+    my $base = $model;
+    $base =~ s{^nvidia/}{};
+    $base =~ s{^nv-}{};
+    
+    # --- Model family patterns (ordered by specificity) ---
+    
+    # DeepSeek V4: 1M context, reasoning
+    if ($base =~ m{deepseek.*v4}i) {
+        return {
+            context_window => 1048576, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
+        };
+    }
+    
+    # DeepSeek V3.x: 128K context, reasoning
+    if ($base =~ m{deepseek.*v3}i) {
+        return {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
+        };
+    }
+    
+    # DeepSeek R1: 128K context, reasoning
+    if ($base =~ m{deepseek.*r1}i) {
+        return {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
+        };
+    }
+    
+    # Llama 4 Maverick: 1M context, vision
+    if ($base =~ m{llama-?4.*maverick}i) {
+        return {
+            context_window => 1048576, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 1, supports_reasoning => 0,
+        };
+    }
+    
+    # Llama 3.3: 128K context
+    if ($base =~ m{llama-?3[._]3}i) {
+        return {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+    
+    # Llama 3.2 vision: 128K context, vision
+    if ($base =~ m{llama-?3[._]2.*vision}i) {
+        return {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 1, supports_reasoning => 0,
+        };
+    }
+    
+    # Llama 3.2 text: 128K context
+    if ($base =~ m{llama-?3[._]2}i) {
+        return {
+            context_window => 131072, max_output_tokens => 8192,
+            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+    
+    # Llama 3.1: 128K context
+    if ($base =~ m{llama-?3[._]1}i) {
+        return {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+    
+    # Nemotron 3 Ultra/Super: 1M context, reasoning
+    if ($base =~ m{nemotron-?3.*(ultra|super)}i) {
+        return {
+            context_window => 1048576, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
+        };
+    }
+    
+    # Nemotron 3 Nano: 256K context
+    if ($base =~ m{nemotron-?3.*nano}i) {
+        return {
+            context_window => 262144, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+    
+    # Nemotron Nano VL: 128K context, vision
+    if ($base =~ m{nemotron.*nano.*vl}i) {
+        return {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 1, supports_reasoning => 0,
+        };
+    }
+    
+    # Nemotron Nano: 128K context
+    if ($base =~ m{nemotron.*nano}i) {
+        return {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
+        };
+    }
+    
+    # Nemotron 4: 128K context
+    if ($base =~ m{nemotron-?4}i) {
+        return {
+            context_window => 131072, max_output_tokens => 8192,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+    
+    # Nemotron (generic): 128K context
+    if ($base =~ m{nemotron}i) {
+        return {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+    
+    # Qwen 3.5: 256K context, reasoning
+    if ($base =~ m{qwen.*3[._]5}i) {
+        return {
+            context_window => 262144, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 1, supports_reasoning => 1,
+        };
+    }
+    
+    # Qwen 3: 256K context, reasoning
+    if ($base =~ m{qwen.*3}i) {
+        return {
+            context_window => 262144, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
+        };
+    }
+    
+    # Mistral Large: 128K context
+    if ($base =~ m{mistral.*large}i) {
+        return {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+    
+    # Mistral Small/Medium: 128K context
+    if ($base =~ m{mistral.*(small|medium)}i) {
+        return {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+    
+    # Mixtral 8x22B: 64K context
+    if ($base =~ m{mixtral.*8x22}i) {
+        return {
+            context_window => 65536, max_output_tokens => 8192,
+            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+    
+    # Mixtral 8x7B: 32K context
+    if ($base =~ m{mixtral.*8x7}i) {
+        return {
+            context_window => 32768, max_output_tokens => 8192,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+    
+    # Mistral 7B: 32K context
+    if ($base =~ m{mistral.*7b}i) {
+        return {
+            context_window => 32768, max_output_tokens => 8192,
+            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+    
+    # Gemma 4: 256K context, vision
+    if ($base =~ m{gemma-?4}i) {
+        return {
+            context_window => 262144, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 1, supports_reasoning => 0,
+        };
+    }
+    
+    # Gemma 3/3n: 128K context, vision
+    if ($base =~ m{gemma-?3}i) {
+        return {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 1, supports_reasoning => 0,
+        };
+    }
+    
+    # Gemma 2: 8K context
+    if ($base =~ m{gemma-?2}i) {
+        return {
+            context_window => 8192, max_output_tokens => 8192,
+            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+    
+    # Phi-4: 128K context
+    if ($base =~ m{phi-?4}i) {
+        return {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+    
+    # Phi-3: 128K context
+    if ($base =~ m{phi-?3}i) {
+        return {
+            context_window => 131072, max_output_tokens => 8192,
+            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+    
+    # Granite: 128K context
+    if ($base =~ m{granite}i) {
+        return {
+            context_window => 131072, max_output_tokens => 8192,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+    
+    # GLM-5: 200K context, reasoning
+    if ($base =~ m{glm-?5}i) {
+        return {
+            context_window => 200000, max_output_tokens => 131072,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
+        };
+    }
+    
+    # GLM-4.x: 128K context
+    if ($base =~ m{glm-?4}i) {
+        return {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+    
+    # Kimi K2: 256K context, reasoning, vision
+    if ($base =~ m{kimi.*k2}i) {
+        return {
+            context_window => 262144, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 1, supports_reasoning => 1,
+        };
+    }
+    
+    # MiniMax M2: 1M context, reasoning
+    if ($base =~ m{minimax.*m2}i) {
+        return {
+            context_window => 1048576, max_output_tokens => 131072,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
+        };
+    }
+    
+    # Codestral: 32K context
+    if ($base =~ m{codestral}i) {
+        return {
+            context_window => 32768, max_output_tokens => 8192,
+            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+    
+    # NVIDIA Cosmos (vision models): 128K context, vision
+    if ($base =~ m{cosmos}i) {
+        return {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 0, supports_streaming => 1, supports_vision => 1, supports_reasoning => 0,
+        };
+    }
+    
+    # ChatQA: 128K context
+    if ($base =~ m{chatqa}i) {
+        return {
+            context_window => 131072, max_output_tokens => 8192,
+            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+    
+    # Mistral Nemo: 128K context
+    if ($base =~ m{mistral.*nemo}i) {
+        return {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+    
+    # Ministral: 128K context
+    if ($base =~ m{ministral}i) {
+        return {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+    
+    # StepFun: 128K context
+    if ($base =~ m{stepfun|step-}i) {
+        return {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+    
+    # Writer Palmyra: 128K context (except 32k variants)
+    if ($base =~ m{palmyra.*32k}i) {
+        return {
+            context_window => 32768, max_output_tokens => 8192,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+    if ($base =~ m{palmyra}i) {
+        return {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+    
+    # Seed/Bytedance: 128K context
+    if ($base =~ m{seed-oss|bytedance}i) {
+        return {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+    
+    # Sarvam: 128K context
+    if ($base =~ m{sarvam}i) {
+        return {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+    
+    # Yi: 32K context
+    if ($base =~ m{/yi-}i) {
+        return {
+            context_window => 32768, max_output_tokens => 8192,
+            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+    
+    # Solar/Upstage: 32K context
+    if ($base =~ m{solar|upstage}i) {
+        return {
+            context_window => 32768, max_output_tokens => 8192,
+            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+    
+    # Stockmark: 32K context
+    if ($base =~ m{stockmark}i) {
+        return {
+            context_window => 32768, max_output_tokens => 8192,
+            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+    
+    # No pattern matched - return undef to use system defaults
+    return undef;
 }
 
 =head2 _fetch_zai_capabilities
