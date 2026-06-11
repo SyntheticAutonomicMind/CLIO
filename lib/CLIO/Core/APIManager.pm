@@ -1998,7 +1998,23 @@ sub _build_payload {
         log_debug('APIManager', "session=" . (defined $self->{session} ? "defined" : "undef") .
                      ", session_id=" . (defined $self->{session}{session_id} ? $self->{session}{session_id} : "undef"));
     }
-    
+
+    # Inject llama_user_id for local SSD-backed inference servers (llama.cpp,
+    # LM Studio, SAM). Each CLIO session gets its own SSD cache directory
+    # on the server (ssd-cache/u/<hash>/), preventing cross-session
+    # checkpoint contamination. All CLIO sessions with the same model share
+    # the same conv_hash, so anonymous continuation matching would otherwise
+    # pull checkpoints from unrelated sessions. Stripped of UUID hyphens
+    # for cleaner filenames and to fit the 64-char limit comfortably.
+    if ($endpoint_config->{llama_user_id_supported}
+        && $self->{session}
+        && $self->{session}{session_id}) {
+        my $uid = $self->{session}{session_id};
+        $uid =~ s/-//g;  # strip UUID hyphens
+        $payload->{llama_user_id} = $uid;
+        log_debug('APIManager', "Including llama_user_id: $uid (session-isolated SSD cache)");
+    }
+
     # Add previous_response_id for GitHub Copilot billing continuity
     # Skip if model has rejected previous_response_id (flagged by ResponseHandler)
     if (!$self->{response_handler}{_no_previous_response_id}) {
