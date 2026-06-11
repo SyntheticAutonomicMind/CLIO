@@ -20,9 +20,9 @@ ok(CLIO::Providers::provider_exists('minimax_token'), 'MiniMax Token Plan provid
 my $provider = CLIO::Providers::get_provider('minimax');
 ok($provider, 'MiniMax provider config retrieved');
 is($provider->{name}, 'MiniMax', 'Provider name');
-is($provider->{model}, 'MiniMax-M2.7', 'Default model is MiniMax-M2.7');
+is($provider->{model}, 'MiniMax-M3', 'Default model is MiniMax-M3');
 is($provider->{api_base}, 'https://api.minimax.io/v1/chat/completions', 'API base URL');
-is($provider->{max_context_tokens}, 204800, 'Context window 204,800 tokens');
+is($provider->{max_context_tokens}, 1000000, 'Context window 1,000,000 tokens');
 
 # Test 9-10: Provider capabilities
 ok($provider->{supports_tools}, 'Supports tool calling');
@@ -32,7 +32,7 @@ ok($provider->{supports_streaming}, 'Supports streaming');
 my $token_provider = CLIO::Providers::get_provider('minimax_token');
 ok($token_provider, 'Token Plan provider config retrieved');
 is($token_provider->{name}, 'MiniMax Token Plan', 'Token Plan provider name');
-is($token_provider->{model}, 'MiniMax-M2.7', 'Token Plan default model same');
+is($token_provider->{model}, 'MiniMax-M3', 'Token Plan default model same');
 is($token_provider->{api_base}, $provider->{api_base}, 'Token Plan same API base');
 
 # Test 15-17: Endpoint config
@@ -41,10 +41,10 @@ ok($endpoint, 'Endpoint config built');
 is($endpoint->{path_suffix}, '', 'Path suffix empty (full URL in api_base)');
 ok($endpoint->{minimax}, 'MiniMax flag set in endpoint config');
 
-# Test 18: Temperature range excludes 0
+# Test 18: Temperature range
 my ($min_temp, $max_temp) = @{$endpoint->{temperature_range}};
-ok($min_temp > 0 && $min_temp <= 0.001, "Min temperature is 0.001 (got $min_temp) - MiniMax rejects temp=0");
-ok($max_temp == 1.0, "Max temperature is 1.0 (got $max_temp)");
+ok($min_temp == 0.0, "Min temperature is 0.0 (got $min_temp)");
+ok($max_temp == 2.0, "Max temperature is 2.0 (got $max_temp)");
 
 # Test 20: Auth header
 is($endpoint->{auth_header}, 'Authorization', 'Auth header is Authorization');
