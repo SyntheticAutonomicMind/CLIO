@@ -28,37 +28,71 @@ CLIO works like pair programming, not prompt-and-response chat. You describe the
 | Category | Capabilities |
 |----------|--------------|
 | **Files** | Read, write, search, edit, manage files |
-| **Git** | Status, diff, commit, branch, push, pull, stash, tag |
+| **Git** | Status, diff, commit, branch, push, pull, stash, tag, worktree |
 | **Terminal** | Execute commands and scripts directly |
 | **Remote** | Run AI tasks on remote systems via SSH |
-| **Multi-Agent** | Spawn parallel agents for complex work |
+| **Multi-Agent** | Spawn parallel agents with file locks, git locks, and rate limiting |
 | **Multiplexer** | Live agent output panes via tmux, GNU Screen, or Zellij |
-| **Memory** | Store and recall information across sessions |
+| **Memory** | Short-term sessions plus long-term memory across projects |
 | **Profile** | Learns your working style and personalizes collaboration |
 | **Todos** | Manage tasks within your workflow |
+| **Undo** | Revert AI changes from any turn |
+| **Skills** | Custom AI skills loaded from Git repositories |
+| **Plugins** | Drop-in tool extensions |
+| **OpenSpec** | Spec-driven development with AI-generated artifacts |
 | **Web** | Fetch and analyze web content |
 | **MCP** | Connect to external tool servers via [Model Context Protocol](docs/MCP.md) |
-| **Proxy Support** | HTTP and SOCKS proxy for corporate/restricted networks |
+
+## Slash Commands
+
+Type `/help` in any session for the full list. Highlights:
+
+- `/api` - providers, models, login, thinking
+- `/config` - global settings, persistence
+- `/session` - history, switch, export
+- `/memory` - long-term patterns
+- `/skills` - manage custom skills
+- `/spec` - OpenSpec lifecycle
+- `/agent` - sub-agents (spawn, inbox, status)
+- `/mcp` - Model Context Protocol servers
+- `/undo` - revert changes from the last turn
+- `/profile` - working-style profile
+- `/update` - in-place version updates
+- `/usage` - billing and token usage
+- `/stats` - performance and memory
+
+See [docs/USER_GUIDE.md](docs/USER_GUIDE.md#slash-commands) for the complete reference.
 
 ---
 
 ## AI Providers
 
+CLIO ships with 15 provider configurations. All API providers are OpenAI-compatible; Anthropic and Google have native protocol adapters.
+
 | Provider | Auth | Best For |
 |----------|------|----------|
-| **GitHub Copilot** | OAuth | Multiple models, easiest setup |
-| **Anthropic** | API Key | Claude models, extended thinking |
+| **GitHub Copilot** | OAuth | Multiple models (GPT, Claude, MiniMax), easiest setup |
+| **Anthropic** | API Key | Claude models, extended thinking, native API |
 | **OpenAI** | API Key | GPT and o-series models |
-| **Google Gemini** | API Key | Large context, multimodal |
+| **Google Gemini** | API Key | Large context (1M+), multimodal, native API |
 | **DeepSeek** | API Key | Coding, reasoning |
 | **OpenRouter** | API Key | Access to hundreds of models |
-| **MiniMax** | API Key | High-throughput coding |
-| **Z.AI** | API Key | GLM-5 models, long-horizon tasks |
+| **Ollama Cloud** | API Key | Hosted open-source models (Qwen, Gemma, DeepSeek) |
+| **MiniMax** | API Key | High-throughput coding, 1M context |
+| **Z.AI** | API Key | GLM-5 models, long-horizon tasks, vision |
+| **NVIDIA NIM** | API Key | Nemotron, Llama, enterprise-grade inference |
 | **llama.cpp** | None | Local, offline, privacy-first |
 | **LM Studio** | None | GUI-based local model management |
 | **SAM** | API Key | Integration with SAM ecosystem |
 
-See [docs/PROVIDERS.md](docs/PROVIDERS.md) for setup instructions.
+Variant providers target the same backends but with different billing endpoints or quotas:
+
+| Variant | Difference |
+|---------|-----------|
+| **MiniMax Token Plan** | MiniMax Token Plan subscription (quota-based, separate billing) |
+| **Z.AI Coding Plan** | Z.AI `/api/coding/paas/v4` endpoint with coding-plan subscription pricing |
+
+See [docs/PROVIDERS.md](docs/PROVIDERS.md) for setup instructions for each provider.
 
 ---
 
@@ -159,12 +193,6 @@ Find the bug causing the login endpoint to return 500 when the session is expire
 ./clio --enable file_operations  # Restrict to specific tools
 ./clio --disable web_operations  # Block specific tools
 ```
-
-### Slash Commands
-
-Type `/help` in any session for the full list. Key commands: `/api` (providers), `/config` (settings), `/session` (history), `/memory` (long-term memory), `/agent` (sub-agents), `/undo` (revert changes), `/usage` (billing), `/stats` (performance).
-
-See [docs/USER_GUIDE.md](docs/USER_GUIDE.md#slash-commands) for the complete reference.
 
 ---
 
