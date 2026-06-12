@@ -580,10 +580,28 @@ sub display_config {
     # Show thinking settings
     my $thinking = $self->{config}->get('show_thinking') ? 'on' : 'off';
     my $effort    = $self->{config}->get('thinking_effort') // 'medium';
-    $self->display_key_value("Thinking", $thinking, 16);
-    $self->display_key_value("Think Effort", $effort, 16);
+   $self->display_key_value("Thinking", $thinking, 16);
+   $self->display_key_value("Think Effort", $effort, 16);
 
-    # Show sampling overrides (only when set)
+    # Show search configuration
+    my $serpapi_key = $self->{config}->get('serpapi_key') || '';
+    my $display_serpapi = $serpapi_key
+        ? substr($serpapi_key, 0, 8) . '...' . substr($serpapi_key, -4)
+        : 'not set';
+    my $search_engine   = $self->{config}->get('search_engine')   || 'auto';
+    my $search_provider = $self->{config}->get('search_provider') || 'auto';
+    $self->display_key_value("SerpAPI Key", $display_serpapi, 16);
+    $self->display_key_value("Search Engine", $search_engine, 16);
+    $self->display_key_value("Search Provider", $search_provider, 16);
+
+    # Show GitHub PAT (only when set)
+    my $github_pat = $self->{config}->get('github_pat') || '';
+    if ($github_pat) {
+        my $display_pat = substr($github_pat, 0, 8) . '...' . substr($github_pat, -4);
+        $self->display_key_value("GitHub PAT", $display_pat, 16);
+    }
+
+   # Show sampling overrides (only when set)
     for my $param (qw(temperature top_p top_k)) {
         my $val = $self->{config}->get("sampling_$param");
         if (defined $val && $val ne '') {
