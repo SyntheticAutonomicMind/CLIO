@@ -133,10 +133,13 @@ List directory contents with unified style.
 =cut
 
 sub _list_directory {
-    my ($self, $path) = @_;
+   my ($self, $path) = @_;
+   
+    # Expand tilde to home directory
+    $path = expand_tilde($path);
     
-    # Resolve path
-    unless (File::Spec->file_name_is_absolute($path)) {
+   # Resolve path
+   unless (File::Spec->file_name_is_absolute($path)) {
         my $working_dir = $self->{session} ? 
             ($self->{session}->state()->{working_directory} || '.') : '.';
         $path = File::Spec->catfile($working_dir, $path);
@@ -211,6 +214,9 @@ sub handle_read_command {
         $self->display_system_message("Reads and displays a file with markdown rendering and pagination.");
         return;
     }
+    
+    # Expand tilde to home directory
+    $filepath = expand_tilde($filepath);
     
     # Resolve path relative to working directory
     unless (File::Spec->file_name_is_absolute($filepath)) {
