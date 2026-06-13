@@ -142,6 +142,16 @@ class ClioAgent(AbstractInstalledAgent):
             "xai": ["XAI_API_KEY"],
             "minimax": ["MINIMAX_API_KEY"],
             "openrouter": ["OPENROUTER_API_KEY"],
+            "nvidia": ["NVIDIA_API_KEY"],
+            "zai": ["ZAI_API_KEY"],
+            "groq": ["GROQ_API_KEY"],
+            "cerebras": ["CEREBRAS_API_KEY"],
+            "sambanova": ["SAMBANOVA_API_KEY"],
+            "together": ["TOGETHER_API_KEY"],
+            "fireworks": ["FIREWORKS_API_KEY"],
+            "mistral": ["MISTRAL_API_KEY"],
+            "perplexity": ["PERPLEXITY_API_KEY"],
+            "ollama_cloud": ["OLLAMA_CLOUD_API_KEY"],
         }
 
         for provider, keys in provider_keys.items():
@@ -151,6 +161,22 @@ class ClioAgent(AbstractInstalledAgent):
                     # If no CLIO_API_KEY yet, use the first provider key found
                     if "CLIO_API_KEY" not in env:
                         env["CLIO_API_KEY"] = os.environ[key]
+
+        # Also read host CLIO config for provider-specific keys
+        # CLIO stores per-provider keys in ~/.clio/config.json api_keys hash
+        if "CLIO_API_KEY" not in env:
+            try:
+                import json
+                config_path = Path.home() / ".clio" / "config.json"
+                if config_path.exists():
+                    with open(config_path) as f:
+                        config = json.load(f)
+                    api_keys = config.get("api_keys", {})
+                    provider_key = api_keys.get(self._provider)
+                    if provider_key:
+                        env["CLIO_API_KEY"] = provider_key
+            except Exception:
+                pass
 
         # Also pass any env var ending with _API_KEY
         for key, value in os.environ.items():

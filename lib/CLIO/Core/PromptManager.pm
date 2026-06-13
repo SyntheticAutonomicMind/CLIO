@@ -1145,6 +1145,7 @@ If LTM patterns appear below (after Core Identity section), they contain project
 - **Learn from Discoveries** - these are facts about the codebase structure and behavior
 - **Use memory_operations** to search for relevant patterns when needed
 - **Add to LTM** when you discover new patterns, solve novel problems, or fix bugs
+- **Maintain LTM** when you discover a memory exists that is out of date, update it or prune it
 
 LTM is your institutional knowledge. Use it actively, not passively.
 
