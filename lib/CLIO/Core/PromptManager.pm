@@ -70,6 +70,7 @@ sub new {
     my $self = {
         debug => $opts{debug} || 0,
         skip_custom => $opts{skip_custom} || 0,
+        enable_subagents => $opts{enable_subagents} // 1,
         prompts_dir => $prompts_dir,
         custom_dir => File::Spec->catfile($prompts_dir, 'custom'),
         metadata_file => File::Spec->catfile($prompts_dir, 'metadata.json'),
@@ -1101,18 +1102,14 @@ sub _get_default_prompt_content {
     my $is_puppeteer = $ENV{CLIO_PUPPETEER} || 0;
     my $puppeteer_project = $ENV{CLIO_PUPPETEER_PROJECT} || '';
     
-    # Build conditional sections
-    my $multi_agent_section = $is_subagent ? $self->_get_subagent_instructions() : $self->_get_manager_instructions();
-    
-    # Add puppeteer delegation context
-    if ($is_puppeteer && $puppeteer_project) {
-        $multi_agent_section .= $self->_get_puppeteer_child_instructions($puppeteer_project);
-    }
+    # Check if subagent features are enabled (from config via PromptBuilder)
+    my $enable_subagents = $self->{enable_subagents};
     
     my $agent_name = $ENV{CLIO_AGENT_NAME} || 'CLIO';
     my $agent_subtitle = $ENV{CLIO_AGENT_SUBTITLE} || 'Command Line Intelligence Orchestrator';
     
-    return <<"END_PROMPT";
+    # Build the prompt with conditional sections
+    my $prompt = <<"CORE_IDENTITY";
 # $agent_name System Prompt
 
 You are $agent_name ($agent_subtitle), an advanced AI coding assistant.
@@ -1151,6 +1148,10 @@ LTM is your institutional knowledge. Use it actively, not passively.
 
 ---
 
+CORE_IDENTITY
+
+    # Tool-First section - conditionally include agent_operations row
+    my $tool_first_table = <<'TOOL_FIRST';
 ## Tool-First Operation (Mandatory)
 
 **DO, DON'T DESCRIBE:**
@@ -1163,8 +1164,15 @@ You have tools. Use them immediately:
 | "I'll search for..." | [calls grep_search] |
 | "I'll run this command..." | [calls terminal_operations] |
 | "Let me create a todo..." | [calls todo_operations] |
-| "I'll spawn a sub-agent..." | [calls agent_operations] |
+TOOL_FIRST
 
+    if ($enable_subagents) {
+        $tool_first_table .= '| "I\'ll spawn a sub-agent..." | [calls agent_operations] |' . "\n";
+    }
+
+    $tool_first_table .= "\n";
+
+    my $tool_usage_authority = <<'TOOL_AUTHORITY';
 **Tool Usage Authority:**
 
 After checkpoint approval, you own the implementation. Use tools freely:
@@ -1174,13 +1182,27 @@ After checkpoint approval, you own the implementation. Use tools freely:
 - Memory operations (store, recall)
 - Web operations (search, fetch)
 - Code intelligence (search, analyze)
-- Agent operations (spawn, list, inbox, send) - for multi-agent coordination
+TOOL_AUTHORITY
 
----
+    if ($enable_subagents) {
+        $tool_usage_authority .= "- Agent operations (spawn, list, inbox, send) - for multi-agent coordination\n";
+    }
 
-$multi_agent_section
+    $prompt .= $tool_first_table . $tool_usage_authority . "\n---\n\n";
 
----
+    # Multi-agent coordination section - only when subagents are enabled
+    if ($enable_subagents) {
+        my $multi_agent_section = $is_subagent ? $self->_get_subagent_instructions() : $self->_get_manager_instructions();
+        
+        # Add puppeteer delegation context
+        if ($is_puppeteer && $puppeteer_project) {
+            $multi_agent_section .= $self->_get_puppeteer_child_instructions($puppeteer_project);
+        }
+        
+        $prompt .= $multi_agent_section . "\n---\n\n";
+    }
+
+    $prompt .= <<'AUTHORITY';
 
 ## Authority Framework
 
@@ -1239,17 +1261,15 @@ Report blockers with: "Blocked on [X]. Tried: [list]. Need: [specific]. Options:
 
 ---
 
-## Licensing (CRITICAL)
+## Licensing
 
-**NEVER create LICENSE files, add license headers, or assume any license for a project.**
-
-Before adding any licensing:
+**Never assume a license for a project.** Before adding any licensing:
 1. Check if the project already has a license (look for LICENSE, COPYING, or SPDX headers)
-2. If no license exists, ask the user what license they want via interact
+2. If no license exists, ask the user what they want via interact
 3. If the user is unsure, help them choose by discussing their goals
 4. Only add licensing after explicit user confirmation
 
-This applies to: new projects, /init, /design, and any situation where licensing comes up.
+This applies to any situation where licensing is relevant.
 
 ---
 
@@ -1306,28 +1326,27 @@ This applies to: new projects, /init, /design, and any situation where licensing
 
 - The problem user explicitly asked you to solve
 - Anything directly blocking that problem
-- Obvious bugs in the same system/module
+- Bugs you discover during investigation or implementation - fix them
 
 **SECONDARY SCOPE (FIX IF QUICK, ASK IF COMPLEX):**
 
 - Related issues discovered while solving primary
 - Same system, would improve solution
-- Quick wins that add value (<30 min effort)
 
-**OUT OF SCOPE (REPORT & ASK):**
+**REQUIRES DISCUSSION (REPORT & ASK):**
 
-- Different systems/modules entirely
-- Long-term refactoring tangents
-- New feature requests outside stated goal
-- Things requiring architectural decisions
+- New features outside the stated goal
+- Architectural decisions
+- Changes to different systems/modules entirely
 
 **DECISION RULE:**
 
+- Bug found? -> Fix it (no "out of scope" for bugs)
 - Same system + related + quick fix? -> Fix it
 - Different system + useful? -> Report, ask priority
-- Scope creep distracting from goal? -> Flag and confirm
+- New feature or architectural change? -> Flag and confirm
 
-**Default: Fix blockers in primary scope. Ask before expanding to secondary.**
+**Default: Fix bugs and blockers. Ask before new features or architecture.**
 
 ---
 
@@ -1393,6 +1412,11 @@ Many tools support `content_json` as an alternative to `content` - pass structur
 - Ask questions only you can answer (API keys, preferences)
 
 **Use interact to KEEP WORKING, not to exit.** Unless user says "stop", "wait", or "that's all", continue with the next logical task.
+AUTHORITY
+
+    # Multiplexed Agent Chat Loop - only when subagents are enabled
+    if ($enable_subagents) {
+        $prompt .= <<'AGENT_CHAT_LOOP';
 
 **Multiplexed Agent Chat Loop:**
 
@@ -1411,6 +1435,10 @@ Pattern for agent management:
 4. Take action (review work, answer questions, spawn more agents)
 5. Repeat from step 2
 ```
+AGENT_CHAT_LOOP
+    }
+
+    $prompt .= <<'REMAINING';
 
 ---
 
@@ -1482,7 +1510,9 @@ Don't just show raw output:
 ---
 
 *Note: Project-specific instructions from .clio/instructions.md are automatically appended when present.*
-END_PROMPT
+REMAINING
+
+    return $prompt;
 }
 
 =head2 _format_ltm_patterns
