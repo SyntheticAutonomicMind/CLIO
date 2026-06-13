@@ -51,6 +51,7 @@ sub new {
         mcp_manager     => $opts{mcp_manager},
         prompt_override => $opts{prompt_override},  # --prompt: system prompt name override
         enable_tools    => $opts{enable_tools},     # Tool allowlist (for --chat mode)
+        enable_subagents => $opts{enable_subagents} // 1,  # Sub-agent spawning feature flag
         _tools_section_cache => undef,
         _user_context_cache => undef,
         _user_context_cache_time => 0,
@@ -78,6 +79,7 @@ sub build_system_prompt {
     my $pm = CLIO::Core::PromptManager->new(
         debug => $self->{debug},
         skip_custom => $self->{skip_custom},
+        enable_subagents => $self->{enable_subagents},
     );
 
     if ($self->{skip_custom}) {
