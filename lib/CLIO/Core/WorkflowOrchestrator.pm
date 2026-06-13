@@ -166,6 +166,7 @@ sub new {
     }
     
     # Initialize prompt builder for system prompt construction
+    my $enable_subagents = $self->{config} ? ($self->{config}->get('enable_subagents') // 1) : 1;
     $self->{prompt_builder} = CLIO::Core::PromptBuilder->new(
         debug           => $args{debug},
         skip_custom     => $self->{skip_custom},
@@ -175,6 +176,7 @@ sub new {
         mcp_manager     => $self->{mcp_manager},
         prompt_override => $self->{prompt_override},
         enable_tools    => $self->{enable_tools},  # Tool allowlist (for --chat mode)
+        enable_subagents => $enable_subagents,
     );
     
     # Initialize FileVault for targeted file backup and undo support
