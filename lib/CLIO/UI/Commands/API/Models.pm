@@ -36,14 +36,20 @@ sub _get_mcm_capabilities {
     return undef unless $provider_name && $model_id;
     
     # Only look up for providers known to lack /v1/models metadata
-    return undef unless $provider_name eq 'nvidia';
+    return undef unless $provider_name eq 'nvidia'
+        || $provider_name eq 'minimax'
+        || $provider_name eq 'minimax_token';
     
+    # Strip provider prefix for MCM lookup (e.g., "minimax/MiniMax-M3" -> "MiniMax-M3")
+    my $lookup_id = $model_id;
+    $lookup_id =~ s{^\Q$provider_name\E/}{};
+
     $_mcm_instance //= do {
         require CLIO::Core::ModelCapabilitiesManager;
         CLIO::Core::ModelCapabilitiesManager->new(debug => 0);
     };
     
-    return $_mcm_instance->get_capabilities($provider_name, $model_id);
+    return $_mcm_instance->get_capabilities($provider_name, $lookup_id);
 }
 
 =head1 NAME
@@ -368,19 +374,7 @@ sub _fetch_provider_models {
 sub _get_static_models {
     my ($self, $provider_name) = @_;
 
-    if ($provider_name =~ /^minimax/) {
-        return [
-            { id => 'MiniMax-M3',              name => 'MiniMax M3',              _context_tokens => 1000000, _output_tokens => 131072, _supports_vision => 1 },
-            { id => 'MiniMax-M2.7',           name => 'MiniMax M2.7',           _context_tokens => 204800, _output_tokens => 131072 },
-            { id => 'MiniMax-M2.7-highspeed',  name => 'MiniMax M2.7 Highspeed',  _context_tokens => 204800, _output_tokens => 131072 },
-            { id => 'MiniMax-M2.5',           name => 'MiniMax M2.5',           _context_tokens => 204800, _output_tokens => 131072 },
-            { id => 'MiniMax-M2.5-highspeed',  name => 'MiniMax M2.5 Highspeed',  _context_tokens => 204800, _output_tokens => 131072 },
-            { id => 'MiniMax-M2.1',           name => 'MiniMax M2.1',           _context_tokens => 204800, _output_tokens => 131072 },
-            { id => 'MiniMax-M2.1-highspeed',  name => 'MiniMax M2.1 Highspeed',  _context_tokens => 204800, _output_tokens => 131072 },
-            { id => 'MiniMax-M2',             name => 'MiniMax M2',             _context_tokens => 204800, _output_tokens => 131072 },
-        ];
-    }
-    elsif ($provider_name eq 'zai') {
+    if ($provider_name eq 'zai') {
         return [
             { id => 'glm-5.1',        _context_tokens => 200000, _output_tokens => 131072 },
             { id => 'glm-5',          _context_tokens => 200000, _output_tokens => 131072 },
