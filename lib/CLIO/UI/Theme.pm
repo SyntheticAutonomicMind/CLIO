@@ -588,6 +588,7 @@ Arguments:
   - flags: Arrayref of flag hashrefs [{severity, description, details}, ...]
   - options: Options text (e.g., "(y)es once | (a)llow category | (n)o deny")
 
+Returns: ($prompt_line, $input_line) - $prompt_line may contain newlines (target + flags), $input_line is the options prompt
 Returns: ($prompt_line, $input_line) - two rendered strings
 
 =cut
@@ -595,26 +596,21 @@ Returns: ($prompt_line, $input_line) - two rendered strings
 sub get_security_prompt {
     my ($self, $target, $flags, $options) = @_;
 
-    # Truncate target if very long
-    if (length($target) > 80) {
-        $target = substr($target, 0, 77) . '...';
-    }
-
-    # Build compact flag descriptions using style colors directly
+    # Build flag descriptions with severity colors, joined with pipe separator
     my @flag_parts;
     for my $flag (@$flags) {
         my $is_high = ($flag->{severity} eq 'high' || $flag->{severity} eq 'critical');
         my $sev_color = $is_high ? $self->get_color('error_message') : $self->get_color('warning_message');
         my $dim = $self->get_color('dim');
-        my $reset = $self->{ansi}->parse('@RESET@');
-        push @flag_parts, "${sev_color}[$flag->{severity}]${dim} $flag->{description}${reset}";
+        push @flag_parts, "${sev_color}[$flag->{severity}]${dim} $flag->{description}\@RESET\@";
     }
-    my $flags_str = join($self->{ansi}->parse('@DIM@') . ', ', @flag_parts);
+    my $pipe = '@DIM@' . $self->_resolve_char('pipe') . '@RESET@';
+    my $flags_str = join(" $pipe ", @flag_parts);
+    $flags_str = $self->{ansi}->parse($flags_str);
 
-    # Render the prompt line
+    # Render the target line (full command/path, no truncation)
     my $prompt_line = $self->render('security_prompt', {
         target => $target,
-        flags => $flags_str,
     });
 
     # Render the input line
@@ -622,7 +618,11 @@ sub get_security_prompt {
         options => $options,
     });
 
-    return ($prompt_line, $input_line);
+    # Compose multi-line output: target line, then flags line (indented)
+    my $result = $prompt_line;
+    $result .= "\n  " . $flags_str if @flag_parts;
+
+    return ($result, $input_line);
 }
 
 =head2 save_style
@@ -839,7 +839,7 @@ sub get_builtin_theme {
         confirmation_prompt_short => '{style.dim}{char.bullet} {style.prompt_indicator}{var.question}{style.dim}: @RESET@',
         
         # Security prompts (command/script approval)
-        security_prompt => '{style.dim}{char.bullet} {style.warning_message}Security{style.dim} {char.pipe} {style.data}{var.target}{style.dim} {char.pipe} {var.flags}@RESET@',
+        security_prompt => '{style.dim}{char.bullet} {style.warning_message}Security{style.dim} {char.pipe} {style.data}{var.target}{style.dim}@RESET@',
         security_prompt_input => '{style.dim}  {style.data}{var.options}{style.dim}: @RESET@',
         
         # Messages

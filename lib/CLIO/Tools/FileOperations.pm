@@ -2409,8 +2409,13 @@ sub _prompt_script_confirmation {
         );
         print "\n$prompt_line\n$input_line";
     } else {
-        my $display_path = length($path) > 80 ? '...' . substr($path, -77) : $path;
-        print "\n* Security | $display_path\n  (y)es once | (a)llow scripts | (n)o deny: ";
+        # Build flag descriptions on one line
+        my @flag_parts;
+        for my $flag (@{$scan_result->{flags} || []}) {
+            push @flag_parts, "[$flag->{severity}] $flag->{description}";
+        }
+        my $flags_str = join(" | ", @flag_parts);
+        print "\n* Security | $path\n  $flags_str\n  (y)es once | (a)llow scripts | (n)o deny: ";
     }
 
     # Suspend ALRM handler - Chat.pm's 1-second timer calls ReadKey(-1)

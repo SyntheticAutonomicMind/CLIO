@@ -1263,16 +1263,6 @@ sub _fetch_models_for_provider {
                 }
             }
         };
-    } elsif ($provider_name =~ /^minimax/) {
-        $models = [
-            { id => 'MiniMax-M2.7',          name => 'MiniMax M2.7',          description => 'Recursive self-improvement, ~60 tps' },
-            { id => 'MiniMax-M2.7-highspeed', name => 'MiniMax M2.7 Highspeed', description => 'Same as M2.7, ~100 tps' },
-            { id => 'MiniMax-M2.5',          name => 'MiniMax M2.5',          description => 'Code generation and refactoring, ~60 tps' },
-            { id => 'MiniMax-M2.5-highspeed', name => 'MiniMax M2.5 Highspeed', description => 'Same as M2.5, ~100 tps' },
-            { id => 'MiniMax-M2.1',          name => 'MiniMax M2.1',          description => '230B params, code + reasoning, ~60 tps' },
-            { id => 'MiniMax-M2.1-highspeed', name => 'MiniMax M2.1 Highspeed', description => 'Same as M2.1, ~100 tps' },
-            { id => 'MiniMax-M2',            name => 'MiniMax M2',            description => 'Function calling, advanced reasoning' },
-        ];
     } else {
         my $api_base = $provider_def->{api_base} || '';
         my $models_url;

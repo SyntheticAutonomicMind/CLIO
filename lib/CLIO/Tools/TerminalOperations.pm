@@ -755,11 +755,16 @@ sub _prompt_command_confirmation {
         }
     } else {
         # Minimal fallback if no theme available
-        my $display_cmd = length($command) > 80 ? substr($command, 0, 77) . '...' : $command;
+        # Build flag descriptions on one line
+        my @flag_parts;
+        for my $flag (@{$analysis->{flags} || []}) {
+            push @flag_parts, "[$flag->{severity}] $flag->{description}";
+        }
+        my $flags_str = join(" | ", @flag_parts);
         if ($is_critical) {
-            print "\n* CRITICAL RISK | $display_cmd\n  $options: ";
+            print "\n* CRITICAL RISK | $command\n  $flags_str\n  $options: ";
         } else {
-            print "\n* Security | $display_cmd\n  $options: ";
+            print "\n* Security | $command\n  $flags_str\n  $options: ";
         }
     }
 

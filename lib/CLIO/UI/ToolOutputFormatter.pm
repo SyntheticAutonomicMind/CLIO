@@ -474,10 +474,16 @@ sub format_error {
     } elsif ($error_message =~ /Failed to parse tool arguments/) {
         return "Invalid arguments, retrying.";
     } else {
-        # For other errors, show a short version
-        my $short_error = substr($error_message, 0, 80);
-        $short_error .= '...' if length($error_message) > 80;
-        return "Error: $short_error";
+        # For multi-line messages, show the first line (the key message)
+        # For single-line messages, truncate if very long
+        if ($error_message =~ /\n/) {
+            my ($first_line) = $error_message =~ /^([^\n]+)/;
+            return "Error: $first_line";
+        } else {
+            my $short_error = substr($error_message, 0, 80);
+            $short_error .= '...' if length($error_message) > 80;
+            return "Error: $short_error";
+        }
     }
 }
 

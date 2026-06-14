@@ -1262,14 +1262,20 @@ sub _handle_agent_authorization {
         print "$cat_label Authorization\n";
         print "$prompt_line\n$input_line";
     } else {
-        my $display = length($description) > 80 ? substr($description, 0, 77) . '...' : $description;
+        # Build flag lines
+        # Build flag descriptions on one line
+        my @flag_parts;
+        for my $flag (@{$flags || []}) {
+            push @flag_parts, "[$flag->{severity}] $flag->{description}";
+        }
+        my $flags_str = join(" | ", @flag_parts);
         print "\n";
         if ($is_critical) {
             print "* CRITICAL RISK ";
         } else {
             print "* Security ";
         }
-        print "[Agent: $from] $cat_label | $display\n  $options: ";
+        print "[Agent: $from] $cat_label | $description\n  $flags_str\n  $options: ";
     }
     
     # Read user response

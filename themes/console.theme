@@ -44,7 +44,7 @@ confirmation_prompt_no_options={style.prompt_indicator}{var.question} {style.dim
 confirmation_prompt_short={style.prompt_indicator}{var.question}{style.dim}: @RESET@
 
 # Security prompts (command/script approval)
-security_prompt={style.warning_message}Security{style.dim} | {style.data}{var.target}{style.dim} | {var.flags}@RESET@
+security_prompt={style.warning_message}Security{style.dim} | {style.data}{var.target}{style.dim}@RESET@
 security_prompt_input={style.data}{var.options}{style.dim}: @RESET@
 
 # Messages - simple prefixes
