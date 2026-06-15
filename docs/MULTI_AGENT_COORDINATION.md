@@ -14,36 +14,36 @@ All three levels share the same coordination infrastructure: broker messaging, f
 
 ## Architecture
 
-```text
-┌──────────────────────────────────────────────────────────────────┐
-│  Host Application (custom GUI)                                  │
-│  ┌────────────────────────────────────────────────────────────┐  │
-│  │  OSC Events (clio:status, clio:agent, clio:tree)           │  │
-│  └────────────────────────────────────────────────────────────┘  │
-│                             ▲                                    │
-└─────────────────────────────┼────────────────────────────────────┘
-                              │ OSC 0 escape sequences
-┌─────────────────────────────┼────────────────────────────────────┐
-│  Primary CLIO Session       │                                    │
-│  ┌──────────────┐     ┌─────┴──────┐     ┌───────────────────┐  │
-│  │ PromptManager│────▶│HostProtocol│     │    Puppeteer      │  │
-│  │ (injects     │     │ (OSC emit) │     │ (topology detect) │  │
-│  │  topology)   │     └────────────┘     └───────────────────┘  │
-│  └──────────────┘           ▲                     │              │
-│         │                   │ relay               │ project info │
-│         ▼                   │                     ▼              │
-│  ┌──────────────────────────┴─────────────────────────────┐     │
-│  │              Coordination Broker                        │     │
-│  │  (Unix Socket - message bus, locks, status relay)       │     │
-│  └─────────┬──────────────┬──────────────┬────────────────┘     │
-│            │              │              │                        │
-└────────────┼──────────────┼──────────────┼───────────────────────┘
-             │              │              │
-    ┌────────▼───┐  ┌───────▼────┐  ┌─────▼──────────┐
-    │ Sub-Agent 1│  │ Sub-Agent 2│  │ Child Agent     │
-    │ (same dir) │  │ (same dir) │  │ (SAM/)      │
-    │            │  │            │  │ loads own .clio/ │
-    └────────────┘  └────────────┘  └─────────────────┘
+```mermaid
+graph TD
+    HostApp["Host Application (custom GUI)"]
+    OSCEvents["OSC Events<br/>clio:status, clio:agent, clio:tree"]
+    PromptMgr["PromptManager<br/>(injects topology)"]
+    HostProto["HostProtocol<br/>(OSC emit)"]
+    Pupp["Puppeteer<br/>(topology detect)"]
+    Broker["Coordination Broker<br/>(Unix Socket - message bus,<br/>locks, status relay)"]
+    SA1["Sub-Agent 1<br/>(same dir)"]
+    SA2["Sub-Agent 2<br/>(same dir)"]
+    CA["Child Agent<br/>(SAM/, loads own .clio/)"]
+
+    HostApp --> OSCEvents
+    OSCEvents -. "OSC 0 escape sequences" .-> HostProto
+    PromptMgr --> HostProto
+    PromptMgr --> Broker
+    Pupp -. "project info" .-> Broker
+    Broker -. "relay" .-> HostProto
+    Broker --> SA1
+    Broker --> SA2
+    Broker --> CA
+
+    style HostApp fill:#e1f5ff
+    style PromptMgr fill:#fff3e0
+    style HostProto fill:#fff3e0
+    style Pupp fill:#fff3e0
+    style Broker fill:#f3e5f5
+    style SA1 fill:#e8f5e9
+    style SA2 fill:#e8f5e9
+    style CA fill:#e8f5e9
 ```
 
 ---
@@ -78,21 +78,28 @@ The scan runs at session start (via PromptManager) and populates the agent's sys
 
 ### Example Topology
 
-```text
-ecosystem/
-├── .clio/                    # Primary project config
-│   ├── instructions.md
-│   └── ltm.json
-├── .gitmodules               # Submodule definitions
-├── SAM/                  # Child project (submodule)
-│   └── .clio/
-│       ├── instructions.md   # SAM-specific dev instructions
-│       └── ltm.json          # SAM-specific learned patterns
-├── ALICE/                    # Child project (submodule)
-│   └── .clio/
-│       ├── instructions.md
-│       └── ltm.json
-└── utils/                    # Regular directory (no .clio/)
+```mermaid
+graph TD
+    Root["ecosystem/"]
+    Root --> Clio[".clio/<br/>Primary project config"]
+    Clio --> ClioInst["instructions.md"]
+    Clio --> ClioLtm["ltm.json"]
+    Root --> Gitmodules[".gitmodules<br/>Submodule definitions"]
+    Root --> SAM["SAM/<br/>Child project (submodule)"]
+    SAM --> SClio[".clio/"]
+    SClio --> SInst["instructions.md<br/>SAM-specific dev instructions"]
+    SClio --> SLtm["ltm.json<br/>SAM-specific learned patterns"]
+    Root --> ALICE["ALICE/<br/>Child project (submodule)"]
+    ALICE --> AClio[".clio/"]
+    AClio --> AInst["instructions.md"]
+    AClio --> ALtm["ltm.json"]
+    Root --> Utils["utils/<br/>Regular directory (no .clio/)"]
+
+    style Root fill:#e1f5ff
+    style Clio fill:#fff3e0
+    style SAM fill:#f3e5f5
+    style ALICE fill:#e8f5e9
+    style Utils fill:#fce4ec
 ```
 
 The primary agent's system prompt automatically includes:
@@ -176,30 +183,24 @@ Shows all detected child projects with their capabilities:
 
 When sub-agents (especially project-scoped ones) run inside a session, their status changes flow back to the primary session and out to any host application through a relay pipeline:
 
-```text
-Child Agent (SAM/)
-  │
-  │ HostProtocol detects broker relay mode
-  │ (no CLIO_HOST_PROTOCOL needed - broker client triggers relay)
-  │
-  ▼
-Broker (status_update message)
-  │
-  │ Primary session polls broker via poll_status_updates
-  │
-  ▼
-Primary CLIO Session
-  │
-  │ Re-emits as clio:agent status OSC events
-  │
-  ▼
-Host Application (custom GUI)
-  │
-  │ Terminal title callback intercepts clio:agent events
-  │ Renders agent hierarchy with live status
-  │
-  ▼
-Native UI (agent cards, status indicators, tree view)
+```mermaid
+graph TD
+    CA["Child Agent (SAM/)"]
+    Broker["Broker (status_update message)"]
+    Primary["Primary CLIO Session"]
+    HostApp["Host Application (custom GUI)"]
+    NativeUI["Native UI (agent cards,<br/>status indicators, tree view)"]
+
+    CA -. "HostProtocol detects broker relay mode<br/>(no CLIO_HOST_PROTOCOL needed -<br/>broker client triggers relay)" .-> Broker
+    Broker -. "Primary session polls broker via poll_status_updates" .-> Primary
+    Primary -. "Re-emits as clio:agent status OSC events" .-> HostApp
+    HostApp -. "Terminal title callback intercepts clio:agent events<br/>Renders agent hierarchy with live status" .-> NativeUI
+
+    style CA fill:#e1f5ff
+    style Broker fill:#fff3e0
+    style Primary fill:#f3e5f5
+    style HostApp fill:#e8f5e9
+    style NativeUI fill:#fce4ec
 ```
 
 ### Agent Events
@@ -675,37 +676,45 @@ Sub-agents run headless (no TTY) so they cannot display interactive security pro
 
 ### Flow
 
-```text
-Child agent tries risky operation
-  -> Tool detects no TTY, checks for broker_client
-  -> AuthorizationRelay sends authorization_request through broker
-  -> Broker queues request in user inbox
-  -> Primary session polls inbox, displays security prompt
-  -> User responds: (y)es once | (a)llow session | (n)o deny
-  -> Response flows back through broker to child agent
-  -> Child tool receives approval/denial, continues or aborts
+```mermaid
+graph TD
+    Start["Child agent tries risky operation"]
+    TTYCheck["Tool detects no TTY,<br/>checks for broker_client"]
+    SendReq["AuthorizationRelay sends<br/>authorization_request through broker"]
+    Queue["Broker queues request in user inbox"]
+    Poll["Primary session polls inbox,<br/>displays security prompt"]
+    Respond["User responds:<br/>(y)es once | (a)llow session | (n)o deny"]
+    Reply["Response flows back through<br/>broker to child agent"]
+    Result["Child tool receives approval/denial,<br/>continues or aborts"]
+
+    Start --> TTYCheck --> SendReq --> Queue --> Poll --> Respond --> Reply --> Result
+
+    style Start fill:#e1f5ff
+    style Respond fill:#fff3e0
+    style Result fill:#e8f5e9
 ```
 
 ### Architecture
 
-```text
-+------------------+     authorization_request     +--------+
-| Child Agent      | ---------------------------> | Broker  |
-| (no TTY)         | <--------------------------- |        |
-|                  |     authorization_response    |        |
-| AuthRelay -----> |                               |        |
-| TerminalOps      |                               |        |
-| FileOps          |                               |        |
-| WebOps           |                               |        |
-+------------------+                               +--------+
-                                                      |  ^
-                                              inbox   |  |  response
-                                                      v  |
-                                                  +--------+
-                                                  | Primary |
-                                                  | Session |
-                                                  | (TTY)   |
-                                                  +--------+
+```mermaid
+sequenceDiagram
+    participant CA as Child Agent (no TTY)
+    participant AR as AuthorizationRelay
+    participant Tools as TerminalOps / FileOps / WebOps
+    participant Broker
+    participant Primary as Primary Session (TTY)
+
+    Tools->>Tools: Detect risky operation
+    Tools->>AR: Check broker_client
+    AR->>Broker: authorization_request
+    Broker->>Primary: queue in user inbox
+    Primary->>Primary: Display security prompt
+    Primary-->>User: Show (y)es / (a)llow / (n)o
+    User->>Primary: Response
+    Primary->>Broker: authorization_response
+    Broker->>AR: Forward response
+    AR->>Tools: Approval / denial
+    Tools->>Tools: Continue or abort
 ```
 
 ### Components
