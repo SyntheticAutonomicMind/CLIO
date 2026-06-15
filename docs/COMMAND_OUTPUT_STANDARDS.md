@@ -32,18 +32,22 @@ All display helpers are available on `$self` via delegation - no need to access 
 
 Commands are registered in the command registry (`CLIO::UI::Commands`) and dispatched by name. Larger command families (like `/api`) are split into submodules:
 
-```text
-lib/CLIO/UI/Commands/
-├── Base.pm           # Base class with display helpers
-├── API.pm            # /api dispatcher
-├── API/
-│   ├── Auth.pm       # /api login, logout, key
-│   ├── Config.pm     # /api provider, set, show
-│   └── Models.pm     # /api models, list
-├── Config.pm         # /config
-├── Session.pm        # /session
-├── Stats.pm          # /stats
-└── ...
+```mermaid
+graph TD
+    Root["lib/CLIO/UI/Commands/"]
+    Root --> Base["Base.pm<br/>Base class with display helpers"]
+    Root --> APIdisp["API.pm<br/>/api dispatcher"]
+    Root --> API["API/"]
+    API --> AuthP["Auth.pm<br/>/api login, logout, key"]
+    API --> ConfigP["Config.pm<br/>/api provider, set, show"]
+    API --> ModelsP["Models.pm<br/>/api models, list"]
+    Root --> ConfigF["Config.pm<br/>/config"]
+    Root --> Session["Session.pm<br/>/session"]
+    Root --> Stats["Stats.pm<br/>/stats"]
+    Root --> More["..."]
+
+    style Root fill:#e1f5ff
+    style API fill:#fff3e0
 ```
 
 ---

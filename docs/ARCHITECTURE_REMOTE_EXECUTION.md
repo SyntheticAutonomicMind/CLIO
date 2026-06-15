@@ -134,41 +134,32 @@ When disabled, the `remote_execution` tool is not registered in the tool registr
 
 ## Data Flow
 
-```text
-User/Agent Request
-    │
-    ▼
-RemoteExecution.route_operation()
-    │
-    ├─ execute_remote ──▶ _validate_execute_params()
-    │                         │
-    │                         ▼
-    │                    _validate_ssh_setup()
-    │                         │
-    │                         ▼
-    │                    rsync local CLIO to remote
-    │                         │
-    │                         ▼
-    │                    _ssh_exec("clio --input 'task' --exit")
-    │                         │
-    │                         ▼
-    │                    retrieve output files
-    │                         │
-    │                         ▼
-    │                    cleanup (if enabled)
-    │
-    ├─ execute_parallel ──▶ _resolve_targets() via DeviceRegistry
-    │                         │
-    │                         ▼
-    │                    fork() per target
-    │                         │
-    │                         ▼
-    │                    each child: execute_remote()
-    │                         │
-    │                         ▼
-    │                    collect & aggregate results
-    │
-    └─ check_remote ──▶ SSH connectivity test
+```mermaid
+graph TD
+    Request[User/Agent Request] --> Route
+    Route["RemoteExecution.route_operation()"] --> ExecRemote
+    Route --> ExecParallel
+    Route --> CheckRemote
+
+    ExecRemote["execute_remote"] --> VEP["_validate_execute_params()"]
+    VEP --> VSS["_validate_ssh_setup()"]
+    VSS --> Rsync["rsync local CLIO to remote"]
+    Rsync --> SshExec["_ssh_exec(clio --input 'task' --exit)"]
+    SshExec --> Retrieve["retrieve output files"]
+    Retrieve --> Cleanup["cleanup (if enabled)"]
+
+    ExecParallel["execute_parallel"] --> ResolveTargets["_resolve_targets() via DeviceRegistry"]
+    ResolveTargets --> Fork["fork() per target"]
+    Fork --> ChildExec["each child: execute_remote()"]
+    ChildExec --> Aggregate["collect & aggregate results"]
+
+    CheckRemote["check_remote"] --> SshTest["SSH connectivity test"]
+
+    style Request fill:#e1f5ff
+    style Route fill:#fff3e0
+    style ExecRemote fill:#f3e5f5
+    style ExecParallel fill:#e8f5e9
+    style CheckRemote fill:#fce4ec
 ```
 
 ---
