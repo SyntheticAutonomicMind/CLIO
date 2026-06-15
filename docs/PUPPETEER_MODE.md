@@ -27,28 +27,35 @@ Think of it as a team lead sitting at a desk, dispatching work to specialists wh
 
 Puppeteer mode needs a parent directory with child projects. Each child project that should be delegatable needs a `.clio/` directory:
 
-```text
-my-ecosystem/
-├── .clio/
-│   ├── instructions.md       # Orchestration-level instructions
-│   └── ltm.json              # Cross-project learned patterns
-├── AGENTS.md                  # Optional: project reference doc
-├── backend/
-│   ├── .clio/
-│   │   ├── instructions.md   # Backend-specific dev guidelines
-│   │   └── ltm.json          # Backend-specific patterns
-│   ├── src/
-│   └── ...
-├── frontend/
-│   ├── .clio/
-│   │   ├── instructions.md   # Frontend-specific guidelines
-│   │   └── ltm.json
-│   ├── src/
-│   └── ...
-└── shared-lib/
-    ├── .clio/
-    │   └── instructions.md
-    └── lib/
+```mermaid
+graph TD
+    Root["my-ecosystem/"]
+    Root --> Clio[".clio/<br/>Orchestration-level"]
+    Clio --> ClioInst["instructions.md"]
+    Clio --> ClioLtm["ltm.json"]
+    Root --> Agents["AGENTS.md<br/>(optional project reference)"]
+    Root --> Backend["backend/"]
+    Backend --> BClio[".clio/"]
+    BClio --> BClioInst["instructions.md"]
+    BClio --> BClioLtm["ltm.json"]
+    Backend --> Bsrc["src/"]
+    Backend --> Bmore["..."]
+    Root --> Frontend["frontend/"]
+    Frontend --> FClio[".clio/"]
+    FClio --> FClioInst["instructions.md"]
+    FClio --> FClioLtm["ltm.json"]
+    Frontend --> Fsrc["src/"]
+    Frontend --> Fmore["..."]
+    Root --> Shared["shared-lib/"]
+    Shared --> SClio[".clio/"]
+    SClio --> SClioInst["instructions.md"]
+    Shared --> Ssrc["lib/"]
+
+    style Root fill:#e1f5ff
+    style Clio fill:#fff3e0
+    style Backend fill:#f3e5f5
+    style Frontend fill:#e8f5e9
+    style Shared fill:#fce4ec
 ```
 
 ### Creating a Puppeteer Project
