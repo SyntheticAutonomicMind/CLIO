@@ -1055,7 +1055,7 @@ CLIO connects to MCP servers via stdio or HTTP transport. Tools from MCP servers
 CLIO sandboxes file operations to the working directory by default. The AI can't read or write files outside your project unless explicitly allowed.
 
 Configuration options:
-- **Sandbox mode** - Strict restriction to working directory
+- **Sandbox mode** - Blocks web/remote/agent/MCP access, restricts file operations to working directory
 - **Auto-approve** - Allow all paths (default for convenience)
 - **Per-path rules** - Allow or deny specific paths
 
