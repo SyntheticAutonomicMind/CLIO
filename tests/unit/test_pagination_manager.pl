@@ -3,8 +3,8 @@ use strict;
 use warnings;
 use utf8;
 use Test::More;
-
-use lib '../../lib';
+use FindBin;
+use lib "$FindBin::Bin/../../lib";
 
 # Test 1: Module loads
 use_ok('CLIO::UI::PaginationManager');
@@ -13,6 +13,7 @@ use_ok('CLIO::UI::PaginationManager');
 my $mock_ui = bless {
     terminal_height => 24,
     terminal_width => 80,
+    is_terminal => 1,  # Override -t STDIN check for test environment
     _tools_invoked_this_request => 0,
 }, 'MockUI';
 
@@ -106,17 +107,37 @@ is($pager->enabled(), 0, 'disabled after full reset');
 is(scalar @{$pager->{pages}}, 0, 'pages cleared after full reset');
 is(scalar @{$pager->{current_page}}, 0, 'current_page cleared after full reset');
 
-# Test 12: should_trigger with tools flag
+# Test 12: should_trigger with tools flag - force past -t STDIN check
+# Set is_terminal on the pager so the -t STDIN check passes
+$pager->{is_terminal} = 1;
 $pager->enable();
-$pager->line_count(22);
-$mock_ui->{_tools_invoked_this_request} = 1;
-
-# Without streaming flag, tools block trigger
-# (can't test -t STDIN in unit test, but verify logic path)
-
-# With streaming flag, tools don't block
-# $pager->should_trigger(streaming => 1) would trigger if -t STDIN
-
+$pager->line_count(50);  # Well over threshold
 $mock_ui->{_tools_invoked_this_request} = 0;
+
+# Without tools flag, force => 1 bypasses terminal check and triggers
+is($pager->should_trigger(force => 1), 1,
+   'triggers when over threshold with force=1 and no tools');
+
+# With tools flag, pagination is suppressed in ALL paths (streaming or not)
+$mock_ui->{_tools_invoked_this_request} = 1;
+is($pager->should_trigger(force => 1), 0,
+   'suppressed when tools invoked (force does not bypass)');
+
+# Reset
+$mock_ui->{_tools_invoked_this_request} = 0;
+
+# Test 13: Flag persists across multiple calls (iteration boundary)
+$pager->enable();
+$pager->line_count(50);
+$mock_ui->{_tools_invoked_this_request} = 1;
+is($pager->should_trigger(), 0, 'suppressed on call 1 (tools flag set)');
+is($pager->should_trigger(), 0, 'suppressed on call 2 (flag still set)');
+is($pager->should_trigger(streaming => 1), 0,
+   'suppressed on streaming call (flag still set)');
+
+# Flag reset
+$mock_ui->{_tools_invoked_this_request} = 0;
+is($pager->should_trigger(force => 1), 1,
+   'triggers after flag reset');
 
 done_testing();
