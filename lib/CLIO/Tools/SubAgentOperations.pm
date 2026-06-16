@@ -166,6 +166,15 @@ sub schema {
 sub before_route {
     my ($self, $operation, $params, $context) = @_;
     
+    # Sandbox mode: Block all sub-agent operations
+    if ($context && $context->{config} && $context->{config}->get('sandbox')) {
+        return $self->error_result(
+            "Sandbox mode: Sub-agent operations are disabled.\n\n" .
+            "The --sandbox flag blocks all sub-agent spawning and management. " .
+            "This is a security feature to prevent the agent from reaching outside the local project."
+        );
+    }
+    
     # Resolve SubAgent handler and stash for dispatch methods
     my $subagent_cmd = $self->_get_subagent_handler($context);
     unless ($subagent_cmd) {

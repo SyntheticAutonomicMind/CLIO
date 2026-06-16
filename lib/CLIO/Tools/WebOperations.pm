@@ -68,6 +68,21 @@ sub dispatch_table {
     };
 }
 
+sub before_route {
+    my ($self, $operation, $params, $context) = @_;
+    
+    # Sandbox mode: Block all web operations
+    if ($context && $context->{config} && $context->{config}->get('sandbox')) {
+        return $self->error_result(
+            "Sandbox mode: web operations are disabled.\n\n" .
+            "The --sandbox flag blocks outbound network requests. " .
+            "This is a security feature to prevent the agent from reaching outside the local project."
+        );
+    }
+    
+    return undef;
+}
+
 =head2 get_additional_parameters
 
 Define parameters for web_operations in JSON schema sent to AI.
