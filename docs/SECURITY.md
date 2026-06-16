@@ -208,6 +208,9 @@ clio --sandbox --resume
 | `terminal_operations` | All risk levels require user confirmation |
 | `web_operations` | Blocked entirely |
 | `remote_execution` | Blocked entirely |
+| `agent_operations` | Blocked entirely |
+| `mcp_*` tools | Blocked entirely |
+| `plugin_*` tools | Blocked entirely |
 | `version_control` | Repository path must be within project |
 
 ### Error Messages
@@ -224,6 +227,30 @@ When remote execution is attempted:
 Sandbox mode: Remote execution is disabled.
 
 The --sandbox flag blocks all remote operations. This is a security feature to prevent the agent from reaching outside the local project.
+```
+
+When web operations are attempted:
+
+```text
+Sandbox mode: web operations are disabled.
+
+The --sandbox flag blocks outbound network requests. This is a security feature to prevent the agent from reaching outside the local project.
+```
+
+When sub-agent operations are attempted:
+
+```text
+Sandbox mode: Sub-agent operations are disabled.
+
+The --sandbox flag blocks all sub-agent spawning and management. This is a security feature to prevent the agent from reaching outside the local project.
+```
+
+When MCP or plugin tools are attempted:
+
+```text
+Sandbox mode: MCP tools are disabled.
+
+The --sandbox flag blocks all MCP operations. This is a security feature to prevent the agent from reaching outside the local project.
 ```
 
 ### Limitations

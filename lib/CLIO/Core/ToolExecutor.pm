@@ -212,6 +212,16 @@ sub execute_tool {
     
     # Check if this is an MCP tool (prefixed with mcp_)
     if ($tool_name =~ /^mcp_/ && $self->{mcp_manager}) {
+        # Sandbox mode: Block all MCP tool calls
+        if ($self->{config} && $self->{config}->get('sandbox')) {
+            log_info('ToolExecutor', "Sandbox: BLOCKED MCP tool '$tool_name'");
+            return $self->_error_result(
+                "Sandbox mode: MCP tools are disabled.\n\n" .
+                "The --sandbox flag blocks all MCP operations. " .
+                "This is a security feature to prevent the agent from reaching outside the local project."
+            );
+        }
+        
         require CLIO::Tools::MCPBridge;
         
         log_debug('ToolExecutor', "Executing MCP tool: $tool_name");
@@ -250,6 +260,16 @@ sub execute_tool {
     
     # Check if this is a plugin tool (prefixed with plugin_)
     if ($tool_name =~ /^plugin_/ && $self->{plugin_manager}) {
+        # Sandbox mode: Block all plugin tool calls
+        if ($self->{config} && $self->{config}->get('sandbox')) {
+            log_info('ToolExecutor', "Sandbox: BLOCKED plugin tool '$tool_name'");
+            return $self->_error_result(
+                "Sandbox mode: Plugin tools are disabled.\n\n" .
+                "The --sandbox flag blocks all plugin operations. " .
+                "This is a security feature to prevent the agent from reaching outside the local project."
+            );
+        }
+        
         require CLIO::Tools::PluginBridge;
         
         log_debug('ToolExecutor', "Executing plugin tool: $tool_name");

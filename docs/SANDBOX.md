@@ -7,7 +7,7 @@ CLIO provides two levels of isolation to help protect your system:
 
 | Mode | Method | Protection Level |
 |------|--------|------------------|
-| **Soft Sandbox** | `--sandbox` flag | Prevents accidental file access |
+| **Soft Sandbox** | `--sandbox` flag | Blocks web/remote access, restricts file access to project directory |
 | **Container Sandbox** | `clio-container` script | True OS-level isolation |
 
 For details on soft sandbox restrictions and behavior, see [SECURITY.md Layer 6](SECURITY.md#layer-6-sandbox-mode).
@@ -141,8 +141,8 @@ CLIO can restrict which tools are available using `--enable` (allowlist) or `--d
 # Only allow file operations in sandbox
 clio --sandbox --enable file_operations,version_control --new
 
-# Block remote and web access (similar to sandbox but without path restrictions)
-clio --disable web_operations,remote_execution --new
+# Block remote, web, and agent access (similar to sandbox but without path restrictions)
+clio --disable web_operations,remote_execution,agent_operations --new
 ```
 
 Tool filtering is applied at registration time - disabled tools never load, so the AI agent cannot call them at all. This is a hard restriction, unlike sandbox mode which gates specific operations within tools.

@@ -212,7 +212,7 @@ CLIO runs with defense-in-depth security:
 - **Secret redaction** - API keys, tokens, and credentials are stripped from AI context before it reaches the model
 - **Command analysis** - Shell commands are classified by risk level (network, credential access, destructive) and require your approval for high-risk operations
 - **Path authorization** - File access outside the project directory requires your permission
-- **Sandbox mode** - `--sandbox` restricts all operations to the project directory
+- **Sandbox mode** - `--sandbox` blocks web/remote/agent access and restricts file operations to the project directory
 - **Container isolation** - `clio-container` provides full OS-level isolation via Docker
 - **Invisible character filtering** - Unicode-based prompt injection attacks are blocked automatically
 
