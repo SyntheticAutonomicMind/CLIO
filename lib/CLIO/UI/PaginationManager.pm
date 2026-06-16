@@ -152,11 +152,14 @@ sub threshold {
 
 Check if pagination should fire.
 
+The C<_tools_invoked_this_request> flag on the UI is always checked. If
+the model is actively calling tools, pagination is suppressed so the user
+does not have to press space during tool workflows. The flag persists
+across iterations of a multi-step tool workflow until the next user input.
+
 Options:
 
 =over 4
-
-=item streaming - if true, skip the tools_invoked check (agent text paginates always)
 
 =item force - if true, bypass pagination_enabled check
 
@@ -170,10 +173,12 @@ sub should_trigger {
     return 0 unless $self->{is_terminal} // (-t STDIN);
     return 0 unless $self->{pagination_enabled} || $opts{force};
 
-    # During tool execution, only streaming text gets paginated
-    unless ($opts{streaming}) {
-        return 0 if $self->{ui}{_tools_invoked_this_request};
-    }
+    # Tool invocation always suppresses pagination - the model is actively
+    # working and the user shouldn't have to press space during streaming
+    # or tool output. This applies to both streaming (agent text) and
+    # non-streaming (tool output) paths. The flag persists across iterations
+    # of a tool workflow until the next user input.
+    return 0 if $self->{ui}{_tools_invoked_this_request};
 
     return 1 if $self->{line_count} >= $self->threshold();
     return 0;

@@ -209,8 +209,9 @@ sub make_on_chunk_callback {
             if ($should_flush) {
                 $self->_flush_markdown_buffer();
 
-                # Check pagination
-                if ($ui->_should_pagination_trigger_for_agent_streaming()) {
+                # Check pagination - suppressed when _tools_invoked_this_request
+                # is set (model is actively calling tools).
+                if ($ui->{pager}->should_trigger()) {
                     my $response = $ui->pause(1);
                     if ($response eq 'Q') {
                         $ui->{stop_streaming} = 1;
