@@ -1036,16 +1036,18 @@ sub _process_ai_request {
         
         $current_tool = $tool_name;
         
-        # Mark that tools have been invoked - disables pagination in writeline()
-        # so user doesn't have to press space during tool output.
-        # Note: _tools_invoked_this_request is checked in _should_pagination_trigger()
-        # Agent streaming output is NOT affected by this flag and remains paginated
+        # Mark that tools have been invoked - this suppresses pagination
+        # in both streaming (agent text) and non-streaming (tool output)
+        # paths via PaginationManager::should_trigger(). The model is
+        # actively working, so the user should not have to press space
+        # mid-workflow. The flag persists across iterations of a multi-step
+        # tool workflow until the next user input resets it.
         $self->{_tools_invoked_this_request} = 1;
-        
+
         $self->{host_proto}->emit_status('tools');
         $self->{host_proto}->emit_tool_start($tool_name);
-        
-        log_debug('Chat', "Tool execution marked (pagination still enabled for agent text)");
+
+        log_debug('Chat', "Tool execution marked (pagination suppressed for model workflow)");
         log_debug('Chat', "Tool called: $tool_name");
     };
     
@@ -3652,7 +3654,7 @@ Check if pagination should be triggered (internal helper).
 Determines if we should pause for pagination based on:
 - Current line count vs threshold
 - Whether pagination is enabled
-- Whether we're in tool execution mode
+- Whether tools were invoked in this request (suppresses pagination)
 - Terminal interactivity
 
 Returns: 1 if pause needed, 0 otherwise
@@ -3662,18 +3664,6 @@ Returns: 1 if pause needed, 0 otherwise
 sub _should_pagination_trigger {
     my ($self) = @_;
     return $self->{pager}->should_trigger();
-}
-
-=head2 _should_pagination_trigger_for_agent_streaming
-
-Check if pagination should trigger for agent streaming output.
-Delegates to PaginationManager with streaming flag.
-
-=cut
-
-sub _should_pagination_trigger_for_agent_streaming {
-    my ($self) = @_;
-    return $self->{pager}->should_trigger(streaming => 1);
 }
 
 =head2 writeline
@@ -3710,53 +3700,54 @@ sub writeline {
     
     my $pager = $self->{pager};
     my $should_paginate = $opts{force_paginate} || $pager->enabled();
-    
+
     $text //= '';
-    
+
     if ($raw) {
         print $text;
         print "\n" if $newline;
         return 1;
     }
-    
+
     if ($use_markdown && $self->{enable_markdown} && length($text) > 0) {
         $text = $self->render_markdown($text);
     }
-    
+
     my $is_interactive = -t STDIN;
     my @lines = split /\n/, $text, -1;
     my $last_idx = $#lines;
-    
+
     for my $i (0 .. $last_idx) {
         my $line = $lines[$i];
         my $is_last = ($i == $last_idx);
         my $print_newline = $is_last ? $newline : 1;
-        
+
         if ($print_newline && $is_interactive && $should_paginate) {
             my $pause_threshold = $pager->threshold();
-            
-            if ($pager->line_count() >= $pause_threshold) {
+
+            if ($pager->line_count() >= $pause_threshold
+                && !$self->{_tools_invoked_this_request}) {
                 $pager->save_page();
-                
+
                 my $response = $pager->pause();
-                
+
                 if ($response eq 'Q') {
                     $pager->reset_page();
                     return 0;
                 }
-                
+
                 $pager->reset_page();
             }
         }
-        
+
         print $line;
         print "\n" if $print_newline;
-        
+
         if ($print_newline && $is_interactive && $should_paginate) {
             $pager->track_line($line);
         }
     }
-    
+
     return 1;
 }
 
