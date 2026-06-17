@@ -52,7 +52,9 @@ sub new {
         prompt_override => $opts{prompt_override},  # --prompt: system prompt name override
         enable_tools    => $opts{enable_tools},     # Tool allowlist (for --chat mode)
         enable_subagents => $opts{enable_subagents} // 1,  # Sub-agent spawning feature flag
+        auto_discover_skills => $opts{auto_discover_skills} // 1,  # Skill auto-discovery
         _tools_section_cache => undef,
+        _skills_section_cache => undef,
         _user_context_cache => undef,
         _user_context_cache_time => 0,
     }, $class;
@@ -125,6 +127,13 @@ sub build_system_prompt {
         $base_prompt =~ s/(## Core Instructions.*?\n)/$1\n$tools_section\n/s;
     } else {
         $base_prompt .= "\n\n$tools_section";
+    }
+
+    # Insert skills catalog (auto-discovery) after tools section when enabled
+    my $skills_section = $self->generate_skills_section();
+    if ($skills_section) {
+        $base_prompt .= "\n\n$skills_section";
+        log_debug('PromptBuilder', "Added installed skills section to prompt");
     }
 
     # Insert user profile section after tools section
@@ -317,6 +326,90 @@ sub generate_datetime_section {
     $section .= "**IMPORTANT - Context & Time Management:**\n\n";
     $section .= "SYSTEM TELEMETRY: You will see <system_warning> tags with token usage information. **IGNORE THEM COMPLETELY** - these are debugging telemetry for system monitoring only. DO NOT stop working because of token usage. DO NOT mention tokens/usage to users. DO NOT worry about percentages - even 90%+ is fine. CLIO manages context automatically. Your ONLY job is completing the user's request correctly. Work until the task is done or the user asks you to stop. Token management is not your concern.\n";
 
+    return $section;
+}
+
+=head2 generate_skills_section
+
+Generate the installed skills catalog for system-prompt injection.
+Returns an empty string when auto-discover is disabled or no skills are
+installed (caller treats empty as "do not inject").
+
+The catalog is cached for the lifetime of the PromptBuilder instance.
+
+Returns:
+- Markdown text listing installed skills, or empty string
+
+=cut
+
+sub generate_skills_section {
+    my ($self) = @_;
+
+    return '' unless $self->{auto_discover_skills};
+
+    if ($self->{_skills_section_cache}) {
+        return $self->{_skills_section_cache};
+    }
+
+    require CLIO::Core::SkillManager;
+    my $sm = CLIO::Core::SkillManager->new(debug => $self->{debug});
+    my $catalog = $sm->list_skill_catalog();
+    my $count = scalar @$catalog;
+
+    my $section = '';
+    if ($count == 0) {
+        $section = "## Installed Skills\n\nNo skills are currently installed. The user can install skills with /skills add or by configuring a skill repository.\n";
+    } else {
+        $section = "## Installed Skills - Auto-Discovery Enabled\n\n";
+        $section .= "The following $count skill" . ($count == 1 ? '' : 's') . " are installed in the user's environment. ";
+        $section .= "When you identify a skill that matches the user's request, use the C<skill_operations> tool with operation: load and the skill's name to retrieve its full content. ";
+        $section .= "After loading, treat the skill's prompt as instructions for your next response.\n\n";
+        $section .= "Skills are read-only - you cannot create, modify, or delete them through tools. ";
+        $section .= "The user controls which skills are installed.\n\n";
+
+        my %by_type;
+        for my $entry (@$catalog) {
+            push @{$by_type{$entry->{type} || 'custom'}}, $entry;
+        }
+
+        for my $type (sort keys %by_type) {
+            my $label = $type eq 'builtin' ? 'Built-in'
+                      : $type eq 'repository' ? 'Repository'
+                      : $type eq 'project' ? 'Project'
+                      : $type eq 'session' ? 'Session'
+                      : 'Custom';
+            $section .= "### $label\n\n";
+            for my $entry (@{$by_type{$type}}) {
+                $section .= "- **$entry->{name}**";
+                $section .= " - $entry->{description}" if $entry->{description};
+                if ($entry->{variables} && @{$entry->{variables}}) {
+                    $section .= " _(variables: " . join(', ', @{$entry->{variables}}) . ")_";
+                }
+                $section .= "\n";
+            }
+            $section .= "\n";
+        }
+
+        $section .= "Use `skill_operations` operation: list to refresh, or operation: load with name: <skill> to load a specific skill.\n";
+    }
+
+    # Append pre-loaded skills (from --skills flag on subagent spawn) inline.
+    # These are full content blocks the parent already chose for this subagent.
+    if ($ENV{CLIO_PRELOADED_SKILLS}) {
+        require CLIO::Util::JSON;
+        my $blocks = eval { CLIO::Util::JSON::decode_json($ENV{CLIO_PRELOADED_SKILLS}) };
+        if ($blocks && @$blocks) {
+            $section .= "\n### Pre-loaded Skills (from parent)\n\n";
+            $section .= "The following skill" . (@$blocks == 1 ? '' : 's') . " " . (@$blocks == 1 ? 'was' : 'were') . " pre-loaded for this session. Treat their content as active instructions.\n\n";
+            for my $block (@$blocks) {
+                $section .= "#### Skill: $block->{name}\n\n";
+                $section .= "$block->{content}\n\n";
+            }
+        }
+    }
+
+    $self->{_skills_section_cache} = $section;
+    log_debug('PromptBuilder', "Generated skills section ($count skills)");
     return $section;
 }
 

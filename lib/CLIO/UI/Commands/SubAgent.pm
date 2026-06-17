@@ -177,6 +177,17 @@ sub cmd_spawn {
             return "ERROR: $resolve_error";
         }
     }
+
+    # Pre-load skills (comma-separated names) so the subagent can use them
+    # without needing skill_operations. Each skill is loaded into the
+    # subagent's system prompt at spawn time. The full content is rendered
+    # into the task so the child process can inject it via --skill flag.
+    my @preloaded_skills;
+    if ($task =~ s/\s*--skills?\s+"([^"]+)"\s*/ / || $task =~ s/\s*--skills?\s+([^\s]+(?:\s*,\s*[^\s]+)*)\s*/ /) {
+        my $skill_list = $1;
+        @preloaded_skills = split(/\s*,\s*/, $skill_list);
+        @preloaded_skills = grep { defined $_ && length $_ } @preloaded_skills;
+    }
     
     # Persistent mode requires a running broker - default to oneshot
     # Users can explicitly set persistent=true when a broker is available
@@ -195,11 +206,12 @@ sub cmd_spawn {
     $task =~ s/^\s+|\s+$//g;
     
     # Spawn agent
-    my $agent_id = $self->{manager}->spawn_agent($task, 
+    my $agent_id = $self->{manager}->spawn_agent($task,
         model => $model,
         persistent => $persistent,
         debug => $self->{debug},
         ($working_dir ? (working_dir => $working_dir) : ()),
+        (@preloaded_skills ? (preloaded_skills => \@preloaded_skills) : ()),
     );
     
     my $mode_str = $persistent ? 'persistent' : 'oneshot';
@@ -219,6 +231,10 @@ sub cmd_spawn {
         
         if ($working_dir) {
             $self->display_key_value("Working Dir", $self->colorize($working_dir, 'CYAN'));
+        }
+
+        if (@preloaded_skills) {
+            $self->display_key_value("Pre-loaded Skills", $self->colorize(join(', ', @preloaded_skills), 'CYAN'));
         }
         
         if ($mux_pane_id) {

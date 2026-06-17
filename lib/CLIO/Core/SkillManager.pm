@@ -869,16 +869,106 @@ Returns: { custom => [@names], builtin => [@names], all => [@names] }
 
 sub list_skills {
     my ($self) = @_;
-    
+
     my @custom = grep { $self->{skills}{$_}{type} eq 'custom' } keys %{$self->{skills}};
     my @builtin = grep { $self->{skills}{$_}{type} eq 'builtin' } keys %{$self->{skills}};
     my @repository = grep { $self->{skills}{$_}{type} eq 'repository' } keys %{$self->{skills}};
-    
+
     return {
         custom => \@custom,
         builtin => \@builtin,
         repository => \@repository,
         all => [keys %{$self->{skills}}]
+    };
+}
+
+=head2 list_skill_catalog
+
+Return a compact catalog of all installed skills for injection into the
+system prompt. Each entry exposes only what the agent needs to decide
+whether to load a skill: name, description, type, and template variables.
+
+Variables let the agent know what context to provide when invoking a skill.
+Descriptions are truncated to keep the catalog compact.
+
+Arguments:
+- $max_description: Truncate description to this many chars (default: 200)
+
+Returns: Arrayref of { name, description, type, variables }
+
+=cut
+
+sub list_skill_catalog {
+    my ($self, $max_description) = @_;
+
+    $max_description //= 200;
+
+    my @catalog;
+    for my $name (sort keys %{$self->{skills}}) {
+        my $skill = $self->{skills}{$name};
+        my $desc = $skill->{description} || '';
+        if (length($desc) > $max_description) {
+            $desc = substr($desc, 0, $max_description - 3) . '...';
+        }
+        push @catalog, {
+            name => $name,
+            description => $desc,
+            type => $skill->{type} || 'custom',
+            variables => $skill->{variables} || [],
+        };
+    }
+
+    return \@catalog;
+}
+
+=head2 render_skill_content
+
+Render a single skill's full content (after frontmatter stripping) so it
+can be appended to a system prompt. Returns the content string, or empty
+string if the skill is unknown.
+
+Arguments:
+- $name: Skill name
+
+Returns: String (skill content with frontmatter removed) or ""
+
+=cut
+
+sub render_skill_content {
+    my ($self, $name) = @_;
+
+    my $skill = $self->get_skill($name);
+    return '' unless $skill;
+
+    my $content = $skill->{prompt} || '';
+    $content = _strip_frontmatter($content);
+    return $content;
+}
+
+=head2 get_skill_full
+
+Get a skill with its full prompt content and metadata. Used by the
+skill_operations tool's "load" operation. Does not mutate session state.
+
+Arguments:
+- $name: Skill name
+
+Returns: Skill hashref with prompt and metadata, or undef if not found
+
+=cut
+
+sub get_skill_full {
+    my ($self, $name) = @_;
+
+    my $skill = $self->get_skill($name);
+    return undef unless $skill;
+
+    return {
+        name => $skill->{name},
+        description => $skill->{description} || '',
+        prompt => $skill->{prompt} || '',
+        variables => $skill->{variables} || [],
+        type => $skill->{type} || 'custom',
     };
 }
 

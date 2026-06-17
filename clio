@@ -776,6 +776,19 @@ if ($input) {
         elsif ($cmd_name eq 'session') {
             print "[SYSTEM] Current session: " . ($session->{session_id} || 'unknown') . "\n";
         }
+        elsif ($cmd_name eq 'skills' || $cmd_name eq 'skill') {
+            # Skill commands work in --input mode (no interactive required).
+            require CLIO::UI::Commands::Skills;
+            my $cmd = CLIO::UI::Commands::Skills->new(
+                chat => $cli_ui,
+                session => $session,
+                debug => $debug,
+            );
+            my $rest = $input;
+            $rest =~ s{^/\S+\s*}{};
+            my @args = split /\s+/, $rest;
+            $cmd->handle_skills_command(@args);
+        }
         else {
             print "[SYSTEM] Unknown slash command: /$cmd_name\n";
             print "[SYSTEM] Note: Most commands only work in interactive mode\n";
