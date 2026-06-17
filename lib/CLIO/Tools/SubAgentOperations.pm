@@ -145,6 +145,10 @@ sub schema {
                 type => 'string',
                 description => '[OPTIONAL] Working directory for agent. Loads that project\'s .clio/ context (LTM, instructions, memory).',
             },
+            skills => {
+                type => 'string',
+                description => '[OPTIONAL] Comma-separated skill names to pre-load into the subagent\'s system prompt. Each skill is rendered and injected; the subagent treats them as active instructions without needing to call skill_operations.',
+            },
             timeout => {
                 type => 'number',
                 description => '[OPTIONAL] Max seconds to wait for wait operation. Default: 60.',
@@ -322,26 +326,35 @@ sub spawn {
     my $model = $params->{model} || ($context && $context->{current_model}) || 'unknown';
     my $persistent = $params->{persistent} ? 1 : 0;
     my $working_dir = $params->{working_dir};
-    
+
+    # Optional pre-loaded skills: comma-separated list of names that
+    # should be rendered into the subagent's system prompt at spawn time.
+    my @preloaded_skills;
+    if ($params->{skills}) {
+        @preloaded_skills = grep { defined $_ && length $_ } split(/\s*,\s*/, $params->{skills});
+    }
+
     # Persistent mode requires a running broker - default to oneshot
     # Users can explicitly set persistent=true when a broker is available
-    
+
     # Truncate task for display
     my $task_short = length($task) > 50 ? substr($task, 0, 47) . '...' : $task;
     my $action_desc = "spawning sub-agent ($model): $task_short";
     $action_desc .= " in $working_dir" if $working_dir;
-    
+    $action_desc .= " [skills: " . join(',', @preloaded_skills) . "]" if @preloaded_skills;
+
     # Build args string
     my $args = qq{"$task" --model $model};
     $args .= " --persistent" if $persistent;
     $args .= qq{ --dir "$working_dir"} if $working_dir;
+    $args .= qq{ --skills "${\(join(',', @preloaded_skills))}"} if @preloaded_skills;
     
     # Suppress direct display - we'll return expanded_content instead
     $handler->{suppress_display} = 1;
     
     # Call the spawn command (display suppressed)
     my $result = $handler->cmd_spawn($args);
-    
+
     delete $handler->{suppress_display};
     
     # Extract agent ID from result if available
@@ -392,9 +405,10 @@ sub spawn {
             model => $model,
             mode => $mode_str,
             ($working_dir ? (working_dir => $working_dir) : ()),
+            (@preloaded_skills ? (preloaded_skills => \@preloaded_skills) : ()),
         );
     }
-    
+
     return $self->success_result("Sub-agent spawned", action_description => $action_desc, task => $task);
 }
 

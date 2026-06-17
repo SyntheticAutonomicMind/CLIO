@@ -204,6 +204,7 @@ sub _display_config_help {
     $self->display_key_value("sanitize_mode", "Text filter: strict|relaxed", 25);
     $self->display_key_value("enable_subagents", "Enable/disable sub-agent spawning (on/off)", 25);
     $self->display_key_value("enable_remote", "Enable/disable remote execution (on/off)", 25);
+    $self->display_key_value("auto_discover_skills", "Inject installed skill catalog into system prompt (on/off)", 25);
     $self->writeline("", markdown => 0);
     
     $self->display_section_header("REDACTION LEVELS");
@@ -229,6 +230,7 @@ sub _display_config_help {
     $self->display_command_row("/config set sanitize_mode relaxed", "Quiet filtering for binary data work", 35);
     $self->display_command_row("/config set enable_subagents off", "Disable sub-agent tool", 35);
     $self->display_command_row("/config set enable_remote off", "Disable remote execution tool", 35);
+    $self->display_command_row("/config set auto_discover_skills off", "Hide skill catalog and disable skill_operations tool", 35);
     $self->writeline("", markdown => 0);
     
     $self->display_section_header("TIPS");
@@ -252,7 +254,7 @@ sub _handle_config_set {
     
     unless ($key) {
         $self->display_error_message("Usage: /config set <key> <value>");
-        $self->writeline("Keys: style, theme, working_directory, terminal_passthrough, terminal_autodetect, redact_level, security_level, sanitize_mode, enable_subagents, enable_remote", markdown => 0);
+        $self->writeline("Keys: style, theme, working_directory, terminal_passthrough, terminal_autodetect, redact_level, security_level, sanitize_mode, enable_subagents, enable_remote, auto_discover_skills", markdown => 0);
         return;
     }
     
@@ -274,6 +276,7 @@ sub _handle_config_set {
         sanitize_mode => 1,
         enable_subagents => 1,
         enable_remote => 1,
+        auto_discover_skills => 1,
     );
     
     unless ($allowed{$key}) {
@@ -426,6 +429,16 @@ sub _handle_config_set {
                 $self->display_info_message("Remote execution enabled: remote_execution tool will be available");
             } else {
                 $self->display_info_message("Remote execution disabled: remote_execution tool will be hidden from AI");
+            }
+            $self->{config}->set($key, $value);
+            $self->{config}->save();
+            $self->display_system_message("Restart session for changes to take effect");
+            return;
+        } elsif ($key eq 'auto_discover_skills') {
+            if ($value) {
+                $self->display_info_message("Skill auto-discovery enabled: installed skill catalog will be injected into the system prompt");
+            } else {
+                $self->display_info_message("Skill auto-discovery disabled: skill catalog hidden and skill_operations tool removed");
             }
             $self->{config}->set($key, $value);
             $self->{config}->save();
@@ -608,8 +621,11 @@ sub show_global_config {
     $subagents = 1 unless defined $subagents;
     my $remote = $self->{config}->get('enable_remote');
     $remote = 1 unless defined $remote;
+    my $auto_discover_skills = $self->{config}->get('auto_discover_skills');
+    $auto_discover_skills = 1 unless defined $auto_discover_skills;
     $self->display_key_value("Sub-agents", $subagents ? 'enabled' : 'disabled', 18);
     $self->display_key_value("Remote Exec", $remote ? 'enabled' : 'disabled', 18);
+    $self->display_key_value("Skill Auto-Discover", $auto_discover_skills ? 'enabled' : 'disabled', 18);
     
     # Paths
     $self->writeline("", markdown => 0);
