@@ -167,6 +167,7 @@ sub new {
     
     # Initialize prompt builder for system prompt construction
     my $enable_subagents = $self->{config} ? ($self->{config}->get('enable_subagents') // 1) : 1;
+    my $auto_discover_skills = $self->{config} ? ($self->{config}->get('auto_discover_skills') // 1) : 1;
     $self->{prompt_builder} = CLIO::Core::PromptBuilder->new(
         debug           => $args{debug},
         skip_custom     => $self->{skip_custom},
@@ -177,7 +178,12 @@ sub new {
         prompt_override => $self->{prompt_override},
         enable_tools    => $self->{enable_tools},  # Tool allowlist (for --chat mode)
         enable_subagents => $enable_subagents,
+        auto_discover_skills => $auto_discover_skills,
     );
+
+    if ($auto_discover_skills) {
+        log_info('WorkflowOrchestrator', 'Auto-discover skills enabled - skill catalog will be injected into system prompt');
+    }
     
     # Initialize FileVault for targeted file backup and undo support
     eval {
@@ -291,6 +297,12 @@ sub _register_default_tools {
             module => 'CLIO::Tools::SubAgentOperations',
             config_key => 'enable_subagents',
             subagent_blocked => 1,
+        },
+        {
+            name => 'skill_operations',
+            module => 'CLIO::Tools::SkillOperations',
+            config_key => 'auto_discover_skills',
+            subagent_blocked => 0,
         },
     );
     

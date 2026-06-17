@@ -84,6 +84,9 @@ use constant DEFAULT_CONFIG => {
     # Feature switches (tools available to agent)
     enable_subagents => 1,  # Enable agent_operations tool (sub-agent spawning)
     enable_remote => 1,     # Enable remote_execution tool (SSH remote tasks)
+    # Auto-discover installed skills in the system prompt and expose skill_operations tool
+    # Off = no skill catalog injected, tool not registered (current behavior)
+    auto_discover_skills => 1,
     # Tool filtering (persistent version of --enable/--disable flags)
     enabled_tools => '',    # Comma-separated allowlist of tools (empty = all)
     disabled_tools => '',   # Comma-separated blocklist of tools (empty = none)

@@ -257,7 +257,37 @@ sub _run_agent_loop {
     my $session = CLIO::Session::Manager->create(
         debug => $debug,
     );
-    
+
+    # Resolve pre-loaded skills into rendered content blocks.
+    # Each is appended to the subagent's system prompt at session start.
+    my @preloaded_skill_blocks;
+    if ($options{preloaded_skills} && @{$options{preloaded_skills}}) {
+        require CLIO::Core::SkillManager;
+        my $sm = CLIO::Core::SkillManager->new(debug => $debug);
+        for my $name (@{$options{preloaded_skills}}) {
+            my $content = $sm->render_skill_content($name);
+            if (length $content) {
+                push @preloaded_skill_blocks, {
+                    name => $name,
+                    content => $content,
+                };
+            }
+            else {
+                print "[SubAgent] WARNING: requested skill '$name' not found, skipping\n";
+            }
+        }
+    }
+
+    # Pass pre-loaded skills to SimpleAIAgent via env var (per-skill)
+    # so the prompt builder can pick them up when constructing the
+    # subagent's system prompt. SimpleAIAgent reads CLIO_PRELOADED_SKILLS
+    # as a JSON array of {name, content} blocks.
+    if (@preloaded_skill_blocks) {
+        require CLIO::Util::JSON;
+        $ENV{CLIO_PRELOADED_SKILLS} = CLIO::Util::JSON::encode_json(\@preloaded_skill_blocks);
+        print "[SubAgent] Pre-loaded " . scalar(@preloaded_skill_blocks) . " skill(s) into system prompt\n";
+    }
+
     # Create APIManager with proper configuration and session
     my $api_manager = CLIO::Core::APIManager->new(
         config => $config,
