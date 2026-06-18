@@ -250,75 +250,30 @@ Returns:
 =cut
 
 sub handle_error_response {
+    my ($self, @args) = @_;
+    return $self->_handle_error_response_impl(@args);
+}
+
+sub _handle_error_response_impl {
+
     my ($self, $resp, $json, $is_streaming, %opts) = @_;
 
     my $attempt_token_recovery = $opts{attempt_token_recovery};
     my $passed_headers = $opts{headers};
 
-    my $status = $resp->code;
-    my $error_prefix = $is_streaming ? "Streaming request failed" : "Request failed";
-    my $error = "$error_prefix: " . $resp->status_line;
-
-    # Try to extract detailed error from response body
-    # Providers return errors in different formats:
-    #   OpenAI/OpenRouter: {"error": {"message": "...", "code": 400}}
-    #   Google native:     [{"error": {"message": "...", "code": 429, "status": "RESOURCE_EXHAUSTED"}}]
-    my $content = safe_decode_json($resp->decoded_content);
-    # For streaming errors, decoded_content may be empty because the body was
-    # captured in raw_response_body and injected as $resp->{content} by APIManager.
-    if (!$content && $resp->{content}) {
-        $content = safe_decode_json($resp->{content});
-    }
-    my $error_obj;
-    if ($content) {
-        if (ref($content) eq 'HASH' && $content->{error}) {
-            $error_obj = $content->{error};
-        } elsif (ref($content) eq 'ARRAY' && @$content && ref($content->[0]) eq 'HASH' && $content->[0]{error}) {
-            $error_obj = $content->[0]{error};
-        }
-    }
-    if ($error_obj) {
-        # Handle both string errors ("Internal Server Error") and hash errors ({message => "...", code => ...})
-        if (ref($error_obj) eq 'HASH') {
-            $error = $error_obj->{message} // $error;
-            # Extract detailed error from OpenRouter metadata.raw for better user messages
-            if ($error_obj->{metadata} && ref($error_obj->{metadata}) eq 'HASH' && $error_obj->{metadata}{raw}) {
-                my $raw = safe_decode_json($error_obj->{metadata}{raw});
-                if ($raw) {
-                    my $inner_error;
-                    if (ref($raw) eq 'ARRAY' && @$raw && ref($raw->[0]) eq 'HASH' && $raw->[0]{error}) {
-                        $inner_error = $raw->[0]{error};
-                    } elsif (ref($raw) eq 'HASH' && $raw->{error}) {
-                        $inner_error = $raw->{error};
-                    }
-                    if ($inner_error && ref($inner_error) eq 'HASH' && $inner_error->{message}) {
-                        $error = $inner_error->{message};
-                        log_debug('ResponseHandler', "Extracted inner error from provider metadata: $error");
-                    }
-                }
-            }
-            # Use embedded error code when HTTP status is uninformative (200 or 599)
-            if (($status == 200 || $status >= 500) && $error_obj->{code} && $error_obj->{code} =~ /^\d+$/) {
-                $status = int($error_obj->{code});
-                log_debug('ResponseHandler', "Using embedded error code $status from response body");
-            }
-            # Detect rate limit from semantic string codes (e.g. GitHub's user_model_rate_limited)
-            if ($status == 200 && $error_obj->{code} && $error_obj->{code} =~ /rate.lim/i) {
-                $status = 429;
-                log_debug('ResponseHandler', "Detected rate limit via code '$error_obj->{code}', treating as 429");
-            }
-        } else {
-            # $error_obj is a plain string error from the provider
-            $error = $error_obj;
-        }
-    }
+    # Parse the error response (decoded body, extracted error object, normalized status)
+    my $parsed = $self->_parse_error_response($resp, $is_streaming);
+    my $status = $parsed->{status};
+    my $error = $parsed->{error};
+    my $content = $parsed->{content};
+    my $error_obj = $parsed->{error_obj};
+    my $detected_rate_limit_code = $parsed->{detected_rate_limit_code};
 
     my $retryable = 0;
     my $retry_after = undef;
     my $retry_info = '';
     my $is_retryable_error = 0;
     my $error_type = undef;
-    my $detected_rate_limit_code = (ref($error_obj) eq 'HASH' && $error_obj->{code}) ? $error_obj->{code} : '';
 
     # Handle rate limiting (429)
     if ($status == 429) {
@@ -945,7 +900,146 @@ sub handle_error_response {
         }
     }
 
-    # Build result
+    # Build result via helper
+    my $result = $self->_build_error_result(
+        is_streaming             => $is_streaming,
+        error                    => $error,
+        retryable                => $retryable,
+        retry_after              => $retry_after,
+        error_type               => $error_type,
+        detected_rate_limit_code => $detected_rate_limit_code,
+        error_obj                => $error_obj,
+    );
+    return $result;
+
+
+=head2 _parse_error_response
+
+Parse an API error response into a normalized state hash.
+
+Reads $resp->code, $resp->decoded_content, and (for streaming responses)
+$resp->{content}. Returns the inferred status, user-facing error string,
+decoded content, extracted error object, and provider-specific rate limit
+code (e.g. user_weekly_rate_limited, zai_usage_limit).
+
+This consolidates the response-body-shape variations across providers
+(OpenAI / OpenRouter / Anthropic / Google / GitHub) into a single entry
+point so the dispatcher can work with uniform state.
+
+Arguments:
+- $resp: HTTP::Response object
+- $is_streaming: boolean, true for streaming requests
+
+Returns:
+- Hashref with: status, error, content, error_obj, detected_rate_limit_code
+
+=cut
+
+sub _parse_error_response {
+    my ($self, $resp, $is_streaming) = @_;
+
+    my $status = $resp->code;
+    my $error_prefix = $is_streaming ? "Streaming request failed" : "Request failed";
+    my $error = "$error_prefix: " . $resp->status_line;
+
+    # Try to extract detailed error from response body
+    # Providers return errors in different formats:
+    #   OpenAI/OpenRouter: {"error": {"message": "...", "code": 400}}
+    #   Google native:     [{"error": {"message": "...", "code": 429, "status": "RESOURCE_EXHAUSTED"}}]
+    my $content = safe_decode_json($resp->decoded_content);
+    # For streaming errors, decoded_content may be empty because the body was
+    # captured in raw_response_body and injected as $resp->{content} by APIManager.
+    if (!$content && $resp->{content}) {
+        $content = safe_decode_json($resp->{content});
+    }
+    my $error_obj;
+    if ($content) {
+        if (ref($content) eq 'HASH' && $content->{error}) {
+            $error_obj = $content->{error};
+        } elsif (ref($content) eq 'ARRAY' && @$content && ref($content->[0]) eq 'HASH' && $content->[0]{error}) {
+            $error_obj = $content->[0]{error};
+        }
+    }
+    if ($error_obj) {
+        # Handle both string errors ("Internal Server Error") and hash errors ({message => "...", code => ...})
+        if (ref($error_obj) eq 'HASH') {
+            $error = $error_obj->{message} // $error;
+            # Extract detailed error from OpenRouter metadata.raw for better user messages
+            if ($error_obj->{metadata} && ref($error_obj->{metadata}) eq 'HASH' && $error_obj->{metadata}{raw}) {
+                my $raw = safe_decode_json($error_obj->{metadata}{raw});
+                if ($raw) {
+                    my $inner_error;
+                    if (ref($raw) eq 'ARRAY' && @$raw && ref($raw->[0]) eq 'HASH' && $raw->[0]{error}) {
+                        $inner_error = $raw->[0]{error};
+                    } elsif (ref($raw) eq 'HASH' && $raw->{error}) {
+                        $inner_error = $raw->{error};
+                    }
+                    if ($inner_error && ref($inner_error) eq 'HASH' && $inner_error->{message}) {
+                        $error = $inner_error->{message};
+                        log_debug('ResponseHandler', "Extracted inner error from provider metadata: $error");
+                    }
+                }
+            }
+            # Use embedded error code when HTTP status is uninformative (200 or 599)
+            if (($status == 200 || $status >= 500) && $error_obj->{code} && $error_obj->{code} =~ /^\d+$/) {
+                $status = int($error_obj->{code});
+                log_debug('ResponseHandler', "Using embedded error code $status from response body");
+            }
+            # Detect rate limit from semantic string codes (e.g. GitHub's user_model_rate_limited)
+            if ($status == 200 && $error_obj->{code} && $error_obj->{code} =~ /rate.lim/i) {
+                $status = 429;
+                log_debug('ResponseHandler', "Detected rate limit via code '$error_obj->{code}', treating as 429");
+            }
+        } else {
+            # $error_obj is a plain string error from the provider
+            $error = $error_obj;
+        }
+    }
+
+    my $detected_rate_limit_code = (ref($error_obj) eq 'HASH' && $error_obj->{code}) ? $error_obj->{code} : '';
+
+    return {
+        status                    => $status,
+        error                     => $error,
+        content                   => $content,
+        error_obj                 => $error_obj,
+        detected_rate_limit_code  => $detected_rate_limit_code,
+    };
+}
+}
+
+=head2 _build_error_result
+
+Construct the result hash for a classified API error response.
+
+Tries to keep the result shape stable across retryable, non-retryable,
+and streaming paths. Mutates $self->{last_failed_tool} (consumes the slot).
+
+Arguments:
+- is_streaming: boolean
+- error: user-facing error string
+- retryable: boolean
+- retry_after: seconds to wait before retry, if known
+- error_type: classification string (rate_limit, quota_exceeded, etc.)
+- detected_rate_limit_code: provider-specific code if present
+- error_obj: full error object from response body
+
+Returns:
+- Hashref suitable for the AI consumer
+
+=cut
+
+sub _build_error_result {
+    my ($self, %state) = @_;
+
+    my $is_streaming             = $state{is_streaming};
+    my $error                    = $state{error};
+    my $retryable                = $state{retryable};
+    my $retry_after              = $state{retry_after};
+    my $error_type               = $state{error_type};
+    my $detected_rate_limit_code = $state{detected_rate_limit_code};
+    my $error_obj                = $state{error_obj};
+
     my $result;
     if ($is_streaming) {
         $result = { success => 0, error => $error };
@@ -974,7 +1068,7 @@ sub handle_error_response {
 
     # Always pass rate_limit_code if detected (for routing decisions)
     $result->{rate_limit_code} = $detected_rate_limit_code if $detected_rate_limit_code;
-    
+
     # Debug: log the final error we're returning
     log_debug('ResponseHandler', "Final error being returned: $error");
 
