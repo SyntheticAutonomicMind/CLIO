@@ -786,17 +786,33 @@ Skills are reusable prompt templates. Instead of typing the same complex instruc
 ### Managing Skills
 
 ```text
-/skills list             # Show all skills
-/skills add              # Create a new skill
-/skills delete <name>    # Remove a skill
-/skills use <name> [file] # Execute a skill as a user message (with optional file context)
-/skills show <name>      # Display skill contents
-/skills load <name>      # Load a skill into the system prompt (persistent for session)
-/skills unload <name>    # Remove a loaded skill from the system prompt
-/skills loaded           # Show currently loaded skills
-/skills search [query]   # Search the skills catalog
-/skills install <name>   # Install a skill from the catalog
+/skills list                          # Show all skills grouped by scope
+/skills list --scope=<scope>          # Filter list (user|project|session|freeform|repository|builtin)
+/skills add <name> "text" [--scope=]  # Create a new skill (scope: user|project|session)
+/skills delete <name>                 # Remove a skill
+/skills use <name> [file]             # Execute a skill as a user message (with optional file context)
+/skills show <name>                   # Display skill contents (includes scope and source file)
+/skills load <name>                   # Load a skill into the system prompt (persistent for session)
+/skills unload <name>                 # Remove a loaded skill from the system prompt
+/skills loaded                        # Show currently loaded skills
+/skills search [query]                # Search the skills catalog
+/skills install <name> [--scope=]     # Install a skill from the catalog (default: project)
 ```
+
+### Skill Scopes
+
+Skills live in one of six scopes. The list and show commands surface the scope and the backing file so it is always clear where a skill is stored and what to edit.
+
+| Scope | Source | Editable | Use for |
+|-------|--------|----------|---------|
+| `user` | `~/.clio/skills.json` | yes | Personal skills you want in every project |
+| `project` | `<cwd>/.clio/skills.json` | yes | Skills tied to a single codebase, commit to the repo |
+| `session` | `sessions/<id>/skills.json` | yes | Throwaway skills for the current session, cleared on exit |
+| `freeform` | `<dir>/.clio/skills/<name>.md` | yes (edit the .md) | Long-form skills version controlled alongside code |
+| `repository` | `~/.clio/skill-cache/<repo>/` | no (re-sync instead) | Skills pulled from a configured Git repository |
+| `builtin` | bundled with CLIO | no | Read-only skills shipped with CLIO |
+
+`/skills add` and `/skills install` accept a scope flag. The flag can be `--global`, `--user`, `--project`, `--session`, or `--scope=user|project|session`. When the flag is omitted, the skill lands in **project** if the current working directory contains a `.clio/` directory, otherwise **user**.
 
 ### Skill Repositories
 
@@ -864,12 +880,13 @@ When skills have the same name across sources, the priority order is:
 1. **Session** skills (highest - current session only)
 2. **Project** skills (`.clio/skills.json`)
 3. **User** skills (`~/.clio/skills.json`)
-4. **Repository** skills (from configured Git repos)
-5. **Built-in** skills (lowest - shipped with CLIO)
+4. **Freeform** skills (`.clio/skills/<name>.md`)
+5. **Repository** skills (from configured Git repos)
+6. **Built-in** skills (lowest - shipped with CLIO)
 
 ### Built-in vs Custom
 
-Skills are stored per-project in `.clio/skills/`. You can share them across teams by committing the skills directory.
+Built-in skills are read-only and shipped with CLIO. Custom skills are JSON entries in either `~/.clio/skills.json` (user) or `<project>/.clio/skills.json` (project), with a third option of a `<dir>/.clio/skills/<name>.md` file for long-form content. Commit the project-level skills file to share skills with the rest of the team.
 
 ---
 
