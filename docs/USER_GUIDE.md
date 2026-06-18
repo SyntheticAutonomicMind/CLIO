@@ -588,8 +588,9 @@ MCP servers extend CLIO's capabilities with external tools. Tools from MCP serve
 | Command | Purpose |
 |---------|---------|
 | `/skill` | Show skill system help |
-| `/skills list` | List all available skills |
-| `/skills add <name> "<text>"` | Create a new skill |
+| `/skills list` | List all available skills grouped by scope |
+| `/skills list --scope=<scope>` | Show skills for a single scope (user, project, session, freeform, repository, builtin) |
+| `/skills add <name> "<text>" [--global\|--project\|--session]` | Create a new skill in the named scope |
 | `/skills delete <name>` | Delete a skill |
 | `/skills show <name>` | Display skill contents |
 | `/skills use <name> [file]` | Execute skill as user message |
@@ -597,7 +598,7 @@ MCP servers extend CLIO's capabilities with external tools. Tools from MCP serve
 | `/skills unload <name>` | Remove loaded skill from system prompt |
 | `/skills loaded` | Show currently loaded skills |
 | `/skills search [query]` | Search the skills catalog |
-| `/skills install <name>` | Install skill from catalog |
+| `/skills install <name> [--global\|--project\|--session]` | Install skill from catalog (default: project) |
 
 ### Execution & Utilities
 
@@ -1999,9 +2000,14 @@ Skills are specialized prompt templates that give CLIO expertise in specific tas
 ### Viewing Available Skills
 
 ```bash
-: /skills                    # List all skills (built-in, custom, and repository)
-: /skills show <name>        # Display skill details
+: /skills                                # List all skills grouped by scope
+: /skills --scope=project                # Show only project-scoped skills
+: /skills --scope=user                   # Show only user-scoped skills
+: /skills --scope=builtin                # Show only built-in skills
+: /skills show <name>                    # Display skill details (includes scope and source file)
 ```
+
+`/skills` groups the output by scope and shows a short description of each scope so you know where a skill is stored. The `--scope=` filter narrows the list to one scope. Use it with any of: `user`, `project`, `session`, `freeform`, `repository`, `builtin`.
 
 **Built-in Skills:**
 | Skill | Description |
@@ -2074,23 +2080,40 @@ Optional flags when adding a repository:
 
 Repository skills are read-only. They appear in `/skills list` under the "REPOSITORY SKILLS" section with their source repository shown. Custom skills override repository skills with the same name.
 
-### Skill Priority
-
-When skills have the same name across sources, the priority order is:
-
-1. **Session** skills (highest - current session only)
-2. **Project** skills (`.clio/skills.json`)
-3. **User** skills (`~/.clio/skills.json`)
-4. **Repository** skills (from configured Git repos)
-5. **Built-in** skills (lowest - shipped with CLIO)
-
 ### Custom Skills
 
-Create your own skills:
+Create your own skills. Skills land in a scope you pick so they show up where you need them.
 
 ```bash
 : /skills add my-skill "Review code for ${lang} best practices: ${code}"
+: /skills add team-style --project "Always run cargo fmt before suggesting changes"
+: /skills add perl-tips --global 'Use 3-arg open and lexical filehandles by default'
+: /skills add brainstorming --session 'Push back on vague requirements and ask for examples'
 ```
+
+The scope flag controls which file the skill is written to. When you omit the flag, the skill lands in the **project** scope if the current working directory has a `.clio/` subdirectory, otherwise it goes to **user**.
+
+| Flag | Aliases | Backing file | Visible in |
+|------|---------|--------------|------------|
+| `--global` | `--user`, `--scope=user` | `~/.clio/skills.json` | Every project on this machine |
+| `--project` (default) | `--scope=project` | `<project>/.clio/skills.json` | This project only |
+| `--session` | `--scope=session` | `sessions/<id>/skills.json` | This session only, gone when the session ends |
+| (no flag, freeform) | edit the file directly | `<dir>/.clio/skills/<name>.md` | Wherever the file lives |
+
+The `freeform` scope is special: a `.clio/skills/<name>.md` file is automatically picked up, and editing the file in place is how you modify that skill. `/skills show <name>` on a freeform skill points at the .md path so you can open it in your editor.
+
+### Scope
+
+Skills live in one of six scopes. The list and show commands surface the scope and the backing file so it is always clear where a skill is stored and what to edit.
+
+| Scope | Source | Editable | Use for |
+|-------|--------|----------|---------|
+| `user` | `~/.clio/skills.json` | yes | Personal skills you want in every project |
+| `project` | `<cwd>/.clio/skills.json` | yes | Skills tied to a single codebase, commit to the repo |
+| `session` | `sessions/<id>/skills.json` | yes | Throwaway skills for the current session, cleared on exit |
+| `freeform` | `<dir>/.clio/skills/<name>.md` | yes (edit the .md) | Markdown-form skills for long-form content, version controlled alongside code |
+| `repository` | `~/.clio/skill-cache/<repo>/` | no (re-sync instead) | Skills pulled from a configured Git repository |
+| `builtin` | bundled with CLIO | no | Read-only skills shipped with CLIO (`explain`, `review`, `test`, `fix`, `doc`, `design`, `init`, `init-with-prd`, `design-review`) |
 
 ### Skill Priority
 
@@ -2099,8 +2122,9 @@ When skills have the same name across sources, the priority order is:
 1. **Session** skills (highest - current session only)
 2. **Project** skills (`.clio/skills.json`)
 3. **User** skills (`~/.clio/skills.json`)
-4. **Repository** skills (from configured Git repos)
-5. **Built-in** skills (lowest - shipped with CLIO)
+4. **Freeform** skills (`.clio/skills/<name>.md`)
+5. **Repository** skills (from configured Git repos)
+6. **Built-in** skills (lowest - shipped with CLIO)
 
 ### System Prompts
 

@@ -67,14 +67,83 @@ Get or create the SkillManager instance.
 
 sub _get_skill_manager {
     my ($self) = @_;
-    
+
     require CLIO::Core::SkillManager;
+    require CLIO::Util::ConfigPath;
+
+    # Detect the active project. We treat a directory containing a
+    # .clio/ subdir as a project root. This keeps the user-level skills
+    # file (in $HOME) distinct from the project-level one, so /skills
+    # add and /skills install land in the right place.
+    #
+    # The user config dir (usually $HOME/.clio) is not a project root -
+    # it is the global user skills file. Walking the tree must not pick
+    # that up, otherwise a skill in the user file gets loaded twice and
+    # the second pass tags it as scope=project, which mis-reports where
+    # it lives and would let /skills add --project silently shadow it.
+    my $user_dir = CLIO::Util::ConfigPath::get_config_dir();
+    my $project_dir = $self->_resolve_project_dir($user_dir);
+    my $project_skills_file = $project_dir
+        ? File::Spec->catfile($project_dir, '.clio', 'skills.json')
+        : undef;
+
     return CLIO::Core::SkillManager->new(
         debug => $self->{debug},
-        session_skills_file => $self->{session} ? 
-            File::Spec->catfile('sessions', $self->{session}{session_id}, 'skills.json') : 
-            undef
+        project_skills_file => $project_skills_file,
+        session_skills_file => $self->{session} ?
+            File::Spec->catfile('sessions', $self->{session}{session_id}, 'skills.json') :
+            undef,
     );
+}
+
+=head2 _resolve_project_dir
+
+Return the absolute path of the project root for the current working
+directory, or undef if CWD is not inside a CLIO project. A project is
+identified by a .clio/ subdirectory anywhere up the tree, but we
+prefer the closest ancestor so skills written to a sub-project do not
+leak into the parent project's skills.json.
+
+The C<$exclude> argument is an absolute path that must never be returned
+as a project root even if it has a .clio/ subdirectory. This is the
+user config dir (usually $HOME/.clio), which is the backing store for
+the user scope, not a project.
+
+=cut
+
+sub _resolve_project_dir {
+    my ($self, $exclude) = @_;
+
+    # Use Cwd's getcwd so we always work with an absolute path. Without
+    # this, on a cwd like "..", splitpath produces a different parent
+    # each iteration and the .clio check can race.
+    require Cwd;
+    my $cwd = Cwd::getcwd();
+    my @candidates = ($cwd);
+    # Walk up at most 5 ancestors to avoid scanning the whole filesystem.
+    my $dir = $cwd;
+    for (1..5) {
+        my ($vol, $parent) = File::Spec->splitpath($dir);
+        $parent =~ s{/+\z}{};
+        last unless length $parent && $parent ne $dir;
+        $dir = $parent;
+        unshift @candidates, $dir;
+    }
+
+    for my $candidate (@candidates) {
+        # The user config dir (usually $HOME/.clio) holds the user-level
+        # skills file, not a project. Treat its parent as the boundary:
+        # candidates equal to that parent would point at the user dir if
+        # it had a .clio/ subdir, but it IS the user dir, so skip it.
+        if (defined $exclude) {
+            my ($exclude_vol, $exclude_dir) = File::Spec->splitpath($exclude);
+            $exclude_dir =~ s{/+\z}{};
+            next if $candidate eq $exclude_dir;
+        }
+        my $clio = File::Spec->catdir($candidate, '.clio');
+        return $candidate if -d $clio;
+    }
+    return undef;
 }
 
 =head2 handle_skills_command(@args)
@@ -93,7 +162,7 @@ sub handle_skills_command {
         return $self->_add_skill($sm, @args);
     }
     elsif ($action eq 'list' || $action eq 'ls') {
-        $self->_list_skills($sm);
+        $self->_list_skills($sm, @args);
     }
     elsif ($action eq 'use' || $action eq 'exec') {
         return $self->_use_skill($sm, @args);
@@ -133,6 +202,69 @@ sub handle_skills_command {
     return;
 }
 
+=head2 _parse_scope_flags
+
+Pull --global / --project / --session flags (and the --scope=<value>
+equivalent) out of an argument list. Returns the cleaned @args and a
+hashref with key 'scope' set to 'user', 'project', or 'session' when
+one of the flags was present, or empty when the user did not specify.
+
+Recognised flags:
+  --global      (alias: --user, --scope=user)
+  --project     (alias: --scope=project)
+  --session     (alias: --scope=session)
+
+=cut
+
+sub _parse_scope_flags {
+    my ($self, @args) = @_;
+
+    my %opts;
+    my @kept;
+    my $bad;
+    for my $arg (@args) {
+        if ($arg eq '--global' || $arg eq '--user') {
+            $opts{scope} = 'user';
+        }
+        elsif ($arg eq '--project') {
+            $opts{scope} = 'project';
+        }
+        elsif ($arg eq '--session') {
+            $opts{scope} = 'session';
+        }
+        elsif ($arg =~ /^--scope=(user|project|session)$/i) {
+            $opts{scope} = lc($1);
+        }
+        elsif ($arg =~ /^--scope=(\w+)$/i) {
+            # --scope=<something> where <something> is not user/project/session.
+            # Surface as a parse error rather than silently dropping it so the
+            # user notices a typo before the skill gets written to the wrong
+            # scope.
+            $bad = $arg;
+        }
+        else {
+            push @kept, $arg;
+        }
+    }
+    return (\@kept, \%opts, $bad);
+}
+
+=head2 _scope_label
+
+Return a human-readable label for a scope string. Centralised here so
+the /skills list and /skills show output stay consistent.
+
+=cut
+
+sub _scope_label {
+    my ($self, $scope) = @_;
+    my %labels = (
+        user => 'user', project => 'project', session => 'session',
+        repository => 'repository', builtin => 'builtin', freeform => 'freeform',
+    );
+    return $labels{$scope} // $scope // 'unknown';
+}
+
 =head2 _show_help()
 
 Display skills command help using unified style.
@@ -143,23 +275,33 @@ sub _show_help {
     my ($self) = @_;
     
     $self->display_command_header("SKILLS");
-    
+
     $self->display_section_header("COMMANDS");
-    $self->{chat}->display_command_row("/skills", "List all skills", 35);
+    $self->{chat}->display_command_row("/skills", "List all skills grouped by scope", 35);
+    $self->{chat}->display_command_row("/skills --scope=<scope>", "Filter list (user|project|session|freeform|repository|builtin)", 35);
     $self->{chat}->display_command_row("/skills use <name> [file]", "Execute skill as user input", 35);
     $self->{chat}->display_command_row("/skills load <name>", "Load skill into system prompt", 35);
     $self->{chat}->display_command_row("/skills unload <name>", "Remove skill from system prompt", 35);
     $self->{chat}->display_command_row("/skills loaded", "Show loaded skills", 35);
-    $self->{chat}->display_command_row("/skills show <name>", "Display skill details", 35);
-    $self->{chat}->display_command_row("/skills add <name> \"<text>\"", "Add custom skill", 35);
+    $self->{chat}->display_command_row("/skills show <name>", "Display skill details (includes scope + source)", 35);
+    $self->{chat}->display_command_row("/skills add <name> \"<text>\" [--scope=...]", "Add custom skill (scope: user|project|session)", 35);
     $self->{chat}->display_command_row("/skills delete <name>", "Delete custom skill", 35);
     $self->writeline("", markdown => 0);
-    
+
+    $self->display_section_header("SCOPES");
+    $self->writeline("  user       - ~/.clio/skills.json (visible in all projects)", markdown => 0);
+    $self->writeline("  project    - .clio/skills.json in the current project", markdown => 0);
+    $self->writeline("  session    - sessions/<id>/skills.json (cleared on session end)", markdown => 0);
+    $self->writeline("  freeform   - .clio/skills/*.md files (edit the .md to modify)", markdown => 0);
+    $self->writeline("  repository - skills pulled from a configured git repository", markdown => 0);
+    $self->writeline("  builtin    - read-only skills shipped with CLIO", markdown => 0);
+    $self->writeline("", markdown => 0);
+
     $self->display_section_header("CATALOG");
     $self->{chat}->display_command_row("/skills search [query]", "Search skills catalog", 35);
-    $self->{chat}->display_command_row("/skills install <name>", "Install skill from catalog", 35);
+    $self->{chat}->display_command_row("/skills install <name> [--scope=...]", "Install skill from catalog (default: project)", 35);
     $self->writeline("", markdown => 0);
-    
+
     $self->display_section_header("REPOSITORIES");
     $self->{chat}->display_command_row("/skills repo add <name> <url>", "Add skill repository", 35);
     $self->{chat}->display_command_row("/skills repo remove <name>", "Remove repository", 35);
@@ -168,7 +310,7 @@ sub _show_help {
     $self->{chat}->display_command_row("/skills repo enable <name>", "Enable repository", 35);
     $self->{chat}->display_command_row("/skills repo disable <name>", "Disable repository", 35);
     $self->writeline("", markdown => 0);
-    
+
     $self->display_section_header("MODES");
     $self->writeline("  use   - Send skill prompt as next message (immediate execution)", markdown => 0);
     $self->writeline("  load  - Merge skill into system prompt (persistent for session)", markdown => 0);
@@ -188,34 +330,97 @@ sub _add_skill {
     my $skill_text = join(' ', @args);
     
     unless ($name && $skill_text) {
-        $self->display_error_message("Usage: /skills add <name> \"<skill text>\"");
+        $self->display_error_message("Usage: /skills add <name> \"<skill text>\" [--global|--project|--session]");
         return;
     }
-    
+
+    # Strip scope flags (--global / --project / --session) so they do not
+    # become part of the prompt text. Reassemble the rest as the skill body.
+    my ($cleaned, $opts, $bad_scope) = $self->_parse_scope_flags(@args);
+    if ($bad_scope) {
+        $self->display_error_message("Invalid $bad_scope (use --global, --project, --session, or --scope=user|project|session)");
+        return;
+    }
+    $skill_text = join(' ', @$cleaned);
     # Remove quotes if present
     $skill_text =~ s/^["']//;
     $skill_text =~ s/["']$//;
-    
-    my $result = $sm->add_skill($name, $skill_text);
-    
+
+    my $result = $sm->add_skill($name, $skill_text, %$opts);
+
     if ($result->{success}) {
-        $self->display_system_message("Added skill '$name'");
+        my $scope = $result->{prompt}{scope} // 'user';
+        $self->display_success_message("Added skill '$name' to $scope scope");
+        if ($result->{prompt}{source}) {
+            $self->writeline("  File: $result->{prompt}{source}", markdown => 0);
+        }
     } else {
         $self->display_error_message($result->{error});
     }
 }
 
-=head2 _list_skills($sm)
+=head2 _list_skills($sm, @args)
 
-List all available skills with modern formatting.
+List all available skills with scope labels. Each skill is shown with
+its source (file path for custom/freeform, repo name for repository).
+A C<--scope=<user|project|session|repository|builtin|freeform>> filter
+narrows the list to a single scope; C<--scope=custom> matches the
+union of user, project, and session.
 
 =cut
 
 sub _list_skills {
-    my ($self, $sm) = @_;
-    
+    my ($self, $sm, @args) = @_;
+
+    # Pull the optional --scope= filter out of @args.
+    my %filter;
+    my @kept;
+    for my $arg (@args) {
+        if ($arg =~ /^--scope=(\w+)$/i) {
+            $filter{scope} = lc($1);
+        }
+        elsif ($arg =~ /^--(user|project|session|repository|builtin|freeform)$/i) {
+            $filter{scope} = lc($1);
+        }
+        else {
+            push @kept, $arg;
+        }
+    }
+    if (@kept) {
+        $self->display_error_message("Unknown list option: @kept (use --scope=<name>)");
+        return;
+    }
+
     my $skills = $sm->list_skills();
-    
+
+    # Determine which scope buckets to show. 'custom' is a virtual bucket
+    # covering user + project + session .json-backed skills, kept for
+    # back-compat with scripts that used the old /skills list grouping.
+    my @buckets;
+    my %by_scope = %{$skills->{by_scope} || {}};
+    if (my $wanted = $filter{scope}) {
+        if ($wanted eq 'custom') {
+            @buckets = (
+                ['user',    $by_scope{user}    // []],
+                ['project', $by_scope{project} // []],
+                ['session', $by_scope{session} // []],
+            );
+        }
+        else {
+            @buckets = ([$wanted, $by_scope{$wanted} // []]);
+        }
+    }
+    else {
+        @buckets = (
+            ['user',       $by_scope{user}       // []],
+            ['project',    $by_scope{project}    // []],
+            ['session',    $by_scope{session}    // []],
+            ['freeform',   $by_scope{freeform}   // []],
+            ['repository', $by_scope{repository} // []],
+            ['builtin',    $by_scope{builtin}    // []],
+        );
+    }
+
     # Check for loaded skills
     my $state = $self->_get_session_state();
     my $loaded = $state ? ($state->{loaded_skills} || []) : [];
@@ -235,79 +440,109 @@ sub _list_skills {
         $self->writeline("", markdown => 0);
     }
     
-    # Custom skills section
-    $self->display_section_header("CUSTOM SKILLS");
-    
-    if (@{$skills->{custom}}) {
-        for my $name (sort @{$skills->{custom}}) {
+    # Render one section per bucket. Order is consistent: user, project,
+    # session, freeform, repository, builtin. A single bucket section is
+    # omitted when empty so the output stays focused.
+    my %scope_descriptions = (
+        user       => 'Stored in your user skills file. Visible across all projects.',
+        project    => 'Stored in this project\'s .clio/skills.json. Visible only here.',
+        session    => 'Stored in this session\'s skills.json. Cleared when the session ends.',
+        freeform   => 'Loaded from .clio/skills/*.md files. Edit the .md to modify.',
+        repository => 'Loaded from a configured skill repository.',
+        builtin    => 'Built into CLIO. Read-only.',
+    );
+
+    my $total_visible = 0;
+    for my $bucket (@buckets) {
+        my ($scope, $names) = @$bucket;
+        $total_visible += scalar(@$names);
+        next unless $names && @$names;
+
+        my $label = uc($self->_scope_label($scope));
+        $self->display_section_header("$label SKILLS" . ($filter{scope} ? '' : ''));
+        if ($scope_descriptions{$scope} && !$filter{scope}) {
+            $self->writeline("  " . $self->colorize($scope_descriptions{$scope}, 'DIM'), markdown => 0);
+        }
+
+        for my $name (sort @$names) {
             my $s = $sm->get_skill($name);
             my $desc = $s->{description} || '(no description)';
             my $indicator = $loaded_names{$name} ? ' [loaded]' : '';
-            $self->display_key_value($name, $desc . $indicator, 16);
+            my $source_label = '';
+            if ($scope eq 'repository' && $s->{source_repo}) {
+                $source_label = " (repo: $s->{source_repo})";
+            }
+            elsif ($scope eq 'freeform' && $s->{location}) {
+                $source_label = " (from $s->{location} dir)";
+            }
+            $self->display_key_value($name, $desc . $source_label . $indicator, 16);
         }
-    } else {
-        $self->writeline("  " . $self->colorize("(none)", 'DIM'), markdown => 0);
+        $self->writeline("", markdown => 0);
     }
-    $self->writeline("", markdown => 0);
-    
-    # Repository skills section
-    $self->display_section_header("REPOSITORY SKILLS");
-    
-    if (@{$skills->{repository}}) {
-        for my $name (sort @{$skills->{repository}}) {
-            my $s = $sm->get_skill($name);
-            my $desc = $s->{description} || '(no description)';
-            my $repo = $s->{source_repo} || '';
-            my $indicator = $loaded_names{$name} ? ' [loaded]' : '';
-            my $source = $repo ? " ($repo)" : '';
-            $self->display_key_value($name, $desc . $source . $indicator, 16);
-        }
-    } else {
-        $self->writeline("  " . $self->colorize("(none - use /skills repo add)", 'DIM'), markdown => 0);
+
+    # Empty hint when no skills are visible at all.
+    if ($total_visible == 0) {
+        my $hint = $filter{scope}
+            ? "(no $filter{scope} skills)"
+            : '(none)';
+        $self->writeline("  " . $self->colorize($hint, 'DIM'), markdown => 0);
+        $self->writeline("", markdown => 0);
     }
-    $self->writeline("", markdown => 0);
-    
-    # Built-in skills section
-    $self->display_section_header("BUILT-IN SKILLS");
-    
-    for my $name (sort @{$skills->{builtin}}) {
-        my $s = $sm->get_skill($name);
-        my $desc = $s->{description} || '(no description)';
-        my $indicator = $loaded_names{$name} ? ' [loaded]' : '';
-        $self->display_key_value($name, $desc . $indicator, 16);
-    }
-    
+
     # Summary
     print "\n";
-    my $custom_count = scalar(@{$skills->{custom}});
-    my $builtin_count = scalar(@{$skills->{builtin}});
-    my $repo_count = scalar(@{$skills->{repository}});
-    my $loaded_count = scalar(@$loaded);
-    my $total = $custom_count + $builtin_count + $repo_count;
-    
-    my $summary = $self->colorize("Total: ", 'LABEL') .
-                  $self->colorize("$custom_count", 'DATA') . " custom, " .
-                  $self->colorize("$repo_count", 'DATA') . " repo, " .
-                  $self->colorize("$builtin_count", 'DATA') . " built-in" .
-                  " (" . $self->colorize("$total", 'SUCCESS') . " total)";
-    $summary .= " | " . $self->colorize("$loaded_count", 'DATA') . " loaded" if $loaded_count > 0;
+    my $custom_count = scalar(@{$by_scope{user}   // []}) +
+                       scalar(@{$by_scope{project}// []}) +
+                       scalar(@{$by_scope{session}// []});
+    my $builtin_count = scalar(@{$by_scope{builtin} // []});
+    my $repo_count    = scalar(@{$by_scope{repository} // []});
+    my $freeform_count= scalar(@{$by_scope{freeform} // []});
+    my $loaded_count  = scalar(@$loaded);
+
+    my $summary;
+    if ($filter{scope}) {
+        # When filtered, show how many skills matched the filter, and
+        # remind the user which scope they were looking at. $total_visible
+        # was computed while rendering the buckets above.
+        $summary = $self->colorize("Filter: ", 'LABEL') .
+                   $self->colorize($filter{scope}, 'DATA') . " - " .
+                   $self->colorize("$total_visible", 'SUCCESS') . " visible";
+        $summary .= " | " . $self->colorize("$loaded_count", 'DATA') . " loaded" if $loaded_count > 0;
+    }
+    else {
+        my $total = $custom_count + $builtin_count + $repo_count + $freeform_count;
+        $summary = $self->colorize("Total: ", 'LABEL') .
+                   $self->colorize("$custom_count", 'DATA') . " custom, " .
+                   $self->colorize("$freeform_count", 'DATA') . " freeform, " .
+                   $self->colorize("$repo_count", 'DATA') . " repo, " .
+                   $self->colorize("$builtin_count", 'DATA') . " built-in" .
+                   " (" . $self->colorize("$total", 'SUCCESS') . " total)";
+        $summary .= " | " . $self->colorize("$loaded_count", 'DATA') . " loaded" if $loaded_count > 0;
+    }
     $self->writeline($summary, markdown => 0);
-    
+
     # Management commands
     $self->display_section_header("COMMANDS");
     $self->{chat}->display_command_row("/skills use <name> [file]", "Execute skill as user input", 35);
     $self->{chat}->display_command_row("/skills load <name>", "Load skill into system prompt", 35);
     $self->{chat}->display_command_row("/skills unload <name>", "Remove from system prompt", 35);
     $self->{chat}->display_command_row("/skills show <name>", "Display skill details", 35);
-    $self->{chat}->display_command_row("/skills add <name> \"<text>\"", "Add custom skill", 35);
+    $self->{chat}->display_command_row("/skills add <name> \"<text>\" [--scope=...]", "Add custom skill", 35);
     $self->{chat}->display_command_row("/skills delete <name>", "Delete custom skill", 35);
     $self->writeline("", markdown => 0);
-    
+
+    $self->display_section_header("FILTERS");
+    $self->{chat}->display_command_row("/skills --scope=user", "Show user-level skills only", 35);
+    $self->{chat}->display_command_row("/skills --scope=project", "Show project-level skills only", 35);
+    $self->{chat}->display_command_row("/skills --scope=session", "Show session-level skills only", 35);
+    $self->{chat}->display_command_row("/skills --scope=freeform", "Show freeform .md skills only", 35);
+    $self->writeline("", markdown => 0);
+
     $self->display_section_header("CATALOG");
     $self->{chat}->display_command_row("/skills search [query]", "Search skills catalog", 35);
     $self->{chat}->display_command_row("/skills install <name>", "Install skill from catalog", 35);
     $self->writeline("", markdown => 0);
-    
+
     $self->display_section_header("REPOSITORIES");
     $self->{chat}->display_command_row("/skills repo add <name> <url>", "Add skill repository", 35);
     $self->{chat}->display_command_row("/skills repo remove <name>", "Remove repository", 35);
@@ -525,14 +760,14 @@ Display skill details with modern formatting and pagination.
 
 sub _show_skill {
     my ($self, $sm, @args) = @_;
-    
+
     my $name = shift @args;
-    
+
     unless ($name) {
         $self->display_error_message("Usage: /skills show <name>");
         return;
     }
-    
+
     my $skill = $sm->get_skill($name);
     unless ($skill) {
         $self->display_error_message("Skill '$name' not found");
@@ -541,18 +776,33 @@ sub _show_skill {
     
     # Build output lines for paginated display
     my @lines;
-    
+
     # Metadata section
     push @lines, $self->colorize("DETAILS", 'SECTION_HEADER');
     push @lines, "";
     push @lines, $self->colorize("Name:        ", 'LABEL') . $self->colorize($name, 'DATA');
     push @lines, $self->colorize("Type:        ", 'LABEL') . $self->colorize($skill->{type} || 'custom', 'DATA');
+    push @lines, $self->colorize("Scope:       ", 'LABEL') . $self->colorize($self->_scope_label($skill->{scope} // 'user'), 'DATA');
     push @lines, $self->colorize("Description: ", 'LABEL') . $self->colorize($skill->{description} || '(none)', 'DATA');
-    
+
+    # Surface the file or repo that backs this skill so the user knows
+    # where to edit it. Built-ins and freeform skills each have their own
+    # hint about how to modify them.
+    my $source = $skill->{source} || $skill->{_source_file};
+    if ($skill->{source_repo}) {
+        push @lines, $self->colorize("Repository:  ", 'LABEL') . $self->colorize($skill->{source_repo}, 'DATA');
+    }
+    if ($source) {
+        push @lines, $self->colorize("Source:      ", 'LABEL') . $self->colorize($source, 'DATA');
+    }
+    if ($skill->{readonly}) {
+        push @lines, $self->colorize("Read-only:   ", 'LABEL') . $self->colorize('yes (edit source file or .md to change)', 'DIM');
+    }
+
     if ($skill->{variables} && @{$skill->{variables}}) {
         push @lines, $self->colorize("Variables:   ", 'LABEL') . $self->colorize(join(", ", @{$skill->{variables}}), 'DATA');
     }
-    
+
     if ($skill->{created}) {
         push @lines, $self->colorize("Created:     ", 'LABEL') . $self->colorize(scalar(localtime($skill->{created})), 'DATA');
     }
@@ -1037,16 +1287,25 @@ Install a skill from the remote skills repository.
 
 sub _install_skill {
     my ($self, $sm, @args) = @_;
-    
+
+    # Parse scope flags first so the help and confirmation copy can
+    # mention where the skill is about to land.
+    my ($cleaned, $opts, $bad_scope) = $self->_parse_scope_flags(@args);
+    if ($bad_scope) {
+        $self->display_error_message("Invalid $bad_scope (use --global, --project, --session, or --scope=user|project|session)");
+        return;
+    }
+    @args = @$cleaned;
+
     my $name = shift @args;
-    
+
     unless ($name) {
-        $self->display_error_message("Usage: /skills install <name>");
+        $self->display_error_message("Usage: /skills install <name> [--global|--project|--session]");
         $self->writeline("", markdown => 0);
         $self->writeline("Use /skills search to see available skills", markdown => 0);
         return;
     }
-    
+
     # Check if already installed
     my $existing = $sm->get_skill($name);
     if ($existing && $existing->{type} eq 'custom') {
@@ -1090,6 +1349,7 @@ sub _install_skill {
     $self->display_section_header("SKILL INFO");
     $self->display_key_value("Name", $name, 15);
     $self->display_key_value("Description", $description, 15);
+    $self->display_key_value("Target scope", $opts->{scope} // 'project (default)', 15);
     my @lines = split /\n/, $content;
     $self->display_key_value("Lines", scalar(@lines), 15);
     
@@ -1139,11 +1399,17 @@ sub _install_skill {
         return;
     }
     
-    # Install by adding to custom skills
-    my $result = $sm->add_skill($name, $content, description => $description);
-    
+    # Install by adding to custom skills. Default scope is 'project' for
+    # installs because the typical use case is "add a skill to this
+    # project". --global overrides to user-level.
+    my $result = $sm->add_skill($name, $content, description => $description, %$opts);
+
     if ($result->{success}) {
-        $self->display_success_message("Skill '$name' installed successfully!");
+        my $scope = $result->{prompt}{scope} // 'user';
+        $self->display_success_message("Skill '$name' installed to $scope scope");
+        if ($result->{prompt}{source}) {
+            $self->writeline("  File: $result->{prompt}{source}", markdown => 0);
+        }
         $self->writeline("Use: /skills use $name", markdown => 0);
     } else {
         $self->display_error_message("Failed to install skill: " . $result->{error});
