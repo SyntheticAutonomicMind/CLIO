@@ -50,6 +50,7 @@ my %opts = (
     all => 0,
     verbose => 0,
     stop_on_failure => 0,
+    per_test_timeout => 120,
 );
 
 GetOptions(
@@ -59,6 +60,7 @@ GetOptions(
     'all' => \$opts{all},
     'verbose' => \$opts{verbose},
     'stop-on-failure' => \$opts{stop_on_failure},
+    'per-test-timeout=i' => \$opts{per_test_timeout},
     'help' => sub { usage(); exit 0; },
 ) or usage_and_exit();
 
@@ -85,6 +87,7 @@ my %results = (
     passed => 0,
     failed => 0,
     skipped => 0,
+    hung => 0,
     errors => [],
 );
 
@@ -180,12 +183,36 @@ sub run_test_file {
     
     # Run the test
     my $test_start = time();
-    my $output = `$command`;
+    my $output;
+    if ($opts{per_test_timeout} > 0) {
+        # Exit 124 from `timeout` means the inner command was killed at the limit.
+        $output = `timeout $opts{per_test_timeout} $command`;
+    } else {
+        $output = `$command`;
+    }
     my $exit_code = $? >> 8;
     my $test_duration = time() - $test_start;
     
     # Check result
-    if ($exit_code == 0) {
+    if ($exit_code == 124) {
+        $results{hung}++;
+        say sprintf("    [HUNG] HUNG (exceeded %ds timeout, %.2fs)", $opts{per_test_timeout}, $test_duration);
+
+        if ($output) {
+            say "    Last output before timeout:";
+            my @lines = split /\n/, $output;
+            my $shown = @lines > 20 ? @lines - 20 : 0;
+            for my $i ($shown .. $#lines) {
+                say "      $lines[$i]";
+            }
+        }
+
+        push @{$results{errors}}, {
+            file => $test_name,
+            exit_code => $exit_code,
+            output => $output,
+        };
+    } elsif ($exit_code == 0) {
         $results{passed}++;
         say sprintf("    ✅ PASSED (%.2fs)", $test_duration);
         
@@ -232,11 +259,12 @@ sub print_summary {
         $results{total} > 0 ? ($results{passed} / $results{total} * 100) : 0
     );
     say sprintf("Failed:         %d", $results{failed});
+    say sprintf("Hung:           %d", $results{hung});
     say sprintf("Skipped:        %d", $results{skipped});
     say sprintf("Duration:       %.2fs", $duration);
     say "=" x 80;
     
-    if ($results{failed} > 0) {
+    if ($results{failed} > 0 || $results{hung} > 0) {
         say "\n❌ FAILURES:";
         for my $error (@{$results{errors}}) {
             say "  - $error->{file} (exit code: $error->{exit_code})";
@@ -258,6 +286,8 @@ sub usage {
     say "  --all               Run all tests (default)";
     say "  --verbose           Show test output even for passing tests";
     say "  --stop-on-failure   Stop at first failure";
+    say "  --per-test-timeout=N  Kill tests that exceed N seconds (default: 120)";
+    say "                        Set to 0 to disable. Hung tests show as [HUNG] in output.";
     say "  --help              Show this help message";
     say "";
     say "Examples:";
