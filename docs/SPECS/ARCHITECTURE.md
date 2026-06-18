@@ -540,7 +540,7 @@ while (my $chunk = read_stream()) {
 The following were previously listed as future enhancements but are now implemented:
 
 1. **Plugin System** - Implemented via PluginManager.pm and PluginBridge.pm
-2. **Protocol Layer** - Implemented via lib/CLIO/Protocols/ (Architect, Editor, Validate, RepoMap, Recall, Puppeteer)
+2. **Protocol Layer** - Implemented via lib/CLIO/Protocols/ (Architect, Editor, Validate, Recall, Puppeteer)
 3. **Multi-Session** - Managed via Session/Manager.pm with session locking
 4. **MCP Integration** - Model Context Protocol support via lib/CLIO/MCP/
 
