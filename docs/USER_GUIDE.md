@@ -1407,7 +1407,6 @@ This is CLIO, a Perl-based AI code assistant. The structure is:
   - `UI/` - Terminal user interface (Chat, Theme, Markdown, ANSI)
   - `Session/` - Session management
   - `Coordination/` - Multi-agent coordination
-  - `Protocols/` - AI workflow protocols
   - `Security/` - Authentication and authorization
   - `Memory/` - Context and memory systems
   
