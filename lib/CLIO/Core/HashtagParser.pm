@@ -579,11 +579,6 @@ sub resolve_codebase {
 
     log_debug('HashtagParser', "Resolving codebase from: $base_dir");
 
-    # Codebase context: defer to the agent's filesystem tools for the
-    # actual map. This used to call CLIO::Protocols::RepoMap, which
-    # was unregistered, partially stubbed, and threw an error on the
-    # first directory it visited. The fallback notes here give the
-    # agent enough orientation to ask the right follow-up questions.
     my $content = "Codebase Overview\n";
     $content .= "=================\n\n";
     $content .= "Working Directory: $base_dir\n\n";
