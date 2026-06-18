@@ -561,6 +561,25 @@ INIT_PRD_PROMPT
 
 Create a new SkillManager instance.
 
+Skill storage is organized in three writable scopes plus read-only sources:
+
+=over 4
+
+=item B<user>     - C<~/.clio/skills.json> and C<~/.clio/skills/*.md>
+
+=item B<project>  - C<.clio/skills.json> and C<.clio/skills/*.md>
+
+=item B<session>  - C<sessions/<id>/skills.json>
+
+=item B<repository> - Git-cached SKILL.md files in C<~/.clio/skill-cache/>
+
+=item B<builtin>  - Hardcoded prompts shipped with CLIO
+
+=back
+
+Paths can be overridden with environment variables for testing and isolation:
+C<CLIO_USER_SKILLS>, C<CLIO_PROJECT_DIR> (skills.json lives at C<CLIO_PROJECT_DIR/.clio/skills.json>).
+
 Arguments:
 - debug: Enable debug output (optional)
 - user_skills_file: Path to user-level skills.json (optional)
@@ -574,12 +593,28 @@ Returns: SkillManager instance
 sub new {
     my ($class, %opts) = @_;
     
+    # Environment overrides take precedence only when the caller has not
+    # explicitly set the matching constructor argument. This keeps the
+    # public API stable while still allowing tests and tooling to point
+    # SkillManager at isolated directories.
+    my $user_file = $opts{user_skills_file}
+        || $ENV{CLIO_USER_SKILLS}
+        || get_config_file('skills.json');
+
+    my $project_file = $opts{project_skills_file};
+    unless ($project_file) {
+        my $project_dir = $ENV{CLIO_PROJECT_DIR} || File::Spec->curdir();
+        $project_file = File::Spec->catfile($project_dir, '.clio', 'skills.json');
+    }
+
     my $self = {
         debug => $opts{debug} || 0,
-        user_skills_file => $opts{user_skills_file} || 
-            get_config_file('skills.json'),
-        project_skills_file => $opts{project_skills_file} ||
-            File::Spec->catfile('.clio', 'skills.json'),
+        user_skills_file => $user_file,
+        project_skills_file => $project_file,
+        freeform_user_dir => $opts{freeform_user_dir} ||
+            File::Spec->catdir((File::Spec->splitpath($user_file))[1], 'skills'),
+        freeform_project_dir => $opts{freeform_project_dir} ||
+            File::Spec->catdir((File::Spec->splitpath($project_file))[1], 'skills'),
         session_skills_file => $opts{session_skills_file},
         skills => {},
         active_prompt => undef,
@@ -602,31 +637,184 @@ Priority: Session > Project > User > Built-in
 sub _load_skills {
     my ($self) = @_;
     
-    # Load built-in skills first (lowest priority)
-    $self->{skills} = { %BUILTIN_PROMPTS };
-    
+    # Built-in skills are the floor. They have scope 'builtin' and are
+    # read-only - they cannot be deleted or overwritten.
+    $self->{skills} = {};
+    for my $name (keys %BUILTIN_PROMPTS) {
+        my $skill = { %{$BUILTIN_PROMPTS{$name}} };
+        $skill->{scope} = 'builtin';
+        $skill->{_source_file} = undef;
+        $skill->{readonly} = 1;
+        $self->{skills}{$name} = $skill;
+    }
+
     # Load repository skills (low-medium priority)
     $self->_load_repository_skills();
-    
+
+    # Load freeform .md skills (user then project, both editable in-place)
+    $self->_load_freeform_skills($self->{freeform_user_dir}, 'user');
+    $self->_load_freeform_skills($self->{freeform_project_dir}, 'project') if $self->_has_project_scope();
+
     # Load user skills (medium priority)
     if (-f $self->{user_skills_file}) {
-        my $user_prompts = $self->_read_skills_file($self->{user_skills_file});
-        %{$self->{skills}} = (%{$self->{skills}}, %$user_prompts);
+        $self->_absorb_scoped_file($self->{user_skills_file}, 'user');
     }
     
     # Load project skills (high priority)
     if (-f $self->{project_skills_file}) {
-        my $project_prompts = $self->_read_skills_file($self->{project_skills_file});
-        %{$self->{skills}} = (%{$self->{skills}}, %$project_prompts);
+        $self->_absorb_scoped_file($self->{project_skills_file}, 'project');
     }
     
     # Load session skills (highest priority)
     if ($self->{session_skills_file} && -f $self->{session_skills_file}) {
-        my $session_prompts = $self->_read_skills_file($self->{session_skills_file});
-        %{$self->{skills}} = (%{$self->{skills}}, %$session_prompts);
+        $self->_absorb_scoped_file($self->{session_skills_file}, 'session');
     }
     
     log_debug('SkillManager', "Loaded " . scalar(keys %{$self->{skills}}) . " skills");
+}
+
+=head2 _has_project_scope
+
+Return true when the project skills file is meaningfully different from the
+user skills file. We skip the project layer when both paths resolve to the
+same file (which happens when running outside of any project directory),
+or when the project file would not land in a real C<./.clio/> of an
+existing project root. The latter is what protects callers that pass
+an explicit C<project_skills_file> for testing or tooling from having
+their C<add_skill> defaults silently land in the wrong scope.
+
+=cut
+
+sub _has_project_scope {
+    my ($self) = @_;
+
+    my $user = $self->{user_skills_file};
+    my $project = $self->{project_skills_file};
+    return 0 unless $user && $project;
+    return 0 if $user eq $project;
+
+    # Require the canonical layout: project file ends in /.clio/skills.json.
+    # This matches the path the SkillManager constructor produces and the
+    # paths real project layouts use. Anything else is treated as "no
+    # project context" so add_skill defaults stay safe.
+    my $project_root = $project;
+    $project_root =~ s|/\.clio/skills\.json\z||;
+    return -d $project_root ? 1 : 0;
+}
+
+=head2 _absorb_scoped_file
+
+Read a skills.json file and merge its entries into the in-memory skills
+hash, tagging each entry with its scope and the path it came from. The
+source file is recorded so subsequent _save_skills() calls can route
+changes back to the correct location.
+
+=cut
+
+sub _absorb_scoped_file {
+    my ($self, $file, $scope) = @_;
+
+    my $skills = $self->_read_skills_file($file);
+    for my $name (keys %$skills) {
+        my $skill = { %{$skills->{$name}} };
+        $skill->{scope} = $scope;
+        $skill->{_source_file} = $file;
+        # Mark all .json-backed custom skills as editable in their scope.
+        $skill->{readonly} = 0;
+        $skill->{type} = 'custom' unless $skill->{type};
+        $self->{skills}{$name} = $skill;
+    }
+}
+
+=head2 _load_freeform_skills
+
+Scan a directory for freeform SKILL.md and <name>.md files. Each file
+becomes a skill with type 'freeform' and scope 'user' or 'project'. The
+file path is recorded as the source so the AI can refer back to it.
+
+The user owns the .md file directly. CLIO reads it for the catalog and
+exposes it via /skills show, but does not write back. To remove a
+freeform skill, delete the file from disk.
+
+=cut
+
+sub _load_freeform_skills {
+    my ($self, $dir, $scope) = @_;
+
+    return unless $dir && -d $dir;
+
+    opendir my $dh, $dir or return;
+    my @entries = sort grep { $_ ne '.' && $_ ne '..' } readdir($dh);
+    closedir $dh;
+
+    for my $entry (@entries) {
+        next unless $entry =~ /\.(md|skill)\z/i;
+
+        my $path = File::Spec->catfile($dir, $entry);
+        next unless -f $path;
+
+        my $content = $self->_slurp($path);
+        next unless defined $content && length $content;
+
+        my ($name, $description) = $self->_parse_freeform_meta($content, $entry);
+        my $skill = {
+            name => $name,
+            description => $description,
+            prompt => $content,
+            variables => [],
+            type => 'freeform',
+            scope => 'freeform',
+            location => $scope,
+            source => $path,
+            _source_file => $path,
+            readonly => 1,  # user edits the file directly
+        };
+
+        # Freeform skills lose to anything more specific with the same name.
+        $self->{skills}{$name} = $skill
+            unless $self->{skills}{$name};
+    }
+}
+
+sub _slurp {
+    my ($self, $path) = @_;
+    open my $fh, '<:encoding(UTF-8)', $path or return undef;
+    my $content = do { local $/; <$fh> };
+    close $fh;
+    return $content;
+}
+
+sub _parse_freeform_meta {
+    my ($self, $content, $filename) = @_;
+
+    my $name = $filename;
+    $name =~ s/\.(md|skill)\z//i;
+    $name = lc($name);
+    $name =~ s/[^a-z0-9_-]+/-/g;
+    $name =~ s/-+/-/g;
+    $name =~ s/^-+//;
+    $name =~ s/-+\z//;
+
+    my $description = '';
+    if ($content =~ /\A---\s*\n(.*?)\n---/s) {
+        my $yaml = $1;
+        if ($yaml =~ /^name:\s*(.+?)\s*$/m) {
+            my $declared = $1;
+            $declared =~ s/^["']//;
+            $declared =~ s/["']$//;
+            $name = $declared if length $declared;
+        }
+        if ($yaml =~ /^description:\s*(.+?)\s*$/m) {
+            $description = $1;
+            $description =~ s/^["']//;
+            $description =~ s/["']$//;
+        }
+    }
+
+    $description = '(freeform skill, edit the .md file directly)'
+        unless length $description;
+
+    return ($name, $description);
 }
 
 =head2 _load_repository_skills
@@ -740,10 +928,20 @@ sub _read_skills_file {
 
 Add a new custom skill.
 
+Skills are written to the file matching their scope. The default scope is
+'user' when no .clio/ directory exists in the current working directory,
+otherwise 'project'. Pass C<scope =E<gt> 'user' | 'project' | 'session'>
+explicitly to override.
+
+Freeform skills cannot be added this way. Edit the .md file directly.
+
 Arguments:
 - $name: Skill name (alphanumeric, hyphens, underscores)
 - $prompt_text: Skill template with ${variables}
-- %opts: Optional parameters (description, tags)
+- %opts: Optional parameters
+    - description: Human-readable description
+    - tags: Arrayref of tags
+    - scope: 'user' (default), 'project', or 'session'
 
 Returns: { success => 1, prompt => $prompt } or { success => 0, error => $msg }
 
@@ -776,15 +974,50 @@ sub add_skill {
         };
     }
     
+    # Resolve target scope. Default to project when a .clio directory is
+    # present in the current working directory, otherwise user.
+    my $scope = $opts{scope} // ($self->_has_project_scope() ? 'project' : 'user');
+    unless ($scope =~ /^(user|project|session)$/) {
+        return {
+            success => 0,
+            error => "Invalid scope '$scope' (use 'user', 'project', or 'session')"
+        };
+    }
+
+    # Check for existing same-name skills that we shouldn't shadow.
+    if (my $existing = $self->{skills}{$name}) {
+        if (($existing->{scope} // '') eq 'builtin') {
+            return { success => 0, error => "Cannot override builtin prompt '$name'" };
+        }
+        if (($existing->{scope} // '') eq 'repository') {
+            return { success => 0, error => "Cannot shadow repository skill '$name' (disable the repository first)" };
+        }
+        if (($existing->{scope} // '') eq 'freeform') {
+            return { success => 0, error => "Cannot shadow freeform skill '$name' (edit the .md file directly)" };
+        }
+    }
+
     # Extract variables from prompt
     my @variables = $self->_extract_variables($prompt_text);
     
+    my $source_file = $self->_file_for_scope($scope);
+    unless ($source_file) {
+        return {
+            success => 0,
+            error => "No writable location for scope '$scope' (session_skills_file not configured)"
+        };
+    }
+
     my $prompt = {
         name => $name,
         description => $opts{description} || "Custom skill",
         prompt => $prompt_text,
         variables => \@variables,
         type => 'custom',
+        scope => $scope,
+        source => $source_file,
+        _source_file => $source_file,
+        readonly => 0,
         created => time(),
         modified => time(),
         usage_count => 0,
@@ -794,14 +1027,17 @@ sub add_skill {
     $self->{skills}{$name} = $prompt;
     $self->_save_skills();
     
-    log_debug('SkillManager', "Added prompt '$name' with variables: " . join(", ", @variables) . "");
+    log_debug('SkillManager', "Added $scope prompt '$name' with variables: " . join(", ", @variables) . "");
     
     return { success => 1, prompt => $prompt };
 }
 
 =head2 delete_skill
 
-Delete a custom skill.
+Delete a custom skill. Routes the deletion to the file that owns the
+skill. Built-in, repository, and freeform skills cannot be deleted this
+way - those sources have their own lifecycle (uninstall CLIO, remove the
+repository, delete the .md file).
 
 Arguments:
 - $name: Skill name
@@ -813,27 +1049,41 @@ Returns: { success => 1 } or { success => 0, error => $msg }
 sub delete_skill {
     my ($self, $name) = @_;
     
-    unless ($self->{skills}{$name}) {
+    my $skill = $self->{skills}{$name};
+    unless ($skill) {
         return { 
             success => 0, 
             error => "Skill '$name' not found" 
         };
     }
     
-    if ($self->{skills}{$name}{type} eq 'builtin') {
+    my $scope = $skill->{scope} // 'user';
+    if ($scope eq 'builtin') {
         return { 
             success => 0, 
             error => "Cannot delete builtin prompt" 
         };
     }
     
-    if ($self->{skills}{$name}{type} eq 'repository') {
+    if ($scope eq 'repository') {
         return { 
             success => 0, 
             error => "Cannot delete repository skill. Remove the repository or disable it instead." 
         };
     }
     
+    if ($scope eq 'freeform') {
+        return {
+            success => 0,
+            error => "Cannot delete freeform skill '$name' (edit the .md file at: $skill->{source})"
+        };
+    }
+
+    # If the user explicitly added a same-name skill to a higher-priority
+    # scope (project shadows user), deleting the project entry should
+    # restore the user version. We surface the original 'user' skill by
+    # re-reading the user file. The /skills command handler does this for
+    # us before calling delete_skill when needed.
     delete $self->{skills}{$name};
     $self->_save_skills();
     
@@ -861,23 +1111,43 @@ sub get_skill {
 
 =head2 list_skills
 
-List all available skills.
+List all available skills, grouped by type and scope.
 
-Returns: { custom => [@names], builtin => [@names], all => [@names] }
+The 'by_scope' bucket is the modern grouping the UI and tool prefer:
+
+    { builtin => [...], user => [...], project => [...], session => [...],
+      repository => [...], freeform => [...] }
+
+The legacy 'custom' / 'builtin' / 'repository' buckets are kept for
+backwards compatibility and aggregate all .json-backed custom skills
+(user + project + session + freeform) under 'custom'.
+
+Returns: { custom => [...], builtin => [...], repository => [...],
+           by_scope => { ... }, all => [...] }
 
 =cut
 
 sub list_skills {
     my ($self) = @_;
 
-    my @custom = grep { $self->{skills}{$_}{type} eq 'custom' } keys %{$self->{skills}};
-    my @builtin = grep { $self->{skills}{$_}{type} eq 'builtin' } keys %{$self->{skills}};
-    my @repository = grep { $self->{skills}{$_}{type} eq 'repository' } keys %{$self->{skills}};
+    my @custom = grep { ($self->{skills}{$_}{type} // '') eq 'custom' } keys %{$self->{skills}};
+    my @builtin = grep { ($self->{skills}{$_}{type} // '') eq 'builtin' } keys %{$self->{skills}};
+    my @repository = grep { ($self->{skills}{$_}{type} // '') eq 'repository' } keys %{$self->{skills}};
+
+    my %by_scope = (
+        builtin => [], user => [], project => [], session => [],
+        repository => [], freeform => [],
+    );
+    for my $name (keys %{$self->{skills}}) {
+        my $scope = $self->{skills}{$name}{scope} // 'user';
+        push @{$by_scope{$scope} //= []}, $name;
+    }
 
     return {
         custom => \@custom,
         builtin => \@builtin,
         repository => \@repository,
+        by_scope => \%by_scope,
         all => [keys %{$self->{skills}}]
     };
 }
@@ -885,27 +1155,33 @@ sub list_skills {
 =head2 list_skill_catalog
 
 Return a compact catalog of all installed skills for injection into the
-system prompt. Each entry exposes only what the agent needs to decide
-whether to load a skill: name, description, type, and template variables.
+system prompt. Each entry exposes what the agent needs to decide whether
+to load a skill: name, description, type, scope, source path, and
+template variables.
 
 Variables let the agent know what context to provide when invoking a skill.
 Descriptions are truncated to keep the catalog compact.
 
 Arguments:
 - $max_description: Truncate description to this many chars (default: 200)
+- $scope_filter: Optional arrayref of scopes to include (e.g. ['user','project'])
+    Returns all scopes when omitted.
 
-Returns: Arrayref of { name, description, type, variables }
+Returns: Arrayref of { name, description, type, scope, source, variables }
 
 =cut
 
 sub list_skill_catalog {
-    my ($self, $max_description) = @_;
+    my ($self, $max_description, $scope_filter) = @_;
 
     $max_description //= 200;
+    my %allowed = $scope_filter ? map { $_ => 1 } @$scope_filter : ();
 
     my @catalog;
     for my $name (sort keys %{$self->{skills}}) {
         my $skill = $self->{skills}{$name};
+        my $scope = $skill->{scope} // 'user';
+        next if %allowed && !$allowed{$scope};
         my $desc = $skill->{description} || '';
         if (length($desc) > $max_description) {
             $desc = substr($desc, 0, $max_description - 3) . '...';
@@ -914,6 +1190,9 @@ sub list_skill_catalog {
             name => $name,
             description => $desc,
             type => $skill->{type} || 'custom',
+            scope => $scope,
+            source => $skill->{source} || $skill->{_source_file},
+            readonly => $skill->{readonly} ? 1 : 0,
             variables => $skill->{variables} || [],
         };
     }
@@ -949,11 +1228,13 @@ sub render_skill_content {
 
 Get a skill with its full prompt content and metadata. Used by the
 skill_operations tool's "load" operation. Does not mutate session state.
+The returned hashref includes scope and source so the agent knows where
+the skill lives and whether it can be modified.
 
 Arguments:
 - $name: Skill name
 
-Returns: Skill hashref with prompt and metadata, or undef if not found
+Returns: Skill hashref with prompt, metadata, scope, source, readonly, or undef if not found
 
 =cut
 
@@ -969,6 +1250,9 @@ sub get_skill_full {
         prompt => $skill->{prompt} || '',
         variables => $skill->{variables} || [],
         type => $skill->{type} || 'custom',
+        scope => $skill->{scope} // 'user',
+        source => $skill->{source} || $skill->{_source_file},
+        readonly => $skill->{readonly} ? 1 : 0,
     };
 }
 
@@ -999,8 +1283,10 @@ sub execute_skill {
     # Substitute variables
     my $rendered = $self->_substitute_variables($prompt->{prompt}, $context);
     
-    # Update usage count (only for custom skills)
-    if ($prompt->{type} eq 'custom') {
+    # Update usage count for any skill whose backing store is a writable
+    # .json file. Built-in, repository, and freeform skills are immutable
+    # from the runtime's perspective.
+    if (!$prompt->{readonly} && $prompt->{_source_file}) {
         $prompt->{usage_count}++;
         $prompt->{modified} = time();
         $self->_save_skills();
@@ -1205,38 +1491,125 @@ Save custom skills to user-level JSON file.
 sub _save_skills {
     my ($self) = @_;
     
-    # Only save custom skills to user file
-    my %custom_prompts = map { 
-        $_ => $self->{skills}{$_} 
-    } grep { 
-        $self->{skills}{$_}{type} eq 'custom' 
-    } keys %{$self->{skills}};
-    
-    my $data = {
-        version => '1.0',
-        skills => \%custom_prompts,
-        active_prompt => $self->{active_prompt},
-        metadata => {
-            last_updated => time(),
-            total_prompts => scalar(keys %custom_prompts)
+    # Group skills by their backing file. Each scope has its own .json
+    # file (user, project, session). Read-only sources (builtin,
+    # repository, freeform) are excluded from writes because we never
+    # own their backing store.
+    my %by_file;
+    for my $name (keys %{$self->{skills}}) {
+        my $skill = $self->{skills}{$name};
+        next if $skill->{readonly};
+        next unless $skill->{_source_file};
+        push @{$by_file{$skill->{_source_file}}}, $name;
+    }
+
+    my $total_written = 0;
+    for my $file (keys %by_file) {
+        my $skills_in_file = {};
+        my $active_in_file = undef;
+        for my $name (@{$by_file{$file}}) {
+            my $skill = $self->{skills}{$name};
+            # Strip internal-only fields before persisting.
+            my $clean = { %$skill };
+            delete $clean->{_source_file};
+            $skills_in_file->{$name} = $clean;
+            $active_in_file //= $name;
         }
-    };
+
+        my $data = {
+            version => '1.0',
+            skills => $skills_in_file,
+            active_prompt => $file eq $self->{user_skills_file} ? $self->{active_prompt} : undef,
+            metadata => {
+                last_updated => time(),
+                total_prompts => scalar(keys %$skills_in_file)
+            }
+        };
+
+        # Ensure directory exists.
+        my ($volume, $dir, $name_part) = File::Spec->splitpath($file);
+        my $full_dir = File::Spec->catpath($volume, $dir, '');
+        make_path($full_dir) unless -d $full_dir;
     
-    # Ensure directory exists
-    my ($volume, $dir, $file) = File::Spec->splitpath($self->{user_skills_file});
-    my $full_dir = File::Spec->catpath($volume, $dir, '');
-    make_path($full_dir) unless -d $full_dir;
+        # Write JSON atomically: temp file then rename, so a crash
+        # mid-write never leaves a half-truncated skills.json behind.
+        my $tmp_file = "$file.tmp.$$";
+        open my $fh, '>:encoding(UTF-8)', $tmp_file or do {
+            log_error('SkillManager', "Cannot write to $tmp_file: $!");
+            next;
+        };
+        print $fh encode_json($data);
+        close $fh or do {
+            log_error('SkillManager', "Cannot close $tmp_file: $!");
+            next;
+        };
+        rename $tmp_file, $file or do {
+            log_error('SkillManager', "Cannot rename $tmp_file to $file: $!");
+            next;
+        };
     
-    # Write JSON
-    open my $fh, '>', $self->{user_skills_file} or do {
-        log_error('SkillManager', "Cannot write to $self->{user_skills_file}: $!");
-        return;
-    };
-    print $fh encode_json($data);
-    close $fh;
+        $total_written += scalar(keys %$skills_in_file);
+        log_debug('SkillManager', "Saved " . scalar(keys %$skills_in_file) .
+            " skills to $file");
+    }
     
-    log_debug('SkillManager', "Saved " . scalar(keys %custom_prompts) .
-        " custom skills to $self->{user_skills_file}");
+    if ($total_written == 0) {
+        log_debug('SkillManager', "No writable skills to save");
+    }
+}
+
+=head2 _file_for_scope
+
+Resolve the on-disk file that backs a given scope. Returns undef for
+the session scope when no session_skills_file is configured.
+
+=cut
+
+sub _file_for_scope {
+    my ($self, $scope) = @_;
+
+    return $self->{user_skills_file}    if $scope eq 'user';
+    return $self->{project_skills_file} if $scope eq 'project';
+    return $self->{session_skills_file} if $scope eq 'session' && $self->{session_skills_file};
+    return undef;
+}
+
+=head2 scope_for_skill
+
+Return the scope of a registered skill, or undef if the name is unknown.
+
+=cut
+
+sub scope_for_skill {
+    my ($self, $name) = @_;
+    my $skill = $self->{skills}{$name} or return undef;
+    return $skill->{scope} // 'user';
+}
+
+=head2 source_for_skill
+
+Return the on-disk file or path backing a skill. Built-in skills return
+undef since they have no backing file.
+
+=cut
+
+sub source_for_skill {
+    my ($self, $name) = @_;
+    my $skill = $self->{skills}{$name} or return undef;
+    return $skill->{source} || $skill->{_source_file};
+}
+
+=head2 reload
+
+Drop the in-memory skill cache and re-read from disk. Useful after
+editing a freeform .md file or after manually changing a skills.json.
+
+=cut
+
+sub reload {
+    my ($self) = @_;
+    $self->_load_skills();
+    return 1;
 }
 
 1;
