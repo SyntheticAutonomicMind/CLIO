@@ -1819,3 +1819,5 @@ sub _query_llama_props {
 L<CLIO::Core::GitHubCopilotModelsAPI>, L<CLIO::Core::APIManager>
 
 =cut
+
+1;
