@@ -27,7 +27,7 @@ CLIO::Protocols::Handler - Base class for CLIO protocol handlers
 =head1 DESCRIPTION
 
 Handler is the abstract base class for all CLIO protocol implementations
-(Architect, Editor, Validate, RepoMap, TreeSit, etc.). It provides common
+(Architect, Editor, Validate, TreeSit, etc.). It provides common
 functionality for:
 
 - Input validation (base64 encoding, required fields)

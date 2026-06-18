@@ -232,8 +232,6 @@ clio/
           Manager.pm        # Protocol registry
           Architect.pm      # Architecture analysis
           Editor.pm         # Code editing
-          Validate.pm       # Validation
-          RepoMap.pm        # Repository mapping
           Recall.pm         # Memory recall
       Security/             # Auth/authz
           Auth.pm           # Authentication

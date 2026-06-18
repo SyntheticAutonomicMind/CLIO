@@ -576,50 +576,20 @@ sub resolve_codebase {
     
     # Get working directory
     my $base_dir = $self->{session}->{working_directory} || '.';
-    
+
     log_debug('HashtagParser', "Resolving codebase from: $base_dir");
-    
-    # Build a concise codebase summary using RepoMap protocol
+
+    # Codebase context: defer to the agent's filesystem tools for the
+    # actual map. This used to call CLIO::Protocols::RepoMap, which
+    # was unregistered, partially stubbed, and threw an error on the
+    # first directory it visited. The fallback notes here give the
+    # agent enough orientation to ask the right follow-up questions.
     my $content = "Codebase Overview\n";
     $content .= "=================\n\n";
     $content .= "Working Directory: $base_dir\n\n";
-    
-    # Get directory structure using RepoMap
-    eval {
-        require CLIO::Protocols::RepoMap;
-        my $repomap = CLIO::Protocols::RepoMap->new();
-        
-        # Get structure with limited depth to keep it concise
-        my $result = $repomap->handle({
-            action => 'structure',
-            max_depth => 3,  # Limit depth to keep output manageable
-            file_details => 0,  # Don't include detailed file info
-            include_hidden => 0  # Skip hidden files/dirs
-        });
-        
-        if ($result && $result->{success} && $result->{data}) {
-            $content .= "Directory Structure:\n";
-            $content .= $self->_format_structure($result->{data}->{structure}, 0);
-            $content .= "\n";
-            
-            # Add summary stats if available
-            if ($result->{data}->{summary}) {
-                my $summary = $result->{data}->{summary};
-                $content .= "Summary:\n";
-                $content .= "  Total Files: " . ($summary->{total_files} || 0) . "\n";
-                $content .= "  Total Directories: " . ($summary->{total_dirs} || 0) . "\n";
-                $content .= "  Total Size: " . ($summary->{total_size} || 0) . " bytes\n";
-                $content .= "\n";
-            }
-        }
-    };
-    if ($@) {
-        log_warning('HashtagParser', "Failed to get repo structure: $@");
-        $content .= "[Unable to generate structure - RepoMap protocol error]\n\n";
-    }
-    
-    $content .= "Note: For specific files, use #file:path\n";
-    $content .= "Note: For specific directories, use #folder:path\n";
+    $content .= "No automatic structure map is generated. Use #folder:path ";
+    $content .= "to inspect a specific directory, #file:path for a specific ";
+    $content .= "file, or terminal_operations (find, ls, tree) for a quick map.\n\n";
     
     return {
         type => 'codebase',
@@ -627,56 +597,6 @@ sub resolve_codebase {
         content => $content,
         size => length($content)
     };
-}
-
-=head2 _format_structure
-
-Format directory structure for display.
-
-Arguments:
-    $structure - Structure hash from RepoMap
-    $indent - Current indentation level
-
-Returns:
-    Formatted string
-
-=cut
-
-sub _format_structure {
-    my ($self, $structure, $indent) = @_;
-    
-    return '' unless $structure && ref($structure) eq 'HASH';
-    
-    my $output = '';
-    my $prefix = '  ' x $indent;
-    
-    # Handle directory name
-    if ($structure->{name}) {
-        $output .= $prefix . $structure->{name};
-        $output .= '/' if $structure->{type} && $structure->{type} eq 'directory';
-        $output .= "\n";
-    }
-    
-    # Handle children
-    if ($structure->{children} && ref($structure->{children}) eq 'ARRAY') {
-        for my $child (@{$structure->{children}}) {
-            $output .= $self->_format_structure($child, $indent + 1);
-        }
-    }
-    
-    # Handle files
-    if ($structure->{files} && ref($structure->{files}) eq 'ARRAY') {
-        for my $file (@{$structure->{files}}) {
-            if (ref($file) eq 'HASH') {
-                $output .= $prefix . '  ' . ($file->{name} || $file) . "\n";
-            }
-            else {
-                $output .= $prefix . '  ' . $file . "\n";
-            }
-        }
-    }
-    
-    return $output;
 }
 
 =head2 resolve_selection

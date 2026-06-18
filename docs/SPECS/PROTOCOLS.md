@@ -6,7 +6,7 @@
 
 ## Overview
 
-**Current Status:** CLIO has protocol modules for structured workflows (Architect, Editor, Validate, RepoMap, Recall, Puppeteer). The base64-encoded protocol format described below is a planned extension for tool composition and parameter encoding.
+**Current Status:** CLIO has protocol modules for structured workflows (Architect, Editor, Validate, Recall, Puppeteer). The base64-encoded protocol format described below is a planned extension for tool composition and parameter encoding.
 
 **What Are Protocols?**
 
@@ -298,7 +298,7 @@ CLIO uses **tool-based architecture** with protocol modules for structured workf
 - Tool registry
 - Action descriptions
 - Structured tool results
-- Protocol modules (Architect, Editor, Validate, RepoMap, Recall, Puppeteer)
+- Protocol modules (Architect, Editor, Validate, Recall, Puppeteer)
 
 **What's planned:**
 - Protocol handlers
@@ -348,4 +348,4 @@ CLIO uses **tool-based architecture** with protocol modules for structured workf
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-**Note:** CLIO has active protocol modules (Architect, Editor, Validate, RepoMap, Recall, Puppeteer) that provide structured workflows. The base64-encoded protocol format for tool composition is planned future architecture that will be added when advanced features require it.
+**Note:** CLIO has active protocol modules (Architect, Editor, Validate, Recall, Puppeteer) that provide structured workflows. The base64-encoded protocol format for tool composition is planned future architecture that will be added when advanced features require it.

@@ -45,7 +45,7 @@ Responsibilities:
 
 Protocol syntax: [PROTOCOL_NAME:param1=value1:param2=value2:...]
 
-Supported protocols: ARCHITECT, EDITOR, VALIDATE, REPOMAP, TREESIT,
+Supported protocols: ARCHITECT, EDITOR, VALIDATE, TREESIT,
 RECALL, MEMORY, YARN, MODEL, etc.
 
 =head1 METHODS

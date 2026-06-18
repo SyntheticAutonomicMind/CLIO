@@ -1215,7 +1215,6 @@ Protocols are higher-level analysis frameworks that combine multiple tools for s
 | **Architect** | Problem analysis and solution design - breaks down problems, proposes architectures |
 | **Editor** | Precise code modification - targeted edits with context awareness |
 | **Validate** | Comprehensive validation - syntax checking, style compliance, security scanning |
-| **RepoMap** | Repository structure analysis - builds a map of your codebase |
 | **Recall** | Historical context retrieval - finds relevant past work |
 | **Puppeteer** | Multi-project orchestration - detects child projects and delegates work to project-scoped agents |
 
