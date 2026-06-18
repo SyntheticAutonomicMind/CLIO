@@ -10,6 +10,7 @@ use lib "$RealBin/../lib";
 
 use CLIO::Session::Manager;
 use CLIO::Memory::LongTerm;
+use CLIO::Core::PromptManager;
 use CLIO::Core::WorkflowOrchestrator;
 use Data::Dumper;
 
@@ -97,7 +98,15 @@ if ($test_ltm) {
     print "   LTM has " . scalar(@$test_disc) . " discoveries\n";
 }
 
-my $system_prompt = $orchestrator->_build_system_prompt($session);
+my $system_prompt;
+eval {
+    my $pm = CLIO::Core::PromptManager->new(debug => 1);
+    $system_prompt = $pm->get_system_prompt($session);
+};
+if ($@) {
+    print "   [FAIL] PromptManager->get_system_prompt errored: $@\n";
+    $system_prompt = '';
+}
 
 # Check if LTM patterns are in the prompt
 if ($system_prompt =~ /Long-Term Memory Patterns/) {
