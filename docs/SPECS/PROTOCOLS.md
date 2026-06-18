@@ -6,9 +6,11 @@
 
 ## Overview
 
-**Current Status:** CLIO has protocol modules for structured workflows (Architect, Editor, Validate, Recall, Puppeteer). The base64-encoded protocol format described below is a planned extension for tool composition and parameter encoding.
+**Current Status:** CLIO does not have a protocol layer. Tools in `lib/CLIO/Tools/` are the primary interface the AI uses; `CLIO::Protocols::Puppeteer` exists as a multi-project topology helper called directly from `SubAgent.pm` and `PromptManager.pm`. The base64-encoded protocol format described below is a planned future extension that has not been implemented.
 
-**What Are Protocols?**
+**Historical Note (for context only):**
+
+The protocol layer was removed in June 2026. Earlier versions registered 14 protocol handlers (`FILE_OP`, `GIT`, `RAG`, `MEMORY`, `RECALL`, `SEARCH`, `URL_FETCH`, `WEB_SEARCH`, `CODE_ANALYSIS`, `VALIDATE`, `PATTERN`, `REFACTOR`, `SECURITY`, `AUDIT`) via `CLIO::Protocols::Manager->register()`, but the actual code was never exercised - 12 of the 14 handler classes were missing, and the 2 that existed (`Recall`, `Validate`) defined `process_request()` while the Manager dispatched `handle()`. The active architecture is the tool registry in `lib/CLIO/Tools/`.
 
 Protocols are higher-level abstractions over tools, providing semantic grouping and simplified interfaces for related operations. They enable the AI to perform complex multi-step operations through structured commands.
 
@@ -290,15 +292,14 @@ Protocol Manager:
 
 ## Current Implementation
 
-**As of January 2026:**
+**As of June 2026:**
 
-CLIO uses **tool-based architecture** with protocol modules for structured workflows. The base64-encoded protocol format is not yet implemented.
+CLIO uses a **tool-based architecture** exclusively. The protocol modules that previously shipped in `lib/CLIO/Protocols/` (Architect, Editor, Validate, Recall) have been removed. `CLIO::Protocols::Puppeteer` remains as a non-protocol helper class for multi-project coordination.
 **What works today:**
 - Direct tool calls via AI
 - Tool registry
 - Action descriptions
 - Structured tool results
-- Protocol modules (Architect, Editor, Validate, Recall, Puppeteer)
 
 **What's planned:**
 - Protocol handlers
@@ -348,4 +349,4 @@ CLIO uses **tool-based architecture** with protocol modules for structured workf
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-**Note:** CLIO has active protocol modules (Architect, Editor, Validate, Recall, Puppeteer) that provide structured workflows. The base64-encoded protocol format for tool composition is planned future architecture that will be added when advanced features require it.
+**Note:** CLIO does not have a working protocol layer. Tool calls are the only mechanism for the AI to invoke functions. The base64-encoded protocol format described in this document has never been implemented.

@@ -128,23 +128,6 @@ use CLIO::Core::APIManager;
 use CLIO::Core::SimpleAIAgent;
 use CLIO::Core::Config;
 use CLIO::Session::Manager;
-use CLIO::Protocols::Manager;
-
-# Register ALL protocol handlers including enhanced protocols
-CLIO::Protocols::Manager->register(name => 'FILE_OP', handler => 'CLIO::Protocols::FileOp');
-CLIO::Protocols::Manager->register(name => 'GIT', handler => 'CLIO::Protocols::Git');
-CLIO::Protocols::Manager->register(name => 'RAG', handler => 'CLIO::Protocols::RAG');
-CLIO::Protocols::Manager->register(name => 'MEMORY', handler => 'CLIO::Protocols::Memory');
-CLIO::Protocols::Manager->register(name => 'RECALL', handler => 'CLIO::Protocols::Recall');
-CLIO::Protocols::Manager->register(name => 'SEARCH', handler => 'CLIO::Protocols::Search');
-CLIO::Protocols::Manager->register(name => 'URL_FETCH', handler => 'CLIO::Protocols::UrlFetch');
-CLIO::Protocols::Manager->register(name => 'WEB_SEARCH', handler => 'CLIO::Protocols::WebSearch');
-CLIO::Protocols::Manager->register(name => 'CODE_ANALYSIS', handler => 'CLIO::Protocols::CodeAnalysis');
-CLIO::Protocols::Manager->register(name => 'VALIDATE', handler => 'CLIO::Protocols::Validate');
-CLIO::Protocols::Manager->register(name => 'PATTERN', handler => 'CLIO::Protocols::Pattern');
-CLIO::Protocols::Manager->register(name => 'REFACTOR', handler => 'CLIO::Protocols::Refactor');
-CLIO::Protocols::Manager->register(name => 'SECURITY', handler => 'CLIO::Protocols::Security');
-CLIO::Protocols::Manager->register(name => 'AUDIT', handler => 'CLIO::Protocols::Audit');
 
 # Initialize configuration system
 my $config = CLIO::Core::Config->new(debug => $debug);
@@ -748,17 +731,7 @@ if ($input) {
     if ($broker_client && $ENV{CLIO_PUPPETEER} && $cli_ui->{host_proto}) {
         $cli_ui->{host_proto}->set_broker_relay($broker_client);
     }
-    
-    # Handle protocol commands first (unchanged)
-    if ($input =~ /^\[MEMORY:/) {
-        my $resp = CLIO::Protocols::Manager->handle($input, $session);
-        $session->save();
-        log_debug('Main', "Session saved to $session->{state}->{file}");
-        require Data::Dumper;
-        print Data::Dumper::Dumper($resp);
-        exit 0;
-    }
-    
+
     # Handle slash commands locally (don't send to AI)
     if ($input =~ /^\/(\S+)/) {
         my $cmd_name = lc($1);
@@ -869,7 +842,7 @@ if ($input) {
             }
             
             if ($debug && @{$result->{protocols_used}}) {
-                log_debug('Main', 'Protocols used: ' . join(", ", @{$result->{protocols_used}}));
+                log_debug('Main', 'Tools used: ' . join(", ", @{$result->{protocols_used}}));
             }
         } else {
             my $error_msg = "[ERROR] " . join("; ", @{$result->{errors}});

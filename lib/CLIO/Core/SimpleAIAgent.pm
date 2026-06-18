@@ -17,9 +17,9 @@ CLIO::Core::SimpleAIAgent - Simplified AI agent that bypasses broken natural lan
 
 =head1 DESCRIPTION
 
-This module provides a working AI interface that directly calls the API when the 
+This module provides a working AI interface that directly calls the API when the
 main natural language processing system is broken. It ensures the system works
-for both conversational and protocol-based requests.
+for conversational requests.
 
 =cut
 
@@ -156,28 +156,6 @@ sub process_user_request {
     };
     
     log_debug('SimpleAIAgent', "Processing request: '$user_input'");
-    
-    # Check if it's a direct protocol command
-    if ($user_input =~ /^\[([A-Z_]+):/) {
-        log_debug('SimpleAIAgent', "Direct protocol command detected");
-        # Let the protocol manager handle it
-        eval {
-            require CLIO::Protocols::Manager;
-            my $protocol_result = CLIO::Protocols::Manager->handle($user_input, $self->{session});
-            if ($protocol_result && $protocol_result->{success}) {
-                $result->{final_response} = $protocol_result->{response} || "Protocol executed successfully";
-                $result->{protocols_used} = [$1];
-            } else {
-                $result->{final_response} = "Protocol execution failed: " . ($protocol_result->{error} || "Unknown error");
-                $result->{success} = 0;
-            }
-        };
-        if ($@) {
-            $result->{final_response} = "Protocol execution error: $@";
-            $result->{success} = 0;
-        }
-        return $result;
-    }
     
     # Use WorkflowOrchestrator for all natural language requests
     log_debug('SimpleAIAgent', "Using WorkflowOrchestrator for natural language request");
