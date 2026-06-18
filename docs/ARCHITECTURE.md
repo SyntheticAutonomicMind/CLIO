@@ -252,35 +252,21 @@ Tools can be restricted via `--enable` (allowlist) or `--disable` (blocklist) CL
 - Output goes to STDERR with `[DEBUG]`, `[ERROR]`, `[TRACE]` prefixes
 - Tool operations logged via ToolLogger
 
-### 9. Protocol System
-**Files:** `lib/CLIO/Protocols/`
+### 9. Multi-Project Topology
+**Files:** `lib/CLIO/Protocols/Puppeteer.pm`
 
-| Protocol | File | Purpose |
-|----------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Architect | `Architect.pm` | Problem-solving design |
-| Editor | `Editor.pm` | Code modification format |
-| Validate | `Validate.pm` | Code validation |
-| Recall | `Recall.pm` | Memory recall |
-| Puppeteer | `Puppeteer.pm` | Multi-project topology detection and delegation |
-| Handler | `Handler.pm` | Protocol base class |
-| Manager | `Manager.pm` | Protocol registry |
+`Puppeteer.pm` is a helper class (not a registered protocol) called directly from `SubAgent.pm` and `PromptManager.pm` to discover child projects and load their instructions. It is not part of the tool architecture.
 
-**How it works:**
-1. AI returns natural language protocol commands
-2. Protocol handlers are invoked directly by the AI agent
-3. Manager looks up protocol handler
-4. Handler executes the protocol
-5. Results sent back to AI
+CLIO has no other protocol modules. The earlier `Architect.pm`, `Editor.pm`, `Validate.pm`, `Recall.pm`, `Manager.pm`, and `Handler.pm` were removed in June 2026 because they were unregistered, their handler classes did not exist, and the dispatch method name (`handle` vs `process_request`) was inconsistent. The tool architecture in `lib/CLIO/Tools/` is the active, working layer.
 
 ### 10. Multi-Agent Coordination
-**Files:** `lib/CLIO/Coordination/`, `lib/CLIO/Protocols/Puppeteer.pm`, `lib/CLIO/UI/HostProtocol.pm`
+**Files:** `lib/CLIO/Coordination/`, `lib/CLIO/UI/HostProtocol.pm`
 
 | Component | File | Purpose |
 |-----------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------|
 | Broker | `Broker.pm` | Unix socket coordination server (messaging, locks, status relay) |
 | Client | `Client.pm` | Broker connection API |
 | SubAgent | `SubAgent.pm` | Process spawning and lifecycle management |
-| Puppeteer | `Puppeteer.pm` | Topology detection and project-scoped agent delegation |
 | HostProtocol | `HostProtocol.pm` | OSC event emission and broker relay for agent status |
 
 **How it works:**

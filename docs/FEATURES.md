@@ -38,7 +38,6 @@ This document is the deep reference - the place to understand the detailed capab
 14. [MCP Integration](#14-mcp-integration)
 15. [Security](#15-security)
 16. [Themes and Styles](#16-themes-and-styles)
-17. [Protocols](#17-protocols)
 18. [Undo System](#18-undo-system)
 19. [Billing and Usage Tracking](#19-billing-and-usage-tracking)
 20. [Host Application Protocol](#20-host-application-protocol)
@@ -1203,22 +1202,6 @@ CLIO renders markdown in the terminal with full support for:
 - Horizontal rules
 - Mathematical formulas (LaTeX rendering in terminal)
 - Links and references
-
----
-
-## 17. Protocols
-
-Protocols are higher-level analysis frameworks that combine multiple tools for specific tasks. They're used internally by the AI and through custom instructions.
-
-| Protocol | Purpose |
-|----------|---------|
-| **Architect** | Problem analysis and solution design - breaks down problems, proposes architectures |
-| **Editor** | Precise code modification - targeted edits with context awareness |
-| **Validate** | Comprehensive validation - syntax checking, style compliance, security scanning |
-| **Recall** | Historical context retrieval - finds relevant past work |
-| **Puppeteer** | Multi-project orchestration - detects child projects and delegates work to project-scoped agents |
-
-Protocols are invoked automatically when the AI determines they're needed, or can be triggered through natural language requests.
 
 ---
 

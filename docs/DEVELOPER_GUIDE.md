@@ -11,9 +11,8 @@
 3. [Code Organization](#code-organization)
 4. [Development Setup](#development-setup)
 5. [Adding New Tools](#adding-new-tools)
-6. [Adding New Protocols](#adding-new-protocols)
-7. [Adding New AI Providers](#adding-new-ai-providers)
-8. [Testing](#testing)
+6. [Adding New AI Providers](#adding-new-ai-providers)
+7. [Testing](#testing)
 9. [Code Standards](#code-standards)
 10. [Contribution Workflow](#contribution-workflow)
 
@@ -227,12 +226,6 @@ clio/
           Broker.pm         # Coordination server (auto-exits after 5 min idle)
           Client.pm         # Broker connection API
           SubAgent.pm       # Process spawning
-      Protocols/            # Complex workflows
-          Handler.pm        # Protocol base class
-          Manager.pm        # Protocol registry
-          Architect.pm      # Architecture analysis
-          Editor.pm         # Code editing
-          Recall.pm         # Memory recall
       Security/             # Auth/authz
           Auth.pm           # Authentication
           Authz.pm          # Authorization
@@ -292,7 +285,6 @@ clio/
 - **UI**: `CLIO::UI::*` - User interface components
 - **Session**: `CLIO::Session::*` - Session management
 - **Coordination**: `CLIO::Coordination::*` - Multi-agent coordination
-- **Protocols**: `CLIO::Protocols::*` - Complex AI workflows
 - **Security**: `CLIO::Security::*` - Authentication and authorization
 - **Memory**: `CLIO::Memory::*` - Context and memory system
 - **Providers**: `CLIO::Providers::*` - Native API provider modules
@@ -573,76 +565,6 @@ return $self->operation_success($result_data, "Custom success message");
 # Error
 return $self->operation_error("Error message explaining what went wrong");
 ```
-
----------------------------------------------------
-
-## Adding New Protocols
-
-### Protocol Pattern
-
-Protocols are a higher-level abstraction over tools, providing semantic grouping of related operations.
-
-**Example: Database Protocol**
-
-Create `lib/CLIO/Protocols/Database.pm`:
-
-```perl
-package CLIO::Protocols::Database;
-
-use strict;
-use warnings;
-use DBI;  # If we added CPAN support (we don't currently)
-
-sub new {
-    my ($class, %opts) = @_;
-    
-    my $self = {
-        debug => $opts{debug} || 0,
-        connection => undef,
-    };
-    
-    return bless $self, $class;
-}
-
-sub execute {
-    my ($self, $command, $session) = @_;
-    
-    # Parse protocol command format
-    if ($command =~ /^\[DATABASE:(.+)\]$/) {
-        my $params_str = $1;
-        my %params = $self->parse_params($params_str);
-        
-        my $action = $params{action};
-        
-        if ($action eq 'query') {
-            return $self->handle_query(\%params);
-        }
-        elsif ($action eq 'execute') {
-            return $self->handle_execute(\%params);
-        }
-    }
-    
-    return { success => 0, error => "Invalid DATABASE protocol format" };
-}
-
-sub handle_query {
-    my ($self, $params) = @_;
-    
-    my $sql = $params->{sql};
-    
-    # Execute query
-    # Return results
-    
-    return {
-        success => 1,
-        data => \@results,
-    };
-}
-
-1;
-```
-
-**Note:** Current CLIO architecture focuses on tools rather than protocols. Protocol support may be added in future versions.
 
 ---------------------------------------------------
 
@@ -1055,7 +977,7 @@ Then open a Pull Request on GitHub.
 ## Resources
 
 **Documentation:**
-- `docs/SPECS/` - Technical specifications (Architecture, Tools, Protocols)
+- `docs/SPECS/` - Technical specifications (Architecture, Tools)
 - `docs/ARCHITECTURE.md` - Architecture overview
 - `docs/ARCHITECTURE_REMOTE_EXECUTION.md` - Remote execution design spec
 - `docs/COMMAND_OUTPUT_STANDARDS.md` - Command output styling standards
