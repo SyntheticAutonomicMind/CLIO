@@ -260,7 +260,6 @@ Tools can be restricted via `--enable` (allowlist) or `--disable` (blocklist) CL
 | Architect | `Architect.pm` | Problem-solving design |
 | Editor | `Editor.pm` | Code modification format |
 | Validate | `Validate.pm` | Code validation |
-| RepoMap | `RepoMap.pm` | Repository mapping |
 | Recall | `Recall.pm` | Memory recall |
 | Puppeteer | `Puppeteer.pm` | Multi-project topology detection and delegation |
 | Handler | `Handler.pm` | Protocol base class |
@@ -663,8 +662,6 @@ lib/CLIO/
       Handler.pm           # Base class
       Architect.pm         # Design protocol
       Editor.pm            # Code editing protocol
-      Validate.pm          # Validation protocol
-      RepoMap.pm           # Repository mapping
       Recall.pm            # Memory recall
   Providers/               # Native API provider modules
       Base.pm              # Provider base class
