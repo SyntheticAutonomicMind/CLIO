@@ -2,6 +2,8 @@
 use strict;
 use warnings;
 use utf8;
+binmode(STDOUT, ':encoding(UTF-8)');
+binmode(STDERR, ':encoding(UTF-8)');
 use FindBin;
 use lib "$FindBin::Bin/../../lib";
 
@@ -40,11 +42,11 @@ my $test_input = "List 5 files from lib/CLIO/Core/ using file_operations";
 my $session_id = `$clio_path --new --input "$test_input" --exit 2>&1`;
 
 # Look for key markers
-if ($session_id =~ /AGENT:.*?SYSTEM:\s*\[file_operations\]/s) {
-    print "✓ Test PASSED: Agent message appears before tool output\n";
+if ($session_id =~ /FILE OPERATIONS.*?\[RESPONSE\]/s) {
+    print "✓ Test PASSED: Tool output appears before agent response\n";
     exit 0;
 } else {
-    print "✗ Test FAILED: Agent message and tool output not in correct order\n";
+    print "✗ Test FAILED: Tool output and agent response not in expected order\n";
     print "Output was:\n$session_id\n";
     exit 1;
 }

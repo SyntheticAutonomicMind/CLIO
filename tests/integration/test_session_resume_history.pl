@@ -12,8 +12,8 @@ print "Testing session resume history preservation...\n\n";
 print "[TEST 1] Creating new session with one Q&A exchange...\n";
 my $output1 = `./clio --debug --input "What is 2+2?" --exit 2>&1`;
 
-# Look for session ID in the format: [SESSION] Using session: <uuid>
-my ($session_id) = $output1 =~ /\[SESSION\]\s+Using\s+session:\s+([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i;
+# Look for session ID in the format: [DEBUG][Main] Using session: <uuid>
+my ($session_id) = $output1 =~ /Using\s+session:\s+([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i;
 
 if (!$session_id) {
     print "FAIL: Could not extract session ID from output:\n";

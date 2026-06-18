@@ -701,7 +701,7 @@ sub trim_for_token_limit {
 
         my @last_two = @non_system[-2..-1];
         for my $msg (@last_two) {
-            next if $last_user_msg && $msg == $last_user_msg;
+            next if $last_user_msg && defined $msg && $msg == $last_user_msg;
             push @kept, $msg;
         }
         @non_system = @kept;

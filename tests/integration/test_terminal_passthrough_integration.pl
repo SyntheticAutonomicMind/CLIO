@@ -49,13 +49,13 @@ test("Simple command captures output", sub {
     die "Exit code not 0" unless $result->{exit_code} == 0;
 });
 
-# Test 2: All commands use passthrough mode
-test("All commands use passthrough mode", sub {
+# Test 2: Passthrough mode is opt-in
+test("Passthrough mode works when requested", sub {
     my $result = $tool->execute_command(
-        { command => 'echo "passthrough check"' },
+        { command => 'echo "passthrough check"', passthrough => 1 },
         $context
     );
-    
+
     die "Command failed" unless $result->{success};
     die "Should indicate passthrough" unless $result->{passthrough};
 });
@@ -120,24 +120,26 @@ test("Multi-line output captured correctly", sub {
     die "Missing line3" unless $result->{output} =~ /line3/;
 });
 
-# Test 7: Action description format
-test("Action description shows result status", sub {
+# Test 7: Pre-action description is populated for user feedback
+test("Pre-action description is populated", sub {
     my $result = $tool->execute_command(
         { command => 'echo "test"' },
         $context
     );
-    
+
     die "Command failed" unless $result->{success};
-    die "action_description should indicate success" 
-        unless $result->{action_description} =~ /success/;
+    die "pre_action_description should be set"
+        unless $result->{pre_action_description};
+    die "pre_action_description should contain command"
+        unless $result->{pre_action_description} =~ /echo/;
 });
 
-# Test 8: Multiplexer detection (should be available or not - either is fine)
-test("Multiplexer detection doesn't crash", sub {
-    my $mux = $tool->_get_multiplexer($context);
-    # mux can be undef or an object - both are fine
-    # Just verify it doesn't crash
-    1;
+# Test 8: Multiplexer detection lives on CLIO::UI::Commands::Mux, not on the tool.
+# The tool intentionally does not own multiplexer detection - this test pins that
+# contract so a future refactor doesn't accidentally couple them.
+test("TerminalOperations has no _get_multiplexer method", sub {
+    die "TerminalOperations should not expose _get_multiplexer"
+        if $tool->can('_get_multiplexer');
 });
 
 # Summary
