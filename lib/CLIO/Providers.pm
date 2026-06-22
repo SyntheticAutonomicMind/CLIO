@@ -136,6 +136,7 @@ my %PROVIDERS = (
             path_suffix => '',
             temperature_range => [0.0, 2.0],
             supports_tools => 1,
+            sampling_defaults => { temperature => 1.0, top_p => 0.95, top_k => 20 },
         },
     },
 
@@ -153,6 +154,7 @@ my %PROVIDERS = (
             path_suffix => '',
             temperature_range => [0.0, 2.0],
             supports_tools => 1,
+            sampling_defaults => { temperature => 1.0, top_p => 0.95, top_k => 20 },
         },
     },
     

@@ -870,6 +870,19 @@ sub adapt_request_for_endpoint {
         delete $payload->{stream_options};
     }
     
+    # Apply provider-recommended sampling defaults for all providers
+    # (previously only MiniMax and Z.AI did this inside their blocks)
+    if (my $sd = $endpoint_config->{sampling_defaults}) {
+        for my $param (qw(temperature top_p top_k)) {
+            next unless defined $sd->{$param};
+            if (!exists $payload->{$param}) {
+                $payload->{$param} = $sd->{$param};
+            } elsif ($param eq 'temperature' && $payload->{$param} == 0.2) {
+                $payload->{$param} = $sd->{$param};
+            }
+        }
+    }
+
     # Apply user-configured sampling overrides (highest priority - override everything)
     if ($self->{config}) {
         for my $param (qw(temperature top_p top_k)) {
