@@ -79,6 +79,13 @@ use constant DEFAULT_CONFIG => {
     sampling_temperature => '',  # Override temperature (e.g. 0.7); empty = use provider default
     sampling_top_p => '',        # Override top_p (e.g. 0.9); empty = use provider default
     sampling_top_k => '',        # Override top_k (e.g. 40); empty = use provider default
+    # Capability overrides (cap_* caps model value, force_* overrides boolean)
+    cap_context_window => 0,     # Cap model's context window (0 = no cap, e.g. 128000 for DeepSeek 1M -> 128k)
+    cap_max_output => 0,         # Cap model's max output tokens (0 = no cap)
+    cap_max_prompt => 0,         # Cap model's max prompt tokens (0 = no cap)
+    force_tools => '',           # Force tools on/off ('', 'on', 'off')
+    force_vision => '',          # Force vision on/off ('', 'on', 'off')
+    force_reasoning => '',       # Force reasoning on/off ('', 'on', 'off')
     # Agent iteration limit (0 = unlimited)
     max_iterations => 0,
     # Feature switches (tools available to agent)
