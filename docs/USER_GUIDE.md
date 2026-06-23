@@ -425,6 +425,12 @@ CLIO provides 35+ slash commands. Type `/help` in any session to see the full li
 | `/api set temperature <value>` | Override sampling temperature |
 | `/api set top_p <value>` | Override top_p sampling |
 | `/api set top_k <value>` | Override top_k sampling |
+| `/api set context_window <value>` | Cap model's context window (e.g. `128k`, `256000`, `1M`) |
+| `/api set max_output <value>` | Cap max output tokens (e.g. `16k`) |
+| `/api set max_prompt <value>` | Cap max prompt tokens (e.g. `200k`) |
+| `/api set tools on\|off\|auto` | Force tool calling on/off (auto = model default) |
+| `/api set vision on\|off\|auto` | Force vision support on/off |
+| `/api set reasoning on\|off\|auto` | Force reasoning support on/off |
 | `/api set <setting> <value> --session` | Set value for this session only |
 | `/api models` | List available models |
 | `/api alias <name> <model>` | Create a model alias |
@@ -1733,6 +1739,13 @@ CLIO is designed to be configured **interactively** using slash commands:
 /api set top_p 0.95                 # Override top_p
 /api set top_k 40                   # Override top_k
 /api set temperature reset          # Revert to provider default
+
+/api set context_window 128k        # Cap DeepSeek's 1M context to 128k
+/api set max_output 16k             # Cap max output tokens
+/api set max_output reset           # Clear cap, use model default
+/api set tools off                  # Force-disable tool calling for this model
+/api set vision on                  # Force-enable vision (override model default)
+/api set context_window 256k --session  # Session-only override
 /api alias <name> <model>           # Create model alias
 ```
 

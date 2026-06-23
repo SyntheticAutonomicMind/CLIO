@@ -116,6 +116,40 @@ CLIO uses conservative sampling defaults tuned for reliable tool use. When worki
 
 Overrides are saved globally and visible in `/api show`. Provider-recommended defaults (e.g. MiniMax's `temperature=1.0`) are applied automatically when no override is set - you only need to set these if you want to change from the provider recommendation.
 
+### Capability Overrides
+
+Each model reports its own capabilities (context window, max output, tool/vision/reasoning support). You can override any of these from the slash command line:
+
+**Token caps** - reduce the model's reported value to save tokens:
+
+```text
+/api set context_window 128k        # Cap DeepSeek's 1M context to 128k
+/api set context_window 256000      # Same, raw tokens
+/api set max_output 16k             # Cap max output tokens
+/api set max_prompt 200k            # Cap max prompt tokens
+/api set context_window reset       # Clear cap, use model default
+```
+
+Token values accept `k` and `M` suffixes (`128k`, `1.5M`) as well as raw integers. Caps never increase a model's value - if your cap exceeds the model's max, the model default wins.
+
+**Capability forces** - turn a capability on or off regardless of what the model reports:
+
+```text
+/api set tools on        # Force tool calling on
+/api set tools off       # Force tool calling off (e.g. for pure chat)
+/api set vision on       # Force vision support on
+/api set reasoning off   # Force reasoning off (skip thinking parameters)
+/api set tools auto      # Clear override, use model default
+```
+
+All overrides accept `--session` for session-only application:
+
+```text
+/api set context_window 256k --session  # Only this session
+```
+
+Caps and forces flow through to conversation trimming, `/context` display, `/api models --capabilities`, and tool/vision/reasoning detection - changing them takes effect immediately without restarting.
+
 ### Chat Mode
 
 For conversational AI without file modifications, use chat mode:
