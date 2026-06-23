@@ -93,13 +93,7 @@ sub _model_supports_reasoning {
     my ($self, $model) = @_;
     return 0 unless $model;
 
-    # Check cached capabilities from models API (authoritative source)
-    if ($self->{_model_capabilities_cache} && $self->{_model_capabilities_cache}{$model}) {
-        my $caps = $self->{_model_capabilities_cache}{$model};
-        return $caps->{supports_reasoning} if defined $caps->{supports_reasoning};
-    }
-
-    # Fetch capabilities (will populate cache with supports_reasoning if available)
+    # Use get_model_capabilities which applies user overrides and caches raw caps
     my $caps = $self->get_model_capabilities($model);
     if ($caps && defined $caps->{supports_reasoning}) {
         return $caps->{supports_reasoning};
@@ -686,8 +680,9 @@ sub adapt_request_for_endpoint {
     # Per-model tool support check (more granular than provider-level)
     if (exists $payload->{tools} && $payload->{model}) {
         my $model = $payload->{model};
-        my $caps = $self->{_model_capabilities_cache}{$model} if $self->{_model_capabilities_cache};
-        if ($caps && defined $caps->{supports_tools} && !$caps->{supports_tools}) {
+        # Use model_supports_tools (goes through get_model_capabilities which
+        # applies user overrides from /api set tools).
+        if (!$self->model_supports_tools($model)) {
             delete $payload->{tools};
             log_info('APIManager', "Removed tools: model '$model' does not support function calling");
         }
@@ -1010,19 +1005,13 @@ Returns:
 sub model_supports_tools {
     my ($self, $model) = @_;
     $model ||= $self->get_current_model();
-    
-    # Check cached capabilities first
-    if ($self->{_model_capabilities_cache} && $self->{_model_capabilities_cache}{$model}) {
-        my $caps = $self->{_model_capabilities_cache}{$model};
-        return $caps->{supports_tools} if defined $caps->{supports_tools};
-    }
-    
-    # Fetch capabilities (will populate cache)
+
+    # Use get_model_capabilities which applies user overrides and caches raw caps
     my $caps = $self->get_model_capabilities($model);
     if ($caps && defined $caps->{supports_tools}) {
         return $caps->{supports_tools};
     }
-    
+
     # Default: assume tools are supported (don't break existing behavior)
     return 1;
 }
@@ -1030,14 +1019,8 @@ sub model_supports_tools {
 sub model_supports_vision {
     my ($self, $model) = @_;
     $model ||= $self->get_current_model();
-    
-    # Check cached capabilities first
-    if ($self->{_model_capabilities_cache} && $self->{_model_capabilities_cache}{$model}) {
-        my $caps = $self->{_model_capabilities_cache}{$model};
-        return $caps->{supports_vision} if defined $caps->{supports_vision};
-    }
-    
-    # Fetch capabilities (will populate cache)
+
+    # Use get_model_capabilities which applies user overrides and caches raw caps
     my $caps = $self->get_model_capabilities($model);
     if ($caps && defined $caps->{supports_vision}) {
         return $caps->{supports_vision};
@@ -1056,10 +1039,12 @@ sub get_model_capabilities {
     my ($target_provider, $api_model) = $self->_parse_model_provider($model);
     
     # Check cache first (cache by full model name including provider prefix)
-    if ($self->{_model_capabilities_cache} && 
+    if ($self->{_model_capabilities_cache} &&
         $self->{_model_capabilities_cache}{$model}) {
         log_debug('APIManager', "Model caps for $model (cached): prompt=" . ($self->{_model_capabilities_cache}{$model}{max_prompt_tokens} // 'undef') . ", ctx_window=" . ($self->{_model_capabilities_cache}{$model}{max_context_window_tokens} // 'undef'));
-        return $self->{_model_capabilities_cache}{$model};
+        # Cache holds raw caps; apply user overrides so runtime config changes
+        # (e.g. /api set context_window) are reflected without cache invalidation.
+        return $self->_caps_with_overrides($self->{_model_capabilities_cache}{$model});
     }
     
     # Use ModelCapabilitiesManager for providers with static capability maps
@@ -1083,6 +1068,9 @@ sub get_model_capabilities {
             my $caps = $mcm->get_capabilities($eff_provider, $api_model);
             log_debug('APIManager', "MCM get_capabilities for $eff_provider/$api_model: " . ($caps ? "found" : "undef"));
             if ($caps) {
+                # Cache stores RAW caps (without overrides). Overrides applied
+                # at get_model_capabilities return point so runtime changes
+                # to overrides are reflected immediately.
                 my $n = {
                     max_prompt_tokens          => $caps->{max_prompt_tokens} || $caps->{context_window},
                     max_output_tokens          => $caps->{max_output_tokens},
@@ -1094,14 +1082,15 @@ sub get_model_capabilities {
                 $self->{_model_capabilities_cache} ||= {};
                 $self->{_model_capabilities_cache}{$model} = $n;
                 log_debug('APIManager', "MCM capability for $model: ctx=$caps->{context_window}, tools=$caps->{supports_tools}");
-                return $n;
+                return $self->_caps_with_overrides($n);
             }
             return undef;
         };
         if ($@) {
             log_debug('APIManager', "MCM failed for $model: $@");
         }
-        return $normalized if $normalized;
+        return undef unless $normalized;
+        return $normalized;
     }
     
     # Determine API base for the model's provider
@@ -1184,7 +1173,7 @@ sub get_model_capabilities {
                     $self->{_model_capabilities_cache} ||= {};
                     $self->{_model_capabilities_cache}{$model} = $capabilities;
                     log_debug('APIManager', "Using provider fallback for $model: context=$ctx (models endpoint unavailable)");
-                    return $capabilities;
+                    return $self->_caps_with_overrides($capabilities);
                 }
             }
             log_info('APIManager', "Models endpoint unavailable ($models_url), using fallback token limits");
@@ -1241,7 +1230,7 @@ sub get_model_capabilities {
         $self->{_model_capabilities_cache}{$model} = $capabilities;
 
         log_debug('APIManager', "Model caps for $model: prompt=$capabilities->{max_prompt_tokens}, output=$capabilities->{max_output_tokens}, ctx_window=$capabilities->{max_context_window_tokens}");
-        return $capabilities;
+        return $self->_caps_with_overrides($capabilities);
     }
     
     log_debug('APIManager', "Model $api_model not found in /models response, falling back to default context window");
@@ -1304,7 +1293,118 @@ sub _extract_model_capabilities {
         $caps->{supports_reasoning} = (grep { $_ eq 'reasoning' } @{$info->{supported_parameters}}) ? 1 : 0;
     }
 
+    # Returns RAW caps (without user overrides). Overrides applied at
+    # get_model_capabilities return point via _caps_with_overrides so runtime
+    # changes to overrides are reflected immediately without cache invalidation.
     return $caps;
+}
+
+=head2 _apply_capability_overrides($caps)
+
+Apply user-configured capability overrides from config to a caps hashref.
+Modifies $caps in place.
+
+Numeric caps (cap_context_window, cap_max_output, cap_max_prompt) cap the
+model's reported value: effective = min(model_value, override) when override > 0.
+
+Boolean forces (force_tools, force_vision, force_reasoning) replace the
+model's reported value when set to 'on' or 'off'.
+
+Session-only overrides (state->{api_config}{cap_*}) take precedence over
+global config values.
+
+=cut
+
+sub _apply_capability_overrides {
+    my ($self, $caps) = @_;
+    return $caps unless ref($caps) eq 'HASH';
+
+    # Resolve effective values (session override > global config)
+    my %effective;
+    for my $key (qw(cap_context_window cap_max_output cap_max_prompt
+                    force_tools force_vision force_reasoning)) {
+        my $val;
+        if ($self->{session} && $self->{session}->can('state')) {
+            my $state = $self->{session}->state();
+            if ($state && $state->{api_config} && exists $state->{api_config}{$key}) {
+                $val = $state->{api_config}{$key};
+            }
+        }
+        unless (defined $val) {
+            $val = $self->{config} ? $self->{config}->get($key) : undef;
+        }
+        $effective{$key} = $val;
+    }
+
+    # Apply numeric caps
+    if ($effective{cap_context_window} && $effective{cap_context_window} > 0) {
+        my $cap = $effective{cap_context_window};
+        my $current = $caps->{max_context_window_tokens};
+        if (defined $current && $current > $cap) {
+            log_debug('APIManager', sprintf(
+                "Capping context_window: %d -> %d", $current, $cap
+            ));
+            $caps->{max_context_window_tokens} = $cap;
+        }
+    }
+
+    if ($effective{cap_max_output} && $effective{cap_max_output} > 0) {
+        my $cap = $effective{cap_max_output};
+        my $current = $caps->{max_output_tokens};
+        if (defined $current && $current > $cap) {
+            log_debug('APIManager', sprintf(
+                "Capping max_output: %d -> %d", $current, $cap
+            ));
+            $caps->{max_output_tokens} = $cap;
+        }
+    }
+
+    if ($effective{cap_max_prompt} && $effective{cap_max_prompt} > 0) {
+        my $cap = $effective{cap_max_prompt};
+        my $current = $caps->{max_prompt_tokens};
+        if (defined $current && $current > $cap) {
+            log_debug('APIManager', sprintf(
+                "Capping max_prompt: %d -> %d", $current, $cap
+            ));
+            $caps->{max_prompt_tokens} = $cap;
+        }
+    }
+
+    # Apply boolean forces
+    for my $cap_name (qw(tools vision reasoning)) {
+        my $force = $effective{"force_$cap_name"};
+        next unless defined $force && $force ne '';
+
+        my $forced_bool = ($force eq 'on') ? 1 : 0;
+        my $key = "supports_$cap_name";
+        if (defined $caps->{$key} && $caps->{$key} != $forced_bool) {
+            log_debug('APIManager', sprintf(
+                "Forcing %s: %s -> %s",
+                $cap_name,
+                $caps->{$key} ? 'on' : 'off',
+                $force
+            ));
+        }
+        $caps->{$key} = $forced_bool;
+    }
+
+    return $caps;
+}
+
+=head2 _caps_with_overrides($caps)
+
+Return a copy of $caps with user-configured capability overrides applied.
+Used to ensure all callers see the post-override values consistently even
+when overrides change at runtime. Cache stores raw caps; this method applies
+overrides on every read.
+
+=cut
+
+sub _caps_with_overrides {
+    my ($self, $caps) = @_;
+    return undef unless ref($caps) eq 'HASH';
+    my $copy = { %$caps };
+    return $self->_apply_capability_overrides($copy);
 }
 
 =head2 _resolve_local_model($api_base, $api_id)

@@ -119,9 +119,15 @@ sub handle_set {
             $self->display_system_message("$setting set to $value" . ($session_only ? " (session only)" : " (saved)"));
         }
     }
+    elsif ($setting eq 'context_window' || $setting eq 'max_output' || $setting eq 'max_prompt') {
+        $self->_set_capability_cap($setting, $value, $session_only);
+    }
+    elsif ($setting eq 'tools' || $setting eq 'vision' || $setting eq 'reasoning') {
+        $self->_set_capability_force($setting, $value, $session_only);
+    }
     else {
         $self->display_error_message("Unknown setting: $setting");
-        $self->writeline("Valid settings: model, provider, base, key, thinking, thinking_effort, temperature, top_p, top_k, github_pat, serpapi_key, search_engine, search_provider", markdown => 0);
+        $self->writeline("Valid settings: model, provider, base, key, thinking, thinking_effort, temperature, top_p, top_k, github_pat, serpapi_key, search_engine, search_provider, context_window, max_output, max_prompt, tools, vision, reasoning", markdown => 0);
     }
 }
 
@@ -453,6 +459,158 @@ sub _set_api_setting {
     }
 }
 
+=head2 _parse_token_count($value)
+
+Parse a token count value with optional k/M suffix into a raw integer.
+Supports formats like "128000", "128k", "1M", "256K".
+May be called as instance method or class method.
+
+Returns: integer token count, or undef if invalid.
+
+=cut
+
+sub _parse_token_count {
+    my $value;
+    if (@_ == 2) {
+        # Called as instance/class method: ($self, $value)
+        $value = $_[1];
+    } else {
+        # Called as function: ($value)
+        $value = $_[0];
+    }
+    return undef unless defined $value && $value ne '';
+
+    # Strip whitespace
+    $value =~ s/^\s+|\s+$//g;
+
+    # Pure integer
+    if ($value =~ /^(\d+)$/) {
+        return $1 + 0;
+    }
+
+    # Integer with k/K or m/M suffix (with optional decimals)
+    if ($value =~ /^(\d+(?:\.\d+)?)\s*([kKmM])$/) {
+        my ($num, $suffix) = ($1, lc($2));
+        my $multiplier = ($suffix eq 'k') ? 1000 : 1000000;
+        return int($num * $multiplier);
+    }
+
+    return undef;
+}
+
+=head2 _format_token_count($count)
+
+Format a token count for display (e.g. 128000 -> "128k", 1000000 -> "1.0M").
+May be called as instance method or class method.
+
+Returns: formatted string.
+
+=cut
+
+sub _format_token_count {
+    my $count;
+    if (@_ == 2) {
+        # Called as instance/class method: ($self, $count)
+        $count = $_[1];
+    } else {
+        # Called as function: ($count)
+        $count = $_[0];
+    }
+    return '0' unless defined $count && $count > 0;
+    if ($count >= 1000000) {
+        my $m = $count / 1000000;
+        return $m == int($m) ? int($m) . 'M' : sprintf('%.1fM', $m);
+    }
+    elsif ($count >= 1000) {
+        my $k = $count / 1000;
+        return $k == int($k) ? int($k) . 'k' : sprintf('%.1fk', $k);
+    }
+    return $count . '';
+}
+
+=head2 _set_capability_cap($setting, $value, $session_only)
+
+Handle /api set context_window|max_output|max_prompt <value>.
+
+Caps the model's reported value. Use this to save tokens by limiting
+the effective context/output/prompt budget below the model's maximum.
+
+Accepts token counts in raw form (128000) or with k/M suffix (128k, 1M).
+Pass 'reset', 'default', or '0' to clear the cap and use the model's value.
+
+=cut
+
+sub _set_capability_cap {
+    my ($self, $setting, $value, $session_only) = @_;
+
+    my $config_key = "cap_$setting";
+
+    if (!defined $value || $value eq '' || $value =~ /^(reset|default|off|0)$/i) {
+        $self->{config}->set($config_key, 0);
+        $self->{config}->save() unless $session_only;
+        $self->display_system_message("$setting cap cleared (using model default)" . ($session_only ? " (session only)" : " (saved)"));
+        return;
+    }
+
+    my $tokens = _parse_token_count($value);
+    unless ($tokens && $tokens > 0) {
+        $self->display_error_message("Invalid $setting value: '$value'");
+        $self->writeline("Use raw tokens (128000) or suffixed form (128k, 1M), or 'reset' to clear", markdown => 0);
+        return;
+    }
+
+    unless ($tokens >= 1000) {
+        $self->display_error_message("$setting cap too small: $tokens (minimum 1000 tokens)");
+        return;
+    }
+
+    $self->{config}->set($config_key, $tokens);
+    $self->{config}->save() unless $session_only;
+    $self->display_system_message(
+        sprintf("%s capped at %s%s",
+            $setting,
+            _format_token_count($tokens),
+            ($session_only ? " (session only)" : " (saved)")
+        )
+    );
+}
+
+=head2 _set_capability_force($setting, $value, $session_only)
+
+Handle /api set tools|vision|reasoning <on|off|auto>.
+
+Force a capability on or off regardless of what the model reports.
+Use 'auto' (or 'reset') to clear the override and use the model's value.
+
+=cut
+
+sub _set_capability_force {
+    my ($self, $setting, $value, $session_only) = @_;
+
+    my $config_key = "force_$setting";
+    my $normalized = lc($value // '');
+
+    # Clear triggers - these explicitly ask to revert to model default
+    if ($normalized =~ /^(auto|reset|default|'')$/) {
+        $self->{config}->set($config_key, '');
+        $self->{config}->save() unless $session_only;
+        $self->display_system_message("$setting override cleared (using model default)" . ($session_only ? " (session only)" : " (saved)"));
+        return;
+    }
+
+    # Boolean force values
+    unless ($normalized =~ /^(on|off|true|false|enabled|disabled)$/) {
+        $self->display_error_message("Invalid $setting value: '$value'");
+        $self->writeline("Valid values: on, off, auto (use model default)", markdown => 0);
+        return;
+    }
+
+    my $forced = ($normalized =~ /^(on|true|enabled)$/) ? 'on' : 'off';
+    $self->{config}->set($config_key, $forced);
+    $self->{config}->save() unless $session_only;
+    $self->display_system_message("$setting forced: $forced" . ($session_only ? " (session only)" : " (saved)"));
+}
+
 # Update session billing state when provider or model changes mid-session.
 # Ensures /usage shows correct model name and quota without restart.
 # Also updates max_tokens so State::add_message trims at the correct threshold.
@@ -609,12 +767,68 @@ sub display_config {
         }
     }
 
+    # Show capability cap overrides (only when set)
+    for my $cap (qw(context_window max_output max_prompt)) {
+        my $val = $self->{config}->get("cap_$cap");
+        if (defined $val && $val && $val > 0) {
+            my $model_default = $self->_get_model_default_for_cap($cap);
+            my $suffix = $model_default
+                ? sprintf(" (override, model: %s)", _format_token_count($model_default))
+                : " (override)";
+            $self->display_key_value(
+                ucfirst($cap) . " cap",
+                _format_token_count($val) . $suffix,
+                16
+            );
+        }
+    }
+
+    # Show capability force overrides (only when set)
+    for my $cap (qw(tools vision reasoning)) {
+        my $val = $self->{config}->get("force_$cap");
+        if (defined $val && $val ne '') {
+            $self->display_key_value(
+                "Force $cap",
+                $val,
+                16
+            );
+        }
+    }
+
     if (keys %session_overrides) {
         $self->writeline("", markdown => 0);
         $self->display_system_message("(session) = session-only override, use /api set <key> <value> to save globally");
     }
 
     $self->writeline("", markdown => 0);
+}
+
+=head2 _get_model_default_for_cap($cap)
+
+Look up the model's actual default value for a capability cap (context_window,
+max_output, max_prompt). Used by /api show to display what the model reports
+versus what is currently capped.
+
+Returns: integer token count, or undef if not available.
+
+=cut
+
+sub _get_model_default_for_cap {
+    my ($self, $cap) = @_;
+
+    return undef unless $self->{ai_agent} && $self->{ai_agent}->{api};
+
+    my $caps = eval { $self->{ai_agent}->{api}->get_model_capabilities() };
+    return undef unless $caps && ref($caps) eq 'HASH';
+
+    my $key = $cap eq 'context_window' ? 'max_context_window_tokens'
+           : $cap eq 'max_output'     ? 'max_output_tokens'
+           : $cap eq 'max_prompt'     ? 'max_prompt_tokens'
+           : undef;
+
+    return undef unless $key;
+    return undef unless defined $caps->{$key} && $caps->{$key} > 0;
+    return $caps->{$key};
 }
 
 sub display_providers {
