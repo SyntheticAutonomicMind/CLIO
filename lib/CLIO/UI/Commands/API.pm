@@ -156,6 +156,12 @@ sub _display_api_help {
     $self->display_command_row("/api set temperature <value>", "Override sampling temperature", 40);
     $self->display_command_row("/api set top_p <value>", "Override top_p sampling", 40);
     $self->display_command_row("/api set top_k <value>", "Override top_k sampling", 40);
+    $self->display_command_row("/api set context_window <value>", "Cap context window (e.g. 128k, 256000, reset)", 40);
+    $self->display_command_row("/api set max_output <value>", "Cap max output tokens (e.g. 16k, reset)", 40);
+    $self->display_command_row("/api set max_prompt <value>", "Cap max prompt tokens (e.g. 200k, reset)", 40);
+    $self->display_command_row("/api set tools on|off|auto", "Force tool calling on/off (auto = model default)", 40);
+    $self->display_command_row("/api set vision on|off|auto", "Force vision support on/off", 40);
+    $self->display_command_row("/api set reasoning on|off|auto", "Force reasoning support on/off", 40);
     $self->display_command_row("/api set github_pat <token>", "Set GitHub PAT for extended models", 40);
     $self->display_command_row("/api providers", "Show available providers", 40);
     $self->display_command_row("/api models", "List available models", 40);
@@ -167,6 +173,13 @@ sub _display_api_help {
     $self->display_command_row("/api alias <name> <model>", "Create model alias", 40);
     $self->display_command_row("/api alias <name> --delete", "Remove alias", 40);
     $self->display_command_row("/api remove <provider>", "Remove stored credentials for a provider", 40);
+    $self->writeline("", markdown => 0);
+
+    $self->display_section_header("CAPABILITY OVERRIDES");
+    $self->writeline("  Caps and forces apply to the current model's reported capabilities.", markdown => 0);
+    $self->writeline("  Token values accept k/M suffixes: " . $self->colorize("128000, 128k, 1M", 'USER'), markdown => 0);
+    $self->writeline("  Use " . $self->colorize("reset", 'USER') . " or " . $self->colorize("auto", 'USER') . " to clear and use model default.", markdown => 0);
+    $self->writeline("  Example: /api set context_window 128k caps DeepSeek's 1M context to 128k", markdown => 0);
     $self->writeline("", markdown => 0);
 
     $self->display_section_header("SESSION OVERRIDES");
