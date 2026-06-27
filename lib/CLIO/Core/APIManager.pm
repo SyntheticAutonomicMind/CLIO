@@ -1570,8 +1570,12 @@ sub _detect_api_type_and_url {
     
     # Try to detect provider from URL pattern using centralized registry
     my $provider_name = provider_from_url($api_base);
-    
-    # Map provider names to (api_type, models_url)
+
+    # Map provider names to (api_type, models_url). Note: the models_url here
+    # is only used as a fallback when the api_base supplied by the user lacks
+    # a discernible URL pattern. For LAN-local SAM/LM Studio deployments the
+    # user-supplied api_base (e.g. http://max:8080/...) takes precedence and
+    # these localhost URLs are not used.
     my %provider_models_urls = (
         'github-copilot' => ['github-copilot', 'https://api.githubcopilot.com/models'],
         'openai'         => ['openai', 'https://api.openai.com/v1/models'],

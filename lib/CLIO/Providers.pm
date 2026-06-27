@@ -523,8 +523,13 @@ sub provider_from_url {
     return 'nvidia'         if $url =~ m{integrate\.api\.nvidia\.com}i;
 
     # Local/self-hosted providers
-    return 'lmstudio'       if $url =~ m{(?:localhost|127\.0\.0\.1):1234}i;
-    return 'sam'            if $url =~ m{(?:localhost|127\.0\.0\.1):8080}i;
+    # Detection by service-specific port, not by host. SAM conventionally
+    # listens on 8080, LM Studio on 1234. Host may be localhost, a LAN
+    # hostname (e.g. 'max'), or any IP. llama.cpp users can override the
+    # provider explicitly via --provider llama.cpp; we don't auto-detect
+    # its port since llama.cpp has no default port.
+    return 'lmstudio'       if $url =~ m{^https?://[^/]+:1234/}i;
+    return 'sam'            if $url =~ m{^https?://[^/]+:8080/}i;
 
     # DashScope variants
     return 'dashscope'      if $url =~ m{dashscope.*\.aliyuncs\.com}i;

@@ -1644,6 +1644,7 @@ sub _fetch_openai_compatible_capabilities {
     
     my $api_base = $provider_def->{api_base};
     $api_base =~ s{/+$}{};
+    my $api_type = $provider;  # Local provider names (sam, lmstudio, llama.cpp) are valid api_types for /props gating
     
     # Get API key
     my $api_key;
@@ -1701,7 +1702,9 @@ sub _fetch_openai_compatible_capabilities {
         
         # For local llama.cpp servers, /v1/models only exposes n_ctx_train (training context),
         # not the server's actual --ctx-size runtime value. Query /props to get the real n_ctx.
-        if (!$context_window || $api_base =~ m{localhost:|127\.0\.0\.1:}i) {
+        # Gate on api_type rather than URL pattern: local servers may run on
+        # LAN hostnames or arbitrary IPs (not just localhost).
+        if (!$context_window || $api_type =~ /^(generic|sam|lmstudio|llama\.cpp)$/i) {
             my $props_ctx = $self->_query_llama_props($api_base);
             if ($props_ctx && $props_ctx > 0) {
                 $context_window = $props_ctx;
@@ -1775,15 +1778,18 @@ or the response does not contain context information. This is used to supplement
 the /v1/models response which only exposes n_ctx_train (training context), not the
 server's runtime --ctx-size value.
 
-Only called for local OpenAI-compatible servers (localhost/127.0.0.1).
+Called for any OpenAI-compatible server with a /props endpoint. In practice this
+means local inference servers (llama.cpp, LM Studio, SAM), but the host may be
+localhost, a LAN hostname, or an IP address - the function does not filter by URL.
 
 =cut
 
 sub _query_llama_props {
     my ($self, $api_base) = @_;
-    
-    # Derive the /props URL from the api_base
-    # e.g. http://localhost:9090/v1/chat/completions -> http://localhost:9090/props
+
+    # Derive the /props URL from the api_base. Works for any host (LAN, public,
+    # localhost) - the caller decides whether to invoke us.
+    # e.g. http://max:9090/v1/chat/completions -> http://max:9090/props
     my $props_url = $api_base;
     $props_url =~ s{/+$}{};       # strip trailing slashes
     $props_url =~ s{/v1(/.*)?$}{};  # strip /v1 and anything after it

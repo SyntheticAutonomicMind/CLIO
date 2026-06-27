@@ -1106,8 +1106,14 @@ sub _detect_api_type {
         $base_url =~ s{/+$}{};
         $base_url =~ s{/compatible-mode/v1.*$}{};
         return ('dashscope', "$base_url/compatible-mode/v1/models");
-    } elsif ($api_base =~ m{localhost:8080}i) {
-        return ('sam', 'http://localhost:8080/v1/models');
+    } elsif ($api_base =~ m{^https?://[^/]+:8080/}i) {
+        # SAM conventionally listens on 8080. Use the user-supplied base URL
+        # directly so LAN deployments (e.g. http://max:8080) work.
+        my $base_url = $api_base;
+        $base_url =~ s{/chat/completions$}{};
+        $base_url =~ s{/v1$}{};
+        $base_url =~ s{/+$}{};
+        return ('sam', "$base_url/v1/models");
     }
 
     if ($api_base =~ m{^https?://}) {

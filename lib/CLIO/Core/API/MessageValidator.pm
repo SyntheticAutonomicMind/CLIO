@@ -88,8 +88,7 @@ sub validate_and_truncate {
         my $provider = ($config && $config->can('get')) ? ($config->get('provider') || '') : '';
         
         if ($provider =~ /^(sam|llama\.cpp|lmstudio)$/i || 
-            $api_base =~ m{localhost:[0-9]+}i ||
-            $api_base =~ m{127\.0\.0\.1:[0-9]+}i) {
+            $api_base =~ m{^https?://[^/]+:[0-9]+/}i) {
             $max_prompt = CLIO::Core::Defaults::DEFAULT_LOCAL_CONTEXT_WINDOW();
         } else {
             $max_prompt = CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW();
