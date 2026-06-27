@@ -1210,7 +1210,20 @@ sub get_model_capabilities {
     
     # Find our model and extract capabilities
     for my $model_info (@$models) {
-        next unless $model_info->{id} eq $api_model;
+        # Match by id or aliases. llama.cpp populates both with the full
+        # filesystem path, but other OpenAI-compatible servers may use
+        # aliases for short names. Accept either.
+        my $id_match = ($model_info->{id} && $model_info->{id} eq $api_model);
+        my $alias_match = 0;
+        if (!$id_match && $model_info->{aliases} && ref($model_info->{aliases}) eq 'ARRAY') {
+            for my $alias (@{$model_info->{aliases}}) {
+                if ($alias && $alias eq $api_model) {
+                    $alias_match = 1;
+                    last;
+                }
+            }
+        }
+        next unless $id_match || $alias_match;
 
         # For local OpenAI-compatible servers (generic api_type), enrich model_info
         # with the actual running context window from the llama.cpp /props endpoint.
@@ -1234,6 +1247,28 @@ sub get_model_capabilities {
     }
     
     log_debug('APIManager', "Model $api_model not found in /models response, falling back to default context window");
+
+    # Restore /props fallback for local providers when /v1/models doesn't
+    # match. Common cause: llama.cpp returns the full path as the id but
+    # _resolve_local_model returned the basename (stripped to match aliases
+    # and id paths consistently), so the eq comparison above misses. /props
+    # exposes the runtime n_ctx (e.g. 196608 from --ctx-size) which is the
+    # ground truth for context budgeting.
+    if ($api_type =~ /^(generic|sam|lmstudio)$/i) {
+        require CLIO::Core::Defaults;
+        my $props_ctx = $self->_query_llama_props($api_base);
+        if ($props_ctx && $props_ctx > 0) {
+            my $capabilities = {
+                max_prompt_tokens          => $props_ctx,
+                max_output_tokens          => CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS(),
+                max_context_window_tokens  => $props_ctx,
+            };
+            $self->{_model_capabilities_cache} ||= {};
+            $self->{_model_capabilities_cache}{$model} = $capabilities;
+            log_debug('APIManager', "llama.cpp /props fallback n_ctx=$props_ctx for $api_model");
+            return $self->_caps_with_overrides($capabilities);
+        }
+    }
 
     log_debug('APIManager', "get_model_capabilities returning undef for $model");
     return undef;
@@ -1426,7 +1461,11 @@ Returns: resolved model name string, or undef if resolution fails.
 sub _resolve_local_model {
     my ($self, $api_base, $api_id) = @_;
 
-    return undef unless $api_base =~ /localhost|127\.0\.0\.1/;
+    # No localhost guard: the local_model sentinel only matches llama.cpp and
+    # LM Studio defaults, so resolution is only triggered for local-style
+    # providers. LAN-hosted llama.cpp servers (e.g. http://max:9090) work
+    # the same as localhost for capability lookup.
+    return undef unless $api_base;
 
     my $models_url = $api_base;
     $models_url =~ s{/+$}{};
@@ -1443,10 +1482,15 @@ sub _resolve_local_model {
     my $models = $data->{data} || [];
     return undef unless @$models;
 
+    # Prefer a non-path-shaped id (basename only) so we can match it against
+    # the /v1/models response during capability lookup. llama.cpp returns the
+    # full filesystem path as the model id; using the basename lets us match
+    # the same path-stripped value in get_model_capabilities.
     my $model_name = $models->[0]{id};
     return undef unless $model_name;
 
     $model_name =~ s/\.gguf$//i;
+    $model_name =~ s{.*/}{};  # Strip any directory path (llama.cpp quirk)
 
     log_debug('APIManager', "Resolved local_model to: $model_name");
     return $model_name;
