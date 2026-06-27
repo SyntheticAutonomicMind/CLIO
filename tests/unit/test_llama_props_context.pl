@@ -46,6 +46,8 @@ my %url_tests = (
     'http://localhost:9090/'                    => 'http://localhost:9090/props',
     'http://localhost:9090'                     => 'http://localhost:9090/props',
     'http://127.0.0.1:11434/v1/chat/completions' => 'http://127.0.0.1:11434/props',
+    'http://max:9090/v1/chat/completions'       => 'http://max:9090/props',
+    'http://192.168.1.50:9090/v1'               => 'http://192.168.1.50:9090/props',
 );
 
 for my $input (sort keys %url_tests) {
