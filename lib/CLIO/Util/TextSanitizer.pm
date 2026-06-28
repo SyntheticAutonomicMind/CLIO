@@ -230,22 +230,3 @@ This module provides a centralized sanitization function to prevent these issues
 
 =cut
 
-=head2 strip_conversation_tags
-
-Strip out conversation markup tags from text.
-
-Arguments:
-- $text: Text potentially containing [conversation]...[/conversation] tags
-
-Returns: Text with conversation tags removed
-
-=cut
-
-sub strip_conversation_tags {
-    my ($text) = @_;
-    return $text unless defined $text;
-    $text =~ s/\[conversation\](.*?)\[\/conversation\]/$1/gs;
-    return $text;
-}
-
-1;
