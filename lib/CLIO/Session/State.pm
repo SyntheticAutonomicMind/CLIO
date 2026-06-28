@@ -460,6 +460,26 @@ sub _validate_and_repair_history {
 
 sub add_message {
     my ($self, $role, $content, $opts) = @_;
+    # Defense in depth: content must be a string for safe JSON serialization.
+    # A non-string (hash/array ref) would silently corrupt the session file and
+    # pollute the model's context on resume. Catch it here, log loudly, and
+    # coerce to a string so the session remains recoverable. The real fix is
+    # upstream (caller should not pass refs), but this is the last line of defense.
+    if (ref $content) {
+        log_error('State::add_message', sprintf(
+            "BUG: add_message received non-string content (role=%s, type=%s) - "
+            . "coercing to string to preserve session integrity. This indicates a "
+            . "ReadLine control signal or similar ref leaked into user input.",
+            $role // '<undef>',
+            ref $content
+        ));
+        if (ref $content eq 'HASH' && defined $content->{type}) {
+            $content = "[CORRUPTED INPUT: ref of type " . ref($content) . " with type='$content->{type}' - "
+                . "this is a bug, please report]";
+        } else {
+            $content = "[CORRUPTED INPUT: ref of type " . ref($content) . "]";
+        }
+    }
     $content = strip_conversation_tags($content);
     
     # Generate unique turn ID (SAM compatibility)
