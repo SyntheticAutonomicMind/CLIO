@@ -7,7 +7,7 @@ use strict;
 use warnings;
 use utf8;
 use Encode qw(decode);
-use CLIO::Core::Logger qw(should_log log_debug);
+use CLIO::Core::Logger qw(should_log log_debug log_warning);
 use CLIO::Core::ErrorContext qw(classify_error format_error);
 use CLIO::Util::JSONRepair qw(repair_malformed_json);
 use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json safe_encode_json);
