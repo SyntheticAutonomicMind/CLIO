@@ -499,6 +499,11 @@ CLIO provides 35+ slash commands. Type `/help` in any session to see the full li
 | `/memory stats` | Show LTM statistics |
 | `/memory prune [days]` | Remove old/low-confidence entries |
 | `/memory clear` | Clear all patterns |
+| `/memory corroborate <search_text>` | Add corroboration to an LTM entry (promotes to TRUSTED at 2+) |
+| `/memory promote <search_text>` | Manually promote an entry to TRUSTED tier |
+| `/memory tier <search_text>` | Show the trust tier of an LTM entry |
+
+**Trust Tiers:** LTM entries are tagged `[UNVERIFIED]` (single-source, 0.3x score weight, 30-day age-out) or `[TRUSTED]` (corroborated by ≥2 independent sources or verified outcome, full weight, 90-day age-out). Agents are instructed to verify `[UNVERIFIED]` entries before acting on them, especially procedural patterns.
 
 ### User Profile
 
@@ -969,10 +974,15 @@ YOU: Forget the information about the old API endpoint
 
 **Long-Term Memory (LTM) Management:**
 ```text
-/memory stats    # Show LTM statistics (entry counts, timestamps)
-/memory prune    # Remove old/low-confidence entries (default 90 days)
-/memory prune 30 # Remove entries older than 30 days
+/memory stats          # Show LTM statistics (entry counts, timestamps)
+/memory prune          # Remove old/low-confidence entries (default 90 days)
+/memory prune 30       # Remove entries older than 30 days
+/memory corroborate <search_text>  # Add corroboration (promotes to TRUSTED at 2+)
+/memory promote <search_text>      # Manually promote entry to TRUSTED tier
+/memory tier <search_text>         # Show trust tier of an LTM entry
 ```
+
+**Trust Tiers:** Entries show `[UNVERIFIED]` (single-source, 0.3x score, 30-day age-out) or `[TRUSTED]` (corroborated by ≥2 independent sources or verified outcome, full weight, 90-day age-out). Verify `[UNVERIFIED]` entries before acting on them.
 
 ### Todo List Operations
 
