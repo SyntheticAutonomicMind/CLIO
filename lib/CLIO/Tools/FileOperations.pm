@@ -1075,10 +1075,7 @@ sub grep_search {
             if ($@) {
                 my $err = $@;
                 $err =~ s/ at .* line \d+.*//;  # Clean up error message
-                $result = {
-                    success => 0,
-                    error => "Invalid regex pattern '$query': $err"
-                };
+                $result = $self->error_result("Invalid regex pattern '$query': $err");
                 return;
             }
         } else {

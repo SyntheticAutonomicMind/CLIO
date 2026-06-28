@@ -379,11 +379,18 @@ sub execute_tool {
     }
     
     # Validate tool result schema - ensure required fields exist
-    unless (exists $result->{success} && defined $result->{output}) {
-        log_warning('ToolExecutor', "Tool '$tool_name' returned result missing required fields (success, output)");
+    # Required: 'success' must exist. 'output' is only required for success=1
+    # results (the success branch consumes it). Error results (success=0) only
+    # need 'success' and 'error' - the error branch below uses $result->{error}
+    # directly and does not need an 'output' field. This matches error_result()
+    # in Tool.pm which intentionally doesn't set 'output'.
+    my $valid = exists $result->{success}
+        && ($result->{success} ? defined $result->{output} : exists $result->{error});
+    unless ($valid) {
+        log_warning('ToolExecutor', "Tool '$tool_name' returned malformed result (missing success/output/error)");
         $result = {
             success => 0,
-            output => "Tool returned malformed result (missing success/output fields)",
+            output => "Tool returned malformed result (missing required fields)",
             error => "Internal tool error: malformed result structure",
         };
     }
