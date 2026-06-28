@@ -32,9 +32,7 @@ call, covering all points where text enters the AI pipeline.
 =cut
 
 use Exporter 'import';
-our @EXPORT_OK = qw(sanitize_text set_sanitize_mode get_sanitize_mode);
-# Re-export InvisibleCharFilter helpers for callers that want raw detection
-push @EXPORT_OK, qw(filter_invisible_chars has_invisible_chars describe_invisible_chars);
+our @EXPORT_OK = qw(sanitize_text set_sanitize_mode get_sanitize_mode strip_conversation_tags);
 
 # Sanitize mode: 'strict' (default) warns on HIGH-severity invisible chars.
 # 'relaxed' still filters them but suppresses the warning - useful when working
@@ -177,6 +175,24 @@ sub sanitize_text {
     return $text;
 }
 
+=head2 strip_conversation_tags
+
+Strip out conversation markup tags from text.
+
+Arguments:
+- $text: Text potentially containing [conversation]...[/conversation] tags
+
+Returns: Text with conversation tags removed
+
+=cut
+
+sub strip_conversation_tags {
+    my ($text) = @_;
+    return $text unless defined $text;
+    $text =~ s/\[conversation\](.*?)\[\/conversation\]/$1/gs;
+    return $text;
+}
+
 1;
 
 __END__
@@ -213,5 +229,23 @@ This module provides a centralized sanitization function to prevent these issues
 4. **No dependencies**: Uses only Perl core features
 
 =cut
+
+=head2 strip_conversation_tags
+
+Strip out conversation markup tags from text.
+
+Arguments:
+- $text: Text potentially containing [conversation]...[/conversation] tags
+
+Returns: Text with conversation tags removed
+
+=cut
+
+sub strip_conversation_tags {
+    my ($text) = @_;
+    return $text unless defined $text;
+    $text =~ s/\[conversation\](.*?)\[\/conversation\]/$1/gs;
+    return $text;
+}
 
 1;

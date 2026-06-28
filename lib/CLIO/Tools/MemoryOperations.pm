@@ -427,7 +427,7 @@ Searches newest sessions first, returns matches with session IDs.
 
 Parameters:
   query - Text to search for in session history
-  max_sessions - Maximum number of sessions to search (default: 10)
+  max_sessions - Maximum number of sessions to search (default: 10, max: 50)
   max_results - Maximum total results to return (default: 5)
 
 =cut
@@ -438,6 +438,10 @@ sub recall_sessions {
     my $query = $params->{query};
     my $max_sessions = $params->{max_sessions} || 10;
     my $max_results = $params->{max_results} || 5;
+    
+    # Enforce hard limits to prevent OOM
+    $max_sessions = 50 if $max_sessions > 50;
+    $max_results = 20 if $max_results > 20;
     
     return $self->error_result("Missing 'query' parameter") unless $query;
     
@@ -476,6 +480,13 @@ sub recall_sessions {
             $session_id =~ s/.*[\/\\]//;
             $session_id =~ s/\.json$//;
             
+            # Check file size before reading - skip huge files to prevent OOM
+            my $file_size = -s $session_path;
+            if ($file_size > 50_000_000) {  # 50MB limit
+                log_warning('MemoryOps', "Skipping large session file $session_id ($file_size bytes)");
+                next SESSION;
+            }
+            
             my $json;
             eval {
                 open my $fh, '<', $session_path or croak "Cannot read: $!";
@@ -487,6 +498,9 @@ sub recall_sessions {
             
             my $session_data = safe_decode_json($json);
             next SESSION unless $session_data && $session_data->{history};
+            
+            # Clear large variables early to free memory
+            $json = undef;
             
             $sessions_searched++;
             
@@ -564,6 +578,9 @@ sub recall_sessions {
                     match_query => $query,
                 };
             }
+            
+            # Clear session data to free memory before next iteration
+            $session_data = undef;
         }
         
         # Sort by score descending, take top N
@@ -600,20 +617,25 @@ Extract meaningful keywords from a search query, filtering stop words.
 
 =cut
 
+# Default stop words - can be overridden by setting $CLIO::Tools::MemoryOperations::STOP_WORDS
+our @DEFAULT_STOP_WORDS = qw(
+    a an the is are was were be been being
+    in on at to for of by with from as
+    and or but not no nor so yet
+    it its this that these those
+    i me my we us our you your he she they them
+    do does did have has had will would should could
+    what where when how why which who whom
+    all any some each every
+    very much more most just also too
+);
+
 sub _extract_keywords {
     my ($query) = @_;
     
-    my %stop_words = map { $_ => 1 } qw(
-        a an the is are was were be been being
-        in on at to for of by with from as
-        and or but not no nor so yet
-        it its this that these those
-        i me my we us our you your he she they them
-        do does did have has had will would should could
-        what where when how why which who whom
-        all any some each every
-        very much more most just also too
-    );
+    # Allow custom stop words via package variable
+    my @stop_words = @DEFAULT_STOP_WORDS;
+    my %stop_words = map { $_ => 1 } @stop_words;
     
     # Split on non-word characters, lowercase, filter
     my @words = grep { 
@@ -697,11 +719,8 @@ sub add_discovery {
         # Add discovery to LTM
         $ltm->add_discovery($fact, $confidence, 1);  # verified=1 (user explicitly added)
         
-        # Save LTM - use current working directory for cross-platform compatibility
-        # The stored working_directory may be from a different machine
-        my $working_dir = Cwd::getcwd();
-        my $ltm_file = File::Spec->catfile($working_dir, '.clio', 'ltm.json');
-        $ltm->save($ltm_file);
+        # Save LTM
+        $self->_save_ltm($ltm, $context);
         
         $result = $self->success_result(
             "Discovery stored successfully",
@@ -748,10 +767,8 @@ sub add_solution {
         # Add solution to LTM
         $ltm->add_problem_solution($error, $solution, $examples);
         
-        # Save LTM - use current working directory for cross-platform compatibility
-        my $working_dir = Cwd::getcwd();
-        my $ltm_file = File::Spec->catfile($working_dir, '.clio', 'ltm.json');
-        $ltm->save($ltm_file);
+        # Save LTM
+        $self->_save_ltm($ltm, $context);
         
         $result = $self->success_result(
             "Solution stored successfully",
@@ -798,10 +815,8 @@ sub add_pattern {
         # Add pattern to LTM
         $ltm->add_code_pattern($pattern, $confidence, $examples);
         
-        # Save LTM - use current working directory for cross-platform compatibility
-        my $working_dir = Cwd::getcwd();
-        my $ltm_file = File::Spec->catfile($working_dir, '.clio', 'ltm.json');
-        $ltm->save($ltm_file);
+        # Save LTM
+        $self->_save_ltm($ltm, $context);
         
         $result = $self->success_result(
             "Pattern stored successfully",
@@ -816,6 +831,28 @@ sub add_pattern {
     }
     
     return $result;
+}
+
+=head2 _save_ltm
+
+Internal helper to save LTM to disk. Uses session's working_directory if available,
+falls back to current working directory for cross-platform compatibility.
+
+=cut
+
+sub _save_ltm {
+    my ($self, $ltm, $context) = @_;
+    
+    # Use session's working_directory if available (more reliable than getcwd)
+    my $working_dir;
+    if ($context->{session} && $context->{session}->{state} && $context->{session}->{state}->{working_directory}) {
+        $working_dir = $context->{session}->{state}->{working_directory};
+    } else {
+        $working_dir = Cwd::getcwd();
+    }
+    
+    my $ltm_file = File::Spec->catfile($working_dir, '.clio', 'ltm.json');
+    $ltm->save($ltm_file);
 }
 
 =head2 update_ltm

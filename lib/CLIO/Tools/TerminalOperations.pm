@@ -543,6 +543,7 @@ sub _execute_passthrough {
 
 Send TERM to a process group, wait up to 2 seconds for graceful exit, then
 KILL if still alive. Uses POSIX-portable negative-PID form for group kill.
+Reaps all child processes to prevent zombies.
 
 =cut
 
@@ -559,6 +560,12 @@ sub _kill_process_group {
     if (waitpid($pid, POSIX::WNOHANG()) <= 0) {
         kill('KILL', -$pid);
         waitpid($pid, 0);
+    }
+    
+    # Reap any remaining children in the process group to prevent zombies
+    # Use non-blocking waitpid in a loop
+    while (waitpid(-1, POSIX::WNOHANG()) > 0) {
+        # Reaped a child
     }
 }
 

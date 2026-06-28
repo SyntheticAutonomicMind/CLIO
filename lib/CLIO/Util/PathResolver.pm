@@ -13,7 +13,7 @@ use File::Spec;
 use File::Path qw(make_path);
 use Exporter 'import';
 
-our @EXPORT_OK = qw(expand_tilde);
+our @EXPORT_OK = qw(expand_tilde shell_quote);
 
 =head1 NAME
 
@@ -250,6 +250,27 @@ sub get_themes_dir {
     return File::Spec->catdir($base, 'themes');
 }
 
+=head2 shell_quote($str)
+
+Shell-quote a string for safe interpolation into shell commands.
+Uses single-quote wrapping with embedded single-quote escaping.
+This is a simplified version of String::ShellQuote for environments
+where that module may not be available.
+
+Arguments:
+- $str: String to quote
+
+Returns: Shell-quoted string
+
+=cut
+
+sub shell_quote {
+    my ($str) = @_;
+    return "''" unless defined $str && length $str;
+    $str =~ s/'/'\\''/g;
+    return "'$str'";
+}
+
 1;
 
 =head1 AUTHOR
@@ -261,5 +282,3 @@ CLIO Project
 GPL-3.0
 
 =cut
-
-1;

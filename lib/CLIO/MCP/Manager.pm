@@ -437,6 +437,17 @@ sub add_server {
         unless ($self->is_available()) {
             return { success => 0, error => 'MCP not available (no compatible runtimes found)' };
         }
+        
+        # Validate command
+        unless ($command_or_config && ref($command_or_config) eq 'ARRAY' && @$command_or_config) {
+            return { success => 0, error => 'No command configured for local server' };
+        }
+        
+        my $exe = $command_or_config->[0];
+        unless ($self->_command_exists($exe)) {
+            return { success => 0, error => "Command not found in PATH: $exe" };
+        }
+        
         $client = CLIO::MCP::Client->new(
             name    => $name,
             command => $command_or_config,

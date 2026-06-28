@@ -18,7 +18,6 @@ use CLIO::Util::PathResolver qw(expand_tilde);
 use File::Path qw(make_path);
 use Cwd qw(abs_path getcwd);
 use Encode qw(decode);
-use feature 'say';
 use File::Glob qw(:bsd_glob);
 
 =head1 NAME
@@ -480,14 +479,14 @@ sub _check_sandbox {
     my $sandbox_enabled = $config->get('sandbox');
     return { allowed => 1 } unless $sandbox_enabled;
     
-    # Get project directory (working directory)
-    my $project_dir = getcwd();  # Default to current working directory
-    
-    # Try to get from session state if available
+    # Get project directory from session state (NOT getcwd() which can differ)
+    my $project_dir;
     if ($context->{session} && $context->{session}->{state}) {
-        my $session_wd = $context->{session}->{state}->{working_directory};
-        $project_dir = $session_wd if $session_wd;
+        $project_dir = $context->{session}->{state}->{working_directory};
     }
+    
+    # Fallback to getcwd if no session working_directory
+    $project_dir //= getcwd();
     
     # Resolve project directory to absolute path
     $project_dir = abs_path($project_dir) || $project_dir;
@@ -1192,36 +1191,45 @@ sub _semantic_search_hybrid {
     
     log_debug('FileOperations', "Keywords: " . join(', ', @keywords));
     
-    # Use grep_search for each keyword
+    # Combine keywords into a single regex for efficient single-pass search
+    # Use alternation to match any keyword
+    my $combined_regex = join('|', map { quotemeta($_) } @keywords);
+    
+    # Use proper glob pattern
+    my $pattern = ($scope eq '.' || !$scope) ? '**/*' : "$scope/**/*";
+    
+    my $grep_result = $self->grep_search({
+        query => $combined_regex,
+        pattern => $pattern,
+        is_regex => 1,
+        max_results => 500,  # Higher limit for semantic search
+    }, $context);
+    
     my %file_scores = ();  # file => score
     my %file_matches = ();  # file => array of match lines
     
-    foreach my $keyword (@keywords) {
-        # Use proper glob pattern
-        my $pattern = ($scope eq '.' || !$scope) ? '**/*' : "$scope/**/*";
-        
-        my $grep_result = $self->grep_search({
-            query => $keyword,
-            pattern => $pattern,
-            is_regex => 0,
-            max_results => 200,  # Higher limit for semantic search
-        }, $context);
-        
-        # grep_search returns results in 'output' not 'matches'
-        next unless $grep_result->{success} && $grep_result->{output};
-        
+    if ($grep_result->{success} && $grep_result->{output}) {
         foreach my $match (@{$grep_result->{output}}) {
             # grep_search returns {path, line, content}
             my $file = $match->{path};
             next unless $file;
             
-            # Score: number of keyword matches + position bonus
+            # Score: count how many keywords matched in this file
+            my $content_lc = lc($match->{content});
+            my $keyword_hits = 0;
+            foreach my $keyword (@keywords) {
+                $keyword_hits++ if $content_lc =~ /\Q$keyword\E/;
+            }
+            
             $file_scores{$file} ||= 0;
-            $file_scores{$file} += 1;
+            $file_scores{$file} += $keyword_hits;
             
             # Boost score if keyword appears in file name
-            if ($file =~ /\Q$keyword\E/i) {
-                $file_scores{$file} += 2;
+            foreach my $keyword (@keywords) {
+                if ($file =~ /\Q$keyword\E/i) {
+                    $file_scores{$file} += 2;
+                    last;  # Only boost once per file
+                }
             }
             
             # Store match details (normalize format)

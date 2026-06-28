@@ -31,6 +31,7 @@ use utf8;
 use Carp qw(croak);
 use CLIO::Core::Logger qw(log_debug);
 use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json);
+use CLIO::Util::TextSanitizer qw(strip_conversation_tags);
 
 log_debug('ShortTerm', "CLIO::Memory::ShortTerm loaded");
 
@@ -43,14 +44,6 @@ sub new {
     };
     bless $self, $class;
     return $self;
-}
-
-# Strip out conversation markup
-sub strip_conversation_tags {
-    my ($text) = @_;
-    return $text unless defined $text;
-    $text =~ s/\[conversation\](.*?)\[\/conversation\]/$1/gs;
-    return $text;
 }
 
 sub add_message {

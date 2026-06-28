@@ -47,7 +47,6 @@ use CLIO::Core::API::ResponseHandler;
 use CLIO::Util::TextSanitizer qw(sanitize_text);
 use CLIO::UI::Terminal qw(ui_char);
 use CLIO::Core::RateLimiter;
-use CLIO::Compat::HTTP;
 use CLIO::Util::CABundle;
 
 # Define request states
@@ -67,6 +66,10 @@ use constant {
 
 # Generate a UUID v4 for request tracking headers
 sub _generate_uuid {
+    # Seed RNG with high-resolution time and PID for cryptographic-quality randomness
+    # This is called frequently, so we use a lightweight seed each call
+    srand(Time::HiRes::time() ^ $$ ^ int(rand(2**31)));
+    
     my @hex = ('0'..'9', 'a'..'f');
     my $uuid = '';
     for my $i (1..32) {
@@ -85,6 +88,31 @@ sub _create_http_client {
     my $proxy = $self->{config} ? ($self->{config}->get('http_proxy') || '') : '';
     $opts{proxy} = $proxy if $proxy;
     return CLIO::Compat::HTTP->new(%opts);
+}
+
+# Get or create a shared HTTP client for connection pooling
+# Reuses the same client for multiple requests to enable keep-alive
+sub _get_shared_http_client {
+    my ($self, %opts) = @_;
+    
+    # Create a cache key based on options that affect connection behavior
+    my $cache_key = join('|', 
+        $opts{timeout} || 300,
+        $opts{proxy} || '',
+        $opts{agent} || '',
+        $opts{ssl_opts} ? 'ssl' : 'no_ssl'
+    );
+    
+    $self->{_http_client_cache} ||= {};
+    
+    unless ($self->{_http_client_cache}{$cache_key}) {
+        my $proxy = $self->{config} ? ($self->{config}->get('http_proxy') || '') : '';
+        $opts{proxy} = $proxy if $proxy && !$opts{proxy};
+        $self->{_http_client_cache}{$cache_key} = CLIO::Compat::HTTP->new(%opts);
+        log_debug('APIManager', "Created new shared HTTP client (cache_key=$cache_key)");
+    }
+    
+    return $self->{_http_client_cache}{$cache_key};
 }
 
 # Check if a model supports reasoning/thinking parameters via models API
@@ -1472,7 +1500,7 @@ sub _resolve_local_model {
     $models_url =~ s{/v1(/.*)?$}{};
     $models_url .= '/v1/models';
 
-    my $ua = $self->_create_http_client(timeout => 5);
+    my $ua = $self->_get_shared_http_client(timeout => 5);
     my $resp = eval { $ua->get($models_url) };
     return undef if $@ || !$resp || !$resp->is_success;
 
@@ -1519,7 +1547,7 @@ sub _query_llama_props {
     $props_url =~ s{/v1(/.*)?$}{};  # strip /v1 and anything after it
     $props_url .= '/props';
 
-    my $ua = $self->_create_http_client(timeout => 5);
+    my $ua = $self->_get_shared_http_client(timeout => 5);
     my $resp = eval { $ua->get($props_url) };
     if ($@ || !$resp || !$resp->is_success) {
         log_debug('APIManager', "llama.cpp /props not available at $props_url");
@@ -2630,10 +2658,11 @@ sub _prepare_api_request {
     return { error_result => $json } if ref($json) eq 'HASH' && !$json->{success};
 
     # Create HTTP client with extended timeout for slow local inference (llama.cpp, SAM, LM Studio)
+    # Use shared client for connection pooling (keep-alive)
     my $default_timeout = 300;  # Fast API (cloud) default
     my $slow_timeout = 600;      # Slow API (local inference) default
     my $ua_timeout = $endpoint_config->{slow_api} ? $slow_timeout : $default_timeout;
-    my $ua = $self->_create_http_client(
+    my $ua = $self->_get_shared_http_client(
         timeout  => $ua_timeout,
         agent    => 'GitHubCopilotChat/0.22.4',
         ssl_opts => { verify_hostname => 1 }
@@ -2976,7 +3005,7 @@ sub _process_non_streaming_response {
     }
 
     # Successful response
-    $self->{response_handler}->process_rate_limit_headers($resp->headers);
+    my $rate_limit_info = $self->{response_handler}->process_rate_limit_headers($resp->headers);
     $self->{rate_limiter}->update_from_headers($provider_label, $resp->headers);
     $self->{rate_limiter}->release($provider_label);
     $self->_log_api_response($resp, $provider_label, 0);
@@ -3763,7 +3792,7 @@ sub _finalize_streaming_response {
 
     # Process rate limit and quota headers
     my $headers = $s{streaming_headers} || $resp->headers;
-    $self->{response_handler}->process_rate_limit_headers($headers) if $headers;
+    my $rate_limit_info = $self->{response_handler}->process_rate_limit_headers($headers) if $headers;
 
     if ($s{endpoint_config}{requires_copilot_headers} && $headers) {
         my $response_id = $self->{session}{lastGitHubCopilotResponseId} || 'unknown';
@@ -4614,7 +4643,7 @@ sub _send_native_streaming {
     my %usage_tracking = (input_tokens => 0, output_tokens => 0);
     
     # Create HTTP client
-    my $ua = $self->_create_http_client(
+    my $ua = $self->_get_shared_http_client(
         timeout => 300,
         agent => 'CLIO/1.0',
         ssl_opts => { verify_hostname => 1 },
@@ -4759,7 +4788,7 @@ sub _send_native_streaming {
             }
             # Process rate limit headers from 429 responses too
             if ($self->{response_handler} && $resp_headers) {
-                $self->{response_handler}->process_rate_limit_headers($resp_headers);
+                my $rate_limit_info = $self->{response_handler}->process_rate_limit_headers($resp_headers);
             }
         }
         elsif ($status == 400) {
@@ -4786,7 +4815,7 @@ sub _send_native_streaming {
     # Process rate limit headers on successful responses too (proactive token quota tracking)
     if ($self->{response_handler}) {
         my $resp_headers = $response->can("headers") ? $response->headers : undef;
-        $self->{response_handler}->process_rate_limit_headers($resp_headers) if $resp_headers;
+        my $rate_limit_info = $self->{response_handler}->process_rate_limit_headers($resp_headers) if $resp_headers;
     }
 
     # Build result

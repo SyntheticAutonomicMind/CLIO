@@ -343,6 +343,22 @@ sub clear_thinking_blocks {
     my ($self) = @_;
     $self->{_thinking_blocks} = [];
     $self->{_current_thinking} = undef;
+    $self->{_final_usage} = undef;
+}
+
+=head2 get_final_usage()
+
+Return the final usage data captured from message_delta event, if any.
+This is used when message_delta contains both stop_reason and usage,
+where only the stop event can be returned from parse_stream_event.
+
+Returns: Hashref with output_tokens, or undef if not available.
+
+=cut
+
+sub get_final_usage {
+    my ($self) = @_;
+    return $self->{_final_usage};
 }
 
 =head2 parse_stream_event($line)
@@ -531,24 +547,25 @@ sub parse_stream_event {
         my $delta = $data->{delta};
         my $usage = $data->{usage};
         
-        my @results;
-        
+        # If both stop_reason and usage are present, we can only return one event
+        # per parse_stream_event call. Prioritize stop_reason (critical for stream
+        # termination) but store usage for later retrieval via get_final_usage().
         if ($delta && $delta->{stop_reason}) {
-            push @results, {
+            # Store usage if present for later retrieval
+            $self->{_final_usage} = $usage if $usage;
+            return {
                 type => 'stop',
                 stop_reason => $self->_map_stop_reason($delta->{stop_reason}),
             };
         }
         
         if ($usage) {
-            push @results, {
+            return {
                 type => 'usage',
                 output_tokens => $usage->{output_tokens} // 0,
             };
         }
         
-        # Return first result if any (message_delta typically has stop_reason)
-        return $results[0] if @results;
         return undef;
     }
     elsif ($event_type eq 'message_stop') {

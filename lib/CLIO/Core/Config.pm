@@ -147,6 +147,36 @@ Provider defaults (api_base, model) come from CLIO::Providers dynamically.
 sub load {
     my ($self) = @_;
     
+    # Check if we have a cached config for the current provider
+    my $current_provider = $self->{config}->{provider} // 'github_copilot';
+    my $cache_key = $current_provider;
+    
+    if ($self->{_provider_cache} && $self->{_provider_cache}{provider} eq $cache_key) {
+        # Return cached config merged with user-set values
+        my %config = %{DEFAULT_CONFIG()};
+        %config = (%config, %{$self->{_provider_cache}{config}});
+        
+        # Apply user-set values on top of cached provider defaults
+        if ($self->{config_file} && -f $self->{config_file}) {
+            eval {
+                open my $fh, '<', $self->{config_file} or croak "Cannot open: $!";
+                my $json = do { local $/; <$fh> };
+                close $fh;
+                
+                my $file_config = decode_json($json);
+                
+                # Load user-set values and mark them as user-set
+                for my $key (keys %$file_config) {
+                    $config{$key} = $file_config->{$key};
+                    $self->{user_set}->{$key} = 1;  # Mark as user-explicitly-set
+                }
+            };
+        }
+        
+        $self->{config} = \%config;
+        return $self->{config};
+    }
+    
     # Start with system defaults
     my %config = %{DEFAULT_CONFIG()};
     
@@ -234,6 +264,17 @@ sub load {
                 $config{api_key} = $provider_key;
                 log_debug('Config', "Loaded api_key for provider '$config{provider}'");
             }
+            
+            # Cache the provider config (without user-set values)
+            my %provider_defaults = %config;
+            # Remove user-set values from cache
+            for my $key (keys %{$self->{user_set}}) {
+                delete $provider_defaults{$key};
+            }
+            $self->{_provider_cache} = {
+                provider => $cache_key,
+                config => \%provider_defaults,
+            };
         } else {
             log_warning('Config', "Unknown provider '$config{provider}', using defaults");
         }

@@ -70,6 +70,20 @@ my @NETWORK_COMMANDS = qw(
     ssh scp sftp rsync
     ftp lftp tftp
     sendmail mail mutt
+    aria2c httpie lynx links w3m
+    openssl gnutls-cli
+    dig nslookup host
+    whois
+    traceroute tracepath mtr
+    ncftp
+    lftp
+    wget2
+    fetch
+    http
+    https
+    websocat
+    ncat
+    netcat
 );
 
 # Interpreter patterns that might do network I/O

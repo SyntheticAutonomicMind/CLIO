@@ -1087,6 +1087,9 @@ Supports:
 Arguments:
 - $headers: HTTP::Headers object
 
+Returns:
+- Hashref with rate_limit_info and dynamic_min_delay, or undef if no rate limit headers
+
 =cut
 
 sub process_rate_limit_headers {
@@ -1163,8 +1166,6 @@ sub process_rate_limit_headers {
 
     return unless keys %rate_limit;
 
-    $self->{_rate_limit_info} = \%rate_limit;
-
     # Store quota_used in session for UI display (mirrors Broker.pm behavior)
     if (defined $rate_limit{quota_used} && $self->{session}) {
         my $rl_provider = $self->_get_current_provider();
@@ -1218,6 +1219,8 @@ sub process_rate_limit_headers {
         }
     }
 
+    my $dynamic_min_delay = $self->{_dynamic_min_delay} // 1.0;
+    
     if (defined $percent_remaining) {
         my $new_delay;
         if ($percent_remaining > 50) {
@@ -1230,8 +1233,8 @@ sub process_rate_limit_headers {
             $new_delay = 2.5;
         }
 
-        my $old_delay = $self->{_dynamic_min_delay} // 1.0;
-        $self->{_dynamic_min_delay} = $new_delay;
+        my $old_delay = $dynamic_min_delay;
+        $dynamic_min_delay = $new_delay;
 
         if ($new_delay != $old_delay) {
             my $limit = $rate_limit{limit_requests} || 'N/A';
@@ -1247,42 +1250,16 @@ sub process_rate_limit_headers {
     if ($rate_limit{reset_requests}) {
         my $reset_time = $rate_limit{reset_requests};
         my $now = time();
-
-        if ($reset_time =~ /^\d+$/) {
-            # Already Unix timestamp
-        }
-        elsif ($reset_time =~ /(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/) {
-            eval {
-                require Time::Local;
-                $reset_time = Time::Local::timegm($6, $5, $4, $3, $2-1, $1);
-            };
-        }
-
-        if ($reset_time =~ /^\d+$/ && $reset_time > $now) {
-            my $seconds_until_reset = $reset_time - $now;
-            $self->{_rate_limit_reset_in} = $seconds_until_reset;
-            log_debug('ResponseHandler', "Rate limit resets in ${seconds_until_reset}s");
+        if ($reset_time > $now) {
+            $rate_limit{seconds_until_reset} = $reset_time - $now;
         }
     }
 
-    # Handle explicit Retry-After header
-    if ($rate_limit{retry_after}) {
-        my $retry_after = $rate_limit{retry_after};
-        if ($retry_after =~ /^\d+$/) {
-            $self->{rate_limit_until} = time() + $retry_after;
-            # Propagate to session state per-provider for /usage display
-            my $rl_provider = $self->_get_current_provider();
-            if ($self->{session} && $self->{session}->can('state')) {
-                my $state = $self->{session}->state();
-                $state->{rate_limits} //= {};
-                $state->{rate_limits}{$rl_provider} //= {};
-                $state->{rate_limits}{$rl_provider}{rate_limit_until} = $self->{rate_limit_until};
-            } elsif ($self->{session}) {
-                $self->{session}{rate_limit_until} = $self->{rate_limit_until};
-            }
-            log_info('ResponseHandler', "Retry-After header: waiting ${retry_after}s before next request");
-        }
-    }
+    # Return rate limit info and new delay (stateless - caller decides what to do with it)
+    return {
+        rate_limit_info => \%rate_limit,
+        dynamic_min_delay => $dynamic_min_delay,
+    };
 }
 
 =head2 process_quota_headers

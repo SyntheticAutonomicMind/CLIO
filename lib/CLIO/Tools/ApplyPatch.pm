@@ -402,10 +402,10 @@ sub _parse_patch {
                     next;
                 }
                 
-                # Unrecognized line - treat as context (may indicate malformed patch)
-                log_debug('ApplyPatch', "Unrecognized line in patch chunk treated as context: '$cl'");
-                push @{$current_chunk->{old_lines}}, $cl;
-                push @{$current_chunk->{new_lines}}, $cl;
+                # Unrecognized line - this may indicate malformed patch
+                # Instead of silently treating as context, warn and skip
+                log_warning('ApplyPatch', "Unrecognized line in patch chunk (not +, -, space, or @@): '$cl'");
+                log_warning('ApplyPatch', "This line will be ignored. Check patch format for missing +/-/space prefixes.");
                 $i++;
             }
             
@@ -648,7 +648,7 @@ sub _find_chunk_position {
     
     $start_offset //= 0;
     
-    # If we have old_lines, search for exact match
+    # If we have old_lines, search for match (try exact first, then fuzzy)
     if ($old_lines && @$old_lines) {
         my $pattern_len = scalar @$old_lines;
         
@@ -682,10 +682,25 @@ sub _find_chunk_position {
             }
         }
         
+        # If exact match fails, try fuzzy match (whitespace-tolerant)
+        for my $i ($search_start .. ($#$lines - $pattern_len + 1)) {
+            if ($self->_lines_match_fuzzy($lines, $i, $old_lines)) {
+                log_debug('ApplyPatch', "Fuzzy match found at line $i");
+                return $i;
+            }
+        }
+        
         # Retry from start of file if we started with offset
         if ($search_start > 0) {
             for my $i (0 .. ($search_start - 1)) {
                 if ($self->_lines_match($lines, $i, $old_lines)) {
+                    return $i;
+                }
+            }
+            # Also try fuzzy from start
+            for my $i (0 .. ($search_start - 1)) {
+                if ($self->_lines_match_fuzzy($lines, $i, $old_lines)) {
+                    log_debug('ApplyPatch', "Fuzzy match found at line $i (retry from start)");
                     return $i;
                 }
             }
@@ -707,6 +722,33 @@ sub _find_chunk_position {
     }
     
     return undef;
+}
+
+=head2 _lines_match_fuzzy(\@file_lines, $start_pos, \@pattern_lines)
+
+Check if pattern_lines match file_lines starting at start_pos, ignoring whitespace differences.
+
+=cut
+
+sub _lines_match_fuzzy {
+    my ($self, $file_lines, $start, $pattern) = @_;
+    
+    return 0 if $start + scalar(@$pattern) - 1 > $#$file_lines;
+    
+    for my $j (0 .. $#$pattern) {
+        my $file_line = $file_lines->[$start + $j] // '';
+        my $pat_line = $pattern->[$j] // '';
+        
+        # Normalize whitespace: trim and collapse multiple spaces
+        $file_line =~ s/^\s+|\s+$//g;
+        $file_line =~ s/\s+/ /g;
+        $pat_line =~ s/^\s+|\s+$//g;
+        $pat_line =~ s/\s+/ /g;
+        
+        return 0 unless $file_line eq $pat_line;
+    }
+    
+    return 1;
 }
 
 =head2 _find_chunk_position_fuzzy

@@ -47,6 +47,7 @@ use CLIO::Memory::ShortTerm;
 use CLIO::Memory::LongTerm;
 use CLIO::Memory::YaRN;
 use CLIO::Memory::TokenEstimator;
+use CLIO::Util::TextSanitizer qw(strip_conversation_tags);
 
 sub new {
     my ($class, %args) = @_;
@@ -455,14 +456,6 @@ sub _validate_and_repair_history {
     return "Session restored. Ready to continue." if $removed_count >= 1;
     
     return 0;  # No repairs were made
-}
-
-# Strip out conversation markup
-sub strip_conversation_tags {
-    my ($text) = @_;
-    return $text unless defined $text;
-    $text =~ s/\[conversation\](.*?)\[\/conversation\]/$1/gs;
-    return $text;
 }
 
 sub add_message {

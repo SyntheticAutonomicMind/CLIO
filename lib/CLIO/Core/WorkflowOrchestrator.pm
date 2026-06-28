@@ -9,7 +9,6 @@ use utf8;
 use Carp qw(croak);
 use CLIO::UI::Terminal qw(box_char);
 use CLIO::Core::Logger qw(log_error log_warning log_info log_debug should_log);
-use CLIO::Core::Logger qw(log_error log_warning log_info log_debug);
 use CLIO::Core::ErrorContext qw(classify_error format_error);
 use CLIO::Util::TextSanitizer qw(sanitize_text);
 use CLIO::Util::JSONRepair qw(repair_malformed_json);
@@ -1107,6 +1106,19 @@ sub _build_turn_context {
     return (\@messages, $tools);
 }
 
+=head2 invalidate_tool_cache
+
+Invalidate the cached tool definitions. Call this when MCP servers or plugins
+are added/removed, or when tool definitions change.
+
+=cut
+
+sub invalidate_tool_cache {
+    my ($self) = @_;
+    delete $self->{_tools_cache};
+    log_debug('WorkflowOrchestrator', "Tool definition cache invalidated");
+}
+
 =head2 _capture_file_before
 
 Snapshot file content before a write operation so we can show diffs after.
@@ -1657,7 +1669,7 @@ sub _prepare_tool_round {
 
     log_debug('WorkflowOrchestrator', "Delaying save of assistant message with tool_calls until first tool result completes");
 
-    # ── Phase 3: Resolve aliases and classify tools ───────────────────
+    # ── Phase 3: Classify tools ──────────────────────────────────────────
     my @blocking_tools = ();
     my @serial_tools = ();
     my @parallel_tools = ();
@@ -1665,34 +1677,11 @@ sub _prepare_tool_round {
     for my $tool_call (@{$api_response->{tool_calls}}) {
         my $tool_name = $tool_call->{function}->{name} || 'unknown';
 
-        # Resolve tool aliases
-        my $alias_info = $self->{tool_registry}->get_alias_info($tool_name);
-        if ($alias_info) {
-            log_debug('WorkflowOrchestrator', "Alias detected: '$tool_name' -> '$alias_info->{tool}' with operation='$alias_info->{operation}'");
-            $tool_call->{function}->{name} = $alias_info->{tool};
-            $tool_name = $alias_info->{tool};
-
-            my $args_str = $tool_call->{function}->{arguments};
-            if ($args_str) {
-                eval {
-                    my $args = decode_json($args_str);
-                    unless (exists $args->{operation}) {
-                        $args->{operation} = $alias_info->{operation};
-                        $tool_call->{function}->{arguments} = encode_json($args);
-                        log_debug('WorkflowOrchestrator', "Injected operation='$alias_info->{operation}' into args");
-                    }
-                };
-            } else {
-                $tool_call->{function}->{arguments} = encode_json({ operation => $alias_info->{operation} });
-                log_debug('WorkflowOrchestrator', "Created args with operation='$alias_info->{operation}'");
-            }
-        }
-
         my $tool = $self->{tool_registry}->get_tool($tool_name);
 
         # Parse arguments for classification (reuse Phase 1 result when available)
         my $params = {};
-        if ($tool_call->{_parsed_args} && !$alias_info) {
+        if ($tool_call->{_parsed_args}) {
             # Reuse pre-parsed args from Phase 1 validation (avoids redundant JSON decode)
             $params = $tool_call->{_parsed_args};
         } elsif ($tool_call->{function}->{arguments}) {

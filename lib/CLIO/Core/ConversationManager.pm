@@ -255,6 +255,7 @@ Strategy:
 1. Always preserve first user message (original task context)
 2. Keep recent messages for continuity
 3. Fill remaining budget with high-importance older messages
+4. Preserve tool_call/tool_result pairs together (never split them)
 
 Arguments:
 - $history: Arrayref of message objects
@@ -323,6 +324,8 @@ sub trim_conversation_for_api {
     # context (current task) survives, not old completed tasks.
     # The proactive trim in MessageValidator handles sophisticated compression
     # with thread_summary generation. This is a simple budget-based tail keep.
+    #
+    # IMPORTANT: Preserve tool_call/tool_result pairs together - never split them.
 
     my @kept = ();
     my $kept_tokens = 0;
@@ -330,6 +333,52 @@ sub trim_conversation_for_api {
     for my $i (reverse 0 .. $#messages) {
         my $msg = $messages[$i];
         my $msg_tokens = CLIO::Memory::TokenEstimator::estimate_tokens($msg->{content} // '');
+        
+        # Check if this is a tool_result that needs its tool_call partner
+        my $is_tool_result = ($msg->{role} // '') eq 'tool';
+        my $tool_call_id = $msg->{tool_call_id};
+        
+        # If this is a tool_result, check if we have its tool_call in the kept messages
+        # If not, we need to also keep the tool_call (which would be earlier in the array)
+        if ($is_tool_result && $tool_call_id) {
+            # Look for the matching tool_call in the remaining messages (earlier indices)
+            my $has_tool_call = 0;
+            for my $j (0 .. $i - 1) {
+                my $prev_msg = $messages[$j];
+                if (($prev_msg->{role} // '') eq 'assistant' && $prev_msg->{tool_calls}) {
+                    for my $tc (@{$prev_msg->{tool_calls}}) {
+                        if ($tc->{id} eq $tool_call_id) {
+                            $has_tool_call = 1;
+                            last;
+                        }
+                    }
+                }
+                last if $has_tool_call;
+            }
+            
+            # If we don't have the tool_call in kept messages, we need to include it
+            # This means we need to also include the assistant message with the tool_call
+            if (!$has_tool_call) {
+                # Find the assistant message with this tool_call
+                for my $j (0 .. $i - 1) {
+                    my $prev_msg = $messages[$j];
+                    if (($prev_msg->{role} // '') eq 'assistant' && $prev_msg->{tool_calls}) {
+                        for my $tc (@{$prev_msg->{tool_calls}}) {
+                            if ($tc->{id} eq $tool_call_id) {
+                                # Include this assistant message (and its tool_calls)
+                                my $assistant_tokens = CLIO::Memory::TokenEstimator::estimate_tokens($prev_msg->{content} // '');
+                                if ($kept_tokens + $msg_tokens + $assistant_tokens <= $target_tokens) {
+                                    unshift @kept, $prev_msg;
+                                    $kept_tokens += $assistant_tokens;
+                                }
+                                last;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
         if ($kept_tokens + $msg_tokens <= $target_tokens) {
             unshift @kept, $msg;
             $kept_tokens += $msg_tokens;

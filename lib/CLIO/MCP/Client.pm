@@ -278,20 +278,33 @@ sub _discover_tools {
         return;
     }
     
-    my $response = $self->{transport}->send_request('tools/list', {});
+    my @all_tools;
+    my $cursor;
     
-    unless ($response && $response->{result} && $response->{result}{tools}) {
-        log_warning('MCP:$self->{name}', "tools/list returned no tools");
-        $self->{tools} = [];
-        return;
-    }
+    do {
+        my $request = { };
+        $request->{cursor} = $cursor if $cursor;
+        
+        my $response = $self->{transport}->send_request('tools/list', $request);
+        
+        unless ($response && $response->{result} && $response->{result}{tools}) {
+            log_warning('MCP:$self->{name}', "tools/list returned no tools");
+            last;
+        }
+        
+        push @all_tools, @{$response->{result}{tools}};
+        
+        # Check for pagination cursor
+        $cursor = $response->{result}{nextCursor};
+        
+    } while ($cursor);
     
-    $self->{tools} = $response->{result}{tools};
+    $self->{tools} = \@all_tools;
     
-    my $count = scalar @{$self->{tools}};
+    my $count = scalar @all_tools;
     log_debug('MCP', "Server '$self->{name}' provides $count tool(s)");
     
-    for my $tool (@{$self->{tools}}) {
+    for my $tool (@all_tools) {
         log_debug('MCP', "  - $tool->{name}: " . ($tool->{description} || 'no description'));
     }
 }
