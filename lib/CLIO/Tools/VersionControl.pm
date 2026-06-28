@@ -19,8 +19,11 @@ use feature 'say';
 
 # Shell-quote a string for safe interpolation into backtick commands.
 # Uses single-quote wrapping with embedded single-quote escaping.
+# This is a simplified version of String::ShellQuote for environments
+# where that module may not be available.
 sub _sq {
     my ($str) = @_;
+    return "''" unless defined $str && length $str;
     $str =~ s/'/'\\''/g;
     return "'$str'";
 }
@@ -301,6 +304,7 @@ sub commit {
     
     my $repo_path = $params->{repository_path} || '.';
     my $message = $params->{message};
+    my $auto_stage = $params->{auto_stage} // 1;  # Default to true for backward compat
     my $result;
     
     return $self->error_result("Missing 'message' parameter") unless $message;
@@ -329,12 +333,14 @@ sub commit {
     
     eval {
         $result = _in_repo($repo_path, sub {
-            # Auto-stage all tracked changes before commit
-            my $add_output = `git add -A 2>&1`;
-            my $add_exit = $? >> 8;
-            if ($add_exit != 0) {
-                $result = $self->error_result("git add failed (exit $add_exit): $add_output");
-                return $result;
+            # Auto-stage all tracked changes before commit (unless disabled)
+            if ($auto_stage) {
+                my $add_output = `git add -A 2>&1`;
+                my $add_exit = $? >> 8;
+                if ($add_exit != 0) {
+                    $result = $self->error_result("git add failed (exit $add_exit): $add_output");
+                    return $result;
+                }
             }
             
             # Check if there's anything to commit after staging

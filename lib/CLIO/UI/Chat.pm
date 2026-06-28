@@ -212,7 +212,8 @@ Return the agent display name (e.g. "CLIO").
 =cut
 
 sub agent_name {
-    return $ENV{CLIO_AGENT_NAME} || 'CLIO';
+    my ($self) = @_;
+    return $self->{_cached_agent_name} //= ($ENV{CLIO_AGENT_NAME} || 'CLIO');
 }
 
 =head2 _get_broker_client
@@ -440,12 +441,11 @@ sub run {
         # Check for update notifications from background check
         $self->check_for_update_notification();
         
-        # Check for agent messages (if broker client available)
+        # Get broker client for agent message routing
         my $broker_client = $self->_get_broker_client();
-        if ($broker_client && !$self->{_broker_dead}) {
-            my $ok = $self->check_agent_messages($broker_client);
-            $self->{_broker_dead} = 1 unless $ok;
-        }
+        
+        # Agent messages are now handled via readline's event_callback
+        # which polls the broker during input wait. No need to poll here.
         
         # Get user input
         my $input = $self->get_input();
@@ -1354,14 +1354,22 @@ sub display_agent_message {
     my $agent_label = uc($from);
     print $self->colorize("$agent_label: ", $color);
     
-    # Print content - full text, no truncation
+    # Print content - truncate long messages to 2000 chars
+    my $max_content_length = 2000;
     if (ref($content) eq 'HASH') {
         print "\n";
         for my $key (sort keys %$content) {
             next unless defined $content->{$key};
-            print "  $key: $content->{$key}\n";
+            my $val = $content->{$key};
+            if (length($val) > $max_content_length) {
+                $val = substr($val, 0, $max_content_length) . "... [truncated]";
+            }
+            print "  $key: $val\n";
         }
     } else {
+        if (length($content) > $max_content_length) {
+            $content = substr($content, 0, $max_content_length) . "... [truncated]";
+        }
         print "$content\n";
     }
     
@@ -2004,7 +2012,8 @@ sub get_input {
             };
             $input = $self->{readline}->readline($prompt, event_callback => $event_cb);
         } else {
-            $input = $self->{readline}->readline($prompt);
+            # Use timeout to prevent indefinite blocking (5 minutes)
+            $input = $self->{readline}->readline($prompt, timeout => 300);
         }
         
         # Handle Ctrl-D (EOF)

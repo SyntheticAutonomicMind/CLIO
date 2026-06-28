@@ -278,61 +278,12 @@ sub _set_model {
         $value = $resolved;
     }
 
-    require CLIO::Providers;
-    my $current_provider = $self->{config}->get('provider') || '';
-    my $full_model = $value;
-    my $display_model = $value;
-
-    my $has_provider_prefix = 0;
-    if ($value =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i) {
-        my ($prefix, $rest) = ($1, $2);
-        if (CLIO::Providers::provider_exists($prefix)) {
-            $has_provider_prefix = 1;
-
-            my $provider_key = $self->{config}->get_provider_key($prefix);
-            my $has_auth = $provider_key
-                || $prefix eq 'github_copilot'
-                || $prefix eq 'sam'
-                || $prefix eq 'llama.cpp'
-                || $prefix eq 'lmstudio';
-
-            unless ($has_auth) {
-                $self->display_error_message("Provider '$prefix' has no API key configured.");
-                $self->display_system_message("Set it with: /api set provider $prefix && /api set key <your-key>");
-                return;
-            }
-        }
-    }
-
-    if (!$has_provider_prefix && $current_provider) {
-        $full_model = "$current_provider/$value";
-        $display_model = $full_model;
-    }
-
-    # Extract API model name for validation
-    my $api_model = $value;
-    my $target_provider = $current_provider;
-    if ($full_model =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i) {
-        my ($prefix, $rest) = ($1, $2);
-        if (CLIO::Providers::provider_exists($prefix)) {
-            $target_provider = $prefix;
-            $api_model = $rest;
-        }
-    }
+    my ($full_model, $display_model, $target_provider, $api_model) = 
+        $self->_resolve_model_details($value);
 
     # Validate model for GitHub Copilot
     if ($target_provider eq 'github_copilot') {
-        require CLIO::Core::ModelRegistry;
-        my $registry_args = {};
-        eval {
-            require CLIO::Core::GitHubCopilotModelsAPI;
-            my $models_api = CLIO::Core::GitHubCopilotModelsAPI->new(debug => $self->{debug});
-            $registry_args->{github_copilot_api} = $models_api;
-        };
-
-        my $registry = CLIO::Core::ModelRegistry->new(%$registry_args);
-        my ($valid, $error) = $registry->validate_model($api_model);
-
+        my ($valid, $error) = $self->_validate_github_copilot_model($api_model);
         unless ($valid) {
             $self->display_error_message($error);
             return;
@@ -348,6 +299,79 @@ sub _set_model {
     $self->_update_billing_state($full_model, $target_provider);
 
     # Post-set validation
+    $self->_post_set_model_validation($full_model, $api_model);
+}
+
+=head2 _resolve_model_details
+
+Resolve model details including provider prefix, full model name, and target provider.
+
+Returns: ($full_model, $display_model, $target_provider, $api_model)
+
+=cut
+
+sub _resolve_model_details {
+    my ($self, $value) = @_;
+
+    require CLIO::Providers;
+    my $current_provider = $self->{config}->get('provider') || '';
+    my $full_model = $value;
+    my $display_model = $value;
+    my $has_provider_prefix = 0;
+    my $target_provider = $current_provider;
+    my $api_model = $value;
+
+    if ($value =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i) {
+        my ($prefix, $rest) = ($1, $2);
+        if (CLIO::Providers::provider_exists($prefix)) {
+            $has_provider_prefix = 1;
+            $target_provider = $prefix;
+            $api_model = $rest;
+            $full_model = $value;
+            $display_model = $value;
+        }
+    }
+
+    if (!$has_provider_prefix && $current_provider) {
+        $full_model = "$current_provider/$value";
+        $display_model = $full_model;
+    }
+
+    return ($full_model, $display_model, $target_provider, $api_model);
+}
+
+=head2 _validate_github_copilot_model
+
+Validate a model for GitHub Copilot provider.
+
+Returns: ($valid, $error_message)
+
+=cut
+
+sub _validate_github_copilot_model {
+    my ($self, $api_model) = @_;
+
+    require CLIO::Core::ModelRegistry;
+    my $registry_args = {};
+    eval {
+        require CLIO::Core::GitHubCopilotModelsAPI;
+        my $models_api = CLIO::Core::GitHubCopilotModelsAPI->new(debug => $self->{debug});
+        $registry_args->{github_copilot_api} = $models_api;
+    };
+
+    my $registry = CLIO::Core::ModelRegistry->new(%$registry_args);
+    return $registry->validate_model($api_model);
+}
+
+=head2 _post_set_model_validation
+
+Post-set validation for model capabilities.
+
+=cut
+
+sub _post_set_model_validation {
+    my ($self, $full_model, $api_model) = @_;
+
     if ($self->{ai_agent} && $self->{ai_agent}->{api}) {
         eval {
             my $caps = $self->{ai_agent}->{api}->get_model_capabilities($full_model);

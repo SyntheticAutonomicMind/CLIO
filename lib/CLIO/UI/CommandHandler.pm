@@ -8,6 +8,7 @@ use warnings;
 use utf8;
 use Carp qw(croak confess);
 use CLIO::Core::Logger qw(log_warning);
+use Text::ParseWords qw(shellwords);
 use CLIO::UI::Commands::API;
 use CLIO::UI::Commands::Config;
 use CLIO::UI::Commands::Git;
@@ -225,6 +226,10 @@ sub new {
         debug => $self->{debug},
     );
     
+    # Build command registry eagerly at construction time (not lazy)
+    # This avoids potential race conditions and ensures consistent behavior
+    $self->{_registry} = $self->_build_command_registry();
+    
     return $self;
 }
 
@@ -247,12 +252,10 @@ sub handle_command {
     # Remove leading slash
     $command =~ s/^\///;
     
-    # Split into command and args
-    my ($cmd, @args) = split /\s+/, $command;
-    $cmd = lc($cmd);
-    
-    # Build registry on first use
-    $self->{_registry} ||= $self->_build_command_registry();
+    # Split into command and args using shellwords to handle quoted arguments
+    my @parts = shellwords($command);
+    my $cmd = lc(shift @parts);
+    my @args = @parts;
     
     # Look up command (direct or alias)
     my $entry = $self->{_registry}{$cmd};
@@ -299,191 +302,101 @@ sub _build_command_registry {
     my $chat = $self->{chat};
     my %reg;
     
-    # Helper to register a command with optional aliases
-    my $register = sub {
-        my ($names, %opts) = @_;
-        my @names = ref $names ? @$names : ($names);
-        for my $name (@names) {
-            $reg{$name} = \%opts;
-        }
-    };
-    
-    # --- Exit ---
-    $register->([qw(exit quit q)],
-        handler => sub { return 0 },
-        returns => 'exit',
-    );
-    
-    # --- Core UI ---
-    $register->([qw(help h)],
-        handler => sub { $chat->display_help() },
-    );
-    $register->([qw(clear cls)],
-        handler => sub { $chat->repaint_screen() },
-    );
-    $register->('reset',
-        handler => sub { $self->_handle_reset_command() },
-    );
-    $register->('debug',
-        handler => sub {
+    # Define all commands as data - easier to maintain and extend
+    my @command_defs = (
+        # Exit commands
+        { names => [qw(exit quit q)], handler => sub { return 0 }, returns => 'exit' },
+        
+        # Core UI
+        { names => [qw(help h)], handler => sub { $chat->display_help() } },
+        { names => [qw(clear cls)], handler => sub { $chat->repaint_screen() } },
+        { name => 'reset', handler => sub { $self->_handle_reset_command() } },
+        { name => 'debug', handler => sub {
             $chat->{debug} = !$chat->{debug};
             $chat->display_system_message("Debug mode: " . ($chat->{debug} ? "ON" : "OFF"));
-        },
-    );
-    $register->('color',
-        handler => sub {
+        }},
+        { name => 'color', handler => sub {
             $chat->{use_color} = !$chat->{use_color};
             $chat->display_system_message("Color mode: " . ($chat->{use_color} ? "ON" : "OFF"));
-        },
-    );
-    
-    # --- Primary commands (routed to extracted modules) ---
-    $register->('session',   handler => sub { $self->{session_cmd}->handle_session_command(@_) });
-    $register->('config',    handler => sub { $self->{config_cmd}->handle_config_command(@_) });
-    $register->('api',       handler => sub { $self->{api_cmd}->handle_api_command(@_) });
-    $register->('loglevel',  handler => sub { $self->{config_cmd}->handle_loglevel_command(@_) });
-    $register->('style',     handler => sub { $self->{config_cmd}->handle_style_command(@_) });
-    $register->('theme',     handler => sub { $self->{config_cmd}->handle_theme_command(@_) });
-    $register->('file',      handler => sub { $self->{file_cmd}->handle_file_command(@_) });
-    $register->('todo',      handler => sub { $self->{todo_cmd}->handle_todo_command(@_) });
-    $register->('model',     handler => sub { $self->{api_cmd}->handle_model_command(@_) });
-    $register->('prompt',    handler => sub { $self->{prompt_cmd}->handle_prompt_command(@_) });
-    $register->('git',       handler => sub { $self->{git_cmd}->handle_git_command(@_) });
-    $register->('log',       handler => sub { $self->{log_cmd}->handle_log_command(@_) });
-    $register->('update',    handler => sub { $self->{update_cmd}->handle_update_command(@_) });
-    $register->('undo',      handler => sub { $self->handle_undo_command(@_) });
-    $register->('mcp',       handler => sub { $self->handle_mcp_command(@_) });
-    $register->('plugin',    handler => sub { $self->handle_plugin_command(@_) });
-    $register->('stats',     handler => sub { $self->{stats_cmd}->handle_stats_command(@_) });
-    $register->([qw(context ctx)],
-        handler => sub { $self->{context_cmd}->handle_context_command(@_) },
-    );
-    $register->([qw(billing bill usage)],
-        handler => sub { $self->{billing_cmd}->handle_billing_command(@_) },
-    );
-    $register->([qw(performance perf)],
-        handler => sub { $self->{system_cmd}->handle_performance_command(@_) },
-    );
-    $register->([qw(shell sh)],
-        handler => sub { $self->{system_cmd}->handle_shell_command() },
-    );
-    $register->([qw(device dev)],
-        handler => sub { CLIO::UI::Commands::Device::handle_device_command(join(' ', @_), { chat => $chat }) },
-    );
-    $register->('group',
-        handler => sub { CLIO::UI::Commands::Device::handle_group_command(join(' ', @_), { chat => $chat }) },
-    );
-    
-    # --- Commands that return prompts ---
-    $register->([qw(multi-line multiline multi ml)],
-        handler => sub { my $c = $self->{system_cmd}->handle_multiline_command(); return (1, $c) if $c; return () },
-        returns => 'prompt',
-    );
-    $register->([qw(skills skill)],
-        handler => sub { $self->{skills_cmd}->handle_skills_command(@_) },
-        returns => 'prompt',
-    );
-    $register->([qw(memory mem ltm)],
-        handler => sub { $self->{memory_cmd}->handle_memory_command(@_) },
-        returns => 'prompt',
-    );
-    $register->([qw(profile)],
-        handler => sub { $self->{profile_cmd}->handle_profile_command(@_) },
-        returns => 'prompt',
-    );
-    $register->([qw(spec specs)],
-        handler => sub { $self->{spec_cmd}->handle_spec_command(@_) },
-        returns => 'prompt',
-    );
-    $register->('explain',
-        handler => sub { my $p = $self->{ai_cmd}->handle_explain_command(@_); return (1, $p) if $p; return () },
-        returns => 'prompt',
-    );
-    $register->('review',
-        handler => sub { my $p = $self->{ai_cmd}->handle_review_command(@_); return (1, $p) if $p; return () },
-        returns => 'prompt',
-    );
-    $register->('test',
-        handler => sub { my $p = $self->{ai_cmd}->handle_test_command(@_); return (1, $p) if $p; return () },
-        returns => 'prompt',
-    );
-    $register->('fix',
-        handler => sub { my $p = $self->{ai_cmd}->handle_fix_command(@_); return (1, $p) if $p; return () },
-        returns => 'prompt',
-    );
-    $register->('doc',
-        handler => sub { my $p = $self->{ai_cmd}->handle_doc_command(@_); return (1, $p) if $p; return () },
-        returns => 'prompt',
-    );
-    $register->('init',
-        handler => sub { my $p = $self->{project_cmd}->handle_init_command(@_); return (1, $p) if $p; return () },
-        returns => 'prompt',
-    );
-    $register->('design',
-        handler => sub { my $p = $self->{project_cmd}->handle_design_command(@_); return (1, $p) if $p; return () },
-        returns => 'prompt',
-    );
-    
-    # --- Commands with subcommand dispatch ---
-    $register->([qw(subagent agent)],
-        handler => sub {
+        }},
+        
+        # Primary commands (routed to extracted modules)
+        { name => 'session', handler => sub { $self->{session_cmd}->handle_session_command(@_) } },
+        { name => 'config', handler => sub { $self->{config_cmd}->handle_config_command(@_) } },
+        { name => 'api', handler => sub { $self->{api_cmd}->handle_api_command(@_) } },
+        { name => 'loglevel', handler => sub { $self->{config_cmd}->handle_loglevel_command(@_) } },
+        { name => 'style', handler => sub { $self->{config_cmd}->handle_style_command(@_) } },
+        { name => 'theme', handler => sub { $self->{config_cmd}->handle_theme_command(@_) } },
+        { name => 'file', handler => sub { $self->{file_cmd}->handle_file_command(@_) } },
+        { name => 'todo', handler => sub { $self->{todo_cmd}->handle_todo_command(@_) } },
+        { name => 'model', handler => sub { $self->{api_cmd}->handle_model_command(@_) } },
+        { name => 'prompt', handler => sub { $self->{prompt_cmd}->handle_prompt_command(@_) } },
+        { name => 'git', handler => sub { $self->{git_cmd}->handle_git_command(@_) } },
+        { name => 'log', handler => sub { $self->{log_cmd}->handle_log_command(@_) } },
+        { name => 'update', handler => sub { $self->{update_cmd}->handle_update_command(@_) } },
+        { name => 'undo', handler => sub { $self->handle_undo_command(@_) } },
+        { name => 'mcp', handler => sub { $self->handle_mcp_command(@_) } },
+        { name => 'plugin', handler => sub { $self->handle_plugin_command(@_) } },
+        { name => 'stats', handler => sub { $self->{stats_cmd}->handle_stats_command(@_) } },
+        { names => [qw(context ctx)], handler => sub { $self->{context_cmd}->handle_context_command(@_) } },
+        { names => [qw(billing bill usage)], handler => sub { $self->{billing_cmd}->handle_billing_command(@_) } },
+        { names => [qw(performance perf)], handler => sub { $self->{system_cmd}->handle_performance_command(@_) } },
+        { names => [qw(shell sh)], handler => sub { $self->{system_cmd}->handle_shell_command() } },
+        { names => [qw(device dev)], handler => sub { CLIO::UI::Commands::Device::handle_device_command(join(' ', @_), { chat => $chat }) } },
+        { name => 'group', handler => sub { CLIO::UI::Commands::Device::handle_group_command(join(' ', @_), { chat => $chat }) } },
+        
+        # Commands that return prompts
+        { names => [qw(multi-line multiline multi ml)], handler => sub { my $c = $self->{system_cmd}->handle_multiline_command(); return (1, $c) if $c; return () }, returns => 'prompt' },
+        { names => [qw(skills skill)], handler => sub { $self->{skills_cmd}->handle_skills_command(@_) }, returns => 'prompt' },
+        { names => [qw(memory mem ltm)], handler => sub { $self->{memory_cmd}->handle_memory_command(@_) }, returns => 'prompt' },
+        { names => [qw(profile)], handler => sub { $self->{profile_cmd}->handle_profile_command(@_) }, returns => 'prompt' },
+        { names => [qw(spec specs)], handler => sub { $self->{spec_cmd}->handle_spec_command(@_) }, returns => 'prompt' },
+        { name => 'explain', handler => sub { my $p = $self->{ai_cmd}->handle_explain_command(@_); return (1, $p) if $p; return () }, returns => 'prompt' },
+        { name => 'review', handler => sub { my $p = $self->{ai_cmd}->handle_review_command(@_); return (1, $p) if $p; return () }, returns => 'prompt' },
+        { name => 'test', handler => sub { my $p = $self->{ai_cmd}->handle_test_command(@_); return (1, $p) if $p; return () }, returns => 'prompt' },
+        { name => 'fix', handler => sub { my $p = $self->{ai_cmd}->handle_fix_command(@_); return (1, $p) if $p; return () }, returns => 'prompt' },
+        { name => 'doc', handler => sub { my $p = $self->{ai_cmd}->handle_doc_command(@_); return (1, $p) if $p; return () }, returns => 'prompt' },
+        { name => 'init', handler => sub { my $p = $self->{project_cmd}->handle_init_command(@_); return (1, $p) if $p; return () }, returns => 'prompt' },
+        { name => 'design', handler => sub { my $p = $self->{project_cmd}->handle_design_command(@_); return (1, $p) if $p; return () }, returns => 'prompt' },
+        
+        # Commands with subcommand dispatch
+        { names => [qw(subagent agent)], handler => sub {
             my $sub = shift(@_) || 'help';
             my $r = $self->{subagent_cmd}->handle($sub, join(' ', @_));
             print "$r\n" if $r;
-        },
-    );
-    $register->([qw(mux multiplexer)],
-        handler => sub {
+        }},
+        { names => [qw(mux multiplexer)], handler => sub {
             my $sub = shift(@_) || 'help';
             my $r = $self->{mux_cmd}->handle($sub, join(' ', @_));
             print "$r\n" if $r;
-        },
+        }},
+        
+        # Backward compatibility aliases
+        { name => 'login', handler => sub { $self->{api_cmd}->handle_login_command(@_) }, hint => '/api login' },
+        { name => 'logout', handler => sub { $self->{api_cmd}->handle_logout_command(@_) }, hint => '/api logout' },
+        { name => 'models', handler => sub { $self->{api_cmd}->handle_models_command(@_) }, hint => '/api models' },
+        { name => 'edit', handler => sub { $self->{file_cmd}->handle_edit_command(join(' ', @_)) }, hint => '/file edit <path>' },
+        { name => 'commit', handler => sub { $self->{git_cmd}->handle_commit_command(@_) }, hint => '/git commit' },
+        { name => 'diff', handler => sub { $self->{git_cmd}->handle_diff_command(@_) }, hint => '/git diff' },
+        { names => [qw(status st)], handler => sub { $self->{git_cmd}->handle_status_command(@_) }, hint => '/git status' },
+        { names => [qw(gitlog gl)], handler => sub { $self->{git_cmd}->handle_gitlog_command(@_) }, hint => '/git log' },
+        { name => 'switch', handler => sub { $self->{session_cmd}->handle_switch_command(@_) }, hint => '/session switch' },
+        { names => [qw(read view cat)], handler => sub { $self->{file_cmd}->handle_read_command(@_) }, hint => '/file read <path>' },
+        { name => 'exec', handler => sub { $self->{system_cmd}->handle_exec_command(@_) } },
     );
     
-    # --- Backward compatibility aliases ---
-    $register->('login',
-        handler => sub { $self->{api_cmd}->handle_login_command(@_) },
-        hint    => '/api login',
-    );
-    $register->('logout',
-        handler => sub { $self->{api_cmd}->handle_logout_command(@_) },
-        hint    => '/api logout',
-    );
-    $register->('models',
-        handler => sub { $self->{api_cmd}->handle_models_command(@_) },
-        hint    => '/api models',
-    );
-    $register->('edit',
-        handler => sub { $self->{file_cmd}->handle_edit_command(join(' ', @_)) },
-        hint    => '/file edit <path>',
-    );
-    $register->('commit',
-        handler => sub { $self->{git_cmd}->handle_commit_command(@_) },
-        hint    => '/git commit',
-    );
-    $register->('diff',
-        handler => sub { $self->{git_cmd}->handle_diff_command(@_) },
-        hint    => '/git diff',
-    );
-    $register->([qw(status st)],
-        handler => sub { $self->{git_cmd}->handle_status_command(@_) },
-        hint    => '/git status',
-    );
-    $register->([qw(gitlog gl)],
-        handler => sub { $self->{git_cmd}->handle_gitlog_command(@_) },
-        hint    => '/git log',
-    );
-    $register->('switch',
-        handler => sub { $self->{session_cmd}->handle_switch_command(@_) },
-        hint    => '/session switch',
-    );
-    $register->([qw(read view cat)],
-        handler => sub { $self->{file_cmd}->handle_read_command(@_) },
-        hint    => '/file read <path>',
-    );
-    $register->('exec',
-        handler => sub { $self->{system_cmd}->handle_exec_command(@_) },
-    );
+    # Build registry from data
+    for my $def (@command_defs) {
+        my @names = $def->{names} ? @{$def->{names}} : ($def->{name});
+        for my $name (@names) {
+            my %opts = (
+                handler => $def->{handler},
+            );
+            $opts{hint} = $def->{hint} if $def->{hint};
+            $opts{returns} = $def->{returns} if $def->{returns};
+            $reg{$name} = \%opts;
+        }
+    }
     
     return \%reg;
 }
