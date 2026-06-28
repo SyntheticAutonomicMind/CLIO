@@ -99,11 +99,23 @@ sub handle_memory_command {
     elsif ($subcmd eq 'stats') {
         $self->_show_stats($ltm);
     }
+    elsif ($subcmd eq 'corroborate') {
+        $self->_corroborate_entry($ltm, @args[1..$#args]);
+    }
+    elsif ($subcmd eq 'promote') {
+        $self->_promote_entry($ltm, @args[1..$#args]);
+    }
+    elsif ($subcmd eq 'tier') {
+        $self->_show_tier($ltm, @args[1..$#args]);
+    }
     else {
         $self->display_error_message("Unknown subcommand: $subcmd");
         $self->writeline("Usage:", markdown => 0);
         $self->display_list_item("/memory [list|ls] [type] - List patterns");
         $self->display_list_item("/memory store <type> [data] - Store pattern (requires AI)");
+        $self->display_list_item("/memory corroborate <search_text> - Add corroboration to entry");
+        $self->display_list_item("/memory promote <search_text> - Promote entry to TRUSTED tier");
+        $self->display_list_item("/memory tier <search_text> - Show trust tier of entry");
         $self->display_list_item("/memory prune [max_age_days] - Prune old/low-confidence entries");
         $self->display_list_item("/memory stats - Show LTM statistics");
         $self->display_list_item("/memory clear - Clear all patterns");
@@ -392,6 +404,99 @@ sub _prune_patterns {
         } else {
             $self->display_success_message("Pruned $total_removed entries (now $after_total total)");
         }
+    }
+}
+
+=head2 _corroborate_entry($ltm, @args)
+
+Add a corroboration to an LTM entry.
+
+=cut
+
+sub _corroborate_entry {
+    my ($self, $ltm, @args) = @_;
+    
+    my $search_text = join(' ', @args);
+    return $self->display_error_message("Usage: /memory corroborate <search_text>") unless $search_text;
+    
+    my $result = $ltm->add_corroboration($search_text);
+    
+    if ($result->{found}) {
+        $self->display_success_message("Corroboration added to entry");
+        $self->writeline("  Tier: " . $self->colorize($result->{tier}, $result->{tier} eq 'trusted' ? 'SUCCESS' : 'WARNING'), markdown => 0);
+        $self->writeline("  Corroboration count: " . $self->colorize($result->{corroboration_count}, 'DATA'), markdown => 0);
+        $self->writeline("  Category: " . $self->colorize($result->{category}, 'DATA'), markdown => 0);
+        $self->writeline("  Text: " . $self->colorize(substr($result->{text}, 0, 80), 'command_value'), markdown => 0);
+        
+        if ($result->{promoted}) {
+            $self->display_success_message("Entry promoted to TRUSTED tier!");
+        }
+        
+        # Save LTM
+        eval {
+            my $ltm_file = $ltm->{_file_path} || '.clio/ltm.json';
+            $ltm->save($ltm_file);
+        };
+        $self->display_warning_message("Corroborated but failed to save: $@") if $@;
+    } else {
+        $self->display_error_message("No LTM entry matching '$search_text' found");
+    }
+}
+
+=head2 _promote_entry($ltm, @args)
+
+Manually promote an LTM entry to TRUSTED tier.
+
+=cut
+
+sub _promote_entry {
+    my ($self, $ltm, @args) = @_;
+    
+    my $search_text = join(' ', @args);
+    return $self->display_error_message("Usage: /memory promote <search_text>") unless $search_text;
+    
+    my $result = $ltm->promote_entry($search_text);
+    
+    if ($result->{found}) {
+        $self->display_success_message("Entry promoted to TRUSTED tier");
+        $self->writeline("  Category: " . $self->colorize($result->{category}, 'DATA'), markdown => 0);
+        $self->writeline("  Text: " . $self->colorize(substr($result->{text}, 0, 80), 'command_value'), markdown => 0);
+        
+        # Save LTM
+        eval {
+            my $ltm_file = $ltm->{_file_path} || '.clio/ltm.json';
+            $ltm->save($ltm_file);
+        };
+        $self->display_warning_message("Promoted but failed to save: $@") if $@;
+    } else {
+        $self->display_error_message("No LTM entry matching '$search_text' found");
+    }
+}
+
+=head2 _show_tier($ltm, @args)
+
+Show the trust tier of an LTM entry.
+
+=cut
+
+sub _show_tier {
+    my ($self, $ltm, @args) = @_;
+    
+    my $search_text = join(' ', @args);
+    return $self->display_error_message("Usage: /memory tier <search_text>") unless $search_text;
+    
+    my $result = $ltm->get_entry_tier($search_text);
+    
+    if ($result->{found}) {
+        my $tier_color = $result->{tier} eq 'trusted' ? 'SUCCESS' : 'WARNING';
+        $self->display_command_header("LTM ENTRY TIER");
+        $self->writeline("  Tier: " . $self->colorize($result->{tier}, $tier_color), markdown => 0);
+        $self->writeline("  Corroboration count: " . $self->colorize($result->{corroboration_count}, 'DATA'), markdown => 0);
+        $self->writeline("  Corroboration sources: " . $self->colorize(join(', ', @{$result->{corroboration_sources}}), 'DATA'), markdown => 0);
+        $self->writeline("  Category: " . $self->colorize($result->{category}, 'DATA'), markdown => 0);
+        $self->writeline("  Text: " . $self->colorize(substr($result->{text}, 0, 120), 'command_value'), markdown => 0);
+    } else {
+        $self->display_error_message("No LTM entry matching '$search_text' found");
     }
 }
 

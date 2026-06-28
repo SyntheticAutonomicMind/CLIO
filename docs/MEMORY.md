@@ -168,6 +168,31 @@ memory_operations(operation: "add_pattern",
 
 Agents are instructed to add LTM entries when they discover something significant - a new pattern, a bug fix that could recur, or a fact about the codebase structure. This happens organically during normal work sessions.
 
+### Corroboration Gate (Trust Tiers)
+
+**New in v2026.06** - LTM entries now have a trust tier system to defend against memory poisoning attacks. Every entry is tagged with a tier:
+
+| Tier | Badge | Description |
+|------|-------|-------------|
+| **Unverified** | `[UNVERIFIED]` | Single-source entry, not yet corroborated. Heavy score penalty (0.3x), fast decay (30-day age-out), low confidence floor (0.7). |
+| **Trusted** | `[TRUSTED]` | Corroborated by ≥2 independent sources (distinct agent:session pairs) OR manually promoted after verified outcome. Full score weight, normal decay (90-day age-out), standard confidence floor (0.5). |
+
+**How corroboration works:**
+
+```text
+# Agent independently verifies an existing memory
+memory_operations(operation: "add_corroboration",
+    search_text: "Config uses YAML not JSON",
+    source_agent: "agent-123",
+    source_session: "session-456")
+
+# After 2+ independent corroborations, entry auto-promotes to TRUSTED
+```
+
+**Source tracking prevents sybil attacks** - corroborations from the same `agent:session` pair are deduplicated. Only distinct sources count toward the threshold.
+
+**Agents are instructed to trust but verify:** `[UNVERIFIED]` entries (especially procedural patterns like "always do X") should be validated before acting on them. Use `add_corroboration` when you independently confirm a memory, or `promote_entry` after a verified successful outcome.
+
 ### Pruning
 
 Old or low-confidence entries are cleaned up to keep LTM focused:
@@ -378,6 +403,9 @@ The `.clio/ltm.json` file contains:
 | `/memory search <query>` | Search memory by keyword |
 | `/memory stats` | LTM statistics (entry counts, ages) |
 | `/memory prune` | Clean up old/low-confidence LTM entries |
+| `/memory corroborate <search_text>` | Add corroboration to an LTM entry (promotes to TRUSTED at 2+) |
+| `/memory promote <search_text>` | Manually promote an entry to TRUSTED tier |
+| `/memory tier <search_text>` | Show the trust tier of an LTM entry |
 
 ### Session Commands
 
