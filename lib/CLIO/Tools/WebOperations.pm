@@ -117,9 +117,18 @@ sub fetch_url {
     
     my $url = $params->{url};
     my $timeout = $params->{timeout} || 30;
-    
+
     return $self->error_result("Missing 'url' parameter") unless $url;
-    
+
+    # Validate URL shape before any network call. HTTP::Tiny's "Invalid URI"
+    # error gets lost in transport noise without this.
+    unless ($url =~ m{^https?://[\w\-\.]+(:\d+)?(/\S*)?$}i) {
+        return $self->error_result(
+            "Malformed URL: $url. " .
+            "Expected format: http://host[:port][/path] or https://..."
+        );
+    }
+
     # Security: check for sandbox mode and suspicious URLs
     my $security_check = $self->_check_url_security($url, $context);
     if ($security_check->{blocked}) {
@@ -154,15 +163,15 @@ sub fetch_url {
             my $content = $response->decoded_content;
             my $content_type = $response->header('content-type') || '';
             my $raw_size = length($content);
-            
+
             # Convert HTML to readable text if content is HTML
             if ($content_type =~ /text\/html/i || $content =~ /^\s*<!DOCTYPE\s+html/i || $content =~ /<html/i) {
                 $content = $self->_html_to_text($content);
             }
-            
+
             my $final_size = length($content);
             my $action_desc = "fetching $url ($raw_size bytes raw, $final_size bytes text, " . $response->code . ")";
-            
+
             $result = $self->success_result(
                 $content,
                 action_description => $action_desc,
@@ -171,15 +180,113 @@ sub fetch_url {
                 content_type => $content_type,
             );
         } else {
-            return $self->error_result("HTTP error: " . $response->status_line);
+            return $self->error_result(_categorize_http_error($url, $response, $timeout));
         }
     };
-    
+
     if ($@) {
-        return $self->error_result("Failed to fetch URL: $@");
+        # $@ holds the transport-layer exception (DNS, TCP, TLS, etc.).
+        # Map it to a clear category instead of dumping the raw exception.
+        return $self->error_result(_categorize_transport_error($url, $@, $timeout));
     }
-    
+
     return $result;
+}
+
+=head2 _categorize_http_error
+
+Convert an HTTP::Tiny non-2xx response into a user-friendly error with a
+hint about what to do next. Falls back to the raw status_line if the
+status code isn't recognized.
+
+=cut
+
+sub _categorize_http_error {
+    my ($url, $response, $timeout) = @_;
+
+    my $code = $response->code || 0;
+    my $line = $response->status_line || "HTTP $code";
+
+    my ($category, $hint);
+    if ($code == 401 || $code == 403) {
+        $category = "Authentication required";
+        $hint = "The server rejected the request as unauthorized. " .
+                "Check credentials, API keys, or whether the resource is private.";
+    } elsif ($code == 404) {
+        $category = "Not found";
+        $hint = "The URL returned 404. Verify the path is correct.";
+    } elsif ($code == 410) {
+        $category = "Gone";
+        $hint = "The resource has been permanently removed.";
+    } elsif ($code == 429) {
+        $category = "Rate limited";
+        $hint = "The server is throttling requests. Wait and retry, " .
+                "or check rate-limit headers in the response.";
+    } elsif ($code >= 500 && $code <= 599) {
+        $category = "Server error";
+        $hint = "The remote server reported a problem. This is usually " .
+                "transient - retry after a short delay.";
+    } elsif ($code >= 400 && $code <= 499) {
+        $category = "Client error";
+        $hint = "The request was rejected by the server. Check the URL " .
+                "and any required headers or parameters.";
+    } elsif ($code >= 300 && $code <= 399) {
+        $category = "Redirect not followed";
+        $hint = "The server wants to redirect, but HTTP::Tiny does not " .
+                "follow redirects by default. Use the Location header " .
+                "from the response to retry at the new URL.";
+    } else {
+        $category = "HTTP error";
+        $hint = "";
+    }
+
+    return "$category: $line (url: $url)" . ($hint ? "\n\nHint: $hint" : '');
+}
+
+=head2 _categorize_transport_error
+
+Convert an HTTP::Tiny transport-layer exception into a categorized error.
+Covers DNS failure, TCP timeout, connection refused, TLS handshake problems,
+and malformed-URL cases raised before the request is sent.
+
+=cut
+
+sub _categorize_transport_error {
+    my ($url, $err, $timeout) = @_;
+
+    my ($category, $hint);
+    if ($err =~ /timed? ?out|timeout/i) {
+        $category = "Timeout";
+        $hint = "The request did not complete within ${timeout}s. " .
+                "Try a longer timeout, or check that the host is reachable.";
+    } elsif ($err =~ /name or service not known|no such host|nxdomain|getaddrinfo/i) {
+        $category = "DNS lookup failed";
+        $hint = "Could not resolve the hostname in $url. " .
+                "Check the spelling and that the host exists.";
+    } elsif ($err =~ /connection refused/i) {
+        $category = "Connection refused";
+        $hint = "The remote host actively refused the connection. " .
+                "The service may be down, or a firewall is blocking the port.";
+    } elsif ($err =~ /network is unreachable|no route to host/i) {
+        $category = "Network unreachable";
+        $hint = "No route to the remote host. Check connectivity " .
+                "(VPN, firewall, or offline state).";
+    } elsif ($err =~ /ssl|tls|certificate/i) {
+        $category = "TLS error";
+        $hint = "TLS handshake or certificate validation failed. " .
+                "The server's certificate may be expired or self-signed.";
+    } elsif ($err =~ /invalid uri|invalid url|malformed/i) {
+        $category = "Malformed URL";
+        $hint = "The URL could not be parsed. Expected: " .
+                "http://host[:port][/path] or https://...";
+    } else {
+        $category = "Network error";
+        $hint = "Transport-layer failure before any HTTP response.";
+    }
+
+    my $detail = $err =~ /\n/ ? (split /\n/, $err)[0] : $err;
+    $detail =~ s/^\s+|\s+$//g;
+    return "$category: $detail (url: $url)" . ($hint ? "\n\nHint: $hint" : '');
 }
 
 =head2 _html_to_text

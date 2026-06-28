@@ -186,7 +186,22 @@ sub log {
     my ($self, $params, $context) = @_;
     
     my $repo_path = $params->{repository_path} || '.';
-    my $limit = $params->{limit} || 10;
+    # Validate limit: must be a positive integer.
+    # Negative or zero values silently caused unbounded output (1132+ commits
+    # returned for limit=-5). Clamp large values to a safe maximum.
+    my $limit = $params->{limit};
+    my $clamped = 0;
+    if (!defined $limit) {
+        $limit = 10;
+    } elsif ($limit !~ /^\d+$/ || $limit == 0) {
+        return $self->error_result(
+            "Invalid 'limit' parameter: $params->{limit}. " .
+            "Must be a positive integer (1-1000)."
+        );
+    } elsif ($limit > 1000) {
+        $clamped = 1;
+        $limit = 1000;
+    }
     my $result;
     
     eval {
@@ -208,6 +223,7 @@ sub log {
                 action_description => "viewing git log of $repo_path (" . scalar(@commits) . " commits)",
                 repository_path => $repo_path,
                 count => scalar(@commits),
+                ($clamped ? (limit_clamped => 1000) : ()),
             );
         });
     };
@@ -226,6 +242,12 @@ sub diff {
     my $ref1 = $params->{ref1} || 'HEAD';
     my $ref2 = $params->{ref2} || '';
     my $file = $params->{file} || '';
+
+    # When a file is specified, validate it exists. Git diff returns empty
+    # output for missing paths, leaving callers with no clue why.
+    if ($file && !-f $file) {
+        return $self->error_result("File not found: $file");
+    }
     my $result;
     
     eval {

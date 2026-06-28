@@ -547,6 +547,24 @@ sub read_file {
     
     return $self->error_result("File not found: $path") unless -f $path;
     return $self->error_result("File not readable: $path") unless -r $path;
+
+    # Count total lines so we can give a helpful error when start_line is
+    # Count total lines so we can give a helpful error when start_line is
+    # past EOF (previously returned silent empty output with success=1).
+    my $total_lines = 0;
+    {
+        open my $lc_fh, '<:raw', $path or croak "Cannot open $path: $!";
+        while (<$lc_fh>) { $total_lines++ }
+        close $lc_fh;
+    }
+
+    if ($start_line > $total_lines) {
+        return $self->error_result(
+            "Line range out of bounds: requested start_line=$start_line, " .
+            "but $path has only $total_lines line" . ($total_lines == 1 ? '' : 's') . ". " .
+            "Read with start_line=1 or omit it to read the full file."
+        );
+    }
     
     # Binary file detection - check first 8KB for null bytes
     my $binary_check = $self->_detect_binary($path);
@@ -611,6 +629,12 @@ sub read_file {
         
         my $content = join('', @lines);
         my $lines_read = scalar(@lines);
+
+        # Informational hint when caller asked for more than was available.
+        my $range_note = '';
+        if (defined $end_line && $end_line > $total_lines) {
+            $range_note = " (file ends at line $total_lines)";
+        }
         
         log_debug('FileOp', "Read $lines_read lines from $path");
         
