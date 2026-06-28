@@ -1037,6 +1037,24 @@ sub _build_turn_context {
 
     # Save user message to session history NOW (before processing)
     if ($session && $session->can('add_message')) {
+        # Defense in depth: $user_input must be a string. Refs (hash/array) would
+        # corrupt the session JSON and pollute the model's context. If we see one,
+        # log it loudly and coerce to a stringified representation so the session
+        # remains at least recoverable. The real fix is upstream (Chat.pm must not
+        # leak ReadLine control signals), but this prevents silent corruption.
+        if (ref $user_input) {
+            log_error('WorkflowOrchestrator', sprintf(
+                "BUG: user_input is a %s ref (not a string) - this indicates a ReadLine "
+                . "control signal leaked into user input. Stringifying to preserve session.",
+                ref $user_input
+            ));
+            if (ref $user_input eq 'HASH' && defined $user_input->{type}) {
+                $user_input = "[INVALID INPUT: ReadLine control signal '$user_input->{type}' "
+                    . "leaked into user input - this is a bug, please report]";
+            } else {
+                $user_input = "[INVALID INPUT: non-string ref of type " . ref($user_input) . "]";
+            }
+        }
         # Store text description of images for session history (not base64 data)
         my $history_content = $user_input;
         if ($image_attachments && @$image_attachments) {
@@ -1669,7 +1687,7 @@ sub _prepare_tool_round {
 
     log_debug('WorkflowOrchestrator', "Delaying save of assistant message with tool_calls until first tool result completes");
 
-    # ── Phase 3: Classify tools ──────────────────────────────────────────
+    # ── Phase 3: Resolve aliases and classify tools ───────────────────
     my @blocking_tools = ();
     my @serial_tools = ();
     my @parallel_tools = ();
@@ -1677,11 +1695,34 @@ sub _prepare_tool_round {
     for my $tool_call (@{$api_response->{tool_calls}}) {
         my $tool_name = $tool_call->{function}->{name} || 'unknown';
 
+        # Resolve tool aliases
+        my $alias_info = $self->{tool_registry}->get_alias_info($tool_name);
+        if ($alias_info) {
+            log_debug('WorkflowOrchestrator', "Alias detected: '$tool_name' -> '$alias_info->{tool}' with operation='$alias_info->{operation}'");
+            $tool_call->{function}->{name} = $alias_info->{tool};
+            $tool_name = $alias_info->{tool};
+
+            my $args_str = $tool_call->{function}->{arguments};
+            if ($args_str) {
+                eval {
+                    my $args = decode_json($args_str);
+                    unless (exists $args->{operation}) {
+                        $args->{operation} = $alias_info->{operation};
+                        $tool_call->{function}->{arguments} = encode_json($args);
+                        log_debug('WorkflowOrchestrator', "Injected operation='$alias_info->{operation}' into args");
+                    }
+                };
+            } else {
+                $tool_call->{function}->{arguments} = encode_json({ operation => $alias_info->{operation} });
+                log_debug('WorkflowOrchestrator', "Created args with operation='$alias_info->{operation}'");
+            }
+        }
+
         my $tool = $self->{tool_registry}->get_tool($tool_name);
 
         # Parse arguments for classification (reuse Phase 1 result when available)
         my $params = {};
-        if ($tool_call->{_parsed_args}) {
+        if ($tool_call->{_parsed_args} && !$alias_info) {
             # Reuse pre-parsed args from Phase 1 validation (avoids redundant JSON decode)
             $params = $tool_call->{_parsed_args};
         } elsif ($tool_call->{function}->{arguments}) {

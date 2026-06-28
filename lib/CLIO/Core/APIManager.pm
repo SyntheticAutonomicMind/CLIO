@@ -66,19 +66,26 @@ use constant {
 
 # Generate a UUID v4 for request tracking headers
 sub _generate_uuid {
-    # Seed RNG with high-resolution time and PID for cryptographic-quality randomness
-    # This is called frequently, so we use a lightweight seed each call
-    srand(Time::HiRes::time() ^ $$ ^ int(rand(2**31)));
-    
+    # Use a per-call entropy pool (high-res time, PID, address of lexical, counter).
+    # Avoids calling srand() which would pollute the process-global rand() state
+    # and break other code paths that rely on rand().
+    our $UUID_COUNTER = 0;
+    $UUID_COUNTER++;
+    my $entropy = (Time::HiRes::time() * 1_000_000) ^ $$ ^ (0 + \$UUID_COUNTER) ^ ($UUID_COUNTER * 0x9E3779B9);
+
     my @hex = ('0'..'9', 'a'..'f');
     my $uuid = '';
     for my $i (1..32) {
-        $uuid .= $hex[int(rand(16))];
+        # xorshift32 step to mix entropy per character
+        $entropy ^= ($entropy << 13) & 0xFFFFFFFF;
+        $entropy ^= ($entropy >> 17) & 0xFFFFFFFF;
+        $entropy ^= ($entropy << 5)  & 0xFFFFFFFF;
+        $uuid .= $hex[$entropy & 0xF];
         $uuid .= '-' if $i == 8 || $i == 12 || $i == 16 || $i == 20;
     }
     # Set version (4) and variant (8, 9, a, or b)
     substr($uuid, 14, 1) = '4';
-    substr($uuid, 19, 1) = $hex[8 + int(rand(4))];
+    substr($uuid, 19, 1) = $hex[8 + ($entropy & 0x3)];
     return $uuid;
 }
 
@@ -100,7 +107,7 @@ sub _get_shared_http_client {
         $opts{timeout} || 300,
         $opts{proxy} || '',
         $opts{agent} || '',
-        $opts{ssl_opts} ? 'ssl' : 'no_ssl'
+        $opts{ssl_opts} ? _ssl_opts_key($opts{ssl_opts}) : 'no_ssl'
     );
     
     $self->{_http_client_cache} ||= {};
@@ -113,6 +120,21 @@ sub _get_shared_http_client {
     }
     
     return $self->{_http_client_cache}{$cache_key};
+}
+
+# Build a stable cache key from ssl_opts hashref. Keys are sorted so the
+# key is order-independent. Used to differentiate HTTP clients configured
+# with different TLS verification settings.
+sub _ssl_opts_key {
+    my ($opts) = @_;
+    return 'ssl:empty' unless ref($opts) eq 'HASH' && keys %$opts;
+    my @pairs;
+    for my $k (sort keys %$opts) {
+        my $v = $opts->{$k};
+        $v = defined $v ? $v : '\undef';
+        push @pairs, "$k=$v";
+    }
+    return 'ssl:' . join(',', @pairs);
 }
 
 # Check if a model supports reasoning/thinking parameters via models API
@@ -4818,6 +4840,19 @@ sub _send_native_streaming {
     if ($self->{response_handler}) {
         my $resp_headers = $response->can("headers") ? $response->headers : undef;
         my $rate_limit_info = $self->{response_handler}->process_rate_limit_headers($resp_headers) if $resp_headers;
+    }
+
+    # Anthropic may emit stop_reason + usage in a single message_delta event.
+    # parse_stream_event only returns one event per call, so the usage is
+    # stashed on the provider. Recover it here for accurate billing.
+    if ($provider->can('get_final_usage')) {
+        my $final_usage = $provider->get_final_usage();
+        if ($final_usage && $final_usage->{output_tokens}) {
+            if (!$usage_tracking{output_tokens} || $usage_tracking{output_tokens} < $final_usage->{output_tokens}) {
+                $usage_tracking{output_tokens} = $final_usage->{output_tokens};
+                log_debug('APIManager', sprintf("Recovered final usage from provider: %d output tokens", $final_usage->{output_tokens}));
+            }
+        }
     }
 
     # Build result
