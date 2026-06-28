@@ -56,7 +56,7 @@ LTM MAINTENANCE:
 -  prune_ltm: age/limits optional. Removes old entries. Returns {pruned, remaining}.
 -  ltm_stats: no params. Returns {discoveries, solutions, patterns, workflows, failures, rules}
 },
-        supported_operations => [qw(store retrieve search list delete recall_sessions add_discovery add_solution add_pattern update_ltm prune_ltm ltm_stats)],
+        supported_operations => [qw(store retrieve search list delete recall_sessions add_discovery add_solution add_pattern add_corroboration update_ltm prune_ltm ltm_stats)],
         %opts,
     );
 }
@@ -72,6 +72,7 @@ sub dispatch_table {
         add_discovery   => 'add_discovery',
         add_solution    => 'add_solution',
         add_pattern     => 'add_pattern',
+        add_corroboration => 'add_corroboration',
         update_ltm      => 'update_ltm',
         prune_ltm       => 'prune_ltm',
         ltm_stats       => 'ltm_stats',
@@ -164,6 +165,22 @@ sub get_additional_parameters {
         entry_type => {
             type => "string",
             description => "[OPTIONAL] LTM entry type to update: discovery, solution, pattern. Searches all if omitted.",
+        },
+        search_text => {
+            type => "string",
+            description => "[REQUIRED for add_corroboration] Text to search for in LTM to find entry to corroborate.",
+        },
+        source_agent => {
+            type => "string",
+            description => "[OPTIONAL for add_corroboration] Agent ID providing corroboration. Default: CLIO_AGENT_ID env.",
+        },
+        source_session => {
+            type => "string",
+            description => "[OPTIONAL for add_corroboration] Session ID providing corroboration. Default: CLIO_SESSION_ID env.",
+        },
+        entry_type => {
+            type => "string",
+            description => "[OPTIONAL for add_corroboration] Type filter: discovery, solution, pattern, workflow, failure.",
         },
     };
 }
@@ -954,6 +971,71 @@ sub ltm_stats {
     
     if ($@) {
         return $self->error_result("Failed to get LTM stats: $@");
+    }
+    
+    return $result;
+}
+
+=head2 add_corroboration
+
+Add a corroboration to an existing LTM entry from an independent source.
+When corroboration_count reaches threshold (2), entry is promoted to 'trusted' tier.
+
+Parameters:
+  search_text - Text to find the entry to corroborate (required)
+  source_agent - Agent ID providing corroboration (optional, default: CLIO_AGENT_ID env)
+  source_session - Session ID providing corroboration (optional, default: CLIO_SESSION_ID env)
+  entry_type - Type filter: discovery, solution, pattern, workflow, failure (optional)
+
+=cut
+
+sub add_corroboration {
+    my ($self, $params, $context) = @_;
+    
+    my $search_text = $params->{search_text};
+    my $source_agent = $params->{source_agent};
+    my $source_session = $params->{source_session};
+    my $type = $params->{entry_type};
+    
+    return $self->error_result("Missing 'search_text' parameter") unless $search_text;
+    
+    my $result;
+    eval {
+        my $ltm = $context->{ltm} || $context->{session}->{ltm} if ref($context) eq 'HASH';
+        return $self->error_result("LTM not available in context") unless $ltm;
+        
+        my $corroboration_result = $ltm->add_corroboration($search_text, $source_agent, $source_session, $type);
+        
+        if ($corroboration_result->{found}) {
+            # Save the updated LTM
+            eval {
+                my $ltm_file = File::Spec->catfile(Cwd::getcwd(), '.clio', 'ltm.json');
+                $ltm->save($ltm_file) if -e $ltm_file;
+            };
+            
+            my $action_desc = "corroborating LTM entry: '$search_text' (tier: $corroboration_result->{tier})";
+            if ($corroboration_result->{promoted}) {
+                $action_desc .= " -> PROMOTED TO TRUSTED";
+            }
+            
+            $result = $self->success_result(
+                encode_json($corroboration_result),
+                action_description => $action_desc,
+                found => $corroboration_result->{found},
+                promoted => $corroboration_result->{promoted},
+                tier => $corroboration_result->{tier},
+                corroboration_count => $corroboration_result->{corroboration_count},
+                category => $corroboration_result->{category},
+            );
+        } else {
+            $result = $self->error_result(
+                "No LTM entry matching '$search_text' found."
+            );
+        }
+    };
+    
+    if ($@) {
+        return $self->error_result("Failed to add corroboration: $@");
     }
     
     return $result;

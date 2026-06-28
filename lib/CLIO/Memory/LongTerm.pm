@@ -115,36 +115,41 @@ Add a discovered fact about the codebase
 =cut
 
 sub add_discovery {
-    my ($self, $fact, $confidence, $verified) = @_;
-    
-    $confidence //= 0.8;
-    $verified //= 0;
-    $fact = $self->absolutize_dates($fact);
-    
-    # Check if already exists
-    for my $d (@{$self->{patterns}{discoveries}}) {
-        if ($d->{fact} eq $fact) {
-            # Update confidence if higher
-            if ($confidence > $d->{confidence}) {
-                $d->{confidence} = $confidence;
-                $d->{verified} = $verified;
-                $d->{updated} = time();
-            }
-            return;
-        }
-    }
-    
-    # Add new discovery
-    push @{$self->{patterns}{discoveries}}, {
-        fact => $fact,
-        confidence => $confidence,
-        verified => $verified,
-        timestamp => time(),
-    };
-    
-    $self->{_dirty} = 1;
-    $self->{metadata}{last_updated} = time();
-    log_debug('LTM', "Added discovery: $fact (confidence: $confidence)");
+   my ($self, $fact, $confidence, $verified) = @_;
+   
+   $confidence //= 0.8;
+   $verified //= 0;
+   $fact = $self->absolutize_dates($fact);
+   
+   # Check if already exists
+   for my $d (@{$self->{patterns}{discoveries}}) {
+       if ($d->{fact} eq $fact) {
+           # Update confidence if higher
+           if ($confidence > $d->{confidence}) {
+               $d->{confidence} = $confidence;
+               $d->{verified} = $verified;
+               $d->{updated} = time();
+           }
+           return;
+       }
+   }
+   
+   # Add new discovery
+   push @{$self->{patterns}{discoveries}}, {
+       fact => $fact,
+       confidence => $confidence,
+       verified => $verified,
+       timestamp => time(),
+       source_agent => $ENV{CLIO_AGENT_ID} // 'unknown',
+       source_session => $ENV{CLIO_SESSION_ID} // 'unknown',
+       corroboration_count => 0,
+       corroboration_sources => [],
+       tier => 'unverified',
+   };
+   
+   $self->{_dirty} = 1;
+   $self->{metadata}{last_updated} = time();
+   log_debug('LTM', "Added discovery: $fact (confidence: $confidence)");
 }
 
 =head2 add_problem_solution
@@ -156,39 +161,44 @@ Add a problem-solution mapping from debugging experience
 =cut
 
 sub add_problem_solution {
-    my ($self, $error, $solution, $examples) = @_;
-    
-    $examples //= [];
-    $error = $self->absolutize_dates($error);
-    $solution = $self->absolutize_dates($solution);
-    
-    # Check if already exists
-    for my $ps (@{$self->{patterns}{problem_solutions}}) {
-        if ($ps->{error} eq $error) {
-            # Increment solved count
-            $ps->{solved_count}++;
-            $ps->{updated} = time();
-            
-            # Add new examples
-            for my $ex (@$examples) {
-                push @{$ps->{examples}}, $ex unless grep { $_ eq $ex } @{$ps->{examples}};
-            }
-            return;
-        }
-    }
-    
-    # Add new problem-solution
-    push @{$self->{patterns}{problem_solutions}}, {
-        error => $error,
-        solution => $solution,
-        solved_count => 1,
-        examples => $examples,
-        timestamp => time(),
-    };
-    
-    $self->{_dirty} = 1;
-    $self->{metadata}{last_updated} = time();
-    log_debug('LTM', "Added problem-solution: $error -> $solution");
+   my ($self, $error, $solution, $examples) = @_;
+   
+   $examples //= [];
+   $error = $self->absolutize_dates($error);
+   $solution = $self->absolutize_dates($solution);
+   
+   # Check if already exists
+   for my $ps (@{$self->{patterns}{problem_solutions}}) {
+       if ($ps->{error} eq $error) {
+           # Increment solved count
+           $ps->{solved_count}++;
+           $ps->{updated} = time();
+           
+           # Add new examples
+           for my $ex (@$examples) {
+               push @{$ps->{examples}}, $ex unless grep { $_ eq $ex } @{$ps->{examples}};
+           }
+           return;
+       }
+   }
+   
+   # Add new problem-solution
+   push @{$self->{patterns}{problem_solutions}}, {
+       error => $error,
+       solution => $solution,
+       solved_count => 1,
+       examples => $examples,
+       timestamp => time(),
+       source_agent => $ENV{CLIO_AGENT_ID} // 'unknown',
+       source_session => $ENV{CLIO_SESSION_ID} // 'unknown',
+       corroboration_count => 0,
+       corroboration_sources => [],
+       tier => 'unverified',
+   };
+   
+   $self->{_dirty} = 1;
+   $self->{metadata}{last_updated} = time();
+   log_debug('LTM', "Added problem-solution: $error -> $solution");
 }
 
 =head2 add_code_pattern
@@ -200,38 +210,43 @@ Add a code pattern observed in the project
 =cut
 
 sub add_code_pattern {
-    my ($self, $pattern, $confidence, $examples) = @_;
-    
-    $confidence //= 0.7;
-    $examples //= [];
-    $pattern = $self->absolutize_dates($pattern);
-    
-    # Check if already exists
-    for my $cp (@{$self->{patterns}{code_patterns}}) {
-        if ($cp->{pattern} eq $pattern) {
-            # Increase confidence based on repeated observation
-            $cp->{confidence} = ($cp->{confidence} + $confidence) / 2;
-            $cp->{updated} = time();
-            
-            # Add new examples
-            for my $ex (@$examples) {
-                push @{$cp->{examples}}, $ex unless grep { $_ eq $ex } @{$cp->{examples}};
-            }
-            return;
-        }
-    }
-    
-    # Add new code pattern
-    push @{$self->{patterns}{code_patterns}}, {
-        pattern => $pattern,
-        confidence => $confidence,
-        examples => $examples,
-        timestamp => time(),
-    };
-    
-    $self->{_dirty} = 1;
-    $self->{metadata}{last_updated} = time();
-    log_debug('LTM', "Added code pattern: $pattern (confidence: $confidence)");
+   my ($self, $pattern, $confidence, $examples) = @_;
+   
+   $confidence //= 0.7;
+   $examples //= [];
+   $pattern = $self->absolutize_dates($pattern);
+   
+   # Check if already exists
+   for my $cp (@{$self->{patterns}{code_patterns}}) {
+       if ($cp->{pattern} eq $pattern) {
+           # Increase confidence based on repeated observation
+           $cp->{confidence} = ($cp->{confidence} + $confidence) / 2;
+           $cp->{updated} = time();
+           
+           # Add new examples
+           for my $ex (@$examples) {
+               push @{$cp->{examples}}, $ex unless grep { $_ eq $ex } @{$cp->{examples}};
+           }
+           return;
+       }
+   }
+   
+   # Add new code pattern
+   push @{$self->{patterns}{code_patterns}}, {
+       pattern => $pattern,
+       confidence => $confidence,
+       examples => $examples,
+       timestamp => time(),
+       source_agent => $ENV{CLIO_AGENT_ID} // 'unknown',
+       source_session => $ENV{CLIO_SESSION_ID} // 'unknown',
+       corroboration_count => 0,
+       corroboration_sources => [],
+       tier => 'unverified',
+   };
+   
+   $self->{_dirty} = 1;
+   $self->{metadata}{last_updated} = time();
+   log_debug('LTM', "Added code pattern: $pattern (confidence: $confidence)");
 }
 
 =head2 update_entry
@@ -337,37 +352,42 @@ Add a successful workflow sequence
 =cut
 
 sub add_workflow {
-    my ($self, $sequence, $success) = @_;
-    
-    $success //= 1;
-    
-    my $seq_key = join("->", @$sequence);
-    
-    # Check if already exists
-    for my $wf (@{$self->{patterns}{workflows}}) {
-        my $wf_key = join("->", @{$wf->{sequence}});
-        if ($wf_key eq $seq_key) {
-            # Update success rate
-            $wf->{count}++;
-            my $successes = int($wf->{success_rate} * ($wf->{count} - 1));
-            $successes += $success ? 1 : 0;
-            $wf->{success_rate} = $successes / $wf->{count};
-            $wf->{updated} = time();
-            return;
-        }
-    }
-    
-    # Add new workflow
-    push @{$self->{patterns}{workflows}}, {
-        sequence => $sequence,
-        count => 1,
-        success_rate => $success ? 1.0 : 0.0,
-        timestamp => time(),
-    };
-    
-    $self->{_dirty} = 1;
-    $self->{metadata}{last_updated} = time();
-    log_debug('LTM', "Added workflow: $seq_key");
+   my ($self, $sequence, $success) = @_;
+   
+   $success //= 1;
+   
+   my $seq_key = join("->", @$sequence);
+   
+   # Check if already exists
+   for my $wf (@{$self->{patterns}{workflows}}) {
+       my $wf_key = join("->", @{$wf->{sequence}});
+       if ($wf_key eq $seq_key) {
+           # Update success rate
+           $wf->{count}++;
+           my $successes = int($wf->{success_rate} * ($wf->{count} - 1));
+           $successes += $success ? 1 : 0;
+           $wf->{success_rate} = $successes / $wf->{count};
+           $wf->{updated} = time();
+           return;
+       }
+   }
+   
+   # Add new workflow
+   push @{$self->{patterns}{workflows}}, {
+       sequence => $sequence,
+       count => 1,
+       success_rate => $success ? 1.0 : 0.0,
+       timestamp => time(),
+       source_agent => $ENV{CLIO_AGENT_ID} // 'unknown',
+       source_session => $ENV{CLIO_SESSION_ID} // 'unknown',
+       corroboration_count => 0,
+       corroboration_sources => [],
+       tier => 'unverified',
+   };
+   
+   $self->{_dirty} = 1;
+   $self->{metadata}{last_updated} = time();
+   log_debug('LTM', "Added workflow: $seq_key");
 }
 
 =head2 add_failure
@@ -379,29 +399,34 @@ Record a failure and how to prevent it
 =cut
 
 sub add_failure {
-    my ($self, $what, $impact, $prevention) = @_;
-    
-    # Check if already exists
-    for my $f (@{$self->{patterns}{failures}}) {
-        if ($f->{what} eq $what) {
-            $f->{occurrences}++;
-            $f->{updated} = time();
-            return;
-        }
-    }
-    
-    # Add new failure
-    push @{$self->{patterns}{failures}}, {
-        what => $what,
-        impact => $impact,
-        prevention => $prevention,
-        occurrences => 1,
-        timestamp => time(),
-    };
-    
-    $self->{_dirty} = 1;
-    $self->{metadata}{last_updated} = time();
-    log_debug('LTM', "Added failure: $what");
+   my ($self, $what, $impact, $prevention) = @_;
+   
+   # Check if already exists
+   for my $f (@{$self->{patterns}{failures}}) {
+       if ($f->{what} eq $what) {
+           $f->{occurrences}++;
+           $f->{updated} = time();
+           return;
+       }
+   }
+   
+   # Add new failure
+   push @{$self->{patterns}{failures}}, {
+       what => $what,
+       impact => $impact,
+       prevention => $prevention,
+       occurrences => 1,
+       timestamp => time(),
+       source_agent => $ENV{CLIO_AGENT_ID} // 'unknown',
+       source_session => $ENV{CLIO_SESSION_ID} // 'unknown',
+       corroboration_count => 0,
+       corroboration_sources => [],
+       tier => 'unverified',
+   };
+   
+   $self->{_dirty} = 1;
+   $self->{metadata}{last_updated} = time();
+   log_debug('LTM', "Added failure: $what");
 }
 
 =head2 add_context_rule
@@ -413,17 +438,173 @@ Add a rule for a specific directory or module
 =cut
 
 sub add_context_rule {
-    my ($self, $context, $rule) = @_;
+   my ($self, $context, $rule) = @_;
+   
+   $self->{patterns}{context_rules}{$context} //= [];
+   
+   # Add if not already present
+   unless (grep { $_ eq $rule } @{$self->{patterns}{context_rules}{$context}}) {
+       push @{$self->{patterns}{context_rules}{$context}}, $rule;
+       $self->{_dirty} = 1;
+       $self->{metadata}{last_updated} = time();
+       log_debug('LTM', "Added context rule for $context: $rule");
+   }
+}
+
+=head2 add_corroboration
+
+Add a corroboration to an existing LTM entry from an independent source.
+When corroboration_count reaches threshold (default 2), entry is promoted to 'trusted' tier.
+
+    $ltm->add_corroboration($search_text, $source_agent, $source_session, $type);
+
+Arguments:
+- search_text: Text to find the entry (matches fact/error/solution/pattern/what)
+- source_agent: Agent ID providing corroboration (default: CLIO_AGENT_ID env)
+- source_session: Session ID providing corroboration (default: CLIO_SESSION_ID env)
+- type: Optional type filter ('discovery', 'solution', 'pattern', 'workflow', 'failure')
+
+Returns: HashRef { found => 0|1, promoted => 0|1, tier => 'unverified'|'trusted', ... }
+
+=cut
+
+sub add_corroboration {
+    my ($self, $search_text, $source_agent, $source_session, $type_filter) = @_;
     
-    $self->{patterns}{context_rules}{$context} //= [];
+    $source_agent //= $ENV{CLIO_AGENT_ID} // 'unknown';
+    $source_session //= $ENV{CLIO_SESSION_ID} // 'unknown';
+    my $source_key = "$source_agent:$source_session";
+    my $search_lc = lc($search_text);
+    my $now = time();
     
-    # Add if not already present
-    unless (grep { $_ eq $rule } @{$self->{patterns}{context_rules}{$context}}) {
-        push @{$self->{patterns}{context_rules}{$context}}, $rule;
-        $self->{_dirty} = 1;
-        $self->{metadata}{last_updated} = time();
-        log_debug('LTM', "Added context rule for $context: $rule");
+    my @categories = $type_filter ? ($type_filter) : qw(discoveries problem_solutions code_patterns workflows failures);
+    
+    for my $category (@categories) {
+        my $entries = $self->{patterns}{$category} || [];
+        next unless @$entries;
+        
+        for my $entry (@$entries) {
+            my $text = $self->_entry_text($entry, $category);
+            next unless index(lc($text), $search_lc) >= 0;
+            
+            # Initialize corroboration fields if missing (backward compat)
+            $entry->{corroboration_count} //= 0;
+            $entry->{corroboration_sources} //= [];
+            $entry->{tier} //= 'unverified';
+            
+            # Check if this source already corroborated
+            next if grep { $_ eq $source_key } @{$entry->{corroboration_sources}};
+            
+            # Add corroboration
+            push @{$entry->{corroboration_sources}}, $source_key;
+            $entry->{corroboration_count} = scalar @{$entry->{corroboration_sources}};
+            $entry->{updated} = $now;
+            $self->{_dirty} = 1;
+            $self->{metadata}{last_updated} = $now;
+            
+            log_debug('LTM', "Corroboration added to $category entry (count: $entry->{corroboration_count})");
+            
+            # Promote to trusted if threshold met (2 independent sources)
+            my $promoted = 0;
+            if ($entry->{corroboration_count} >= 2 && $entry->{tier} eq 'unverified') {
+                $entry->{tier} = 'trusted';
+                $promoted = 1;
+                log_info('LTM', "Entry promoted to trusted tier: " . substr($text, 0, 80));
+            }
+            
+            return {
+                found => 1,
+                promoted => $promoted,
+                tier => $entry->{tier},
+                corroboration_count => $entry->{corroboration_count},
+                category => $category,
+                text => $text,
+            };
+        }
     }
+    
+    return { found => 0, error => "No entry matching '$search_text' found" };
+}
+
+=head2 promote_entry
+
+Manually promote an entry to trusted tier (e.g., after verified outcome credit).
+
+    $ltm->promote_entry($search_text, $type);
+
+=cut
+
+sub promote_entry {
+    my ($self, $search_text, $type_filter) = @_;
+    
+    my $search_lc = lc($search_text);
+    my $now = time();
+    
+    my @categories = $type_filter ? ($type_filter) : qw(discoveries problem_solutions code_patterns workflows failures);
+    
+    for my $category (@categories) {
+        my $entries = $self->{patterns}{$category} || [];
+        next unless @$entries;
+        
+        for my $entry (@$entries) {
+            my $text = $self->_entry_text($entry, $category);
+            next unless index(lc($text), $search_lc) >= 0;
+            
+            $entry->{tier} = 'trusted';
+            $entry->{updated} = $now;
+            $entry->{promoted_by} = $ENV{CLIO_AGENT_ID} // 'manual';
+            $entry->{promoted_at} = $now;
+            $self->{_dirty} = 1;
+            $self->{metadata}{last_updated} = $now;
+            
+            log_info('LTM', "Entry manually promoted to trusted: " . substr($text, 0, 80));
+            
+            return {
+                found => 1,
+                promoted => 1,
+                tier => 'trusted',
+                category => $category,
+                text => $text,
+            };
+        }
+    }
+    
+    return { found => 0, error => "No entry matching '$search_text' found" };
+}
+
+=head2 get_entry_tier
+
+Get the tier of an entry (for debugging/display).
+
+=cut
+
+sub get_entry_tier {
+    my ($self, $search_text, $type_filter) = @_;
+    
+    my $search_lc = lc($search_text);
+    
+    my @categories = $type_filter ? ($type_filter) : qw(discoveries problem_solutions code_patterns workflows failures);
+    
+    for my $category (@categories) {
+        my $entries = $self->{patterns}{$category} || [];
+        next unless @$entries;
+        
+        for my $entry (@$entries) {
+            my $text = $self->_entry_text($entry, $category);
+            next unless index(lc($text), $search_lc) >= 0;
+            
+            return {
+                found => 1,
+                tier => $entry->{tier} // 'unverified',
+                corroboration_count => $entry->{corroboration_count} // 0,
+                corroboration_sources => $entry->{corroboration_sources} // [],
+                category => $category,
+                text => $text,
+            };
+        }
+    }
+    
+    return { found => 0 };
 }
 
 =head2 get_patterns_for_context
@@ -704,7 +885,16 @@ sub score_entry {
         $usage += log(1 + $search_count) * 0.2;  # diminishing returns
     }
 
-    return $confidence * $recency * $type_weight * $usage;
+    # Tier weight: unverified entries get heavy penalty (0.3x), trusted get full weight
+    my $tier_weight = 1.0;
+    my $tier = $entry->{tier} // 'unverified';
+    if ($tier eq 'unverified') {
+        $tier_weight = 0.3;  # Heavy penalty for uncorroborated memories
+    } elsif ($tier eq 'trusted') {
+        $tier_weight = 1.0;  # Full weight for corroborated memories
+    }
+
+    return $confidence * $recency * $type_weight * $usage * $tier_weight;
 }
 
 =head2 get_scored_entries
@@ -833,11 +1023,19 @@ Render a single LTM entry as markdown text.
 sub _render_entry {
     my ($self, $entry, $type) = @_;
 
+    # Tier badge for display
+    my $tier = $entry->{tier} // 'unverified';
+    my $tier_badge = $tier eq 'trusted' ? ' [TRUSTED]' : ' [UNVERIFIED]';
+    my $corroboration_info = '';
+    if ($entry->{corroboration_count} && $entry->{corroboration_count} > 0) {
+        $corroboration_info = " (corroborated x$entry->{corroboration_count})";
+    }
+
     if ($type eq 'discovery') {
         my $fact = $entry->{fact} || 'Unknown';
         my $confidence = $entry->{confidence} || 0;
         my $verified = $entry->{verified} ? 'Verified' : 'Unverified';
-        return "- **$fact** (Confidence: " . sprintf("%.0f%%", $confidence * 100) . ", $verified)\n";
+        return "- **$fact**$tier_badge$corroboration_info (Confidence: " . sprintf("%.0f%%", $confidence * 100) . ", $verified)\n";
     }
     elsif ($type eq 'solution') {
         my $error = $entry->{error} || 'Unknown error';
@@ -847,14 +1045,14 @@ sub _render_entry {
         if ($entry->{examples} && @{$entry->{examples}}) {
             $text .= "  Examples: " . join(", ", @{$entry->{examples}}) . "\n";
         }
-        $text .= "_Applied successfully $solved_count time" . ($solved_count == 1 ? '' : 's') . "_\n\n";
+        $text .= "_Applied successfully $solved_count time" . ($solved_count == 1 ? '' : 's') . "$tier_badge$corroboration_info\n\n";
         return $text;
     }
     elsif ($type eq 'pattern') {
         my $pattern = $entry->{pattern} || 'Unknown pattern';
         my $confidence = $entry->{confidence} || 0;
         my $examples = $entry->{examples} || [];
-        my $text = "- **$pattern** (Confidence: " . sprintf("%.0f%%", $confidence * 100) . ")\n";
+        my $text = "- **$pattern**$tier_badge$corroboration_info (Confidence: " . sprintf("%.0f%%", $confidence * 100) . ")\n";
         if (@$examples) {
             $text .= "  Examples: " . join(", ", @$examples) . "\n";
         }
@@ -865,14 +1063,14 @@ sub _render_entry {
         my $success_rate = $entry->{success_rate} || 0;
         my $count = $entry->{count} || 0;
         return '' unless @$sequence;
-        return "- " . join(" -> ", @$sequence) . "\n" .
+        return "- " . join(" -> ", @$sequence) . "$tier_badge$corroboration_info\n" .
                "  _Success rate: " . sprintf("%.0f%%", $success_rate * 100) . " ($count attempts)_\n";
     }
     elsif ($type eq 'failure') {
         my $what = $entry->{what} || 'Unknown failure';
         my $impact = $entry->{impact} || 'Unknown impact';
         my $prevention = $entry->{prevention} || 'No prevention documented';
-        return "- **$what**: $impact\n  _Prevention: ${prevention}_\n";
+        return "- **$what**$tier_badge$corroboration_info: $impact\n  _Prevention: ${prevention}_\n";
     }
 
     return '';
@@ -1014,6 +1212,7 @@ sub consolidate {
     my $stats = { removed => 0, decayed => 0, deduped => 0 };
 
     # Phase 1: Confidence decay for stale entries
+    # Unverified entries decay faster (2x rate)
     for my $category (qw(discoveries problem_solutions code_patterns)) {
         for my $entry (@{$self->{patterns}{$category} || []}) {
             my $last_touch = $entry->{updated} || $entry->{timestamp} || $now;
@@ -1023,6 +1222,13 @@ sub consolidate {
                 # Decay 0.1 per 30-day period beyond the threshold
                 my $periods = int(($stale_days - $decay_days) / 30);
                 my $decay = $periods * 0.1;
+                
+                # Unverified entries decay 2x faster
+                my $tier = $entry->{tier} // 'unverified';
+                if ($tier eq 'unverified') {
+                    $decay *= 2;
+                }
+                
                 my $old_conf = $entry->{confidence} // 0.5;
                 my $new_conf = $old_conf - $decay;
                 $new_conf = 0.3 if $new_conf < 0.3;  # floor
@@ -1036,18 +1242,30 @@ sub consolidate {
     }
 
     # Phase 2: Age-out entries that are old AND low confidence
+    # Unverified entries age out faster (30 days vs 90 days)
     my $age_cutoff = $now - ($max_age_days * 86400);
+    my $unverified_age_cutoff = $now - (30 * 86400);  # 30 days for unverified
     for my $category (qw(discoveries problem_solutions code_patterns workflows failures)) {
         my @kept;
         for my $entry (@{$self->{patterns}{$category} || []}) {
             my $ts = $entry->{updated} || $entry->{timestamp} || $now;
             my $conf = $entry->{confidence} // 0.5;
+            my $tier = $entry->{tier} // 'unverified';
 
-            # Keep if recent enough OR high confidence
-            if ($ts >= $age_cutoff || $conf >= 0.5) {
-                push @kept, $entry;
+            # Unverified entries: stricter age-out (30 days) and higher confidence floor
+            if ($tier eq 'unverified') {
+                if ($ts >= $unverified_age_cutoff || $conf >= 0.7) {
+                    push @kept, $entry;
+                } else {
+                    $stats->{removed}++;
+                }
             } else {
-                $stats->{removed}++;
+                # Trusted entries: normal age-out (90 days) and lower confidence floor
+                if ($ts >= $age_cutoff || $conf >= 0.5) {
+                    push @kept, $entry;
+                } else {
+                    $stats->{removed}++;
+                }
             }
         }
         $self->{patterns}{$category} = \@kept;
