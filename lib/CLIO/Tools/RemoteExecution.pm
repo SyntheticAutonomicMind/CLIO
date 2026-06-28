@@ -1121,9 +1121,10 @@ sub _shell_quote {
 sub _validate_host {
     my ($self, $host) = @_;
     return 0 unless defined $host && length $host;
-    # Allow user@host, user@host.domain, IPv4, IPv6 in brackets
+    # Allow user@host, IPv4, IPv6 in brackets, hostnames with underscores
     # Reject shell metacharacters: spaces, semicolons, backticks, $(), pipes, etc.
-    return $host =~ /\A[\w.\-\@\[\]:]+\z/;
+    # Allow: alphanumeric, underscore, hyphen, dot, @, colon, brackets
+    return $host =~ /\A[a-zA-Z0-9_\-.\@\[\]:]+\z/;
 }
 
 sub _validate_port {
@@ -1212,16 +1213,9 @@ sub _validate_ssh_setup {
         }
         
         if ($agent_exit == 1) {
-            return $self->error_result(
-                "SSH agent running but no keys loaded.\n\n" .
-                "Add your SSH key:\n" .
-                "  ssh-add ~/.ssh/id_rsa  (or id_ed25519)\n\n" .
-                "Or create a new key:\n" .
-                "  ssh-keygen -t ed25519 -C \"your_email\@example.com\"\n" .
-                "  ssh-copy-id $host\n" .
-                "  ssh-add ~/.ssh/id_ed25519\n\n" .
-                "See docs/REMOTE_EXECUTION.md for detailed setup instructions."
-            );
+            # Agent is running but has no keys - this is OK, SSH will use keys from ~/.ssh/
+            # Just warn the user, don't block
+            log_warning('RemoteExec', "SSH agent running but no keys loaded. SSH will use keys from ~/.ssh/");
         }
     }
     
@@ -1503,7 +1497,10 @@ sub _copy_local_clio_to_remote {
     my $ssh_opts = "ssh -p $ssh_port";
     $ssh_opts .= " -i " . $self->_shell_quote($ssh_key) if $ssh_key;
     
-    my $rsync_cmd = "rsync -az --delete -e " . $self->_shell_quote($ssh_opts);
+    # Use rsync WITHOUT --delete to avoid accidentally removing remote files
+    # that aren't in the local source. The --delete flag is dangerous because
+    # it can delete files on the remote that don't exist locally.
+    my $rsync_cmd = "rsync -az -e " . $self->_shell_quote($ssh_opts);
     $rsync_cmd .= " --exclude='.git'";
     $rsync_cmd .= " --exclude='.clio/sessions'";
     $rsync_cmd .= " --exclude='ai-assisted'";
@@ -1670,6 +1667,7 @@ sub _execute_clio_remote {
     my $remote_dir = $args{remote_dir};
     my $model = $args{model};
     my $api_key = $args{api_key};
+    my $streaming = $args{streaming} // 0;  # New parameter for streaming support
     
     # Validate paths used in shell script
     for my $path ($clio_path, $config_dir, $remote_dir) {
@@ -1697,6 +1695,10 @@ sub _execute_clio_remote {
         $env_exports .= "\nexport CLIO_API_KEY=$q_api_key";
     }
     
+    # Build the clio command with optional streaming flag
+    my $clio_cmd = "$q_clio_path --model $q_model --input '$command'";
+    $clio_cmd .= " --exit" unless $streaming;  # Only add --exit for non-streaming mode
+    
     my $exec_script = <<"SHELL";
 #!/bin/bash
 set -e
@@ -1705,7 +1707,7 @@ $env_exports
 cd $q_remote_dir
 
 START=\$(date +%s)
-$q_clio_path --model $q_model --input '$command' --exit 2>&1
+$clio_cmd 2>&1
 EXIT_CODE=\$?
 END=\$(date +%s)
 DURATION=\$((END - START))

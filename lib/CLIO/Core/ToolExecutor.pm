@@ -6,7 +6,7 @@ package CLIO::Core::ToolExecutor;
 use strict;
 use warnings;
 use utf8;
-use Encode qw(decode encode);
+use Encode qw(decode);
 use CLIO::Core::Logger qw(should_log log_debug);
 use CLIO::Core::ErrorContext qw(classify_error format_error);
 use CLIO::Util::JSONRepair qw(repair_malformed_json);
@@ -14,6 +14,7 @@ use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json safe_encode_jso
 use CLIO::Session::ToolResultStore;
 use CLIO::Logging::ToolLogger;
 use CLIO::Security::SecretRedactor qw(redact redact_any);
+use Storable qw(dclone);
 use Time::HiRes qw(time);
 
 =head1 NAME
@@ -339,6 +340,10 @@ sub execute_tool {
         $current_model = $self->{api_manager}->get_current_model();
     }
 
+    # Protect against SIGPIPE from broken broker socket connections during tool execution
+    # This prevents crashes when the broker process dies or network fails mid-tool
+    local $SIG{PIPE} = 'IGNORE';
+
     my $result = $tool->execute($arguments, {
         session => $self->{session},
         config => $self->{config},  # Pass config for API keys (web search)
@@ -371,6 +376,16 @@ sub execute_tool {
         });
         
         return $self->_error_result("Tool returned invalid result");
+    }
+    
+    # Validate tool result schema - ensure required fields exist
+    unless (exists $result->{success} && defined $result->{output}) {
+        log_warning('ToolExecutor', "Tool '$tool_name' returned result missing required fields (success, output)");
+        $result = {
+            success => 0,
+            output => "Tool returned malformed result (missing success/output fields)",
+            error => "Internal tool error: malformed result structure",
+        };
     }
     
     if ($result->{success}) {
@@ -609,7 +624,7 @@ Arguments:
 - $params: Hashref of tool parameters
 
 Returns:
-- Normalized params hashref
+- Normalized params hashref (deep copy, original unchanged)
 
 =cut
 
@@ -617,6 +632,9 @@ sub _normalize_dual_json_params {
     my ($self, $params) = @_;
     
     return $params unless $params && ref($params) eq 'HASH';
+    
+    # Deep clone to avoid mutating caller's data
+    $params = dclone($params);
     
     # Look for _json parameter variants
     my @param_keys = keys %$params;
@@ -697,8 +715,8 @@ sub _normalize_oneof_params {
     my $tool = $self->{tool_registry}->get_tool($tool_name);
     return $params unless $tool;
     
-    # Get tool definition to check parameter schemas
-    my $tool_def = $tool->get_tool_definition();
+    # Get tool definition to check parameter schemas (cached)
+    my $tool_def = $self->_get_cached_tool_definition($tool_name);
     return $params unless $tool_def && $tool_def->{parameters};
     
     my $properties = $tool_def->{parameters}{properties};
@@ -745,6 +763,32 @@ sub _normalize_oneof_params {
     }
     
     return $params;
+}
+
+=head2 _get_cached_tool_definition
+
+Get cached tool definition to avoid re-fetching on every call.
+
+Arguments:
+- $tool_name: Tool name
+
+Returns:
+- Tool definition hashref or undef
+
+=cut
+
+sub _get_cached_tool_definition {
+    my ($self, $tool_name) = @_;
+    
+    $self->{_tool_def_cache} ||= {};
+    
+    unless ($self->{_tool_def_cache}{$tool_name}) {
+        my $tool = $self->{tool_registry}->get_tool($tool_name);
+        return unless $tool;
+        $self->{_tool_def_cache}{$tool_name} = $tool->get_tool_definition();
+    }
+    
+    return $self->{_tool_def_cache}{$tool_name};
 }
 
 =head2 _get_redact_level
