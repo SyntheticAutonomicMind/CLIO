@@ -12,6 +12,8 @@ binmode(STDERR, ':encoding(UTF-8)');
 use Carp qw(croak);
 use Scalar::Util qw(blessed);
 use CLIO::Util::JSON qw(encode_json);
+use Cwd qw(abs_path);
+use Time::HiRes qw(sleep);
 use parent 'CLIO::Tools::Tool';
 
 =head1 NAME
@@ -223,30 +225,21 @@ sub _dispatch_broadcast   { my ($self, $params, $ctx) = @_; $self->broadcast($pa
 sub _get_subagent_handler {
     my ($self, $context) = @_;
     
-    # Try to get from context directly
+    # Path 1: Direct from context (most common for tool calls)
     if ($context->{subagent_cmd}) {
         return $context->{subagent_cmd};
     }
     
-    # Try to get from UI (Chat.pm) - this is the primary path
-    # The UI is passed from ToolExecutor
+    # Path 2: From UI's command handler (primary path for interactive sessions)
     my $ui = $context->{ui};
     if ($ui && ref($ui) && $ui->can('get_command_handler')) {
-        my $ch = $ui->get_command_handler();
+        my $ch = $ui = $ui->get_command_handler();
         if ($ch && $ch->{subagent_cmd}) {
             return $ch->{subagent_cmd};
         }
     }
     
-    # Try direct access to command_handler hash (legacy)
-    if ($ui && ref($ui) eq 'HASH' && $ui->{command_handler}) {
-        my $ch = $ui->{command_handler};
-        if ($ch->{subagent_cmd}) {
-            return $ch->{subagent_cmd};
-        }
-    }
-    
-    # Try blessed object with command_handler attribute
+    # Path 3: From blessed UI object with command_handler attribute
     if ($ui && blessed($ui) && $ui->{command_handler}) {
         my $ch = $ui->{command_handler};
         if ($ch->{subagent_cmd}) {
@@ -262,7 +255,7 @@ sub _get_subagent_handler {
         return $ch->{subagent_cmd};
     }
     
-    # Fall back to creating a minimal handler (for non-UI contexts)
+    # Path 4: Fall back to creating a minimal handler (for non-UI contexts)
     # NOTE: This handler won't have broker_client until spawn is called
     if ($context->{session}) {
         # Check if we already have a cached handler
@@ -326,6 +319,15 @@ sub spawn {
     my $model = $params->{model} || ($context && $context->{current_model}) || 'unknown';
     my $persistent = $params->{persistent} ? 1 : 0;
     my $working_dir = $params->{working_dir};
+
+    # Validate working_dir exists if provided
+    if ($working_dir) {
+        unless (-d $working_dir) {
+            return $self->error_result("Working directory does not exist: $working_dir");
+        }
+        # Ensure it's an absolute path
+        $working_dir = abs_path($working_dir) || $working_dir;
+    }
 
     # Optional pre-loaded skills: comma-separated list of names that
     # should be rendered into the subagent's system prompt at spawn time.
@@ -462,7 +464,7 @@ sub wait {
     my ($self, $params, $handler, $context) = @_;
 
     my $timeout = $params->{timeout} || 60;
-    my $poll_interval = $params->{poll_interval} || 5;
+    my $poll_interval = $params->{poll_interval} || 1;  # Default to 1 second for more responsive polling
 
     my $action_desc = "waiting for agent activity (${timeout}s timeout)";
 
@@ -470,12 +472,12 @@ sub wait {
         return $self->error_result("No sub-agents spawned");
     }
 
-        my $start = time();
-        my @events;
-        
-        while ((time() - $start) < $timeout) {
-            # Relay child status updates via OSC
-            $self->_relay_child_status($handler, $context);
+    my $start = time();
+    my @events;
+    
+    while ((time() - $start) < $timeout) {
+        # Relay child status updates via OSC
+        $self->_relay_child_status($handler, $context);
 
         # Check for new messages from agents
         if ($handler->{broker_client}) {
@@ -542,8 +544,8 @@ sub wait {
             );
         }
 
-        # Sleep before next poll
-        sleep($poll_interval);
+        # Sleep before next poll (use Time::HiRes for sub-second precision)
+        Time::HiRes::sleep($poll_interval);
     }
 
     # Timeout with no events
@@ -795,12 +797,9 @@ sub inbox {
         }
     }
     
-    # Auto-acknowledge messages so they don't accumulate in the broker.
-    # The AI can still see them in this response before they're cleared.
-    my @msg_ids = map { $_->{id} } @formatted;
-    if (@msg_ids && $handler->{broker_client}) {
-        eval { $handler->{broker_client}->acknowledge_messages(@msg_ids) };
-    }
+    # DO NOT auto-acknowledge messages here. Messages should only be acknowledged
+    # when the AI explicitly calls agent_operations(operation: 'acknowledge').
+    # This preserves unread state if the AI doesn't process the messages.
     
     return $self->success_result(
         join("\n", @output_lines),
