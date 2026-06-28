@@ -51,6 +51,12 @@ LTM STORAGE (persist facts across sessions):
 -  add_solution: error + solution (required), examples (optional). Stores to .clio/ltm.json. Returns success confirmation.
 -  add_pattern: pattern (required), confidence (optional). Stores to .clio/ltm.json. Returns success confirmation.
 
+LTM CORROBORATION (trust tier promotion):
+-  add_corroboration: search_text (required), source_agent (optional), source_session (optional), entry_type (optional). 
+    Adds independent corroboration to an existing LTM entry. When an entry receives >=2 corroborations from distinct 
+    agent:session pairs, it auto-promotes from [UNVERIFIED] to [TRUSTED] tier. Use this when you independently 
+    verify a memory is correct (e.g., you tested a solution and it worked, you confirmed a pattern in the codebase).
+
 LTM MAINTENANCE:
 -  update_ltm: search_text + replacement (required), entry_type (optional). Updates existing entry. Returns {updated, count}.
 -  prune_ltm: age/limits optional. Removes old entries. Returns {pruned, remaining}.
