@@ -1235,6 +1235,9 @@ sub process_rate_limit_headers {
 
         my $old_delay = $dynamic_min_delay;
         $dynamic_min_delay = $new_delay;
+        # Persist on the handler so APIManager's _dynamic_min_delay reader
+        # sees the updated value on subsequent requests.
+        $self->{_dynamic_min_delay} = $new_delay;
 
         if ($new_delay != $old_delay) {
             my $limit = $rate_limit{limit_requests} || 'N/A';
@@ -1252,6 +1255,11 @@ sub process_rate_limit_headers {
         my $now = time();
         if ($reset_time > $now) {
             $rate_limit{seconds_until_reset} = $reset_time - $now;
+            # Persist cached reset time so weekly/monthly rate-limit handling
+            # (which reads $self->{_rate_limit_reset_in}) can recover it on
+            # the error response when the immediate headers don't carry a
+            # usable reset timestamp.
+            $self->{_rate_limit_reset_in} = $rate_limit{seconds_until_reset};
         }
     }
 

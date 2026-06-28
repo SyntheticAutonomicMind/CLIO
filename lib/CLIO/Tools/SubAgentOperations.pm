@@ -233,7 +233,7 @@ sub _get_subagent_handler {
     # Path 2: From UI's command handler (primary path for interactive sessions)
     my $ui = $context->{ui};
     if ($ui && ref($ui) && $ui->can('get_command_handler')) {
-        my $ch = $ui = $ui->get_command_handler();
+        my $ch = $ui->get_command_handler();
         if ($ch && $ch->{subagent_cmd}) {
             return $ch->{subagent_cmd};
         }

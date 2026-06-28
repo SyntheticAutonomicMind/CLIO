@@ -281,6 +281,17 @@ sub _set_model {
     my ($full_model, $display_model, $target_provider, $api_model) = 
         $self->_resolve_model_details($value);
 
+    # Validate that the target provider has credentials configured.
+    # Skipped when the target provider is already the current one (no switch implied).
+    if ($target_provider ne ($self->{config}->get('provider') || '')) {
+        my ($has_auth, $auth_error) = $self->_check_provider_auth($target_provider);
+        unless ($has_auth) {
+            $self->display_error_message($auth_error);
+            $self->display_system_message("Set it with: /api set provider $target_provider && /api set key <your-key>");
+            return;
+        }
+    }
+
     # Validate model for GitHub Copilot
     if ($target_provider eq 'github_copilot') {
         my ($valid, $error) = $self->_validate_github_copilot_model($api_model);
@@ -338,6 +349,36 @@ sub _resolve_model_details {
     }
 
     return ($full_model, $display_model, $target_provider, $api_model);
+}
+
+=head2 _check_provider_auth
+
+Check whether the given provider has credentials configured.
+Returns ($has_auth, $error_message). $has_auth is 1 when credentials
+are present OR when the provider does not require explicit credentials
+(e.g. github_copilot with device flow, sam, llama.cpp, lmstudio).
+
+=cut
+
+sub _check_provider_auth {
+    my ($self, $provider) = @_;
+
+    # Providers that don't need an API key in CLIO config
+    my %NO_KEY_NEEDED = map { $_ => 1 } qw(
+        github_copilot
+        sam
+        llama.cpp
+        lmstudio
+    );
+
+    return (1, '') if $NO_KEY_NEEDED{$provider};
+
+    my $provider_key = $self->{config}->get_provider_key($provider);
+    if ($provider_key) {
+        return (1, '');
+    }
+
+    return (0, "Provider '$provider' has no API key configured.");
 }
 
 =head2 _validate_github_copilot_model
