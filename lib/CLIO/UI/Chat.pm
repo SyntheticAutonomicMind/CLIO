@@ -209,11 +209,15 @@ sub flush_output_buffer {
 
 Return the agent display name (e.g. "CLIO").
 
+Reads from $ENV{CLIO_AGENT_NAME} on every call so environment changes
+(e.g. setting the var via /init or a wrapper script after startup)
+are picked up immediately.
+
 =cut
 
 sub agent_name {
     my ($self) = @_;
-    return $self->{_cached_agent_name} //= ($ENV{CLIO_AGENT_NAME} || 'CLIO');
+    return $ENV{CLIO_AGENT_NAME} || 'CLIO';
 }
 
 =head2 _get_broker_client
@@ -1992,28 +1996,56 @@ sub get_input {
         # If broker is active, poll for agent messages during readline
         my $input;
         my $broker_client = $self->_get_broker_client();
-        if ($broker_client && !$self->{_broker_dead}) {
-            my $event_cb = sub {
-                my $events = $self->_poll_broker_events($broker_client);
-                return 0 unless $events && @$events;
-                for my $event (@$events) {
-                    if (($event->{message_type} || '') eq 'authorization_request') {
-                        print "\r\e[K";
-                        $self->_handle_agent_authorization($event->{_raw_msg}, $broker_client);
-                    } else {
-                        my $rendered = $self->_render_broker_event($event);
-                        if ($rendered) {
+        # ReadLine can return hash signals ({ type => '__AGENT_EVENT__' | '__TIMEOUT__' })
+        # when an event or timeout fires. Loop until we get real string input - never
+        # leak these control signals to the caller as if they were user input.
+        while (1) {
+            if ($broker_client && !$self->{_broker_dead}) {
+                my $event_cb = sub {
+                    my $events = $self->_poll_broker_events($broker_client);
+                    return 0 unless $events && @$events;
+                    for my $event (@$events) {
+                        if (($event->{message_type} || '') eq 'authorization_request') {
                             print "\r\e[K";
-                            print $rendered;
+                            $self->_handle_agent_authorization($event->{_raw_msg}, $broker_client);
+                        } else {
+                            my $rendered = $self->_render_broker_event($event);
+                            if ($rendered) {
+                                print "\r\e[K";
+                                print $rendered;
+                            }
                         }
                     }
+                    return 1;
+                };
+                $input = $self->{readline}->readline($prompt, event_callback => $event_cb);
+            } else {
+                # 5-minute timeout allows ReadLine to periodically release control.
+                # When it fires with no user input, we silently re-prompt (do NOT
+                # treat the timeout signal as user input - that would corrupt the
+                # session by injecting a { type => '__TIMEOUT__' } hash as a
+                # user message and confuse the model).
+                $input = $self->{readline}->readline($prompt, timeout => 300);
+            }
+            
+            # Defensive: ReadLine should only return undef (EOF) or a string here.
+            # If we ever see a hash ref, treat it as a control signal - either known
+            # (__AGENT_EVENT__ shouldn't reach this path, but guard anyway) or unknown.
+            # Never leak it to the caller.
+            if (ref $input eq 'HASH') {
+                my $sig_type = $input->{type} // '<unknown>';
+                if ($sig_type eq '__TIMEOUT__') {
+                    log_debug('Chat', "ReadLine idle timeout (no input after 5min) - re-prompting silently");
+                    # Silently continue - user is idle. Don't echo anything that
+                    # could pollute the chat log. Next readline() call will set
+                    # raw mode again.
+                    next;
                 }
-                return 1;
-            };
-            $input = $self->{readline}->readline($prompt, event_callback => $event_cb);
-        } else {
-            # Use timeout to prevent indefinite blocking (5 minutes)
-            $input = $self->{readline}->readline($prompt, timeout => 300);
+                # Unknown control signal - log and re-prompt to be safe
+                log_warning('Chat', "Unknown ReadLine control signal '$sig_type' - re-prompting");
+                next;
+            }
+            last;  # Real string input (or undef for EOF)
         }
         
         # Handle Ctrl-D (EOF)
