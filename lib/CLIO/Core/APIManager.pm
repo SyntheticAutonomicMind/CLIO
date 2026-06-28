@@ -3659,6 +3659,8 @@ sub _process_think_tags {
                 $work = '';
             }
             else {
+                # Strip stale </think> close tags without matching open tags
+                $work =~ s{</think>}{}g;
                 $output .= $work;
                 $work = '';
             }
