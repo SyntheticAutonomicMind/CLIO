@@ -13,7 +13,7 @@ use File::Spec;
 use File::Path qw(make_path);
 use File::Basename qw(dirname);
 use CLIO::Util::JSON qw(encode_json);
-use CLIO::Core::Logger qw(log_debug);
+use CLIO::Core::Logger qw(log_debug log_warning);
 use parent 'CLIO::Tools::Tool';
 
 =head1 NAME
