@@ -42,6 +42,19 @@ sub atomic_write {
     my $encoding = $opts{encoding};
     my $mode     = $opts{mode};
 
+    # atomic_write is meant for full-file replacement with non-empty
+    # serialized content. Undef and ref content are never legitimate -
+    # they almost always mean the caller forgot to encode_json() or
+    # accidentally passed the wrong variable. Empty string is allowed
+    # because some callers legitimately clear files (e.g. todo lists,
+    # progress markers).
+    if (!defined $content) {
+        croak "atomic_write: refusing to write undef content to '$path'";
+    }
+    if (ref($content)) {
+        croak "atomic_write: refusing to write ref(" . ref($content) . ") content to '$path' - encode it first";
+    }
+
     # Use PID in temp name to prevent race conditions with multiple agents
     my $temp = "${path}.tmp.$$";
 

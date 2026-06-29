@@ -1996,9 +1996,10 @@ sub get_input {
         # If broker is active, poll for agent messages during readline
         my $input;
         my $broker_client = $self->_get_broker_client();
-        # ReadLine can return hash signals ({ type => '__AGENT_EVENT__' | '__TIMEOUT__' })
-        # when an event or timeout fires. Loop until we get real string input - never
-        # leak these control signals to the caller as if they were user input.
+        # ReadLine returns a hash ref { type => '__AGENT_EVENT__' } when an
+        # agent event requires AI attention. Loop until we get real string
+        # input - never leak control signals to the caller as if they were
+        # user input.
         while (1) {
             if ($broker_client && !$self->{_broker_dead}) {
                 my $event_cb = sub {
@@ -2020,29 +2021,15 @@ sub get_input {
                 };
                 $input = $self->{readline}->readline($prompt, event_callback => $event_cb);
             } else {
-                # 5-minute timeout allows ReadLine to periodically release control.
-                # When it fires with no user input, we silently re-prompt (do NOT
-                # treat the timeout signal as user input - that would corrupt the
-                # session by injecting a { type => '__TIMEOUT__' } hash as a
-                # user message and confuse the model).
-                $input = $self->{readline}->readline($prompt, timeout => 300);
+                $input = $self->{readline}->readline($prompt);
             }
-            
+
             # Defensive: ReadLine should only return undef (EOF) or a string here.
-            # If we ever see a hash ref, treat it as a control signal - either known
-            # (__AGENT_EVENT__ shouldn't reach this path, but guard anyway) or unknown.
-            # Never leak it to the caller.
+            # If we ever see a hash ref, treat it as a control signal. Never
+            # leak it to the caller.
             if (ref $input eq 'HASH') {
                 my $sig_type = $input->{type} // '<unknown>';
-                if ($sig_type eq '__TIMEOUT__') {
-                    log_debug('Chat', "ReadLine idle timeout (no input after 5min) - re-prompting silently");
-                    # Silently continue - user is idle. Don't echo anything that
-                    # could pollute the chat log. Next readline() call will set
-                    # raw mode again.
-                    next;
-                }
-                # Unknown control signal - log and re-prompt to be safe
-                log_warning('Chat', "Unknown ReadLine control signal '$sig_type' - re-prompting");
+                log_warning('Chat', "ReadLine control signal '$sig_type' - re-prompting");
                 next;
             }
             last;  # Real string input (or undef for EOF)

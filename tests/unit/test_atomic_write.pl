@@ -7,7 +7,7 @@ use strict;
 use warnings;
 use utf8;
 use lib './lib';
-use Test::More tests => 10;
+use Test::More tests => 18;
 use File::Temp qw(tempdir);
 use File::Spec;
 
@@ -69,6 +69,37 @@ my $tmpdir = tempdir(CLEANUP => 1);
     eval { atomic_write($bad_file, "data") };
     ok($@, 'write to nonexistent dir throws error');
     like($@, qr/Cannot create temp file/, 'error message mentions temp file');
+}
+
+# Test 7: undef content is rejected (defensive check)
+{
+    my $file = File::Spec->catfile($tmpdir, 'undef.txt');
+    eval { atomic_write($file, undef) };
+    ok($@, 'undef content throws error');
+    like($@, qr/undef content/, 'error mentions undef content');
+    ok(!-e $file, 'no file created for undef content');
+}
+
+# Test 8: hash ref content is rejected (defensive check)
+{
+    my $file = File::Spec->catfile($tmpdir, 'hashref.txt');
+    my $bad = { type => '__TIMEOUT__' };
+    eval { atomic_write($file, $bad) };
+    ok($@, 'hashref content throws error');
+    like($@, qr/ref\(HASH\)/, 'error mentions ref type');
+    ok(!-e $file, 'no file created for hashref content');
+}
+
+# Test 9: empty string is allowed (legitimate use case: clearing a file)
+{
+    my $file = File::Spec->catfile($tmpdir, 'cleared.txt');
+    atomic_write($file, "initial content");
+    atomic_write($file, "");
+    ok(-e $file, 'empty write still creates file');
+    open my $fh, '<:raw', $file;
+    my $content = do { local $/; <$fh> };
+    close $fh;
+    is($content, "", 'empty content empties file');
 }
 
 print "\n All AtomicWrite tests passed!\n";
