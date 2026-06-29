@@ -236,6 +236,58 @@ sub load {
     }
     
     my $stm  = CLIO::Memory::ShortTerm->new(history => \@cleaned_stm, debug => $args{debug});
+
+    # MIGRATION: Clean up corrupted history entries where content is a hash/array ref.
+    # Old ReadLine bug could leak control signals like {type=>'__TIMEOUT__'} into user
+    # input. They were saved as user message content (hash ref) instead of a string.
+    # Strict-schema providers (e.g. NVIDIA NIM) reject these with
+    # "data did not match any variant of untagged enum
+    # ChatCompletionRequestUserMessageContent". Permissive providers (minimax) accept
+    # them, which is why the bug was invisible in some sessions and fatal in others.
+    # Coerce ref content to a string marker preserving the message so the surrounding
+    # conversation flow (assistant+tool sequences) stays intact.
+    my $history_data = $data->{history} || [];
+    my @cleaned_history;
+    my $corruption_migrated = 0;
+    for my $i (0 .. $#$history_data) {
+        my $entry = $history_data->[$i];
+        unless (ref($entry) eq 'HASH') {
+            push @cleaned_history, $entry;
+            next;
+        }
+
+        # Mirror the STM role fixup so {role=>{role=>..., content=>...}}->{content=>undef}
+        # also gets cleaned.
+        my $role = $entry->{role};
+        my $content = $entry->{content};
+        if (ref($role) eq 'HASH') {
+            $content = $role->{content} if defined $role->{content};
+            $role = $role->{role} if defined $role->{role};
+            $entry->{role} = $role;
+            $entry->{content} = $content;
+        }
+
+        # Coerce ref content to a string marker. Keep the message so tool_call /
+        # tool_result pairing and assistant turn order remain valid.
+        if (ref($content) ne '') {
+            my $ref_type = ref($content);
+            my $inner = '';
+            if ($ref_type eq 'HASH' && defined $content->{type}) {
+                $inner = " type='$content->{type}'";
+            }
+            $content = "[CORRUPTED INPUT: " . $ref_type . $inner
+                . ' - migrated by session loader]';
+            $corruption_migrated++;
+        }
+        $entry->{content} = $content if defined $content;
+        push @cleaned_history, $entry;
+    }
+    $data->{history} = \@cleaned_history;
+    if ($corruption_migrated) {
+        $data->{_corruption_migrated} = $corruption_migrated;
+        log_info('State::load', "Migrated $corruption_migrated corrupted message(s) "
+            . "(hash/array content -> string marker). Session will be re-saved to persist fix.");
+    }
     my $yarn = CLIO::Memory::YaRN->new(threads => $data->{yarn} // {}, debug => $args{debug});
     my $self = {
         session_id => $session_id,
@@ -293,6 +345,13 @@ sub load {
         $self->{repair_notification} = $repaired;
     }
     
+    # Persist corruption migration immediately so subsequent loads don't re-migrate.
+    if ($data->{_corruption_migrated}) {
+        eval { $self->save(); };
+        if ($@) {
+            log_warning('State::load', "Failed to persist corruption migration: $@");
+        }
+    }
     log_debug('State::load', "returning self: $self");
     
     # Restore model to ENV if one was saved (so it persists across resume)
