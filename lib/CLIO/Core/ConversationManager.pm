@@ -50,6 +50,35 @@ separation of concerns. Uses functional style (exported functions).
 
 =cut
 
+=head2 _coerce_ref_content_to_string (Internal)
+
+Convert a hash/array ref to a string marker. Used as a defensive last-mile
+coercion before sending messages to the API. The session loader is the
+primary defense (State::load migration), but if a hash-ref content leaks
+through anyway (corrupted on-disk, manual edit, different code path) we
+still need to produce a string so strict-schema providers (e.g. NVIDIA NIM)
+don't reject the message with "data did not match any variant of untagged
+enum ChatCompletionRequestUserMessageContent".
+
+Arguments:
+    $content - hashref, arrayref, or other ref
+
+Returns:
+    String marker. Format: "[CORRUPTED INPUT: TYPE type='X' - repaired at JIT]"
+
+=cut
+
+sub _coerce_ref_content_to_string {
+    my ($content) = @_;
+    my $ref_type = ref($content);
+    my $inner = '';
+    if ($ref_type eq 'HASH' && defined $content->{type}) {
+        $inner = " type='$content->{type}'";
+    }
+    return "[CORRUPTED INPUT: " . $ref_type . $inner
+        . ' - repaired at JIT]';
+}
+
 =head2 load_conversation_history
 
 Load conversation history from session object, validating message structure
@@ -61,6 +90,8 @@ Handles:
 - Validating tool message tool_call_id presence
 - Preserving tool_calls on assistant messages for API correlation
 - Removing orphaned tool_calls (missing results) and tool_results (missing calls)
+- Defensive coercion of hash/array ref content to a string marker (belt-and-
+  suspenders against corruption like ReadLine control-signal leaks)
 
 Arguments:
 - $session: Session object (may be undef)
@@ -116,6 +147,16 @@ sub load_conversation_history {
     for my $msg (@$history) {
         next unless $msg && ref($msg) eq 'HASH';
         next unless $msg->{role};
+
+        # DEFENSIVE: State::load should have coerced ref content already, but
+        # belt-and-suspenders: if a hash/array leaked through anyway (session
+        # opened via different code path, or manually edited), coerce it to a
+        # string marker so strict-schema providers (e.g. NVIDIA NIM) accept it.
+        if (ref($msg->{content}) ne '') {
+            $msg->{content} = _coerce_ref_content_to_string($msg->{content});
+            log_warning('ConversationManager',
+                "Coerced ref content to string at JIT time - State::load migration may be stale");
+        }
 
         if ($debug) {
             my $has_tool_calls = exists $msg->{tool_calls} ? 'YES' : 'NO';

@@ -237,7 +237,6 @@ sub readline {
     # request-response protocol so we poll on a timer, not watch the socket fd.
     my $event_callback = $opts{event_callback};  # coderef, returns true if redraw needed
     my $prefill = $opts{prefill} || '';  # Pre-fill input buffer (restored after agent interrupt)
-    my $timeout = $opts{timeout} || 0;  # Timeout in seconds (0 = no timeout)
 
     # Reset display lines tracking for new input
     $self->{display_lines} = 1;
@@ -272,18 +271,17 @@ sub readline {
     while (1) {
         # Read next character - either blocking (normal) or multiplexed (with event_callback)
         my $char;
-        if ($event_callback || $timeout > 0) {
+        if ($event_callback) {
             # Multiplexed mode: use select() on STDIN with periodic callback
             # Inspired by PhotonBBS's alarm(1) + doevents() pattern.
             # The broker uses request-response protocol (not push), so we poll
             # the callback on a timer rather than watching the broker fd.
-            my $select_timeout = $timeout > 0 ? $timeout : 1.0;
             while (!defined $char) {
                 my $rin = '';
                 vec($rin, fileno(STDIN), 1) = 1;
                 
-                # Wait up to $select_timeout seconds for STDIN, then poll events
-                my $nfound = select(my $rout = $rin, undef, undef, $select_timeout);
+                # Wait up to 1 second for STDIN, then poll events
+                my $nfound = select(my $rout = $rin, undef, undef, 1.0);
                 
                 # Check STDIN for user keypress
                 if ($nfound > 0 && vec($rout, fileno(STDIN), 1)) {
@@ -292,32 +290,22 @@ sub readline {
                 
                 # Poll event callback (broker events, agent messages, etc.)
                 # Returns: 0 = nothing, 1 = redraw needed, "BREAK" = abort readline
-                if ($event_callback) {
-                    my $cb_result = $event_callback->();
-                    if ($cb_result && $cb_result eq 'BREAK') {
-                        # Agent event requires AI attention - abort readline
-                        if (length $input) {
-                            # User has typed something - don't interrupt them.
-                            # Redraw the prompt and their input after the event display.
-                            $self->_redraw_line_external($prompt, \$input, \$cursor_pos);
-                        } else {
-                            # No user input yet - safe to hand control to AI
-                            print "\r\n";
-                            ReadMode('restore');
-                            return { type => '__AGENT_EVENT__', partial_input => '' };
-                        }
-                    }
-                    if ($cb_result) {
+                my $cb_result = $event_callback->();
+                if ($cb_result && $cb_result eq 'BREAK') {
+                    # Agent event requires AI attention - abort readline
+                    if (length $input) {
+                        # User has typed something - don't interrupt them.
+                        # Redraw the prompt and their input after the event display.
                         $self->_redraw_line_external($prompt, \$input, \$cursor_pos);
+                    } else {
+                        # No user input yet - safe to hand control to AI
+                        print "\r\n";
+                        ReadMode('restore');
+                        return { type => '__AGENT_EVENT__', partial_input => '' };
                     }
                 }
-                
-                # Timeout handling - if no event_callback and timeout expired
-                if (!$event_callback && $timeout > 0 && !$nfound) {
-                    # Timeout expired - return special timeout indicator
-                    print "\r\n";
-                    ReadMode('restore');
-                    return { type => '__TIMEOUT__', partial_input => $input };
+                if ($cb_result) {
+                    $self->_redraw_line_external($prompt, \$input, \$cursor_pos);
                 }
             }
         } else {
