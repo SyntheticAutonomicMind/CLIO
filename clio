@@ -132,7 +132,7 @@ use CLIO::Core::APIManager;
 use CLIO::Core::SimpleAIAgent;
 use CLIO::Core::Config;
 use CLIO::Session::Manager;
-use CLIO::Providers qw(list_providers get_provider);
+use CLIO::Providers qw(list_providers get_provider provider_exists);
 
 # Initialize configuration system
 my $config = CLIO::Core::Config->new(debug => $debug);
@@ -164,6 +164,37 @@ if ((!$provider || $provider eq '') && $cli_model_override
         delete $config->{user_set}->{model};
         $provider = $derived_provider;
         log_info('Main', "Auto-selected provider '$provider' from --model prefix");
+    }
+}
+
+# If still no provider but the user has API keys configured, auto-select
+# from those keys. This avoids the "No AI Provider Configured" dead-end for
+# users who set up keys via /api set key but never explicitly ran
+# /api set provider. Preference order:
+#   1. Providers with priority_display (github_copilot) if they have a key
+#   2. Alphabetical for determinism
+# The selection is persisted so subsequent launches don't hit this branch
+# again - the user can change providers with /api set provider anytime.
+if (!$provider || $provider eq '') {
+    my @configured = $config->list_provider_keys();
+    if (@configured) {
+        my @candidates = sort {
+            my $a_def = CLIO::Providers::get_provider($a);
+            my $b_def = CLIO::Providers::get_provider($b);
+            my $a_pri = ($a_def && $a_def->{priority_display}) ? 0 : 1;
+            my $b_pri = ($b_def && $b_def->{priority_display}) ? 0 : 1;
+            return $a_pri <=> $b_pri || $a cmp $b;
+        } @configured;
+
+        my $auto = $candidates[0];
+        if ($auto && CLIO::Providers::provider_exists($auto)) {
+            $config->set_provider($auto);
+            $config->save();
+            $provider = $auto;
+            log_info('Main', "Auto-selected provider '$provider' from configured api_keys");
+            print STDERR "[clio] No provider set - auto-selected '$auto' from your configured API keys.\n";
+            print STDERR "[clio] Run '/api set provider <name>' to choose a different one.\n";
+        }
     }
 }
 if (!$provider || $provider eq '') {
@@ -747,11 +778,17 @@ if ($broker_session && $broker_agent_id) {
             $has_prefix = CLIO::Providers::provider_exists($1);
         }
         
-        unless ($has_prefix) {
-            my $full_model = "$current_provider/$current_model";
-            $config->set('model', $full_model, 0);
-            log_debug('Main', "Added provider prefix to model: $full_model");
-        }
+       unless ($has_prefix) {
+            # If model is just a provider name (placeholder), don't double-prefix it.
+            # APIManager::get_current_model will resolve it lazily via _resolve_model_placeholder.
+            if (CLIO::Providers::provider_exists($current_model) && $current_model eq $current_provider) {
+                log_debug('Main', "Model '$current_model' is a provider placeholder - letting APIManager resolve it");
+            } else {
+               my $full_model = "$current_provider/$current_model";
+               $config->set('model', $full_model, 0);
+               log_debug('Main', "Added provider prefix to model: $full_model");
+            }
+       }
     }
 }
 
