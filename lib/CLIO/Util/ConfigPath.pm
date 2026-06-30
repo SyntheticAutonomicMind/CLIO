@@ -62,18 +62,11 @@ iOS/iPadOS Detection:
 sub get_config_dir {
     my ($type) = @_;
     
-    # Check if PathResolver has been initialized (via the clio script startup).
-    # PathResolver is the authority on config directory: it handles --config,
-    # CLIO_HOME, dev-mode detection, and installed-mode HOME resolution.
-    # Once PathResolver sets CONFIG_DIR, ConfigPath MUST honor it - no
-    # second-guessing with HOME path checks.
+    # If PathResolver was initialized with --config, use that directory.
+    # Otherwise, CONFIG_DIR always points to ~/.clio (the global user config).
     eval { require CLIO::Util::PathResolver; };
     if (!$@ && defined $CLIO::Util::PathResolver::CONFIG_DIR) {
-        my $override = $CLIO::Util::PathResolver::CONFIG_DIR;
-        if ($override) {
-            make_path($override) unless -d $override;
-            return $override;
-        }
+        return $CLIO::Util::PathResolver::CONFIG_DIR;
     }
     
     my $home = $ENV{HOME} || $ENV{USERPROFILE} || '.';
