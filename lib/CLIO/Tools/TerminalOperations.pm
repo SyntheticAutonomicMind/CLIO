@@ -382,12 +382,24 @@ sub _execute_passthrough {
     
     # Suspend CLIO's terminal input handling so the command owns the TTY
     $self->_suspend_clio_input();
-    
-    # Save caller's ALRM handler and remaining alarm time, then disable.
-    # We use a poll loop instead of alarm() for timeout - no ALRM needed.
-    my $saved_alrm = $SIG{ALRM};
-    my $saved_alarm_remaining = alarm(0);
-    
+
+    # Note: On Unix we INTENTIONALLY do NOT touch $SIG{ALRM} or alarm() here.
+    # Chat.pm installs a 1-second ALRM handler that scans stdin for ESC and
+    # sets session->state()->{user_interrupted}, which the poll loop below
+    # checks. The Unix path also uses Time::HiRes polling for the timeout, so
+    # it doesn't need a local alarm() either.
+    #
+    # The Windows path below DOES need its own alarm() because fork() is
+    # unavailable and we fall back to system(); the local SIG{ALRM} is scoped
+    # to the eval block, so Chat.pm's handler is still preserved on Windows
+    # outside that eval.
+    my $saved_alrm;
+    my $saved_alarm_remaining;
+    if ($^O eq 'MSWin32') {
+        $saved_alrm = $SIG{ALRM};
+        $saved_alarm_remaining = alarm(0);
+    }
+
     my $exit_code;
     my $child_pid;
     my $interrupted = 0;
@@ -504,16 +516,19 @@ sub _execute_passthrough {
     } # end Unix fork path
     
     my $err = $@;
-    
-    # Restore caller's ALRM handler and re-arm their alarm.
-    # alarm(0) returns 0 both when no alarm was pending AND when <1 second
-    # remained (integer floor). If a handler existed, always re-arm with at
-    # least 1 second so the periodic timer doesn't go dead.
-    $SIG{ALRM} = $saved_alrm || 'DEFAULT';
-    if ($saved_alrm && ref($saved_alrm) eq 'CODE') {
-        alarm($saved_alarm_remaining || 1);
-    } elsif ($saved_alarm_remaining) {
-        alarm($saved_alarm_remaining);
+
+    # Restore caller's ALRM handler (only needed on Windows where we saved it).
+    # On Unix we left Chat.pm's ALRM handler untouched, so nothing to restore.
+    if ($^O eq 'MSWin32') {
+        # alarm(0) returns 0 both when no alarm was pending AND when <1 second
+        # remained (integer floor). If a handler existed, always re-arm with at
+        # least 1 second so the periodic timer doesn't go dead.
+        $SIG{ALRM} = $saved_alrm || 'DEFAULT';
+        if ($saved_alrm && ref($saved_alrm) eq 'CODE') {
+            alarm($saved_alarm_remaining || 1);
+        } elsif ($saved_alarm_remaining) {
+            alarm($saved_alarm_remaining);
+        }
     }
     
     if ($err) {
