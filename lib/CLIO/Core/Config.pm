@@ -45,7 +45,7 @@ use constant DEFAULT_CONFIG => {
     api_key => '',
     api_keys => {},  # Per-provider API keys: { google => 'AIza...', minimax => '...' }
     api_bases => {},  # Per-provider API base URLs: { 'llama.cpp' => 'http://localhost:9090/...' }
-    provider => 'github_copilot',  # Default provider
+    provider => undef,  # No default - must be configured by user
     editor => $ENV{EDITOR} || $ENV{VISUAL} || 'vim',  # Default editor
     log_level => 'WARNING',  # Default log level: ERROR, WARNING, INFO, DEBUG
     # Web search configuration (SerpAPI)
@@ -252,8 +252,13 @@ sub load {
             
             # Apply provider's model unless user explicitly set it
             unless ($self->{user_set}->{model}) {
-                $config{model} = $provider_config->{model};
-                log_debug('Config', "Using model from provider '$config{provider}': $config{model}");
+                my $default_model = $provider_config->{model};
+                if (defined $default_model) {
+                    $config{model} = $default_model;
+                    log_debug('Config', "Using model from provider '$config{provider}': $config{model}");
+                } else {
+                    log_debug('Config', "Provider '$config{provider}' has no default model - will be fetched from API");
+                }
             }
             
             # Load the provider's api_key if one exists in the api_keys store
@@ -279,12 +284,11 @@ sub load {
             log_warning('Config', "Unknown provider '$config{provider}', using defaults");
         }
     } else {
-        # No provider set - use openai defaults
-        my $provider_config = get_provider('openai');
-        if ($provider_config) {
-            $config{api_base} = $provider_config->{api_base} unless $self->{user_set}->{api_base};
-            $config{model} = $provider_config->{model} unless $self->{user_set}->{model};
-        }
+        # No provider set
+        # Note: Provider should be set via user configuration.
+        # The clio executable will prompt the user if no provider is configured.
+        # If we reach here, the user has already configured a provider.
+        log_debug('Config', 'No provider set - waiting for user configuration');
     }
     
     # Note: Log level is now controlled by CLIO_LOG_LEVEL environment variable
@@ -421,13 +425,19 @@ sub set_provider {
         $self->{config}->{api_base} = $provider_config->{api_base};
     }
     
-    # Store default model with provider prefix (e.g., "github_copilot/claude-haiku-4.5")
-    # Some providers (github_copilot, nvidia) already include the prefix in their default model
+    # Store default model with provider prefix
+    # If provider has no default model (undef), we'll use the first available model from the API
     my $default_model = $provider_config->{model};
-    if ($default_model =~ m{^\Q$provider\E/}) {
-        $self->{config}->{model} = $default_model;
+    if (defined $default_model) {
+        if ($default_model =~ m{^\Q$provider\E/}) {
+            $self->{config}->{model} = $default_model;
+        } else {
+            $self->{config}->{model} = "$provider/$default_model";
+        }
     } else {
-        $self->{config}->{model} = "$provider/$default_model";
+        # No default model - use provider as placeholder
+        # The actual model will be fetched from the API when needed
+        $self->{config}->{model} = $provider;
     }
     
     # When switching providers, load the per-provider API key if available
@@ -448,7 +458,7 @@ sub set_provider {
     
     log_debug('Config', "Switched to provider: $provider");
     log_debug('Config', "api_base: " . $self->{config}->{api_base} . " (from " . ($provider_base ? "stored" : "provider") . ")");
-    log_debug('Config', "model: $provider_config->{model} (from provider)");
+    log_debug('Config', "model: " . ($provider_config->{model} // '(no default - will fetch from API)') . " (from provider)");
     
     return 1;
 }
