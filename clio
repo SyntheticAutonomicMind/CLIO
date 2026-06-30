@@ -10,7 +10,6 @@ BEGIN {
 
 use strict;
 use warnings;
-use File::Spec;
 use File::Basename;
 use CLIO::Util::JSON qw(encode_json decode_json);
 use CLIO::UI::Terminal qw(detect_capabilities configure_io_encoding box_char);
@@ -178,28 +177,6 @@ if ((!$provider || $provider eq '') && $cli_model_override
 if (!$provider || $provider eq '') {
     my @configured = $config->list_provider_keys();
 
-    # Fallback: if the active config dir has no API keys (e.g., fresh dev
-    # checkout), check ~/.clio/config.json which is the standard installed
-    # location. PathResolver's Priority 3 isolates sessions/memory/vault per
-    # checkout, but API config should be shared.
-    my $home_api_keys;
-    unless (@configured) {
-        my $home_config = File::Spec->catfile($ENV{HOME}, '.clio', 'config.json');
-        if (-f $home_config) {
-            eval {
-                open my $fh, '<', $home_config or die;
-                my $json = do { local $/; <$fh> };
-                close $fh;
-                my $data = CLIO::Util::JSON::decode_json($json);
-                if ($data->{api_keys} && ref($data->{api_keys}) eq 'HASH') {
-                    @configured = sort keys %{$data->{api_keys}};
-                    $home_api_keys = $data->{api_keys};
-                    log_info('Main', "Found " . scalar(@configured) . " API keys in HOME config");
-                }
-            };
-        }
-    }
-
     if (@configured) {
         my @candidates = sort {
             my $a_def = CLIO::Providers::get_provider($a);
@@ -212,14 +189,6 @@ if (!$provider || $provider eq '') {
         my $auto = $candidates[0];
         if ($auto && CLIO::Providers::provider_exists($auto)) {
             $config->set_provider($auto);
-
-            # If we loaded API keys from HOME config, copy the selected
-            # provider's key into the active config so the session can
-            # actually authenticate.
-            if ($home_api_keys && $home_api_keys->{$auto} && !$config->get_provider_key($auto)) {
-                $config->set_provider_key($auto, $home_api_keys->{$auto});
-            }
-
             $config->save();
             $provider = $auto;
             log_info('Main', "Auto-selected provider '$provider' from configured api_keys");
