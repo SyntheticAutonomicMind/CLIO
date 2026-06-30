@@ -1577,13 +1577,14 @@ sub display_header {
     # Strip CLIO provider prefix from model name for display
     # "github_copilot/gpt-4.1" -> "gpt-4.1" (provider shown after @)
     my $display_model = $model;
-    if ($display_model =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i && CLIO::Providers::provider_exists($1)) {
+    if (defined $display_model && $display_model =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i && CLIO::Providers::provider_exists($1)) {
         my $model_provider = $1;
         $display_model = $2;
         # Always update provider_display from the model prefix for cross-provider routing
         # e.g., "openrouter/deepseek/deepseek-r1" shows "@OpenRouter" not "@GitHub Copilot"
         $provider_display = $provider_names{$model_provider} || ucfirst($model_provider);
     }
+    $display_model //= '(none configured)';
     my $model_with_provider = "$display_model\@$provider_display";
     
     # Add session override indicator when session-only settings are active

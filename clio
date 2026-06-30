@@ -13,7 +13,8 @@ use warnings;
 use File::Spec;
 use File::Basename;
 use CLIO::Util::JSON qw(encode_json decode_json);
-use CLIO::UI::Terminal qw(detect_capabilities configure_io_encoding);
+use CLIO::UI::Terminal qw(detect_capabilities configure_io_encoding box_char);
+use CLIO::UI::ANSI;
 use CLIO::UI::Chat;
 use CLIO::Util::PathResolver;
 use CLIO::Core::Logger qw(should_log log_info log_debug);
@@ -42,6 +43,9 @@ if ($config_dir_override) {
 } else {
     CLIO::Util::PathResolver::init();
 }
+
+# Initialize ANSI formatter for colored output (after no_color is determined)
+my $ansi = CLIO::UI::ANSI->new(enabled => !$no_color);
 
 # Check for --help flag
 if (grep { $_ eq '--help' || $_ eq '-h' } @ARGV) {
@@ -128,9 +132,92 @@ use CLIO::Core::APIManager;
 use CLIO::Core::SimpleAIAgent;
 use CLIO::Core::Config;
 use CLIO::Session::Manager;
+use CLIO::Providers qw(list_providers get_provider);
 
 # Initialize configuration system
 my $config = CLIO::Core::Config->new(debug => $debug);
+
+# Check if provider is configured - if not, prompt user to configure one
+my $provider = $config->get('provider');
+if (!$provider || $provider eq '') {
+    # Get all available providers dynamically
+    my @providers = list_providers();
+    
+    # Use CLIO's display system for consistent output
+    # Create a minimal chat object for display purposes
+    my $display = CLIO::UI::Chat->new(no_color => $no_color, debug => $debug);
+    
+    # Display header
+    $display->display_command_header("No AI Provider Configured");
+    
+    $display->writeline("CLIO needs an API key or authentication to use an AI provider.", markdown => 0);
+    $display->writeline("", markdown => 0);
+    
+    # Display available providers
+    $display->display_section_header("Available Providers");
+    $display->writeline("(run /api providers in the application for full list)", markdown => 0);
+    $display->writeline("", markdown => 0);
+    
+    for my $prov_name (@providers) {
+        my $prov_config = get_provider($prov_name);
+        next unless $prov_config;
+        
+        my $display_name = $prov_config->{name} || $prov_name;
+        my $auth = $prov_config->{requires_auth} || 'none';
+        
+        my $auth_desc;
+        if ($auth eq 'apikey') {
+            $auth_desc = 'API key';
+        } elsif ($auth eq 'copilot') {
+            $auth_desc = 'GitHub Copilot';
+        } elsif ($auth eq 'none') {
+            $auth_desc = 'none';
+        } else {
+            $auth_desc = $auth;
+        }
+        
+        my $label = $display->colorize("$prov_name:", 'command_subheader');
+        my $desc = $display->colorize($display_name, 'data');
+        my $auth_label = $display->colorize("($auth_desc)", 'dim');
+        
+        printf "%-22s %s %s\n", $label, $desc, $auth_label;
+    }
+    
+    $display->writeline("", markdown => 0);
+    
+    # Display configuration instructions
+    $display->display_section_header("Configuration");
+    
+    my $cmd1 = $display->colorize("/api set provider <name>", 'command');
+    my $cmd2 = $display->colorize("/api set key <your_key>", 'command');
+    
+    $display->writeline("To configure a provider:", markdown => 0);
+    $display->writeline("  $cmd1  # Choose your provider", markdown => 0);
+    $display->writeline("  $cmd2    # Set your API key", markdown => 0);
+    $display->writeline("", markdown => 0);
+    
+    my $web_ui = $display->colorize("http://localhost:8080/setup", 'user_text');
+    $display->writeline("Or use the web UI at $web_ui", markdown => 0);
+    
+    $display->writeline("", markdown => 0);
+    
+    # Display additional help
+    $display->display_section_header("Getting Started");
+    
+    my $guide = $display->colorize("docs/USER_GUIDE.md", 'user_text');
+    $display->writeline("See $guide (section: Configuration) for more information", markdown => 0);
+    $display->writeline("", markdown => 0);
+    
+    my $chat_cmd = $display->colorize("clio --chat --new", 'command');
+    $display->writeline("For testing, use: $chat_cmd", markdown => 0);
+    $display->writeline("", markdown => 0);
+    
+    # Display footer
+    my $border = box_char('dhorizontal') x 62;
+    $display->writeline($ansi->parse(q{@DIM@} . $border . q{@RESET@}), markdown => 0);
+    
+    exit 1;
+}
 
 # Apply config log_level to env if --debug wasn't used
 unless ($ENV{CLIO_LOG_LEVEL}) {
