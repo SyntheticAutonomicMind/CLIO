@@ -257,8 +257,10 @@ sub load {
                     $config{model} = $default_model;
                     log_debug('Config', "Using model from provider '$config{provider}': $config{model}");
                 } else {
-                    log_debug('Config', "Provider '$config{provider}' has no default model - will be fetched from API");
-                }
+               log_debug('Config', "Provider '$config{provider}' has no default model - will be fetched from API");
+                $config{model} = $config{provider};
+                log_debug('Config', "Using provider name as model placeholder: $config{model}");
+           }
             }
             
             # Load the provider's api_key if one exists in the api_keys store
