@@ -408,6 +408,7 @@ sub _fetch_provider_capabilities {
     elsif ($provider_def->{capability_map}) {
         return $self->_fetch_zai_capabilities($model) if $provider =~ /^zai/;
         return $self->_fetch_minimax_capabilities($model) if $provider =~ /^minimax/;
+        return $self->_fetch_deepseek_capabilities($model) if $provider =~ /^deepseek/i;
     }
     elsif ($provider_def->{requires_auth} && $provider_def->{requires_auth} eq 'apikey') {
         return $self->_fetch_openai_compatible_capabilities($provider, $model);
@@ -1614,6 +1615,63 @@ sub _fetch_minimax_capabilities {
         supports_reasoning    => $model_data->{supports_reasoning},
         embeddings_dimension  => undef,
         architecture          => 'minimax',
+        quantization          => undef,
+        parameters            => undef,
+        capabilities          => [],
+        size_bytes            => undef,
+        raw                   => $model_data,
+    };
+}
+
+=head2 _fetch_deepseek_capabilities
+
+Fetch capabilities for DeepSeek provider models using a static map.
+DeepSeek's /v1/models endpoint returns only the model id with no metadata,
+so we maintain a static capability map sourced from their API docs
+(https://api-docs.deepseek.com/quick_start/pricing).
+
+=cut
+
+sub _fetch_deepseek_capabilities {
+    my ($self, $model) = @_;
+
+    # DeepSeek V4 series: 1M context, 32K max output (API allows up to 384K
+    # but 32K is the practical sweet spot for typical agent loops). Both
+    # Flash and Pro support thinking modes and tool calls.
+    my %deepseek_models = (
+        'deepseek-v4-flash' => {
+            context_window => 1048576,
+            max_output_tokens => 32768,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 1,
+        },
+        'deepseek-v4-pro' => {
+            context_window => 1048576,
+            max_output_tokens => 32768,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 1,
+        },
+    );
+
+    my $model_data = $deepseek_models{$model};
+    return undef unless $model_data;
+
+    return {
+        provider              => 'deepseek',
+        model                 => $model,
+        context_window        => $model_data->{context_window},
+        max_prompt_tokens     => $model_data->{context_window},
+        max_output_tokens     => $model_data->{max_output_tokens},
+        supports_tools        => $model_data->{supports_tools},
+        supports_streaming    => $model_data->{supports_streaming},
+        supports_vision       => $model_data->{supports_vision},
+        supports_reasoning    => $model_data->{supports_reasoning},
+        embeddings_dimension  => undef,
+        architecture          => 'deepseek',
         quantization          => undef,
         parameters            => undef,
         capabilities          => [],

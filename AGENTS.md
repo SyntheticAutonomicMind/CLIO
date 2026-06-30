@@ -690,6 +690,7 @@ add and remove models.
 | NVIDIA NIM | `_fetch_nvidia_capabilities` + `_nvidia_model_heuristics` | `lib/CLIO/Core/ModelCapabilitiesManager.pm` ~line 647 | 2026-06-11 |
 | Z.AI | `_fetch_zai_capabilities` | Same file ~line 1412 | Check date |
 | MiniMax | `_fetch_minimax_capabilities` | Same file ~line 1531 | Check date |
+| DeepSeek | `_fetch_deepseek_capabilities` | Same file ~line 1626 | 2026-06-30 |
 
 **How to update:**
 

@@ -38,7 +38,8 @@ sub _get_mcm_capabilities {
     # Only look up for providers known to lack /v1/models metadata
     return undef unless $provider_name eq 'nvidia'
         || $provider_name eq 'minimax'
-        || $provider_name eq 'minimax_token';
+        || $provider_name eq 'minimax_token'
+        || $provider_name eq 'deepseek';
     
     # Strip provider prefix for MCM lookup (e.g., "minimax/MiniMax-M3" -> "MiniMax-M3")
     my $lookup_id = $model_id;
@@ -403,6 +404,12 @@ sub _get_static_models {
             { id => 'glm-5-turbo',   _context_tokens => 200000, _output_tokens => 131072 },
             { id => 'glm-4.7',       _context_tokens => 200000, _output_tokens => 131072 },
             { id => 'glm-4.5-air',   _context_tokens => 128000, _output_tokens => 16384 },
+        ];
+    }
+    elsif ($provider_name eq 'deepseek') {
+        return [
+            { id => 'deepseek-v4-flash', _context_tokens => 1048576, _output_tokens => 32768, _supports_tools => 1, _supports_reasoning => 1 },
+            { id => 'deepseek-v4-pro',   _context_tokens => 1048576, _output_tokens => 32768, _supports_tools => 1, _supports_reasoning => 1 },
         ];
     }
 
