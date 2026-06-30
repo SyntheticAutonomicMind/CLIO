@@ -164,6 +164,22 @@ sub _model_supports_reasoning {
     return 0;
 }
 
+=head2 _get_reasoning_mode($model)
+
+Get the reasoning mode from model capabilities.
+Returns 'effort', 'enabled', 'adaptive', or undef.
+
+=cut
+
+sub _get_reasoning_mode {
+    my ($self, $model) = @_;
+    return undef unless $model;
+    
+    my $caps = $self->get_model_capabilities($model);
+    return undef unless $caps && $caps->{supports_reasoning};
+    return $caps->{reasoning_mode};
+}
+
 # Recursive sanitization of data structures before JSON encoding
 # Configuration validation and display
 sub validate_configuration {
@@ -839,8 +855,7 @@ sub adapt_request_for_endpoint {
     
     # Add reasoning support for OpenRouter endpoints
     # Only enable when thinking display is on - reasoning tokens are charged as output tokens
-    # Only for models known to support reasoning (deepseek-r1, qwq, etc.)
-    # Adding reasoning to non-thinking models causes provider errors (e.g. Google Vertex AI)
+    # Check model capabilities for reasoning support instead of hardcoded model patterns
     if ($endpoint_config->{openrouter}) {
         my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
         my $model_supports = $endpoint_config->{supports_reasoning}
@@ -851,33 +866,25 @@ sub adapt_request_for_endpoint {
         }
     }
 
-    # Add reasoning_effort for OpenAI native provider (o-series, gpt-5+).
-    # The /chat/completions endpoint accepts reasoning_effort on reasoning-capable
-    # models; sending it to non-reasoning models (gpt-4o, gpt-4.1) is rejected
-    # with "Unknown parameter". Pattern match keeps the param off non-reasoning models.
-    # The /responses path (codex, gpt-5+) builds its own payload and is unaffected.
-    if ($endpoint_config->{openai} && !$endpoint_config->{openrouter}) {
+    # Add reasoning for OpenAI-compatible Chat Completions providers
+    # (OpenAI, DeepSeek, NVIDIA, GitHub Copilot, and any other provider
+    # using the standard /chat/completions path). Uses reasoning_effort
+    # parameter, gated on model capabilities instead of model-name regex.
+    # Excludes providers with their own thinking format (Anthropic, Google,
+    # MiniMax, Z.AI, OpenRouter) which are handled separately.
+    elsif (!$endpoint_config->{openrouter}
+        && !$endpoint_config->{anthropic}
+        && !$endpoint_config->{google}
+        && !$endpoint_config->{minimax}
+        && !$endpoint_config->{zai})
+    {
         my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
         my $model = $payload->{model} // '';
-        if ($show_thinking && $model =~ /^(?:o\d|gpt-5)/i) {
+        my $reasoning_mode = $model ? $self->_get_reasoning_mode($model) : undef;
+        if ($show_thinking && $reasoning_mode) {
             my $thinking_effort = $self->{config} ? ($self->{config}->get('thinking_effort') // 'medium') : 'medium';
             $payload->{reasoning_effort} = $thinking_effort;
-            log_debug('APIManager', "OpenAI: added reasoning_effort=$thinking_effort for $model");
-        }
-    }
-
-    # Add reasoning_effort for GitHub Copilot /chat/completions path.
-    # Copilot exposes OpenAI o-series, gpt-5, and Claude 4 reasoning models
-    # through the chat completions endpoint. The /responses path is handled
-    # separately in _build_responses_api_payload (not affected here).
-    if ($endpoint_config->{requires_copilot_headers} && !$endpoint_config->{openai}) {
-        my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
-        my $model = $payload->{model} // '';
-        # Match: o-series (o1, o3, o4, ...), gpt-5+, and Claude 4 family
-        if ($show_thinking && $model =~ /^(?:o\d|gpt-5|claude-(?:sonnet|opus|haiku)-4)/i) {
-            my $thinking_effort = $self->{config} ? ($self->{config}->get('thinking_effort') // 'medium') : 'medium';
-            $payload->{reasoning_effort} = $thinking_effort;
-            log_debug('APIManager', "GitHub Copilot: added reasoning_effort=$thinking_effort for $model");
+            log_debug('APIManager', "Added reasoning_effort=$thinking_effort for $model (mode=$reasoning_mode)");
         }
     }
 
@@ -887,28 +894,21 @@ sub adapt_request_for_endpoint {
 
         # MiniMax-M3 uses thinking: {type: "adaptive"} for deep reasoning
         # M2.x models (2.0+) also support interleaved thinking natively via
-        # {type: "enabled"} per MiniMax's docs. With this enabled, the model
-        # emits structured reasoning into reasoning_details which the harness
-        # captures and round-trips properly (vs the <think> text tag approach
-        # which is fragile).
-        if ($payload->{model} && $payload->{model} =~ /^MiniMax-M3/i) {
-            my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
-            if ($show_thinking) {
-                $payload->{thinking} = { type => 'adaptive' };
-            } else {
-                $payload->{thinking} = { type => 'disabled' };
-            }
-        }
-        elsif ($payload->{model} && $payload->{model} =~ /^MiniMax-M2/i) {
-            # M2.x: enable interleaved thinking only when the user opts in.
-            # When disabled, the model skips reasoning tokens entirely (saving
-            # cost). When enabled, the model emits structured reasoning_details
-            # which the harness captures and round-trips correctly.
-            my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
-            if ($show_thinking) {
-                $payload->{thinking} = { type => 'enabled' };
-            } else {
-                $payload->{thinking} = { type => 'disabled' };
+        # {type: "enabled"} per MiniMax's docs.
+        # Use model capabilities to determine reasoning mode instead of model-name regex.
+        if ($payload->{model}) {
+            my $reasoning_mode = $self->_get_reasoning_mode($payload->{model});
+            if ($reasoning_mode) {
+                my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
+                if ($show_thinking) {
+                    if ($reasoning_mode eq 'adaptive') {
+                        $payload->{thinking} = { type => 'adaptive' };
+                    } else {
+                        $payload->{thinking} = { type => 'enabled' };
+                    }
+                } else {
+                    $payload->{thinking} = { type => 'disabled' };
+                }
             }
         }
         
@@ -945,9 +945,10 @@ sub adapt_request_for_endpoint {
     # - Clear thinking from prior turns (reduces context/cost unless user opts in)
     if ($endpoint_config->{zai}) {
         # Enable Z.AI thinking parameter for chain-of-thought
-        # Z.AI uses { thinking: { type: "enabled" } } (different from OpenRouter's reasoning)
+        # Uses model capabilities to check reasoning support
         my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
-        if ($show_thinking) {
+        my $reasoning_mode = $payload->{model} ? $self->_get_reasoning_mode($payload->{model}) : undef;
+        if ($show_thinking && $reasoning_mode) {
             $payload->{thinking} = { type => 'enabled' };
         }
 
@@ -4715,9 +4716,14 @@ sub _send_native_streaming {
         }
         elsif ($show_thinking && $provider_supports) {
             # User wants to see thinking and the model supports it.
+            # Look up reasoning_mode from capabilities so the provider
+            # can use the correct format (adaptive vs enabled vs effort).
+            my $full_model = $opts{model} // $self->{model} // $self->get_current_model();
+            my $reasoning_mode = $full_model ? $self->_get_reasoning_mode($full_model) : undef;
             $thinking_opt = {
                 enabled => 1,
                 effort  => $effort,
+                ($reasoning_mode ? (mode => $reasoning_mode) : ()),
             };
         }
         elsif (!$show_thinking) {
