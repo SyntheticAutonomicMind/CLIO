@@ -192,8 +192,11 @@ if (!$provider || $provider eq '') {
             $config->save();
             $provider = $auto;
             log_info('Main', "Auto-selected provider '$provider' from configured api_keys");
-            print STDERR "[clio] No provider set - auto-selected '$auto' from your configured API keys.\n";
-            print STDERR "[clio] Run '/api set provider <name>' to choose a different one.\n";
+
+            # Create minimal display object for themed output
+            my $display = CLIO::UI::Chat->new(no_color => $no_color, debug => $debug);
+            $display->display_system_message("No provider set - auto-selected '$auto' from your configured API keys.");
+            $display->display_system_message("Run '/api set provider <name>' to choose a different one.");
         }
     }
 }
