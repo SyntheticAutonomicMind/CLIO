@@ -39,9 +39,20 @@ use constant LOG_LEVEL => {
     DEBUG => 3,
 };
 
+# Config keys scoped per model (provider/model ID). When switching models,
+# these values are saved to model_configs and restored on switch back.
+use constant MODEL_SCOPED_KEYS => [
+    qw(cap_context_window cap_max_output cap_max_prompt
+       show_thinking thinking_effort
+       sampling_temperature sampling_top_p sampling_top_k
+       force_tools force_vision force_reasoning)
+];
+
+
 # Default configuration (system-level defaults only)
 # Provider-specific defaults come from CLIO::Providers
 use constant DEFAULT_CONFIG => {
+    model_configs => {},  # Per-model scoped config
     api_key => '',
     api_keys => {},  # Per-provider API keys: { google => 'AIza...', minimax => '...' }
     api_bases => {},  # Per-provider API base URLs: { 'llama.cpp' => 'http://localhost:9090/...' }
@@ -296,6 +307,44 @@ sub load {
     # Note: Log level is now controlled by CLIO_LOG_LEVEL environment variable
     # which is set by the --debug flag in the main clio script
     
+
+
+    # Restore per-model scoped config for the current model (if resolved).
+    # Migration: if model_configs is empty but scoped keys have non-default
+    # values, migrate them into model_configs for the current model.
+    {
+        my $model = $self->{config}->{model};
+        my $model_configs = $self->{config}->{model_configs} ||= {};
+        
+        if ($model && $model =~ m{/}) {
+            # If no stored config for this model yet, check for migration
+            if (!exists $model_configs->{$model} || !%{$model_configs->{$model}}) {
+                my $has_migration = 0;
+                my $entry = $model_configs->{$model} ||= {};
+                for my $key (@{MODEL_SCOPED_KEYS()}) {
+                    my $val = $self->{config}->{$key};
+                    my $default = DEFAULT_CONFIG->{$key};
+                    # Only migrate if value differs from default
+                    if (defined $val && (!defined $default || $val ne $default)) {
+                        $entry->{$key} = $val;
+                        $has_migration = 1;
+                    }
+                }
+                if ($has_migration) {
+                    log_debug('Config', "Migrated existing scoped config values to model_configs{$model}");
+                }
+            }
+            # Restore scoped config from model_configs if available
+            if ($model_configs->{$model}) {
+                for my $key (@{MODEL_SCOPED_KEYS()}) {
+                    if (exists $model_configs->{$model}{$key}) {
+                        $self->{config}->{$key} = $model_configs->{$model}{$key};
+                    }
+                }
+                log_debug('Config', "Restored model config for '$model'");
+            }
+        }
+    }
     $self->{config} = \%config;
     
     return 1;
@@ -318,13 +367,15 @@ sub save {
         make_path($self->{config_dir}, { mode => 0700 }) or croak "Cannot create config dir: $!";
     }
     
-    # Build config to save - ONLY user-explicitly-set values
-    my %config_to_save;
-    for my $key (keys %{$self->{user_set}}) {
-        $config_to_save{$key} = $self->{config}->{$key};
-    }
-    
-    # Log what we're saving
+   # Build config to save - ONLY user-explicitly-set values
+   my %config_to_save;
+   for my $key (keys %{$self->{user_set}}) {
+       $config_to_save{$key} = $self->{config}->{$key};
+   }
+    $config_to_save{model_configs} = $self->{config}->{model_configs}
+        if $self->{config}->{model_configs} && %{$self->{config}->{model_configs}};
+   
+   # Log what we're saving
     if (should_log('DEBUG')) {
         log_debug('Config', "Saving user-set values: " . join(', ', sort keys %config_to_save));
     }
@@ -368,17 +419,94 @@ When called via /api commands, marks the value as user-set so it gets saved.
 =cut
 
 sub set {
-    my ($self, $key, $value, $mark_user_set) = @_;
+   my ($self, $key, $value, $mark_user_set) = @_;
+   
+    # When model changes, save old scoped config and restore new one
+    if ($key eq 'model' && defined $value && $value ne ''
+        && $self->{config}->{model} && $self->{config}->{model} ne $value)
+    {
+        my $old_model = $self->{config}->{model};
+        # Save old model config if it was resolved (has "/")
+        $self->_save_model_config($old_model) if $old_model =~ m{/};
+        $self->{config}->{$key} = $value;
+       # Restore new model config if it is resolved (has "/")
+       $self->_restore_model_config($value) if $value =~ m{/};
+        # Persist scoped config immediately to avoid data loss on exit
+        $self->save() if $old_model =~ m{/};
+   } else {
+   $self->{config}->{$key} = $value;
+    }
+   
+   # Mark as user-set unless explicitly told not to (default: mark as user-set)
+   if (!defined $mark_user_set || $mark_user_set) {
+       $self->{user_set}->{$key} = 1;
+       log_debug('Config', "Marked '$key' as user-set");
+   }
+   
+    # If this is a model-scoped key, update model_configs immediately
+    if (grep { $_ eq $key } @{MODEL_SCOPED_KEYS()}) {
+        my $model = $self->{config}->{model};
+        if ($model && $model =~ m{/}) {
+            $self->{config}->{model_configs} ||= {};
+            $self->{config}->{model_configs}{$model} ||= {};
+            $self->{config}->{model_configs}{$model}{$key} = $value;
+        }
+    }
+    return 1;
+}
+
+
+=head2 _save_model_config($model_id)
+
+Save current per-model scoped config values to model_configs{$model_id}.
+Called automatically when switching models via set('model', ...).
+
+=cut
+
+sub _save_model_config {
+    my ($self, $model_id) = @_;
+    return unless $model_id;
     
-    $self->{config}->{$key} = $value;
+    $self->{config}->{model_configs} ||= {};
+    my $entry = $self->{config}->{model_configs}{$model_id} ||= {};
     
-    # Mark as user-set unless explicitly told not to (default: mark as user-set)
-    if (!defined $mark_user_set || $mark_user_set) {
-        $self->{user_set}->{$key} = 1;
-        log_debug('Config', "Marked '$key' as user-set");
+    for my $key (@{MODEL_SCOPED_KEYS()}) {
+        my $val = $self->{config}->{$key};
+        $entry->{$key} = $val if defined $val;
     }
     
-    return 1;
+    log_debug('Config', "Saved model config for '$model_id': " . scalar(keys %$entry) . " keys");
+}
+
+=head2 _restore_model_config($model_id)
+
+Restore per-model scoped config values from model_configs{$model_id}.
+Falls back to DEFAULT_CONFIG values if no stored config exists for this model.
+Called automatically when switching models via set('model', ...).
+
+=cut
+
+sub _restore_model_config {
+    my ($self, $model_id) = @_;
+    return unless $model_id;
+    
+    $self->{config}->{model_configs} ||= {};
+    my $entry = $self->{config}->{model_configs}{$model_id};
+    
+    for my $key (@{MODEL_SCOPED_KEYS()}) {
+        if ($entry && exists $entry->{$key}) {
+            $self->{config}->{$key} = $entry->{$key};
+        } else {
+            # Use system default - but don't mark as user-set
+            $self->{config}->{$key} = DEFAULT_CONFIG->{$key};
+        }
+    }
+    
+    if ($entry && %$entry) {
+        log_debug('Config', "Restored model config for '$model_id': " . scalar(keys %$entry) . " keys");
+    } else {
+        log_debug('Config', "No stored config for '$model_id' - using defaults");
+    }
 }
 
 =head2 set_provider
@@ -432,14 +560,14 @@ sub set_provider {
     my $default_model = $provider_config->{model};
     if (defined $default_model) {
         if ($default_model =~ m{^\Q$provider\E/}) {
-            $self->{config}->{model} = $default_model;
+            $self->set("model", $default_model, 0);
         } else {
-            $self->{config}->{model} = "$provider/$default_model";
+            $self->set("model", "$provider/$default_model", 0);
         }
     } else {
         # No default model - use provider as placeholder
         # The actual model will be fetched from the API when needed
-        $self->{config}->{model} = $provider;
+        $self->set("model", $provider, 0);
     }
     
     # When switching providers, load the per-provider API key if available
