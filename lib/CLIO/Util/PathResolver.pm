@@ -77,10 +77,11 @@ sub init {
     # (has lib/ and .clio/ subdirectories)
     my $script_dir = $FindBin::Bin;
     if (-d "$script_dir/lib" && -d "$script_dir/.clio") {
-        # Development mode - use script directory/.clio for config
+        # Development mode - use script directory for base (lib/ access)
+        # CONFIG_DIR always goes to HOME for global config (API keys, provider)
         $BASE_DIR = $script_dir;
-        $CONFIG_DIR = File::Spec->catdir($script_dir, '.clio');
-        return;
+        $CONFIG_DIR = undef;  # Will fall through to Priority 4
+        # Don't return - fall through to HOME resolution
     }
     
     # Priority 4: Installed mode - use ~/.clio
