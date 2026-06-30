@@ -48,11 +48,11 @@ Users can override any setting via /api commands, but these are the defaults.
 #   - slow_api: Flag for local inference providers requiring longer HTTP timeouts (default: 300s, slow_api: 600s)
 
 my %PROVIDERS = (
-    sam => {
-        name => 'SAM (Local)',
-        api_base => 'http://localhost:8080/v1/chat/completions',
-        model => undef,  # No default model - user must specify
-        requires_auth => 'apikey',
+   sam => {
+       name => 'SAM (Local)',
+       api_base => 'http://localhost:8080/v1/chat/completions',
+       model => undef,  # No default - user must specify (local inference)
+       requires_auth => 'apikey',
         supports_tools => 1,
         supports_streaming => 1,
         max_context_tokens => 32000,
@@ -66,11 +66,11 @@ my %PROVIDERS = (
         },
     },
     
-    github_copilot => {
-        name => 'GitHub Copilot',
-        api_base => 'https://api.githubcopilot.com',
-        model => undef,  # No default model - provider handles this via _get_models_for_github_copilot()
-        requires_auth => 'copilot',
+   github_copilot => {
+       name => 'GitHub Copilot',
+       api_base => 'https://api.githubcopilot.com',
+       model => 'claude-sonnet-4.6',  # Default fallback - copilot_models fetches dynamic list at startup
+       requires_auth => 'copilot',
         supports_tools => 1,
         supports_streaming => 1,
         supports_reasoning => 1,  # Claude 4, GPT-5, o-series exposed via /chat/completions
@@ -85,11 +85,11 @@ my %PROVIDERS = (
         },
     },
     
-    openai => {
-        name => 'OpenAI',
-        api_base => 'https://api.openai.com/v1/chat/completions',
-        model => undef,  # No default model - use first model from /models endpoint
-        requires_auth => 'apikey',
+   openai => {
+       name => 'OpenAI',
+       api_base => 'https://api.openai.com/v1/chat/completions',
+       model => 'gpt-4.1',
+       requires_auth => 'apikey',
         supports_tools => 1,
         supports_streaming => 1,
         supports_reasoning => 1,  # o-series and gpt-5 accept reasoning_effort
@@ -101,11 +101,11 @@ my %PROVIDERS = (
         },
     },
     
-    deepseek => {
-        name => 'DeepSeek',
-        api_base => 'https://api.deepseek.com/v1',
-        model => undef,  # No default model - use first model from /models endpoint
-        requires_auth => 'apikey',
+   deepseek => {
+       name => 'DeepSeek',
+       api_base => 'https://api.deepseek.com/v1',
+       model => 'deepseek-v4-pro',
+       requires_auth => 'apikey',
         supports_tools => 1,
         supports_streaming => 1,
         supports_reasoning => 1,
@@ -121,11 +121,11 @@ my %PROVIDERS = (
         },
     },
     
-    'llama.cpp' => {
-        name => 'llama.cpp (Local)',
-        api_base => 'http://localhost:8080/v1/chat/completions',
-        model => undef,  # No default model - user must specify
-        requires_auth => 'none',
+   'llama.cpp' => {
+       name => 'llama.cpp (Local)',
+       api_base => 'http://localhost:8080/v1/chat/completions',
+       model => 'local-model',
+       requires_auth => 'none',
         supports_tools => 1,
         supports_streaming => 1,
         max_context_tokens => 32000,
@@ -145,11 +145,11 @@ my %PROVIDERS = (
         },
     },
 
-    lmstudio => {
-        name => 'LM Studio',
-        api_base => 'http://localhost:1234/v1/chat/completions',
-        model => undef,  # No default model - user must specify
-        requires_auth => 'none',
+   lmstudio => {
+       name => 'LM Studio',
+       api_base => 'http://localhost:1234/v1/chat/completions',
+       model => 'local-model',
+       requires_auth => 'none',
         supports_tools => 1,
         supports_streaming => 1,
         max_context_tokens => 32000,
@@ -163,11 +163,11 @@ my %PROVIDERS = (
         },
     },
     
-    ollama_cloud => {
-        name => 'Ollama Cloud',
-        api_base => 'https://ollama.com/v1/chat/completions',
-        model => undef,  # No default model - use first model from /models endpoint
-        requires_auth => 'apikey',
+   ollama_cloud => {
+       name => 'Ollama Cloud',
+       api_base => 'https://ollama.com/v1/chat/completions',
+       model => 'gemma4:31b',
+       requires_auth => 'apikey',
         supports_tools => 1,
         supports_streaming => 1,
         max_context_tokens => 128000,
@@ -178,11 +178,11 @@ my %PROVIDERS = (
         },
     },
     
-    openrouter => {
-        name => 'OpenRouter',
-        api_base => 'https://openrouter.ai/api/v1/chat/completions',
-        model => undef,  # No default model - use first model from /models endpoint
-        requires_auth => 'apikey',
+   openrouter => {
+       name => 'OpenRouter',
+       api_base => 'https://openrouter.ai/api/v1/chat/completions',
+       model => 'meta-llama/llama-3.1-405b-instruct:free',
+       requires_auth => 'apikey',
         supports_tools => 1,
         supports_streaming => 1,
         endpoint => {
@@ -193,11 +193,11 @@ my %PROVIDERS = (
         },
     },
     
-    google => {
-        name => 'Google Gemini',
-        api_base => 'https://generativelanguage.googleapis.com/v1beta',
-        model => undef,  # No default model - use first model from /models endpoint
-        requires_auth => 'apikey',
+   google => {
+       name => 'Google Gemini',
+       api_base => 'https://generativelanguage.googleapis.com/v1beta',
+       model => 'gemini-2.5-flash',
+       requires_auth => 'apikey',
         supports_tools => 1,
         supports_streaming => 1,
         supports_reasoning => 1,
@@ -212,11 +212,11 @@ my %PROVIDERS = (
         },
     },
     
-    minimax => {
-       name => 'MiniMax',
-       api_base => 'https://api.minimax.io/v1/chat/completions',
-       model => undef,  # No default model - use first model from /models endpoint
-       requires_auth => 'apikey',
+   minimax => {
+      name => 'MiniMax',
+      api_base => 'https://api.minimax.io/v1/chat/completions',
+       model => 'MiniMax-M3',
+      requires_auth => 'apikey',
        supports_tools => 1,
        supports_streaming => 1,
        supports_reasoning => 1,
@@ -234,11 +234,11 @@ my %PROVIDERS = (
         },
     },
     
-    minimax_token => {
-       name => 'MiniMax Token Plan',
-       api_base => 'https://api.minimax.io/v1/chat/completions',
-       model => undef,  # No default model - use first model from /models endpoint
-       requires_auth => 'apikey',
+   minimax_token => {
+      name => 'MiniMax Token Plan',
+      api_base => 'https://api.minimax.io/v1/chat/completions',
+       model => 'MiniMax-M3',
+      requires_auth => 'apikey',
        supports_tools => 1,
        supports_streaming => 1,
        supports_reasoning => 1,
@@ -255,11 +255,11 @@ my %PROVIDERS = (
         },
     },
     
-    zai => {
-        name => 'Z.AI (Chat)',
-        api_base => 'https://api.z.ai/api/paas/v4',
-        model => undef,  # No default model - use first model from /models endpoint
-        requires_auth => 'apikey',
+   zai => {
+       name => 'Z.AI (Chat)',
+       api_base => 'https://api.z.ai/api/paas/v4',
+       model => 'glm-5.1',
+       requires_auth => 'apikey',
         supports_tools => 1,
         supports_streaming => 1,
         supports_reasoning => 1,
@@ -279,11 +279,11 @@ my %PROVIDERS = (
         },
     },
     
-    zai_coding => {
-        name => 'Z.AI (Coding)',
-        api_base => 'https://api.z.ai/api/coding/paas/v4',
-        model => undef,  # No default model - use first model from /models endpoint
-        requires_auth => 'apikey',
+   zai_coding => {
+       name => 'Z.AI (Coding)',
+       api_base => 'https://api.z.ai/api/coding/paas/v4',
+       model => 'glm-5.1',
+       requires_auth => 'apikey',
         supports_tools => 1,
         supports_streaming => 1,
         supports_reasoning => 1,
@@ -304,11 +304,11 @@ my %PROVIDERS = (
         },
     },
     
-    anthropic => {
-        name => 'Anthropic',
-        api_base => 'https://api.anthropic.com/v1/messages',
-        model => undef,  # No default model - use first model from /models endpoint
-        requires_auth => 'apikey',
+   anthropic => {
+       name => 'Anthropic',
+       api_base => 'https://api.anthropic.com/v1/messages',
+       model => 'claude-sonnet-4-20250514',
+       requires_auth => 'apikey',
         supports_tools => 1,
         supports_streaming => 1,
         supports_reasoning => 1,
@@ -330,11 +330,11 @@ my %PROVIDERS = (
         },
     },
     
-    nvidia => {
-        name => 'NVIDIA NIM',
-        api_base => 'https://integrate.api.nvidia.com/v1',
-        model => undef,  # No default model - use first model from /models endpoint
-        requires_auth => 'apikey',
+   nvidia => {
+       name => 'NVIDIA NIM',
+       api_base => 'https://integrate.api.nvidia.com/v1',
+       model => 'nvidia/nemotron-3-ultra-550b-a55b',
+       requires_auth => 'apikey',
         native_api => 1,  # Has dedicated capability fetcher (static map + heuristics)
         supports_tools => 1,
         supports_streaming => 1,

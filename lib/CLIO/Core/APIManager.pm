@@ -571,7 +571,7 @@ sub get_current_model {
                 my $resolved = $self->_resolve_model_placeholder($model);
                 if ($resolved && $resolved ne $model) {
                     $model = $resolved;
-                    $self->{config}->set('model', $model);
+                    $self->{config}->set('model', $model, 0);
                     eval { $self->{config}->save(); };
                 }
             }
