@@ -137,8 +137,35 @@ use CLIO::Providers qw(list_providers get_provider);
 # Initialize configuration system
 my $config = CLIO::Core::Config->new(debug => $debug);
 
+# Pre-parse --model so we can auto-derive provider from "provider/model" prefix
+# before the "No AI Provider Configured" prompt fires. Without this, a one-shot
+# `clio --model nvidia/...` would still trigger the prompt because the full
+# CLI parse (and --model handling) runs *after* the prompt check below.
+my $cli_model_override;
+for (my $i = 0; $i < @ARGV; $i++) {
+    if ($ARGV[$i] eq '--model' && defined $ARGV[$i+1]) {
+        $cli_model_override = $ARGV[$i+1];
+    }
+}
+
 # Check if provider is configured - if not, prompt user to configure one
 my $provider = $config->get('provider');
+if ((!$provider || $provider eq '') && $cli_model_override
+    && $cli_model_override =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i
+    && CLIO::Providers::provider_exists($1)) {
+    my $derived_provider = $1;
+    my $api_key = $config->get_provider_key($derived_provider);
+    if ($api_key) {
+        $config->set_provider($derived_provider);
+        # set_provider marks provider as user_set; clear it so this one-shot
+        # override does not get persisted to config.json.
+        delete $config->{user_set}->{provider};
+        delete $config->{user_set}->{api_base};
+        delete $config->{user_set}->{model};
+        $provider = $derived_provider;
+        log_info('Main', "Auto-selected provider '$provider' from --model prefix");
+    }
+}
 if (!$provider || $provider eq '') {
     # Get all available providers dynamically
     my @providers = list_providers();
