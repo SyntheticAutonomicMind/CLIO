@@ -311,7 +311,7 @@ sub load {
     # Note: Log level is now controlled by CLIO_LOG_LEVEL environment variable
     # which is set by the --debug flag in the main clio script
     
-
+    $self->{config} = \%config;
 
     # Restore per-model scoped config for the current model (if resolved).
     # Migration: if model_configs is empty but scoped keys have non-default
@@ -349,7 +349,6 @@ sub load {
             }
         }
     }
-    $self->{config} = \%config;
     
     return 1;
 }
