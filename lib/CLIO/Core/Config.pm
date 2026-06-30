@@ -265,13 +265,17 @@ sub load {
             unless ($self->{user_set}->{model}) {
                 my $default_model = $provider_config->{model};
                 if (defined $default_model) {
-                    $config{model} = $default_model;
+                    # Use the saved model if it's already properly prefixed (has "/"),
+                    # otherwise apply the provider's default
+                    unless ($config{model} && $config{model} =~ m{/}) {
+                        $config{model} = $default_model;
+                    }
                     log_debug('Config', "Using model from provider '$config{provider}': $config{model}");
                 } else {
-               log_debug('Config', "Provider '$config{provider}' has no default model - will be fetched from API");
-                $config{model} = $config{provider};
-                log_debug('Config', "Using provider name as model placeholder: $config{model}");
-           }
+                    require CLIO::Providers;
+                    $config{model} = $config{model} || CLIO::Providers::DEFAULT_MODEL();
+                    log_debug('Config', "Provider '$config{provider}' has no default model, using: $config{model}");
+                }
             }
             
             # Load the provider's api_key if one exists in the api_keys store
@@ -565,9 +569,17 @@ sub set_provider {
             $self->set("model", "$provider/$default_model", 0);
         }
     } else {
-        # No default model - use provider as placeholder
-        # The actual model will be fetched from the API when needed
-        $self->set("model", $provider, 0);
+        # No default model for this provider - keep existing model if it's
+        # already set and is a real model (not a provider-name placeholder).
+        # If nothing is set, use DEFAULT_MODEL as fallback.
+        my $existing = $self->get('model');
+        if ($existing && length($existing) && $existing ne $provider && $existing ne '') {
+            log_debug('Config', "Keeping existing model for provider '$provider': $existing");
+        } else {
+            require CLIO::Providers;
+            $self->set("model", CLIO::Providers::DEFAULT_MODEL(), 0);
+            log_debug('Config', "No default model for '$provider', using global fallback: " . CLIO::Providers::DEFAULT_MODEL());
+        }
     }
     
     # When switching providers, load the per-provider API key if available
