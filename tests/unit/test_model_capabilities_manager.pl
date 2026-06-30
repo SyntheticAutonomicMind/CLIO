@@ -45,4 +45,21 @@ is($formatted, '128k', '_format_tokens formats 128000 as 128k');
 $formatted = $mcm->_format_tokens(500);
 is($formatted, '500', '_format_tokens formats 500 as 500');
 
+# DeepSeek static capability map
+for my $model (qw(deepseek-v4-flash deepseek-v4-pro)) {
+    $mcm->clear_cache();
+    my $caps = $mcm->get_capabilities('deepseek', $model);
+    ok($caps, "DeepSeek caps returned for $model");
+    is($caps->{context_window}, 1048576, "$model context_window=1M");
+    is($caps->{max_output_tokens}, 32768, "$model max_output=32K");
+    ok($caps->{supports_tools}, "$model supports_tools");
+    ok($caps->{supports_reasoning}, "$model supports_reasoning");
+    is($caps->{supports_vision}, 0, "$model supports_vision=0");
+}
+
+# Unknown model returns undef
+$mcm->clear_cache();
+my $unknown = $mcm->get_capabilities('deepseek', 'deepseek-v99-unknown');
+is($unknown, undef, 'Unknown deepseek model returns undef');
+
 done_testing();
