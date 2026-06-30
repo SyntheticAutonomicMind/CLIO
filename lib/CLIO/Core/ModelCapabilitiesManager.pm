@@ -39,6 +39,11 @@ Each capability record contains:
         supports_streaming => Boolean - streaming responses,
         supports_vision   => Boolean - image input support,
         supports_reasoning => Boolean - extended thinking / reasoning,
+        reasoning_mode    => String - thinking mode: 'effort', 'enabled', 'adaptive' (or undef),
+                             Determines what param format to use within the provider's API:
+                               'effort'   -> reasoning_effort / effort parameter
+                               'enabled'  -> thinking with budget_tokens
+                               'adaptive' -> thinking with automatic budget, effort hint only
         embeddings_dimension => Integer - embedding vector size (or undef),
         architecture      => String - model architecture (e.g., 'llama', 'gpt-4'),
         quantization      => String - quantization level (e.g., 'Q4_K_M'),
@@ -132,6 +137,8 @@ sub get_capabilities {
     my $capabilities = $self->_fetch_provider_capabilities($provider, $model);
     
     if ($capabilities) {
+        # Post-process: ensure reasoning_mode is populated
+        $self->_ensure_reasoning_mode($capabilities, $provider, $model);
         $self->_set_cached($cache_key, $capabilities);
     }
     
@@ -229,6 +236,8 @@ sub refresh_capabilities {
     my $capabilities = $self->_fetch_provider_capabilities($provider, $model);
     
     if ($capabilities) {
+        # Post-process: ensure reasoning_mode is populated
+        $self->_ensure_reasoning_mode($capabilities, $provider, $model);
         $self->_set_cached($cache_key, $capabilities);
     }
     
@@ -1775,6 +1784,17 @@ sub _fetch_openai_compatible_capabilities {
             || $m->{max_output_tokens}
             || $permuted_model->{max_output_tokens}
             || undef;
+
+        # Parse reasoning metadata (OpenRouter returns a 'reasoning' field)
+        my $reasoning_mode;
+        my $reasoning_mandatory = 0;
+        if ($m->{reasoning} && ref($m->{reasoning}) eq 'HASH') {
+            my $r = $m->{reasoning};
+            # Determine mode from supported_efforts if available
+            # OpenRouter uses 'reasoning.effort' parameter -> 'effort' mode
+            $reasoning_mode = 'effort' if $r->{supported_efforts};
+            $reasoning_mandatory = $r->{mandatory} || 0;
+        }
         
         return {
             provider              => $provider,
@@ -1785,7 +1805,8 @@ sub _fetch_openai_compatible_capabilities {
             supports_tools        => $m->{supports_tools} || $m->{function_call} || 0,
             supports_streaming    => 1,  # Most OpenAI-compatible support streaming
             supports_vision       => $m->{vision} || $m->{supports_vision} || 0,
-            supports_reasoning    => 0,
+            supports_reasoning    => $reasoning_mode ? 1 : 0,
+            reasoning_mode        => $reasoning_mode,
             embeddings_dimension  => undef,
             architecture          => undef,
             quantization          => $m->{quantization} || undef,
@@ -1797,6 +1818,59 @@ sub _fetch_openai_compatible_capabilities {
     }
     
     return undef;
+}
+
+=head2 _ensure_reasoning_mode($capabilities, $provider, $model)
+
+Post-process capability hash to fill in reasoning_mode based on model heuristics
+when not already set. Called after fetching capabilities from any source.
+
+=cut
+
+sub _ensure_reasoning_mode {
+    my ($self, $capabilities, $provider, $model) = @_;
+    
+    # Already set - keep it
+    return if exists $capabilities->{reasoning_mode};
+    
+    # Not a reasoning model - nothing to set
+    return unless $capabilities->{supports_reasoning};
+    
+    # Determine reasoning_mode from model name + provider heuristics
+    # This fills the gap for static maps that only have supports_reasoning boolean.
+    
+    my $mode;
+    
+    # Anthropic provider: 4.6+ models use adaptive, older use enabled
+    if ($provider =~ /^anthropic$/i) {
+        if ($model =~ /-(?:opus|sonnet|haiku)-4-(?:[6-9]|\d{2,})$/i || $model =~ /^claude-mythos/i) {
+            $mode = 'adaptive';
+        } else {
+            $mode = 'enabled';
+        }
+    }
+    # Google provider: uses thinkingBudget (enabled mode)
+    elsif ($provider =~ /^google/i) {
+        $mode = 'enabled';
+    }
+    # MiniMax: M3 uses adaptive, M2 uses enabled
+    elsif ($provider =~ /^minimax/i) {
+        if ($model =~ /MiniMax-M3/i) {
+            $mode = 'adaptive';
+        } else {
+            $mode = 'enabled';
+        }
+    }
+    # Z.AI: GLM models use enabled thinking
+    elsif ($provider =~ /^zai/i) {
+        $mode = 'enabled';
+    }
+    # DeepSeek, OpenAI, Copilot, NVIDIA, OpenRouter: effort-based
+    else {
+        $mode = 'effort';
+    }
+    
+    $capabilities->{reasoning_mode} = $mode if $mode;
 }
 
 =head2 _format_tokens

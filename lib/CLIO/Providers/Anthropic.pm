@@ -1008,7 +1008,13 @@ sub _default_thinking_config {
 
     my $max = $self->_max_thinking_budget_for_model($model);
 
-    if ($self->_supports_adaptive_thinking($model)) {
+    # Prefer explicit mode from thinking_opt (set by APIManager from capabilities).
+    # Fall back to regex-based detection for backward compatibility.
+    my $adaptive = exists $opts->{mode}
+        ? ($opts->{mode} eq 'adaptive')
+        : $self->_supports_adaptive_thinking($model);
+
+    if ($adaptive) {
         return {
             enabled => 1,
             mode    => 'adaptive',
