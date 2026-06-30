@@ -806,6 +806,21 @@ sub display_config {
    $self->display_key_value("Thinking", $thinking, 16);
    $self->display_key_value("Think Effort", $effort, 16);
 
+    # Show reasoning mode from model capabilities (how the model handles thinking)
+    my $reasoning_mode = undef;
+    if ($self->{ai_agent} && $self->{ai_agent}->{api}) {
+        my $api_manager = $self->{ai_agent}->{api};
+        if ($api_manager->can('get_model_capabilities')) {
+            my $caps = eval {
+                $api_manager->get_model_capabilities($model)
+            };
+            $reasoning_mode = $caps->{reasoning_mode} if $caps;
+        }
+    }
+    if ($reasoning_mode) {
+        $self->display_key_value("Reason Mode", $reasoning_mode, 16);
+    }
+
     # Show search configuration
     my $serpapi_key = $self->{config}->get('serpapi_key') || '';
     my $display_serpapi = $serpapi_key
