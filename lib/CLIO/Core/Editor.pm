@@ -144,6 +144,11 @@ sub edit_multiline {
     # Read content
     my $content;
     if (open my $rfh, '<', $filename) {
+        # Note: ':encoding(UTF-8)' is critical here. Vim saves the buffer as
+        # UTF-8 bytes (since terminal is UTF-8). Without this layer, Perl
+        # reads raw bytes and multi-byte characters (box drawing, CJK,
+        # emoji) become corrupted in the resulting prompt.
+        binmode($rfh, ':encoding(UTF-8)');
         $content = do { local $/; <$rfh> };
         close $rfh;
     } else {
