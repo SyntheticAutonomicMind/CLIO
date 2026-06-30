@@ -133,6 +133,9 @@ sub check_github_auth      { shift->{auth}->check_github_auth(@_) }
 sub _display_api_help {
     my ($self) = @_;
 
+    # Enable pagination for long help output
+    $self->{chat}{pager}->enable();
+
     $self->display_command_header("API - Configure AI Provider");
 
     $self->display_section_header("QUICK START - Discover Available Providers");
@@ -215,6 +218,9 @@ sub _display_api_help {
     $self->writeline("  " . $self->colorize("/api set model gpt-4.1", 'USER') . "            Set model (uses current provider)", markdown => 0);
     $self->writeline("  " . $self->colorize("/api set model openrouter/deepseek/deepseek-r1", 'USER') . "  Cross-provider model", markdown => 0);
     $self->writeline("", markdown => 0);
+
+    # Disable pagination after command completes
+    $self->{chat}{pager}->disable();
 }
 
 1;
