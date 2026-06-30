@@ -564,16 +564,101 @@ sub get_current_model {
     
     # Priority 2: Config is the authority for the main session
     if ($self->{config} && $self->{config}->can('get')) {
-        my $model = $self->{config}->get('model');
-        if ($model) {
-            return $model;
-        }
+       my $model = $self->{config}->get('model');
+       if ($model) {
+            # If model is just a provider name (no "/"), resolve it to a real model
+            if ($model !~ m{/}) {
+                my $resolved = $self->_resolve_model_placeholder($model);
+                if ($resolved && $resolved ne $model) {
+                    $model = $resolved;
+                    $self->{config}->set('model', $model);
+                    eval { $self->{config}->save(); };
+                }
+            }
+           return $model;
+       }
     }
     
     # Fallback (should never happen if config is properly initialized)
-    log_warning('APIManager', "No model in config, using default");
+   log_warning('APIManager', "No model in config, using default");
+   require CLIO::Providers;
+   return CLIO::Providers::DEFAULT_MODEL();
+}
+
+# Resolve a model placeholder (provider name only, e.g. "deepseek")
+# into a real model like "deepseek/deepseek-v4-pro" by querying /v1/models.
+sub _resolve_model_placeholder {
+    my ($self, $placeholder) = @_;
+    
+    return $placeholder unless $placeholder;
+    
     require CLIO::Providers;
-    return CLIO::Providers::DEFAULT_MODEL();
+    return $placeholder unless CLIO::Providers::provider_exists($placeholder);
+    
+    $self->{_model_placeholder_cache} ||= {};
+    return $self->{_model_placeholder_cache}{$placeholder}
+        if exists $self->{_model_placeholder_cache}{$placeholder};
+    
+    my $provider_def = CLIO::Providers::get_provider($placeholder);
+    my $api_base = $provider_def->{api_base};
+    
+    if ($self->{config}) {
+        my $stored_base = $self->{config}->get_provider_base($placeholder);
+        $api_base = $stored_base if $stored_base;
+    }
+    
+    my ($api_type, $models_url) = $self->_detect_api_type_and_url($api_base);
+    unless ($models_url) {
+        log_debug('APIManager', "Cannot resolve model for $placeholder: no models endpoint");
+        return $placeholder;
+    }
+    
+   my $needs_auth = $provider_def->{requires_auth} && $provider_def->{requires_auth} ne 'none';
+    my $api_key = $needs_auth ? $self->_get_api_key() : '';
+   unless (!$needs_auth || $api_key) {
+        return $placeholder;
+    }
+    
+    my $ua = $self->_create_http_client(timeout => 10);
+    my %headers = ('Authorization' => "Bearer $api_key");
+    $headers{'Editor-Version'} = 'CLIO/1.0' if $api_type eq 'github-copilot';
+    
+    if ($api_type eq 'google') {
+        $models_url .= "?key=$api_key";
+        delete $headers{'Authorization'};
+    }
+    
+    my $resp = eval { $ua->get($models_url, headers => \%headers) };
+    unless ($resp && $resp->is_success) {
+        return $placeholder;
+    }
+    
+    my $data = safe_decode_json($resp->decoded_content);
+    return $placeholder if $@ || !$data;
+    
+    my @model_ids;
+    if ($api_type eq 'google' && $data->{models}) {
+        @model_ids = map { (my $n = ($_->{name} || '')) =~ s{^models/}{}; $n } @{$data->{models}};
+    } elsif ($data->{data}) {
+        @model_ids = map { $_->{id} || () } @{$data->{data}};
+    }
+    
+    for my $id (@model_ids) {
+        next if $id =~ m{^/} || $id =~ m{\.gguf$}i;
+        my $resolved = "$placeholder/$id";
+        log_info('APIManager', "Resolved model $placeholder -> $resolved");
+        return $self->{_model_placeholder_cache}{$placeholder} = $resolved;
+    }
+    
+    if (@model_ids) {
+        my $id = $model_ids[0];
+        $id =~ s{.*/}{};
+        $id =~ s{\.gguf$}{}i;
+        my $resolved = "$placeholder/$id";
+        return $self->{_model_placeholder_cache}{$placeholder} = $resolved;
+    }
+    
+    return $placeholder;
 }
 
 # Get current provider - reads from Config (PUBLIC method)
