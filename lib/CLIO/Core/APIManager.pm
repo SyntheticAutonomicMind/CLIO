@@ -48,6 +48,7 @@ use CLIO::Util::TextSanitizer qw(sanitize_text);
 use CLIO::UI::Terminal qw(ui_char);
 use CLIO::Core::RateLimiter;
 use CLIO::Util::CABundle;
+use CLIO::Core::Defaults qw(DEFAULT_MAX_OUTPUT_TOKENS DEFAULT_CONTEXT_WINDOW DEFAULT_LOCAL_CONTEXT_WINDOW DEFAULT_MAX_RESPONSE_TOKENS);
 
 # Define request states
 use constant {
@@ -917,12 +918,11 @@ sub adapt_request_for_endpoint {
         if (my $sd = $endpoint_config->{sampling_defaults}) {
             for my $param (qw(temperature top_p top_k)) {
                 next unless defined $sd->{$param};
-                if (!exists $payload->{$param}) {
-                    $payload->{$param} = $sd->{$param};
-                } elsif ($param eq 'temperature' && $payload->{$param} == 0.2) {
-                    # Override CLIO's conservative default with provider recommendation
-                    $payload->{$param} = $sd->{$param};
-                }
+                # Only fill in defaults for params the caller didn't set.
+                # We never inject defaults ourselves anymore, so no override
+                # branch is needed (see _build_payload).
+                next if exists $payload->{$param};
+                $payload->{$param} = $sd->{$param};
             }
         }
         
@@ -955,17 +955,6 @@ sub adapt_request_for_endpoint {
 
         # Remove OpenAI-specific stream_options (Z.AI doesn't support it)
         delete $payload->{stream_options};
-
-        # Apply provider-recommended sampling defaults (match Z.AI API recommendations)
-        if (my $sd = $endpoint_config->{sampling_defaults}) {
-            for my $param (qw(temperature top_p)) {
-                next unless defined $sd->{$param};
-                if ($param eq 'temperature' && $payload->{$param} == 0.2) {
-                    # Override CLIO's conservative default (0.2) with Z.AI recommendation (1.0)
-                    $payload->{$param} = $sd->{$param};
-                }
-            }
-        }
 
         # Track peak-hour multiplier for Coding Plan users (GLM-5.x models cost 3x during peak)
         # Peak hours: 14:00-18:00 CST (UTC+8) = 06:00-10:00 UTC
@@ -1001,30 +990,33 @@ sub adapt_request_for_endpoint {
         # Remove stream_options (DeepSeek doesn't support it)
         delete $payload->{stream_options};
     }
-    
-    # Apply provider-recommended sampling defaults for all providers
-    # (previously only MiniMax and Z.AI did this inside their blocks)
-    if (my $sd = $endpoint_config->{sampling_defaults}) {
-        for my $param (qw(temperature top_p top_k)) {
-            next unless defined $sd->{$param};
-            if (!exists $payload->{$param}) {
-                $payload->{$param} = $sd->{$param};
-            } elsif ($param eq 'temperature' && $payload->{$param} == 0.2) {
-                $payload->{$param} = $sd->{$param};
-            }
-        }
-    }
 
-    # Apply user-configured sampling overrides (highest priority - override everything)
+    # Sampling parameter priority (highest to lowest):
+    #   1. Caller opts (already in $payload from _build_payload)
+    #   2. User /api set sampling_temperature|top_p|top_k config
+    #   3. Provider endpoint sampling_defaults (registry-recommended values)
+    # User config must run BEFORE provider defaults so the
+    # `next if exists $payload->{$param}` skip doesn't drop user values
+    # that the provider default would otherwise have filled in.
     if ($self->{config}) {
         for my $param (qw(temperature top_p top_k)) {
             my $val = $self->{config}->get("sampling_$param");
-            if (defined $val && $val ne '') {
-                $payload->{$param} = $val + 0;
-            }
+            next unless defined $val && $val ne '';
+            next if exists $payload->{$param};  # caller opts win
+            $payload->{$param} = $val + 0;
         }
     }
-    
+
+    # Provider-recommended sampling defaults fill in any param the caller
+    # and user config both left unset.
+    if (my $sd = $endpoint_config->{sampling_defaults}) {
+        for my $param (qw(temperature top_p top_k)) {
+            next unless defined $sd->{$param};
+            next if exists $payload->{$param};
+            $payload->{$param} = $sd->{$param};
+        }
+    }
+
     return $payload;
 }
 # Check if string ends with a valid partial <think> prefix.
@@ -2266,10 +2258,14 @@ sub _build_payload {
     my $payload = {
         model => $model,
         messages => $messages,
-        temperature => $opts{temperature} // 0.2,
-        top_p => $opts{top_p} // 0.95,
         max_tokens => $max_tokens,
     };
+
+    # Only include sampling parameters when explicitly set. Letting the
+    # provider (or the user via sampling_* config) decide avoids sending
+    # unsolicited defaults like temperature=0.2 to APIs that reject them.
+    $payload->{temperature} = $opts{temperature} if defined $opts{temperature};
+    $payload->{top_p}       = $opts{top_p}       if defined $opts{top_p};
     
     # Add stream flag if streaming
     if ($stream) {
@@ -4741,12 +4737,15 @@ sub _send_native_streaming {
     # Build the request using the native provider
     # Use get_current_model() for full model ID with prefix (required by native providers like NVIDIA)
     my $full_model = $self->get_current_model();
-    my $request = $provider->build_request($messages, $tools, {
+    # Only pass temperature when explicitly set; native providers already
+    # gate on `defined $options->{temperature}` and will omit it otherwise.
+    my %build_opts = (
         model => $full_model,
         max_tokens => $opts{max_tokens} // $self->_get_max_output_tokens($full_model),
-        temperature => $opts{temperature} // 0.2,
         ($thinking_opt ? (thinking => $thinking_opt) : ()),
-    });
+    );
+    $build_opts{temperature} = $opts{temperature} if defined $opts{temperature};
+    my $request = $provider->build_request($messages, $tools, \%build_opts);
     
     # Initialize tracking
     my $start_time = time();
