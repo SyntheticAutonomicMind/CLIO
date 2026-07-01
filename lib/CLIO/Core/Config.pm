@@ -158,11 +158,11 @@ Provider defaults (api_base, model) come from CLIO::Providers dynamically.
 sub load {
     my ($self) = @_;
     
-    # Check if we have a cached config for the current provider
-    my $current_provider = $self->{config}->{provider} // 'github_copilot';
-    my $cache_key = $current_provider;
+    # Check if we have a cached config for the current provider.
+    # Only cache when a provider IS configured - no provider = full reload.
+    my $cache_key = $self->{config}->{provider};
     
-    if ($self->{_provider_cache} && $self->{_provider_cache}{provider} eq $cache_key) {
+    if ($cache_key && $self->{_provider_cache} && $self->{_provider_cache}{provider} eq $cache_key) {
         # Return cached config merged with user-set values
         my %config = %{DEFAULT_CONFIG()};
         %config = (%config, %{$self->{_provider_cache}{config}});

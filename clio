@@ -156,12 +156,12 @@ if ((!$provider || $provider eq '') && $cli_model_override
     my $api_key = $config->get_provider_key($derived_provider);
     if ($api_key) {
         $config->set_provider($derived_provider);
-        # set_provider marks provider as user_set; clear it so this one-shot
-        # override does not get persisted to config.json.
-        delete $config->{user_set}->{provider};
-        delete $config->{user_set}->{api_base};
-        delete $config->{user_set}->{model};
         $provider = $derived_provider;
+        # set_provider marks provider/model/api_base as user_set.
+        # Don't delete those flags: the user has no configured provider
+        # and this --model provides the first usable provider. Save it
+        # so it persists across sessions.
+        $config->save();
         log_info('Main', "Auto-selected provider '$provider' from --model prefix");
     }
 }
@@ -743,14 +743,24 @@ if ($model_override) {
     # Load provider config (api_base, api_key, etc.) only if switching providers
     my $current_provider = $config->get('provider');
     if ($target_provider ne ($current_provider // '')) {
-        $config->set_provider($target_provider);
-        # Remove user_set flags so the temporary switch isn't persisted to config file
-        delete $config->{user_set}->{provider};
-        delete $config->{user_set}->{api_base};
-        delete $config->{user_set}->{model};
-        log_debug('Main', "Loaded provider '$target_provider' config including api_key");
+        # Load provider config directly without touching user_set flags.
+        # set_provider() would mark provider as user_set, and deleting those
+        # flags afterward also removes the ORIGINAL user-configured provider,
+        # causing config.json to lose provider on next save.
+        my $pcfg = CLIO::Providers::get_provider($target_provider);
+        $config->{config}->{provider} = $target_provider;
+
+        # Load api_base: stored override first, then provider default
+        my $pbase = $config->get_provider_base($target_provider);
+        $config->{config}->{api_base} = $pbase || $pcfg->{api_base};
+
+        # Load per-provider API key if available
+        my $pkey = $config->get_provider_key($target_provider);
+        $config->{config}->{api_key} = $pkey if $pkey;
+
+        log_debug('Main', "Temporarily switched to provider '$target_provider' (from --model)");
     }
-    
+
     # Apply model override with provider prefix
     $model_override = "$target_provider/$model_override";
     $config->set('model', $model_override, 0);  # 0 = don't persist
