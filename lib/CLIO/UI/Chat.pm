@@ -417,6 +417,12 @@ sub run {
     # Display header
     $self->display_header();
     
+    # If no provider is configured, show a helpful system message
+    my $provider = $self->{config} ? $self->{config}->get('provider') : undef;
+    if (!$provider) {
+        $self->display_system_message("To get started, use /api to configure a provider.");
+    }
+    
     # Emit session metadata to host application
     if ($self->{host_proto}->active() && $self->{session}) {
         my $session_name = $self->{session}->session_name() // '';
@@ -1587,6 +1593,58 @@ sub display_header {
     $display_model //= '(none configured)';
     my $model_with_provider = "$display_model\@$provider_display";
     
+    # If no provider at all, show a clean message instead of "(none configured)@Unknown"
+    if (!$provider) {
+        $model_with_provider = 'NO PROVIDER';
+        
+        print "\n";
+        
+        # Build session display: include friendly name if set
+        my $session_name = $self->{session} ? $self->{session}->session_name() : undef;
+        my $session_name_line = '';
+        if ($session_name) {
+            my $label_color = $self->{theme_mgr}->get_color('banner_label') || '';
+            my $data_color = $self->{theme_mgr}->get_color('data') || '';
+            my $reset = $self->{ansi}->parse('@RESET@');
+            $session_name_line = "${label_color}Session:    ${data_color}${session_name}${reset}";
+        }
+        
+        # Render banner lines 1-3 (app name, session ID, etc.), skip line 4 (provider connected),
+        # then render custom "not connected" message and line 5 (help text)
+        for my $ln (1..3) {
+            my $template_key = "banner_line$ln";
+            my $template = $self->{theme_mgr}->get_template($template_key);
+            next unless $template;
+            my $rendered = $self->{theme_mgr}->render($template_key, {
+                session_id => $session_id,
+                session_name => $session_name,
+                session_name_line => $session_name_line,
+                model => $model_with_provider,
+            });
+            my $stripped = $rendered;
+            $stripped =~ s/\e\[[0-9;]*m//g;
+            $stripped =~ s/^\s+//;
+            $stripped =~ s/\s+$//;
+            next unless length($stripped) > 0;
+            print $rendered, "\n";
+        }
+        # Custom no-provider line replacing "You are connected to..."
+        print "You are not connected to a provider.\n";
+        # Banner line 5 (help text)
+        my $l5_template = $self->{theme_mgr}->get_template('banner_line5');
+        if ($l5_template) {
+            my $rendered = $self->{theme_mgr}->render('banner_line5', {
+                session_id => $session_id,
+                session_name => $session_name,
+                session_name_line => $session_name_line,
+                model => $model_with_provider,
+            });
+            print $rendered, "\n";
+        }
+        print "\n";
+        return;
+    }
+    
     # Add session override indicator when session-only settings are active
     if ($self->{session}) {
         my $state = $self->{session}->state();
@@ -1602,7 +1660,6 @@ sub display_header {
     
     # Build session display: include friendly name if set
     my $session_name = $self->{session} ? $self->{session}->session_name() : undef;
-    # Build the session name banner line (empty string if no name - line will be skipped)
     my $session_name_line = '';
     if ($session_name) {
         my $label_color = $self->{theme_mgr}->get_color('banner_label') || '';
@@ -1615,10 +1672,8 @@ sub display_header {
     my $line_num = 1;
     while (1) {
         my $template_key = "banner_line$line_num";
-        
-        # Check if template exists first
         my $template = $self->{theme_mgr}->get_template($template_key);
-        last unless $template;  # Stop when no more banner lines are defined
+        last unless $template;
         
         my $rendered = $self->{theme_mgr}->render($template_key, {
             session_id => $session_id,
@@ -1628,10 +1683,8 @@ sub display_header {
         });
         
         $line_num++;
-        
-        # Skip lines that rendered to empty (e.g., conditional session_name line)
         my $stripped = $rendered;
-        $stripped =~ s/\e\[[0-9;]*m//g;  # Strip ANSI codes
+        $stripped =~ s/\e\[[0-9;]*m//g;
         $stripped =~ s/^\s+//;
         $stripped =~ s/\s+$//;
         next unless length($stripped) > 0;
@@ -1897,6 +1950,8 @@ sub _build_prompt {
         if ($model =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i && CLIO::Providers::provider_exists($1)) {
             $model = $2;
         }
+    } elsif (!$self->{ai_agent}) {
+        $model = 'NO PROVIDER';
     }
     push @parts, $self->colorize("[$model]", 'prompt_model');
     
