@@ -66,9 +66,10 @@ use constant {
 
 # Generate a UUID v4 for request tracking headers
 sub _generate_uuid {
-    # Use a per-call entropy pool (high-res time, PID, address of lexical, counter).
-    # Avoids calling srand() which would pollute the process-global rand() state
-    # and break other code paths that rely on rand().
+    # Self-contained entropy pool using xorshift32 seeded from time/PID/counter.
+    # Avoids Perl's rand() entirely: a stray srand() call elsewhere in the
+    # process (e.g. from a module that seeds for reproducibility) would
+    # otherwise poison UUID randomness without us knowing.
     our $UUID_COUNTER = 0;
     $UUID_COUNTER++;
     my $entropy = (Time::HiRes::time() * 1_000_000) ^ $$ ^ (0 + \$UUID_COUNTER) ^ ($UUID_COUNTER * 0x9E3779B9);
