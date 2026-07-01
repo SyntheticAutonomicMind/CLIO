@@ -48,6 +48,7 @@ import inspect
 import os
 import re
 import shlex
+import json
 from pathlib import Path
 
 from terminal_bench.agents.base_agent import AgentResult
@@ -91,6 +92,10 @@ class ClioAgent(AbstractInstalledAgent):
         self._model_name = model_name
         self._version = kwargs.get("version", "latest")
         self._clio_path = kwargs.get("clio_path", None)
+        # Reasoning/thinking settings for models that support it
+        # (NVIDIA Nemotron, DeepSeek, etc.). Defaults: on, medium.
+        self._enable_reasoning = kwargs.get("enable_reasoning", True)
+        self._reasoning_effort = kwargs.get("reasoning_effort", "medium")
 
         # Auto-detect CLIO source path
         if self._clio_path:
@@ -361,12 +366,29 @@ class ClioAgent(AbstractInstalledAgent):
         sequences that carry token usage data. The OSC events are parsed
         from the asciinema cast file, not the tmux scrollback.
         """
+        # Write a CLIO config file before launching the agent so that
+        # reasoning/thinking settings apply. The container has no
+        # persistent ~/.clio/config.json so we seed it here.
+        if self._enable_reasoning:
+            config_json = json.dumps({
+                "show_thinking": True,
+                "thinking_effort": self._reasoning_effort,
+            })
+            # Build the config-write command; clio is launched after.
+            config_cmd = (
+                f"mkdir -p ~/.clio && "
+                f"echo {shlex.quote(config_json)} > ~/.clio/config.json"
+            )
+        else:
+            config_cmd = ":"
+
         escaped_instruction = shlex.quote(instruction)
         model_flag = f"--model {shlex.quote(self._model_name)}"
 
         return [
             TerminalCommand(
                 command=(
+                    f"{config_cmd} && "
                     f"clio --new {model_flag} "
                     f"--input {escaped_instruction} --exit"
                 ),
