@@ -125,6 +125,7 @@ my $session_id = '';
 my $mode = '';
 my $working_dir = '';
 my $session;
+my $no_provider = 0;  # Set when CLIO starts without a configured provider
 
 # Load required modules
 use CLIO::Core::APIManager;
@@ -137,9 +138,8 @@ use CLIO::Providers qw(list_providers get_provider provider_exists);
 my $config = CLIO::Core::Config->new(debug => $debug);
 
 # Pre-parse --model so we can auto-derive provider from "provider/model" prefix
-# before the "No AI Provider Configured" prompt fires. Without this, a one-shot
-# `clio --model nvidia/...` would still trigger the prompt because the full
-# CLI parse (and --model handling) runs *after* the prompt check below.
+# before the provider check. Without this, `clio --model nvidia/...` would hit
+# the no-provider path because the full CLI parse runs *after* it.
 my $cli_model_override;
 for (my $i = 0; $i < @ARGV; $i++) {
     if ($ARGV[$i] eq '--model' && defined $ARGV[$i+1]) {
@@ -201,83 +201,9 @@ if (!$provider || $provider eq '') {
     }
 }
 if (!$provider || $provider eq '') {
-    # Get all available providers dynamically
-    my @providers = list_providers();
-    
-    # Use CLIO's display system for consistent output
-    # Create a minimal chat object for display purposes
-    my $display = CLIO::UI::Chat->new(no_color => $no_color, debug => $debug);
-    
-    # Display header
-    $display->display_command_header("No AI Provider Configured");
-    
-    $display->writeline("CLIO needs an API key or authentication to use an AI provider.", markdown => 0);
-    $display->writeline("", markdown => 0);
-    
-    # Display available providers
-    $display->display_section_header("Available Providers");
-    $display->writeline("(run /api providers in the application for full list)", markdown => 0);
-    $display->writeline("", markdown => 0);
-    
-    for my $prov_name (@providers) {
-        my $prov_config = get_provider($prov_name);
-        next unless $prov_config;
-        
-        my $display_name = $prov_config->{name} || $prov_name;
-        my $auth = $prov_config->{requires_auth} || 'none';
-        
-        my $auth_desc;
-        if ($auth eq 'apikey') {
-            $auth_desc = 'API key';
-        } elsif ($auth eq 'copilot') {
-            $auth_desc = 'GitHub Copilot';
-        } elsif ($auth eq 'none') {
-            $auth_desc = 'none';
-        } else {
-            $auth_desc = $auth;
-        }
-        
-        my $label = $display->colorize("$prov_name:", 'command_subheader');
-        my $desc = $display->colorize($display_name, 'data');
-        my $auth_label = $display->colorize("($auth_desc)", 'dim');
-        
-        printf "%-22s %s %s\n", $label, $desc, $auth_label;
-    }
-    
-    $display->writeline("", markdown => 0);
-    
-    # Display configuration instructions
-    $display->display_section_header("Configuration");
-    
-    my $cmd1 = $display->colorize("/api set provider <name>", 'command');
-    my $cmd2 = $display->colorize("/api set key <your_key>", 'command');
-    
-    $display->writeline("To configure a provider:", markdown => 0);
-    $display->writeline("  $cmd1  # Choose your provider", markdown => 0);
-    $display->writeline("  $cmd2    # Set your API key", markdown => 0);
-    $display->writeline("", markdown => 0);
-    
-    my $web_ui = $display->colorize("http://localhost:8080/setup", 'user_text');
-    $display->writeline("Or use the web UI at $web_ui", markdown => 0);
-    
-    $display->writeline("", markdown => 0);
-    
-    # Display additional help
-    $display->display_section_header("Getting Started");
-    
-    my $guide = $display->colorize("docs/USER_GUIDE.md", 'user_text');
-    $display->writeline("See $guide (section: Configuration) for more information", markdown => 0);
-    $display->writeline("", markdown => 0);
-    
-    my $chat_cmd = $display->colorize("clio --chat --new", 'command');
-    $display->writeline("For testing, use: $chat_cmd", markdown => 0);
-    $display->writeline("", markdown => 0);
-    
-    # Display footer
-    my $border = box_char('dhorizontal') x 62;
-    $display->writeline($ansi->parse(q{@DIM@} . $border . q{@RESET@}), markdown => 0);
-    
-    exit 1;
+    # No provider configured - let CLIO start so slash commands are available.
+    # The Chat UI will show an informational message, and /api commands work.
+    $no_provider = 1;
 }
 
 # Apply config log_level to env if --debug wasn't used
@@ -832,25 +758,30 @@ if ($model_override) {
 }
 
 # Initialize API manager and AI agent
-my $api = CLIO::Core::APIManager->new(
-    debug => $debug,
-    session => $session->state(),
-    config => $config,
-    broker_client => $broker_client,  # Pass broker client for API rate limiting coordination
-);
-my $ai_agent = CLIO::Core::SimpleAIAgent->new(
-    debug => $debug,
-    session => $session,
-    api => $api,
-    skip_custom => $skip_custom,
-    skip_ltm => $skip_ltm,
-    broker_client => $broker_client,  # Pass broker client for coordination
-    non_interactive => $input ? 1 : 0,  # Non-interactive mode when --input is used
-    enable_tools => $enable_tools,      # --enable: allowlist of tools
-    disable_tools => $disable_tools,    # --disable: blocklist of tools
-    prompt_override => $prompt_override, # --prompt: system prompt name override
-    chat_mode => ($mode eq 'chat' ? 1 : 0),  # Chat mode flag
-);
+# Skip if no provider is configured - CLIO starts in setup mode
+my $api;
+my $ai_agent;
+unless ($no_provider) {
+    $api = CLIO::Core::APIManager->new(
+        debug => $debug,
+        session => $session->state(),
+        config => $config,
+        broker_client => $broker_client,  # Pass broker client for API rate limiting coordination
+    );
+    $ai_agent = CLIO::Core::SimpleAIAgent->new(
+        debug => $debug,
+        session => $session,
+        api => $api,
+        skip_custom => $skip_custom,
+        skip_ltm => $skip_ltm,
+        broker_client => $broker_client,  # Pass broker client for coordination
+        non_interactive => $input ? 1 : 0,  # Non-interactive mode when --input is used
+        enable_tools => $enable_tools,      # --enable: allowlist of tools
+        disable_tools => $disable_tools,    # --disable: blocklist of tools
+        prompt_override => $prompt_override, # --prompt: system prompt name override
+        chat_mode => ($mode eq 'chat' ? 1 : 0),  # Chat mode flag
+    );
+}
 
 if ($debug) {
     my $cfg = $config->get_all();
@@ -922,6 +853,9 @@ if ($input) {
         }
     }
     else {
+        if (!$ai_agent) {
+            print "[SYSTEM] No AI provider configured. Run CLIO interactively and use /api to set one.\n";
+        } else {
         # Send input directly to AI agent
         # Set up callbacks for host protocol events (OSC) and tool tracking
         # These are normally set up in Chat.pm::_process_and_respond but
@@ -951,7 +885,7 @@ if ($input) {
         }
         
         my $result = $ai_agent->process_user_request($input, \%agent_context);
-        
+
         if ($result->{success}) {
             my $response = $result->{final_response};
             $response =~ s/^\[conversation\]//;
@@ -1003,6 +937,7 @@ if ($input) {
             $last_response = $error_msg;
             $session->add_message('system', $error_msg);
             print "$error_msg\n";
+        }
         }
     }
     
