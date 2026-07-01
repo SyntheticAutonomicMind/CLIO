@@ -153,7 +153,11 @@ if ((!$provider || $provider eq '') && $cli_model_override
     && $cli_model_override =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i
     && CLIO::Providers::provider_exists($1)) {
     my $derived_provider = $1;
-    my $api_key = $config->get_provider_key($derived_provider);
+    # Check config first, then fall back to CLIO_API_KEY env var.
+    # Env var covers non-interactive/CI/CD launches where there's no
+    # persistent config file (e.g. terminal-bench task containers).
+    my $api_key = $config->get_provider_key($derived_provider)
+        || ($ENV{CLIO_API_KEY} && length($ENV{CLIO_API_KEY}) ? $ENV{CLIO_API_KEY} : undef);
     if ($api_key) {
         $config->set_provider($derived_provider);
         $provider = $derived_provider;
