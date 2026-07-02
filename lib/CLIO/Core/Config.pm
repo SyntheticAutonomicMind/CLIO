@@ -435,7 +435,7 @@ sub set {
        # Restore new model config if it is resolved (has "/")
        $self->_restore_model_config($value) if $value =~ m{/};
         # Persist scoped config immediately to avoid data loss on exit
-        $self->save() if $old_model =~ m{/};
+        $self->save() if $old_model =~ m{/} && (!defined $mark_user_set || $mark_user_set);
    } else {
    $self->{config}->{$key} = $value;
     }
