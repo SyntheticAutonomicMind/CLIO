@@ -280,12 +280,30 @@ sub diff {
 
 sub branch {
     my ($self, $params, $context) = @_;
-    
+
     my $repo_path = $params->{repository_path} || '.';
     my $action = $params->{action} || 'list';  # list, create, delete, switch
     my $name = $params->{name} || '';
+
+    # Validate parameters upfront with messages that match ToolErrorGuidance
+    # categories. Validation errors return error_result() directly so we don't
+    # pollute the message with croak's caller-location suffix (e.g. "at
+    # /Users/.../ToolExecutor.pm line N") and so the guidance system can
+    # correctly classify the failure (missing_required vs invalid_value).
+    my %valid_actions = map { $_ => 1 } qw(list create delete switch);
+    unless ($valid_actions{$action}) {
+        return $self->error_result(
+            "Invalid action '$action'. Must be one of: list, create, delete, switch"
+        );
+    }
+    unless ($action eq 'list' || $name) {
+        return $self->error_result(
+            "Missing required parameter: name (required for action '$action')"
+        );
+    }
+
     my $result;
-    
+
     eval {
         $result = _in_repo($repo_path, sub {
             my $output;
@@ -298,7 +316,7 @@ sub branch {
             } elsif ($action eq 'switch' && $name) {
                 $output = `git checkout @{[_sq($name)]} 2>&1`;
             } else {
-                croak "Invalid branch action or missing name";
+                croak "Internal: unhandled branch action '$action' (validation should have caught this)";
             }
             
             my $action_desc = $action eq 'list' 
@@ -508,11 +526,21 @@ sub blame {
 
 sub stash {
     my ($self, $params, $context) = @_;
-    
+
     my $repo_path = $params->{repository_path} || '.';
     my $action = $params->{action} || 'list';  # save, list, apply, drop, clear
+    my $index = $params->{index} // 0;
+
+    # Validate parameters upfront. See branch() for rationale.
+    my %valid_actions = map { $_ => 1 } qw(save list apply drop clear);
+    unless ($valid_actions{$action}) {
+        return $self->error_result(
+            "Invalid action '$action'. Must be one of: save, list, apply, drop, clear"
+        );
+    }
+
     my $result;
-    
+
     eval {
         $result = _in_repo($repo_path, sub {
             my $output;
@@ -522,17 +550,15 @@ sub stash {
             } elsif ($action eq 'list') {
                 $output = `git stash list 2>&1`;
             } elsif ($action eq 'apply') {
-                my $index = $params->{index} // 0;
                 my $safe_idx = int($index);
                 $output = `git stash apply stash\@{$safe_idx} 2>&1`;
             } elsif ($action eq 'drop') {
-                my $index = $params->{index} // 0;
                 my $safe_idx = int($index);
                 $output = `git stash drop stash\@{$safe_idx} 2>&1`;
             } elsif ($action eq 'clear') {
                 $output = `git stash clear 2>&1`;
             } else {
-                croak "Invalid stash action: $action";
+                croak "Internal: unhandled stash action '$action' (validation should have caught this)";
             }
             
             my $action_desc = $action eq 'save' 
@@ -558,12 +584,26 @@ sub stash {
 
 sub tag {
     my ($self, $params, $context) = @_;
-    
+
     my $repo_path = $params->{repository_path} || '.';
     my $action = $params->{action} || 'list';  # list, create, delete
     my $name = $params->{name} || '';
+
+    # Validate parameters upfront. See branch() for rationale.
+    my %valid_actions = map { $_ => 1 } qw(list create delete);
+    unless ($valid_actions{$action}) {
+        return $self->error_result(
+            "Invalid action '$action'. Must be one of: list, create, delete"
+        );
+    }
+    unless ($action eq 'list' || $name) {
+        return $self->error_result(
+            "Missing required parameter: name (required for action '$action')"
+        );
+    }
+
     my $result;
-    
+
     eval {
         $result = _in_repo($repo_path, sub {
             my $output;
@@ -579,7 +619,7 @@ sub tag {
             } elsif ($action eq 'delete' && $name) {
                 $output = `git tag -d @{[_sq($name)]} 2>&1`;
             } else {
-                croak "Invalid tag action or missing name";
+                croak "Internal: unhandled tag action '$action' (validation should have caught this)";
             }
             
             my $action_desc = $action eq 'list'
@@ -608,8 +648,30 @@ sub worktree {
     my $repo_path = $params->{repository_path} || '.';
     my $action = $params->{action} || 'list';  # list, add, remove, prune, merge, pr
     my $worktree_path = $params->{worktree_path} || '';
+    my $branch = $params->{branch} || '';
+    my $force = $params->{force} || 0;
+    my $create_branch = $params->{create_branch} || 0;
+
+    # Validate parameters upfront. See branch() for rationale.
+    my %valid_actions = map { $_ => 1 } qw(list add remove prune merge pr);
+    unless ($valid_actions{$action}) {
+        return $self->error_result(
+            "Invalid action '$action'. Must be one of: list, add, remove, prune, merge, pr"
+        );
+    }
+    if (($action eq 'add' || $action eq 'remove') && !$worktree_path) {
+        return $self->error_result(
+            "Missing required parameter: worktree_path (required for action '$action')"
+        );
+    }
+    if (($action eq 'merge' || $action eq 'pr') && !$worktree_path) {
+        return $self->error_result(
+            "Missing required parameter: worktree_path (required for action '$action')"
+        );
+    }
+
     my $result;
-    
+
     # Validate worktree_path for sandbox mode (add/remove create/delete dirs)
     if ($worktree_path && $context && $context->{config} && $context->{config}->get('sandbox')) {
         my $sandbox_check = $self->_check_sandbox_path($worktree_path, $context);
@@ -650,9 +712,7 @@ sub worktree {
             $output = `git worktree list 2>&1`;
             my $exit = $? >> 8;
             croak "git worktree list failed (exit $exit):\n$output" if $exit != 0;
-        } elsif ($action eq 'add' && $worktree_path) {
-            my $branch = $params->{branch} || '';
-            my $create_branch = $params->{create_branch} || 0;
+        } elsif ($action eq 'add') {
             my $cmd = "git worktree add";
             if ($create_branch && $branch) {
                 $cmd .= " -b " . _sq($branch);
@@ -663,8 +723,7 @@ sub worktree {
             $output = `$cmd`;
             my $exit = $? >> 8;
             croak "git worktree add failed (exit $exit):\n$output" if $exit != 0;
-        } elsif ($action eq 'remove' && $worktree_path) {
-            my $force = $params->{force} || 0;
+        } elsif ($action eq 'remove') {
             my $cmd = "git worktree remove";
             $cmd .= " --force" if $force;
             $cmd .= " " . _sq($worktree_path) . " 2>&1";
@@ -675,7 +734,7 @@ sub worktree {
             $output = `git worktree prune 2>&1`;
             my $exit = $? >> 8;
             croak "git worktree prune failed (exit $exit):\n$output" if $exit != 0;
-        } elsif (($action eq 'merge' || $action eq 'pr') && $worktree_path) {
+        } elsif ($action eq 'merge' || $action eq 'pr') {
             # Resolve the branch name from the worktree
             my $wt_list = `git worktree list --porcelain 2>&1`;
             my $wt_branch = $self->_resolve_worktree_branch($wt_list, $worktree_path);
@@ -701,10 +760,8 @@ sub worktree {
                         "Fix the push issue, then create a pull request to merge '$wt_branch' into '$current_branch'.";
                 }
             }
-        } elsif ($action eq 'merge' || $action eq 'pr') {
-            croak "worktree_path is required for '$action' action. Use action 'list' to see available worktrees.";
         } else {
-            croak "Invalid worktree action or missing worktree_path for add/remove";
+            croak "Internal: unhandled worktree action '$action' (validation should have caught this)";
         }
 
         my $action_desc = $action eq 'list'

@@ -121,7 +121,7 @@ my $fail_result = $vc->route_operation('worktree', {
     action => 'add',
 }, {});
 ok($fail_result->{error}, 'worktree add without path returns error');
-like($fail_result->{error}, qr/Git worktree failed/, 'error message is descriptive');
+like($fail_result->{error}, qr/Missing required parameter: worktree_path/, 'error message identifies missing parameter');
 
 # Test 13: invalid worktree action fails gracefully
 my $invalid_result = $vc->route_operation('worktree', {
@@ -129,7 +129,7 @@ my $invalid_result = $vc->route_operation('worktree', {
     action => 'invalid_action',
 }, {});
 ok($invalid_result->{error}, 'invalid worktree action returns error');
-like($invalid_result->{error}, qr/Git worktree failed/, 'invalid action error is descriptive');
+like($invalid_result->{error}, qr/Invalid action 'invalid_action'/, 'invalid action error identifies the bad action');
 
 # Test 14: worktree add with existing branch (no create)
 system("cd $temp_repo && git branch feature-existing >/dev/null 2>&1");
@@ -153,7 +153,7 @@ my $merge_no_path = $vc->route_operation('worktree', {
     action => 'merge',
 }, {});
 ok($merge_no_path->{error}, 'merge without worktree_path returns error');
-like($merge_no_path->{error}, qr/worktree_path is required/, 'merge error message mentions worktree_path is required');
+like($merge_no_path->{error}, qr/Missing required parameter: worktree_path/, 'merge error message identifies missing worktree_path');
 
 # Test 16: pr action requires worktree_path
 my $pr_no_path = $vc->route_operation('worktree', {
@@ -161,7 +161,7 @@ my $pr_no_path = $vc->route_operation('worktree', {
     action => 'pr',
 }, {});
 ok($pr_no_path->{error}, 'pr without worktree_path returns error');
-like($pr_no_path->{error}, qr/worktree_path is required/, 'pr error message mentions worktree_path is required');
+like($pr_no_path->{error}, qr/Missing required parameter: worktree_path/, 'pr error message identifies missing worktree_path');
 
 # Test 17: merge action with a worktree
 # Create a worktree with a new branch, make a commit in it, then merge into main
