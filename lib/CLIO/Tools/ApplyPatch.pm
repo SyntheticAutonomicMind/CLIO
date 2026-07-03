@@ -150,30 +150,36 @@ sub _do_apply {
     my $patch_text = $params->{patch} || $params->{patchText} || '';
     
     unless ($patch_text && length($patch_text) > 0) {
-        return {
-            success => 0,
-            error => 'patch parameter is required',
+        # Use error_result() so tool_name is set for ToolErrorGuidance.
+        # Phrasing matches the 'Missing required parameter: <name>' convention
+        # so guidance categorizes this as 'missing_required'.
+        return $self->error_result(
+            'Missing required parameter: patch',
             action_description => 'apply_patch failed: no patch provided',
-        };
+        );
     }
     
     # Parse the patch
     my ($hunks, $parse_error) = $self->_parse_patch($patch_text);
     
     if ($parse_error) {
-        return {
-            success => 0,
-            error => "Patch parse error: $parse_error",
-            action_description => "apply_patch failed: $parse_error",
-        };
+        # Strip any caller-location that leaked from internal croaks in the
+        # parser, then route through error_result() so tool_name is set.
+        my $clean_err = $self->_clean_eval_error($parse_error);
+        return $self->error_result(
+            "Patch parse error: $clean_err",
+            action_description => "apply_patch failed: $clean_err",
+        );
     }
     
     if (!$hunks || !@$hunks) {
-        return {
-            success => 0,
-            error => 'No file operations found in patch',
+        # Phrase with 'Invalid' so ToolErrorGuidance's invalid_value regex
+        # (/invalid/i) matches and the schema guidance fires, pointing at
+        # the *** Add/Update/Delete File: directives the patch requires.
+        return $self->error_result(
+            "Invalid patch: no file operations found. Patch must contain at least one *** Add File:, *** Update File:, or *** Delete File: directive.",
             action_description => 'apply_patch failed: empty patch',
-        };
+        );
     }
     
     # Apply each hunk
@@ -228,24 +234,43 @@ sub _do_apply {
     my $summary = join(', ', @parts) || 'no changes';
     
     if (@errors) {
-        return {
-            success => 0,
-            error => "Patch partially applied. Errors: " . join('; ', @errors),
-            action_description => "apply_patch: $summary (with " . scalar(@errors) . " error(s))",
+        my $err_count = scalar(@errors);
+        my $total = scalar(@$hunks);
+
+        # If only one hunk failed, surface that hunk's error directly so
+        # ToolErrorGuidance can categorize it (file_not_found, permission_denied,
+        # edit_content_mismatch, etc.). The "partial apply" framing only makes
+        # sense when some hunks actually succeeded.
+        if ($err_count == $total && $err_count == 1) {
+            my $failed = [grep { !$_->{success} } @results]->[0];
+            return $self->error_result(
+                $failed->{error},
+                action_description => "apply_patch: $summary (with 1 error)",
+                type => $failed->{type},
+                path => $failed->{path},
+                output => encode_json({ results => \@results }),
+            );
+        }
+
+        # Multiple hunks with mixed success/failure: keep the partial-apply
+        # framing. Per-hunk detail (already clean and category-matching) lives
+        # in 'output' so the AI can see what succeeded and what failed.
+        return $self->error_result(
+            "Patch partially applied. $err_count of $total hunks failed. See per-hunk errors below.",
+            action_description => "apply_patch: $summary (with $err_count error(s))",
             output => encode_json({ results => \@results }),
-        };
+        );
     }
     
-    return {
-        success => 1,
-        action_description => "apply_patch: $summary",
-        output => encode_json({
+    return $self->success_result(
+        encode_json({
             results => \@results,
             files_created => $files_created,
             files_modified => $files_modified,
             files_deleted => $files_deleted,
         }),
-    };
+        action_description => "apply_patch: $summary",
+    );
 }
 
 =head2 _parse_patch($text)
@@ -476,7 +501,11 @@ sub _apply_hunk {
         return $self->_apply_update($full_path, $path, $hunk);
     }
     
-    return { success => 0, type => $type, path => $path, error => "Unknown hunk type: $type" };
+    return $self->error_result(
+        "Unknown hunk type: $type (expected add, update, or delete)",
+        type => $type,
+        path => $path,
+    );
 }
 
 sub _apply_add {
@@ -487,7 +516,15 @@ sub _apply_add {
     unless (-d $dir) {
         eval { make_path($dir) };
         if ($@) {
-            return { success => 0, type => 'add', path => $rel_path, error => "Cannot create directory: $@" };
+            # Strip croak caller-location from $@ so it doesn't leak the
+            # internal executor file path. Underlying OS errors like
+            # "Permission denied" still match ToolErrorGuidance's
+            # permission_denied regex.
+            return $self->error_result(
+                "Cannot create directory for $rel_path: " . $self->_clean_eval_error($@),
+                type => 'add',
+                path => $rel_path,
+            );
         }
     }
     
@@ -503,7 +540,11 @@ sub _apply_add {
     };
     
     if ($@) {
-        return { success => 0, type => 'add', path => $rel_path, error => "Write failed: $@" };
+        return $self->error_result(
+            "Write failed for $rel_path: " . $self->_clean_eval_error($@),
+            type => 'add',
+            path => $rel_path,
+        );
     }
     
     return { success => 1, type => 'add', path => $rel_path };
@@ -513,21 +554,35 @@ sub _apply_delete {
     my ($self, $full_path, $rel_path) = @_;
     
     unless (-e $full_path) {
-        return { success => 0, type => 'delete', path => $rel_path, error => "File not found" };
+        # "File not found: <path>" matches ToolErrorGuidance's file_not_found
+        # regex so the AI gets the dedicated guidance about path checks.
+        return $self->error_result(
+            "File not found: $rel_path",
+            type => 'delete',
+            path => $rel_path,
+        );
     }
     
     if (unlink $full_path) {
         return { success => 1, type => 'delete', path => $rel_path };
     }
     
-    return { success => 0, type => 'delete', path => $rel_path, error => "Delete failed: $!" };
+    return $self->error_result(
+        "Delete failed for $rel_path: $!",
+        type => 'delete',
+        path => $rel_path,
+    );
 }
 
 sub _apply_update {
     my ($self, $full_path, $rel_path, $hunk) = @_;
     
     unless (-f $full_path) {
-        return { success => 0, type => 'update', path => $rel_path, error => "File not found" };
+        return $self->error_result(
+            "File not found: $rel_path",
+            type => 'update',
+            path => $rel_path,
+        );
     }
     
     # Read current content
@@ -540,7 +595,11 @@ sub _apply_update {
     };
     
     if ($@) {
-        return { success => 0, type => 'update', path => $rel_path, error => "Read failed: $@" };
+        return $self->error_result(
+            "Read failed for $rel_path: " . $self->_clean_eval_error($@),
+            type => 'update',
+            path => $rel_path,
+        );
     }
     
     my @lines = split /\n/, $content, -1;
@@ -562,15 +621,18 @@ sub _apply_update {
         }
         
         if (!defined $match_pos) {
-            return {
-                success => 0,
+            # Retain "Cannot find match position for chunk" so ToolErrorGuidance
+            # categorizes as edit_content_mismatch and shows the dedicated
+            # guidance (read the file, find real text, retry with correct
+            # old_lines that exactly match the file).
+            return $self->error_result(
+                "Cannot find match position for chunk" .
+                ($context ? " (context: '$context')" : '') .
+                ". The file content does not match your patch. " .
+                "Read the file to see its actual content before retrying.",
                 type => 'update',
                 path => $rel_path,
-                error => "Cannot find match position for chunk" . 
-                         ($context ? " (context: '$context')" : '') .
-                         ". The file content does not match your patch. " .
-                         "Read the file to see its actual content before retrying.",
-            };
+            );
         }
         
         # Apply the replacement
@@ -600,7 +662,11 @@ sub _apply_update {
         };
         
         if ($@) {
-            return { success => 0, type => 'update', path => $rel_path, error => "Move failed: $@" };
+            return $self->error_result(
+                "Move failed for $rel_path: " . $self->_clean_eval_error($@),
+                type => 'update',
+                path => $rel_path,
+            );
         }
         
         # Delete original
@@ -628,7 +694,11 @@ sub _apply_update {
     };
     
     if ($@) {
-        return { success => 0, type => 'update', path => $rel_path, error => "Write failed: $@" };
+        return $self->error_result(
+            "Write failed for $rel_path: " . $self->_clean_eval_error($@),
+            type => 'update',
+            path => $rel_path,
+        );
     }
     
     return { success => 1, type => 'update', path => $rel_path };
@@ -805,6 +875,36 @@ sub _lines_match {
     }
     
     return 1;
+}
+
+=head2 _clean_eval_error (Internal)
+
+Strip Carp-style caller-location suffix that croak() appends to $@, so the
+AI sees a clean OS-level error instead of an internal file path.
+
+Without this, an error like "Cannot write temp: Permission denied at
+/home/deck/.local/clio/lib/CLIO/Tools/ApplyPatch.pm line 354." leaks the
+executor path and obscures the real failure.
+
+Arguments:
+    $err - The $@ string from an eval block (or any error string)
+
+Returns:
+    Cleaned error string with caller-location stripped
+
+=cut
+
+sub _clean_eval_error {
+    my ($self, $err) = @_;
+    return '' unless defined $err && length $err;
+    # Strip "at <path> line <num>." (Carp/croak caller-location suffix).
+    # This works for any path - .pm, .pl, bare paths, or relative paths.
+    # Without stripping, the AI sees the internal executor file path and
+    # ToolErrorGuidance can't cleanly categorize the underlying failure.
+    $err =~ s/\s+at\s+\S+\s+line\s+\d+\.?\s*$//;
+    # Trailing whitespace
+    $err =~ s/\s+\z//;
+    return $err;
 }
 
 1;
