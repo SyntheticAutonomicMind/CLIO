@@ -654,7 +654,7 @@ sub read_file {
     
     if ($@) {
         log_debug('FileOp', "Failed to read $path: $@");
-        return $self->error_result("Failed to read file: $@");
+        return $self->error_result("Failed to read file: " . $self->_clean_eval_error($@));
     }
     
     return $result;
@@ -731,7 +731,7 @@ sub list_dir {
     
     if ($@) {
         log_debug('FileOp', "Failed to list directory $path: $@");
-        return $self->error_result("Failed to list directory: $@");
+        return $self->error_result("Failed to list directory: " . $self->_clean_eval_error($@));
     }
     
     return $result;
@@ -997,7 +997,7 @@ sub file_search {
     
     if ($@) {
         log_debug('FileOp', "File search failed: $@");
-        return $self->error_result("File search failed: $@");
+        return $self->error_result("File search failed: " . $self->_clean_eval_error($@));
     }
     
     return $result;
@@ -1178,7 +1178,7 @@ sub grep_search {
     
     if ($@) {
         log_debug('FileOp', "Grep search failed: $@");
-        return $self->error_result("Grep search failed: $@");
+        return $self->error_result("Grep search failed: " . $self->_clean_eval_error($@));
     }
     
     return $result;
@@ -1640,7 +1640,7 @@ sub create_file {
     
     if ($@) {
         log_debug('FileOp', "Failed to create file: $@");
-        return $self->error_result("Failed to create file: $@");
+        return $self->error_result("Failed to create file: " . $self->_clean_eval_error($@));
     }
     
     return $result;
@@ -1723,7 +1723,7 @@ sub write_file {
     
     if ($@) {
         log_debug('FileOp', "Failed to write file: $@");
-        return $self->error_result("Failed to write file: $@");
+        return $self->error_result("Failed to write file: " . $self->_clean_eval_error($@));
     }
     
     return $result;
@@ -1808,7 +1808,7 @@ sub append_file {
     
     if ($@) {
         log_debug('FileOp', "Failed to append to file: $@");
-        return $self->error_result("Failed to append to file: $@");
+        return $self->error_result("Failed to append to file: " . $self->_clean_eval_error($@));
     }
     
     return $result;
@@ -1885,7 +1885,7 @@ sub replace_string {
     
     if ($@) {
         log_debug('FileOp', "Failed to replace string: $@");
-        return $self->error_result("Failed to replace string: $@");
+        return $self->error_result("Failed to replace string: " . $self->_clean_eval_error($@));
     }
     
     return $result;
@@ -2089,7 +2089,7 @@ sub insert_at_line {
     
     if ($@) {
         log_debug('FileOp', "Failed to insert at line: $@");
-        return $self->error_result("Failed to insert at line: $@");
+        return $self->error_result("Failed to insert at line: " . $self->_clean_eval_error($@));
     }
     
     return $result;
@@ -2160,7 +2160,7 @@ sub delete_file {
     
     if ($@) {
         log_debug('FileOp', "Failed to delete: $@");
-        return $self->error_result("Failed to delete: $@");
+        return $self->error_result("Failed to delete: " . $self->_clean_eval_error($@));
     }
     
     return $result;
@@ -2233,7 +2233,7 @@ sub rename_file {
     
     if ($@) {
         log_debug('FileOp', "Failed to rename: $@");
-        return $self->error_result("Failed to rename: $@");
+        return $self->error_result("Failed to rename: " . $self->_clean_eval_error($@));
     }
     
     return $result;
@@ -2283,7 +2283,7 @@ sub create_directory {
     
     if ($@) {
         log_debug('FileOp', "Failed to create directory: $@");
-        return $self->error_result("Failed to create directory: $@");
+        return $self->error_result("Failed to create directory: " . $self->_clean_eval_error($@));
     }
     
     return $result;

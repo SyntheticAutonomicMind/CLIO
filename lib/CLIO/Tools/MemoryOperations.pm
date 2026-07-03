@@ -229,7 +229,7 @@ sub store {
     };
     
     if ($@) {
-        return $self->error_result("Failed to store memory: $@");
+        return $self->error_result("Failed to store memory: " . $self->_clean_eval_error($@));
     }
     
     return $result;
@@ -266,7 +266,7 @@ sub retrieve {
     };
     
     if ($@) {
-        return $self->error_result("Failed to retrieve memory: $@");
+        return $self->error_result("Failed to retrieve memory: " . $self->_clean_eval_error($@));
     }
     
     return $result;
@@ -348,7 +348,7 @@ sub search {
     };
     
     if ($@) {
-        return $self->error_result("Search failed: $@");
+        return $self->error_result("Search failed: " . $self->_clean_eval_error($@));
     }
     
     return $result;
@@ -382,7 +382,7 @@ sub list_memories {
     };
     
     if ($@) {
-        return $self->error_result("Failed to list memories: $@");
+        return $self->error_result("Failed to list memories: " . $self->_clean_eval_error($@));
     }
     
     return $result;
@@ -414,7 +414,7 @@ sub delete {
     };
     
     if ($@) {
-        return $self->error_result("Failed to delete memory: $@");
+        return $self->error_result("Failed to delete memory: " . $self->_clean_eval_error($@));
     }
     
     return $result;
@@ -605,7 +605,7 @@ sub recall_sessions {
     };
     
     if ($@) {
-        return $self->error_result("Session recall failed: $@");
+        return $self->error_result("Session recall failed: " . $self->_clean_eval_error($@));
     }
     
     return $result;
@@ -731,7 +731,7 @@ sub add_discovery {
     };
     
     if ($@) {
-        return $self->error_result("Failed to add discovery: $@");
+        return $self->error_result("Failed to add discovery: " . $self->_clean_eval_error($@));
     }
     
     return $result;
@@ -779,7 +779,7 @@ sub add_solution {
     };
     
     if ($@) {
-        return $self->error_result("Failed to add solution: $@");
+        return $self->error_result("Failed to add solution: " . $self->_clean_eval_error($@));
     }
     
     return $result;
@@ -827,7 +827,7 @@ sub add_pattern {
     };
     
     if ($@) {
-        return $self->error_result("Failed to add pattern: $@");
+        return $self->error_result("Failed to add pattern: " . $self->_clean_eval_error($@));
     }
     
     return $result;
@@ -910,7 +910,7 @@ sub update_ltm {
     };
     
     if ($@) {
-        return $self->error_result("Failed to update LTM: $@");
+        return $self->error_result("Failed to update LTM: " . $self->_clean_eval_error($@));
     }
     
     return $result;
@@ -976,7 +976,7 @@ sub prune_ltm {
     };
     
     if ($@) {
-        return $self->error_result("Failed to prune LTM: $@");
+        return $self->error_result("Failed to prune LTM: " . $self->_clean_eval_error($@));
     }
     
     return $result;
@@ -1013,7 +1013,7 @@ sub ltm_stats {
     };
     
     if ($@) {
-        return $self->error_result("Failed to get LTM stats: $@");
+        return $self->error_result("Failed to get LTM stats: " . $self->_clean_eval_error($@));
     }
     
     return $result;
@@ -1078,7 +1078,7 @@ sub add_corroboration {
     };
     
     if ($@) {
-        return $self->error_result("Failed to add corroboration: $@");
+        return $self->error_result("Failed to add corroboration: " . $self->_clean_eval_error($@));
     }
     
     return $result;
