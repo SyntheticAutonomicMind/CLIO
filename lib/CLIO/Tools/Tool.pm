@@ -427,6 +427,38 @@ sub error_result {
     };
 }
 
+=head2 _clean_eval_error
+
+Strip Carp/croak caller-location suffix from a $@ string so internal
+file paths don't leak into user-visible error messages. Also used
+whenever an eval/croak error is forwarded to $self->error_result().
+
+Without stripping, the AI sees messages like:
+    Git status failed: Not a git repository
+        at /home/user/.local/clio/lib/CLIO/Core/ToolExecutor.pm line 358.
+which (a) leaks the executor file path and (b) prevents
+ToolErrorGuidance from cleanly categorizing the underlying failure.
+
+Arguments:
+    $err: Raw $@ string (may be undef or empty)
+
+Returns:
+    Cleaned error string with trailing " at <path> line <num>." removed,
+    or empty string if input was undef/empty.
+
+=cut
+
+sub _clean_eval_error {
+    my ($self, $err) = @_;
+    return '' unless defined $err && length $err;
+    # Strip "at <path> line <num>." (Carp/croak caller-location suffix).
+    # Works for any path: .pm, .pl, bare paths, or relative paths.
+    $err =~ s/\s+at\s+\S+\s+line\s+\d+\.?\s*$//;
+    # Trailing whitespace
+    $err =~ s/\s+\z//;
+    return $err;
+}
+
 1;
 
 __END__

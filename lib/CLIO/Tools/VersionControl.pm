@@ -174,11 +174,11 @@ sub status {
             );
         });
     };
-    
+
     if ($@) {
-        return $self->error_result("Git status failed: $@");
+        return $self->error_result("Git status failed: " . $self->_clean_eval_error($@));
     }
-    
+
     return $result;
 }
 
@@ -227,11 +227,11 @@ sub log {
             );
         });
     };
-    
+
     if ($@) {
-        return $self->error_result("Git log failed: $@");
+        return $self->error_result("Git log failed: " . $self->_clean_eval_error($@));
     }
-    
+
     return $result;
 }
 
@@ -270,11 +270,11 @@ sub diff {
             );
         });
     };
-    
+
     if ($@) {
-        return $self->error_result("Git diff failed: $@");
+        return $self->error_result("Git diff failed: " . $self->_clean_eval_error($@));
     }
-    
+
     return $result;
 }
 
@@ -331,11 +331,11 @@ sub branch {
             );
         });
     };
-    
+
     if ($@) {
-        return $self->error_result("Git branch failed: $@");
+        return $self->error_result("Git branch failed: " . $self->_clean_eval_error($@));
     }
-    
+
     return $result;
 }
 
@@ -425,9 +425,9 @@ sub commit {
     }
     
     if ($@) {
-        return $self->error_result("Git commit failed: $@");
+        return $self->error_result("Git commit failed: " . $self->_clean_eval_error($@));
     }
-    
+
     return $result;
 }
 
@@ -456,11 +456,11 @@ sub push {
             );
         });
     };
-    
+
     if ($@) {
-        return $self->error_result("Git push failed: $@");
+        return $self->error_result("Git push failed: " . $self->_clean_eval_error($@));
     }
-    
+
     return $result;
 }
 
@@ -489,11 +489,11 @@ sub pull {
             );
         });
     };
-    
+
     if ($@) {
-        return $self->error_result("Git pull failed: $@");
+        return $self->error_result("Git pull failed: " . $self->_clean_eval_error($@));
     }
-    
+
     return $result;
 }
 
@@ -516,11 +516,11 @@ sub blame {
             );
         });
     };
-    
+
     if ($@) {
-        return $self->error_result("Git blame failed: $@");
+        return $self->error_result("Git blame failed: " . $self->_clean_eval_error($@));
     }
-    
+
     return $result;
 }
 
@@ -574,11 +574,11 @@ sub stash {
             );
         });
     };
-    
+
     if ($@) {
-        return $self->error_result("Git stash failed: $@");
+        return $self->error_result("Git stash failed: " . $self->_clean_eval_error($@));
     }
-    
+
     return $result;
 }
 
@@ -634,11 +634,11 @@ sub tag {
             );
         });
     };
-    
+
     if ($@) {
-        return $self->error_result("Git tag failed: $@");
+        return $self->error_result("Git tag failed: " . $self->_clean_eval_error($@));
     }
-    
+
     return $result;
 }
 
@@ -792,9 +792,9 @@ sub worktree {
     }
     
     if ($main_error) {
-        return $self->error_result("Git worktree failed: $main_error");
+        return $self->error_result("Git worktree failed: " . $self->_clean_eval_error($main_error));
     }
-    
+
     return $result;
 }
 

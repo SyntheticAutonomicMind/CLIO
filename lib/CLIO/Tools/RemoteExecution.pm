@@ -525,7 +525,7 @@ sub execute_remote {
     
     if ($@) {
         my $error = "$@";
-        
+
         # Emit OSC remote error event
         if ($host_proto && $host_proto->active()) {
             $host_proto->emit_remote_event('error',
@@ -534,7 +534,7 @@ sub execute_remote {
                 duration => time() - $start_time,
             );
         }
-        
+
         # Attempt cleanup on error
         eval {
             $self->_ssh_exec(
@@ -544,8 +544,8 @@ sub execute_remote {
                 command => "rm -rf $q_remote_staging",
             ) if $cleanup;
         };
-        
-        return $self->error_result("Remote execution failed: $error");
+
+        return $self->error_result("Remote execution failed: " . $self->_clean_eval_error($error));
     }
     
     return $result;
@@ -667,13 +667,13 @@ sub execute_parallel {
         my $elapsed = time() - $start_time;
         
         if ($@ || !$result) {
-            push @results, {
-                device => $device->{name},
-                host => $device->{host},
-                success => 0,
-                error => $@ || "No result returned",
-                elapsed_seconds => $elapsed,
-            };
+                push @results, {
+                    device => $device->{name},
+                    host => $device->{host},
+                    success => 0,
+                    error => ($@ ? $self->_clean_eval_error($@) : '') || "No result returned",
+                    elapsed_seconds => $elapsed,
+                };
         } else {
             push @results, {
                 device => $device->{name},
@@ -807,7 +807,7 @@ sub prepare_remote {
     };
     
     if ($@) {
-        return $self->error_result("Preparation failed: $@");
+        return $self->error_result("Preparation failed: " . $self->_clean_eval_error($@));
     }
     
     return $result;
@@ -853,7 +853,7 @@ sub cleanup_remote {
     };
     
     if ($@) {
-        return $self->error_result("Cleanup failed: $@");
+        return $self->error_result("Cleanup failed: " . $self->_clean_eval_error($@));
     }
     
     return $result;
@@ -958,7 +958,7 @@ sub check_remote {
     };
     
     if ($@) {
-        return $self->error_result("Remote check failed: $@");
+        return $self->error_result("Remote check failed: " . $self->_clean_eval_error($@));
     }
     
     return $result;
@@ -1028,7 +1028,7 @@ sub transfer_files {
     };
     
     if ($@) {
-        return $self->error_result("File transfer failed: $@");
+        return $self->error_result("File transfer failed: " . $self->_clean_eval_error($@));
     }
     
     return $result;
@@ -1098,7 +1098,7 @@ sub retrieve_files {
     };
     
     if ($@) {
-        return $self->error_result("File retrieval failed: $@");
+        return $self->error_result("File retrieval failed: " . $self->_clean_eval_error($@));
     }
     
     return $result;
