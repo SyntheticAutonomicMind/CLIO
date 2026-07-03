@@ -631,9 +631,12 @@ sub _search_serpapi {
             engine => $config->{name},
         );
     };
-    
+
     if ($@) {
-        return { error => $@ };
+        # Strip Carp caller-location before forwarding to the public search_web()
+        # aggregator; otherwise the trailing "at file.pm line N" leaks into the
+        # consolidated error message.
+        return { error => $self->_clean_eval_error($@) };
     }
     
     return $result;
@@ -739,9 +742,9 @@ sub _search_brave {
             provider => 'brave',
         );
     };
-    
+
     if ($@) {
-        return { error => $@ };
+        return { error => $self->_clean_eval_error($@) };
     }
     
     return $result;
@@ -851,9 +854,9 @@ sub _search_duckduckgo_direct {
             );
         }
     };
-    
+
     if ($@) {
-        return { error => $@ };
+        return { error => $self->_clean_eval_error($@) };
     }
     
     return $result;

@@ -161,9 +161,9 @@ sub execute_command {
     };
     
     chdir $original_cwd if $changed_dir;
-    
+
     if ($@) {
-        return $self->error_result("Command execution failed: $@");
+        return $self->error_result("Command execution failed: " . $self->_clean_eval_error($@));
     }
     
     return $result;

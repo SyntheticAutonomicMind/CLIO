@@ -879,33 +879,10 @@ sub _lines_match {
 
 =head2 _clean_eval_error (Internal)
 
-Strip Carp-style caller-location suffix that croak() appends to $@, so the
-AI sees a clean OS-level error instead of an internal file path.
-
-Without this, an error like "Cannot write temp: Permission denied at
-/home/deck/.local/clio/lib/CLIO/Tools/ApplyPatch.pm line 354." leaks the
-executor path and obscures the real failure.
-
-Arguments:
-    $err - The $@ string from an eval block (or any error string)
-
-Returns:
-    Cleaned error string with caller-location stripped
-
-=cut
-
-sub _clean_eval_error {
-    my ($self, $err) = @_;
-    return '' unless defined $err && length $err;
-    # Strip "at <path> line <num>." (Carp/croak caller-location suffix).
-    # This works for any path - .pm, .pl, bare paths, or relative paths.
-    # Without stripping, the AI sees the internal executor file path and
-    # ToolErrorGuidance can't cleanly categorize the underlying failure.
-    $err =~ s/\s+at\s+\S+\s+line\s+\d+\.?\s*$//;
-    # Trailing whitespace
-    $err =~ s/\s+\z//;
-    return $err;
-}
+_clean_eval_error() is inherited from CLIO::Tools::Tool (where the
+POD documentation lives). All tools can call $self->_clean_eval_error($@)
+to strip Carp/croak caller-location suffixes before forwarding to
+error_result(). See CLIO::Tools::Tool for details.
 
 1;
 

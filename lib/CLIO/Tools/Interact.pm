@@ -146,10 +146,10 @@ sub request_input {
     
     # Validate parameters
     unless ($params->{message}) {
-        return {
-            success => 0,
-            error => "Missing required parameter: message"
-        };
+        # Route through error_result() so tool_name='interact' is set, letting
+        # ToolErrorGuidance categorize this as missing_required and emit the
+        # dedicated guidance about which parameter is missing and why.
+        return $self->error_result("Missing required parameter: message");
     }
     
     my $message = $params->{message};
@@ -196,10 +196,7 @@ sub request_input {
     
     # Get UI object from context
     unless ($ui && $ui->can('request_collaboration')) {
-        return {
-            success => 0,
-            error => "UI not available for collaboration (context missing ui object)"
-        };
+        return $self->error_result("UI not available for collaboration (context missing ui object)");
     }
     
     # Display action line BEFORE showing collaboration prompt
@@ -296,10 +293,7 @@ sub request_input {
     }
     
     unless (defined $user_response) {
-        return {
-            success => 0,
-            error => "User cancelled collaboration or provided no input"
-        };
+        return $self->error_result("User cancelled collaboration or provided no input");
     }
     
     log_debug('Interact', "User responded: $user_response");
@@ -371,10 +365,7 @@ sub _request_via_broker {
     
     unless ($msg_id) {
         log_error('Interact', "Failed to send question to broker");
-        return {
-            success => 0,
-            error => "Failed to send question to broker"
-        };
+        return $self->error_result("Failed to send question to broker");
     }
     
     log_debug('Interact', "Question sent (id: $msg_id), polling for response...");
@@ -403,10 +394,7 @@ sub _request_via_broker {
             
             # Handle stop signals gracefully
             if ($type eq 'stop') {
-                return {
-                    success => 0,
-                    error => "Received stop signal from coordinator"
-                };
+                return $self->error_result("Received stop signal from coordinator");
             }
         }
         
@@ -418,10 +406,7 @@ sub _request_via_broker {
     
     unless (defined $response) {
         log_warning('Interact', "Timeout waiting for response from user");
-        return {
-            success => 0,
-            error => "Timeout waiting for user response via broker (waited ${timeout}s)"
-        };
+        return $self->error_result("Timeout waiting for user response via broker (waited ${timeout}s)");
     }
     
     # Store in session if available
