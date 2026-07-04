@@ -7,7 +7,7 @@ use strict;
 use warnings;
 use utf8;
 
-our $VERSION = '20260703.2';
+our $VERSION = '20260704.1';
 
 =head1 NAME
 
@@ -15,7 +15,7 @@ CLIO - Command Line Intelligence Orchestrator
 
 =head1 VERSION
 
-Version 20260703.2
+Version 20260704.1
 
 =head1 DESCRIPTION
 
