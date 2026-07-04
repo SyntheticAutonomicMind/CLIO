@@ -812,6 +812,7 @@ sub _handle_ai_response {
     if ($accumulated_content) {
         $accumulated_content =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;  # Structured
         $accumulated_content =~ s/\s*<!--session:[a-z][a-z0-9_-]{2,50}-->\s*//sgi;  # Simple
+        $accumulated_content = $self->_detect_system_warning_references($accumulated_content);
     }
     
     if ($result && $result->{messages_saved_during_workflow}) {
@@ -819,6 +820,7 @@ sub _handle_ai_response {
         my $display_response = $result->{final_response} // '';
         $display_response =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;  # Structured
         $display_response =~ s/\s*<!--session:[a-z][a-z0-9_-]{2,50}-->\s*//sgi;  # Simple
+        $display_response = $self->_detect_system_warning_references($display_response);
         $display_response = $self->_detect_and_display_images($display_response);
         $self->add_to_buffer('assistant', $display_response) if $display_response;
     } elsif ($result && $result->{final_response}) {
@@ -828,6 +830,7 @@ sub _handle_ai_response {
         my $display_response = $result->{final_response};
         $display_response =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;  # Structured
         $display_response =~ s/\s*<!--session:[a-z][a-z0-9_-]{2,50}-->\s*//sgi;  # Simple
+        $display_response = $self->_detect_system_warning_references($display_response);
         $display_response = $self->_detect_and_display_images($display_response);
         $self->add_to_buffer('assistant', $display_response);
     } elsif ($accumulated_content) {
@@ -835,6 +838,7 @@ sub _handle_ai_response {
         my $sanitized = sanitize_text($accumulated_content);
         $self->{session}->add_message('assistant', $sanitized);
         $accumulated_content = $self->_detect_and_display_images($accumulated_content);
+        $accumulated_content = $self->_detect_system_warning_references($accumulated_content);
         $self->add_to_buffer('assistant', $accumulated_content);
     }
     
@@ -881,6 +885,38 @@ sub _handle_ai_response {
     $self->{pager}->disable();
     log_debug('Chat', "Pagination DISABLED after response complete");
     $self->hide_busy_indicator();
+}
+
+=head2 _detect_system_warning_references($content)
+
+Detect and log <system_warning>...</system_warning> tags in model responses.
+These are provider-injected infrastructure messages that the model should
+not be reproducing or acting on in its output. When found, logs the content
+in debug mode and displays a SYSTEM notification.
+
+Arguments:
+- $content: Model response text
+
+Returns: $content (unchanged - logging and display are side effects)
+
+=cut
+
+sub _detect_system_warning_references {
+    my ($self, $content) = @_;
+    return $content unless $content;
+    
+    my @matches = $content =~ /<system_warning>(.*?)<\/system_warning>/gs;
+    
+    if (@matches) {
+        log_debug('Chat', "Model response contains " . scalar(@matches) . " <system_warning> reference(s)");
+        for my $match (@matches) {
+            my $truncated = length($match) > 200 ? substr($match, 0, 200) . "..." : $match;
+            log_debug('Chat', "  system_warning content: $truncated");
+        }
+        $self->display_system_message("Model referenced API provider telemetry in its response");
+    }
+    
+    return $content;
 }
 
 =head2 _detect_and_display_images($text)
