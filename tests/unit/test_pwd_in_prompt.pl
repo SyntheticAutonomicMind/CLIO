@@ -29,29 +29,29 @@ require CLIO::Core::PromptBuilder;
 
 # Create PromptBuilder for testing the datetime section
 my $builder = CLIO::Core::PromptBuilder->new(debug => 0);
-my $section = eval { $builder->generate_datetime_section() };
+my $section = eval { $builder->get_user_context() };
 
-ok(defined $section, "Generated datetime section");
+ok(defined $section, "Generated user context section");
 
 if ($section) {
     ok($section =~ /Working Directory/i, "Section includes 'Working Directory' heading");
     ok($section =~ /\Q$current_pwd\E/, "Section includes actual PWD: $current_pwd");
-    ok($section =~ /CRITICAL PATH RULES/i, "Section includes path usage rules");
+    ok($section =~ /userContext/i, "Section includes userContext block");
 
     print "# Sample from section:\n";
     my @lines = split /\n/, $section;
-    for my $line (grep { /Working Directory|CRITICAL|pwd/ } @lines[0..15]) {
+    for my $line (grep { /Working Directory|userContext|Language/ } @lines[0..15]) {
         print "#   $line\n";
     }
 } else {
     fail("Could not generate section: $@");
     fail("No section content");
     fail("No PWD found");
-    fail("No path rules found");
+    fail("No userContext found");
 }
 
 # Cleanup
 chdir($orig_dir);
 
-print "# Test complete: PWD is included in system prompt\n";
+print "# Test complete: PWD is included in user context\n";
 done_testing();

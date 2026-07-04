@@ -35,17 +35,17 @@ subtest 'constructor - custom values' => sub {
     is($builder->{non_interactive}, 1, 'non_interactive set');
 };
 
-# Test 2: generate_datetime_section
-subtest 'generate_datetime_section - content' => sub {
+# Test 2: get_user_context
+subtest 'get_user_context - content' => sub {
     my $builder = CLIO::Core::PromptBuilder->new();
-    my $section = $builder->generate_datetime_section();
+    my $section = $builder->get_user_context();
 
     ok(defined $section, 'Section generated');
     like($section, qr/Current Date/, 'Contains date header');
     like($section, qr/\d{4}-\d{2}-\d{2}/, 'Contains ISO date');
     like($section, qr/Working Directory/, 'Contains working directory');
-    like($section, qr/CRITICAL PATH RULES/, 'Contains path rules');
-    like($section, qr/SYSTEM TELEMETRY/, 'Contains telemetry notice');
+    like($section, qr/userContext/, 'Contains userContext block');
+    like($section, qr/do not reference or repeat/, 'Contains usage directive');
 };
 
 # Test 3: generate_non_interactive_section (static function)
