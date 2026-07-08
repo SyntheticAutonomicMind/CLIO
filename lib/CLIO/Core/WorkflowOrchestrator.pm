@@ -836,7 +836,15 @@ sub process_input {
         if (@tool_calls_made > 0 && length($final_content) > 0 && $session && $session->can('add_message')) {
             eval {
                 my $sanitized = sanitize_text($final_content);
-                $session->add_message('assistant', $sanitized);
+                # Persist thinking/reasoning metadata alongside the final text so
+                # the next turn can replay it (Anthropic thinking continuity,
+                # OpenAI Responses reasoning chaining, OpenRouter reasoning_details).
+                $session->add_message('assistant', $sanitized, {
+                    reasoning_content  => $api_response->{reasoning_content}  // $api_response->{accumulated_reasoning},
+                    reasoning_details  => $api_response->{reasoning_details},
+                    reasoning_blocks   => $api_response->{reasoning_blocks},
+                    responses_reasoning_items => $api_response->{responses_reasoning_items},
+                });
                 log_debug('WorkflowOrchestrator', "Saved final assistant response to session (" . length($sanitized) . " chars)");
             };
             if ($@) {
@@ -1481,7 +1489,14 @@ sub _execute_tool_round {
                         $$pending_msg_ref->{content},
                         {
                             tool_calls => $$pending_msg_ref->{tool_calls},
-                            reasoning_content => $$pending_msg_ref->{reasoning_content}
+                            reasoning_content => $$pending_msg_ref->{reasoning_content},
+                            # Persist every reasoning format present on the
+                            # pending message so providers can replay them on
+                            # the next turn (Anthropic thinking, OpenAI
+                            # Responses chaining, OpenRouter reasoning_details).
+                            reasoning_details => $$pending_msg_ref->{reasoning_details},
+                            reasoning_blocks  => $$pending_msg_ref->{reasoning_blocks},
+                            responses_reasoning_items => $$pending_msg_ref->{responses_reasoning_items},
                         }
                     );
                     log_debug('WorkflowOrchestrator', "Saved assistant message with tool_calls to session (on first tool result)");

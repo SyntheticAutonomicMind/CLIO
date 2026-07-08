@@ -50,6 +50,15 @@ sub make_api_config_cmd {
     return ($cmd, $config);
 }
 
+sub _make_config_with_provider {
+    my $dir = '/tmp/clio_cap_mgr_' . int(rand(1e9));
+    mkdir $dir;
+    my $cfg = "$dir/config.json";
+    open(my $fh, '>', $cfg) or die "Cannot create config: $!";
+    print $fh q({"provider": "github_copilot"});
+    close $fh;
+    return CLIO::Core::Config->new(config_dir => $dir);
+}
 # Fake chat that captures output for assertions.
 package FakeChat;
 sub new { bless { output => [] }, shift }
@@ -147,6 +156,21 @@ subtest '_format_token_count formats values correctly' => sub {
         'undef -> 0');
     is(CLIO::UI::Commands::API::Config::_format_token_count(500), '500',
         '500 -> 500 (no suffix)');
+};
+
+# =============================================================================
+# Test: _humanize_cap_name
+# =============================================================================
+
+subtest '_humanize_cap_name produces user-friendly labels' => sub {
+    is(CLIO::UI::Commands::API::Config::_humanize_cap_name('context_window'),
+        'Context window', 'context_window -> Context window');
+    is(CLIO::UI::Commands::API::Config::_humanize_cap_name('max_output'),
+        'Max output', 'max_output -> Max output');
+    is(CLIO::UI::Commands::API::Config::_humanize_cap_name('max_prompt'),
+        'Max prompt', 'max_prompt -> Max prompt');
+    is(CLIO::UI::Commands::API::Config::_humanize_cap_name('unknown'),
+        'unknown', 'unknown -> unknown (passthrough)');
 };
 
 # =============================================================================
@@ -294,7 +318,7 @@ subtest '_set_capability_force rejects invalid input' => sub {
 # =============================================================================
 
 subtest '_apply_capability_overrides caps context_window' => sub {
-    my $config = CLIO::Core::Config->new(config_dir => '/tmp/clio_cap_mgr_' . int(rand(1e9)));
+    my $config = _make_config_with_provider();
     $config->set('cap_context_window', 128000);
 
     my $mgr = CLIO::Core::APIManager->new(config => $config, debug => 0);
@@ -317,7 +341,7 @@ subtest '_apply_capability_overrides caps context_window' => sub {
 };
 
 subtest '_apply_capability_overrides does not raise when override exceeds model' => sub {
-    my $config = CLIO::Core::Config->new(config_dir => '/tmp/clio_cap_mgr_' . int(rand(1e9)));
+    my $config = _make_config_with_provider();
     $config->set('cap_context_window', 2000000);  # 2M override
 
     my $mgr = CLIO::Core::APIManager->new(config => $config, debug => 0);
@@ -333,7 +357,7 @@ subtest '_apply_capability_overrides does not raise when override exceeds model'
 };
 
 subtest '_apply_capability_overrides caps max_output' => sub {
-    my $config = CLIO::Core::Config->new(config_dir => '/tmp/clio_cap_mgr_' . int(rand(1e9)));
+    my $config = _make_config_with_provider();
     $config->set('cap_max_output', 8192);
 
     my $mgr = CLIO::Core::APIManager->new(config => $config, debug => 0);
@@ -349,7 +373,7 @@ subtest '_apply_capability_overrides caps max_output' => sub {
 };
 
 subtest '_apply_capability_overrides caps max_prompt' => sub {
-    my $config = CLIO::Core::Config->new(config_dir => '/tmp/clio_cap_mgr_' . int(rand(1e9)));
+    my $config = _make_config_with_provider();
     $config->set('cap_max_prompt', 200000);
 
     my $mgr = CLIO::Core::APIManager->new(config => $config, debug => 0);
@@ -365,7 +389,7 @@ subtest '_apply_capability_overrides caps max_prompt' => sub {
 };
 
 subtest '_apply_capability_overrides forces tools on' => sub {
-    my $config = CLIO::Core::Config->new(config_dir => '/tmp/clio_cap_mgr_' . int(rand(1e9)));
+    my $config = _make_config_with_provider();
     $config->set('force_tools', 'on');
 
     my $mgr = CLIO::Core::APIManager->new(config => $config, debug => 0);
@@ -385,7 +409,7 @@ subtest '_apply_capability_overrides forces tools on' => sub {
 };
 
 subtest '_apply_capability_overrides forces tools off' => sub {
-    my $config = CLIO::Core::Config->new(config_dir => '/tmp/clio_cap_mgr_' . int(rand(1e9)));
+    my $config = _make_config_with_provider();
     $config->set('force_tools', 'off');
 
     my $mgr = CLIO::Core::APIManager->new(config => $config, debug => 0);
@@ -399,7 +423,7 @@ subtest '_apply_capability_overrides forces tools off' => sub {
 };
 
 subtest '_apply_capability_overrides forces vision' => sub {
-    my $config = CLIO::Core::Config->new(config_dir => '/tmp/clio_cap_mgr_' . int(rand(1e9)));
+    my $config = _make_config_with_provider();
     $config->set('force_vision', 'on');
 
     my $mgr = CLIO::Core::APIManager->new(config => $config, debug => 0);
@@ -409,7 +433,7 @@ subtest '_apply_capability_overrides forces vision' => sub {
 };
 
 subtest '_apply_capability_overrides forces reasoning' => sub {
-    my $config = CLIO::Core::Config->new(config_dir => '/tmp/clio_cap_mgr_' . int(rand(1e9)));
+    my $config = _make_config_with_provider();
     $config->set('force_reasoning', 'off');
 
     my $mgr = CLIO::Core::APIManager->new(config => $config, debug => 0);
@@ -420,7 +444,7 @@ subtest '_apply_capability_overrides forces reasoning' => sub {
 };
 
 subtest '_apply_capability_overrides applies multiple overrides at once' => sub {
-    my $config = CLIO::Core::Config->new(config_dir => '/tmp/clio_cap_mgr_' . int(rand(1e9)));
+    my $config = _make_config_with_provider();
     $config->set('cap_context_window', 128000);
     $config->set('cap_max_output', 8192);
     $config->set('force_tools', 'off');
@@ -454,7 +478,7 @@ subtest '_apply_capability_overrides applies multiple overrides at once' => sub 
 # =============================================================================
 
 subtest '_caps_with_overrides does not mutate input' => sub {
-    my $config = CLIO::Core::Config->new(config_dir => '/tmp/clio_cap_mgr_' . int(rand(1e9)));
+    my $config = _make_config_with_provider();
     $config->set('cap_context_window', 128000);
 
     my $mgr = CLIO::Core::APIManager->new(config => $config, debug => 0);
@@ -474,7 +498,7 @@ subtest '_caps_with_overrides does not mutate input' => sub {
 # =============================================================================
 
 subtest 'session override takes precedence over global config' => sub {
-    my $config = CLIO::Core::Config->new(config_dir => '/tmp/clio_cap_mgr_' . int(rand(1e9)));
+    my $config = _make_config_with_provider();
     $config->set('cap_context_window', 256000);  # Global: 256k
 
     # Fake session with state
