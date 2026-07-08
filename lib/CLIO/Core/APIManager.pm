@@ -1470,6 +1470,14 @@ Modifies $caps in place.
 
 Numeric caps (cap_context_window, cap_max_output, cap_max_prompt) cap the
 model's reported value: effective = min(model_value, override) when override > 0.
+cap_context_window additionally caps max_prompt_tokens so the prompt budget
+enforced by MessageValidator honors the user's intent (otherwise the cap
+only affects State::trim_context via max_context_window_tokens and the
+validator still uses the uncapped model value).
+When the model's value is undef (provider did not report it, or the
+ModelCapabilitiesManager lookup failed) and the override is > 0, the override
+is used as the value rather than allowing the chain of DEFAULT_* fallbacks to
+win below.
 
 Boolean forces (force_tools, force_vision, force_reasoning) replace the
 model's reported value when set to 'on' or 'off'.
@@ -1500,22 +1508,46 @@ sub _apply_capability_overrides {
         $effective{$key} = $val;
     }
 
-    # Apply numeric caps
+    # Apply numeric caps (also act as fallbacks when provider value is undef)
     if ($effective{cap_context_window} && $effective{cap_context_window} > 0) {
         my $cap = $effective{cap_context_window};
         my $current = $caps->{max_context_window_tokens};
-        if (defined $current && $current > $cap) {
+        if (!defined $current) {
+            log_debug('APIManager', sprintf(
+                "Applying context_window fallback (no provider value): undef -> %d", $cap
+            ));
+            $caps->{max_context_window_tokens} = $cap;
+        }
+        elsif ($current > $cap) {
             log_debug('APIManager', sprintf(
                 "Capping context_window: %d -> %d", $current, $cap
             ));
             $caps->{max_context_window_tokens} = $cap;
+        }
+        # Also cap max_prompt_tokens so MessageValidator's budget honors the cap.
+        # max_prompt_tokens is what the validator actually uses; if the cap only
+        # touches max_context_window_tokens (the field State::trim_context reads),
+        # the user's intent is half-honored and prompts balloon back to model max.
+        if (!defined $caps->{max_prompt_tokens} || $caps->{max_prompt_tokens} > $cap) {
+            log_debug('APIManager', sprintf(
+                "Capping max_prompt (from context_window cap): %s -> %d",
+                defined $caps->{max_prompt_tokens} ? $caps->{max_prompt_tokens} : 'undef',
+                $cap
+            ));
+            $caps->{max_prompt_tokens} = $cap;
         }
     }
 
     if ($effective{cap_max_output} && $effective{cap_max_output} > 0) {
         my $cap = $effective{cap_max_output};
         my $current = $caps->{max_output_tokens};
-        if (defined $current && $current > $cap) {
+        if (!defined $current) {
+            log_debug('APIManager', sprintf(
+                "Applying max_output fallback (no provider value): undef -> %d", $cap
+            ));
+            $caps->{max_output_tokens} = $cap;
+        }
+        elsif ($current > $cap) {
             log_debug('APIManager', sprintf(
                 "Capping max_output: %d -> %d", $current, $cap
             ));
@@ -1526,7 +1558,13 @@ sub _apply_capability_overrides {
     if ($effective{cap_max_prompt} && $effective{cap_max_prompt} > 0) {
         my $cap = $effective{cap_max_prompt};
         my $current = $caps->{max_prompt_tokens};
-        if (defined $current && $current > $cap) {
+        if (!defined $current) {
+            log_debug('APIManager', sprintf(
+                "Applying max_prompt fallback (no provider value): undef -> %d", $cap
+            ));
+            $caps->{max_prompt_tokens} = $cap;
+        }
+        elsif ($current > $cap) {
             log_debug('APIManager', sprintf(
                 "Capping max_prompt: %d -> %d", $current, $cap
             ));
