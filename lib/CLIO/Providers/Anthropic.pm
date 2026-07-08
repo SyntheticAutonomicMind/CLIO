@@ -248,14 +248,29 @@ sub build_request {
             };
         }
         elsif ($thinking->{mode} eq 'adaptive') {
-            # Adaptive thinking: just type + effort, no budget_tokens
+            # Adaptive thinking: type goes in the thinking block, effort
+            # goes in output_config (TOP-LEVEL field, not inside thinking).
+            # Per Anthropic docs:
+            #   thinking: { type: "adaptive", display: "summarized" }
+            #   output_config: { effort: "low"|"medium"|"high"|"xhigh"|"max" }
+            # Sending effort inside the thinking block is silently ignored
+            # by the API and produces no behavior change.
             $payload->{thinking} = {
-                type => 'adaptive',
+                type   => 'adaptive',
+                # display='summarized' makes thinking text visible to CLIO.
+                # 'omitted' is the default on Fable 5 / Mythos 5 / Sonnet 5 /
+                # Opus 4.8 / Opus 4.7 (returns empty thinking field). We set
+                # 'summarized' explicitly so thinking text is available across
+                # all adaptive-capable models. No extra cost - charged for
+                # original thinking tokens, not the summary.
+                display => 'summarized',
             };
             if ($thinking->{effort} && $thinking->{effort} ne 'medium') {
-                # Anthropic only accepts 'low'|'medium'|'high' for adaptive effort;
-                # 'medium' is the default and may be omitted.
-                $payload->{thinking}{effort} = $thinking->{effort};
+                # Accepted values: low|medium|high|xhigh|max.
+                # 'medium' is the default and may be omitted. Other values
+                # are forwarded verbatim so future effort levels reach
+                # the API without a CLIO update.
+                $payload->{output_config}{effort} = $thinking->{effort};
             }
         }
     }
@@ -998,7 +1013,7 @@ Inputs:
 Returns a hashref with:
   enabled       - 1/0
   mode          - 'enabled' or 'adaptive' (or undef if disabled)
-  effort        - 'low'|'medium'|'high' (for adaptive) or for budget sizing
+  effort        - 'low'|'medium'|'high'|'xhigh'|'max' (for adaptive) or for budget sizing
   budget_tokens - integer for 'enabled' mode (clamped to model max)
 
 When called without $opts, returns the default config (enabled, medium effort).
@@ -1013,7 +1028,14 @@ sub _default_thinking_config {
     return { enabled => 0 } unless $enabled;
 
     my $effort = $opts->{effort} // 'medium';
-    $effort = 'medium' unless $effort =~ /^(?:low|medium|high)$/;
+    # Accept any Anthropic-defined effort level. Known values today:
+    #   low|medium|high - all adaptive-capable models
+    #   xhigh           - Fable 5, Mythos 5, Opus 4.8, Opus 4.7, Sonnet 5
+    #   max             - all adaptive-capable models (no depth limit)
+    # Future levels (xhighest, etc.) pass through verbatim. Unknown
+    # values fall back to 'medium' to avoid sending malformed payloads
+    # to the API.
+    $effort = 'medium' unless $effort =~ /^(?:low|medium|high|xhigh|max)$/;
 
     my $max = $self->_max_thinking_budget_for_model($model);
 
@@ -1034,12 +1056,18 @@ sub _default_thinking_config {
     # 'enabled' mode: budget maps from effort. Anthropic docs recommend
     # 1024 minimum, 16k+ for complex tasks. We use 4k/10k/20k for
     # low/medium/high (clamped to model max).
+    # 'xhigh' maps to 32k - deeper reasoning than 'high', useful for
+    # complex agent loops and long-horizon planning tasks.
+    # 'max' maps to the model max budget - no soft constraint, only the
+    # hard max_tokens ceiling applies.
     # Note: build_request() ensures max_tokens > budget_tokens + 4096
     # (minimum response budget) as a safety net.
     my %effort_to_budget = (
         low    => 4096,
         medium => 10240,
         high   => 20480,
+        xhigh  => 32768,
+        max    => 65536,    # highest standard budget; model max clamps if needed
     );
     my $budget = $effort_to_budget{$effort};
     $budget = $max if $budget > $max;
