@@ -76,6 +76,14 @@ Returns:
 sub handle_api_error {
     my ($wo, $api_response, $ctx) = @_;
 
+    # ErrorHandler calls into WorkflowOrchestrator for some operations
+    # (_compress_dropped_for_recovery, _checkpoint_session_progress). WO
+    # normally loads first (it `use`s this module), but a direct require
+    # of ErrorHandler would leave WO un-loaded and those calls would fail
+    # with "Undefined subroutine". Lazy-load here to break the circular
+    # dependency at compile time and guarantee WO is available when needed.
+    require CLIO::Core::WorkflowOrchestrator;
+
     my $messages            = $ctx->{messages};
     my $retry_count_ref     = $ctx->{retry_count};
     my $session_error_ref   = $ctx->{session_error_count};
@@ -535,6 +543,10 @@ Returns:
 
 sub trim_for_token_limit {
     my ($wo, %args) = @_;
+
+    # See comment in handle_api_error: WO functions are called below.
+    # Require lazily to break the circular import and guarantee WO is loaded.
+    require CLIO::Core::WorkflowOrchestrator;
 
     my $messages        = $args{messages};
     my $retry_count     = $args{retry_count};
