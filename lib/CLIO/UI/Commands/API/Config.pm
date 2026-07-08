@@ -98,9 +98,13 @@ sub handle_set {
     }
     elsif ($setting eq 'thinking_effort') {
         my $level = lc($value // '');
-        unless ($level =~ /^(low|medium|high)$/) {
+        # Accepted values are provider+model dependent. Anthropic adaptive
+        # (4.6+) supports xhigh in addition to low/medium/high; OpenAI and
+        # Google accept low/medium/high. We validate the broader set here
+        # and let the provider reject unsupported values at request time.
+        unless ($level =~ /^(low|medium|high|xhigh|max)$/) {
             $self->display_error_message("Invalid thinking_effort value: '$value'");
-            $self->writeline("Valid values: low, medium, high", markdown => 0);
+            $self->writeline("Valid values: low, medium, high, xhigh, max (xhigh and max require Anthropic 4.6+ adaptive)", markdown => 0);
             return;
         }
         if ($session_only) {

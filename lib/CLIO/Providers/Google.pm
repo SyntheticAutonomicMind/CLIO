@@ -197,7 +197,7 @@ model does not support thinking, or if thinking is explicitly disabled.
 
 Opts shape:
   enabled => 1/0
-  effort  => 'low'|'medium'|'high' (mapped to thinkingBudget in tokens)
+effort  => 'low'|'medium'|'high' (mapped to thinkingBudget in tokens, xhigh falls back to high)
   budget  => integer override (clamped to model limits)
 
 For Gemini 2.5 Pro/Flash: thinkingBudget is the token count the model may
@@ -227,6 +227,11 @@ sub _build_thinking_config {
     }
     else {
         my $effort = $opts->{effort} // 'medium';
+        # Google uses thinkingBudget (token count) instead of effort levels.
+        # Accept xhigh for cross-provider parity (Anthropic 4.6+) and map
+        # it to the same budget as high since Google's API does not have a
+        # distinct xhigh tier.
+        $effort = 'high' if $effort eq 'xhigh';
         $effort = 'medium' unless $effort =~ /^(?:low|medium|high)$/;
         my %effort_to_budget = (
             low    => 1024,    # minimal thinking

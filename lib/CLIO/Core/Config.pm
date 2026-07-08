@@ -85,7 +85,12 @@ use constant DEFAULT_CONFIG => {
     http_proxy => '',
     # Reasoning/thinking display
     show_thinking => 0,         # Show model's reasoning/thinking output (default: off)
-    thinking_effort => 'medium', # Reasoning effort level: low, medium, high (default: medium)
+    thinking_effort => 'medium', # Reasoning effort level: low, medium, high, xhigh (default: medium)
+    # Accepted values depend on provider+model:
+    # - Anthropic adaptive (4.6+): low|medium|high|xhigh|max
+    # - Anthropic enabled (older): low|medium|high|xhigh|max (mapped to budget_tokens)
+    # - OpenAI: low|medium|high
+    # - Google Gemini: low|medium|high (mapped to thinkingBudget)
     # Sampling parameter overrides (empty string = use model/provider defaults)
     sampling_temperature => '',  # Override temperature (e.g. 0.7); empty = use provider default
     sampling_top_p => '',        # Override top_p (e.g. 0.9); empty = use provider default

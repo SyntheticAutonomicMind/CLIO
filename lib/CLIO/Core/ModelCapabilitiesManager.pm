@@ -584,25 +584,25 @@ Returns:
 
 sub _fetch_anthropic_capabilities {
     my ($self, $model) = @_;
-    
-    # Anthropic /v1/models/{model_id} endpoint
-    # Response format (from Anthropic SDK):
-    #   { id, display_name, created_at, type: "model",
-    #     max_input_tokens, max_tokens,
-    #     capabilities: { thinking: { supported, types: { adaptive, enabled } },
-    #                     effort: { supported, ... },
-    #                     image_input: { supported }, ... } }
-    # Get API key for Anthropic
+
+    # Anthropic exposes two related endpoints:
+    #   GET /v1/models/{model_id}  - rich per-model data including
+    #       capabilities.thinking.types.{adaptive,enabled} which drive
+    #       reasoning_mode resolution.
+    #   GET /v1/models             - list of available models, sparse by
+    #       default but proxies (Azure AI Foundry, custom deployments)
+    #       may add context_window/max_output_tokens.
+    #
+    # The Anthropic native API supports both. Anthropic-compatible proxies
+    # often only support the LIST endpoint, or alias models under
+    # deployment names so the per-model endpoint 404s for the configured
+    # model name. Try per-model first (rich data path), fall back to LIST
+    # with _find_model_in_list (case-insensitive + prefix-stripped match).
     my ($api_key, $user_api_base);
     eval {
         require CLIO::Core::Config;
         my $config = CLIO::Core::Config->new();
         $api_key = $config->get_provider_key('anthropic');
-        # If the user has overridden the Anthropic api_base (e.g. to point at
-        # a proxy), derive the models URL from that override instead of
-        # hardcoding api.anthropic.com. Most Anthropic-compatible proxies
-        # preserve the /v1/models/{model_id} path; we strip a trailing
-        # /messages segment (the chat endpoint) and replace with /models.
         $user_api_base = $config->get_provider_base('anthropic');
     };
 
@@ -624,50 +624,101 @@ sub _fetch_anthropic_capabilities {
         $api_base = 'https://api.anthropic.com/v1/models';
     }
 
-    my $url = "$api_base/$model";
-    
-    my $resp = $http->get($url, headers => {
+    # Try per-model endpoint first (/v1/models/{model_id}). This is the
+    # rich data path: Anthropic native returns the full capabilities
+    # structure including supports_adaptive_thinking / supports_enabled_thinking.
+    my $per_model_url = "$api_base/$model";
+    my $resp = $http->get($per_model_url, headers => {
         'x-api-key' => $api_key,
         'anthropic-version' => '2023-06-01',
         'Accept' => 'application/json',
     });
-    
-    unless ($resp->{success}) {
-        log_debug('ModelCapabilitiesManager', "Anthropic models API failed for $model: HTTP $resp->{status}");
+
+    if ($resp->{success}) {
+        my $data = eval { decode_json($resp->{content}) };
+        if (!$@ && $data && $data->{id}) {
+            return $self->_parse_anthropic_per_model_response($data, $model);
+        }
+        log_debug('ModelCapabilitiesManager', "Anthropic per-model endpoint returned malformed response for $model, trying /v1/models list");
+    }
+    else {
+        log_debug('ModelCapabilitiesManager', "Anthropic per-model endpoint failed for $model: HTTP $resp->{status}, trying /v1/models list");
+    }
+
+    # Fall back to LIST endpoint (/v1/models). The list endpoint is more
+    # permissive about model aliases - proxies that gate by deployment
+    # name (Azure AI Foundry, custom deployments) typically expose the
+    # full list but 404 the per-model endpoint for arbitrary model names.
+    # Use _find_model_in_list to handle case-insensitive and prefix-
+    # stripped matches (response may have 'anthropic/claude-sonnet-4-6'
+    # while caller passes 'claude-sonnet-4-6', or vice versa).
+    my $list_resp = $http->get($api_base, headers => {
+        'x-api-key' => $api_key,
+        'anthropic-version' => '2023-06-01',
+        'Accept' => 'application/json',
+    });
+
+    unless ($list_resp->{success}) {
+        log_debug('ModelCapabilitiesManager', "Anthropic models list also failed: HTTP $list_resp->{status}");
         return undef;
     }
-    
-    my $data;
-    eval {
-        $data = decode_json($resp->{content});
-    };
-    if ($@) {
-        log_debug('ModelCapabilitiesManager', "Failed to parse Anthropic response: $@");
+
+    my $list_data = eval { decode_json($list_resp->{content}) };
+    if ($@ || !$list_data) {
+        log_debug('ModelCapabilitiesManager', "Failed to parse Anthropic list response: " . ($@ // 'empty body'));
         return undef;
     }
-    
-    return undef unless $data && $data->{id};
-    
-    # Extract capabilities from the API response
+
+    # Anthropic LIST returns { data: [...] }; tolerate { models: [...] }
+    # for proxies that follow a different shape.
+    my $entries = $list_data->{data} || $list_data->{models} || [];
+    my $matched = $self->_find_model_in_list($entries, $model, 'id');
+    unless ($matched) {
+        log_debug('ModelCapabilitiesManager', "Anthropic model $model not found in /v1/models list response");
+        return undef;
+    }
+
+    return $self->_build_anthropic_caps_from_list_entry($matched, $model);
+}
+
+=head2 _parse_anthropic_per_model_response (Internal)
+
+Translate the rich /v1/models/{model_id} response into the MCM standard
+schema. This is the path taken when Anthropic's own API (or a faithful
+proxy) responds to the per-model endpoint. Only this path can populate
+supports_adaptive_thinking and supports_enabled_thinking - those fields
+are not in the LIST response.
+
+Arguments:
+    $data            - Decoded JSON body from /v1/models/{model_id}
+    $requested_model - Model name the caller asked for (used as fallback
+                       when the response omits an id field)
+
+Returns: MCM capability hashref.
+
+=cut
+
+sub _parse_anthropic_per_model_response {
+    my ($self, $data, $requested_model) = @_;
+
     my $caps = $data->{capabilities} || {};
     my $thinking = $caps->{thinking} || {};
-    my $effort = $caps->{effort} || {};
     my $image_input = $caps->{image_input} || {};
-    
-    # max_tokens from the API is the maximum value for the max_tokens parameter
-    # (i.e., max output tokens). max_input_tokens is the context window.
+
+    # max_tokens from the API is the maximum value for the max_tokens
+    # parameter (i.e., max output tokens). max_input_tokens is the
+    # context window.
     my $max_output = $data->{max_tokens};
     my $context_window = $data->{max_input_tokens};
-    
-    # Fallback to provider-level defaults if API doesn't provide specifics
+
     require CLIO::Providers;
     my $pdef = CLIO::Providers::get_provider('anthropic');
     $max_output //= $pdef->{max_output_tokens} if $pdef;
     $context_window //= $pdef->{max_context_tokens} if $pdef;
-    
+
     return {
         provider              => 'anthropic',
-        model                 => $data->{id} // $model,
+        model                 => $data->{id} // $requested_model,
         context_window        => $context_window,
         max_prompt_tokens     => $context_window,
         max_output_tokens     => $max_output,
@@ -684,6 +735,99 @@ sub _fetch_anthropic_capabilities {
         capabilities          => [],
         size_bytes            => undef,
         raw                   => $data,
+    };
+}
+
+=head2 _build_anthropic_caps_from_list_entry (Internal)
+
+Translate one entry from the /v1/models LIST response into the MCM
+standard schema. This is the fallback path taken when the per-model
+endpoint fails (404 from a proxy that doesn't support per-model URLs,
+or alias mismatch where the response id differs from the requested
+model name).
+
+LIST responses may be sparse (Anthropic native returns just id/
+display_name/created_at/type) or rich (proxies like Azure Foundry
+may add context_window, max_output_tokens, capabilities). Accept
+whichever field names the proxy provides and fall back to the
+Anthropic provider defaults from Providers.pm for anything missing.
+
+Arguments:
+    $entry           - Single hashref from /v1/models data array
+    $requested_model - Model name the caller asked for
+
+Returns: MCM capability hashref.
+
+=cut
+
+sub _build_anthropic_caps_from_list_entry {
+    my ($self, $entry, $requested_model) = @_;
+
+    require CLIO::Providers;
+    my $pdef = CLIO::Providers::get_provider('anthropic');
+
+    # Field-name flexibility. Anthropic native uses max_input_tokens/
+    # max_tokens; OpenAI-style proxies use context_window/
+    # max_completion_tokens; some proxies mix conventions. Take the
+    # first defined value, in priority order.
+    my $context_window = $entry->{max_input_tokens}
+                       || $entry->{context_window}
+                       || $entry->{context_length}
+                       || ($pdef ? $pdef->{max_context_tokens} : undef);
+    my $max_output = $entry->{max_tokens}
+                   || $entry->{max_output_tokens}
+                   || $entry->{max_completion_tokens}
+                   || ($pdef ? $pdef->{max_output_tokens} : undef);
+
+    # If the LIST response includes capabilities.thinking, surface the
+    # adaptive/enabled flags so reasoning_mode resolution picks the
+    # correct mode (adaptive vs enabled). Most proxies strip this; in
+    # that case leave supports_adaptive_thinking / supports_enabled_thinking
+    # undef and let _ensure_reasoning_mode's name heuristic run.
+    my $caps_block = $entry->{capabilities} || {};
+    my $thinking = $caps_block->{thinking};
+    my $image_input = $caps_block->{image_input};
+
+    my ($supports_adaptive, $supports_enabled, $supports_reasoning);
+    if ($thinking && ref($thinking) eq 'HASH') {
+        $supports_reasoning = $thinking->{supported} ? 1 : 0;
+        # Only set adaptive/enabled when the type itself is present in the
+        # response. A 'supported=>1' thinking block with no types.subfield
+        # means the API didn't disambiguate; leave the flags undef so
+        # _ensure_reasoning_mode's name heuristic picks the right mode.
+        if ($thinking->{types} && ref($thinking->{types}) eq 'HASH') {
+            $supports_adaptive = ($thinking->{types}{adaptive} && $thinking->{types}{adaptive}{supported}) ? 1 : 0;
+            $supports_enabled  = ($thinking->{types}{enabled}  && $thinking->{types}{enabled}{supported})  ? 1 : 0;
+        }
+    }
+    else {
+        # No capabilities block in the LIST response. All current Claude
+        # models support reasoning, but the sparse proxy response can't
+        # confirm which mode. Set supports_reasoning=1 so reasoning_effort
+        # gets sent, and leave adaptive/enabled undef so _ensure_reasoning_mode
+        # picks the right mode via its name heuristic.
+        $supports_reasoning = 1;
+    }
+
+    return {
+        provider              => 'anthropic',
+        model                 => $entry->{id} // $requested_model,
+        context_window        => $context_window,
+        max_prompt_tokens     => $context_window,
+        max_output_tokens     => $max_output,
+        supports_tools        => 1,
+        supports_streaming    => 1,
+        supports_vision       => ($image_input && ref($image_input) eq 'HASH' && $image_input->{supported}) ? 1 : 0,
+        supports_reasoning    => $supports_reasoning,
+        supports_adaptive_thinking => $supports_adaptive,
+        supports_enabled_thinking  => $supports_enabled,
+        embeddings_dimension  => undef,
+        architecture          => 'claude',
+        quantization          => undef,
+        parameters            => undef,
+        capabilities          => [],
+        size_bytes            => undef,
+        raw                   => $entry,
     };
 }
 
