@@ -441,6 +441,79 @@ sub _set_cached {
     $self->_save_cache();
 }
 
+=head2 set_reasoning_mode($provider, $model, $mode)
+
+Persist a corrected reasoning_mode for a model. Used by the self-
+correcting retry path: when the API returns HTTP 400 with a self-
+describing error like
+
+    "thinking.type.enabled" is not supported for this model.
+    Use "thinking.type.adaptive" ...
+
+APIManager extracts the correct mode ("adaptive") from the error and
+calls this method so the next request for this model uses the right
+mode the first time, with no wasted round-trip and no name-heuristic
+guessing.
+
+Also sets the data-driven supports_adaptive_thinking /
+supports_enabled_thinking flag (whichever matches the new mode) so
+_ensure_reasoning_mode's authoritative-data path wins over the
+heuristic on subsequent calls, not just the persisted cache.
+
+Arguments:
+- $provider: Provider name (e.g. 'anthropic')
+- $model: Model identifier (no provider prefix - the bare API name)
+- $mode: 'adaptive' or 'enabled'
+
+Returns: 1 on success, 0 on failure.
+
+=cut
+
+sub set_reasoning_mode {
+    my ($self, $provider, $model, $mode) = @_;
+
+    return 0 unless $provider && $model && $mode;
+    return 0 unless $mode =~ /^(?:adaptive|enabled)$/;
+
+    my $cache_key = $self->_build_cache_key($provider, $model);
+
+    # Get existing entry (from cache or fetch fresh). If we have nothing
+    # in cache, create a minimal entry with just the mode fields so the
+    # learning survives even when /v1/models fetch failed entirely.
+    my $entry = $self->{cache}{$cache_key};
+    unless ($entry) {
+        # No prior fetch - create a minimal learned entry. It won't have
+        # context_window etc. (those need a real API response), but it
+        # WILL have the correct mode so reasoning requests work.
+        $entry = {
+            provider           => $provider,
+            model              => $model,
+            supports_reasoning => 1,
+            _cached_at         => time,
+            _learned           => 1,  # Marker: this entry was learned, not fetched
+        };
+    }
+
+    # Update mode and the data-driven flag. The data-driven flag is what
+    # _ensure_reasoning_mode checks first; setting it ensures we don't
+    # re-trigger the heuristic on subsequent calls.
+    $entry->{reasoning_mode} = $mode;
+    if ($mode eq 'adaptive') {
+        $entry->{supports_adaptive_thinking} = 1;
+    }
+    elsif ($mode eq 'enabled') {
+        $entry->{supports_enabled_thinking} = 1;
+    }
+    $entry->{supports_reasoning} = 1;
+    $entry->{_learned_at} = time;
+
+    $self->{cache}{$cache_key} = $entry;
+    $self->_save_cache();
+
+    log_info('ModelCapabilitiesManager', "Learned reasoning_mode=$mode for $provider:$model (self-corrected from API error)");
+    return 1;
+}
+
 =head2 _fetch_provider_capabilities
 
 Route fetch to provider-specific method.

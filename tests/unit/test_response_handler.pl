@@ -410,4 +410,101 @@ subtest 'handle_error_response - Copilot session rate limit message' => sub {
     like($result->{error}, qr/51%.*session.*rate.*limit/i, 'Error contains the quota message');
 };
 
+
+# =============================================================================
+# Anthropic self-describing mode-mismatch tests
+# =============================================================================
+# The Anthropic API returns the correct thinking.type directly in the
+# 400 error message:
+#
+#   "thinking.type.enabled" is not supported for this model.
+#   Use "thinking.type.adaptive" and "output_config.effort" ...
+#
+# This is a much better signal than guessing from the model name - the
+# API itself tells us the right answer. ResponseHandler extracts the
+# correct mode and stashes it on _correct_reasoning_mode so the
+# caller's retry loop can rebuild the request and persist the learning.
+
+subtest 'handle_error_response - Anthropic self-describing mode mismatch (enabled rejected, adaptive correct)' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 400,
+        status_line => '400 Bad Request',
+        content => '{"type":"error","error":{"type":"invalid_request_error","message":"\"thinking.type.enabled\" is not supported for this model. Use \"thinking.type.adaptive\" and \"output_config.effort\" to control thinking behavior."}}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{retryable}, 1, 'Mode mismatch is retryable (we know the right mode)');
+    is($result->{error_type}, 'unsupported_param', 'Error type is unsupported_param');
+    is($handler->{_correct_reasoning_mode}, 'adaptive',
+        'Correct mode extracted from error text: enabled rejected -> adaptive correct');
+    like($result->{error}, qr/adaptive/i,
+        'Retry info mentions the correct mode');
+};
+
+subtest 'handle_error_response - Anthropic self-describing (adaptive rejected, enabled correct)' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 400,
+        status_line => '400 Bad Request',
+        content => '{"error":{"message":"thinking.type.adaptive is not supported for this model. Use thinking.type.enabled to control thinking behavior."}}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{retryable}, 1, 'Reverse mismatch is also retryable');
+    is($handler->{_correct_reasoning_mode}, 'enabled',
+        'Correct mode extracted: adaptive rejected -> enabled correct');
+};
+
+subtest 'handle_error_response - Anthropic self-describing ignores _no_reasoning flag' => sub {
+    # The mode-mismatch branch is more specific than the generic
+    # "thinking is not supported" branch - it must take precedence and
+    # set _correct_reasoning_mode instead of _no_reasoning.
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 400,
+        status_line => '400 Bad Request',
+        content => '{"error":{"message":"thinking.type.enabled is not supported for this model. Use thinking.type.adaptive."}}',
+    );
+
+    $handler->handle_error_response($resp, '{}', 0);
+    is($handler->{_correct_reasoning_mode}, 'adaptive',
+        'Mode-mismatch branch sets _correct_reasoning_mode');
+    ok(!$handler->{_no_reasoning},
+        'Mode-mismatch branch does NOT set _no_reasoning (we know the right mode, not that thinking is forbidden)');
+};
+
+subtest 'handle_error_response - non-mode-mismatch 400 still uses _no_reasoning path' => sub {
+    # If the 400 doesn't have the "Use thinking.type.X" pattern, fall
+    # through to the generic "thinking is not supported" branch which
+    # sets _no_reasoning.
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 400,
+        status_line => '400 Bad Request',
+        content => '{"error":{"message":"thinking is not supported by this model"}}',
+    );
+
+    $handler->handle_error_response($resp, '{}', 0);
+    ok(!defined $handler->{_correct_reasoning_mode},
+        'Generic thinking-not-supported leaves _correct_reasoning_mode undef');
+    is($handler->{_no_reasoning}, 1,
+        'Generic thinking-not-supported still sets _no_reasoning');
+};
+
+subtest 'handle_error_response - unknown mode in error falls through' => sub {
+    # Defensive: if the API ever returns a mode we don't recognize,
+    # don't set _correct_reasoning_mode (so retry won't loop forever).
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 400,
+        status_line => '400 Bad Request',
+        content => '{"error":{"message":"thinking.type.enabled is not supported. Use thinking.type.futuremode"}}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    ok(!defined $handler->{_correct_reasoning_mode},
+        'Unknown correct mode -> _correct_reasoning_mode stays undef');
+};
+
 done_testing();
