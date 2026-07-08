@@ -995,14 +995,11 @@ sub _fetch_nvidia_capabilities {
         },
     );
     
-    # Try exact match first (full model ID with org prefix)
-    my $model_data = $nvidia_models{$model};
-    
-    # Try without nvidia/ prefix (for models under nvidia/ namespace)
-    if (!$model_data && $model =~ s{^nvidia/}{}) {
-        $model_data = $nvidia_models{$model};
-    }
-    
+    # Case-insensitive lookup (handles "minimax/MiniMax-M3", casing
+    # differences between OpenRouter slugs and provider canonical ids,
+    # and org/ prefix stripping).
+    my $model_data = $self->_lookup_static_model(\%nvidia_models, $model, 'nvidia');
+
     # If no exact match, try pattern-based heuristics for model families
     if (!$model_data) {
         $model_data = $self->_nvidia_model_heuristics($model);
@@ -1407,6 +1404,61 @@ sub _nvidia_model_heuristics {
     return undef;
 }
 
+=head2 _lookup_static_model (Internal)
+
+Case-insensitive lookup against a static capability map.
+
+Handles the common miss cases for model id strings pulled from
+providers: (1) the input may already include an org/ prefix that
+the static map strips (e.g. "minimax/MiniMax-M3"), (2) casing may
+differ because OpenRouter-style slugs are lowercase while some
+providers advertise canonical mixed-case ids.
+
+Arguments:
+    $map_ref  - Hashref of model data keyed by canonical model id.
+    $model    - Model identifier supplied by the caller.
+    @prefixes - Zero or more org/ prefixes to strip on retry
+                (e.g. "minimax", "minimaxai", "deepseek").
+
+Returns:
+    The matching hashref entry, or undef if no match is found.
+
+=cut
+
+sub _lookup_static_model {
+    my ($self, $map_ref, $model, @prefixes) = @_;
+
+    # Exact match first.
+    my $model_data = $map_ref->{$model};
+
+    # Strip any of the configured org/ prefixes and retry.
+    if (!$model_data && @prefixes) {
+        my $bare = $model;
+        for my $prefix (@prefixes) {
+            $bare =~ s{^\Q$prefix\E/}{};
+            last if $bare ne $model;
+        }
+        $model_data = $map_ref->{$bare} if $bare ne $model;
+    }
+
+    # Final fallback: case-insensitive match (with prefix stripped).
+    if (!$model_data) {
+        my $bare = $model;
+        for my $prefix (@prefixes) {
+            $bare =~ s{^\Q$prefix\E/}{};
+        }
+        my $lc_target = lc($bare);
+        for my $key (keys %$map_ref) {
+            if (lc($key) eq $lc_target) {
+                $model_data = $map_ref->{$key};
+                last;
+            }
+        }
+    }
+
+    return $model_data;
+}
+
 =head2 _fetch_zai_capabilities
 
 Fetch capabilities from Z.AI API.
@@ -1503,9 +1555,9 @@ sub _fetch_zai_capabilities {
         },
     );
     
-    my $model_data = $zai_models{$model};
+    my $model_data = $self->_lookup_static_model(\%zai_models, $model, 'zai');
     return undef unless $model_data;
-    
+
     return {
         provider              => 'zai',
         model                 => $model,
@@ -1609,9 +1661,9 @@ sub _fetch_minimax_capabilities {
         },
     );
     
-    my $model_data = $minimax_models{$model};
+    my $model_data = $self->_lookup_static_model(\%minimax_models, $model, 'minimax', 'minimaxai');
     return undef unless $model_data;
-    
+
     return {
         provider              => 'minimax',
         model                 => $model,
@@ -1666,7 +1718,7 @@ sub _fetch_deepseek_capabilities {
         },
     );
 
-    my $model_data = $deepseek_models{$model};
+    my $model_data = $self->_lookup_static_model(\%deepseek_models, $model, 'deepseek');
     return undef unless $model_data;
 
     return {

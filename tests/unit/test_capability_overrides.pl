@@ -388,6 +388,47 @@ subtest '_apply_capability_overrides caps max_prompt' => sub {
         'max_prompt capped from 1M to 200k');
 };
 
+subtest '_apply_capability_overrides context_window cap also caps max_prompt' => sub {
+    # Regression: cap_context_window used to only cap max_context_window_tokens,
+    # but MessageValidator's budget reads max_prompt_tokens. The cap was
+    # effectively dead for the validator. Verify the cap also caps the
+    # prompt field so the user's intent (limit budget to N) is honored.
+    my $config = _make_config_with_provider();
+    $config->set('cap_context_window', 128000);
+
+    my $mgr = CLIO::Core::APIManager->new(config => $config, debug => 0);
+    my $caps = {
+        max_context_window_tokens => 1000000,
+        max_output_tokens         => 16384,
+        max_prompt_tokens         => 1000000,
+    };
+
+    $mgr->_apply_capability_overrides($caps);
+    is($caps->{max_context_window_tokens}, 128000,
+        'context_window capped at 128k');
+    is($caps->{max_prompt_tokens}, 128000,
+        'max_prompt also capped at 128k (MessageValidator budget honored)');
+};
+
+subtest '_apply_capability_overrides context_window cap also populates max_prompt fallback' => sub {
+    # When the provider did not report max_prompt_tokens at all, the cap should
+    # populate it so MessageValidator has something concrete to budget against
+    # instead of falling through to DEFAULT_CONTEXT_WINDOW.
+    my $config = _make_config_with_provider();
+    $config->set('cap_context_window', 64000);
+
+    my $mgr = CLIO::Core::APIManager->new(config => $config, debug => 0);
+    my $caps = {
+        max_context_window_tokens => 1000000,
+        max_output_tokens         => 16384,
+        # max_prompt_tokens is undef (provider didn't report it)
+    };
+
+    $mgr->_apply_capability_overrides($caps);
+    is($caps->{max_prompt_tokens}, 64000,
+        'undef max_prompt populated with cap value as fallback');
+};
+
 subtest '_apply_capability_overrides forces tools on' => sub {
     my $config = _make_config_with_provider();
     $config->set('force_tools', 'on');
