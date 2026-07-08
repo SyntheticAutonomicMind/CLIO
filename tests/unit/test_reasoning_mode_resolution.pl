@@ -284,7 +284,7 @@ sub _run {
 # ========================================================================
 # Anthropic 5-series and proxy aliases
 # ========================================================================
-# Regression: commit f9159c0 introduced the LIST endpoint fallback, which
+# Regression: an earlier commit introduced the LIST endpoint fallback, which
 # routes models from Anthropic-compatible proxies (Azure Foundry, custom
 # deployments) through the heuristic in _ensure_reasoning_mode for the
 # first time. The previous regex only recognized 4.6+ generations
@@ -371,7 +371,7 @@ sub _run {
         caps     => { supports_reasoning => 1 },
     );
     is($caps->{reasoning_mode}, 'adaptive',
-        'Proxy alias Proxy-Sonnet-5 -> adaptive (was enabled in f9159c0, caused HTTP 400)');
+        'Proxy alias Proxy-Sonnet-5 -> adaptive (was misclassified as enabled, caused HTTP 400)');
 }
 
 # Test 26: Proxy alias for Opus 4.8 -> adaptive
