@@ -9,7 +9,7 @@ use utf8;
 use parent 'CLIO::Providers::Base';
 use CLIO::Util::JSON qw(encode_json decode_json);
 use CLIO::Core::Logger qw(log_debug log_warning);
-use CLIO::Core::Logger qw(log_debug log_warning);
+use JSON::PP;
 
 =head1 NAME
 

@@ -86,8 +86,13 @@ sub handle_set {
     }
     elsif ($setting eq 'thinking') {
         my $enabled = ($value =~ /^(on|true|1|yes|enabled)$/i) ? 1 : 0;
-        $self->{config}->set('show_thinking', $enabled);
-        $self->{config}->save();
+        my $thinking_key = 'show_thinking';
+        if ($session_only) {
+            $self->_write_session_override($thinking_key, $enabled);
+        } else {
+            $self->{config}->set($thinking_key, $enabled);
+            $self->{config}->save();
+        }
         my $state_label = $enabled ? "enabled" : "disabled";
         $self->display_system_message("Thinking/reasoning display $state_label" . ($session_only ? " (session only)" : " (saved)"));
     }
@@ -98,24 +103,36 @@ sub handle_set {
             $self->writeline("Valid values: low, medium, high", markdown => 0);
             return;
         }
-        $self->{config}->set('thinking_effort', $level);
-        $self->{config}->save() unless $session_only;
+        if ($session_only) {
+            $self->_write_session_override('thinking_effort', $level);
+        } else {
+            $self->{config}->set('thinking_effort', $level);
+            $self->{config}->save();
+        }
         $self->display_system_message("Thinking effort set to '$level'" . ($session_only ? " (session only)" : " (saved)"));
     }
     elsif ($setting =~ /^(temperature|top_p|top_k)$/) {
         my $key = "sampling_$setting";
         if (!defined $value || $value eq '' || $value =~ /^(reset|default|off)$/i) {
             # Clear override - revert to provider defaults
-            $self->{config}->set($key, '');
-            $self->{config}->save() unless $session_only;
+            if ($session_only) {
+                $self->_write_session_override($key, 0);
+            } else {
+                $self->{config}->set($key, '');
+                $self->{config}->save();
+            }
             $self->display_system_message("$setting reset to provider default" . ($session_only ? " (session only)" : " (saved)"));
         } else {
             unless ($value =~ /^\d+(\.\d+)?$/) {
                 $self->display_error_message("Invalid $setting value: '$value' (must be a number)");
                 return;
             }
-            $self->{config}->set($key, $value + 0);
-            $self->{config}->save() unless $session_only;
+            if ($session_only) {
+                $self->_write_session_override($key, $value + 0);
+            } else {
+                $self->{config}->set($key, $value + 0);
+                $self->{config}->save();
+            }
             $self->display_system_message("$setting set to $value" . ($session_only ? " (session only)" : " (saved)"));
         }
     }
@@ -593,6 +610,22 @@ sub _format_token_count {
     return $count . '';
 }
 
+=head2 _humanize_cap_name($cap)
+
+Convert capability cap setting names to user-friendly labels.
+Examples: context_window -> Context window, max_output -> Max output,
+max_prompt -> Max prompt.
+
+=cut
+
+sub _humanize_cap_name {
+    my ($cap) = @_;
+    return 'Context window' if $cap eq 'context_window';
+    return 'Max output' if $cap eq 'max_output';
+    return 'Max prompt' if $cap eq 'max_prompt';
+    return $cap;
+}
+
 =head2 _set_capability_cap($setting, $value, $session_only)
 
 Handle /api set context_window|max_output|max_prompt <value>.
@@ -611,8 +644,12 @@ sub _set_capability_cap {
     my $config_key = "cap_$setting";
 
     if (!defined $value || $value eq '' || $value =~ /^(reset|default|off|0)$/i) {
-        $self->{config}->set($config_key, 0);
-        $self->{config}->save() unless $session_only;
+        if ($session_only) {
+            $self->_write_session_override($config_key, 0);
+        } else {
+            $self->{config}->set($config_key, 0);
+            $self->{config}->save();
+        }
         $self->display_system_message("$setting cap cleared (using model default)" . ($session_only ? " (session only)" : " (saved)"));
         return;
     }
@@ -629,8 +666,12 @@ sub _set_capability_cap {
         return;
     }
 
-    $self->{config}->set($config_key, $tokens);
-    $self->{config}->save() unless $session_only;
+    if ($session_only) {
+        $self->_write_session_override($config_key, $tokens);
+    } else {
+        $self->{config}->set($config_key, $tokens);
+        $self->{config}->save();
+    }
     $self->display_system_message(
         sprintf("%s capped at %s%s",
             $setting,
@@ -638,6 +679,37 @@ sub _set_capability_cap {
             ($session_only ? " (session only)" : " (saved)")
         )
     );
+}
+
+=head2 _write_session_override($config_key, $value)
+
+Store a session-only override for a setting (mirrors _set_api_setting
+semantics). The session value takes effect immediately; the global
+config is left untouched so disk state stays clean. Used by capability
+cap and force handlers that share the api_config session namespace.
+
+Arguments:
+    $config_key - The config key (e.g. 'cap_context_window', 'force_tools')
+    $value      - The override value (0 or '' to clear the override)
+
+=cut
+
+sub _write_session_override {
+    my ($self, $config_key, $value) = @_;
+
+    return unless $self->{session} && $self->{session}->can('state');
+    my $state = $self->{session}->state();
+    $state->{api_config} ||= {};
+
+    # Treat 0 and '' as "clear the session override"
+    my $clearing = (!defined $value) || $value eq '' || $value == 0;
+    if ($clearing) {
+        delete $state->{api_config}{$config_key};
+    } else {
+        $state->{api_config}{$config_key} = $value;
+    }
+
+    $self->{session}->save() if $self->{session}->can('save');
 }
 
 =head2 _set_capability_force($setting, $value, $session_only)
@@ -657,8 +729,12 @@ sub _set_capability_force {
 
     # Clear triggers - these explicitly ask to revert to model default
     if ($normalized =~ /^(auto|reset|default|'')$/) {
-        $self->{config}->set($config_key, '');
-        $self->{config}->save() unless $session_only;
+        if ($session_only) {
+            $self->_write_session_override($config_key, 0);
+        } else {
+            $self->{config}->set($config_key, '');
+            $self->{config}->save();
+        }
         $self->display_system_message("$setting override cleared (using model default)" . ($session_only ? " (session only)" : " (saved)"));
         return;
     }
@@ -671,8 +747,12 @@ sub _set_capability_force {
     }
 
     my $forced = ($normalized =~ /^(on|true|enabled)$/) ? 'on' : 'off';
-    $self->{config}->set($config_key, $forced);
-    $self->{config}->save() unless $session_only;
+    if ($session_only) {
+        $self->_write_session_override($config_key, $forced);
+    } else {
+        $self->{config}->set($config_key, $forced);
+        $self->{config}->save();
+    }
     $self->display_system_message("$setting forced: $forced" . ($session_only ? " (session only)" : " (saved)"));
 }
 
@@ -853,10 +933,10 @@ sub display_config {
         if (defined $val && $val && $val > 0) {
             my $model_default = $self->_get_model_default_for_cap($cap);
             my $suffix = $model_default
-                ? sprintf(" (override, model: %s)", _format_token_count($model_default))
+                ? sprintf(" (cap %s, model: %s)", _format_token_count($val), _format_token_count($model_default))
                 : " (override)";
             $self->display_key_value(
-                ucfirst($cap) . " cap",
+                _humanize_cap_name($cap) . " cap",
                 _format_token_count($val) . $suffix,
                 16
             );

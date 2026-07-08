@@ -578,7 +578,30 @@ sub add_message {
         $message->{reasoning_content} = $opts->{reasoning_content};
         log_debug('State::add_message', "Added reasoning_content to message");
     }
-    
+
+    # Add reasoning_details if provided (OpenAI Chat Completions format)
+    # Used by OpenRouter/OpenAI-style providers; replayed on subsequent turns so
+    # the model can continue its chain-of-thought across turns.
+    if ($opts && $opts->{reasoning_details} && ref($opts->{reasoning_details}) eq 'ARRAY') {
+        $message->{reasoning_details} = $opts->{reasoning_details};
+        log_debug('State::add_message', "Added reasoning_details to message (" . scalar(@{$opts->{reasoning_details}}) . " items)");
+    }
+
+    # Add reasoning_blocks if provided (Anthropic native extended thinking format)
+    # Replayed so Anthropic's thinking continuity holds across turns.
+    if ($opts && $opts->{reasoning_blocks} && ref($opts->{reasoning_blocks}) eq 'ARRAY') {
+        $message->{reasoning_blocks} = $opts->{reasoning_blocks};
+        log_debug('State::add_message', "Added reasoning_blocks to message (" . scalar(@{$opts->{reasoning_blocks}}) . " blocks)");
+    }
+
+    # Add responses_reasoning_items if provided (OpenAI Responses API native format)
+    # Required for OpenAI Responses chained reasoning across turns; without this
+    # the provider has to start a new reasoning chain from scratch each turn.
+    if ($opts && $opts->{responses_reasoning_items} && ref($opts->{responses_reasoning_items}) eq 'ARRAY') {
+        $message->{responses_reasoning_items} = $opts->{responses_reasoning_items};
+        log_debug('State::add_message', "Added responses_reasoning_items to message (" . scalar(@{$opts->{responses_reasoning_items}}) . " items)");
+    }
+
     # Add provider response ID if available (for assistant messages)
     if ($role eq 'assistant' && $self->{lastGitHubCopilotResponseId}) {
         $message->{metadata}{providerResponseId} = $self->{lastGitHubCopilotResponseId};
