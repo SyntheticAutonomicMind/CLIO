@@ -806,6 +806,46 @@ sub _handle_error_response_impl {
         log_info('ResponseHandler', "Flagged model as not supporting reasoning - will strip from future requests");
     }
 
+    # Handle Anthropic thinking-mode mismatch (self-describing error)
+    # The Anthropic API returns the correct mode directly in the error:
+    #
+    #   "thinking.type.enabled" is not supported for this model.
+    #   Use "thinking.type.adaptive" and "output_config.effort" to
+    #   control thinking behavior.
+    #
+    # This is more useful than the generic "not supported" branch above
+    # because the API tells us the EXACT correct mode to use. We extract
+    # it and stash it on the handler so the caller's retry loop can
+    # rebuild the request with the right mode AND persist the correction
+    # to the capability cache (via MCM.set_reasoning_mode) so every
+    # subsequent request for this model gets it right the first time.
+    #
+    # Naming-convention agnostic: works for any current or
+    # future Anthropic model because we never look at the model name.
+    elsif ($status == 400 && $error =~ /thinking\.type\.(\w+).*?Use\s+["']?\s*thinking\.type\.(\w+)/is) {
+        my ($rejected, $correct) = ($1, $2);
+        $correct = lc($correct);
+        # Only accept known modes - defensive against API changes
+        if ($correct =~ /^(?:adaptive|enabled)$/) {
+            $is_retryable_error = 1;
+            $retryable = 1;
+            $retry_after = 0;
+            $error_type = 'unsupported_param';
+
+            # Stash the correct mode so APIManager can retry with it
+            # and persist the learning to MCM cache.
+            $self->{_correct_reasoning_mode} = $correct;
+
+            $retry_info = "Anthropic rejected thinking.type=$rejected, retrying with $correct (self-correcting).";
+            $error = $retry_info;
+            log_info('ResponseHandler', "Anthropic self-describing mode mismatch: rejected=$rejected correct=$correct - will retry and persist to MCM cache");
+        }
+        else {
+            # Pattern matched but mode is unknown - fall through to generic 400 handling
+            log_warning('ResponseHandler', "Anthropic mode-mismatch error matched pattern but extracted mode '$correct' is not adaptive/enabled - falling through");
+        }
+    }
+
     # Handle temperature incompatible with thinking (Anthropic 400)
     # When extended thinking is enabled, Anthropic requires temperature=1 and
     # forbids top_k. This should be handled in Anthropic.pm's build_request,

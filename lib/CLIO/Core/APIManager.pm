@@ -4733,6 +4733,10 @@ sub _send_native_streaming {
     my $on_tool_call = $opts{on_tool_call};
     my $on_thinking = $opts{on_thinking};
 
+    # Hoist thinking_effort to outer scope so the self-correcting retry
+    # block (inside the 400 error handler, ~150 lines below) can use it.
+    my $effort = $self->{config} ? ($self->{config}->get('thinking_effort') // 'medium') : 'medium';
+
     # Build thinking config for providers that support it. The harness
     # knows the user's preference (show_thinking, thinking_effort) and the
     # endpoint config (which provider we're talking to). The provider's
@@ -4743,7 +4747,6 @@ sub _send_native_streaming {
         # by this model, don't send thinking params again.
         my $reasoning_blocked = $self->{response_handler} && $self->{response_handler}{_no_reasoning};
         my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
-        my $effort = $self->{config} ? ($self->{config}->get('thinking_effort') // 'medium') : 'medium';
         my $provider_supports = $self->_model_supports_reasoning($opts{model} // $self->{model});
         if ($reasoning_blocked) {
             # Model rejected reasoning params on a previous request - disable
@@ -4960,6 +4963,184 @@ sub _send_native_streaming {
             }
             # Use the full error message for better diagnostics
             $result->{error} = $err_msg || "HTTP 400";
+
+            # Check if ResponseHandler detected a self-describing
+            # mode-mismatch error and stashed the correct mode. If so,
+            # this is NOT a hard failure - we can retry immediately with
+            # the corrected mode AND persist the learning so future
+            # requests for this model get it right the first time.
+            #
+            # The API itself tells us the right mode in its error
+            # message (e.g. "Use thinking.type.adaptive"). This is
+            # naming-convention agnostic: works for any current or
+            # future Anthropic model - we never look at the name,
+            if ($self->{response_handler} && $self->{response_handler}{_correct_reasoning_mode}) {
+                my $correct_mode = delete $self->{response_handler}{_correct_reasoning_mode};
+                my $full_model = $opts{model} // $self->{model} // $self->get_current_model();
+                my ($provider_name, $api_model) = $self->_parse_model_provider($full_model);
+                $provider_name //= ($self->{config} ? ($self->{config}->get('provider') || '') : '');
+
+                # Persist the learning to MCM cache so subsequent
+                # requests don't have to repeat the failed round-trip.
+                # This is the "self-correcting" part - once learned,
+                # always learned (until cache TTL expires).
+                if ($provider_name && $api_model) {
+                    eval {
+                        require CLIO::Core::ModelCapabilitiesManager;
+                        my $mcm = CLIO::Core::ModelCapabilitiesManager->new(debug => $self->{debug});
+                        $mcm->set_reasoning_mode($provider_name, $api_model, $correct_mode);
+                    };
+                    if ($@) {
+                        log_warning('APIManager', "Failed to persist learned reasoning_mode: $@");
+                    }
+                }
+
+                # Also clear APIManager's per-request capability cache
+                # for this model so the next lookup re-reads from MCM
+                # and gets the corrected mode immediately.
+                delete $self->{_model_capabilities_cache}{$full_model};
+
+                log_info('APIManager', "Self-correcting retry with reasoning_mode=$correct_mode for $full_model");
+
+                # Rebuild the request with the corrected mode.
+                my $thinking_opt_corrected = {
+                    enabled => 1,
+                    effort  => $effort,
+                    mode    => $correct_mode,
+                };
+                my %build_opts_retry = (
+                    model      => $full_model,
+                    max_tokens => $opts{max_tokens} // $self->_get_max_output_tokens($full_model),
+                    thinking   => $thinking_opt_corrected,
+                );
+                $build_opts_retry{temperature} = $opts{temperature} if defined $opts{temperature};
+                my $request_retry = $provider->build_request($messages, $tools, \%build_opts_retry);
+
+                # Track second attempt metrics
+                my $retry_start_time = time();
+                my $retry_first_token_time;
+                my $retry_accumulated_content = '';
+                my @retry_tool_calls;
+                my $retry_current_tool_call;
+                my $retry_token_count = 0;
+                my $retry_buffer = '';
+                my %retry_usage_tracking = (input_tokens => 0, output_tokens => 0);
+
+                my $retry_response;
+                eval {
+                    $retry_response = $ua->_request_via_curl_streaming(
+                        $request_retry->{method},
+                        $request_retry->{url},
+                        $request_retry->{headers},
+                        $request_retry->{body},
+                        sub {
+                            my ($chunk, $resp, $proto) = @_;
+
+                            $retry_buffer .= $chunk;
+                            $retry_buffer =~ s/\r\n/\n/g;
+
+                            while ($retry_buffer =~ s/^(.*?)\n//s) {
+                                my $event = $provider->parse_stream_event($1);
+                                next unless $event;
+
+                                my $type = $event->{type};
+                                if ($type eq 'text') {
+                                    $retry_first_token_time //= time();
+                                    $retry_token_count++;
+                                    $retry_accumulated_content .= $event->{content};
+                                    $on_chunk->($event->{content}) if $on_chunk;
+                                }
+                                elsif ($type =~ /^thinking/) {
+                                    if ($on_thinking) {
+                                        $type eq 'thinking'         ? $on_thinking->($event->{content})
+                                      : $type eq 'thinking_start'   ? $on_thinking->(undef, 'start')
+                                      : $type eq 'thinking_end'     ? $on_thinking->(undef, 'end')
+                                      : $type eq 'thinking_redacted' ? $on_thinking->(undef, 'redacted')
+                                      :                               $on_thinking->(undef, 'end');
+                                    }
+                                }
+                                elsif ($type eq 'tool_start') {
+                                    $retry_current_tool_call = { id => $event->{id}, type => 'function',
+                                        function => { name => $event->{name}, arguments => '' } };
+                                }
+                                elsif ($type eq 'tool_args' && $retry_current_tool_call) {
+                                    $retry_current_tool_call->{function}{arguments} .= $event->{content};
+                                }
+                                elsif ($type eq 'tool_end') {
+                                    if (!$retry_current_tool_call && $event->{name}) {
+                                        $retry_current_tool_call = { id => $event->{id}, type => 'function',
+                                            function => { name => $event->{name}, arguments => '' } };
+                                    }
+                                    if ($retry_current_tool_call) {
+                                        $retry_current_tool_call->{function}{arguments} = encode_json($event->{arguments})
+                                            if $event->{arguments};
+                                        push @retry_tool_calls, $retry_current_tool_call;
+                                        $on_tool_call->($retry_current_tool_call->{function}{name}) if $on_tool_call;
+                                        $retry_current_tool_call = undef;
+                                    }
+                                }
+                                elsif ($type eq 'error') {
+                                    croak "API Error: $event->{message}";
+                                }
+                                elsif ($type eq 'usage') {
+                                    $retry_usage_tracking{input_tokens} += ($event->{input_tokens} // 0);
+                                    $retry_usage_tracking{output_tokens} += ($event->{output_tokens} // 0);
+                                }
+                            }
+                        });
+                };
+
+                if ($@) {
+                    log_error('APIManager', "Self-correcting retry failed: $@");
+                    return { success => 0, error => "Self-correcting retry failed: $@", retryable => 0 };
+                }
+
+                if (!$retry_response->is_success) {
+                    my $retry_status = $retry_response->code;
+                    my $retry_error_body = $retry_response->decoded_content // '';
+                    log_error('APIManager', "Self-correcting retry still failed: HTTP $retry_status: $retry_error_body");
+                    # Surface the original 400 error so the user knows
+                    # what happened, plus a note about the retry.
+                    return {
+                        success => 0,
+                        error => "$result->{error} (self-correcting retry with mode=$correct_mode also failed: HTTP $retry_status)",
+                        retryable => ($retry_status == 429 || $retry_status >= 500),
+                    };
+                }
+
+                # Retry succeeded - emit results as if the original request
+                # worked, with usage/metrics tracked from the retry.
+                my $retry_duration = time() - $retry_start_time;
+                my $retry_result = {
+                    success => 1,
+                    content => $retry_accumulated_content,
+                    metrics => {
+                        ttft => ($retry_first_token_time ? $retry_first_token_time - $retry_start_time : $retry_duration),
+                        tps => ($retry_duration > 0 ? $retry_token_count / $retry_duration : 0),
+                        tokens => $retry_token_count,
+                        duration => $retry_duration,
+                    },
+                    usage => {
+                        prompt_tokens => $retry_usage_tracking{input_tokens} || 0,
+                        completion_tokens => $retry_usage_tracking{output_tokens} || $retry_token_count,
+                        total_tokens => ($retry_usage_tracking{input_tokens} || 0) + ($retry_usage_tracking{output_tokens} || $retry_token_count),
+                    },
+                    finish_reason => (@retry_tool_calls ? 'tool_calls' : 'stop'),
+                    _self_corrected_mode => $correct_mode,  # marker for callers/debugging
+                };
+                $retry_result->{tool_calls} = \@retry_tool_calls if @retry_tool_calls;
+
+                # Capture thinking blocks from retry
+                if ($provider->can('get_thinking_blocks')) {
+                    my $blocks = $provider->get_thinking_blocks();
+                    if ($blocks && ref($blocks) eq 'ARRAY' && @$blocks) {
+                        $retry_result->{reasoning_blocks} = $blocks;
+                    }
+                    $provider->clear_thinking_blocks() if $provider->can('clear_thinking_blocks');
+                }
+
+                return $retry_result;
+            }
         }
 
         return $result;
