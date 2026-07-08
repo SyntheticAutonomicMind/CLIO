@@ -89,9 +89,9 @@ Arguments:
 
 sub new {
     my ($class, %args) = @_;
-    
+
     my $cache_file = get_config_file('model_capabilities_cache.json');
-    
+
     my $self = {
         debug      => $args{debug} || 0,
         cache_file => $args{cache_file} || $cache_file,
@@ -99,7 +99,7 @@ sub new {
         cache      => undef,  # Lazily loaded
         http       => undef,  # Lazily created
     };
-    
+
     bless $self, $class;
     return $self;
 }
@@ -119,13 +119,21 @@ Returns:
 
 sub get_capabilities {
     my ($self, $provider, $model) = @_;
-    
+
     return undef unless $provider && $model;
-    
+
     $self->_ensure_cache_loaded();
-    
-    # Check cache first
-    my $cache_key = "${provider}:${model}";
+
+    # Cache key includes the model's normalized form AND the current
+    # api_base for the provider. This means:
+    # - Same model with different casings/prefixes (e.g. "MiniMax-M3",
+    #   "minimax-m3", "minimax/MiniMax-M3") share a cache entry
+    # - /api set base changes produce a new cache key, so the old
+    #   entry is unreachable and expires after TTL. Without this, the
+    #   cached entry from the previous api_base would be served for
+    #   up to 1 hour, which is wrong when the user has switched proxies
+    #   or hosts.
+    my $cache_key = $self->_build_cache_key($provider, $model);
     if (my $cached = $self->_get_cached($cache_key)) {
         log_debug('ModelCapabilitiesManager', "Cache hit for $cache_key");
         return $cached;
@@ -227,21 +235,70 @@ Returns:
 
 sub refresh_capabilities {
     my ($self, $provider, $model) = @_;
-    
+
     return undef unless $provider && $model;
-    
+
     $self->_ensure_cache_loaded();
-    
-    my $cache_key = "${provider}:${model}";
+
+    # Same cache-key construction as get_capabilities so the refresh
+    # overwrites the right entry (not a sibling that the next read
+    # won't see).
+    my $cache_key = $self->_build_cache_key($provider, $model);
     my $capabilities = $self->_fetch_provider_capabilities($provider, $model);
-    
+
     if ($capabilities) {
         # Post-process: ensure reasoning_mode is populated
         $self->_ensure_reasoning_mode($capabilities, $provider, $model);
         $self->_set_cached($cache_key, $capabilities);
     }
-    
+
     return $capabilities;
+}
+
+=head2 _build_cache_key (Internal)
+
+Build the cache key for a (provider, model) pair. Includes the current
+api_base so changes to /api set base invalidate the cached entry
+implicitly (old key becomes unreachable, expires after TTL).
+
+The model is normalized (lowercased, org/ prefix stripped) so
+"MiniMax-M3", "minimax-m3", and "minimax/MiniMax-M3" share a single
+cache entry instead of creating three siblings.
+
+The api_base is included as-is (raw, untransformed). Different
+fetchers may transform it differently to derive their own URLs;
+what matters for cache keying is that the user's configured base
+changed, which means the data the fetcher gets back is potentially
+different.
+
+Arguments:
+- $provider: Provider name
+- $model:    Model identifier
+
+Returns: cache key string
+
+=cut
+
+sub _build_cache_key {
+    my ($self, $provider, $model) = @_;
+
+    # Normalize model: lowercase + strip a leading org/ segment.
+    my $normalized_model = lc($model);
+    $normalized_model =~ s{^[^/]+/}{};
+
+    # Read the user's configured api_base (if any) so a /api set base
+    # change produces a new key. The eval keeps the rest of the
+    # function working even if Config is unavailable (e.g. during
+    # a code path that constructs MCM before Config exists).
+    my $api_base = '';
+    eval {
+        require CLIO::Core::Config;
+        my $config = CLIO::Core::Config->new();
+        my $user_base = $config->get_provider_base($provider);
+        $api_base = $user_base if defined $user_base && length $user_base;
+    };
+
+    return "${provider}:${normalized_model}:${api_base}";
 }
 
 =head2 clear_cache
@@ -441,24 +498,76 @@ Returns:
 
 sub _fetch_github_copilot_capabilities {
     my ($self, $model) = @_;
-    
+
     my $caps;
     eval {
         require CLIO::Core::GitHubCopilotModelsAPI;
-        
+
         my $models_api = CLIO::Core::GitHubCopilotModelsAPI->new(
             debug => $self->{debug},
             cache_ttl => 0,  # Force refresh to get latest
         );
-        
+
         $caps = $models_api->get_model_capabilities($model);
     };
-    
+
     if ($@) {
         log_warning('ModelCapabilitiesManager', "Failed to fetch GitHub Copilot capabilities: $@");
+        return undef;
     }
-    
-    return $caps;
+
+    return undef unless $caps;
+
+    # Translate the GitHub Copilot-specific schema to the MCM standard
+    # schema. Copilot's get_model_capabilities returns its own field
+    # names (max_context_window_tokens, max_thinking_budget, etc.)
+    # that are useful for the copilot-specific code paths, but MCM
+    # consumers expect the standard fields (context_window,
+    # supports_reasoning, reasoning_mode, etc.).
+    #
+    # Without this translation:
+    # - supports_reasoning is undef, so _ensure_reasoning_mode below
+    #   returns early without setting a mode. The result: APIManager
+    #   sees reasoning_mode=undef and doesn't send reasoning_effort,
+    #   even when the model actually supports it. This was the
+    #   "thinking never sent for copilot models" bug.
+    # - context_window is missing, so /api models shows "-" for
+    #   context_window on copilot rows.
+    my $supports_adaptive = $caps->{supports_adaptive_thinking} ? 1 : 0;
+    # Note: GitHubCopilotModelsAPI's get_model_capabilities doesn't
+    # currently extract supports_enabled_thinking even when the API
+    # provides it. If/when that gets added upstream, this also picks
+    # it up automatically.
+    my $supports_enabled = $caps->{supports_enabled_thinking} ? 1 : 0;
+
+    return {
+        provider                => 'github_copilot',
+        model                   => $model,
+        context_window          => $caps->{max_context_window_tokens},
+        max_prompt_tokens       => $caps->{max_prompt_tokens},
+        max_output_tokens       => $caps->{max_output_tokens},
+        supports_tools          => $caps->{supports_tools},
+        supports_streaming      => $caps->{supports_streaming},
+        supports_vision         => $caps->{supports_vision},
+        # supports_reasoning drives _ensure_reasoning_mode below. If
+        # either adaptive or enabled thinking is supported, the model
+        # can do reasoning. The mode itself is filled in by
+        # _ensure_reasoning_mode from the supports_adaptive_thinking /
+        # supports_enabled_thinking fields.
+        supports_reasoning      => ($supports_adaptive || $supports_enabled) ? 1 : 0,
+        supports_adaptive_thinking => $supports_adaptive,
+        supports_enabled_thinking  => $supports_enabled,
+        embeddings_dimension    => undef,
+        architecture            => $caps->{family},
+        quantization            => undef,
+        parameters              => undef,
+        capabilities            => [],
+        size_bytes              => undef,
+        # Preserve the copilot-specific fields the rest of the code
+        # may use (max_thinking_budget, supported_endpoints, vendor,
+        # category, picker_enabled, preview, reasoning_effort).
+        raw                     => $caps,
+    };
 }
 
 =head2 _fetch_anthropic_capabilities
@@ -483,19 +592,38 @@ sub _fetch_anthropic_capabilities {
     #     capabilities: { thinking: { supported, types: { adaptive, enabled } },
     #                     effort: { supported, ... },
     #                     image_input: { supported }, ... } }
-    my $api_base = 'https://api.anthropic.com/v1/models';
-    
     # Get API key for Anthropic
-    my $api_key;
+    my ($api_key, $user_api_base);
     eval {
         require CLIO::Core::Config;
         my $config = CLIO::Core::Config->new();
         $api_key = $config->get_provider_key('anthropic');
+        # If the user has overridden the Anthropic api_base (e.g. to point at
+        # a proxy), derive the models URL from that override instead of
+        # hardcoding api.anthropic.com. Most Anthropic-compatible proxies
+        # preserve the /v1/models/{model_id} path; we strip a trailing
+        # /messages segment (the chat endpoint) and replace with /models.
+        $user_api_base = $config->get_provider_base('anthropic');
     };
-    
+
     return undef unless $api_key;
-    
+
     my $http = $self->get_http();
+    my $api_base;
+    if ($user_api_base) {
+        # User set /api set base for anthropic. The chat endpoint is
+        # /v1/messages; the models endpoint is /v1/models/{model_id}. Strip
+        # a trailing /messages (or /messages/) so the same override can
+        # supply both endpoints, then append /models.
+        my $base = $user_api_base;
+        $base =~ s{/+messages/?$}{};
+        $api_base = "${base}/models";
+        log_debug('ModelCapabilitiesManager', "Anthropic MCM using user api_base=$user_api_base (models URL=$api_base)");
+    }
+    else {
+        $api_base = 'https://api.anthropic.com/v1/models';
+    }
+
     my $url = "$api_base/$model";
     
     my $resp = $http->get($url, headers => {
@@ -573,21 +701,27 @@ Returns:
 
 sub _fetch_google_capabilities {
     my ($self, $model) = @_;
-    
-    my $api_base = 'https://generativelanguage.googleapis.com/v1beta';
-    
-    # Get API key for Google
-    my $api_key;
+
+    # Get API key and (optionally) a user-configured api_base for Google.
+    my ($api_key, $user_api_base);
     eval {
         require CLIO::Core::Config;
         my $config = CLIO::Core::Config->new();
         $api_key = $config->get_provider_key('google');
+        $user_api_base = $config->get_provider_base('google');
     };
-    
+
     return undef unless $api_key;
-    
+
     my $http = $self->get_http();
+    # If the user has overridden the Google api_base (e.g. to point at a
+    # Vertex AI proxy), honor that override. Strip a trailing slash and
+    # append /models (Google's models endpoint is /v1beta/models for the
+    # default public API; the proxy is expected to follow the same shape).
+    my $api_base = $user_api_base ? $user_api_base : 'https://generativelanguage.googleapis.com/v1beta';
+    $api_base =~ s{/+$}{};
     my $models_url = "$api_base/models?key=$api_key";
+    log_debug('ModelCapabilitiesManager', "Google MCM using models_url=$models_url") if $user_api_base;
     
     my $resp = $http->get($models_url, headers => { 'Accept' => 'application/json' });
     
@@ -605,20 +739,18 @@ sub _fetch_google_capabilities {
         return undef;
     }
     
-    # Find the specific model
-    for my $m (@{$data->{models} || []}) {
-        my $model_id = $m->{name};
-        $model_id =~ s{^models/}{};
-        
-        next unless $model_id eq $model;
-        
+    # Find the specific model. Use _find_model_in_list so case-insensitive
+    # and prefix-stripped matches work (server returns "models/gemini-2.5-flash",
+    # caller may pass "gemini-2.5-flash" or "google/gemini-2.5-flash").
+    my $m = $self->_find_model_in_list($data->{models} || [], $model, 'name');
+    if ($m) {
         my @methods = @{$m->{supportedGenerationMethods} || []};
         my $supports_tools = grep { $_ eq 'generateContent' } @methods;
-        
+
         # Get token limits from model info
         my $output_tokens = $m->{outputTokenLimit} || undef;
         my $context_window = $m->{contextWindow} || $m->{maxPosition_embeddings} || undef;
-        
+
         return {
             provider              => 'google',
             model                 => $model,
@@ -638,7 +770,7 @@ sub _fetch_google_capabilities {
             raw                  => $m,
         };
     }
-    
+
     return undef;
 }
 
@@ -1404,6 +1536,64 @@ sub _nvidia_model_heuristics {
     return undef;
 }
 
+=head2 _find_model_in_list (Internal)
+
+Locate a model entry in a list of model hashes returned by an external
+API (e.g. /v1/models). Returns the matching hashref or undef.
+
+The match handles the same normalization cases as _lookup_static_model:
+exact, prefix-stripped, and case-insensitive. Server-returned model IDs
+may be canonical mixed-case ("MiniMax-M3") or include an org prefix
+("minimax/MiniMax-M3"); the caller's model may be lowercase without
+prefix ("minimax-m3"). Any of these combinations should hit.
+
+Arguments:
+    $models   - Arrayref of model hashrefs (each must have an 'id' key,
+                or a 'name' key for Google-style responses).
+    $model    - Model identifier the caller is looking up.
+    $id_field - Hash key to read from each model entry ('id' for
+                OpenAI-compatible, 'name' for Google).
+
+Returns: Matching model hashref, or undef if not found.
+
+=cut
+
+sub _find_model_in_list {
+    my ($self, $models, $model, $id_field) = @_;
+    $id_field //= 'id';
+
+    return undef unless $models && ref($models) eq 'ARRAY' && $model;
+
+    # First pass: exact match (after stripping Google-style "models/" prefix
+    # from the server's name field if applicable). Fast path, no normalization.
+    for my $m (@$models) {
+        my $id = $m->{$id_field};
+        next unless defined $id;
+        $id =~ s{^models/}{} if $id_field eq 'name';
+        return $m if $id eq $model;
+    }
+
+    # Second pass: case-insensitive match with optional org/ prefix strip.
+    # Try the model as-is first, then with a leading org/ segment stripped
+    # in case the server returned "minimax/MiniMax-M3" but the caller passed
+    # "minimax-m3" (or vice versa). Both sides are stripped so either
+    # direction works.
+    for my $strip_prefix ('', 1) {
+        my $lc_target = $strip_prefix
+            ? lc((split m{/}, $model, 2)[1] // $model)
+            : lc($model);
+        for my $m (@$models) {
+            my $id = $m->{$id_field};
+            next unless defined $id;
+            $id =~ s{^models/}{} if $id_field eq 'name';
+            $id =~ s{^[^/]+/}{} if $strip_prefix;
+            return $m if lc($id) eq $lc_target;
+        }
+    }
+
+    return undef;
+}
+
 =head2 _lookup_static_model (Internal)
 
 Case-insensitive lookup against a static capability map.
@@ -1602,6 +1792,7 @@ sub _fetch_minimax_capabilities {
             supports_streaming => 1,
             supports_vision => 1,
             supports_reasoning => 1,
+            supports_adaptive_thinking => 1,  # M3 uses adaptive thinking
         },
         'MiniMax-M2.7' => {
             context_window => 204800,
@@ -1610,6 +1801,7 @@ sub _fetch_minimax_capabilities {
             supports_streaming => 1,
             supports_vision => 0,
             supports_reasoning => 1,
+            supports_enabled_thinking => 1,   # M2.x uses enabled thinking
         },
         'MiniMax-M2.7-highspeed' => {
             context_window => 204800,
@@ -1618,6 +1810,7 @@ sub _fetch_minimax_capabilities {
             supports_streaming => 1,
             supports_vision => 0,
             supports_reasoning => 1,
+            supports_enabled_thinking => 1,
         },
         'MiniMax-M2.5' => {
             context_window => 204800,
@@ -1626,6 +1819,7 @@ sub _fetch_minimax_capabilities {
             supports_streaming => 1,
             supports_vision => 0,
             supports_reasoning => 1,
+            supports_enabled_thinking => 1,
         },
         'MiniMax-M2.5-highspeed' => {
             context_window => 204800,
@@ -1634,6 +1828,7 @@ sub _fetch_minimax_capabilities {
             supports_streaming => 1,
             supports_vision => 0,
             supports_reasoning => 1,
+            supports_enabled_thinking => 1,
         },
         'MiniMax-M2.1' => {
             context_window => 204800,
@@ -1642,6 +1837,7 @@ sub _fetch_minimax_capabilities {
             supports_streaming => 1,
             supports_vision => 0,
             supports_reasoning => 1,
+            supports_enabled_thinking => 1,
         },
         'MiniMax-M2.1-highspeed' => {
             context_window => 204800,
@@ -1650,6 +1846,7 @@ sub _fetch_minimax_capabilities {
             supports_streaming => 1,
             supports_vision => 0,
             supports_reasoning => 1,
+            supports_enabled_thinking => 1,
         },
         'MiniMax-M2' => {
             context_window => 204800,
@@ -1658,6 +1855,7 @@ sub _fetch_minimax_capabilities {
             supports_streaming => 1,
             supports_vision => 0,
             supports_reasoning => 1,
+            supports_enabled_thinking => 1,
         },
     );
     
@@ -1756,15 +1954,37 @@ Returns:
 
 sub _fetch_openai_compatible_capabilities {
     my ($self, $provider, $model) = @_;
-    
+
     require CLIO::Providers;
     my $provider_def = CLIO::Providers::get_provider($provider);
     return undef unless $provider_def;
-    
-    my $api_base = $provider_def->{api_base};
+
+    # Read the user's configured api_base if any. Most local providers
+    # (llama.cpp, LM Studio, SAM) and most OpenAI-compatible providers
+    # have the user override api_base to point at a LAN IP, a non-default
+    # port, or a proxy. MCM must honor that override; otherwise the call
+    # goes to the provider's default host which the user is not actually
+    # using, and returns stale data or fails silently.
+    my $user_api_base;
+    eval {
+        require CLIO::Core::Config;
+        my $config = CLIO::Core::Config->new();
+        $user_api_base = $config->get_provider_base($provider);
+    };
+
+    # Use the user's override when present, otherwise fall back to the
+    # provider's default. Either way, derive the models URL correctly:
+    # most openai-compatible providers expose the chat endpoint at
+    # /v1/chat/completions and the models endpoint at /v1/models. The
+    # previous code appended /models to the full chat URL, producing
+    # an invalid path like /v1/chat/completions/models.
+    my $raw_api_base = $user_api_base || $provider_def->{api_base};
+    my $api_base = $raw_api_base;
     $api_base =~ s{/+$}{};
+    $api_base =~ s{/chat/completions/?$}{};
+    $api_base =~ s{/chat/?$}{};
     my $api_type = $provider;  # Local provider names (sam, lmstudio, llama.cpp) are valid api_types for /props gating
-    
+
     # Get API key
     my $api_key;
     eval {
@@ -1772,11 +1992,12 @@ sub _fetch_openai_compatible_capabilities {
         my $config = CLIO::Core::Config->new();
         $api_key = $config->get_provider_key($provider);
     };
-    
+
     return undef unless $api_key;
-    
+
     my $http = $self->get_http();
     my $models_url = "$api_base/models";
+    log_debug('ModelCapabilitiesManager', "OpenAI-compatible MCM ($provider) using models_url=$models_url") if $user_api_base;
     
     my $resp = $http->get($models_url, 
         headers => { 
@@ -1799,13 +2020,12 @@ sub _fetch_openai_compatible_capabilities {
         return undef;
     }
     
-    # Find the specific model
+    # Find the specific model. Use _find_model_in_list so case-insensitive
+    # and prefix-stripped matches work (server may return canonical mixed-case
+    # ids like "MiniMax-M3" while caller passes lowercase "minimax-m3").
     my $models = $data->{data} || $data->{models} || [];
-    for my $m (@$models) {
-        my $model_id = $m->{id};
-        
-        next unless $model_id eq $model;
-        
+    my $m = $self->_find_model_in_list($models, $model, 'id');
+    if ($m) {
         my $permuted_model = $m->{permuted_model} || undef;
         
         # Extract context window
@@ -1874,30 +2094,71 @@ sub _fetch_openai_compatible_capabilities {
 
 =head2 _ensure_reasoning_mode($capabilities, $provider, $model)
 
-Post-process capability hash to fill in reasoning_mode based on model heuristics
-when not already set. Called after fetching capabilities from any source.
+Post-process capability hash to fill in reasoning_mode when not already
+set. Called after fetching capabilities from any source.
+
+Resolution order (first match wins):
+1. Already-set value (returned untouched)
+2. Anthropic API data: supports_adaptive_thinking / supports_enabled_thinking
+   fields set by _fetch_anthropic_capabilities from /v1/models/{id}
+3. Static map data: reasoning_mode field set directly in the map
+4. Provider+model name heuristic (fallback for proxies that strip
+   capabilities from /v1/models, or for static maps that predate the
+   reasoning_mode field)
 
 =cut
 
 sub _ensure_reasoning_mode {
     my ($self, $capabilities, $provider, $model) = @_;
-    
+
     # Already set - keep it
     return if exists $capabilities->{reasoning_mode};
-    
+
     # Not a reasoning model - nothing to set
     return unless $capabilities->{supports_reasoning};
-    
-    # Determine reasoning_mode from model name + provider heuristics
-    # This fills the gap for static maps that only have supports_reasoning boolean.
-    
+
+    # Data-driven path 1: Anthropic /v1/models response explicitly tells
+    # us which thinking types are supported. Prefer adaptive (newer
+    # API) over enabled (older API) when both are available. This is
+    # the only authoritative source for the exact Anthropic model
+    # behavior, since the heuristic below cannot enumerate every
+    # future minor version.
+    if ($capabilities->{supports_adaptive_thinking}) {
+        $capabilities->{reasoning_mode} = 'adaptive';
+        return;
+    }
+    if ($capabilities->{supports_enabled_thinking}) {
+        $capabilities->{reasoning_mode} = 'enabled';
+        return;
+    }
+
+    # Data-driven path 2: static maps may set reasoning_mode directly.
+    # (This branch is for future use; current maps only set
+    # supports_reasoning. Kept here so static maps have an explicit
+    # way to override the heuristic when needed.)
+
+    # Heuristic fallback: derive mode from provider + model name.
+    # This is fragile for Anthropic model names (Anthropic uses several
+    # naming conventions: "claude-sonnet-4-20250514", "claude-sonnet-4-6",
+    # "claude-sonnet-4-5-20250929", etc.) - the regex below catches the
+    # common cases but cannot enumerate every future model. If you add
+    # a new Anthropic model, prefer adding the data-driven fields above
+    # to relying on this heuristic.
     my $mode;
-    
-    # Anthropic provider: 4.6+ models use adaptive, older use enabled
+
+    # Anthropic provider: 4.6+ models use adaptive, older use enabled.
+    # The regex matches "claude-{family}-4-{minor}" where {minor} is 6-9
+    # (single digit) or 2-3 digits. The (?!\d{8}) negative lookahead
+    # blocks the YYYYMMDD date-suffix case (e.g. "claude-sonnet-4-20250514"
+    # must not classify as 4.{20250514} adaptive). With the lookahead,
+    # "-sonnet-4-20250514" requires minor "20250514" but the lookahead
+    # sees 8 digits ahead, so it does not match.
     if ($provider =~ /^anthropic$/i) {
-        if ($model =~ /-(?:opus|sonnet|haiku)-4-(?:[6-9]|\d{2,})$/i || $model =~ /^claude-mythos/i) {
+        if ($model =~ /-(?:opus|sonnet|haiku)-4-(?!\d{8})(?:[6-9](?:-|$)|\d{2,3}(?:-|$))/i
+            || $model =~ /^claude-mythos/i) {
             $mode = 'adaptive';
-        } else {
+        }
+        else {
             $mode = 'enabled';
         }
     }
@@ -1905,11 +2166,15 @@ sub _ensure_reasoning_mode {
     elsif ($provider =~ /^google/i) {
         $mode = 'enabled';
     }
-    # MiniMax: M3 uses adaptive, M2 uses enabled
+    # MiniMax: M3 uses adaptive, M2.x uses enabled. Specific model
+    # names (M3+, future M4 etc.) should ideally set
+    # supports_adaptive_thinking or reasoning_mode directly in the
+    # static map rather than relying on this fallback.
     elsif ($provider =~ /^minimax/i) {
-        if ($model =~ /MiniMax-M3/i) {
+        if ($model =~ /-?M3(\b|-)/i || $model =~ /M3(?:\.|$)/i) {
             $mode = 'adaptive';
-        } else {
+        }
+        else {
             $mode = 'enabled';
         }
     }
@@ -1921,7 +2186,7 @@ sub _ensure_reasoning_mode {
     else {
         $mode = 'effort';
     }
-    
+
     $capabilities->{reasoning_mode} = $mode if $mode;
 }
 
@@ -1971,34 +2236,96 @@ localhost, a LAN hostname, or an IP address - the function does not filter by UR
 sub _query_llama_props {
     my ($self, $api_base) = @_;
 
-    # Derive the /props URL from the api_base. Works for any host (LAN, public,
-    # localhost) - the caller decides whether to invoke us.
-    # e.g. http://max:9090/v1/chat/completions -> http://max:9090/props
-    my $props_url = $api_base;
-    $props_url =~ s{/+$}{};       # strip trailing slashes
-    $props_url =~ s{/v1(/.*)?$}{};  # strip /v1 and anything after it
-    $props_url .= '/props';
-    
+    # Derive the /props URL from the api_base.
+    #
+    # The /props endpoint is mounted at the server root, so the correct
+    # URL is the api_base's origin (protocol + host + port) + /props,
+    # regardless of what path the chat endpoint is at.
+    #
+    # Real-world inputs this function receives (after the openai-compatible
+    # fetcher normalizes the api_base):
+    #   http://localhost:8080/v1/chat/completions  (default llama.cpp)
+    #   http://localhost:1234/v1/chat/completions  (LM Studio default)
+    #   http://max.local:9090/v1/chat/completions  (LAN host)
+    #   http://192.168.1.50:8080/v1/chat/completions (LAN IP)
+    #   http://[::1]:8080/v1/chat/completions      (IPv6 localhost)
+    #   https://my-proxy.example.com/v1/chat/completions (proxy)
+    #
+    # All of these should map to <origin>/props.
+    #
+    # The old regex `s{/v1(/.*)?$}{}` only stripped /v1 paths. It missed:
+    #   - /api/chat/completions (SAM's path on some forks)
+    #   - /v2/chat/completions (hypothetical future API version)
+    #   - Bare hosts (no path at all, e.g. "https://api.githubcopilot.com")
+    # For the bare-host case the old regex left the trailing "com" alone
+    # but didn't prepend a slash, producing "https://api.githubcopilot.comprops".
+    #
+    # The new parser extracts just the origin. Subpath-mounted servers
+    # (e.g. "http://server.com/llama/v1/chat/completions" where the
+    # whole llama.cpp server is mounted under /llama/) are not handled
+    # here - the /props endpoint would be at /llama/props not /props.
+    # This is documented as a known limitation. If you mount llama.cpp
+    # under a subpath, the function will try /props at the root and
+    # silently return undef; the caller falls back to max_context_tokens.
+
+    my $origin = $self->_origin_from_url($api_base);
+    return undef unless $origin;
+    my $props_url = "${origin}/props";
+
     my $ua = $self->get_http();
     my $resp = eval { $ua->get($props_url) };
     if ($@ || !$resp || !$resp->{success}) {
         log_debug('ModelCapabilitiesManager', "llama.cpp /props not available at $props_url");
         return undef;
     }
-    
+
     my $data = safe_decode_json($resp->{content});
     if ($@) {
         log_debug('ModelCapabilitiesManager', "llama.cpp /props parse error: $@");
         return undef;
     }
-    
+
     # /props exposes: default_generation_settings.n_ctx (actual runtime context window)
     # This reflects the --ctx-size / -c value passed at server startup, not the model's
     # training context (n_ctx_train) which is what /v1/models exposes.
     my $n_ctx = $data->{default_generation_settings}{n_ctx}
              || $data->{n_ctx};   # some older versions may expose it at top level
-    
+
     return $n_ctx if $n_ctx && $n_ctx > 0;
+    return undef;
+}
+
+=head2 _origin_from_url (Internal)
+
+Extract just the origin (protocol + host + port) from a URL, dropping
+the path and any query string or fragment.
+
+Handles the URL shapes that appear in CLIO's provider configurations:
+- IPv4 host: http://192.168.1.50:8080/v1 -> http://192.168.1.50:8080
+- IPv6 host: http://[::1]:8080/v1        -> http://[::1]:8080
+- Hostname:  http://max.local:9090/v1     -> http://max.local:9090
+- Bare host: https://api.example.com      -> https://api.example.com
+- userinfo:  http://user:pass@host:8080/  -> http://user:pass@host:8080
+
+Returns the origin string, or undef if the input isn't a recognizable URL.
+
+=cut
+
+sub _origin_from_url {
+    my ($self, $url) = @_;
+    return undef unless defined $url && length $url;
+
+    # Match scheme://[userinfo@]host[:port] where host may be a name,
+    # IPv4 address, or bracketed IPv6 address. We intentionally stop at
+    # the first '/' (start of path), '?' (start of query), or '#' (start
+    # of fragment).
+    if ($url =~ m{^([a-z][a-z0-9+.\-]*://[^/?#]+)}i) {
+        return $1;
+    }
+
+    # No scheme we recognized. /props URL derivation requires a URL
+    # with a scheme, so return undef. The caller will log a debug
+    # line and fall back to the next source of context_window.
     return undef;
 }
 

@@ -14,6 +14,10 @@ use File::Spec;
 use POSIX qw(strftime);
 use Time::HiRes qw(time);
 use CLIO::Core::Logger qw(log_debug log_error);
+# File::Basename::basename is called inside sub filter() to strip directory
+# prefixes from log file paths. Load it explicitly so the call doesn't
+# depend on File::Basename being pulled in transitively by some other module.
+use File::Basename qw(basename);
 
 =head1 NAME
 

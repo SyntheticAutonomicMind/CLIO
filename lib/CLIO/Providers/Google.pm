@@ -7,6 +7,10 @@ use strict;
 use warnings;
 use utf8;
 use parent 'CLIO::Providers::Base';
+# JSON::PP::true is the JSON boolean constant; CLIO::Util::JSON::encode_json
+# serializes it as JSON `true`. Load JSON::PP without importing so we don't
+# collide with CLIO::Util::JSON's encode_json prototype.
+use JSON::PP ();
 use CLIO::Util::JSON qw(encode_json decode_json);
 
 =head1 NAME

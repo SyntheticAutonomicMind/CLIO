@@ -235,16 +235,19 @@ sub get_model_billing {
     
     require CLIO::Core::Defaults;
 
-    # Find model by ID
+    # Find model by ID. Match is case-insensitive so user input like
+    # "gpt-4.1" finds server-side "gpt-4.1" (same case) AND any future
+    # variant where the server uses different casing. The model's
+    # actual id (e.g. "gpt-4.1") is returned to the caller via $model.
     for my $model (@{$models_data->{data}}) {
-        if ($model->{id} eq $model_id) {
+        if (defined $model->{id} && lc($model->{id}) eq lc($model_id)) {
             my $category = $model->{model_picker_category};
             my $vendor = $model->{vendor};
-            
+
             if ($model->{billing}) {
                 log_debug('GitHubCopilotModelsAPI', "Found billing for $model_id: " . "premium=" . ($model->{billing}{is_premium} || 0) . ", " .
                     "multiplier=" . ($model->{billing}{multiplier} || 0) . ", category=" . ($category || 'none') . ", vendor=" . ($vendor || 'none'));
-                
+
                 return {
                     is_premium => $model->{billing}{is_premium} || 0,
                     multiplier => $model->{billing}{multiplier} || 0,
@@ -255,7 +258,7 @@ sub get_model_billing {
                 # Model exists but API doesn't provide billing info
                 # Use model_picker_category as fallback (June 2026+ usage-based billing)
                 log_debug('GitHubCopilotModelsAPI', "Model $model_id has no billing data, using category=" . ($category || 'none'));
-                
+
                 return {
                     is_premium => 0,
                     multiplier => 0,
@@ -265,14 +268,12 @@ sub get_model_billing {
             }
         }
     }
-    
+
     # Model not found in API response
     log_warning('GitHubCopilotModelsAPI', "Model $model_id not found in API response");
-    
+
     return {is_premium => 0, multiplier => 0, category => undef, vendor => undef};
 }
-
-=head2 _get_hardcoded_multiplier
 
 =head2 get_all_models
 
@@ -344,9 +345,13 @@ sub get_model_capabilities {
     
     require CLIO::Core::Defaults;
 
-    # Find model by ID
+    # Find model by ID. Case-insensitive match (same as get_model_billing
+    # and the MCM case-insensitive lookup fix) so user input like
+    # "Gpt-4.1" finds server-side "gpt-4.1" without a strict case
+    # match requirement. The actual server-side id is preserved in
+    # the returned $caps as needed by the caller.
     for my $model (@{$models_data->{data}}) {
-        if ($model->{id} eq $model_id) {
+        if (defined $model->{id} && lc($model->{id}) eq lc($model_id)) {
             my $caps = {
                 family => $model->{capabilities}{family} || undef,
                 # Include supported_endpoints from the API response
@@ -369,6 +374,7 @@ sub get_model_capabilities {
                 $caps->{supports_streaming} = $supports->{streaming} ? 1 : 0;
                 $caps->{supports_vision} = $supports->{vision} ? 1 : 0;
                 $caps->{supports_adaptive_thinking} = $supports->{adaptive_thinking} ? 1 : 0;
+                $caps->{supports_enabled_thinking} = $supports->{enabled_thinking} ? 1 : 0;
                 $caps->{supports_parallel_tool_calls} = $supports->{parallel_tool_calls} ? 1 : 0;
                 $caps->{supports_structured_outputs} = $supports->{structured_outputs} ? 1 : 0;
                 $caps->{max_thinking_budget} = $supports->{max_thinking_budget};
@@ -504,7 +510,7 @@ Arguments:
 
 sub _save_cache {
     my ($self, $data) = @_;
-    
+
     # Create cache directory if needed
     my $cache_dir = dirname($self->{cache_file});
     unless (-d $cache_dir) {
@@ -513,15 +519,27 @@ sub _save_cache {
             return;
         };
     }
-    
-    open my $fh, '>', $self->{cache_file} or do {
-        log_warning('GitHubCopilotModelsAPI', "Cannot save cache: $!");
+
+    # Atomic write: write to .tmp file first, then rename. This
+    # prevents corruption if the process is killed mid-write - the
+    # rename is atomic on POSIX systems so the cache file is either
+    # the old valid data or the new valid data, never a partial
+    # write. The MCM cache uses the same pattern (see
+    # ModelCapabilitiesManager::_save_cache).
+    my $temp_file = $self->{cache_file} . '.tmp';
+    open my $fh, '>', $temp_file or do {
+        log_warning('GitHubCopilotModelsAPI', "Cannot write cache temp file: $!");
         return;
     };
-    
     print $fh encode_json($data);
     close $fh;
-    
+
+    if (!rename($temp_file, $self->{cache_file})) {
+        log_warning('GitHubCopilotModelsAPI', "Cannot rename cache: $!");
+        unlink $temp_file;  # Clean up temp file
+        return;
+    }
+
     log_debug('GitHubCopilotModelsAPI', "Saved models cache to $self->{cache_file}");
 }
 

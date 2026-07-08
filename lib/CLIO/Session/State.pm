@@ -43,6 +43,11 @@ use Fcntl qw(:flock);
 use CLIO::Util::AtomicWrite qw(atomic_write);
 use Cwd qw(getcwd abs_path);
 use POSIX qw(strftime);
+# File::Basename::dirname is called inside sub save() to derive the session
+# directory from the session file path. Load it explicitly so the call
+# doesn't depend on File::Basename being pulled in transitively by some
+# other module CLIO happens to load first.
+use File::Basename qw(dirname);
 use CLIO::Memory::ShortTerm;
 use CLIO::Memory::LongTerm;
 use CLIO::Memory::YaRN;

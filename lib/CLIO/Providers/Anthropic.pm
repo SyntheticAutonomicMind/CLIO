@@ -9,7 +9,11 @@ use utf8;
 use parent 'CLIO::Providers::Base';
 use CLIO::Util::JSON qw(encode_json decode_json);
 use CLIO::Core::Logger qw(log_debug log_warning);
-use JSON::PP;
+# JSON::PP is loaded for the boolean constant (JSON::PP::true) which
+# CLIO::Util::JSON::encode_json serializes as JSON `true` (a plain Perl
+# 1 is serialized as `1`, not `true`). Use the empty import list to avoid
+# a prototype-mismatch conflict with CLIO::Util::JSON's encode_json.
+use JSON::PP ();
 
 =head1 NAME
 
@@ -490,10 +494,15 @@ sub parse_stream_event {
             };
         }
         elsif ($delta_type eq 'thinking_delta') {
-            # Extended thinking content
+            # Extended thinking content. The Anthropic native API uses
+            # delta.thinking, but some proxies/variants emit delta.text
+            # or delta.reasoning_content for the same event. Check all
+            # three so we render thinking content from compatible proxies
+            # that diverge from the upstream field name.
+            my $thinking_text = $delta->{thinking} // $delta->{text} // $delta->{reasoning_content} // '';
             return {
                 type => 'thinking',
-                content => $delta->{thinking} // '',
+                content => $thinking_text,
             };
         }
         elsif ($delta_type eq 'signature_delta') {
