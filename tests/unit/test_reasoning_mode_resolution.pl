@@ -280,4 +280,133 @@ sub _run {
         'MiniMax M2.7 end-to-end reasoning_mode is enabled');
 }
 
+
+# ========================================================================
+# Anthropic 5-series and proxy aliases
+# ========================================================================
+# Regression: commit f9159c0 introduced the LIST endpoint fallback, which
+# routes models from Anthropic-compatible proxies (Azure Foundry, custom
+# deployments) through the heuristic in _ensure_reasoning_mode for the
+# first time. The previous regex only recognized 4.6+ generations
+# (-sonnet-4-6, -opus-4-7) and a hardcoded mythos prefix. It did not
+# recognize:
+#
+# 1. The new bare -5 generation (Sonnet 5, Opus 5, Haiku 5, Fable 5,
+#    Mythos 5) - all of which are adaptive per Anthropic's API docs.
+# 2. Proxy aliases that don't start with "claude-" (e.g.
+#    "Proxy-Sonnet-5", "Proxy-Opus-4-8"). The heuristic was
+#    hardcoded for "claude-" prefixed names; proxy deployment names
+#    broke it.
+#
+# Result: Proxy-Sonnet-5 was being misclassified as 'enabled' mode
+# and CLIO was sending {"thinking": {"type": "enabled", ...}} which
+# Anthropic's API (and any modern proxy) rejects with HTTP 400
+# "thinking.type.enabled is not supported for this model".
+#
+# The fix extends the regex to match the {family}-5 suffix (anywhere
+# in the name) and adds "fable" to the family list.
+
+# Test 20: Anthropic Sonnet 5 bare -> adaptive
+{
+    my $caps = _run(
+        provider => 'anthropic',
+        model    => 'claude-sonnet-5',
+        caps     => { supports_reasoning => 1 },
+    );
+    is($caps->{reasoning_mode}, 'adaptive',
+        'Anthropic Sonnet 5 -> adaptive (5-series is adaptive-only)');
+}
+
+# Test 21: Anthropic Opus 5 bare -> adaptive
+{
+    my $caps = _run(
+        provider => 'anthropic',
+        model    => 'claude-opus-5',
+        caps     => { supports_reasoning => 1 },
+    );
+    is($caps->{reasoning_mode}, 'adaptive',
+        'Anthropic Opus 5 -> adaptive');
+}
+
+# Test 22: Anthropic Haiku 5 bare -> adaptive
+{
+    my $caps = _run(
+        provider => 'anthropic',
+        model    => 'claude-haiku-5',
+        caps     => { supports_reasoning => 1 },
+    );
+    is($caps->{reasoning_mode}, 'adaptive',
+        'Anthropic Haiku 5 -> adaptive');
+}
+
+# Test 23: Anthropic Fable 5 bare -> adaptive (always-on adaptive per docs)
+{
+    my $caps = _run(
+        provider => 'anthropic',
+        model    => 'claude-fable-5',
+        caps     => { supports_reasoning => 1 },
+    );
+    is($caps->{reasoning_mode}, 'adaptive',
+        'Anthropic Fable 5 -> adaptive (always-on per Anthropic docs)');
+}
+
+# Test 24: Anthropic Mythos 5 bare -> adaptive
+{
+    my $caps = _run(
+        provider => 'anthropic',
+        model    => 'claude-mythos-5',
+        caps     => { supports_reasoning => 1 },
+    );
+    is($caps->{reasoning_mode}, 'adaptive',
+        'Anthropic Mythos 5 -> adaptive (always-on per Anthropic docs)');
+}
+
+# Test 25: Proxy alias for Sonnet 5 (no "claude-" prefix) -> adaptive
+# This is the EXACT scenario from the live bug report: Proxy-Sonnet-5
+# was being sent to the API with thinking.type=enabled and HTTP 400'd.
+{
+    my $caps = _run(
+        provider => 'anthropic',
+        model    => 'Proxy-Sonnet-5',
+        caps     => { supports_reasoning => 1 },
+    );
+    is($caps->{reasoning_mode}, 'adaptive',
+        'Proxy alias Proxy-Sonnet-5 -> adaptive (was enabled in f9159c0, caused HTTP 400)');
+}
+
+# Test 26: Proxy alias for Opus 4.8 -> adaptive
+{
+    my $caps = _run(
+        provider => 'anthropic',
+        model    => 'Proxy-Opus-4-8',
+        caps     => { supports_reasoning => 1 },
+    );
+    is($caps->{reasoning_mode}, 'adaptive',
+        'Proxy alias Proxy-Opus-4-8 -> adaptive (works for proxy deployment names)');
+}
+
+# Test 27: Proxy alias for Sonnet 4.5 (older) -> enabled
+# 4.5 is older than 4.6, so it stays in 'enabled' mode. The alias
+# check must NOT over-match and accidentally adaptive-classify 4.5.
+{
+    my $caps = _run(
+        provider => 'anthropic',
+        model    => 'Proxy-Sonnet-4-5',
+        caps     => { supports_reasoning => 1 },
+    );
+    is($caps->{reasoning_mode}, 'enabled',
+        'Proxy alias Proxy-Sonnet-4-5 -> enabled (4.5 is pre-adaptive)');
+}
+
+# Test 28: Anthropic 3.5 still enabled (sanity check that we didn't break old models)
+{
+    my $caps = _run(
+        provider => 'anthropic',
+        model    => 'claude-3-5-sonnet-20241022',
+        caps     => { supports_reasoning => 1 },
+    );
+    is($caps->{reasoning_mode}, 'enabled',
+        'Anthropic 3.5 Sonnet -> enabled (no adaptive support)');
+}
+
 done_testing();

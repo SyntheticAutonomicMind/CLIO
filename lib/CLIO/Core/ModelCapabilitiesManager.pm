@@ -2298,7 +2298,23 @@ sub _ensure_reasoning_mode {
     # "-sonnet-4-20250514" requires minor "20250514" but the lookahead
     # sees 8 digits ahead, so it does not match.
     if ($provider =~ /^anthropic$/i) {
-        if ($model =~ /-(?:opus|sonnet|haiku)-4-(?!\d{8})(?:[6-9](?:-|$)|\d{2,3}(?:-|$))/i
+        # Adaptive if matches any of:
+        # - claude-{family}-4-{6,7,8,9}         (e.g. sonnet-4-6, opus-4-7)
+        # - claude-{family}-4-{N} where N >= 10 (e.g. opus-4-12, future)
+        # - claude-{family}-5                   (Fable 5, Mythos 5, Sonnet 5,
+        #                                        Opus 5, Haiku 5; the 5-series
+        #                                        is adaptive per Anthropic docs)
+        # - claude-mythos*                      (any version, always adaptive)
+        # - Proxy aliases containing "-{family}-5" or "-{family}-4-{6,7,8,9}"
+        #   without the "claude-" prefix
+        #   (e.g. Proxy-Sonnet-5, Proxy-Opus-4-8)
+        #
+        # The (?!\d{8}) negative lookahead blocks the YYYYMMDD date-suffix
+        # case: "claude-sonnet-4-20250514" must NOT classify as 4.{20250514}
+        # adaptive. With the lookahead, "-sonnet-4-20250514" requires minor
+        # "20250514" but the lookahead sees 8 digits ahead, so it does not
+        # match the 4-X rule.
+        if ($model =~ /-(?:opus|sonnet|haiku|fable|mythos)-(?:4-(?!\d{8})(?:[6-9](?:-|$|\b)|\d{2,3}(?:-|$|\b))|5(?:-|$|\b))/i
             || $model =~ /^claude-mythos/i) {
             $mode = 'adaptive';
         }
