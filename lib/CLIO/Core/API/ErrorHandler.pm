@@ -110,38 +110,49 @@ sub handle_api_error {
     if ($api_response->{retryable}) {
         $$retry_count_ref++;
 
-        # Escalate repeated bare 400s to context trim
+# Bail out on persistent bad_request after the configured retry limit is exhausted.
+        # The previous behavior was to flip error_type to 'token_limit_exceeded' after just
+        # 2 retries and try to trim context - that was wrong. Token limit errors have their
+        # own specific handler below (model_max_prompt_tokens_exceeded / context_length_exceeded).
+        # An unrecognized 400 that's persistent is more likely a backend / model / payload
+        # issue than a context size issue. Bail with the actual provider error so the user
+        # sees what the provider actually said and can take action (switch model, contact support,
+        # check /api logs).
         my $error_type_check = $api_response->{error_type} || '';
-        if ($error_type_check eq 'bad_request' && $$retry_count_ref >= 2) {
-            $wo->{_bad_request_escalations} = ($wo->{_bad_request_escalations} || 0) + 1;
+        if ($error_type_check eq 'bad_request' && $$retry_count_ref >= $max_retries) {
+            log_error('ErrorHandler', "Persistent 400 Bad Request after $$retry_count_ref retries - giving up without context trim.");
 
-            if ($wo->{_bad_request_escalations} <= 1) {
-                log_warning('ErrorHandler', "Repeated 400 Bad Request ($$retry_count_ref attempts) - escalating to context trim (escalation #$wo->{_bad_request_escalations})");
-                $api_response->{error_type} = 'token_limit_exceeded';
-            } else {
-                log_error('ErrorHandler', "Persistent 400 Bad Request after $wo->{_bad_request_escalations} context trim attempts ($$retry_count_ref total retries). Giving up.");
+            dump_diagnostic(
+                trigger      => 'persistent_400',
+                messages     => $messages,
+                api_manager  => $wo->{api_manager},
+                iteration    => $iteration,
+                retry_count  => $$retry_count_ref,
+                error        => $error,
+                api_response => $api_response,
+                append       => 1,
+                extra        => { retries => $$retry_count_ref },
+            );
 
-                dump_diagnostic(
-                    trigger      => 'persistent_400',
-                    messages     => $messages,
-                    api_manager  => $wo->{api_manager},
-                    iteration    => $iteration,
-                    retry_count  => $$retry_count_ref,
-                    error        => $error,
-                    api_response => $api_response,
-                    append       => 1,
-                    extra        => { escalations => $wo->{_bad_request_escalations} },
-                );
+            # Use the provider's actual error message, plus actionable guidance.
+            # Don't synthesize a "Token limit exceeded" message - that's misleading for
+            # unrecognized 400s which are usually content/payload/model issues.
+            my $user_error = $api_response->{error} || $error;
+            $user_error .= "\n\nThe API provider rejected the request with HTTP 400 and no specific classification "
+                          . "matched our known patterns. This usually means one of:\n"
+                          . "  - The model doesn't support some parameter we sent (reasoning mode, tool format, etc.)\n"
+                          . "  - The conversation context has content the model rejects (formatting, encoding)\n"
+                          . "  - The provider's backend changed behavior and our error classifier needs an update\n"
+                          . "Try a different model, or check /tmp/clio_api_400.log for the full provider response. "
+                          . "Run /api model <provider>/<model> to switch.";
 
-                return {
-                    success         => 0,
-                    error           => "Persistent 400 Bad Request from API after $$retry_count_ref retries and $wo->{_bad_request_escalations} context trims. The API backend may be experiencing issues. Diagnostic dump written to /tmp/clio_diag_persistent_400.log. Try again in a few minutes, or use a different model.",
-                    iterations      => $iteration,
-                    tool_calls_made => $tool_calls_made,
-                };
-            }
+            return {
+                success         => 0,
+                error           => $user_error,
+                iterations      => $iteration,
+                tool_calls_made => $tool_calls_made,
+            };
         }
-
         # Determine retry limit based on error type
         my $error_type_for_limit = $api_response->{error_type} || '';
         my $retry_limit;
@@ -150,6 +161,10 @@ sub handle_api_error {
             $retry_limit = $max_rate_limit_retries;
             $allow_infinite_retry = 1 if $max_rate_limit_retries == 0;
         } elsif ($error_type_for_limit eq 'server_error' || $error_type_for_limit eq 'connection_error') {
+            $retry_limit = $max_server_retries;
+            $allow_infinite_retry = 1 if $max_server_retries == 0;
+        } elsif ($error_type_for_limit eq 'timeout' || $error_type_for_limit eq 'overloaded') {
+            # Upstream timeouts and overload errors get the same retry budget as 5xx
             $retry_limit = $max_server_retries;
             $allow_infinite_retry = 1 if $max_server_retries == 0;
         } elsif ($error_type_for_limit eq 'bad_request') {
@@ -192,6 +207,12 @@ sub handle_api_error {
             }
         } else {
             $error_type = "server error";
+        }
+        # Upstream timeout/overload get accurate labels instead of generic "server error"
+        if ($api_response->{error_type} && $api_response->{error_type} eq 'timeout') {
+            $error_type = "upstream timeout";
+        } elsif ($api_response->{error_type} && $api_response->{error_type} eq 'overloaded') {
+            $error_type = "upstream overload";
         }
 
         # Format retry count display (show ∞ for infinite retries)
@@ -304,6 +325,16 @@ sub handle_api_error {
             $system_msg //= "Temporary $error_type. Retrying in ${retry_delay}s... (attempt $$retry_count_ref)";
             log_info('ErrorHandler', "Applying exponential backoff for server error: ${retry_delay}s delay");
         }
+        elsif ($api_response->{error_type} && ($api_response->{error_type} eq 'timeout' || $api_response->{error_type} eq 'overloaded')) {
+            # Apply exponential backoff for upstream timeouts and overload conditions.
+            # retry_after from ResponseHandler sets the base (30s for timeout, 10s for overloaded).
+            $error_type = $api_response->{error_type} eq 'timeout' ? "upstream timeout" : "upstream overload";
+            my $backoff_multiplier = 2 ** ($$retry_count_ref - 1);
+            $retry_delay = $retry_delay * $backoff_multiplier;
+            $retry_delay = 300 if $retry_delay > 300;
+            $system_msg //= "Upstream $error_type. Retrying in ${retry_delay}s... (attempt $$retry_count_ref)";
+            log_info('ErrorHandler', "Applying exponential backoff for $error_type: ${retry_delay}s delay");
+        }
         elsif ($api_response->{error_type} && $api_response->{error_type} eq 'rate_limit') {
             $error_type = "rate limit";
         }
@@ -396,6 +427,50 @@ sub handle_api_error {
     # produce for a problem that retrying or trimming context cannot fix.
     if (defined($api_response->{error_type}) && $api_response->{error_type} eq 'provider_unavailable') {
         log_warning('ErrorHandler', "Provider backend unavailable - returning error immediately without retry/trim");
+        return {
+            success         => 0,
+            error           => $api_response->{error},
+            iterations      => $iteration,
+            tool_calls_made => $tool_calls_made,
+        };
+    }
+
+    # Billing error - non-retryable. No amount of waiting fixes an empty balance.
+    if (defined($api_response->{error_type}) && $api_response->{error_type} eq 'billing_error') {
+        log_warning('ErrorHandler', "Billing error (out of credits) - returning error immediately");
+        return {
+            success         => 0,
+            error           => $api_response->{error},
+            iterations      => $iteration,
+            tool_calls_made => $tool_calls_made,
+        };
+    }
+
+    # Model not found - non-retryable. The model literally doesn't exist for this provider/account.
+    if (defined($api_response->{error_type}) && $api_response->{error_type} eq 'model_not_found') {
+        log_warning('ErrorHandler', "Model not found - returning error immediately");
+        return {
+            success         => 0,
+            error           => $api_response->{error},
+            iterations      => $iteration,
+            tool_calls_made => $tool_calls_made,
+        };
+    }
+
+    # Region unavailable - non-retryable. The model isn't accessible from the user's region.
+    if (defined($api_response->{error_type}) && $api_response->{error_type} eq 'region_unavailable') {
+        log_warning('ErrorHandler', "Region unavailable - returning error immediately");
+        return {
+            success         => 0,
+            error           => $api_response->{error},
+            iterations      => $iteration,
+            tool_calls_made => $tool_calls_made,
+        };
+    }
+
+    # Account disabled - non-retryable. User must contact support/admin to restore access.
+    if (defined($api_response->{error_type}) && $api_response->{error_type} eq 'account_disabled') {
+        log_warning('ErrorHandler', "Account disabled - returning error immediately");
         return {
             success         => 0,
             error           => $api_response->{error},
