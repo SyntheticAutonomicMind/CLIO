@@ -156,6 +156,7 @@ sub _display_api_help {
     $self->display_command_row("/api set key <value>", "Set API key (stored per-provider)", 40);
     $self->display_command_row("/api set thinking on|off", "Show model reasoning output", 40);
     $self->display_command_row("/api set thinking_effort low|medium|high|xhigh|max", "Reasoning depth (xhigh/max require Anthropic 4.6+ adaptive)", 40);
+    $self->display_command_row("/api set thinking_mode auto|enabled|disabled", "Thinking on/off mode (default: auto; auto=adaptive for Anthropic)", 40);
     $self->display_command_row("/api set temperature <value>", "Override sampling temperature", 40);
     $self->display_command_row("/api set top_p <value>", "Override top_p sampling", 40);
     $self->display_command_row("/api set top_k <value>", "Override top_k sampling", 40);

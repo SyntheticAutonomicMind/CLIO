@@ -89,19 +89,48 @@ A single request might involve dozens of tool calls - reading files, searching c
 
 Responses stream in real-time, token by token. You see the AI "thinking" as it types. Tool operations show live action descriptions so you know exactly what's happening.
 
-### Thinking/Reasoning Display
+### Thinking/Reasoning Display and Modes
 
-When using models that support extended thinking (OpenAI reasoning, Google thoughts, OpenRouter reasoning, MiniMax M2), CLIO can display the model's internal reasoning process and control how deeply it reasons:
+CLIO exposes two independent controls for thinking/reasoning:
+
+1. **Visibility** (`/api set thinking on|off`) - whether reasoning blocks render
+   in the chat UI. Off by default. Independent of whether thinking happens.
+2. **Mode** (`/api set thinking_mode auto|enabled|disabled`) - whether and how
+   the harness sends thinking parameters to the model. Default: `auto`.
+3. **Effort** (`/api set thinking_effort low|medium|high|xhigh|max`) - reasoning
+   depth when the model is in adaptive or budget mode. Default: `medium`.
 
 ```text
-/api set thinking on              # Enable thinking display
-/api set thinking off             # Disable (default)
-/api set thinking_effort low      # Fast, lightweight reasoning
-/api set thinking_effort medium   # Balanced (default)
-/api set thinking_effort high     # Deep, thorough reasoning
+/api set thinking on|off                              # Show thinking in UI
+/api set thinking_mode auto|enabled|disabled          # How thinking is sent
+/api set thinking_effort low|medium|high|xhigh|max    # Reasoning depth
 ```
 
-When enabled, reasoning content appears in a distinct visual style before the main response, giving you visibility into the model's thought process. Higher effort levels produce more thorough reasoning at the cost of speed and tokens.
+`thinking_mode` values:
+
+- `auto` (default, recommended) - For Anthropic models, sends adaptive thinking
+  automatically. The model decides when to think based on request complexity
+  (at low effort, simple queries may skip thinking entirely). For other
+  providers, gates on `thinking on|off` like before.
+- `enabled` - Force thinking ON. Uses the model's native mode (adaptive for
+  current Anthropic, enabled with `budget_tokens` for legacy).
+- `disabled` - Force thinking OFF. Overridden to adaptive with a warning for
+  models that require it (Fable 5, Mythos 5, Mythos Preview) because their
+  API rejects `{type: "disabled"}` with HTTP 400.
+
+`thinking_effort` is provider-aware. Anthropic adaptive supports
+`low|medium|high|xhigh|max` (xhigh requires Fable 5, Mythos 5, Opus 4.7/4.8,
+or Sonnet 5). Other providers accept the values their API supports.
+
+When thinking is visible, reasoning content appears in a distinct visual
+style before the main response, giving you visibility into the model's
+thought process. Higher effort levels produce more thorough reasoning at
+the cost of speed and tokens.
+
+For Anthropic 4.6+ and newer, **adaptive thinking is the recommended mode**
+per Anthropic's docs - it lets the model decide when to think rather than
+allocating a fixed token budget. The harness defaults to adaptive for these
+models so you get the better-quality default behavior without configuration.
 
 ### Sampling Parameters
 
@@ -649,8 +678,9 @@ These send structured prompts to the AI:
 | `/api set provider <name>` | Switch AI provider |
 | `/api set model <name>` | Switch AI model |
 | `/api set key <key>` | Set API key |
-| `/api set thinking on\|off` | Toggle reasoning display |
-| `/api set thinking_effort low\|medium\|high` | Set reasoning depth (default: medium) |
+| `/api set thinking on\|off` | Show model reasoning output in UI |
+| `/api set thinking_effort low\|medium\|high\|xhigh\|max` | Set reasoning depth (xhigh/max require Anthropic 4.6+ adaptive) |
+| `/api set thinking_mode auto\|enabled\|disabled` | Set thinking mode (default: auto; auto=adaptive for Anthropic) |
 | `/api set temperature <value>` | Override sampling temperature |
 | `/api set top_p <value>` | Override top_p sampling |
 | `/api set top_k <value>` | Override top_k sampling |

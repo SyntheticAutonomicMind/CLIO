@@ -167,6 +167,13 @@ sub new {
     # Initialize prompt builder for system prompt construction
     my $enable_subagents = $self->{config} ? ($self->{config}->get('enable_subagents') // 1) : 1;
     my $auto_discover_skills = $self->{config} ? ($self->{config}->get('auto_discover_skills') // 1) : 1;
+    # Read show_thinking here so PromptBuilder can include the optional
+    # reasoning-steering paragraph when the user has chosen to surface the
+    # thinking stream. Without this the steering text never makes it into
+    # the system prompt and Anthropic's adaptive summarizer collapses
+    # trivial reasoning (e.g. "which tool next") to an empty string even
+    # though the model still bills the round-trip.
+    my $show_thinking = $self->{config} ? ($self->{config}->get('show_thinking') // 0) : 0;
     $self->{prompt_builder} = CLIO::Core::PromptBuilder->new(
         debug           => $args{debug},
         skip_custom     => $self->{skip_custom},
@@ -178,6 +185,7 @@ sub new {
         enable_tools    => $self->{enable_tools},  # Tool allowlist (for --chat mode)
         enable_subagents => $enable_subagents,
         auto_discover_skills => $auto_discover_skills,
+        show_thinking   => $show_thinking,
     );
 
     if ($auto_discover_skills) {

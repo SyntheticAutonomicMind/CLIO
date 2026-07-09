@@ -420,8 +420,9 @@ CLIO provides 35+ slash commands. Type `/help` in any session to see the full li
 | `/api set model <name>` | Set AI model (saved globally) |
 | `/api set key <value>` | Set API key (saved per-provider) |
 | `/api set base <url>` | Set API base URL (saved globally) |
-| `/api set thinking on\|off` | Toggle reasoning display |
-| `/api set thinking_effort low\|medium\|high` | Set reasoning depth (default: medium) |
+| `/api set thinking on\|off` | Toggle reasoning display (UI visibility) |
+| `/api set thinking_effort low\|medium\|high\|xhigh\|max` | Set reasoning depth (default: medium) |
+| `/api set thinking_mode auto\|enabled\|disabled` | Thinking mode (default: auto; auto=adaptive for Anthropic) |
 | `/api set temperature <value>` | Override sampling temperature |
 | `/api set top_p <value>` | Override top_p sampling |
 | `/api set top_k <value>` | Override top_k sampling |
@@ -1743,8 +1744,9 @@ CLIO is designed to be configured **interactively** using slash commands:
 /api set model <model>              # Set model
 /api set base <url>                 # Set API base URL
 /api models                         # List available models
-/api set thinking on                # Enable reasoning display
-/api set thinking_effort high       # Deep reasoning (low|medium|high)
+/api set thinking on                # Show reasoning blocks in UI
+/api set thinking_mode auto         # Recommended: adaptive thinking for Anthropic
+/api set thinking_effort high       # Deep reasoning (low|medium|high|xhigh|max)
 /api set temperature 1.0            # Override sampling temperature
 /api set top_p 0.95                 # Override top_p
 /api set top_k 40                   # Override top_k

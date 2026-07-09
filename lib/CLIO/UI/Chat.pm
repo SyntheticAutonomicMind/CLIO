@@ -581,6 +581,14 @@ sub _make_thinking_callback {
     my ($self, $spinner) = @_;
     my $thinking_active = 0;
     my $line_buffer = '';  # accumulates streaming chunks until newline
+    # Anthropic's adaptive thinking summarizer can return an empty string
+    # for trivial reasoning (e.g. "which tool next" decisions) even though
+    # the round-trip still produces a valid signature we bill for. Printing
+    # the THINKING header on the start signal would render an empty box in
+    # that case, so we defer the header/hrule until the first real content
+    # chunk arrives. If 'end' fires without ever producing content we print
+    # nothing at all.
+    my $header_printed = 0;
     
     # Get terminal width and compute available space for indented content
     my $get_wrap_width = sub {
@@ -682,15 +690,20 @@ sub _make_thinking_callback {
         
         if (defined $signal) {
             if ($signal eq 'start') {
-                $thinking_active = 1;
                 $line_buffer = '';
                 $spinner->stop();
-                $print_thinking_header->();
-                $print_thinking_hrule->();
+                # Defer header/hrule until the first real content chunk;
+                # if no content ever arrives, skip them entirely (the
+                # summarizer returned an empty string).
+                # Do NOT mark thinking_active here: the empty-summary case
+                # fires 'start' followed by 'end' with no content between
+                # them, and we want the 'end' handler to suppress output
+                # in that case.
+                $header_printed = 0;
                 return;
             }
             elsif ($signal eq 'end') {
-                if ($thinking_active) {
+                if ($header_printed) {
                     $flush_buffer->();
                     print "\n";
                     $print_thinking_hrule->();
@@ -699,6 +712,7 @@ sub _make_thinking_callback {
                 }
                 $thinking_active = 0;
                 $line_buffer = '';
+                $header_printed = 0;
                 $self->{streaming}->{first_chunk_received} = 0;
                 return;
             }
@@ -706,12 +720,16 @@ sub _make_thinking_callback {
         
         return unless defined $content && length($content);
         
-        if (!$thinking_active) {
+        if (!$header_printed) {
             $thinking_active = 1;
             $line_buffer = '';
             $spinner->stop();
+            # First real content chunk: print header and top hrule now.
+            # If $header_printed is already set, we've already emitted them
+            # for an earlier stream within the same callback's lifetime.
             $print_thinking_header->();
             $print_thinking_hrule->();
+            $header_printed = 1;
         }
         
         # Accumulate content and emit complete lines with word-wrap

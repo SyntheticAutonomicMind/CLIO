@@ -789,6 +789,10 @@ sub _parse_anthropic_per_model_response {
     $max_output //= $pdef->{max_output_tokens} if $pdef;
     $context_window //= $pdef->{max_context_tokens} if $pdef;
 
+    my $supports_adaptive = ($thinking->{types} && $thinking->{types}{adaptive} && $thinking->{types}{adaptive}{supported} ? 1 : 0);
+    my $supports_enabled  = ($thinking->{types} && $thinking->{types}{enabled}  && $thinking->{types}{enabled}{supported}  ? 1 : 0);
+    my $requires_adaptive = $self->_anthropic_requires_adaptive($data->{id} // $requested_model, $thinking);
+
     return {
         provider              => 'anthropic',
         model                 => $data->{id} // $requested_model,
@@ -799,8 +803,9 @@ sub _parse_anthropic_per_model_response {
         supports_streaming    => 1,
         supports_vision       => ($image_input->{supported} ? 1 : 0),
         supports_reasoning    => ($thinking->{supported} ? 1 : 0),
-        supports_adaptive_thinking => ($thinking->{types} && $thinking->{types}{adaptive} && $thinking->{types}{adaptive}{supported} ? 1 : 0),
-        supports_enabled_thinking  => ($thinking->{types} && $thinking->{types}{enabled} && $thinking->{types}{enabled}{supported} ? 1 : 0),
+        supports_adaptive_thinking => $supports_adaptive,
+        supports_enabled_thinking  => $supports_enabled,
+        requires_adaptive_thinking => $requires_adaptive,
         embeddings_dimension  => undef,
         architecture          => 'claude',
         quantization          => undef,
@@ -882,6 +887,8 @@ sub _build_anthropic_caps_from_list_entry {
         $supports_reasoning = 1;
     }
 
+    my $requires_adaptive = $self->_anthropic_requires_adaptive($entry->{id} // $requested_model, $thinking);
+
     return {
         provider              => 'anthropic',
         model                 => $entry->{id} // $requested_model,
@@ -894,6 +901,7 @@ sub _build_anthropic_caps_from_list_entry {
         supports_reasoning    => $supports_reasoning,
         supports_adaptive_thinking => $supports_adaptive,
         supports_enabled_thinking  => $supports_enabled,
+        requires_adaptive_thinking => $requires_adaptive,
         embeddings_dimension  => undef,
         architecture          => 'claude',
         quantization          => undef,
@@ -902,6 +910,61 @@ sub _build_anthropic_caps_from_list_entry {
         size_bytes            => undef,
         raw                   => $entry,
     };
+}
+
+=head2 _anthropic_requires_adaptive($model, $thinking_block)
+
+Determine whether an Anthropic model REQUIRES adaptive thinking (cannot
+be disabled). Returns 1 if adaptive is the only acceptable thinking
+mode for this model.
+
+Data-driven path: Anthropic's /v1/models response may include
+capabilities.thinking.types.disabled.supported:false for models that
+reject {type:"disabled"}. That explicit signal wins.
+
+Fallback path: when the API response doesn't disambiguate (LIST path,
+proxy stripped the disabled entry, or model is brand new and the
+capabilities block is missing), the heuristic in this method handles
+the known-required set: Fable 5, Mythos 5, Mythos Preview. These are
+the only Anthropic model families where adaptive is mandatory as of
+the docs at the time of this code.
+
+Used by APIManager to override a user-set thinking_mode=disabled when
+the model would 400. The override is logged so the user can see why
+their config was ignored.
+
+Arguments:
+    $model         - Model identifier (bare name, no provider prefix)
+    $thinking_block - The capabilities.thinking hashref from the API
+                       response, or undef when unavailable
+
+Returns: 1 if adaptive is required, 0 otherwise.
+
+=cut
+
+sub _anthropic_requires_adaptive {
+    my ($self, $model, $thinking) = @_;
+
+    # Data-driven path: explicit "disabled" rejection from the API.
+    # The API signals models that reject {type:"disabled"} via
+    # capabilities.thinking.types.disabled.supported:false.
+    if ($thinking && ref($thinking) eq 'HASH'
+        && $thinking->{types} && ref($thinking->{types}) eq 'HASH'
+        && exists $thinking->{types}{disabled}
+        && ref($thinking->{types}{disabled}) eq 'HASH'
+        && defined $thinking->{types}{disabled}{supported}
+        && !$thinking->{types}{disabled}{supported}) {
+        return 1;
+    }
+
+    # Fallback: well-known families where adaptive is mandatory. These
+    # are documented in Anthropic's adaptive-thinking docs. Keep the
+    # match patterns tight so we don't accidentally force adaptive on
+    # future models where it becomes optional again.
+    return 1 if defined $model && $model =~ /-(?:fable|mythos)-5(?:-|$|\b)/i;
+    return 1 if defined $model && $model =~ /^claude-mythos-preview(?:-|$|\b)/i;
+
+    return 0;
 }
 
 =head2 _fetch_google_capabilities

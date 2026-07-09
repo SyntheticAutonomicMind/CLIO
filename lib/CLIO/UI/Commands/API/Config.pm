@@ -115,6 +115,33 @@ sub handle_set {
         }
         $self->display_system_message("Thinking effort set to '$level'" . ($session_only ? " (session only)" : " (saved)"));
     }
+    elsif ($setting eq 'thinking_mode') {
+        my $mode = lc($value // '');
+        # thinking_mode controls how the harness decides whether to send
+        # thinking params. auto is the default and the recommended choice
+        # for Anthropic (sends adaptive thinking without requiring
+        # show_thinking). enabled forces thinking ON regardless of
+        # show_thinking. disabled forces thinking OFF - may be overridden
+        # to adaptive for models that require it (Fable 5, Mythos 5,
+        # Mythos Preview) with a warning.
+        unless ($mode =~ /^(auto|enabled|disabled)$/) {
+            $self->display_error_message("Invalid thinking_mode value: '$value'");
+            $self->writeline("Valid values: auto, enabled, disabled", markdown => 0);
+            $self->writeline("  auto:    Recommended. Sends adaptive thinking for Anthropic models,", markdown => 0);
+            $self->writeline("           other providers gate on show_thinking as before.", markdown => 0);
+            $self->writeline("  enabled: Force thinking ON regardless of show_thinking.", markdown => 0);
+            $self->writeline("  disabled: Force thinking OFF. May 400 on Fable 5/Mythos 5/", markdown => 0);
+            $self->writeline("            Mythos Preview (overridden to adaptive with warning).", markdown => 0);
+            return;
+        }
+        if ($session_only) {
+            $self->_write_session_override('thinking_mode', $mode);
+        } else {
+            $self->{config}->set('thinking_mode', $mode);
+            $self->{config}->save();
+        }
+        $self->display_system_message("Thinking mode set to '$mode'" . ($session_only ? " (session only)" : " (saved)"));
+    }
     elsif ($setting =~ /^(temperature|top_p|top_k)$/) {
         my $key = "sampling_$setting";
         if (!defined $value || $value eq '' || $value =~ /^(reset|default|off)$/i) {
@@ -148,7 +175,7 @@ sub handle_set {
     }
     else {
         $self->display_error_message("Unknown setting: $setting");
-        $self->writeline("Valid settings: model, provider, base, key, thinking, thinking_effort, temperature, top_p, top_k, github_pat, serpapi_key, search_engine, search_provider, context_window, max_output, max_prompt, tools, vision, reasoning", markdown => 0);
+        $self->writeline("Valid settings: model, provider, base, key, thinking, thinking_effort, thinking_mode, temperature, top_p, top_k, github_pat, serpapi_key, search_engine, search_provider, context_window, max_output, max_prompt, tools, vision, reasoning", markdown => 0);
     }
 }
 
@@ -887,8 +914,10 @@ sub display_config {
     # Show thinking settings
     my $thinking = $self->{config}->get('show_thinking') ? 'on' : 'off';
     my $effort    = $self->{config}->get('thinking_effort') // 'medium';
+    my $mode      = $self->{config}->get('thinking_mode') // 'auto';
    $self->display_key_value("Thinking", $thinking, 16);
    $self->display_key_value("Think Effort", $effort, 16);
+   $self->display_key_value("Think Mode", $mode, 16);
 
     # Show reasoning mode from model capabilities (how the model handles thinking)
     my $reasoning_mode = undef;
