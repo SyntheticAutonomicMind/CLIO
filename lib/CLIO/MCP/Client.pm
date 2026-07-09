@@ -87,7 +87,7 @@ sub connect {
     
     my $transport = $self->{transport};
     unless ($transport) {
-        log_error('MCP:$self->{name}', "No transport configured");
+        log_error("MCP:$self->{name}", "No transport configured");
         return 0;
     }
     
@@ -95,7 +95,7 @@ sub connect {
     
     # Connect transport
     unless ($transport->connect()) {
-        log_error('MCP:$self->{name}', "Transport connection failed");
+        log_error("MCP:$self->{name}", "Transport connection failed");
         return 0;
     }
     
@@ -108,7 +108,7 @@ sub connect {
         $self->_discover_tools();
         return 1;
     } else {
-        log_error('MCP:$self->{name}', "Initialization handshake failed");
+        log_error("MCP:$self->{name}", "Initialization handshake failed");
         $self->disconnect();
         return 0;
     }
@@ -244,7 +244,7 @@ sub _initialize {
     });
     
     unless ($response && $response->{result}) {
-        log_error('MCP:$self->{name}', "Initialize failed - no valid response");
+        log_error("MCP:$self->{name}", "Initialize failed - no valid response");
         return 0;
     }
     
@@ -288,7 +288,7 @@ sub _discover_tools {
         my $response = $self->{transport}->send_request('tools/list', $request);
         
         unless ($response && $response->{result} && $response->{result}{tools}) {
-            log_warning('MCP:$self->{name}', "tools/list returned no tools");
+            log_warning("MCP:$self->{name}", "tools/list returned no tools");
             last;
         }
         

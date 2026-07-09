@@ -60,7 +60,7 @@ sub connect {
     
     my @cmd = @{$self->{command}};
     unless (@cmd) {
-        log_error('MCP:$self->{name}', "No command specified");
+        log_error("MCP:$self->{name}", "No command specified");
         return 0;
     }
     
@@ -273,7 +273,7 @@ sub _read_response {
         }
     }
     
-    log_warning('MCP:$self->{name}', "Timeout waiting for response (id=$expected_id)");
+    log_warning("MCP:$self->{name}", "Timeout waiting for response (id=$expected_id)");
     return undef;
 }
 
