@@ -706,6 +706,34 @@ sub _handle_error_response_impl {
             }
         }
     }
+    # Handle provider backend unavailability (NVIDIA NIM "DEGRADED function cannot be invoked", etc.).
+    # Non-retryable: the model itself cannot be invoked on the provider's infrastructure, so retrying
+    # or trimming context cannot help. Surface the real error to the user with actionable guidance.
+    # Checked BEFORE the generic 5xx handler so 503s with availability semantics aren't retried.
+    # Also scans the raw response body because NVIDIA's format puts the DEGRADED text at the
+    # top-level `detail` field rather than in `error.message`, so $error alone won't catch it.
+    elsif (($status == 400 || $status == 503) && (
+        $error =~ /DEGRADED function cannot be invoked|model (?:is )?unavailable|service unavailable|backend unavailable|model_not_available|model_decommissioned/i
+        || (ref($content) eq 'HASH' && (($content->{detail} // '') =~ /DEGRADED function cannot be invoked/i))
+        || ($resp->{content} // '') =~ /DEGRADED function cannot be invoked/i
+        || (ref($error_obj) eq 'HASH' && (($error_obj->{code} // '') =~ /model_not_available|model_decommissioned/i))
+    )) {
+        $is_retryable_error = 0;
+        $retryable = 0;
+        $error_type = 'provider_unavailable';
+        my $detail = $error;
+        if (ref($content) eq 'HASH' && $content->{detail}) {
+            $detail = $content->{detail};
+        } elsif ($resp->{content} && $resp->{content} =~ /"detail"\s*:\s*"([^"]+)"/) {
+            $detail = $1;
+        }
+        $error = "The AI provider reports this model is currently unavailable on their infrastructure. "
+               . "This is not a context size issue - the model itself cannot be invoked right now. "
+               . "Try a different model, or wait and retry later.\n\n"
+               . "Provider detail: $detail";
+        log_warning('ResponseHandler', "Provider unavailable (non-retryable): $detail");
+    }
+
     # Handle transient server errors (5xx except 599 which is handled as connection_error)
     elsif ($status >= 500 && $status < 599) {
         $is_retryable_error = 1;

@@ -390,6 +390,19 @@ sub handle_api_error {
         };
     }
 
+    # Provider backend unavailability (NVIDIA NIM "DEGRADED function cannot be invoked", etc.).
+    # The model itself is unavailable on the provider's infrastructure. Returning immediately
+    # avoids the misleading "Token limit exceeded" fallback that the retry/escalate path would
+    # produce for a problem that retrying or trimming context cannot fix.
+    if (defined($api_response->{error_type}) && $api_response->{error_type} eq 'provider_unavailable') {
+        log_warning('ErrorHandler', "Provider backend unavailable - returning error immediately without retry/trim");
+        return {
+            success         => 0,
+            error           => $api_response->{error},
+            iterations      => $iteration,
+            tool_calls_made => $tool_calls_made,
+        };
+    }
     # ── Non-retryable errors ──────────────────────────────────────────
     $$retry_count_ref = 0;
 
