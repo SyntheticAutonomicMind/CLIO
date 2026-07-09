@@ -354,14 +354,33 @@ sub load {
                     log_debug('Config', "Migrated existing scoped config values to model_configs{$model}");
                 }
             }
-            # Restore scoped config from model_configs if available
+            # Restore scoped config from model_configs if available.
+            # CRITICAL: only apply values that DIFFER from DEFAULT_CONFIG so that stale
+            # auto-migrated entries can't silently override the user's newer
+            # global settings on every load. With this guard:
+            #   - Default-value entries (from older auto-population) are skipped
+            #   - Explicit per-model overrides (non-default) are still applied
+            #   - Global `/api set X` values survive model switches intact
+            # Bug context: previously this block copied every key from model_configs
+            # back into $self->{config}, which clobbered newer top-level settings with
+            # stale defaults (e.g. user sets thinking on, top-level=1, but stale
+            # model_configs->{minimax/MiniMax-M3}->{show_thinking}=0 silently
+            # overrode it on every load - making /api set thinking on appear to reset).
             if ($model_configs->{$model}) {
+                my $restored_count = 0;
                 for my $key (@{MODEL_SCOPED_KEYS()}) {
-                    if (exists $model_configs->{$model}{$key}) {
-                        $self->{config}->{$key} = $model_configs->{$model}{$key};
-                    }
+                    next unless exists $model_configs->{$model}{$key};
+                    my $val = $model_configs->{$model}{$key};
+                    my $default = DEFAULT_CONFIG->{$key};
+                    next if defined $default && defined $val && $val eq $default;
+                    $self->{config}->{$key} = $val;
+                    $restored_count++;
                 }
-                log_debug('Config', "Restored model config for '$model'");
+                if ($restored_count) {
+                    log_debug('Config', "Restored $restored_count non-default model config value(s) for '$model'");
+                } else {
+                    log_debug('Config', "Model config for '$model' contains only default values - keeping global values");
+                }
             }
         }
     }
