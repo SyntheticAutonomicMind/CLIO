@@ -84,13 +84,13 @@ Returns: Hashref with success, output/error, metadata
 sub execute {
     my ($self, $params, $context) = @_;
     
-    log_debug('Tool:$self->{name}', "Execute called");
+    log_debug("Tool:$self->{name}", "Execute called");
     
     # Extract operation parameter
     my $operation = $params->{operation};
     unless ($operation) {
         my $available = join(', ', @{$self->{supported_operations}});
-        log_debug('Tool:$self->{name}', "Missing 'operation' parameter. Available: $available");
+        log_debug("Tool:$self->{name}", "Missing 'operation' parameter. Available: $available");
         return $self->operation_error("Missing 'operation' parameter");
     }
     
@@ -99,12 +99,12 @@ sub execute {
         my $available = join(', ', @{$self->{supported_operations}});
         my $suggestion = $self->_suggest_operation($operation);
         my $hint = $suggestion ? " Did you mean: $suggestion?" : "";
-        log_debug('Tool:$self->{name}', "Unknown operation: '$operation'. Available: $available");
+        log_debug("Tool:$self->{name}", "Unknown operation: '$operation'. Available: $available");
         return $self->operation_error("Unknown operation: $operation.$hint Valid operations: $available");
     }
     
     # Route to operation handler
-    log_debug('Tool:$self->{name}', "Routing to operation: $operation");
+    log_debug("Tool:$self->{name}", "Routing to operation: $operation");
     
     return $self->route_operation($operation, $params, $context);
 }
