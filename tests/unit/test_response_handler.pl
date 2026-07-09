@@ -506,5 +506,79 @@ subtest 'handle_error_response - unknown mode in error falls through' => sub {
     ok(!defined $handler->{_correct_reasoning_mode},
         'Unknown correct mode -> _correct_reasoning_mode stays undef');
 };
+# =============================================================================
+# Provider backend unavailability tests (NVIDIA NIM DEGRADED function, etc.)
+# =============================================================================
+# These errors are NOT retryable: the model itself is unavailable on the
+# provider's infrastructure, so retrying or trimming context cannot help.
+# Misclassifying these as retryable bad_request causes the misleading
+# "Token limit exceeded even with minimal conversation history" message.
 
+subtest 'handle_error_response - NVIDIA DEGRADED function (400)' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 400,
+        status_line => '400 Bad Request',
+        content => '{"status":400,"title":"Bad Request","detail":"Function id \'948fe171-ce7a-4332-8bc0-5e14e90259f9\': DEGRADED function cannot be invoked"}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{retryable}, 0, 'NVIDIA DEGRADED function is NOT retryable');
+    is($result->{error_type}, 'provider_unavailable', 'Error type is provider_unavailable');
+    like($result->{error}, qr/unavailable/i, 'Error mentions unavailability');
+    like($result->{error}, qr/DEGRADED function/, 'Error preserves provider detail');
+};
+
+subtest 'handle_error_response - 503 model_not_available' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 503,
+        status_line => '503 Service Unavailable',
+        content => '{"error":{"message":"The model gpt-99 is currently unavailable","code":"model_not_available"}}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{retryable}, 0, 'model_not_available is NOT retryable');
+    is($result->{error_type}, 'provider_unavailable', 'Error type is provider_unavailable');
+};
+
+subtest 'handle_error_response - 400 generic model unavailable' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 400,
+        status_line => '400 Bad Request',
+        content => '{"error":{"message":"model is unavailable on this endpoint"}}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{retryable}, 0, 'model unavailable is NOT retryable');
+    is($result->{error_type}, 'provider_unavailable', 'Error type is provider_unavailable');
+};
+
+subtest 'handle_error_response - 503 service unavailable' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 503,
+        status_line => '503 Service Unavailable',
+        content => '{"error":{"message":"service unavailable, please try again later"}}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{retryable}, 0, 'service unavailable is NOT retryable');
+    is($result->{error_type}, 'provider_unavailable', 'Error type is provider_unavailable');
+};
+
+subtest 'handle_error_response - generic 400 still retryable (regression check)' => sub {
+    # Confirm we did NOT change behavior for genuine 400s that should still retry.
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 400,
+        status_line => '400 Bad Request',
+        content => '{"error":{"message":"Invalid request payload"}}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{retryable}, 1, 'Generic 400 still retryable');
+    is($result->{error_type}, 'bad_request', 'Error type is still bad_request');
+};
 done_testing();
