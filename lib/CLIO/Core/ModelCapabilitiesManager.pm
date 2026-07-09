@@ -942,6 +942,41 @@ Returns: 1 if adaptive is required, 0 otherwise.
 
 =cut
 
+sub _anthropic_model_reasoning_mode {
+    my ($self, $model) = @_;
+    return undef unless defined $model && length $model;
+
+    # Family detection. Anthropic family names (sonnet, opus, haiku,
+    # fable, mythos) are unique to Anthropic - safe to use as the
+    # family indicator regardless of provider config. This lets
+    # custom Anthropic-compatible proxies (which may register under
+    # a different provider name) still get the correct reasoning
+    # mode. Proxy deployment aliases like "Proxy-Sonnet-5" match
+    # because they contain "-sonnet-" / "-opus-" / etc.
+    my $is_anthropic_family = ($model =~ /-(?:opus|sonnet|haiku|fable|mythos)-/i
+                             || $model =~ /^claude-mythos/i);
+    return undef unless $is_anthropic_family;
+
+    # Adaptive-capable generations:
+    #   - {family}-5, {family}-5-anything     (5-series is adaptive per docs)
+    #   - {family}-4-{6,7,8,9}                (4.6+ adaptive)
+    #   - {family}-4-{10..999}                (4.10+ adaptive; future-proofing)
+    #   - claude-mythos*                      (any version, always adaptive)
+    #
+    # The (?!\d{8}) negative lookahead blocks the YYYYMMDD date-suffix
+    # case: "claude-sonnet-4-20250514" must NOT classify as 4.{20250514}
+    # adaptive. The lookahead sees 8 digits ahead and rejects the match.
+    # (4-X dated is 4.0, which is legacy enabled mode.)
+    if ($model =~ /-(?:opus|sonnet|haiku|fable|mythos)-(?:4-(?!\d{8})(?:[6-9](?:-|$|\b)|\d{2,3}(?:-|$|\b))|5(?:-|$|\b))/i
+        || $model =~ /^claude-mythos/i) {
+        return 'adaptive';
+    }
+
+    # Anthropic family but pre-4.6 generation -> legacy enabled mode
+    # (claude-sonnet-4-20250514, claude-sonnet-4-5-20250929, claude-3-x-*, etc.)
+    return 'enabled';
+}
+
 sub _anthropic_requires_adaptive {
     my ($self, $model, $thinking) = @_;
 
@@ -2417,46 +2452,21 @@ sub _ensure_reasoning_mode {
     # supports_reasoning. Kept here so static maps have an explicit
     # way to override the heuristic when needed.)
 
-    # Heuristic fallback: derive mode from provider + model name.
-    # This is fragile for Anthropic model names (Anthropic uses several
-    # naming conventions: "claude-sonnet-4-20250514", "claude-sonnet-4-6",
-    # "claude-sonnet-4-5-20250929", etc.) - the regex below catches the
-    # common cases but cannot enumerate every future model. If you add
-    # a new Anthropic model, prefer adding the data-driven fields above
-    # to relying on this heuristic.
+    # Model-name-based fallback: Anthropic-family model names get
+    # Anthropic reasoning rules regardless of provider name. Custom
+    # Anthropic-compatible proxies may register under a non-anthropic
+    # provider name, but the model name pattern is unique to Anthropic.
+    # This covers proxy aliases (e.g. "Proxy-Sonnet-5") and 5-series
+    # models that the older provider-gated regex would have missed.
     my $mode;
 
-    # Anthropic provider: 4.6+ models use adaptive, older use enabled.
-    # The regex matches "claude-{family}-4-{minor}" where {minor} is 6-9
-    # (single digit) or 2-3 digits. The (?!\d{8}) negative lookahead
-    # blocks the YYYYMMDD date-suffix case (e.g. "claude-sonnet-4-20250514"
-    # must not classify as 4.{20250514} adaptive). With the lookahead,
-    # "-sonnet-4-20250514" requires minor "20250514" but the lookahead
-    # sees 8 digits ahead, so it does not match.
-    if ($provider =~ /^anthropic$/i) {
-        # Adaptive if matches any of:
-        # - claude-{family}-4-{6,7,8,9}         (e.g. sonnet-4-6, opus-4-7)
-        # - claude-{family}-4-{N} where N >= 10 (e.g. opus-4-12, future)
-        # - claude-{family}-5                   (Fable 5, Mythos 5, Sonnet 5,
-        #                                        Opus 5, Haiku 5; the 5-series
-        #                                        is adaptive per Anthropic docs)
-        # - claude-mythos*                      (any version, always adaptive)
-        # - Proxy aliases containing "-{family}-5" or "-{family}-4-{6,7,8,9}"
-        #   without the "claude-" prefix
-        #   (e.g. Proxy-Sonnet-5, Proxy-Opus-4-8)
-        #
-        # The (?!\d{8}) negative lookahead blocks the YYYYMMDD date-suffix
-        # case: "claude-sonnet-4-20250514" must NOT classify as 4.{20250514}
-        # adaptive. With the lookahead, "-sonnet-4-20250514" requires minor
-        # "20250514" but the lookahead sees 8 digits ahead, so it does not
-        # match the 4-X rule.
-        if ($model =~ /-(?:opus|sonnet|haiku|fable|mythos)-(?:4-(?!\d{8})(?:[6-9](?:-|$|\b)|\d{2,3}(?:-|$|\b))|5(?:-|$|\b))/i
-            || $model =~ /^claude-mythos/i) {
-            $mode = 'adaptive';
-        }
-        else {
-            $mode = 'enabled';
-        }
+    # Model-name-based path: applies for any provider when the model
+    # name is recognizably Anthropic-family. Single source of truth
+    # for Anthropic-family mode resolution - the same helper is used
+    # by Anthropic.pm:_supports_adaptive_thinking (via lazy require)
+    # so build-time and MCM-time heuristics cannot diverge.
+    if (my $family_mode = $self->_anthropic_model_reasoning_mode($model)) {
+        $mode = $family_mode;
     }
     # Google provider: uses thinkingBudget (enabled mode)
     elsif ($provider =~ /^google/i) {

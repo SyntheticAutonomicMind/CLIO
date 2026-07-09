@@ -409,4 +409,142 @@ sub _run {
         'Anthropic 3.5 Sonnet -> enabled (no adaptive support)');
 }
 
+# ========================================================================
+# Provider-agnostic Anthropic-family detection
+# ========================================================================
+# Regression: Anthropic-compatible proxies (Azure Foundry, custom
+# deployments) often register under a non-"anthropic" provider name.
+# The previous heuristic gated the Anthropic-family regex on
+# $provider =~ /^anthropic$/i, so any custom-named provider with a
+# Claude-family model name fell through to the default 'effort' mode
+# and the request went out with the wrong thinking format.
+#
+# The fix: extract the Anthropic-family regex into
+# _anthropic_model_reasoning_mode (a model-name-only helper) and call
+# it first in _ensure_reasoning_mode, before any provider-name gating.
+# The Anthropic-family tokens (sonnet/opus/haiku/fable/mythos) are
+# unique enough to Anthropic that this is safe.
+
+# Test 29: Custom provider name with Anthropic-family model -> adaptive
+# (proxy registered under a custom name but pointing at Anthropic-compatible
+# API). Same scenario the user hit with Proxy-Sonnet-5.
+{
+    my $caps = _run(
+        provider => 'my-custom-anthropic-proxy',
+        model    => 'claude-sonnet-5',
+        caps     => { supports_reasoning => 1 },
+    );
+    is($caps->{reasoning_mode}, 'adaptive',
+        'Custom provider name with claude-sonnet-5 -> adaptive (provider-agnostic detection)');
+}
+
+# Test 30: Custom provider with proxy alias for Sonnet 5 -> adaptive
+{
+    my $caps = _run(
+        provider => 'corp-internal-proxy',
+        model    => 'Proxy-Sonnet-5',
+        caps     => { supports_reasoning => 1 },
+    );
+    is($caps->{reasoning_mode}, 'adaptive',
+        'Custom provider with proxy alias Proxy-Sonnet-5 -> adaptive');
+}
+
+# Test 31: Custom provider with proxy alias for Opus 4.8 -> adaptive
+{
+    my $caps = _run(
+        provider => 'azure-foundry',
+        model    => 'internal-opus-4-8',
+        caps     => { supports_reasoning => 1 },
+    );
+    is($caps->{reasoning_mode}, 'adaptive',
+        'Custom provider azure-foundry with internal-opus-4-8 -> adaptive');
+}
+
+# Test 32: Custom provider with proxy alias for Sonnet 4.5 (pre-adaptive)
+# must STILL classify as enabled, not over-match.
+{
+    my $caps = _run(
+        provider => 'corp-internal-proxy',
+        model    => 'Proxy-Sonnet-4-5',
+        caps     => { supports_reasoning => 1 },
+    );
+    is($caps->{reasoning_mode}, 'enabled',
+        'Custom provider with proxy alias Proxy-Sonnet-4-5 -> enabled (4.5 is pre-adaptive)');
+}
+
+# Test 33: Custom provider with Mythos 5 -> adaptive (always-on)
+{
+    my $caps = _run(
+        provider => 'corp-internal-proxy',
+        model    => 'my-mythos-5-deployment',
+        caps     => { supports_reasoning => 1 },
+    );
+    is($caps->{reasoning_mode}, 'adaptive',
+        'Custom provider with mythos-5 deployment -> adaptive');
+}
+
+# Test 34: Non-Anthropic-family model on custom provider -> falls through
+# to provider-specific heuristic. "effort" is the default for unknown
+# providers (OpenAI/DeepSeek/NVIDIA/OpenRouter).
+{
+    my $caps = _run(
+        provider => 'some-random-provider',
+        model    => 'gpt-4o-mini',
+        caps     => { supports_reasoning => 1 },
+    );
+    is($caps->{reasoning_mode}, 'effort',
+        'Non-Anthropic-family model on custom provider -> effort (provider-specific default)');
+}
+
+# Test 35: Provider=anthropic with non-family model still uses enabled
+# (the previous provider=anthropic fallback was 'enabled'; this
+# confirms it didn't accidentally become 'effort').
+{
+    my $caps = _run(
+        provider => 'anthropic',
+        model    => 'some-anthropic-model-without-sonnet-naming',
+        caps     => { supports_reasoning => 1 },
+    );
+    is($caps->{reasoning_mode}, 'enabled',
+        'anthropic provider with non-family model name -> enabled (legacy fallback)');
+}
+
+# Test 36: _anthropic_model_reasoning_mode direct call - the helper
+# extracted from _ensure_reasoning_mode, provider-name independent.
+# This is the source of truth used by both MCM and Anthropic.pm.
+{
+    is($mcm->_anthropic_model_reasoning_mode('claude-sonnet-5'), 'adaptive',
+        'helper: claude-sonnet-5 -> adaptive');
+    is($mcm->_anthropic_model_reasoning_mode('claude-sonnet-4-6'), 'adaptive',
+        'helper: claude-sonnet-4-6 -> adaptive');
+    is($mcm->_anthropic_model_reasoning_mode('claude-sonnet-4-20250514'), 'enabled',
+        'helper: claude-sonnet-4-20250514 (4.0 dated) -> enabled');
+    is($mcm->_anthropic_model_reasoning_mode('claude-sonnet-4-5-20250929'), 'enabled',
+        'helper: claude-sonnet-4-5-20250929 (4.5 dated) -> enabled');
+    is($mcm->_anthropic_model_reasoning_mode('Proxy-Sonnet-5'), 'adaptive',
+        'helper: Proxy-Sonnet-5 -> adaptive');
+    is($mcm->_anthropic_model_reasoning_mode('Proxy-Opus-4-8'), 'adaptive',
+        'helper: Proxy-Opus-4-8 -> adaptive');
+    is($mcm->_anthropic_model_reasoning_mode('claude-mythos'), 'adaptive',
+        'helper: claude-mythos -> adaptive');
+    is($mcm->_anthropic_model_reasoning_mode('claude-mythos-preview'), 'adaptive',
+        'helper: claude-mythos-preview -> adaptive');
+    is($mcm->_anthropic_model_reasoning_mode('claude-fable-5'), 'adaptive',
+        'helper: claude-fable-5 -> adaptive');
+    is($mcm->_anthropic_model_reasoning_mode('claude-haiku-5'), 'adaptive',
+        'helper: claude-haiku-5 -> adaptive');
+    is($mcm->_anthropic_model_reasoning_mode('claude-opus-4-1'), 'enabled',
+        'helper: claude-opus-4-1 (4.1) -> enabled');
+    is($mcm->_anthropic_model_reasoning_mode('claude-3-5-sonnet-20241022'), 'enabled',
+        'helper: claude-3-5-sonnet-20241022 (3.5) -> enabled');
+    is($mcm->_anthropic_model_reasoning_mode('gpt-4o'), undef,
+        'helper: gpt-4o -> undef (not Anthropic family)');
+    is($mcm->_anthropic_model_reasoning_mode('MiniMax-M3'), undef,
+        'helper: MiniMax-M3 -> undef (not Anthropic family)');
+    is($mcm->_anthropic_model_reasoning_mode(undef), undef,
+        'helper: undef -> undef');
+    is($mcm->_anthropic_model_reasoning_mode(''), undef,
+        'helper: empty string -> undef');
+}
+
 done_testing();

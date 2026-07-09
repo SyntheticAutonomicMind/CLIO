@@ -276,6 +276,35 @@ use_ok('CLIO::Core::APIManager');
     ok($p->_supports_adaptive_thinking('claude-opus-4-10'), 'Anthropic: 4.10 is adaptive');
     ok($p->_supports_adaptive_thinking('claude-mythos'), 'Anthropic: mythos is adaptive');
     ok(!$p->_supports_adaptive_thinking('claude-3-5-sonnet'), 'Anthropic: 3.5 not adaptive');
+
+    # 5-series: every Anthropic-family 5-generation is adaptive per docs.
+    # Previously this regex only matched 4.6+, sending {type:enabled} for
+    # 5-series models and getting HTTP 400'd by the API.
+    ok($p->_supports_adaptive_thinking('claude-sonnet-5'), 'Anthropic: sonnet-5 is adaptive');
+    ok($p->_supports_adaptive_thinking('claude-opus-5'), 'Anthropic: opus-5 is adaptive');
+    ok($p->_supports_adaptive_thinking('claude-haiku-5'), 'Anthropic: haiku-5 is adaptive');
+    ok($p->_supports_adaptive_thinking('claude-fable-5'), 'Anthropic: fable-5 is adaptive');
+    ok($p->_supports_adaptive_thinking('claude-mythos-5'), 'Anthropic: mythos-5 is adaptive');
+    ok($p->_supports_adaptive_thinking('claude-sonnet-5-preview'), 'Anthropic: sonnet-5-preview is adaptive');
+
+    # Proxy aliases: deployment names like "Proxy-Sonnet-5" and
+    # "internal-opus-4-8" hit this fallback regex (mode isn't passed
+    # in thinking_opt when MCM is empty), so it must recognize them.
+    ok($p->_supports_adaptive_thinking('Proxy-Sonnet-5'), 'Anthropic: Proxy-Sonnet-5 alias is adaptive');
+    ok($p->_supports_adaptive_thinking('Proxy-Opus-4-8'), 'Anthropic: Proxy-Opus-4-8 alias is adaptive');
+    ok($p->_supports_adaptive_thinking('internal-opus-4-12'), 'Anthropic: internal-opus-4-12 alias is adaptive');
+
+    # Regression guard: 4.0/4.1/4.5 dated and bare stay legacy 'enabled'.
+    ok(!$p->_supports_adaptive_thinking('claude-sonnet-4-20250514'), 'Anthropic: sonnet-4 dated (4.0) not adaptive');
+    ok(!$p->_supports_adaptive_thinking('claude-opus-4-1'), 'Anthropic: opus-4-1 not adaptive');
+    ok(!$p->_supports_adaptive_thinking('claude-sonnet-4-5'), 'Anthropic: sonnet-4-5 not adaptive');
+    ok(!$p->_supports_adaptive_thinking('Proxy-Sonnet-4-5'), 'Anthropic: Proxy-Sonnet-4-5 alias is enabled (4.5 is pre-adaptive)');
+
+    # Non-Anthropic-family names must NOT be classified as adaptive.
+    ok(!$p->_supports_adaptive_thinking('gpt-4o'), 'Anthropic: gpt-4o not adaptive (not Claude family)');
+    ok(!$p->_supports_adaptive_thinking('MiniMax-M3'), 'Anthropic: MiniMax-M3 not adaptive');
+    ok(!$p->_supports_adaptive_thinking(undef), 'Anthropic: undef -> 0');
+    ok(!$p->_supports_adaptive_thinking(''), 'Anthropic: empty -> 0');
 }
 
 # ── 12. Anthropic _needs_interleaved_thinking_beta ────────────────────

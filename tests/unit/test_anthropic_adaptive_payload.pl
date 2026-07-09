@@ -165,4 +165,62 @@ sub build_payload_for {
         'build_request: sets thinking.display=summarized so thinking text is visible');
 }
 
+# Test 9: Proxy alias + no explicit mode falls through to adaptive via
+# _supports_adaptive_thinking. Without this fix, model=Proxy-Sonnet-5
+# with thinking enabled but no mode in the thinking_opt would have
+# defaulted to {type: enabled, budget_tokens: ...} and HTTP 400'd
+# with "thinking.type.enabled is not supported for this model".
+{
+    my $body = build_payload_for(
+        model    => 'Proxy-Sonnet-5',
+        thinking => { enabled => 1, effort => 'high' },  # no mode
+    );
+    is($body->{thinking}{type}, 'adaptive',
+        'proxy alias Proxy-Sonnet-5 with no explicit mode -> adaptive (was: enabled, HTTP 400)');
+    is($body->{thinking}{display}, 'summarized',
+        'proxy alias Proxy-Sonnet-5 -> adaptive with display=summarized');
+    ok(!exists $body->{thinking}{budget_tokens},
+        'proxy alias Proxy-Sonnet-5 -> no budget_tokens (adaptive mode)');
+    is($body->{output_config}{effort}, 'high',
+        'proxy alias Proxy-Sonnet-5 -> effort goes to output_config.effort');
+}
+
+# Test 10: 5-series (claude-sonnet-5) without explicit mode also picks adaptive
+{
+    my $body = build_payload_for(
+        model    => 'claude-sonnet-5',
+        thinking => { enabled => 1, effort => 'high' },
+    );
+    is($body->{thinking}{type}, 'adaptive',
+        'claude-sonnet-5 with no explicit mode -> adaptive');
+    is($body->{output_config}{effort}, 'high',
+        'claude-sonnet-5 effort -> output_config.effort');
+}
+
+# Test 11: 4.5 model (pre-adaptive) without explicit mode still gets
+# {type: enabled, budget_tokens: ...} - regression guard for the
+# reverse case (we must NOT over-match and adaptive-ify 4.5).
+{
+    my $body = build_payload_for(
+        model    => 'claude-sonnet-4-5-20250929',
+        thinking => { enabled => 1, effort => 'medium' },
+    );
+    is($body->{thinking}{type}, 'enabled',
+        '4.5 dated model with no explicit mode -> enabled (legacy)');
+    ok($body->{thinking}{budget_tokens},
+        '4.5 dated model -> budget_tokens set (enabled mode)');
+    is($body->{output_config}, undef,
+        '4.5 dated model -> no output_config (enabled mode uses thinking block only)');
+}
+
+# Test 12: Source-level regression guard - Anthropic.pm's
+# _supports_adaptive_thinking delegates to MCM. Without the
+# shared helper, the regex could drift between the two files.
+{
+    my $src = do { local $/; open my $fh, '<', 'lib/CLIO/Providers/Anthropic.pm' or die; <$fh> };
+
+    like($src, qr/_anthropic_model_reasoning_mode/,
+        'Anthropic.pm calls MCM._anthropic_model_reasoning_mode (single source of truth)');
+}
+
 done_testing();

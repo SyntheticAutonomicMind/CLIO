@@ -966,10 +966,31 @@ model decide based on the effort hint.
 sub _supports_adaptive_thinking {
     my ($self, $model) = @_;
     return 0 unless defined $model && length $model;
-    # 4.6+ family: claude-{family}-{major}-6, -7, -8, plus non-versioned names
-    # (e.g. claude-mythos). 4.5 and earlier use the older enabled+budget_tokens
-    # form. Be conservative: anything we don't recognize as 4.6+ uses 'enabled'.
-    return 1 if $model =~ /-(?:opus|sonnet|haiku)-4-(?:[6-9]|\d{2,})$/i;
+    # Delegate to MCM._anthropic_model_reasoning_mode so build-time and
+    # MCM-time heuristics share a single source of truth. Without this,
+    # the two regexes can drift (this function previously missed the
+    # 5-series and proxy aliases, sending {type:enabled} for models
+    # like Proxy-Sonnet-5 and getting HTTP 400'd by the API).
+    #
+    # MCM is loaded lazily because Anthropic.pm is used by APIManager
+    # which also uses MCM - the module is almost always loaded by the
+    # time build_request runs. If MCM is somehow unavailable, fall
+    # back to the inline regex (covers the common 4.6+ case at least).
+    my $mcm;
+    eval {
+        require CLIO::Core::ModelCapabilitiesManager;
+        $mcm = CLIO::Core::ModelCapabilitiesManager->new();
+    };
+    if ($mcm && !$@) {
+        my $mode = $mcm->_anthropic_model_reasoning_mode($model);
+        return 0 unless defined $mode;
+        return $mode eq 'adaptive' ? 1 : 0;
+    }
+
+    # Fallback regex (kept in sync with MCM._anthropic_model_reasoning_mode).
+    # Used only when MCM cannot be loaded - the lazy require above
+    # normally succeeds.
+    return 1 if $model =~ /-(?:opus|sonnet|haiku|fable|mythos)-(?:4-(?!\d{8})(?:[6-9](?:-|$|\b)|\d{2,3}(?:-|$|\b))|5(?:-|$|\b))/i;
     return 1 if $model =~ /^claude-mythos/i;
     return 0;
 }
