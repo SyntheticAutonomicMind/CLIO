@@ -860,9 +860,15 @@ sub adapt_request_for_endpoint {
     # Check model capabilities for reasoning support instead of hardcoded model patterns
     if ($endpoint_config->{openrouter}) {
         my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
+        my $thinking_mode = $self->{config} ? ($self->{config}->get('thinking_mode') // 'auto') : 'auto';
         my $model_supports = $endpoint_config->{supports_reasoning}
             || ($payload->{model} && $self->_model_supports_reasoning($payload->{model}));
-        if ($show_thinking && $model_supports) {
+        # thinking_mode=auto: gate on show_thinking (legacy behavior).
+        # thinking_mode=enabled: force ON regardless of show_thinking.
+        # thinking_mode=disabled: never send reasoning params.
+        my $send_reasoning = ($thinking_mode eq 'enabled' && $model_supports)
+            || ($thinking_mode eq 'auto' && $show_thinking && $model_supports);
+        if ($send_reasoning) {
             my $thinking_effort = $self->{config} ? ($self->{config}->get('thinking_effort') // 'medium') : 'medium';
             $payload->{reasoning} = { enabled => \1, effort => $thinking_effort };
         }
@@ -881,9 +887,16 @@ sub adapt_request_for_endpoint {
         && !$endpoint_config->{zai})
     {
         my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
+        my $thinking_mode = $self->{config} ? ($self->{config}->get('thinking_mode') // 'auto') : 'auto';
         my $model = $payload->{model} // '';
         my $reasoning_mode = $model ? $self->_get_reasoning_mode($model) : undef;
-        if ($show_thinking && $reasoning_mode) {
+        # thinking_mode=auto: gate on show_thinking (legacy behavior).
+        # thinking_mode=enabled: force ON (preserves the model's native
+        # mode - effort for OpenAI/DeepSeek/NVIDIA/Copilot).
+        # thinking_mode=disabled: never send reasoning_effort.
+        my $send_reasoning = ($thinking_mode eq 'enabled' && $reasoning_mode)
+            || ($thinking_mode eq 'auto' && $show_thinking && $reasoning_mode);
+        if ($send_reasoning) {
             my $thinking_effort = $self->{config} ? ($self->{config}->get('thinking_effort') // 'medium') : 'medium';
             $payload->{reasoning_effort} = $thinking_effort;
             log_debug('APIManager', "Added reasoning_effort=$thinking_effort for $model (mode=$reasoning_mode)");
@@ -902,7 +915,13 @@ sub adapt_request_for_endpoint {
             my $reasoning_mode = $self->_get_reasoning_mode($payload->{model});
             if ($reasoning_mode) {
                 my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
-                if ($show_thinking) {
+                my $thinking_mode = $self->{config} ? ($self->{config}->get('thinking_mode') // 'auto') : 'auto';
+                # thinking_mode=auto: gate on show_thinking (legacy).
+                # thinking_mode=enabled: force ON.
+                # thinking_mode=disabled: send type=disabled.
+                my $send_thinking = $thinking_mode eq 'enabled'
+                    || ($thinking_mode eq 'auto' && $show_thinking);
+                if ($send_thinking) {
                     if ($reasoning_mode eq 'adaptive') {
                         $payload->{thinking} = { type => 'adaptive' };
                     } else {
@@ -948,8 +967,15 @@ sub adapt_request_for_endpoint {
         # Enable Z.AI thinking parameter for chain-of-thought
         # Uses model capabilities to check reasoning support
         my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
+        my $thinking_mode = $self->{config} ? ($self->{config}->get('thinking_mode') // 'auto') : 'auto';
         my $reasoning_mode = $payload->{model} ? $self->_get_reasoning_mode($payload->{model}) : undef;
-        if ($show_thinking && $reasoning_mode) {
+        # thinking_mode=auto: gate on show_thinking (legacy).
+        # thinking_mode=enabled: force ON.
+        # thinking_mode=disabled: skip (Z.AI has no "disabled" type so the
+        # only way to opt out is to not send the parameter).
+        my $send_thinking = ($thinking_mode eq 'enabled' && $reasoning_mode)
+            || ($thinking_mode eq 'auto' && $show_thinking && $reasoning_mode);
+        if ($send_thinking) {
             $payload->{thinking} = { type => 'enabled' };
         }
 
@@ -2081,12 +2107,27 @@ sub _build_responses_api_payload {
     # ResponseHandler flags _no_reasoning when model rejects reasoning params
     if (!$self->{response_handler}{_no_reasoning}) {
         my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
-        my $thinking_effort = $self->{config} ? ($self->{config}->get('thinking_effort') // 'medium') : 'medium';
-        my $reasoning_config = { effort => $thinking_effort };
-        if ($show_thinking) {
-            $reasoning_config->{summary} = 'auto';
+        my $thinking_mode = $self->{config} ? ($self->{config}->get('thinking_mode') // 'auto') : 'auto';
+        # thinking_mode=auto: gate on show_thinking (legacy).
+        # thinking_mode=enabled: force ON.
+        # thinking_mode=disabled: skip the reasoning parameter entirely.
+        if ($thinking_mode eq 'disabled') {
+            # Skip - Responses API has no "disabled" type, only "enabled"
+            # with effort. Omitting reasoning means no reasoning happens.
         }
-        $payload->{reasoning} = $reasoning_config;
+        elsif ($thinking_mode eq 'enabled'
+            || ($thinking_mode eq 'auto' && $show_thinking)) {
+            my $thinking_effort = $self->{config} ? ($self->{config}->get('thinking_effort') // 'medium') : 'medium';
+            my $reasoning_config = { effort => $thinking_effort };
+            # summary: auto makes the model return reasoning text; only set
+            # when the user actually wants to see it. With thinking_mode=auto
+            # and show_thinking=0, or thinking_mode=enabled, we still
+            # configure effort but skip the visible summary.
+            if ($show_thinking) {
+                $reasoning_config->{summary} = 'auto';
+            }
+            $payload->{reasoning} = $reasoning_config;
+        }
     }
     
     # Add tools if provided - convert to Responses API format
@@ -4610,7 +4651,11 @@ have first-class thinking support, and for endpoints with the
 sub _endpoint_supports_thinking {
     my ($self) = @_;
 
-    my $provider_name = $self->{provider} // '';
+    # The provider lives on the config object, not on $self. Reading
+    # $self->{provider} always returned empty and disabled thinking
+    # entirely; reading through config matches every other provider
+    # check in this file.
+    my $provider_name = $self->{config} ? ($self->{config}->get('provider') // '') : '';
     return 1 if $provider_name eq 'anthropic';
     return 1 if $provider_name eq 'google';
 
@@ -4735,6 +4780,10 @@ sub _send_native_streaming {
 
     # Hoist thinking_effort to outer scope so the self-correcting retry
     # block (inside the 400 error handler, ~150 lines below) can use it.
+
+    # Hoist thinking_mode (auto|enabled|disabled). Resolved once so both
+    # the initial send and the self-correcting retry use the same value.
+    my $thinking_mode = $self->{config} ? ($self->{config}->get('thinking_mode') // 'auto') : 'auto';
     my $effort = $self->{config} ? ($self->{config}->get('thinking_effort') // 'medium') : 'medium';
 
     # Build thinking config for providers that support it. The harness
@@ -4747,29 +4796,85 @@ sub _send_native_streaming {
         # by this model, don't send thinking params again.
         my $reasoning_blocked = $self->{response_handler} && $self->{response_handler}{_no_reasoning};
         my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
-        my $provider_supports = $self->_model_supports_reasoning($opts{model} // $self->{model});
+        my $full_model_for_caps = $opts{model} // $self->{model} // $self->get_current_model();
+        my $provider_supports = $self->_model_supports_reasoning($full_model_for_caps);
+        my $caps = $full_model_for_caps ? $self->get_model_capabilities($full_model_for_caps) : undef;
+        my $requires_adaptive = ($caps && $caps->{requires_adaptive_thinking}) ? 1 : 0;
+        # Fallback when MCM has no data (no API key, network failure, brand
+        # new model not yet in the cache). Match the well-known families
+        # that REQUIRE adaptive - this is the safety net for the Fable 5 /
+        # Mythos 5 / Mythos Preview case where the API rejects
+        # {type:"disabled"} with HTTP 400. MCM._anthropic_requires_adaptive
+        # has the same regex; we duplicate it here to keep APIManager
+        # safe when the capabilities fetch failed.
+        if (!$requires_adaptive && defined $full_model_for_caps
+            && ($self->{config} ? ($self->{config}->get('provider') // '') : '') =~ /^anthropic$/i) {
+            $requires_adaptive = 1 if $full_model_for_caps =~ /-(?:fable|mythos)-5(?:-|$|\b)/i;
+            $requires_adaptive = 1 if $full_model_for_caps =~ /^claude-mythos-preview(?:-|$|\b)/i;
+            # Strip provider/ prefix for the Fable/Mythos 5 check above
+            if (!$requires_adaptive && $full_model_for_caps =~ s{^[^/]+/}{}) {
+                $requires_adaptive = 1 if $full_model_for_caps =~ /-(?:fable|mythos)-5(?:-|$|\b)/i;
+                $requires_adaptive = 1 if $full_model_for_caps =~ /^claude-mythos-preview(?:-|$|\b)/i;
+            }
+        }
+
+        # Three-way decision via thinking_mode (default: auto).
+        # auto:     Anthropic -> send adaptive (recommended by Anthropic;
+        #           happens regardless of show_thinking - the model decides
+        #           whether to actually think). Other providers: gate on
+        #           show_thinking to preserve current behavior.
+        # enabled:  Force thinking ON. Uses the model's native mode
+        #           (adaptive for current Anthropic, enabled for legacy).
+        # disabled: Omit thinking. Overridden to adaptive with a warning
+        #           for models that REQUIRE adaptive (Fable 5, Mythos 5,
+        #           Mythos Preview) because the API rejects
+        #           {type:"disabled"} on those with HTTP 400.
         if ($reasoning_blocked) {
-            # Model rejected reasoning params on a previous request - disable
+            # Model rejected reasoning params on a previous request - disable.
             $thinking_opt = { enabled => 0 };
         }
-        elsif ($show_thinking && $provider_supports) {
-            # User wants to see thinking and the model supports it.
-            # Look up reasoning_mode from capabilities so the provider
-            # can use the correct format (adaptive vs enabled vs effort).
-            my $full_model = $opts{model} // $self->{model} // $self->get_current_model();
-            my $reasoning_mode = $full_model ? $self->_get_reasoning_mode($full_model) : undef;
+        elsif ($thinking_mode eq 'disabled') {
+            if ($requires_adaptive) {
+                # Override: this model rejects {type:"disabled"} with HTTP 400.
+                log_warning('APIManager', "thinking_mode=disabled ignored for $full_model_for_caps: model requires adaptive thinking (API rejects {type:disabled})");
+                $thinking_opt = {
+                    enabled => 1,
+                    effort  => $effort,
+                    mode    => 'adaptive',
+                };
+            }
+            else {
+                $thinking_opt = { enabled => 0 };
+            }
+        }
+        elsif ($thinking_mode eq 'enabled' && $provider_supports) {
+            my $reasoning_mode = $full_model_for_caps ? $self->_get_reasoning_mode($full_model_for_caps) : undef;
             $thinking_opt = {
                 enabled => 1,
                 effort  => $effort,
                 ($reasoning_mode ? (mode => $reasoning_mode) : ()),
             };
         }
-        elsif (!$show_thinking) {
-            # User explicitly disabled thinking. Pass enabled => 0 so the
-            # provider knows not to enable it by default.
-            $thinking_opt = {
-                enabled => 0,
-            };
+        elsif ($thinking_mode eq 'auto') {
+            my $provider_name = $self->{provider} // '';
+            if ($provider_name eq 'anthropic' && $provider_supports) {
+                $thinking_opt = {
+                    enabled => 1,
+                    effort  => $effort,
+                    mode    => 'adaptive',
+                };
+            }
+            elsif ($show_thinking && $provider_supports) {
+                my $reasoning_mode = $full_model_for_caps ? $self->_get_reasoning_mode($full_model_for_caps) : undef;
+                $thinking_opt = {
+                    enabled => 1,
+                    effort  => $effort,
+                    ($reasoning_mode ? (mode => $reasoning_mode) : ()),
+                };
+            }
+            elsif (!$show_thinking) {
+                $thinking_opt = { enabled => 0 };
+            }
         }
         # When show_thinking is on but model doesn't support reasoning,
         # don't pass any thinking option (provider will skip it).

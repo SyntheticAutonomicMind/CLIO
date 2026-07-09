@@ -465,10 +465,17 @@ sub parse_stream_event {
             # on the initial content_block_start; if so, capture it for round-trip
             # (the model requires the signature on the previous turn's thinking block
             # when interleaved thinking is enabled).
+            # Initialize text => '' so the thinking_delta handler can accumulate into
+            # it; without this the text was computed for display but never persisted
+            # into _thinking_blocks, and on providers/modes that require the prior
+            # turn's thinking text to round-trip with the model, the text was
+            # silently lost after being shown once.
             $self->{_current_thinking} = {
                 type => 'thinking',
                 signature => $block->{signature},
+                text      => '',
             };
+            log_debug('Anthropic', 'thinking block start (signature=' . ($block->{signature} ? 'yes' : 'no') . ')');
             return {
                 type => 'thinking_start',
                 content => '',
@@ -515,6 +522,13 @@ sub parse_stream_event {
             # three so we render thinking content from compatible proxies
             # that diverge from the upstream field name.
             my $thinking_text = $delta->{thinking} // $delta->{text} // $delta->{reasoning_content} // '';
+            # Accumulate the text into the current thinking block so it
+            # round-trips with the model on the next turn. Without this
+            # the text was shown once and then silently dropped.
+            if (length $thinking_text) {
+                $self->{_current_thinking}{text} .= $thinking_text
+                    if $self->{_current_thinking};
+            }
             return {
                 type => 'thinking',
                 content => $thinking_text,
@@ -531,6 +545,7 @@ sub parse_stream_event {
     elsif ($event_type eq 'content_block_stop') {
         # If we just finished a thinking block, persist it for round-trip.
         if ($self->{_current_thinking} && $self->{_current_thinking}{type} eq 'thinking') {
+            log_debug('Anthropic', 'thinking block stop (text_len=' . length($self->{_current_thinking}{text} // '') . ', signature=' . ($self->{_current_thinking}{signature} ? 'yes' : 'no') . ')');
             push @{$self->{_thinking_blocks}}, $self->{_current_thinking};
             $self->{_current_thinking} = undef;
             return {

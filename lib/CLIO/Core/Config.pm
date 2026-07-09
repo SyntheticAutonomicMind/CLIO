@@ -43,7 +43,7 @@ use constant LOG_LEVEL => {
 # these values are saved to model_configs and restored on switch back.
 use constant MODEL_SCOPED_KEYS => [
     qw(cap_context_window cap_max_output cap_max_prompt
-       show_thinking thinking_effort
+       show_thinking thinking_effort thinking_mode
        sampling_temperature sampling_top_p sampling_top_k
        force_tools force_vision force_reasoning)
 ];
@@ -91,6 +91,17 @@ use constant DEFAULT_CONFIG => {
     # - Anthropic enabled (older): low|medium|high|xhigh|max (mapped to budget_tokens)
     # - OpenAI: low|medium|high
     # - Google Gemini: low|medium|high (mapped to thinkingBudget)
+    thinking_mode => 'auto',    # Reasoning mode: auto|enabled|disabled (default: auto)
+    # - auto: use adaptive thinking for capable Anthropic models (recommended),
+    #   legacy enabled mode for older Anthropic models, and the existing
+    #   show_thinking-gated behavior for all other providers.
+    # - enabled: force legacy enabled mode (thinking.type=enabled + budget_tokens)
+    #   for any model that supports it. Models that reject enabled mode
+    #   (Fable 5, Mythos 5, Mythos Preview, Sonnet 5, Opus 4.7, Opus 4.8)
+    #   will fall back to adaptive with a warning.
+    # - disabled: omit the thinking parameter entirely. Models that REQUIRE
+    #   thinking (Fable 5, Mythos 5, Mythos Preview) will still receive
+    #   adaptive with a warning because the API rejects thinking.type=disabled.
     # Sampling parameter overrides (empty string = use model/provider defaults)
     sampling_temperature => '',  # Override temperature (e.g. 0.7); empty = use provider default
     sampling_top_p => '',        # Override top_p (e.g. 0.9); empty = use provider default
