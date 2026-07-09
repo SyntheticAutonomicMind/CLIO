@@ -651,6 +651,39 @@ sub _handle_error_response_impl {
     # We treat these differently:
     #   - 401: Token is invalid, recovery makes sense
     #   - 403: Check if it's a permanent failure (subscription required, model unavailable) before recovering
+    # Handle region unavailability BEFORE auth (non-retryable).
+    # The model exists but isn't available in the user's geographic region or data residency.
+    elsif (($status == 400 || $status == 403) && (
+        $error =~ /\bregion(?:unavailable|not[_ -]?(?:available|supported))?\b/i
+        || $error =~ /\bnot\s+available\s+in\s+(?:your\s+)?(?:region|country|location)\b/i
+        || $error =~ /\bdata\s+residency\b/i
+        || (ref($error_obj) eq 'HASH' && (($error_obj->{code} // '') =~ /region[_]?(?:unavailable|not[_]?available)|geo[_]?restriction/i))
+    )) {
+        $is_retryable_error = 0;
+        $retryable = 0;
+        $error_type = 'region_unavailable';
+        $error = "The model is not available in your region or data-residency setting. "
+               . "Retrying won't help - you need a model deployed in a region you can access.\n\n"
+               . "Provider detail: $error";
+        log_warning('ResponseHandler', "Region unavailable (non-retryable): $error");
+    }
+
+    # Handle account-level deactivation BEFORE auth (non-retryable - user must contact support or admin).
+    elsif (($status == 400 || $status == 403) && (
+        $error =~ /\b(?:account|organization|workspace)\s+(?:deactivated|suspended|disabled|locked|terminated|blocked|banned)\b/i
+        || $error =~ /\borganization\s+(?:is\s+)?inactive\b/i
+        || $error =~ /\borganization\s+has\s+been\s+deactivated\b/i
+        || (ref($error_obj) eq 'HASH' && (($error_obj->{code} // '') =~ /account[_]?(?:deactivated|suspended|disabled)|org[_]?(?:deactivated|inactive)/i))
+    )) {
+        $is_retryable_error = 0;
+        $retryable = 0;
+        $error_type = 'account_disabled';
+        $error = "Your account or organization has been deactivated/suspended by the provider. "
+               . "Retrying won't help - you'll need to contact the provider's support or your account admin to restore access.\n\n"
+               . "Provider detail: $error";
+        log_warning('ResponseHandler', "Account disabled (non-retryable): $error");
+    }
+
     elsif ($status == 401 || $status == 403) {
         # For 403, check if the error message indicates a permanent failure that token recovery won't fix
         my $is_permanent_auth_failure = 0;
@@ -732,6 +765,45 @@ sub _handle_error_response_impl {
                . "Try a different model, or wait and retry later.\n\n"
                . "Provider detail: $detail";
         log_warning('ResponseHandler', "Provider unavailable (non-retryable): $detail");
+    }
+
+    # Handle upstream timeouts distinctly from generic server_error.
+    # Timeouts (504 Gateway Timeout, 408 Request Timeout, or 5xx with "timeout" in body)
+    # benefit from longer backoff than transient 5xx - retrying in 2s won't help if the
+    # upstream is still processing. Give them 30s+ before retry so the upstream has time
+    # to clear its backlog.
+    elsif ($status == 408 || $status == 504 ||
+           ($status >= 500 && $status < 600 &&
+            $error =~ /\b(?:request\s+timeout|upstream\s+timeout|deadline\s+exceeded|read\s+timeout|gateway\s+timeout)\b/i)) {
+        $is_retryable_error = 1;
+        $retryable = 1;
+        $retry_after = 30;
+        $error_type = 'timeout';
+        $retry_info = "Upstream timeout. Will retry with a longer wait.";
+        $error = "The AI provider timed out responding to the request. "
+               . "This is usually transient (the upstream was busy). Retrying after a longer wait.\n\n"
+               . "Provider detail: $error";
+        log_info('ResponseHandler', "Timeout (retryable with long backoff): $error");
+    }
+
+    # Handle upstream/internal overload distinctly from generic 5xx server_error.
+    # "engine_overloaded", "internal_error", "upstream_error" etc. are usually transient
+    # - the upstream provider's model is overloaded right now. Exponential backoff helps
+    # because these often clear within 30-60s.
+    elsif ($status >= 500 && $status < 600 && (
+        $error =~ /\b(?:engine[_ -]?overloaded|model[_ -]?overloaded|server[_ -]?overloaded|service[_ -]?overloaded)\b/i
+        || $error =~ /\bupstream[_ -]?(?:error|provider[_ -]?error|provider[_ -]?issue)\b/i
+        || (ref($error_obj) eq 'HASH' && (($error_obj->{code} // '') =~ /engine[_]?overloaded|model[_]?overloaded|server[_]?overloaded|internal[_]?error/i))
+    )) {
+        $is_retryable_error = 1;
+        $retryable = 1;
+        $retry_after = 10;
+        $error_type = 'overloaded';
+        $retry_info = "Upstream provider is overloaded. Will retry with backoff.";
+        $error = "The AI provider reports their upstream is overloaded. "
+               . "This is usually transient - retrying after a short wait should resolve it.\n\n"
+               . "Provider detail: $error";
+        log_info('ResponseHandler', "Overloaded (retryable with backoff): $error");
     }
 
     # Handle transient server errors (5xx except 599 which is handled as connection_error)
@@ -920,6 +992,48 @@ sub _handle_error_response_impl {
         log_info('ResponseHandler', "Content filter triggered: $error");
     }
 
+    # Handle billing/credit/quota errors distinct from rate limits (non-retryable).
+    # Distinct from rate_limit because no amount of waiting fixes an empty balance.
+    # Covers OpenAI/Anthropic "insufficient credit", Z.AI 1113-style, generic "payment required",
+    # HTTP 402 Payment Required, and provider-specific codes.
+    elsif (($status == 400 || $status == 402) && (
+        $error =~ /insufficient\s+(?:credit|credits|balance|quota|funds)/i
+        || $error =~ /credit\s+balance\s+(?:is\s+)?(?:too\s+)?(?:low|insufficient|exceeded)/i
+        || $error =~ /payment\s+required/i
+        || $error =~ /billing[_\s](?:issue|problem|error|limit)/i
+        || $error =~ /pay[-\s]?as[-\s]?you[-\s]?go/i
+        || $error =~ /add\s+(?:credits?|funds?|balance)/i
+        || (ref($error_obj) eq 'HASH' && (($error_obj->{code} // '') =~ /insufficient[_]?(?:credit|quota|balance)|payment[_]?required|billing[_]?error/i))
+        || (ref($error_obj) eq 'HASH' && (($error_obj->{type} // '') =~ /insufficient[_]?(?:credit|quota|balance)|payment[_]?required/i))
+    )) {
+        $is_retryable_error = 0;
+        $retryable = 0;
+        $error_type = 'billing_error';
+        $error = "Your API account has run out of credits or hit a billing limit. "
+               . "This is not a temporary issue - you need to add credits or upgrade your plan before this model will work again.\n\n"
+               . "Provider detail: $error";
+        log_warning('ResponseHandler', "Billing error (non-retryable): $error");
+    }
+
+    # Handle model-not-found errors (non-retryable - the model doesn't exist for this provider/account).
+    # Distinct from provider_unavailable (model exists but is currently degraded) and region_unavailable
+    # (model exists but not in your region). Retrying won't help - the model must be changed.
+    elsif (($status == 400 || $status == 404) && (
+        $error =~ /\b(?:model[_\s-]not[-\s]?found|no\s+such\s+model|unknown\s+model|model\s+does\s+not\s+exist)\b/i
+        || $error =~ /\b(?:invalid[_\s-]?model|unsupported[_\s-]?model|model[_\s-]?(?:does\s+not|doesn't)\s+support)\b/i
+        || (ref($error_obj) eq 'HASH' && (($error_obj->{code} // '') =~ /model[_]?not[_]?found|unknown[_]?model|no[_]?such[_]?model/i))
+        || (ref($error_obj) eq 'HASH' && (($error_obj->{type} // '') =~ /invalid[_]?request[_]?error/i) && (($error_obj->{code} // '') =~ /model/i))
+    )) {
+        $is_retryable_error = 0;
+        $retryable = 0;
+        $error_type = 'model_not_found';
+        $error = "The specified model is not available from this provider (or for this account/API key). "
+               . "This is not a transient issue - the model name may be wrong, deprecated, or not enabled on your plan.\n\n"
+               . "Try a different model with: /api model <provider>/<model>\n\n"
+               . "Provider detail: $error";
+        log_warning('ResponseHandler', "Model not found (non-retryable): $error");
+    }
+
     # Handle generic 400 (transient backend error, content encoding issue, etc.)
     # These arrive with no recognizable error string - treat as retryable with short backoff.
     # The raw response body is logged to /tmp/clio_api_400.log for diagnosis.
@@ -948,10 +1062,26 @@ sub _handle_error_response_impl {
             log_info('ResponseHandler', "API 400 Bad Request (empty response body)");
         }
 
-        $retry_info = "API 400 Bad Request - retrying after short delay...";
-        # Don't overwrite $error if it was already set from JSON body extraction above
-        # (e.g., OpenRouter metadata errors, Anthropic error messages)
-        $error = $retry_info unless $error_obj;
+        $retry_info = "Unclassified API 400 - retrying. If this persists, the provider message has been logged to /tmp/clio_api_400.log.";
+
+        # Preserve the provider's error message so the user actually sees what went wrong.
+        # When $error_obj exists, _parse_error_response already extracted the provider's
+        # message into $error - don't overwrite it. When there's no error_obj, $error is
+        # the generic "Request failed: 400 Bad Request" - keep that as a baseline but flag
+        # it as unclassified so the user knows to check the diagnostic log.
+        my $provider_msg = $error;
+        if (length($provider_msg) > 500) {
+            $provider_msg = substr($provider_msg, 0, 497) . '...';
+        }
+        if ($error_obj) {
+            # Provider gave us a message - use it as-is, trimmed
+            $error = $provider_msg;
+        } else {
+            # No structured error info - tell the user where to look
+            $error = "API rejected the request (HTTP 400). No structured error message was provided by the provider. "
+                   . "Full response body has been logged to /tmp/clio_api_400.log for diagnosis. "
+                   . "Retrying in case the failure was transient.";
+        }
     }
 
     # Log error details

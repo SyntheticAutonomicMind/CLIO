@@ -581,4 +581,235 @@ subtest 'handle_error_response - generic 400 still retryable (regression check)'
     is($result->{retryable}, 1, 'Generic 400 still retryable');
     is($result->{error_type}, 'bad_request', 'Error type is still bad_request');
 };
+# =============================================================================
+# Non-retryable error type tests (Layer 2 - billing/model_not_found/etc)
+# =============================================================================
+# These errors are NEVER retryable. No amount of waiting fixes an empty balance,
+# a missing model, a regional lock, or a deactivated account.
+
+subtest 'handle_error_response - 400 billing_error (insufficient credit)' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 400,
+        status_line => '400 Bad Request',
+        content => '{"error":{"message":"You have insufficient credit balance to use this model. Please top up your account.","type":"insufficient_credit"}}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{retryable}, 0, 'Insufficient credit is NOT retryable');
+    is($result->{error_type}, 'billing_error', 'Error type is billing_error');
+    like($result->{error}, qr/credits or hit a billing limit/i, 'User-facing message mentions billing');
+};
+
+subtest 'handle_error_response - 402 payment_required' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 402,
+        status_line => '402 Payment Required',
+        content => '{"error":{"message":"Payment required to access this model"}}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{retryable}, 0, '402 Payment Required is NOT retryable');
+    is($result->{error_type}, 'billing_error', 'Error type is billing_error');
+};
+
+subtest 'handle_error_response - 400 billing_error (payment required string)' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 400,
+        status_line => '400 Bad Request',
+        content => '{"error":{"message":"Payment required for this endpoint"}}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{retryable}, 0, 'payment required string is NOT retryable');
+    is($result->{error_type}, 'billing_error', 'Error type is billing_error');
+};
+
+subtest 'handle_error_response - 400 model_not_found' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 404,
+        status_line => '404 Not Found',
+        content => '{"error":{"message":"The model `gpt-99-turbo` does not exist or you do not have access to it.","code":"model_not_found"}}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{retryable}, 0, 'Model not found is NOT retryable');
+    is($result->{error_type}, 'model_not_found', 'Error type is model_not_found');
+    like($result->{error}, qr/switch models|different model/i, 'User-facing message mentions switching models');
+};
+
+subtest 'handle_error_response - 400 "no such model" string' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 400,
+        status_line => '400 Bad Request',
+        content => '{"error":{"message":"No such model: claude-fake-99"}}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{retryable}, 0, 'No such model is NOT retryable');
+    is($result->{error_type}, 'model_not_found', 'Error type is model_not_found');
+};
+
+subtest 'handle_error_response - 403 region_unavailable' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 403,
+        status_line => '403 Forbidden',
+        content => '{"error":{"message":"This model is not available in your region. Please try a model deployed in a supported region.","code":"region_unavailable"}}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{retryable}, 0, 'Region unavailable is NOT retryable');
+    is($result->{error_type}, 'region_unavailable', 'Error type is region_unavailable');
+};
+
+subtest 'handle_error_response - 400 account_disabled' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 403,
+        status_line => '403 Forbidden',
+        content => '{"error":{"message":"Your organization has been deactivated. Please contact support.","code":"account_deactivated"}}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{retryable}, 0, 'Account deactivated is NOT retryable');
+    is($result->{error_type}, 'account_disabled', 'Error type is account_disabled');
+};
+
+subtest 'handle_error_response - 400 organization inactive' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 400,
+        status_line => '400 Bad Request',
+        content => '{"error":{"message":"Organization inactive - access denied"}}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{retryable}, 0, 'Org inactive is NOT retryable');
+    is($result->{error_type}, 'account_disabled', 'Error type is account_disabled');
+};
+
+# =============================================================================
+# Retryable-but-specific error type tests (Layer 2 - timeout/overloaded)
+# =============================================================================
+# These should be retried with a longer backoff than generic 2s.
+
+subtest 'handle_error_response - 504 Gateway Timeout' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 504,
+        status_line => '504 Gateway Timeout',
+        content => '{"error":{"message":"Upstream provider timed out"}}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{retryable}, 1, '504 Gateway Timeout IS retryable');
+    is($result->{error_type}, 'timeout', 'Error type is timeout');
+    is($result->{retry_after}, 30, 'Timeout retry_after is 30s (longer than generic 2s)');
+};
+
+subtest 'handle_error_response - 408 Request Timeout' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 408,
+        status_line => '408 Request Timeout',
+        content => '{"error":{"message":"Request took too long"}}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{retryable}, 1, '408 Request Timeout IS retryable');
+    is($result->{error_type}, 'timeout', 'Error type is timeout');
+};
+
+subtest 'handle_error_response - 500 engine_overloaded' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 503,
+        status_line => '503 Service Unavailable',
+        content => '{"error":{"message":"engine_overloaded","code":"engine_overloaded"}}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{retryable}, 1, 'engine_overloaded IS retryable');
+    is($result->{error_type}, 'overloaded', 'Error type is overloaded (not server_error)');
+    is($result->{retry_after}, 10, 'Overloaded retry_after is 10s');
+};
+
+subtest 'handle_error_response - 500 model overloaded string' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 500,
+        status_line => '500 Internal Server Error',
+        content => '{"error":{"message":"model_overloaded - please retry after a short wait"}}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{retryable}, 1, 'model_overloaded string IS retryable');
+    is($result->{error_type}, 'overloaded', 'Error type is overloaded');
+};
+
+subtest 'handle_error_response - 500 upstream_error' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 502,
+        status_line => '502 Bad Gateway',
+        content => '{"error":{"message":"upstream_error: provider returned an empty response"}}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{retryable}, 1, 'upstream_error IS retryable');
+    is($result->{error_type}, 'overloaded', 'Error type is overloaded (not server_error)');
+};
+
+# =============================================================================
+# Generic 400 fallback improvement tests (Layer 1)
+# =============================================================================
+# The new behavior preserves the actual provider error message instead of
+# overwriting it with a generic retry notice.
+
+subtest 'handle_error_response - generic 400 preserves provider error' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 400,
+        status_line => '400 Bad Request',
+        content => '{"error":{"message":"Invalid request payload: missing required field \'messages\'"}}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{retryable}, 1, 'Generic 400 still retryable');
+    is($result->{error_type}, 'bad_request', 'Error type is still bad_request');
+    like($result->{error}, qr/Invalid request payload: missing required field/, 'Error preserves actual provider message');
+};
+
+subtest 'handle_error_response - generic 400 with no error_obj shows hint' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 400,
+        status_line => '400 Bad Request',
+        content => 'plain text body',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{retryable}, 1, 'Generic 400 still retryable');
+    is($result->{error_type}, 'bad_request', 'Error type is bad_request');
+    like($result->{error}, qr/\/tmp\/clio_api_400\.log/, 'Empty-body 400 hint points to diagnostic log');
+};
+
+# Regression check: NVIDIA DEGRADED function still classified correctly with new patterns in place
+subtest 'handle_error_response - NVIDIA DEGRADED still classified correctly (regression)' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 400,
+        status_line => '400 Bad Request',
+        content => '{"status":400,"title":"Bad Request","detail":"Function id \'abc\': DEGRADED function cannot be invoked"}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{error_type}, 'provider_unavailable', 'DEGRADED function still classified as provider_unavailable');
+    is($result->{retryable}, 0, 'DEGRADED function still NOT retryable');
+};
 done_testing();

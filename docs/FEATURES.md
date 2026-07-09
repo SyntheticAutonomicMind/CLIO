@@ -203,6 +203,40 @@ When something goes wrong - a syntax error, a failed test, an unexpected file st
 
 ---
 
+### API Error Classification
+
+When an API call fails, CLIO classifies the error into a specific type and chooses the appropriate recovery strategy. The classification covers most common provider error patterns:
+
+**Non-retryable errors** (no amount of waiting fixes these):
+
+- **`billing_error`** - Account is out of credits, hit a billing limit, or returned HTTP 402 Payment Required. Action: add credits or upgrade your plan.
+- **`model_not_found`** - The specified model doesn't exist for this provider or your account. Action: switch models with `/api model <provider>/<model>`.
+- **`region_unavailable`** - The model exists but isn't accessible from your region or data-residency setting. Action: pick a model deployed in a supported region.
+- **`account_disabled`** - Your account or organization has been deactivated/suspended by the provider. Action: contact provider support or your account admin.
+- **`provider_unavailable`** - The model's backend function is in a DEGRADED state on the provider's infrastructure (e.g. NVIDIA NIM `DEGRADED function cannot be invoked`). Action: try a different model or wait and retry later.
+- **`quota_exceeded`** - Account-level quota (credits, monthly limit) is exhausted. Distinct from rate_limit.
+- **`auth_failed`** - Permanent authentication failure (invalid API key, missing subscription).
+
+**Retryable errors** (transient - retry may help):
+
+- **`timeout`** - Upstream provider timed out (HTTP 408/504 or 5xx with "timeout" in body). Retried with longer backoff (30s base, exponential).
+- **`overloaded`** - Upstream engine/model is overloaded (`engine_overloaded`, `model_overloaded`, `upstream_error`). Retried with backoff (10s base, exponential).
+- **`server_error`** - Generic 5xx response. Retried with exponential backoff.
+- **`connection_error`** - Network/HTTP transport failure. Connectivity check on first retry.
+- **`rate_limit`** - HTTP 429 with retry guidance from the provider.
+
+**Trim-and-retry errors** (context-related):
+
+- **`token_limit_exceeded`** - Provider reports context window exceeded. Triggers the three-layer reactive trimming strategy.
+- **`malformed_tool_json`** - Provider rejected the AI's tool call due to bad JSON. Removed, schema guidance injected, retried.
+
+**Unclassified 400** (the catch-all):
+
+- **`bad_request`** - Provider returned HTTP 400 with no recognizable pattern. The actual provider error message is preserved and shown to the user. After the configured retry limit, CLIO bails with the original message plus guidance (suggesting `/api logs` and model switch).
+
+If you see an error message you can't interpret, check `/tmp/clio_api_400.log` for the full provider response body, and `/tmp/clio_diag_persistent_400.log` for diagnostic dumps of unclassified failures.
+
+
 ## 2. Tools
 
 Tools are CLIO's hands and eyes. They let the AI interact with your filesystem, terminal, version control, and more. CLIO has 11 core tools (plus dynamic MCP and plugin bridges) with over 80 operations between them.
