@@ -869,7 +869,7 @@ sub trim_for_token_limit {
             bail     => 1,
             response => {
                 success         => 0,
-                error           => "API error persists after context trim (0 messages removed, $retry_count retries). This is likely a backend issue, not a context size problem. Diagnostic dump written to /tmp/clio_diag_persistent_400.log. Try again in a few minutes, or use a different model.",
+                error           => "API error persists after context trim (0 messages removed, $retry_count retries). Diagnostic dump written to /tmp/clio_diag_persistent_400.log. Try a different model, or wait a few minutes and retry.",
                 iterations      => $iteration,
                 tool_calls_made => $tool_calls_made,
             },

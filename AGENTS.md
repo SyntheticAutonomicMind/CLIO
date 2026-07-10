@@ -660,6 +660,7 @@ Permanent knowledge -> Detailed commit message (committed)
 | Create summary docs in root | Clutters repository, wrong location | Use scratch/ for working documents |
 | Skip collaboration checkpoints | Violates Unbroken Method | Use interact at key decision points |
 | Technical jargon in action_desc | Users don't care about implementation details | Use user-focused descriptions |
+| Negative framing in user-facing messages | "This is not X" or "Retrying won't help" assumes the user has a mental model we haven't given them | State what IS true and what to do. Tell the user what action to take, not what this isn't |
 | Changelog-style comments in code | Git history explains why; comments should describe what | Write comments for current state, not history |
 
 **Technical jargon example:**

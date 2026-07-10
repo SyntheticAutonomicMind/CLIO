@@ -628,7 +628,6 @@ sub _apply_update {
             return $self->error_result(
                 "Cannot find match position for chunk" .
                 ($context ? " (context: '$context')" : '') .
-                ". The file content does not match your patch. " .
                 "Read the file to see its actual content before retrying.",
                 type => 'update',
                 path => $rel_path,
