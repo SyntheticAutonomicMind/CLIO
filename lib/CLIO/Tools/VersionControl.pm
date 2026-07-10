@@ -74,8 +74,8 @@ sub new {
 ━━━━━━━━━━━━━━━━━━━━━ BRANCH (2 operations) ━━━━━━━━━━━━━━━━━━━━━
 -  branch - Branch operations (list, create, switch, delete)
    Returns: list [{name, current}] or operation confirmation
--  commit - Create commits
-   Returns: {success, hash, message} on success
+-  commit - Create commits (auto-stages all changes including untracked files; pass auto_stage=0 to commit only pre-staged files)
+   Returns: {success, hash, message, staged_files} on success
 
 ━━━━━━━━━━━━━━━━━━━━━ REMOTE (2 operations) ━━━━━━━━━━━━━━━━━━━━━
 -  push - Push changes to remote
@@ -94,6 +94,15 @@ sub new {
 ━━━━━━━━━━━━━━━━━━━━━ WORKTREE (1 operation) ━━━━━━━━━━━━━━━━━━━━━
 -  worktree - Worktree operations (list, add, remove, prune, merge, pr)
    Returns: list [{path, branch}] or operation confirmation
+
+[COMMIT BEHAVIOR] The commit operation runs `git add -A` before committing by default,
+picking up ALL working-tree changes including untracked files. This means a stray
+untracked file will land in your commit even if you didn't intend to add it.
+
+To commit only specific files: (1) explicitly `git add <exact paths>` via
+terminal_operations before commit, OR (2) pass auto_stage=0 to commit only what's
+already staged. The commit result includes a `staged_files` list so you can see
+exactly what got committed before moving on.
 
 [CRITICAL WARNING] ⚠️  NEVER USE INTERACTIVE OPERATIONS:
 -  git rebase -i / --interactive (BREAKS TERMINAL UI - FORBIDDEN)
@@ -341,14 +350,14 @@ sub branch {
 
 sub commit {
     my ($self, $params, $context) = @_;
-    
+
     my $repo_path = $params->{repository_path} || '.';
     my $message = $params->{message};
     my $auto_stage = $params->{auto_stage} // 1;  # Default to true for backward compat
     my $result;
-    
+
     return $self->error_result("Missing 'message' parameter") unless $message;
-    
+
     # Multi-agent coordination: Request git lock via broker
     my $lock_acquired = 0;
     if ($context->{broker_client}) {
@@ -370,10 +379,13 @@ sub commit {
             log_warning('VersionControl', "Continuing without lock");
         }
     }
-    
+
     eval {
         $result = _in_repo($repo_path, sub {
-            # Auto-stage all tracked changes before commit (unless disabled)
+            # Capture pre-stage untracked files so we can warn the agent if
+            # auto_stage pulled in files they didn't intend to commit.
+            my @pre_untracked = $auto_stage ? split /\n/, `git ls-files --others --exclude-standard 2>&1` : ();
+
             if ($auto_stage) {
                 my $add_output = `git add -A 2>&1`;
                 my $add_exit = $? >> 8;
@@ -382,37 +394,53 @@ sub commit {
                     return $result;
                 }
             }
-            
-            # Check if there's anything to commit after staging
-            my $status = `git status --porcelain 2>&1`;
-            if (!$status || $status =~ /^\s*$/) {
+
+            # Capture the list of files staged for this commit so the agent
+            # (and any reviewers) can see exactly what landed. Use
+            # `git diff --cached --name-only` which lists only files with
+            # staged changes, regardless of whether auto_stage ran.
+            my @staged_files = split /\n/, `git diff --cached --name-only 2>&1`;
+            @staged_files = grep { length } @staged_files;
+
+            if (!@staged_files) {
                 $result = $self->error_result(
                     "Nothing to commit - working tree clean.\n" .
                     "No modified, added, or deleted files detected."
                 );
                 return $result;
             }
-            
+
+            # Identify which just-staged files were previously untracked.
+            # These are the files auto_stage pulled in without an explicit add.
+            my %pre_untracked = map { $_ => 1 } @pre_untracked;
+            my @auto_staged_untracked = grep { $pre_untracked{$_} } @staged_files;
+
             # Properly escape message for shell
             my $escaped_message = $message;
             $escaped_message =~ s/'/'\\''/g;
-            
+
             my $output = `git commit -m '$escaped_message' 2>&1`;
             my $exit_code = $? >> 8;
-            
+
             if ($exit_code != 0) {
                 $result = $self->error_result("git commit failed (exit $exit_code): $output");
                 return $result;
             }
-            
+
             return $self->success_result(
                 $output,
                 action_description => "committing changes",
                 message => $message,
+                staged_files => \@staged_files,
+                # Tag any untracked files auto_stage pulled in so the agent
+                # can see them in the result and decide whether to keep them.
+                ($auto_stage && @auto_staged_untracked
+                    ? (auto_staged_untracked => \@auto_staged_untracked)
+                    : ()),
             );
         });
     };
-    
+
     # Release git lock if acquired
     if ($lock_acquired && $context->{broker_client}) {
         eval {
@@ -423,13 +451,14 @@ sub commit {
             log_warning('VersionControl', "Failed to release git lock: $@");
         }
     }
-    
+
     if ($@) {
         return $self->error_result("Git commit failed: " . $self->_clean_eval_error($@));
     }
 
     return $result;
 }
+
 
 sub push {
     my ($self, $params, $context) = @_;
@@ -895,6 +924,10 @@ sub get_additional_parameters {
         message => {
             type => "string",
             description => "[REQUIRED for commit] Commit message describing the changes.",
+        },
+        auto_stage => {
+            type => "boolean",
+            description => "[OPTIONAL for commit] When true (default), runs 'git add -A' before committing, picking up all tracked AND untracked files in the working tree. Set to 0 to commit only what is already staged. To commit specific files, run `git add <paths>` via terminal_operations first, then pass auto_stage=0.",
         },
         ref1 => {
             type => "string",
