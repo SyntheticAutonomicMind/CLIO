@@ -141,7 +141,7 @@ sub _get_category_guidance {
     
     my %guidance = (
         edit_content_mismatch => sub {
-            return "WHAT WENT WRONG: Your edit failed because the text you're trying to replace does not match the file's current content.\n" .
+            return "WHAT WENT WRONG: Your edit failed because the file's current content has changed since you last read it.\n" .
                    "Your assumption about what the file contains is WRONG.\n\n" .
                    "IMMEDIATE ACTION REQUIRED:\n" .
                    "1. READ the file NOW to see its ACTUAL current content\n" .

@@ -1853,8 +1853,7 @@ sub replace_string {
         
         if ($count == 0) {
             $result = $self->error_result(
-                "String not found in file. The old_string you provided does not match " .
-                "any text in '$path'. Read the file to see its actual content before retrying."
+                "String not found in '$path'. Read the file to see its actual content before retrying."
             );
             return;
         }

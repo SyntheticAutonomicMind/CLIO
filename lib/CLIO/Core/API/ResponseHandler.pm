@@ -663,7 +663,7 @@ sub _handle_error_response_impl {
         $retryable = 0;
         $error_type = 'region_unavailable';
         $error = "The model is not available in your region or data-residency setting. "
-               . "Retrying won't help - you need a model deployed in a region you can access.\n\n"
+               . "Switch to a model deployed in a region you can access.\n\n"
                . "Provider detail: $error";
         log_warning('ResponseHandler', "Region unavailable (non-retryable): $error");
     }
@@ -679,7 +679,7 @@ sub _handle_error_response_impl {
         $retryable = 0;
         $error_type = 'account_disabled';
         $error = "Your account or organization has been deactivated/suspended by the provider. "
-               . "Retrying won't help - you'll need to contact the provider's support or your account admin to restore access.\n\n"
+               . "Contact the provider's support or your account admin to restore access.\n\n"
                . "Provider detail: $error";
         log_warning('ResponseHandler', "Account disabled (non-retryable): $error");
     }
@@ -761,7 +761,6 @@ sub _handle_error_response_impl {
             $detail = $1;
         }
         $error = "The AI provider reports this model is currently unavailable on their infrastructure. "
-               . "This is not a context size issue - the model itself cannot be invoked right now. "
                . "Try a different model, or wait and retry later.\n\n"
                . "Provider detail: $detail";
         log_warning('ResponseHandler', "Provider unavailable (non-retryable): $detail");
@@ -1010,7 +1009,7 @@ sub _handle_error_response_impl {
         $retryable = 0;
         $error_type = 'billing_error';
         $error = "Your API account has run out of credits or hit a billing limit. "
-               . "This is not a temporary issue - you need to add credits or upgrade your plan before this model will work again.\n\n"
+               . "Add credits or upgrade your plan before retrying.\n\n"
                . "Provider detail: $error";
         log_warning('ResponseHandler', "Billing error (non-retryable): $error");
     }
@@ -1028,7 +1027,7 @@ sub _handle_error_response_impl {
         $retryable = 0;
         $error_type = 'model_not_found';
         $error = "The specified model is not available from this provider (or for this account/API key). "
-               . "This is not a transient issue - the model name may be wrong, deprecated, or not enabled on your plan.\n\n"
+               . "The model name may be wrong, deprecated, or not enabled on your plan.\n\n"
                . "Try a different model with: /api model <provider>/<model>\n\n"
                . "Provider detail: $error";
         log_warning('ResponseHandler', "Model not found (non-retryable): $error");
