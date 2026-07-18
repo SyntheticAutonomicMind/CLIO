@@ -169,11 +169,48 @@ sub new {
     my $auto_discover_skills = $self->{config} ? ($self->{config}->get('auto_discover_skills') // 1) : 1;
     # Read show_thinking here so PromptBuilder can include the optional
     # reasoning-steering paragraph when the user has chosen to surface the
-    # thinking stream. Without this the steering text never makes it into
-    # the system prompt and Anthropic's adaptive summarizer collapses
-    # trivial reasoning (e.g. "which tool next") to an empty string even
-    # though the model still bills the round-trip.
+    # thinking stream.
+    #
+    # Gate the steering paragraph on reasoning_mode='adaptive' too. Without
+    # this gate, every show_thinking=1 session injects a "brief one-line
+    # note" instruction that Anthropic's adaptive summarizer genuinely
+    # needs (collapses trivial reasoning to empty otherwise) but other
+    # providers' thinking actively mis-trains: M3 was observed emitting
+    # `**Locating X****Reporting Y****Preparing Z**` as its thinking when
+    # given tools under this steering, which the user reasonably called
+    # out as not real thinking.
+    #
+    # The gate is reasoning_mode='adaptive' AND the model name matches
+    # the Anthropic family pattern (sonnet/opus/haiku/fable/mythos).
+    # reasoning_mode alone is not enough - M3 also resolves to 'adaptive'
+    # because of its supports_adaptive_thinking capability, but M3's
+    # "adaptive" is the native reasoning format, not Anthropic's
+    # summarizer-collapse case. The model-name heuristic is the same one
+    # MCM._anthropic_model_reasoning_mode uses, so the gate stays in sync
+    # with whatever Anthropic family detection MCM already performs.
     my $show_thinking = $self->{config} ? ($self->{config}->get('show_thinking') // 0) : 0;
+    my $needs_thinking_steering = 0;
+    if ($show_thinking && $args{api_manager}) {
+        eval {
+            my $cur_model = $args{api_manager}->get_current_model();
+            my $reasoning_mode = $args{api_manager}->_get_reasoning_mode($cur_model);
+            if (defined $reasoning_mode && $reasoning_mode eq 'adaptive') {
+                # Lazy require MCM - avoid hard dep at startup if not used
+                require CLIO::Core::ModelCapabilitiesManager;
+                my $mcm = CLIO::Core::ModelCapabilitiesManager->new(debug => 0);
+                # _anthropic_model_reasoning_mode returns 'adaptive'/'enabled'/undef.
+                # Only 'adaptive' here means the model is in the Anthropic family
+                # and its adaptive summarizer is the one that collapses trivially.
+                my $family_mode = $mcm->_anthropic_model_reasoning_mode($cur_model);
+                $needs_thinking_steering = 1 if defined $family_mode && $family_mode eq 'adaptive';
+            }
+        };
+        if ($@) {
+            log_debug('WorkflowOrchestrator', "Failed to compute needs_thinking_steering: $@");
+        }
+    }
+    log_debug('WorkflowOrchestrator', "needs_thinking_steering=" . ($needs_thinking_steering ? '1' : '0')
+        . " (show_thinking=" . ($show_thinking ? '1' : '0') . ")");
     $self->{prompt_builder} = CLIO::Core::PromptBuilder->new(
         debug           => $args{debug},
         skip_custom     => $self->{skip_custom},
@@ -186,6 +223,7 @@ sub new {
         enable_subagents => $enable_subagents,
         auto_discover_skills => $auto_discover_skills,
         show_thinking   => $show_thinking,
+        needs_thinking_steering => $needs_thinking_steering,
     );
 
     if ($auto_discover_skills) {
