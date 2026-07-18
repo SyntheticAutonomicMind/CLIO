@@ -458,7 +458,7 @@ When called via /api commands, marks the value as user-set so it gets saved.
 
 sub set {
    my ($self, $key, $value, $mark_user_set) = @_;
-   
+
     # When model changes, save old scoped config and restore new one
     if ($key eq 'model' && defined $value && $value ne ''
         && $self->{config}->{model} && $self->{config}->{model} ne $value)
@@ -466,6 +466,28 @@ sub set {
         my $old_model = $self->{config}->{model};
         # Save old model config if it was resolved (has "/")
         $self->_save_model_config($old_model) if $old_model =~ m{/};
+
+        # If switching to a different model on the SAME provider and the
+        # new model has no stored entry, seed its entry from the old model's
+        # just-saved entry. Without this, per-provider settings (e.g. user
+        # toggled show_thinking on for minimax) are silently reset when the
+        # user runs `/api set model minimax/some-other-model`. Switching to
+        # a model on a different provider still falls through to defaults
+        # (no entry to copy from), preserving the existing behavior.
+        #
+        # We do NOT overwrite an existing new-model entry - if the user
+        # ever explicitly customized settings for the destination model,
+        # those still win.
+        if ($old_model =~ m{^([^/]+)/} && $value =~ m{^\Q$1\E/}) {
+            $self->{config}->{model_configs} ||= {};
+            my $old_entry = $self->{config}->{model_configs}{$old_model};
+            my $new_entry = $self->{config}->{model_configs}{$value};
+            if ($old_entry && %$old_entry && (!$new_entry || !%$new_entry)) {
+                $self->{config}->{model_configs}{$value} = { %$old_entry };
+                log_debug('Config', "Seeded new model entry '$value' from '$old_model' (same provider, no prior entry)");
+            }
+        }
+
         $self->{config}->{$key} = $value;
        # Restore new model config if it is resolved (has "/")
        $self->_restore_model_config($value) if $value =~ m{/};
