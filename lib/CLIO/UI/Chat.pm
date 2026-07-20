@@ -622,12 +622,21 @@ sub _make_thinking_callback {
         # markdown_buffer and let flush() render it with the same
         # rendering/word-wrap as ordinary assistant output. We isolate
         # the operation to avoid disturbing any in-flight main stream.
+        # Save the full set of streaming-controller fields we touch so
+        # the helper cannot pollute the main answer stream that
+        # immediately follows. In particular, first_chunk_received
+        # gates whether the main callback prints "CLIO: " on its first
+        # content chunk; if it leaks into thinking flush at value 1,
+        # the very first answer chunk after thinking will arrive with
+        # the prefix already "consumed" and the first line will be
+        # indented like a continuation (no agent label).
         my $saved_md  = $self->{streaming}{markdown_buffer};
         my $saved_ln  = $self->{streaming}{line_buffer};
         my $saved_flp = $self->{streaming}{first_line_printed};
         my $saved_tbl = $self->{streaming}{in_table};
         my $saved_cb  = $self->{streaming}{in_code_block};
         my $saved_cnt = $self->{streaming}{md_line_count};
+        my $saved_fcr = $self->{streaming}{first_chunk_received};
 
         $self->{streaming}{markdown_buffer}     = $think_stream->{markdown_buffer};
         $self->{streaming}{line_buffer}         = $think_stream->{line_buffer};
@@ -635,6 +644,10 @@ sub _make_thinking_callback {
         $self->{streaming}{in_table}            = $think_stream->{in_table};
         $self->{streaming}{in_code_block}       = $think_stream->{in_code_block};
         $self->{streaming}{md_line_count}       = $think_stream->{md_line_count};
+        # While the thinking box is being rendered, the main controller
+        # is mid-flight; keep first_chunk_received at its prior value so
+        # flush() does not signal a fresh agent prefix inside the box.
+        # We do NOT want "CLIO: " to appear inside a THINKING block.
 
         # Strip session markers before rendering so the box never leaks
         # the structured form (the simple form is already handled by
@@ -666,6 +679,7 @@ sub _make_thinking_callback {
         $self->{streaming}{in_table}            = $saved_tbl;
         $self->{streaming}{in_code_block}       = $saved_cb;
         $self->{streaming}{md_line_count}       = $saved_cnt;
+        $self->{streaming}{first_chunk_received} = $saved_fcr;
     };
 
     # Helper: print a dim hrule indented by 4 spaces (inline format only)
