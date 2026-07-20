@@ -325,4 +325,41 @@ subtest 'end signal flushes partial trailing line' => sub {
         'partial line at end-of-stream is flushed');
 };
 
+# --- Test 10: end signal preserves main streaming controller state.
+# Regression guard for the boundary bug where thinking flush could
+# leak first_chunk_received or first_line_printed state changes into
+# the main answer stream that follows. The fix preserves all main-
+# controller fields that flush_thinking() touches.
+#
+# Documented behavior:
+#   - first_chunk_received MUST be reset to 0 by thinking 'end' so the
+#     subsequent answer stream re-emits "CLIO: " on its first chunk.
+#   - first_line_printed MUST remain at its pre-call value so the
+#     answer stream's first line is NOT indented (it sits next to the
+#     "CLIO: " prefix, not below it).
+subtest 'end signal preserves main streaming controller state' => sub {
+    my $config  = MockConfig->new(show_thinking => 1);
+    my $chat    = MockChat->new(config => $config);
+    # Simulate that a prior answer stream had already started (so
+    # first_chunk_received=1). After thinking ends, the boundary
+    # behavior is: first_chunk_received reset to 0, first_line_printed
+    # preserved.
+    $chat->{streaming}->{first_chunk_received} = 1;
+    $chat->{streaming}->{first_line_printed}  = 1;
+    my $spinner = MockSpinner->new;
+    my $cb      = $chat->_make_thinking_callback($spinner);
+
+    my $out = _capture_stdout(sub {
+        $cb->('', 'start');
+        $cb->("thinking prose\n", undef);
+        $cb->('', 'end');
+    });
+
+    is($chat->{streaming}->{first_chunk_received}, 0,
+        'first_chunk_received reset to 0 so answer stream re-emits CLIO: prefix');
+    is($chat->{streaming}->{first_line_printed}, 1,
+        'main controller first_line_printed unchanged by thinking flush');
+    like($out, qr/THINKING/, 'THINKING header still emitted inside box');
+};
+
 done_testing();
