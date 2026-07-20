@@ -479,7 +479,6 @@ sub set {
         # ever explicitly customized settings for the destination model,
         # those still win.
         if ($old_model =~ m{^([^/]+)/} && $value =~ m{^\Q$1\E/}) {
-            $self->{config}->{model_configs} ||= {};
             my $old_entry = $self->{config}->{model_configs}{$old_model};
             my $new_entry = $self->{config}->{model_configs}{$value};
             if ($old_entry && %$old_entry && (!$new_entry || !%$new_entry)) {

@@ -615,28 +615,24 @@ sub _make_thinking_callback {
     my $flush_thinking = sub {
         # Route accumulated buffer through the StreamingController so it
         # is batched as Markdown (preserving tables / code blocks) and
-        # then word-wrapped + indented to match the rest of CLIO output.
+        # then word-wrap+indented to match the rest of CLIO output.
         return unless defined $think_stream && $self->{streaming};
-        # Reuse the live buffer state of the main streaming controller
-        # via the public API: stash the thinking buffer into its
-        # markdown_buffer and let flush() render it with the same
-        # rendering/word-wrap as ordinary assistant output. We isolate
-        # the operation to avoid disturbing any in-flight main stream.
-        # Save the full set of streaming-controller fields we touch so
-        # the helper cannot pollute the main answer stream that
-        # immediately follows. In particular, first_chunk_received
-        # gates whether the main callback prints "CLIO: " on its first
-        # content chunk; if it leaks into thinking flush at value 1,
-        # the very first answer chunk after thinking will arrive with
-        # the prefix already "consumed" and the first line will be
-        # indented like a continuation (no agent label).
+        # Temporarily swap the main controller's buffer state for the
+        # thinking buffer, let flush() render it through the same
+        # Markdown + word-wrap path the answer stream uses, then swap
+        # back. We isolate the swap so the main controller's state
+        # (in_table, in_code_block, md_line_count, first_line_printed)
+        # cannot leak into the answer stream that immediately follows.
+        # Note: first_chunk_received is intentionally NOT saved or
+        # restored - StreamingController::flush never modifies it, and
+        # the 'end' handler explicitly resets it to 0 below so the next
+        # answer chunk re-emits the "CLIO: " prefix.
         my $saved_md  = $self->{streaming}{markdown_buffer};
         my $saved_ln  = $self->{streaming}{line_buffer};
         my $saved_flp = $self->{streaming}{first_line_printed};
         my $saved_tbl = $self->{streaming}{in_table};
         my $saved_cb  = $self->{streaming}{in_code_block};
         my $saved_cnt = $self->{streaming}{md_line_count};
-        my $saved_fcr = $self->{streaming}{first_chunk_received};
 
         $self->{streaming}{markdown_buffer}     = $think_stream->{markdown_buffer};
         $self->{streaming}{line_buffer}         = $think_stream->{line_buffer};
@@ -644,10 +640,6 @@ sub _make_thinking_callback {
         $self->{streaming}{in_table}            = $think_stream->{in_table};
         $self->{streaming}{in_code_block}       = $think_stream->{in_code_block};
         $self->{streaming}{md_line_count}       = $think_stream->{md_line_count};
-        # While the thinking box is being rendered, the main controller
-        # is mid-flight; keep first_chunk_received at its prior value so
-        # flush() does not signal a fresh agent prefix inside the box.
-        # We do NOT want "CLIO: " to appear inside a THINKING block.
 
         # Strip session markers before rendering so the box never leaks
         # the structured form (the simple form is already handled by
@@ -655,17 +647,13 @@ sub _make_thinking_callback {
         $self->{streaming}{markdown_buffer} = $strip_session_markers->($self->{streaming}{markdown_buffer});
         $self->{streaming}{line_buffer}     = $strip_session_markers->($self->{streaming}{line_buffer});
 
-        # Invoke flush() on the live StreamingController instance.
-        # $self->{streaming} may be either a hashref or a blessed object
-        # depending on caller context, so dispatch through ref().
-        my $sc = $self->{streaming};
-        my $flusher = ref($sc) eq 'HASH' ? $sc->{_flush} : $sc->can('flush');
-        $sc->flush() if ref($sc);
+        # Flush through the live StreamingController so the thinking
+        # text is rendered with the same line-batching, Markdown, and
+        # word-wrap as ordinary assistant output.
+        $self->{streaming}->flush();
 
-        # Capture what the helper mutated (md_line_count, in_*) so we
-        # can restore the main controller's state to whatever it was
-        # before this thinking flush - we never want a thinking flush
-        # to leak in_code_block/in_table into a subsequent answer stream.
+        # Capture post-flush state back into the thinking controller
+        # so subsequent thinking chunks see an empty buffer.
         $think_stream->{markdown_buffer} = $self->{streaming}{markdown_buffer};
         $think_stream->{line_buffer}     = $self->{streaming}{line_buffer};
         $think_stream->{md_line_count}   = $self->{streaming}{md_line_count};
@@ -679,7 +667,6 @@ sub _make_thinking_callback {
         $self->{streaming}{in_table}            = $saved_tbl;
         $self->{streaming}{in_code_block}       = $saved_cb;
         $self->{streaming}{md_line_count}       = $saved_cnt;
-        $self->{streaming}{first_chunk_received} = $saved_fcr;
     };
 
     # Helper: print a dim hrule indented by 4 spaces (inline format only)
