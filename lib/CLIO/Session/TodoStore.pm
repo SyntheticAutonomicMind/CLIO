@@ -405,9 +405,18 @@ sub validate {
         }
         
         # Dependencies must exist
-        if ($todo->{dependencies} && @{$todo->{dependencies}}) {
-            foreach my $dep_id (@{$todo->{dependencies}}) {
-                unless ($todo_ids{$dep_id}) {
+        # Defensive: dependencies may arrive as an arrayref, an integer
+        # (single upstream task), a hashref (provider serialization),
+        # or a CSV string. Reject anything that is not a non-empty
+        # arrayref so we don't crash on @{} deref here.
+        my $deps = $todo->{dependencies};
+        if (defined $deps && ref($deps) ne 'ARRAY') {
+            push @errors, "Todo #$id has invalid 'dependencies' field (expected array of todo IDs, got " .
+                (ref($deps) || 'scalar') . ")";
+        }
+        elsif ($deps && @$deps) {
+            foreach my $dep_id (@$deps) {
+                unless (defined $dep_id && $todo_ids{$dep_id}) {
                     push @errors, "Todo #$id depends on non-existent todo #$dep_id";
                 }
             }
@@ -479,11 +488,15 @@ sub _has_circular_dependency {
     return 0 unless $todo;
     
     # If no dependencies, no cycle
-    return 0 unless $todo->{dependencies} && @{$todo->{dependencies}};
-    
+    # Guard against non-arrayref dependencies (e.g. CSV string from a
+    # misbehaving provider). Same shape as the validate() guard above.
+    return 0 unless $todo->{dependencies}
+                && ref($todo->{dependencies}) eq 'ARRAY'
+                && @{$todo->{dependencies}};
+
     # Mark this node as visited
     $visited->{$todo_id} = 1;
-    
+
     # Recursively check each dependency
     foreach my $dep_id (@{$todo->{dependencies}}) {
         if ($self->_has_circular_dependency($dep_id, $todos, {%$visited})) {

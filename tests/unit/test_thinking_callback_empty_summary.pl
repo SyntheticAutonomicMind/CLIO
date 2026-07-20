@@ -59,10 +59,50 @@ sub new {
     no warnings 'redefine';
     *{__PACKAGE__ . "::_make_thinking_callback"} =
         \&CLIO::UI::Chat::_make_thinking_callback;
+    # The thinking callback now delegates to a real StreamingController
+    # for Markdown rendering and word-wrap. Build a real one with the
+    # mock so flush()/render_markdown() succeed.
+    require CLIO::UI::StreamingController;
+    $self->{streaming}                = CLIO::UI::StreamingController->new(ui => $self);
+    $self->{first_chunk_received}     = 0;
+    $self->{stop_streaming}          = 0;
+    $self->{_last_was_system_message} = 0;
+    $self->{_prepare_for_next_iteration} = 0;
+    $self->{_need_agent_prefix}       = 0;
+    $self->{enable_markdown}         = 1;
+    $self->{terminal_width}          = 100;
+    $self->{_count_visual_lines} = sub {
+        my ($self, $text) = @_;
+        return 0 unless defined $text && length($text) > 0;
+        my @lines = split /\n/, $text, -1;
+        pop @lines if @lines && $lines[-1] eq '';
+        return scalar(@lines);
+    };
+    $self->{pager} = bless { line_count => 0, pages => [],
+        current_page => [], page_index => 0, pagination_enabled => 0 },
+        'MockPager';
+    {
+        no strict 'refs';
+        for my $m (qw(enable disable reset_page track_line
+                increment_lines line_count enabled should_trigger)) {
+            my $body = $m eq 'enable'         ? sub { $_[0]->{pagination_enabled} = 1 }
+                     : $m eq 'disable'        ? sub { $_[0]->{pagination_enabled} = 0 }
+                     : $m eq 'reset_page'     ? sub { $_[0]->{line_count} = 0; $_[0]->{current_page} = [] }
+                     : $m eq 'track_line'     ? sub { push @{$_[0]->{current_page}}, $_[1]; $_[0]->{line_count}++ }
+                     : $m eq 'increment_lines'? sub { $_[0]->{line_count} += ($_[1] // 1) }
+                     : $m eq 'line_count'     ? sub { $_[0]->{line_count} = $_[1] if defined $_[1]; $_[0]->{line_count} }
+                     : $m eq 'enabled'        ? sub { $_[0]->{pagination_enabled} }
+                     :                         sub { 0 };
+            no warnings 'redefine';
+            *{"MockPager::$m"} = $body;
+        }
+    }
     return $self;
 }
 # colorize: identity (no ANSI codes) so test output is greppable.
 sub colorize { my ($self, $text, $tag) = @_; return $text; }
+sub render_markdown { my ($self, $text) = @_; return $text; }
+sub agent_name { 'CLIO' }
 
 package main;
 
@@ -74,7 +114,7 @@ package main;
 sub _capture_stdout {
     my ($cb) = @_;
     my $captured = '';
-    open my $fh, '>', \$captured or die "open in-memory fh: $!";
+    open my $fh, '>:encoding(UTF-8)', \$captured or die "open in-memory fh: $!";
     my $old = select $fh;
     local $| = 1;
     $cb->();
@@ -157,6 +197,11 @@ subtest 'show_thinking=1 - header deferred until first content chunk' => sub {
     # Step 2: now send content - header + content should appear together.
     my $out_after_content = _capture_stdout(sub {
         $cb->("Reasoning about the next step.\n", undef);
+        # The header now defers rendering until 'end' too: only after
+        # the streaming chunk has been accumulated into the
+        # StreamingController do we print the THINKING box. Send an
+        # 'end' so the flush_thinking path renders the deferred box.
+        $cb->('', 'end');
     });
      like($out_after_content, qr/THINKING/,
         'Header appears once first content arrives');

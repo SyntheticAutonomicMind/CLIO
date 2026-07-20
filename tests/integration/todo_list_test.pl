@@ -370,6 +370,54 @@ test("Update multiple fields in one operation", sub {
     die "Expected progress 0.3" unless $updated->[0]{progress} == 0.3;
 });
 
+# TEST 16: Non-arrayref 'dependencies' must not crash; must return a
+# structured validation error instead of letting @{} deref blow up.
+test("Non-arrayref dependencies returns validation error, not crash", sub {
+    my $store = CLIO::Session::TodoStore->new(
+        session_id => 'test_session_dep_scalar',
+        sessions_dir => $temp_dir,
+    );
+    my $todos = [
+        { id => 1, title => "Task 1", description => "x", status => "not-started",
+          dependencies => "1,2" },  # CSV string - common provider artefact
+        { id => 2, title => "Task 2", description => "y", status => "not-started" },
+    ];
+    my ($success, $error) = $store->write($todos);
+    die "Expected write to fail" if $success;
+    die "Expected validation error mentioning dependencies"
+        unless $error && $error =~ /invalid 'dependencies' field/;
+});
+
+test("Hashref dependencies returns validation error, not crash", sub {
+    my $store = CLIO::Session::TodoStore->new(
+        session_id => 'test_session_dep_hash',
+        sessions_dir => $temp_dir,
+    );
+    my $todos = [
+        { id => 1, title => "Task 1", description => "x", status => "not-started",
+          dependencies => { foo => 'bar' } },
+        { id => 2, title => "Task 2", description => "y", status => "not-started" },
+    ];
+    my ($success, $error) = $store->write($todos);
+    die "Expected write to fail" if $success;
+    die "Expected error mentioning HASH"
+        unless $error && $error =~ /invalid 'dependencies' field.*HASH/s;
+});
+
+test("undef dependencies is silently accepted (treated as no deps)", sub {
+    my $store = CLIO::Session::TodoStore->new(
+        session_id => 'test_session_dep_undef',
+        sessions_dir => $temp_dir,
+    );
+    my $todos = [
+        { id => 1, title => "Task 1", description => "x", status => "not-started",
+          dependencies => undef },
+        { id => 2, title => "Task 2", description => "y", status => "not-started" },
+    ];
+    my ($success, $error) = $store->write($todos);
+    die "Write failed: $error" unless $success;
+});
+
 # Summary
 print "\n" . "="x60 . "\n";
 print "SUMMARY: $passed/$test_count tests passed\n";
