@@ -32,15 +32,23 @@ my $_mcm_instance;
 
 sub _get_mcm_capabilities {
     my ($self, $provider_name, $model_id) = @_;
-    
+
     return undef unless $provider_name && $model_id;
-    
-    # Only look up for providers known to lack /v1/models metadata
-    return undef unless $provider_name eq 'nvidia'
-        || $provider_name eq 'minimax'
-        || $provider_name eq 'minimax_token'
-        || $provider_name eq 'deepseek';
-    
+
+    # Only look up for providers whose /v1/models endpoint lacks
+    # capability metadata. The lacks_models_metadata flag is set in
+    # Providers.pm for providers like DeepSeek/NVIDIA/MiniMax that
+    # return only basic model info (id, owned_by) without context
+    # window, max output, supports_reasoning, etc. Adding a new
+    # provider with the same limitation is a one-flag edit.
+    my $lacks_metadata = 0;
+    eval { require CLIO::Providers; };
+    if (!$@) {
+        my $pdef = CLIO::Providers::get_provider($provider_name);
+        $lacks_metadata = 1 if $pdef && $pdef->{lacks_models_metadata};
+    }
+    return undef unless $lacks_metadata;
+
     # Strip provider prefix for MCM lookup (e.g., "minimax/MiniMax-M3" -> "MiniMax-M3")
     my $lookup_id = $model_id;
     $lookup_id =~ s{^\Q$provider_name\E/}{};
@@ -49,7 +57,7 @@ sub _get_mcm_capabilities {
         require CLIO::Core::ModelCapabilitiesManager;
         CLIO::Core::ModelCapabilitiesManager->new(debug => 0);
     };
-    
+
     return $_mcm_instance->get_capabilities($provider_name, $lookup_id);
 }
 

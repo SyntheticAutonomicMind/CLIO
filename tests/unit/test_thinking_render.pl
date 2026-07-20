@@ -329,9 +329,16 @@ subtest 'end signal flushes partial trailing line' => sub {
 # Regression guard for the boundary between thinking flush and the
 # main answer stream that follows.
 #
-# Documented behavior:
-#   - first_chunk_received MUST be reset to 0 by thinking 'end' so the
-#     subsequent answer stream re-emits "CLIO: " on its first chunk.
+# Documented behavior (post-fix):
+#   - first_chunk_received MUST stay at its pre-call value when thinking
+#     'end' fires. Resetting it from 1 back to 0 would cause the next
+#     content chunk in the SAME iteration to print a duplicate "CLIO: "
+#     prefix mid-stream - which is exactly the bug seen on zaphod with
+#     MiniMax M3, where reasoning and content are interleaved within a
+#     single iteration.
+#   - Iteration transitions (where a fresh "CLIO: " prefix IS desired)
+#     are owned by WorkflowOrchestrator::reset_streaming_state +
+#     prepare_for_iteration, not by the thinking callback.
 #   - first_line_printed MUST remain at its pre-call value so the
 #     answer stream's first line is NOT indented (it sits next to the
 #     "CLIO: " prefix, not below it).
@@ -340,8 +347,8 @@ subtest 'end signal preserves main streaming controller state' => sub {
     my $chat    = MockChat->new(config => $config);
     # Simulate that a prior answer stream had already started (so
     # first_chunk_received=1). After thinking ends, the boundary
-    # behavior is: first_chunk_received reset to 0, first_line_printed
-    # preserved.
+    # behavior is: first_chunk_received STAYS at 1 (no re-print of
+    # "CLIO: " mid-iteration), first_line_printed preserved.
     $chat->{streaming}->{first_chunk_received} = 1;
     $chat->{streaming}->{first_line_printed}  = 1;
     my $spinner = MockSpinner->new;
@@ -353,10 +360,41 @@ subtest 'end signal preserves main streaming controller state' => sub {
         $cb->('', 'end');
     });
 
-    is($chat->{streaming}->{first_chunk_received}, 0,
-        'first_chunk_received reset to 0 so answer stream re-emits CLIO: prefix');
+    is($chat->{streaming}->{first_chunk_received}, 1,
+        'first_chunk_received preserved (no duplicate CLIO: prefix mid-iteration)');
     is($chat->{streaming}->{first_line_printed}, 1,
         'main controller first_line_printed unchanged by thinking flush');
+    like($out, qr/THINKING/, 'THINKING header still emitted inside box');
+};
+
+# --- Test 10b: end signal still produces a fresh prefix when thinking
+# arrives BEFORE any content in the iteration. Anthropic-style flow
+# (thinking-first, then content) needs first_chunk_received to be 0
+# on the next content chunk so the prefix prints. WorkflowOrchestrator
+# calls reset_streaming_state + prepare_for_iteration between iterations,
+# which sets the conditions the streaming controller checks - the
+# thinking callback doesn't need to (and shouldn't) intervene.
+subtest 'thinking-first iteration produces prefix on next content' => sub {
+    my $config  = MockConfig->new(show_thinking => 1);
+    my $chat    = MockChat->new(config => $config);
+    # Fresh iteration: no prior content. WorkflowOrchestrator would
+    # have called reset_streaming_state + prepare_for_iteration here.
+    $chat->{streaming}->{first_chunk_received} = 0;
+    $chat->{streaming}->{_prepare_for_next_iteration} = 1;
+    $chat->{streaming}->{first_line_printed}  = 1;
+    my $spinner = MockSpinner->new;
+    my $cb      = $chat->_make_thinking_callback($spinner);
+
+    my $out = _capture_stdout(sub {
+        $cb->('', 'start');
+        $cb->("thinking prose\n", undef);
+        $cb->('', 'end');
+    });
+
+    is($chat->{streaming}->{first_chunk_received}, 0,
+        'first_chunk_received preserved (no override to 0/1 by thinking)');
+    is($chat->{streaming}->{_prepare_for_next_iteration}, 1,
+        '_prepare_for_next_iteration flag untouched (owned by WorkflowOrchestrator)');
     like($out, qr/THINKING/, 'THINKING header still emitted inside box');
 };
 
