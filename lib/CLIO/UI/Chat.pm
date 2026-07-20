@@ -768,6 +768,22 @@ sub _make_thinking_callback {
         # StreamingController already handles per-line session marker
         # stripping (both simple and structured forms), so we do not
         # need a second strip here.
+        #
+        # Defensive chunk-boundary spacing: model tokenizers sometimes
+        # drop whitespace at streaming chunk boundaries, so consecutive
+        # reasoning chunks can arrive glued together ("investigation."
+        # + "I'll start" -> "investigation.I'll start"). When line_buffer
+        # already has a partial sentence and the new chunk doesn't
+        # start with whitespace, insert a single space at the join so
+        # the visible reasoning stays readable. Guarded on both sides
+        # being ASCII so we don't break CJK / non-ASCII scripts that
+        # do not use spaces between characters (你好 + 世界 stays
+        # 你好世界, not 你好 世界).
+        if (length($think_stream->{line_buffer})
+            && $think_stream->{line_buffer} =~ /[A-Za-z0-9.,!?;:]$/
+            && $content =~ /^[A-Za-z0-9]/) {
+            $think_stream->{line_buffer} .= ' ';
+        }
         $think_stream->{line_buffer} .= $content;
         while ((my $pos = index($think_stream->{line_buffer}, "\n")) >= 0) {
             my $line = substr($think_stream->{line_buffer}, 0, $pos);

@@ -360,4 +360,75 @@ subtest 'end signal preserves main streaming controller state' => sub {
     like($out, qr/THINKING/, 'THINKING header still emitted inside box');
 };
 
+# --- Test 11: defensive space-at-chunk-boundary for ASCII joins ---
+#
+# Regression: model tokenizers sometimes drop whitespace at streaming
+# chunk boundaries, so "investigation." and "I'll start" arrive as
+# two separate reasoning chunks and get glued into "investigation.I'll
+# start" inside the THINKING box. The renderer inserts a single ASCII
+# space at the join when both sides are ASCII alphanumeric/punctuation
+# (so CJK is untouched).
+subtest 'inserts space at ASCII chunk boundaries' => sub {
+    my $config  = MockConfig->new(show_thinking => 1);
+    my $chat    = MockChat->new(config => $config);
+    my $spinner = MockSpinner->new;
+    my $cb      = $chat->_make_thinking_callback($spinner);
+
+    my $out = _capture_stdout(sub {
+        $cb->('', 'start');
+        # Bug case: two chunks where the tokenizer dropped the space
+        # between "investigation." and "I'll start".
+        $cb->('Let me begin investigation.', undef);
+        $cb->("I'll start by reviewing.\n", undef);
+        $cb->('', 'end');
+    });
+
+    unlike($out, qr/investigation\.I'll start/,
+        'no glued "investigation.I\'ll start" in visible output');
+    like($out, qr/investigation\. I'll start/,
+        'space inserted at ASCII chunk boundary');
+};
+
+# --- Test 12: CJK chunk boundaries stay glued (no space inserted) ---
+subtest 'CJK chunk boundaries remain glued (no heuristic space)' => sub {
+    my $config  = MockConfig->new(show_thinking => 1);
+    my $chat    = MockChat->new(config => $config);
+    my $spinner = MockSpinner->new;
+    my $cb      = $chat->_make_thinking_callback($spinner);
+
+    my $out = _capture_stdout(sub {
+        $cb->('', 'start');
+        # Chinese script doesn't use spaces between characters. The
+        # heuristic must not insert one.
+        $cb->('你好', undef);
+        $cb->("世界。\n", undef);
+        $cb->('', 'end');
+    });
+
+    # The capture layer writes UTF-8 bytes; decode so the regex sees
+    # a properly-flagged UTF-8 string instead of bare bytes.
+    utf8::decode($out) unless utf8::is_utf8($out);
+    like($out, qr/你好世界/, 'CJK characters stay glued, no inserted space');
+    unlike($out, qr/你好 世界/, 'no spurious space between CJK characters');
+};
+
+# --- Test 13: heuristic skips when either side already has whitespace ---
+subtest 'heuristic skips when either side already has whitespace' => sub {
+    my $config  = MockConfig->new(show_thinking => 1);
+    my $chat    = MockChat->new(config => $config);
+    my $spinner = MockSpinner->new;
+    my $cb      = $chat->_make_thinking_callback($spinner);
+
+    my $out = _capture_stdout(sub {
+        $cb->('', 'start');
+        # Trailing space on first chunk - heuristic skips because the
+        # previous content already ends with whitespace.
+        $cb->('word ', undef);
+        $cb->('next', undef);
+        $cb->('', 'end');
+    });
+
+    like($out, qr/word next/, 'single space when previous chunk ends with whitespace');
+};
+
 done_testing();
