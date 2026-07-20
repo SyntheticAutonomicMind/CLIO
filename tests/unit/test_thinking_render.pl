@@ -398,15 +398,21 @@ subtest 'thinking-first iteration produces prefix on next content' => sub {
     like($out, qr/THINKING/, 'THINKING header still emitted inside box');
 };
 
-# --- Test 11: defensive space-at-chunk-boundary for ASCII joins ---
+# --- Test 11: chunks join verbatim, no heuristic space inserted ---
 #
-# Regression: model tokenizers sometimes drop whitespace at streaming
-# chunk boundaries, so "investigation." and "I'll start" arrive as
-# two separate reasoning chunks and get glued into "investigation.I'll
-# start" inside the THINKING box. The renderer inserts a single ASCII
-# space at the join when both sides are ASCII alphanumeric/punctuation
-# (so CJK is untouched).
-subtest 'inserts space at ASCII chunk boundaries' => sub {
+# Regression guard against a previous heuristic that inserted a space at
+# every alphanumeric-alphanumeric chunk boundary. The heuristic was
+# intended to fix model-emission artifacts like "investigation." + "I'll
+# start" gluing into "investigation.I'll start", but the regex was too
+# broad: it fired at word-internal chunk splits and broke words like
+# "llama-bench" into "llama-b ench", "RADVERNOIR" into "RADV ERNOIR",
+# "Cezanne" into "Cez anne", and "-ngl" into "-ng l".
+#
+# Current behavior: chunks are concatenated verbatim. Mid-word splits
+# stay glued (correct). Inter-word boundary cases where the model
+# actually drops a space will appear run-on, which is preferable to
+# breaking every word the tokenizer happens to split in the middle.
+subtest 'chunks join verbatim - no heuristic space inserted' => sub {
     my $config  = MockConfig->new(show_thinking => 1);
     my $chat    = MockChat->new(config => $config);
     my $spinner = MockSpinner->new;
@@ -414,21 +420,32 @@ subtest 'inserts space at ASCII chunk boundaries' => sub {
 
     my $out = _capture_stdout(sub {
         $cb->('', 'start');
-        # Bug case: two chunks where the tokenizer dropped the space
-        # between "investigation." and "I'll start".
-        $cb->('Let me begin investigation.', undef);
-        $cb->("I'll start by reviewing.\n", undef);
+        # Chunks split mid-word - the renderer must NOT insert a space
+        # at the join. These are the cases that broke visibly when the
+        # previous heuristic was active.
+        $cb->('Good. llama-b', undef);
+        $cb->("ench works, RADV", undef);
+        $cb->("ERNOIR confirms Cez", undef);
+        $cb->("anne detection. -ng", undef);
+        $cb->("l flag set.\n", undef);
         $cb->('', 'end');
     });
 
-    unlike($out, qr/investigation\.I'll start/,
-        'no glued "investigation.I\'ll start" in visible output');
-    like($out, qr/investigation\. I'll start/,
-        'space inserted at ASCII chunk boundary');
+    # All mid-word splits stay glued (the original words are preserved).
+    unlike($out, qr/llama-b ench/,  '"llama-bench" not split by heuristic');
+    unlike($out, qr/RADV ERNOIR/,   '"RADVERNOIR" not split by heuristic');
+    unlike($out, qr/Cez anne/,      '"Cezanne" not split by heuristic');
+    unlike($out, qr/-ng l/,         '"-ngl" not split by heuristic');
+    like($out,  qr/llama-bench/,    '"llama-bench" preserved verbatim');
+    like($out,  qr/RADVERNOIR/,     '"RADVERNOIR" preserved verbatim');
+    like($out,  qr/Cezanne/,        '"Cezanne" preserved verbatim');
 };
 
-# --- Test 12: CJK chunk boundaries stay glued (no space inserted) ---
-subtest 'CJK chunk boundaries remain glued (no heuristic space)' => sub {
+# --- Test 12: CJK chunk boundaries stay glued ---
+#
+# Chinese script doesn't use spaces between characters. The chunk-append
+# path concatenates verbatim, so "你好" + "世界" stays "你好世界".
+subtest 'CJK chunk boundaries remain glued' => sub {
     my $config  = MockConfig->new(show_thinking => 1);
     my $chat    = MockChat->new(config => $config);
     my $spinner = MockSpinner->new;
@@ -436,8 +453,7 @@ subtest 'CJK chunk boundaries remain glued (no heuristic space)' => sub {
 
     my $out = _capture_stdout(sub {
         $cb->('', 'start');
-        # Chinese script doesn't use spaces between characters. The
-        # heuristic must not insert one.
+        # Chinese script doesn't use spaces between characters.
         $cb->('你好', undef);
         $cb->("世界。\n", undef);
         $cb->('', 'end');
@@ -446,12 +462,16 @@ subtest 'CJK chunk boundaries remain glued (no heuristic space)' => sub {
     # The capture layer writes UTF-8 bytes; decode so the regex sees
     # a properly-flagged UTF-8 string instead of bare bytes.
     utf8::decode($out) unless utf8::is_utf8($out);
-    like($out, qr/你好世界/, 'CJK characters stay glued, no inserted space');
+    like($out, qr/你好世界/, 'CJK characters stay glued');
     unlike($out, qr/你好 世界/, 'no spurious space between CJK characters');
 };
 
-# --- Test 13: heuristic skips when either side already has whitespace ---
-subtest 'heuristic skips when either side already has whitespace' => sub {
+# --- Test 13: chunks with leading whitespace preserved verbatim ---
+#
+# When the model (or tokenizer) DOES emit a leading space on a chunk,
+# the renderer keeps it. This is the normal case where the heuristic
+# was a no-op.
+subtest 'chunks with leading whitespace preserved verbatim' => sub {
     my $config  = MockConfig->new(show_thinking => 1);
     my $chat    = MockChat->new(config => $config);
     my $spinner = MockSpinner->new;
@@ -459,14 +479,14 @@ subtest 'heuristic skips when either side already has whitespace' => sub {
 
     my $out = _capture_stdout(sub {
         $cb->('', 'start');
-        # Trailing space on first chunk - heuristic skips because the
-        # previous content already ends with whitespace.
+        # Trailing space on first chunk - normal case where the
+        # heuristic was a no-op (kept the existing leading space).
         $cb->('word ', undef);
         $cb->('next', undef);
         $cb->('', 'end');
     });
 
-    like($out, qr/word next/, 'single space when previous chunk ends with whitespace');
+    like($out, qr/word next/, 'single space preserved when previous chunk ends with whitespace');
 };
 
 done_testing();
