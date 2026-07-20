@@ -326,10 +326,8 @@ subtest 'end signal flushes partial trailing line' => sub {
 };
 
 # --- Test 10: end signal preserves main streaming controller state.
-# Regression guard for the boundary bug where thinking flush could
-# leak first_chunk_received or first_line_printed state changes into
-# the main answer stream that follows. The fix preserves all main-
-# controller fields that flush_thinking() touches.
+# Regression guard for the boundary between thinking flush and the
+# main answer stream that follows.
 #
 # Documented behavior:
 #   - first_chunk_received MUST be reset to 0 by thinking 'end' so the
