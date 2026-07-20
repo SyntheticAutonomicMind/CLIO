@@ -113,6 +113,10 @@ my %PROVIDERS = (
         max_output_tokens => 32768,
         capability_map => 1,
         static_models => 1,
+        # DeepSeek's /v1/models endpoint doesn't return full capability
+        # metadata; the MCM static map is authoritative. Flagged so
+        # /api models display can pull from MCM instead.
+        lacks_models_metadata => 1,
         chat_endpoint_suffix => '/chat/completions',
         endpoint => {
             path_suffix => '/chat/completions',
@@ -190,6 +194,10 @@ my %PROVIDERS = (
             temperature_range => [0.0, 2.0],
             supports_tools => 1,
             openrouter => 1,
+            # OpenRouter uses its own `reasoning: {enabled, effort}` param,
+            # not OpenAI's `reasoning_effort`. The flag tells APIManager
+            # to skip the OpenAI-compat reasoning_effort injection.
+            native_thinking_format => 1,
         },
     },
     
@@ -209,6 +217,10 @@ my %PROVIDERS = (
             temperature_range => [0.0, 2.0],
             supports_tools => 1,
             google => 1,
+            # Google's Gemini handles thinking via its own native API
+            # (temperature settings + thought tokens), not via OpenAI's
+            # `reasoning_effort`. Skip the OpenAI-compat injection.
+            native_thinking_format => 1,
         },
     },
     
@@ -224,16 +236,27 @@ my %PROVIDERS = (
         max_context_tokens => 1000000,
         max_output_tokens => 131072,
         capability_map => 1,
+        # MiniMax exposes a /v1/token_plan/quota endpoint for the
+        # Token Plan variant. /billing surfaces a hint to use it.
+        has_quota_api => 1,
+        # MiniMax's /v1/models response lacks capability metadata.
+        # The MCM static map is authoritative. Flagged so /api models
+        # display can pull from MCM instead.
+        lacks_models_metadata => 1,
         endpoint => {
             path_suffix => '',
             temperature_range => [0.0, 2.0],
             supports_tools => 1,
             minimax => 1,
+            # MiniMax handles thinking via its own `thinking: {type}`
+            # param + `reasoning_split: true` flag. Skip the OpenAI-compat
+            # reasoning_effort injection to avoid double-sending.
+            native_thinking_format => 1,
             # Recommended sampling params per MiniMax model card
             sampling_defaults => { temperature => 1.0, top_p => 0.95, top_k => 40 },
         },
     },
-    
+
     minimax_token => {
         name => 'MiniMax Token Plan',
         api_base => 'https://api.minimax.io/v1/chat/completions',
@@ -246,11 +269,14 @@ my %PROVIDERS = (
         max_context_tokens => 1000000,
         max_output_tokens => 131072,
         capability_map => 1,
+        has_quota_api => 1,
+        lacks_models_metadata => 1,
         endpoint => {
             path_suffix => '',
             temperature_range => [0.0, 2.0],
             supports_tools => 1,
             minimax => 1,
+            native_thinking_format => 1,
             sampling_defaults => { temperature => 1.0, top_p => 0.95, top_k => 40 },
         },
     },
@@ -275,10 +301,13 @@ my %PROVIDERS = (
             supports_tools => 1,
             zai => 1,
             reasoning_field => 'reasoning_content',
+            # Z.AI handles thinking via its own `thinking: {type}` param.
+            # Skip the OpenAI-compat reasoning_effort injection.
+            native_thinking_format => 1,
             sampling_defaults => { temperature => 1.0, top_p => 0.95 },
         },
     },
-    
+
     zai_coding => {
         name => 'Z.AI (Coding)',
         api_base => 'https://api.z.ai/api/coding/paas/v4',
@@ -299,11 +328,12 @@ my %PROVIDERS = (
             supports_tools => 1,
             zai => 1,
             reasoning_field => 'reasoning_content',
+            native_thinking_format => 1,
             coding_plan => 1,
             sampling_defaults => { temperature => 1.0, top_p => 0.95 },
         },
     },
-    
+
     anthropic => {
         name => 'Anthropic',
         api_base => 'https://api.anthropic.com/v1/messages',
@@ -322,6 +352,10 @@ my %PROVIDERS = (
             temperature_range => [0.0, 1.0],
             supports_tools => 1,
             anthropic => 1,
+            # Anthropic handles thinking via its own `thinking: {type}`
+            # param (native API). Skip the OpenAI-compat reasoning_effort
+            # injection.
+            native_thinking_format => 1,
             auth_header => 'x-api-key',
             auth_value_format => '{api_key}',
             extra_headers => {
@@ -340,6 +374,11 @@ my %PROVIDERS = (
         supports_streaming => 1,
         supports_reasoning => 1,  # Many NIM models support reasoning (DeepSeek V4, Nemotron Ultra, etc.)
         keep_model_prefix => 1,  # NVIDIA model IDs include "nvidia/" namespace prefix
+        # NVIDIA's /v1/models response omits most capability fields
+        # (context_window, max_output_tokens). The NIM static map in
+        # ModelCapabilitiesManager is the source of truth. Flagged so
+        # /api models display can pull from MCM.
+        lacks_models_metadata => 1,
         endpoint => {
             path_suffix => '/chat/completions',
             temperature_range => [0.0, 2.0],

@@ -878,14 +878,15 @@ sub adapt_request_for_endpoint {
     # (OpenAI, DeepSeek, NVIDIA, GitHub Copilot, and any other provider
     # using the standard /chat/completions path). Uses reasoning_effort
     # parameter, gated on model capabilities instead of model-name regex.
-    # Excludes providers with their own thinking format (Anthropic, Google,
-    # MiniMax, Z.AI, OpenRouter) which are handled separately.
-    elsif (!$endpoint_config->{openrouter}
-        && !$endpoint_config->{anthropic}
-        && !$endpoint_config->{google}
-        && !$endpoint_config->{minimax}
-        && !$endpoint_config->{zai})
-    {
+    # Excludes providers whose endpoint_config declares
+    # native_thinking_format => 1 - those providers handle reasoning via
+    # their own params (e.g. Anthropic `thinking: {type}`, MiniMax
+    # `reasoning_split + thinking: {type}`, Z.AI `thinking: {type}`,
+    # OpenRouter `reasoning: {enabled, effort}`), so we don't double-send
+    # the OpenAI param on top. Adding a new provider with its own
+    # thinking format just requires setting that one flag in Providers.pm
+    # rather than editing this exclusion list.
+    elsif (!$endpoint_config->{native_thinking_format}) {
         my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
         my $thinking_mode = $self->{config} ? ($self->{config}->get('thinking_mode') // 'auto') : 'auto';
         my $model = $payload->{model} // '';
@@ -3223,8 +3224,13 @@ sub _process_non_streaming_response {
 
     # Post-process content
     if (defined $content && length($content)) {
-        # Strip <think> tags from MiniMax non-streaming
-        if ($endpoint_config->{minimax} && $content =~ /<think>/) {
+        # Strip inline <think>...</think> tags from any provider's non-streaming
+        # response. Mirrors the provider-agnostic streaming extraction in
+        # _process_think_tags: any chat template that emits thinking inline
+        # (llama.cpp + Qwen3, DeepSeek-R1 distills, MiniMax M2.x) hits this
+        # path. Providers using a separate reasoning_content field never put
+        # <think> tags in their content, so this is a no-op for them.
+        if ($content =~ /<think>/) {
             $content =~ s{<think>.*?</think>\n*}{}sg;
             $content =~ s/<\/?think>//g;
             $content =~ s/^\n+//;
@@ -3352,7 +3358,6 @@ sub send_request_streaming {
         reasoning_active => 0,
         in_think_tag     => 0,
         think_buffer     => '',
-        is_minimax       => $endpoint_config->{minimax} ? 1 : 0,
         use_responses_api => $use_responses_api,
         model            => $model,
         on_chunk         => $on_chunk,
@@ -3682,8 +3687,14 @@ sub _process_chat_completions_delta {
     if (defined($delta->{content}) && length($delta->{content})) {
         $content_delta = $delta->{content};
 
-        # MiniMax <think> tag state machine
-        if ($ss->{is_minimax} && defined $content_delta) {
+        # Inline <think>...</think> tag extraction. Provider-agnostic:
+        # models running through llama.cpp (Qwen3, DeepSeek-R1 distills),
+        # MiniMax M2.x, and any other chat template that emits thinking
+        # inline in delta.content all hit this path. Providers that use
+        # a separate reasoning_content field (DeepSeek API, OpenRouter,
+        # NVIDIA) never put <think> tags in delta.content, so this is a
+        # no-op for them.
+        if (defined $content_delta) {
             $content_delta = $self->_process_think_tags($content_delta, $ss);
             $content_delta = undef unless defined($content_delta) && length($content_delta);
         }
@@ -3786,8 +3797,10 @@ sub _accumulate_tool_calls_delta {
 
 =head2 _process_think_tags($content_delta, $ss)
 
-MiniMax M2.x <think>...</think> state machine. Strips think tags from content
-and routes thinking content to the on_thinking callback.
+Provider-agnostic <think>...</think> state machine. Strips think tags from
+content and routes thinking content to the on_thinking callback. Used by
+MiniMax M2.x, llama.cpp servers running Qwen3 / DeepSeek-R1 distills, and
+any other chat template that emits thinking inline in delta.content.
 Returns the filtered content_delta (may be empty string).
 
 =cut
@@ -3870,8 +3883,11 @@ sub _cleanup_streaming_state {
         $ss->{reasoning_active} = 0;
     }
 
-    # Strip residual <think> tags from accumulated content
-    if ($ss->{is_minimax} && length($ss->{accum_content}) && $ss->{accum_content} =~ /<\/?think>/) {
+    # Strip residual <think> tags from accumulated content. Mirrors the
+    # provider-agnostic think-tag extraction in _process_think_tags -
+    # any provider whose chat template emits inline think tags may leave
+    # a partial residue here if the stream ends inside a tag.
+    if (length($ss->{accum_content}) && $ss->{accum_content} =~ /<\/?think>/) {
         while ($ss->{accum_content} =~ s{<think>(.*?)</think>\n*}{}sg) {
             my $residual = $1;
             if (length($residual)) {
@@ -3884,8 +3900,8 @@ sub _cleanup_streaming_state {
         log_debug('APIManager', "Cleaned residual <think> tags from streaming content");
     }
 
-    # Flush remaining think_buffer
-    if ($ss->{is_minimax} && length($ss->{think_buffer})) {
+    # Flush remaining think_buffer (provider-agnostic; see _process_think_tags).
+    if (length($ss->{think_buffer})) {
         if (!$ss->{in_think_tag}) {
             $ss->{accum_content} .= $ss->{think_buffer};
         }
@@ -4656,10 +4672,14 @@ sub _endpoint_supports_thinking {
     # entirely; reading through config matches every other provider
     # check in this file.
     my $provider_name = $self->{config} ? ($self->{config}->get('provider') // '') : '';
-    return 1 if $provider_name eq 'anthropic';
-    return 1 if $provider_name eq 'google';
 
-    # Resolve via provider registry (handles google_vertex etc.)
+    # Resolve via provider registry. Anthropic, Google, MiniMax, Z.AI,
+    # NVIDIA, OpenAI, DeepSeek, GitHub Copilot, OpenRouter - all declare
+    # supports_reasoning in Providers.pm when they have any thinking
+    # capability. This includes native-API providers (Anthropic, Google,
+    # NVIDIA) and OpenAI-compat providers. Adding a new provider with
+    # thinking support is a one-flag edit in Providers.pm; no change
+    # needed here.
     if ($provider_name) {
         my $provider_config = get_provider($provider_name);
         return 1 if $provider_config && $provider_config->{supports_reasoning};
@@ -4804,18 +4824,17 @@ sub _send_native_streaming {
         # new model not yet in the cache). Match the well-known families
         # that REQUIRE adaptive - this is the safety net for the Fable 5 /
         # Mythos 5 / Mythos Preview case where the API rejects
-        # {type:"disabled"} with HTTP 400. MCM._anthropic_requires_adaptive
-        # has the same regex; we duplicate it here to keep APIManager
-        # safe when the capabilities fetch failed.
-        if (!$requires_adaptive && defined $full_model_for_caps
-            && ($self->{config} ? ($self->{config}->get('provider') // '') : '') =~ /^anthropic$/i) {
-            $requires_adaptive = 1 if $full_model_for_caps =~ /-(?:fable|mythos)-5(?:-|$|\b)/i;
-            $requires_adaptive = 1 if $full_model_for_caps =~ /^claude-mythos-preview(?:-|$|\b)/i;
-            # Strip provider/ prefix for the Fable/Mythos 5 check above
-            if (!$requires_adaptive && $full_model_for_caps =~ s{^[^/]+/}{}) {
-                $requires_adaptive = 1 if $full_model_for_caps =~ /-(?:fable|mythos)-5(?:-|$|\b)/i;
-                $requires_adaptive = 1 if $full_model_for_caps =~ /^claude-mythos-preview(?:-|$|\b)/i;
-            }
+        # {type:"disabled"} with HTTP 400. Detection is model-name based,
+        # not provider-name based: the Anthropic family naming tokens
+        # (fable/mythos) are unique enough to Anthropic that a regex
+        # against the model name catches both native Anthropic and any
+        # Anthropic-compatible proxy (Azure Foundry, internal deployments)
+        # that registers under a different provider name.
+        if (!$requires_adaptive && defined $full_model_for_caps) {
+            my $bare = $full_model_for_caps;
+            $bare =~ s{^[^/]+/}{};  # Strip provider/ prefix if present.
+            $requires_adaptive = 1 if $bare =~ /-(?:fable|mythos)-5(?:-|$|\b)/i;
+            $requires_adaptive = 1 if $bare =~ /^claude-mythos-preview(?:-|$|\b)/i;
         }
 
         # Three-way decision via thinking_mode (default: auto).

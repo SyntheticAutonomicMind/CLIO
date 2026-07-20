@@ -400,7 +400,15 @@ sub _display_generic_billing {
     $self->_display_recent_requests($billing, show_rate => 0);
     
     # Provider-specific hints
-    my $has_quota = ($provider eq 'minimax' || $provider eq 'minimax_token');
+    # has_quota_api flag is set in Providers.pm for providers that
+    # expose a quota API endpoint (currently MiniMax + MiniMax Token).
+    # New providers with quota APIs just need the flag in Providers.pm.
+    my $has_quota = 0;
+    eval { require CLIO::Providers; };
+    if (!$@ && $provider) {
+        my $pdef = CLIO::Providers::get_provider($provider);
+        $has_quota = 1 if $pdef && $pdef->{has_quota_api};
+    }
     if ($has_quota) {
         $self->writeline("", markdown => 0);
         $self->writeline($self->colorize("Use /api quota for token plan balance and usage details.", 'DIM'), markdown => 0);

@@ -744,7 +744,15 @@ sub _make_thinking_callback {
                 $think_stream->{in_table}        = 0;
                 $think_stream->{md_line_count}   = 0;
                 $header_printed = 0;
-                $self->{streaming}->{first_chunk_received} = 0;
+                # Don't reset first_chunk_received here. The thinking
+                # callback must not mutate main-streaming iteration
+                # state - that's owned by WorkflowOrchestrator's
+                # reset_streaming_state + prepare_for_iteration. If we
+                # reset mid-iteration, MiniMax-style interleaved
+                # reasoning+content streams (Qwen3, MiniMax M3, etc.)
+                # print a duplicate "CLIO: " prefix after every thinking
+                # box mid-stream. Iteration control stays with the
+                # WorkflowOrchestrator.
                 return;
             }
         }
