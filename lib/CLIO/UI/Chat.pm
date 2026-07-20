@@ -580,7 +580,6 @@ Returns a closure and a reference to the thinking_active flag.
 sub _make_thinking_callback {
     my ($self, $spinner) = @_;
     my $thinking_active = 0;
-    my $line_buffer = '';  # accumulates streaming chunks until newline
     # Anthropic's adaptive thinking summarizer can return an empty string
     # for trivial reasoning (e.g. "which tool next" decisions) even though
     # the round-trip still produces a valid signature we bill for. Printing
@@ -589,61 +588,84 @@ sub _make_thinking_callback {
     # chunk arrives. If 'end' fires without ever producing content we print
     # nothing at all.
     my $header_printed = 0;
-    
-    # Get terminal width and compute available space for indented content
-    my $get_wrap_width = sub {
-        my ($term_cols) = GetTerminalSize();
-        $term_cols ||= 80;
-        return $term_cols - 1;  # 1 column margin
-    };
-    
+
     my $indent = '    ';
-    
-    # Helper: word-wrap and print a complete line with indent
-    my $print_wrapped_line = sub {
-        my ($line) = @_;
-        my $max_width = $get_wrap_width->();
-        my $avail = $max_width - length($indent);
-        $avail = 20 if $avail < 20;
-        
-        if (length($line) <= $avail) {
-            print $self->colorize("$indent$line", 'DATA');
-        } else {
-            my @wrapped;
-            my $current = '';
-            for my $word (split /(\s+)/, $line) {
-                if ($current eq '' && $word =~ /^\s+$/) {
-                    next;
-                }
-                if ($current eq '') {
-                    $current = $word;
-                } elsif (length($current) + length($word) > $avail) {
-                    $current =~ s/\s+$//;
-                    push @wrapped, $current;
-                    if ($word =~ /^\s+$/) {
-                        $current = '';
-                    } else {
-                        $current = $word;
-                    }
-                } else {
-                    $current .= $word;
-                }
-            }
-            if ($current ne '') {
-                $current =~ s/\s+$//;
-                push @wrapped, $current;
-            }
-            my $text = join("\n", map { "$indent$_" } @wrapped);
-            print $self->colorize($text, 'DATA');
-        }
+
+    # Use the StreamingController so thinking renders through the same
+    # line-batching + Markdown + word-wrap pipeline as ordinary output.
+    # This guarantees tables, bold/italic, lists, code blocks, and word
+    # wrapping all behave identically between thinking and answer paths.
+    my $think_stream = CLIO::UI::StreamingController->new(ui => $self);
+    # Suppress the agent prefix / pager enable that the main callback
+    # does on the first chunk - we render inside the THINKING box, not
+    # next to a CLIO: prompt.
+    $think_stream->reset();
+
+    my $strip_session_markers = sub {
+        my ($text) = @_;
+        return '' unless defined $text;
+        # Strip BOTH structured and simple forms. The structured form
+        # uses {...} for the JSON payload; the simple form is just an
+        # identifier. Either kind must be removed from visible output.
+        $text =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;
+        $text =~ s/\s*<!--session:[a-z][a-z0-9_-]{2,50}-->\s*//sgi;
+        return $text;
     };
-    
-    # Helper: flush any partial line in the buffer
-    my $flush_buffer = sub {
-        if (length($line_buffer)) {
-            $print_wrapped_line->($line_buffer);
-            $line_buffer = '';
-        }
+
+    my $flush_thinking = sub {
+        # Route accumulated buffer through the StreamingController so it
+        # is batched as Markdown (preserving tables / code blocks) and
+        # then word-wrapped + indented to match the rest of CLIO output.
+        return unless defined $think_stream && $self->{streaming};
+        # Reuse the live buffer state of the main streaming controller
+        # via the public API: stash the thinking buffer into its
+        # markdown_buffer and let flush() render it with the same
+        # rendering/word-wrap as ordinary assistant output. We isolate
+        # the operation to avoid disturbing any in-flight main stream.
+        my $saved_md  = $self->{streaming}{markdown_buffer};
+        my $saved_ln  = $self->{streaming}{line_buffer};
+        my $saved_flp = $self->{streaming}{first_line_printed};
+        my $saved_tbl = $self->{streaming}{in_table};
+        my $saved_cb  = $self->{streaming}{in_code_block};
+        my $saved_cnt = $self->{streaming}{md_line_count};
+
+        $self->{streaming}{markdown_buffer}     = $think_stream->{markdown_buffer};
+        $self->{streaming}{line_buffer}         = $think_stream->{line_buffer};
+        $self->{streaming}{first_line_printed}  = 1;
+        $self->{streaming}{in_table}            = $think_stream->{in_table};
+        $self->{streaming}{in_code_block}       = $think_stream->{in_code_block};
+        $self->{streaming}{md_line_count}       = $think_stream->{md_line_count};
+
+        # Strip session markers before rendering so the box never leaks
+        # the structured form (the simple form is already handled by
+        # the per-line strip inside StreamingController).
+        $self->{streaming}{markdown_buffer} = $strip_session_markers->($self->{streaming}{markdown_buffer});
+        $self->{streaming}{line_buffer}     = $strip_session_markers->($self->{streaming}{line_buffer});
+
+        # Invoke flush() on the live StreamingController instance.
+        # $self->{streaming} may be either a hashref or a blessed object
+        # depending on caller context, so dispatch through ref().
+        my $sc = $self->{streaming};
+        my $flusher = ref($sc) eq 'HASH' ? $sc->{_flush} : $sc->can('flush');
+        $sc->flush() if ref($sc);
+
+        # Capture what the helper mutated (md_line_count, in_*) so we
+        # can restore the main controller's state to whatever it was
+        # before this thinking flush - we never want a thinking flush
+        # to leak in_code_block/in_table into a subsequent answer stream.
+        $think_stream->{markdown_buffer} = $self->{streaming}{markdown_buffer};
+        $think_stream->{line_buffer}     = $self->{streaming}{line_buffer};
+        $think_stream->{md_line_count}   = $self->{streaming}{md_line_count};
+        $think_stream->{in_table}        = $self->{streaming}{in_table};
+        $think_stream->{in_code_block}   = $self->{streaming}{in_code_block};
+
+        # Restore the main streaming controller's pre-call state.
+        $self->{streaming}{markdown_buffer}     = $saved_md;
+        $self->{streaming}{line_buffer}         = $saved_ln;
+        $self->{streaming}{first_line_printed}  = $saved_flp;
+        $self->{streaming}{in_table}            = $saved_tbl;
+        $self->{streaming}{in_code_block}       = $saved_cb;
+        $self->{streaming}{md_line_count}       = $saved_cnt;
     };
 
     # Helper: print a dim hrule indented by 4 spaces (inline format only)
@@ -690,7 +712,11 @@ sub _make_thinking_callback {
         
         if (defined $signal) {
             if ($signal eq 'start') {
-                $line_buffer = '';
+                $think_stream->{line_buffer}     = '';
+                $think_stream->{markdown_buffer} = '';
+                $think_stream->{in_code_block}   = 0;
+                $think_stream->{in_table}        = 0;
+                $think_stream->{md_line_count}   = 0;
                 $spinner->stop();
                 # Defer header/hrule until the first real content chunk;
                 # if no content ever arrives, skip them entirely (the
@@ -704,25 +730,28 @@ sub _make_thinking_callback {
             }
             elsif ($signal eq 'end') {
                 if ($header_printed) {
-                    $flush_buffer->();
+                    $flush_thinking->();
                     print "\n";
                     $print_thinking_hrule->();
                     print "\n";
                     STDOUT->flush() if STDOUT->can('flush');
                 }
                 $thinking_active = 0;
-                $line_buffer = '';
+                $think_stream->{line_buffer}     = '';
+                $think_stream->{markdown_buffer} = '';
+                $think_stream->{in_code_block}   = 0;
+                $think_stream->{in_table}        = 0;
+                $think_stream->{md_line_count}   = 0;
                 $header_printed = 0;
                 $self->{streaming}->{first_chunk_received} = 0;
                 return;
             }
         }
-        
+
         return unless defined $content && length($content);
-        
+
         if (!$header_printed) {
             $thinking_active = 1;
-            $line_buffer = '';
             $spinner->stop();
             # First real content chunk: print header and top hrule now.
             # If $header_printed is already set, we've already emitted them
@@ -731,20 +760,40 @@ sub _make_thinking_callback {
             $print_thinking_hrule->();
             $header_printed = 1;
         }
-        
-        # Accumulate content and emit complete lines with word-wrap
-        $line_buffer .= $content;
-        
-        while ($line_buffer =~ /\n/) {
-            my $nl_pos = index($line_buffer, "\n");
-            my $line = substr($line_buffer, 0, $nl_pos);
-            $line_buffer = substr($line_buffer, $nl_pos + 1);
-            
-            # Strip HTML session comment markers (e.g. <!--session:test-->)
-            $line =~ s/<!--session:[a-z0-9_-]+-->\s*//gi;
-            
-            $print_wrapped_line->($line);
-            print "\n";
+
+        # Feed the chunk into the thinking StreamingController so it
+        # is batched with the same line + Markdown grouping the main
+        # output stream uses, then flushed via the unified pipeline.
+        # StreamingController already handles per-line session marker
+        # stripping (both simple and structured forms), so we do not
+        # need a second strip here.
+        $think_stream->{line_buffer} .= $content;
+        while ((my $pos = index($think_stream->{line_buffer}, "\n")) >= 0) {
+            my $line = substr($think_stream->{line_buffer}, 0, $pos);
+            $think_stream->{line_buffer} = substr($think_stream->{line_buffer}, $pos + 1);
+
+            # Track Markdown context (table / code block) so partial
+            # tables do not get flushed in the middle of a row.
+            if ($line =~ /^```/) {
+                $think_stream->{in_code_block} = !$think_stream->{in_code_block};
+            }
+            my $line_is_table_row = ($line =~ /^\|.*\|$/);
+            my $line_is_blank     = ($line =~ /^\s*$/);
+            if ($line_is_table_row) {
+                $think_stream->{in_table} = 1;
+            } elsif (!$line_is_blank && $think_stream->{in_table}) {
+                $think_stream->{in_table} = 0;
+            }
+
+            # Strip HTML session comment markers on the per-line path
+            # because the StreamingController's own line branch only
+            # matches when the marker appears at end-of-line. The
+            # thinking callback also receives markers mid-line (e.g.
+            # in OpenRouter reasoning_summary deltas).
+            $line = $strip_session_markers->($line);
+
+            $think_stream->{markdown_buffer} .= $line . "\n";
+            $think_stream->{md_line_count}++;
         }
         STDOUT->flush() if STDOUT->can('flush');
     };
