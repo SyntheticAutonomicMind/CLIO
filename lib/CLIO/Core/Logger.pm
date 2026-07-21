@@ -79,8 +79,15 @@ sub should_log {
 
 =head2 log_debug, log_info, log_warning, log_error
 
-Helper functions that clear the line before printing log messages.
-This prevents log messages from interfering with spinners or partial output.
+Helper functions that print log messages to STDERR with a timestamp and
+[LEVEL][Module] prefix.
+
+The previous implementation prefixed every line with "\r\e[K" to clear
+any in-progress spinner output. That prefix was destructive when a tool
+output line was being rendered (inline format prints the tool header
+and action on the same line without a separating newline). The
+spinner now owns its own line-clearing on stop; the logger just
+prints messages.
 
 Arguments:
 - $module: Module name (e.g., 'APIManager', 'Chat')
@@ -114,7 +121,7 @@ sub log_debug {
     my ($module, $message, $config) = @_;
     return unless should_log('DEBUG', $config);
     my $ts = get_timestamp();
-    print STDERR "\r\e[K$ts [DEBUG][$module] $message\n";
+    print STDERR "$ts [DEBUG][$module] $message\n";
 }
 
 =head2 log_info
@@ -127,7 +134,7 @@ sub log_info {
     my ($module, $message, $config) = @_;
     return unless should_log('INFO', $config);
     my $ts = get_timestamp();
-    print STDERR "\r\e[K$ts [INFO][$module] $message\n";
+    print STDERR "$ts [INFO][$module] $message\n";
 }
 
 =head2 log_warning
@@ -140,7 +147,7 @@ sub log_warning {
     my ($module, $message, $config) = @_;
     return unless should_log('WARNING', $config);
     my $ts = get_timestamp();
-    print STDERR "\r\e[K$ts [WARN][$module] $message\n";
+    print STDERR "$ts [WARN][$module] $message\n";
 }
 
 =head2 log_error
@@ -153,7 +160,7 @@ sub log_error {
     my ($module, $message, $config) = @_;
     return unless should_log('ERROR', $config);
     my $ts = get_timestamp();
-    print STDERR "\r\e[K$ts [ERROR][$module] $message\n";
+    print STDERR "$ts [ERROR][$module] $message\n";
 }
 
 1;

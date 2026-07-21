@@ -74,18 +74,21 @@ sub edit_file {
     }
     
     log_debug('Editor', "Opening file: $filepath");
-    
-    # Open editor - use system() to wait for completion
-    my $cmd = "$self->{editor} " . quotemeta($filepath);
-    my $result = system($cmd);
-    
+
+    # Open editor - list-form system() avoids shell interpretation of the
+    # editor binary path and filepath. Earlier versions used
+    # "$self->{editor} " . quotemeta($filepath) which only protected the
+    # filepath; a configured editor like 'vi; rm -rf /' would be honored
+    # by the shell.
+    my $result = system($self->{editor}, $filepath);
+
     if ($result != 0) {
         my $exit_code = $result >> 8;
         return { success => 0, error => "Editor exited with code: $exit_code" };
     }
-    
+
     log_debug('Editor', "File editing complete");
-    
+
     return { success => 1, filepath => $filepath };
 }
 
@@ -130,11 +133,11 @@ sub edit_multiline {
     close $fh;
     
     log_debug('Editor', "Created temp file: $filename");
-    
-    # Open editor
-    my $cmd = "$self->{editor} " . quotemeta($filename);
-    my $result = system($cmd);
-    
+
+    # Open editor - list-form system() avoids shell interpretation of the
+    # editor binary path or filename.
+    my $result = system($self->{editor}, $filename);
+
     if ($result != 0) {
         unlink $filename;
         my $exit_code = $result >> 8;
