@@ -46,7 +46,6 @@ Features:
 - Cached update status to avoid API rate limits
 - Auto-detection of installation method (system vs user)
 - Safe update installation with verification
-- Rollback support in case of failure
 
 =head1 SYNOPSIS
 
@@ -414,38 +413,70 @@ sub download_version {
 
 =head2 install_version
 
-Install a specific version of CLIO.
-
-Arguments:
-- $version: Version to install
-
-Returns:
-- Hashref with {success, error, message}
+Deprecated alias for L</switch_to_version>. Retained for backwards
+compatibility with external callers that imported install_version.
 
 =cut
 
 sub install_version {
     my ($self, $version) = @_;
-    
+    return $self->switch_to_version($version);
+}
+
+=head2 switch_to_version
+
+Download and install a specific version of CLIO. This is the user-facing
+primitive used by `/update switch <version>`. It downloads the requested
+release tarball from GitHub, verifies it looks like a CLIO source tree,
+runs install.sh against the currently-detected install location, and
+cleans up the temporary download directory.
+
+Arguments:
+- $version: Version to switch to (e.g., "20260720.3")
+
+Returns:
+- Hashref with {success, error, message, version}
+
+=cut
+
+sub switch_to_version {
+    my ($self, $version) = @_;
+
     return { success => 0, error => 'Version required' } unless $version;
-    
+
+    # Validate version format (defense in depth - prevents injection via path)
+    unless ($version =~ /^[A-Za-z0-9._-]+$/) {
+        return { success => 0, error => "Invalid version format: $version" };
+    }
+
     # Download the version
     my $source_dir = $self->download_version($version);
     unless ($source_dir) {
         return { success => 0, error => "Failed to download version $version" };
     }
-    
+
     # Install from directory
-    my $result = $self->install_from_directory($source_dir);
-    
-    # Clean up download directory
+    my $ok = $self->install_from_directory($source_dir);
+
+    # Clean up download directory regardless of outcome
     my $download_dir = dirname($source_dir);
     rmtree($download_dir) if -d $download_dir;
-    
-    if ($result) {
-        return { success => 1, message => "Installed version $version" };
+
+    if ($ok) {
+        # Clear update cache so future status checks reflect the new version
+        my $cache_file = File::Spec->catfile($self->{cache_dir}, 'update_check_cache');
+        unlink $cache_file if -f $cache_file;
+
+        return {
+            success => 1,
+            message => "Switched to version $version",
+            version => $version,
+        };
     } else {
-        return { success => 0, error => "Installation failed for version $version" };
+        return {
+            success => 0,
+            error => "Installation failed for version $version",
+        };
     }
 }
 
@@ -878,53 +909,52 @@ sub install_from_directory {
     log_debug('Update', "Needs sudo: " . ($needs_sudo ? 'yes' : 'no'));
     
     # Change to source directory
-    my $original_dir = `pwd`;
-    chomp $original_dir;
-    
+    my $original_dir = getcwd();
+
     chdir($source_dir) or do {
         log_error('Update', "Cannot cd to $source_dir: $!");
         return 0;
     };
-    
+
     my $success = 0;
-    
-    # Determine the correct install.sh command based on detected location
+
+    # Determine the correct install.sh command based on detected location.
     # install.sh behavior:
     #   - ./install.sh --user          -> installs to ~/.local/clio
     #   - ./install.sh /path/to/dir    -> installs to /path/to/dir
     #   - ./install.sh                 -> installs to /opt/clio (default)
-    
-    my $install_cmd;
-    
+    #
+    # Use list-form system() to avoid shell injection via paths containing
+    # single quotes, spaces, or other shell metacharacters.
+
+    my @install_cmd;
+
     # Special case: if current install is ~/.local/clio, use --user flag
     if ($install_dir eq "$ENV{HOME}/.local/clio") {
         log_debug('Update', "Using --user flag for ~/.local/clio install");
-        $install_cmd = "bash install.sh --user";
+        @install_cmd = ('bash', 'install.sh', '--user');
     }
     # Otherwise, explicitly specify the target directory
-    else {
-        # Determine if we need sudo
-        if ($needs_sudo) {
-            log_debug('Update', "System install to $install_dir (needs sudo)");
-            $install_cmd = "sudo bash install.sh '$install_dir'";
-        } else {
-            log_debug('Update', "Installing to $install_dir (no sudo needed)");
-            $install_cmd = "bash install.sh '$install_dir'";
-        }
+    elsif ($needs_sudo) {
+        log_debug('Update', "System install to $install_dir (needs sudo)");
+        @install_cmd = ('sudo', 'bash', 'install.sh', $install_dir);
+    } else {
+        log_debug('Update', "Installing to $install_dir (no sudo needed)");
+        @install_cmd = ('bash', 'install.sh', $install_dir);
     }
-    
-    log_debug('Update', "Running: $install_cmd");
-    
-    my $result = system($install_cmd);
+
+    log_debug('Update', "Running: " . join(' ', @install_cmd));
+
+    my $result = system(@install_cmd);
     $success = ($result == 0);
-    
+
     if (!$success) {
-        log_error('Update', "Installation command failed: $install_cmd");
+        log_error('Update', "Installation command failed: " . join(' ', @install_cmd));
         log_error('Update', "Exit code: " . ($result >> 8));
     }
-    
-    chdir($original_dir);
-    
+
+    chdir($original_dir) or log_warning('Update', "Cannot return to $original_dir: $!");
+
     return $success;
 }
 
@@ -949,26 +979,32 @@ sub install_latest {
         };
     }
     
-    # Get version from downloaded source
+    # Get version from downloaded source (best effort - falls back to 'unknown')
     my $new_version = 'unknown';
     if (-f "$source_dir/VERSION") {
-        open my $fh, '<', "$source_dir/VERSION";
-        $new_version = <$fh>;
-        close $fh;
-        chomp $new_version if $new_version;
+        if (open my $fh, '<', "$source_dir/VERSION") {
+            my $v = <$fh>;
+            close $fh;
+            if (defined $v) {
+                chomp $v;
+                $new_version = $v if $v ne '';
+            }
+        } else {
+            log_warning('Update', "Cannot read VERSION file: $!");
+        }
     }
-    
+
     # Install
     my $install_success = $self->install_from_directory($source_dir);
-    
+
     # Cleanup download directory
     rmtree(dirname($source_dir));
-    
+
     if ($install_success) {
-        # Clear update cache
+        # Clear update cache so future status checks reflect the new version
         my $cache_file = File::Spec->catfile($self->{cache_dir}, 'update_check_cache');
         unlink $cache_file if -f $cache_file;
-        
+
         return {
             success => 1,
             message => "Successfully updated to version $new_version",
