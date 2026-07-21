@@ -575,7 +575,7 @@ sub _search_serpapi {
     );
     
     unless ($engine_config{$engine}) {
-        return { error => "Unsupported search engine: $engine. Use: google, bing, duckduckgo" };
+        return $self->error_result("Unsupported search engine: $engine. Use: google, bing, duckduckgo");
     }
     
     my $config = $engine_config{$engine};
@@ -636,9 +636,9 @@ sub _search_serpapi {
         # Strip Carp caller-location before forwarding to the public search_web()
         # aggregator; otherwise the trailing "at file.pm line N" leaks into the
         # consolidated error message.
-        return { error => $self->_clean_eval_error($@) };
+        return $self->error_result($self->_clean_eval_error($@));
     }
-    
+
     return $result;
 }
 
@@ -744,9 +744,9 @@ sub _search_brave {
     };
 
     if ($@) {
-        return { error => $self->_clean_eval_error($@) };
+        return $self->error_result($self->_clean_eval_error($@));
     }
-    
+
     return $result;
 }
 
@@ -856,9 +856,9 @@ sub _search_duckduckgo_direct {
     };
 
     if ($@) {
-        return { error => $self->_clean_eval_error($@) };
+        return $self->error_result($self->_clean_eval_error($@));
     }
-    
+
     return $result;
 }
 

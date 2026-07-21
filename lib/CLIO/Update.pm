@@ -68,16 +68,16 @@ Features:
 
 sub new {
     my ($class, %opts) = @_;
-    
+
     my $self = {
         debug => $opts{debug} || 0,
         github_repo => 'SyntheticAutonomicMind/CLIO',
         api_base => 'https://api.github.com',
-        cache_dir => '.clio',
+        cache_dir => $opts{cache_dir} || '.clio',
         cache_duration => 43200,  # 12 hours in seconds
         timeout => 10,  # HTTP request timeout
     };
-    
+
     bless $self, $class;
     return $self;
 }
@@ -662,9 +662,14 @@ sub get_available_update {
         };
     }
     
-    # Cache has a version - check if it's different from current
-    my $update_available = ($content ne $current) ? 1 : 0;
-    
+    # Cache has a version. Only report an update when the cached version is
+    # actually newer than the running one. A plain string-equality check
+    # would report "update available" if the user installed a newer version
+    # outside of CLIO (cache still holds the older upstream version) — the
+    # notification would then point at the older cached version, which is
+    # backwards.
+    my $update_available = ($self->_compare_versions($content, $current) > 0) ? 1 : 0;
+
     return {
         cached => 1,
         up_to_date => $update_available ? 0 : 1,
