@@ -94,27 +94,43 @@ sub handle_update_command {
     elsif ($subcmd eq 'install') {
         $self->_install_update($updater);
     }
-    elsif ($subcmd eq 'status' || $subcmd eq '' || $subcmd eq 'help') {
-        $self->_show_status($updater);
-    }
     elsif ($subcmd eq 'list') {
         $self->_list_versions($updater);
     }
     elsif ($subcmd eq 'switch') {
         $self->_switch_version($updater, $args[1]);
     }
-    else {
-        $self->display_command_header("UPDATE");
-        
-        $self->display_section_header("COMMANDS");
-        $self->display_command_row("/update", "Show version and help", 30);
-        $self->display_command_row("/update status", "Show version status", 30);
-        $self->display_command_row("/update check", "Check for updates", 30);
-        $self->display_command_row("/update list", "List all versions", 30);
-        $self->display_command_row("/update install", "Install latest version", 30);
-        $self->display_command_row("/update switch <ver>", "Switch to specific version", 30);
-        $self->writeline("", markdown => 0);
+    elsif ($subcmd eq 'status' || $subcmd eq '') {
+        $self->_show_status($updater);
     }
+    elsif ($subcmd eq 'help') {
+        $self->_show_help();
+    }
+    else {
+        $self->_show_help();
+    }
+}
+
+=head2 _show_help()
+
+Display the /update command reference.
+
+=cut
+
+sub _show_help {
+    my ($self) = @_;
+
+    $self->display_command_header("UPDATE");
+
+    $self->display_section_header("COMMANDS");
+    $self->display_command_row("/update", "Show current version and status", 30);
+    $self->display_command_row("/update status", "Show cached update status", 30);
+    $self->display_command_row("/update check", "Check GitHub for updates", 30);
+    $self->display_command_row("/update list", "List available versions", 30);
+    $self->display_command_row("/update install", "Install the latest version", 30);
+    $self->display_command_row("/update switch <ver>", "Switch to a specific version", 30);
+    $self->display_command_row("/update help", "Show this help", 30);
+    $self->writeline("", markdown => 0);
 }
 
 =head2 _check_updates($updater)
@@ -203,7 +219,8 @@ sub _install_update {
     my $result = $updater->install_latest();
     
     if ($result->{success}) {
-        $self->display_success_message("Update installed successfully!");
+        my $new_version = $result->{version} || 'latest';
+        $self->display_success_message("Update installed successfully ($new_version)!");
         $self->writeline("", markdown => 0);
         $self->display_info_message("Please restart CLIO to use the new version");
         $self->writeline("", markdown => 0);
@@ -254,9 +271,8 @@ sub _install_update {
     } else {
         $self->display_error_message("Update installation failed: " . ($result->{error} || 'Unknown error'));
         $self->writeline("", markdown => 0);
-        if ($result->{rollback}) {
-            $self->display_info_message("Previous version restored (rollback successful)");
-        }
+        $self->writeline("Your previous version is still in place at the install location.", markdown => 0);
+        $self->writeline("The downloaded files have been cleaned up; nothing else was modified.", markdown => 0);
     }
     $self->writeline("", markdown => 0);
 }
@@ -327,26 +343,29 @@ sub _list_versions {
     
     my $count = 0;
     for my $release (@$releases) {
+        # Skip drafts entirely - they shouldn't be visible to users
+        next if $release->{draft};
+
         my $version = $release->{version};
         my $date = $release->{published_at} || '';
         $date =~ s/T.*//;
-        
+
         my $marker = '';
         my $version_color = 'command_value';
         if ($version eq $current) {
             $marker = ' (current)';
             $version_color = 'success';
         }
-        
+
         if ($release->{prerelease}) {
             $marker .= ' [pre-release]';
         }
-        
+
         my $line = "  " . $self->colorize($version, $version_color);
         $line .= $self->colorize($marker, 'muted') if $marker;
         $line .= "  " . $self->colorize($date, 'muted') if $date;
         $self->writeline($line, markdown => 0);
-        
+
         $count++;
         last if $count >= 20;
     }

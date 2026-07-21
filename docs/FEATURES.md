@@ -780,6 +780,12 @@ These send structured prompts to the AI:
 | `/stats log [N]` | Raw log entries (last N, default 20) |
 | `/undo` | Revert last AI changes |
 | `/update` | Check for CLIO updates |
+| `/update status` | Show cached update status (no network call) |
+| `/update check` | Force a fresh check against GitHub releases |
+| `/update list` | List available releases with dates and prerelease markers |
+| `/update install` | Download and install the latest release |
+| `/update switch <ver>` | Download and install a specific version |
+| `/update help` | Show the /update command reference |
 | `/log` | View session log |
 | `/device` | Manage remote devices |
 | `/subagent spawn <task>` | Spawn a sub-agent |
