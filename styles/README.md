@@ -63,6 +63,26 @@ agent_text=@WHITE@
 system_message=@CYAN@
 
 # ... more keys
+
+## Spinner Style
+
+Styles can select a built-in spinner animation via the `spinner_style` key:
+
+```
+spinner_style=dots        # default - ASCII dot cascade, works everywhere
+spinner_style=rotator     # ASCII classic rotation (| / - \), works everywhere
+spinner_style=braille     # 8-frame Unicode braille, falls back to dots on non-UTF-8 locales
+```
+
+For fully custom frame sequences, use the legacy `spinner_frames` key
+(comma-separated):
+
+```
+spinner_frames=*,**,***,**,*, 
+```
+
+`spinner_style` and `spinner_frames` are mutually exclusive - if both are
+present, `spinner_frames` wins.
 ```
 
 See [docs/STYLE_QUICKREF.md](../docs/STYLE_QUICKREF.md) for the complete list of style keys and available color codes.

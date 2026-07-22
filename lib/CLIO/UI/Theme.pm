@@ -266,27 +266,39 @@ sub get_color {
 
 =head2 get_spinner_frames
 
-Get spinner animation frames from current style, parsed from comma-separated string
+Get spinner animation frames from current style.
 
-Returns an array reference of animation frames
+Resolves in this order:
+1. spinner_frames key (legacy comma-separated explicit frames) - takes
+   precedence for backward compat with custom themes.
+2. spinner_style key (named spinner from CLIO::UI::Spinners) - preferred.
+3. Default: 'dots'.
+
+Capability-aware fallback: spinners that require UTF-8 (e.g., braille)
+auto-fall-back to the dots spinner when the locale isn't UTF-8.
+
+Returns an array reference of animation frames.
 
 =cut
 
 sub get_spinner_frames {
     my ($self) = @_;
-    
+
+    require CLIO::UI::Spinners;
+
     my $style = $self->{styles}->{$self->{current_style}} || $self->{styles}->{default};
-    return ['.', '..', '...', '..', '.', ' '] unless $style;
-    
-    my $frames_str = $style->{spinner_frames} || '.,..,...,..,., ';    
-    # Split comma-separated frames, preserving intentional spaces
-    my @frames = split(/,/, $frames_str);
-    # Trim leading whitespace only (trailing space may be intentional for blank frames)
-    @frames = map { s/^\s+//r } @frames;
-    # Replace empty strings with space (blank frame)
-    @frames = map { $_ eq '' ? ' ' : $_ } @frames;
-    
-    return \@frames;
+    unless ($style) {
+        return CLIO::UI::Spinners::spinner_frames('dots');
+    }
+
+    # 1. Explicit frames override (legacy / custom themes).
+    if ($style->{spinner_frames}) {
+        return CLIO::UI::Spinners::parse_legacy_frames($style->{spinner_frames});
+    }
+
+    # 2. Named spinner style (preferred).
+    my $name = $style->{spinner_style} || 'dots';
+    return CLIO::UI::Spinners::spinner_frames($name);
 }
 
 =head2 get_tool_display_format

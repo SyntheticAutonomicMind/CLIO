@@ -341,3 +341,4 @@ grep -rn '\\x{25' lib/ | grep -v Terminal.pm
 - **Display:** `lib/CLIO/UI/Display.pm` - High-level display methods
 - **Chat:** `lib/CLIO/UI/Chat.pm` - Terminal interface, streaming, thinking callbacks
 - **Spinner:** `lib/CLIO/UI/ProgressSpinner.pm` - Animated spinner with braille fallback
+- **Spinner Catalog:** `lib/CLIO/UI/Spinners.pm` - Named spinner styles (`dots`, `rotator`, `braille`) with capability-aware fallback
