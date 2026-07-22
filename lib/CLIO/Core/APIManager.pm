@@ -3465,6 +3465,21 @@ sub _process_sse_data {
         log_debug('APIManager', "Chunk has id: " . substr($data->{id}, 0, 30) . "...") if $data->{id};
     }
 
+    # Capture SSE error-only chunks (no `choices` field). Providers like NVIDIA NIM
+    # wrap upstream errors in SSE framing even when no model output was produced:
+    #   data: {"error":{"message":"...","code":"..."}}\n\n
+    # Without this, the error is silently swallowed and the workflow exits with
+    # an empty response. Stash the error on streaming state so _finalize_streaming_response
+    # can surface it as a retryable error.
+    if ($data->{error} && !$data->{choices}) {
+        my $err = $data->{error};
+        my $msg = ref($err) eq 'HASH' ? ($err->{message} // $err->{msg} // 'unknown') : ($err // 'unknown');
+        my $code = ref($err) eq 'HASH' ? ($err->{code} // $err->{type} // '') : '';
+        log_warning('APIManager', "SSE error chunk: code=$code message=$msg");
+        $ss->{_sse_error} = { message => $msg, code => $code };
+        return;  # No content/tool_calls to extract from this chunk
+    }
+
     # Extract stateful_marker for billing session continuity
     if ($data->{stateful_marker}) {
         my $iteration = ($ss->{opts} && $ss->{opts}{tool_call_iteration}) || 1;
@@ -3967,6 +3982,38 @@ sub _finalize_streaming_response {
     # Set streaming headers BEFORE error check so rate limit detection can use them
     $s{streaming_headers} //= $resp->headers if $resp->can('headers');
 
+    # Surface SSE error chunks captured during streaming
+    if ($s{_sse_error} && !$s{accumulated_content} && !keys(%{$s{tool_calls_accumulator}})) {
+        my $sse_err = $s{_sse_error};
+        $self->{response_handler}->release_broker_slot($resp, 200);
+        my $code = $sse_err->{code} // '';
+        # Default to retryable - upstream errors usually resolve themselves.
+        # Explicit non-retryable set is reserved for client-side errors (4xx-class)
+        # that we explicitly identify here.
+        my $is_retryable = 1;
+        my $error_type = 'server_error';
+        if ($code =~ /rate.?lim/i) {
+            $error_type = 'rate_limit';
+        } elsif ($code =~ /timeout/i) {
+            $error_type = 'timeout';
+        } elsif ($code =~ /overload|busy|throttle/i) {
+            $error_type = 'overloaded';
+        } elsif ($code =~ /auth|forbidden|unauthor/i) {
+            $is_retryable = 0;
+            $error_type = 'auth_error';
+        } elsif ($code =~ /invalid|bad.?request/i) {
+            $is_retryable = 0;
+            $error_type = 'bad_request';
+        }
+        return {
+            success => 0,
+            error => "SSE error from provider: " . ($sse_err->{message} // 'unknown') . " (code=$code)",
+            retryable => $is_retryable,
+            retry_after => $is_retryable ? 5 : 0,
+            error_type => $error_type,
+        };
+    }
+
     # Handle HTTP error responses based on status code
     if ($is_error) {
         # Pass streaming headers to error handler for rate limit header parsing
@@ -4150,16 +4197,37 @@ sub _check_200_body_error {
     return undef unless $body;
 
     my ($error_msg, $error_code);
-    eval {
-        my $parsed = decode_json($body);
-        my $err = (ref($parsed) eq 'ARRAY' && @$parsed) ? $parsed->[0]{error}
-                : (ref($parsed) eq 'HASH')              ? $parsed->{error}
-                : undef;
-        if ($err) {
-            $error_msg  = ref($err) eq 'HASH' ? $err->{message} : $err;
-            $error_code = ref($err) eq 'HASH' ? $err->{code}    : undef;
+
+    # Provider error bodies sometimes arrive as SSE-framed JSON:
+    #   data: {"error":{"message":"...","code":"..."}}\n\n
+    # (NVIDIA NIM wraps non-streaming errors in SSE framing even when
+    # Content-Type is text/event-stream). Try plain JSON first (Google/OpenRouter),
+    # then strip SSE framing and retry.
+    my $parsed;
+    my @candidates = ($body);
+    if ($body =~ /\Adata:|\n\n/m || $body =~ /\Aevent:/) {
+        my $clean = $body;
+        $clean =~ s/^data:\s*//mg;
+        $clean =~ s/^event:\s*\S+\s*$//mg;
+        $clean =~ s/\s+\z//;
+        push @candidates, $clean if $clean ne $body && length($clean);
+    }
+    for my $candidate (@candidates) {
+        my $p = eval { decode_json($candidate) };
+        if (ref($p) eq 'HASH' || (ref($p) eq 'ARRAY' && @$p)) {
+            $parsed = $p;
+            last;
         }
-    };
+    }
+    return undef unless $parsed;
+
+    my $err = (ref($parsed) eq 'ARRAY' && @$parsed) ? $parsed->[0]{error}
+            : (ref($parsed) eq 'HASH')              ? $parsed->{error}
+            : undef;
+    if ($err) {
+        $error_msg  = ref($err) eq 'HASH' ? $err->{message} : $err;
+        $error_code = ref($err) eq 'HASH' ? $err->{code}    : undef;
+    }
     return undef unless $error_msg;
 
     log_debug('APIManager', "Error in 200 body: $error_msg");
