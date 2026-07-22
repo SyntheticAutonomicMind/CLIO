@@ -3200,6 +3200,12 @@ sub display_help {
     push @help_lines, sprintf("  %-30s %s", $self->colorize('Shift+Left/Right', 'help_command'), 'Move cursor by word');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('Ctrl+A / Home', 'help_command'), 'Move to start of line');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('Ctrl+E / End', 'help_command'), 'Move to end of line');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('Backspace', 'help_command'), 'Delete character before cursor');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('Delete', 'help_command'), 'Delete character at cursor');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('Ctrl+W / Shift+Delete', 'help_command'), 'Delete word before cursor');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('Alt+D / Ctrl+Delete', 'help_command'), 'Delete word after cursor');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('Ctrl+K', 'help_command'), 'Delete to end of line');
+    push @help_lines, sprintf("  %-30s %s", $self->colorize('Ctrl+U', 'help_command'), 'Delete to start of line');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('Up/Down', 'help_command'), 'Navigate command history');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('Tab', 'help_command'), 'Auto-complete commands/paths');
     push @help_lines, sprintf("  %-30s %s", $self->colorize('Any key', 'help_command'), 'Interrupt the agent');
