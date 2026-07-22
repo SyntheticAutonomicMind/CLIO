@@ -323,6 +323,30 @@ sub display_rate_limit_info {
     } elsif ($rl_code =~ /user_monthly_rate_limited/i) {
         my $reset_msg = format_reset_message($retry_after, undef);
         $message = "Monthly rate limit reached. Please review your usage$reset_msg.";
+    } elsif ($rl_code =~ /userbymodelbyminuteuncachedinputtokens|userbymodelbyminuteinputtokens|^anthropic[-_]ratelimit|ratelimitreached/i) {
+        # Anthropic ITPM (input tokens per minute) hits. The bucket name in
+        # older errors / Bedrock proxies exposes the limit directly
+        # ("UserByModelByMinuteUncachedInputTokens" = per-model per-user per
+        # minute, uncached input tokens). Newer responses use a generic
+        # "RateLimitReached" code with a descriptive message instead.
+        #
+        # These caps continuously refill (token bucket), so the provider's
+        # Retry-After hint is what determines when the bucket recovers.
+        # Without it, default to a short wait - CLIO proactively paces
+        # subsequent requests once ITPM throttling is triggered.
+        my $reset_msg = format_reset_message($retry_after, undef);
+        my $suffix = $reset_msg || " and try again shortly";
+        $message = "Anthropic input-token rate limit hit (ITPM)$suffix. "
+                 . "Large or repeated requests with prompt caching disabled are the usual cause.";
+    } elsif ($rl_code =~ /userbymodelbyminuteuncachedoutputtokens|userbymodelbyminuteoutputtokens/i) {
+        my $reset_msg = format_reset_message($retry_after, undef);
+        my $suffix = $reset_msg || " and try again shortly";
+        $message = "Anthropic output-token rate limit hit (OTPM)$suffix. "
+                 . "Long responses or many parallel completions are the usual cause.";
+    } elsif ($rl_code =~ /userbymodelbyminuterequests/i) {
+        my $reset_msg = format_reset_message($retry_after, undef);
+        my $suffix = $reset_msg || " and try again shortly";
+        $message = "Anthropic request rate limit hit (RPM)$suffix. Reduce concurrent requests or add delay between turns.";
     } else {
         $message = "Rate limit reached. Please wait before making more requests.";
     }

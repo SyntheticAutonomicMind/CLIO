@@ -9,7 +9,7 @@ use utf8;
 
 use CLIO::Core::Logger qw(should_log log_error log_warning log_info log_debug);
 use CLIO::Util::JSON qw(decode_json encode_json safe_decode_json safe_encode_json);
-use CLIO::Util::RateLimit qw(format_reset_message);
+use CLIO::Util::RateLimit qw(format_reset_message parse_anthropic_reset_timestamp);
 use Scalar::Util qw(blessed);
 
 =head1 NAME
@@ -1398,6 +1398,52 @@ sub process_rate_limit_headers {
         elsif ($lc_name eq 'x-ratelimit-reset-tokens') {
             $rate_limit{reset_tokens} = $value;
         }
+        # Anthropic native rate-limit headers. Distinct prefix
+        # (`anthropic-ratelimit-*`) from the generic x-ratelimit-* used by
+        # OpenAI and proxies. Four buckets per Anthropic API:
+        #   requests         - requests per minute (RPM)
+        #   tokens           - combined input + output per minute
+        #   input-tokens     - input tokens per minute (ITPM)
+        #   output-tokens    - output tokens per minute (OTPM)
+        # Plus priority-* variants for Priority Tier customers. `*-reset`
+        # values are RFC 3339 timestamps (handled below) rather than
+        # seconds-until-reset like the x-ratelimit-* family.
+        elsif ($lc_name eq 'anthropic-ratelimit-requests-limit') {
+            $rate_limit{anthropic_requests_limit} = $value;
+        }
+        elsif ($lc_name eq 'anthropic-ratelimit-requests-remaining') {
+            $rate_limit{anthropic_requests_remaining} = $value;
+        }
+        elsif ($lc_name eq 'anthropic-ratelimit-requests-reset') {
+            $rate_limit{anthropic_requests_reset} = $value;
+        }
+        elsif ($lc_name eq 'anthropic-ratelimit-tokens-limit') {
+            $rate_limit{anthropic_tokens_limit} = $value;
+        }
+        elsif ($lc_name eq 'anthropic-ratelimit-tokens-remaining') {
+            $rate_limit{anthropic_tokens_remaining} = $value;
+        }
+        elsif ($lc_name eq 'anthropic-ratelimit-tokens-reset') {
+            $rate_limit{anthropic_tokens_reset} = $value;
+        }
+        elsif ($lc_name eq 'anthropic-ratelimit-input-tokens-limit') {
+            $rate_limit{anthropic_input_tokens_limit} = $value;
+        }
+        elsif ($lc_name eq 'anthropic-ratelimit-input-tokens-remaining') {
+            $rate_limit{anthropic_input_tokens_remaining} = $value;
+        }
+        elsif ($lc_name eq 'anthropic-ratelimit-input-tokens-reset') {
+            $rate_limit{anthropic_input_tokens_reset} = $value;
+        }
+        elsif ($lc_name eq 'anthropic-ratelimit-output-tokens-limit') {
+            $rate_limit{anthropic_output_tokens_limit} = $value;
+        }
+        elsif ($lc_name eq 'anthropic-ratelimit-output-tokens-remaining') {
+            $rate_limit{anthropic_output_tokens_remaining} = $value;
+        }
+        elsif ($lc_name eq 'anthropic-ratelimit-output-tokens-reset') {
+            $rate_limit{anthropic_output_tokens_reset} = $value;
+        }
         elsif ($lc_name eq 'retry-after') {
             $rate_limit{retry_after} = $value;
         }
@@ -1495,8 +1541,51 @@ sub process_rate_limit_headers {
         }
     }
 
+    # Anthropic ITPM/OTPM/RPM headers. When the API returns these (always
+    # does for native Anthropic traffic, often also for proxies) we treat
+    # the input-tokens bucket as the operative constraint - large
+    # conversations with cached prefix disabled blow ITPM the most, and
+    # ITPM is what produces the "UncachedInputTokens" / "Rate limit of
+    # 250000 per 60s exceeded" errors users see. Output-tokens is the next
+    # most-likely tight bucket and is folded in alongside. This feeds the
+    # dynamic_min_delay pipeline so a low ITPM heads the throttle up before
+    # the API returns 429.
+    if (defined $rate_limit{anthropic_input_tokens_limit} && defined $rate_limit{anthropic_input_tokens_remaining}) {
+        my $itpm_limit = $rate_limit{anthropic_input_tokens_limit};
+        my $itpm_remaining = $rate_limit{anthropic_input_tokens_remaining};
+        if ($itpm_limit > 0) {
+            my $itpm_pct = ($itpm_remaining / $itpm_limit) * 100;
+            if (!defined $percent_remaining || $itpm_pct < $percent_remaining) {
+                $percent_remaining = $itpm_pct;
+                log_debug('ResponseHandler', sprintf("Anthropic ITPM: %.1f%% remaining (%d/%d)", $itpm_pct, $itpm_remaining, $itpm_limit));
+            }
+        }
+    }
+    if (defined $rate_limit{anthropic_output_tokens_limit} && defined $rate_limit{anthropic_output_tokens_remaining}) {
+        my $otpm_limit = $rate_limit{anthropic_output_tokens_limit};
+        my $otpm_remaining = $rate_limit{anthropic_output_tokens_remaining};
+        if ($otpm_limit > 0) {
+            my $otpm_pct = ($otpm_remaining / $otpm_limit) * 100;
+            if (!defined $percent_remaining || $otpm_pct < $percent_remaining) {
+                $percent_remaining = $otpm_pct;
+                log_debug('ResponseHandler', sprintf("Anthropic OTPM: %.1f%% remaining (%d/%d)", $otpm_pct, $otpm_remaining, $otpm_limit));
+            }
+        }
+    }
+    if (defined $rate_limit{anthropic_requests_limit} && defined $rate_limit{anthropic_requests_remaining}) {
+        my $rpm_limit = $rate_limit{anthropic_requests_limit};
+        my $rpm_remaining = $rate_limit{anthropic_requests_remaining};
+        if ($rpm_limit > 0) {
+            my $rpm_pct = ($rpm_remaining / $rpm_limit) * 100;
+            if (!defined $percent_remaining || $rpm_pct < $percent_remaining) {
+                $percent_remaining = $rpm_pct;
+                log_debug('ResponseHandler', sprintf("Anthropic RPM: %.1f%% remaining (%d/%d)", $rpm_pct, $rpm_remaining, $rpm_limit));
+            }
+        }
+    }
+
     my $dynamic_min_delay = $self->{_dynamic_min_delay} // 1.0;
-    
+
     if (defined $percent_remaining) {
         my $new_delay;
         if ($percent_remaining > 50) {
@@ -1537,6 +1626,21 @@ sub process_rate_limit_headers {
             # usable reset timestamp.
             $self->{_rate_limit_reset_in} = $rate_limit{seconds_until_reset};
         }
+    }
+
+    # Anthropic `*-reset` headers carry RFC 3339 timestamps, not seconds.
+    # Normalize them into seconds_until_reset and persist on the handler
+    # so the weekly/monthly recovery code path can still find a reset
+    # hint when the immediate 429 response only carries Retry-After.
+    for my $bucket (qw(requests tokens input_tokens output_tokens)) {
+        my $raw_key = "anthropic_${bucket}_reset";
+        next unless defined $rate_limit{$raw_key};
+        my $secs = parse_anthropic_reset_timestamp($rate_limit{$raw_key});
+        next unless defined $secs;
+        if (!defined $self->{_rate_limit_reset_in} || $secs < $self->{_rate_limit_reset_in}) {
+            $self->{_rate_limit_reset_in} = $secs;
+        }
+        last;
     }
 
     # Return rate limit info and new delay (stateless - caller decides what to do with it)

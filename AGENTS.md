@@ -738,7 +738,7 @@ conventions. This section documents the guard patterns currently implemented.
 | Provider | Limit Type | Detection | Retry | Throttle Learning |
 |----------|-----------|-----------|-------|-------------------|
 | OpenAI | RPM/TPM headers | `x-ratelimit-*` headers + 429 status | Retry-After header | Yes |
-| Anthropic | RPM/ITPM/OTPM | 429 `rate_limit_error`, 529 `overloaded_error` | Retry-After header | Yes |
+| Anthropic | RPM/ITPM/OTPM | 429 + `anthropic-ratelimit-{input,output}-tokens-*` headers | Retry-After header + RFC 3339 reset | Yes (token-bucket) |
 | Google Gemini | RPM/TPM/RPD | 429 `RESOURCE_EXHAUSTED`, 503 `UNAVAILABLE` | Default 60s | Yes |
 | NVIDIA NIM | Worker concurrency (no headers) | SSE `ResourceExhausted` / `Worker.*limit` mid-stream | 30s | Yes |
 | GitHub Copilot | AI credits | Custom quota headers + semantic codes | Varies | Yes |
@@ -788,6 +788,69 @@ events from the provider's `parse_stream_event` are stashed in `$ns{_sse_error}`
 instead of `croak`-ing. The HTTP layer wraps callbacks in `eval` which would
 silently swallow `croak` exceptions. After the streaming loop completes, the
 stashed error is surfaced as a proper retryable result.
+
+**Anthropic ITPM/OTPM/RPM awareness (added 2026-07-22):**
+
+Anthropic enforces three separate per-model per-minute caps (per
+https://docs.anthropic.com/en/api/rate-limits):
+
+- **RPM** - requests per minute
+- **ITPM** - input tokens per minute. For most Claude models, only uncached
+  input tokens count (cached reads do NOT count toward ITPM). What counts:
+  `input_tokens + cache_creation_input_tokens`. The 250K ITPM per-minute
+  bucket is the one most often hit by large conversations when prompt
+  caching is off.
+- **OTPM** - output tokens per minute
+
+These are token-bucket caps that continuously refill (NOT fixed-window resets).
+CLIO handles them via three coordinated layers:
+
+1. **Header parsing** (`API/ResponseHandler.process_rate_limit_headers`):
+   recognises `anthropic-ratelimit-{requests,tokens,input-tokens,output-tokens}-{limit,remaining,reset}`.
+   `*-reset` values are RFC 3339 timestamps - parse them with
+   `Util::RateLimit::parse_anthropic_reset_timestamp` (handles `Z` and
+   `+HH:MM`/`-HHMM` offset variants).
+
+2. **Snapshot learning** (`APIManager._apply_anthropic_rate_limit_headers`):
+   on every successful response and every 429, stashes the latest bucket
+   state per model under `$self->{_anthropic_rate_limits}{$model}` and seeds
+   the learned ITPM ceiling from `anthropic-ratelimit-input-tokens-limit`
+   (lower-only policy mirrors `_model_throttle_learn`).
+
+3. **Token-bucket preflight** (`APIManager._model_input_token_throttle_check`):
+   before each request, estimates pending input tokens with
+   `TokenEstimator::estimate_messages_tokens` and returns a delay in
+   seconds if `(used_in_last_60s + pending) / limit >= 0.70`. Token-bucket
+   refill math: `gap / (limit / 60)` per second until the reset moment.
+   Two layers, max() wins:
+   - Snapshot: precise against API-reported remaining capacity.
+   - Learned: fallback when no snapshot or it's older than 90s.
+   At `ratio >= 1.0` the delay is `reset_in + 1` (waits for the bucket
+   to refill).
+
+Real input token counts (`usage.prompt_tokens`) flow back into the
+sliding window via `_model_input_token_throttle_record` after each
+native streaming response. So the 70% threshold uses ACTUAL usage,
+not estimates, once a round-trip has completed.
+
+Code paths:
+- `lib/CLIO/Util/RateLimit.pm` - friendly-type mapping + RFC 3339 parser
+- `lib/CLIO/Core/API/ResponseHandler.pm` - `process_rate_limit_headers` extension
+- `lib/CLIO/Core/APIManager.pm` - `_apply_anthropic_rate_limit_headers`,
+  `_model_input_token_throttle_{record,check}`, `_learn_input_token_limit`
+- `lib/CLIO/Core/Diagnostics.pm` - `display_rate_limit_info` Anthropic branches
+
+Anthropic rate-limit error codes mapped to user-friendly names:
+- `RateLimitReached` -> "Anthropic rate limit"
+- `UserByModelByMinuteUncachedInputTokens` -> "Anthropic uncached input token limit (ITPM)"
+- `UserByModelByMinuteUncachedOutputTokens` -> "Anthropic uncached output token limit (OTPM)"
+- `UserByModelByMinuteInputTokens` -> "Anthropic input token limit (ITPM)"
+- `UserByModelByMinuteOutputTokens` -> "Anthropic output token limit (OTPM)"
+- `UserByModelByMinuteRequests` -> "Anthropic request rate limit (RPM)"
+
+Tests:
+- `tests/unit/test_anthropic_rate_limit.pl` - header parsing + friendly codes
+- `tests/unit/test_anthropic_input_token_throttle.pl` - snapshot/learn layers
 
 ---
 
