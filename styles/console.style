@@ -89,8 +89,8 @@ table_border=@DIM@
 # UI ELEMENTS
 # ═══════════════════════════════════════════════════════════════
 
-# ASCII spinner - compatible with all terminals, no Unicode required
-spinner_frames=-,\\,|,/
+# ASCII spinner - classic vi-style rotator, no Unicode required.
+spinner_style=rotator
 # ASCII symbols - force plain text for maximum compatibility
 tool_bullet=*
 tool_separator=>

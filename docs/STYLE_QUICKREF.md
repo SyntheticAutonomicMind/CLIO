@@ -64,8 +64,9 @@ markdown_list_bullet=@BRIGHT_GREEN@
 table_header=@BOLD@@BRIGHT_CYAN@
 table_border=@DIM@
 
-# UI
-spinner_frames=⠋,⠙,⠹,⠸,⠼,⠴,⠦,⠧,⠇,⠏
+# UI - either spinner_style (named) or spinner_frames (custom sequence)
+spinner_style=dots       # options: dots, rotator, braille
+# spinner_frames=*,**,***,**,*,   # legacy / fully custom frame sequence
 ```
 
 ## ANSI Color Codes
