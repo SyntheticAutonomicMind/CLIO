@@ -1,12 +1,12 @@
 # CLIO Architecture
 
-**Last Updated:** May 2026
+**Last Updated:** July 2026
 
 ---------------------------------------------------
 
 ## Quick Overview
 
-CLIO is a **terminal-first AI code assistant** built in Perl. It integrates AI models (GitHub Copilot, Anthropic, OpenAI, Google, OpenRouter, Ollama Cloud, MiniMax, Z.AI) with local tools (file operations, git, terminal) to help developers work more effectively.
+CLIO is a **terminal-first AI code assistant** built in Perl. It integrates AI models (GitHub Copilot, Anthropic, OpenAI, Google, OpenRouter, Ollama Cloud, MiniMax, Z.AI, NVIDIA NIM, DeepSeek, SAM, llama.cpp, LM Studio) with local tools (file operations, git, terminal) to help developers work more effectively.
 
 **Core concept:** User types → CLIO thinks → CLIO uses tools → Results displayed
 
@@ -102,7 +102,7 @@ Terminal Output
 | Logger | `Logger.pm` | Debug and trace output |
 
 **How it works:**
-1. APIManager connects to AI provider (GitHub Copilot, OpenAI, Google, OpenRouter, MiniMax, Z.AI, Ollama Cloud, etc.)
+1. APIManager connects to AI provider (GitHub Copilot, OpenAI, Google, OpenRouter, MiniMax, Z.AI, Ollama Cloud, NVIDIA NIM, DeepSeek, SAM, llama.cpp, LM Studio, etc.)
 2. WorkflowOrchestrator manages complex interactions, including:
    - Proactive context trimming before each API call (keeps messages at ≤75% of context)
    - Reactive trimming with 3-attempt escalation when the API rejects due to token overflow
@@ -127,7 +127,9 @@ Terminal Output
 | Sub-Agent Operations | `SubAgentOperations.pm` | Spawn and manage parallel agents |
 | Remote Execution | `RemoteExecution.pm` | Execute AI tasks on remote systems |
 | Apply Patch | `ApplyPatch.pm` | Apply lightweight diff patches |
+| Skill Operations | `SkillOperations.pm` | Manage AI skills |
 | MCP Bridge | `MCPBridge.pm` | Bridge to MCP tool servers |
+| Plugin Bridge | `PluginBridge.pm` | Bridge to plugin tools |
 | Base Tool | `Tool.pm` | Abstract base class for all tools |
 | Registry | `Registry.pm` | Tool registration and lookup |
 
@@ -298,20 +300,21 @@ CLIO has no other protocol modules. The earlier `Architect.pm`, `Editor.pm`, `Va
 6. Managed panes are tracked and can be listed/closed via `/mux` commands
 
 ### 12. AI Providers
-**Files:** `lib/CLIO/Providers/`
+**Files:** `lib/CLIO/Providers/`, `lib/CLIO/Providers.pm`
 
 | Component | File | Purpose |
 |-----------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Provider Registry | `Providers.pm` | AI provider registration and lookup |
+| Provider Registry | `Providers.pm` | AI provider registration and lookup (15 providers) |
 | Base | `Base.pm` | Abstract base class for providers |
 | Anthropic | `Anthropic.pm` | Native Anthropic Messages API |
 | Google | `Google.pm` | Native Google Gemini API |
+| NVIDIA | `NVIDIA.pm` | Native NVIDIA NIM API |
 
 **How it works:**
 - Base.pm defines the provider interface
-- Each provider implements native API communication
-- Providers register via Providers.pm for runtime selection
-- GitHub Copilot and OpenAI-compatible providers are handled directly by APIManager
+- Each native provider implements its own API communication
+- 15 providers configured in Providers.pm: SAM, GitHub Copilot, OpenAI, DeepSeek, llama.cpp, LM Studio, Ollama Cloud, OpenRouter, MiniMax, MiniMax Token Plan, Z.AI Chat, Z.AI Coding, Anthropic, Google Gemini, NVIDIA NIM
+- OpenAI-compatible providers (OpenAI, DeepSeek, MiniMax, Z.AI, OpenRouter, etc.) and GitHub Copilot are handled directly by APIManager
 
 ### 13. OpenSpec Integration
 **Files:** `lib/CLIO/Spec/`, `lib/CLIO/Util/YAML.pm`, `lib/CLIO/UI/Commands/Spec.pm`

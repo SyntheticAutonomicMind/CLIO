@@ -49,18 +49,20 @@ Tool Selection (WorkflowOrchestrator)
     v
 Tool Execution (ToolExecutor)
     |
-    +-- file_operations (17 operations)
-    +-- version_control (git + worktrees)
+    +-- file_operations (read, write, search, edit)
+    +-- version_control (git, worktrees, diff)
     +-- terminal_operations (shell exec)
-    +-- memory_operations (store/recall/LTM)
+    +-- memory_operations (store, recall, LTM)
     +-- todo_operations (task management)
-    +-- web_operations (search/fetch)
-    +-- code_intelligence (search/analyze)
+    +-- web_operations (fetch, search)
+    +-- code_intelligence (usages, history)
     +-- interact (checkpoints)
     +-- apply_patch (diff-based editing)
-    +-- remote_execution (SSH + parallel) [requires: enable_remote config]
-    +-- agent_operations (multi-agent) [requires: enable_subagents config]
-    +-- MCPBridge (infrastructure: dynamically exposes MCP server tools)
+    +-- remote_execution (SSH + parallel) [conditional]
+    +-- agent_operations (multi-agent) [conditional]
+    +-- skill_operations (skill management) [conditional]
+    +-- MCPBridge (MCP server tools) [dynamic]
+    +-- PluginBridge (plugin tools) [dynamic]
     |
     v
 Result Processing
@@ -88,13 +90,13 @@ Terminal Output (with color/theme)
 | `lib/CLIO/Test/` | Test infrastructure (MockAPI) |
 | `lib/CLIO/Tools/` | AI-callable tools (16 modules) |
 | `lib/CLIO/UI/` | Terminal UI (Chat, Markdown, Theme, Commands, Multiplexer) |
-| `lib/CLIO/UI/Commands/` | Slash command handlers (18 commands across multiple categories) |
+| `lib/CLIO/UI/Commands/` | Slash command handlers (23 command modules across multiple categories) |
 | `lib/CLIO/UI/Multiplexer/` | Terminal multiplexer support |
 | `lib/CLIO/Session/` | Session management (Manager, State, FileVault, Lock, Export, TodoStore, ToolResultStore) |
 | `lib/CLIO/Memory/` | Context/memory system (YaRN, TokenEstimator, ShortTerm, LongTerm) |
 | `lib/CLIO/Profile/` | User personality profile (Analyzer, Manager) |
 | `lib/CLIO/Protocols/` | Complex workflows (Puppeteer) |
-| `lib/CLIO/Providers/` | Direct API providers (Anthropic, Google, NVIDIA, Base) |
+| `lib/CLIO/Providers/` | Direct API providers (Anthropic, Google, NVIDIA, Base, DeepSeek, MiniMax, Z.AI, OpenRouter, Ollama Cloud, GitHub Copilot, SAM, llama.cpp, LM Studio) |
 | `lib/CLIO/Coordination/` | Multi-agent coordination (Broker, Client, SubAgent) |
 | `lib/CLIO/MCP/` | Model Context Protocol (Manager, Client, Transport::HTTP, Transport::Stdio, Auth::OAuth) |
 | `lib/CLIO/Security/` | Auth/authz (Auth, Authz, AuthorizationRelay, CommandAnalyzer, InvisibleCharFilter, PathAuthorizer, SecretRedactor) |
@@ -235,10 +237,10 @@ log_error('ModuleName', 'something failed: %s', $error);
 | `CLIO::Core::API::` | APIManager sub-modules | ResponseHandler, MessageValidator, ErrorHandler, PayloadSanitizer |
 | `CLIO::Tools::` | AI-callable tools | FileOperations, VersionControl, TerminalOperations, MemoryOperations, Interact, ApplyPatch, CodeIntelligence, RemoteExecution, SubAgentOperations, TodoList, WebOperations, SkillOperations, MCPBridge, PluginBridge, Registry, Tool |
 | `CLIO::UI::` | Terminal interface | Chat, Markdown, Theme, ANSI, CommandHandler, DiffRenderer, Display, HostProtocol, Multiplexer, PaginationManager, ProgressSpinner, StreamingController, Terminal, ToolOutputFormatter |
-| `CLIO::UI::Commands::` | Slash command handlers | AI, API, Billing, Config, Context, Device, File, Git, Log, Memory, Mux, Profile, Project, Prompt, Session, Skills, Spec, Stats |
+| `CLIO::UI::Commands::` | Slash command handlers | AI, API, Billing, Config, Context, Device, File, Git, Log, Memory, Mux, Profile, Project, Prompt, Session, Skills, Spec, Stats, SubAgent, System, Todo, Update |
 | `CLIO::Session::` | Session management | Manager, State, FileVault, Lock, Export, TodoStore, ToolResultStore |
 | `CLIO::Memory::` | Context/memory | ShortTerm, LongTerm, YaRN, TokenEstimator |
-| `CLIO::Providers::` | Direct API providers | Anthropic, Google, NVIDIA, Base |
+| `CLIO::Providers::` | Provider registry + native providers | Anthropic, Google, NVIDIA, Base (15 providers configured in Providers.pm) |
 | `CLIO::Coordination::` | Multi-agent coordination | Broker, Client, SubAgent |
 | `CLIO::MCP::` | Model Context Protocol | Manager, Client, Transport::Stdio, Transport::HTTP, Auth::OAuth |
 | `CLIO::Profile::` | User profiling | Analyzer, Manager |
