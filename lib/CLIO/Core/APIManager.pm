@@ -818,6 +818,180 @@ sub _model_throttle_check {
     return $spread_delay;
 }
 
+# Token-aware throttling for Anthropic ITPM/OTPM.
+#
+# Anthropic enforces per-model per-minute token caps in addition to RPM
+# (ITPM = input tokens per minute, OTPM = output tokens per minute). The
+# request-count throttle above is unchanged, but it can ship a small number
+# of large requests that still blow ITPM. Track a sliding 60-second window
+# of input tokens consumed per model so the preflight delay grows as we
+# approach the ITPM bucket's limit.
+#
+# Two layers:
+#   1. Snapshot - last seen `anthropic-ratelimit-input-tokens-*` values.
+#      Used to compute an exact delay against the API-reported remaining
+#      capacity and reset window. Most precise signal; resets after the
+#      bucket refills.
+#   2. Learned limit - the model's ITPM observed at the moment of a 429.
+#      Used as fallback when we don't yet have a fresh snapshot.
+#
+# Both layers feed `_model_input_token_throttle_check($model, $pending)`,
+# which returns seconds to wait before sending the next request.
+
+sub _model_input_token_throttle_record {
+    my ($self, $model, $tokens) = @_;
+    return unless defined $model && length $model;
+    return unless defined $tokens && $tokens > 0;
+
+    $self->{_model_input_token_window} //= {};
+    my $window = $self->{_model_input_token_window}{$model} //= [];
+    my $now = time();
+    @$window = grep { $_->{t} > $now - 60 } @$window;
+    push @$window, { t => $now, tokens => int($tokens) };
+}
+
+sub _model_input_token_throttle_check {
+    my ($self, $model, $pending_tokens) = @_;
+    return 0 unless $model;
+    return 0 if $self->{broker_client};
+
+    $pending_tokens //= 0;
+    $self->{_model_input_token_window} //= {};
+    $self->{_model_input_token_limits} //= {};
+    my $window = $self->{_model_input_token_window}{$model} //= [];
+    my $now    = time();
+    @$window   = grep { $_->{t} > $now - 60 } @$window;
+    my $used   = 0;
+    $used += $_->{tokens} for @$window;
+
+    # Layer 1: API-reported snapshot. Most accurate when fresh.
+    my $snap = $self->{_anthropic_rate_limits}{$model};
+    my $snap_delay;
+    if ($snap && $snap->{input_tokens} && $snap->{input_tokens}{limit} > 0) {
+        my $itpm = $snap->{input_tokens};
+        if (($now - ($itpm->{observed_at} // 0)) <= 90) {
+            my $would = $used + $pending_tokens;
+            my $ratio = $would / $itpm->{limit};
+            if ($ratio >= 1.0) {
+                my $reset_in = $itpm->{reset_in};
+                $snap_delay = ($reset_in && $reset_in > 0) ? ($reset_in + 1) : 30;
+            }
+            elsif ($ratio >= 0.7) {
+                my $gap = $would - 0.7 * $itpm->{limit};
+                my $reset_in = $itpm->{reset_in} // 60;
+                my $refill_per_sec = $itpm->{limit} / 60;
+                my $delay = ($gap > 0 && $refill_per_sec > 0)
+                    ? ($gap / $refill_per_sec)
+                    : 0;
+                $delay = 0.5 if $delay > 0 && $delay < 0.5;
+                $delay = $reset_in if $delay > $reset_in;
+                $delay = 10    if $delay > 10;
+                $snap_delay = $delay;
+            }
+        }
+    }
+
+    # Layer 2: learned ITPM. Used when we have no snapshot, or it is stale.
+    my $learned_delay;
+    my $limit = $self->{_model_input_token_limits}{$model};
+    if (defined $limit && $limit > 0) {
+        my $would = $used + $pending_tokens;
+        my $pct = $would / $limit;
+        if ($pct >= 1.0) {
+            my $oldest = $window->[0]{t} // $now;
+            my $window_remaining = 60 - ($now - $oldest);
+            $learned_delay = ($window_remaining > 0) ? ($window_remaining + 1) : 2;
+        }
+        elsif ($pct >= 0.7) {
+            my $oldest = $window->[0]{t} // $now;
+            my $window_remaining = 60 - ($now - $oldest);
+            my $gap = $would - 0.7 * $limit;
+            my $refill_per_sec = $limit / 60;
+            my $delay = ($gap > 0 && $refill_per_sec > 0)
+                ? ($gap / $refill_per_sec)
+                : 0;
+            $delay = 0.5 if $delay > 0 && $delay < 0.5;
+            $delay = $window_remaining + 1 if $delay > $window_remaining + 1;
+            $learned_delay = $delay;
+        }
+    }
+
+    return $snap_delay    if defined $snap_delay    && defined $learned_delay && $snap_delay >= $learned_delay;
+    return $learned_delay if defined $learned_delay;
+    return $snap_delay    if defined $snap_delay;
+    return 0;
+}
+
+sub _apply_anthropic_rate_limit_headers {
+    my ($self, $model, $rl_info) = @_;
+    return unless ref($rl_info) eq 'HASH' && $model;
+
+    $self->{_anthropic_rate_limits} //= {};
+    my $snapshot = $self->{_anthropic_rate_limits}{$model} = {};
+    my $any;
+    my $now = time();
+
+    require CLIO::Util::RateLimit;
+
+    for my $bucket (qw(requests tokens input_tokens output_tokens)) {
+        my $limit_key = "anthropic_${bucket}_limit";
+        my $rem_key   = "anthropic_${bucket}_remaining";
+        my $reset_key = "anthropic_${bucket}_reset";
+        next unless defined $rl_info->{$limit_key} && defined $rl_info->{$rem_key};
+        my $limit     = 0 + ($rl_info->{$limit_key} // 0);
+        my $remaining = 0 + ($rl_info->{$rem_key}   // 0);
+        my $reset_in  = CLIO::Util::RateLimit::parse_anthropic_reset_timestamp($rl_info->{$reset_key});
+        $snapshot->{$bucket} = {
+            limit       => $limit,
+            remaining   => $remaining,
+            reset_in    => $reset_in,
+            observed_at => $now,
+        };
+        $any++;
+    }
+
+    if ($snapshot->{input_tokens} && $snapshot->{input_tokens}{limit} > 0) {
+        $self->_learn_input_token_limit($model, undef, $snapshot->{input_tokens}{limit});
+    }
+
+    delete $self->{_anthropic_rate_limits}{$model} unless $any;
+}
+
+sub _learn_input_token_limit {
+    my ($self, $model, $observed_tokens, $explicit_limit) = @_;
+    return unless $model;
+
+    $self->{_model_input_token_limits} //= {};
+    my $existing = $self->{_model_input_token_limits}{$model};
+
+    if (defined $explicit_limit && $explicit_limit > 0) {
+        if (!defined $existing || $explicit_limit < $existing) {
+            $self->{_model_input_token_limits}{$model} = int($explicit_limit);
+            log_info('APIManager', sprintf(
+                "Anthropic ITPM limit for %s seeded from headers: %d tokens/60s (was %s)",
+                $model, int($explicit_limit), $existing // 'unknown'));
+        }
+        return;
+    }
+
+    return unless defined $observed_tokens && $observed_tokens > 0;
+    my $new_limit = $observed_tokens > 1 ? int($observed_tokens - 1) : 1;
+    if (!defined $existing || $new_limit < $existing) {
+        $self->{_model_input_token_limits}{$model} = $new_limit;
+        log_info('APIManager', "Learned input token limit for $model: $new_limit tokens/60s (was " . ($existing // 'unknown') . ")");
+    }
+}
+
+sub _sliding_window_input_tokens {
+    my ($self, $model) = @_;
+    return 0 unless $model;
+    my $window = $self->{_model_input_token_window}{$model} // return 0;
+    my $now = time();
+    my $sum = 0;
+    $sum += $_->{tokens} for grep { $_->{t} > $now - 60 } @$window;
+    return $sum;
+}
+
 # Validate and adapt request parameters for specific endpoints
 sub adapt_request_for_endpoint {
     my ($self, $payload, $endpoint_config) = @_;
@@ -2731,6 +2905,29 @@ sub _prepare_api_request {
     # Prepare and trim messages
     my $messages = $self->_prepare_messages($input, %opts);
 
+    # Token-aware throttle (Anthropic ITPM/OTPM). Estimate the input tokens
+    # for the upcoming request and let the input-token layer pace it.
+    # Composes with the request-count throttle above - whichever wants the
+    # bigger delay wins. Estimate is intentionally conservative; TokenEstimator
+    # uses learned ratios fed from real API responses, and we leave a 70%
+    # safety margin in `_model_input_token_throttle_check`.
+    {
+        my $pending_tokens = 0;
+        eval {
+            require CLIO::Memory::TokenEstimator;
+            $pending_tokens = CLIO::Memory::TokenEstimator::estimate_messages_tokens($messages);
+        };
+        if ($@) {
+            log_debug('APIManager', "TokenEstimator unavailable for input-token throttle check: $@");
+            $pending_tokens = 0;
+        }
+        if (my $token_delay = $self->_model_input_token_throttle_check($model, $pending_tokens)) {
+            log_info('APIManager', sprintf("Proactive token throttle for %s: %.1fs (pending~%d tokens)",
+                $model, $token_delay, $pending_tokens));
+            for (my $i = int($token_delay); $i > 0; $i--) { sleep(1); }
+        }
+    }
+
     # Check for native provider (non-OpenAI-compatible API)
     my $native_provider = $self->_get_native_provider($target_provider);
     if ($native_provider) {
@@ -3205,6 +3402,12 @@ sub _process_non_streaming_response {
 
     # Successful response
     my $rate_limit_info = $self->{response_handler}->process_rate_limit_headers($resp->headers);
+    if (ref($rate_limit_info) eq 'HASH' && ref($rate_limit_info->{rate_limit_info}) eq 'HASH') {
+        # Feed Anthropic headers (when present) into the token-bucket
+        # throttle. Without this the input-token layer stays ignorant of
+        # the API's declared ITPM/OTPM/RPM and falls back to learner-only.
+        $self->_apply_anthropic_rate_limit_headers($model, $rate_limit_info->{rate_limit_info});
+    }
     $self->{rate_limiter}->update_from_headers($provider_label, $resp->headers);
     $self->{rate_limiter}->release($provider_label);
     $self->_log_api_response($resp, $provider_label, 0);
@@ -4080,6 +4283,9 @@ sub _finalize_streaming_response {
     # Process rate limit and quota headers
     my $headers = $s{streaming_headers} || $resp->headers;
     my $rate_limit_info = $self->{response_handler}->process_rate_limit_headers($headers) if $headers;
+    if (ref($rate_limit_info) eq 'HASH' && ref($rate_limit_info->{rate_limit_info}) eq 'HASH' && $s{model}) {
+        $self->_apply_anthropic_rate_limit_headers($s{model}, $rate_limit_info->{rate_limit_info});
+    }
 
     if ($s{endpoint_config}{requires_copilot_headers} && $headers) {
         my $response_id = $self->{session}{lastGitHubCopilotResponseId} || 'unknown';
@@ -4093,6 +4299,16 @@ sub _finalize_streaming_response {
 
     # Resolve or estimate usage for billing
     my $usage = $self->_resolve_streaming_usage(\%s);
+
+    # Record actual input-token usage against the sliding window so the
+    # preflight throttle sees accurate numbers on the next request. Per
+    # Anthropic docs the ITPM bucket only sees uncached input tokens
+    # (input_tokens + cache_creation_input_tokens) - cache reads do NOT
+    # count. Native providers may report cache_creation_input_tokens in
+    # the SSE usage event; use the larger of the two when both are present.
+    if ($s{model} && $usage && $usage->{prompt_tokens}) {
+        $self->_model_input_token_throttle_record($s{model}, $usage->{prompt_tokens});
+    }
 
     # Convert accumulated tool_calls hash to sorted array
     my $tool_calls;
@@ -5211,6 +5427,16 @@ sub _send_native_streaming {
             # Process rate limit headers from 429 responses too
             if ($self->{response_handler} && $resp_headers) {
                 my $rate_limit_info = $self->{response_handler}->process_rate_limit_headers($resp_headers);
+                # Anthropic 429 surfaces the most-correct ITPM/OTPM/RPM
+                # numbers we will see. Seed the throttle snapshot AND the
+                # learned limit so future requests throttle proactively.
+                if (ref($rate_limit_info) eq 'HASH' && ref($rate_limit_info->{rate_limit_info}) eq 'HASH') {
+                    $self->_apply_anthropic_rate_limit_headers($ns{model}, $rate_limit_info->{rate_limit_info});
+                }
+                # Also report as a rate-limit event so request-count
+                # learning still kicks in for proxies that hide the
+                # anthropic-ratelimit-* headers.
+                $self->report_rate_limit_for_model($ns{model});
             }
         }
         elsif ($status == 400) {
@@ -5421,6 +5647,17 @@ sub _send_native_streaming {
     if ($self->{response_handler}) {
         my $resp_headers = $response->can("headers") ? $response->headers : undef;
         my $rate_limit_info = $self->{response_handler}->process_rate_limit_headers($resp_headers) if $resp_headers;
+        if (ref($rate_limit_info) eq 'HASH' && ref($rate_limit_info->{rate_limit_info}) eq 'HASH') {
+            $self->_apply_anthropic_rate_limit_headers($ns{model}, $rate_limit_info->{rate_limit_info});
+        }
+    }
+
+    # Record this turn's real input tokens against the sliding window so
+    # next request's preflight throttle sees accurate numbers. Without
+    # this the window stays empty and we only ever learn from 429 events.
+    if ($ns{model}) {
+        my $recorded_input = $usage_tracking{input_tokens} || 0;
+        $self->_model_input_token_throttle_record($ns{model}, $recorded_input) if $recorded_input > 0;
     }
 
     # Anthropic may emit stop_reason + usage in a single message_delta event.
