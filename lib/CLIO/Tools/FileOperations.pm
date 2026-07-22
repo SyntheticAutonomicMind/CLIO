@@ -174,7 +174,7 @@ sub get_additional_parameters {
         paths => {
             type => "array",
             items => { type => "string" },
-            description => "[OPTIONAL] Multiple file paths for get_errors. Use when checking multiple files.",
+            description => "[OPTIONAL for get_errors] Multiple file paths as an array. When provided, get_errors iterates each path and aggregates results in the 'per_file' field. Use 'path' (singular) for a single file.",
         },
         
         # Read file parameters
@@ -204,7 +204,7 @@ sub get_additional_parameters {
         },
         directory => {
             type => "string",
-            description => "[OPTIONAL] Base directory for file_search. Default: current directory.",
+            description => "[OPTIONAL] Base directory for file_search. Also accepted by grep_search (or pass 'path' as an alias) to scope the search.",
         },
         is_regex => {
             type => "boolean",
@@ -802,14 +802,65 @@ sub get_file_info {
 
 sub get_errors {
     my ($self, $params, $context) = @_;
-    
-    my $path = $params->{path};
-    
-    return $self->error_result("Missing 'path' parameter") unless $path;
+
+    # Accept either singular 'path' (string) or plural 'paths' (arrayref).
+    # Iterate when multiple files are given and aggregate results.
+    my @paths;
+    if (ref($params->{paths}) eq 'ARRAY') {
+        @paths = @{$params->{paths}};
+    } elsif (defined $params->{path}) {
+        @paths = ($params->{path});
+    }
+
+    return $self->error_result("Missing 'path' or 'paths' parameter") unless @paths;
+
+    my @all_errors;
+    my %per_file;
+    my $total_with_errors = 0;
+
+    for my $path (@paths) {
+        my $entry = $self->_check_one_file_errors($path, $context);
+        unless ($entry->{success}) {
+            # File-level error (missing, not Perl, etc.) - record and continue
+            $per_file{$path} = {
+                success => 0,
+                error => $entry->{error},
+            };
+            next;
+        }
+        $total_with_errors++ if $entry->{has_errors};
+        push @all_errors, @{$entry->{output}} if $entry->{output};
+        $per_file{$path} = {
+            success => 1,
+            has_errors => $entry->{has_errors},
+            error_count => $entry->{error_count},
+        };
+    }
+
+    my $total = scalar(@paths);
+    my $action_desc = $total == 1
+        ? sprintf("checking syntax of %s (%s)", $paths[0], $per_file{$paths[0]}{error_count} ? "$per_file{$paths[0]}{error_count} errors" : "no errors")
+        : sprintf("checking syntax of %d files (%d with errors)", $total, $total_with_errors);
+
+    return $self->success_result(
+        \@all_errors,
+        action_description => $action_desc,
+        paths => \@paths,
+        files_checked => $total,
+        files_with_errors => $total_with_errors,
+        per_file => \%per_file,
+        has_errors => scalar(@all_errors) > 0,
+        error_count => scalar(@all_errors),
+    );
+}
+
+sub _check_one_file_errors {
+    my ($self, $path, $context) = @_;
+
     return $self->error_result("File not found: $path") unless -f $path;
-    
+
     log_debug('FileOp', "Checking syntax: $path");
-    
+
     # Only works for Perl files
     unless ($path =~ /\.p[lm]$/) {
         my $action_desc = "syntax check skipped (not Perl)";
@@ -820,11 +871,11 @@ sub get_errors {
             path => $path,
         );
     }
-    
+
     # Run perl -c to check syntax
     my $output = `perl -Ilib -c "$path" 2>&1`;
     my $exit_code = $? >> 8;
-    
+
     my @errors;
     if ($exit_code != 0) {
         # Parse error messages
@@ -834,14 +885,15 @@ sub get_errors {
                     message => $1,
                     line => $2,
                     severity => 'error',
+                    path => $path,
                 };
             }
         }
     }
-    
+
     my $status = scalar(@errors) > 0 ? scalar(@errors) . " errors" : "no errors";
     my $action_desc = "checking syntax of $path ($status)";
-    
+
     return $self->success_result(
         \@errors,
         action_description => $action_desc,
@@ -1005,14 +1057,17 @@ sub file_search {
 
 sub grep_search {
     my ($self, $params, $context) = @_;
-    
+
     my $query = $params->{query};
+    # Scope the search to a directory. Accept either 'directory' (canonical, matches file_search)
+    # or 'path' (alias for callers who expect the same parameter name they use elsewhere).
     my $pattern = $params->{pattern} || '**/*';
     my $is_regex = $params->{is_regex} || 0;
     my $max_results = $params->{max_results} || 50;  # Prevent runaway searches
-    
+    my $directory = $params->{directory} || $params->{path} || '.';
+
     return $self->error_result("Missing 'query' parameter") unless defined $query && length($query);
-    
+
     # Auto-detect regex intent when query contains metacharacters
     # Agents often pass regex patterns (e.g., "sdl|SDL") without setting is_regex
     if (!$is_regex && $query =~ /[|\(\)\[\]\{\}\+\^\\\$]/) {
@@ -1043,7 +1098,8 @@ sub grep_search {
         my $start_time = time();
         
         # First, find files matching pattern
-        my $file_result = $self->file_search({ pattern => $pattern }, $context);
+        # Forward the directory scope to file_search so grep is bounded by it.
+        my $file_result = $self->file_search({ pattern => $pattern, directory => $directory }, $context);
         unless ($file_result->{success}) {
             $result = $file_result;
             return;
@@ -1084,9 +1140,14 @@ sub grep_search {
         }
         
         foreach my $file (@files) {
+            # file_search returns paths relative to the search directory. Rebuild the
+            # absolute path so -T/-s/open work regardless of process cwd.
             my $path = $file->{path};
+            unless (File::Spec->file_name_is_absolute($path)) {
+                $path = File::Spec->catfile($directory, $path);
+            }
             $files_searched++;
-            
+
             # Wall-clock timeout check
             if (time() - $start_time > $SEARCH_TIMEOUT) {
                 $timed_out = 1;
@@ -1094,7 +1155,7 @@ sub grep_search {
                 log_debug('FileOp', "Grep search timed out after ${SEARCH_TIMEOUT}s");
                 last;
             }
-            
+
             # Skip files larger than size limit
             my $file_size = -s $path;
             if (defined $file_size && $file_size > $MAX_FILE_SIZE) {
@@ -1102,14 +1163,14 @@ sub grep_search {
                 log_debug('FileOp', "Skipping large file ($file_size bytes): $path");
                 next;
             }
-            
+
             # Skip binary files - enhanced detection
             # First check Perl's -T heuristic
             unless (-T $path) {
                 $files_skipped++;
                 next;
             }
-            
+
             # Then sample for null bytes (catches files -T misclassifies)
             if ($self->_has_null_bytes($path, $BINARY_CHECK_SIZE)) {
                 $files_skipped++;
@@ -1139,10 +1200,11 @@ sub grep_search {
                 if ($line =~ $search_regex) {
                     push @matches, {
                         path => $path,
+                        relative_path => $file->{path},
                         line => $line_num,
                         content => $line,
                     };
-                    
+
                     # Stop if we hit result limit
                     if (scalar(@matches) >= $max_results) {
                         close $fh;
@@ -1169,6 +1231,7 @@ sub grep_search {
             action_description => $action_desc,
             query => $query,
             pattern => $pattern,
+            directory => $directory,
             is_regex => $is_regex,
             match_count => scalar(@matches),
             files_searched => $files_searched,

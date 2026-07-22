@@ -167,7 +167,18 @@ sub new {
         log_debug('SessionManager', "Entered Manager::new");
         log_debug('SessionManager', "Manager::new] called with args: " . join(", ", map { "$_=$args{$_}" } keys %args));
     }
-    
+
+    # Reset per-process tool session grants so they never carry across sessions
+    # or accumulate over the lifetime of long-running processes. Without this,
+    # a single 'allow this category for the session' response can persist for
+    # the rest of the process and auto-approve later destructive commands.
+    require CLIO::Tools::TerminalOperations;
+    require CLIO::Tools::FileOperations;
+    require CLIO::Tools::WebOperations;
+    CLIO::Tools::TerminalOperations::reset_session_grants();
+    CLIO::Tools::FileOperations::reset_script_session_grants();
+    CLIO::Tools::WebOperations::reset_url_session_grants();
+
     # Determine working directory for loading project LTM
     my $working_dir = $args{working_directory} || Cwd::getcwd();
     
@@ -181,8 +192,11 @@ sub new {
     };
     bless $self, $class;
     
-    # Load project-level LTM from .clio/ltm.json (shared across all sessions in this project)
-    my $ltm_file = File::Spec->catfile($working_dir, '.clio', 'ltm.json');
+    # Load project-level LTM from .clio/ltm.json (shared across all sessions in this project).
+    # Use PathResolver::find_ltm_path so the load target converges with the write target
+    # used by MemoryOperations - prevents shadow LTM files when sessions start in subdirs.
+    require CLIO::Util::PathResolver;
+    my $ltm_file = CLIO::Util::PathResolver::find_ltm_path($working_dir);
     my $ltm = CLIO::Memory::LongTerm->load($ltm_file, debug => $self->{debug});
     
     my $stm  = CLIO::Memory::ShortTerm->new(debug => $self->{debug});
