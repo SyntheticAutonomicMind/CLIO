@@ -97,7 +97,16 @@ Rules:
 - Removed lines start with -
 - Context (unchanged) lines start with space
 - @@ anchors help locate the change position
-- Multiple @@ sections per file for non-adjacent changes',
+- Multiple @@ sections per file for non-adjacent changes
+
+IMPORTANT: every line in a chunk MUST start with +, -, space, or @@.
+Bare text lines (POD blocks like =head2/=cut, function signatures like
+"sub foo {", or prose paragraphs) are silently dropped, which breaks
+contiguous chunk matching and causes "Cannot find match position for
+chunk" errors. When editing POD blocks or anything with mixed prose,
+prefer file_operations.replace_string with exact old_string/new_string.
+If you see "Unrecognized line in patch chunk" warnings, the chunk
+format is wrong - reread this rule.',
                 },
             },
         },

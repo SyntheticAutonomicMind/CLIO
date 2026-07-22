@@ -169,7 +169,7 @@ sub get_additional_parameters {
         # Common path parameters
         path => {
             type => "string",
-            description => "[REQUIRED for most operations] File or directory path. Used by read_file, list_dir, file_exists, get_file_info, write operations, etc.",
+            description => "[REQUIRED for most operations] File or directory path. Used by read_file, list_dir, file_exists, get_file_info, write operations, etc. REQUIRED on EVERY call (including multi_replace_string items) - a missing path returns a parameter validation error, not a graceful fallback. For grep_search, this is a DIRECTORY not a file; combine with `pattern` (e.g. pattern: '*.pm') to scope the search.",
         },
         paths => {
             type => "array",
@@ -204,7 +204,7 @@ sub get_additional_parameters {
         },
         directory => {
             type => "string",
-            description => "[OPTIONAL] Base directory for file_search. Also accepted by grep_search (or pass 'path' as an alias) to scope the search.",
+            description => "[OPTIONAL] Base directory for file_search. Also accepted by grep_search (or pass `path` as an alias) to scope the search. When passed as `path`, must be a DIRECTORY (not a file) - for single-file greps use terminal_operations `grep` instead.",
         },
         is_regex => {
             type => "boolean",
