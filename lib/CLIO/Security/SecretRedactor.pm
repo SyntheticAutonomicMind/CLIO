@@ -98,8 +98,8 @@ my @PII_PATTERNS = (
     # US Social Security Numbers
     qr/\b\d{3}-\d{2}-\d{4}\b/,
     
-    # US Phone numbers (various formats)
-    qr/(?:\+1[-.\s]?)?(?:\(\d{3}\)|\d{3})[-.\s]?\d{3}[-.\s]?\d{4}/,
+    # US Phone numbers (various formats) - require formatting/separators, not bare 10-digit numbers
+    qr/(?:\+1[-.\s]?)?(?:\(\d{3}\)[-.\s]?\d{3}[-.\s]?\d{4}|\d{3}[-.\s]\d{3}[-.\s]\d{4})/,
     
     # Credit card numbers (16 digits, various separators)
     qr/\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/,

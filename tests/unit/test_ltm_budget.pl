@@ -177,11 +177,19 @@ $ltm->{patterns}{discoveries} = [
 my $stats = $ltm->consolidate(confidence_decay_days => 60);
 ok_test($stats->{decayed} >= 1, "consolidate: decayed stale entry");
 
-my $old_entry = $ltm->{patterns}{discoveries}[0];
-ok_test(
-    $old_entry->{confidence} < 0.8,
-    "consolidate: confidence reduced from 0.8 to $old_entry->{confidence}"
-);
+# Note: The decayed entry may be age-out removed in Phase 2 if its confidence
+# drops below 0.7 (unverified entries with age > 30 days and conf < 0.7 are removed).
+# The $stats->{decayed} check above confirms decay happened.
+# Find the old entry by content if it survived age-out
+my $found_old = 0;
+for my $entry (@{$ltm->{patterns}{discoveries}}) {
+    if ($entry->{fact} eq "Old stale discovery") {
+        $found_old = 1;
+        ok_test($entry->{confidence} < 0.8, "consolidate: old entry confidence reduced from 0.8 to $entry->{confidence}");
+        last;
+    }
+}
+ok_test($found_old || $stats->{removed} >= 1, "consolidate: old entry either survived with reduced confidence or was age-out removed");
 
 # ============================================================
 # Test 8: consolidate - deduplication

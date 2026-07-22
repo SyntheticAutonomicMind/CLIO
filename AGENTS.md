@@ -728,6 +728,67 @@ should be reviewed when:
 - Context window norms shift (e.g., 128K becomes the new minimum)
 - New providers are added
 
+### Provider Rate Limit Guards
+
+CLIO handles rate limiting differently per provider because each API has its own
+conventions. This section documents the guard patterns currently implemented.
+
+**Provider-specific behavior:**
+
+| Provider | Limit Type | Detection | Retry | Throttle Learning |
+|----------|-----------|-----------|-------|-------------------|
+| OpenAI | RPM/TPM headers | `x-ratelimit-*` headers + 429 status | Retry-After header | Yes |
+| Anthropic | RPM/ITPM/OTPM | 429 `rate_limit_error`, 529 `overloaded_error` | Retry-After header | Yes |
+| Google Gemini | RPM/TPM/RPD | 429 `RESOURCE_EXHAUSTED`, 503 `UNAVAILABLE` | Default 60s | Yes |
+| NVIDIA NIM | Worker concurrency (no headers) | SSE `ResourceExhausted` / `Worker.*limit` mid-stream | 30s | Yes |
+| GitHub Copilot | AI credits | Custom quota headers + semantic codes | Varies | Yes |
+| MiniMax | RPM (tokens) | `authorized_error` + HTTP code | Default | No |
+| Z.AI | RPM/Concurrency/Usage | Codes 1302/1303/1305 (retry), 1308/1310 (non-retry) | 3-30s | No |
+| OpenRouter | Credit + RPM | `X-RateLimit-*` headers + 402/429 | Header | Yes |
+| Ollama Cloud | RPM | HTTP 429/502 | Default | No |
+| DeepSeek | **Concurrency** (not RPM) | HTTP 429 when exceeded | Default | No |
+
+**DeepSeek concurrency limits:**
+
+DeepSeek uses hard concurrency limits (not RPM) per their docs at
+https://api-docs.deepseek.com/quick_start/rate_limit:
+- `deepseek-v4-pro`: 500 concurrent connections per account
+- `deepseek-v4-flash`: 2500 concurrent connections per account
+
+These are configured via `model_concurrency` in `Providers.pm` and applied at
+APIManager startup via `configure_rate_limiter()`. The RateLimiter's
+`acquire($provider, $model)` checks both provider and model-specific limits.
+
+**NVIDIA NIM SSE error chunk handling:**
+
+NVIDIA NIM returns mid-stream SSE error chunks when upstream capacity is hit:
+```json
+data: {"error": {"code": 500, "message": "ResourceExhausted: Worker local total request limit reached (74/32)", "type": "server_error"}}
+```
+
+These are captured in `$ss->{_sse_error}` (OpenAI-compatible path) or
+`$ns{_sse_error}` (native streaming path) and surfaced as `error_type: rate_limit`
+with 30s `retry_after`. The pattern matches:
+- `ResourceExhausted|Worker.*limit|quota|too many requests` in message
+- Generic 5xx codes in SSE stream (also triggers throttle learning)
+
+**Z.AI error codes:**
+
+Z.AI returns structured error codes in the response body:
+- `1302` - High concurrency → retry 3s
+- `1303` - High frequency → retry 5s
+- `1305` - General rate limit → retry 30s
+- `1308` - Usage limit (5-hour reset) → non-retryable, parse reset time
+- `1310` - Weekly/Monthly limit → non-retryable, parse reset time
+
+**Native streaming SSE error stashing:**
+
+For native streaming providers (Anthropic, Google, NVIDIA-native), SSE error
+events from the provider's `parse_stream_event` are stashed in `$ns{_sse_error}`
+instead of `croak`-ing. The HTTP layer wraps callbacks in `eval` which would
+silently swallow `croak` exceptions. After the streaming loop completes, the
+stashed error is surfaced as a proper retryable result.
+
 ---
 
 ## Quick Reference

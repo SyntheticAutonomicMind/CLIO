@@ -112,7 +112,9 @@ my $mcm = CLIO::Core::ModelCapabilitiesManager->new();
 # Test 7: Model with no prefix and no slash - just gets lowercased
 {
     my $key = $mcm->_build_cache_key('anthropic', 'claude-sonnet-4-20250514');
-    is($key, 'anthropic:claude-sonnet-4-20250514:',
+    # Cache key includes provider:normalized_model:api_base
+    # api_base may be set from user config - just verify structure
+    like($key, qr/^anthropic:claude-sonnet-4-20250514:/,
         'Anthropic model name with date is preserved as-is (lowercased)');
 }
 

@@ -71,6 +71,26 @@ Returns:
 sub _coerce_ref_content_to_string {
     my ($content) = @_;
     my $ref_type = ref($content);
+    return '' unless $ref_type;
+    
+    # Preserve legitimate multimodal content (arrayref of content parts)
+    # Each part should be a hash with 'type' key (text or image_url)
+    if ($ref_type eq 'ARRAY') {
+        my $valid_multimodal = 1;
+        for my $part (@$content) {
+            if (!ref($part) || ref($part) ne 'HASH' || !exists $part->{type}) {
+                $valid_multimodal = 0;
+                last;
+            }
+            # Valid types: text, image_url (and maybe others in future)
+            if ($part->{type} ne 'text' && $part->{type} ne 'image_url') {
+                $valid_multimodal = 0;
+                last;
+            }
+        }
+        return $content if $valid_multimodal;
+    }
+    
     my $inner = '';
     if ($ref_type eq 'HASH' && defined $content->{type}) {
         $inner = " type='$content->{type}'";

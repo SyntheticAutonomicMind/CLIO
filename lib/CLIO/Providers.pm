@@ -117,6 +117,16 @@ my %PROVIDERS = (
         # metadata; the MCM static map is authoritative. Flagged so
         # /api models display can pull from MCM instead.
         lacks_models_metadata => 1,
+        # DeepSeek uses CONCURRENCY limits (not RPM) per their docs at
+        # https://api-docs.deepseek.com/quick_start/rate_limit. Different
+        # models have different caps:
+        #   deepseek-v4-pro:   500 concurrent connections per account
+        #   deepseek-v4-flash: 2500 concurrent connections per account
+        # These are wired into RateLimiter via configure_rate_limiter().
+        model_concurrency => {
+            'deepseek-v4-pro'   => 500,
+            'deepseek-v4-flash' => 2500,
+        },
         chat_endpoint_suffix => '/chat/completions',
         endpoint => {
             path_suffix => '/chat/completions',
@@ -581,7 +591,49 @@ sub provider_from_url {
     return;
 }
 
-1;
+
+=head2 configure_rate_limiter
+
+Configure the RateLimiter singleton with provider-specific model concurrency
+limits declared in the provider registry. Should be called once at startup
+so per-model concurrency caps (e.g. DeepSeek's 500 for v4-pro) take effect
+before the first request.
+
+Currently configures:
+- DeepSeek: model_concurrency map from Providers.pm
+- Other providers: defaults from DEFAULT_MAX_CONCURRENT in RateLimiter
+
+Arguments:
+- $rate_limiter: Optional CLIO::Core::RateLimiter instance. If omitted,
+                 uses the RateLimiter singleton.
+
+Returns: Number of model concurrency entries configured (for logging).
+
+=cut
+
+sub configure_rate_limiter {
+    my ($rate_limiter) = @_;
+
+    # Lazy-load RateLimiter to avoid circular deps (Providers.pm is loaded
+    # before RateLimiter.pm in some startup paths).
+    unless ($rate_limiter) {
+        require CLIO::Core::RateLimiter;
+        $rate_limiter = CLIO::Core::RateLimiter->get_instance();
+    }
+
+    my $count = 0;
+    for my $provider_name (list_providers()) {
+        my $provider = $PROVIDERS{$provider_name};
+        next unless $provider && $provider->{model_concurrency};
+
+        for my $model (keys %{$provider->{model_concurrency}}) {
+            my $max = $provider->{model_concurrency}{$model};
+            $rate_limiter->set_model_concurrency($provider_name, $model, $max);
+            $count++;
+        }
+    }
+    return $count;
+}
 
 =head1 AUTHOR
 

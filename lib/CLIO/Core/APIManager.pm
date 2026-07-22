@@ -276,17 +276,31 @@ sub new {
         
         # Rate limiter for concurrent request limiting
         rate_limiter => CLIO::Core::RateLimiter->get_instance(),
-        
+
         %args,
     };
     bless $self, $class;
-    
+
+    # Configure RateLimiter with provider-specific model concurrency limits
+    # (e.g. DeepSeek's 500 concurrent for v4-pro, 2500 for v4-flash).
+    # Must run AFTER the RateLimiter singleton is created and BEFORE the
+    # first request so model-specific caps are in place.
+    eval {
+        CLIO::Providers::configure_rate_limiter($self->{rate_limiter});
+    };
+    if ($@) {
+        log_warning('APIManager', "configure_rate_limiter failed: $@");
+    }
+
     # Initialize response handler for rate limiting, error handling, quota tracking
     $self->{response_handler} = CLIO::Core::API::ResponseHandler->new(
         session       => $args{session},
         broker_client => $args{broker_client},
         debug         => $args{debug} // 0,
     );
+    # Give ResponseHandler a reference back to us for throttle learning
+    # triggers (e.g. OpenAI "Slow Down" 503 -> report_rate_limit_for_model).
+    $self->{response_handler}->set_apimanager($self);
     
     # Initialize API key (check GitHub auth first, then config)
 
@@ -3116,7 +3130,7 @@ sub send_request {
     }
     
     # Acquire slot in rate limiter
-    unless ($self->{rate_limiter}->acquire($provider)) {
+    unless ($self->{rate_limiter}->acquire($provider, $ctx->{model})) {
         return { 
             success => 0, 
             error => "Concurrency limit reached for $provider, please try again",
@@ -3319,7 +3333,7 @@ sub send_request_streaming {
     }
     
     # Acquire slot in rate limiter
-    unless ($self->{rate_limiter}->acquire($provider)) {
+    unless ($self->{rate_limiter}->acquire($provider, $ctx->{model})) {
         return { 
             success => 0, 
             error => "Concurrency limit reached for $provider, please try again",
@@ -3999,29 +4013,41 @@ sub _finalize_streaming_response {
         my $sse_err = $s{_sse_error};
         $self->{response_handler}->release_broker_slot($resp, 200);
         my $code = $sse_err->{code} // '';
+        my $msg = $sse_err->{message} // '';
         # Default to retryable - upstream errors usually resolve themselves.
         # Explicit non-retryable set is reserved for client-side errors (4xx-class)
         # that we explicitly identify here.
         my $is_retryable = 1;
         my $error_type = 'server_error';
-        if ($code =~ /rate.?lim/i) {
+        my $retry_after = 5;
+        if ($code =~ /rate.?lim/i || $msg =~ /rate.?lim/i || $msg =~ /ResourceExhausted|Worker.*limit|quota|too many requests/i) {
             $error_type = 'rate_limit';
+            $retry_after = 30;  # Longer wait for rate limits - 30s gives the provider time to recover
+            # Teach the throttle to learn this model's limit so future requests are paced
+            $self->report_rate_limit_for_model($s{model});
         } elsif ($code =~ /timeout/i) {
             $error_type = 'timeout';
         } elsif ($code =~ /overload|busy|throttle/i) {
             $error_type = 'overloaded';
+            # Overloaded errors often signal we're pushing the provider too hard.
+            # Teach the throttle so future requests proactively slow down.
+            $self->report_rate_limit_for_model($s{model});
         } elsif ($code =~ /auth|forbidden|unauthor/i) {
             $is_retryable = 0;
             $error_type = 'auth_error';
         } elsif ($code =~ /invalid|bad.?request/i) {
             $is_retryable = 0;
             $error_type = 'bad_request';
+        } elsif ($code =~ /^5\d{2}$/) {
+            # Generic 5xx in SSE stream - likely upstream capacity issue.
+            # Trigger throttle learning so the next request is paced.
+            $self->report_rate_limit_for_model($s{model});
         }
         return {
             success => 0,
             error => "SSE error from provider: " . ($sse_err->{message} // 'unknown') . " (code=$code)",
             retryable => $is_retryable,
-            retry_after => $is_retryable ? 5 : 0,
+            retry_after => $is_retryable ? $retry_after : 0,
             error_type => $error_type,
         };
     }
@@ -5001,6 +5027,13 @@ sub _send_native_streaming {
     my $token_count = 0;
     my $buffer = '';
     my %usage_tracking = (input_tokens => 0, output_tokens => 0);
+
+    # State hash for native streaming (mirrors $ss in OpenAI-compatible path)
+    # Allows stashing SSE errors for proper handling after streaming completes
+    my %ns = (
+        _sse_error => undef,
+        model => $full_model,
+    );
     
     # Create HTTP client
     my $ua = $self->_get_shared_http_client(
@@ -5078,7 +5111,14 @@ sub _send_native_streaming {
                     }
                 }
                 elsif ($type eq 'error') {
-                    croak "API Error: $event->{message}";
+                    # Stash SSE error instead of croaking - the eval wrapper
+                    # around curl streaming will catch and log it, but we need
+                    # to surface it properly via _finalize_streaming_response
+                    $ns{_sse_error} = {
+                        code    => $event->{code} // $event->{type} // 'overloaded',
+                        message => $event->{message} // 'Overloaded',
+                    };
+                    return;  # No content/tool_calls to extract from this chunk
                 }
                 elsif ($type eq 'usage') {
                     # Track token usage from native providers (Anthropic, Google)
@@ -5092,6 +5132,28 @@ sub _send_native_streaming {
     if ($@) {
         log_error('APIManager', "Native streaming failed: $@");
         return { success => 0, error => $@ };
+    }
+
+    # Check for stashed SSE error (mirrors _finalize_streaming_response pattern)
+    if ($ns{_sse_error}) {
+        my $sse_err = $ns{_sse_error};
+        log_debug('APIManager', "Native streaming SSE error: code=$sse_err->{code} msg=$sse_err->{message}");
+        # Teach the throttle the same way the OpenAI-compatible path does.
+        # Without this, native providers (Anthropic, Google, NVIDIA-native) miss
+        # out on proactive pacing after capacity errors.
+        my $error_type = ($sse_err->{code} =~ /rate.?lim/i || $sse_err->{message} =~ /rate.?lim|ResourceExhausted|Worker.*limit|quota|too many requests/i) ? 'rate_limit'
+                         : ($sse_err->{code} =~ /overload|busy|throttle/i || $sse_err->{message} =~ /overload|busy|throttle/i) ? 'overloaded'
+                         : 'server_error';
+        $self->report_rate_limit_for_model($ns{model}) if $error_type eq 'rate_limit'
+                                                       || $error_type eq 'overloaded'
+                                                       || ($sse_err->{code} =~ /^5\d{2}$/);
+        return {
+            success => 0,
+            error => "SSE error from provider: " . ($sse_err->{message} // 'unknown') . " (code=$sse_err->{code})",
+            retryable => 1,
+            retry_after => 30,
+            error_type => $error_type,
+        };
     }
 
     if (!$response->is_success) {
@@ -5284,7 +5346,12 @@ sub _send_native_streaming {
                                     }
                                 }
                                 elsif ($type eq 'error') {
-                                    croak "API Error: $event->{message}";
+                                    # Stash SSE error instead of croaking - same pattern as initial request
+                                    $ns{_sse_error} = {
+                                        code    => $event->{code} // $event->{type} // 'overloaded',
+                                        message => $event->{message} // 'Overloaded',
+                                    };
+                                    return;  # No content/tool_calls to extract from this chunk
                                 }
                                 elsif ($type eq 'usage') {
                                     $retry_usage_tracking{input_tokens} += ($event->{input_tokens} // 0);
@@ -5367,6 +5434,27 @@ sub _send_native_streaming {
                 log_debug('APIManager', sprintf("Recovered final usage from provider: %d output tokens", $final_usage->{output_tokens}));
             }
         }
+    }
+
+    # Check for stashed SSE error (mirrors _finalize_streaming_response pattern)
+    if ($ns{_sse_error}) {
+        my $sse_err = $ns{_sse_error};
+        log_debug('APIManager', "Native streaming SSE error: code=$sse_err->{code} msg=$sse_err->{message}");
+        # Teach the throttle the same way the OpenAI-compatible path does.
+        # Self-correcting retry path - same throttle learning logic.
+        my $error_type = ($sse_err->{code} =~ /rate.?lim/i || $sse_err->{message} =~ /rate.?lim|ResourceExhausted|Worker.*limit|quota|too many requests/i) ? 'rate_limit'
+                         : ($sse_err->{code} =~ /overload|busy|throttle/i || $sse_err->{message} =~ /overload|busy|throttle/i) ? 'overloaded'
+                         : 'server_error';
+        $self->report_rate_limit_for_model($ns{model}) if $error_type eq 'rate_limit'
+                                                       || $error_type eq 'overloaded'
+                                                       || ($sse_err->{code} =~ /^5\d{2}$/);
+        return {
+            success => 0,
+            error => "SSE error from provider: " . ($sse_err->{message} // 'unknown') . " (code=$sse_err->{code})",
+            retryable => 1,
+            retry_after => 30,
+            error_type => $error_type,
+        };
     }
 
     # Build result
