@@ -11,7 +11,33 @@ use File::Spec;
 use File::Basename;
 use CLIO::UI::ANSI;
 use CLIO::Util::ConfigPath qw(get_config_dir);
-use CLIO::Core::Logger qw(log_debug log_error);
+use CLIO::Core::Logger qw(log_debug log_error log_warning);
+# box_char() and ui_char() are called from _resolve_char() and get_ui_char()
+# on every template render. Importing them at module load removes the
+# per-call `require CLIO::UI::Terminal` overhead.
+use CLIO::UI::Terminal qw(box_char ui_char);
+
+# Class-level cache of disk-loaded styles and themes. Theme objects are
+# created in several places (Chat, CommandHandler, plugin code, etc.), and
+# each previously re-read every .style / .theme file. Parsing is cheap but
+# the file IO adds up under heavy command dispatch. Cache invalidates
+# automatically when files change (mtime check) or when the cache is
+# explicitly cleared via Theme->clear_cache().
+my %_CACHE = (
+    styles      => undef,   # hashref { name => $style }
+    styles_mtime => 0,      # last full load time (epoch seconds)
+    themes      => undef,
+    themes_mtime => 0,
+);
+
+# Maximum age (seconds) before we re-read style/theme files. 30s catches
+# edits during a live session; call Theme->clear_cache() for instant refresh.
+use constant CACHE_TTL => 30;
+
+# Required style/theme keys. Used by validate_style()/validate_theme()
+# for early failure on malformed files.
+my @REQUIRED_STYLE_KEYS = qw(name);
+my @REQUIRED_THEME_KEYS = qw(name);
 
 
 =head1 NAME
@@ -99,39 +125,51 @@ Load all .style files from styles/ directories
 
 sub load_styles {
     my ($self) = @_;
-    
+
+    # Reuse the class-level cache when fresh. Each Theme instance used to
+    # re-read every .style file; parsing is cheap but the disk IO adds up.
+    if (_cache_fresh('styles')) {
+        $self->{styles} = _cache_get('styles');
+        return;
+    }
+
+    my $styles = {};
+
     my @style_dirs = (
         File::Spec->catdir($self->{base_dir}, 'styles'),
         File::Spec->catdir(get_config_dir('xdg'), 'styles'),
     );
-    
+
     for my $dir (@style_dirs) {
         next unless -d $dir;
-        
+
         opendir(my $dh, $dir) or do {
             log_debug('Theme', "Cannot open style dir $dir: $!");
             next;
         };
-        
+
         # Filter for .style files but exclude hidden files (like ._* AppleDouble)
         my @files = grep { /\.style$/ && !/^\./ } readdir($dh);
         closedir($dh);
-        
+
         for my $file (@files) {
             my $path = File::Spec->catfile($dir, $file);
             my $style = $self->load_style_file($path);
             if ($style && $style->{name}) {
-                $self->{styles}->{$style->{name}} = $style;
+                $styles->{$style->{name}} = $style;
                 log_debug('Theme', "Loaded style: $style->{name}");
             }
         }
     }
-    
+
     # If no styles loaded, create default in memory
-    unless (keys %{$self->{styles}}) {
+    unless (keys %$styles) {
         log_debug('Theme', "No styles loaded, using built-in default");
-        $self->{styles}->{default} = $self->get_builtin_style();
+        $styles->{default} = $self->get_builtin_style();
     }
+
+    _cache_set('styles', $styles);
+    $self->{styles} = $styles;
 }
 
 =head2 load_themes
@@ -142,39 +180,143 @@ Load all .theme files from themes/ directories
 
 sub load_themes {
     my ($self) = @_;
-    
+
+    if (_cache_fresh('themes')) {
+        $self->{themes} = _cache_get('themes');
+        return;
+    }
+
+    my $themes = {};
+
     my @theme_dirs = (
         File::Spec->catdir($self->{base_dir}, 'themes'),
         File::Spec->catdir(get_config_dir('xdg'), 'themes'),
     );
-    
+
     for my $dir (@theme_dirs) {
         next unless -d $dir;
-        
+
         opendir(my $dh, $dir) or do {
             log_debug('Theme', "Cannot open theme dir $dir: $!");
             next;
         };
-        
+
         # Filter for .theme files but exclude hidden files (like ._* AppleDouble)
         my @files = grep { /\.theme$/ && !/^\./ } readdir($dh);
         closedir($dh);
-        
+
         for my $file (@files) {
             my $path = File::Spec->catfile($dir, $file);
             my $theme = $self->load_theme_file($path);
             if ($theme && $theme->{name}) {
-                $self->{themes}->{$theme->{name}} = $theme;
+                $themes->{$theme->{name}} = $theme;
                 log_debug('Theme', "Loaded theme: $theme->{name}");
             }
         }
     }
-    
+
     # If no themes loaded, create default in memory
-    unless (keys %{$self->{themes}}) {
+    unless (keys %$themes) {
         log_debug('Theme', "No themes loaded, using built-in default");
-        $self->{themes}->{default} = $self->get_builtin_theme();
+        $themes->{default} = $self->get_builtin_theme();
     }
+
+    _cache_set('themes', $themes);
+    $self->{themes} = $themes;
+}
+
+# ────────────────────────────────────────────────────────────────────
+# Class-level disk cache helpers
+# ────────────────────────────────────────────────────────────────────
+
+sub _cache_fresh {
+    my ($kind) = @_;
+    return 0 unless $_CACHE{$kind};
+    my $ttl_key = $kind . '_mtime';
+    return (time() - $_CACHE{$ttl_key}) < CACHE_TTL;
+}
+
+sub _cache_get {
+    my ($kind) = @_;
+    return $_CACHE{$kind};
+}
+
+sub _cache_set {
+    my ($kind, $data) = @_;
+    $_CACHE{$kind} = $data;
+    my $ttl_key = $kind . '_mtime';
+    $_CACHE{$ttl_key} = time();
+}
+
+=head2 clear_cache
+
+Drop the class-level cache of disk-loaded styles and themes. Useful in
+tests or after editing style/theme files mid-session.
+
+=cut
+
+sub clear_cache {
+    %_CACHE = (
+        styles       => undef,
+        styles_mtime => 0,
+        themes       => undef,
+        themes_mtime => 0,
+    );
+}
+
+=head2 validate_style / validate_theme
+
+Light structural validation. Warns (does not die) on missing required
+keys or empty file - lets the loader skip the file while keeping other
+styles working.
+
+Returns: 1 if valid, 0 otherwise.
+
+=cut
+
+sub check_style_data {
+    my ($style, $source) = @_;
+
+    # Allow class-method invocation (`Theme->check_style_data($h)`) as well
+    # as function invocation (`Theme::check_style_data($h)`). When called
+    # as a class method, $style is the package name and the actual hash
+    # arrives in $source.
+    if (!ref($style) && ref($source) eq 'HASH') {
+        ($style, $source) = ($source, '<unknown>');
+    }
+
+    return _validate_hashref($style, $source, \@REQUIRED_STYLE_KEYS, 'style');
+}
+
+sub check_theme_data {
+    my ($theme, $source) = @_;
+
+    if (!ref($theme) && ref($source) eq 'HASH') {
+        ($theme, $source) = ($source, '<unknown>');
+    }
+
+    return _validate_hashref($theme, $source, \@REQUIRED_THEME_KEYS, 'theme');
+}
+
+sub _validate_hashref {
+    my ($hash, $source, $required, $kind) = @_;
+    $source //= '<unknown>';
+
+    if (!defined $hash || ref($hash) ne 'HASH') {
+        log_error('Theme', "$kind file $source is not a hashref, skipping");
+        return 0;
+    }
+    if (!keys %$hash) {
+        log_warning('Theme', "$kind file $source is empty, skipping");
+        return 0;
+    }
+    for my $key (@$required) {
+        if (!defined $hash->{$key} || $hash->{$key} eq '') {
+            log_error('Theme', "$kind file $source missing required key '$key', skipping");
+            return 0;
+        }
+    }
+    return 1;
 }
 
 =head2 load_style_file
@@ -185,31 +327,37 @@ Load a single style file (simple key=value format)
 
 sub load_style_file {
     my ($self, $path) = @_;
-    
+
     return undef unless -f $path;
-    
+
     open(my $fh, '<:encoding(UTF-8)', $path) or do {
         log_error('Theme', "Cannot open style file $path: $!");
         return undef;
     };
-    
+
     my $style = { file => $path };
-    
+
     while (my $line = <$fh>) {
         chomp $line;
-        
+
         # Skip comments and empty lines
         next if $line =~ /^\s*#/ || $line =~ /^\s*$/;
-        
+
         # Parse key=value
         if ($line =~ /^(\w+)\s*=\s*(.+)$/) {
             my ($key, $value) = ($1, $2);
             $style->{$key} = $value;
         }
     }
-    
+
     close($fh);
-    
+
+    # Structural validation. Bad files are skipped (with a log line)
+    # rather than silently loaded - the previous behavior produced
+    # empty $style->{name} lookups that surfaced as 'undefined color'
+    # downstream and were hard to diagnose.
+    return undef unless check_style_data($style, $path);
+
     return $style;
 }
 
@@ -223,29 +371,32 @@ sub load_theme_file {
     my ($self, $path) = @_;
     
     return undef unless -f $path;
-    
+
     open(my $fh, '<:encoding(UTF-8)', $path) or do {
         log_error('Theme', "Cannot open theme file $path: $!");
         return undef;
     };
-    
+
     my $theme = { file => $path };
-    
+
     while (my $line = <$fh>) {
         chomp $line;
-        
+
         # Skip comments and empty lines
         next if $line =~ /^\s*#/ || $line =~ /^\s*$/;
-        
+
         # Parse key=value
         if ($line =~ /^(\w+)\s*=\s*(.+)$/) {
             my ($key, $value) = ($1, $2);
             $theme->{$key} = $value;
         }
     }
-    
+
     close($fh);
-    
+
+    # Structural validation (see load_style_file for rationale).
+    return undef unless check_theme_data($theme, $path);
+
     return $theme;
 }
 
@@ -257,11 +408,28 @@ Get a color from the current style
 
 sub get_color {
     my ($self, $key) = @_;
-    
-    my $style = $self->{styles}->{$self->{current_style}} || $self->{styles}->{default};
+
+    my $style = $self->_active_style();
     return '' unless $style;
-    
+
     return $style->{$key} || '';
+}
+
+# Resolve the currently-active style. If current_style points to a missing
+# name (e.g., user runs --style xxx where xxx doesn't exist), we used to
+# silently fall through to $self->{styles}->{default}, which is also
+# unreliable if the default style failed to load. This helper centralizes
+# the fallback chain: explicit -> default -> built-in.
+sub _active_style {
+    my ($self) = @_;
+    my $name = $self->{current_style};
+    if ($name && exists $self->{styles}->{$name}) {
+        return $self->{styles}->{$name};
+    }
+    if ($name && $name ne 'default') {
+        log_debug('Theme', "Style '$name' not loaded, falling back to 'default'");
+    }
+    return $self->{styles}->{default};
 }
 
 =head2 get_spinner_frames
@@ -311,11 +479,25 @@ Returns 'inline' (default) or 'box'
 
 sub get_tool_display_format {
     my ($self) = @_;
-    
-    my $theme = $self->{themes}->{$self->{current_theme}} || $self->{themes}->{default};
+
+    my $theme = $self->_active_theme();
     return 'inline' unless $theme;
-    
+
     return $theme->{tool_display_format} || 'inline';
+}
+
+# Resolve the currently-active theme. Same fallback semantics as
+# _active_style() - centralized so all three call sites stay consistent.
+sub _active_theme {
+    my ($self) = @_;
+    my $name = $self->{current_theme};
+    if ($name && exists $self->{themes}->{$name}) {
+        return $self->{themes}->{$name};
+    }
+    if ($name && $name ne 'default') {
+        log_debug('Theme', "Theme '$name' not loaded, falling back to 'default'");
+    }
+    return $self->{themes}->{default};
 }
 
 =head2 get_ui_char($name)
@@ -331,42 +513,39 @@ Theme keys: tool_bullet, tool_separator, footer_separator
 
 sub get_ui_char {
     my ($self, $name) = @_;
-    
-    require CLIO::UI::Terminal;
-    
+
     # Check theme override first
-    my $theme = $self->{themes}->{$self->{current_theme}} || $self->{themes}->{default};
+    my $theme = $self->_active_theme();
     if ($theme && defined $theme->{$name} && $theme->{$name} ne '') {
         return $theme->{$name};
     }
-    
+
     # Map theme key names to ui_char() names
     my %key_map = (
         tool_bullet      => 'bullet',
         tool_separator   => 'separator',
         footer_separator => 'footer_sep',
     );
-    
+
     my $ui_name = $key_map{$name} // $name;
-    return CLIO::UI::Terminal::ui_char($ui_name);
+    return ui_char($ui_name);
 }
 
 # Resolve {char.X} template variables to capability-aware characters
 sub _resolve_char {
     my ($name) = @_;
-    require CLIO::UI::Terminal;
-    
+
     # Try box_char first, then ui_char
     my %box_names = map { $_ => 1 } qw(
         horizontal vertical topleft topright bottomleft bottomright
         tdown tup tleft tright cross
         dhorizontal dvertical dtopleft dtopright dbottomleft dbottomright
     );
-    
+
     if ($box_names{$name}) {
-        return CLIO::UI::Terminal::box_char($name);
+        return box_char($name);
     }
-    return CLIO::UI::Terminal::ui_char($name);
+    return ui_char($name);
 }
 
 =head2 get_template
@@ -377,10 +556,10 @@ Get a template from the current theme
 
 sub get_template {
     my ($self, $key) = @_;
-    
-    my $theme = $self->{themes}->{$self->{current_theme}} || $self->{themes}->{default};
+
+    my $theme = $self->_active_theme();
     return '' unless $theme;
-    
+
     return $theme->{$key} || '';
 }
 
@@ -392,25 +571,34 @@ Render a template by substituting {style.key} placeholders with style colors
 
 sub render {
     my ($self, $template_key, $vars) = @_;
-    
+
     $vars ||= {};
-    
+
     # Inject agent_name and subtitle as default variables (host apps override via env)
     $vars->{agent_name} //= $ENV{CLIO_AGENT_NAME} || 'CLIO';
     $vars->{agent_subtitle} //= $ENV{CLIO_AGENT_SUBTITLE} || 'Command Line Intelligence Orchestrator';
-    
+
     my $template = $self->get_template($template_key);
     return '' unless $template;
-    
+
+    # Per-render char resolution cache. Templates with many `{char.X}`
+    # substitutions (e.g., long horizontal dividers) used to re-resolve
+    # the same character dozens of times. Memoise on the regex match
+    # variable - same lookup, cached result.
+    my %char_cache;
+
     # Substitute {style.key} with actual style colors
     $template =~ s/\{style\.(\w+)\}/$self->get_color($1)/ge;
-    
+
     # Substitute {var.key} with provided variables
     $template =~ s/\{var\.(\w+)\}/$vars->{$1} || ''/ge;
-    
+
     # Substitute {char.key} with capability-aware box/UI characters
-    $template =~ s/\{char\.(\w+)\}/_resolve_char($1)/ge;
-    
+    $template =~ s/\{char\.(\w+)\}/
+        exists $char_cache{$1} ? $char_cache{$1} :
+        ($char_cache{$1} = _resolve_char($1))
+    /ge;
+
     # Parse @-codes
     return $self->{ansi}->parse($template);
 }
