@@ -642,6 +642,186 @@ subtest 'handle_message routes status operations' => sub {
     is($resp->{type}, 'status_updates', 'poll_status_updates routed correctly');
 };
 
+# ============================================================================
+# ITPM (input tokens per minute) cross-agent coordination
+#
+# Without these, a parent agent and N sub-agents each consume their own
+# ITPM budget independently and can collectively blow
+# UserByModelByMinuteUncachedInputTokens even though no single agent
+# exceeds the limit. The broker aggregates reported usage and applies
+# ITPM-aware delay to slot requests.
+# ============================================================================
+subtest 'handle_report_api_tokens aggregates into per-model window' => sub {
+    my $broker = fresh_broker();
+    my $model = 'claude-broker-test';
+    my $sock = mock_client($broker, 20);
+
+    # First agent reports 80000 tokens.
+    $broker->handle_report_api_tokens(20, {
+        model => $model,
+        input_tokens => 80000,
+        cache_creation_input_tokens => 0,
+    });
+    is($broker->{api_rate_limit}{token_windows}{$model}[-1]{tokens}, 80000,
+        'Single report stored at full value (no cache_creation counted twice)');
+
+    # Second agent reports 50000 tokens on the same model.
+    $broker->handle_report_api_tokens(20, {
+        model => $model,
+        input_tokens => 50000,
+        cache_creation_input_tokens => 12000,
+    });
+    my $sum = 0;
+    $sum += $_->{tokens} for @{$broker->{api_rate_limit}{token_windows}{$model}};
+    is($sum, 142000,
+        'ITPM sums input_tokens + cache_creation_input_tokens across reports (no double-count)');
+};
+
+subtest 'handle_report_api_tokens ignores cache_read (not ITPM-relevant)' => sub {
+    my $broker = fresh_broker();
+    my $model = 'claude-cache-read';
+
+    # Cache reads alone should NOT contribute to ITPM tracking.
+    $broker->handle_report_api_tokens(20, {
+        model => $model,
+        input_tokens => 0,
+        cache_creation_input_tokens => 0,
+    });
+    # The handler returns early if tokens <= 0, so window should be empty.
+    ok(!exists $broker->{api_rate_limit}{token_windows}{$model},
+        'Zero-ITPM report does not create an empty window entry');
+};
+
+subtest '_apply_api_token_headers seeds learned ITPM cap from Anthropic headers' => sub {
+    my $broker = fresh_broker();
+    my $model = 'claude-headers-test';
+
+    my $info = {
+        anthropic_input_tokens_limit     => '250000',
+        anthropic_input_tokens_remaining => '175000',
+        anthropic_input_tokens_reset     => POSIX::strftime('%Y-%m-%dT%H:%M:%SZ', localtime(time() + 30)),
+        anthropic_requests_limit         => '1000',
+        anthropic_requests_remaining     => '950',
+    };
+
+    $broker->_apply_api_token_headers($model, $info);
+
+    my $snap = $broker->{api_rate_limit}{token_snapshots}{$model};
+    ok(ref($snap) eq 'HASH', 'Snapshot stored');
+    is($snap->{input_tokens}{limit}, 250000, 'ITPM limit captured');
+    is($snap->{input_tokens}{remaining}, 175000, 'ITPM remaining captured');
+    is($broker->{api_rate_limit}{token_limits}{$model}, 250000,
+        'ITPM ceiling seeded into learned-limit slot for fallback');
+};
+
+subtest '_apply_api_token_headers is lower-only (mirrors APIManager policy)' => sub {
+    my $broker = fresh_broker();
+    my $model = 'claude-lower-only';
+
+    # First report: 250000.
+    $broker->_apply_api_token_headers($model, {
+        anthropic_input_tokens_limit     => '250000',
+        anthropic_input_tokens_remaining => '0',
+        anthropic_input_tokens_reset     => '2026-07-22T18:00:00Z',
+    });
+    is($broker->{api_rate_limit}{token_limits}{$model}, 250000,
+        'Initial ceiling stored');
+
+    # Second report: 500000 (higher) - must NOT raise the floor.
+    $broker->_apply_api_token_headers($model, {
+        anthropic_input_tokens_limit     => '500000',
+        anthropic_input_tokens_remaining => '0',
+        anthropic_input_tokens_reset     => '2026-07-22T18:00:00Z',
+    });
+    is($broker->{api_rate_limit}{token_limits}{$model}, 250000,
+        'Higher reported limit does NOT raise learned ceiling');
+
+    # Third report: 100000 (lower) - lowers the ceiling.
+    $broker->_apply_api_token_headers($model, {
+        anthropic_input_tokens_limit     => '100000',
+        anthropic_input_tokens_remaining => '0',
+        anthropic_input_tokens_reset     => '2026-07-22T18:00:00Z',
+    });
+    is($broker->{api_rate_limit}{token_limits}{$model}, 100000,
+        'Lower reported limit lowers learned ceiling');
+};
+
+subtest '_calculate_api_token_delay aggregates usage across agents' => sub {
+    my $broker = fresh_broker();
+    my $model = 'claude-cross-agent';
+
+    # No data -> no delay.
+    is($broker->_calculate_api_token_delay($model, 0), 0,
+        'Cold start: no delay with empty window');
+
+    # Two agents report 100k each = 200k used.
+    $broker->handle_report_api_tokens(20, {
+        model => $model, input_tokens => 100000, cache_creation_input_tokens => 0,
+    });
+    $broker->handle_report_api_tokens(21, {
+        model => $model, input_tokens => 100000, cache_creation_input_tokens => 0,
+    });
+
+    # Learned ceiling 250k, used 200k. pending=60k => would=260k > 250k => >=1.0 branch.
+    $broker->{api_rate_limit}{token_limits}{$model} = 250000;
+    my $delay = $broker->_calculate_api_token_delay($model, 60000);
+    cmp_ok($delay, '>', 0,
+        'Returns positive delay when aggregate usage plus pending would exceed ceiling');
+};
+
+subtest 'handle_request_api_slot checks ITPM via model+pending_tokens' => sub {
+    my $broker = fresh_broker();
+    my $model = 'claude-slot-itpm';
+
+    # Pump the window so ITPM pressure is high.
+    $broker->handle_report_api_tokens(20, {
+        model => $model, input_tokens => 240000, cache_creation_input_tokens => 0,
+    });
+    $broker->{api_rate_limit}{token_limits}{$model} = 250000;
+
+    # Slot request without model/pending (legacy clients) - RPM-only path.
+    my $sock_no_ctx = mock_client($broker, 30);
+    $broker->handle_request_api_slot(30, { agent_id => 'a', request_id => 1 });
+    my $resp_no_ctx = $sock_no_ctx->last_message;
+    is($resp_no_ctx->{type}, 'api_slot_granted',
+        'Legacy slot request (no ITPM context) is not ITPM-gated');
+
+    # Slot request WITH model+pending that would exceed ITPM.
+    my $sock_over = mock_client($broker, 31);
+    $broker->handle_request_api_slot(31, {
+        agent_id => 'b', request_id => 2,
+        model => $model, pending_tokens => 50000,
+    });
+    my $resp_over = $sock_over->last_message;
+    is($resp_over->{type}, 'api_slot_wait',
+        'ITPM-aware slot request is delayed when aggregate would exceed ceiling');
+    cmp_ok($resp_over->{delay}, '>', 0, 'Returns a positive ITPM delay');
+    is($resp_over->{reason}, 'token_rate',
+        'Reason identifies token-bucket (vs. RPM) origin');
+};
+
+subtest 'handle_release_api_slot forwards anthropic_rate_limit_info' => sub {
+    my $broker = fresh_broker();
+    my $model = 'claude-relay';
+    my $sock = mock_client($broker, 40);
+
+    $broker->handle_release_api_slot(40, {
+        agent_id => 'agent-relay',
+        request_id => 7,
+        model => $model,
+        anthropic_rate_limit_info => {
+            anthropic_input_tokens_limit     => '250000',
+            anthropic_input_tokens_remaining => '200000',
+            anthropic_input_tokens_reset     => '2026-07-22T18:00:00Z',
+        },
+    });
+
+    is($broker->{api_rate_limit}{token_limits}{$model}, 250000,
+        'Anthropic headers forwarded via release_api_slot seed broker learned limit');
+    is($broker->{api_rate_limit}{token_snapshots}{$model}{input_tokens}{limit}, 250000,
+        'Anthropic headers forwarded via release_api_slot seed broker snapshot');
+};
+
 done_testing();
 
 print "\n Broker behavioral tests PASSED\n";

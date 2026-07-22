@@ -39,6 +39,9 @@ can_ok('CLIO::Coordination::Client', qw(send_status_update poll_status_updates))
 # Test 5: Messaging convenience methods exist
 can_ok('CLIO::Coordination::Client', qw(send_question send_complete send_blocked send_status));
 
+# Test 6: API rate-limit slot/usage reporting exists
+can_ok('CLIO::Coordination::Client', qw(request_api_slot release_api_slot report_api_tokens wait_for_api_slot get_rate_limit_status));
+
 done_testing();
 
 print "\n✓ Client unit tests PASSED\n";

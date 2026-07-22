@@ -365,22 +365,29 @@ sub send_blocked {
 # === API Rate Limiting Methods (Phase 3) ===
 
 sub request_api_slot {
-    my ($self, $request_id) = @_;
-    
+    my ($self, $request_id, %opts) = @_;
+
     $request_id ||= int(rand(1000000));
-    
-    my $result = $self->send_and_wait({
+
+    my $msg = {
         type => 'request_api_slot',
         agent_id => $self->{agent_id},
         request_id => $request_id,
-    }, 10);  # Longer timeout for rate limit waits
-    
+    };
+    # Optional ITPM context. When provided, the broker checks the
+    # aggregate per-model input-token sliding window (across all
+    # connected agents) and may delay the slot beyond pure RPM gates.
+    $msg->{model}          = $opts{model}          if defined $opts{model};
+    $msg->{pending_tokens} = $opts{pending_tokens} if defined $opts{pending_tokens};
+
+    my $result = $self->send_and_wait($msg, 10);  # Longer timeout for rate limit waits
+
     if (!$result) {
         # Broker not responding - allow request to proceed
         $self->log_debug("Broker not responding for API slot request, proceeding");
         return { granted => 1, delay => 0 };
     }
-    
+
     if ($result->{type} eq 'api_slot_granted') {
         $self->log_debug("API slot granted immediately");
         return {
@@ -399,14 +406,33 @@ sub request_api_slot {
             request_id => $result->{request_id},
         };
     }
-    
+
     # Unknown response, allow request
     return { granted => 1, delay => 0 };
 }
 
+# Fire-and-forget report of an API request's ITPM-relevant input tokens.
+# Used by APIManager after each response completes to feed the broker's
+# per-model sliding window so cross-agent ITPM coordination sees this
+# agent's actual consumption. Cache reads are NOT included - Anthropic
+# uncached ITPM only counts input_tokens + cache_creation_input_tokens.
+sub report_api_tokens {
+    my ($self, %args) = @_;
+
+    my $msg = {
+        type => 'report_api_tokens',
+        agent_id => $self->{agent_id},
+    };
+    $msg->{model}                      = $args{model}                      if defined $args{model};
+    $msg->{input_tokens}               = $args{input_tokens}               if defined $args{input_tokens};
+    $msg->{cache_creation_input_tokens} = $args{cache_creation_input_tokens} if defined $args{cache_creation_input_tokens};
+
+    return $self->send($msg);
+}
+
 sub release_api_slot {
     my ($self, %args) = @_;
-    
+
     my $msg = {
         type => 'release_api_slot',
         agent_id => $self->{agent_id},
@@ -414,14 +440,24 @@ sub release_api_slot {
         status => $args{status},
         retry_after => $args{retry_after},
     };
-    
-    # Include rate limit headers if provided
+
+    # Include raw HTTP response headers so the broker can refresh its
+    # x-ratelimit-* snapshot.
     if ($args{headers}) {
         $msg->{headers} = $args{headers};
     }
-    
+    # Forward Anthropic ITPM/OTPM/RPM headers (parsed rate_limit_info
+    # from ResponseHandler.process_rate_limit_headers). Lets the broker
+    # maintain the same per-model Anthropic snapshot the agent sees, so
+    # future slot requests from any agent get the precise ITPM-aware
+    # delay instead of falling back to the learned ceiling.
+    if ($args{model} && ref($args{anthropic_rate_limit_info}) eq 'HASH') {
+        $msg->{model}                       = $args{model};
+        $msg->{anthropic_rate_limit_info}   = $args{anthropic_rate_limit_info};
+    }
+
     my $result = $self->send_and_wait($msg, 2);
-    
+
     return ($result && $result->{success}) ? 1 : 0;
 }
 
@@ -476,15 +512,15 @@ sub poll_status_updates {
 }
 
 sub wait_for_api_slot {
-    my ($self, $max_wait) = @_;
-    
+    my ($self, $max_wait, %opts) = @_;
+
     $max_wait ||= 120;  # Default 2 minute max wait
     my $start = time();
     my $request_id = int(rand(1000000));
-    
+
     while (time() - $start < $max_wait) {
-        my $result = $self->request_api_slot($request_id);
-        
+        my $result = $self->request_api_slot($request_id, %opts);
+
         if ($result->{granted}) {
             return {
                 success => 1,
@@ -492,15 +528,15 @@ sub wait_for_api_slot {
                 waited => time() - $start,
             };
         }
-        
+
         # Need to wait
         my $delay = $result->{delay} || 0.5;
         $delay = 30 if $delay > 30;  # Cap individual waits at 30s
-        
+
         $self->log_debug("Waiting ${delay}s for API slot (reason: $result->{reason})");
         sleep($delay);
     }
-    
+
     # Timeout - return failure but include request_id so caller can proceed anyway
     return {
         success => 0,

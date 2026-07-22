@@ -825,19 +825,55 @@ CLIO handles them via three coordinated layers:
    Two layers, max() wins:
    - Snapshot: precise against API-reported remaining capacity.
    - Learned: fallback when no snapshot or it's older than 90s.
-   At `ratio >= 1.0` the delay is `reset_in + 1` (waits for the bucket
-   to refill).
+   At `ratio >= 1.0` the delay is `effective_reset + 1` (waits for the
+   bucket to refill). `effective_reset` adjusts the snapshot's
+   `reset_in` for time elapsed since `observed_at` so we don't wait
+   longer than the bucket actually needs to refill.
 
-Real input token counts (`usage.prompt_tokens`) flow back into the
-sliding window via `_model_input_token_throttle_record` after each
-native streaming response. So the 70% threshold uses ACTUAL usage,
-not estimates, once a round-trip has completed.
+Real input token counts (`usage.prompt_tokens` + `cache_creation_input_tokens`)
+flow back into the sliding window via `_model_input_token_throttle_record`
+after each native streaming response. CLIO configures prompt caching
+(`cache_control: ephemeral` on system prompt + last tool), so every
+session's first request and any request after the 5-min cache TTL
+incur `cache_creation_input_tokens` that count toward ITPM - those
+must be included in the recorded amount or the throttle silently
+under-counts. The `parse_stream_event` handler in
+`Providers/Anthropic.pm` extracts `cache_creation_input_tokens` from
+the SSE `message_start.usage` event and it is accumulated in
+`usage_tracking{cache_creation_input_tokens}` alongside `input_tokens`.
+
+4. **Cross-agent ITPM coordination** (`Broker._calculate_api_token_delay`,
+   `Broker.handle_report_api_tokens`): when an APIManager has a
+   `broker_client` (i.e. it is a sub-agent or the parent of sub-agents),
+   the broker maintains a per-model sliding window aggregated across
+   every connected agent. Each agent reports its actual input tokens
+   (incl. cache creation) after every response via `report_api_tokens`,
+   and on `release_api_slot` the agent forwards Anthropic headers
+   (`anthropic_rate_limit_info`) so the broker's per-model snapshot
+   stays in sync. Slot requests now carry `model` + `pending_tokens`
+   so the broker can return an ITPM-aware delay even when no other
+   agent has reported yet. Without this layer, parent + N sub-agents
+   each consume their own ITPM budget independently and can
+   collectively blow `UserByModelByMinuteUncachedInputTokens` while
+   no single agent exceeds the limit. Two-layer logic (snapshot +
+   learned) mirrors the per-agent `_model_input_token_throttle_check`
+   but with broker-wide visibility.
 
 Code paths:
 - `lib/CLIO/Util/RateLimit.pm` - friendly-type mapping + RFC 3339 parser
-- `lib/CLIO/Core/API/ResponseHandler.pm` - `process_rate_limit_headers` extension
+- `lib/CLIO/Core/API/ResponseHandler.pm` - `process_rate_limit_headers` extension,
+  `set_last_request_model` / `release_broker_slot` Anthropic forwarding
 - `lib/CLIO/Core/APIManager.pm` - `_apply_anthropic_rate_limit_headers`,
-  `_model_input_token_throttle_{record,check}`, `_learn_input_token_limit`
+  `_model_input_token_throttle_{record,check}`, `_learn_input_token_limit`,
+  `report_api_tokens` + `_pending_*_for_broker` plumbing
+- `lib/CLIO/Providers/Anthropic.pm` - `parse_stream_event` extracts
+  `cache_creation_input_tokens`
+- `lib/CLIO/Coordination/Broker.pm` - `_calculate_api_token_delay`,
+  `handle_report_api_tokens`, `_apply_api_token_headers`,
+  `handle_request_api_slot` ITPM gating
+- `lib/CLIO/Coordination/Client.pm` - `report_api_tokens`,
+  `request_api_slot($id, model=>, pending_tokens=)`,
+  `release_api_slot(anthropic_rate_limit_info =>)`
 - `lib/CLIO/Core/Diagnostics.pm` - `display_rate_limit_info` Anthropic branches
 
 Anthropic rate-limit error codes mapped to user-friendly names:
@@ -850,7 +886,10 @@ Anthropic rate-limit error codes mapped to user-friendly names:
 
 Tests:
 - `tests/unit/test_anthropic_rate_limit.pl` - header parsing + friendly codes
-- `tests/unit/test_anthropic_input_token_throttle.pl` - snapshot/learn layers
+- `tests/unit/test_anthropic_input_token_throttle.pl` - snapshot/learn layers,
+  stale reset_in adjustment, cache_creation extraction
+- `tests/unit/test_broker.pl` - cross-agent ITPM aggregation, snapshot/header
+  forwarding, slot gating with model+pending_tokens
 
 ---
 

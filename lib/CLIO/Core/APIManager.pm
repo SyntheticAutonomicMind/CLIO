@@ -873,12 +873,20 @@ sub _model_input_token_throttle_check {
             my $would = $used + $pending_tokens;
             my $ratio = $would / $itpm->{limit};
             if ($ratio >= 1.0) {
-                my $reset_in = $itpm->{reset_in};
-                $snap_delay = ($reset_in && $reset_in > 0) ? ($reset_in + 1) : 30;
+                # The snapshot's reset_in is computed relative to its observed_at.
+                # Adjust for elapsed time since the header was received so we don't
+                # wait longer than the bucket actually needs to refill.
+                my $elapsed        = $now - ($itpm->{observed_at} // $now);
+                my $effective_reset = ($itpm->{reset_in} // 0) - $elapsed;
+                $effective_reset   = 0 if $effective_reset < 0;
+                $snap_delay = $effective_reset > 0 ? ($effective_reset + 1) : 0.5;
             }
             elsif ($ratio >= 0.7) {
                 my $gap = $would - 0.7 * $itpm->{limit};
-                my $reset_in = $itpm->{reset_in} // 60;
+                # Same elapsed-time adjustment as the >= 1.0 branch.
+                my $elapsed        = $now - ($itpm->{observed_at} // $now);
+                my $reset_in       = (($itpm->{reset_in} // 60) - $elapsed);
+                $reset_in          = 0 if $reset_in < 0;
                 my $refill_per_sec = $itpm->{limit} / 60;
                 my $delay = ($gap > 0 && $refill_per_sec > 0)
                     ? ($gap / $refill_per_sec)
@@ -2822,7 +2830,22 @@ sub _apply_rate_limiting {
     my $broker_request_id;
     if ($self->{broker_client}) {
         local $SIG{PIPE} = 'IGNORE';
-        my $slot_result = $self->{broker_client}->wait_for_api_slot(120);
+        # Pass the resolved model + estimated pending input tokens so the
+        # broker's per-model ITPM sliding window (aggregated across all
+        # connected agents) can gate this slot. Without model/pending the
+        # broker only sees RPM-style pressure and cannot prevent
+        # UserByModelByMinuteUncachedInputTokens errors when multiple
+        # agents share an account.
+        my $pending_for_broker = 0;
+        eval {
+            require CLIO::Memory::TokenEstimator;
+            $pending_for_broker = CLIO::Memory::TokenEstimator::estimate_messages_tokens($self->{_pending_messages_for_broker} // []);
+        };
+        my $model_for_broker = $self->{_pending_model_for_broker};
+        my %slot_opts;
+        $slot_opts{model}          = $model_for_broker if defined $model_for_broker;
+        $slot_opts{pending_tokens} = $pending_for_broker if $pending_for_broker > 0;
+        my $slot_result = $self->{broker_client}->wait_for_api_slot(120, %slot_opts);
         $broker_request_id = $slot_result->{request_id};
 
         if (!$slot_result->{success}) {
@@ -2886,8 +2909,6 @@ sub _prepare_api_request {
 
     my $is_streaming = delete $opts{is_streaming} || 0;
 
-    $self->_apply_rate_limiting();
-
     # Get endpoint-specific configuration
     my $ep = $self->_prepare_endpoint_config(%opts);
     my $endpoint_config = $ep->{config};
@@ -2895,15 +2916,31 @@ sub _prepare_api_request {
     my $model = $ep->{model};
     my $target_provider = $ep->{target_provider};
 
+    # Prepare and trim messages so the broker ITPM check sees a realistic
+    # pending token estimate (post-trim, not the raw user input).
+    my $messages = $self->_prepare_messages($input, %opts);
+
+    # Expose context for _apply_rate_limiting -> broker wait_for_api_slot.
+    # The broker uses these to compute ITPM-aware slot delay across all
+    # connected agents (prevents sub-agent fanout from blowing
+    # UserByModelByMinuteUncachedInputTokens).
+    $self->{_pending_messages_for_broker} = $messages;
+    $self->{_pending_model_for_broker}    = $model;
+
+    eval { $self->_apply_rate_limiting(); };
+    if ($@) {
+        log_warning('APIManager', "_apply_rate_limiting failed: $@");
+    }
+    # Record the resolved model so release_broker_slot can forward
+    # anthropic-ratelimit-* headers to the broker's per-model snapshot.
+    $self->{response_handler}->set_last_request_model($model) if $self->{response_handler};
+
     # Proactive per-model throttle
     if (my $throttle_delay = $self->_model_throttle_check($model)) {
         log_info('APIManager', sprintf("Proactive rate throttle for %s: %.1fs", $model, $throttle_delay));
         for (my $i = int($throttle_delay); $i > 0; $i--) { sleep(1); }
     }
     $self->_model_throttle_record($model);
-
-    # Prepare and trim messages
-    my $messages = $self->_prepare_messages($input, %opts);
 
     # Token-aware throttle (Anthropic ITPM/OTPM). Estimate the input tokens
     # for the upcoming request and let the input-token layer pace it.
@@ -4305,9 +4342,28 @@ sub _finalize_streaming_response {
     # Anthropic docs the ITPM bucket only sees uncached input tokens
     # (input_tokens + cache_creation_input_tokens) - cache reads do NOT
     # count. Native providers may report cache_creation_input_tokens in
-    # the SSE usage event; use the larger of the two when both are present.
-    if ($s{model} && $usage && $usage->{prompt_tokens}) {
-        $self->_model_input_token_throttle_record($s{model}, $usage->{prompt_tokens});
+    # the SSE usage event; OpenAI-compatible providers (including some
+    # Anthropic proxies) may surface it via streaming_usage. Sum them
+    # so any source gets credit for the ITPM-relevant portion of input.
+    if ($s{model} && $usage && ($usage->{prompt_tokens} || $usage->{cache_creation_input_tokens})) {
+        my $recorded = ($usage->{prompt_tokens}                // 0)
+                     + ($usage->{cache_creation_input_tokens} // 0);
+        $self->_model_input_token_throttle_record($s{model}, $recorded) if $recorded > 0;
+        # Report to broker so its cross-agent ITPM sliding window sees
+        # this request. Fire-and-forget so a slow broker can't stall the
+        # agent. Broker only does ITPM coordination when broker_client is
+        # present (sub-agents), but the call is safe for the parent too
+        # - the broker ignores reports that don't match a known agent.
+        if ($self->{broker_client} && $recorded > 0) {
+            eval {
+                local $SIG{PIPE} = 'IGNORE';
+                $self->{broker_client}->report_api_tokens(
+                    model                        => $s{model},
+                    input_tokens                 => ($usage->{prompt_tokens}                  // 0),
+                    cache_creation_input_tokens  => ($usage->{cache_creation_input_tokens}   // 0),
+                );
+            };
+        }
     }
 
     # Convert accumulated tool_calls hash to sorted array
@@ -5242,7 +5298,11 @@ sub _send_native_streaming {
     my $current_tool_call;
     my $token_count = 0;
     my $buffer = '';
-    my %usage_tracking = (input_tokens => 0, output_tokens => 0);
+    my %usage_tracking = (
+        input_tokens                => 0,
+        output_tokens               => 0,
+        cache_creation_input_tokens => 0,
+    );
 
     # State hash for native streaming (mirrors $ss in OpenAI-compatible path)
     # Allows stashing SSE errors for proper handling after streaming completes
@@ -5340,6 +5400,11 @@ sub _send_native_streaming {
                     # Track token usage from native providers (Anthropic, Google)
                     $usage_tracking{input_tokens} += ($event->{input_tokens} // 0);
                     $usage_tracking{output_tokens} += ($event->{output_tokens} // 0);
+                    # Anthropic ITPM counts cache_creation_input_tokens as uncached
+                    # input. Track it separately so the ITPM record below can
+                    # include it. Cache reads are not counted toward ITPM and
+                    # don't need to be tracked here.
+                    $usage_tracking{cache_creation_input_tokens} += ($event->{cache_creation_input_tokens} // 0);
                 }
             }
         });
@@ -5516,7 +5581,11 @@ sub _send_native_streaming {
                 my $retry_current_tool_call;
                 my $retry_token_count = 0;
                 my $retry_buffer = '';
-                my %retry_usage_tracking = (input_tokens => 0, output_tokens => 0);
+                my %retry_usage_tracking = (
+                        input_tokens                => 0,
+                        output_tokens               => 0,
+                        cache_creation_input_tokens => 0,
+                    );
 
                 my $retry_response;
                 eval {
@@ -5582,6 +5651,7 @@ sub _send_native_streaming {
                                 elsif ($type eq 'usage') {
                                     $retry_usage_tracking{input_tokens} += ($event->{input_tokens} // 0);
                                     $retry_usage_tracking{output_tokens} += ($event->{output_tokens} // 0);
+                                    $retry_usage_tracking{cache_creation_input_tokens} += ($event->{cache_creation_input_tokens} // 0);
                                 }
                             }
                         });
@@ -5618,9 +5688,10 @@ sub _send_native_streaming {
                         duration => $retry_duration,
                     },
                     usage => {
-                        prompt_tokens => $retry_usage_tracking{input_tokens} || 0,
-                        completion_tokens => $retry_usage_tracking{output_tokens} || $retry_token_count,
-                        total_tokens => ($retry_usage_tracking{input_tokens} || 0) + ($retry_usage_tracking{output_tokens} || $retry_token_count),
+                        prompt_tokens                => $retry_usage_tracking{input_tokens} || 0,
+                        completion_tokens             => $retry_usage_tracking{output_tokens} || $retry_token_count,
+                        cache_creation_input_tokens   => $retry_usage_tracking{cache_creation_input_tokens} || 0,
+                        total_tokens                  => ($retry_usage_tracking{input_tokens} || 0) + ($retry_usage_tracking{output_tokens} || $retry_token_count),
                     },
                     finish_reason => (@retry_tool_calls ? 'tool_calls' : 'stop'),
                     _self_corrected_mode => $correct_mode,  # marker for callers/debugging
@@ -5655,9 +5726,27 @@ sub _send_native_streaming {
     # Record this turn's real input tokens against the sliding window so
     # next request's preflight throttle sees accurate numbers. Without
     # this the window stays empty and we only ever learn from 429 events.
+    # Per Anthropic docs, ITPM counts (input_tokens + cache_creation_input_tokens).
+    # Cache reads do NOT count, so we don't include them. Without adding
+    # cache_creation, the first request of a session (or any request after
+    # cache TTL expiry) under-counts its real ITPM consumption by the size
+    # of the cached prefix (system prompt + tools, often 30-80K tokens).
     if ($ns{model}) {
-        my $recorded_input = $usage_tracking{input_tokens} || 0;
+        my $recorded_input = ($usage_tracking{input_tokens}                // 0)
+                           + ($usage_tracking{cache_creation_input_tokens} // 0);
         $self->_model_input_token_throttle_record($ns{model}, $recorded_input) if $recorded_input > 0;
+        # Report to broker (sub-agent case) so cross-agent ITPM tracking
+        # sees this request's contribution. Fire-and-forget.
+        if ($self->{broker_client} && $recorded_input > 0) {
+            eval {
+                local $SIG{PIPE} = 'IGNORE';
+                $self->{broker_client}->report_api_tokens(
+                    model                        => $ns{model},
+                    input_tokens                 => ($usage_tracking{input_tokens}                // 0),
+                    cache_creation_input_tokens  => ($usage_tracking{cache_creation_input_tokens} // 0),
+                );
+            };
+        }
     }
 
     # Anthropic may emit stop_reason + usage in a single message_delta event.
@@ -5702,9 +5791,10 @@ sub _send_native_streaming {
                      tps => ($duration > 0 ? $token_count / $duration : 0),
                      tokens => $token_count, duration => $duration },
         usage => {
-            prompt_tokens => $usage_tracking{input_tokens} || 0,
-            completion_tokens => $usage_tracking{output_tokens} || $token_count,
-            total_tokens => ($usage_tracking{input_tokens} || 0) + ($usage_tracking{output_tokens} || $token_count),
+            prompt_tokens                => $usage_tracking{input_tokens} || 0,
+            completion_tokens              => $usage_tracking{output_tokens} || $token_count,
+            cache_creation_input_tokens    => $usage_tracking{cache_creation_input_tokens} || 0,
+            total_tokens                   => ($usage_tracking{input_tokens} || 0) + ($usage_tracking{output_tokens} || $token_count),
         },
         finish_reason => (@tool_calls ? 'tool_calls' : 'stop'),
     };
