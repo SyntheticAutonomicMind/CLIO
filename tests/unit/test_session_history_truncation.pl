@@ -5,7 +5,9 @@
 
 use strict;
 use warnings;
-use lib './lib';
+use FindBin qw($RealBin);
+use lib "$RealBin/../../lib";
+use lib "$RealBin/../lib";
 use Test::More tests => 3;
 use CLIO::Session::Manager;
 use File::Temp qw(tempdir);

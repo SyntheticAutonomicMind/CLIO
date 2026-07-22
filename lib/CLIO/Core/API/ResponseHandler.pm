@@ -73,6 +73,26 @@ sub _get_current_provider {
     return 'unknown';
 }
 
+=head2 _get_current_model
+
+Get the current model from session state.
+
+Returns: Model string (e.g. 'gpt-4.1', 'deepseek-v4-pro') or 'unknown'
+
+=cut
+
+sub _get_current_model {
+    my ($self) = @_;
+    if ($self->{session}) {
+        if ($self->{session}->can('state') && $self->{session}->state()) {
+            my $state = $self->{session}->state();
+            return $state->{selected_model} if $state->{selected_model};
+        }
+        return $self->{session}{selected_model} if $self->{session}{selected_model};
+    }
+    return 'unknown';
+}
+
 sub new {
     my ($class, %opts) = @_;
     return bless {
@@ -100,6 +120,18 @@ Update the session reference (called when session changes).
 sub set_session {
     my ($self, $session) = @_;
     $self->{session} = $session;
+}
+
+=head2 set_apimanager
+
+Update the APIManager reference. Required for throttle learning triggers
+on specific error patterns (e.g. OpenAI "Slow Down" 503).
+
+=cut
+
+sub set_apimanager {
+    my ($self, $apimanager) = @_;
+    $self->{_apimanager} = $apimanager;
 }
 
 =head2 set_broker_request_id
@@ -804,6 +836,34 @@ sub _handle_error_response_impl {
                . "Provider detail: $error";
         log_info('ResponseHandler', "Overloaded (retryable with backoff): $error");
     }
+    # Handle OpenAI's "Slow Down" 503 distinctly from generic overload.
+    # Per OpenAI docs (https://platform.openai.com/docs/guides/error-codes/api-errors):
+    # "Reduce your request rate to its original level, keep it stable for at
+    #  least 15 minutes, and then gradually increase it."
+    # This is harder to recover from than generic engine_overloaded - the
+    # throttle learns the actual ceiling and waits 15+ minutes before
+    # letting us back in. Longer retry + aggressive throttle learning.
+    elsif ($status == 503 && $error =~ /\bslow[\s_]?down\b/i) {
+        $is_retryable_error = 1;
+        $retryable = 1;
+        $retry_after = 60;
+        $error_type = 'overloaded';
+        $retry_info = "OpenAI 'Slow Down' detected. Provider requires 15+ minutes of reduced rate before recovery.";
+        $error = "OpenAI is throttling this account with a 'Slow Down' response (HTTP 503). "
+               . "Per OpenAI's docs, you must reduce request rate to its original level and keep it "
+               . "stable for at least 15 minutes before gradually increasing again. "
+               . "The throttle has been updated to reflect this limit.\n\n"
+               . "Provider detail: $error";
+        log_warning('ResponseHandler', "OpenAI Slow Down detected - aggressive throttle learning triggered: $error");
+
+        # Aggressive throttle learning - tell APIManager to learn this
+        # model's limit immediately. APIManager exposes this through
+        # report_rate_limit_for_model which counts recent requests to
+        # determine the learned ceiling.
+        if ($self->{_apimanager} && $self->{_apimanager}->can('report_rate_limit_for_model')) {
+            $self->{_apimanager}->report_rate_limit_for_model($self->_get_current_model());
+        }
+    }
 
     # Handle transient server errors (5xx except 599 which is handled as connection_error)
     elsif ($status >= 500 && $status < 599) {
@@ -1073,8 +1133,11 @@ sub _handle_error_response_impl {
             $provider_msg = substr($provider_msg, 0, 497) . '...';
         }
         if ($error_obj) {
-            # Provider gave us a message - use it as-is, trimmed
-            $error = $provider_msg;
+            # Provider gave us a message - use it as-is, trimmed. The diagnostic log
+            # still captures the body above; mention its path so the user knows where
+            # to look if the error keeps recurring.
+            $error = $provider_msg
+                   . "\n\n(If this repeats, full body logged to /tmp/clio_api_400.log for diagnosis.)";
         } else {
             # No structured error info - tell the user where to look
             $error = "API rejected the request (HTTP 400). No structured error message was provided by the provider. "
@@ -1190,6 +1253,22 @@ sub _parse_error_response {
         } else {
             # $error_obj is a plain string error from the provider
             $error = $error_obj;
+        }
+    }
+    # FALLBACK: If we still have no structured error and the response has raw content,
+    # capture it as a string. This handles providers that return plain text errors
+    # (like GitHub Copilot's "unauthorized: unauthorized: AuthenticateToken authentication failed")
+    # instead of JSON.
+    else {
+        my $raw_body = $resp->{content} // eval { $resp->decoded_content } // '';
+        if ($raw_body && $raw_body =~ /\S/) {
+            $error = $raw_body;
+            # Expose the plain text through $error_obj too so downstream dispatch
+            # handlers (e.g. the 403 subscription check, 401 handlers) can pattern
+            # match against the body. The auth handler specifically handles
+            # !ref($error_obj) strings via "$error_obj" stringification.
+            $error_obj = $raw_body;
+            log_debug('ResponseHandler', "Captured plain-text error body: $raw_body");
         }
     }
 

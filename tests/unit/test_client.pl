@@ -26,7 +26,7 @@ BEGIN { use_ok('CLIO::Coordination::Client') or BAIL_OUT("Cannot load Client"); 
 
 # Test 2: Required modules imported
 ok(defined &IO::Socket::UNIX::new, 'IO::Socket::UNIX imported');
-ok(defined &JSON::PP::encode_json, 'JSON::PP imported');
+ok(defined &CLIO::Util::JSON::encode_json, 'CLIO::Util::JSON imported');
 
 # Test 3: Package methods exist
 can_ok('CLIO::Coordination::Client', qw(new connect disconnect send_and_wait));

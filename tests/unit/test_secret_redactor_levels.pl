@@ -155,13 +155,19 @@ subtest 'PII patterns' => sub {
 };
 
 subtest 'Phone number edge case in API keys' => sub {
-    # A token with 10-digit sequence SHOULD be redacted at api_permissive because
-    # the PII phone pattern matches the digits inside
-    # This is expected behavior - PII protection takes precedence
+    # A token with bare 10-digit sequence should NOT be redacted as a phone number
+    # Phone numbers require formatting (separators, parentheses, etc.)
+    # This is the CORRECT behavior - we don't want false positives on tokens
     my $token_with_digits = 'ghp_' . '1234567890' . 'abcdefghij' . 'klmnopqrstuvwxyz';
     my $result = redact($token_with_digits, level => 'api_permissive');
+    unlike($result, qr/\[REDACTED\]/, 
+        'Token containing bare 10-digit sequence is NOT redacted (no false positive)');
+    
+    # But a properly formatted phone number SHOULD be redacted
+    my $with_phone = 'ghp_555-123-4567abcdef';
+    $result = redact($with_phone, level => 'api_permissive');
     like($result, qr/\[REDACTED\]/, 
-        'Token containing phone-like digits is partially redacted (PII protection)');
+        'Token containing formatted phone number IS redacted');
     
     # At 'off' level, nothing should be redacted
     is(redact($token_with_digits, level => 'off'), $token_with_digits,

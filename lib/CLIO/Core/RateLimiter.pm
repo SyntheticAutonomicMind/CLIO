@@ -27,7 +27,7 @@ Supports:
     my $limiter = CLIO::Core::RateLimiter->new();
     
     # Acquire a slot before making a request
-    $limiter->acquire($provider);
+    $limiter->acquire($provider, $model);   # $model optional, enables model-specific limits
     
     # Release when request completes
     $limiter->release($provider);
@@ -123,14 +123,24 @@ Get the configured max concurrent requests for a provider.
 
 Arguments:
 - $provider: Provider name (e.g., 'github', 'openai')
+- $model: Optional model name for model-specific limits (e.g., 'deepseek-v4-pro' -> 500)
 
 Returns: Max concurrent requests (default: 2)
+
+Model-specific limits take precedence over provider-level limits. Some
+providers (notably DeepSeek) enforce concurrency limits that vary by
+model, not by provider.
 
 =cut
 
 sub get_max_concurrent {
-    my ($self, $provider) = @_;
+    my ($self, $provider, $model) = @_;
     $provider = lc($provider);
+
+    # Model-specific limit takes precedence over provider-level limit
+    if ($model && exists $self->{model_concurrency}{$provider}{$model}) {
+        return $self->{model_concurrency}{$provider}{$model};
+    }
     return $self->{max_concurrent}{$provider} // DEFAULT_MAX_CONCURRENT;
 }
 
@@ -151,29 +161,52 @@ sub set_max_concurrent {
     log_debug('RateLimiter', "Set $provider max_concurrent=$max");
 }
 
+=head2 set_model_concurrency
+
+Set max concurrent requests for a specific provider+model combination.
+Used when a provider enforces model-specific limits (e.g. DeepSeek's
+500-concurrent cap for v4-pro vs 2500 for v4-flash).
+
+Arguments:
+- $provider: Provider name (e.g., 'deepseek')
+- $model: Model name (e.g., 'deepseek-v4-pro')
+- $max: Maximum concurrent requests
+
+=cut
+
+sub set_model_concurrency {
+    my ($self, $provider, $model, $max) = @_;
+    $provider = lc($provider);
+    $self->{model_concurrency}{$provider} //= {};
+    $self->{model_concurrency}{$provider}{$model} = $max;
+    log_debug('RateLimiter', "Set $provider/$model max_concurrent=$max");
+}
+
 =head2 acquire
 
 Attempt to acquire a slot for a request. Returns immediately if slot
-available, or returns 0 if at concurrency limit.
+available, or returns 0 if at concurrency limit. Model-specific limits
+(set via set_model_concurrency) take precedence over provider limits.
 
 Arguments:
 - $provider: Provider name
+- $model: Optional model name for model-specific concurrency caps
 
 Returns: 1 if acquired, 0 if at limit (caller should wait)
 
 =cut
 
 sub acquire {
-    my ($self, $provider) = @_;
+    my ($self, $provider, $model) = @_;
     $provider = lc($provider);
     my $current = $self->{active_requests}{$provider} // 0;
-    my $max = $self->get_max_concurrent($provider);
-    
+    my $max = $self->get_max_concurrent($provider, $model);
+
     if ($current >= $max) {
         log_debug('RateLimiter', "Provider $provider at concurrency limit ($current/$max)");
         return 0;
     }
-    
+
     $self->{active_requests}{$provider} = $current + 1;
     log_debug('RateLimiter', "Acquired slot for $provider ($current -> " . ($current + 1) . "/$max)");
     return 1;

@@ -361,7 +361,7 @@ my $src = do {
 my $helper_count = () = $src =~ /sub _search_(?:serpapi|brave|duckduckgo_direct)/g;
 is($helper_count, 3, 'web: 3 search helpers exist');
 
-my $clean_count = () = $src =~ /error\s*=>\s*\$self->_clean_eval_error\(\$@\)/g;
+my $clean_count = () = $src =~ /error_result\(\s*\$self->_clean_eval_error\(\$@\)/g;
 is($clean_count, 3, 'web: all 3 search helpers use _clean_eval_error() on $@');
 
 my $raw_count = () = $src =~ /error\s*=>\s*\$@/g;
