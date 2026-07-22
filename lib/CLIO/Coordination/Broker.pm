@@ -92,17 +92,30 @@ sub new {
             last_request_time => 0,
             in_flight => 0,  # Current number of requests in progress
             queue => [],     # Waiting requests: [{agent_id, request_id, queued_at}]
-            
+
             # Rate limit state from response headers
             remaining => undef,    # x-ratelimit-remaining
             reset_at => undef,     # x-ratelimit-reset (unix timestamp)
             retry_after => undef,  # retry-after header value
             retry_until => 0,      # Don't send requests until this time
-            
+
             # Quota tracking
             quota_used => undef,   # x-github-total-quota-used percentage
             quota_timestamp => 0,
             target_quota => 80,    # Start throttling above this %
+
+            # ITPM tracking (input tokens per minute) for Anthropic-style
+            # token buckets. Aggregated across all connected agents so a
+            # parent + N sub-agents cannot collectively blow ITPM while
+            # each thinks it has its own budget.
+            #
+            # token_windows:   model => [{t, tokens}, ...]  (last 60s sliding)
+            # token_limits:    model => learned_limit       (lower-only)
+            # token_snapshots: model => { input_tokens: {limit, remaining,
+            #                                            reset_in, observed_at}, ... }
+            token_windows   => {},
+            token_limits    => {},
+            token_snapshots => {},
         },
         
         # Authorization relay: pending requests from child agents awaiting user response
@@ -357,6 +370,12 @@ sub handle_message {
     }
     elsif ($type eq 'get_rate_limit_status') {
         $self->handle_get_rate_limit_status($fd);
+    }
+    elsif ($type eq 'report_api_tokens') {
+        # Sub-agent reports actual input-token usage from a completed
+        # response. Aggregated into the per-model sliding window so the
+        # next slot request from any agent can be checked against ITPM.
+        $self->handle_report_api_tokens($fd, $msg);
     }
     elsif ($type eq 'status_update') {
         $self->handle_status_update($fd, $msg);
@@ -896,22 +915,31 @@ sub send_error {
 
 sub handle_request_api_slot {
     my ($self, $fd, $msg) = @_;
-    
+
     my $agent_id = $msg->{agent_id} || 'unknown';
     my $request_id = $msg->{request_id} || int(rand(1000000));
     my $rl = $self->{api_rate_limit};
     my $now = time();
-    
-    # Calculate required delay
-    my $delay = $self->_calculate_api_delay();
-    
+
+    # RPM-style delay (min delay between requests, x-ratelimit-remaining).
+    my $rpm_delay = $self->_calculate_api_delay();
+
+    # ITPM delay (per-model aggregate across all connected agents).
+    # Only computed if the caller provided a model - sub-agents always
+    # do; legacy clients that don't are still gated on RPM.
+    my $model         = $msg->{model};
+    my $pending       = $msg->{pending_tokens};
+    my $token_delay   = $model ? $self->_calculate_api_token_delay($model, $pending) : 0;
+    my $delay         = $rpm_delay > $token_delay ? $rpm_delay : $token_delay;
+    my $wait_reason   = $rpm_delay > $token_delay ? 'rate_limit' : 'token_rate';
+
     # Check if we can grant immediately
     if ($rl->{in_flight} < $rl->{max_parallel} && $delay <= 0) {
         $rl->{in_flight}++;
         $rl->{last_request_time} = $now;
-        
+
         $self->log_debug("API slot granted immediately to $agent_id (in_flight: $rl->{in_flight})");
-        
+
         $self->send_message($fd, {
             type => 'api_slot_granted',
             request_id => $request_id,
@@ -919,52 +947,52 @@ sub handle_request_api_slot {
         });
         return;
     }
-    
+
     # Need to wait - calculate total delay
     my $wait_for_slot = 0;
     if ($rl->{in_flight} >= $rl->{max_parallel}) {
         # Estimate when a slot will free up (average request takes ~2-5 seconds)
         $wait_for_slot = 0.5;  # Small delay, will re-check
     }
-    
+
     my $total_delay = $delay > 0 ? $delay : $wait_for_slot;
     $total_delay = 0.1 if $total_delay < 0.1;  # Minimum 100ms
-    
-    $self->log_debug("API slot delayed for $agent_id: ${total_delay}s (in_flight: $rl->{in_flight}, delay: $delay)");
-    
+
+    $self->log_debug("API slot delayed for $agent_id: ${total_delay}s (in_flight: $rl->{in_flight}, rpm=$rpm_delay, token=$token_delay)");
+
     $self->send_message($fd, {
         type => 'api_slot_wait',
         request_id => $request_id,
         delay => $total_delay,
         in_flight => $rl->{in_flight},
-        reason => $delay > 0 ? 'rate_limit' : 'max_parallel',
+        reason => $wait_reason,
     });
 }
 
 sub handle_release_api_slot {
     my ($self, $fd, $msg) = @_;
-    
+
     my $agent_id = $msg->{agent_id} || 'unknown';
     my $request_id = $msg->{request_id} || 0;
     my $rl = $self->{api_rate_limit};
-    
+
     # Decrement in-flight counter
     $rl->{in_flight}-- if $rl->{in_flight} > 0;
-    
+
     # Update rate limit state from response headers if provided
     if ($msg->{headers}) {
         my $h = $msg->{headers};
-        
+
         # Parse x-ratelimit-remaining
         if (defined $h->{'x-ratelimit-remaining'}) {
             $rl->{remaining} = int($h->{'x-ratelimit-remaining'});
         }
-        
+
         # Parse x-ratelimit-reset (Unix timestamp)
         if (defined $h->{'x-ratelimit-reset'}) {
             $rl->{reset_at} = int($h->{'x-ratelimit-reset'});
         }
-        
+
         # Parse retry-after header
         if (defined $h->{'retry-after'}) {
             my $retry = $h->{'retry-after'};
@@ -974,18 +1002,28 @@ sub handle_release_api_slot {
                 $rl->{retry_after} = $retry;
             }
         }
-        
+
         # Parse quota used percentage
         if (defined $h->{'x-github-total-quota-used'}) {
             $rl->{quota_used} = $h->{'x-github-total-quota-used'};
             $rl->{quota_timestamp} = time();
         }
-        
-        $self->log_debug("Updated rate limit state: remaining=" . ($rl->{remaining} // 'N/A') . 
-                        ", reset=" . ($rl->{reset_at} // 'N/A') . 
+
+        $self->log_debug("Updated rate limit state: remaining=" . ($rl->{remaining} // 'N/A') .
+                        ", reset=" . ($rl->{reset_at} // 'N/A') .
                         ", quota=" . ($rl->{quota_used} // 'N/A') . "%");
     }
-    
+
+    # Forward Anthropic ITPM/OTPM/RPM headers (the rate_limit_info
+    # sub-hash that APIManager builds via ResponseHandler.process_rate_limit_headers)
+    # so the broker's per-model token snapshot stays in sync with what
+    # each agent sees on its own responses. Done OUTSIDE the headers
+    # block above because Anthropic-compatible headers travel on a
+    # separate field (the agent's response_handler parsed them already).
+    if ($msg->{model} && ref($msg->{anthropic_rate_limit_info}) eq 'HASH') {
+        $self->_apply_api_token_headers($msg->{model}, $msg->{anthropic_rate_limit_info});
+    }
+
     # Handle error responses
     if ($msg->{status} && $msg->{status} == 429) {
         # Rate limited - set retry_until from retry-after or default 60s
@@ -993,9 +1031,9 @@ sub handle_release_api_slot {
         $rl->{retry_until} = time() + $retry_delay;
         $self->log_info("Rate limit hit by $agent_id, blocking requests for ${retry_delay}s");
     }
-    
+
     $self->log_debug("API slot released by $agent_id (in_flight: $rl->{in_flight})");
-    
+
     $self->send_message($fd, {
         type => 'ack',
         success => 1,
@@ -1004,10 +1042,10 @@ sub handle_release_api_slot {
 
 sub handle_get_rate_limit_status {
     my ($self, $fd) = @_;
-    
+
     my $rl = $self->{api_rate_limit};
     my $now = time();
-    
+
     $self->send_message($fd, {
         type => 'rate_limit_status',
         in_flight => $rl->{in_flight},
@@ -1018,6 +1056,76 @@ sub handle_get_rate_limit_status {
         quota_used => $rl->{quota_used},
         can_request => ($rl->{in_flight} < $rl->{max_parallel} && $now >= $rl->{retry_until}),
     });
+}
+
+# Aggregate reported ITPM-relevant tokens from a completed request into
+# the broker's per-model sliding window. Sums input_tokens and
+# cache_creation_input_tokens (Anthropic's uncached-input bucket) and
+# ignores cache reads (which do not count toward ITPM).
+sub handle_report_api_tokens {
+    my ($self, $fd, $msg) = @_;
+
+    my $model = $msg->{model};
+    return unless $model;
+
+    # ITPM-relevant: non-cached input + cache creation. Cache reads do
+    # not count toward Anthropic's uncached ITPM bucket.
+    my $tokens = ($msg->{input_tokens}                // 0)
+               + ($msg->{cache_creation_input_tokens} // 0);
+    return if $tokens <= 0;
+
+    my $rl = $self->{api_rate_limit};
+    my $window = $rl->{token_windows}{$model} //= [];
+    my $now    = time();
+    @$window   = grep { $_->{t} > $now - 60 } @$window;
+    push @$window, { t => $now, tokens => int($tokens) };
+
+    $self->send_message($fd, { type => 'ack', success => 1 });
+}
+
+# Update per-model Anthropic ITPM/OTPM/RPM snapshot from response headers
+# reported by an agent releasing its API slot. Same header shapes as
+# APIManager._apply_anthropic_rate_limit_headers, so we mirror its
+# storage layout and let _calculate_api_token_delay read it back.
+sub _apply_api_token_headers {
+    my ($self, $model, $info) = @_;
+    return unless ref($info) eq 'HASH' && $model;
+
+    require CLIO::Util::RateLimit;
+
+    my $rl = $self->{api_rate_limit};
+    my $snapshot = $rl->{token_snapshots}{$model} = {};
+    my $any;
+    my $now = time();
+
+    for my $bucket (qw(requests tokens input_tokens output_tokens)) {
+        my $limit_key = "anthropic_${bucket}_limit";
+        my $rem_key   = "anthropic_${bucket}_remaining";
+        my $reset_key = "anthropic_${bucket}_reset";
+        next unless defined $info->{$limit_key} && defined $info->{$rem_key};
+        my $limit     = 0 + ($info->{$limit_key} // 0);
+        my $remaining = 0 + ($info->{$rem_key}   // 0);
+        my $reset_in  = CLIO::Util::RateLimit::parse_anthropic_reset_timestamp($info->{$reset_key});
+        $snapshot->{$bucket} = {
+            limit       => $limit,
+            remaining   => $remaining,
+            reset_in    => $reset_in,
+            observed_at => $now,
+        };
+        $any++;
+    }
+
+    # Seed the lower-only learned limit from the API-reported ITPM cap so
+    # future requests have a fallback ceiling if the snapshot goes stale.
+    if ($snapshot->{input_tokens} && $snapshot->{input_tokens}{limit} > 0) {
+        my $existing = $rl->{token_limits}{$model};
+        my $reported = int($snapshot->{input_tokens}{limit});
+        if (!defined $existing || $reported < $existing) {
+            $rl->{token_limits}{$model} = $reported;
+        }
+    }
+
+    delete $rl->{token_snapshots}{$model} unless $any;
 }
 
 # Status update from sub-agent - stores for primary to poll
@@ -1230,6 +1338,93 @@ sub _calculate_api_delay {
     }
     
     return $delay;
+}
+
+# Compute the ITPM-aware delay for a slot request. Mirrors the two-layer
+# design from APIManager._model_input_token_throttle_check but with
+# broker-wide visibility: every connected agent's reported usage is
+# already in token_windows, so $used is the aggregate consumption.
+#
+# Layer 1: API-reported snapshot (from anthropic-ratelimit-input-tokens-*
+# headers forwarded by any agent). Most precise when fresh (<= 90s old).
+# Layer 2: lower-only learned ITPM ceiling. Fallback when snapshot is
+# missing or stale.
+#
+# The returned delay is the maximum of the two layers, in seconds.
+sub _calculate_api_token_delay {
+    my ($self, $model, $pending_tokens) = @_;
+    return 0 unless $model;
+
+    $pending_tokens //= 0;
+    my $rl = $self->{api_rate_limit};
+    my $window = $rl->{token_windows}{$model} //= [];
+    my $now    = time();
+    @$window   = grep { $_->{t} > $now - 60 } @$window;
+    my $used   = 0;
+    $used += $_->{tokens} for @$window;
+
+    # Layer 1: API-reported snapshot.
+    my $snap = $rl->{token_snapshots}{$model};
+    my $snap_delay;
+    if ($snap && $snap->{input_tokens} && $snap->{input_tokens}{limit} > 0) {
+        my $itpm = $snap->{input_tokens};
+        if (($now - ($itpm->{observed_at} // 0)) <= 90) {
+            my $would = $used + $pending_tokens;
+            my $ratio = $would / $itpm->{limit};
+            if ($ratio >= 1.0) {
+                # Same elapsed-time adjustment as APIManager: the
+                # header's reset_in is computed at observed_at.
+                my $elapsed = $now - ($itpm->{observed_at} // $now);
+                my $effective_reset = ($itpm->{reset_in} // 0) - $elapsed;
+                $effective_reset = 0 if $effective_reset < 0;
+                $snap_delay = $effective_reset > 0 ? ($effective_reset + 1) : 0.5;
+            }
+            elsif ($ratio >= 0.7) {
+                my $gap = $would - 0.7 * $itpm->{limit};
+                my $elapsed = $now - ($itpm->{observed_at} // $now);
+                my $reset_in = ($itpm->{reset_in} // 60) - $elapsed;
+                $reset_in = 0 if $reset_in < 0;
+                my $refill_per_sec = $itpm->{limit} / 60;
+                my $delay = ($gap > 0 && $refill_per_sec > 0)
+                    ? ($gap / $refill_per_sec)
+                    : 0;
+                $delay = 0.5 if $delay > 0 && $delay < 0.5;
+                $delay = $reset_in if $delay > $reset_in;
+                $delay = 10    if $delay > 10;
+                $snap_delay = $delay;
+            }
+        }
+    }
+
+    # Layer 2: learned ITPM ceiling.
+    my $learned_delay;
+    my $limit = $rl->{token_limits}{$model};
+    if (defined $limit && $limit > 0) {
+        my $would = $used + $pending_tokens;
+        my $pct = $would / $limit;
+        if ($pct >= 1.0) {
+            my $oldest = $window->[0]{t} // $now;
+            my $window_remaining = 60 - ($now - $oldest);
+            $learned_delay = ($window_remaining > 0) ? ($window_remaining + 1) : 2;
+        }
+        elsif ($pct >= 0.7) {
+            my $oldest = $window->[0]{t} // $now;
+            my $window_remaining = 60 - ($now - $oldest);
+            my $gap = $would - 0.7 * $limit;
+            my $refill_per_sec = $limit / 60;
+            my $delay = ($gap > 0 && $refill_per_sec > 0)
+                ? ($gap / $refill_per_sec)
+                : 0;
+            $delay = 0.5 if $delay > 0 && $delay < 0.5;
+            $delay = $window_remaining + 1 if $delay > $window_remaining + 1;
+            $learned_delay = $delay;
+        }
+    }
+
+    return $snap_delay    if defined $snap_delay    && defined $learned_delay && $snap_delay >= $learned_delay;
+    return $learned_delay if defined $learned_delay;
+    return $snap_delay    if defined $snap_delay;
+    return 0;
 }
 
 sub log_info {

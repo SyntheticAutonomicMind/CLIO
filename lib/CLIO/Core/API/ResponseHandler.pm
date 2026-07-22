@@ -145,6 +145,19 @@ sub set_broker_request_id {
     $self->{_current_broker_request_id} = $id;
 }
 
+=head2 set_last_request_model
+
+Set the current request's resolved model identifier. Used by
+release_broker_slot so the broker can refresh its per-model
+Anthropic ITPM/OTPM/RPM snapshot from the response headers.
+
+=cut
+
+sub set_last_request_model {
+    my ($self, $model) = @_;
+    $self->{_last_request_model} = $model;
+}
+
 =head2 _get_rate_limit_user_message
 
 Generate a user-friendly message for rate limit errors based on error codes.
@@ -1834,14 +1847,27 @@ sub release_broker_slot {
     }
 
     my $request_id = $self->{_current_broker_request_id};
-   eval {
-       local $SIG{PIPE} = 'IGNORE';
-       $self->{broker_client}->release_api_slot(
-           request_id => $request_id,
-           status     => $status,
-           headers    => \%headers,
-       );
-        log_debug('ResponseHandler', "Released broker slot (request_id=$request_id, status=$status)");
+    my $model      = $self->{_last_request_model};
+    my $anthropic_rl_info;
+    if ($resp && $resp->can('headers')) {
+        my $rl = $self->process_rate_limit_headers($resp->headers);
+        if (ref($rl) eq 'HASH' && ref($rl->{rate_limit_info}) eq 'HASH') {
+            $anthropic_rl_info = $rl->{rate_limit_info};
+        }
+    }
+
+    eval {
+        local $SIG{PIPE} = 'IGNORE';
+        $self->{broker_client}->release_api_slot(
+            request_id                => $request_id,
+            status                    => $status,
+            headers                   => \%headers,
+            model                     => $model,
+            ($anthropic_rl_info
+                ? (anthropic_rate_limit_info => $anthropic_rl_info)
+                : ()),
+        );
+        log_debug('ResponseHandler', "Released broker slot (request_id=$request_id, status=$status, model=" . ($model // '?') . ")");
     };
     if ($@) {
         log_warning('ResponseHandler', "Failed to release broker slot: $@");

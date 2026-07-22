@@ -428,13 +428,20 @@ sub parse_stream_event {
     
     # Handle different event types
     if ($event_type eq 'message_start') {
-        # Extract usage from message_start
+        # Extract usage from message_start. Anthropic's ITPM bucket counts
+        # (input_tokens + cache_creation_input_tokens); cache reads do NOT
+        # count. Expose cache_creation_input_tokens so APIManager can
+        # include it in the per-model ITPM sliding window. Without this,
+        # the first request of a session (or any request after cache TTL
+        # expiry) under-counts its real ITPM consumption by the size of
+        # the cached prefix (system prompt + tools, often 30-80K tokens).
         my $usage = $data->{message}{usage};
         if ($usage) {
             return {
                 type => 'usage',
-                input_tokens => $usage->{input_tokens} // 0,
-                output_tokens => $usage->{output_tokens} // 0,
+                input_tokens                => $usage->{input_tokens} // 0,
+                output_tokens               => $usage->{output_tokens} // 0,
+                cache_creation_input_tokens => $usage->{cache_creation_input_tokens} // 0,
             };
         }
         return undef;

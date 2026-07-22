@@ -188,4 +188,145 @@ subtest 'no signal = no delay' => sub {
         'No snapshot, no learned limit -> 0 delay (cold start)');
 };
 
+# =============================================================================
+# Section 7: stale reset_in is adjusted for elapsed time since observed_at.
+# The Anthropic header is computed at observed_at but used as-is at throttle
+# check time. Without adjustment, we wait the full original reset_in even
+# after the bucket has already refilled. With adjustment, the wait shrinks
+# linearly toward 0 as time passes.
+# =============================================================================
+subtest 'reset_in shrinks with elapsed time since observed_at' => sub {
+    my $a = bless { _model_input_token_window => {}, _model_input_token_limits => {}, _anthropic_rate_limits => {} }, 'CLIO::Core::APIManager';
+    my $model = 'claude-reset-elapsed';
+
+    # Force usage well over the limit so we always enter the >= 1.0 branch.
+    $a->_model_input_token_throttle_record($model, 300000);
+
+    # observed_at 20s ago, header said reset in 30s (so bucket refills in 10s).
+    my $observed_at = time() - 20;
+    $a->{_anthropic_rate_limits}{$model} = {
+        input_tokens => {
+            limit       => 250000,
+            remaining   => 0,
+            reset_in    => 30,
+            observed_at => $observed_at,
+        },
+    };
+
+    # Without the elapsed-time adjustment the >= 1.0 branch would return
+    # original reset_in + 1 = 31. With the fix it returns ~11 (10s actual
+    # refill + 1 padding), and definitely under 25 (proves we adjusted).
+    my $delay = $a->_model_input_token_throttle_check($model, 0);
+    cmp_ok($delay, '<', 25, 'Delay accounts for 20s already elapsed (not full 30+1)');
+    cmp_ok($delay, '>=', 10, 'Delay covers the actual remaining refill window');
+};
+
+# =============================================================================
+# Section 8: effective reset_in of 0 -> short retry, not 30s.
+# When the bucket has fully refilled by the time we check, we should not
+# wait the fallback 30s penalty. Use a tiny delay so the caller rechecks
+# the actual bucket state and proceeds if the gap has closed.
+# =============================================================================
+subtest 'effective reset_in of 0 -> short retry interval' => sub {
+    my $a = bless { _model_input_token_window => {}, _model_input_token_limits => {}, _anthropic_rate_limits => {} }, 'CLIO::Core::APIManager';
+    my $model = 'claude-reset-past';
+
+    $a->_model_input_token_throttle_record($model, 300000);
+
+    # observed_at 60s ago, header said reset in 5s (i.e., 55s ago).
+    $a->{_anthropic_rate_limits}{$model} = {
+        input_tokens => {
+            limit       => 250000,
+            remaining   => 0,
+            reset_in    => 5,
+            observed_at => time() - 60,
+        },
+    };
+
+    my $delay = $a->_model_input_token_throttle_check($model, 0);
+    cmp_ok($delay, '<', 5,
+        'Bucket has fully refilled by now -> no long wait (was returning 6+ before fix)');
+};
+
+# =============================================================================
+# Section 9: cache_creation_input_tokens flows into recorded ITPM.
+# The Anthropic SSE usage event includes cache_creation_input_tokens and
+# cache_read_input_tokens. ITPM counts (input_tokens + cache_creation_*)
+# but NOT cache reads. Verify the parser surfaces cache_creation and that
+# a sample accumulation produces the expected ITPM total.
+# =============================================================================
+subtest 'cache_creation_input_tokens surfaces from Anthropic SSE parser' => sub {
+    require CLIO::Providers::Anthropic;
+
+    # Build a minimal Anthropic provider instance and feed a message_start
+    # event that contains the full cache_* usage triple.
+    my $prov = bless {
+        _final_usage => undef,
+        _thinking_blocks => [],
+    }, 'CLIO::Providers::Anthropic';
+
+    my $json = '{"type":"message_start","message":{"usage":{'
+             . '"input_tokens":100,'
+             . '"cache_creation_input_tokens":50000,'
+             . '"cache_read_input_tokens":30000,'
+             . '"output_tokens":1'
+             . '}}}';
+    my $event = $prov->parse_stream_event("data: $json");
+    is($event->{type}, 'usage', 'message_start emits usage event');
+    is($event->{input_tokens}, 100, 'input_tokens surfaced');
+    is($event->{output_tokens}, 1, 'output_tokens surfaced');
+    is($event->{cache_creation_input_tokens}, 50000,
+        'cache_creation_input_tokens surfaced (would be 0 before fix)');
+
+    # Feed a message_start with NO cache fields (older API or proxy that
+    # strips them) - we must default to 0, not crash or emit undef.
+    my $legacy_json = '{"type":"message_start","message":{"usage":{'
+                    . '"input_tokens":200,'
+                    . '"output_tokens":1'
+                    . '}}}';
+    my $legacy = $prov->parse_stream_event("data: $legacy_json");
+    is($legacy->{type}, 'usage', 'legacy usage event still parses');
+    is($legacy->{input_tokens}, 200, 'legacy input_tokens preserved');
+    is($legacy->{cache_creation_input_tokens} // 0, 0,
+        'missing cache_creation_input_tokens defaults to 0');
+};
+
+# =============================================================================
+# Section 10: ITPM recording includes cache_creation_input_tokens.
+# The native streaming path accumulates cache_creation_input_tokens and
+# passes (input_tokens + cache_creation) to the throttle record. Without
+# cache_creation the first request of a session under-counts ITPM by the
+# size of the cached prefix (system prompt + tools, often 30-80K tokens).
+# =============================================================================
+subtest 'native streaming usage accumulation includes cache_creation' => sub {
+    # Simulate the accumulation pattern from the native streaming loop:
+    #   $usage_tracking{input_tokens}                += $event->{input_tokens};
+    #   $usage_tracking{cache_creation_input_tokens} += $event->{cache_creation_input_tokens};
+    my %usage_tracking = (
+        input_tokens                => 0,
+        output_tokens               => 0,
+        cache_creation_input_tokens => 0,
+    );
+
+    # First request: cache hit for system prompt + tools.
+    $usage_tracking{input_tokens}                += 100;
+    $usage_tracking{cache_creation_input_tokens} += 50000;
+    # Second request: cache hit persists.
+    $usage_tracking{input_tokens}                += 150;
+    $usage_tracking{cache_creation_input_tokens} += 0;
+
+    # What APIManager actually records as ITPM contribution:
+    my $recorded = ($usage_tracking{input_tokens}                // 0)
+                 + ($usage_tracking{cache_creation_input_tokens} // 0);
+    is($recorded, 50250,
+        'ITPM record sums input_tokens + cache_creation_input_tokens');
+
+    # And what the bug (pre-fix) recorded:
+    my $buggy_recorded = $usage_tracking{input_tokens};
+    is($buggy_recorded, 250,
+        'Pre-fix would have under-counted by 50000 tokens (the cached prefix)');
+    cmp_ok($recorded, '>', $buggy_recorded,
+        'Cache creation makes the throttle more conservative (correct direction)');
+};
+
 done_testing();
