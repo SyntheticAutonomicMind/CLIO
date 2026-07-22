@@ -239,7 +239,7 @@ If you see an error message you can't interpret, check `/tmp/clio_api_400.log` f
 
 ## 2. Tools
 
-Tools are CLIO's hands and eyes. They let the AI interact with your filesystem, terminal, version control, and more. CLIO has 11 core tools (plus dynamic MCP and plugin bridges) with over 80 operations between them.
+Tools are CLIO's hands and eyes. They let the AI interact with your filesystem, terminal, version control, and more. CLIO has a comprehensive toolset covering file operations, version control, terminal execution, memory, web search, code intelligence, and more - plus dynamic MCP and plugin bridges that extend capabilities further.
 
 ### File Operations
 
