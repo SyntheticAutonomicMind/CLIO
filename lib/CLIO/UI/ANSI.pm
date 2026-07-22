@@ -243,37 +243,69 @@ Supports:
 
 sub parse {
     my ($self, $text) = @_;
-    
+
     return '' unless defined $text;
-    
+
+    # Use pre-compiled regexes (built once per instance in _regex_cache).
+    my $r = $self->_regex_cache();
+
     # If ANSI is disabled (--no-color), strip extended codes, resolve box-drawing to chars
     unless ($self->{enabled}) {
-        $text =~ s/\@\[[^\]]*\]\@?//g;         # Strip @[hex]@ and @[hex] codes
-        $text =~ s/\@(?:BG)?256:\d+\@//g;      # Strip @256:N@ codes
+        $text =~ s/$r->{strip_hex}//g;
+        $text =~ s/$r->{strip_256}//g;
         # Box-drawing codes still resolve to characters (they're not color)
-        $text =~ s/\@(D?BOX(?:HORIZ|VERT|TOPLEFT|TOPRIGHT|BOTLEFT|BOTRIGHT|TDOWN|TUP|TLEFT|TRIGHT|CROSS))\@/_boxcode_to_char($1)/ge;
-        $text =~ s/\@[A-Z_]+\@//g;             # Strip standard @-codes
+        $text =~ s/$r->{box}/_boxcode_to_char($1)/ge;
+        $text =~ s/$r->{strip_standard}//g;
         return $text;
     }
-    
+
     my $codes = $self->codes();
-    
+
     # 1. TrueColor hex: @[RRGGBB]@ or @[RRGGBB] foreground, @[BG:RRGGBB]@ or @[BG:RRGGBB] background
     #    Both with and without trailing @ are supported (PhotonBBS compat)
-    $text =~ s/\@\[([0-9A-Fa-f]{6})\]\@?/_hex_to_ansi($1, 0)/ge;
-    $text =~ s/\@\[BG:([0-9A-Fa-f]{6})\]\@?/_hex_to_ansi($1, 1)/ge;
-    
+    $text =~ s/$r->{hex_fg}/_hex_to_ansi($1, 0)/ge;
+    $text =~ s/$r->{hex_bg}/_hex_to_ansi($1, 1)/ge;
+
     # 2. 256-color: @256:NNN@ foreground, @BG256:NNN@ background
-    $text =~ s/\@256:(\d{1,3})\@/_256_to_ansi($1, 0)/ge;
-    $text =~ s/\@BG256:(\d{1,3})\@/_256_to_ansi($1, 1)/ge;
-    
+    $text =~ s/$r->{color_256_fg}/_256_to_ansi($1, 0)/ge;
+    $text =~ s/$r->{color_256_bg}/_256_to_ansi($1, 1)/ge;
+
     # 3. Box-drawing @-codes: @BOXHORIZ@, @BOXVERT@, @DBOXHORIZ@, etc.
-    $text =~ s/\@(D?BOX(?:HORIZ|VERT|TOPLEFT|TOPRIGHT|BOTLEFT|BOTRIGHT|TDOWN|TUP|TLEFT|TRIGHT|CROSS))\@/_boxcode_to_char($1)/ge;
-    
+    $text =~ s/$r->{box}/_boxcode_to_char($1)/ge;
+
     # 4. Standard @CODE@ with ANSI escape sequence
-    $text =~ s/\@([A-Z_]+)\@/exists $codes->{$1} ? $codes->{$1} : ''/ge;
-    
+    $text =~ s/$r->{standard}/exists $codes->{$1} ? $codes->{$1} : ''/ge;
+
     return $text;
+}
+
+=head2 _regex_cache
+
+Pre-compile the @-code substitution regexes once per instance. The seven
+patterns below used to be re-compiled on every parse() call. Compiling
+qr// objects upfront eliminates that overhead on the hot path.
+
+Returns a hashref of compiled regexes.
+
+=cut
+
+sub _regex_cache {
+    my ($self) = @_;
+    unless ($self->{_regex_cache}) {
+        $self->{_regex_cache} = {
+            hex_fg         => qr/\@\[([0-9A-Fa-f]{6})\]\@?/,
+            hex_bg         => qr/\@\[BG:([0-9A-Fa-f]{6})\]\@?/,
+            color_256_fg   => qr/\@256:(\d{1,3})\@/,
+            color_256_bg   => qr/\@BG256:(\d{1,3})\@/,
+            box            => qr/\@(D?BOX(?:HORIZ|VERT|TOPLEFT|TOPRIGHT|BOTLEFT|BOTRIGHT|TDOWN|TUP|TLEFT|TRIGHT|CROSS))\@/,
+            standard       => qr/\@([A-Z_]+)\@/,
+            # Disabled-mode strip patterns
+            strip_hex      => qr/\@\[[^\]]*\]\@?/,
+            strip_256      => qr/\@(?:BG)?256:\d+\@/,
+            strip_standard => qr/\@[A-Z_]+\@/,
+        };
+    }
+    return $self->{_regex_cache};
 }
 
 =head2 strip
