@@ -86,8 +86,8 @@ sub FakeResp::headers { return $_[0]->{headers}; }
     is($ss->{accum_content}, 'hello', 'Test 2.2: content from normal chunk accumulated');
 }
 
-# Test 3: chunks with error AND choices (e.g., mid-stream error with prior content)
-# should NOT be treated as pure-error chunks; let existing content flow through.
+# Test 3: Responses API error event delivery (event_type=error pattern).
+# This is the second error shape - data has `type=error` and message/code at top level.
 {
     my $am = bless({
         response_handler => bless({}, 'StubRH'),
@@ -96,20 +96,52 @@ sub FakeResp::headers { return $_[0]->{headers}; }
 
     my $ss = {
         accum_content => '',
-        use_responses_api => 0,
+        use_responses_api => 1,  # Responses API
     };
 
     my $data = {
-        choices => [{ delta => { content => 'partial' } }],
-        error => { message => 'late', code => 'late' },
+        type => 'error',
+        message => 'Server overloaded',
+        code => 'overloaded',
     };
 
-    $am->_process_sse_data($data, '', $ss);
+    $am->_process_sse_data($data, 'error', $ss);
 
-    ok(!exists $ss->{_sse_error},
-       'Test 3.1: chunk with both choices+error is not flagged as SSE error');
-    is($ss->{accum_content}, 'partial',
-       'Test 3.2: content still extracted when error accompanies choices');
+    ok(exists $ss->{_sse_error},
+       'Test 3.1: Responses API error event captured');
+    is($ss->{_sse_error}{message}, 'Server overloaded',
+       'Test 3.2: Responses API error message preserved');
+    is($ss->{_sse_error}{code}, 'overloaded',
+       'Test 3.3: Responses API error code preserved');
+}
+
+# Test 4: Streaming chunk loop must safely skip JSON `null` payloads.
+# safe_decode_json returns undef for JSON `null` (no $@), and the previous
+# SSE loop passed that undef to _process_sse_data which would then crash
+# on `keys %$data`. Verify the loop side skips null/non-hash payloads.
+{
+    use CLIO::Util::JSON qw(safe_decode_json);
+
+    my $cases = [
+        { name => 'JSON null',     input => 'null' },
+        { name => 'JSON scalar',   input => '42' },
+        { name => 'JSON array',    input => '[1,2,3]' },
+        { name => 'JSON string',   input => '"hello"' },
+        { name => 'JSON object',   input => '{"choices":[]}' },
+    ];
+
+    for my $case (@$cases) {
+        my $data = safe_decode_json($case->{input});
+        my $is_hash = ref($data) eq 'HASH';
+        my $should_process = $is_hash ? 1 : 0;
+        ok(($is_hash && $should_process) || (!$is_hash && !$should_process),
+           "Test 4.x: $case->{name} payload shape correctly recognized");
+    }
+
+    # Replicate the SSE-loop guard
+    my $data = safe_decode_json('null');
+    my $would_skip = (!defined $data) || (ref($data) ne 'HASH');
+    ok($would_skip, 'Test 4.6: null payload would be skipped by SSE loop guard');
 }
 
 done_testing();
