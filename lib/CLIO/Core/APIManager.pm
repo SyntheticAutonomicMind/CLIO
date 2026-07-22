@@ -3407,6 +3407,10 @@ sub send_request_streaming {
                         log_warning('APIManager', "Failed to parse SSE chunk: $@");
                         next;
                     }
+                    # Skip null/non-object payloads (e.g. JSON `null`, scalar) - they
+                    # have no fields to dispatch on and would crash _process_sse_data
+                    # which dereferences $data unconditionally.
+                    next unless ref($data) eq 'HASH';
 
                     $event_type = $data->{type} if !$event_type && $data->{type};
                     $self->_process_sse_data($data, $event_type, $ss);
@@ -3465,16 +3469,24 @@ sub _process_sse_data {
         log_debug('APIManager', "Chunk has id: " . substr($data->{id}, 0, 30) . "...") if $data->{id};
     }
 
-    # Capture SSE error-only chunks (no `choices` field). Providers like NVIDIA NIM
-    # wrap upstream errors in SSE framing even when no model output was produced:
-    #   data: {"error":{"message":"...","code":"..."}}\n\n
-    # Without this, the error is silently swallowed and the workflow exits with
-    # an empty response. Stash the error on streaming state so _finalize_streaming_response
-    # can surface it as a retryable error.
-    if ($data->{error} && !$data->{choices}) {
-        my $err = $data->{error};
-        my $msg = ref($err) eq 'HASH' ? ($err->{message} // $err->{msg} // 'unknown') : ($err // 'unknown');
-        my $code = ref($err) eq 'HASH' ? ($err->{code} // $err->{type} // '') : '';
+    # Capture SSE error-only chunks. Two patterns to handle:
+    #   1. Chat Completions / OpenAI-compat: {"error":{"message":"...","code":"..."}}
+    #      (no `choices` field - NVIDIA NIM hits this when upstream provider fails)
+    #   2. Responses API: {"type":"error","message":"...","code":"..."}
+    #      (delivered as an SSE event with `type: error`)
+    # Both end up with no content or tool_calls produced. Without this, the error
+    # is silently swallowed and the workflow exits with an empty response.
+    # Stash on streaming state so _finalize_streaming_response can surface it as
+    # a retryable error.
+    my $_err_hash;
+    if (ref($data->{error}) eq 'HASH') {
+        $_err_hash = $data->{error};
+    } elsif ($event_type eq 'error' || (defined $data->{type} && $data->{type} eq 'error')) {
+        $_err_hash = $data;
+    }
+    if ($_err_hash) {
+        my $msg = $_err_hash->{message} // $_err_hash->{msg} // 'unknown';
+        my $code = $_err_hash->{code} // $_err_hash->{type} // '';
         log_warning('APIManager', "SSE error chunk: code=$code message=$msg");
         $ss->{_sse_error} = { message => $msg, code => $code };
         return;  # No content/tool_calls to extract from this chunk
