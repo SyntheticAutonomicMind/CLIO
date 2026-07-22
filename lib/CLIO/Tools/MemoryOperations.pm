@@ -329,7 +329,8 @@ sub search {
             # Save LTM if entries were refreshed
             if ($ltm_matches > 0) {
                 eval {
-                    my $ltm_file = File::Spec->catfile(Cwd::getcwd(), '.clio', 'ltm.json');
+                    require CLIO::Util::PathResolver;
+                    my $ltm_file = CLIO::Util::PathResolver::find_ltm_path(_ltm_working_dir($context));
                     $ltm->save($ltm_file) if -e $ltm_file;
                 };
             }
@@ -835,24 +836,34 @@ sub add_pattern {
 
 =head2 _save_ltm
 
-Internal helper to save LTM to disk. Uses session's working_directory if available,
-falls back to current working directory for cross-platform compatibility.
+Internal helper to save LTM to disk. Resolves the canonical LTM path via
+PathResolver::find_ltm_path so the write target always matches the read
+target used at session load time.
 
 =cut
 
 sub _save_ltm {
     my ($self, $ltm, $context) = @_;
-    
-    # Use session's working_directory if available (more reliable than getcwd)
-    my $working_dir;
-    if ($context->{session} && $context->{session}->{state} && $context->{session}->{state}->{working_directory}) {
-        $working_dir = $context->{session}->{state}->{working_directory};
-    } else {
-        $working_dir = Cwd::getcwd();
-    }
-    
-    my $ltm_file = File::Spec->catfile($working_dir, '.clio', 'ltm.json');
+
+    # Resolve the canonical LTM file via PathResolver::find_ltm_path so the
+    # write target always matches the read target used at session load time.
+    # Walking up the project tree ensures we converge on the repo-root
+    # .clio/ltm.json even when the session was started from a subdirectory.
+    require CLIO::Util::PathResolver;
+    my $working_dir = _ltm_working_dir($context);
+    my $ltm_file = CLIO::Util::PathResolver::find_ltm_path($working_dir);
     $ltm->save($ltm_file);
+}
+
+sub _ltm_working_dir {
+    my ($context) = @_;
+    if (ref($context) eq 'HASH'
+        && $context->{session}
+        && $context->{session}->{state}
+        && $context->{session}->{state}->{working_directory}) {
+        return $context->{session}->{state}->{working_directory};
+    }
+    return Cwd::getcwd();
 }
 
 =head2 update_ltm
@@ -891,7 +902,8 @@ sub update_ltm {
         if ($update_result->{found}) {
             # Save the updated LTM
             eval {
-                my $ltm_file = File::Spec->catfile(Cwd::getcwd(), '.clio', 'ltm.json');
+                require CLIO::Util::PathResolver;
+                my $ltm_file = CLIO::Util::PathResolver::find_ltm_path(_ltm_working_dir($context));
                 $ltm->save($ltm_file) if -e $ltm_file;
             };
             
@@ -957,8 +969,8 @@ sub prune_ltm {
                             $removed->{patterns} + $removed->{workflows} + $removed->{failures};
         
         # Save LTM - use current working directory for cross-platform compatibility
-        my $working_dir = Cwd::getcwd();
-        my $ltm_file = File::Spec->catfile($working_dir, '.clio', 'ltm.json');
+        require CLIO::Util::PathResolver;
+        my $ltm_file = CLIO::Util::PathResolver::find_ltm_path(_ltm_working_dir($context));
         $ltm->save($ltm_file);
         
         my $stats = $ltm->get_stats();
@@ -1052,7 +1064,8 @@ sub add_corroboration {
         if ($corroboration_result->{found}) {
             # Save the updated LTM
             eval {
-                my $ltm_file = File::Spec->catfile(Cwd::getcwd(), '.clio', 'ltm.json');
+                require CLIO::Util::PathResolver;
+                my $ltm_file = CLIO::Util::PathResolver::find_ltm_path(_ltm_working_dir($context));
                 $ltm->save($ltm_file) if -e $ltm_file;
             };
             

@@ -113,12 +113,13 @@ sub save {
     }
     
     # Save project-level LTM to .clio/ltm.json (shared across all sessions)
-    # Use getcwd() for the LTM path, not stored working_directory
-    # This prevents issues when sessions are shared across different machines
-    # where the stored path may not exist (e.g., /Users/... on Linux)
+    # Resolve via PathResolver::find_ltm_path so the write target converges with
+    # the read target used at session load time. Walking up the project tree
+    # ensures we don't create shadow LTM files at intermediate paths.
     if ($self->{ltm}) {
+        require CLIO::Util::PathResolver;
         my $current_dir = getcwd();
-        my $ltm_file = File::Spec->catfile($current_dir, '.clio', 'ltm.json');
+        my $ltm_file = CLIO::Util::PathResolver::find_ltm_path($current_dir);
         eval { $self->{ltm}->save($ltm_file); };
         if ($@) {
             log_warning('State', "Failed to save LTM: $@");
@@ -195,9 +196,13 @@ sub load {
     # Use getcwd() for cross-platform compatibility
     # The stored working_directory may be from a different machine (e.g., /Users/... on Linux)
     my $working_dir = getcwd();
-    
-    # Load project-level LTM from .clio/ltm.json (shared across all sessions)
-    my $ltm_file = File::Spec->catfile($working_dir, '.clio', 'ltm.json');
+
+    # Load project-level LTM from .clio/ltm.json (shared across all sessions).
+    # Use PathResolver::find_ltm_path so the load target converges with the write
+    # target used by MemoryOperations - prevents shadow LTM files when sessions
+    # are loaded from a subdirectory of a repo.
+    require CLIO::Util::PathResolver;
+    my $ltm_file = CLIO::Util::PathResolver::find_ltm_path($working_dir);
     my $ltm = CLIO::Memory::LongTerm->load($ltm_file, debug => $args{debug});
     
     # Fallback: If old session has ltm->{store} data, migrate it

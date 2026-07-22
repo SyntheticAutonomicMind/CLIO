@@ -644,6 +644,25 @@ sub validate_command {
         security_level => $security_level,
     );
 
+    # Dry-run safety: when the command is critical-risk AND we don't have a real
+    # interactive TTY (no -t STDIN), deny it without prompting. The prompt path
+    # is only safe when a human is actually at the terminal to read the warning
+    # and choose yes/no/allow. In --input mode, captured/cron-like contexts, or
+    # any other non-interactive invocation, the prompt could auto-resolve to 'y'
+    # from stale session grants or piped input - which is exactly the security
+    # hole this guard closes.
+    if ($analysis->{blocked} && !-t STDIN) {
+        my @descs = map { $_->{description} } @{$analysis->{flags}};
+        my $reason = join('; ', @descs);
+        log_warning('TermOps', "DENIED critical command in non-interactive context: $reason");
+        return $self->error_result(
+            "Command denied (critical risk, non-interactive context).\n\n" .
+            "Security analysis: $reason\n" .
+            "Critical commands require an interactive TTY for explicit user approval. " .
+            "Run this command directly in your shell, or use a non-destructive alternative."
+        );
+    }
+
     # Hard-blocked commands (critical risk - system destructive)
     # Still prompt the user - they always have final say
     if ($analysis->{blocked}) {
@@ -693,7 +712,34 @@ sub validate_command {
         command   => $command,
         safe      => 1,
         analysis  => $analysis,
+        approved_by => $self->_decision_source($analysis, $context),
     );
+}
+
+# Session-level grants: once user approves a category, don't re-ask.
+# Declared before any sub that references it so both _decision_source and
+# _prompt_command_confirmation see the same hash.
+my %_session_grants;
+
+=head2 _decision_source
+
+Internal: report WHY a command was approved (interactive prompt, session grant,
+no flags) so callers can audit the decision path. Returns a short string.
+
+=cut
+
+sub _decision_source {
+    my ($self, $analysis, $context) = @_;
+
+    return 'no_flags' if !@{$analysis->{flags} || []};
+    # Was a session grant responsible? (Set by 'a' response to a prior prompt.)
+    for my $flag (@{$analysis->{flags}}) {
+        if ($_session_grants{$flag->{category}}) {
+            return 'session_grant:' . $flag->{category};
+        }
+    }
+
+    return 'auto';
 }
 
 =head2 _prompt_command_confirmation
@@ -708,9 +754,6 @@ for the same category of command within a session. All risk levels
 Returns: 1 if approved, 0 if denied
 
 =cut
-
-# Session-level grants: once user approves a category, don't re-ask
-my %_session_grants;
 
 sub _prompt_command_confirmation {
     my ($self, $command, $analysis, $context) = @_;

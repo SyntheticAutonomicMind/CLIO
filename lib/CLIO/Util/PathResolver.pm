@@ -10,10 +10,11 @@ use CLIO::Core::Logger qw(log_info);
 use FindBin;
 use Carp qw(croak);
 use File::Spec;
+use Cwd qw(abs_path);
 use File::Path qw(make_path);
 use Exporter 'import';
 
-our @EXPORT_OK = qw(expand_tilde shell_quote);
+our @EXPORT_OK = qw(expand_tilde shell_quote find_ltm_path);
 
 =head1 NAME
 
@@ -270,6 +271,58 @@ sub shell_quote {
     return "''" unless defined $str && length $str;
     $str =~ s/'/'\\''/g;
     return "'$str'";
+}
+
+=head2 find_ltm_path($working_dir)
+
+Resolve the canonical project-level LTM file path.
+
+Walks up from $working_dir looking for .clio/ltm.json, stopping at the
+project boundary (the directory containing a .git directory or filesystem
+root). Returns the highest existing .clio/ltm.json within the project tree,
+which prevents shadow LTM files from being created at intermediate paths
+when sessions are started from subdirectories.
+
+The walk is bounded by the project root (.git) and never crosses into
+the user's home directory - so a session in /Users/me/projects/foo won't
+accidentally resolve to /Users/me/.clio/ltm.json.
+
+If no .clio/ltm.json exists anywhere in the project tree, returns
+$working_dir + .clio/ltm.json (which will be created on first save).
+
+Arguments:
+  $working_dir - Directory to start the walk-up from (absolute preferred)
+
+Returns:
+  String path to the canonical .clio/ltm.json
+
+=cut
+
+sub find_ltm_path {
+    my ($working_dir) = @_;
+
+    $working_dir = abs_path($working_dir) || $working_dir;
+
+    my $dir = $working_dir;
+    my $canonical;
+    my %visited;
+    while ($dir && !defined $visited{$dir}) {
+        $visited{$dir} = 1;
+        my $candidate = File::Spec->catfile($dir, '.clio', 'ltm.json');
+        if (-e $candidate) {
+            $canonical = $candidate;
+        }
+        # Stop at project boundary - the dir containing .git - so we never
+        # walk past the repo root into user-home/global config territory.
+        last if -d File::Spec->catdir($dir, '.git');
+        # File::Spec->catdir($dir, '..') does NOT simplify - just appends '/..'.
+        # Use abs_path to canonicalize the parent so the loop converges on '/'.
+        my $parent = abs_path(File::Spec->catdir($dir, '..'));
+        last if !$parent || $parent eq $dir;
+        $dir = $parent;
+    }
+
+    return $canonical || File::Spec->catfile($working_dir, '.clio', 'ltm.json');
 }
 
 1;
