@@ -268,9 +268,19 @@ These kinds of prompts help you see how CLIO investigates before it changes anyt
 | Key | Action |
 |-----|--------|
 | `Left` / `Right` (Arrows) | Move cursor one character |
-| `Alt+Left` / `Alt+Right` | Jump by word |
+| `Shift+Left` / `Shift+Right` | Jump by word |
+| `Ctrl+Left` / `Ctrl+Right` | Jump by word (emacs/Mac Terminal) |
+| `Option+Left` / `Option+Right` | Jump by word (macOS Terminal, requires Meta on) |
 | `Home` / `End` | Move to start/end of line |
 | `Ctrl+A` / `Ctrl+E` | Start/end of line (emacs) |
+| `Ctrl+W` | Delete word before cursor |
+| `Shift+Delete` | Delete word before cursor |
+| `Option+Backspace` | Delete word before cursor (macOS Terminal, requires Meta on) |
+| `Alt+D` | Delete word after cursor |
+| `Ctrl+Delete` | Delete word after cursor |
+| `Option+D` | Delete word after cursor (macOS Terminal, requires Meta on) |
+| `Ctrl+K` | Delete from cursor to end of line |
+| `Ctrl+U` | Delete from cursor to start of line |
 | `Tab` | Auto-complete commands/paths |
 | `ESC` | Cancel multi-line input |
 
