@@ -3703,6 +3703,8 @@ sub send_request_streaming {
         messages              => $messages,
         input                 => $input,
         json                  => $json,
+        _finish_reason        => $ss->{_finish_reason},
+        _sse_error            => $ss->{_sse_error},
     );
 }
 
@@ -3932,6 +3934,16 @@ sub _process_responses_api_event {
                 total_tokens      => ($resp_data->{usage}{input_tokens} || 0) + ($resp_data->{usage}{output_tokens} || 0),
             };
         }
+        # Track completion so _finalize_streaming_response can distinguish a
+        # legitimate stream end (response.completed -> finish_reason=stop or
+        # tool_calls) from a mid-stream truncation. Mirror of the
+        # choices[].finish_reason capture in _process_chat_completions_delta.
+        my $status = $resp_data->{status} // '';
+        if ($status eq 'completed') {
+            $ss->{_finish_reason} = 'stop';
+        } elsif (length $status) {
+            $ss->{_finish_reason} = $status;
+        }
         log_debug('APIManager', "Responses API: stream completed, status=" . ($resp_data->{status} || '?'));
     }
     elsif ($event_type eq 'error') {
@@ -3954,6 +3966,19 @@ sub _process_chat_completions_delta {
 
     my $choice = $data->{choices}[0];
     my $delta  = $choice->{delta} || return (undef, undef);
+
+    # Capture finish_reason / stop_reason from the choice so
+    # _finalize_streaming_response can distinguish a legitimate stream end
+    # (`"stop"` or `"tool_calls"`) from a mid-stream SSE error chunk. Without
+    # this the finalizer cannot tell "the model finished its turn" apart from
+    # "the connection died halfway through" - both look like an empty
+    # choices[].finish_reason on the next-to-last delta.
+    # MiniMax and similar OpenAI-compat providers emit finish_reason on the
+    # same delta as the last tool_call/content fragment, then send a final
+    # [DONE] marker; some skip the [DONE] when the stream truncates.
+    if (defined $choice->{finish_reason} && length $choice->{finish_reason}) {
+        $ss->{_finish_reason} = $choice->{finish_reason};
+    }
 
     my $content_delta    = undef;
     my $tool_calls_delta = undef;
@@ -4248,8 +4273,23 @@ sub _finalize_streaming_response {
     # Set streaming headers BEFORE error check so rate limit detection can use them
     $s{streaming_headers} //= $resp->headers if $resp->can('headers');
 
-    # Surface SSE error chunks captured during streaming
-    if ($s{_sse_error} && !$s{accumulated_content} && !keys(%{$s{tool_calls_accumulator}})) {
+    # Surface SSE error chunks captured during streaming. Three cases:
+    #   1. Error on first chunk (no content/tool_calls streamed) - the
+    #      previous NVIDIA-style case. Always treat as retryable error.
+    #   2. Error mid-stream after content/tool_calls streamed, AND no
+    #      finish_reason received - the stream was truncated. Treat as
+    #      retryable error (the retry will regenerate the full response).
+    #   3. Error mid-stream after content/tool_calls streamed, AND a
+    #      finish_reason was received - the response ended legitimately
+    #      and the SSE error chunk is spurious noise. Ignore it.
+    # Without case (2) the MiniMax-style silent work-stop bug returns: the
+    # model streams LTM writes, the connection dies, _finalize returns
+    # success with no further content, and the orchestrator hangs waiting
+    # for the agent to do something it never gets to. With (2) the broken
+    # response is rejected and the orchestrator retries.
+    if ($s{_sse_error}
+        && (!$s{accumulated_content} && !keys(%{$s{tool_calls_accumulator}})
+            || !$s{_finish_reason})) {
         my $sse_err = $s{_sse_error};
         $self->{response_handler}->release_broker_slot($resp, 200);
         my $code = $sse_err->{code} // '';
@@ -4500,7 +4540,14 @@ Returns error hashref if found, undef otherwise.
 sub _check_200_body_error {
     my ($self, $resp, $s) = @_;
 
-    return undef if $s->{accumulated_content} || keys(%{$s->{tool_calls_accumulator}});
+    # Only ignore the body-level error if the response is legitimately
+    # complete. If the provider sent content/tool_calls but never emitted a
+    # finish_reason (e.g. MiniMax truncation case) the error structure in the
+    # body IS the truncation - return it so the orchestrator can retry.
+    # finish_reason was captured in _process_chat_completions_delta and
+    # _process_responses_api_event during streaming.
+    return undef if $s->{_finish_reason}
+        && ($s->{accumulated_content} || keys(%{$s->{tool_calls_accumulator}}));
 
     my $body = $s->{raw_response_body} || $s->{buffer} || '';
     $body =~ s/^\s+|\s+$//g;

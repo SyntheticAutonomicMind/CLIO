@@ -139,10 +139,32 @@ sub am_with_stub {
     is($err, undef, 'Test 5.1: empty body returns undef');
 }
 
-# Test 6: Tool calls present (mid-streaming) must NOT trigger error check
+# Test 6: Tool calls present WITH a finish_reason -> response was legitimate,
+# ignore the body-level error chunk (it's spurious noise)
 {
     my $am = am_with_stub();
     my $sse_body = 'data: {"error":{"message":"late error","code":"late"}}';
+
+    my $s = {
+        accumulated_content => '',
+        tool_calls_accumulator => { 0 => { id => 'call_1' } },
+        raw_response_body => $sse_body . "\n\n",
+        buffer => '',
+        _finish_reason => 'tool_calls',
+    };
+
+    my $resp = fake_resp();
+    my $err = $am->_check_200_body_error($resp, $s);
+
+    is($err, undef, 'Test 6.1: tool calls + finish_reason short-circuits body-level error');
+}
+
+# Test 7: Tool calls present WITHOUT a finish_reason -> stream was truncated
+# before the model could emit its finish marker. Return the body-level error
+# so the orchestrator retries (this is the MiniMax-style silent stop).
+{
+    my $am = am_with_stub();
+    my $sse_body = 'data: {"error":{"message":"stream died","code":"trunc"}}';
 
     my $s = {
         accumulated_content => '',
@@ -154,7 +176,9 @@ sub am_with_stub {
     my $resp = fake_resp();
     my $err = $am->_check_200_body_error($resp, $s);
 
-    is($err, undef, 'Test 6.1: tool calls present short-circuit error check');
+    isa_ok($err, 'HASH', 'Test 7.1: tool_calls without finish_reason surfaces truncated-stream error');
+    is($err->{error}, 'stream died', 'Test 7.2: error message preserved');
+    is($err->{success}, 0, 'Test 7.3: success flag set');
 }
 
 done_testing();

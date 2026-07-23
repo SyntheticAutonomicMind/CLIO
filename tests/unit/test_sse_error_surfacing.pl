@@ -31,6 +31,9 @@ sub fake_resp {
     return bless { headers => bless {}, 'FakeResp' }, 'FakeResp';
 }
 sub FakeResp::headers { return $_[0]->{headers}; }
+sub FakeResp::code { return $_[0]->{code} // 200; }
+sub FakeResp::status_line { return $_[0]->{status_line} // '200 OK'; }
+sub FakeResp::decoded_content { return $_[0]->{decoded_content} // ''; }
 
 # Test 1: _process_sse_data captures SSE error chunk on streaming state
 {
@@ -142,6 +145,112 @@ sub FakeResp::headers { return $_[0]->{headers}; }
     my $data = safe_decode_json('null');
     my $would_skip = (!defined $data) || (ref($data) ne 'HASH');
     ok($would_skip, 'Test 4.6: null payload would be skipped by SSE loop guard');
+}
+
+# Test 5: _finalize_streaming_response surfaces SSE error mid-stream
+# (after content/tool_calls were streamed) when no finish_reason was
+# received. This is the MiniMax-style silent truncation: agent streamed
+# LTM writes, then the connection died before the model could emit
+# finish_reason='stop'. Without this gate the orchestrator thinks the
+# turn is done and hangs.
+{
+    package StubRH5;
+    sub release_broker_slot {}
+    sub report_rate_limit_for_model {}
+
+    package main;
+    my $am = bless({
+        response_handler => bless({}, 'StubRH5'),
+    }, 'CLIO::Core::APIManager');
+
+    # Streaming state: LTM tool call already written + response truncated
+    # with an SSE error before the model could finish_reason.
+    my $s = {
+        resp => fake_resp(),
+        accumulated_content => '',
+        accumulated_reasoning => '',
+        streaming_usage => undef,
+        streaming_headers => bless({}, 'FakeResp'),
+        token_count => 0,
+        start_time => time(),
+        first_token_time => undef,
+        tool_calls_accumulator => { 0 => { id => 'call_1', function => { name => 'memory_operations', arguments => '{}' } } },
+        raw_response_body => '',
+        buffer => '',
+        model => 'MiniMax-M3',
+        endpoint_config => {},
+        provider_label => 'MiniMax',
+        messages => [],
+        input => undef,
+        json => '',
+        _sse_error => { message => 'upstream connection reset', code => 'overloaded' },
+        _finish_reason => undef,
+    };
+
+    my $result = $am->_finalize_streaming_response(%$s);
+
+    ok(!$result->{success}, 'Test 5.1: mid-stream SSE error returns success=0');
+    ok($result->{retryable}, 'Test 5.2: mid-stream SSE error is retryable');
+    is($result->{error_type}, 'overloaded', 'Test 5.3: error_type detected from SSE error code');
+    like($result->{error}, qr/upstream connection reset/,
+         'Test 5.4: SSE error message surfaced in result');
+    cmp_ok($result->{retry_after}, '>=', 1, 'Test 5.5: retry_after is positive');
+}
+
+# Test 6: _finalize_streaming_response IGNORES SSE error when a
+# finish_reason was already received. This is the legitimate case where
+# a provider's final SSE chunk emits an `error:` line right after a
+# clean finish_reason='stop' - the error chunk is spurious noise.
+{
+    package StubRH6;
+    sub release_broker_slot {}
+    sub update_from_headers {}
+    sub release {}
+    sub process_rate_limit_headers {}
+    sub report_rate_limit_for_model {}
+    sub process_copilot_usage {}
+    sub store_stateful_marker {}
+
+    package StubRL6;
+    sub update_from_headers {}
+    sub release {}
+
+    package main;
+    my $am = bless({
+        response_handler => bless({}, 'StubRH6'),
+        rate_limiter => bless({}, 'StubRL6'),
+        session => undef,
+    }, 'CLIO::Core::APIManager');
+
+    my $s = {
+        resp => fake_resp(),
+        accumulated_content => 'partial answer that the model actually finished',
+        accumulated_reasoning => '',
+        streaming_usage => undef,
+        streaming_headers => bless({}, 'FakeResp'),
+        token_count => 10,
+        start_time => time() - 5,
+        first_token_time => time() - 4,
+        tool_calls_accumulator => {},
+        raw_response_body => '',
+        buffer => '',
+        model => 'MiniMax-M3',
+        endpoint_config => {},
+        provider_label => 'MiniMax',
+        messages => [],
+        input => undef,
+        json => '',
+        _sse_error => { message => 'spurious error after stop', code => 'noise' },
+        _finish_reason => 'stop',
+    };
+
+    my $result = $am->_finalize_streaming_response(%$s);
+
+    ok($result->{success}, 'Test 6.1: SSE error with finish_reason=stop is NOT surfaced as retryable');
+    is($result->{content}, 'partial answer that the model actually finished',
+       'Test 6.2: legitimate stream content preserved');
+    ok(!exists $result->{retryable} || !$result->{retryable},
+       'Test 6.3: legitimate response not flagged retryable');
 }
 
 done_testing();
