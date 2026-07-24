@@ -11,7 +11,6 @@ binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use parent 'CLIO::Tools::Tool';
 use Cwd 'getcwd';
-use feature 'say';
 use POSIX qw(WNOHANG);
 use Time::HiRes ();
 use CLIO::Core::Logger qw(log_debug log_info log_warning log_error);

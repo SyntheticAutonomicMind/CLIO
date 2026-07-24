@@ -14,7 +14,6 @@ use parent 'CLIO::Tools::Tool';
 use CLIO::Util::ConfigPath qw(get_config_dir);
 use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json);
 use File::Spec;
-use feature 'say';
 
 =head1 NAME
 

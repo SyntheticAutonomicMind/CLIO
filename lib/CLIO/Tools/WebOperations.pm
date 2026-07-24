@@ -12,7 +12,6 @@ use Carp qw(croak confess);
 use parent 'CLIO::Tools::Tool';
 use CLIO::Compat::HTTP;
 use CLIO::Util::JSON qw(encode_json decode_json);
-use feature 'say';
 use CLIO::Core::Logger qw(log_debug log_info log_warning);
 
 =head1 NAME

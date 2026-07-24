@@ -8,7 +8,6 @@ use warnings;
 use utf8;
 use Carp qw(croak confess);
 use CLIO::Core::Logger qw(log_debug);
-use feature 'say';
 
 =head1 NAME
 
