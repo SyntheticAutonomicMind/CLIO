@@ -1364,6 +1364,7 @@ sub _execute_tool_round {
         # Notify UI that tool execution is complete
         if ($on_tool_end) {
             eval { $on_tool_end->($tool_name); };
+            log_debug('WorkflowOrchestrator', "UI on_tool_end callback error: $@") if $@;
         }
 
         # Extract action_description from tool result
