@@ -2,6 +2,18 @@
 
 **Project Methodology:** The Unbroken Method for Human-AI Collaboration
 
+## Session Start Protocol
+
+**Run this BEFORE responding to any user request, every session:**
+
+1. `git status --short` — see what is already modified in the working tree.
+2. For any unstaged or staged files, `memory_operations(operation: "recall_sessions", query: "FILENAME")` to learn what was being done with them.
+3. If a file is modified in the tree and you do not know why, it is part of THIS session's work until proven otherwise. Investigate before treating anything as out of scope.
+
+**The ownership rule.** There is no "out of scope" for files that were already modified when the session opened. Unbroken Method Pillar 2 ("No out of scope") applies to all code in the tree, not just code the user explicitly mentions. Never label in-tree work as "pre-existing" or "not my responsibility" without explicit confirmation from the user and a concrete handoff plan.
+
+**Why this exists.** The agent has a tendency to focus on the immediate user request and ignore surrounding state. That is how finished-but-uncommitted work gets orphaned, how regressions sneak in, and how the user ends up having to remind the agent that things are its responsibility. The protocol above forces a state survey before any action.
+
 ## The Unbroken Method
 
 This project follows **The Unbroken Method** for human-AI collaboration. This is the core operational framework.
