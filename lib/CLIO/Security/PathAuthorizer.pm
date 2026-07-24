@@ -7,7 +7,6 @@ use strict;
 use warnings;
 use utf8;
 use CLIO::Core::Logger qw(log_debug log_warning);
-use feature 'say';
 use File::Spec;
 use Cwd qw(abs_path realpath);
 use CLIO::Util::PathResolver qw(expand_tilde);

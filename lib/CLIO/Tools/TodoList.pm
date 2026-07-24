@@ -9,7 +9,6 @@ use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use CLIO::Core::Logger qw(log_debug);
-use feature 'say';
 use parent 'CLIO::Tools::Tool';
 use CLIO::Session::TodoStore;
 

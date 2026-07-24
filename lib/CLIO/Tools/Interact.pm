@@ -11,7 +11,6 @@ binmode(STDERR, ':encoding(UTF-8)');
 use CLIO::Core::Logger qw(should_log log_debug log_error log_info log_warning);
 use CLIO::UI::Terminal qw(box_char);
 use parent 'CLIO::Tools::Tool';
-use feature 'say';
 
 =head1 NAME
 

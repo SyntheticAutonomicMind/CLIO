@@ -15,7 +15,6 @@ use Cwd qw(getcwd abs_path);
 use File::Spec ();
 use CLIO::Util::PathResolver qw(expand_tilde);
 use CLIO::Util::JSON qw(decode_json encode_json);
-use feature 'say';
 
 # Shell-quote a string for safe interpolation into backtick commands.
 # Uses single-quote wrapping with embedded single-quote escaping.

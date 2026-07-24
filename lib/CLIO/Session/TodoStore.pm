@@ -8,7 +8,6 @@ use warnings;
 use utf8;
 use CLIO::Core::Logger qw(log_debug log_error);
 use Carp qw(croak);
-use feature 'say';
 use File::Path qw(make_path);
 use File::Spec;
 use CLIO::Util::JSON qw(decode_json encode_json_pretty);

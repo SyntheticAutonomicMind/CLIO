@@ -7,7 +7,6 @@ use strict;
 use warnings;
 use utf8;
 use CLIO::Core::Logger qw(log_debug);
-use feature 'say';
 use File::Temp qw(tempfile);
 use File::Spec;
 

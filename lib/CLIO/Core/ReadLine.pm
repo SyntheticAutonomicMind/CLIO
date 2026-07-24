@@ -10,7 +10,6 @@ use CLIO::Core::Logger qw(should_log log_debug log_warning);
 
 # Ensure STDOUT is autoflushed for immediate terminal response
 $| = 1;
-use feature 'say';
 use CLIO::Compat::Terminal qw(ReadMode ReadKey GetTerminalSize);
 use Encode ();
 

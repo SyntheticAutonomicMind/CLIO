@@ -7,7 +7,6 @@ use strict;
 use warnings;
 use utf8;
 use Carp qw(croak);
-use feature 'say';
 use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json);
 use File::Path qw(make_path);
 use File::Spec;
