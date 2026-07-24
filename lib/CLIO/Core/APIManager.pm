@@ -605,6 +605,7 @@ sub get_current_model {
                     $model = $resolved;
                     $self->{config}->set('model', $model, 0);
                     eval { $self->{config}->save(); };
+                    log_warning('APIManager', "Failed to persist resolved model '$model' to config: $@") if $@;
                 }
             }
            return $model;
@@ -662,6 +663,8 @@ sub _resolve_model_placeholder {
     
     my $resp = eval { $ua->get($models_url, headers => \%headers) };
     unless ($resp && $resp->is_success) {
+        log_debug('APIManager', "Model discovery failed for placeholder '$placeholder' ($models_url): "
+            . ($@ ? "eval: $@" : ($resp ? $resp->status_line : 'no response')));
         return $placeholder;
     }
     
@@ -1864,7 +1867,11 @@ sub _resolve_local_model {
 
     my $ua = $self->_get_shared_http_client(timeout => 5);
     my $resp = eval { $ua->get($models_url) };
-    return undef if $@ || !$resp || !$resp->is_success;
+    unless ($resp && $resp->is_success) {
+        log_debug('APIManager', "_resolve_local_model fetch failed ($models_url): "
+            . ($@ ? "eval: $@" : ($resp ? $resp->status_line : 'no response')));
+        return undef;
+    }
 
     my $data = safe_decode_json($resp->decoded_content);
     return undef unless $data;
