@@ -40,12 +40,22 @@ sub _make_mgr {
         model    => 'gpt-4.1',
         config   => $config,
     );
+    # Pre-populate model capabilities cache. _get_reasoning_mode calls
+    # get_model_capabilities(), which without an internet-reachable api_base
+    # for the test provider falls through to a 30s HTTP fetch that times out
+    # and returns undef. Tests inject the caps they need instead of waiting
+    # for the network probe.
+    if ($args{cached_caps}) {
+        $mgr->{_model_capabilities_cache} = { %{$args{cached_caps}} };
+    }
     return $mgr;
 }
 
 # 1. OpenAI: o-series gets reasoning_effort when thinking is on
 {
     my $mgr = _make_mgr(show_thinking => 1, thinking_effort => 'high');
+    $mgr->{_model_capabilities_cache} ||= {};
+    $mgr->{_model_capabilities_cache}{'o3-mini'} = { supports_reasoning => 1, reasoning_mode => 'effort' };
     my $payload = { model => 'o3-mini', messages => [] };
     my $ec = CLIO::Providers::build_endpoint_config('openai', 'sk-test');
     my $result = $mgr->adapt_request_for_endpoint($payload, $ec);
@@ -57,6 +67,8 @@ sub _make_mgr {
 # 2. OpenAI: gpt-5+ gets reasoning_effort
 {
     my $mgr = _make_mgr(show_thinking => 1, thinking_effort => 'low');
+    $mgr->{_model_capabilities_cache} ||= {};
+    $mgr->{_model_capabilities_cache}{'gpt-5'} = { supports_reasoning => 1, reasoning_mode => 'effort' };
     my $payload = { model => 'gpt-5', messages => [] };
     my $ec = CLIO::Providers::build_endpoint_config('openai', 'sk-test');
     my $result = $mgr->adapt_request_for_endpoint($payload, $ec);
@@ -68,6 +80,11 @@ sub _make_mgr {
 {
     for my $model (qw(gpt-4.1 gpt-4o gpt-4-turbo gpt-3.5-turbo)) {
         my $mgr = _make_mgr(show_thinking => 1, thinking_effort => 'high');
+        # Preload supports_reasoning=0 so the caps lookup short-circuits
+        # without falling through to a slow HTTP fetch of an unreachable
+        # api_base. _get_reasoning_mode() returns undef for these models.
+        $mgr->{_model_capabilities_cache} ||= {};
+        $mgr->{_model_capabilities_cache}{$model} = { supports_reasoning => 0 };
         my $payload = { model => $model, messages => [] };
         my $ec = CLIO::Providers::build_endpoint_config('openai', 'sk-test');
         my $result = $mgr->adapt_request_for_endpoint($payload, $ec);
@@ -79,6 +96,10 @@ sub _make_mgr {
 # 4. OpenAI: show_thinking off - no reasoning_effort even on o-series
 {
     my $mgr = _make_mgr(show_thinking => 0, thinking_effort => 'high');
+    # Caps preloaded so reasoning_mode resolves. show_thinking=0 should
+    # still keep reasoning_effort off; this confirms the gate works.
+    $mgr->{_model_capabilities_cache} ||= {};
+    $mgr->{_model_capabilities_cache}{'o1-preview'} = { supports_reasoning => 1, reasoning_mode => 'effort' };
     my $payload = { model => 'o1-preview', messages => [] };
     my $ec = CLIO::Providers::build_endpoint_config('openai', 'sk-test');
     my $result = $mgr->adapt_request_for_endpoint($payload, $ec);
@@ -97,6 +118,8 @@ sub _make_mgr {
         claude-sonnet-4-20250514
     )) {
         my $mgr = _make_mgr(show_thinking => 1, thinking_effort => 'medium');
+        $mgr->{_model_capabilities_cache} ||= {};
+        $mgr->{_model_capabilities_cache}{$model} = { supports_reasoning => 1, reasoning_mode => 'effort' };
         my $payload = { model => $model, messages => [] };
         my $ec = CLIO::Providers::build_endpoint_config('github_copilot', 'gho-test');
         my $result = $mgr->adapt_request_for_endpoint($payload, $ec);
@@ -109,6 +132,8 @@ sub _make_mgr {
 {
     for my $model (qw(o1-preview o3-mini o4-mini gpt-5 gpt-5-mini gpt-5-codex)) {
         my $mgr = _make_mgr(show_thinking => 1, thinking_effort => 'low');
+        $mgr->{_model_capabilities_cache} ||= {};
+        $mgr->{_model_capabilities_cache}{$model} = { supports_reasoning => 1, reasoning_mode => 'effort' };
         my $payload = { model => $model, messages => [] };
         my $ec = CLIO::Providers::build_endpoint_config('github_copilot', 'gho-test');
         my $result = $mgr->adapt_request_for_endpoint($payload, $ec);
@@ -127,6 +152,10 @@ sub _make_mgr {
         claude-3-haiku
     )) {
         my $mgr = _make_mgr(show_thinking => 1, thinking_effort => 'high');
+        # Preload supports_reasoning=0 to skip the slow lookup path.
+        # _get_reasoning_mode() returns undef for these models.
+        $mgr->{_model_capabilities_cache} ||= {};
+        $mgr->{_model_capabilities_cache}{$model} = { supports_reasoning => 0 };
         my $payload = { model => $model, messages => [] };
         my $ec = CLIO::Providers::build_endpoint_config('github_copilot', 'gho-test');
         my $result = $mgr->adapt_request_for_endpoint($payload, $ec);
@@ -138,6 +167,8 @@ sub _make_mgr {
 # 8. GitHub Copilot: show_thinking off - no reasoning_effort
 {
     my $mgr = _make_mgr(show_thinking => 0, thinking_effort => 'high');
+    $mgr->{_model_capabilities_cache} ||= {};
+    $mgr->{_model_capabilities_cache}{'gpt-5'} = { supports_reasoning => 1, reasoning_mode => 'effort' };
     my $payload = { model => 'gpt-5', messages => [] };
     my $ec = CLIO::Providers::build_endpoint_config('github_copilot', 'gho-test');
     my $result = $mgr->adapt_request_for_endpoint($payload, $ec);
@@ -192,6 +223,8 @@ sub _make_mgr {
 {
     for my $effort (qw(low medium high)) {
         my $mgr = _make_mgr(show_thinking => 1, thinking_effort => $effort);
+        $mgr->{_model_capabilities_cache} ||= {};
+        $mgr->{_model_capabilities_cache}{'o3-mini'} = { supports_reasoning => 1, reasoning_mode => 'effort' };
         my $payload = { model => 'o3-mini', messages => [] };
         my $ec = CLIO::Providers::build_endpoint_config('openai', 'sk-test');
         my $result = $mgr->adapt_request_for_endpoint($payload, $ec);
@@ -202,6 +235,8 @@ sub _make_mgr {
 # 14. Payload with already-set reasoning_effort is overwritten
 {
     my $mgr = _make_mgr(show_thinking => 1, thinking_effort => 'low');
+    $mgr->{_model_capabilities_cache} ||= {};
+    $mgr->{_model_capabilities_cache}{'o3-mini'} = { supports_reasoning => 1, reasoning_mode => 'effort' };
     my $payload = { model => 'o3-mini', messages => [], reasoning_effort => 'stale-value' };
     my $ec = CLIO::Providers::build_endpoint_config('openai', 'sk-test');
     my $result = $mgr->adapt_request_for_endpoint($payload, $ec);
@@ -212,6 +247,8 @@ sub _make_mgr {
 # 15. Copilot + openai combo: if a user routes openai through Copilot, the openai branch wins
 {
     my $mgr = _make_mgr(show_thinking => 1, thinking_effort => 'medium');
+    $mgr->{_model_capabilities_cache} ||= {};
+    $mgr->{_model_capabilities_cache}{'gpt-5'} = { supports_reasoning => 1, reasoning_mode => 'effort' };
     my $payload = { model => 'gpt-5', messages => [] };
     my $ec = CLIO::Providers::build_endpoint_config('openai', 'sk-test');
     ok(!$ec->{requires_copilot_headers}, 'openai endpoint does not have requires_copilot_headers');
