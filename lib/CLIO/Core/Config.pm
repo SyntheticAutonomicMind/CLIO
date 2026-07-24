@@ -552,19 +552,27 @@ sub _restore_model_config {
     $self->{config}->{model_configs} ||= {};
     my $entry = $self->{config}->{model_configs}{$model_id};
     
+    my $restored_count = 0;
     for my $key (@{MODEL_SCOPED_KEYS()}) {
         if ($entry && exists $entry->{$key}) {
-            $self->{config}->{$key} = $entry->{$key};
-        } else {
-            # Use system default - but don't mark as user-set
-            $self->{config}->{$key} = DEFAULT_CONFIG->{$key};
+            my $val = $entry->{$key};
+            my $default = DEFAULT_CONFIG->{$key};
+            # Only restore if the stored value differs from default.
+            # This prevents stale default entries (e.g., from old migrations)
+            # from silently overwriting newer global config values.
+            next if defined $default && defined $val && $val eq $default;
+            $self->{config}->{$key} = $val;
+            $restored_count++;
         }
+        # If no stored value (or value equals default), KEEP current global config value.
+        # Do NOT fall back to DEFAULT_CONFIG here - the global config may have
+        # user-set values that should persist across model switches.
     }
     
-    if ($entry && %$entry) {
-        log_debug('Config', "Restored model config for '$model_id': " . scalar(keys %$entry) . " keys");
+    if ($restored_count) {
+        log_debug('Config', "Restored $restored_count non-default model config value(s) for '$model_id'");
     } else {
-        log_debug('Config', "No stored config for '$model_id' - using defaults");
+        log_debug('Config', "No non-default model config for '$model_id' - keeping global values");
     }
 }
 

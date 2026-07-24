@@ -3114,7 +3114,10 @@ sub _prepare_api_request {
     # Determine provider label for logging
     my $provider_label = $endpoint_config->{minimax} ? 'MiniMax' :
                          $endpoint_config->{requires_copilot_headers} ? 'GitHub Copilot' :
-                         $endpoint_config->{openrouter} ? 'OpenRouter' : 'API';
+                         $endpoint_config->{openrouter} ? 'OpenRouter' :
+                         $endpoint_config->{google} ? 'Google' :
+                         $endpoint_config->{anthropic} ? 'Anthropic' :
+                         $endpoint_config->{nvidia} ? 'NVIDIA' : 'API';
 
     # Log full request to debug log
     $self->_log_api_request($req, $final_endpoint, $provider_label, $model, $json, $is_streaming, $use_responses_api);
@@ -3438,7 +3441,7 @@ sub _process_non_streaming_response {
     if (!$resp->is_success) {
         $self->_log_api_response($resp, $provider_label, 1);
         $self->{response_handler}->release_broker_slot($resp, $resp->code);
-        $self->{rate_limiter}->release($provider_label);
+        $self->{rate_limiter}->release(lc($provider_label));
         return $self->{response_handler}->handle_error_response($resp, $json, 0,
             attempt_token_recovery => sub { $self->_attempt_token_recovery() },
             headers => $resp->headers);
@@ -3452,8 +3455,8 @@ sub _process_non_streaming_response {
         # the API's declared ITPM/OTPM/RPM and falls back to learner-only.
         $self->_apply_anthropic_rate_limit_headers($model, $rate_limit_info->{rate_limit_info});
     }
-    $self->{rate_limiter}->update_from_headers($provider_label, $resp->headers);
-    $self->{rate_limiter}->release($provider_label);
+    $self->{rate_limiter}->update_from_headers(lc($provider_label), $resp->headers);
+    $self->{rate_limiter}->release(lc($provider_label));
     $self->_log_api_response($resp, $provider_label, 0);
 
     my $data = safe_decode_json($resp->decoded_content);
@@ -4452,13 +4455,14 @@ sub _finalize_streaming_response {
     $self->_log_streaming_response($response, $s{provider_label}, $tool_calls);
     $self->{response_handler}->release_broker_slot($resp, 200);
     
-    # Update rate limit state and release slot
+    # Update rate limit state and release slot (use lowercase for consistency with acquire)
     my $rl_headers = $s{streaming_headers};
     unless (defined $rl_headers) {
         $rl_headers = $resp->headers if $resp->can('headers');
     }
-    $self->{rate_limiter}->update_from_headers($s{provider_label}, $rl_headers) if $rl_headers;
-    $self->{rate_limiter}->release($s{provider_label});
+    my $rate_limiter_provider = lc($s{provider_label});
+    $self->{rate_limiter}->update_from_headers($rate_limiter_provider, $rl_headers) if $rl_headers;
+    $self->{rate_limiter}->release($rate_limiter_provider);
 
     return $response;
 }
@@ -4475,7 +4479,7 @@ sub _handle_streaming_http_error {
     $self->{response_handler}->release_broker_slot($resp, $resp->code);
     
     # Release rate limiter slot on error
-    $self->{rate_limiter}->release($s->{provider_label});
+    $self->{rate_limiter}->release(lc($s->{provider_label}));
 
     # For streaming errors, the body may be in accumulated_content (captured by SSE callback)
     # or in raw_response_body/buffer (raw HTTP response)
