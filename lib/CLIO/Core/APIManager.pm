@@ -4266,6 +4266,12 @@ sub _finalize_streaming_response {
     if ($s{error}) {
         log_debug('APIManager', "Streaming request failed: $s{error}");
         $self->{response_handler}->release_broker_slot(undef, 599);
+        # Release rate limiter slot - send_request_streaming acquired it before
+        # the eval that produced $s{error}, and the success path at the end of
+        # this sub is unreachable here. Without this release the slot leaks and
+        # every subsequent request to the same provider sees a permanently
+        # occupied concurrency slot.
+        $self->{rate_limiter}->release(lc($s{provider_label})) if $s{provider_label};
         return {
             success => 0, error => "Streaming request failed: $s{error}",
             retryable => 1, retry_after => 2, error_type => 'server_error',
@@ -4302,6 +4308,12 @@ sub _finalize_streaming_response {
             || !$s{_finish_reason})) {
         my $sse_err = $s{_sse_error};
         $self->{response_handler}->release_broker_slot($resp, 200);
+        # Release rate limiter slot - the success path below owns the release,
+        # but this SSE-error early-return bypasses it. Leaked slots pinned the
+        # per-provider concurrency counter at the limit, making every retry
+        # hit "Concurrency limit reached for $provider" and exhaust the 3-retry
+        # budget on what was originally a transient provider rate limit.
+        $self->{rate_limiter}->release(lc($s{provider_label})) if $s{provider_label};
         my $code = $sse_err->{code} // '';
         my $msg = $sse_err->{message} // '';
         # Default to retryable - upstream errors usually resolve themselves.

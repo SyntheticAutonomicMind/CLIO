@@ -157,10 +157,18 @@ sub FakeResp::decoded_content { return $_[0]->{decoded_content} // ''; }
     package StubRH5;
     sub release_broker_slot {}
     sub report_rate_limit_for_model {}
+    sub process_rate_limit_headers {}
+    sub process_quota_headers {}
+    sub store_stateful_marker {}
+
+    package StubRL5;
+    sub release {}
+    sub update_from_headers {}
 
     package main;
     my $am = bless({
         response_handler => bless({}, 'StubRH5'),
+        rate_limiter => bless({}, 'StubRL5'),
     }, 'CLIO::Core::APIManager');
 
     # Streaming state: LTM tool call already written + response truncated

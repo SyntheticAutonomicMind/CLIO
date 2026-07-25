@@ -157,7 +157,14 @@ sub handle_api_error {
         my $error_type_for_limit = $api_response->{error_type} || '';
         my $retry_limit;
         my $allow_infinite_retry = 0;
-        if ($error_type_for_limit eq 'rate_limit') {
+        # concurrency_limit is CLIO's local per-provider concurrency slot
+        # exhaustion. It is conceptually a rate limit (we are out of allowed
+        # requests right now) and must inherit rate_limit's infinite-retry
+        # budget. Without this it fell into the generic 3-retry bucket,
+        # so any session that briefly had two in-flight requests to the
+        # same provider would die with "Maximum retries exceeded" even
+        # though the in-flight requests were recoverable.
+        if ($error_type_for_limit eq 'rate_limit' || $error_type_for_limit eq 'concurrency_limit') {
             $retry_limit = $max_rate_limit_retries;
             $allow_infinite_retry = 1 if $max_rate_limit_retries == 0;
         } elsif ($error_type_for_limit eq 'server_error' || $error_type_for_limit eq 'connection_error') {
@@ -189,7 +196,11 @@ sub handle_api_error {
         my $user_message = $api_response->{user_message};  # Detailed message from ResponseHandler
 
         # Determine error type - use specific rate limit type if available
-        if ($api_response->{error_type} && $api_response->{error_type} eq 'rate_limit') {
+        # concurrency_limit surfaces as "Rate limit detected" so the user
+        # sees the same UI message they get from provider rate limits
+        # (and, importantly, gets infinite retry budget via the matching
+        # change in the retry-limit selector above).
+        if ($api_response->{error_type} && ($api_response->{error_type} eq 'rate_limit' || $api_response->{error_type} eq 'concurrency_limit')) {
             my $rl_code = $api_response->{rate_limit_code} // '';
             $error_type = get_rate_limit_type_name($rl_code);
 
@@ -335,7 +346,11 @@ sub handle_api_error {
             $system_msg //= "Upstream $error_type. Retrying in ${retry_delay}s... (attempt $$retry_count_ref)";
             log_info('ErrorHandler', "Applying exponential backoff for $error_type: ${retry_delay}s delay");
         }
-        elsif ($api_response->{error_type} && $api_response->{error_type} eq 'rate_limit') {
+        # concurrency_limit hits this branch too - the rate_limit branch above
+        # already set $error_type via get_rate_limit_type_name, but this
+        # default assignment ensures the user-facing label is correct even if
+        # the response lacks a rate_limit_code.
+        elsif ($api_response->{error_type} && ($api_response->{error_type} eq 'rate_limit' || $api_response->{error_type} eq 'concurrency_limit')) {
             $error_type = "rate limit";
         }
         elsif ($api_response->{error_type} && $api_response->{error_type} eq 'auth_recovered') {
