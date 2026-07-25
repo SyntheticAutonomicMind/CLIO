@@ -442,4 +442,80 @@ subtest 'Bug 2d: rate_limit and concurrency_limit get the same retry budget' => 
     is($result, 'retry', 'rate_limit still returns retry (no regression)');
 };
 
+subtest 'Bug 2e: truncated stream is retryable with infinite budget and accurate label' => sub {
+    # Stream truncation (provider ended without finish_reason) is the
+    # MiniMax silent-stop bug. The new error_type=truncated must:
+    #   1. Get the same infinite retry budget as server_error/timeout
+    #   2. Surface a "stream truncated" label (not generic "server error")
+    #   3. Not bail after max_retries=3 the way the previous generic-else
+    #      branch would have.
+    my $result = call_handle_api_error(
+        api_response => {
+            success    => 0,
+            error      => 'Stream truncated: provider ended response without finish_reason (content=39 chars, tool_calls=0)',
+            retryable  => 1,
+            retry_after => 5,
+            error_type => 'truncated',
+        }
+    );
+
+    is($result, 'retry', 'truncated returns retry (infinite budget, not bailing)');
+};
+
+subtest 'Bug 2f: truncated does NOT bail at attempt 50' => sub {
+    # Verify the retry budget inheritance works for truncated the same
+    # way it does for server_error (max_server_retries=0 -> infinite).
+    my $wo = StubWO->new();
+    my $session = StubSession->new();
+    my $retry_count = 50;
+    my $session_error_count = 0;
+
+    my $ctx = {
+        messages            => [],
+        retry_count         => \$retry_count,
+        session_error_count => \$session_error_count,
+        iteration           => 1,
+        tool_calls_made     => [],
+        session             => $session,
+        on_system_message   => sub {},
+        max_retries         => 3,
+        max_server_retries  => 0,    # infinite, inherited by truncated
+        max_session_errors  => 50,
+        max_rate_limit_retries => 0,
+    };
+
+    my $result = CLIO::Core::API::ErrorHandler::handle_api_error(
+        $wo,
+        {
+            success    => 0,
+            error      => 'Stream truncated: provider ended response without finish_reason (content=39 chars, tool_calls=0)',
+            retryable  => 1,
+            retry_after => 5,
+            error_type => 'truncated',
+        },
+        $ctx
+    );
+
+    is($result, 'retry',
+        'truncated does NOT bail at attempt 50 (infinite retry budget via server_error inheritance)');
+};
+
+subtest 'Bug 2g: truncated surfaces "stream truncated" label to UI' => sub {
+    my $msg;
+    my $result = call_handle_api_error(
+        api_response => {
+            success    => 0,
+            error      => 'Stream truncated: provider ended response without finish_reason',
+            retryable  => 1,
+            retry_after => 5,
+            error_type => 'truncated',
+        },
+        on_system_message => sub { $msg = shift; }
+    );
+
+    is($result, 'retry', 'returns retry');
+    like($msg, qr/stream truncated/i,
+        'system message uses "stream truncated" label (not generic "server error")');
+};
+
 done_testing();

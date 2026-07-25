@@ -261,4 +261,232 @@ sub FakeResp::decoded_content { return $_[0]->{decoded_content} // ''; }
        'Test 6.3: legitimate response not flagged retryable');
 }
 
+# Test 7: Truncated stream with content but no finish_reason and no SSE
+# error chunk. This is the gap in the 62f7976 fix: MiniMax and other
+# OpenAI-compat providers sometimes drop the connection cleanly without
+# sending an explicit `data: {"error":...}` chunk, leaving the buffer
+# with partial content but no stop marker. Without the truncation guard
+# _finalize_streaming_response returns success with the partial response
+# and the orchestrator treats it as a final answer (the agent "just stops").
+{
+    package StubRH7;
+    sub release_broker_slot {}
+    sub update_from_headers {}
+    sub release {}
+    sub process_rate_limit_headers {}
+    sub report_rate_limit_for_model {}
+    sub process_copilot_usage {}
+    sub store_stateful_marker {}
+
+    package StubRL7;
+    sub update_from_headers {}
+    sub release {}
+
+    package main;
+    my $am = bless({
+        response_handler => bless({}, 'StubRH7'),
+        rate_limiter => bless({}, 'StubRL7'),
+        session => undef,
+    }, 'CLIO::Core::APIManager');
+
+    # State: content streamed (model started an answer), connection
+    # dropped, no finish_reason was emitted, no SSE error chunk sent.
+    my $s = {
+        resp => fake_resp(),
+        accumulated_content => 'I was about to investigate the codebase',
+        accumulated_reasoning => '',
+        streaming_usage => undef,
+        streaming_headers => bless({}, 'FakeResp'),
+        token_count => 8,
+        start_time => time() - 2,
+        first_token_time => time() - 1,
+        tool_calls_accumulator => {},
+        raw_response_body => 'data: {"choices":[{"delta":{"content":"I was about to investigate the codebase"}}]}',
+        buffer => '',
+        model => 'minimax/MiniMax-M3',
+        endpoint_config => {},
+        provider_label => 'minimax',
+        messages => [],
+        input => undef,
+        json => '',
+        _sse_error => undef,
+        _finish_reason => undef,
+    };
+
+    my $result = $am->_finalize_streaming_response(%$s);
+
+    ok(!$result->{success}, 'Test 7.1: truncated content+no-finish_reason returns success=0');
+    ok($result->{retryable}, 'Test 7.2: truncated stream is retryable');
+    is($result->{error_type}, 'truncated', 'Test 7.3: error_type=truncated');
+    like($result->{error}, qr/finish_reason/, 'Test 7.4: error mentions missing finish_reason');
+    like($result->{error}, qr/content=39 chars/, 'Test 7.5: error reports content length for diagnostics');
+    cmp_ok($result->{retry_after}, '>=', 1, 'Test 7.6: retry_after is positive');
+}
+
+# Test 8: Truncated stream with tool_calls but no finish_reason. The
+# connection dropped mid-tool-emission; partial tool_calls are in the
+# accumulator but the model never got to send the `finish_reason=tool_calls`
+# marker. Surfacing as retryable prevents the orchestrator from trying
+# to execute a partial tool call.
+{
+    package StubRH8;
+    sub release_broker_slot {}
+    sub update_from_headers {}
+    sub release {}
+    sub process_rate_limit_headers {}
+    sub report_rate_limit_for_model {}
+    sub process_copilot_usage {}
+    sub store_stateful_marker {}
+
+    package StubRL8;
+    sub update_from_headers {}
+    sub release {}
+
+    package main;
+    my $am = bless({
+        response_handler => bless({}, 'StubRH8'),
+        rate_limiter => bless({}, 'StubRL8'),
+        session => undef,
+    }, 'CLIO::Core::APIManager');
+
+    my $s = {
+        resp => fake_resp(),
+        accumulated_content => '',
+        accumulated_reasoning => '',
+        streaming_usage => undef,
+        streaming_headers => bless({}, 'FakeResp'),
+        token_count => 0,
+        start_time => time() - 2,
+        first_token_time => time() - 1,
+        tool_calls_accumulator => {
+            0 => { id => 'call_1', type => 'function',
+                   function => { name => 'memory_operations', arguments => '{"action":"sto' } },
+        },
+        raw_response_body => 'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"memory_operations","arguments":"{\\"action\\":\\"sto"}}]}}]}',
+        buffer => '',
+        model => 'minimax/MiniMax-M3',
+        endpoint_config => {},
+        provider_label => 'minimax',
+        messages => [],
+        input => undef,
+        json => '',
+        _sse_error => undef,
+        _finish_reason => undef,
+    };
+
+    my $result = $am->_finalize_streaming_response(%$s);
+
+    ok(!$result->{success}, 'Test 8.1: truncated tool_calls+no-finish_reason returns success=0');
+    ok($result->{retryable}, 'Test 8.2: truncated tool-call stream is retryable');
+    is($result->{error_type}, 'truncated', 'Test 8.3: error_type=truncated');
+    like($result->{error}, qr/tool_calls=1/, 'Test 8.4: error reports tool_call count for diagnostics');
+}
+
+# Test 9: Legitimate finish with content + finish_reason=stop must NOT
+# be flagged as truncated. This is the normal happy-path response.
+{
+    package StubRH9;
+    sub release_broker_slot {}
+    sub update_from_headers {}
+    sub release {}
+    sub process_rate_limit_headers {}
+    sub report_rate_limit_for_model {}
+    sub process_copilot_usage {}
+    sub store_stateful_marker {}
+
+    package StubRL9;
+    sub update_from_headers {}
+    sub release {}
+
+    package main;
+    my $am = bless({
+        response_handler => bless({}, 'StubRH9'),
+        rate_limiter => bless({}, 'StubRL9'),
+        session => undef,
+    }, 'CLIO::Core::APIManager');
+
+    my $s = {
+        resp => fake_resp(),
+        accumulated_content => 'The investigation is complete. No issues found.',
+        accumulated_reasoning => '',
+        streaming_usage => undef,
+        streaming_headers => bless({}, 'FakeResp'),
+        token_count => 12,
+        start_time => time() - 5,
+        first_token_time => time() - 4,
+        tool_calls_accumulator => {},
+        raw_response_body => '',
+        buffer => '',
+        model => 'minimax/MiniMax-M3',
+        endpoint_config => {},
+        provider_label => 'minimax',
+        messages => [],
+        input => undef,
+        json => '',
+        _sse_error => undef,
+        _finish_reason => 'stop',
+    };
+
+    my $result = $am->_finalize_streaming_response(%$s);
+
+    ok($result->{success}, 'Test 9.1: content+finish_reason=stop is NOT flagged truncated');
+    is($result->{content}, 'The investigation is complete. No issues found.',
+       'Test 9.2: legitimate stream content preserved');
+}
+
+# Test 10: Empty stream (no content, no tool_calls) without finish_reason
+# is NOT flagged as truncated. The orchestrator-side premature-stop
+# heuristic owns the "is this a real final answer?" question when nothing
+# was produced - returning a retryable here would just thrash the loop
+# on legitimately empty responses (e.g. model that returned only
+# reasoning/thinking and no content).
+{
+    package StubRH10;
+    sub release_broker_slot {}
+    sub update_from_headers {}
+    sub release {}
+    sub process_rate_limit_headers {}
+    sub report_rate_limit_for_model {}
+    sub process_copilot_usage {}
+    sub store_stateful_marker {}
+
+    package StubRL10;
+    sub update_from_headers {}
+    sub release {}
+
+    package main;
+    my $am = bless({
+        response_handler => bless({}, 'StubRH10'),
+        rate_limiter => bless({}, 'StubRL10'),
+        session => undef,
+    }, 'CLIO::Core::APIManager');
+
+    my $s = {
+        resp => fake_resp(),
+        accumulated_content => '',
+        accumulated_reasoning => 'lots of thinking but no content',
+        streaming_usage => undef,
+        streaming_headers => bless({}, 'FakeResp'),
+        token_count => 0,
+        start_time => time() - 2,
+        first_token_time => time() - 1,
+        tool_calls_accumulator => {},
+        raw_response_body => '',
+        buffer => '',
+        model => 'minimax/MiniMax-M3',
+        endpoint_config => {},
+        provider_label => 'minimax',
+        messages => [],
+        input => undef,
+        json => '',
+        _sse_error => undef,
+        _finish_reason => undef,
+    };
+
+    my $result = $am->_finalize_streaming_response(%$s);
+
+    ok($result->{success}, 'Test 10.1: empty stream+no-finish_reason is NOT flagged truncated');
+    is($result->{content} // '', '', 'Test 10.2: empty content returned as empty string');
+}
+
 done_testing();

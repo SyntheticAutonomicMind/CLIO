@@ -174,6 +174,14 @@ sub handle_api_error {
             # Upstream timeouts and overload errors get the same retry budget as 5xx
             $retry_limit = $max_server_retries;
             $allow_infinite_retry = 1 if $max_server_retries == 0;
+        } elsif ($error_type_for_limit eq 'truncated') {
+            # Truncated stream (provider ended without finish_reason). This is a
+            # transient network/provider issue that almost always resolves on
+            # retry - treat it like a server_error with infinite retries so a
+            # flapping provider doesn't blow the per-iteration retry budget on
+            # what would otherwise be a single successful retry.
+            $retry_limit = $max_server_retries;
+            $allow_infinite_retry = 1 if $max_server_retries == 0;
         } elsif ($error_type_for_limit eq 'bad_request') {
             $retry_limit = 4;
         } else {
@@ -224,6 +232,8 @@ sub handle_api_error {
             $error_type = "upstream timeout";
         } elsif ($api_response->{error_type} && $api_response->{error_type} eq 'overloaded') {
             $error_type = "upstream overload";
+        } elsif ($api_response->{error_type} && $api_response->{error_type} eq 'truncated') {
+            $error_type = "stream truncated";
         }
 
         # Format retry count display (show ∞ for infinite retries)
