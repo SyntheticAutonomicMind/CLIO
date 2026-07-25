@@ -267,6 +267,63 @@ sub new {
     return $self;
 }
 
+=head2 _looks_premature_stop($content, $tool_calls_count)
+
+Heuristic for detecting when the model has stopped mid-workflow after
+executing tool calls. Returns 1 if the response looks like a premature
+stop that should be nudged with a continuation message, 0 if the
+response is a legitimate final answer.
+
+Detection rules (any one triggers premature=1):
+  - Empty content after at least one tool call (model went silent)
+  - Short content (< 200 chars) after tool calls that ends mid-sentence
+    (no terminal punctuation, or ends with `:`)
+
+Long content (>= 200 chars) is always treated as a legitimate final
+answer, even mid-sentence, because models writing that much are usually
+actually finishing their thought. The complementary streaming-side
+guard in APIManager (truncation detection) catches the case where the
+connection drops mid-stream - this heuristic is the second line of
+defense for responses that complete cleanly but look incomplete.
+
+Arguments:
+    $content           - The assistant's response content (string, may be empty)
+    $tool_calls_count  - Number of tool calls executed so far in the workflow
+
+Returns:
+    1 if the response looks like a premature stop, 0 otherwise.
+
+=cut
+
+sub _looks_premature_stop {
+    my ($self, $content, $tool_calls_count) = @_;
+
+    return 0 unless $tool_calls_count && $tool_calls_count > 0;
+
+    my $content_length = length($content // '');
+
+    # Completely empty response after tool calls - definitely premature.
+    if ($content_length == 0) {
+        return 1;
+    }
+
+    # Long responses are treated as genuine final answers even if they
+    # look mid-sentence - a model that wrote 200+ chars was probably
+    # actually finishing its thought, not stopping mid-work.
+    return 0 if $content_length >= 200;
+
+    # Short response: check if it ends mid-sentence.
+    my $trimmed = $content // '';
+    $trimmed =~ s/\s+$//;
+    # Ends with `:` (colon, e.g. "Let me check:") or no terminal
+    # punctuation (`.`, `!`, `?` possibly followed by `)`/`]`) -> mid-work.
+    if ($trimmed =~ /[:]\s*$/ || $trimmed !~ /[.!?][)\]]*\s*$/) {
+        return 1;
+    }
+
+    return 0;
+}
+
 =head2 _register_default_tools
 
 Register default tools (file_operations, etc.) with the tool registry.
@@ -275,7 +332,7 @@ Register default tools (file_operations, etc.) with the tool registry.
 
 sub _register_default_tools {
     my ($self) = @_;
-    
+
     # Tools blocked for sub-agents (to prevent coordination issues and fork bombs)
     my %blocked_for_subagent = (
         'remote_execution' => 1,    # Cannot spawn remote work
@@ -790,29 +847,15 @@ sub process_input {
         if ($premature_stop_retries < $max_premature_stop_retries) {
             my $content = $api_response->{content} // '';
             my $content_length = length($content);
-            
-            # Heuristic: A genuine final answer after tool use typically has substance.
-            # An empty or very short response after active tool calling is suspicious.
-            # Also detect responses that end mid-sentence (no terminal punctuation).
-            my $looks_premature = 0;
-            
-            if ($content_length == 0 && @tool_calls_made > 0) {
-                # Completely empty response after tool calls - definitely premature
-                $looks_premature = 1;
-                log_info('WorkflowOrchestrator', "Premature stop detected: empty response after " . scalar(@tool_calls_made) . " tool calls");
-            }
-            elsif ($content_length > 0 && $content_length < 200 && @tool_calls_made > 0) {
-                # Short response after tool calls - check if it looks mid-sentence
-                my $trimmed = $content;
-                $trimmed =~ s/\s+$//;
-                # Ends with colon, comma, or no terminal punctuation - likely mid-work
-                if ($trimmed =~ /[:]\s*$/ || $trimmed !~ /[.!?][)\]]*\s*$/) {
-                    $looks_premature = 1;
-                    log_info('WorkflowOrchestrator', "Premature stop detected: short mid-sentence response ($content_length chars) after " . scalar(@tool_calls_made) . " tool calls");
-                }
-            }
-            
+            my $tool_calls_count = scalar @tool_calls_made;
+            my $looks_premature = $self->_looks_premature_stop($content, $tool_calls_count);
+
             if ($looks_premature) {
+                if ($content_length == 0) {
+                    log_info('WorkflowOrchestrator', "Premature stop detected: empty response after $tool_calls_count tool calls");
+                } else {
+                    log_info('WorkflowOrchestrator', "Premature stop detected: short mid-sentence response ($content_length chars) after $tool_calls_count tool calls");
+                }
                 $premature_stop_retries++;
                 log_debug('WorkflowOrchestrator', "Premature workflow stop detected (retry $premature_stop_retries/$max_premature_stop_retries). Nudging model to continue.");
                 

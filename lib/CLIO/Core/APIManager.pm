@@ -4354,6 +4354,44 @@ sub _finalize_streaming_response {
         };
     }
 
+    # Detect truncated stream: content/tool_calls were streamed but no
+    # finish_reason was ever captured. The OpenAI Chat Completions spec
+    # requires `choices[].finish_reason` on the final delta, so its absence
+    # means the connection died (or was closed) before the provider could
+    # emit the stop marker. Without this guard the finalizer returns
+    # success with the partial response, and the orchestrator treats the
+    # truncated text as a final answer - the agent then "just stops"
+    # mid-workflow, exactly the MiniMax silent-stop bug 62f7976 attempted
+    # to fix for the SSE-error case but only addressed when the provider
+    # also emitted an explicit `data: {"error":...}` chunk. MiniMax and
+    # other OpenAI-compat providers frequently drop the connection
+    # without sending an error chunk at all.
+    #
+    # Only fire when we have something to lose (content or tool_calls
+    # accumulated) - a stream that produced nothing yet has no
+    # `finish_reason` is still treated as a no-op by the orchestrator's
+    # premature-stop heuristic, which has the right context to decide
+    # whether to nudge the model.
+    if (!$s{_finish_reason}
+        && (length($s{accumulated_content}) || keys(%{$s{tool_calls_accumulator}}))) {
+        my $content_len = length($s{accumulated_content} // '');
+        my $tc_count    = scalar keys %{$s{tool_calls_accumulator}};
+        log_warning('APIManager',
+            "Truncated stream detected: no finish_reason, content=$content_len chars, "
+            . "tool_calls=$tc_count - surfacing as retryable");
+        $self->{response_handler}->release_broker_slot($resp, 200);
+        $self->{rate_limiter}->release(lc($s{provider_label})) if $s{provider_label};
+        return {
+            success     => 0,
+            error       => "Stream truncated: provider ended response without finish_reason "
+                         . "(content=$content_len chars, tool_calls=$tc_count). "
+                         . "The connection dropped before the model could complete its turn.",
+            retryable   => 1,
+            retry_after => 5,
+            error_type  => 'truncated',
+        };
+    }
+
     # Handle HTTP error responses based on status code
     if ($is_error) {
         # Pass streaming headers to error handler for rate limit header parsing
