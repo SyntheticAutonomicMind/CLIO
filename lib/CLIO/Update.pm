@@ -14,6 +14,7 @@ use CLIO::Util::JSON qw(decode_json encode_json);
 use CLIO::Util::Proxy qw(resolve_proxy_url);
 use CLIO::Core::Logger qw(log_debug log_error log_warning);
 use POSIX qw(_exit);
+use CLIO::Update::Releases;
 
 my $NULLDEV = $^O eq 'MSWin32' ? 'nul' : '/dev/null';
 
@@ -133,49 +134,11 @@ Returns:
 
 sub get_latest_version {
     my ($self) = @_;
-    
-    my $api_url = sprintf("%s/repos/%s/releases/latest",
-        $self->{api_base},
-        $self->{github_repo}
+    return CLIO::Update::Releases::get_latest_version(
+        api_base    => $self->{api_base},
+        github_repo => $self->{github_repo},
+        timeout     => $self->{timeout},
     );
-    
-    log_debug('Update', "Fetching latest release from: $api_url");
-    
-    # Use curl for HTTP request (more reliable than LWP)
-    my $response = `curl -s -m $self->{timeout} @{[_proxy_shell_arg()]}-H "Accept: application/vnd.github+json" "$api_url" 2>$NULLDEV`;
-    
-    if ($? != 0) {
-        log_debug('Update', "curl failed with exit code: " . ($? >> 8));
-        return undef;
-    }
-    
-    # Parse JSON response
-    my $data;
-    eval {
-        $data = decode_json($response);
-    };
-    
-    if ($@ || !$data) {
-        log_debug('Update', "Failed to parse JSON response: $@");
-        return undef;
-    }
-    
-    # Extract version info
-    my $tag_name = $data->{tag_name} || '';
-    my $version = $tag_name;
-    $version =~ s/^v//;  # Remove leading 'v'
-    
-    my $tarball_url = $data->{tarball_url} || '';
-    my $published_at = $data->{published_at} || '';
-    
-    return {
-        version => $version,
-        tag_name => $tag_name,
-        tarball_url => $tarball_url,
-        published_at => $published_at,
-        release_name => $data->{name} || '',
-        release_notes => $data->{body} || '',
-    };
 }
 
 =head2 get_all_releases
@@ -194,59 +157,12 @@ Returns:
 
 sub get_all_releases {
     my ($self, %opts) = @_;
-    
-    my $per_page = $opts{per_page} || 30;
-    my $page = $opts{page} || 1;
-    
-    my $api_url = sprintf("%s/repos/%s/releases?per_page=%d&page=%d",
-        $self->{api_base},
-        $self->{github_repo},
-        $per_page,
-        $page
+    return CLIO::Update::Releases::get_all_releases(
+        %opts,
+        api_base    => $self->{api_base},
+        github_repo => $self->{github_repo},
+        timeout     => $self->{timeout},
     );
-    
-    log_debug('Update', "Fetching releases from: $api_url");
-    
-    # Use curl for HTTP request
-    my $response = `curl -s -m $self->{timeout} @{[_proxy_shell_arg()]}-H "Accept: application/vnd.github+json" "$api_url" 2>$NULLDEV`;
-    
-    if ($? != 0) {
-        log_debug('Update', "curl failed with exit code: " . ($? >> 8));
-        return undef;
-    }
-    
-    # Parse JSON response
-    my $data;
-    eval {
-        $data = decode_json($response);
-    };
-    
-    if ($@ || !$data || ref($data) ne 'ARRAY') {
-        log_debug('Update', "Failed to parse JSON response: $@");
-        return undef;
-    }
-    
-    # Transform each release
-    my @releases;
-    for my $release (@$data) {
-        my $tag_name = $release->{tag_name} || '';
-        my $version = $tag_name;
-        $version =~ s/^v//;  # Remove leading 'v'
-        
-        push @releases, {
-            version => $version,
-            tag_name => $tag_name,
-            tarball_url => $release->{tarball_url} || '',
-            published_at => $release->{published_at} || '',
-            release_name => $release->{name} || $version,
-            prerelease => $release->{prerelease} ? 1 : 0,
-            draft => $release->{draft} ? 1 : 0,
-        };
-    }
-    
-    log_debug('Update', "Found " . scalar(@releases) . " releases");
-    
-    return \@releases;
 }
 
 =head2 get_release_by_version
@@ -263,55 +179,12 @@ Returns:
 
 sub get_release_by_version {
     my ($self, $version) = @_;
-    
-    return undef unless $version;
-
-    # Validate version format (defense in depth - prevents injection via path)
-    unless ($version =~ /^[A-Za-z0-9._-]+$/) {
-        log_error("Update", "Invalid version format: $version");
-        return undef;
-    }
-    
-    # Try with 'v' prefix first (common convention), then without
-    my @tags_to_try = ("v$version", $version);
-    
-    for my $tag (@tags_to_try) {
-        my $api_url = sprintf("%s/repos/%s/releases/tags/%s",
-            $self->{api_base},
-            $self->{github_repo},
-            $tag
-        );
-        
-        log_debug('Update', "Fetching release by tag: $tag");
-        
-        my $response = `curl -s -m $self->{timeout} @{[_proxy_shell_arg()]}-H "Accept: application/vnd.github+json" "$api_url" 2>$NULLDEV`;
-        
-        next if $? != 0;
-        
-        my $data;
-        eval {
-            $data = decode_json($response);
-        };
-        
-        next if $@ || !$data || $data->{message};  # Skip if error or "not found" message
-        
-        my $tag_name = $data->{tag_name} || '';
-        my $ver = $tag_name;
-        $ver =~ s/^v//;
-        
-        return {
-            version => $ver,
-            tag_name => $tag_name,
-            tarball_url => $data->{tarball_url} || '',
-            published_at => $data->{published_at} || '',
-            release_name => $data->{name} || $ver,
-            release_notes => $data->{body} || '',
-            prerelease => $data->{prerelease} ? 1 : 0,
-        };
-    }
-    
-    log_debug('Update', "Version $version not found");
-    return undef;
+    return CLIO::Update::Releases::get_release_by_version(
+        version     => $version,
+        api_base    => $self->{api_base},
+        github_repo => $self->{github_repo},
+        timeout     => $self->{timeout},
+    );
 }
 
 =head2 download_version
@@ -328,87 +201,12 @@ Returns:
 
 sub download_version {
     my ($self, $version) = @_;
-    
-    return undef unless $version;
-
-    # Validate version format (defense in depth - prevents injection via path)
-    unless ($version =~ /^[A-Za-z0-9._-]+$/) {
-        log_error("Update", "Invalid version format: $version");
-        return undef;
-    }
-    
-    # Get release info for this version
-    my $release = $self->get_release_by_version($version);
-    unless ($release && $release->{tarball_url}) {
-        log_error('Update', "Cannot find release for version: $version");
-        return undef;
-    }
-    
-    my $tarball_url = $release->{tarball_url};
-    
-    # Create download directory
-    my $download_dir = "/tmp/clio-update-$version";
-    if (-d $download_dir) {
-        log_debug('Update', "Removing existing download dir: $download_dir");
-        rmtree($download_dir);
-    }
-    
-    mkpath($download_dir) or do {
-        log_error('Update', "Cannot create download dir: $!");
-        return undef;
-    };
-    
-    # Download tarball
-    my $tarball_path = "$download_dir/clio.tar.gz";
-    log_debug('Update', "Downloading version $version from: $tarball_url");
-    
-    my $curl_result = system("curl", "-sL", "-m", "30", _proxy_arg(), "-o", $tarball_path, $tarball_url);
-    
-    if ($curl_result != 0) {
-        log_error('Update', "Download failed");
-        rmtree($download_dir);
-        return undef;
-    }
-    
-    # Extract tarball
-    log_debug('Update', "Extracting tarball");
-    
-    my $orig_dir = getcwd();
-    my $extract_ok = 0;
-    if (chdir($download_dir)) {
-        $extract_ok = (system("tar", "-xzf", "clio.tar.gz") == 0);
-        chdir($orig_dir) or log_warning("Update", "Cannot return to $orig_dir: $!");
-    }
-    
-    if (!$extract_ok) {
-        log_error('Update', "Extraction failed");
-        rmtree($download_dir);
-        return undef;
-    }
-    
-    # Find extracted directory
-    opendir(my $dh, $download_dir) or return undef;
-    my @subdirs = grep { -d "$download_dir/$_" && $_ !~ /^\./ } readdir($dh);
-    closedir($dh);
-    
-    unless (@subdirs) {
-        log_error('Update', "No extracted directory found");
-        rmtree($download_dir);
-        return undef;
-    }
-    
-    my $extracted_dir = File::Spec->catdir($download_dir, $subdirs[0]);
-    
-    # Verify it looks like CLIO
-    unless (-f "$extracted_dir/clio") {
-        log_error('Update', "Downloaded directory doesn't look like CLIO (no ./clio executable)");
-        rmtree($download_dir);
-        return undef;
-    }
-    
-    log_debug('Update', "Successfully downloaded version $version to: $extracted_dir");
-    
-    return $extracted_dir;
+    return CLIO::Update::Releases::download_version(
+        version     => $version,
+        api_base    => $self->{api_base},
+        github_repo => $self->{github_repo},
+        timeout     => $self->{timeout},
+    );
 }
 
 =head2 install_version
@@ -795,80 +593,11 @@ Returns:
 
 sub download_latest {
     my ($self) = @_;
-    
-    # Get latest release info
-    my $release = $self->get_latest_version();
-    unless ($release && $release->{tarball_url}) {
-        log_error('Update', "Cannot get latest release info");
-        return undef;
-    }
-    
-    my $version = $release->{version};
-    my $tarball_url = $release->{tarball_url};
-    
-    # Create download directory
-    my $download_dir = "/tmp/clio-update-$version";
-    if (-d $download_dir) {
-        log_debug('Update', "Removing existing download dir: $download_dir");
-        rmtree($download_dir);
-    }
-    
-    mkpath($download_dir) or do {
-        log_error('Update', "Cannot create download dir: $!");
-        return undef;
-    };
-    
-    # Download tarball
-    my $tarball_path = "$download_dir/clio.tar.gz";
-    log_debug('Update', "Downloading from: $tarball_url");
-    
-    my $curl_result = system("curl", "-sL", "-m", "30", _proxy_arg(), "-o", $tarball_path, $tarball_url);
-    
-    if ($curl_result != 0) {
-        log_error('Update', "Download failed");
-        rmtree($download_dir);
-        return undef;
-    }
-    
-    # Extract tarball
-    log_debug('Update', "Extracting tarball");
-    
-    my $orig_dir = getcwd();
-    my $extract_ok = 0;
-    if (chdir($download_dir)) {
-        $extract_ok = (system("tar", "-xzf", "clio.tar.gz") == 0);
-        chdir($orig_dir) or log_warning("Update", "Cannot return to $orig_dir: $!");
-    }
-    
-    if (!$extract_ok) {
-        log_error('Update', "Extraction failed");
-        rmtree($download_dir);
-        return undef;
-    }
-    
-    # Find extracted directory (GitHub creates a subdirectory like SyntheticAutonomicMind-CLIO-abc123/)
-    opendir(my $dh, $download_dir) or return undef;
-    my @subdirs = grep { -d "$download_dir/$_" && $_ !~ /^\./ } readdir($dh);
-    closedir($dh);
-    
-    unless (@subdirs) {
-        log_error('Update', "No extracted directory found");
-        rmtree($download_dir);
-        return undef;
-    }
-    
-    my $extracted_dir = File::Spec->catdir($download_dir, $subdirs[0]);
-    
-    # Verify it looks like CLIO (has ./clio executable)
-    unless (-f "$extracted_dir/clio") {
-        log_error('Update', "Downloaded directory doesn't look like CLIO (no ./clio executable)");
-        rmtree($download_dir);
-        return undef;
-    }
-    
-    log_debug('Update', "Successfully downloaded to: $extracted_dir");
-    
-    return $extracted_dir;
+    return CLIO::Update::Releases::download_latest(
+        api_base    => $self->{api_base},
+        github_repo => $self->{github_repo},
+        timeout     => $self->{timeout},
+    );
 }
 
 =head2 install_from_directory
