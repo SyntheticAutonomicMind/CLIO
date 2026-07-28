@@ -14,6 +14,13 @@ use CLIO::UI::Terminal qw(box_char ui_char);
 
 CLIO::Core::PerformanceMonitor - Track API endpoint and model performance
 
+=head1 SYNOPSIS
+
+    use CLIO::Core::PerformanceMonitor;
+
+    my $pm = CLIO::Core::PerformanceMonitor->new();
+    my $stats = $pm->snapshot();
+
 =head1 DESCRIPTION
 
 Monitors API endpoint performance metrics to help select the best endpoint.

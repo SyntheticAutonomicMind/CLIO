@@ -14,6 +14,13 @@ use File::Spec;
 
 CLIO::Core::Editor - External editor integration for CLIO
 
+=head1 SYNOPSIS
+
+    use CLIO::Core::Editor;
+
+    my $editor = CLIO::Core::Editor->new();
+    my $content = $editor->open_file('/path/to/file');
+
 =head1 DESCRIPTION
 
 Provides functionality to open external editors for file editing and multi-line input.

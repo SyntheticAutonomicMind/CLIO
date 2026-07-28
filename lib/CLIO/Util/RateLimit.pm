@@ -16,6 +16,15 @@ our @EXPORT_OK = qw(get_rate_limit_type_name format_reset_message parse_anthropi
 
 CLIO::Util::RateLimit - Shared rate limit utility functions
 
+=head1 SYNOPSIS
+
+    use CLIO::Util::RateLimit qw(create_rate_limiter);
+
+    my $limiter = create_rate_limiter(requests_per_minute => 60);
+    if (!$limiter->try_acquire()) {
+        sleep $limiter->retry_after();
+    }
+
 =head1 DESCRIPTION
 
 Common functions for rate limit error code mapping and reset time formatting.

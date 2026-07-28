@@ -35,6 +35,18 @@ sub _proxy_shell_arg {
 
 CLIO::Update::Releases - GitHub releases API + tarball download primitives
 
+=head1 SYNOPSIS
+
+    use CLIO::Update::Releases;
+
+    my $release = CLIO::Update::Releases::get_latest_version(
+        github_repo => 'SyntheticAutonomicMind/CLIO',
+    );
+    my $path = CLIO::Update::Releases::download_version(
+        version => '20260720.1',
+        github_repo => 'SyntheticAutonomicMind/CLIO',
+    );
+
 =head1 DESCRIPTION
 
 Class methods that fetch CLIO release metadata from GitHub's API and

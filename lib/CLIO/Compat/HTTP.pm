@@ -27,6 +27,13 @@ BEGIN {
 
 CLIO::Compat::HTTP - Portable HTTP client using core modules
 
+=head1 SYNOPSIS
+
+    use CLIO::Compat::HTTP;
+
+    my $response = CLIO::Compat::HTTP::_request_via_curl($url, %opts);
+    my $streaming = CLIO::Compat::HTTP::_request_via_curl_streaming($url, $cb, %opts);
+
 =head1 DESCRIPTION
 
 Provides HTTP client functionality using HTTP::Tiny (Perl core since 5.14).

@@ -14,6 +14,14 @@ our @EXPORT_OK = qw(GetTerminalSize ReadMode ReadKey ReadLine reset_terminal res
 
 CLIO::Compat::Terminal - Portable terminal control using POSIX::Termios
 
+=head1 SYNOPSIS
+
+    use CLIO::Compat::Terminal;
+
+    my $key = CLIO::Compat::Terminal::ReadKey(0);  # Non-blocking read
+    my $term = CLIO::Compat::Terminal::get_term_size();
+    CLIO::Compat::Terminal::reset_terminal();
+
 =head1 DESCRIPTION
 
 Provides terminal control functionality without Term::ReadKey or stty dependency.

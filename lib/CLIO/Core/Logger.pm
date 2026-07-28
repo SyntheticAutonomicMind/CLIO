@@ -15,6 +15,15 @@ our @EXPORT_OK = qw(should_log log_debug log_info log_warning log_error LOG_LEVE
 
 CLIO::Core::Logger - Global logging utility
 
+=head1 SYNOPSIS
+
+    use CLIO::Core::Logger qw(log_debug log_info log_warning log_error);
+
+    log_debug('MyModule', 'detailed diagnostic');
+    log_info('MyModule', 'informational message');
+    log_warning('MyModule', 'something unexpected');
+    log_error('MyModule', 'something failed: %s', $err);
+
 =head1 DESCRIPTION
 
 Provides global should_log() function that checks CLIO_LOG_LEVEL environment

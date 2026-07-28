@@ -19,6 +19,14 @@ use File::Spec;
 
 CLIO::Core::Config - Configuration management for CLIO
 
+=head1 SYNOPSIS
+
+    use CLIO::Core::Config;
+
+    my $config = CLIO::Core::Config->new();
+    my $value = $config->get('section', 'key');
+    $config->set('section', 'key', $value);
+
 =head1 DESCRIPTION
 
 Manages configuration for API settings, model selection, and provider selection.

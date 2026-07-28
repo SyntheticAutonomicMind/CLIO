@@ -12,6 +12,13 @@ use utf8;
 
 CLIO::MCP::Transport::Stdio - Stdio transport for MCP
 
+=head1 SYNOPSIS
+
+    use CLIO::MCP::Transport::Stdio;
+
+    my $stdio = CLIO::MCP::Transport::Stdio->new(%opts);
+    $stdio->start(sub { my ($msg) = @_; process_message($msg); });
+
 =head1 DESCRIPTION
 
 Implements the MCP stdio transport. Spawns an MCP server as a subprocess

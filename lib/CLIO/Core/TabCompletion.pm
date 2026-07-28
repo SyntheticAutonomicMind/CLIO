@@ -14,6 +14,13 @@ use Cwd;
 
 CLIO::Core::TabCompletion - Tab completion for CLIO
 
+=head1 SYNOPSIS
+
+    use CLIO::Core::TabCompletion;
+
+    my $tc = CLIO::Core::TabCompletion->new(%opts);
+    my @matches = $tc->complete($partial_line, $state);
+
 =head1 DESCRIPTION
 
 Provides comprehensive tab completion for:

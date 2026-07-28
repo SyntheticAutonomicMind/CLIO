@@ -15,6 +15,15 @@ use CLIO::Util::PathResolver qw(expand_tilde);
 
 CLIO::Security::PathAuthorizer - Authorization guard for file path operations
 
+=head1 SYNOPSIS
+
+    use CLIO::Security::PathAuthorizer;
+
+    my $pa = CLIO::Security::PathAuthorizer->new(%rules);
+    if (!$pa->is_allowed('/some/path', 'read')) {
+        die "Path access denied";
+    }
+
 =head1 DESCRIPTION
 
 Implements path-based authorization for file operations.

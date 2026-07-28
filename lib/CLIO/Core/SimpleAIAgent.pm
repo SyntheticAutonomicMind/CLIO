@@ -15,6 +15,13 @@ use MIME::Base64 qw(encode_base64 decode_base64);
 
 CLIO::Core::SimpleAIAgent - Simplified AI agent that bypasses broken natural language processing
 
+=head1 SYNOPSIS
+
+    use CLIO::Core::SimpleAIAgent;
+
+    my $agent = CLIO::Core::SimpleAIAgent->new(%opts);
+    my $result = $agent->run($prompt, %run_opts);
+
 =head1 DESCRIPTION
 
 This module provides a working AI interface that directly calls the API when the
