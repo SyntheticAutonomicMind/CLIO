@@ -26,6 +26,17 @@ use File::Basename;
 use Test::More;
 use Cwd qw(abs_path);
 
+# IMPORTANT: Skip if invoked from inside the test runner. The assessment
+# tool itself invokes the runner to compute the Testing category, and
+# if we're being run from inside the runner that would recurse
+# infinitely (outer runner -> assessment -> inner runner -> assessment ->
+# ...) until the system runs out of processes. We detect this via an
+# env var the runner sets before forking each test child.
+if ($ENV{CLIO_TEST_RUNNER_INVOKED}) {
+    plan skip_all => 'Skipping during nested runner invocation';
+    exit 0;
+}
+
 # Locate project root (parent of tests/)
 my $tests_dir = dirname(abs_path($FindBin::Bin));
 my $project_root = dirname($tests_dir);
@@ -33,8 +44,10 @@ my $project_root = dirname($tests_dir);
 # Chdir so assess_codebase.pl finds the right paths
 chdir $project_root or die "Cannot chdir to $project_root: $!\n";
 
-# Run assessment
-my $assess_output = `perl -I lib tools/assess_codebase.pl --json 2>/dev/null`;
+# Run assessment. --skip-tests avoids running the unit tests inside
+# the assessment (we ARE a unit test, so re-running the suite from
+# here would be pointless and slow).
+my $assess_output = `perl -I lib tools/assess_codebase.pl --skip-tests --json 2>/dev/null`;
 my $assess_exit = $?;
 my $assess_data;
 
