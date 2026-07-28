@@ -16,6 +16,13 @@ use CLIO::Util::AtomicWrite qw(atomic_write);
 
 CLIO::Profile::Manager - Manage user personality profiles for CLIO
 
+=head1 SYNOPSIS
+
+    use CLIO::Profile::Manager;
+
+    my $pm = CLIO::Profile::Manager->new(profile_dir => $dir);
+    my $profile = $pm->load_profile('default');
+
 =head1 DESCRIPTION
 
 Handles loading, saving, and injecting user profiles into the system prompt.
