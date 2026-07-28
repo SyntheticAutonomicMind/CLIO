@@ -43,6 +43,11 @@ tmp/
 # Pattern: 10 alphanumeric characters
 [A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]/
 
+# End-to-end install test fixtures (created by test_install_sh.pl,
+# test_update_install.pl). Simulated install dirs owned by root after
+# install.sh runs via sudo. Always safe to delete.
+tests/unit/tmp_*_e2e/
+
 # Test output files
 test_task.txt
 t/calculator.t
