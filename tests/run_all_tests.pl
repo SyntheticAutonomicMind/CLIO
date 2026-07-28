@@ -40,6 +40,7 @@ use feature 'say';
 use File::Find;
 use File::Spec;
 use Getopt::Long;
+use POSIX qw(:sys_wait_h setpgid SIGKILL);
 use Time::HiRes qw(time);
 
 # Parse command line options
@@ -183,15 +184,66 @@ sub run_test_file {
     
     # Run the test
     my $test_start = time();
-    my $output;
-    if ($opts{per_test_timeout} > 0) {
-        # Exit 124 from `timeout` means the inner command was killed at the limit.
-        $output = `timeout $opts{per_test_timeout} $command`;
-    } else {
-        $output = `$command`;
+    my $output = '';
+    my $exit_code = 0;
+
+    # Run the test with proper process group cleanup. We don't use the
+    # `timeout` command because it only kills the immediate child. Tests
+    # that fork subprocesses (broker processes, MCP server stubs,
+    # daemonized helpers) become orphans when the wrapper dies, lingering
+    # until the runner exits and exhausting process slots in long CI
+    # runs. Instead, fork a child, put it in its own process group with
+    # POSIX::setpgid, then exec. On timeout, send SIGKILL to the entire
+    # process group (-PGID) so the test + children die together.
+    # Cross-platform (macOS, Linux, BSD) - uses POSIX directly, not
+    # `setsid` (not in default PATH on macOS).
+    pipe(my $read_fd, my $write_fd) or die "pipe: $!";
+
+    my $pid = fork();
+    if ($pid == 0) {
+        close $read_fd;
+        POSIX::setpgid(0, 0) or die "setpgid: $!";
+        open(STDOUT, '>&', $write_fd) or die "dup stdout: $!";
+        open(STDERR, '>&', $write_fd) or die "dup stderr: $!";
+        close $write_fd;
+        # Signal to nested tests that we're inside the runner. Meta tests
+        # (test_assessment_regression, test_lint_size_regression) use
+        # this to skip cleanly instead of recursing back into us.
+        $ENV{CLIO_TEST_RUNNER_INVOKED} = 1;
+        exec('sh', '-c', "$command 2>&1") or die "exec: $!";
     }
-    my $exit_code = $? >> 8;
+
+    close $write_fd;
+
+    if ($opts{per_test_timeout} > 0) {
+        my $wait_result = waitpid($pid, &WNOHANG);
+        my $deadline = time() + $opts{per_test_timeout};
+        my $timed_out = 0;
+        while ($wait_result <= 0) {
+            if (time() >= $deadline) {
+                kill('KILL', -$pid) or warn "kill pgid: $!";
+                $timed_out = 1;
+                last;
+            }
+            select(undef, undef, undef, 0.1);
+            $wait_result = waitpid($pid, &WNOHANG);
+        }
+        if ($wait_result <= 0) {
+            waitpid($pid, 0);  # Reap
+        }
+        $exit_code = $timed_out ? 124 : ($? >> 8);
+    } else {
+        waitpid($pid, 0);
+        $exit_code = $? >> 8;
+    }
+
     my $test_duration = time() - $test_start;
+
+    {
+        local $/;
+        $output = <$read_fd>;
+    }
+    close $read_fd;
     
     # Check result
     if ($exit_code == 124) {

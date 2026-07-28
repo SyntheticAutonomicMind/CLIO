@@ -42,11 +42,15 @@ jobs:
           perl tools/lint_size_regression.pl --base=origin/${{ github.base_ref }}
 
       - name: Run codebase assessment
-        # Capture metrics. Doesn't fail the build - just records.
-        # Drop a comment on PR if any category score regresses.
+        # CI runs the assessment in --skip-tests mode to avoid the
+        # 3+ minute test runner invocation. Tests are run separately
+        # by the release workflow; in CI the Testing category uses
+        # last-known-good counts from the assessment history (or the
+        # runner output if available). The assessment itself finishes
+        # in under 10 seconds without tests.
         id: assess
         run: |
-          perl -I lib tools/assess_codebase.pl --json > /tmp/assess.json
+          perl -I lib tools/assess_codebase.pl --skip-tests --json > /tmp/assess.json
           python3 -c "
           import json
           with open('/tmp/assess.json') as f:
@@ -93,7 +97,7 @@ jobs:
       - name: Append assessment to history
         if: github.event_name == 'push'
         run: |
-          perl -I lib tools/assess_codebase.pl --json > /tmp/assess.json
+          perl -I lib tools/assess_codebase.pl --skip-tests --json > /tmp/assess.json
           python3 -c "
           import json, datetime
           with open('/tmp/assess.json') as f:

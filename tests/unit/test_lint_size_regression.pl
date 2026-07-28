@@ -29,6 +29,14 @@ use Cwd qw(abs_path);
 
 use Test::More;
 
+# Skip when invoked from inside the test runner. Reading working tree
+# state from inside the runner produces no signal (changes are already
+# committed) and isn't what this test is designed to catch.
+if ($ENV{CLIO_TEST_RUNNER_INVOKED}) {
+    plan skip_all => 'Skipping during nested runner invocation';
+    exit 0;
+}
+
 my $tests_dir = dirname(abs_path($FindBin::Bin));
 my $project_root = dirname($tests_dir);
 chdir $project_root or die "Cannot chdir to $project_root: $!\n";

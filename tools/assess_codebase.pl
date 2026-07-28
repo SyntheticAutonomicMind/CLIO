@@ -27,6 +27,7 @@ use Cwd 'abs_path';
 
 my $json_mode = grep { $_ eq '--json' } @ARGV;
 my $score_mode = grep { $_ eq '--score-only' } @ARGV;
+my $skip_tests = grep { $_ eq '--skip-tests' } @ARGV;
 
 # Find project root (parent of tools/)
 my $script_dir = dirname(abs_path($0));
@@ -420,7 +421,7 @@ for my $t (@integration_tests) {
 my ($unit_pass, $unit_fail) = (0, 0);
 my @unit_failures;
 my @unit_hung;
-my $runner = -f 'tests/run_all_tests.pl' ? 'tests/run_all_tests.pl' : undef;
+my $runner = (-f 'tests/run_all_tests.pl' && !$skip_tests) ? 'tests/run_all_tests.pl' : undef;
 my $runner_output = '';
 if ($runner) {
     # 30s per-test timeout matches the runner's recommended default.
