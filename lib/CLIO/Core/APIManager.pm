@@ -1122,9 +1122,22 @@ sub adapt_request_for_endpoint {
                 my $send_thinking = $thinking_mode eq 'enabled'
                     || ($thinking_mode eq 'auto' && $show_thinking);
                 if ($send_thinking) {
-                    if ($reasoning_mode eq 'adaptive') {
+                    # thinking_mode=enabled is a user override: force the
+                    # enabled (always-on) thinking mode regardless of the
+                    # model's preferred adaptive mode. Adaptive mode
+                    # (MiniMax-M3) lets the model decide on its own and
+                    # routinely produces a brief summary at the start of
+                    # a fresh session; forcing enabled guarantees the
+                    # model thinks through every response. Models that
+                    # lack an enabled option (M3 supports both enabled and
+                    # adaptive) would otherwise be stuck on adaptive.
+                    if ($thinking_mode eq 'enabled') {
+                        $payload->{thinking} = { type => 'enabled' };
+                    }
+                    elsif ($reasoning_mode eq 'adaptive') {
                         $payload->{thinking} = { type => 'adaptive' };
-                    } else {
+                    }
+                    else {
                         $payload->{thinking} = { type => 'enabled' };
                     }
                 } else {
@@ -1431,8 +1444,16 @@ sub get_model_capabilities {
                     max_output_tokens          => $caps->{max_output_tokens},
                     max_context_window_tokens  => $caps->{context_window},
                     supports_tools              => $caps->{supports_tools},
+                    supports_streaming          => $caps->{supports_streaming},
                     supports_vision             => $caps->{supports_vision},
                     supports_reasoning          => $caps->{supports_reasoning},
+                    # Pass through reasoning_mode so _get_reasoning_mode() can
+                    # classify models as 'effort'|'enabled'|'adaptive'. Without
+                    # this field, _get_reasoning_mode always returned undef,
+                    # silently disabling every adapt_request_for_endpoint code
+                    # path that gates payload construction on it (OpenAI-compat
+                    # reasoning_effort, MiniMax thinking.type, Z.AI thinking).
+                    reasoning_mode              => $caps->{reasoning_mode},
                 };
                 $self->{_model_capabilities_cache} ||= {};
                 $self->{_model_capabilities_cache}{$model} = $n;

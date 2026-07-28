@@ -32,9 +32,21 @@ use_ok('CLIO::Core::Config');
 # adapt_request_for_endpoint so we don't initialize the heavy machinery.
 sub _make_mgr {
     my (%args) = @_;
-    my $config = $args{config} || CLIO::Core::Config->new();
+    # Use a hermetic config_dir so global settings (the user's
+    # ~/.clio/config.json) don't pollute test expectations. Without
+    # this, a globally-set `thinking_mode=enabled` silently flips
+    # these tests' results the moment a real user runs them.
+    require File::Temp;
+    my $dir = File::Temp::tempdir(CLEANUP => 1);
+    my $config = $args{config} || CLIO::Core::Config->new(config_dir => $dir);
     $config->set('show_thinking', $args{show_thinking} // 0);
     $config->set('thinking_effort', $args{thinking_effort} // 'medium');
+    # Pin thinking_mode so the gate isn't silently flipped by an inherited
+    # value from ~/.clio/config.json. Default 'auto' matches the user
+    # setting the test name actually exercises.
+    $config->set('thinking_mode', $args{thinking_mode} // 'auto');
+    $config->set('api_base', $args{api_base} // 'https://api.openai.com/v1');
+    $config->set('api_keys', { openai => 'sk-test' });
     my $mgr = CLIO::Core::APIManager->new(
         provider => 'openai',
         model    => 'gpt-4.1',
