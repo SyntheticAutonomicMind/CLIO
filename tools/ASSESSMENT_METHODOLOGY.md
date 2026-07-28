@@ -151,3 +151,42 @@ perl tools/assess_codebase.pl --score-only
 | Version | Date | Change |
 |---------|------|--------|
 | 1.0 | 2026-03-31 | Initial methodology. 8 categories, fixed rubrics, automated collector. |
+
+---
+
+## Companion Tools
+
+These scripts extend the methodology with automation that prevents the
+regressions we already paid down:
+
+### `tools/lint_size_regression.pl`
+
+Lints the working tree (or staged changes) for patterns that historically
+caused the codebase to drift away from its quality rubric:
+
+- New `.pm` file over 1000 lines (Architecture)
+- New `sub` over 200 lines (Method Quality)
+- New bare `die` outside `eval` / `or die` / `$SIG` (Error Handling)
+- New `use JSON::PP` without empty-import workaround (Code Hygiene)
+- New `use NonCore::Module` (Dependencies)
+
+Always exits 0 - surfaces warnings for PR review without blocking.
+
+### `tools/track_assessment.sh`
+
+Appends the current `--json` assessment to `runs/assessment-history.jsonl`
+with timestamp + commit hash + optional note. Each line is a self-contained
+JSON record.
+
+### `.github/workflows/metrics.yml`
+
+CI workflow that:
+1. Runs `lint_size_regression.pl` against the PR branch
+2. Captures the assessment and posts it as a GitHub Actions summary
+3. Compares against the last record in `assessment-history.jsonl` and
+   fails if any category regressed
+4. On main-branch push, appends a new record to the history (rolling
+   trend data)
+
+The guardrails are warnings, not blockers - the goal is to surface
+metrics drift at PR review time, not to prevent legitimate changes.
