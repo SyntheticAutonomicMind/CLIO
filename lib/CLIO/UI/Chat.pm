@@ -1722,8 +1722,8 @@ sub display_header {
         my $session_name = $self->{session} ? $self->{session}->session_name() : undef;
         my $session_name_line = '';
         if ($session_name) {
-            my $label_color = $self->{theme_mgr}->get_color('banner_label') || '';
-            my $data_color = $self->{theme_mgr}->get_color('data') || '';
+            my $label_color = $self->{theme_mgr}->get_color('label') || '';
+            my $data_color = $self->{theme_mgr}->get_color('value') || '';
             my $reset = $self->{ansi}->parse('@RESET@');
             $session_name_line = "${label_color}Session:    ${data_color}${session_name}${reset}";
         }
@@ -1781,8 +1781,8 @@ sub display_header {
     my $session_name = $self->{session} ? $self->{session}->session_name() : undef;
     my $session_name_line = '';
     if ($session_name) {
-        my $label_color = $self->{theme_mgr}->get_color('banner_label') || '';
-        my $data_color = $self->{theme_mgr}->get_color('data') || '';
+        my $label_color = $self->{theme_mgr}->get_color('label') || '';
+        my $data_color = $self->{theme_mgr}->get_color('value') || '';
         my $reset = $self->{ansi}->parse('@RESET@');
         $session_name_line = "${label_color}Session:    ${data_color}${session_name}${reset}";
     }

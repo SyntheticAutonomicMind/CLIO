@@ -994,7 +994,7 @@ sub _render_preview_sample {
         my $bullet      = box_char('topleft') . box_char('horizontal') . box_char('horizontal') . box_char('tleft') . ' ';
         my $bullet_color = $theme_mgr->get_color('muted') // '';
         my $name_color   = $theme_mgr->get_color('ASSISTANT') || $theme_mgr->get_color('agent_label') || '';
-        my $data_color   = $theme_mgr->get_color('agent_text') || $theme_mgr->get_color('data') || '';
+        my $data_color   = $theme_mgr->get_color('agent_text') || $theme_mgr->get_color('value') || '';
         my $reset        = "\e[0m";
         $self->writeline(
             "${bullet_color}${bullet}${reset}" .
