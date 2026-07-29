@@ -327,6 +327,7 @@ sub _build_command_registry {
         { name => 'loglevel', handler => sub { $self->{config_cmd}->handle_loglevel_command(@_) } },
         { name => 'style', handler => sub { $self->{config_cmd}->handle_style_command(@_) } },
         { name => 'theme', handler => sub { $self->{config_cmd}->handle_theme_command(@_) } },
+        { name => 'preview', handler => sub { $self->{config_cmd}->handle_preview_command(@_) } },
         { name => 'file', handler => sub { $self->{file_cmd}->handle_file_command(@_) } },
         { name => 'todo', handler => sub { $self->{todo_cmd}->handle_todo_command(@_) } },
         { name => 'model', handler => sub { $self->{api_cmd}->handle_model_command(@_) } },
