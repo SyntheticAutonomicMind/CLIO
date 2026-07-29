@@ -7,46 +7,46 @@ name=compact
 user_prompt_format={style.user_prompt}> @RESET@
 agent_prefix={style.agent_label}AI: @RESET@
 system_prefix={style.system_message}SYS: @RESET@
-error_prefix={style.error_message}ERR: @RESET@
+error_prefix={style.error}ERR: @RESET@
 
 # Banner - condensed
-banner_line1={style.app_title}{var.agent_name}@RESET@ {style.dim}v1.0@RESET@
-banner_line2={style.dim}Session: {style.data}{var.session_id}@RESET@
-banner_line3={style.dim}Model: {style.data}{var.model}@RESET@
-banner_line4={style.dim}Type "{style.data}/help{style.dim}" for commands.@RESET@
+banner_line1={style.primary}{var.agent_name}@RESET@ {style.subtle}v1.0@RESET@
+banner_line2={style.subtle}Session: {style.value}{var.session_id}@RESET@
+banner_line3={style.subtle}Model: {style.value}{var.model}@RESET@
+banner_line4={style.subtle}Type "{style.value}/help{style.subtle}" for commands.@RESET@
 
 # Help system - minimal
-help_header={style.data}{var.title}@RESET@
-help_section={style.dim}{var.section}@RESET@
+help_header={style.value}{var.title}@RESET@
+help_section={style.subtle}{var.section}@RESET@
 help_command={style.prompt_indicator}{var.command}@RESET@
 
 # Status indicators - minimal
-thinking_indicator={style.dim}...@RESET@
+thinking_indicator={style.subtle}...@RESET@
 
 # Navigation - brief
 nav_next={style.prompt_indicator}N@RESET@
 nav_previous={style.prompt_indicator}P@RESET@
 nav_quit={style.prompt_indicator}Q@RESET@
-pagination_info={style.dim}{var.info}@RESET@
+pagination_info={style.subtle}{var.info}@RESET@
 
 # Pagination prompts (single-line pause format)
 pagination_hint_streaming=
 pagination_hint_full=
-pagination_prompt_streaming={style.dim}{char.bullet} {style.agent_label}Q{style.dim} {char.pipe} more @RESET@
-pagination_prompt={style.dim}{char.bullet} {style.data}{var.current}/{var.total} {style.dim}{char.pipe} {var.nav_hint}{style.agent_label}Q{style.dim} {char.pipe} more @RESET@
+pagination_prompt_streaming={style.subtle}{char.bullet} {style.agent_label}Q{style.subtle} {char.pipe} more @RESET@
+pagination_prompt={style.subtle}{char.bullet} {style.value}{var.current}/{var.total} {style.subtle}{char.pipe} {var.nav_hint}{style.agent_label}Q{style.subtle} {char.pipe} more @RESET@
 
 # Input prompts (box-drawing - compact style)
-input_prompt={style.dim}{char.topleft}{char.horizontal}{char.horizontal}{char.tleft} {style.prompt_indicator}{var.prompt}@RESET@
-input_prompt_with_default={style.dim}{char.topleft}{char.horizontal}{char.horizontal}{char.tleft} {style.prompt_indicator}{var.prompt} ({style.data}↵{style.dim}={var.default_action})@RESET@
+input_prompt={style.subtle}{char.topleft}{char.horizontal}{char.horizontal}{char.tleft} {style.prompt_indicator}{var.prompt}@RESET@
+input_prompt_with_default={style.subtle}{char.topleft}{char.horizontal}{char.horizontal}{char.tleft} {style.prompt_indicator}{var.prompt} ({style.value}↵{style.subtle}={var.default_action})@RESET@
 
 # Confirmation prompts (minimal box-drawing)
-confirmation_prompt={style.dim}{char.bullet} {style.prompt_indicator}{var.question}{style.dim} {style.data}{var.options} {style.dim}[{style.data}Enter{style.dim}={var.default_action}]: @RESET@
-confirmation_prompt_no_options={style.dim}{char.bullet} {style.prompt_indicator}{var.question}{style.dim} [{style.data}Enter{style.dim}={var.default_action}]: @RESET@
-confirmation_prompt_short={style.dim}{char.bullet} {style.prompt_indicator}{var.question}{style.dim}: @RESET@
+confirmation_prompt={style.subtle}{char.bullet} {style.prompt_indicator}{var.question}{style.subtle} {style.value}{var.options} {style.subtle}[{style.value}Enter{style.subtle}={var.default_action}]: @RESET@
+confirmation_prompt_no_options={style.subtle}{char.bullet} {style.prompt_indicator}{var.question}{style.subtle} [{style.value}Enter{style.subtle}={var.default_action}]: @RESET@
+confirmation_prompt_short={style.subtle}{char.bullet} {style.prompt_indicator}{var.question}{style.subtle}: @RESET@
 
 # Security prompts (command/script approval)
-security_prompt={style.dim}{char.bullet} {style.warning_message}Security{style.dim} {char.pipe} {style.data}{var.target}{style.dim}@RESET@
-security_prompt_input={style.dim}  {style.data}{var.options}{style.dim}: @RESET@
+security_prompt={style.subtle}{char.bullet} {style.warning}Security{style.subtle} {char.pipe} {style.value}{var.target}{style.subtle}@RESET@
+security_prompt_input={style.subtle}  {style.value}{var.options}{style.subtle}: @RESET@
 
 # Messages - no prefixes, just color differentiation
 user_message_prefix={style.user_text}@RESET@

@@ -96,29 +96,3 @@ tool_bullet=*
 tool_separator=>
 
 # ═══════════════════════════════════════════════════════════════
-# DEPRECATED (Backward Compatibility)
-# ═══════════════════════════════════════════════════════════════
-
-app_title=@BOLD@
-app_subtitle=@RESET@
-banner_label=@DIM@
-banner_value=@RESET@
-banner_help=@DIM@
-banner_command=@RESET@
-command_label=@DIM@
-command_value=@RESET@
-command_header=@BOLD@
-command_subheader=@RESET@
-data=@RESET@
-dim=@DIM@
-highlight=@RESET@
-theme_header=@RESET@
-help_command=@RESET@
-markdown_formula=@RESET@
-markdown_link_text=@UNDERLINE@
-markdown_link_url=@DIM@
-error_message=@RESET@
-warning_message=@RESET@
-success_message=@RESET@
-info_message=@DIM@
-banner=@RESET@

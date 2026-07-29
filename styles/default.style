@@ -93,30 +93,3 @@ table_border=@DIM@
 spinner_frames=.,..,...,..,., 
 
 # ═══════════════════════════════════════════════════════════════
-# DEPRECATED (Backward Compatibility)
-# ═══════════════════════════════════════════════════════════════
-
-app_title=@BOLD@@BRIGHT_CYAN@
-app_subtitle=@CYAN@
-banner_label=@DIM@@WHITE@
-banner_value=@BRIGHT_WHITE@
-banner_help=@DIM@@WHITE@
-banner_command=@BRIGHT_GREEN@
-command_label=@DIM@@WHITE@
-command_value=@BRIGHT_WHITE@
-command_header=@BOLD@@BRIGHT_CYAN@
-command_subheader=@CYAN@
-data=@BRIGHT_WHITE@
-dim=@DIM@
-highlight=@BRIGHT_CYAN@
-theme_header=@BRIGHT_CYAN@
-help_command=@BRIGHT_GREEN@
-markdown_formula=@BRIGHT_CYAN@
-markdown_link_text=@BRIGHT_CYAN@@UNDERLINE@
-markdown_link_url=@DIM@@CYAN@
-error_message=@BRIGHT_RED@
-warning_message=@BRIGHT_YELLOW@
-success_message=@BRIGHT_GREEN@
-info_message=@CYAN@
-banner=@BRIGHT_CYAN@
-muted_text=@DIM@@WHITE@
