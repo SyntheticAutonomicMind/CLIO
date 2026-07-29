@@ -1123,16 +1123,22 @@ sub adapt_request_for_endpoint {
                     || ($thinking_mode eq 'auto' && $show_thinking);
                 if ($send_thinking) {
                     # thinking_mode=enabled is a user override: force the
-                    # enabled (always-on) thinking mode regardless of the
-                    # model's preferred adaptive mode. Adaptive mode
-                    # (MiniMax-M3) lets the model decide on its own and
-                    # routinely produces a brief summary at the start of
-                    # a fresh session; forcing enabled guarantees the
-                    # model thinks through every response. Models that
-                    # lack an enabled option (M3 supports both enabled and
-                    # adaptive) would otherwise be stuck on adaptive.
+                    # model's thinking ON. For M2.x models this maps to
+                    # {type:"enabled"} (their accepted native value).
+                    # For M3, the API only accepts {type:"adaptive"} or
+                    # {type:"disabled"}; sending {type:"enabled"} returns
+                    # HTTP 400 with "invalid params, invalid thinking.type:
+                    # 'enabled' (allowed: adaptive, disabled) (2013)".
+                    # Adaptive is M3's "thinking on" mode - the model
+                    # decides whether to think deeply or briefly, but the
+                    # parameter signals thinking is available.
                     if ($thinking_mode eq 'enabled') {
-                        $payload->{thinking} = { type => 'enabled' };
+                        if ($reasoning_mode eq 'adaptive') {
+                            $payload->{thinking} = { type => 'adaptive' };
+                        }
+                        else {
+                            $payload->{thinking} = { type => 'enabled' };
+                        }
                     }
                     elsif ($reasoning_mode eq 'adaptive') {
                         $payload->{thinking} = { type => 'adaptive' };
