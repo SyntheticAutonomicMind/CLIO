@@ -1,0 +1,65 @@
+# CLIO Theme: spacious
+# Maximum breathing room - generous spacing, descriptive labels, full hrule padding
+# Best for: presentations, screen sharing, accessibility, low-vision use
+
+name=spacious
+
+# Prompts - descriptive
+user_prompt_format={style.user_prompt}  user> @RESET@
+agent_prefix={style.agent_label}  {var.agent_name} says: @RESET@
+system_prefix={style.system_message}  [system] @RESET@
+error_prefix={style.error_message}  [error] @RESET@
+
+# Banner - generous multi-line
+banner_line1=
+banner_line2={style.app_title}  {var.agent_name}@RESET@ {style.app_subtitle}- {var.agent_subtitle}@RESET@
+banner_line3=
+banner_line4={style.label}  Session:@RESET@ {style.value}{var.session_id}@RESET@
+banner_line5={style.label}  Model:@RESET@   {style.value}{var.model}@RESET@
+banner_line6=
+banner_line7={style.dim}  Type "/help" for available commands@RESET@
+
+# Help system - framed
+help_header={style.value}### {var.title} ###@RESET@
+help_section={style.label}## {var.section} ##@RESET@
+help_command={style.prompt_indicator}  {var.command}@RESET@
+
+# Status indicators - descriptive
+thinking_indicator={style.dim}  (agent is thinking...)@RESET@
+
+# Navigation - descriptive
+nav_next={style.prompt_indicator}  [N] next page@RESET@
+nav_previous={style.prompt_indicator}  [P] previous page@RESET@
+nav_quit={style.prompt_indicator}  [Q] quit@RESET@
+pagination_info={style.dim}  Page {var.info}@RESET@
+
+# Pagination prompts - generous spacing
+pagination_hint_streaming={style.dim}  Press Q to quit  |  Any key for more@RESET@
+pagination_hint_full={style.dim}  Use ^/v to navigate pages  |  Q to quit  |  Any key for more@RESET@
+pagination_prompt_streaming={style.dim}  Q@RESET@ {style.prompt_indicator}>@RESET@ @RESET@
+pagination_prompt={style.dim}  Page {var.current} of {var.total}  |  {var.nav_hint}Q@RESET@ {style.prompt_indicator}>@RESET@ @RESET@
+
+# Input prompts - generous
+input_prompt={style.dim}  >@RESET@ {style.prompt_indicator}{var.prompt}@RESET@
+input_prompt_with_default={style.dim}  >@RESET@ {style.prompt_indicator}{var.prompt}@RESET@ {style.dim}(press Enter to {var.default_action})@RESET@
+
+# Confirmation prompts - clear
+confirmation_prompt={style.dim}  ?@RESET@ {style.prompt_indicator}{var.question}@RESET@ {style.dim}|@RESET@ {style.value}{var.options}@RESET@ {style.dim}|@RESET@ {style.value}Enter@RESET@ {style.dim}to {var.default_action}:@RESET@ @RESET@
+confirmation_prompt_no_options={style.dim}  ?@RESET@ {style.prompt_indicator}{var.question}@RESET@ {style.dim}|@RESET@ {style.value}Enter@RESET@ {style.dim}to {var.default_action}:@RESET@ @RESET@
+confirmation_prompt_short={style.dim}  ?@RESET@ {style.prompt_indicator}{var.question}@RESET@: @RESET@
+
+# Security prompts - clear
+security_prompt={style.dim}  ?@RESET@ {style.warning_message}SECURITY@RESET@ {style.dim}|@RESET@ {style.value}{var.target}@RESET@
+security_prompt_input={style.dim}    {style.value}{var.options}@RESET@: @RESET@
+
+# Messages - descriptive
+user_message_prefix={style.user_text}  [You] @RESET@
+agent_message_prefix={style.agent_label}  [{var.agent_name}] @RESET@
+
+# Tool display format
+tool_display_format=inline
+
+# Layout knobs - generous
+separator_repeat=70
+indent_width=4
+show_timestamps=0

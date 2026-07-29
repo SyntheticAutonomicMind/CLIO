@@ -57,3 +57,8 @@ agent_message_prefix={style.agent_label}[Agent responds]: @RESET@
 
 # Tool display format
 tool_display_format=inline
+
+# Layout knobs
+separator_repeat=60
+indent_width=4
+show_timestamps=1

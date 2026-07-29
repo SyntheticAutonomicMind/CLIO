@@ -1,0 +1,59 @@
+# CLIO Theme: dense
+# Maximum information density - minimal spacing, short labels, no hrule padding
+# Best for: narrow terminals, log-style viewing, embedding in other tools
+
+name=dense
+
+# Prompts - terse single characters
+user_prompt_format={style.user_prompt}>{style.normal} @RESET@
+agent_prefix={style.agent_label}<@RESET@
+system_prefix={style.system_message}*@RESET@
+error_prefix={style.error}!@RESET@
+
+# Banner - one-liner
+banner_line1={style.app_title}{var.agent_name}@RESET@ {style.dim}|@RESET@ {style.value}{var.model}@RESET@
+
+# Help system - compact
+help_header={style.data}{var.title}@RESET@
+help_section={style.dim}{var.section}@RESET@
+help_command={style.prompt_indicator}{var.command}@RESET@
+
+# Status indicators - minimal
+thinking_indicator={style.dim}...@RESET@
+
+# Navigation - single chars
+nav_next={style.prompt_indicator}>@RESET@
+nav_previous={style.prompt_indicator}<@RESET@
+nav_quit={style.prompt_indicator}q@RESET@
+pagination_info={style.dim}{var.info}@RESET@
+
+# Pagination prompts (terse)
+pagination_hint_streaming=
+pagination_hint_full=
+pagination_prompt_streaming={style.dim}{char.bullet} {style.agent_label}q@RESET@
+pagination_prompt={style.dim}{var.current}/{var.total} {style.agent_label}q@RESET@
+
+# Input prompts - minimal
+input_prompt={style.prompt_indicator}{var.prompt}@RESET@
+input_prompt_with_default={style.prompt_indicator}{var.prompt}@{style.data}{var.default_action}@RESET@
+
+# Confirmation prompts - inline terse
+confirmation_prompt={style.prompt_indicator}{var.question}@RESET@ {style.data}{var.options}@RESET@ {style.dim}[{var.default_action}]@RESET@: @RESET@
+confirmation_prompt_no_options={style.prompt_indicator}{var.question}@RESET@ {style.dim}[{var.default_action}]@RESET@: @RESET@
+confirmation_prompt_short={style.prompt_indicator}{var.question}@RESET@: @RESET@
+
+# Security prompts
+security_prompt={style.warning}!@RESET@ {style.data}{var.target}@RESET@ {style.dim}{var.options}@RESET@: @RESET@
+security_prompt_input={style.dim}{var.options}@RESET@: @RESET@
+
+# Messages - minimal prefix
+user_message_prefix={style.user_text}@RESET@
+agent_message_prefix={style.agent_text}@RESET@
+
+# Tool display format
+tool_display_format=inline
+
+# Layout knobs - tightest possible
+separator_repeat=15
+indent_width=2
+show_timestamps=0

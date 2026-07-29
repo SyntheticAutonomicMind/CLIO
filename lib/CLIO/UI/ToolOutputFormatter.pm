@@ -365,25 +365,59 @@ Only applies in inline tool format.
 
 sub display_hrule {
     my ($self) = @_;
-    
+
     my $tool_format = $self->get_tool_format();
     return unless $tool_format eq 'inline';
-    
+
     my ($term_cols) = GetTerminalSize();
     $term_cols ||= 80;
-    my $indent = '    ';  # 4 spaces to align under expanded content
+    my $indent = $self->_theme_indent();
     my $rule_len = $term_cols - length($indent) - 1;
+
+    # Honor the theme's separator_repeat preference when set; otherwise
+    # fit to terminal width with a sane minimum so thin terminals don't
+    # produce one-character rules.
+    my $theme_repeat = $self->_theme_separator_repeat();
+    if ($theme_repeat && $theme_repeat > 0) {
+        $rule_len = $theme_repeat;
+    }
     $rule_len = 20 if $rule_len < 20;
-    
+
     my $hz = box_char('horizontal');
     my $rule = $hz x $rule_len;
-    
+
     if ($self->{ui} && $self->{ui}->can('colorize')) {
         print $self->{ui}->colorize("$indent$rule", 'DIM') . "\n";
     } else {
         print "$indent$rule\n";
     }
     STDOUT->flush() if STDOUT->can('flush');
+}
+
+# Pull theme-controlled indent width. Defaults to 4 (existing behavior).
+sub _theme_indent {
+    my ($self) = @_;
+    my $ui = $self->{ui};
+    if ($ui && $ui->{theme_mgr} && $ui->{theme_mgr}->can('get_template')) {
+        my $val = $ui->{theme_mgr}->get_template('indent_width');
+        if (defined $val && $val =~ /^\d+$/ && $val >= 0 && $val <= 16) {
+            return ' ' x $val;
+        }
+    }
+    return ' ' x 4;
+}
+
+# Pull theme-controlled separator repeat. undef = fit-to-terminal.
+sub _theme_separator_repeat {
+    my ($self) = @_;
+    my $ui = $self->{ui};
+    if ($ui && $ui->{theme_mgr} && $ui->{theme_mgr}->can('get_template')) {
+        my $val = $ui->{theme_mgr}->get_template('separator_repeat');
+        if (defined $val && $val =~ /^\d+$/ && $val > 0) {
+            return $val;
+        }
+    }
+    return undef;
 }
 
 =head2 wrap_text_to_width($text, $indent, $max_width)
