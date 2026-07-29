@@ -92,4 +92,10 @@ table_border=@DIM@
 
 spinner_style=dots
 
+# Accessibility
+# reduced_motion: when 1, spinners use a static indicator instead of animation
+reduced_motion=0
+# high_contrast: when 1, force bright/high-contrast colors throughout UI
+high_contrast=0
+
 # ═══════════════════════════════════════════════════════════════

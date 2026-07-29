@@ -89,6 +89,16 @@ sub start {
     
     return if $self->{running};
     
+    # Reduced motion: show a static indicator instead of animating
+    if ($self->{theme_mgr} && $self->{theme_mgr}->can('is_reduced_motion')
+        && $self->{theme_mgr}->is_reduced_motion()) {
+        $self->{running} = 1;
+        $self->{_started_at} = time();
+        print "[...]";
+        STDOUT->flush() if STDOUT->can('flush');
+        return;
+    }
+    
     # Hide cursor before animation begins
     print "\e[?25l";
     STDOUT->flush() if STDOUT->can('flush');
@@ -145,6 +155,14 @@ sub stop {
     return unless $self->{running};
     
     $self->{running} = 0;
+    
+    # Reduced motion: just erase the static indicator
+    if ($self->{theme_mgr} && $self->{theme_mgr}->can('is_reduced_motion')
+        && $self->{theme_mgr}->is_reduced_motion()) {
+        print "\r\e[K";
+        STDOUT->flush() if STDOUT->can('flush');
+        return;
+    }
     
     if ($self->{pid}) {
         my $pid = $self->{pid};

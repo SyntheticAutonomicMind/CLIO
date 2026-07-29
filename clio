@@ -27,6 +27,7 @@ configure_io_encoding();
 my $config_dir_override;
 my $no_color = 0;
 my $no_banner = 0;
+my $reduced_motion = 0;
 for (my $i = 0; $i < @ARGV; $i++) {
     if ($ARGV[$i] eq '--config' && defined $ARGV[$i+1]) {
         $config_dir_override = $ARGV[$i+1];
@@ -37,6 +38,9 @@ for (my $i = 0; $i < @ARGV; $i++) {
     }
     if ($ARGV[$i] eq '--no-banner') {
         $no_banner = 1;
+    }
+    if ($ARGV[$i] eq '--reduced-motion') {
+        $reduced_motion = 1;
     }
 }
 
@@ -80,6 +84,7 @@ OPTIONS:
     --config <path>    Use custom config directory (for isolated testing)
     --no-color         Disable ANSI color output (for CI/workflows)
     --no-banner        Suppress the startup banner
+    --reduced-motion   Use static indicators instead of animated spinners
     --no-custom-instructions  Skip .clio/instructions.md
     --no-ltm           Skip long-term memory pattern injection
     --incognito        Skip both custom instructions AND LTM (fresh audit mode)
@@ -152,6 +157,11 @@ my $config = CLIO::Core::Config->new(debug => $debug);
 # --no-banner overrides show_banner for this session only (not persisted).
 if ($no_banner) {
     $config->set('show_banner', 0, 0);
+}
+
+# --reduced-motion overrides the style key for this session
+if ($reduced_motion) {
+    $config->set('reduced_motion', 1, 0);
 }
 
 # Pre-parse --model so we can auto-derive provider from "provider/model" prefix
