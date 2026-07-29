@@ -1396,6 +1396,10 @@ sub _prepopulate_session_data {
 }
 
 =head2 _build_prompt
+
+=cut
+
+sub _build_prompt {
     my ($self, $mode) = @_;
     $mode ||= 'normal';  # Default to normal mode
     
