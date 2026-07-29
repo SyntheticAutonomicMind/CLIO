@@ -55,3 +55,8 @@ agent_message_prefix={style.agent_label}{var.agent_name}: @RESET@
 # box: Uses box-drawing characters (┌──┤ TOOL NAME)
 # inline: Simple text prefix (TOOL NAME: action)
 tool_display_format=inline
+
+# Layout knobs
+separator_repeat=20
+indent_width=2
+show_timestamps=0

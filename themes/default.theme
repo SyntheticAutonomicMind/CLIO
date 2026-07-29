@@ -53,5 +53,13 @@ security_prompt_input={style.subtle}  {style.value}{var.options}{style.subtle}: 
 user_message_prefix={style.user_text}YOU: @RESET@
 agent_message_prefix={style.agent_label}{var.agent_name}: @RESET@
 
+# Layout knobs - read by code (ToolOutputFormatter, Display.pm)
+# separator_repeat: length of horizontal rule lines (auto-fitted to terminal otherwise)
+# indent_width:     spaces per indent level (tool output, thinking blocks)
+# show_timestamps:  0=off, 1=on (banner line decoration, future use)
+separator_repeat=35
+indent_width=4
+show_timestamps=0
+
 # Tool display format: 'box' (default) or 'inline'
 tool_display_format=inline
