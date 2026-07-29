@@ -1658,7 +1658,14 @@ sub check_for_update_notification {
 
 sub display_header {
     my ($self) = @_;
-    
+
+    # Respect the show_banner config key. Users can disable the banner
+    # persistently via /config set show_banner off, or for one session
+    # with --no-banner. Default is on.
+    if ($self->{config} && !$self->{config}->get('show_banner')) {
+        return;
+    }
+
     my $session_id = $self->{session} ? $self->{session}->{session_id} : 'unknown';
     my $model = $self->{config} ? $self->{config}->get('model') : 'unknown';
     

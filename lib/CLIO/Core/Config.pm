@@ -126,6 +126,8 @@ use constant DEFAULT_CONFIG => {
     # Feature switches (tools available to agent)
     enable_subagents => 1,  # Enable agent_operations tool (sub-agent spawning)
     enable_remote => 1,     # Enable remote_execution tool (SSH remote tasks)
+    # UI display options
+    show_banner => 1,       # Display startup banner (1=yes, 0=no). Override with --no-banner.
     # Auto-discover installed skills in the system prompt and expose skill_operations tool
     # Off = no skill catalog injected, tool not registered (current behavior)
     auto_discover_skills => 1,
