@@ -535,6 +535,40 @@ sub get_tool_display_format {
     return $theme->{tool_display_format} || 'inline';
 }
 
+=head2 is_reduced_motion
+
+Check if reduced motion is enabled (via style key or CLI flag).
+
+=cut
+
+sub is_reduced_motion {
+    my ($self) = @_;
+    # CLI override wins
+    if ($self->{config} && $self->{config}->get('reduced_motion')) {
+        return 1;
+    }
+    my $style = $self->{styles}->{$self->{current_style}} || $self->{styles}->{default};
+    return 0 unless $style;
+    return $style->{reduced_motion} ? 1 : 0;
+}
+
+=head2 is_high_contrast
+
+Check if high contrast mode is enabled (via style key or CLI flag).
+
+=cut
+
+sub is_high_contrast {
+    my ($self) = @_;
+    # CLI override wins
+    if ($self->{config} && $self->{config}->get('high_contrast')) {
+        return 1;
+    }
+    my $style = $self->{styles}->{$self->{current_style}} || $self->{styles}->{default};
+    return 0 unless $style;
+    return $style->{high_contrast} ? 1 : 0;
+}
+
 # Resolve the currently-active theme. Same fallback semantics as
 # _active_style() - centralized so all three call sites stay consistent.
 sub _active_theme {
