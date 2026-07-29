@@ -17,16 +17,19 @@
 # chasing this for several sessions.
 #
 # Companion fix: MiniMax adaptive models that DO receive a thinking.type
-# signal now honor an explicit user thinking_mode=enabled by emitting
-# thinking.type=enabled (always-on) instead of the model's preferred
-# adaptive mode. Adaptive mode reliably gives back one-line summaries at
-# session start; enabled forces the model through every response.
+# signal honor an explicit user thinking_mode=enabled by mapping to the
+# model's accepted value. M3 (reasoning_mode=adaptive) accepts only
+# {type:"adaptive"} or {type:"disabled"} - it rejects {type:"enabled"}
+# with HTTP 400 (error 2013). M2.x (reasoning_mode=enabled) still accepts
+# {type:"enabled"} via the static-map supports_enabled_thinking flag, so
+# the user override keeps emitting type=enabled for those models.
 #
 # These tests verify:
 #   1. get_model_capabilities returns reasoning_mode in its normalized hash.
 #   2. _get_reasoning_mode() returns 'adaptive' for MiniMax-M3, 'enabled'
 #      for MiniMax-M2.x, 'effort' for DeepSeek V4 / NVIDIA nemotron.
-#   3. MiniMax adaptive + user thinking_mode=enabled -> thinking.type=enabled.
+#   3. MiniMax-M3 + user thinking_mode=enabled -> thinking.type=adaptive
+#      (NOT enabled - M3 API rejects that with HTTP 400).
 #   4. MiniMax adaptive + user thinking_mode=auto + show_thinking=1
 #      -> thinking.type=adaptive (default preserved).
 #   5. MiniMax adaptive + user thinking_mode=disabled -> thinking.type=disabled.
@@ -123,7 +126,13 @@ subtest '_get_reasoning_mode returns correct value for each provider' => sub {
 # Section 2: MiniMax thinking.type selection
 # ─────────────────────────────────────────────────────────────────────────
 
-subtest 'M3 + user thinking_mode=enabled -> thinking.type=enabled (override)' => sub {
+subtest 'M3 + user thinking_mode=enabled -> thinking.type=adaptive (API rejects enabled)' => sub {
+    # MiniMax-M3's OpenAI-compatible API only accepts {type:"adaptive"} or
+    # {type:"disabled"}; sending {type:"enabled"} returns HTTP 400 with
+    # "invalid params, invalid thinking.type: 'enabled' (allowed:
+    # adaptive, disabled) (2013)". The user override thinking_mode=enabled
+    # therefore falls back to type=adaptive - the only M3 value that
+    # enables thinking. The model decides depth on its own.
     my $payload = _build(
         provider      => 'minimax',
         model         => 'minimax/MiniMax-M3',
@@ -132,8 +141,10 @@ subtest 'M3 + user thinking_mode=enabled -> thinking.type=enabled (override)' =>
         thinking_mode => 'enabled',
         show_thinking => 1,
     );
-    is_deeply($payload->{thinking}, { type => 'enabled' },
-        'MiniMax-M3: explicit thinking_mode=enabled forces thinking.type=enabled');
+    is_deeply($payload->{thinking}, { type => 'adaptive' },
+        'MiniMax-M3: thinking_mode=enabled falls back to adaptive (M3 rejects enabled)');
+    ok(!exists $payload->{thinking}{budget_tokens},
+        'MiniMax-M3: adaptive mode does not include budget_tokens (only enabled mode does)');
 };
 
 subtest 'M3 + thinking_mode=auto + show_thinking=1 -> thinking.type=adaptive (default preserved)' => sub {
