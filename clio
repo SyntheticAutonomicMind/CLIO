@@ -1025,14 +1025,57 @@ if ($input) {
         my $cmd_name = lc($1);
         if ($cmd_name eq 'help' || $cmd_name eq 'h' || $cmd_name eq '?') {
             my $_agent_name = $ENV{CLIO_AGENT_NAME} || 'CLIO';
-            print "[SYSTEM] $_agent_name Slash Commands:\n";
-            print "  /help, /h, /?              Display help\n";
-            print "  /exit, /quit, /q           Exit $_agent_name\n";
-            print "  /session                   Show session ID\n";
-            print "  /config                    Show configuration\n";
-            print "  /api                       Show API status\n";
-            print "\n";
-            print "For full command list, use interactive mode (./clio)\n";
+            print "[SYSTEM] $_agent_name Slash Commands (full list):\n\n";
+
+            print "  [CORE]\n";
+            print "    /help, /h, /?            Display this help\n";
+            print "    /exit, /quit, /q         Exit $_agent_name\n";
+            print "    /reset                   Reset the current session\n";
+            print "    /debug                   Toggle debug mode\n";
+            print "    /color                   Toggle ANSI color output\n";
+            print "    /clear, /cls             Clear screen\n\n";
+
+            print "  [CONFIG]\n";
+            print "    /config                  Show / set configuration\n";
+            print "    /api                     Provider / API status\n";
+            print "    /model <name>            Switch model\n";
+            print "    /models                  List available models\n";
+            print "    /prompt <name>           Switch system prompt\n";
+            print "    /style [set|list|preview]    Style management\n";
+            print "    /theme [set|list|preview]    Theme management\n";
+            print "    /loglevel <level>        Set log level\n";
+            print "    /log [N]                 Show recent log lines\n\n";
+
+            print "  [SESSIONS]\n";
+            print "    /session                 Show session ID / manage\n";
+            print "    /switch                  List and switch sessions\n";
+            print "    /undo                    Undo last edit\n\n";
+
+            print "  [SKILLS / EXTENSIONS]\n";
+            print "    /skills                  Manage installed skills\n";
+            print "    /mcp                     MCP server management\n";
+            print "    /plugin                  Plugin management\n\n";
+
+            print "  [PROJECT]\n";
+            print "    /file                    File operations\n";
+            print "    /git                     Git operations\n";
+            print "    /todo                    Todo list management\n";
+            print "    /diff                    Show pending diffs\n";
+            print "    /commit                  Commit pending changes\n";
+            print "    /exec                    Execute a command\n";
+            print "    /edit                    Edit a file\n\n";
+
+            print "  [SKILLS - callable in interactive mode]\n";
+            print "    /design, /doc, /explain, /fix, /init, /review, /test\n\n";
+
+            print "  [META]\n";
+            print "    /update                  Check for updates\n";
+            print "    /stats                   Usage statistics\n";
+            print "    /login, /logout          Provider authentication\n";
+            print "    /group                   Sub-agent management\n\n";
+
+            print "Most commands accept sub-arguments. Run any command in\n";
+            print "interactive mode (./clio) for full options and examples.\n";
         }
         elsif ($cmd_name eq 'session') {
             print "[SYSTEM] Current session: " . ($session->{session_id} || 'unknown') . "\n";
