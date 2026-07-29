@@ -91,4 +91,8 @@ table_border=@BLACK@
 
 spinner_style=dots
 
+# Accessibility
+reduced_motion=0
+high_contrast=0
+
 # ═══════════════════════════════════════════════════════════════

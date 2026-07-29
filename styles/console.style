@@ -91,6 +91,10 @@ table_border=@DIM@
 
 # ASCII spinner - classic vi-style rotator, no Unicode required.
 spinner_style=rotator
+
+# Accessibility
+reduced_motion=0
+high_contrast=0
 # ASCII symbols - force plain text for maximum compatibility
 tool_bullet=*
 tool_separator=>
