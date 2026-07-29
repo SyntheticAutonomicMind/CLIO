@@ -26,6 +26,7 @@ configure_io_encoding();
 # Parse early CLI options BEFORE module init (--config and --no-color)
 my $config_dir_override;
 my $no_color = 0;
+my $no_banner = 0;
 for (my $i = 0; $i < @ARGV; $i++) {
     if ($ARGV[$i] eq '--config' && defined $ARGV[$i+1]) {
         $config_dir_override = $ARGV[$i+1];
@@ -33,6 +34,9 @@ for (my $i = 0; $i < @ARGV; $i++) {
     if ($ARGV[$i] eq '--no-color') {
         $no_color = 1;
         $ENV{NO_COLOR} = 1;  # Standard env var for no-color output
+    }
+    if ($ARGV[$i] eq '--no-banner') {
+        $no_banner = 1;
     }
 }
 
@@ -75,6 +79,7 @@ OPTIONS:
     --chat             Chat mode: conversational AI with web access (sandboxed)
     --config <path>    Use custom config directory (for isolated testing)
     --no-color         Disable ANSI color output (for CI/workflows)
+    --no-banner        Suppress the startup banner
     --no-custom-instructions  Skip .clio/instructions.md
     --no-ltm           Skip long-term memory pattern injection
     --incognito        Skip both custom instructions AND LTM (fresh audit mode)
@@ -95,6 +100,7 @@ EXAMPLES:
     clio --incognito --new        # Fresh audit without project knowledge
     clio --chat --new             # Conversational chat mode (sandboxed)
     clio --config /tmp/clio-test  # Use isolated config for testing
+    clio --no-banner              # Skip startup banner
     clio --no-color --input "hi"  # Non-interactive without color
     clio --list-styles            # Browse terminal styles
     clio --list-themes            # Browse output themes
@@ -142,6 +148,11 @@ use CLIO::Providers qw(list_providers get_provider provider_exists);
 
 # Initialize configuration system
 my $config = CLIO::Core::Config->new(debug => $debug);
+
+# --no-banner overrides show_banner for this session only (not persisted).
+if ($no_banner) {
+    $config->set('show_banner', 0, 0);
+}
 
 # Pre-parse --model so we can auto-derive provider from "provider/model" prefix
 # before the provider check. Without this, `clio --model nvidia/...` would hit

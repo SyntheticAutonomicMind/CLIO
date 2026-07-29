@@ -196,6 +196,7 @@ sub _display_config_help {
     $self->display_section_header("SETTABLE KEYS");
     $self->display_key_value("style", "UI color scheme", 25);
     $self->display_key_value("theme", "Banner and template theme", 25);
+    $self->display_key_value("show_banner", "Display startup banner (on/off, override: --no-banner)", 25);
     $self->display_key_value("workdir", "Working directory path", 25);
     $self->display_key_value("terminal_passthrough", "Force direct terminal access", 25);
     $self->display_key_value("terminal_autodetect", "Auto-detect interactive commands", 25);
@@ -231,6 +232,7 @@ sub _display_config_help {
     $self->display_command_row("/config set enable_subagents off", "Disable sub-agent tool", 35);
     $self->display_command_row("/config set enable_remote off", "Disable remote execution tool", 35);
     $self->display_command_row("/config set auto_discover_skills off", "Hide skill catalog and disable skill_operations tool", 35);
+    $self->display_command_row("/config set show_banner off", "Suppress the startup banner", 35);
     $self->writeline("", markdown => 0);
     
     $self->display_section_header("TIPS");
@@ -254,7 +256,7 @@ sub _handle_config_set {
     
     unless ($key) {
         $self->display_error_message("Usage: /config set <key> <value>");
-        $self->writeline("Keys: style, theme, working_directory, terminal_passthrough, terminal_autodetect, redact_level, security_level, sanitize_mode, enable_subagents, enable_remote, auto_discover_skills", markdown => 0);
+        $self->writeline("Keys: style, theme, show_banner, working_directory, terminal_passthrough, terminal_autodetect, redact_level, security_level, sanitize_mode, enable_subagents, enable_remote, auto_discover_skills", markdown => 0);
         return;
     }
     
@@ -267,6 +269,7 @@ sub _handle_config_set {
     my %allowed = (
         style => 1,
         theme => 1,
+        show_banner => 1,
         working_directory => 1,
         terminal_passthrough => 1,
         terminal_autodetect => 1,
@@ -389,7 +392,7 @@ sub _handle_config_set {
     }
     
     # Handle boolean values for terminal toggle settings
-    if ($key =~ /^(terminal_|enable_)/) {
+    if ($key =~ /^(terminal_|enable_|show_)/) {
         if ($value =~ /^(true|1|yes|on)$/i) {
             $value = 1;
         } elsif ($value =~ /^(false|0|no|off)$/i) {
@@ -443,6 +446,15 @@ sub _handle_config_set {
             $self->{config}->set($key, $value);
             $self->{config}->save();
             $self->display_system_message("Restart session for changes to take effect");
+            return;
+        } elsif ($key eq 'show_banner') {
+            if ($value) {
+                $self->display_info_message("Startup banner will be shown on next session");
+            } else {
+                $self->display_info_message("Startup banner will be suppressed on next session. Use --no-banner for one-off.");
+            }
+            $self->{config}->set($key, $value);
+            $self->{config}->save();
             return;
         }
     }
