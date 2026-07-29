@@ -787,6 +787,10 @@ sub handle_style_command {
             $self->{session}->state()->{style} = $name;
             $self->{session}->save();
             $self->display_system_message("Style changed to: $name");
+            # Re-render header to show new style immediately
+            if ($self->{chat} && $self->{chat}->can('display_header')) {
+                $self->{chat}->display_header();
+            }
         } else {
             $self->display_error_message("Style '$name' not found. Use /style list to see available styles.");
         }
@@ -858,6 +862,10 @@ sub handle_theme_command {
             $self->{session}->state()->{theme} = $name;
             $self->{session}->save();
             $self->display_system_message("Theme changed to: $name");
+            # Re-render header to show new theme immediately
+            if ($self->{chat} && $self->{chat}->can('display_header')) {
+                $self->{chat}->display_header();
+            }
         } else {
             $self->display_error_message("Theme '$name' not found. Use /theme list to see available themes.");
         }
