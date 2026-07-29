@@ -866,6 +866,186 @@ sub handle_theme_command {
     }
 }
 
+=head2 handle_preview_command
+
+Render a recognizable sample of UI output using a temporary style/theme
+without persisting the change. Lets users audition a look before committing
+via /style set or /theme set.
+
+    /preview                  Show current style + theme
+    /preview style [<name>]   Preview a style (or current if name omitted)
+    /preview theme [<name>]   Preview a theme (or current if name omitted)
+
+=cut
+
+sub handle_preview_command {
+    my ($self, @args) = @_;
+
+    my $theme_mgr = $self->{chat}->{theme_mgr};
+    unless ($theme_mgr) {
+        $self->display_error_message("Theme manager not available");
+        return;
+    }
+
+    my $action = lc($args[0] // '');
+    my $target = $args[1] // '';
+
+    # /preview (no args) -> preview the current style and theme.
+    if ($action eq '' || $action eq 'show' || $action eq 'current') {
+        $self->_render_preview_sample(
+            style => $theme_mgr->get_current_style(),
+            theme => $theme_mgr->get_current_theme(),
+            label => 'current',
+        );
+        return;
+    }
+
+    if ($action eq 'style') {
+        my $name = $target ne '' ? $target : $theme_mgr->get_current_style();
+        unless (exists $theme_mgr->{styles}->{$name}) {
+            $self->display_error_message("Style '$name' not found. Use /style list to see options.");
+            return;
+        }
+        $self->_render_preview_sample(
+            style => $name,
+            theme => $theme_mgr->get_current_theme(),
+            label => $target ne '' ? "style: $name" : "current style: $name",
+        );
+        return;
+    }
+
+    if ($action eq 'theme') {
+        my $name = $target ne '' ? $target : $theme_mgr->get_current_theme();
+        unless (exists $theme_mgr->{themes}->{$name}) {
+            $self->display_error_message("Theme '$name' not found. Use /theme list to see options.");
+            return;
+        }
+        $self->_render_preview_sample(
+            style => $theme_mgr->get_current_style(),
+            theme => $name,
+            label => $target ne '' ? "theme: $name" : "current theme: $name",
+        );
+        return;
+    }
+
+    $self->display_error_message("Usage: /preview [style|theme] [<name>]");
+}
+
+# Internal: swap to (style, theme) without persisting, render a sample,
+# then restore. The original style/theme are restored regardless of any
+# error during rendering so /preview is always safe to run.
+sub _render_preview_sample {
+    my ($self, %opts) = @_;
+
+    my $theme_mgr = $self->{chat}->{theme_mgr};
+    my $orig_style = $theme_mgr->get_current_style();
+    my $orig_theme = $theme_mgr->get_current_theme();
+
+    my $new_style = $opts{style} // $orig_style;
+    my $new_theme = $opts{theme} // $orig_theme;
+
+    # Apply the requested style+theme for this preview only.
+    $theme_mgr->set_style($new_style);
+    $theme_mgr->set_theme($new_theme);
+
+    # Header banner
+    my $label = $opts{label} // "$new_style + $new_theme";
+    $self->display_command_header("PREVIEW: $label");
+
+    eval {
+        # Section 1: Banner (uses theme templates).
+        $self->writeline("", markdown => 0);
+        $self->writeline($self->colorize("[ BANNER ]", 'ASSISTANT'), markdown => 0);
+        my $banner_line = $theme_mgr->render('banner_line1', {
+            agent_name      => 'CLIO',
+            agent_subtitle  => 'AI Assistant',
+        });
+        $self->writeline($banner_line, markdown => 0);
+
+        # Section 2: User message and agent response
+        $self->writeline("", markdown => 0);
+        $self->writeline($self->colorize("[ CONVERSATION ]", 'ASSISTANT'), markdown => 0);
+        my $user_prefix = $theme_mgr->render('user_message_prefix');
+        $self->writeline(
+            $self->colorize($user_prefix, 'USER') . $self->colorize("Read lib/CLIO/Core/Config.pm and summarize the load() method.", 'USER'),
+            markdown => 0,
+        );
+        my $agent_prefix = $theme_mgr->render('agent_message_prefix', { agent_name => 'CLIO' });
+        $self->writeline(
+            $self->colorize($agent_prefix, 'ASSISTANT') . $self->colorize("Config->load() reads .clio/config.json and merges it with defaults.", 'DATA'),
+            markdown => 0,
+        );
+
+        # Section 3: Thinking block
+        $self->writeline("", markdown => 0);
+        $self->writeline($self->colorize("[ THINKING ]", 'ASSISTANT'), markdown => 0);
+        my $bullet      = box_char('topleft') . box_char('horizontal') . box_char('horizontal') . box_char('tleft') . ' ';
+        my $bullet_color = $theme_mgr->get_color('muted') // '';
+        my $name_color   = $theme_mgr->get_color('ASSISTANT') || $theme_mgr->get_color('agent_label') || '';
+        my $data_color   = $theme_mgr->get_color('agent_text') || $theme_mgr->get_color('data') || '';
+        my $reset        = "\e[0m";
+        $self->writeline(
+            "${bullet_color}${bullet}${reset}" .
+            "${name_color}THINKING${reset} " .
+            "${bullet_color}${bullet}${reset}",
+            markdown => 0,
+        );
+        $self->writeline(
+            "${data_color}    Reading the file structure and identifying the load() function.${reset}",
+            markdown => 0,
+        );
+
+        # Section 4: Tool header (inline format)
+        $self->writeline("", markdown => 0);
+        $self->writeline($self->colorize("[ TOOL CALL ]", 'ASSISTANT'), markdown => 0);
+        my $tool_bullet = box_char('bullet') . ' ';
+        my $tool_sep    = ' -> ';
+        $self->writeline(
+            "${bullet_color}${tool_bullet}${name_color}FILE OPERATIONS${reset} " .
+            "${bullet_color}${tool_sep}${data_color}reading lib/CLIO/Core/Config.pm (1247 bytes)${reset}",
+            markdown => 0,
+        );
+
+        # Section 5: Status indicators
+        $self->writeline("", markdown => 0);
+        $self->writeline($self->colorize("[ STATUS ]", 'ASSISTANT'), markdown => 0);
+        $self->writeline($self->colorize('ERROR:', 'error') . ' ' . $self->colorize('Sample error message', 'DATA'), markdown => 0);
+        $self->writeline($self->colorize('WARN:', 'warning') . '  ' . $self->colorize('Sample warning message', 'DATA'), markdown => 0);
+        $self->writeline($self->colorize('OK:', 'success') . '   ' . $self->colorize('Sample success message', 'DATA'), markdown => 0);
+        $self->writeline($self->colorize('INFO:', 'info') . '  ' . $self->colorize('Sample info message', 'DATA'), markdown => 0);
+
+        # Section 6: Markdown
+        $self->writeline("", markdown => 0);
+        $self->writeline($self->colorize("[ MARKDOWN ]", 'ASSISTANT'), markdown => 0);
+        $self->writeline(
+            $theme_mgr->get_color('markdown_h1') . '# Heading 1' . $reset . ' ' .
+            $theme_mgr->get_color('markdown_bold') . 'bold' . $reset . ' ' .
+            $theme_mgr->get_color('markdown_italic') . 'italic' . $reset . ' ' .
+            $theme_mgr->get_color('markdown_code') . 'inline code' . $reset,
+            markdown => 0,
+        );
+
+        # Section 7: Input prompt
+        $self->writeline("", markdown => 0);
+        $self->writeline($self->colorize("[ PROMPT ]", 'ASSISTANT'), markdown => 0);
+        my $input_prompt = $theme_mgr->render('input_prompt', { prompt => 'clio>' });
+        $self->writeline($input_prompt, markdown => 0);
+    };
+
+    if ($@) {
+        # Render error inline but continue to restore originals below.
+        $self->writeline("", markdown => 0);
+        $self->display_error_message("Preview render error: $@");
+    }
+
+    # Always restore originals - /preview never persists.
+    $theme_mgr->set_style($orig_style);
+    $theme_mgr->set_theme($orig_theme);
+
+    $self->writeline("", markdown => 0);
+    $self->display_info_message("Preview only - active style/theme unchanged.");
+}
+
 1;
 
 __END__
