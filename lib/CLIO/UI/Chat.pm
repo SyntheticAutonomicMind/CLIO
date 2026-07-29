@@ -19,6 +19,7 @@ use CLIO::UI::Display;
 use CLIO::UI::HostProtocol;
 use CLIO::UI::StreamingController;
 use CLIO::UI::PaginationManager;
+use CLIO::UI::Chat::Header;
 use utf8;
 use open ':std', ':encoding(UTF-8)';
 use Carp qw(croak);
@@ -137,6 +138,7 @@ sub new {
 
     # Initialize pagination manager
     $self->{pager} = CLIO::UI::PaginationManager->new(ui => $self);
+    $self->{header} = CLIO::UI::Chat::Header->new($self);
     
     if (-t STDIN) {
         $self->setup_tab_completion();
@@ -217,7 +219,7 @@ are picked up immediately.
 
 sub agent_name {
     my ($self) = @_;
-    return $ENV{CLIO_AGENT_NAME} || 'CLIO';
+    return $self->{header}->agent_name();
 }
 
 =head2 _get_broker_client
@@ -1517,81 +1519,7 @@ Check for updates in background (non-blocking)
 
 sub check_for_updates_async {
     my ($self) = @_;
-    
-    # Load Update module
-    eval {
-        require CLIO::Update;
-    };
-    if ($@) {
-        # Silently fail if module not available
-        log_debug('Chat', "Update module not available: $@");
-        return;
-    }
-    
-    my $updater = CLIO::Update->new(debug => $self->{debug});
-    
-    # Check if we have cached update info
-    my $update_info = $updater->get_available_update();
-    
-    if ($update_info && $update_info->{cached} && !$update_info->{up_to_date}) {
-        # Display update notification
-        my $version = $update_info->{version} || 'unknown';
-        $self->display_system_message("An update is available ($version). Run " . 
-            $self->colorize('/update install', 'command') . " to upgrade.");
-    }
-    
-    # Track cache file modification time for periodic checking
-    # This allows us to detect when background check completes and finds an update
-    my $cache_file = File::Spec->catfile('.clio', 'update_check_cache');
-    if (-f $cache_file) {
-        $self->{_update_cache_mtime} = (stat($cache_file))[9];
-        log_debug('Chat', "Tracking update cache mtime: $self->{_update_cache_mtime}");
-    }
-    
-    # Fork background process to check for updates
-    # Parent returns immediately, child checks and caches result
-    # Skip on Windows - fork() emulation via threads is unreliable
-    if ($^O eq 'MSWin32') {
-        log_debug('Chat', "Skipping async update check on Windows (no fork)");
-        return;
-    }
-    # Double-fork: intermediate exits immediately so parent can reap it;
-    # grandchild is adopted by init and auto-reaped when the check finishes.
-    my $intermediate = fork();
-    
-    if (!defined $intermediate) {
-        # Fork failed - silently continue
-        log_warning('Chat', "Failed to fork update checker: $!");
-        return;
-    }
-    
-    if ($intermediate == 0) {
-        # Intermediate child: fork grandchild, then exit immediately
-        my $grandchild = fork();
-        _exit(0) unless defined $grandchild && $grandchild == 0;
-        
-        # Grandchild: check for updates (adopted by init on intermediate exit)
-        # Reset terminal state first, while still connected to parent TTY
-        # This must happen BEFORE closing any file descriptors
-        # Use light reset - no ANSI codes needed since we're about to close output
-        eval {
-            require CLIO::Compat::Terminal;
-            CLIO::Compat::Terminal::reset_terminal_light();  # ReadMode(0) only
-        };
-        
-        # Close stdin/stdout/stderr to avoid interfering with parent's terminal
-        close(STDIN);
-        close(STDOUT);
-        close(STDERR);
-        
-        eval {
-            $updater->check_for_updates();
-        };
-        _exit(0);  # Grandchild exits (reaped by init)
-    }
-    
-    # Parent waits for intermediate (exits immediately, no blocking)
-    waitpid($intermediate, 0);
+    return $self->{header}->check_for_updates_async();
 }
 
 =head2 check_for_update_notification
@@ -1605,235 +1533,26 @@ update check (forked process) completes and writes a new result to the cache.
 
 sub check_for_update_notification {
     my ($self) = @_;
-    
-    # Only check periodically - not on every loop iteration
-    # Track last check time in $self->{_last_update_check}
-    my $now = time();
-    my $last_check = $self->{_last_update_check} || 0;
-    my $check_interval = 30;  # Check every 30 seconds
-    
-    return if ($now - $last_check) < $check_interval;
-    
-    $self->{_last_update_check} = $now;
-    
-    # Load Update module
-    eval {
-        require CLIO::Update;
-    };
-    return if $@;
-    
-    my $cache_file = File::Spec->catfile('.clio', 'update_check_cache');
-    
-    # Check if cache file has been modified since we last checked
-    return unless -f $cache_file;
-    
-    my $current_mtime = (stat($cache_file))[9];
-    my $last_known_mtime = $self->{_update_cache_mtime} || 0;
-    
-    # No change - return early
-    return if $current_mtime <= $last_known_mtime;
-    
-    # Cache file has been updated - check if there's a new update available
-    log_debug('Chat', "Update cache modified, checking for new updates");
-    
-    my $updater = CLIO::Update->new(debug => $self->{debug});
-    my $update_info = $updater->get_available_update();
-    
-    # Update our tracked mtime
-    $self->{_update_cache_mtime} = $current_mtime;
-    
-    # If update is available and we haven't already notified, display message
-    if ($update_info && $update_info->{cached} && !$update_info->{up_to_date}) {
-        # Only notify if we haven't already shown this version
-        my $version = $update_info->{version} || 'unknown';
-        my $notified_version = $self->{_notified_update_version} || '';
-        
-        if ($version ne $notified_version) {
-            $self->display_system_message("An update is available ($version). Run " . 
-                $self->colorize('/update install', 'command') . " to upgrade.");
-            $self->{_notified_update_version} = $version;
-        }
-    }
+    return $self->{header}->check_for_update_notification();
 }
 
 sub display_header {
     my ($self) = @_;
-
-    # Respect the show_banner config key. Users can disable the banner
-    # persistently via /config set show_banner off, or for one session
-    # with --no-banner. Default is on.
-    if ($self->{config} && !$self->{config}->get('show_banner')) {
-        return;
-    }
-
-    my $session_id = $self->{session} ? $self->{session}->{session_id} : 'unknown';
-    my $model = $self->{config} ? $self->{config}->get('model') : 'unknown';
-    
-    # Get provider - try stored provider first, then detect from api_base
-    my $provider = $self->{config} ? $self->{config}->get('provider') : undef;
-    unless ($provider) {
-        # Detect from api_base if not explicitly set
-        my $api_base = $self->{config} ? $self->{config}->get('api_base') : '';
-        my $presets = $self->{config} ? $self->{config}->get('provider_presets') : {};
-        if ($api_base && $presets) {
-            for my $p (keys %$presets) {
-                if ($presets->{$p}->{base} eq $api_base) {
-                    $provider = $p;
-                    last;
-                }
-            }
-        }
-    }
-    
-    # Map provider names to display names from Providers registry
-    require CLIO::Providers;
-    my %provider_names;
-    for my $pname (CLIO::Providers::list_providers()) {
-        my $pdef = CLIO::Providers::get_provider($pname);
-        $provider_names{$pname} = $pdef->{name} if $pdef && $pdef->{name};
-    }
-    # Legacy aliases not in the registry
-    $provider_names{'gemini'}  //= 'Google Gemini';
-    $provider_names{'qwen'}    //= 'Qwen';
-    $provider_names{'grok'}    //= 'xAI Grok';
-    
-    my $provider_display = $provider ? ($provider_names{$provider} || ucfirst($provider)) : 'Unknown';
-    
-    # Strip CLIO provider prefix from model name for display
-    # "github_copilot/gpt-4.1" -> "gpt-4.1" (provider shown after @)
-    my $display_model = $model;
-    if (defined $display_model && $display_model =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i && CLIO::Providers::provider_exists($1)) {
-        my $model_provider = $1;
-        $display_model = $2;
-        # Always update provider_display from the model prefix for cross-provider routing
-        # e.g., "openrouter/deepseek/deepseek-r1" shows "@OpenRouter" not "@GitHub Copilot"
-        $provider_display = $provider_names{$model_provider} || ucfirst($model_provider);
-    }
-    $display_model //= '(none configured)';
-    my $model_with_provider = "$display_model\@$provider_display";
-    
-    # If no provider at all, show a clean message instead of "(none configured)@Unknown"
-    if (!$provider) {
-        $model_with_provider = 'NO PROVIDER';
-        
-        print "\n";
-        
-        # Build session display: include friendly name if set
-        my $session_name = $self->{session} ? $self->{session}->session_name() : undef;
-        my $session_name_line = '';
-        if ($session_name) {
-            my $label_color = $self->{theme_mgr}->get_color('label') || '';
-            my $data_color = $self->{theme_mgr}->get_color('value') || '';
-            my $reset = $self->{ansi}->parse('@RESET@');
-            $session_name_line = "${label_color}Session:    ${data_color}${session_name}${reset}";
-        }
-        
-        # Render banner lines 1-3 (app name, session ID, etc.), skip line 4 (provider connected),
-        # then render custom "not connected" message and line 5 (help text)
-        for my $ln (1..3) {
-            my $template_key = "banner_line$ln";
-            my $template = $self->{theme_mgr}->get_template($template_key);
-            next unless $template;
-            my $rendered = $self->{theme_mgr}->render($template_key, {
-                session_id => $session_id,
-                session_name => $session_name,
-                session_name_line => $session_name_line,
-                model => $model_with_provider,
-            });
-            my $stripped = $rendered;
-            $stripped =~ s/\e\[[0-9;]*m//g;
-            $stripped =~ s/^\s+//;
-            $stripped =~ s/\s+$//;
-            next unless length($stripped) > 0;
-            print $rendered, "\n";
-        }
-        # Custom no-provider line replacing "You are connected to..."
-        print "You are not connected to a provider.\n";
-        # Banner line 5 (help text)
-        my $l5_template = $self->{theme_mgr}->get_template('banner_line5');
-        if ($l5_template) {
-            my $rendered = $self->{theme_mgr}->render('banner_line5', {
-                session_id => $session_id,
-                session_name => $session_name,
-                session_name_line => $session_name_line,
-                model => $model_with_provider,
-            });
-            print $rendered, "\n";
-        }
-        print "\n";
-        return;
-    }
-    
-    # Add session override indicator when session-only settings are active
-    if ($self->{session}) {
-        my $state = $self->{session}->state();
-        if ($state && $state->{api_config}) {
-            my $ac = $state->{api_config};
-            if ($ac->{model} || $ac->{provider} || $ac->{api_base}) {
-                $model_with_provider .= " (session)";
-            }
-        }
-    }
-    
-    print "\n";
-    
-    # Build session display: include friendly name if set
-    my $session_name = $self->{session} ? $self->{session}->session_name() : undef;
-    my $session_name_line = '';
-    if ($session_name) {
-        my $label_color = $self->{theme_mgr}->get_color('label') || '';
-        my $data_color = $self->{theme_mgr}->get_color('value') || '';
-        my $reset = $self->{ansi}->parse('@RESET@');
-        $session_name_line = "${label_color}Session:    ${data_color}${session_name}${reset}";
-    }
-    
-    # Dynamically render all banner lines (themes can have variable number)
-    my $line_num = 1;
-    while (1) {
-        my $template_key = "banner_line$line_num";
-        my $template = $self->{theme_mgr}->get_template($template_key);
-        last unless $template;
-        
-        my $rendered = $self->{theme_mgr}->render($template_key, {
-            session_id => $session_id,
-            session_name => $session_name,
-            session_name_line => $session_name_line,
-            model => $model_with_provider,
-        });
-        
-        $line_num++;
-        my $stripped = $rendered;
-        $stripped =~ s/\e\[[0-9;]*m//g;
-        $stripped =~ s/^\s+//;
-        $stripped =~ s/\s+$//;
-        next unless length($stripped) > 0;
-        
-        print $rendered, "\n";
-    }
-    
-    print "\n";
+    return $self->{header}->display_header();
 }
 
-=head2 _build_prompt
+=head2 _check_auth_migration
 
-Build the enhanced prompt with model, directory, and git branch.
-
-Format: [model-name] directory-name (git-branch): 
-
-Components:
-- Model name in brackets (themed)
-- Current directory basename (themed)
-- Git branch in parentheses if in repo (themed)
-- Colon prompt indicator (themed based on input mode)
-
-Arguments:
-- $mode: Optional mode ('normal' or 'collaboration'), defaults to 'normal'
-         - 'normal': Uses 'prompt_indicator' color (user's theme)
-         - 'collaboration': Uses 'COLLAB_PROMPT' color (bright cyan/blue)
-
-Returns: Formatted prompt string with theme colors
+Check if GitHub Copilot authentication needs migration or if tokens are invalid.
+Shows a one-time notice if the stored tokens are from an older auth method.
+If tokens are expired/invalid, offers automatic re-authentication.
 
 =cut
+
+sub _check_auth_migration {
+    my ($self) = @_;
+    return $self->{header}->_check_auth_migration();
+}
 
 =head2 _prepopulate_session_data
 
@@ -1848,209 +1567,12 @@ Called at session start to provide accurate /usage data immediately.
 
 =cut
 
-=head2 _check_auth_migration
-
-Check if GitHub Copilot authentication needs migration or if tokens are invalid.
-Shows a one-time notice if the stored tokens are from an older auth method.
-If tokens are expired/invalid, offers automatic re-authentication.
-
-=cut
-
-sub _check_auth_migration {
-    my ($self) = @_;
-    
-    # Only check for GitHub Copilot provider
-    my $provider = $self->{config} ? $self->{config}->get('provider') : '';
-    return unless $provider && $provider eq 'github_copilot';
-    
-    eval {
-        require CLIO::Core::GitHubAuth;
-        my $auth = CLIO::Core::GitHubAuth->new(debug => 0);
-        
-        # Check if a static API key is configured - if so, skip auth checks
-        # The api_key could be set via /api set key or stored in api_keys for provider
-        my $static_key = $self->{config}->get('api_key');
-        my $api_keys = $self->{config}->get('api_keys') || {};
-        $static_key ||= $api_keys->{$provider};
-        
-        if ($static_key) {
-            log_info('Chat', "Static API key configured for github_copilot, skipping GitHub auth");
-            return;
-        }
-        
-        # Check for migration needs first
-        my $reason = $auth->needs_reauth();
-        if ($reason) {
-            $self->display_system_message($reason);
-            return;
-        }
-        
-        # Check if tokens exist and are valid
-        my $tokens = $auth->load_tokens();
-        
-        if (!$tokens || !$tokens->{github_token}) {
-            # No tokens at all - prompt for login
-            log_info('Chat', "GitHub Copilot provider configured but no tokens found");
-            eval {
-                if ($self->{command_handler} && $self->{command_handler}{api_cmd}) {
-                    $self->{command_handler}{api_cmd}->check_github_auth();
-                } else {
-                    $self->display_system_message(
-                        "GitHub Copilot requires authentication. Please run /api login"
-                    );
-                }
-            };
-            if ($@) {
-                log_warning('Chat', "Auth prompt failed: $@");
-            }
-            return;
-        }
-        
-        # Validate stored tokens are actually still valid
-        # This catches the case where CLIO hasn't been used in a while
-        # and the GitHub OAuth token has been revoked
-        my $validation = $auth->validate_github_token();
-        
-        if ($validation && !$validation->{valid}) {
-            my $status = $validation->{status} || 'unknown';
-            
-            if ($status == 401 || $status == 403) {
-                # Token is expired/revoked - clear and re-authenticate
-                $self->display_system_message(
-                    "Your GitHub authentication has expired (HTTP $status). "
-                    . "Starting re-authentication..."
-                );
-                
-                $auth->clear_tokens();
-                
-                eval {
-                    if ($self->{command_handler} && $self->{command_handler}{api_cmd}) {
-                        $self->{command_handler}{api_cmd}->handle_login_command();
-                    } else {
-                        $self->display_system_message(
-                            "Please run /api login to re-authenticate."
-                        );
-                    }
-                };
-                if ($@) {
-                    log_warning('Chat', "Auto re-auth failed: $@");
-                    $self->display_system_message(
-                        "Automatic re-authentication failed. Please run /api login manually."
-                    );
-                }
-            } elsif ($validation->{error} && $validation->{error} =~ /Network/) {
-                # Network error - silently skip (might be offline)
-                log_debug('Chat', "Skipping token validation - network error");
-            }
-        }
-    };
-    # Silently ignore errors - auth check is non-critical
-}
-
 sub _prepopulate_session_data {
     my ($self) = @_;
-    
-    return unless $self->{session};
-    
-    my $provider = $self->{config} ? $self->{config}->get('provider') : '';
-    
-    # Only prepopulate for GitHub Copilot provider
-    return unless $provider && $provider eq 'github_copilot';
-    
-    log_debug('Chat', "Prepopulating session data from CopilotUserAPI");
-    
-    eval {
-        require CLIO::Core::CopilotUserAPI;
-        my $user_api = CLIO::Core::CopilotUserAPI->new(debug => $self->{debug});
-        
-        # Try cached first, then fetch if no cache
-        my $user_data = $user_api->get_cached_user() || $user_api->fetch_user();
-        
-        return unless $user_data;
-        
-        # Get session state
-        my $state;
-        if ($self->{session}->can('state')) {
-            $state = $self->{session}->state();
-        } else {
-            $state = $self->{session};  # Might be State directly
-        }
-        
-        return unless $state;
-        
-        # Prepopulate quota info
-        my $premium = $user_data->get_premium_quota();
-        if ($premium) {
-            $state->{quota} = {
-                entitlement => $premium->{entitlement},
-                used => $premium->{used},
-                available => $premium->{entitlement} - $premium->{used},
-                percent_remaining => $premium->{percent_remaining},
-                overage_used => $premium->{overage_count} || 0,
-                overage_permitted => $premium->{overage_permitted},
-                reset_date => $user_data->{quota_reset_date_utc} || 'unknown',
-                last_updated => time(),
-            };
-            
-            # Also store user info for display
-            $state->{copilot_user} = {
-                login => $user_data->{login},
-                copilot_plan => $user_data->{copilot_plan},
-                access_type_sku => $user_data->{access_type_sku},
-            };
-            
-            log_debug('Chat', "Prepopulated quota: " . "$premium->{used}/$premium->{entitlement} " .
-                "($premium->{percent_remaining}% remaining)\n");
-        }
-        
-        # Prepopulate model info from config
-        my $model = $self->{config}->get('model') || 'unknown';
-        if ($model ne 'unknown' && !$state->{billing}{model}) {
-            $state->{billing}{model} = $model;
-            
-            # Get billing multiplier only for GitHub Copilot provider
-            # Other providers don't use GitHub's billing API
-            # Also check model prefix - --model openrouter/... overrides routing
-            my $provider = $self->{config}->get('provider') || '';
-            my $model_provider = '';
-            require CLIO::Providers;
-            if ($model =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i && CLIO::Providers::provider_exists($1)) {
-                $model_provider = $1;
-            }
-            # Get billing multiplier only for GitHub Copilot provider
-            # Check both config provider AND model prefix (--model github_copilot/...)
-            if (($provider eq 'github_copilot' || $model_provider eq 'github_copilot') && (!$model_provider || $model_provider eq 'github_copilot')) {
-                eval {
-                    require CLIO::Core::GitHubCopilotModelsAPI;
-                    my $models_api = CLIO::Core::GitHubCopilotModelsAPI->new(debug => $self->{debug});
-                    # Strip provider prefix: "github_copilot/gpt-4.1" -> "gpt-4.1"
-                    my $api_model = $model;
-                    if ($api_model =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i && CLIO::Providers::provider_exists($1)) {
-                        $api_model = $2;
-                    }
-                    my $billing = $models_api->get_model_billing($api_model);
-                    if ($billing && defined $billing->{multiplier}) {
-                        $state->{billing}{multiplier} = $billing->{multiplier};
-                        log_debug('Chat', "Prepopulated model billing: $api_model -> " . "$billing->{multiplier}x");
-                    }
-                    if ($billing && $billing->{category}) {
-                        $state->{billing}{category} = $billing->{category};
-                    }
-                    if ($billing && $billing->{vendor}) {
-                        $state->{billing}{vendor} = $billing->{vendor};
-                    }
-                };
-                # Ignore errors - just means no multiplier info
-            }
-        }
-    };
-    
-    if ($@) {
-        log_debug('Chat', "Prepopulation failed (non-fatal): $@");
-    }
+    return $self->{header}->_prepopulate_session_data();
 }
 
-sub _build_prompt {
+=head2 _build_prompt
     my ($self, $mode) = @_;
     $mode ||= 'normal';  # Default to normal mode
     
@@ -3368,150 +2890,6 @@ sub display_help {
     $self->{pager}->reset();
 }
 
-
-=head2 show_global_config
-
-Display global configuration in formatted view
-
-=cut
-
-sub show_global_config {
-    my ($self) = @_;
-    
-    $self->display_command_header("GLOBAL CONFIGURATION");
-    
-    # API Settings
-    $self->display_section_header("API Settings");
-    
-    # Detect provider from api_base if not explicitly set
-    my $provider = $self->{config}->get('provider');
-    unless ($provider) {
-        my $api_base = $self->{config}->get('api_base') || '';
-        my $presets = $self->{config}->get('provider_presets') || {};
-        if ($api_base && $presets) {
-            for my $p (keys %$presets) {
-                if ($presets->{$p}->{base} eq $api_base) {
-                    $provider = $p;
-                    last;
-                }
-            }
-        }
-    }
-    $provider ||= 'unknown';
-    
-    require CLIO::Providers;
-    my $model = $self->{config}->get('model') || CLIO::Providers::DEFAULT_MODEL();
-    my $api_key = $self->{config}->get('api_key');
-    my $api_base = $self->{config}->get('api_base');
-    
-    # Check for GitHub Copilot authentication if that's the provider
-    my $auth_status = '[NOT SET]';
-    if ($api_key && length($api_key) > 0) {
-        $auth_status = '[SET]';
-    } elsif ($provider eq 'github_copilot') {
-        # Check for GitHub Copilot token file
-        eval {
-            require CLIO::Core::GitHubAuth;
-            my $gh_auth = CLIO::Core::GitHubAuth->new(debug => 0);
-            # Check if we have a usable token (get_copilot_token can fall back to github_token)
-            my $token = $gh_auth->get_copilot_token();
-            if ($token) {
-                $auth_status = '[TOKEN]';
-            } else {
-                $auth_status = '[NO TOKEN - use /login]';
-            }
-        };
-        # If eval failed, show that GitHub auth check failed
-        if ($@) {
-            $auth_status = '[NOT SET]';
-        }
-    }
-    
-    $self->display_key_value("Provider", $provider, 18);
-    $self->display_key_value("Model", $model, 18);
-    $self->display_key_value("API Key", $auth_status, 18);
-    
-    # Resolve API base URL to show actual endpoint
-    my $display_url = $api_base || '[default]';
-    if ($api_base && $api_base !~ m{^https?://}) {
-        # It's a shorthand like 'sam' or 'github-copilot', resolve to actual endpoint
-        my ($api_type, $models_url) = $self->_detect_api_type($api_base);
-        if ($models_url) {
-            # Extract base URL from models endpoint (remove /v1/models or /models suffix)
-            $display_url = $models_url;
-            $display_url =~ s{/v1/models$}{};
-            $display_url =~ s{/models$}{};
-            $display_url =~ s{/v1/chat/completions$}{};
-            # If we removed something, show it resolved. Otherwise show original.
-            $display_url = "$api_base " . ui_char("arrow_right") . " $display_url" if $display_url ne $models_url;
-        }
-    }
-    $self->display_key_value("API Base URL", $display_url, 18);
-    
-    # UI Settings
-    print "\n";
-    $self->display_section_header("UI Settings");
-    my $style = $self->{config}->get('style') || 'default';
-    my $theme = $self->{config}->get('theme') || 'default';
-    my $loglevel = $ENV{CLIO_LOG_LEVEL} || $self->{config}->get('log_level') || 'WARNING';
-    
-    $self->display_key_value("Color Style", $style, 18);
-    $self->display_key_value("Output Theme", $theme, 18);
-    $self->display_key_value("Log Level", $loglevel, 18);
-    
-    # Paths
-    print "\n";
-    $self->display_section_header("Paths & Files");
-    require Cwd;
-    my $workdir = $self->{config}->get('working_directory') || Cwd::getcwd();
-    my $config_file = $self->{config}->{config_file};
-    
-    $self->display_key_value("Working Dir", $workdir, 18);
-    $self->display_key_value("Config File", $config_file, 18);
-    $self->display_key_value("Sessions Dir", File::Spec->catdir('.', 'sessions'), 18);
-    $self->display_key_value("Styles Dir", File::Spec->catdir('.', 'styles'), 18);
-    $self->display_key_value("Themes Dir", File::Spec->catdir('.', 'themes'), 18);
-    
-    print "\n";
-    $self->display_info_message("Use '/config save' to persist changes");
-    print "\n";
-}
-
-=head2 show_session_config
-
-Display session-specific configuration
-
-=cut
-
-sub show_session_config {
-    my ($self) = @_;
-    
-    my $state = $self->{session}->state();
-    
-    print "\n", $self->colorize("SESSION CONFIGURATION", 'DATA'), "\n";
-    print $self->colorize(box_char("hhorizontal") x 51, "DIM"), "\n\n";
-    
-    print $self->colorize("Session Info:", 'SYSTEM'), "\n";
-    printf "  Session ID:   %s\n", $state->{session_id};
-    printf "  Messages:     %d\n", scalar(@{$state->{history} || []});
-    require Cwd;
-    printf "  Working Dir:  %s\n", $state->{working_directory} || Cwd::getcwd();
-    
-    print "\n", $self->colorize("UI Settings:", 'SYSTEM'), "\n";
-    # Fall back to global config if not set in session
-    my $session_style = $state->{style} || $self->{config}->get('style') || 'default';
-    my $session_theme = $state->{theme} || $self->{config}->get('theme') || 'default';
-    printf "  Style:        %s%s\n", $session_style, ($state->{style} ? '' : ' (from global)');
-    printf "  Theme:        %s%s\n", $session_theme, ($state->{theme} ? '' : ' (from global)');
-    
-    print "\n", $self->colorize("Model:", 'SYSTEM'), "\n";
-    # Fall back to global config if not set in session (typical for new sessions)
-    require CLIO::Providers;
-    my $session_model = $state->{selected_model} || $self->{config}->get('model') || CLIO::Providers::DEFAULT_MODEL();
-    printf "  Selected:     %s%s\n", $session_model, ($state->{selected_model} ? '' : ' (from global)');
-    
-    print "\n";
-}
 
 =head2 clear_screen
 
