@@ -7,47 +7,47 @@ name=default
 user_prompt_format={style.user_prompt}: @RESET@
 agent_prefix={style.agent_label}{var.agent_name}: @RESET@
 system_prefix={style.system_message}SYSTEM: @RESET@
-error_prefix={style.error_message}ERROR: @RESET@
+error_prefix={style.error}ERROR: @RESET@
 
 # Banner (displayed at session start)
-banner_line1={style.app_title}{var.agent_name} {style.app_subtitle}- {var.agent_subtitle}@RESET@
-banner_line2={style.banner_label}Session ID: {style.data}{var.session_id}@RESET@
+banner_line1={style.primary}{var.agent_name} {style.secondary}- {var.agent_subtitle}@RESET@
+banner_line2={style.label}Session ID: {style.value}{var.session_id}@RESET@
 banner_line3={var.session_name_line}
-banner_line4={style.banner_label}You are connected to {style.data}{var.model}@RESET@
-banner_line5={style.banner_label}Type "{style.data}/help{style.banner_label}" for a list of commands.@RESET@
+banner_line4={style.label}You are connected to {style.value}{var.model}@RESET@
+banner_line5={style.label}Type "{style.value}/help{style.label}" for a list of commands.@RESET@
 
 # Help system
-help_header={style.data}{var.title}@RESET@
-help_section={style.data}{var.section}@RESET@
+help_header={style.value}{var.title}@RESET@
+help_section={style.value}{var.section}@RESET@
 help_command={style.prompt_indicator}{var.command}@RESET@
 
 # Status indicators
-thinking_indicator={style.dim}(thinking...)@RESET@
+thinking_indicator={style.subtle}(thinking...)@RESET@
 
 # Navigation
 nav_next={style.prompt_indicator}[N]ext@RESET@
 nav_previous={style.prompt_indicator}[P]revious@RESET@
 nav_quit={style.prompt_indicator}[Q]uit@RESET@
-pagination_info={style.dim}{var.info}@RESET@
+pagination_info={style.subtle}{var.info}@RESET@
 
 # Pagination prompts (single-line pause format)
 pagination_hint_streaming=
 pagination_hint_full=
-pagination_prompt_streaming={style.dim}{char.bullet} {style.agent_label}Q{style.dim} quit {char.pipe} any key for more @RESET@
-pagination_prompt={style.dim}{char.bullet} {style.data}{var.current}/{var.total} {style.dim}{char.pipe} {var.nav_hint}{style.agent_label}Q{style.dim} quit {char.pipe} any key for more @RESET@
+pagination_prompt_streaming={style.subtle}{char.bullet} {style.agent_label}Q{style.subtle} quit {char.pipe} any key for more @RESET@
+pagination_prompt={style.subtle}{char.bullet} {style.value}{var.current}/{var.total} {style.subtle}{char.pipe} {var.nav_hint}{style.agent_label}Q{style.subtle} quit {char.pipe} any key for more @RESET@
 
 # Input prompts (standardized BBS style with box-drawing)
-input_prompt={style.dim}{char.topleft}{char.horizontal}{char.horizontal}{char.tleft} {style.prompt_indicator}{var.prompt}@RESET@
-input_prompt_with_default={style.dim}{char.topleft}{char.horizontal}{char.horizontal}{char.tleft} {style.prompt_indicator}{var.prompt}{style.dim} {char.vertical} {style.data}Enter{style.dim} to {style.data}{var.default_action}@RESET@
+input_prompt={style.subtle}{char.topleft}{char.horizontal}{char.horizontal}{char.tleft} {style.prompt_indicator}{var.prompt}@RESET@
+input_prompt_with_default={style.subtle}{char.topleft}{char.horizontal}{char.horizontal}{char.tleft} {style.prompt_indicator}{var.prompt}{style.subtle} {char.vertical} {style.value}Enter{style.subtle} to {style.value}{var.default_action}@RESET@
 
 # Confirmation prompts (single-line inline format)
-confirmation_prompt={style.dim}{char.bullet} {style.prompt_indicator}{var.question}{style.dim} {char.pipe} {style.data}{var.options} {style.dim}{char.pipe} {style.data}Enter{style.dim} to {style.data}{var.default_action}{style.dim}: @RESET@
-confirmation_prompt_no_options={style.dim}{char.bullet} {style.prompt_indicator}{var.question}{style.dim} {char.pipe} {style.data}Enter{style.dim} to {style.data}{var.default_action}{style.dim}: @RESET@
-confirmation_prompt_short={style.dim}{char.bullet} {style.prompt_indicator}{var.question}{style.dim}: @RESET@
+confirmation_prompt={style.subtle}{char.bullet} {style.prompt_indicator}{var.question}{style.subtle} {char.pipe} {style.value}{var.options} {style.subtle}{char.pipe} {style.value}Enter{style.subtle} to {style.value}{var.default_action}{style.subtle}: @RESET@
+confirmation_prompt_no_options={style.subtle}{char.bullet} {style.prompt_indicator}{var.question}{style.subtle} {char.pipe} {style.value}Enter{style.subtle} to {style.value}{var.default_action}{style.subtle}: @RESET@
+confirmation_prompt_short={style.subtle}{char.bullet} {style.prompt_indicator}{var.question}{style.subtle}: @RESET@
 
 # Security prompts (command/script approval)
-security_prompt={style.dim}{char.bullet} {style.warning_message}Security{style.dim} {char.pipe} {style.data}{var.target}{style.dim}@RESET@
-security_prompt_input={style.dim}  {style.data}{var.options}{style.dim}: @RESET@
+security_prompt={style.subtle}{char.bullet} {style.warning}Security{style.subtle} {char.pipe} {style.value}{var.target}{style.subtle}@RESET@
+security_prompt_input={style.subtle}  {style.value}{var.options}{style.subtle}: @RESET@
 
 # Messages
 user_message_prefix={style.user_text}YOU: @RESET@

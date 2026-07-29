@@ -352,12 +352,61 @@ sub load_style_file {
 
     close($fh);
 
+    # Apply backward-compatibility aliases. Older style files (and many
+    # user-customized styles) still reference keys like 'dim', 'data',
+    # 'app_title' that were renamed to canonical forms ('subtle', 'value',
+    # 'primary'). Apply only when the canonical key is not already set so
+    # the canonical form always wins.
+    _apply_deprecated_aliases($style);
+
     # Structural validation. Bad files are skipped (with a log line)
     # rather than silently loaded - the previous behavior produced
     # empty $style->{name} lookups that surfaced as 'undefined color'
     # downstream and were hard to diagnose.
     return undef unless check_style_data($style, $path);
 
+    return $style;
+}
+
+# Backward-compat alias map: deprecated_key => canonical_key.
+# Loaded styles that still reference the old names get the canonical
+# values transparently. The list is small and stable - new deprecations
+# are documented here so a single grep finds them.
+my %DEPRECATED_STYLE_ALIASES = (
+    dim               => 'subtle',
+    data              => 'value',
+    banner            => 'app_title',
+    warning_message   => 'warning',
+    error_message     => 'error',
+    success_message   => 'success',
+    info_message      => 'info',
+    banner_label      => 'label',
+    banner_value      => 'value',
+    banner_help       => 'label',
+    banner_command    => 'command',
+    app_title         => 'primary',
+    app_subtitle      => 'secondary',
+    command_label     => 'label',
+    command_value     => 'value',
+    command_header    => 'primary',
+    command_subheader => 'secondary',
+    highlight         => 'secondary',
+    theme_header      => 'secondary',
+    help_command      => 'command',
+    markdown_formula  => 'secondary',
+    markdown_link_text => 'link',
+    markdown_link_url => 'muted',
+    muted_text        => 'muted',
+);
+
+sub _apply_deprecated_aliases {
+    my ($style) = @_;
+    for my $deprecated (keys %DEPRECATED_STYLE_ALIASES) {
+        my $canonical = $DEPRECATED_STYLE_ALIASES{$deprecated};
+        next unless exists $style->{$deprecated};
+        next if exists $style->{$canonical};  # canonical wins
+        $style->{$canonical} = $style->{$deprecated};
+    }
     return $style;
 }
 

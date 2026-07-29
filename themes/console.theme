@@ -7,45 +7,45 @@ name=console
 user_prompt_format={style.user_prompt}> @RESET@
 agent_prefix={style.agent_label}{var.agent_name}: @RESET@
 system_prefix={style.system_message}[SYSTEM] @RESET@
-error_prefix={style.error_message}[ERROR] @RESET@
+error_prefix={style.error}[ERROR] @RESET@
 
 # Banner - simple text
-banner_line1={style.app_title}{var.agent_name}@RESET@ {style.dim}- {var.agent_subtitle}@RESET@
-banner_line2={style.dim}Session: {style.data}{var.session_id}@RESET@
-banner_line3={style.dim}Model: {style.data}{var.model}@RESET@
+banner_line1={style.primary}{var.agent_name}@RESET@ {style.subtle}- {var.agent_subtitle}@RESET@
+banner_line2={style.subtle}Session: {style.value}{var.session_id}@RESET@
+banner_line3={style.subtle}Model: {style.value}{var.model}@RESET@
 
 # Help system
-help_header={style.data}{var.title}@RESET@
-help_section={style.dim}{var.section}@RESET@
+help_header={style.value}{var.title}@RESET@
+help_section={style.subtle}{var.section}@RESET@
 help_command={style.prompt_indicator}{var.command}@RESET@
 
 # Status indicators - simple
-thinking_indicator={style.dim}...@RESET@
+thinking_indicator={style.subtle}...@RESET@
 
 # Navigation - brief
 nav_next={style.prompt_indicator}N@RESET@
 nav_previous={style.prompt_indicator}P@RESET@
 nav_quit={style.prompt_indicator}Q@RESET@
-pagination_info={style.dim}{var.info}@RESET@
+pagination_info={style.subtle}{var.info}@RESET@
 
 # Pagination prompts - plain text, single-line
 pagination_hint_streaming=
 pagination_hint_full=
-pagination_prompt_streaming={style.dim}* Q quit | any key for more @RESET@
-pagination_prompt={style.dim}* {var.current}/{var.total} | {var.nav_hint}Q quit | any key for more @RESET@
+pagination_prompt_streaming={style.subtle}* Q quit | any key for more @RESET@
+pagination_prompt={style.subtle}* {var.current}/{var.total} | {var.nav_hint}Q quit | any key for more @RESET@
 
 # Input prompts - plain text instead of box-drawing
 input_prompt={style.prompt_indicator}{var.prompt}: @RESET@
 input_prompt_with_default={style.prompt_indicator}{var.prompt} (Enter={var.default_action}): @RESET@
 
 # Confirmation prompts - plain text
-confirmation_prompt={style.prompt_indicator}{var.question} {style.data}{var.options} {style.dim}(Enter={var.default_action}): @RESET@
-confirmation_prompt_no_options={style.prompt_indicator}{var.question} {style.dim}(Enter={var.default_action}): @RESET@
-confirmation_prompt_short={style.prompt_indicator}{var.question}{style.dim}: @RESET@
+confirmation_prompt={style.prompt_indicator}{var.question} {style.value}{var.options} {style.subtle}(Enter={var.default_action}): @RESET@
+confirmation_prompt_no_options={style.prompt_indicator}{var.question} {style.subtle}(Enter={var.default_action}): @RESET@
+confirmation_prompt_short={style.prompt_indicator}{var.question}{style.subtle}: @RESET@
 
 # Security prompts (command/script approval)
-security_prompt={style.warning_message}Security{style.dim} | {style.data}{var.target}{style.dim}@RESET@
-security_prompt_input={style.data}{var.options}{style.dim}: @RESET@
+security_prompt={style.warning}Security{style.subtle} | {style.value}{var.target}{style.subtle}@RESET@
+security_prompt_input={style.value}{var.options}{style.subtle}: @RESET@
 
 # Messages - simple prefixes
 user_message_prefix={style.user_text}YOU: @RESET@
