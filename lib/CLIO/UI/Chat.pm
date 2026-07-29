@@ -21,6 +21,7 @@ use CLIO::UI::StreamingController;
 use CLIO::UI::PaginationManager;
 use CLIO::UI::Chat::Header;
 use CLIO::UI::Chat::Security;
+use CLIO::UI::Chat::Help;
 use utf8;
 use open ':std', ':encoding(UTF-8)';
 use Carp qw(croak);
@@ -141,6 +142,7 @@ sub new {
     $self->{pager} = CLIO::UI::PaginationManager->new(ui => $self);
     $self->{header} = CLIO::UI::Chat::Header->new($self);
     $self->{security} = CLIO::UI::Chat::Security->new($self);
+    $self->{help} = CLIO::UI::Chat::Help->new($self);
     
     if (-t STDIN) {
         $self->setup_tab_completion();
@@ -2516,199 +2518,7 @@ Display help message with available commands
 
 sub display_help {
     my ($self) = @_;
-    
-    # Refresh terminal size before pagination (handle resize)
-    $self->refresh_terminal_size();
-    
-    # Reset pagination state and ENABLE pagination for help output
-    $self->{pager}->reset();
-    $self->{pager}->enable();
-    
-    # Build help text as array of lines for pagination
-    my @help_lines = ();
-    
-    # Header
-    push @help_lines, "";
-    push @help_lines, $self->colorize(box_char("dhorizontal") x 62, 'command_header');
-    push @help_lines, $self->colorize($self->agent_name() . " COMMANDS", 'command_header');
-    push @help_lines, $self->colorize(box_char("dhorizontal") x 62, 'command_header');
-    push @help_lines, "";
-    
-    # Sections
-    push @help_lines, $self->colorize("BASICS", 'command_subheader');
-    push @help_lines, $self->colorize(box_char("horizontal") x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/help, /h', 'help_command'), 'Display this help');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/exit, /quit, /q', 'help_command'), 'Exit the chat');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/clear', 'help_command'), 'Clear the screen');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/reset', 'help_command'), 'Reset terminal and kill stale processes');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/init', 'help_command'), 'Initialize ' . $self->agent_name() . ' for this project');
-    push @help_lines, "";
-    
-    push @help_lines, $self->colorize("KEYBOARD SHORTCUTS", 'command_subheader');
-    push @help_lines, $self->colorize(box_char("horizontal") x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('Left/Right', 'help_command'), 'Move cursor by character');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('Shift+Left/Right', 'help_command'), 'Move cursor by word');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('Option+Left/Right', 'help_command'), 'Move cursor by word (macOS)');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('Ctrl+A / Home', 'help_command'), 'Move to start of line');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('Ctrl+E / End', 'help_command'), 'Move to end of line');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('Backspace', 'help_command'), 'Delete character before cursor');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('Delete / Fn+Delete', 'help_command'), 'Delete character at cursor');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('Ctrl+W', 'help_command'), 'Delete word before cursor');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('Shift+Delete', 'help_command'), 'Delete word before cursor');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('Option+Backspace', 'help_command'), 'Delete word before cursor (macOS)');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('Alt+D', 'help_command'), 'Delete word after cursor');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('Ctrl+Delete', 'help_command'), 'Delete word after cursor');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('Option+D', 'help_command'), 'Delete word after cursor (macOS)');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('Ctrl+K', 'help_command'), 'Delete to end of line');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('Ctrl+U', 'help_command'), 'Delete to start of line');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('Up/Down', 'help_command'), 'Navigate command history');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('Tab', 'help_command'), 'Auto-complete commands/paths');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('Any key', 'help_command'), 'Interrupt the agent');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('Ctrl+C', 'help_command'), 'Cancel input or exit');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('Ctrl+D', 'help_command'), 'Exit (on empty line)');
-    push @help_lines, "";
-    
-    push @help_lines, $self->colorize("API & CONFIG", 'command_subheader');
-    push @help_lines, $self->colorize(box_char("horizontal") x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api', 'help_command'), 'API settings (model, provider, login)');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api set model <name>', 'help_command'), 'Set AI model');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api models', 'help_command'), 'List available models');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/model <name>', 'help_command'), 'Quick model switch (alias-aware)');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api alias <name> <model>', 'help_command'), 'Create model alias');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/api remove <provider>', 'help_command'), 'Remove provider credentials');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/config', 'help_command'), 'Global configuration');
-    push @help_lines, "";
-    
-    push @help_lines, $self->colorize("SESSION", 'command_subheader');
-    push @help_lines, $self->colorize(box_char("horizontal") x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/session', 'help_command'), 'Session management');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/session list', 'help_command'), 'List all sessions');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/session switch', 'help_command'), 'Switch sessions');
-    push @help_lines, "";
-    
-    push @help_lines, $self->colorize("FILE & GIT", 'command_subheader');
-    push @help_lines, $self->colorize(box_char("horizontal") x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/file', 'help_command'), 'File operations');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/file read <path>', 'help_command'), 'View file');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/git', 'help_command'), 'Git operations');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/git status', 'help_command'), 'Show git status');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/undo', 'help_command'), 'Revert AI changes from last turn');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/undo diff', 'help_command'), 'Show changes since last turn');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/undo list', 'help_command'), 'List recent turns with file changes');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/mcp', 'help_command'), 'MCP server status');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/mcp list', 'help_command'), 'List MCP tools');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/mcp add <name> <cmd>', 'help_command'), 'Add MCP server');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/mcp remove <name>', 'help_command'), 'Remove MCP server');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/mcp auth <name>', 'help_command'), 'Trigger OAuth authentication');
-    push @help_lines, "";
-    
-    push @help_lines, $self->colorize("PLUGINS", 'command_subheader');
-    push @help_lines, $self->colorize(box_char("horizontal") x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/plugin', 'help_command'), 'List installed plugins');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/plugin info <name>', 'help_command'), 'Show plugin details');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/plugin enable <name>', 'help_command'), 'Enable a plugin');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/plugin disable <name>', 'help_command'), 'Disable a plugin');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/plugin config <name> [k v]', 'help_command'), 'View/set plugin config');
-    push @help_lines, "";
-    
-    push @help_lines, $self->colorize("TODO", 'command_subheader');
-    push @help_lines, $self->colorize(box_char("horizontal") x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo', 'help_command'), "View agent's todo list");
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo add <text>', 'help_command'), 'Add todo');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/todo done <id>', 'help_command'), 'Complete todo');
-    push @help_lines, "";
-    
-    push @help_lines, $self->colorize("SPECS (OpenSpec)", 'command_subheader');
-    push @help_lines, $self->colorize(box_char("horizontal") x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/spec', 'help_command'), 'Show spec overview');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/spec init', 'help_command'), 'Initialize openspec/ directory');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/spec list', 'help_command'), 'List specs and changes');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/spec new <name>', 'help_command'), 'Create a new change');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/spec propose <name>', 'help_command'), 'Create change + AI generates artifacts');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/spec status [name]', 'help_command'), 'Show artifact status');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/spec archive <name>', 'help_command'), 'Archive completed change');
-    push @help_lines, "";
-    
-    push @help_lines, $self->colorize("MEMORY", 'command_subheader');
-    push @help_lines, $self->colorize(box_char("horizontal") x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory', 'help_command'), 'View long-term memory patterns');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory list [type]', 'help_command'), 'List all or filtered patterns');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory store <type>', 'help_command'), 'Store pattern (via AI)');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/memory clear', 'help_command'), 'Clear all patterns');
-    push @help_lines, "";
-    
-    push @help_lines, $self->colorize("PROFILE", 'command_subheader');
-    push @help_lines, $self->colorize(box_char("horizontal") x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/profile', 'help_command'), 'View profile status');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/profile build', 'help_command'), 'Build profile from session history');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/profile show', 'help_command'), 'Display current profile');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/profile edit', 'help_command'), 'Open profile in editor');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/profile clear', 'help_command'), 'Remove profile');
-    push @help_lines, "";
-    
-    push @help_lines, $self->colorize("UPDATES", 'command_subheader');
-    push @help_lines, $self->colorize(box_char("horizontal") x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/update', 'help_command'), 'Show update status and help');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/update check', 'help_command'), 'Check for available updates');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/update list', 'help_command'), 'List all available versions');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/update install', 'help_command'), 'Install latest version');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/update switch <ver>', 'help_command'), 'Switch to a specific version');
-    push @help_lines, "";
-    
-    push @help_lines, $self->colorize("DEVELOPER", 'command_subheader');
-    push @help_lines, $self->colorize(box_char("horizontal") x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/explain [file]', 'help_command'), 'Explain code');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/review [file]', 'help_command'), 'Review code');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/test [file]', 'help_command'), 'Generate tests');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/fix <file>', 'help_command'), 'Propose fixes');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/doc <file>', 'help_command'), 'Generate docs');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/design', 'help_command'), 'Create/update project PRD');
-    push @help_lines, "";
-    
-    push @help_lines, $self->colorize("SKILLS & PROMPTS", 'command_subheader');
-    push @help_lines, $self->colorize(box_char("horizontal") x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/skills', 'help_command'), 'Manage custom skills');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/prompt', 'help_command'), 'Manage system prompts');
-    push @help_lines, "";
-    
-    push @help_lines, $self->colorize("DEVICES & REMOTE", 'command_subheader');
-    push @help_lines, $self->colorize(box_char("horizontal") x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/device', 'help_command'), 'List registered devices');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/device add <name> <host>', 'help_command'), 'Register device');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/device info <name>', 'help_command'), 'Device details');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/group', 'help_command'), 'List device groups');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/group add <name> <devs...>', 'help_command'), 'Create group');
-    push @help_lines, "";
-    
-    push @help_lines, $self->colorize("MULTI-AGENT", 'command_subheader');
-    push @help_lines, $self->colorize(box_char("horizontal") x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/agent spawn <task>', 'help_command'), 'Spawn a sub-agent');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/agent list', 'help_command'), 'List sub-agents');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/agent inbox', 'help_command'), 'Check messages from agents');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/mux status', 'help_command'), 'Multiplexer status (tmux/screen)');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/mux agent <id>', 'help_command'), 'Open agent output pane');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/mux close all', 'help_command'), 'Close all managed panes');
-    push @help_lines, "";
-    
-    push @help_lines, $self->colorize("OTHER", 'command_subheader');
-    push @help_lines, $self->colorize(box_char("horizontal") x 62, 'dim');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/billing', 'help_command'), 'API usage stats');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/stats', 'help_command'), 'Memory and performance stats');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/stats history', 'help_command'), 'Memory usage timeline');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/context', 'help_command'), 'Manage context files');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/exec <cmd>', 'help_command'), 'Run shell command');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/multi, /ml, //', 'help_command'), 'Open editor for multi-line input');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/style, /theme', 'help_command'), 'Appearance settings');
-    push @help_lines, sprintf("  %-30s %s", $self->colorize('/debug', 'help_command'), 'Toggle debug mode');
-    push @help_lines, "";
-    
-    # Output with pagination
-    for my $line (@help_lines) {
-        last unless $self->writeline($line, markdown => 0);
-    }
-    
-    # Reset pagination state after display
-    $self->{pager}->reset();
+    return $self->{help}->display_help();
 }
 
 
