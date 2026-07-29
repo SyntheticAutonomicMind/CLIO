@@ -60,6 +60,9 @@ OPTIONS:
     --resume [ID]      Resume a session (most recent if no ID provided)
     --sessions         List all sessions with friendly names
     --list-models      Output available models as JSON (for integrations)
+    --list-styles      List all available terminal styles with descriptions
+    --list-themes      List all available output themes with descriptions
+    --list-spinners    List all available spinner animations
     --debug            Enable debug output
     --dir <path>       Set working directory for session
     --input <text>     Process input and exit
@@ -93,6 +96,9 @@ EXAMPLES:
     clio --chat --new             # Conversational chat mode (sandboxed)
     clio --config /tmp/clio-test  # Use isolated config for testing
     clio --no-color --input "hi"  # Non-interactive without color
+    clio --list-styles            # Browse terminal styles
+    clio --list-themes            # Browse output themes
+    clio --list-spinners          # Browse spinner animations
 
 SESSIONS:
     Sessions are stored in: .clio/sessions/
@@ -281,6 +287,15 @@ for (my $i = 0; $i < @ARGV; $i++) {
     }
     if ($ARGV[$i] eq '--list-models') {
         $mode = 'list_models';
+    }
+    if ($ARGV[$i] eq '--list-styles') {
+        $mode = 'list_styles';
+    }
+    if ($ARGV[$i] eq '--list-themes') {
+        $mode = 'list_themes';
+    }
+    if ($ARGV[$i] eq '--list-spinners') {
+        $mode = 'list_spinners';
     }
 }
 
@@ -486,6 +501,169 @@ if ($mode eq 'list_models') {
 
     print CLIO::Util::JSON::encode_json(\@all_models);
     print "\n";
+    exit 0;
+}
+
+# Helper: extract description from the leading comment block of a .style file.
+# Style files start with a # header comment like:
+#   # CLIO Style: dracula
+#   # Dracula - Dark Theme with Vibrant Colors
+#   #
+#   # Color Philosophy:
+#   # - ...
+# Returns the second-line tagline (the description), or undef if not found.
+sub _extract_style_description {
+    my ($path) = @_;
+    return undef unless -r $path;
+    open my $fh, '<:encoding(UTF-8)', $path or return undef;
+    my @header = ();
+    while (my $line = <$fh>) {
+        last unless $line =~ /^#/;
+        chomp $line;
+        $line =~ s/^#\s*//;
+        push @header, $line;
+    }
+    close $fh;
+    # Skip the first header line ("CLIO Style: <name>") and the section
+    # dividers (lines made of box-drawing chars). Return the first
+    # substantive tagline.
+    for my $i (1 .. $#header) {
+        my $line = $header[$i];
+        next if $line =~ /^[\s\-\=\u2500-\u257f]*$/;   # dividers / blanks
+        next if $line =~ /^Color Philosophy/i;
+        next if $line =~ /^Based on /i;
+        return $line;
+    }
+    return undef;
+}
+
+# Helper: group a style name into a coarse category for display.
+sub _style_category {
+    my ($name) = @_;
+    my %categories = (
+        modern  => [qw(console default dark greyscale light slate
+                       solarized-dark solarized-light nord dracula)],
+        retro   => [qw(amber-terminal apple-ii bbs-bright commodore-64
+                       dos-blue green-screen photon retro-rainbow vt100)],
+        flair   => [qw(monokai synthwave cyberpunk matrix ocean forest)],
+    );
+    for my $cat (keys %categories) {
+        return $cat if grep { $_ eq $name } @{$categories{$cat}};
+    }
+    return 'other';
+}
+
+# Handle --list-styles mode (browse all terminal styles)
+if ($mode eq 'list_styles') {
+    require CLIO::UI::Theme;
+    # $RealBin is already in scope from the top-of-file `use FindBin qw($RealBin)`.
+
+    my $theme = CLIO::UI::Theme->new(debug => 0);
+    my @styles = $theme->list_styles();
+
+    my $bold = "\e[1m";
+    my $dim  = "\e[2m";
+    my $cyan = "\e[36m";
+    my $green = "\e[32m";
+    my $reset = "\e[0m";
+
+    print "${bold}CLIO Styles${reset} ${dim}(", scalar(@styles), " available)${reset}\n";
+    print "${dim}\x{2550}" x 70 . "${reset}\n\n";
+
+    # Group styles by category and print in canonical order: modern, retro, flair, other.
+    my %by_cat;
+    for my $style (@styles) {
+        push @{$by_cat{_style_category($style)}}, $style;
+    }
+
+    my @cat_order = qw(modern retro flair other);
+    my @cat_labels = (
+        modern => 'Modern',
+        retro  => 'Retro',
+        flair  => 'Flair/Nature',
+        other  => 'Other',
+    );
+    while (@cat_labels) {
+        my $cat = shift @cat_labels;
+        my $label = shift @cat_labels;
+        my $items = $by_cat{$cat} || [];
+        next unless @$items;
+        print "${cyan}${bold}${label}${reset}\n";
+        for my $style (@$items) {
+            # Locate the source file to extract the description.
+            my $path = "$RealBin/styles/$style.style";
+            my $desc = _extract_style_description($path) // '(no description)';
+            printf "  ${green}*${reset} ${bold}%-22s${reset} ${dim}%s${reset}\n",
+                $style, $desc;
+        }
+        print "\n";
+    }
+
+    print "${dim}Use:${reset}\n";
+    print "  ${green}clio --style <name>${reset}      ${dim}# one-shot session${reset}\n";
+    print "  ${green}/config style <name>${reset}    ${dim}# set as default${reset}\n";
+
+    exit 0;
+}
+
+# Handle --list-themes mode (browse all output themes)
+if ($mode eq 'list_themes') {
+    require CLIO::UI::Theme;
+    # $RealBin is already in scope from the top-of-file `use FindBin qw($RealBin)`.
+
+    my $theme = CLIO::UI::Theme->new(debug => 0);
+    my @themes = $theme->list_themes();
+
+    my $bold = "\e[1m";
+    my $dim  = "\e[2m";
+    my $cyan = "\e[36m";
+    my $green = "\e[32m";
+    my $reset = "\e[0m";
+
+    print "${bold}CLIO Themes${reset} ${dim}(", scalar(@themes), " available)${reset}\n";
+    print "${dim}\x{2550}" x 70 . "${reset}\n\n";
+
+    for my $t (@themes) {
+        my $path = "$RealBin/themes/$t.theme";
+        my $desc = _extract_style_description($path) // '(no description)';
+        printf "  ${green}*${reset} ${bold}%-12s${reset} ${dim}%s${reset}\n",
+            $t, $desc;
+    }
+
+    print "\n${dim}Use:${reset}\n";
+    print "  ${green}clio --theme <name>${reset}      ${dim}# one-shot session${reset}\n";
+    print "  ${green}/config theme <name>${reset}     ${dim}# set as default${reset}\n";
+
+    exit 0;
+}
+
+# Handle --list-spinners mode (browse all spinner animations)
+if ($mode eq 'list_spinners') {
+    require CLIO::UI::Spinners;
+    CLIO::UI::Spinners->import(qw(list_spinners spinner_metadata));
+
+    my @spinners = list_spinners();
+
+    my $bold = "\e[1m";
+    my $dim  = "\e[2m";
+    my $cyan = "\e[36m";
+    my $green = "\e[32m";
+    my $reset = "\e[0m";
+
+    print "${bold}CLIO Spinner Animations${reset} ${dim}(", scalar(@spinners), " available)${reset}\n";
+    print "${dim}\x{2550}" x 70 . "${reset}\n\n";
+
+    for my $s (@spinners) {
+        my $meta = spinner_metadata($s);
+        my $desc = $meta->{description} // '(no description)';
+        my $utf8_flag = $meta->{requires_utf8} ? ' [UTF-8]' : '';
+        printf "  ${green}*${reset} ${bold}%-12s${reset} ${dim}%s%s${reset}\n",
+            $s, $desc, $utf8_flag;
+    }
+
+    print "\n${dim}Use:${reset}\n";
+    print "  ${green}spinner_style=<name>${reset}  ${dim}# in a .style file${reset}\n";
+
     exit 0;
 }
 
