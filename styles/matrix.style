@@ -91,4 +91,8 @@ table_border=@DIM@
 
 spinner_style=binary
 
+# Accessibility
+reduced_motion=0
+high_contrast=0
+
 # ═══════════════════════════════════════════════════════════════
