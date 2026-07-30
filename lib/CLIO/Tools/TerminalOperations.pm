@@ -281,9 +281,15 @@ sub _execute_captured {
                 last;
             }
             
+            # Compute current idle/wall time FIRST so it's available for all
+            # diagnostic logging in this iteration (interrupt, hard ceiling, idle).
+            my $now = Time::HiRes::time();
+            my $idle_seconds = $now - $last_activity;
+            my $wall_seconds = $now - $start;
+
             # Check for user interrupt (set by Chat.pm ALRM handler)
             if ($session && $session->state() && $session->state()->{user_interrupted}) {
-                log_info('TerminalOps', "User interrupt during command execution, killing child process group $pid");
+                log_info('TerminalOps', "User interrupt detected (ESC/Ctrl-C), killing child process group $pid (wall=" . sprintf('%.1fs', $wall_seconds) . " idle=" . sprintf('%.1fs', $idle_seconds) . ")");
                 $interrupted = 1;
                 $self->_kill_process_group($pid);
                 $exit_code = 130;
@@ -297,12 +303,9 @@ sub _execute_captured {
                 $last_output_size = $current_size;
             }
             
-            my $now = Time::HiRes::time();
-            my $idle_seconds = $now - $last_activity;
-            my $wall_seconds = $now - $start;
-            
             # Hard ceiling: absolute wall-clock limit regardless of activity
             if ($wall_seconds > $hard_ceiling) {
+                log_info('TerminalOps', "Hard ceiling reached: wall=" . sprintf('%.1fs', $wall_seconds) . " > $hard_ceiling, killing child process group $pid (idle=" . sprintf('%.1fs', $idle_seconds) . ")");
                 $timed_out = 1;
                 log_warning('TerminalOps', "Command hit hard ceiling after ${hard_ceiling}s, killing process group $pid");
                 $self->_kill_process_group($pid);
@@ -311,6 +314,7 @@ sub _execute_captured {
             
             # Idle timeout: no output for $timeout seconds
             if ($idle_seconds > $timeout) {
+                log_info('TerminalOps', "Idle timeout reached: idle=" . sprintf('%.1fs', $idle_seconds) . " > $timeout (wall=" . sprintf('%.1fs', $wall_seconds) . "), killing child process group $pid");
                 $timed_out = 1;
                 my $total = int($wall_seconds);
                 log_warning('TerminalOps', "Command idle for ${timeout}s (${total}s total), killing process group $pid");
@@ -476,9 +480,15 @@ sub _execute_passthrough {
                 last;
             }
             
+            # Compute current idle/wall time FIRST so it's available for all
+            # diagnostic logging in this iteration.
+            my $now = Time::HiRes::time();
+            my $idle_seconds = $now - $last_activity;
+            my $wall_seconds = $now - $start;
+
             # Check for user interrupt
             if ($session && $session->state() && $session->state()->{user_interrupted}) {
-                log_info('TerminalOps', "User interrupt during passthrough, killing process group $child_pid");
+                log_info('TerminalOps', "User interrupt detected (ESC/Ctrl-C), killing passthrough process group $child_pid (wall=" . sprintf('%.1fs', $wall_seconds) . " idle=" . sprintf('%.1fs', $idle_seconds) . ")");
                 $interrupted = 1;
                 $self->_kill_process_group($child_pid);
                 $exit_code = 130;
@@ -492,12 +502,9 @@ sub _execute_passthrough {
                 $last_output_size = $current_size;
             }
             
-            my $now = Time::HiRes::time();
-            my $idle_seconds = $now - $last_activity;
-            my $wall_seconds = $now - $start;
-            
             # Hard ceiling
             if ($wall_seconds > $hard_ceiling) {
+                log_info('TerminalOps', "Hard ceiling reached in passthrough: wall=" . sprintf('%.1fs', $wall_seconds) . " > $hard_ceiling, killing process group $child_pid (idle=" . sprintf('%.1fs', $idle_seconds) . ")");
                 $timed_out = 1;
                 log_warning('TerminalOps', "Passthrough hit hard ceiling after ${hard_ceiling}s, killing process group $child_pid");
                 $self->_kill_process_group($child_pid);
@@ -506,6 +513,7 @@ sub _execute_passthrough {
             
             # Idle timeout
             if ($idle_seconds > $timeout) {
+                log_info('TerminalOps', "Idle timeout reached in passthrough: idle=" . sprintf('%.1fs', $idle_seconds) . " > $timeout (wall=" . sprintf('%.1fs', $wall_seconds) . "), killing process group $child_pid");
                 $timed_out = 1;
                 my $total = int($wall_seconds);
                 log_warning('TerminalOps', "Passthrough idle for ${timeout}s (${total}s total), killing process group $child_pid");
@@ -599,6 +607,8 @@ sub _kill_process_group {
     my ($self, $pid) = @_;
     return unless $pid && $pid > 0;
 
+    log_info('TerminalOps', "_kill_process_group entered: pid=$pid my_pid=$$ my_pgid=" . (_get_pid_pgid($$) // 'unknown'));
+
     # Safety check: verify the child's PGID is the child's PID before
     # targeting that process group with SIGKILL. If the child's setpgid(0, 0)
     # silently failed at fork, the child is in CLIO's PGID (or the shell's),
@@ -611,22 +621,42 @@ sub _kill_process_group {
         return;
     }
 
-    kill('TERM', -$pid);
+    my $term_sent = kill('TERM', -$pid);
+    log_info('TerminalOps', "Sent SIGTERM to PGID=$pid (kill returned: " . ($term_sent ? scalar($term_sent) : '0') . " targets)");
     my $wait_start = Time::HiRes::time();
+    my $term_grace = 0;
     while (Time::HiRes::time() - $wait_start < 2) {
-        last if waitpid($pid, POSIX::WNOHANG()) > 0;
+        my $w = waitpid($pid, POSIX::WNOHANG());
+        if ($w > 0) {
+            $term_grace = Time::HiRes::time() - $wait_start;
+            last;
+        }
+        if ($w < 0) {
+            log_warning('TerminalOps', "waitpid($pid, WNOHANG) returned -1 during TERM grace: errno=$!");
+        }
         Time::HiRes::usleep(50_000);
     }
-    if (waitpid($pid, POSIX::WNOHANG()) <= 0) {
-        kill('KILL', -$pid);
-        waitpid($pid, 0);
+    my $final_w = waitpid($pid, POSIX::WNOHANG());
+    if ($final_w <= 0) {
+        log_info('TerminalOps', "PID $pid did not exit within 2s of SIGTERM, escalating to SIGKILL");
+        my $kill_sent = kill('KILL', -$pid);
+        log_info('TerminalOps', "Sent SIGKILL to PGID=$pid (kill returned: " . ($kill_sent ? scalar($kill_sent) : '0') . " targets)");
+        my $reaped = waitpid($pid, 0);
+        log_info('TerminalOps', "Blocking waitpid($pid) returned: " . ($reaped // 'undef') . " status=" . (($reaped && $reaped > 0) ? ($? >> 8) : 'n/a'));
+    } else {
+        log_info('TerminalOps', "PID $pid exited cleanly after SIGTERM within " . sprintf('%.2fs', $term_grace));
     }
 
     # Reap any remaining children in the process group to prevent zombies
     # Use non-blocking waitpid in a loop
+    my $reaped_count = 0;
     while (waitpid(-1, POSIX::WNOHANG()) > 0) {
-        # Reaped a child
+        $reaped_count++;
     }
+    if ($reaped_count > 0) {
+        log_info('TerminalOps', "Reaped $reaped_count remaining child(ren) via waitpid(-1) to prevent zombies");
+    }
+    log_info('TerminalOps', "_kill_process_group complete for pid=$pid");
 }
 
 =head2 _suspend_clio_input
