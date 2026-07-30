@@ -299,7 +299,7 @@ Commands are validated before execution. CLIO shows the command text before runn
 
 **Process safety:** Commands are spawned in their own process group (via `setpgid`). On ESC interrupt or timeout, CLIO sends SIGTERM to the entire group (killing shells, ssh connections, and any grandchild processes), then SIGKILL after 2 seconds if needed. This prevents orphaned processes accumulating in the background.
 
-**Activity-based timeouts:** CLIO uses idle timeout detection rather than wall-clock timeouts. If a command is actively producing output (build logs, test results), it keeps running. Commands are only killed after the idle timeout (default 60 seconds) with no output. A hard ceiling (default 600 seconds, configurable via `CLIO_TERMINAL_MAX_TIMEOUT`) prevents infinite runs.
+**Activity-based timeouts:** CLIO uses idle timeout detection rather than wall-clock timeouts. If a command is actively producing output (build logs, test results), it keeps running. Commands are only killed after the idle timeout (default 300 seconds) with no output. A hard ceiling (default 600 seconds, configurable via `CLIO_TERMINAL_MAX_TIMEOUT`) prevents infinite runs.
 
 ### Apply Patch
 

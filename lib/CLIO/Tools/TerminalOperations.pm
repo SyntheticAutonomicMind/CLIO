@@ -43,10 +43,13 @@ Operations:
 
 Behavior: Commands run in captured mode by default (output to file, no pty).
 Use passthrough=true for interactive TTY access. Multiplexer panes used when available.
-Timeout is idle: command killed after N seconds with no output. Active commands run until hard ceiling (10min).},
+Timeout is idle: command killed after N seconds with no output. Default idle timeout is 300s (5min). Active commands run until hard ceiling (10min).},
 # Timeout is an idle timeout: if the command produces no output for
 # $timeout seconds it is killed. Active commands that keep writing
 # output will not be killed until the hard ceiling (10min default).
+# Default 300s (5min) aligns with other CLIO tools (Interact, RemoteExecution)
+# and prevents premature kills of long-running commands that are silently
+# working (model loading, large compiles, DB queries, etc.).
         supported_operations => [qw(exec validate)],
         %opts,
     );
@@ -93,7 +96,12 @@ sub execute_command {
     }
     
     my $command = $params->{command};
-    my $timeout = $params->{timeout} || 60;
+    # Default idle timeout is 300s (5min). Aligned with other CLIO tools
+    # (Interact, RemoteExecution) and the 600s hard ceiling. 60s was too
+    # short for commands that are silently working (model loading, large
+    # compiles, DB queries) - the activity-based timeout resets on stdout
+    # but not on silent CPU work.
+    my $timeout = $params->{timeout} || 300;
     my $passthrough = $params->{passthrough} || 0;
     
     # Get working directory from params first, then from session context, then default to '.'
@@ -559,12 +567,50 @@ Send TERM to a process group, wait up to 2 seconds for graceful exit, then
 KILL if still alive. Uses POSIX-portable negative-PID form for group kill.
 Reaps all child processes to prevent zombies.
 
+Safety: before issuing the kill, verifies the child's PGID is actually the
+child's PID. If the child's setpgid(0, 0) failed at fork time, the child
+would be in CLIO's PGID (or worse, CLIO's shell's PGID), and a kill
+targeting PGID=$pid would either be a no-op or - far worse - hit CLIO
+itself. Same defensive pattern as CLIO::Compat::Terminal::kill_stale_children.
+
+Note: POSIX::getpgid is not exported on macOS Perl, so we resolve the PGID
+via ps. Falls back to BAILING OUT (refusing to kill) if the lookup fails -
+safer than firing SIGKILL at the wrong group.
+
 =cut
+
+sub _get_pid_pgid {
+    my ($pid) = @_;
+    return undef unless $pid && $pid =~ /^\d+$/;
+
+    # Prefer POSIX::getpgid on systems where it works (Linux). Falls back to
+    # ps on macOS / older Perls where the function isn't exported.
+    my $pgid = eval { POSIX::getpgid($pid) };
+    return $pgid if defined $pgid;
+
+    my $ps = `ps -o pid,pgid -p $pid 2>/dev/null`;
+    if ($ps =~ /^\s*\d+\s+(\d+)/m) {
+        return $1;
+    }
+    return undef;
+}
 
 sub _kill_process_group {
     my ($self, $pid) = @_;
     return unless $pid && $pid > 0;
-    
+
+    # Safety check: verify the child's PGID is the child's PID before
+    # targeting that process group with SIGKILL. If the child's setpgid(0, 0)
+    # silently failed at fork, the child is in CLIO's PGID (or the shell's),
+    # and killing PGID=$pid would either miss the child entirely or, in
+    # pathological cases, fan out to CLIO/peers. The same pattern is used in
+    # CLIO::Compat::Terminal::kill_stale_children.
+    my $child_pgid = _get_pid_pgid($pid);
+    if (!defined $child_pgid || $child_pgid != $pid) {
+        log_warning('TerminalOps', "Refusing to kill PID $pid: its PGID is " . ($child_pgid // 'unknown') . ", not its own PID. Child setpgid likely failed at fork; would risk killing CLIO or its peers.");
+        return;
+    }
+
     kill('TERM', -$pid);
     my $wait_start = Time::HiRes::time();
     while (Time::HiRes::time() - $wait_start < 2) {
@@ -575,7 +621,7 @@ sub _kill_process_group {
         kill('KILL', -$pid);
         waitpid($pid, 0);
     }
-    
+
     # Reap any remaining children in the process group to prevent zombies
     # Use non-blocking waitpid in a loop
     while (waitpid(-1, POSIX::WNOHANG()) > 0) {
@@ -899,7 +945,7 @@ sub get_additional_parameters {
         },
         timeout => {
             type => "integer",
-            description => "[OPTIONAL] Idle timeout in seconds. Default: 60. Command is killed only after this many seconds with no output. Active commands keep running.",
+            description => "[OPTIONAL] Idle timeout in seconds. Default: 300. Command is killed only after this many seconds with no output. Active commands keep running. Hard ceiling 600s (configurable via CLIO_TERMINAL_MAX_TIMEOUT).",
         },
         working_directory => {
             type => "string",

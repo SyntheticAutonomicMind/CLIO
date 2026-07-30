@@ -149,7 +149,7 @@ Known performance considerations:
    - Rendering overhead is minimal (markdown processed per-chunk)
 
 3. **Terminal operations** - Commands run in forked processes
-   - Activity-based idle timeout (default 60s) prevents hangs
+   - Activity-based idle timeout (default 300s) prevents hangs
    - Process groups ensure clean cleanup on timeout
 
 4. **Context trimming** - Runs every iteration after the first
