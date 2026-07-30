@@ -225,7 +225,7 @@ CLIO provides comprehensive tooling across multiple categories. Every tool opera
 
 **Parameters:**
 - `command` (string, **required**) - Shell command to execute
-- `timeout` (integer, optional) - Timeout in seconds (default: 60)
+- `timeout` (integer, optional) - Idle timeout in seconds (default: 300). Command is killed only after this many seconds with no output. Active commands keep running. Hard ceiling 600s (configurable via CLIO_TERMINAL_MAX_TIMEOUT).
 - `working_directory` (string, optional) - Working directory (default: `.`)
 - `passthrough` (boolean, optional) - Force direct terminal access
 
