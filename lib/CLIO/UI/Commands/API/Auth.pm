@@ -203,26 +203,29 @@ sub handle_quota {
     } @args;
 
     my $provider = $self->{config}->get('provider') || '';
-    
-    # Route to provider-specific quota handlers
-    if ($provider =~ /^minimax/) {
-        $self->_handle_minimax_quota($refresh);
-        return;
+
+    # Registry-driven dispatch: providers with a quota API declare
+    # `has_quota_api => 1` and `quota_handler => 'foo'` in CLIO::Providers.
+    # The handler method is `_handle_<quota_handler>_quota` on this
+    # class. Replaces the previous hand-written `provider =~ /^minimax/i`
+    # and `provider eq 'github_copilot'` chain. Adding a new quota
+    # provider means one line in the registry; this dispatcher stays
+    # unchanged.
+    require CLIO::Providers;
+    my $quota_handler = CLIO::Providers::quota_handler($provider);
+    if ($quota_handler) {
+        my $method = "_handle_${quota_handler}_quota";
+        if ($self->can($method)) {
+            return $self->$method($refresh);
+        }
+        log_warning('API', "Provider $provider declared quota_handler '$quota_handler' but method $method is missing");
     }
-    
-    if ($provider eq 'github_copilot') {
-        $self->_handle_copilot_quota($refresh);
-        return;
-    }
-    
+
     # Providers without quota APIs
     my $provider_display = ucfirst($provider || 'Unknown');
-    eval { require CLIO::Providers; };
-    if (!$@) {
-        my $pdef = CLIO::Providers::get_provider($provider);
-        $provider_display = $pdef->{name} if $pdef && $pdef->{name};
-    }
-    
+    my $pdef = CLIO::Providers::get_provider($provider);
+    $provider_display = $pdef->{name} if $pdef && $pdef->{name};
+
     $self->display_system_message("$provider_display does not provide a quota API.");
     $self->display_system_message("Use /billing to see session token usage.");
     return;
