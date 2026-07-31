@@ -21,6 +21,7 @@ use CLIO::Providers qw(
     get_provider list_providers provider_exists
     is_local_inference exposes_props default_context_window
     provider_from_url
+    capability_fetcher default_reasoning_mode
 );
 use CLIO::Core::Defaults qw(
     DEFAULT_LOCAL_CONTEXT_WINDOW DEFAULT_CONTEXT_WINDOW
@@ -150,6 +151,72 @@ for my $name (@CLOUD_NAMES) {
     is(provider_from_url('https://api.example.com/v1'),
         undef,
         'Unknown cloud URL returns undef');
+}
+
+# ============================================================================
+# capability_fetcher - registry-driven MCM dispatch
+# ============================================================================
+{
+    # Providers with a dedicated fetcher declare it in the registry.
+    # Each fetcher value maps to a `_fetch_<value>_capabilities` method
+    # on ModelCapabilitiesManager. Most providers use a one-to-one
+    # mapping (anthropic -> anthropic), but some share a fetcher
+    # (minimax + minimax_token both -> minimax, zai + zai_coding
+    # both -> zai). Document the map explicitly so future additions
+    # notice when they need to add to the shared set.
+    my %EXPECTED_FETCHER = (
+        'anthropic'      => 'anthropic',
+        'google'         => 'google',
+        'nvidia'         => 'nvidia',
+        'zai'            => 'zai',
+        'zai_coding'     => 'zai',
+        'minimax'        => 'minimax',
+        'minimax_token'  => 'minimax',
+        'deepseek'       => 'deepseek',
+        'github_copilot' => 'github_copilot',
+    );
+    for my $name (sort keys %EXPECTED_FETCHER) {
+        is(capability_fetcher($name), $EXPECTED_FETCHER{$name},
+            "capability_fetcher($name) maps to $EXPECTED_FETCHER{$name}");
+    }
+
+    # Providers without a dedicated fetcher return undef so the caller
+    # can fall back to the generic OpenAI-compatible path.
+    for my $name (qw(openai ollama_cloud openrouter sam llama.cpp lmstudio)) {
+        is(capability_fetcher($name), undef,
+            "$name has no dedicated fetcher -> undef (caller falls back)");
+    }
+}
+
+# ============================================================================
+# default_reasoning_mode - registry-driven MCM reasoning_mode heuristic
+# ============================================================================
+{
+    # Providers with an explicit default
+    is(default_reasoning_mode('anthropic'), 'adaptive',
+        'anthropic default is adaptive (most 5+ models)');
+    is(default_reasoning_mode('google'), 'enabled',
+        'google default is enabled (thinkingBudget)');
+    is(default_reasoning_mode('zai'),  'enabled',
+        'zai default is enabled (GLM thinking type)');
+    is(default_reasoning_mode('deepseek'), 'effort',
+        'deepseek default is effort (reasoning_effort)');
+
+    # Cloud providers without a declared default: fall through to
+    # the effort-mode fallback in MCM. The registry returns undef
+    # so MCM can apply its own model-name heuristics.
+    for my $name (qw(openai github_copilot openrouter nvidia)) {
+        is(default_reasoning_mode($name), undef,
+            "$name has no declared default -> undef (MCM uses fallback)");
+    }
+
+    # MiniMax family: per-model (M3 adaptive vs M2.x enabled),
+    # so the registry deliberately leaves the default undef and lets
+    # the model-name pattern in MCM run.
+    is(default_reasoning_mode('minimax'),      undef,
+        'minimax leaves default undef (M3/M2.x split is per-model)');
+    is(default_reasoning_mode('minimax_token'), undef,
+        'minimax_token leaves default undef (same reason)');
 }
 
 done_testing();
