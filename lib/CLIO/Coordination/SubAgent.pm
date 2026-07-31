@@ -258,6 +258,17 @@ sub _run_agent_loop {
         debug => $debug,
     );
 
+    # Set LTM corroboration identity for this sub-agent. add_corroboration()
+    # in CLIO::Memory::LongTerm reads $ENV{CLIO_AGENT_ID} /
+    # $ENV{CLIO_SESSION_ID} to build the source key used for sybil-resistant
+    # dedup. Without this, every sub-agent corroboration would collapse to
+    # "unknown:unknown" and the parent + sub-agents could never jointly
+    # promote an entry to [TRUSTED]. The agent_id from the broker gives
+    # each sub-agent a distinct identity from the parent "main" process.
+    $ENV{CLIO_AGENT_ID}   = $agent_id;
+    $ENV{CLIO_SESSION_ID} = $session->{session_id};
+    log_debug('SubAgent', "LTM identity: CLIO_AGENT_ID=$ENV{CLIO_AGENT_ID} CLIO_SESSION_ID=$ENV{CLIO_SESSION_ID}");
+
     # Resolve pre-loaded skills into rendered content blocks.
     # Each is appended to the subagent's system prompt at session start.
     my @preloaded_skill_blocks;

@@ -360,13 +360,13 @@ sub compute_prompt_budget {
                       || CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS();
     $output_reserve = CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS() if $output_reserve <= 0;
 
-    # Estimation buffer: max of constant + proportional, capped. Covers
+    # Estimation buffer: constant + proportional, capped. Covers
     # token estimation error, per-message overhead not captured by the
     # character heuristic, and provider-specific formatting tokens.
-    #   32k ctx  -> max(8K, 1.6K) = 8K
-    #   128k ctx -> max(8K, 6.4K) = 8K
-    #   200k ctx -> max(8K, 10K) = 10K
-    #   1M ctx   -> max(8K, 50K) = 50K (cap kicks in)
+    #   32k ctx  -> 8192 + 160 = 9792
+    #   128k ctx -> 8192 + 640 = 14592
+    #   200k ctx -> 8192 + 10000 = 18192
+    #   1M ctx   -> 8192 + 50000 = 58192, capped at 51200
     my $est_buffer = CLIO::Core::Defaults::OUTPUT_ESTIMATION_BUFFER()
                    + int($context_window * CLIO::Core::Defaults::OUTPUT_ESTIMATION_BUFFER_PCT());
     my $buffer_cap = CLIO::Core::Defaults::OUTPUT_ESTIMATION_BUFFER_MAX();

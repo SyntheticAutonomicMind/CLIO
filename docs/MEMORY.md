@@ -170,28 +170,50 @@ Agents are instructed to add LTM entries when they discover something significan
 
 ### Corroboration Gate (Trust Tiers)
 
-**New in v2026.06** - LTM entries now have a trust tier system to defend against memory poisoning attacks. Every entry is tagged with a tier:
+LTM entries have a trust tier system to defend against memory poisoning attacks. Every entry is tagged with a tier:
 
 | Tier | Badge | Description |
 |------|-------|-------------|
 | **Unverified** | `[UNVERIFIED]` | Single-source entry, not yet corroborated. Heavy score penalty (0.3x), fast decay (30-day age-out), low confidence floor (0.7). |
 | **Trusted** | `[TRUSTED]` | Corroborated by ≥2 independent sources (distinct agent:session pairs) OR manually promoted after verified outcome. Full score weight, normal decay (90-day age-out), standard confidence floor (0.5). |
 
+**Identity and source tracking.**
+
+Every corroboration is stamped with a `source_agent` and `source_session` joined as `agent:session` (e.g. `main:sess_abc123`). CLIO sets these automatically at startup so the source key is meaningful rather than collapsing to `unknown:unknown`:
+
+- `clio` (top-level process) sets `CLIO_AGENT_ID=main` and `CLIO_SESSION_ID=<session uuid>` after the session is created or loaded. A fresh `./clio --new` session therefore has a distinct `agent:session` key from a previous session, so cross-session corroboration works.
+- `SubAgent.pm` (spawned sub-agents) sets `CLIO_AGENT_ID=<broker agent_id>` and `CLIO_SESSION_ID=<session uuid>`, giving each sub-agent its own identity distinct from the parent's `main`.
+- The `memory_operations` tool and the `/memory corroborate` slash command both fall back to the active session's `session_id` and `agent_id` from context if the env vars are unset, so external scripts and tests still get a usable identity rather than silently disabling promotion.
+
+`corroboration_sources` is the dedup key list on every LTM entry. Corroborations from the same `agent:session` pair never double-count, which is the sybil-resistance mechanism: a single agent cannot self-promote its own entries within a session.
+
 **How corroboration works:**
 
 ```text
-# Agent independently verifies an existing memory
+# Agent independently verifies an existing memory.
+# Identity is auto-resolved from env vars / session context.
+# Override only when simulating a different agent (eg, tests):
 memory_operations(operation: "add_corroboration",
     search_text: "Config uses YAML not JSON",
     source_agent: "agent-123",
     source_session: "session-456")
 
-# After 2+ independent corroborations, entry auto-promotes to TRUSTED
+# After 2+ independent corroborations, entry auto-promotes to TRUSTED.
+# Same source re-corroborating returns already_corroborated=1 (no double-count).
 ```
 
-**Source tracking prevents sybil attacks** - corroborations from the same `agent:session` pair are deduplicated. Only distinct sources count toward the threshold.
+**When promotion happens automatically:**
 
-**Agents are instructed to trust but verify:** `[UNVERIFIED]` entries (especially procedural patterns like "always do X") should be validated before acting on them. Use `add_corroboration` when you independently confirm a memory, or `promote_entry` after a verified successful outcome.
+- A parent + child agent corroborate the same entry (different `agent_id`).
+- Two sessions of the same agent corroborate the same entry (different `session_id`).
+- Two distinct top-level sessions corroborate the same entry across the user's day.
+
+**When promotion does NOT happen automatically:**
+
+- A single session re-corroborates (dedup silently drops it; the response carries `already_corroborated=1`).
+- The agent:session pair cannot be resolved at all (env vars unset AND context lookup fails). This is the failure mode the `test_ltm_corroboration.pl` regression test pins down - in this case every corroboration collapses to `unknown:unknown` and the threshold can never be reached. Use the `/memory promote <search_text>` override or restart the session to recover.
+
+**Trust but verify:** `[UNVERIFIED]` entries (especially procedural patterns like "always do X") should be validated before acting on them. Use `add_corroboration` when you independently confirm a memory, or `/memory promote <search_text>` after a verified successful outcome. The `/memory tier <search_text>` command shows the current tier, the corroboration count, and the recorded sources so you can audit why an entry is or isn't promoted.
 
 ### Pruning
 
@@ -403,9 +425,9 @@ The `.clio/ltm.json` file contains:
 | `/memory search <query>` | Search memory by keyword |
 | `/memory stats` | LTM statistics (entry counts, ages) |
 | `/memory prune` | Clean up old/low-confidence LTM entries |
-| `/memory corroborate <search_text>` | Add corroboration to an LTM entry (promotes to TRUSTED at 2+) |
-| `/memory promote <search_text>` | Manually promote an entry to TRUSTED tier |
-| `/memory tier <search_text>` | Show the trust tier of an LTM entry |
+| `/memory corroborate <search_text>` | Add corroboration to an LTM entry (auto-promotes to TRUSTED at 2+ distinct agent:session pairs) |
+| `/memory promote <search_text>` | Manually promote an entry to TRUSTED tier (unconditional override; use after verified outcome) |
+| `/memory tier <search_text>` | Show the trust tier, corroboration count, and recorded sources of an LTM entry |
 
 ### Session Commands
 

@@ -898,6 +898,24 @@ if ($broker_session && $broker_agent_id) {
     log_debug('Broker', 'No broker env vars, running standalone');
 }
 
+# Set LTM corroboration identity BEFORE any tool runs.
+# add_corroboration() in CLIO::Memory::LongTerm reads $ENV{CLIO_AGENT_ID}
+# and $ENV{CLIO_SESSION_ID} as the source key for sybil-resistant dedup.
+# Without these assignments, every corroboration collapses to
+# "unknown:unknown" and the dedup check silently prevents reaching the
+# 2-source threshold for promotion to [TRUSTED]. See
+# tests/unit/test_ltm_corroboration.pl for the regression.
+#
+# Identity model: top-level CLIO is agent "main" and sub-agents inherit
+# their broker agent_id. Two sessions of the same agent count as different
+# sources (matches the existing agent:session dedup key), so a fresh
+# `clio --new` session can corroborate entries written by a previous
+# session - this matches the threat model (a session restart is a real
+# barrier, not a free vote).
+$ENV{CLIO_AGENT_ID}   = $ENV{CLIO_BROKER_AGENT_ID} || 'main';
+$ENV{CLIO_SESSION_ID} = $session_id;
+log_debug('Main', "LTM identity: CLIO_AGENT_ID=$ENV{CLIO_AGENT_ID} CLIO_SESSION_ID=$ENV{CLIO_SESSION_ID}");
+
 # Ensure model has provider/ prefix (backward compatibility for bare model names)
 {
     my $current_model = $config->get('model') || '';
