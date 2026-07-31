@@ -1268,21 +1268,30 @@ sub _fetch_nvidia_capabilities {
         },
         
         # --- Moonshot ---
+        # Kimi K2.6: 256K context, 32K default output per platform.kimi.ai
+        # K2.6 quickstart docs (verified 2026-07-31). The docs explicitly
+        # state: "max_tokens - optional - The maximum number of tokens to
+        # generate for the chat completion. - int - Default to be 32k
+        # aka 32768". Kimi K3 (not in our static map yet) defaults to
+        # 131072 per platform.kimi.ai/docs/api/chat.
         'moonshotai/kimi-k2.6' => {
             context_window => 262144, max_output_tokens => 32768,
             supports_tools => 1, supports_streaming => 1, supports_vision => 1, supports_reasoning => 1,
         },
 
         # --- NVIDIA Nemotron ---
-        # Nemotron 3 Ultra/Super: 1M context, 8K output per build.nvidia.com
-        # (https://docs.openclaw.ai/providers/nvidia). Updated 2026-07-31
-        # from 16K to match the current NIM endpoint.
+        # Nemotron 3 Ultra/Super: 1M context, 32K output per docs.api.nvidia.com
+        # NIM API reference (verified 2026-07-31 via the OpenCode example
+        # config embedded in the docs, which sets "limit":{"output":32768}
+        # for both Ultra and Super). The modelcard itself only states the
+        # 1M context length for both input and output sections - the
+        # 32K value is the practical NIM service default.
         'nvidia/nemotron-3-ultra-550b-a55b' => {
-            context_window => 1048576, max_output_tokens => 8192,
+            context_window => 1048576, max_output_tokens => 32768,
             supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
         },
         'nvidia/nemotron-3-super-120b-a12b' => {
-            context_window => 1048576, max_output_tokens => 8192,
+            context_window => 1048576, max_output_tokens => 32768,
             supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
         },
         'nvidia/nemotron-3-nano-30b-a3b' => {
@@ -1564,11 +1573,12 @@ sub _nvidia_model_heuristics {
         };
     }
     
-    # Nemotron 3 Ultra/Super: 1M context, 8K output, reasoning
-    # (Updated 2026-07-31 to match build.nvidia.com.)
+    # Nemotron 3 Ultra/Super: 1M context, 32K output, reasoning
+    # (Updated 2026-07-31 from 16K to 32K per docs.api.nvidia.com NIM
+    # API reference - same source as the static map entries above.)
     if ($base =~ m{nemotron-?3.*(ultra|super)}i) {
         return {
-            context_window => 1048576, max_output_tokens => 8192,
+            context_window => 1048576, max_output_tokens => 32768,
             supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
         };
     }
@@ -1734,7 +1744,10 @@ sub _nvidia_model_heuristics {
     }
     
     # Kimi K2: 256K context, 32K output, reasoning, vision
-    # (Updated 2026-07-31 from 16K to match current API docs.)
+    # Updated 2026-07-31 from 16K to 32K per platform.kimi.ai K2.6
+    # quickstart docs, which state: "max_tokens - optional - ... -
+    # Default to be 32k aka 32768". (K2.6 is the model covered by our
+    # static map entry; the heuristic catches K2 family variants.)
     if ($base =~ m{kimi.*k2}i) {
         return {
             context_window => 262144, max_output_tokens => 32768,

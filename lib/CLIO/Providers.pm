@@ -354,10 +354,14 @@ my %PROVIDERS = (
         supports_reasoning => 1,
         supports_vision => 1,
         max_context_tokens => 200000,
-        # Claude 4.5+ default output is 64K. With Anthropic's
-        # `output-128k-2025-02-19` beta header it can reach 128K.
-        # When the Anthropic native API is reachable, MCM uses the
-        # per-model max_tokens from /v1/models instead of this value.
+        # Claude 4.5/4.6 default output is 64K per platform.claude.com
+        # Models overview (verified 2026-07-31). Haiku 4.5 is also 64K.
+        # Sonnet 5+/Fable 5/Opus 5 default is 128K. With the
+        # `output-128k-2025-02-19` beta header Claude 4.5 reaches 128K,
+        # and with `output-300k-2026-03-24` the latest models reach
+        # 300K. The Anthropic native API exposes per-model max via
+        # /v1/models/{id}; when reachable, MCM uses that exact value
+        # instead of this 64K default.
         max_output_tokens => 64000,
         native_api => 1,
         provider_module => 'CLIO::Providers::Anthropic',
