@@ -8,7 +8,7 @@ use warnings;
 use utf8;
 use Exporter 'import';
 
-our @EXPORT_OK = qw(get_provider list_providers provider_exists build_endpoint_config DEFAULT_MODEL provider_from_url);
+our @EXPORT_OK = qw(get_provider list_providers provider_exists build_endpoint_config DEFAULT_MODEL provider_from_url is_local_inference exposes_props default_context_window);
 
 # Fallback model when no model is configured anywhere.
 # This should rarely be reached - Config and provider defaults take priority.
@@ -58,6 +58,13 @@ my %PROVIDERS = (
         max_context_tokens => 32000,
         slow_api => 1,  # Local inference is significantly slower than cloud APIs
         llama_user_id_supported => 1,
+        # Provider-feature flags (replaces scattered `provider =~ /^sam$/`
+        # checks in MessageValidator/APIManager/MCM). See the helper
+        # functions is_local_inference() and exposes_props() below for
+        # usage and the per-flag rationale.
+        local_inference => 1,
+        exposes_props => 1,
+        url_detection_patterns => [ qr{^https?://[^/]+:8080/}i ],
         endpoint => {
             path_suffix => '',
             temperature_range => [0.0, 2.0],
@@ -151,6 +158,11 @@ my %PROVIDERS = (
         # model share the same conv_hash, so continuation matching
         # would otherwise pull checkpoints from unrelated sessions).
         llama_user_id_supported => 1,
+        local_inference => 1,
+        exposes_props => 1,
+        # No url_detection_patterns - llama.cpp's port is freely configurable
+        # (the server binds to whatever --port flag was passed), so we can't
+        # safely auto-detect. Users explicitly register as --provider llama.cpp.
         endpoint => {
             path_suffix => '',
             temperature_range => [0.0, 2.0],
@@ -169,6 +181,9 @@ my %PROVIDERS = (
         max_context_tokens => 32000,
         slow_api => 1,  # Local inference is significantly slower than cloud APIs
         llama_user_id_supported => 1,
+        local_inference => 1,
+        exposes_props => 1,
+        url_detection_patterns => [ qr{^https?://[^/]+:1234/}i ],
         endpoint => {
             path_suffix => '',
             temperature_range => [0.0, 2.0],
@@ -541,25 +556,119 @@ Returns:
 
 sub validate_provider {
     my ($provider_name) = @_;
-    
+
     unless (defined $provider_name && length($provider_name)) {
         return (0, "Provider name cannot be empty");
     }
-    
+
     if (provider_exists($provider_name)) {
         return (1, '');
     }
-    
+
     my @providers = list_providers();
     my $providers_str = join(', ', @providers);
     return (0, "Provider '$provider_name' not found. Available: $providers_str");
+}
+
+=head2 is_local_inference($provider_name)
+
+Returns 1 if the named provider is a local-inference server (sam,
+llama.cpp, lmstudio, ...), 0 otherwise.
+
+Centralizes the "is this a local inference server?" check that used to
+live as `provider =~ /^(sam|llama\.cpp|lmstudio)$/i` scattered across
+MessageValidator.pm and APIManager.pm. Adding a new local inference
+provider now requires setting the C<local_inference> flag in the
+provider's registry entry - no other code changes.
+
+Local inference is flagged when:
+- The server runs the model in-process (i.e. on a host the user owns)
+  rather than forwarding tokens to a third-party API. Local servers
+  are RAM-limited, so DEFAULT_LOCAL_CONTEXT_WINDOW is the safe fallback
+  when the /v1/models endpoint doesn't report a context.
+- Server-defined extras (llama_user_id, conservative timeout) apply.
+
+Arguments:
+- $provider_name: provider key (e.g. 'sam', 'llama.cpp')
+
+Returns: 1 if local inference, 0 otherwise (including unknown providers).
+
+=cut
+
+sub is_local_inference {
+    my ($provider_name) = @_;
+    my $p = get_provider($provider_name);
+    return 0 unless $p;
+    return $p->{local_inference} ? 1 : 0;
+}
+
+=head2 exposes_props($provider_name)
+
+Returns 1 if the named provider's HTTP server exposes the llama.cpp-style
+C</props> endpoint (default_generation_settings.n_ctx), 0 otherwise.
+
+Centralizes the "try /props to discover runtime context window" gating
+that used to live as C<$api_type =~ /^(generic|sam|lmstudio|llama\.cpp)$/i>
+in ModelCapabilitiesManager.pm.
+
+/props is reported by llama.cpp and compatible servers (LM Studio,
+SAM forks) as the runtime C<n_ctx>, which is set with C<--ctx-size> on
+server start and may differ from the model's training context
+(n_ctx_train) reported by /v1/models. For other servers the endpoint
+returns 404 or malformed JSON, so we only query it when the flag is set.
+
+Arguments:
+- $provider_name: provider key
+
+Returns: 1 if the provider's server supports /props, 0 otherwise.
+
+=cut
+
+sub exposes_props {
+    my ($provider_name) = @_;
+    my $p = get_provider($provider_name);
+    return 0 unless $p;
+    return $p->{exposes_props} ? 1 : 0;
+}
+
+=head2 default_context_window($provider_name)
+
+Returns the right DEFAULT context-window fallback for a provider.
+Local inference servers (C<is_local_inference>) get
+DEFAULT_LOCAL_CONTEXT_WINDOW (smaller) because the model's max context
+is bounded by host RAM. Everything else gets DEFAULT_CONTEXT_WINDOW.
+
+Previously implemented as a ternary on a hardcoded regex list in
+MessageValidator.pm and APIManager.pm's _extract_model_capabilities.
+
+Arguments:
+- $provider_name: provider key
+
+Returns: integer token count (DEFAULT_LOCAL_CONTEXT_WINDOW or
+          DEFAULT_CONTEXT_WINDOW from CLIO::Core::Defaults).
+
+=cut
+
+sub default_context_window {
+    my ($provider_name) = @_;
+    require CLIO::Core::Defaults;
+    if (is_local_inference($provider_name)) {
+        return CLIO::Core::Defaults::DEFAULT_LOCAL_CONTEXT_WINDOW();
+    }
+    return CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW();
 }
 
 =head2 provider_from_url($url)
 
 Detect provider name from an API base URL.
 
-Arguments:
+Cloud providers are matched against well-known domain patterns (e.g.
+api.anthropic.com). Local inference providers are matched against the
+C<url_detection_patterns> declared on their own provider entry -
+this way, adding a new local server only requires touching the
+registry, not this function.
+
+Arguments
   $url - API base URL (e.g., 'https://api.githubcopilot.com')
 
 Returns:
@@ -571,7 +680,9 @@ sub provider_from_url {
     my ($url) = @_;
     return unless defined $url;
 
-    # Standard API providers
+    # Standard API providers - well-known domain patterns. Hardcoded
+    # by name because the host portion of the URL is the primary key
+    # (not a port or path we could confuse with another provider).
     return 'github-copilot' if $url =~ m{githubcopilot\.com}i;
     return 'openai'         if $url =~ m{api\.openai\.com}i;
     return 'google'         if $url =~ m{generativelanguage\.googleapis\.com}i;
@@ -584,17 +695,22 @@ sub provider_from_url {
     return 'zai'            if $url =~ m{api\.z\.ai}i;
     return 'nvidia'         if $url =~ m{integrate\.api\.nvidia\.com}i;
 
-    # Local/self-hosted providers
-    # Detection by service-specific port, not by host. SAM conventionally
-    # listens on 8080, LM Studio on 1234. Host may be localhost, a LAN
-    # hostname (e.g. 'max'), or any IP. llama.cpp users can override the
-    # provider explicitly via --provider llama.cpp; we don't auto-detect
-    # its port since llama.cpp has no default port.
-    return 'lmstudio'       if $url =~ m{^https?://[^/]+:1234/}i;
-    return 'sam'            if $url =~ m{^https?://[^/]+:8080/}i;
+    # DashScope variants (unified under 'dashscope' provider)
+    return 'dashscope' if $url =~ m{dashscope.*\.aliyuncs\.com}i;
 
-    # DashScope variants
-    return 'dashscope'      if $url =~ m{dashscope.*\.aliyuncs\.com}i;
+    # Provider-declared URL detection patterns. Iterates each provider
+    # that opts in by listing url_detection_patterns -> [qr{}, ...].
+    # Useful for local servers where hostname/port identifies the
+    # service (e.g. lmstudio on :1234, sam on :8080). llama.cpp
+    # intentionally has no entries because its port is freely
+    # configurable - users must register it explicitly.
+    for my $name (list_providers()) {
+        my $p = $PROVIDERS{$name};
+        next unless $p && ref($p->{url_detection_patterns}) eq 'ARRAY';
+        for my $pat (@{$p->{url_detection_patterns}}) {
+            return $name if $url =~ $pat;
+        }
+    }
 
     return;
 }

@@ -80,19 +80,32 @@ sub validate_and_truncate {
     my $model = $args{model} || 'unknown';
     
     # Determine max prompt tokens
-    require CLIO::Core::Defaults;
+    require CLIO::Providers;
     my $max_prompt;
     if ($caps && $caps->{max_prompt_tokens}) {
         $max_prompt = $caps->{max_prompt_tokens};
     } else {
+        # Fall back to the provider registry: local inference servers
+        # use DEFAULT_LOCAL_CONTEXT_WINDOW (smaller) because the model's
+        # max context is bounded by host RAM; everything else uses
+        # DEFAULT_CONTEXT_WINDOW. CLIO::Providers::default_context_window
+        # centralizes this so we don't hardcode provider names here.
         my $provider = ($config && $config->can('get')) ? ($config->get('provider') || '') : '';
 
-        if ($provider =~ /^(sam|llama\.cpp|lmstudio)$/i ||
-            $api_base =~ m{^https?://[^/]+:[0-9]+/}i) {
-            $max_prompt = CLIO::Core::Defaults::DEFAULT_LOCAL_CONTEXT_WINDOW();
-        } else {
-            $max_prompt = CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW();
+        # When the provider config is missing/empty (e.g. early init
+        # before Config loads), fall back to the URL heuristic: any
+        # HTTP host with an explicit port that isn't a known cloud
+        # API base is treated as local inference.
+        my $resolved_provider = $provider;
+        if (!$resolved_provider && $api_base && $api_base =~ m{^https?://[^/]+:[0-9]+/}i
+            && CLIO::Providers::provider_from_url($api_base) eq '') {
+            # Unrecognized LAN URL with explicit port - sentinel value;
+            # any local_inference provider would work, but we use
+            # the local registry value to pick the smaller window.
+            $resolved_provider = 'sam';
         }
+
+        $max_prompt = CLIO::Providers::default_context_window($resolved_provider);
 
         log_debug('MessageValidator', "Using fallback token limit for $model: $max_prompt");
     }
