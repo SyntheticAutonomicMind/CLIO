@@ -7,7 +7,7 @@ use strict;
 use warnings;
 use utf8;
 use CLIO::Core::Logger qw(should_log log_debug log_info log_warning);
-use CLIO::Memory::TokenEstimator qw(estimate_tokens);
+use CLIO::Memory::TokenEstimator qw(estimate_tokens compute_prompt_budget);
 use CLIO::Util::JSON qw(encode_json decode_json safe_encode_json);
 use POSIX qw(strftime);
 
@@ -86,28 +86,34 @@ sub validate_and_truncate {
         $max_prompt = $caps->{max_prompt_tokens};
     } else {
         my $provider = ($config && $config->can('get')) ? ($config->get('provider') || '') : '';
-        
-        if ($provider =~ /^(sam|llama\.cpp|lmstudio)$/i || 
+
+        if ($provider =~ /^(sam|llama\.cpp|lmstudio)$/i ||
             $api_base =~ m{^https?://[^/]+:[0-9]+/}i) {
             $max_prompt = CLIO::Core::Defaults::DEFAULT_LOCAL_CONTEXT_WINDOW();
         } else {
             $max_prompt = CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW();
         }
-        
+
         log_debug('MessageValidator', "Using fallback token limit for $model: $max_prompt");
     }
-    
+
+    # Compute prompt budget from model capabilities. Uses the model's
+    # actual max_output_tokens (no hard cap) plus an estimation buffer.
+    # This replaces the previous 15% margin + 8K buffer, which over-
+    # reserved for models with small actual output caps.
+    require CLIO::Memory::TokenEstimator;
+    my $prompt_budget = CLIO::Memory::TokenEstimator::compute_prompt_budget($caps);
+
     # Calculate tool token budget
     my $tool_tokens = _calculate_tool_tokens($tools);
-    
-    # Safety margins - account for estimation error, per-message overhead not captured,
-    # and API-specific formatting tokens that aren't in our character count
-    my $estimation_margin = int($max_prompt * 0.15);
-    my $response_buffer = 8000;
-    my $effective_limit = $max_prompt - $tool_tokens - ($estimation_margin + $response_buffer);
+
+    # Effective limit: prompt budget minus tools. Tool definitions are
+    # sent on every request and counted toward the prompt, so they
+    # reduce the available budget for messages.
+    my $effective_limit = $prompt_budget - $tool_tokens;
     $effective_limit = 1000 if $effective_limit < 1000;
-    
-    log_debug('MessageValidator', "Token budget: max=$max_prompt, tools=$tool_tokens, effective=$effective_limit");
+
+    log_debug('MessageValidator', "Token budget: max=$max_prompt, tools=$tool_tokens, budget=$prompt_budget, effective=$effective_limit");
     
     # Estimate token usage
     my $estimated_tokens = _estimate_tokens($messages);
@@ -131,10 +137,10 @@ sub validate_and_truncate {
             print $dfh "Timestamp: ", scalar(localtime), "\n";
             print $dfh "Model: $model\n";
             print $dfh "max_prompt (from caps): $max_prompt\n";
+            print $dfh "max_output_tokens (from caps): " . ($caps->{max_output_tokens} // 'undef') . "\n";
             print $dfh "tool_tokens: $tool_tokens\n";
-            print $dfh "estimation_margin (15%): $estimation_margin\n";
-            print $dfh "response_buffer: $response_buffer\n";
-            print $dfh "effective_limit: $effective_limit\n";
+            print $dfh "prompt_budget (ctx - output - buffer): $prompt_budget\n";
+            print $dfh "effective_limit (budget - tools): $effective_limit\n";
             print $dfh "estimated_tokens: $estimated_tokens\n";
             print $dfh "overage: " . ($estimated_tokens - $effective_limit) . "\n";
             print $dfh "message_count: " . scalar(@$messages) . "\n";
@@ -171,13 +177,18 @@ sub validate_and_truncate {
     
     my @remaining = @units[$start_unit .. $#units];
     
-    # Post-trim target: keep context at 50% of max to give headroom for the next burst
-    # of work before hitting the ceiling again. Using effective_limit (83% of max) caused
-    # immediate re-saturation on the very next large file read post-trim.
-    my $post_trim_keep_limit = int($max_prompt * 0.50);
-    $post_trim_keep_limit = $effective_limit if $post_trim_keep_limit < $effective_limit * 0.5;
+    # Post-trim target: keep context at the prompt budget computed
+    # from model capabilities. The estimation buffer in
+    # compute_prompt_budget already covers next-burst headroom; no
+    # additional percentage-based haircut is needed.
+    # Previously: int($max_prompt * 0.50) which kept 500K for 1M
+    #            context (50% reservation regardless of model's real
+    #            output cap). Now: $prompt_budget (~822K for 1M with
+    #            128K output, ~934K for 1M with 16K output).
+    my $post_trim_keep_limit = $prompt_budget;
+    $post_trim_keep_limit = int($effective_limit * 0.5) if $post_trim_keep_limit < $effective_limit * 0.5;
     $post_trim_keep_limit = CLIO::Core::Defaults::DEFAULT_POST_TRIM_FLOOR() if $post_trim_keep_limit < CLIO::Core::Defaults::DEFAULT_POST_TRIM_FLOOR();
-    log_debug('MessageValidator', "Post-trim keep target: $post_trim_keep_limit tokens (50% of $max_prompt)");
+    log_debug('MessageValidator', "Post-trim keep target: $post_trim_keep_limit tokens (prompt budget for $model)");
 
     # DIAGNOSTIC: Append post_trim_keep_limit to the validator diagnostic (CLIO_TRIM_DIAG=1 to enable)
     if ($ENV{CLIO_TRIM_DIAG}) {

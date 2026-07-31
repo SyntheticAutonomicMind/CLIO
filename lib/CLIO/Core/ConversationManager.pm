@@ -341,10 +341,23 @@ sub trim_conversation_for_api {
     my $model_context = $opts{model_context_window} // CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW();
     my $max_response = $opts{max_response_tokens} // CLIO::Core::Defaults::DEFAULT_MAX_RESPONSE_TOKENS();
 
-    # Calculate dynamic safe threshold based on model's context window
-    # Uses shared constant from TokenEstimator for consistency with State::add_message trim
-    my $safe_threshold_percent = CLIO::Memory::TokenEstimator::SAFE_CONTEXT_PERCENT;
-    my $safe_threshold = int($model_context * $safe_threshold_percent);
+    # Compute prompt budget from model capabilities. Uses the model's
+    # actual max_response_tokens (passed in as max_response_tokens,
+    # originally from Provider.max_output_tokens) plus an estimation
+    # buffer. NO hard cap on the reserve - whatever the model supports.
+    #
+    # Previously: safe_threshold = int(model_context * 0.75) which
+    #            reserved 25% of context for output regardless of the
+    #            model's actual output cap. For 1M ctx with 16K output
+    #            this kept 750K for prompt and reserved 250K (24x the
+    #            actual output). Now we reserve 16K + 50K buffer and
+    #            keep ~934K for prompt.
+    my $caps_for_budget = {
+        max_context_window_tokens => $model_context,
+        max_output_tokens         => $max_response,
+    };
+    my $prompt_budget = CLIO::Memory::TokenEstimator::compute_prompt_budget($caps_for_budget);
+    my $safe_threshold = $prompt_budget;
 
     # Estimate current size
     my $system_tokens = CLIO::Memory::TokenEstimator::estimate_tokens($system_prompt);
@@ -353,16 +366,16 @@ sub trim_conversation_for_api {
 
     if ($current_total <= $safe_threshold) {
         if ($debug) {
-            log_debug('ConversationManager', "History OK: $history_tokens tokens (total: $current_total of $safe_threshold safe limit, model context: $model_context)");
+            log_debug('ConversationManager', "History OK: $history_tokens tokens (total: $current_total of $safe_threshold prompt budget, model context: $model_context)");
         }
         return $history;
     }
 
     if ($debug) {
-        log_warning('ConversationManager', "History exceeds safe limit: $current_total tokens (safe: $safe_threshold of $model_context total). Trimming...");
+        log_warning('ConversationManager', "History exceeds prompt budget: $current_total tokens (budget: $safe_threshold of $model_context total). Trimming...");
         log_debug('ConversationManager', "Model context window: $model_context tokens");
         log_debug('ConversationManager', "Max response: $max_response tokens");
-        log_debug('ConversationManager', "Safe trim threshold: " . int($safe_threshold_percent * 100) . "% = $safe_threshold tokens");
+        log_debug('ConversationManager', "Prompt budget (ctx - output - buffer): $safe_threshold tokens");
         log_debug('ConversationManager', "System prompt: $system_tokens tokens");
         log_debug('ConversationManager', "History: $history_tokens tokens");
         log_debug('ConversationManager', "Messages in history: " . scalar(@$history) . "");
@@ -370,7 +383,8 @@ sub trim_conversation_for_api {
 
     my @messages = @$history;
 
-    # Calculate target based on available space
+    # Calculate target based on available space (90% of remaining budget
+    # after system prompt reserve - gives 10% headroom for next burst).
     my $target_tokens = int(($safe_threshold - $system_tokens) * 0.9);
 
     if ($target_tokens < 5000) {
@@ -452,7 +466,7 @@ sub trim_conversation_for_api {
     if ($debug) {
         log_debug('ConversationManager', "Trimmed: " . scalar(@messages) . " -> " . scalar(@kept) . " messages");
         log_debug('ConversationManager', "Token reduction: $history_tokens -> $kept_tokens tokens");
-        log_debug('ConversationManager', "Final total with system: " . ($system_tokens + $kept_tokens) . " of $safe_threshold safe limit");
+        log_debug('ConversationManager', "Final total with system: " . ($system_tokens + $kept_tokens) . " of $safe_threshold prompt budget");
     }
 
     return \@kept if @kept;

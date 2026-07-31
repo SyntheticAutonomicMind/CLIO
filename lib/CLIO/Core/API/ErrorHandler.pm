@@ -9,7 +9,7 @@ use utf8;
 use CLIO::UI::Terminal qw(ui_char);
 use CLIO::Core::Logger qw(log_error log_warning log_info log_debug should_log);
 use CLIO::Core::Logger qw(log_error log_warning log_info log_debug);
-use CLIO::Memory::TokenEstimator qw(estimate_tokens);
+use CLIO::Memory::TokenEstimator qw(estimate_tokens compute_prompt_budget);
 use CLIO::Util::RateLimit qw(get_rate_limit_type_name);
 use CLIO::Core::Diagnostics qw(dump_diagnostic display_rate_limit_info get_tool_specific_guidance);
 use CLIO::Core::Defaults qw(DEFAULT_CONTEXT_WINDOW);
@@ -726,11 +726,16 @@ sub trim_for_token_limit {
     }
 
     if ($retry_count == 1) {
-        # First retry: keep recent messages that fit in 40% of model context
+        # First retry: keep recent messages that fit in the model's
+        # prompt budget (context - output - estimation buffer).
+        # Previously: int(max_ctx * 0.40) which kept 40% of max
+        # context (reserving 60% for output). Now we use the model's
+        # actual output cap, so for 1M with 16K output we keep ~934K
+        # instead of 400K.
         my $_retry_caps = $wo->{api_manager}
             ? ($wo->{api_manager}->get_model_capabilities() || {}) : {};
-        my $max_ctx     = $_retry_caps->{max_prompt_tokens} || DEFAULT_CONTEXT_WINDOW;
-        my $keep_budget = int($max_ctx * 0.40);
+        require CLIO::Memory::TokenEstimator;
+        my $keep_budget = CLIO::Memory::TokenEstimator::compute_prompt_budget($_retry_caps);
         $keep_budget = 40000 if $keep_budget < 40000;
 
         my $kept_tokens = 0;

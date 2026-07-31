@@ -807,7 +807,10 @@ sub _update_billing_state {
     $state->{selected_provider} = $provider if $provider;
 
     # Update max_tokens from model capabilities so State::add_message
-    # trims at the correct threshold for the model's context window
+    # trims at the correct threshold for the model's context window.
+    # Also update max_output_tokens so the new prompt-budget formula
+    # (compute_prompt_budget) can reserve the actual output cap
+    # rather than the 25% SAFE_CONTEXT_PERCENT heuristic.
     if ($model) {
         eval {
             my $api_manager = $self->{api_manager};
@@ -816,6 +819,10 @@ sub _update_billing_state {
                 if ($caps && $caps->{max_context_window_tokens}) {
                     $state->{max_tokens} = $caps->{max_context_window_tokens};
                     log_debug('Config', "Updated session max_tokens to $caps->{max_context_window_tokens} (model context window)");
+                }
+                if ($caps && $caps->{max_output_tokens}) {
+                    $state->{max_output_tokens} = $caps->{max_output_tokens};
+                    log_debug('Config', "Updated session max_output_tokens to $caps->{max_output_tokens} (model output cap)");
                 }
             }
         };
