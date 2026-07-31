@@ -12,6 +12,19 @@ use utf8;
 use Carp qw(croak);
 use POSIX qw(strftime);
 
+# Singular type filter names used by the tool layer (discovery, solution,
+# pattern, workflow, failure) map to the plural category keys stored in
+# the LTM JSON (discoveries, problem_solutions, code_patterns, workflows,
+# failures). Normalize before using a filter as a hash key - the tool
+# schema documents singular names, but the entries live under plural keys.
+my %LTM_CATEGORY_MAP = (
+    discovery => 'discoveries',
+    solution  => 'problem_solutions',
+    pattern   => 'code_patterns',
+    workflow  => 'workflows',
+    failure   => 'failures',
+);
+
 =head1 NAME
 
 CLIO::Memory::LongTerm - Dynamic experience database for project-specific learning
@@ -476,25 +489,44 @@ sub add_corroboration {
     my $source_key = "$source_agent:$source_session";
     my $search_lc = lc($search_text);
     my $now = time();
+
+    $type_filter = $LTM_CATEGORY_MAP{$type_filter} if $type_filter && exists $LTM_CATEGORY_MAP{$type_filter};
     
     my @categories = $type_filter ? ($type_filter) : qw(discoveries problem_solutions code_patterns workflows failures);
-    
+
+    # Track whether any search-hit entry was skipped because the source
+    # key was already a corroborator. Without this distinction,
+    # add_corroboration's dedup path returns {found => 0, error => ...}
+    # - the same shape as a genuine miss - so callers (and tests) can't
+    # tell "no such entry" from "you already corroborated this one".
+    my %already_corroborated_info;
+
     for my $category (@categories) {
         my $entries = $self->{patterns}{$category} || [];
         next unless @$entries;
-        
+
         for my $entry (@$entries) {
             my $text = $self->_entry_text($entry, $category);
             next unless index(lc($text), $search_lc) >= 0;
-            
+
             # Initialize corroboration fields if missing (backward compat)
             $entry->{corroboration_count} //= 0;
             $entry->{corroboration_sources} //= [];
             $entry->{tier} //= 'unverified';
-            
-            # Check if this source already corroborated
-            next if grep { $_ eq $source_key } @{$entry->{corroboration_sources}};
-            
+
+            # Check if this source already corroborated. If so, record
+            # the entry's current state so we can return a useful signal
+            # below (rather than masquerading as "no entry found").
+            if (grep { $_ eq $source_key } @{$entry->{corroboration_sources}}) {
+                %already_corroborated_info = (
+                    category => $category,
+                    text => $text,
+                    tier => $entry->{tier},
+                    corroboration_count => $entry->{corroboration_count},
+                );
+                next;
+            }
+
             # Add corroboration
             push @{$entry->{corroboration_sources}}, $source_key;
             $entry->{corroboration_count} = scalar @{$entry->{corroboration_sources}};
@@ -522,7 +554,23 @@ sub add_corroboration {
             };
         }
     }
-    
+
+    # We matched an entry, but the source key was already in its
+    # corroboration_sources list. Surface that as a found-but-no-op
+    # rather than the misleading "No entry matching..." error so callers
+    # can distinguish a genuine miss from a duplicate-vote attempt.
+    if (%already_corroborated_info) {
+        return {
+            found => 1,
+            already_corroborated => 1,
+            promoted => 0,
+            tier => $already_corroborated_info{tier},
+            corroboration_count => $already_corroborated_info{corroboration_count},
+            category => $already_corroborated_info{category},
+            text => $already_corroborated_info{text},
+        };
+    }
+
     return { found => 0, error => "No entry matching '$search_text' found" };
 }
 
@@ -539,6 +587,8 @@ sub promote_entry {
     
     my $search_lc = lc($search_text);
     my $now = time();
+
+    $type_filter = $LTM_CATEGORY_MAP{$type_filter} if $type_filter && exists $LTM_CATEGORY_MAP{$type_filter};
     
     my @categories = $type_filter ? ($type_filter) : qw(discoveries problem_solutions code_patterns workflows failures);
     
@@ -582,6 +632,8 @@ sub get_entry_tier {
     my ($self, $search_text, $type_filter) = @_;
     
     my $search_lc = lc($search_text);
+
+    $type_filter = $LTM_CATEGORY_MAP{$type_filter} if $type_filter && exists $LTM_CATEGORY_MAP{$type_filter};
     
     my @categories = $type_filter ? ($type_filter) : qw(discoveries problem_solutions code_patterns workflows failures);
     
@@ -1413,6 +1465,15 @@ sub _entry_text {
         return ($entry->{error} // '') . ' ' . ($entry->{solution} // '');
     } elsif ($category eq 'code_patterns') {
         return $entry->{pattern} // '';
+    } elsif ($category eq 'workflows') {
+        # Search across the sequence of steps so callers can target a
+        # workflow by any step name (e.g., "deploy"). Without this,
+        # corroboration silently never matches workflow entries.
+        return join(' ', @{$entry->{sequence} || []});
+    } elsif ($category eq 'failures') {
+        # Mirror _render_entry's failure block so search hits the same
+        # surface text the AI sees in the rendered output.
+        return join(' ', $entry->{what} // '', $entry->{impact} // '', $entry->{prevention} // '');
     }
     return '';
 }

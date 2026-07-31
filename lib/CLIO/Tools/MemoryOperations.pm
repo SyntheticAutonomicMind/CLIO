@@ -1045,19 +1045,37 @@ Parameters:
 
 sub add_corroboration {
     my ($self, $params, $context) = @_;
-    
+
     my $search_text = $params->{search_text};
     my $source_agent = $params->{source_agent};
     my $source_session = $params->{source_session};
     my $type = $params->{entry_type};
-    
+
     return $self->error_result("Missing 'search_text' parameter") unless $search_text;
-    
+
+    # Defensive identity fallback. LongTerm.pm reads $ENV{CLIO_AGENT_ID} /
+    # $ENV{CLIO_SESSION_ID} as the default corroboration source key, and
+    # those env vars are set by `clio` and SubAgent.pm at session start.
+    # If a caller invokes this tool without that wiring in place (eg, a
+    # test harness, a script, or a future entry point that forgot to set
+    # the env), fall back to the session_id from the live session so we
+    # still get a usable identity rather than the silent "unknown:unknown"
+    # trap documented in tests/unit/test_ltm_corroboration.pl.
+    unless ($source_session || $ENV{CLIO_SESSION_ID}) {
+        my $ctx_session = ref($context) eq 'HASH' ? $context->{session} : undef;
+        if (ref($ctx_session) eq 'HASH' && $ctx_session->{session_id}) {
+            $source_session = $ctx_session->{session_id};
+        }
+    }
+    unless ($source_agent) {
+        $source_agent = $ENV{CLIO_AGENT_ID} || 'main';
+    }
+
     my $result;
     eval {
         my $ltm = $context->{ltm} || $context->{session}->{ltm} if ref($context) eq 'HASH';
         return $self->error_result("LTM not available in context") unless $ltm;
-        
+
         my $corroboration_result = $ltm->add_corroboration($search_text, $source_agent, $source_session, $type);
         
         if ($corroboration_result->{found}) {

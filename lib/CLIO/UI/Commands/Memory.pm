@@ -415,12 +415,25 @@ Add a corroboration to an LTM entry.
 
 sub _corroborate_entry {
     my ($self, $ltm, @args) = @_;
-    
+
     my $search_text = join(' ', @args);
     return $self->display_error_message("Usage: /memory corroborate <search_text>") unless $search_text;
-    
-    my $result = $ltm->add_corroboration($search_text);
-    
+
+    # Resolve corroboration identity from env vars, falling back to the
+    # active session if env vars were never set. Without this, the slash
+    # command collapses every corroboration to "unknown:unknown" and the
+    # dedup logic in LongTerm.pm silently prevents reaching the 2-source
+    # promotion threshold. See tests/unit/test_ltm_corroboration.pl.
+    my $source_agent   = $ENV{CLIO_AGENT_ID};
+    my $source_session = $ENV{CLIO_SESSION_ID};
+    unless ($source_session) {
+        my $sess = $self->{session};
+        $source_session = $sess->{session_id} if ref($sess) eq 'HASH' && $sess->{session_id};
+    }
+    $source_agent //= 'main';
+
+    my $result = $ltm->add_corroboration($search_text, $source_agent, $source_session);
+
     if ($result->{found}) {
         $self->display_success_message("Corroboration added to entry");
         $self->writeline("  Tier: " . $self->colorize($result->{tier}, $result->{tier} eq 'trusted' ? 'SUCCESS' : 'WARNING'), markdown => 0);

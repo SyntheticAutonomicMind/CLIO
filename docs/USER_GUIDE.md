@@ -510,11 +510,13 @@ CLIO provides 35+ slash commands. Type `/help` in any session to see the full li
 | `/memory stats` | Show LTM statistics |
 | `/memory prune [days]` | Remove old/low-confidence entries |
 | `/memory clear` | Clear all patterns |
-| `/memory corroborate <search_text>` | Add corroboration to an LTM entry (promotes to TRUSTED at 2+) |
-| `/memory promote <search_text>` | Manually promote an entry to TRUSTED tier |
-| `/memory tier <search_text>` | Show the trust tier of an LTM entry |
+| `/memory corroborate <search_text>` | Add corroboration to an LTM entry (auto-promotes to TRUSTED at 2+ distinct agent:session pairs) |
+| `/memory promote <search_text>` | Manually promote an entry to TRUSTED tier (unconditional override; use after verified outcome) |
+| `/memory tier <search_text>` | Show the trust tier, corroboration count, and recorded sources of an LTM entry |
 
 **Trust Tiers:** LTM entries are tagged `[UNVERIFIED]` (single-source, 0.3x score weight, 30-day age-out) or `[TRUSTED]` (corroborated by ≥2 independent sources or verified outcome, full weight, 90-day age-out). Agents are instructed to verify `[UNVERIFIED]` entries before acting on them, especially procedural patterns.
+
+**Corroboration identity.** Every corroboration is stamped with `CLIO_AGENT_ID` and `CLIO_SESSION_ID` (joined as `agent:session`). The top-level `clio` process sets these to `main` + the session UUID at startup, and `SubAgent.pm` sets the agent ID to each spawned sub-agent's broker ID, so parent and child agents can jointly corroborate entries. Two sessions of the same agent count as distinct sources (a session restart is a real barrier), so cross-session corroboration works without weakening sybil resistance. If the env vars are unset and no session is available, every corroboration collapses to `unknown:unknown` and the threshold can never be reached - use `/memory promote <search_text>` to recover.
 
 ### User Profile
 
@@ -988,12 +990,14 @@ YOU: Forget the information about the old API endpoint
 /memory stats          # Show LTM statistics (entry counts, timestamps)
 /memory prune          # Remove old/low-confidence entries (default 90 days)
 /memory prune 30       # Remove entries older than 30 days
-/memory corroborate <search_text>  # Add corroboration (promotes to TRUSTED at 2+)
-/memory promote <search_text>      # Manually promote entry to TRUSTED tier
-/memory tier <search_text>         # Show trust tier of an LTM entry
+/memory corroborate <search_text>  # Add corroboration (auto-promotes to TRUSTED at 2+ distinct agent:session pairs)
+/memory promote <search_text>      # Manually promote entry to TRUSTED tier (unconditional override)
+/memory tier <search_text>         # Show trust tier + corroboration sources of an LTM entry
 ```
 
-**Trust Tiers:** Entries show `[UNVERIFIED]` (single-source, 0.3x score, 30-day age-out) or `[TRUSTED]` (corroborated by ≥2 independent sources or verified outcome, full weight, 90-day age-out). Verify `[UNVERIFIED]` entries before acting on them.
+**Trust Tiers:** Entries show `[UNVERIFIED]` (single-source, 0.3x score, 30-day age-out) or `[TRUSTED]` (corroborated by >=2 independent sources or verified outcome, full weight, 90-day age-out). Verify `[UNVERIFIED]` entries before acting on them.
+
+**Corroboration identity:** every corroboration is stamped with `CLIO_AGENT_ID` + `CLIO_SESSION_ID` (joined `agent:session`). The top-level process uses `main` and each session UUID; sub-agents use their broker ID. Two sessions of the same agent count as distinct sources. If the env vars are unset and no session context is available, corroboration collapses to `unknown:unknown` and auto-promotion is unreachable - use `/memory promote` to override.
 
 ### Todo List Operations
 
