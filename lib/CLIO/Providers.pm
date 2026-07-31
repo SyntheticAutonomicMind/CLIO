@@ -8,7 +8,12 @@ use warnings;
 use utf8;
 use Exporter 'import';
 
-our @EXPORT_OK = qw(get_provider list_providers provider_exists build_endpoint_config DEFAULT_MODEL provider_from_url is_local_inference exposes_props default_context_window);
+our @EXPORT_OK = qw(
+    get_provider list_providers provider_exists
+    build_endpoint_config DEFAULT_MODEL provider_from_url
+    is_local_inference exposes_props default_context_window
+    capability_fetcher default_reasoning_mode
+);
 
 # Fallback model when no model is configured anywhere.
 # This should rarely be reached - Config and provider defaults take priority.
@@ -83,6 +88,10 @@ my %PROVIDERS = (
         supports_reasoning => 1,  # Claude 4, GPT-5, o-series exposed via /chat/completions
         chat_endpoint_suffix => '/chat/completions',
         copilot_models => 1,
+        # Capability fetcher dispatch (replaces `provider =~ /^...$/i`
+        # chain in ModelCapabilitiesManager._fetch_provider_capabilities).
+        # The fetcher method name is `_fetch_<value>_capabilities`.
+        capability_fetcher => 'github_copilot',
         priority_display => 1,
         endpoint => {
             path_suffix => '',
@@ -124,6 +133,8 @@ my %PROVIDERS = (
         # metadata; the MCM static map is authoritative. Flagged so
         # /api models display can pull from MCM instead.
         lacks_models_metadata => 1,
+        capability_fetcher => 'deepseek',
+        default_reasoning_mode => 'effort',  # DeepSeek uses reasoning_effort parameter
         # DeepSeek uses CONCURRENCY limits (not RPM) per their docs at
         # https://api-docs.deepseek.com/quick_start/rate_limit. Different
         # models have different caps:
@@ -237,6 +248,8 @@ my %PROVIDERS = (
         native_api => 1,
         provider_module => 'CLIO::Providers::Google',
         max_context_tokens => 1048576,
+        capability_fetcher => 'google',
+        default_reasoning_mode => 'enabled',  # Gemini uses thinkingBudget (enabled) per its native API
         endpoint => {
             path_suffix => '/openai/chat/completions',
             temperature_range => [0.0, 2.0],
@@ -268,6 +281,10 @@ my %PROVIDERS = (
         # The MCM static map is authoritative. Flagged so /api models
         # display can pull from MCM instead.
         lacks_models_metadata => 1,
+        capability_fetcher => 'minimax',
+        # MiniMax reasoning_mode is decided per-model by the M3 vs M2.x
+        # name pattern (M3 adaptive, M2.x enabled). The M3 vs M2.x split
+        # is a model-family property, not a provider-level default.
         endpoint => {
             path_suffix => '',
             temperature_range => [0.0, 2.0],
@@ -296,6 +313,7 @@ my %PROVIDERS = (
         capability_map => 1,
         has_quota_api => 1,
         lacks_models_metadata => 1,
+        capability_fetcher => 'minimax',  # Token Plan uses the same fetcher as the standard provider
         endpoint => {
             path_suffix => '',
             temperature_range => [0.0, 2.0],
@@ -319,6 +337,8 @@ my %PROVIDERS = (
         max_output_tokens => 131072,
         capability_map => 1,
         static_models => 1,
+        capability_fetcher => 'zai',
+        default_reasoning_mode => 'enabled',  # GLM uses thinking: {type} thinking mode (enabled by default)
         endpoint => {
             path_suffix => '/chat/completions',
             temperature_range => [0.0, 1.0],
@@ -346,6 +366,7 @@ my %PROVIDERS = (
         max_output_tokens => 131072,
         capability_map => 1,
         static_models => 1,
+        capability_fetcher => 'zai',  # Coding plan uses same fetcher
         endpoint => {
             path_suffix => '/chat/completions',
             temperature_range => [0.0, 1.0],
@@ -380,6 +401,8 @@ my %PROVIDERS = (
         max_output_tokens => 64000,
         native_api => 1,
         provider_module => 'CLIO::Providers::Anthropic',
+        capability_fetcher => 'anthropic',
+        default_reasoning_mode => 'adaptive',  # most Anthropic models now use adaptive thinking; family heuristic handles per-version
         endpoint => {
             path_suffix => '',
             temperature_range => [0.0, 1.0],
@@ -412,6 +435,7 @@ my %PROVIDERS = (
         # ModelCapabilitiesManager is the source of truth. Flagged so
         # /api models display can pull from MCM.
         lacks_models_metadata => 1,
+        capability_fetcher => 'nvidia',
         endpoint => {
             path_suffix => '/chat/completions',
             temperature_range => [0.0, 2.0],
@@ -656,6 +680,58 @@ sub default_context_window {
         return CLIO::Core::Defaults::DEFAULT_LOCAL_CONTEXT_WINDOW();
     }
     return CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW();
+}
+
+=head2 capability_fetcher($provider_name)
+
+Returns the name of the ModelCapabilitiesManager fetcher method to call
+for this provider (e.g. C<'anthropic'> means C<_fetch_anthropic_capabilities>).
+Returns undef for providers without a dedicated fetcher (callers fall
+back to the generic OpenAI-compatible fetcher).
+
+Centralizes the `provider =~ /^...$/i` chain previously used in
+ModelCapabilitiesManager._fetch_provider_capabilities. Adding a new
+provider with a dedicated fetcher now means setting one field in the
+registry; the dispatcher doesn't change.
+
+Arguments:
+- $provider_name: provider key (e.g. 'anthropic', 'minimax')
+
+Returns: string with the fetcher suffix, or undef if no fetcher
+         is declared for the provider.
+
+=cut
+
+sub capability_fetcher {
+    my ($provider_name) = @_;
+    my $p = get_provider($provider_name);
+    return undef unless $p;
+    return $p->{capability_fetcher};
+}
+
+=head2 default_reasoning_mode($provider_name)
+
+Returns the registry-declared default reasoning_mode for the named
+provider, or undef if the provider doesn't declare one. Callers
+(typically MCM::_ensure_reasoning_mode) layer this with other
+signals (data-driven flags, model-name heuristics) to decide the
+final mode.
+
+Centralizes the `provider =~ /^minimax/i` / `provider =~ /^zai/i`
+cascade previously in MCM._ensure_reasoning_mode.
+
+Arguments:
+- $provider_name: provider key (e.g. 'zai', 'google')
+
+Returns: 'adaptive' | 'enabled' | 'effort' | undef.
+
+=cut
+
+sub default_reasoning_mode {
+    my ($provider_name) = @_;
+    my $p = get_provider($provider_name);
+    return undef unless $p;
+    return $p->{default_reasoning_mode};
 }
 
 =head2 provider_from_url($url)

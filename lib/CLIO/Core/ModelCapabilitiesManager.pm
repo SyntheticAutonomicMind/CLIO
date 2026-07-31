@@ -534,22 +534,32 @@ sub _fetch_provider_capabilities {
     
     require CLIO::Providers;
     my $provider_def = CLIO::Providers::get_provider($provider);
+
+    # Registry-driven dispatch: providers with a dedicated fetcher
+    # declare it via C<capability_fetcher => 'foo'> and we call
+    # C<_fetch_foo_capabilities>. This replaces the previous chain of
+    # `provider =~ /^anthropic$/i` (and friends) inside an
+    # `if ($provider_def->{native_api})` group. Grouping by
+    # C<native_api> vs C<capability_map> vs C<copilot_models> was
+    # incidental - all those groups route to a named fetcher method.
+    # Adding a new provider with a custom fetcher now means one line
+    # in CLIO::Providers' registry; the dispatcher here stays put.
+    if ($provider_def) {
+        my $fetcher = CLIO::Providers::capability_fetcher($provider);
+        if ($fetcher) {
+            my $method = "_fetch_${fetcher}_capabilities";
+            if ($self->can($method)) {
+                return $self->$method($model);
+            }
+            log_warning('ModelCapabilitiesManager',
+                "Provider $provider declared fetcher '$fetcher' but method $method is missing");
+        }
+    }
     
-    if ($provider_def->{copilot_models}) {
-        return $self->_fetch_github_copilot_capabilities($model);
-    }
-    elsif ($provider_def->{native_api}) {
-        # Route native_api providers to their specific fetchers
-        return $self->_fetch_anthropic_capabilities($model) if $provider =~ /^anthropic$/i;
-        return $self->_fetch_google_capabilities($model) if $provider =~ /^google$/i;
-        return $self->_fetch_nvidia_capabilities($model) if $provider =~ /^nvidia$/i;
-    }
-    elsif ($provider_def->{capability_map}) {
-        return $self->_fetch_zai_capabilities($model) if $provider =~ /^zai/;
-        return $self->_fetch_minimax_capabilities($model) if $provider =~ /^minimax/;
-        return $self->_fetch_deepseek_capabilities($model) if $provider =~ /^deepseek/i;
-    }
-    elsif ($provider_def->{requires_auth} && $provider_def->{requires_auth} eq 'apikey') {
+    # Fallback: OpenAI-compatible path for unknown apikey-based providers.
+    # This is the only remaining route for plain OpenAI, Ollama Cloud,
+    # OpenRouter, and any user-added custom provider.
+    if ($provider_def->{requires_auth} && $provider_def->{requires_auth} eq 'apikey') {
         return $self->_fetch_openai_compatible_capabilities($provider, $model);
     }
     
@@ -2485,38 +2495,43 @@ sub _ensure_reasoning_mode {
     # provider name, but the model name pattern is unique to Anthropic.
     # This covers proxy aliases (e.g. "Proxy-Sonnet-5") and 5-series
     # models that the older provider-gated regex would have missed.
+    #
+    # Source-of-truth dispatch: each provider sets a
+    # `default_reasoning_mode` in CLIO::Providers. Anthropic gets
+    # 'adaptive' (most 5+ models), Gemini and Z.AI get 'enabled',
+    # DeepSeek gets 'effort'. MiniMax is the notable exception: the
+    # M3-vs-M2.x split is a model-name property, not a single value,
+    # so it lives in the MiniMax branch below.
     my $mode;
+    my $provider_default;
 
-    # Model-name-based path: applies for any provider when the model
-    # name is recognizably Anthropic-family. Single source of truth
-    # for Anthropic-family mode resolution - the same helper is used
-    # by Anthropic.pm:_supports_adaptive_thinking (via lazy require)
-    # so build-time and MCM-time heuristics cannot diverge.
     if (my $family_mode = $self->_anthropic_model_reasoning_mode($model)) {
         $mode = $family_mode;
     }
-    # Google provider: uses thinkingBudget (enabled mode)
-    elsif ($provider =~ /^google/i) {
-        $mode = 'enabled';
+    elsif ($provider_default = CLIO::Providers::default_reasoning_mode($provider)) {
+        $mode = $provider_default;
     }
     # MiniMax: M3 uses adaptive, M2.x uses enabled. Specific model
     # names (M3+, future M4 etc.) should ideally set
     # supports_adaptive_thinking or reasoning_mode directly in the
-    # static map rather than relying on this fallback.
-    elsif ($provider =~ /^minimax/i) {
-        if ($model =~ /-?M3(\b|-)/i || $model =~ /M3(?:\.|$)/i) {
-            $mode = 'adaptive';
-        }
-        else {
-            $mode = 'enabled';
+    # static map rather than relying on this fallback. The provider
+    # identity is matched against the registry's display name rather
+    # than a hardcoded regex - the registry is the source of truth
+    # for "this provider is MiniMax".
+    elsif (CLIO::Providers::provider_exists($provider)) {
+        my $pdef = CLIO::Providers::get_provider($provider);
+        if (($pdef->{name} // '') =~ /MiniMax/i) {
+            if ($model =~ /-?M3(\b|-)/i || $model =~ /M3(?:\.|$)/i) {
+                $mode = 'adaptive';
+            }
+            else {
+                $mode = 'enabled';
+            }
         }
     }
-    # Z.AI: GLM models use enabled thinking
-    elsif ($provider =~ /^zai/i) {
-        $mode = 'enabled';
-    }
-    # DeepSeek, OpenAI, Copilot, NVIDIA, OpenRouter: effort-based
-    else {
+    # DeepSeek, OpenAI, Copilot, NVIDIA, OpenRouter, plus any provider
+    # with no registry-declared default: effort-based reasoning_effort.
+    if (!$mode) {
         $mode = 'effort';
     }
 
