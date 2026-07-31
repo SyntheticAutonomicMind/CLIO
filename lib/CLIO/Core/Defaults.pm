@@ -39,6 +39,9 @@ our @EXPORT_OK = qw(
     DEFAULT_BINARY_SAMPLE_SIZE
     DEFAULT_POST_TRIM_FLOOR
     TOOL_RESULT_MAX_CHUNK
+    OUTPUT_ESTIMATION_BUFFER
+    OUTPUT_ESTIMATION_BUFFER_PCT
+    OUTPUT_ESTIMATION_BUFFER_MAX
     default_chunk_size
 );
 
@@ -52,6 +55,17 @@ use constant DEFAULT_LOCAL_CONTEXT_WINDOW => 65536;   # Local models (SAM, llama
 # Output token fallbacks
 use constant DEFAULT_MAX_OUTPUT_TOKENS    => 16384;   # When no output limit is known
 use constant DEFAULT_MAX_RESPONSE_TOKENS  => 16000;   # Response budget for conversation management
+
+# Output reservation buffer for context budgeting.
+# Trim paths reserve actual max_output_tokens (from model caps) plus this
+# buffer to cover estimation error. NO hard cap on output reserve - use
+# whatever the model actually supports. Clinically: with 128K-output
+# models (MiniMax-M3, Z.AI GLM-5) and a 1M context window, we'd
+# previously reserve 500K (50%) for output; with actual reserves we keep
+# 822K for prompt (172K more usable context).
+use constant OUTPUT_ESTIMATION_BUFFER     => 8192;    # Constant part of reserve
+use constant OUTPUT_ESTIMATION_BUFFER_PCT => 0.05;    # Proportional part (5% of context)
+use constant OUTPUT_ESTIMATION_BUFFER_MAX => 51200;   # Cap proportional buffer at 50K
 
 # Tool result chunking
 use constant TOOL_RESULT_MAX_CHUNK        => 32768;   # Hard ceiling per chunk (bytes)

@@ -1269,17 +1269,20 @@ sub _fetch_nvidia_capabilities {
         
         # --- Moonshot ---
         'moonshotai/kimi-k2.6' => {
-            context_window => 262144, max_output_tokens => 16384,
+            context_window => 262144, max_output_tokens => 32768,
             supports_tools => 1, supports_streaming => 1, supports_vision => 1, supports_reasoning => 1,
         },
-        
+
         # --- NVIDIA Nemotron ---
+        # Nemotron 3 Ultra/Super: 1M context, 8K output per build.nvidia.com
+        # (https://docs.openclaw.ai/providers/nvidia). Updated 2026-07-31
+        # from 16K to match the current NIM endpoint.
         'nvidia/nemotron-3-ultra-550b-a55b' => {
-            context_window => 1048576, max_output_tokens => 16384,
+            context_window => 1048576, max_output_tokens => 8192,
             supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
         },
         'nvidia/nemotron-3-super-120b-a12b' => {
-            context_window => 1048576, max_output_tokens => 16384,
+            context_window => 1048576, max_output_tokens => 8192,
             supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
         },
         'nvidia/nemotron-3-nano-30b-a3b' => {
@@ -1561,10 +1564,11 @@ sub _nvidia_model_heuristics {
         };
     }
     
-    # Nemotron 3 Ultra/Super: 1M context, reasoning
+    # Nemotron 3 Ultra/Super: 1M context, 8K output, reasoning
+    # (Updated 2026-07-31 to match build.nvidia.com.)
     if ($base =~ m{nemotron-?3.*(ultra|super)}i) {
         return {
-            context_window => 1048576, max_output_tokens => 16384,
+            context_window => 1048576, max_output_tokens => 8192,
             supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
         };
     }
@@ -1729,10 +1733,11 @@ sub _nvidia_model_heuristics {
         };
     }
     
-    # Kimi K2: 256K context, reasoning, vision
+    # Kimi K2: 256K context, 32K output, reasoning, vision
+    # (Updated 2026-07-31 from 16K to match current API docs.)
     if ($base =~ m{kimi.*k2}i) {
         return {
-            context_window => 262144, max_output_tokens => 16384,
+            context_window => 262144, max_output_tokens => 32768,
             supports_tools => 1, supports_streaming => 1, supports_vision => 1, supports_reasoning => 1,
         };
     }

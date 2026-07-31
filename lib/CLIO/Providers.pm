@@ -354,7 +354,11 @@ my %PROVIDERS = (
         supports_reasoning => 1,
         supports_vision => 1,
         max_context_tokens => 200000,
-        max_output_tokens => 16384,
+        # Claude 4.5+ default output is 64K. With Anthropic's
+        # `output-128k-2025-02-19` beta header it can reach 128K.
+        # When the Anthropic native API is reachable, MCM uses the
+        # per-model max_tokens from /v1/models instead of this value.
+        max_output_tokens => 64000,
         native_api => 1,
         provider_module => 'CLIO::Providers::Anthropic',
         endpoint => {

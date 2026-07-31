@@ -9,7 +9,7 @@ use utf8;
 use POSIX qw(ceil);
 use Exporter 'import';
 
-our @EXPORT_OK = qw(estimate_tokens get_effective_ratio);
+our @EXPORT_OK = qw(estimate_tokens get_effective_ratio compute_prompt_budget);
 
 =head1 NAME
 
@@ -51,10 +51,10 @@ use constant TOKENS_PER_COMPLETION => 3;   # response priming overhead
 use constant TOOL_CALL_OVERHEAD    => 10;  # JSON structure of a tool_call
 
 # Context management threshold: trim at this percentage of max context
-# Leaves (1 - SAFE_CONTEXT_PERCENT) as safety margin for response + estimation error
-# 0.75: proactive trim fires at 75% of max context (e.g., 150K of 200K).
-# Closes the gap with the reactive trim threshold (~83% effective), reducing
-# full-reset events. Tested against 107M-token session data (see scratch/CLIO_OPTIMIZATION_PLAN.md).
+# Used as a fallback when model max_output_tokens is unknown. Real trim
+# paths (MessageValidator, ConversationManager, Session::State,
+# ErrorHandler) prefer compute_prompt_budget() which uses the actual
+# model output cap rather than this percentage.
 use constant SAFE_CONTEXT_PERCENT  => 0.75;
 
 # Package-level learned ratio - updated from API response feedback
@@ -259,15 +259,15 @@ Returns: Estimated total tokens including message overhead
 sub estimate_messages_tokens {
     my ($messages) = @_;
     return 0 unless ref $messages eq 'ARRAY';
-    
+
     my $total = TOKENS_PER_COMPLETION;  # Response priming overhead
-    
+
     for my $msg (@$messages) {
         next unless ref $msg eq 'HASH';
-        
+
         # Per-message overhead (role + delimiters)
         $total += TOKENS_PER_MESSAGE;
-        
+
         # Content tokens
         if (defined $msg->{content}) {
             $total += estimate_tokens($msg->{content});
@@ -283,22 +283,99 @@ sub estimate_messages_tokens {
                 }
             }
         }
-        
+
         # Name/tool_call_id overhead
         $total += TOKENS_PER_NAME if $msg->{tool_call_id} || $msg->{name};
-        
+
         # Tool call tokens (if present)
         if ($msg->{tool_calls} && ref $msg->{tool_calls} eq 'ARRAY') {
             for my $tool_call (@{$msg->{tool_calls}}) {
-                my $tool_text = ($tool_call->{function}->{name} // '') . 
+                my $tool_text = ($tool_call->{function}->{name} // '') .
                                ($tool_call->{function}->{arguments} // '');
                 $total += estimate_tokens($tool_text);
                 $total += TOOL_CALL_OVERHEAD;  # JSON structure overhead
             }
         }
     }
-    
+
     return $total;
+}
+
+=head2 compute_prompt_budget($caps)
+
+Compute the prompt budget for a model from its capabilities.
+
+The prompt budget is the maximum number of tokens the conversation
+(messages + tools + system prompt) may consume before trimming. It is
+the model's context window minus the reserve for the model's actual
+output, minus a small estimation buffer.
+
+NO hard cap is applied to the output reserve - we use whatever the
+model actually supports. This is a deliberate departure from the
+previous SAFE_CONTEXT_PERCENT heuristic, which reserved a flat 25%
+(or 50% post-trim) of context for output regardless of the model's
+real output cap. For 1M-context models with 128K output (MiniMax-M3,
+Z.AI GLM-5), the previous behavior reserved 500K for output (50%);
+this function reserves 128K, leaving 822K for prompt (172K more
+usable context).
+
+For 1M-context models with 16K output (NVIDIA Nemotron 3 Ultra, Llama
+4), the reserve is just 16K, leaving ~934K for prompt.
+
+Arguments:
+    $caps - Hashref from ModelCapabilitiesManager::get_capabilities or
+            APIManager::get_model_capabilities. Recognized keys:
+              - max_context_window_tokens (or context_window)
+              - max_prompt_tokens          (used as context_window when set)
+              - max_output_tokens
+
+Returns:
+    Integer prompt budget in tokens. Always >= 1000 to keep a usable
+    floor for even tiny-context local models.
+
+=cut
+
+sub compute_prompt_budget {
+    my ($caps) = @_;
+    return 1000 unless ref $caps eq 'HASH';
+
+    require CLIO::Core::Defaults;
+
+    # Resolve context window. Prefer max_context_window_tokens (the
+    # model's true context window), fall back to max_prompt_tokens
+    # (which MCM populates from context_window for most paths anyway),
+    # and ultimately to DEFAULT_CONTEXT_WINDOW.
+    my $context_window = $caps->{max_context_window_tokens}
+                      || $caps->{context_window}
+                      || $caps->{max_prompt_tokens}
+                      || CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW();
+    $context_window = CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW() if $context_window <= 0;
+
+    # Resolve output reserve. Use the model's actual max_output_tokens
+    # directly - no hard cap (per design: each model knows its own
+    # output limit, and reserving more wastes context). Fall back to
+    # DEFAULT_MAX_OUTPUT_TOKENS only when the model has no reported
+    # output cap (e.g. local models, unmapped providers).
+    my $output_reserve = $caps->{max_output_tokens}
+                      || CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS();
+    $output_reserve = CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS() if $output_reserve <= 0;
+
+    # Estimation buffer: max of constant + proportional, capped. Covers
+    # token estimation error, per-message overhead not captured by the
+    # character heuristic, and provider-specific formatting tokens.
+    #   32k ctx  -> max(8K, 1.6K) = 8K
+    #   128k ctx -> max(8K, 6.4K) = 8K
+    #   200k ctx -> max(8K, 10K) = 10K
+    #   1M ctx   -> max(8K, 50K) = 50K (cap kicks in)
+    my $est_buffer = CLIO::Core::Defaults::OUTPUT_ESTIMATION_BUFFER()
+                   + int($context_window * CLIO::Core::Defaults::OUTPUT_ESTIMATION_BUFFER_PCT());
+    my $buffer_cap = CLIO::Core::Defaults::OUTPUT_ESTIMATION_BUFFER_MAX();
+    $est_buffer = $buffer_cap if $est_buffer > $buffer_cap;
+
+    my $budget = $context_window - $output_reserve - $est_buffer;
+    $budget = 1000 if $budget < 1000;
+
+    return $budget;
 }
 
 1;

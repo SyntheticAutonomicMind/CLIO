@@ -53,6 +53,7 @@ use CLIO::Memory::LongTerm;
 use CLIO::Memory::YaRN;
 use CLIO::Memory::TokenEstimator;
 use CLIO::Util::TextSanitizer qw(strip_conversation_tags);
+use CLIO::Core::Defaults qw(DEFAULT_CONTEXT_WINDOW DEFAULT_MAX_OUTPUT_TOKENS);
 
 sub new {
     my ($class, %args) = @_;
@@ -638,18 +639,29 @@ sub add_message {
     $self->{yarn}->add_to_thread($thread_id, $message);
     
     # Aggressively trim context to stay within safe token budget
-    # Use percentage-based threshold for model-agnostic operation
+    # Use prompt budget from model capabilities for model-aware trim threshold
     my $current_size = $self->get_conversation_size();
-    
-    # Dynamic threshold based on max_tokens (model context window):
-    # Trim at SAFE_CONTEXT_PERCENT of max context to provide safety margin
-    # This accounts for max response (typically 12-16% of context) and estimation error
+
+    # Threshold: model context window minus reserve for output and
+    # estimation buffer. Previously this was int(max_tokens * 0.75) which
+    # reserved 25% of context for output regardless of model. Now we use
+    # compute_prompt_budget which uses the actual configured output
+    # cap (max_output_tokens) plus the estimation buffer.
+    #
+    # For 1M context with 16K output (typical cloud provider): was 750K
+    # threshold (25% reserved for output), now ~934K (16K + 50K buffer).
+    # For 128K context with 16K output: was 96K, now ~104K.
     my $max_tokens = $self->{max_tokens} // 128000;  # Default to 128k if not set
-    my $trim_threshold = int($max_tokens * CLIO::Memory::TokenEstimator::SAFE_CONTEXT_PERCENT);
-    
+    my $max_output = $self->{max_output_tokens}
+                  // CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS();
+    my $trim_threshold = CLIO::Memory::TokenEstimator::compute_prompt_budget({
+        max_context_window_tokens => $max_tokens,
+        max_output_tokens         => $max_output,
+    });
+
     if ($current_size > $trim_threshold) {
         if ($ENV{CLIO_DEBUG} || $self->{debug}) {
-            log_debug('SessionState', "[STATE] Context size ($current_size tokens) exceeds safe threshold ($trim_threshold of $max_tokens max), trimming...");
+            log_debug('SessionState', "[STATE] Context size ($current_size tokens) exceeds prompt budget ($trim_threshold of $max_tokens max, $max_output output reserve), trimming...");
         }
         $self->trim_context();
     }

@@ -104,8 +104,8 @@ my $mcm = CLIO::Core::ModelCapabilitiesManager->new();
 
     my $caps = $mcm->_parse_anthropic_per_model_response($response, 'claude-sonnet-4-20250514');
     is($caps->{context_window}, 200000, 'per-model fallback: context_window from response');
-    # max_tokens missing -> falls back to Anthropic provider default (16384)
-    is($caps->{max_output_tokens}, 16384, 'per-model fallback: max_output_tokens from Providers.pm default');
+    # max_tokens missing -> falls back to Anthropic provider default (64000)
+    is($caps->{max_output_tokens}, 64000, 'per-model fallback: max_output_tokens from Providers.pm default');
 }
 
 # Test 3: Per-model response missing max_input_tokens falls back to provider default
@@ -190,7 +190,7 @@ my $mcm = CLIO::Core::ModelCapabilitiesManager->new();
 
     my $caps = $mcm->_build_anthropic_caps_from_list_entry($entry, 'claude-sonnet-4-20250514');
     is($caps->{context_window}, 200000, 'LIST sparse: context_window from Providers.pm default');
-    is($caps->{max_output_tokens}, 16384, 'LIST sparse: max_output_tokens from Providers.pm default');
+    is($caps->{max_output_tokens}, 64000, 'LIST sparse: max_output_tokens from Providers.pm default');
     # When capabilities block is absent from a sparse LIST response, we
     # still set supports_reasoning=1 (all Claude models support thinking)
     # so the request path actually sends reasoning_effort. adaptive/enabled
@@ -396,7 +396,11 @@ my $mcm = CLIO::Core::ModelCapabilitiesManager->new();
     require CLIO::Providers;
     my $pdef = CLIO::Providers::get_provider('anthropic');
     is($pdef->{max_context_tokens}, 200000, 'Anthropic provider default max_context_tokens=200000');
-    is($pdef->{max_output_tokens}, 16384, 'Anthropic provider default max_output_tokens=16384');
+    # Updated 2026-07-31: Claude 4.5+ default output is 64K. The Anthropic
+    # native API exposes the actual per-model max via /v1/models, but the
+    # Providers.pm default is used when the API is unreachable or the
+    # model is new and not yet in the response.
+    is($pdef->{max_output_tokens}, 64000, 'Anthropic provider default max_output_tokens=64000');
 }
 
 # ========================================================================
