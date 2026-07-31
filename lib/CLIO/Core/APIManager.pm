@@ -1670,9 +1670,8 @@ sub _extract_model_capabilities {
     my $limits = ($info->{capabilities} && $info->{capabilities}{limits}) || {};
 
     # Local models: conservative context to avoid OOM
-    my $fallback_ctx = ($api_type =~ /^(sam|lmstudio|llama\.cpp)$/i)
-        ? CLIO::Core::Defaults::DEFAULT_LOCAL_CONTEXT_WINDOW()
-        : CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW();
+    require CLIO::Providers;
+    my $fallback_ctx = CLIO::Providers::default_context_window($api_type);
 
     # Provider-level output fallback
     my $provider_max_output;

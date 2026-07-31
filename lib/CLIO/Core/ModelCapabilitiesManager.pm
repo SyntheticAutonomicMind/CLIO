@@ -2316,7 +2316,7 @@ sub _fetch_openai_compatible_capabilities {
     $api_base =~ s{/+$}{};
     $api_base =~ s{/chat/completions/?$}{};
     $api_base =~ s{/chat/?$}{};
-    my $api_type = $provider;  # Local provider names (sam, lmstudio, llama.cpp) are valid api_types for /props gating
+    my $api_type = $provider;  # Used for /props gating via CLIO::Providers::is_local_inference
 
     # Get API key
     my $api_key;
@@ -2372,11 +2372,20 @@ sub _fetch_openai_compatible_capabilities {
             $context_window = $permuted_model->{context_window};
         }
         
-        # For local llama.cpp servers, /v1/models only exposes n_ctx_train (training context),
-        # not the server's actual --ctx-size runtime value. Query /props to get the real n_ctx.
-        # Gate on api_type rather than URL pattern: local servers may run on
-        # LAN hostnames or arbitrary IPs (not just localhost).
-        if (!$context_window || $api_type =~ /^(generic|sam|lmstudio|llama\.cpp)$/i) {
+        # For local inference servers, /v1/models only exposes the model's
+        # training context (n_ctx_train), not the server's actual
+        # runtime --ctx-size value. Query /props to get the real n_ctx.
+        # Gating logic centralised through CLIO::Providers:
+        #   - exposes_props() covers the named local providers
+        #     (sam, llama.cpp, lmstudio) that declare this in the registry.
+        #   - ai_type eq 'generic' catches unrecognised OpenAI-compatible
+        #     servers we autodetected through provider_from_url. These
+        #     may be local llama.cpp forks that match the same /props
+        #     convention. /props query is best-effort: returns undef on
+        #     404 without blocking the fetch.
+        require CLIO::Providers;
+        my $is_local = CLIO::Providers::is_local_inference($api_type);
+        if (!$context_window || $is_local || $api_type eq 'generic') {
             my $props_ctx = $self->_query_llama_props($api_base);
             if ($props_ctx && $props_ctx > 0) {
                 $context_window = $props_ctx;
