@@ -13,6 +13,7 @@ our @EXPORT_OK = qw(
     build_endpoint_config DEFAULT_MODEL provider_from_url
     is_local_inference exposes_props default_context_window
     capability_fetcher default_reasoning_mode
+    quota_handler
 );
 
 # Fallback model when no model is configured anywhere.
@@ -92,6 +93,12 @@ my %PROVIDERS = (
         # chain in ModelCapabilitiesManager._fetch_provider_capabilities).
         # The fetcher method name is `_fetch_<value>_capabilities`.
         capability_fetcher => 'github_copilot',
+        # Copilot exposes a /user/quota endpoint via the CopilotUserAPI.
+        # /billing surfaces the result. UI/Commands/API/Auth::handle_quota
+        # dispatches by this name to a provider-specific handler method.
+        # Centralises the old `provider eq 'github_copilot'` check.
+        has_quota_api => 1,
+        quota_handler => 'copilot',
         priority_display => 1,
         endpoint => {
             path_suffix => '',
@@ -277,6 +284,11 @@ my %PROVIDERS = (
         # MiniMax exposes a /v1/token_plan/quota endpoint for the
         # Token Plan variant. /billing surfaces a hint to use it.
         has_quota_api => 1,
+        # UI/Commands/API/Auth::handle_quota dispatches by this name
+        # to a provider-specific handler method on the UI command
+        # class. Centralising here removes the old
+        # `provider =~ /^minimax/i` check.
+        quota_handler => 'minimax',
         # MiniMax's /v1/models response lacks capability metadata.
         # The MCM static map is authoritative. Flagged so /api models
         # display can pull from MCM instead.
@@ -312,6 +324,10 @@ my %PROVIDERS = (
         max_output_tokens => 131072,
         capability_map => 1,
         has_quota_api => 1,
+        # Token Plan shares the minimax quota handler (same /v1/token_plan/usage
+        # endpoint). The dispatch field on this entry points at the same
+        # handler so the UI doesn't need a second method.
+        quota_handler => 'minimax',
         lacks_models_metadata => 1,
         capability_fetcher => 'minimax',  # Token Plan uses the same fetcher as the standard provider
         endpoint => {
@@ -732,6 +748,38 @@ sub default_reasoning_mode {
     my $p = get_provider($provider_name);
     return undef unless $p;
     return $p->{default_reasoning_mode};
+}
+
+=head2 quota_handler($provider_name)
+
+Returns the name of the UI/Commands/API/Auth handler method to call
+for this provider's quota API, or undef if the provider doesn't
+provide one.
+
+Centralizes the `provider =~ /^minimax/i` and `provider eq
+'github_copilot'` chain previously used in
+CLIO::UI::Commands::API::Auth::handle_quota. Each provider with a
+quota API declares a quota_handler in its registry; the UI layer
+locates the handler by name without knowing provider names.
+
+For backwards-compatibility the returned suffix is intended to match
+an existing C<_handle_<suffix>_quota> method on the UI command class.
+Current suffixes used: 'minimax' (covers minimax + minimax_token)
+and 'copilot' (github_copilot).
+
+Arguments:
+- $provider_name: provider key
+
+Returns: handler suffix string, or undef if no quota API.
+
+=cut
+
+sub quota_handler {
+    my ($provider_name) = @_;
+    my $p = get_provider($provider_name);
+    return undef unless $p;
+    return undef unless $p->{has_quota_api};
+    return $p->{quota_handler};
 }
 
 =head2 provider_from_url($url)

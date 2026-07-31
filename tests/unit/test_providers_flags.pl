@@ -22,6 +22,7 @@ use CLIO::Providers qw(
     is_local_inference exposes_props default_context_window
     provider_from_url
     capability_fetcher default_reasoning_mode
+    quota_handler
 );
 use CLIO::Core::Defaults qw(
     DEFAULT_LOCAL_CONTEXT_WINDOW DEFAULT_CONTEXT_WINDOW
@@ -217,6 +218,27 @@ for my $name (@CLOUD_NAMES) {
         'minimax leaves default undef (M3/M2.x split is per-model)');
     is(default_reasoning_mode('minimax_token'), undef,
         'minimax_token leaves default undef (same reason)');
+}
+
+# ============================================================================
+# quota_handler - registry-driven /api quota dispatch
+# ============================================================================
+{
+    # quota_handler returns the suffix that maps to `_handle_<x>_quota`
+    # on the UI/Commands/API/Auth command class. Providers without a
+    # quota API return undef (caller shows "no quota API" message).
+    is(quota_handler('github_copilot'), 'copilot',
+        'github_copilot -> copilot handler');
+    is(quota_handler('minimax'),       'minimax',
+        'minimax -> minimax handler');
+    is(quota_handler('minimax_token'), 'minimax',
+        'minimax_token shares the minimax handler (Token Plan API)');
+
+    # Providers without quota APIs
+    for my $name (qw(openai anthropic google zai nvidia deepseek openrouter)) {
+        is(quota_handler($name), undef,
+            "$name has no quota API -> undef");
+    }
 }
 
 done_testing();
