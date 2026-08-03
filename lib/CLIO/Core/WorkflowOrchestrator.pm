@@ -881,7 +881,7 @@ sub process_input {
                 # Inject a system-level continuation nudge (prefixed with user context for accurate time)
                 push @messages, {
                     role => 'user',
-                    content => $self->{prompt_builder}->get_user_context() .
+                    content => $self->{prompt_builder}->get_user_context($session) .
                                "[SYSTEM: Your previous response ended without completing your work. " .
                                "You were actively using tools and appear to have stopped mid-workflow. " .
                                "Please continue where you left off - review your recent tool results and proceed with your plan.]"
@@ -1098,7 +1098,7 @@ sub _build_turn_context {
     # payload sent to the model) and breaks the expectation that the session
     # stores exactly what the user typed.  Therefore we store only the plain
     # user input in the session history.
-    my $user_context = $self->{prompt_builder}->get_user_context();
+    my $user_context = $self->{prompt_builder}->get_user_context($session);
 
     # Append turn-specific instructions to user context (not system prompt) for cacheability
     # Non-interactive mode instruction (only with --input flag)
@@ -2454,7 +2454,7 @@ sub _compress_dropped_for_recovery {
     push @final_parts, "as if nothing changed. If you had a task in progress, continue it. If the user";
     push @final_parts, "asked a question, answer it. Use todo_operations and git tools for details.";
 
-    my $user_context = $prompt_builder ? $prompt_builder->get_user_context() : '';
+    my $user_context = $prompt_builder ? $prompt_builder->get_user_context($session) : '';
     my $recovery_content = join("\n", @final_parts);
 
     log_debug('WorkflowOrchestrator', "Recovery context created: " . length($recovery_content) . " chars from " . scalar(@$dropped_messages) . " dropped messages");

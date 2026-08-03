@@ -66,7 +66,11 @@ sub new {
 =head2 build_system_prompt
 
 Build a comprehensive system prompt with dynamic tools, date/time,
-LTM patterns, and mode-specific instructions.
+and mode-specific instructions.
+
+LTM patterns and other dynamic content (loaded skills, OpenSpec) are
+injected into the user message via get_user_context() to preserve
+prompt cache stability across turns.
 
 Arguments:
 - $session: Session object (optional, needed for LTM)
@@ -529,12 +533,48 @@ For trivial decisions (e.g. "which tool do I call next?"), a one-line note like
 the trade-off or constraint you're weighing.};
 }
 
+=head2 _get_dynamic_context
+
+Internal: Get dynamic context sections (LTM patterns, loaded skills,
+OpenSpec) from PromptManager for injection into the user message.
+
+These sections change between turns and would invalidate the prompt
+cache if included in the system prompt.
+
+Arguments:
+- $session: Session object
+
+Returns:
+- Dynamic context string, or empty string if nothing to inject
+
+=cut
+
+sub _get_dynamic_context {
+    my ($self, $session) = @_;
+
+    return '' unless $session;
+
+    require CLIO::Core::PromptManager;
+    my $pm = CLIO::Core::PromptManager->new(
+        debug => $self->{debug},
+        skip_custom => $self->{skip_custom},
+        enable_subagents => $self->{enable_subagents},
+    );
+
+    return $pm->get_dynamic_context($session);
+}
+
 =head2 get_user_context
 
-Get the user-context block containing date/time, working directory, and language.
-Cached per-minute to avoid regenerating on every call while keeping
-the information reasonably fresh. This ensures the system prompt stays
-stable while still providing time/directory/language context per-user-message.
+Get the user-context block containing date/time, working directory, language,
+and active session goals (if a session is provided).
+
+The base context (date/time/path/language) is cached per-minute.
+Session goals and dynamic context (LTM, loaded skills, OpenSpec)
+are read fresh each call since they may change between turns.
+
+Arguments:
+- $session: Optional session object (for reading session_goals)
 
 Returns:
 - User context string for prepending to user input
@@ -542,7 +582,7 @@ Returns:
 =cut
 
 sub get_user_context {
-    my ($self) = @_;
+    my ($self, $session) = @_;
 
     my $now = time();
     my $cache_ttl = 60;  # Cache TTL in seconds (1 minute)
@@ -554,7 +594,30 @@ sub get_user_context {
         log_debug('PromptBuilder', "User context cache refreshed at " . scalar(localtime($now)));
     }
 
-    return $self->{_user_context_cache};
+    # Dynamic context (LTM, loaded skills, OpenSpec) comes FIRST - it's
+    # injected into the user message after cache breakpoints, so changes
+    # here don't invalidate the prompt cache.
+    my $context = '';
+    if ($session) {
+        my $dynamic = $self->_get_dynamic_context($session);
+        if ($dynamic) {
+            $context .= "<dynamicContext>\n" . $dynamic . "\n</dynamicContext>\n\n";
+            log_debug('PromptBuilder', "Prepended dynamic context (" . length($dynamic) . " chars)");
+        }
+    }
+
+    # Base context (date/time/path/language) - cached per-minute
+    $context .= $self->{_user_context_cache};
+
+    # Session goals - read fresh each call
+    if ($session) {
+        my $goals = $self->_read_session_goals($session);
+        if ($goals) {
+            $context .= $goals;
+        }
+    }
+
+    return $context;
 }
 
 =head2 _detect_user_language
@@ -658,6 +721,74 @@ sub _generate_user_context_section {
     $section .= "</userContext>\n\n";
 
     return $section;
+}
+
+=head2 _read_session_goals
+
+Internal: Read active session goals from session memory and format them
+for inclusion in the user context. Goals are stored as a JSON array under
+the key 'session_goals' in .clio/memory/.
+
+The agent manages goals via:
+    memory_operations(operation: "store", key: "session_goals", content: $json_array)
+    memory_operations(operation: "retrieve", key: "session_goals")
+
+Each goal: {id, title, description, status, created_at}
+Status values: active, completed, blocked
+
+Returns:
+- Formatted goals string for user context, or empty string if no active goals
+
+=cut
+
+sub _read_session_goals {
+    my ($self, $session) = @_;
+
+    return '' unless $session;
+
+    my $goals_text = '';
+    eval {
+        my $goals_file = '.clio/memory/session_goals.json';
+        return '' unless -f $goals_file;
+
+        require CLIO::Util::JSON;
+        my $json_text = do {
+            open my $fh, '<:encoding(UTF-8)', $goals_file or return '';
+            local $/;
+            <$fh>;
+        };
+
+        my $data = CLIO::Util::JSON::decode_json($json_text);
+        my $content = $data->{content} || '';
+        return '' unless $content;
+
+        my $goals = eval { CLIO::Util::JSON::decode_json($content) };
+        return '' unless $goals && ref($goals) eq 'ARRAY' && @$goals;
+
+        # Filter to active goals only
+        my @active = grep { ($_->{status} || '') eq 'active' } @$goals;
+        return '' unless @active;
+
+        $goals_text = "<sessionGoals>\n";
+        $goals_text .= "You are working toward the following session goals. ";
+        $goals_text .= "Track progress using memory_operations:\n";
+        $goals_text .= "  memory_operations(operation: 'retrieve', key: 'session_goals')\n";
+        $goals_text .= "  memory_operations(operation: 'store', key: 'session_goals', content: '<json>')\n\n";
+        for my $goal (@active) {
+            my $title = $goal->{title} || 'Untitled';
+            my $desc  = $goal->{description} || '';
+            $goals_text .= "- [#$goal->{id}] $title";
+            $goals_text .= ": $desc" if $desc;
+            $goals_text .= "\n";
+        }
+        $goals_text .= "</sessionGoals>\n\n";
+    };
+    if ($@) {
+        log_debug('PromptBuilder', "Failed to read session goals: $@");
+        return '';
+    }
+
+    return $goals_text;
 }
 
 1;

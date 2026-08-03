@@ -250,11 +250,28 @@ sub compress_messages {
     # Seed buckets from previous summary so accumulated history isn't lost across trim cycles
     if ($previous_summary) {
         _parse_previous_summary($previous_summary, {
-            commits       => \@commits,
-            files_touched => \@files_touched,
-            decisions     => \@decisions,
-            tool_counts   => \%tool_counts,
+            commits                 => \@commits,
+            files_touched           => \@files_touched,
+            decisions               => \@decisions,
+            tool_counts             => \%tool_counts,
+            user_requests           => \@user_requests,
+            collaboration_exchanges => \@collaboration_exchanges,
         });
+        # If previous summary had a preserved original request, carry it forward
+        if ($previous_summary =~ /\[original\]\s*(.{1,500})/s) {
+            my $orig = $1;
+            $orig =~ s/\s+$//;
+            $opts{_carried_original} = substr($orig, 0, 300);
+        }
+        # If previous summary had a Current task, carry it forward
+        if ($previous_summary =~ /Current task:\s*(.{1,500})/s) {
+            my $prev_task = $1;
+            $prev_task =~ s/\s+$//;
+            $prev_task =~ s/[\r\n].*//s;
+            if (!$original_task || length($original_task) < 50) {
+                $opts{_carried_task} = $prev_task;
+            }
+        }
     }
 
     for my $msg (@$messages) {
@@ -355,13 +372,25 @@ sub compress_messages {
         $first_user_request = $user_requests[0];
         @user_requests = @user_requests[-7..-1];
     }
+    # Use carried original from previous summary if available (survives cycles)
+    if ($opts{_carried_original}) {
+        my $carried = $opts{_carried_original};
+        unless (grep { $_ eq $carried } @user_requests) {
+            $first_user_request = $carried unless $first_user_request;
+        }
+    }
     # Cap at 8 total (up from 5)
 
     # Find a substantive task description. Short confirmations like "yes" or
     # "go ahead" are useless as task context - scan user_requests for better.
+    # Prefer a carried task from previous summary over the caller's original_task
+    # (which is often the most recent user message, not the real task).
     my @all_requests = @user_requests;
     unshift @all_requests, $first_user_request if $first_user_request;
-    my $effective_task = find_substantive_task($original_task, \@all_requests);
+    my $effective_task = find_substantive_task(
+        $opts{_carried_task} || $original_task,
+        \@all_requests
+    );
 
     # Build summary
     my @parts;
@@ -498,10 +527,12 @@ sub _parse_previous_summary {
     # Strip thread_summary tags
     $summary_text =~ s/<\/?thread_summary>//g;
     
-    my $commits       = $buckets->{commits}       || [];
-    my $files_touched = $buckets->{files_touched}  || [];
-    my $decisions     = $buckets->{decisions}       || [];
-    my $tool_counts   = $buckets->{tool_counts}     || {};
+    my $commits                 = $buckets->{commits}                 || [];
+    my $files_touched           = $buckets->{files_touched}           || [];
+    my $decisions               = $buckets->{decisions}               || [];
+    my $tool_counts             = $buckets->{tool_counts}             || {};
+    my $user_requests           = $buckets->{user_requests}           || [];
+    my $collaboration_exchanges = $buckets->{collaboration_exchanges} || [];
     
     # Parse git commits: lines starting with "- " under "Git commits" section
     if ($summary_text =~ /Git commits.*?:\n((?:- .+\n)+)/s) {
@@ -535,7 +566,30 @@ sub _parse_previous_summary {
         }
     }
     
-    my $parsed_items = scalar(@$commits) + scalar(@$files_touched) + scalar(@$decisions) + scalar(keys %$tool_counts);
+    # Parse user requests: lines under "Recent user requests:" (preserving [original] marker)
+    if ($summary_text =~ /Recent user requests:\n((?:- .+\n)+)/s) {
+        my $block = $1;
+        while ($block =~ /^- (?:\[original\]\s*)?(.+)$/mg) {
+            my $req = $1;
+            $req =~ s/\s+$//;
+            push @$user_requests, $req;
+        }
+    }
+    
+    # Parse active discussion: agent-user exchange pairs
+    if ($summary_text =~ /Active discussion.*?:\n((?:  Agent asked:.+\n(?:  User replied:.+\n)?)+)/s) {
+        my $block = $1;
+        while ($block =~ /  Agent asked:\s*(.{1,1000})\n(?:  User replied:\s*(.{1,1000})\n)?/g) {
+            push @$collaboration_exchanges, {
+                question => $1,
+                response => $2 || '',
+            };
+        }
+    }
+    
+    my $parsed_items = scalar(@$commits) + scalar(@$files_touched) + scalar(@$decisions)
+                     + scalar(keys %$tool_counts) + scalar(@$user_requests)
+                     + scalar(@$collaboration_exchanges);
     log_debug('YaRN', "Parsed $parsed_items items from previous summary") if $parsed_items;
 }
 

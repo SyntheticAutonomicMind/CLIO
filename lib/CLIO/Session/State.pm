@@ -798,18 +798,61 @@ sub trim_context {
     # Nothing to trim
     return if $dropped_count <= 0;
     
-    # Create trim notification message
+    # Collect dropped messages for YaRN compression
+    my $keep_start = scalar(@non_system) - scalar(@recent);
+    my @dropped = @non_system[0 .. ($keep_start - 1)];
+    
+    # Find the most recent user message for task context
+    my $last_user_msg;
+    for my $msg (reverse @dropped) {
+        if (($msg->{role} // '') eq 'user') {
+            $last_user_msg = $msg;
+            last;
+        }
+    }
+    
+    # Compress dropped messages with YaRN for context recovery
+    my $compressed_summary = '';
+    eval {
+        require CLIO::Memory::YaRN;
+        my $yarn = CLIO::Memory::YaRN->new();
+        my $compressed = $yarn->compress_messages(\@dropped,
+            original_task => $last_user_msg ? ($last_user_msg->{content} || '') : '',
+        );
+        if ($compressed && $compressed->{content}) {
+            $compressed_summary = $compressed->{content};
+        }
+    };
+    if ($@) {
+        log_warning('SessionState', "YaRN compression in trim_context failed: $@");
+    }
+    
+    # Build trim notification - include compressed summary if available
+    my $trim_content;
+    if ($compressed_summary) {
+        $trim_content = "[CONTEXT TRIM: $dropped_count messages compressed]\n" .
+            "Older messages summarized below. Recent $keep_recent messages preserved in full.\n\n" .
+            $compressed_summary . "\n\n" .
+            "To recover more context:\n" .
+            "1. memory_operations(operation: 'retrieve', key: 'session_goals') for session goals\n" .
+            "2. memory_operations(operation: 'recall_sessions', query: '<keywords>') for session history\n" .
+            "3. git log and todo_operations(operation: 'read') to verify current state\n" .
+            "DO NOT read handoff documents in ai-assisted/ - use the tools above instead.";
+    } else {
+        $trim_content = "[CONTEXT TRIM: $dropped_count messages archived]\n" .
+            "Token limit approached. Older messages moved to YaRN archive.\n" .
+            "Recent $keep_recent messages preserved.\n\n" .
+            "To recover context, use these in order:\n" .
+            "1. Your LTM patterns (already in system prompt) have project knowledge\n" .
+            "2. memory_operations(operation: 'retrieve', key: 'session_progress') for recent progress\n" .
+            "3. memory_operations(operation: 'recall_sessions', query: '<keywords>') for session history\n" .
+            "4. git log and todo_operations(operation: 'read') to verify current state\n" .
+            "DO NOT read handoff documents in ai-assisted/ - use the tools above instead.";
+    }
+    
     my $trim_notice = {
         role => 'system',
-        content => "[CONTEXT TRIM: $dropped_count messages archived]\n" .
-                   "Token limit approached. Older messages moved to YaRN archive.\n" .
-                   "Recent $keep_recent messages preserved.\n\n" .
-                   "To recover context, use these in order:\n" .
-                   "1. Your LTM patterns (already in system prompt) have project knowledge\n" .
-                   "2. memory_operations(operation: 'retrieve', key: 'session_progress') for recent progress\n" .
-                   "3. memory_operations(operation: 'recall_sessions', query: '<keywords>') for session history\n" .
-                   "4. git log and todo_operations(operation: 'read') to verify current state\n" .
-                   "DO NOT read handoff documents in ai-assisted/ - use the tools above instead.",
+        content => $trim_content,
         _importance => 0.5,
     };
     
