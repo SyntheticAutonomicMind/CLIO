@@ -31,11 +31,22 @@ use CLIO::Core::API::ErrorHandler;
 use Encode qw(encode_utf8);  # For handling Unicode in JSON
 use Time::HiRes qw(time sleep);
 use Digest::MD5 qw(md5_hex);
-use CLIO::Compat::Terminal qw(ReadKey ReadMode);  # For interrupt detection
+use CLIO::Core::Interrupt qw(check pending clear set install_alrm_handler uninstall_alrm_handler with_alrm_handler);
+use CLIO::Compat::Terminal qw(ReadKey ReadMode);  # Backward compat for legacy callers
 use CLIO::Util::AtomicWrite qw(atomic_write);
 use CLIO::Core::Defaults qw(DEFAULT_CONTEXT_WINDOW DEFAULT_MAX_RESPONSE_TOKENS);
 use CLIO::Logging::ProcessStats;
 use POSIX qw(strftime);
+
+# Default ALRM interval (seconds) for interrupt scanning during tool execution.
+# 250ms gives sub-second worst-case latency. Trade-off: 4x more wakeups per
+# minute vs 1s. Cost is negligible (single non-blocking ReadKey per fire).
+use constant INTERRUPT_ALRM_INTERVAL => 0.25;
+
+# Default poll interval (milliseconds) for tools that need to check for
+# interrupt during blocking I/O. Tools should call CLIO::Core::Interrupt::check()
+# at least this often.
+use constant INTERRUPT_POLL_INTERVAL_MS => 100;
 
 # ANSI color codes for terminal output - FALLBACK only when UI is unavailable
 =head1 NAME
@@ -2189,78 +2200,12 @@ Returns:
 
 sub _check_for_user_interrupt {
     my ($self, $session) = @_;
-    
-    # Only check if we have a TTY
-    return 0 unless -t STDIN;
-    
-    # Check if the ALRM signal handler (in Chat.pm) already detected a keypress
-    # and set the interrupt flag. This is the primary detection path - the ALRM
-    # fires every second and checks ReadKey(-1) even during blocking I/O.
-    if ($session && $session->state() && $session->state()->{user_interrupted}) {
-        log_debug('WorkflowOrchestrator', "Interrupt flag already set (detected by ALRM handler)");
-        return 1;
-    }
-    
-    # Secondary check: non-blocking keyboard read
-    # Terminal is already in cbreak mode (set by Chat.pm before agent execution)
-    # so keypresses are immediately available without needing ReadMode switching
-    my $key = eval { ReadKey(-1) };
-    
-    if ($@) {
-        log_warning('WorkflowOrchestrator', "Error checking for interrupt: $@");
-        return 0;
-    }
-    
-    # Only ESC (27) and Ctrl+C (3) trigger interrupts.
-    # Other characters (mouse events, focus events, resize sequences,
-    # random terminal control chars) should NOT interrupt the agent.
-    if (defined $key) {
-        my $ord = ord($key);
-        
-        if ($ord == 27) {
-            # ESC key or escape sequence. Check if more characters follow
-            # immediately - if so, this is a terminal escape sequence
-            # (mouse event, focus event, arrow key, etc.) not a standalone ESC.
-            my $next = eval { ReadKey(0.05) };  # 50ms wait for sequence chars
-            if (defined $next) {
-                # Escape sequence - drain remaining chars and ignore
-                log_debug('WorkflowOrchestrator', "Escape sequence detected, draining (next: 0x" . sprintf("%02x", ord($next)) . ")");
-                while (defined(eval { ReadKey(-1) })) { }
-                return 0;  # Not an interrupt
-            } else {
-                # Standalone ESC - this is an interrupt
-                log_info('WorkflowOrchestrator', "User interrupt detected (ESC key pressed)");
-                while (defined(eval { ReadKey(-1) })) { }
-                if ($session && $session->state()) {
-                    $session->state()->{user_interrupted} = 1;
-                    eval { $session->save(); };
-                    log_warning('WorkflowOrchestrator', "Failed to save interrupt flag to session: $@") if $@;
-                }
-                return 1;  # Interrupt detected
-            }
-        } elsif ($ord == 3) {
-            # Ctrl+C - interrupt
-            log_info('WorkflowOrchestrator', "User interrupt detected (Ctrl+C pressed)");
-            while (defined(eval { ReadKey(-1) })) { }
-            if ($session && $session->state()) {
-                $session->state()->{user_interrupted} = 1;
-                eval { $session->save(); };
-                log_warning('WorkflowOrchestrator', "Failed to save interrupt flag to session: $@") if $@;
-            }
-            return 1;  # Interrupt detected
-        } else {
-            # Any other key - drain but do NOT trigger interrupt.
-            # Mouse events, focus events, resize events, and other terminal
-            # control sequences should not interrupt the agent.
-            my $key_desc = ($ord < 32) ? sprintf('Ctrl+%c (0x%02x)', $ord + 64, $ord) :
-                           sprintf('0x%02x', $ord);
-            log_debug('WorkflowOrchestrator', "Non-interrupt key ($key_desc), draining");
-            while (defined(eval { ReadKey(-1) })) { }
-            return 0;  # Not an interrupt
-        }
-    }
-    
-    return 0;  # No interrupt
+
+    # Delegate to the shared interrupt helper. The helper centralises the
+    # TTY check, the ALRM-state fast path, and the non-blocking read so
+    # that the escape-sequence disambiguation can happen in regular code
+    # (not a signal handler).
+    return CLIO::Core::Interrupt::check(session => $session);
 }
 
 =head2 _handle_interrupt
@@ -2281,13 +2226,12 @@ Returns: Nothing (modifies messages array in place)
 
 sub _handle_interrupt {
     my ($self, $session, $messages_ref) = @_;
-    
+
     log_info('WorkflowOrchestrator', "Handling user interrupt via forced interact");
-    
-    # Clear interrupt flag (it's been handled)
-    if ($session && $session->state()) {
-        $session->state()->{user_interrupted} = 0;
-    }
+
+    # Clear interrupt flag (it's been handled) via the shared helper. This
+    # also logs the clear event so we have a single trail of interrupts.
+    CLIO::Core::Interrupt::clear(session => $session);
     
     # Stop spinner before showing interact prompt
     if ($self->{spinner} && $self->{spinner}->can('stop')) {
