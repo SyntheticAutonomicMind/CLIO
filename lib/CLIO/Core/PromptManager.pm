@@ -94,10 +94,16 @@ sub new {
 
 =head2 get_system_prompt
 
-Get the currently active system prompt text, including custom instructions
-from .clio/instructions.md if present.
+Get the currently active system prompt text (STABLE PORTION ONLY).
 
-Returns: System prompt string
+Dynamic sections (LTM patterns, loaded skills, OpenSpec context) are NOT
+included here - they are returned separately by get_dynamic_context() for
+injection into the user message to preserve prompt cache stability.
+
+Includes: base prompt, custom instructions, plugin instructions,
+puppeteer topology.
+
+Returns: System prompt string (stable)
 
 =cut
 
@@ -139,38 +145,8 @@ sub get_system_prompt {
         $prompt = $self->_get_default_prompt_content();
     }
     
-    # Inject LTM patterns early (right after Core Identity) if session is provided
-    # This improves visibility via primacy effect - models pay more attention to info at the start
-    if ($session) {
-        my $ltm_section = $self->_format_ltm_patterns($session);
-        if ($ltm_section) {
-            log_debug('PromptManager', "Injecting LTM patterns (early position), length=" . length($ltm_section));
-            
-            # Find the end of Core Identity section and inject LTM there
-            # Look for the "---" separator after Core Identity
-            if ($prompt =~ /^## Core Identity\s*\n.*?\n---\s*\n/sm) {
-                # Insert LTM right after Core Identity section
-                log_debug('PromptManager', "Found Core Identity marker, injecting LTM");
-                my $before_len = length($prompt);
-                $prompt =~ s/(^## Core Identity\s*\n.*?\n---\s*\n)/$1$ltm_section\n---\n\n/sm;
-                my $after_len = length($prompt);
-                log_debug('PromptManager', "After injection, prompt length=$after_len (added " . ($after_len - $before_len) . " bytes)");
-                
-                # DEBUG: Show what was injected
-                if ($self->{debug}) {
-                    if ($prompt =~ /(## Long-Term Memory Patterns.*?)(?=\n##)/s) {
-                        log_debug('PromptManager', "Injected LTM section (first 200 chars): " . substr($1, 0, 200) . "...");
-                    }
-                }
-            } else {
-                # Fallback: inject at the end if pattern not found
-                log_warning('PromptManager', "Could not find Core Identity section marker, appending LTM at end");
-                $prompt .= "\n\n" . $ltm_section;
-            }
-        } else {
-            log_debug('PromptManager', "No LTM patterns to inject (empty section)");
-        }
-    }
+    # LTM patterns are now injected via get_dynamic_context() into the user message
+    # to preserve prompt cache stability across turns.
     
     # Append custom instructions if they exist (unless --no-custom-instructions flag set)
     if (!$self->{skip_custom}) {
@@ -191,40 +167,11 @@ sub get_system_prompt {
         log_debug('PromptManager', "Skipping custom instructions (--no-custom-instructions flag)");
     }
     
-    # Append loaded skills to system prompt (if any are loaded in the session)
-    if ($session && $session->{loaded_skills} && @{$session->{loaded_skills}}) {
-        my @loaded = @{$session->{loaded_skills}};
-        my $count = scalar @loaded;
-        log_debug('PromptManager', "Injecting $count loaded skill(s) into system prompt");
-        
-        for my $skill (@loaded) {
-            my $name = $skill->{name} || 'unknown';
-            my $content = $skill->{content} || '';
-            next unless length($content) > 0;
-            
-            $prompt .= "\n\n<loadedSkill name=\"$name\">\n";
-            $prompt .= $content;
-            $prompt .= "\n</loadedSkill>\n";
-            
-            log_debug('PromptManager', "Injected loaded skill '$name' (" . length($content) . " bytes)");
-        }
-    }
+    # Loaded skills are now injected via get_dynamic_context() into the user message
+    # to preserve prompt cache stability across turns.
     
-    # Inject OpenSpec context if openspec/ directory exists in project
-    eval {
-        require CLIO::Spec::Manager;
-        my $spec_mgr = CLIO::Spec::Manager->new(project_root => '.');
-        if ($spec_mgr->is_initialized()) {
-            my $spec_context = $spec_mgr->get_spec_context();
-            if ($spec_context && length($spec_context) > 0) {
-                $prompt .= "\n\n<openSpecContext>\n";
-                $prompt .= $spec_context;
-                $prompt .= "</openSpecContext>\n";
-                log_debug('PromptManager', "Injected OpenSpec context (" . length($spec_context) . " bytes)");
-            }
-        }
-    };
-    log_debug('PromptManager', "OpenSpec context check: $@") if $@;
+    # OpenSpec context is now injected via get_dynamic_context() into the user message
+    # to preserve prompt cache stability across turns.
     
     # Inject plugin instructions if any plugins are loaded
     eval {
@@ -258,6 +205,78 @@ sub get_system_prompt {
     log_debug('PromptManager', "Puppeteer topology check: $@") if $@;
     
     return $prompt;
+}
+
+=head2 get_dynamic_context
+
+Get dynamic context sections for injection into the user message (AFTER
+cache breakpoints). These sections change between turns and would
+invalidate the prompt cache if included in the system prompt.
+
+Includes: LTM patterns, loaded skills, OpenSpec context.
+
+Arguments:
+- $session: Session object (required for LTM and loaded skills)
+
+Returns: Dynamic context string, or empty string if nothing to inject
+
+=cut
+
+sub get_dynamic_context {
+    my ($self, $session) = @_;
+
+    my @sections;
+
+    # LTM patterns (from session)
+    if ($session) {
+        my $ltm_section = $self->_format_ltm_patterns($session);
+        if ($ltm_section) {
+            push @sections, $ltm_section;
+            log_debug('PromptManager', "Dynamic context: LTM patterns (" . length($ltm_section) . " chars)");
+        }
+
+        # Loaded skills
+        if ($session->{loaded_skills} && @{$session->{loaded_skills}}) {
+            my @loaded = @{$session->{loaded_skills}};
+            log_debug('PromptManager', "Dynamic context: " . scalar(@loaded) . " loaded skill(s)");
+
+            for my $skill (@loaded) {
+                my $name = $skill->{name} || 'unknown';
+                my $content = $skill->{content} || '';
+                next unless length($content) > 0;
+
+                my $skill_block = "\n\n<loadedSkill name=\"$name\">\n";
+                $skill_block .= $content;
+                $skill_block .= "\n</loadedSkill>\n";
+                push @sections, $skill_block;
+
+                log_debug('PromptManager', "Dynamic context: loaded skill '$name' (" . length($content) . " bytes)");
+            }
+        }
+    }
+
+    # OpenSpec context
+    eval {
+        require CLIO::Spec::Manager;
+        my $spec_mgr = CLIO::Spec::Manager->new(project_root => '.');
+        if ($spec_mgr->is_initialized()) {
+            my $spec_context = $spec_mgr->get_spec_context();
+            if ($spec_context && length($spec_context) > 0) {
+                my $spec_block = "\n\n<openSpecContext>\n";
+                $spec_block .= $spec_context;
+                $spec_block .= "</openSpecContext>\n";
+                push @sections, $spec_block;
+                log_debug('PromptManager', "Dynamic context: OpenSpec (" . length($spec_context) . " bytes)");
+            }
+        }
+    };
+    log_debug('PromptManager', "Dynamic context OpenSpec check: $@") if $@;
+
+    return '' unless @sections;
+
+    my $dynamic = join('', @sections);
+    log_debug('PromptManager', "Dynamic context total: " . length($dynamic) . " chars");
+    return $dynamic;
 }
 
 =head2 list_prompts
@@ -1153,6 +1172,19 @@ If LTM patterns appear below (after Core Identity section), they contain project
 Use `memory_operations` to search for corroborating evidence or add corroboration when you independently confirm a memory.
 
 LTM is your institutional knowledge. Use it actively, not passively.
+
+**Session Goals (user context, not system prompt):**
+
+When the user gives you a task, create session goals to track progress across long sessions. Goals survive context trimming and are injected into the user context on every turn:
+
+    memory_operations(operation: "store", key: "session_goals", content: '<json>')
+
+Format as a JSON array of goal objects:
+    [{"id":1,"title":"Fix auth bug","description":"...","status":"active","created_at":"..."}]
+
+Status values: active, completed, blocked. Mark goals completed as you finish them.
+Retrieve current goals: memory_operations(operation: "retrieve", key: "session_goals")
+Session goals appear in <sessionGoals> tags in the user context on every turn.
 
 ---
 

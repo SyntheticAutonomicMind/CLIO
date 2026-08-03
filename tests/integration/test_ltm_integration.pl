@@ -87,8 +87,8 @@ my $orchestrator = CLIO::Core::WorkflowOrchestrator->new(
 
 print "   Orchestrator created\n\n";
 
-# 4. Test _build_system_prompt with session
-print "[4] Testing _build_system_prompt with LTM injection...\n";
+# 4. Test get_dynamic_context with session (LTM moved to user message for cache stability)
+print "[4] Testing get_dynamic_context with LTM content...\n";
 
 # Debug: verify LTM is accessible
 my $test_ltm = $session->get_long_term_memory();
@@ -99,61 +99,53 @@ if ($test_ltm) {
 }
 
 my $system_prompt;
+my $dynamic_context;
 eval {
     my $pm = CLIO::Core::PromptManager->new(debug => 1);
     $system_prompt = $pm->get_system_prompt($session);
+    $dynamic_context = $pm->get_dynamic_context($session);
 };
 if ($@) {
-    print "   [FAIL] PromptManager->get_system_prompt errored: $@\n";
+    print "   [FAIL] PromptManager errored: $@\n";
     $system_prompt = '';
+    $dynamic_context = '';
 }
 
-# Check if LTM patterns are in the prompt
+# Verify LTM is NOT in the system prompt (moved to dynamic context for cache stability)
 if ($system_prompt =~ /Long-Term Memory Patterns/) {
-    print "   [OK] LTM section found in prompt\n";
+    print "   [FAIL] LTM section found in system prompt (should be in dynamic context only)\n";
 } else {
-    print "   [FAIL] LTM section NOT found in prompt\n";
+    print "   [OK] LTM section NOT in system prompt (cache-stable)\n";
 }
 
-if ($system_prompt =~ /Test discovery: CLIO uses Perl/) {
-    print "   [OK] Discovery pattern injected\n";
+# Verify LTM IS in the dynamic context
+if ($dynamic_context && $dynamic_context =~ /Long-Term Memory Patterns/) {
+    print "   [OK] LTM section found in dynamic context\n";
 } else {
-    print "   [FAIL] Discovery pattern NOT found\n";
+    print "   [FAIL] LTM section NOT found in dynamic context\n";
 }
 
-if ($system_prompt =~ /API timeout error/) {
-    print "   [OK] Solution pattern injected\n";
+if ($dynamic_context && $dynamic_context =~ /Test discovery: CLIO uses Perl/) {
+    print "   [OK] Discovery pattern in dynamic context\n";
 } else {
-    print "   [FAIL] Solution pattern NOT found\n";
+    print "   [FAIL] Discovery pattern NOT found in dynamic context\n";
 }
 
-if ($system_prompt =~ /use strict; use warnings/) {
-    print "   [OK] Code pattern injected\n";
+if ($dynamic_context && $dynamic_context =~ /API timeout error/) {
+    print "   [OK] Solution pattern in dynamic context\n";
 } else {
-    print "   [FAIL] Code pattern NOT found\n";
+    print "   [FAIL] Solution pattern NOT found in dynamic context\n";
 }
 
-print "\n[5] Full system prompt length: " . length($system_prompt) . " characters\n";
-print "   Searching for patterns in prompt...\n\n";
-
-# Save to file for inspection
-open my $fh, '>', '/tmp/test_system_prompt.txt' or die "Cannot write: $!";
-print $fh $system_prompt;
-close $fh;
-print "   Saved full prompt to /tmp/test_system_prompt.txt\n\n";
-
-# Extract just the LTM section
-if ($system_prompt =~ /(## Long-Term Memory Patterns.*?)(?=^##\s|\z)/ms) {
-    my $ltm_section = $1;
-    print "[5] LTM Section in prompt:\n";
-    print "=" x 70, "\n";
-    print $ltm_section, "\n";
-    print "=" x 70, "\n";
-    print "   LTM section length: " . length($ltm_section) . " characters\n";
+if ($dynamic_context && $dynamic_context =~ /use strict; use warnings/) {
+    print "   [OK] Code pattern in dynamic context\n";
 } else {
-    print "   (LTM section not found with regex)\n";
+    print "   [FAIL] Code pattern NOT found in dynamic context\n";
 }
-print "\n";
+
+print "\n[5] System prompt length: " . length($system_prompt) . " characters (stable portion)\n";
+print "   Dynamic context length: " . length($dynamic_context // '') . " characters\n";
+print "   (LTM patterns now injected into user message for cache stability)\n\n";
 
 # 5. Query LTM patterns directly
 print "[6] Querying LTM patterns directly...\n";
