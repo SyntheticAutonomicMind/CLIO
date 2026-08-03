@@ -1069,7 +1069,25 @@ sub adapt_request_for_endpoint {
             || ($thinking_mode eq 'auto' && $show_thinking && $model_supports);
         if ($send_reasoning) {
             my $thinking_effort = $self->{config} ? ($self->{config}->get('thinking_effort') // 'medium') : 'medium';
-            $payload->{reasoning} = { enabled => \1, effort => $thinking_effort };
+            # OpenRouter's `reasoning.max_tokens` is the provider's token cap
+            # on the model's internal thinking. Doubled from the obvious
+            # baseline (the same as MiniMax's budget_tokens) so models on
+            # OpenRouter emit full verbose reasoning instead of brief
+            # planning one-liners when the user has show_thinking on.
+            my %budget = (
+                low    => 2000,
+                medium => 4000,
+                high   => 8000,
+            );
+            my $effort_key = $thinking_effort;
+            my $max_tokens = $budget{$effort_key};
+            $max_tokens //= 8000;  # unknown effort -> default to high
+            $payload->{reasoning} = {
+                enabled    => \1,
+                effort     => $thinking_effort,
+                max_tokens  => $max_tokens,
+            };
+            log_debug('APIManager', "OpenRouter reasoning: effort=$thinking_effort, max_tokens=$max_tokens");
         }
     }
 
@@ -1219,6 +1237,19 @@ sub adapt_request_for_endpoint {
             || ($thinking_mode eq 'auto' && $show_thinking && $reasoning_mode);
         if ($send_thinking) {
             $payload->{thinking} = { type => 'enabled' };
+            # Z.AI also accepts a top-level `reasoning_effort` parameter
+            # (per docs.z.ai/guides/overview/concept-param) that controls
+            # how much computation the model applies to the thinking phase.
+            # Allowed values on GLM-5.2+: max, xhigh, high, medium, low,
+            # minimal, none. Defaults to max. We forward the user's
+            # thinking_effort directly, since Z.AI's enum overlaps ours.
+            # xhigh is mapped to max since Z.AI treats them as the top tier.
+            my $zai_effort = $self->{config} ? ($self->{config}->get('thinking_effort') // 'high') : 'high';
+            $zai_effort = 'max' if $zai_effort eq 'xhigh';
+            # CLIO's thinking_effort values that don't map to a Z.AI enum.
+            $zai_effort = 'high' unless $zai_effort =~ /^(?:max|xhigh|high|medium|low|minimal|none)$/;
+            $payload->{reasoning_effort} = $zai_effort;
+            log_debug('APIManager', "Z.AI thinking: type=enabled, reasoning_effort=$zai_effort");
         }
 
         # Remove OpenAI-specific stream_options (Z.AI doesn't support it)
