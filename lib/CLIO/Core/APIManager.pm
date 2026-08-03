@@ -1132,20 +1132,43 @@ sub adapt_request_for_endpoint {
                     # Adaptive is M3's "thinking on" mode - the model
                     # decides whether to think deeply or briefly, but the
                     # parameter signals thinking is available.
+                    my $thinking_type;
                     if ($thinking_mode eq 'enabled') {
-                        if ($reasoning_mode eq 'adaptive') {
-                            $payload->{thinking} = { type => 'adaptive' };
-                        }
-                        else {
-                            $payload->{thinking} = { type => 'enabled' };
-                        }
+                        $thinking_type = ($reasoning_mode eq 'adaptive') ? 'adaptive' : 'enabled';
                     }
                     elsif ($reasoning_mode eq 'adaptive') {
-                        $payload->{thinking} = { type => 'adaptive' };
+                        $thinking_type = 'adaptive';
                     }
                     else {
-                        $payload->{thinking} = { type => 'enabled' };
+                        $thinking_type = 'enabled';
                     }
+
+                    # Add budget_tokens when thinking_effort is configured.
+                    # M3's thinking budget controls how much reasoning the
+                    # model produces before responding - with a small budget
+                    # M3 emits a brief planning line (e.g. "Planning user
+                    # location inquiry"); with a larger budget it produces
+                    # the full reasoning chain. Default to 4000 tokens (high)
+                    # when show_thinking is on so users actually see the
+                    # thinking they asked for.
+                    my $thinking = { type => $thinking_type };
+                    if ($reasoning_mode && $thinking_type ne 'disabled') {
+                        my $effort = $self->{config} ? ($self->{config}->get('thinking_effort') // 'high') : 'high';
+                        # M3's per-turn reasoning budget is the single biggest
+                        # knob for verbose thinking. The default values
+                        # (1000/2000/4000) produce planning one-liners
+                        # ("Planning X"); doubling them gets M3 to emit
+                        # the full reasoning chain the user asked for.
+                        my %budget = (
+                            low    => 2000,
+                            medium => 4000,
+                            high   => 8000,
+                        );
+                        my $budget_tokens = $budget{lc($effort)} // 8000;
+                        $thinking->{budget_tokens} = $budget_tokens;
+                        log_debug('APIManager', "MiniMax thinking budget: $budget_tokens tokens (effort=$effort)");
+                    }
+                    $payload->{thinking} = $thinking;
                 } else {
                     $payload->{thinking} = { type => 'disabled' };
                 }
