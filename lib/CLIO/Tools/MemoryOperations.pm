@@ -578,6 +578,85 @@ sub recall_sessions {
                     match_query => $query,
                 };
             }
+
+            # Also search YaRN threads for full untrimmed conversation history.
+            # Session history may have been trimmed, but YaRN stores every message.
+            # Dedup against history matches so we don't double-report.
+            my %seen_content;  # Track content digests already matched in history
+            for my $match (@scored_matches) {
+                next unless $match->{session_id} eq $session_id;
+                my $digest = substr($match->{preview} // '', 0, 80);
+                $seen_content{$digest} = 1;
+            }
+
+            if ($session_data->{yarn} && ref($session_data->{yarn}) eq 'HASH') {
+                my $yarn_threads = $session_data->{yarn};
+                THREAD: for my $thread_id (sort keys %$yarn_threads) {
+                    my $thread = $yarn_threads->{$thread_id};
+                    next THREAD unless $thread && ref($thread) eq 'ARRAY' && @$thread;
+
+                    for my $mi (0 .. $#$thread) {
+                        my $msg = $thread->[$mi];
+                        next unless $msg && $msg->{content};
+
+                        my $role = $msg->{role};
+                        $role = $role->{role} if ref($role) eq 'HASH';
+                        next if $role && $role eq 'system';
+
+                        my $content = $msg->{content};
+                        $content = '' if ref($content);
+                        next unless length($content) > 10;
+
+                        # Skip if already matched in history (same content digest)
+                        my $content_digest = substr($content, 0, 80);
+                        next if $seen_content{$content_digest};
+                        $seen_content{$content_digest} = 1;
+
+                        my $content_lc = lc($content);
+
+                        # Same scoring as history search
+                        my $score = 0;
+
+                        if ($content_lc =~ /\Q$query_lc\E/) {
+                            $score += 3.0;
+                        }
+
+                        my $keyword_hits = 0;
+                        for my $kw (@keywords) {
+                            if ($content_lc =~ /\Q$kw\E/) {
+                                $keyword_hits++;
+                                $score += 1.0;
+                            }
+                        }
+
+                        if (@keywords > 1 && $keyword_hits >= @keywords * 0.7) {
+                            $score += 1.5;
+                        }
+
+                        $score += $title_boost;
+                        $score += 0.3 if $role && $role eq 'assistant';
+                        $score += 0.2 if $role && $role eq 'user';
+
+                        # Slight boost for yarn matches (untrimmed context is more valuable)
+                        $score += 0.5;
+
+                        next unless $score > 0;
+
+                        my $snippet = _extract_best_snippet($content, $query_lc, \@keywords, 600);
+
+                        push @scored_matches, {
+                            session_id   => $session_id,
+                            session_title => $session_title || undef,
+                            role         => $role || 'unknown',
+                            message_index => "yarn:$thread_id:$mi",
+                            preview      => $snippet,
+                            score        => $score,
+                            keyword_hits => $keyword_hits,
+                            match_query  => $query,
+                        };
+                    }
+                }
+            }
             
             # Clear session data to free memory before next iteration
             $session_data = undef;
