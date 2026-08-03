@@ -458,6 +458,44 @@ sub _clean_eval_error {
     return $err;
 }
 
+=head2 check_interrupt
+
+Check whether the user has requested an interrupt (ESC or Ctrl+C).
+
+Long-running operations should poll this method periodically so the user
+does not have to wait for the entire operation to finish before their
+ESC is honoured. The implementation is intentionally cheap: it first
+checks the in-process flag set by the ALRM handler, then performs a
+non-blocking read of STDIN. The escape-sequence disambiguation (50ms
+wait) happens only when we actually see a non-empty byte, not on the
+common no-key-pressed path, so the overhead is one boolean check plus
+(at most) one non-blocking syscall per call.
+
+Usage in a tool loop:
+
+    while (my $chunk = read_more()) {
+        last if $self->check_interrupt($context);
+        process($chunk);
+    }
+
+Arguments:
+- $context: Execution context hashref (optional but recommended). The
+  session is read from $context->{session} when available.
+
+Returns: 1 if interrupt was detected, 0 if not.
+
+=cut
+
+sub check_interrupt {
+    my ($self, $context) = @_;
+
+    # Lazy require so tools that don't need interrupt detection don't
+    # pay the import cost.
+    require CLIO::Core::Interrupt;
+    my $session = $context && $context->{session};
+    return CLIO::Core::Interrupt::check(session => $session);
+}
+
 1;
 
 __END__

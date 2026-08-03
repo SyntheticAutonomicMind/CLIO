@@ -548,6 +548,17 @@ sub read_file {
     return $self->error_result("File not found: $path") unless -f $path;
     return $self->error_result("File not readable: $path") unless -r $path;
 
+    # Interrupt check before reading. read_file can take a long time on
+    # large files (gigabytes), and any interrupt bypass used to be missed
+    # until the read finished. Checking before the read gives the user a
+    # chance to cancel before we burn I/O on a file they no longer want.
+    if ($self->check_interrupt($context)) {
+        return $self->error_result(
+            "Interrupted by user before reading $path. File was not read."
+        );
+    }
+
+
     # Count total lines so we can give a helpful error when start_line is
     # Count total lines so we can give a helpful error when start_line is
     # past EOF (previously returned silent empty output with success=1).
@@ -588,15 +599,21 @@ sub read_file {
     eval {
         # Open in raw mode first, then try to decode UTF-8 gracefully
         open my $fh, '<:raw', $path or croak "Cannot open $path: $!";
-        
+
+        # Inline interrupt polling. Long file reads (millions of lines)
+        # used to ignore user ESC until the read finished. The cost is
+        # one boolean flag check per poll unit - negligible vs the I/O.
+        my $poll_every = CLIO::Core::WorkflowOrchestrator::INTERRUPT_POLL_INTERVAL_MS() * 100;
+        my $lines_since_check = 0;
+
         my @lines;
         if (defined $end_line) {
             # Read specific range
             while (<$fh>) {
                 my $line_num = $.;
                 last if $line_num > $end_line;
-                
-                # Decode UTF-8, replacing invalid bytes with � (replacement character)
+
+                # Decode UTF-8, replacing invalid bytes with  (replacement character)
                 eval {
                     $_ = Encode::decode('UTF-8', $_, Encode::FB_CROAK);
                 };
@@ -604,15 +621,26 @@ sub read_file {
                     # Fallback: replace invalid UTF-8 with replacement character
                     $_ = Encode::decode('UTF-8', $_, Encode::FB_DEFAULT);
                 }
-                
+
                 push @lines, $_ if $line_num >= $start_line;
+
+                if (++$lines_since_check >= $poll_every) {
+                    $lines_since_check = 0;
+                    if ($self->check_interrupt($context)) {
+                        close $fh;
+                        return $self->error_result(
+                            "Interrupted at line $line_num of $path. " .
+                            "Retry with start_line=$line_num to resume."
+                        );
+                    }
+                }
             }
         } else {
             # Read from start_line to EOF
             while (<$fh>) {
                 my $line_num = $.;
-                
-                # Decode UTF-8, replacing invalid bytes with � (replacement character)
+
+                # Decode UTF-8, replacing invalid bytes with  (replacement character)
                 eval {
                     $_ = Encode::decode('UTF-8', $_, Encode::FB_CROAK);
                 };
@@ -620,11 +648,22 @@ sub read_file {
                     # Fallback: replace invalid UTF-8 with replacement character
                     $_ = Encode::decode('UTF-8', $_, Encode::FB_DEFAULT);
                 }
-                
+
                 push @lines, $_ if $line_num >= $start_line;
+
+                if (++$lines_since_check >= $poll_every) {
+                    $lines_since_check = 0;
+                    if ($self->check_interrupt($context)) {
+                        close $fh;
+                        return $self->error_result(
+                            "Interrupted at line $line_num of $path. " .
+                            "Retry with start_line=$line_num to resume."
+                        );
+                    }
+                }
             }
         }
-        
+
         close $fh;
         
         my $content = join('', @lines);
@@ -1004,6 +1043,12 @@ sub file_search {
                             };
                             # Stop if we hit the limit
                             $File::Find::prune = 1 if @matches >= $max_results;
+                            # Poll for interrupt every N matches so a recursive
+                            # search across a big tree can be cancelled.
+                            if (@matches % 100 == 0 && $self->check_interrupt($context)) {
+                                $File::Find::prune = 1;
+                                return;
+                            }
                         }
                         },
                         preprocess => sub {
@@ -1139,6 +1184,7 @@ sub grep_search {
             $search_regex = qr/\Q$query\E/i;
         }
         
+        my $files_since_check = 0;
         foreach my $file (@files) {
             # file_search returns paths relative to the search directory. Rebuild the
             # absolute path so -T/-s/open work regardless of process cwd.
@@ -1147,6 +1193,16 @@ sub grep_search {
                 $path = File::Spec->catfile($directory, $path);
             }
             $files_searched++;
+
+            # Poll for interrupt every N files so a long grep across many
+            # files can be cancelled mid-stream.
+            if (++$files_since_check >= 25) {
+                $files_since_check = 0;
+                if ($self->check_interrupt($context)) {
+                    $search_truncated = 1;
+                    last;
+                }
+            }
 
             # Wall-clock timeout check
             if (time() - $start_time > $SEARCH_TIMEOUT) {

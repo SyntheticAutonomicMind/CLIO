@@ -871,8 +871,11 @@ Post-process AI response: save session, handle errors, display usage.
 
 sub _handle_ai_response {
     my ($self, $result, $alarm_count, $spinner) = @_;
-    
-    alarm(0);
+
+    # Disable the periodic ALRM handler installed by _process_ai_request.
+    # The new helper is idempotent and safe to call multiple times.
+    require CLIO::Core::Interrupt;
+    CLIO::Core::Interrupt::uninstall_alrm_handler();
     log_debug('Chat', "Disabled periodic ALRM after streaming ($alarm_count interrupts)");
     
     $spinner->stop();
@@ -1197,69 +1200,24 @@ sub _process_ai_request {
         log_debug('Chat', "Loaded " . scalar(@$conversation_history) . " messages from session history");
     }
     
-    # Enable periodic signal delivery during streaming
-    # Without this, Ctrl-C during HTTP streaming won't save session because:
-    # - HTTP::Tiny blocks in socket read syscall
-    # - Perl signal handlers only run between Perl opcodes
-    # - ALRM interrupts the syscall, allowing signal handlers to run
-    # Trade-off: 1-second worst-case latency for ESC/keypress response
-    my $alarm_count = 0;
-    my $alarm_handler = sub {
-        $alarm_count++;
-        
-        # Actively check for keypress in the signal handler itself.
-        # This is critical because WorkflowOrchestrator's interrupt checks
-        # only run at specific points (loop top, between tools, etc).
-        # During long tool execution or HTTP streaming, the ALRM handler
-        # is the ONLY code that runs periodically. By checking for input
-        # here, we ensure ESC detection works even when the main loop is
-        # blocked in a tool call or network I/O.
-        if ($self->{session} && $self->{session}->state() && 
-            !$self->{session}->state()->{user_interrupted}) {
-            my $key = eval { ReadKey(-1) };
-            if (defined $key) {
-                my $ord = ord($key);
-                
-                if ($ord == 27) {
-                    # ESC key or escape sequence. Check if more characters
-                    # follow immediately - if so, this is a terminal escape
-                    # sequence (mouse event, focus event, arrow key, etc.)
-                    # not a standalone ESC keypress.
-                    my $next = eval { ReadKey(0.05) };  # 50ms wait for sequence chars
-                    if (defined $next) {
-                        # Escape sequence - drain remaining chars and ignore
-                        log_debug('Chat', "ALRM: escape sequence detected, draining");
-                        while (defined(eval { ReadKey(-1) })) { }
-                    } else {
-                        # Standalone ESC - this is an interrupt
-                        log_debug('Chat', "ALRM interrupt: ESC key detected");
-                        while (defined(eval { ReadKey(-1) })) { }
-                        $self->{session}->state()->{user_interrupted} = 1;
-                    }
-                } elsif ($ord == 3) {
-                    # Ctrl+C - interrupt
-                    log_debug('Chat', "ALRM interrupt: Ctrl+C detected");
-                    while (defined(eval { ReadKey(-1) })) { }
-                    $self->{session}->state()->{user_interrupted} = 1;
-                } else {
-                    # Any other key - drain but do NOT trigger interrupt.
-                    # Mouse events, focus events, resize events, and other
-                    # terminal control sequences should not interrupt the agent.
-                    my $key_desc = ($ord < 32) ? sprintf('Ctrl+%c', $ord + 64) :
-                                   sprintf('0x%02x', $ord);
-                    log_debug('Chat', "ALRM: non-interrupt key ($key_desc), draining");
-                    while (defined(eval { ReadKey(-1) })) { }
-                }
-            }
-        }
-        
-        # Only log ALRM every 10th interrupt to reduce log noise
-        log_debug('Chat', "ALRM #$alarm_count - syscall interrupted for signal delivery")
-            if $alarm_count % 10 == 1;
-        alarm(1);  # Re-arm for next second
-    };
-    local $SIG{ALRM} = $alarm_handler;
-    alarm(1);  # Start periodic interruption
+    # Enable periodic signal delivery during streaming.
+    # The ALRM handler is now provided by CLIO::Core::Interrupt, which
+    # centralises the keystroke detection and keeps the signal handler
+    # safe (no blocking ReadKey in signal context). The 250ms interval
+    # gives sub-second worst-case latency for ESC detection across
+    # streaming and long tool execution.
+    #
+    # Why we still keep an alarm_count tally: legacy callers and
+    # _handle_ai_response() log how many ticks we fired during the
+    # request. CLIO::Core::Interrupt exposes is_alrm_handler_active() so
+    # _handle_ai_response() can detect a request that disabled the
+    # interrupt machinery (e.g. piped -input mode) and skip the log line.
+    require CLIO::Core::Interrupt;
+    CLIO::Core::Interrupt::install_alrm_handler(
+        session => $self->{session},
+        interval => CLIO::Core::WorkflowOrchestrator::INTERRUPT_ALRM_INTERVAL(),
+    );
+    my $alarm_count = 0;  # Legacy metric; see _handle_ai_response()
     
     # Set cbreak mode for interrupt detection during agent execution
     # In normal/canonical mode, keypresses are buffered until Enter and
@@ -2206,11 +2164,17 @@ sub request_collaboration {
             # The ALRM handler calls ReadKey(-1) which does sysread(STDIN) -
             # if /shell hands the foreground to bash via tcsetpgrp(), CLIO becomes
             # a background process and sysread triggers SIGTTIN, stopping CLIO.
-            alarm(0);
+            #
+            # The agent turn is over by the time we reach this branch, so the
+            # ALRM handler is already uninstalled. We use uninstall here as
+            # a defensive no-op (idempotent) and skip the re-arm that the old
+            # code did - re-arming without a handler would terminate the
+            # process on the next SIGALRM.
+            require CLIO::Core::Interrupt;
+            CLIO::Core::Interrupt::uninstall_alrm_handler();
             ReadMode(0);
             my ($continue, $ai_prompt) = $self->handle_command($response);
-            ReadMode(1);  # Re-enter cbreak for interrupt detection
-            alarm(1);     # Re-arm ALRM for interrupt detection
+            ReadMode(1);  # Re-enter cbreak for readline
             
             # If command requested exit, cancel collaboration
             if (!$continue) {

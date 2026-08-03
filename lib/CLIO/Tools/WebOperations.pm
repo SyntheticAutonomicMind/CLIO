@@ -128,6 +128,14 @@ sub fetch_url {
         );
     }
 
+    # Interrupt check before launching the HTTP request. fetch_url can
+    # block on the network for the full timeout period, and the user
+    # could press ESC long before the request finishes. Checking now
+    # short-circuits cleanly with a clear error message.
+    if ($self->check_interrupt($context)) {
+        return $self->error_result("Interrupted before fetching $url.");
+    }
+
     # Security: check for sandbox mode and suspicious URLs
     my $security_check = $self->_check_url_security($url, $context);
     if ($security_check->{blocked}) {
