@@ -250,4 +250,98 @@ subtest 'streaming simulation - Qwen3 / llama.cpp end-to-end' => sub {
     is($ss->{in_think_tag}, 0, 'in_think_tag reset to 0 after close');
 };
 
+# =========================================================================
+# Test 12: Qwen3.6 / llama.cpp close-tag variants. The model
+# inconsistently emits </thinking> (with i) or [/thinking] (square
+# brackets) instead of the canonical </think>. All three must close the
+# thinking block so the real response reaches content and does not get
+# swallowed into the thinking channel.
+# =========================================================================
+subtest 'Qwen3.6 close tag variants </thinking> and [/thinking]' => sub {
+    my $ss = MockSS->new;
+    my $out = run_delta($ss,
+        "<think>User is just chatting.</thinking>\n\nNice. How's the install going?");
+    is($out, "Nice. How's the install going?", 'Content after </thinking> preserved');
+    is($ss->{in_think_tag}, 0, 'in_think_tag reset after </thinking>');
+    is($ss->{reasoning_calls}[0], 'User is just chatting.',
+        'Reasoning captured from </thinking> variant');
+
+    $ss = MockSS->new;
+    $out = run_delta($ss,
+        "<think>User is just chatting.[/thinking]\n\nNice. How's the install going?");
+    is($out, "Nice. How's the install going?", 'Content after [/thinking] preserved');
+    is($ss->{in_think_tag}, 0, 'in_think_tag reset after [/thinking]');
+    is($ss->{reasoning_calls}[0], 'User is just chatting.',
+        'Reasoning captured from [/thinking] variant');
+};
+
+# =========================================================================
+# Test 13: Open tag variants <thinking> and [thinking]. Some Qwen3.x
+# templates open with the longer or bracket forms; the state machine
+# must enter thinking mode for all of them.
+# =========================================================================
+subtest 'open tag variants <thinking> and [thinking]' => sub {
+    my $ss = MockSS->new;
+    my $out = run_delta($ss,
+        "<thinking>Deep reasoning here</thinking>Answer");
+    is($out, 'Answer', 'Content after <thinking>...</thinking> preserved');
+    is($ss->{in_think_tag}, 0, 'in_think_tag reset');
+    is($ss->{reasoning_calls}[0], 'Deep reasoning here',
+        'Reasoning captured from <thinking> variant');
+
+    $ss = MockSS->new;
+    $out = run_delta($ss,
+        "[thinking]Deep reasoning here[/thinking]Answer");
+    is($out, 'Answer', 'Content after [thinking]...[/thinking] preserved');
+    is($ss->{in_think_tag}, 0, 'in_think_tag reset for bracket form');
+    is($ss->{reasoning_calls}[0], 'Deep reasoning here',
+        'Reasoning captured from [thinking] variant');
+};
+
+# =========================================================================
+# Test 14: Chunked </thinking> close across deltas. The model's response
+# is streamed in small chunks, so </thinking> can be split as
+# "</think" + "ing>". The partial-close buffer must handle the i-variant
+# partials (</think, </thinki, </thinkin, </thinking) and the bracket
+# partials ([/think, [/thinki, [/thinkin, [/thinking).
+# =========================================================================
+subtest 'chunked close variants across deltas' => sub {
+    my $ss = MockSS->new;
+    my $out1 = run_delta($ss, "<think>reasoning so far</think");
+    is($out1, '', 'Nothing emitted while inside think tag');
+    is($ss->{in_think_tag}, 1, 'Still in think tag');
+    is($ss->{think_buffer}, '</think', 'Partial </think buffered');
+
+    my $out2 = run_delta($ss, "ing>the answer.");
+    is($out2, "the answer.", 'Content after chunked </thinking> emitted');
+    is($ss->{reasoning_calls}[0], 'reasoning so far',
+        'Pre-close reasoning captured');
+
+    # Bracket close split: "[/think" + "ing]"
+    $ss = MockSS->new;
+    $out1 = run_delta($ss, "<think>reasoning so far[/think");
+    is($ss->{think_buffer}, '[/think', 'Partial [/think buffered');
+    $out2 = run_delta($ss, "ing]the answer.");
+    is($out2, "the answer.", 'Content after chunked [/thinking] emitted');
+    is($ss->{reasoning_calls}[0], 'reasoning so far',
+        'Pre-close reasoning captured for bracket variant');
+};
+
+# =========================================================================
+# Test 15: Stale close tag variants without matching open. Bare
+# </thinking> or [/thinking] with no preceding open tag must be stripped
+# from content, not emitted.
+# =========================================================================
+subtest 'stale close variants stripped from content' => sub {
+    my $ss = MockSS->new;
+    my $out = run_delta($ss, "hello </thinking> world");
+    is($out, "hello  world", 'Stale </thinking> stripped');
+    is(scalar @{$ss->{reasoning_calls}}, 0, 'No reasoning extracted');
+
+    $ss = MockSS->new;
+    $out = run_delta($ss, "hello [/thinking] world");
+    is($out, "hello  world", 'Stale [/thinking] stripped');
+    is(scalar @{$ss->{reasoning_calls}}, 0, 'No reasoning extracted');
+};
+
 done_testing();
