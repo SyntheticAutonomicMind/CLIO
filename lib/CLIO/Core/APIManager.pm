@@ -1318,21 +1318,35 @@ sub adapt_request_for_endpoint {
 
     return $payload;
 }
-# Check if string ends with a valid partial <think> prefix.
-# Only matches exact prefixes: <, <t, <th, <thi, <thin, <think
-# Does NOT match arbitrary < followed by other characters (e.g. <a, <b, <div)
+# Check if string ends with a valid partial think-tag open prefix.
+# Handles <think>, <thinking>, [think], [thinking] and their partial
+# forms (e.g. <, <t, <th, <thi, <thin, <think, <thinki, <thinkin,
+# <thinking and the [ bracket variants).
+# Does NOT match arbitrary < or [ followed by other characters
+# (e.g. <a, <b, <div).
 sub _has_partial_open_think_suffix {
     my ($text) = @_;
     return 0 unless length($text);
-    return $text =~ /(?:<think|<thin|<thi|<th|<t|<)$/;
+    return $text =~ /(?:<think(?:ing|in|i)?|<thin|<thi|<th|<t|<|\[think(?:ing|in|i)?|\[thin|\[thi|\[th|\[t|\[)$/;
 }
 
-# Check if string ends with a valid partial </think> prefix.
-# Only matches exact prefixes: <, </, </t, </th, </thi, </thin, </think
+# Check if string ends with a valid partial think-tag close prefix.
+# Handles </think>, </thinking>, [/think], [/thinking] and their
+# partial forms (e.g. <, </, </t, </th, </thi, </thin, </think, </thinki,
+# </thinkin, </thinking and the [ bracket variants).
 sub _has_partial_close_think_suffix {
     my ($text) = @_;
     return 0 unless length($text);
-    return $text =~ /(?:<\/think|<\/thin|<\/thi|<\/th|<\/t|<\/|<)$/;
+    return $text =~ /(?:<\/think(?:ing|in|i)?|<\/thin|<\/thi|<\/th|<\/t|<\/|<|\[\/think(?:ing|in|i)?|\[\/thin|\[\/thi|\[\/th|\[\/t|\[\/|\[)$/;
+}
+
+# Return the index of the rightmost '<' or '[' in a string. Used to find
+# the start of a partial think-tag prefix for buffering across chunks.
+sub _last_tag_marker_index {
+    my ($text) = @_;
+    my $lt = rindex($text, '<');
+    my $br = rindex($text, '[');
+    return $lt > $br ? $lt : $br;
 }
 
 
@@ -3568,15 +3582,17 @@ sub _process_non_streaming_response {
 
     # Post-process content
     if (defined $content && length($content)) {
-        # Strip inline <think>...</think> tags from any provider's non-streaming
+        # Strip inline thinking tags from any provider's non-streaming
         # response. Mirrors the provider-agnostic streaming extraction in
         # _process_think_tags: any chat template that emits thinking inline
         # (llama.cpp + Qwen3, DeepSeek-R1 distills, MiniMax M2.x) hits this
         # path. Providers using a separate reasoning_content field never put
-        # <think> tags in their content, so this is a no-op for them.
-        if ($content =~ /<think>/) {
-            $content =~ s{<think>.*?</think>\n*}{}sg;
-            $content =~ s/<\/?think>//g;
+        # think tags in their content, so this is a no-op for them. Accepts
+        # all known tag variants: <think>, <thinking>, [think], [thinking]
+        # and their matching closes.
+        if ($content =~ /(?:<think>|<thinking>|\[think\]|\[thinking\])/) {
+            $content =~ s{(?:<think>|<thinking>|\[think\]|\[thinking\])(.*?)(?:</think>|</thinking>|\[/think\]|\[/thinking\])\n*}{}sg;
+            $content =~ s{(?:</?think>|</?thinking>|\[/?think\]|\[/?thinking\])}{}g;
             $content =~ s/^\n+//;
         }
         $content = "[conversation]$content\[/conversation]" unless $content =~ m{\[conversation\].*?\[/conversation\]}s;
@@ -4083,13 +4099,12 @@ sub _process_chat_completions_delta {
     if (defined($delta->{content}) && length($delta->{content})) {
         $content_delta = $delta->{content};
 
-        # Inline <think>...</think> tag extraction. Provider-agnostic:
-        # models running through llama.cpp (Qwen3, DeepSeek-R1 distills),
-        # MiniMax M2.x, and any other chat template that emits thinking
-        # inline in delta.content all hit this path. Providers that use
-        # a separate reasoning_content field (DeepSeek API, OpenRouter,
-        # NVIDIA) never put <think> tags in delta.content, so this is a
-        # no-op for them.
+        # Inline thinking-tag extraction. Provider-agnostic: models running
+        # through llama.cpp (Qwen3, DeepSeek-R1 distills), MiniMax M2.x,
+        # and any other chat template that emits thinking inline in
+        # delta.content all hit this path. Providers that use a separate
+        # reasoning_content field (DeepSeek API, OpenRouter, NVIDIA) never
+        # put think tags in delta.content, so this is a no-op for them.
         if (defined $content_delta) {
             $content_delta = $self->_process_think_tags($content_delta, $ss);
             $content_delta = undef unless defined($content_delta) && length($content_delta);
@@ -4193,10 +4208,18 @@ sub _accumulate_tool_calls_delta {
 
 =head2 _process_think_tags($content_delta, $ss)
 
-Provider-agnostic <think>...</think> state machine. Strips think tags from
-content and routes thinking content to the on_thinking callback. Used by
-MiniMax M2.x, llama.cpp servers running Qwen3 / DeepSeek-R1 distills, and
-any other chat template that emits thinking inline in delta.content.
+Provider-agnostic thinking-tag state machine. Strips think tags from content
+and routes thinking content to the on_thinking callback. Used by MiniMax
+M2.x, llama.cpp servers running Qwen3 / DeepSeek-R1 distills, and any other
+chat template that emits thinking inline in delta.content.
+
+Models are inconsistent about the exact tag spelling. We accept all known
+variants for the open tag - <think>, <thinking>, [think], [thinking] - and
+their matching closes - </think>, </thinking>, [/think], [/thinking]. In
+particular Qwen3.6 frequently closes with </thinking> or [/thinking] instead
+of </think>, which would otherwise leave the state machine stuck in thinking
+mode and swallow the real response into the thinking channel.
+
 Returns the filtered content_delta (may be empty string).
 
 =cut
@@ -4210,7 +4233,7 @@ sub _process_think_tags {
 
     while (length($work)) {
         if ($ss->{in_think_tag}) {
-            if ($work =~ s{^(.*?)</think>}{}s) {
+            if ($work =~ s{^(.*?)(?:</think>|</thinking>|\[/think\]|\[/thinking\])}{}s) {
                 my $think_text = $1;
                 if (length($think_text) && $ss->{on_thinking}) {
                     $ss->{reasoning_active} = 1;
@@ -4221,7 +4244,7 @@ sub _process_think_tags {
                 $work =~ s/^\n+//;
             }
             elsif (_has_partial_close_think_suffix($work)) {
-                my $idx = rindex($work, '<');
+                my $idx = _last_tag_marker_index($work);
                 my $before = substr($work, 0, $idx);
                 if (length($before) && $ss->{on_thinking}) {
                     $ss->{reasoning_active} = 1;
@@ -4241,19 +4264,19 @@ sub _process_think_tags {
             }
         }
         else {
-            if ($work =~ s{^(.*?)<think>}{}s) {
+            if ($work =~ s{^(.*?)(?:<think>|<thinking>|\[think\]|\[thinking\])}{}s) {
                 $output .= $1;
                 $ss->{in_think_tag} = 1;
             }
             elsif (_has_partial_open_think_suffix($work)) {
-                my $idx = rindex($work, '<');
+                my $idx = _last_tag_marker_index($work);
                 $output .= substr($work, 0, $idx);
                 $ss->{think_buffer} = substr($work, $idx);
                 $work = '';
             }
             else {
-                # Strip stale </think> close tags without matching open tags
-                $work =~ s{</think>}{}g;
+                # Strip stale close tags without matching open tags
+                $work =~ s{(?:</think>|</thinking>|\[/think\]|\[/thinking\])}{}g;
                 $output .= $work;
                 $work = '';
             }
@@ -4279,21 +4302,23 @@ sub _cleanup_streaming_state {
         $ss->{reasoning_active} = 0;
     }
 
-    # Strip residual <think> tags from accumulated content. Mirrors the
+    # Strip residual think tags from accumulated content. Mirrors the
     # provider-agnostic think-tag extraction in _process_think_tags -
     # any provider whose chat template emits inline think tags may leave
-    # a partial residue here if the stream ends inside a tag.
-    if (length($ss->{accum_content}) && $ss->{accum_content} =~ /<\/?think>/) {
-        while ($ss->{accum_content} =~ s{<think>(.*?)</think>\n*}{}sg) {
+    # a partial residue here if the stream ends inside a tag. Accepts all
+    # known tag variants: <think>, <thinking>, [think], [thinking] and
+    # their matching closes.
+    if (length($ss->{accum_content}) && $ss->{accum_content} =~ /(?:<\/?think>|<\/?thinking>|\[\/?think\]|\[\/?thinking\])/) {
+        while ($ss->{accum_content} =~ s{(?:<think>|<thinking>|\[think\]|\[thinking\])(.*?)(?:</think>|</thinking>|\[/think\]|\[/thinking\])\n*}{}sg) {
             my $residual = $1;
             if (length($residual)) {
                 $ss->{accum_reasoning} .= $residual;
                 $ss->{on_thinking}->($residual) if $ss->{on_thinking};
             }
         }
-        $ss->{accum_content} =~ s/<\/?think>//g;
+        $ss->{accum_content} =~ s{(?:</?think>|</?thinking>|\[/?think\]|\[/?thinking\])}{}g;
         $ss->{accum_content} =~ s/^\n+//;
-        log_debug('APIManager', "Cleaned residual <think> tags from streaming content");
+        log_debug('APIManager', "Cleaned residual think tags from streaming content");
     }
 
     # Flush remaining think_buffer (provider-agnostic; see _process_think_tags).
