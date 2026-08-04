@@ -345,13 +345,6 @@ sub trim_conversation_for_api {
     # actual max_response_tokens (passed in as max_response_tokens,
     # originally from Provider.max_output_tokens) plus an estimation
     # buffer. NO hard cap on the reserve - whatever the model supports.
-    #
-    # Previously: safe_threshold = int(model_context * 0.75) which
-    #            reserved 25% of context for output regardless of the
-    #            model's actual output cap. For 1M ctx with 16K output
-    #            this kept 750K for prompt and reserved 250K (24x the
-    #            actual output). Now we reserve 16K + 50K buffer and
-    #            keep ~934K for prompt.
     my $caps_for_budget = {
         max_context_window_tokens => $model_context,
         max_output_tokens         => $max_response,

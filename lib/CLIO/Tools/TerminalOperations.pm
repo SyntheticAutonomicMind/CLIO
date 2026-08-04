@@ -807,7 +807,7 @@ sub _decision_source {
     my ($self, $analysis, $context) = @_;
 
     return 'no_flags' if !@{$analysis->{flags} || []};
-    # Was a session grant responsible? (Set by 'a' response to a prior prompt.)
+    # Was a session grant responsible?
     for my $flag (@{$analysis->{flags}}) {
         if ($_session_grants{$flag->{category}}) {
             return 'session_grant:' . $flag->{category};

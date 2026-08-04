@@ -371,11 +371,6 @@ sub load {
             #   - Default-value entries (from older auto-population) are skipped
             #   - Explicit per-model overrides (non-default) are still applied
             #   - Global `/api set X` values survive model switches intact
-            # Bug context: previously this block copied every key from model_configs
-            # back into $self->{config}, which clobbered newer top-level settings with
-            # stale defaults (e.g. user sets thinking on, top-level=1, but stale
-            # model_configs->{minimax/MiniMax-M3}->{show_thinking}=0 silently
-            # overrode it on every load - making /api set thinking on appear to reset).
             if ($model_configs->{$model}) {
                 my $restored_count = 0;
                 for my $key (@{MODEL_SCOPED_KEYS()}) {

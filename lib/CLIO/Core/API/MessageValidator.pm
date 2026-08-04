@@ -194,10 +194,6 @@ sub validate_and_truncate {
     # from model capabilities. The estimation buffer in
     # compute_prompt_budget already covers next-burst headroom; no
     # additional percentage-based haircut is needed.
-    # Previously: int($max_prompt * 0.50) which kept 500K for 1M
-    #            context (50% reservation regardless of model's real
-    #            output cap). Now: $prompt_budget (~822K for 1M with
-    #            128K output, ~934K for 1M with 16K output).
     my $post_trim_keep_limit = $prompt_budget;
     $post_trim_keep_limit = int($effective_limit * 0.5) if $post_trim_keep_limit < $effective_limit * 0.5;
     $post_trim_keep_limit = CLIO::Core::Defaults::DEFAULT_POST_TRIM_FLOOR() if $post_trim_keep_limit < CLIO::Core::Defaults::DEFAULT_POST_TRIM_FLOOR();
@@ -628,10 +624,8 @@ sub _extract_preserved_units {
     }
     
     # Find the MOST RECENT user unit for task context preservation.
-    # Previously we preserved the FIRST user message, but in long sessions
-    # with task transitions that message is stale and misleads the agent.
-    # The original task is captured in the thread_summary. The most recent
-    # user message represents the current work.
+    # The most recent user message represents the current work; the
+    # original task is captured in the thread_summary.
     my $last_user_unit;
     my $last_user_tokens = 0;
     my $last_user_idx = -1;

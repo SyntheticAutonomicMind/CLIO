@@ -464,7 +464,7 @@ sub render_table {
         # Safety: if rounding pushed total above available (e.g. min_widths
         # sum already exceeds available), trim from the largest column down
         # until we fit. This ensures the table width never exceeds the
-        # terminal width (5-char discrepancy bug fix).
+        # terminal width.
         $current_total = 0;
         for my $w (@target_widths) { $current_total += $w; }
         if ($current_total > $available_for_content) {

@@ -964,7 +964,6 @@ sub process_input {
             messages_saved_during_workflow => (@tool_calls_made > 0) ? 1 : 0
         };
         
-        # NOTE: We previously tracked lastResponseHadTools here, but it's no longer needed.
         # previous_response_id should ALWAYS be included when available (see APIManager.pm).
         # Skipping it for tool calls was causing unnecessary credit charges.
         
