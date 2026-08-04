@@ -463,38 +463,6 @@ sub trim_conversation_for_api {
         }
     }
 
-    # Always preserve the first user message (original task context).
-    # The reverse walk may have dropped it if budget was tight.
-    # Find and prepend it if missing - the documented policy is "always".
-    my $first_user_msg;
-    for my $msg (@messages) {
-        if (($msg->{role} // '') eq 'user') {
-            $first_user_msg = $msg;
-            last;
-        }
-    }
-    if ($first_user_msg) {
-        my $already_kept = 0;
-        for my $k (@kept) {
-            if ($k eq $first_user_msg) {
-                $already_kept = 1;
-                last;
-            }
-        }
-        unless ($already_kept) {
-            # Truncate to 2000 chars if needed to avoid blowing budget,
-            # but always preserve the core of the original task.
-            my $preserved = { %$first_user_msg };
-            if (length($preserved->{content} // '') > 2000) {
-                $preserved->{content} = substr($preserved->{content}, 0, 2000) . '...';
-            }
-            unshift @kept, $preserved;
-            if ($debug) {
-                log_debug('ConversationManager', "Preserved first user message (original task context)");
-            }
-        }
-    }
-
     if ($debug) {
         log_debug('ConversationManager', "Trimmed: " . scalar(@messages) . " -> " . scalar(@kept) . " messages");
         log_debug('ConversationManager', "Token reduction: $history_tokens -> $kept_tokens tokens");
