@@ -1119,7 +1119,6 @@ sub _process_ai_request {
     # Show progress indicator while waiting for AI response
     # Use persistent spinner stored on Chat object
     # This ensures tools can access the SAME spinner instance via context
-    # Previously, a new local spinner was created per request, causing reference issues
     unless ($self->{spinner}) {
         # Create persistent spinner on first use with frames from current style
         # Use inline mode so spinner animates after text we print

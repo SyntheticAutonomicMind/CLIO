@@ -1754,7 +1754,6 @@ sub _nvidia_model_heuristics {
     }
     
     # Kimi K2: 256K context, 32K output, reasoning, vision
-    # Updated 2026-07-31 from 16K to 32K per platform.kimi.ai K2.6
     # quickstart docs, which state: "max_tokens - optional - ... -
     # Default to be 32k aka 32768". (K2.6 is the model covered by our
     # static map entry; the heuristic catches K2 family variants.)

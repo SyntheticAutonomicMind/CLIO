@@ -778,10 +778,6 @@ sub trim_context {
     # The proactive trim in MessageValidator handles sophisticated compression
     # (thread_summary, user message preservation, budget-based walk).
     # This trim just ensures Session::State history stays bounded.
-    #
-    # Previously this kept "important" middle messages (top 30% by _importance),
-    # which caused old completed tasks to persist across multiple trims while
-    # current work was dropped.
     
     # Separate system messages (prompt, previous trim notices) from conversation
     my @system = grep { defined $_->{role} && $_->{role} eq 'system' } @messages;

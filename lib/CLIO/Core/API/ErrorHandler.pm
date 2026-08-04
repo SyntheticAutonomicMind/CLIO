@@ -728,10 +728,7 @@ sub trim_for_token_limit {
     if ($retry_count == 1) {
         # First retry: keep recent messages that fit in the model's
         # prompt budget (context - output - estimation buffer).
-        # Previously: int(max_ctx * 0.40) which kept 40% of max
-        # context (reserving 60% for output). Now we use the model's
-        # actual output cap, so for 1M with 16K output we keep ~934K
-        # instead of 400K.
+        # The model's actual output cap is used, not a fixed percentage.
         my $_retry_caps = $wo->{api_manager}
             ? ($wo->{api_manager}->get_model_capabilities() || {}) : {};
         require CLIO::Memory::TokenEstimator;
