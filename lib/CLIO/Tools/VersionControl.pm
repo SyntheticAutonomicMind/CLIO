@@ -195,8 +195,7 @@ sub log {
     
     my $repo_path = $params->{repository_path} || '.';
     # Validate limit: must be a positive integer.
-    # Negative or zero values silently caused unbounded output (1132+ commits
-    # returned for limit=-5). Clamp large values to a safe maximum.
+    # Negative or zero values cause unbounded output; clamp to safe maximum.
     my $limit = $params->{limit};
     my $clamped = 0;
     if (!defined $limit) {
@@ -381,8 +380,8 @@ sub commit {
 
     eval {
         $result = _in_repo($repo_path, sub {
-            # Capture pre-stage untracked files so we can warn the agent if
-            # auto_stage pulled in files they didn't intend to commit.
+            # Capture pre-stage untracked files to warn if auto_stage
+            # includes files the agent didn't intend to commit.
             my @pre_untracked = $auto_stage ? split /\n/, `git ls-files --others --exclude-standard 2>&1` : ();
 
             if ($auto_stage) {
