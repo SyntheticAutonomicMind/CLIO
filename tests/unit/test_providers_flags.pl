@@ -183,7 +183,7 @@ for my $name (@CLOUD_NAMES) {
 
     # Providers without a dedicated fetcher return undef so the caller
     # can fall back to the generic OpenAI-compatible path.
-    for my $name (qw(openai ollama_cloud openrouter sam llama.cpp lmstudio)) {
+    for my $name (qw(openai ollama_cloud openrouter sam lmstudio)) {
         is(capability_fetcher($name), undef,
             "$name has no dedicated fetcher -> undef (caller falls back)");
     }

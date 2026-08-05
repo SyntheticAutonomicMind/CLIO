@@ -41,6 +41,7 @@ use lib "$FindBin::Bin/../../lib";
 use Test::More;
 
 use CLIO::Core::ModelCapabilitiesManager;
+use CLIO::Providers;
 
 my $mcm = CLIO::Core::ModelCapabilitiesManager->new();
 
