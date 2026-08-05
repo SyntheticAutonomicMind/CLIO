@@ -178,6 +178,7 @@ my %PROVIDERS = (
         llama_user_id_supported => 1,
         local_inference => 1,
         exposes_props => 1,
+        capability_fetcher => 'llama_cpp',
         # No url_detection_patterns - llama.cpp's port is freely configurable
         # (the server binds to whatever --port flag was passed), so we can't
         # safely auto-detect. Users explicitly register as --provider llama.cpp.
