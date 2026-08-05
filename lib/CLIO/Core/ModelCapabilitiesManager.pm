@@ -2282,6 +2282,703 @@ sub _fetch_deepseek_capabilities {
     };
 }
 
+
+=head2 _fetch_llama_cpp_capabilities
+
+Fetch capabilities for llama.cpp local models using a static map.
+llama.cpp's /v1/models endpoint returns only the model id with no capability
+metadata, so we maintain a static capability map for popular models that can
+be run locally. Sources: model cards on Hugging Face, Unsloth documentation,
+and NVIDIA/DeepSeek API specs for the original model families.
+
+Arguments:
+- $model: Model identifier (as resolved from llama.cpp /v1/models, typically
+          the GGUF filename without .gguf extension and path stripped)
+
+Returns:
+- Hashref with capability data, or undef if model not in static map
+
+=cut
+
+sub _fetch_llama_cpp_capabilities {
+    my ($self, $model) = @_;
+
+    # Static capability map for popular local models run via llama.cpp.
+    # Keys are case-insensitive and should match the basename returned by
+    # llama.cpp /v1/models (path stripped, .gguf extension removed).
+    my %llama_cpp_models = (
+        # --- DeepSeek V4 (Unsloth) ---
+        # DeepSeek V4: 1M context, reasoning, tools
+        # Source: https://unsloth.ai/docs/models/deepseek-v4
+        'deepseek-v4' => {
+            context_window => 1048576,
+            max_output_tokens => 32768,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 1,
+        },
+        'deepseek-v4-flash' => {
+            context_window => 1048576,
+            max_output_tokens => 32768,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 1,
+        },
+        'deepseek-v4-pro' => {
+            context_window => 1048576,
+            max_output_tokens => 32768,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 1,
+        },
+
+        # --- Laguna (Unsloth) ---
+        # Laguna-S-2.1: 128K context, reasoning, tools
+        # Source: https://huggingface.co/unsloth/Laguna-S-2.1-GGUF
+        'laguna-s-2.1' => {
+            context_window => 131072,
+            max_output_tokens => 32768,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 1,
+        },
+        'laguna-s2.1' => {
+            context_window => 131072,
+            max_output_tokens => 32768,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 1,
+        },
+
+        # --- Nemotron 3 (NVIDIA/Unsloth) ---
+        # Nemotron 3 Ultra/Super: 1M context, 32K output, reasoning, tools
+        # Source: https://unsloth.ai/docs/models/nemotron-3/nemotron-3-super
+        #         https://docs.api.nvidia.com (NIM API reference)
+        'nemotron-3-ultra' => {
+            context_window => 1048576,
+            max_output_tokens => 32768,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 1,
+        },
+        'nemotron-3-super' => {
+            context_window => 1048576,
+            max_output_tokens => 32768,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 1,
+        },
+        'nemotron-3-super-120b' => {
+            context_window => 1048576,
+            max_output_tokens => 32768,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 1,
+        },
+        'nemotron-3-ultra-550b' => {
+            context_window => 1048576,
+            max_output_tokens => 32768,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 1,
+        },
+
+        # --- Additional popular local models ---
+        # Qwen 3 series: 256K context, reasoning, tools
+        'qwen3-32b' => {
+            context_window => 262144,
+            max_output_tokens => 16384,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 1,
+        },
+        'qwen3-14b' => {
+            context_window => 262144,
+            max_output_tokens => 16384,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 1,
+        },
+        'qwen3-8b' => {
+            context_window => 262144,
+            max_output_tokens => 16384,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 1,
+        },
+        'qwen3-4b' => {
+            context_window => 262144,
+            max_output_tokens => 16384,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 1,
+        },
+        'qwen3-1.7b' => {
+            context_window => 262144,
+            max_output_tokens => 16384,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 1,
+        },
+        'qwen3-0.6b' => {
+            context_window => 262144,
+            max_output_tokens => 16384,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 1,
+        },
+
+        # Llama 3.1/3.2/3.3 series
+        'llama-3.1-8b-instruct' => {
+            context_window => 131072,
+            max_output_tokens => 16384,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 0,
+        },
+        'llama-3.1-70b-instruct' => {
+            context_window => 131072,
+            max_output_tokens => 16384,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 0,
+        },
+        'llama-3.2-1b-instruct' => {
+            context_window => 131072,
+            max_output_tokens => 8192,
+            supports_tools => 0,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 0,
+        },
+        'llama-3.2-3b-instruct' => {
+            context_window => 131072,
+            max_output_tokens => 8192,
+            supports_tools => 0,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 0,
+        },
+        'llama-3.2-11b-vision-instruct' => {
+            context_window => 131072,
+            max_output_tokens => 16384,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 1,
+            supports_reasoning => 0,
+        },
+        'llama-3.2-90b-vision-instruct' => {
+            context_window => 131072,
+            max_output_tokens => 16384,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 1,
+            supports_reasoning => 0,
+        },
+        'llama-3.3-70b-instruct' => {
+            context_window => 131072,
+            max_output_tokens => 16384,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 0,
+        },
+
+        # Phi-4 series
+        'phi-4' => {
+            context_window => 131072,
+            max_output_tokens => 16384,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 0,
+        },
+        'phi-4-mini-instruct' => {
+            context_window => 131072,
+            max_output_tokens => 16384,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 0,
+        },
+
+        # Gemma 3 series
+        'gemma-3-4b-it' => {
+            context_window => 131072,
+            max_output_tokens => 16384,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 1,
+            supports_reasoning => 0,
+        },
+        'gemma-3-12b-it' => {
+            context_window => 131072,
+            max_output_tokens => 16384,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 1,
+            supports_reasoning => 0,
+        },
+        'gemma-3-27b-it' => {
+            context_window => 131072,
+            max_output_tokens => 16384,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 1,
+            supports_reasoning => 0,
+        },
+
+        # Mistral series
+        'mistral-7b-instruct-v0.3' => {
+            context_window => 32768,
+            max_output_tokens => 8192,
+            supports_tools => 0,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 0,
+        },
+        'mistral-nemo-12b-instruct' => {
+            context_window => 131072,
+            max_output_tokens => 16384,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 0,
+        },
+
+        # DeepSeek R1 distills
+        'deepseek-r1-distill-llama-8b' => {
+            context_window => 131072,
+            max_output_tokens => 16384,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 1,
+        },
+        'deepseek-r1-distill-llama-70b' => {
+            context_window => 131072,
+            max_output_tokens => 16384,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 1,
+        },
+        'deepseek-r1-distill-qwen-1.5b' => {
+            context_window => 131072,
+            max_output_tokens => 16384,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 1,
+        },
+        'deepseek-r1-distill-qwen-7b' => {
+            context_window => 131072,
+            max_output_tokens => 16384,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 1,
+        },
+        'deepseek-r1-distill-qwen-14b' => {
+            context_window => 131072,
+            max_output_tokens => 16384,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 1,
+        },
+        'deepseek-r1-distill-qwen-32b' => {
+            context_window => 131072,
+            max_output_tokens => 16384,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 1,
+        },
+
+        # Granite series
+        'granite-3.1-8b-instruct' => {
+            context_window => 131072,
+            max_output_tokens => 8192,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 0,
+        },
+
+        # Yi series
+        'yi-1.5-9b-chat' => {
+            context_window => 32768,
+            max_output_tokens => 8192,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 0,
+        },
+        'yi-1.5-34b-chat' => {
+            context_window => 32768,
+            max_output_tokens => 8192,
+            supports_tools => 1,
+            supports_streaming => 1,
+            supports_vision => 0,
+            supports_reasoning => 0,
+        },
+    );
+
+    # Case-insensitive lookup with prefix stripping (e.g., handles
+    # "unsloth/deepseek-v4" -> "deepseek-v4")
+    my $model_data = $self->_lookup_static_model(\%llama_cpp_models, $model, 'unsloth', 'nvidia', 'meta', 'microsoft', 'google', 'mistralai', 'deepseek', 'ibm', '01-ai');
+    
+    if ($model_data) {
+        return {
+            provider              => 'llama.cpp',
+            model                 => $model,
+            context_window        => $model_data->{context_window},
+            max_prompt_tokens     => $model_data->{context_window},
+            max_output_tokens     => $model_data->{max_output_tokens},
+            supports_tools        => $model_data->{supports_tools},
+            supports_streaming    => $model_data->{supports_streaming},
+            supports_vision       => $model_data->{supports_vision},
+            supports_reasoning    => $model_data->{supports_reasoning},
+            embeddings_dimension  => undef,
+            architecture          => 'llama',
+            quantization          => undef,
+            parameters            => undef,
+            capabilities          => [],
+            size_bytes            => undef,
+            raw                   => $model_data,
+        };
+    }
+    
+    # If no static match, try pattern-based heuristics
+    my $heuristic_data = $self->_llama_cpp_model_heuristics($model);
+    if ($heuristic_data) {
+        return {
+            provider              => 'llama.cpp',
+            model                 => $model,
+            context_window        => $heuristic_data->{context_window},
+            max_prompt_tokens     => $heuristic_data->{context_window},
+            max_output_tokens     => $heuristic_data->{max_output_tokens},
+            supports_tools        => $heuristic_data->{supports_tools},
+            supports_streaming    => $heuristic_data->{supports_streaming},
+            supports_vision       => $heuristic_data->{supports_vision},
+            supports_reasoning    => $heuristic_data->{supports_reasoning},
+            embeddings_dimension  => undef,
+            architecture          => 'llama',
+            quantization          => undef,
+            parameters            => undef,
+            capabilities          => [],
+            size_bytes            => undef,
+            raw                   => $heuristic_data,
+        };
+    }
+    
+    return undef;
+}
+
+=head2 _llama_cpp_model_heuristics (Internal)
+
+Pattern-based heuristics for llama.cpp models not in the static map.
+Infers capabilities from model ID naming conventions commonly used in
+GGUF filenames.
+
+Arguments:
+- $model: Model identifier (basename from llama.cpp /v1/models)
+
+Returns:
+- Hashref with capability data, or undef if no pattern matches
+
+=cut
+
+sub _llama_cpp_model_heuristics {
+    my ($self, $model) = @_;
+
+    # Strip common org prefixes for pattern matching
+    my $base = $model;
+    $base =~ s{^unsloth/}{};
+    $base =~ s{^nvidia/}{};
+    $base =~ s{^meta/}{};
+    $base =~ s{^microsoft/}{};
+    $base =~ s{^google/}{};
+    $base =~ s{^mistralai/}{};
+    $base =~ s{^deepseek-ai/}{};
+    $base =~ s{^ibm/}{};
+    $base =~ s{^01-ai/}{};
+
+    # Also strip quantization suffixes (e.g., -Q4_K_M, -Q8_0, -IQ4_XS)
+    $base =~ s{-(?:Q[1-8]_[KM]|IQ[1-4]_[XS]|Q[1-8]|FP16|BF16|F16|F32)$}{i};
+
+    # --- Model family patterns (ordered by specificity) ---
+
+    # DeepSeek V4: 1M context, reasoning
+    if ($base =~ m{deepseek.*v4}i) {
+        return {
+            context_window => 1048576, max_output_tokens => 32768,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
+        };
+    }
+
+    # DeepSeek V3: 128K context, reasoning
+    if ($base =~ m{deepseek.*v3}i) {
+        return {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
+        };
+    }
+
+    # DeepSeek R1 distills: 128K context, reasoning
+    if ($base =~ m{deepseek.*r1.*distill}i || $base =~ m{r1.*distill}i) {
+        return {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
+        };
+    }
+
+    # Laguna: 128K context, reasoning
+    if ($base =~ m{laguna}i) {
+        return {
+            context_window => 131072, max_output_tokens => 32768,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
+        };
+    }
+
+    # Nemotron 3 Ultra/Super: 1M context, 32K output, reasoning
+    if ($base =~ m{nemotron.*3.*(ultra|super)}i) {
+        return {
+            context_window => 1048576, max_output_tokens => 32768,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
+        };
+    }
+
+    # Nemotron 3 Nano: 256K context
+    if ($base =~ m{nemotron.*3.*nano}i) {
+        return {
+            context_window => 262144, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+
+    # Nemotron 4: 128K context
+    if ($base =~ m{nemotron.*4}i) {
+        return {
+            context_window => 131072, max_output_tokens => 8192,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+
+    # Nemotron (generic): 128K context
+    if ($base =~ m{nemotron}i) {
+        return {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+
+    # Qwen 3.5: 256K context, reasoning
+    if ($base =~ m{qwen.*3[._]5}i) {
+        return {
+            context_window => 262144, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 1, supports_reasoning => 1,
+        };
+    }
+
+    # Qwen 3: 256K context, reasoning
+    if ($base =~ m{qwen.*3}i) {
+        return {
+            context_window => 262144, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
+        };
+    }
+
+    # Qwen 2.5: 128K context
+    if ($base =~ m{qwen.*2[._]5}i) {
+        return {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+
+    # Llama 4 Maverick: 1M context, vision
+    if ($base =~ m{llama.*4.*maverick}i) {
+        return {
+            context_window => 1048576, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 1, supports_reasoning => 0,
+        };
+    }
+
+    # Llama 3.3: 128K context
+    if ($base =~ m{llama.*3[._]3}i) {
+        return {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+
+    # Llama 3.2 vision: 128K context, vision
+    if ($base =~ m{llama.*3[._]2.*vision}i) {
+        return {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 1, supports_reasoning => 0,
+        };
+    }
+
+    # Llama 3.2 text: 128K context
+    if ($base =~ m{llama.*3[._]2}i) {
+        return {
+            context_window => 131072, max_output_tokens => 8192,
+            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+
+    # Llama 3.1: 128K context
+    if ($base =~ m{llama.*3[._]1}i) {
+        return {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+
+    # Llama (generic): 4K context fallback (older models)
+    if ($base =~ m{llama}i) {
+        return {
+            context_window => 4096, max_output_tokens => 4096,
+            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+
+    # Phi-4: 128K context
+    if ($base =~ m{phi.*4}i) {
+        return {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+
+    # Phi-3: 128K context
+    if ($base =~ m{phi.*3}i) {
+        return {
+            context_window => 131072, max_output_tokens => 8192,
+            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+
+    # Gemma 4: 256K context, vision
+    if ($base =~ m{gemma.*4}i) {
+        return {
+            context_window => 262144, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 1, supports_reasoning => 0,
+        };
+    }
+
+    # Gemma 3/3n: 128K context, vision
+    if ($base =~ m{gemma.*3}i) {
+        return {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 1, supports_reasoning => 0,
+        };
+    }
+
+    # Gemma 2: 8K context
+    if ($base =~ m{gemma.*2}i) {
+        return {
+            context_window => 8192, max_output_tokens => 8192,
+            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+
+    # Mistral Large: 128K context
+    if ($base =~ m{mistral.*large}i) {
+        return {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+
+    # Mistral Small/Medium: 128K context
+    if ($base =~ m{mistral.*(small|medium)}i) {
+        return {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+
+    # Mistral Nemo: 128K context
+    if ($base =~ m{mistral.*nemo}i) {
+        return {
+            context_window => 131072, max_output_tokens => 16384,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+
+    # Mistral 7B: 32K context
+    if ($base =~ m{mistral.*7b}i) {
+        return {
+            context_window => 32768, max_output_tokens => 8192,
+            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+
+    # Mixtral 8x22B: 64K context
+    if ($base =~ m{mixtral.*8x22}i) {
+        return {
+            context_window => 65536, max_output_tokens => 8192,
+            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+
+    # Mixtral 8x7B: 32K context
+    if ($base =~ m{mixtral.*8x7}i) {
+        return {
+            context_window => 32768, max_output_tokens => 8192,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+
+    # Granite: 128K context
+    if ($base =~ m{granite}i) {
+        return {
+            context_window => 131072, max_output_tokens => 8192,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+
+    # Yi: 32K context
+    if ($base =~ m{yi}i) {
+        return {
+            context_window => 32768, max_output_tokens => 8192,
+            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+
+    # Solar/Upstage: 32K context
+    if ($base =~ m{solar|upstage}i) {
+        return {
+            context_window => 32768, max_output_tokens => 8192,
+            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
+        };
+    }
+
+    # No pattern matched - return undef to use system defaults
+    return undef;
+}
+
 =head2 _fetch_openai_compatible_capabilities
 
 Fetch capabilities from OpenAI-compatible APIs.
