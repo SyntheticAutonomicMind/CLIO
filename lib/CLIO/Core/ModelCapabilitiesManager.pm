@@ -2647,7 +2647,8 @@ sub _fetch_llama_cpp_capabilities {
     my $model_data = $self->_lookup_static_model(\%llama_cpp_models, $model, 'unsloth', 'nvidia', 'meta', 'microsoft', 'google', 'mistralai', 'deepseek', 'ibm', '01-ai');
     
     if ($model_data) {
-        return {
+        # Get base capabilities from static map
+        my $caps = {
             provider              => 'llama.cpp',
             model                 => $model,
             context_window        => $model_data->{context_window},
@@ -2665,12 +2666,23 @@ sub _fetch_llama_cpp_capabilities {
             size_bytes            => undef,
             raw                   => $model_data,
         };
+        
+        # Query /props for actual runtime context window (overrides training context)
+        my $props_ctx = $self->_get_llama_cpp_props_ctx();
+        if ($props_ctx && $props_ctx > 0) {
+            $caps->{context_window} = $props_ctx;
+            $caps->{max_prompt_tokens} = $props_ctx;
+            log_debug('ModelCapabilitiesManager', "llama.cpp /props n_ctx=$props_ctx for $model (overriding training context)");
+        }
+        
+        return $caps;
     }
     
     # If no static match, try pattern-based heuristics
     my $heuristic_data = $self->_llama_cpp_model_heuristics($model);
     if ($heuristic_data) {
-        return {
+        # Get base capabilities from heuristics
+        my $caps = {
             provider              => 'llama.cpp',
             model                 => $model,
             context_window        => $heuristic_data->{context_window},
@@ -2688,6 +2700,16 @@ sub _fetch_llama_cpp_capabilities {
             size_bytes            => undef,
             raw                   => $heuristic_data,
         };
+        
+        # Query /props for actual runtime context window (overrides heuristic)
+        my $props_ctx = $self->_get_llama_cpp_props_ctx();
+        if ($props_ctx && $props_ctx > 0) {
+            $caps->{context_window} = $props_ctx;
+            $caps->{max_prompt_tokens} = $props_ctx;
+            log_debug('ModelCapabilitiesManager', "llama.cpp /props n_ctx=$props_ctx for $model (overriding heuristic context)");
+        }
+        
+        return $caps;
     }
     
     return undef;
@@ -3372,6 +3394,30 @@ sub _origin_from_url {
     # with a scheme, so return undef. The caller will log a debug
     # line and fall back to the next source of context_window.
     return undef;
+}
+
+=head2 _get_llama_cpp_props_ctx (Internal)
+
+Query the llama.cpp /props endpoint to retrieve the actual running
+context window size (n_ctx). Reads the user's configured api_base for
+the llama.cpp provider from CLIO config.
+
+Returns the integer n_ctx value on success, or undef if unavailable.
+
+=cut
+
+sub _get_llama_cpp_props_ctx {
+    my ($self) = @_;
+
+    my $api_base;
+    eval {
+        require CLIO::Core::Config;
+        my $config = CLIO::Core::Config->new();
+        $api_base = $config->get_provider_base('llama.cpp');
+    };
+    return undef unless $api_base;
+
+    return $self->_query_llama_props($api_base);
 }
 
 1;
