@@ -485,7 +485,42 @@ sub get_provider {
     
     # Return copy so caller can't modify the registry
     my %provider = %{$PROVIDERS{$name}};
+    
+    # Merge JSON defaults if available
+    my $json_defaults = _get_json_provider_defaults($name);
+    if ($json_defaults) {
+        # JSON defaults take precedence for overlapping keys
+        %provider = (%provider, %$json_defaults);
+    }
+    
     return \%provider;
+}
+
+=head2 _get_json_provider_defaults
+
+Load provider defaults from JSON file (cached).
+
+=cut
+
+my $_json_provider_defaults_cache;
+sub _get_json_provider_defaults {
+    my ($name) = @_;
+    return unless $name;
+    
+    unless ($_json_provider_defaults_cache) {
+        eval {
+            require CLIO::Core::ModelDataLoader;
+            my $loader = CLIO::Core::ModelDataLoader->new();
+            # Call a method to trigger lazy loading
+            $_json_provider_defaults_cache = $loader->get_provider_defaults('openai') ? $loader->{_cache}{provider_defaults} || {} : {};
+        };
+        if ($@) {
+            # Silently ignore if ModelDataLoader not available
+            $_json_provider_defaults_cache = {};
+        }
+    }
+    
+    return $_json_provider_defaults_cache->{$name};
 }
 
 =head2 list_providers
@@ -682,16 +717,26 @@ is bounded by host RAM. Everything else gets DEFAULT_CONTEXT_WINDOW.
 Previously implemented as a ternary on a hardcoded regex list in
 MessageValidator.pm and APIManager.pm's _extract_model_capabilities.
 
+Now uses the unified JSON model data via ModelDataLoader, with
+CLIO::Core::Defaults constants as fallback.
+
 Arguments:
 - $provider_name: provider key
 
-Returns: integer token count (DEFAULT_LOCAL_CONTEXT_WINDOW or
-          DEFAULT_CONTEXT_WINDOW from CLIO::Core::Defaults).
+Returns: integer token count
 
 =cut
 
 sub default_context_window {
     my ($provider_name) = @_;
+    
+    # Try JSON defaults first
+    my $json_defaults = _get_json_provider_defaults($provider_name);
+    if ($json_defaults && $json_defaults->{max_context_tokens}) {
+        return $json_defaults->{max_context_tokens};
+    }
+    
+    # Fallback to constants
     require CLIO::Core::Defaults;
     if (is_local_inference($provider_name)) {
         return CLIO::Core::Defaults::DEFAULT_LOCAL_CONTEXT_WINDOW();
