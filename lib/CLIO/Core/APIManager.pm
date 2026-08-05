@@ -1498,8 +1498,8 @@ sub get_model_capabilities {
         eval {
             require CLIO::Providers;
             my $pdef = CLIO::Providers::get_provider($eff_provider);
-            # Use MCM for providers with static maps OR native APIs with dedicated fetchers
-            $use_mcm = ($pdef && ($pdef->{capability_map} || $pdef->{native_api})) ? 1 : 0;
+            # Use MCM for providers with static maps, native APIs, OR custom capability fetchers
+            $use_mcm = ($pdef && ($pdef->{capability_map} || $pdef->{native_api} || $pdef->{capability_fetcher})) ? 1 : 0;
         };
     }
     
