@@ -104,6 +104,7 @@ Terminal Output (with color/theme)
 | `lib/CLIO/Compat/` | Compatibility layers (Terminal, HTTP) |
 | `lib/CLIO/Util/` | Utilities (PathResolver, TextSanitizer, JSON, JSONRepair, YAML, ImageAttachment, ImageDisplay, ConfigPath, AtomicWrite, RateLimit, GitIgnore, AnthropicXMLParser, CABundle, Curl, InputHelpers, Proxy, UUID) |
 | `lib/CLIO/Spec/` | OpenSpec integration (Manager) |
+| `lib/CLIO/Core/model-data/` | Unified model capability JSON files (models.json, provider-defaults.json, heuristics.json, provider-mapping.json) |
 | `docs/` | User/dev documentation |
 | `styles/` | Terminal color styles (26 themes: dark, light, retro, cyberpunk, monokai, etc.) |
 | `themes/` | UI themes (compact, console, default, verbose) |
@@ -136,6 +137,11 @@ Terminal Output (with color/theme)
 - `lib/CLIO/Core/PluginManager.pm` - Plugin lifecycle
 - `lib/CLIO/Core/PromptBuilder.pm` - Prompt construction
 - `lib/CLIO/Core/PromptManager.pm` - Prompt template storage
+- `lib/CLIO/Core/ModelDataLoader.pm` - Unified model capability data loader
+- `lib/CLIO/Core/model-data/models.json` - Primary model capability database
+- `lib/CLIO/Core/model-data/provider-defaults.json` - Provider fallback defaults
+- `lib/CLIO/Core/model-data/heuristics.json` - Pattern-based fallback rules
+- `lib/CLIO/Core/model-data/provider-mapping.json` - Provider-to-model ID mappings
 
 ## Image Support
 
@@ -233,7 +239,7 @@ log_error('ModuleName', 'something failed: %s', $error);
 
 | Prefix | Purpose | Examples |
 |--------|---------|----------|
-| `CLIO::Core::` | System core | APIManager, WorkflowOrchestrator, ToolExecutor, Config, PromptManager, ModelCapabilitiesManager |
+| `CLIO::Core::` | System core | APIManager, WorkflowOrchestrator, ToolExecutor, Config, PromptManager, ModelCapabilitiesManager, ModelDataLoader |
 | `CLIO::Core::API::` | APIManager sub-modules | ResponseHandler, MessageValidator, ErrorHandler, PayloadSanitizer |
 | `CLIO::Tools::` | AI-callable tools | FileOperations, VersionControl, TerminalOperations, MemoryOperations, Interact, ApplyPatch, CodeIntelligence, RemoteExecution, SubAgentOperations, TodoList, WebOperations, SkillOperations, MCPBridge, PluginBridge, Registry, Tool |
 | `CLIO::UI::` | Terminal interface | Chat, Markdown, Theme, ANSI, CommandHandler, DiffRenderer, Display, HostProtocol, Multiplexer, PaginationManager, ProgressSpinner, StreamingController, Terminal, ToolOutputFormatter |

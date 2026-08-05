@@ -93,15 +93,36 @@ sub new {
     my $cache_file = get_config_file('model_capabilities_cache.json');
 
     my $self = {
-        debug      => $args{debug} || 0,
-        cache_file => $args{cache_file} || $cache_file,
-        cache_ttl  => $args{cache_ttl} || 3600,
-        cache      => undef,  # Lazily loaded
-        http       => undef,  # Lazily created
+        debug               => $args{debug} || 0,
+        cache_file          => $args{cache_file} || $cache_file,
+        cache_ttl           => $args{cache_ttl} || 3600,
+        cache               => undef,  # Lazily loaded
+        http                => undef,  # Lazily created
+        model_data_loader   => undef,  # Lazily created ModelDataLoader
     };
 
     bless $self, $class;
     return $self;
+}
+
+=head2 _model_data_loader
+
+Get or create the ModelDataLoader instance.
+
+=cut
+
+sub _model_data_loader {
+    my ($self) = @_;
+    unless ($self->{model_data_loader}) {
+        eval {
+            require CLIO::Core::ModelDataLoader;
+            $self->{model_data_loader} = CLIO::Core::ModelDataLoader->new(debug => $self->{debug});
+        };
+        if ($@) {
+            log_warning('ModelCapabilitiesManager', "Failed to create ModelDataLoader: $@");
+        }
+    }
+    return $self->{model_data_loader};
 }
 
 =head2 get_capabilities
@@ -532,6 +553,51 @@ sub _fetch_provider_capabilities {
     
     log_debug('ModelCapabilitiesManager', "Fetching capabilities for ${provider}:${model}");
     
+    # First, try the unified JSON model database via ModelDataLoader.
+    # This uses the provider-specific model ID and normalizes it to
+    # our canonical model names, then returns the unified capabilities.
+    my $loader = $self->_model_data_loader();
+    if ($loader) {
+        my $json_caps = $loader->get_model_capabilities_by_provider($provider, $model);
+        if ($json_caps) {
+            log_debug('ModelCapabilitiesManager', "JSON loader hit for ${provider}:${model}");
+            my $caps = $self->_build_caps_from_json($json_caps, $provider, $model);
+            
+            # For llama.cpp, query /props for actual runtime context window
+            if ($provider eq 'llama.cpp' || $provider eq 'sam' || $provider eq 'lmstudio') {
+                my $props_ctx = $self->_query_llama_props_for_provider($provider);
+                if ($props_ctx && $props_ctx > 0) {
+                    $caps->{context_window} = $props_ctx;
+                    $caps->{max_prompt_tokens} = $props_ctx;
+                    log_debug('ModelCapabilitiesManager', "${provider} /props n_ctx=$props_ctx for $model (overriding training context)");
+                }
+            }
+            
+            return $caps;
+        }
+    }
+    
+    # Try heuristics from JSON loader for unknown models
+    if ($loader) {
+        my $heuristic_caps = $loader->match_heuristics($model);
+        if ($heuristic_caps) {
+            log_debug('ModelCapabilitiesManager', "Heuristic match for ${provider}:${model}");
+            my $caps = $self->_build_caps_from_json($heuristic_caps, $provider, $model);
+            
+            # For llama.cpp, query /props for actual runtime context window
+            if ($provider eq 'llama.cpp' || $provider eq 'sam' || $provider eq 'lmstudio') {
+                my $props_ctx = $self->_query_llama_props_for_provider($provider);
+                if ($props_ctx && $props_ctx > 0) {
+                    $caps->{context_window} = $props_ctx;
+                    $caps->{max_prompt_tokens} = $props_ctx;
+                    log_debug('ModelCapabilitiesManager', "${provider} /props n_ctx=$props_ctx for $model (overriding heuristic context)");
+                }
+            }
+            
+            return $caps;
+        }
+    }
+    
     require CLIO::Providers;
     my $provider_def = CLIO::Providers::get_provider($provider);
 
@@ -549,6 +615,7 @@ sub _fetch_provider_capabilities {
         if ($fetcher) {
             my $method = "_fetch_${fetcher}_capabilities";
             if ($self->can($method)) {
+                log_debug('ModelCapabilitiesManager', "Falling back to static map for ${provider}:${model}");
                 return $self->$method($model);
             }
             log_warning('ModelCapabilitiesManager',
@@ -559,12 +626,50 @@ sub _fetch_provider_capabilities {
     # Fallback: OpenAI-compatible path for unknown apikey-based providers.
     # This is the only remaining route for plain OpenAI, Ollama Cloud,
     # OpenRouter, and any user-added custom provider.
-    if ($provider_def->{requires_auth} && $provider_def->{requires_auth} eq 'apikey') {
+    if ($provider_def && $provider_def->{requires_auth} && $provider_def->{requires_auth} eq 'apikey') {
         return $self->_fetch_openai_compatible_capabilities($provider, $model);
     }
     
     log_warning('ModelCapabilitiesManager', "No capability fetcher for provider: $provider");
     return undef;
+}
+
+=head2 _build_caps_from_json
+
+Build full capabilities hash from JSON loader data.
+
+Arguments:
+- $json_caps: Capabilities hash from ModelDataLoader
+- $provider: Provider name
+- $model: Original model ID
+
+Returns:
+- Hashref with full capability schema
+
+=cut
+
+sub _build_caps_from_json {
+    my ($self, $json_caps, $provider, $model) = @_;
+    
+    return {
+        provider              => $provider,
+        model                 => $model,
+        context_window        => $json_caps->{context_window},
+        max_prompt_tokens     => $json_caps->{max_prompt_tokens} || $json_caps->{context_window},
+        max_output_tokens     => $json_caps->{max_output_tokens},
+        supports_tools        => $json_caps->{supports_tools} ? 1 : 0,
+        supports_streaming    => $json_caps->{supports_streaming} ? 1 : 0,
+        supports_vision       => $json_caps->{supports_vision} ? 1 : 0,
+        supports_reasoning    => $json_caps->{supports_reasoning} ? 1 : 0,
+        reasoning_mode        => $json_caps->{reasoning_mode},
+        embeddings_dimension  => undef,
+        architecture          => $json_caps->{architecture},
+        quantization          => undef,
+        parameters            => undef,
+        capabilities          => [],
+        size_bytes            => undef,
+        raw                   => $json_caps,
+    };
 }
 
 =head2 _fetch_github_copilot_capabilities
@@ -3413,6 +3518,32 @@ sub _get_llama_cpp_props_ctx {
         require CLIO::Core::Config;
         my $config = CLIO::Core::Config->new();
         $api_base = $config->get_provider_base('llama.cpp');
+    };
+    return undef unless $api_base;
+
+    return $self->_query_llama_props($api_base);
+}
+
+=head2 _query_llama_props_for_provider (Internal)
+
+Query the /props endpoint for a local inference provider (llama.cpp, SAM, LM Studio).
+Reads the user's configured api_base for the given provider from CLIO config.
+
+Arguments:
+- $provider: Provider name ('llama.cpp', 'sam', or 'lmstudio')
+
+Returns the integer n_ctx value on success, or undef if unavailable.
+
+=cut
+
+sub _query_llama_props_for_provider {
+    my ($self, $provider) = @_;
+    
+    my $api_base;
+    eval {
+        require CLIO::Core::Config;
+        my $config = CLIO::Core::Config->new();
+        $api_base = $config->get_provider_base($provider);
     };
     return undef unless $api_base;
 
