@@ -197,18 +197,18 @@ sub _show_prompt {
     # Enable pagination for this command output
     $self->{chat}{pager}->reset();
     $self->{chat}{pager}->enable();
-    
-    $self->display_command_header("ACTIVE SYSTEM PROMPT: " . uc($active));
-    
-    $self->display_section_header("METADATA");
-    $self->display_key_value("Name", $active);
-    $self->display_key_value("Lines", $lines);
-    $self->display_key_value("Size", length($prompt) . " bytes");
-    $self->writeline("", markdown => 0);  # Track blank line for pagination
-    
-    $self->display_section_header("CONTENT");
-    $self->writeline("", markdown => 0);
-    
+
+    return unless $self->display_command_header("ACTIVE SYSTEM PROMPT: " . uc($active));
+
+    return unless $self->display_section_header("METADATA");
+    return unless $self->display_key_value("Name", $active);
+    return unless $self->display_key_value("Lines", $lines);
+    return unless $self->display_key_value("Size", length($prompt) . " bytes");
+    return unless $self->writeline("", markdown => 0);  # Track blank line for pagination
+
+    return unless $self->display_section_header("CONTENT");
+    return unless $self->writeline("", markdown => 0);
+
     # Split into lines and use writeline for pagination with auto-markdown
     my @content_lines = split /\n/, $prompt;
     for my $line (@content_lines) {

@@ -342,15 +342,17 @@ sub display_section_header {
     $width ||= 62;
     
     my $chat = $self->{chat};
-    
+
     my $underline = box_char('horizontal') x $width;
-    
+
     # Blank line before section for visual separation from previous content
     # Use writeline (UTF-8, color codes, etc.)
     # Use writeline (UTF-8, color codes, etc.)
-    $chat->writeline('', markdown => 0);
-    $chat->writeline($chat->colorize($text, 'command_subheader'), markdown => 0);
-    $chat->writeline($chat->colorize($underline, 'dim'), markdown => 0);
+    my $ok = 1;
+    $ok &&= $chat->writeline('', markdown => 0);
+    $ok &&= $chat->writeline($chat->colorize($text, 'command_subheader'), markdown => 0);
+    $ok &&= $chat->writeline($chat->colorize($underline, 'dim'), markdown => 0);
+    return $ok;
 }
 
 =head2 display_key_value($key, $value, $key_width)
@@ -375,7 +377,7 @@ sub display_key_value {
     
     my $line = $chat->colorize($padded_key, 'command_label') . " " .
                $chat->colorize($value, 'command_value');
-    $chat->writeline($line, markdown => 0);
+    return $chat->writeline($line, markdown => 0);
 }
 
 =head2 display_command_row($command, $description, $cmd_width)
@@ -399,7 +401,7 @@ sub display_command_row {
     my $padded_cmd = sprintf("%-${cmd_width}s", $command);
     
     my $line = "  " . $chat->colorize($padded_cmd, 'help_command') . " " . $description;
-    $chat->writeline($line, markdown => 0);
+    return $chat->writeline($line, markdown => 0);
 }
 
 =head2 display_list_item($item, $num)
@@ -423,7 +425,7 @@ sub display_list_item {
     } else {
         $line = $chat->colorize("  " . ui_char("bullet_round") . " ", "command_label") . $item;
     }
-    $chat->writeline($line, markdown => 0);
+    return $chat->writeline($line, markdown => 0);
 }
 
 =head2 display_tip($text)
