@@ -269,9 +269,9 @@ sub cmd_list {
     
     # Enable pagination for long output
     $self->{chat}{pager}->enable();
-    
-    $self->display_section_header("SUB-AGENTS");
-    
+
+    return unless $self->display_section_header("SUB-AGENTS");
+
     for my $id (sort keys %$agents) {
         my $agent = $agents->{$id};
         my $mode = $agent->{mode} || 'oneshot';
@@ -305,14 +305,15 @@ sub cmd_list {
         
         # Display agent row
         my $status_colored = $self->colorize("[$status_label]", $status_style);
-        $self->writeline(sprintf("  %-12s %s%s  %s (%s)",
-            $self->colorize($id, 'BOLD'), $status_colored, $mode_badge, $task_display, $time_str), markdown => 0);
+        my $row = sprintf("  %-12s %s%s  %s (%s)",
+            $self->colorize($id, 'BOLD'), $status_colored, $mode_badge, $task_display, $time_str);
+        return unless $self->writeline($row, markdown => 0);
     }
-    
-    $self->writeline("", markdown => 0);
-    $self->writeline($self->colorize("Legend: ", 'DIM') . $self->colorize("[P]", 'CYAN') . 
+
+    return unless $self->writeline("", markdown => 0);
+    return unless $self->writeline($self->colorize("Legend: ", 'DIM') . $self->colorize("[P]", 'CYAN') .
         $self->colorize("=persistent mode, others are oneshot (exit after task)", 'DIM'), markdown => 0);
-    
+
     # Disable pagination
     $self->{chat}{pager}->disable();
     
@@ -353,27 +354,27 @@ sub cmd_status {
     
     # Enable pagination
     $self->{chat}{pager}->enable();
-    
-    $self->display_section_header("AGENT STATUS: $agent_id");
-    $self->display_key_value("Status", $self->colorize($status, $status_style));
-    $self->display_key_value("Mode", $mode eq 'persistent' ? $self->colorize('persistent', 'CYAN') : 'oneshot');
-    $self->display_key_value("PID", $agent->{pid});
-    $self->display_key_value("Runtime", $time_str);
-    $self->writeline("", markdown => 0);
-    $self->display_key_value("Task", $agent->{task});
-    
+
+    return unless $self->display_section_header("AGENT STATUS: $agent_id");
+    return unless $self->display_key_value("Status", $self->colorize($status, $status_style));
+    return unless $self->display_key_value("Mode", $mode eq 'persistent' ? $self->colorize('persistent', 'CYAN') : 'oneshot');
+    return unless $self->display_key_value("PID", $agent->{pid});
+    return unless $self->display_key_value("Runtime", $time_str);
+    return unless $self->writeline("", markdown => 0);
+    return unless $self->display_key_value("Task", $agent->{task});
+
     # Check log file
     my $log_path = "/tmp/clio-agent-$agent_id.log";
     if (-f $log_path) {
-        $self->writeline("", markdown => 0);
-        $self->display_key_value("Log", $log_path);
-        $self->writeline("", markdown => 0);
-        $self->writeline($self->colorize("Last 10 lines:", 'DIM'), markdown => 0);
+        return unless $self->writeline("", markdown => 0);
+        return unless $self->display_key_value("Log", $log_path);
+        return unless $self->writeline("", markdown => 0);
+        return unless $self->writeline($self->colorize("Last 10 lines:", 'DIM'), markdown => 0);
         my $log_tail = ($^O eq "MSWin32" ? "" : `tail -10 "$log_path" 2>/dev/null`);
         if ($log_tail) {
             # Show log lines with dim styling
             for my $line (split /\n/, $log_tail) {
-                $self->writeline("  " . $self->colorize($line, 'DIM'), markdown => 0);
+                return unless $self->writeline("  " . $self->colorize($line, 'DIM'), markdown => 0);
             }
         }
     }
@@ -586,9 +587,9 @@ sub cmd_inbox {
     
     # Enable pagination for long output
     $self->{chat}{pager}->enable();
-    
-    $self->display_section_header("UNREAD MESSAGES (" . scalar(@$messages) . ")");
-    
+
+    return unless $self->display_section_header("UNREAD MESSAGES (" . scalar(@$messages) . ")");
+
     for my $msg (@$messages) {
         my $from = $msg->{from} || 'unknown';
         my $type = $msg->{type} || 'generic';
@@ -603,24 +604,25 @@ sub cmd_inbox {
         $type_color = 'RED' if $type eq 'blocked';
         $type_color = 'CYAN' if $type eq 'status';
         $type_color = 'MAGENTA' if $type eq 'discovery';
-        
-        $self->writeline($self->colorize("[$type]", $type_color) . " from " . 
+
+        return unless $self->writeline($self->colorize("[$type]", $type_color) . " from " .
             $self->colorize($from, 'BOLD') . " (id: $id)", markdown => 0);
-        
+
         if (ref($content) eq 'HASH') {
             for my $key (sort keys %$content) {
-                $self->display_key_value("  $key", $content->{$key}) if defined $content->{$key};
+                next unless defined $content->{$key};
+                return unless $self->display_key_value("  $key", $content->{$key});
             }
         } else {
-            $self->writeline("  $content", markdown => 0);
+            return unless $self->writeline("  $content", markdown => 0);
         }
-        
-        $self->writeline("", markdown => 0);
+
+        return unless $self->writeline("", markdown => 0);
     }
-    
-    $self->writeline("Use " . $self->colorize("/subagent reply <agent-id> <response>", 'BOLD') . " to respond", markdown => 0);
-    $self->writeline("Use " . $self->colorize("/subagent ack", 'BOLD') . " to mark messages as read", markdown => 0);
-    
+
+    return unless $self->writeline("Use " . $self->colorize("/subagent reply <agent-id> <response>", 'BOLD') . " to respond", markdown => 0);
+    return unless $self->writeline("Use " . $self->colorize("/subagent ack", 'BOLD') . " to mark messages as read", markdown => 0);
+
     # Disable pagination
     $self->{chat}{pager}->disable();
     
@@ -670,9 +672,9 @@ sub cmd_history {
     
     # Enable pagination for long output
     $self->{chat}{pager}->enable();
-    
-    $self->display_section_header("MESSAGE HISTORY (" . scalar(@$messages) . ")");
-    
+
+    return unless $self->display_section_header("MESSAGE HISTORY (" . scalar(@$messages) . ")");
+
     for my $msg (@$messages) {
         my $from = $msg->{from} || 'unknown';
         my $type = $msg->{type} || 'generic';
@@ -687,19 +689,20 @@ sub cmd_history {
         $type_color = 'RED' if $type eq 'blocked';
         $type_color = 'CYAN' if $type eq 'status';
         $type_color = 'MAGENTA' if $type eq 'discovery';
-        
-        $self->writeline($self->colorize("[$type]", $type_color) . " from " . 
+
+        return unless $self->writeline($self->colorize("[$type]", $type_color) . " from " .
             $self->colorize($from, 'BOLD') . " (id: $id) at $time", markdown => 0);
-        
+
         if (ref($content) eq 'HASH') {
             for my $key (sort keys %$content) {
-                $self->display_key_value("  $key", $content->{$key}) if defined $content->{$key};
+                next unless defined $content->{$key};
+                return unless $self->display_key_value("  $key", $content->{$key});
             }
         } else {
-            $self->writeline("  $content", markdown => 0);
+            return unless $self->writeline("  $content", markdown => 0);
         }
-        
-        $self->writeline("", markdown => 0);
+
+        return unless $self->writeline("", markdown => 0);
     }
     
     # Disable pagination
@@ -845,49 +848,58 @@ sub cmd_help {
     
     # Enable pagination for help text
     $self->{chat}{pager}->enable();
-    
-    $self->display_command_header("SUB-AGENT");
-    $self->writeline("", markdown => 0);
-    $self->writeline("Spawn and manage multiple CLIO agents working in parallel.", markdown => 0);
-    $self->writeline("", markdown => 0);
-    
-    $self->display_section_header("LIFECYCLE");
-    $self->display_command_row("/subagent spawn <task>", "Spawn new sub-agent with task", 35);
-    $self->display_command_row("  --model <model>", "Specify AI model (default: current session model)", 35);
-    $self->display_command_row("  --persistent", "Keep agent alive for multiple tasks", 35);
-    $self->display_command_row("/subagent list", "List all sub-agents and their status", 35);
-    $self->display_command_row("/subagent status <id>", "Show detailed agent status", 35);
-    $self->display_command_row("/subagent kill <id>", "Terminate specific agent", 35);
-    $self->display_command_row("/subagent killall", "Terminate all sub-agents", 35);
-    $self->writeline("", markdown => 0);
-    
-    $self->display_section_header("COMMUNICATION");
-    $self->display_command_row("/subagent inbox", "Show UNREAD messages from agents", 35);
-    $self->display_command_row("/subagent ack [ids]", "Mark messages as read", 35);
-    $self->display_command_row("/subagent history", "Show ALL messages (read+unread)", 35);
-    $self->display_command_row("/subagent send <id> <msg>", "Send message to agent", 35);
-    $self->display_command_row("/subagent reply <id> <msg>", "Reply to agent question", 35);
-    $self->display_command_row("/subagent broadcast <msg>", "Send message to all agents", 35);
-    $self->writeline("", markdown => 0);
-    
-    $self->display_section_header("COORDINATION");
-    $self->display_command_row("/subagent locks", "Show current file/git locks", 35);
-    $self->display_command_row("/subagent discoveries", "Show shared discoveries", 35);
-    $self->display_command_row("/subagent warnings", "Show shared warnings", 35);
-    $self->writeline("", markdown => 0);
-    
-    $self->display_section_header("PUPPETEER (MULTI-PROJECT)");
-    $self->display_command_row("/subagent projects", "List child projects with .clio/ context", 35);
-    $self->display_command_row("/subagent spawn <task> --dir <path>", "Spawn agent in project directory", 35);
-    $self->display_command_row("/subagent spawn <task> --project <name>", "Spawn agent by project name", 35);
-    $self->writeline("", markdown => 0);
-    
-    $self->display_section_header("MODES");
-    $self->writeline($self->colorize("  Oneshot (default): ", 'BOLD') . "Agent completes one task and exits", markdown => 0);
-    $self->writeline($self->colorize("  Persistent:        ", 'BOLD') . "Agent stays alive, polls for messages", markdown => 0);
-    $self->writeline("", markdown => 0);
-    $self->writeline($self->colorize("Tip: ", 'DIM') . "Use --persistent for interactive work where you need to reply.", markdown => 0);
-    
+
+    return unless $self->display_command_header("SUB-AGENT");
+    return unless $self->writeline("", markdown => 0);
+    return unless $self->writeline("Spawn and manage multiple CLIO agents working in parallel.", markdown => 0);
+    return unless $self->writeline("", markdown => 0);
+
+    my @help_sections = (
+        { header => 'LIFECYCLE', rows => [
+            ['/subagent spawn <task>',          'Spawn new sub-agent with task', 35],
+            ['  --model <model>',                'Specify AI model (default: current session model)', 35],
+            ['  --persistent',                   'Keep agent alive for multiple tasks', 35],
+            ['/subagent list',                   'List all sub-agents and their status', 35],
+            ['/subagent status <id>',            'Show detailed agent status', 35],
+            ['/subagent kill <id>',              'Terminate specific agent', 35],
+            ['/subagent killall',                'Terminate all sub-agents', 35],
+        ], after => [''] },
+        { header => 'COMMUNICATION', rows => [
+            ['/subagent inbox',                  'Show UNREAD messages from agents', 35],
+            ['/subagent ack [ids]',              'Mark messages as read', 35],
+            ['/subagent history',                'Show ALL messages (read+unread)', 35],
+            ['/subagent send <id> <msg>',        'Send message to agent', 35],
+            ['/subagent reply <id> <msg>',       'Reply to agent question', 35],
+            ['/subagent broadcast <msg>',        'Send message to all agents', 35],
+        ], after => [''] },
+        { header => 'COORDINATION', rows => [
+            ['/subagent locks',                  'Show current file/git locks', 35],
+            ['/subagent discoveries',            'Show shared discoveries', 35],
+            ['/subagent warnings',               'Show shared warnings', 35],
+        ], after => [''] },
+        { header => 'PUPPETEER (MULTI-PROJECT)', rows => [
+            ['/subagent projects',               'List child projects with .clio/ context', 35],
+            ['/subagent spawn <task> --dir <path>',     'Spawn agent in project directory', 35],
+            ['/subagent spawn <task> --project <name>', 'Spawn agent by project name', 35],
+        ], after => [''] },
+        { header => 'MODES', rows => [], after => [
+            $self->colorize('  Oneshot (default): ', 'BOLD') . 'Agent completes one task and exits',
+            $self->colorize('  Persistent:        ', 'BOLD') . 'Agent stays alive, polls for messages',
+            '',
+            $self->colorize('Tip: ', 'DIM') . 'Use --persistent for interactive work where you need to reply.',
+        ] },
+    );
+
+    for my $section (@help_sections) {
+        return unless $self->display_section_header($section->{header});
+        for my $row (@{$section->{rows}}) {
+            return unless $self->display_command_row(@{$row});
+        }
+        for my $line (@{$section->{after}}) {
+            return unless $self->writeline($line, markdown => 0);
+        }
+    }
+
     # Disable pagination
     $self->{chat}{pager}->disable();
     
