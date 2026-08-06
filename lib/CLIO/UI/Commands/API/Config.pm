@@ -303,9 +303,23 @@ sub _set_base {
         return;
     }
 
+    # Normalize the URL for local inference providers (llama.cpp, lmstudio,
+    # sam). These providers expose an OpenAI-compatible /v1/chat/completions
+    # endpoint and are configured with path_suffix => '' in Providers.pm,
+    # meaning CLIO does not append any suffix - the user must provide the
+    # full URL. A bare host like http://nimo:9090 silently produces a 404
+    # ("File Not Found") from the server because the request hits the
+    # server root instead of the chat endpoint. Normalize so the user
+    # doesn't have to memorize the convention.
+    my $current_provider = $self->{config}->get('provider') || '';
+    my ($normalized, $normalize_msg) = $self->_normalize_local_inference_url($value, $current_provider);
+    if ($normalize_msg) {
+        $value = $normalized;
+        $self->display_system_message($normalize_msg);
+    }
+
     # Store per-provider when setting globally
     unless ($session_only) {
-        my $current_provider = $self->{config}->get('provider');
         if ($current_provider) {
             $self->{config}->set_provider_base($current_provider, $value);
         }
@@ -314,6 +328,51 @@ sub _set_base {
     $self->_set_api_setting('api_base', $value, $session_only);
     $self->display_system_message("API base set to: $value" . ($session_only ? " (session only)" : " (saved)"));
     $self->_get_auth_helper()->reinit_api_manager();
+}
+
+=head2 _normalize_local_inference_url($url, $provider)
+
+Auto-append the OpenAI-compatible chat completions path for local inference
+providers (llama.cpp, lmstudio, sam). These servers expose the chat
+endpoint at /v1/chat/completions and are configured with path_suffix => ''
+in CLIO::Providers, so the user must provide the full URL. Normalize the
+common mistake of providing a bare host (http://nimo:9090) by appending
+the path automatically, with a one-line note about what changed.
+
+Arguments:
+- $url: User-supplied URL
+- $provider: Current provider name
+
+Returns: ($url, $note)
+- $url: Possibly-normalized URL (unchanged if no normalization was needed)
+- $note: Undef if no change. Otherwise a short system message describing
+  the normalization so the user can verify the URL was rewritten correctly.
+
+=cut
+
+sub _normalize_local_inference_url {
+    my ($self, $url, $provider) = @_;
+
+    require CLIO::Providers;
+    return ($url, undef) unless CLIO::Providers::is_local_inference($provider);
+
+    # Already a chat completions URL - leave alone.
+    return ($url, undef) if $url =~ m{/chat/completions/?$};
+
+    # Bare /v1 or /v1/ - append chat/completions.
+    if ($url =~ m{/v1/?$}) {
+        (my $rewritten = $url) =~ s{/v1/?$}{/chat/completions};
+        return ($rewritten, "Normalized: appended /chat/completions to existing /v1");
+    }
+
+    # Anything else (bare host or non-/v1 path) - append /v1/chat/completions.
+    (my $clean = $url) =~ s{/+$}{};
+    my $rewritten = "${clean}/v1/chat/completions";
+    return ($rewritten,
+        "Normalized: appended /v1/chat/completions. Local inference servers (llama.cpp, "
+        . "LM Studio, SAM) expect the full chat completions path. Pass a bare host "
+        . "like http://localhost:8080 and we'll fill in the rest; pass a custom "
+        . "path and it will be left alone.");
 }
 
 sub _set_model {
