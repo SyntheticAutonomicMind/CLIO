@@ -2182,9 +2182,13 @@ sub _check_and_handle_interrupt {
 
 =head2 _check_for_user_interrupt
 
-Check for user interrupt (ESC or Ctrl+C) non-blocking.
+Check for user interrupt (ESC) non-blocking.
 
-Only ESC (char 27) and Ctrl+C (char 3) trigger interrupts. Other
+Only ESC (char 27) triggers an interrupt. Ctrl+C is intentionally
+NOT an interrupt here - it falls through to the global SIGINT handler
+in C<clio> which terminates the session cleanly via C<cleanup_handler>.
+This matches classic Unix behaviour: Ctrl+C breaks out of the
+foreground process, ESC interrupts the in-flight AI response. Other
 characters (mouse events, focus events, resize sequences, etc.) are
 drained and ignored to prevent false interrupts.
 
