@@ -114,8 +114,11 @@ sub validate_and_truncate {
     # actual max_output_tokens (no hard cap) plus an estimation buffer.
     # This replaces the previous 15% margin + 8K buffer, which over-
     # reserved for models with small actual output caps.
+    # When tools are present, the budget calculation automatically caps
+    # the output reserve at DEFAULT_TOOL_OUTPUT_RESERVE (8K) since tool
+    # responses are short - reclaims up to ~24K of prompt room.
     require CLIO::Memory::TokenEstimator;
-    my $prompt_budget = CLIO::Memory::TokenEstimator::compute_prompt_budget($caps);
+    my $prompt_budget = CLIO::Memory::TokenEstimator::compute_prompt_budget($caps, tools => $tools);
 
     # Calculate tool token budget
     my $tool_tokens = _calculate_tool_tokens($tools);
@@ -241,9 +244,23 @@ sub validate_and_truncate {
     # Create merged summary only if there are dropped messages to compress.
     # If nothing was dropped, preserve the existing summary as-is.
     my $summary_to_use;
+    # Cache-Stable Summary Slot (CSSS): when an existing thread_summary exists,
+    # use its current token count as the target slot size. Subsequent trims
+    # regenerate the summary to fit this same slot, so llama.cpp's prefix
+    # cache stays valid for everything before and after the summary slot.
+    my $summary_slot_target = 0;
+    if ($summary_unit && $summary_unit->{tokens}) {
+        $summary_slot_target = $summary_unit->{tokens};
+        log_debug('MessageValidator', "CSSS: locking summary slot to $summary_slot_target tokens (existing summary)");
+    }
+
     if (@dropped_units) {
-        my $compressed = _compress_dropped(\@dropped_units, $last_user_unit, $debug, $previous_summary_content);
+        my $compressed = _compress_dropped(\@dropped_units, $last_user_unit, $debug, $previous_summary_content, $summary_slot_target);
         $summary_to_use = $compressed;
+        if ($compressed && $compressed->{_metadata}) {
+            my $actual = $compressed->{_metadata}{compressed_tokens} || 0;
+            log_debug('MessageValidator', "CSSS: regenerated summary to $actual tokens (slot target: $summary_slot_target)");
+        }
     } elsif ($summary_unit && $summary_unit->{messages} && @{$summary_unit->{messages}}) {
         # No new drops - keep the existing summary intact
         $summary_to_use = $summary_unit->{messages}[0];
@@ -292,15 +309,31 @@ sub validate_and_truncate {
     }
     my @truncated;
     push @truncated, $system_msg if $system_msg;
-    push @truncated, $summary_to_use if $summary_to_use;
     push @truncated, @validated;
-    
+    # Cache-friendly ordering: summary at END of conversation. Combined with
+    # CSSS (summary slot size locked), this means the summary content changes
+    # only invalidate the summary tokens themselves, not the recent messages
+    # before them. Order: [system][recent_messages][summary]
+    push @truncated, $summary_to_use if $summary_to_use;
+
     if (should_log('DEBUG')) {
         my $final_tokens = _estimate_tokens(\@truncated);
-        log_debug('MessageValidator', "Truncated: " . scalar(@$messages) . " -> " . scalar(@truncated) . 
+        log_debug('MessageValidator', "Truncated: " . scalar(@$messages) . " -> " . scalar(@truncated) .
             " messages, $final_tokens tokens");
+        # Diagnostic: report cache impact of the trim. With CSSS, this should
+        # be at most the summary slot size (everything else is byte-stable).
+        my $summary_tokens_now = 0;
+        if ($summary_to_use && $summary_to_use->{content}) {
+            $summary_tokens_now = estimate_tokens($summary_to_use->{content});
+        }
+        if ($summary_slot_target > 0 && $summary_tokens_now > 0) {
+            my $delta = abs($summary_tokens_now - $summary_slot_target);
+            log_debug('MessageValidator', sprintf(
+                "CSSS: cache impact ~%d/%d tokens invalidated (summary slot)",
+                $delta, $final_tokens));
+        }
     }
-    
+
     return \@truncated;
 }
 
@@ -649,22 +682,23 @@ sub _extract_preserved_units {
 }
 
 sub _compress_dropped {
-    my ($dropped_units, $last_user_unit, $debug, $previous_summary) = @_;
-    
+    my ($dropped_units, $last_user_unit, $debug, $previous_summary, $target_tokens) = @_;
+
     return undef unless $dropped_units && @$dropped_units;
-    
+
     my @dropped_messages;
     for my $unit (@$dropped_units) {
         push @dropped_messages, @{$unit->{messages}};
     }
-    
-    log_debug('MessageValidator', "Compressing " . scalar(@dropped_messages) . " dropped messages");
-    
+
+    log_debug('MessageValidator', "Compressing " . scalar(@dropped_messages) . " dropped messages" .
+        ($target_tokens ? " (CSSS target: $target_tokens tokens)" : ''));
+
     my $compressed;
     eval {
         require CLIO::Memory::YaRN;
         my $yarn = CLIO::Memory::YaRN->new(debug => $debug);
-        
+
         # Get task context from most recent user message, falling back to
         # a substantive message from the dropped set if it's too short.
         my $original_task = '';
@@ -676,6 +710,7 @@ sub _compress_dropped {
         $compressed = $yarn->compress_messages(\@dropped_messages,
             original_task    => $original_task,
             previous_summary => $previous_summary,
+            target_tokens    => $target_tokens,
         );
         
         log_debug('MessageValidator', "Compression successful: " . scalar(@dropped_messages) . 

@@ -36,6 +36,7 @@ our @EXPORT_OK = qw(
     DEFAULT_LOCAL_CONTEXT_WINDOW
     DEFAULT_MAX_OUTPUT_TOKENS
     DEFAULT_MAX_RESPONSE_TOKENS
+    DEFAULT_TOOL_OUTPUT_RESERVE
     DEFAULT_BINARY_SAMPLE_SIZE
     DEFAULT_POST_TRIM_FLOOR
     TOOL_RESULT_MAX_CHUNK
@@ -55,6 +56,14 @@ use constant DEFAULT_LOCAL_CONTEXT_WINDOW => 65536;   # Local models (SAM, llama
 # Output token fallbacks
 use constant DEFAULT_MAX_OUTPUT_TOKENS    => 16384;   # When no output limit is known
 use constant DEFAULT_MAX_RESPONSE_TOKENS  => 16000;   # Response budget for conversation management
+use constant DEFAULT_TOOL_OUTPUT_RESERVE  => 8192;    # Output reserve when tools are active.
+                                                     # Tool-calling agents produce short responses
+                                                     # (tool_call JSON + brief text, well under 8K).
+                                                     # Using model's full max_output_tokens (often
+                                                     # 32K+) wastes prompt budget; capping here
+                                                     # reclaims ~24K of prompt room for long-running
+                                                     # tool-calling sessions and dramatically reduces
+                                                     # trim frequency.
 
 # Output reservation buffer for context budgeting.
 # Trim paths reserve actual max_output_tokens (from model caps) plus this

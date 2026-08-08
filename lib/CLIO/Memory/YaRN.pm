@@ -232,9 +232,10 @@ sub compress_messages {
 
     my $original_task = $opts{original_task} || '';
     my $previous_summary = $opts{previous_summary} || '';
+    my $target_tokens = $opts{target_tokens};   # Cache-Stable Summary Slot: fit to N tokens
     my $message_count = scalar(@$messages);
 
-    log_debug('YaRN', "Compressing $message_count messages");
+    log_debug('YaRN', "Compressing $message_count messages" . ($target_tokens ? " (target: $target_tokens tokens)" : ''));
 
     # Extraction buckets
     my @user_requests;
@@ -454,6 +455,15 @@ sub compress_messages {
 
     my $summary_content = join("\n", @parts);
 
+    # Cache-Stable Summary Slot (CSSS): if caller requested a target token size,
+    # fit the summary to that size. Truncate oldest items first if too big,
+    # pad with neutral filler if too small. This keeps the summary at a constant
+    # byte length across trim cycles, so llama.cpp's prompt cache can reuse
+    # everything before and after the summary slot.
+    if ($target_tokens && $target_tokens > 0) {
+        $summary_content = _fit_summary_to_target($summary_content, $target_tokens);
+    }
+
     # Estimate token counts
     my $original_tokens = 0;
     for my $msg (@$messages) {
@@ -591,6 +601,150 @@ sub _parse_previous_summary {
                      + scalar(keys %$tool_counts) + scalar(@$user_requests)
                      + scalar(@$collaboration_exchanges);
     log_debug('YaRN', "Parsed $parsed_items items from previous summary") if $parsed_items;
+}
+
+=head2 _fit_summary_to_target
+
+Adjust a thread_summary string to fit a target token budget.
+
+Strategy:
+- If too big: drop sections in least-critical-first order (tool_counts,
+  decisions, files, commits, collaboration, user_requests). Within a section,
+  truncate oldest items. Always preserve the Current task line.
+- If too small: pad with a single HTML comment line of neutral filler that
+  # is byte-stable across calls (so it caches the same way each time).
+
+Arguments:
+  $summary_content - Already-rendered thread_summary string
+  $target_tokens   - Desired token count (approximate; tolerance ~10%)
+
+Returns: Adjusted summary string.
+
+=cut
+
+sub _fit_summary_to_target {
+    my ($summary_content, $target_tokens) = @_;
+
+    require CLIO::Memory::TokenEstimator;
+    my $current = CLIO::Memory::TokenEstimator::estimate_tokens($summary_content);
+
+    # Within 10% of target - leave as is. Estimation accuracy is ~5-10% so
+    # chasing exact equality causes thrashing without benefit.
+    my $tolerance = int($target_tokens * 0.10);
+    return $summary_content if abs($current - $target_tokens) <= $tolerance;
+
+    if ($current > $target_tokens) {
+        # Too big - drop sections from least-critical to most-critical.
+        # The Current task section is NEVER dropped (it's the agent's
+        # active task context).
+        log_debug('YaRN', "CSSS: summary $current tokens > target $target_tokens, trimming");
+        my @sections = _parse_summary_sections($summary_content);
+
+        my @drop_order = qw(tool_counts decisions files commits collab user_requests);
+        for my $key (@drop_order) {
+            my $idx = _find_section_index(\@sections, $key);
+            next if $idx < 0;
+            splice @sections, $idx, 1;
+            my $candidate = _render_sections(\@sections);
+            my $size = CLIO::Memory::TokenEstimator::estimate_tokens($candidate);
+            if ($size <= $target_tokens + $tolerance) {
+                $summary_content = $candidate;
+                $current = $size;
+                last;
+            }
+        }
+
+        # If still too big after dropping all droppable sections, hard truncate.
+        if ($current > $target_tokens + $tolerance) {
+            my $ratio = CLIO::Memory::TokenEstimator::get_effective_ratio();
+            my $max_chars = int($target_tokens * $ratio * 0.95);
+            if (length($summary_content) > $max_chars) {
+                $summary_content = substr($summary_content, 0, $max_chars);
+                $summary_content =~ s/\s+\z//;
+                $summary_content .= "\n\n[Summary truncated to fit cache-stable slot of $target_tokens tokens]";
+                $current = CLIO::Memory::TokenEstimator::estimate_tokens($summary_content);
+                log_warning('YaRN', "CSSS: hard-truncated summary to $current tokens (target: $target_tokens)");
+            }
+        }
+    }
+    elsif ($current < $target_tokens) {
+        # Too small - pad with cache-stable filler. The filler must be
+        # byte-deterministic so subsequent regenerations produce identical
+        # bytes (cache hit on the filler portion too).
+        my $shortfall = $target_tokens - $current;
+        my $ratio = CLIO::Memory::TokenEstimator::get_effective_ratio();
+        my $filler_chars = int($shortfall * $ratio);
+        $filler_chars = 1 if $filler_chars < 1;
+        $summary_content .= "\n<!-- csss:padding:" . ('x' x $filler_chars) . " -->\n";
+        $current = CLIO::Memory::TokenEstimator::estimate_tokens($summary_content);
+        log_debug('YaRN', "CSSS: padded summary to $current tokens (target: $target_tokens)");
+    }
+
+    return $summary_content;
+}
+
+# Parse a rendered thread_summary into ordered sections. Returns an array of
+# { name => $key, header => $text, body => $text } hashes. The opening
+# <thread_summary> and closing </thread_summary> tags are stripped.
+sub _parse_summary_sections {
+    my ($content) = @_;
+
+    my @sections;
+    my $body = $content;
+    $body =~ s/<\/?thread_summary>\n?//g;
+
+    my @lines = split /\n/, $body;
+    my $current;
+    my $section_keys = {
+        'Current task'                => 'task',
+        'Active discussion'           => 'collab',
+        'Recent user requests'        => 'user_requests',
+        'Git commits'                 => 'commits',
+        'Files created/modified'      => 'files',
+        'Key decisions'               => 'decisions',
+        'Tool usage'                  => 'tool_counts',
+    };
+
+    for my $line (@lines) {
+        my $matched_key;
+        for my $prefix (keys %$section_keys) {
+            if ($line =~ /^\Q$prefix\E/) {
+                $matched_key = $section_keys->{$prefix};
+                last;
+            }
+        }
+        if (defined $matched_key) {
+            push @sections, $current if $current;
+            $current = { name => $matched_key, header => $line, body => '' };
+        }
+        elsif ($current) {
+            $current->{body} .= ($current->{body} ne '' ? "\n" : '') . $line;
+        }
+    }
+    push @sections, $current if $current;
+
+    return @sections;
+}
+
+sub _find_section_index {
+    my ($sections, $key) = @_;
+    for my $i (0 .. $#$sections) {
+        return $i if $sections->[$i]{name} eq $key;
+    }
+    return -1;
+}
+
+sub _render_sections {
+    my ($sections) = @_;
+    my $out = "<thread_summary>\n";
+    for my $sec (@$sections) {
+        $out .= "\n" . $sec->{header} . "\n";
+        if (length $sec->{body}) {
+            $out .= $sec->{body} . "\n";
+        }
+    }
+    $out .= "\n</thread_summary>";
+    return $out;
 }
 
 1;

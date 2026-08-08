@@ -167,6 +167,44 @@ CLIO supports multimodal image upload and display:
 
 ---
 
+## Cache-Stable Summary Slot (CSSS)
+
+The proactive trim in `MessageValidator` regenerates a `thread_summary` whenever it drops messages. Without CSSS, every trim changes the summary text - which invalidates llama.cpp's prompt cache for everything after the summary position in the prompt. This causes the agent to reprocess the full conversation on every trim cycle (huge CPU cost for local inference at ~400 tok/s).
+
+**How CSSS works:**
+
+1. After the first trim, the summary's current token count becomes the **locked slot size**.
+2. On every subsequent trim, `YaRN::compress_messages` is called with `target_tokens => $slot_size`.
+3. `_fit_summary_to_target` (in `YaRN.pm`) adjusts the summary to fit:
+   - Too big: drops sections in least-critical-first order (tool_counts, decisions, files, commits, collab, user_requests), then hard-truncates as a last resort. The `Current task` line is always preserved.
+   - Too small: pads with a deterministic HTML comment (`<!-- csss:padding:xxxxx -->`) so byte-identical padding regenerates across calls.
+4. The summary is placed at the **end** of the conversation (after recent messages), so even summary content changes only invalidate the summary tokens themselves.
+
+**Combined with summary-at-end ordering:**
+- Recent messages stay at constant positions across trims
+- Cache hit on system prompt + recent messages; only the small summary slot is reprocessed
+
+**Tool-output reserve optimization:**
+
+`compute_prompt_budget($caps, tools => $tools)` automatically caps the output reserve at `DEFAULT_TOOL_OUTPUT_RESERVE` (8K) when the model supports tools and tools are present in the request. Tool-calling responses rarely exceed a few hundred tokens; reserving the full `max_output_tokens` (often 32K) wastes ~24K of prompt budget. This is a per-request check, so non-tool workflows use the full reserve.
+
+**Configuration:**
+
+- `DEFAULT_TOOL_OUTPUT_RESERVE` in `lib/CLIO/Core/Defaults.pm` (default 8192) - adjust if your tool calls regularly exceed this
+- No user-facing config; the optimization is automatic for any tool-calling model
+
+**Diagnostics:**
+
+```
+[DEBUG][MessageValidator] CSSS: locking summary slot to 3500 tokens (existing summary)
+[DEBUG][YaRN] CSSS: padded summary to 3506 tokens (target: 3500)
+[DEBUG][MessageValidator] CSSS: cache impact ~50/83000 tokens invalidated (summary slot)
+```
+
+**Tests:** `tests/unit/test_cache_stable_summary.pl` covers CSSS lock behavior, summary-at-end ordering, tool-reserve capping, and YaRN fit behavior.
+
+---
+
 ## Model Selection
 
 **Use MiniMax M3 for all sub-agents:**

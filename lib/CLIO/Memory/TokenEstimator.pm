@@ -8,6 +8,7 @@ use warnings;
 use utf8;
 use POSIX qw(ceil);
 use Exporter 'import';
+use CLIO::Core::Logger qw(log_debug);
 
 our @EXPORT_OK = qw(estimate_tokens get_effective_ratio compute_prompt_budget);
 
@@ -336,7 +337,7 @@ Returns:
 =cut
 
 sub compute_prompt_budget {
-    my ($caps) = @_;
+    my ($caps, %opts) = @_;
     return 1000 unless ref $caps eq 'HASH';
 
     require CLIO::Core::Defaults;
@@ -356,9 +357,32 @@ sub compute_prompt_budget {
     # output limit, and reserving more wastes context). Fall back to
     # DEFAULT_MAX_OUTPUT_TOKENS only when the model has no reported
     # output cap (e.g. local models, unmapped providers).
+    #
+    # TOOL-CALLING OPTIMIZATION: When tools are present in the request
+    # ($opts{tools} is a non-empty arrayref) and the model supports
+    # tool calling, CLIO's responses are typically short (tool_call JSON
+    # + brief text, well under 8K tokens). The model's full max_output_tokens
+    # (e.g. 32K for many local models) wastes prompt budget when we
+    # reserve it all. Cap the reserve at DEFAULT_TOOL_OUTPUT_RESERVE
+    # (8K) when tools are active. This reclaims up to ~24K of prompt
+    # budget on models with large output caps, dramatically reducing
+    # trim frequency for long-running tool-calling sessions.
     my $output_reserve = $caps->{max_output_tokens}
                       || CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS();
     $output_reserve = CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS() if $output_reserve <= 0;
+
+    my $has_tools = $opts{tools} && ref($opts{tools}) eq 'ARRAY' && @{$opts{tools}};
+    my $model_supports_tools = $caps->{supports_tools} // 0;
+    if ($has_tools && $model_supports_tools) {
+        my $tool_reserve = CLIO::Core::Defaults::DEFAULT_TOOL_OUTPUT_RESERVE();
+        if ($output_reserve > $tool_reserve) {
+            log_debug('TokenEstimator', sprintf(
+                "Tool-calling output reserve: %d -> %d tokens (saving %d for prompt)",
+                $output_reserve, $tool_reserve, $output_reserve - $tool_reserve
+            ));
+            $output_reserve = $tool_reserve;
+        }
+    }
 
     # Estimation buffer: constant + proportional, capped. Covers
     # token estimation error, per-message overhead not captured by the
