@@ -640,9 +640,20 @@ sub _fit_summary_to_target {
         log_debug('YaRN', "CSSS: summary $current tokens > target $target_tokens, trimming");
         my @sections = _parse_summary_sections($summary_content);
 
+        # Map drop-key back to its header prefix. (Same mapping that
+        # _parse_summary_sections uses to identify section boundaries.)
+        my %key_to_prefix = (
+            tool_counts    => 'Tool usage',
+            decisions      => 'Key decisions',
+            files          => 'Files created/modified',
+            commits        => 'Git commits',
+            collab         => 'Active discussion',
+            user_requests  => 'Recent user requests',
+        );
         my @drop_order = qw(tool_counts decisions files commits collab user_requests);
         for my $key (@drop_order) {
-            my $idx = _find_section_index(\@sections, $key);
+            my $prefix = $key_to_prefix{$key};
+            my $idx = _find_section_index(\@sections, $prefix);
             next if $idx < 0;
             splice @sections, $idx, 1;
             my $candidate = _render_sections(\@sections);
@@ -694,6 +705,16 @@ sub _fit_summary_to_target {
 # Parse a rendered thread_summary into ordered sections. Returns an array of
 # { name => $key, header => $text, body => $text } hashes. The opening
 # <thread_summary> and closing </thread_summary> tags are stripped.
+#
+# Robustness notes:
+# - Headers always end with a colon (rendered by the writing code). Matching
+#   on the colon at end-of-prefix prevents body lines like "Git commits:" that
+#   happen to start with the same prefix from being misidentified.
+# - Section keys are sorted by length DESCENDING so longer (more specific)
+#   prefixes like "Files created/modified" match before shorter ones like
+#   "Files" (which is not a real key, but illustrates the principle). Hash
+#   iteration order is randomised in Perl, which would otherwise make this
+#   non-deterministic.
 sub _parse_summary_sections {
     my ($content) = @_;
 
@@ -703,27 +724,34 @@ sub _parse_summary_sections {
 
     my @lines = split /\n/, $body;
     my $current;
-    my $section_keys = {
-        'Current task'                => 'task',
-        'Active discussion'           => 'collab',
-        'Recent user requests'        => 'user_requests',
-        'Git commits'                 => 'commits',
-        'Files created/modified'      => 'files',
-        'Key decisions'               => 'decisions',
-        'Tool usage'                  => 'tool_counts',
-    };
+
+    # Sorted by length descending - longer (more specific) prefixes match first
+    # to avoid ambiguity (e.g. "Files created/modified:" beats "Files:" if a
+    # body line happens to start with "Files").
+    my @section_prefixes = sort { length($b) <=> length($a) } (
+        'Current task',
+        'Active discussion',
+        'Recent user requests',
+        'Git commits',
+        'Files created/modified',
+        'Key decisions',
+        'Tool usage',
+    );
 
     for my $line (@lines) {
-        my $matched_key;
-        for my $prefix (keys %$section_keys) {
-            if ($line =~ /^\Q$prefix\E/) {
-                $matched_key = $section_keys->{$prefix};
+        my $matched;
+        for my $prefix (@section_prefixes) {
+            # A header line starts with the prefix AND ends with a colon
+            # (the colon distinguishes it from any body line that happens
+            # to begin with the same words).
+            if ($line =~ /^\Q$prefix\E:/) {
+                $matched = $prefix;
                 last;
             }
         }
-        if (defined $matched_key) {
+        if (defined $matched) {
             push @sections, $current if $current;
-            $current = { name => $matched_key, header => $line, body => '' };
+            $current = { header => $line, body => '' };
         }
         elsif ($current) {
             $current->{body} .= ($current->{body} ne '' ? "\n" : '') . $line;
@@ -735,9 +763,10 @@ sub _parse_summary_sections {
 }
 
 sub _find_section_index {
-    my ($sections, $key) = @_;
+    my ($sections, $header_prefix) = @_;
     for my $i (0 .. $#$sections) {
-        return $i if $sections->[$i]{name} eq $key;
+        my $header = $sections->[$i]{header} // '';
+        return $i if $header =~ /^\Q$header_prefix\E:/;
     }
     return -1;
 }

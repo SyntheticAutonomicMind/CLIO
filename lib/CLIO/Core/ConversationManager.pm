@@ -491,18 +491,19 @@ sub trim_conversation_for_api {
         log_debug('ConversationManager', "Final total with system: " . ($system_tokens + $kept_tokens) . " of $safe_threshold prompt budget");
     }
 
-    # Re-attach preserved summary messages in their original positions relative
-    # to the kept tail. For now, since the summary is typically at the start
-    # of the conversation history (after the system prompt), we prepend it.
+    # Re-attach preserved summary messages. The proactive trim in
+    # MessageValidator puts the summary at the END of the conversation
+    # ([system][recent][summary]) for cache stability. We follow the same
+    # order here so pre-flight and proactive trims produce consistent
+    # ordering - the proactive trim's _extract_preserved_units detects the
+    # summary regardless of position, but matching the order keeps the
+    # message array stable across trim passes and makes the data flow
+    # easier to reason about.
     my @result = @kept;
     if (@preserved_summaries) {
-        # Prepend summaries (they were originally before the tail)
-        my @prepended;
         for my $s (@preserved_summaries) {
-            push @prepended, $s->{msg};
+            push @result, $s->{msg};
         }
-        push @prepended, @result;
-        @result = @prepended;
         log_debug('ConversationManager', "Pre-flight trim preserved " . scalar(@preserved_summaries) . " thread_summary message(s) for CSSS") if $debug;
     }
 
