@@ -387,6 +387,32 @@ sub trim_conversation_for_api {
 
     my $current_count = scalar(@messages);
 
+    # CRITICAL: Preserve any existing thread_summary system message. Without
+    # this, the proactive trim in MessageValidator cannot lock the summary
+    # slot size (CSSS) because the previous summary was dropped by this
+    # pre-flight trim. Detecting an existing summary here and keeping it
+    # in its original position ensures CSSS works across sessions.
+    my @summary_indices;
+    for my $i (0 .. $#messages) {
+        my $msg = $messages[$i];
+        if (($msg->{role} // '') eq 'system' && ($msg->{content} // '') =~ /<thread_summary>/) {
+            push @summary_indices, $i;
+        }
+    }
+
+    my $kept_tokens = 0;
+    my @preserved_summaries;
+    for my $idx (@summary_indices) {
+        my $msg = $messages[$idx];
+        my $msg_tokens = CLIO::Memory::TokenEstimator::estimate_tokens($msg->{content} // '');
+        # Budget reservation: count summary tokens toward the budget so we
+        # don't run over, but mark them so the walk doesn't double-count them.
+        if ($kept_tokens + $msg_tokens <= $target_tokens) {
+            push @preserved_summaries, { msg => $msg, tokens => $msg_tokens };
+            $kept_tokens += $msg_tokens;
+        }
+    }
+
     # Tail-preserving trim: walk backwards from newest message, keeping
     # messages until token budget is exhausted. This ensures the most recent
     # context (current task) survives, not old completed tasks.
@@ -396,11 +422,14 @@ sub trim_conversation_for_api {
     # IMPORTANT: Preserve tool_call/tool_result pairs together - never split them.
 
     my @kept = ();
-    my $kept_tokens = 0;
 
     for my $i (reverse 0 .. $#messages) {
         my $msg = $messages[$i];
         my $msg_tokens = CLIO::Memory::TokenEstimator::estimate_tokens($msg->{content} // '');
+        # Skip summary messages - they're preserved separately below
+        if (($msg->{role} // '') eq 'system' && ($msg->{content} // '') =~ /<thread_summary>/) {
+            next;
+        }
         
         # Check if this is a tool_result that needs its tool_call partner
         my $is_tool_result = ($msg->{role} // '') eq 'tool';
@@ -462,7 +491,22 @@ sub trim_conversation_for_api {
         log_debug('ConversationManager', "Final total with system: " . ($system_tokens + $kept_tokens) . " of $safe_threshold prompt budget");
     }
 
-    return \@kept if @kept;
+    # Re-attach preserved summary messages in their original positions relative
+    # to the kept tail. For now, since the summary is typically at the start
+    # of the conversation history (after the system prompt), we prepend it.
+    my @result = @kept;
+    if (@preserved_summaries) {
+        # Prepend summaries (they were originally before the tail)
+        my @prepended;
+        for my $s (@preserved_summaries) {
+            push @prepended, $s->{msg};
+        }
+        push @prepended, @result;
+        @result = @prepended;
+        log_debug('ConversationManager', "Pre-flight trim preserved " . scalar(@preserved_summaries) . " thread_summary message(s) for CSSS") if $debug;
+    }
+
+    return \@result if @result;
 
     return $history;
 }

@@ -17,6 +17,7 @@ use utf8;
 use lib './lib';
 use Test::More;
 use CLIO::Core::API::MessageValidator qw(validate_and_truncate);
+use CLIO::Core::ConversationManager qw(trim_conversation_for_api);
 use CLIO::Memory::YaRN;
 use CLIO::Memory::TokenEstimator qw(estimate_tokens compute_prompt_budget);
 
@@ -270,6 +271,52 @@ subtest 'Recent messages stay at constant positions when summary size locked' =>
 
     my $size = estimate_tokens($result1->{content});
     diag("Summary size with target=1500: actual=$size tokens");
+};
+
+subtest 'Pre-flight trim preserves thread_summary for CSSS' => sub {
+    # Build a conversation with an existing thread_summary at position 1
+    # (right after the system prompt). Size it so the pre-flight trim has
+    # to drop messages to fit budget.
+    my @msgs = (
+        { role => 'system', content => "You are CLIO. " . ("System context. " x 500) },
+        { role => 'system', content => "<thread_summary>\nCurrent task: Build a thing.\nFiles: a.c, b.c\n</thread_summary>" },
+        { role => 'user', content => "Original task" },
+    );
+    for my $i (1..200) {
+        push @msgs, {
+            role => 'assistant',
+            content => "Iter $i. " . ("Reasoning text. " x 50),
+            tool_calls => [{
+                id => "tc_$i",
+                type => 'function',
+                function => { name => 'file_operations', arguments => '{}' },
+            }],
+        };
+        push @msgs, {
+            role => 'tool',
+            tool_call_id => "tc_$i",
+            content => "Result $i. " . ("Line. " x 100),
+        };
+    }
+    push @msgs, { role => 'user', content => 'Continue.' };
+
+    my $system_prompt = "You are CLIO. " . ("System context. " x 500);
+    my $trimmed = trim_conversation_for_api(
+        \@msgs,
+        $system_prompt,
+        model_context_window => 131072,
+        max_response_tokens  => 8192,
+        debug => 0,
+    );
+
+    # Verify the trimmed result still contains a thread_summary
+    my ($summary_idx, $summary) = find_summary($trimmed);
+    ok($summary_idx >= 0, "Pre-flight trim preserved existing thread_summary message");
+
+    # The summary content should match the original - not regenerated
+    my $original_summary = "<thread_summary>\nCurrent task: Build a thing.\nFiles: a.c, b.c\n</thread_summary>";
+    is($summary->{content}, $original_summary,
+        "Pre-flight trim preserved summary content verbatim (not regenerated)");
 };
 
 done_testing();
