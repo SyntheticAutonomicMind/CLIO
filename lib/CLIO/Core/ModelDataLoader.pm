@@ -100,28 +100,47 @@ Load a single JSON file with error handling.
 
 sub _load_file {
     my ($self, $filename) = @_;
-    
+
     my $path = "$self->{data_dir}/$filename";
     unless (-f $path) {
         log_warning('ModelDataLoader', "JSON file not found: $path");
         return {};
     }
-    
+
     open my $fh, '<:encoding(UTF-8)', $path or do {
         log_error('ModelDataLoader', "Cannot read $path: $!");
         return {};
     };
-    
+
     my $content = do { local $/; <$fh> };
     close $fh;
-    
+
     my $data = safe_decode_json($content);
     if ($@ || !$data) {
         log_error('ModelDataLoader', "Failed to parse $path: $@");
         return {};
     }
-    
+
     return $data;
+}
+
+# Current schema version of the model-data JSON files. Bump when the on-disk
+# format changes incompatibly - older files will croak with a clear error
+# pointing the user at the upgrade path.
+our $SUPPORTED_DATA_VERSION = 2;
+
+sub _check_data_version {
+    my ($data, $filename) = @_;
+
+    my $version = $data->{version};
+    return unless defined $version;  # No version field - legacy file.
+
+    if ($version > $SUPPORTED_DATA_VERSION) {
+        croak "ModelDataLoader: $filename has version $version, " .
+              "but this build of CLIO only supports up to version $SUPPORTED_DATA_VERSION. " .
+              "The model-data JSON schema has changed incompatibly. " .
+              "Please update CLIO or downgrade the data file.";
+    }
 }
 
 =head2 _load_models
@@ -136,6 +155,7 @@ sub _load_models {
     $self->{_cache}{model_families}     = $data->{model_families}     || {};
     $self->{_cache}{standalone_models}  = $data->{standalone_models}  || {};
     $self->{_cache}{provider_mappings}  = $data->{provider_mappings}  || {};
+    _check_data_version($data, 'models.json');
 }
 
 =head2 _load_provider_defaults
@@ -148,6 +168,7 @@ sub _load_provider_defaults {
     my ($self) = @_;
     my $data = $self->_load_file('provider-defaults.json');
     $self->{_cache}{provider_defaults} = $data->{providers} || {};
+    _check_data_version($data, 'provider-defaults.json');
 }
 
 =head2 _load_heuristics
@@ -162,6 +183,7 @@ sub _load_heuristics {
     $self->{_cache}{heuristics_patterns} = $data->{patterns} || [];
     $self->{_cache}{heuristics_prefix_strip} = $data->{prefix_strip} || [];
     $self->{_cache}{heuristics_quantization_strip} = $data->{quantization_suffix_strip} || '';
+    _check_data_version($data, 'heuristics.json');
 }
 
 =head2 _load_provider_mapping
@@ -174,6 +196,7 @@ sub _load_provider_mapping {
     my ($self) = @_;
     my $data = $self->_load_file('provider-mapping.json');
     $self->{_cache}{provider_mapping} = $data->{mappings} || {};
+    _check_data_version($data, 'provider-mapping.json');
 }
 
 =head2 get_model_capabilities
