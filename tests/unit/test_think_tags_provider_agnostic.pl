@@ -432,24 +432,36 @@ subtest 'whitespace preserved at chunk boundaries around close tag' => sub {
 };
 
 # =========================================================================
-# Test 17: Tokenizer-level "mytodo" bug. Some chat templates (notably
-# Qwen3.6 via llama.cpp) emit continuation tokens without their leading
-# space byte. The result is two adjacent word tokens in separate chunks
-# like "my" then "todo" with no space between. CLIO must defensively
-# insert the missing space so the output reads "my todo" instead of
-# "mytodo". The guard fires only when both sides are letters (no false
-# positives on punctuation, newlines, or already-spaced text).
+# Test 17: Chunks join verbatim - no heuristic space inserted at boundaries.
+#
+# Regression guard against a previous heuristic that inserted a space at
+# every letter-letter chunk boundary. The heuristic was intended to fix a
+# reported model-emission artifact ("my" + "todo" gluing into "mytodo"),
+# but the regex was too broad: it fired at every word-internal chunk split
+# and broke words like "Detect" -> "Det ect", "uvcvideo" -> "uv c video",
+# "modprobe" -> "mod probe", "kernel" -> "k ernel", "Compatibility" ->
+# "Com patibility", "Compliant" -> "Com pl iant", "fps" -> "f ps".
+#
+# Current behavior: chunks are concatenated verbatim. Mid-word splits stay
+# glued (correct). The trade-off is that the original upstream artifact
+# (model emits "mytodo" with no space between two adjacent word tokens)
+# will appear run-on - but that case is rare and belongs in the model
+# tokenizer / chat template, not in CLIO's renderer. This mirrors the
+# d01cb6be fix that already removed an identical heuristic from the
+# THINKING-box content path in Chat.pm::_make_thinking_callback.
 # =========================================================================
-subtest 'defensive space insertion between adjacent letter chunks' => sub {
-    # The exact user-reported scenario
+subtest 'chunks join verbatim - no heuristic space inserted' => sub {
+    # The exact "mytodo" case from the original report: chunks concatenate
+    # verbatim. The output is run-on "mytodo" - by design. The alternative
+    # (heuristic space insertion) breaks every word the tokenizer splits.
     my $ss = MockSS->new;
     run_delta($ss, "<think>r</think>");
     run_delta($ss, "Let me update my");
     my $out = run_delta($ss, "todo and conclude.");
-    is($out, ' todo and conclude.',
-        'Defensive space inserted when prior chunk ends with letter and new chunk starts with letter');
+    is($out, 'todo and conclude.',
+        'mytodo scenario: chunks join verbatim, no heuristic space');
 
-    # No false positive: new chunk already starts with space
+    # Chunks with leading whitespace preserved verbatim
     $ss = MockSS->new;
     run_delta($ss, "<think>r</think>");
     run_delta($ss, "Let me update my");
@@ -457,15 +469,15 @@ subtest 'defensive space insertion between adjacent letter chunks' => sub {
     is($out, ' todo and conclude.',
         'No double space when new chunk already starts with space');
 
-    # No false positive: prior chunk ended with space
+    # Prior chunk ended with space - no double space inserted
     $ss = MockSS->new;
     run_delta($ss, "<think>r</think>");
     run_delta($ss, "Let me update my ");
     $out = run_delta($ss, "todo and conclude.");
     is($out, 'todo and conclude.',
-        'No extra space when prior chunk ended with space');
+        'Single space when previous chunk ended with whitespace');
 
-    # No false positive: prior chunk ended with punctuation
+    # Prior chunk ended with punctuation - no extra space
     $ss = MockSS->new;
     run_delta($ss, "<think>r</think>");
     run_delta($ss, "End of sentence.");
@@ -473,7 +485,7 @@ subtest 'defensive space insertion between adjacent letter chunks' => sub {
     is($out, 'New sentence starts.',
         'No extra space when prior chunk ended with punctuation');
 
-    # No false positive: new chunk starts with digit
+    # New chunk starts with digit - no extra space
     $ss = MockSS->new;
     run_delta($ss, "<think>r</think>");
     run_delta($ss, "Item");
@@ -481,7 +493,7 @@ subtest 'defensive space insertion between adjacent letter chunks' => sub {
     is($out, '42 is the answer.',
         'No extra space when new chunk starts with digit');
 
-    # No false positive: new chunk starts with non-letter (punctuation)
+    # New chunk starts with non-letter - no extra space
     $ss = MockSS->new;
     run_delta($ss, "<think>r</think>");
     run_delta($ss, "hello");
@@ -489,54 +501,133 @@ subtest 'defensive space insertion between adjacent letter chunks' => sub {
     is($out, ', world',
         'No extra space when new chunk starts with punctuation');
 
-    # No false positive: prior output was empty (first chunk)
+    # First chunk after close tag - no leading space inserted
     $ss = MockSS->new;
     run_delta($ss, "<think>r</think>");
     $out = run_delta($ss, "todo and conclude.");
     is($out, 'todo and conclude.',
         'No extra space on first chunk after close tag');
 
-    # No false positive on acronym continuation (uppercase -> uppercase)
-    # Qwen3.6 and similar chat templates strip leading spaces from
-    # acronym-continuation tokens ("L" + "TM" = "LTM", not "L TM").
+    # Acronym continuations stay glued
     $ss = MockSS->new;
     run_delta($ss, "<think>r</think>");
     run_delta($ss, "L");
     $out = run_delta($ss, "TM should not have a space.");
     is($out, 'TM should not have a space.',
-        'No extra space on acronym continuation (L + TM stays LTM)');
+        'Acronym L+TM stays LTM');
 
     $ss = MockSS->new;
     run_delta($ss, "<think>r</think>");
     run_delta($ss, "HW");
     $out = run_delta($ss, "Monitor");
     is($out, 'Monitor',
-        'No extra space on multi-letter acronym continuation (HW + Monitor)');
+        'Multi-letter acronym HW+Monitor stays glued');
 
-    # Uppercase -> lowercase still inserts space (acronym + word)
+    # Regression guard for the exact broken cases from a user-reported
+    # Nemotron 3 Ultra output. The previous heuristic broke every word
+    # the model's tokenizer happened to split mid-stream. These are the
+    # exact words that came out as "Det ect", "uv c video", "mod probe",
+    # "k ernel", "Com patibility", "Com pl iant", "f ps".
     $ss = MockSS->new;
     run_delta($ss, "<think>r</think>");
-    run_delta($ss, "Apple");
-    $out = run_delta($ss, "world");
-    is($out, ' world',
-        'Space inserted when prior chunk ended with uppercase but new starts with lowercase');
+    run_delta($ss, "Hardware Det");
+    $out = run_delta($ss, "ected. Web");
+    is($out, 'ected. Web',
+        '"Detect" and "Web" not split by heuristic (was: "Det ect", "Web cam")');
 
-    # Cumulative behavior: lowercase continuation still inserts space
     $ss = MockSS->new;
     run_delta($ss, "<think>r</think>");
-    run_delta($ss, "think");
-    $out = run_delta($ss, "therefore");
-    is($out, ' therefore', 'Single space inserted between "think" and "therefore"');
+    run_delta($ss, "uv");
+    $out = run_delta($ss, "cvideo driver");
+    is($out, 'cvideo driver',
+        '"uvcvideo" not split by heuristic (was: "uv c video")');
 
-    # Cumulative behavior with mixed-case acronym boundary
     $ss = MockSS->new;
     run_delta($ss, "<think>r</think>");
-    run_delta($ss, "the");
-    $out = run_delta($ss, "LTM");
-    is($out, ' LTM', 'Space inserted between "the" and acronym "LTM"');
-    $out = run_delta($ss, "module");
-    is($out, ' module',
-        'Space inserted between acronym "LTM" and next lowercase word');
+    run_delta($ss, "mod");
+    $out = run_delta($ss, "probe.d/uv");
+    is($out, 'probe.d/uv',
+        '"modprobe" and "uvcvideo" path not split (was: "mod probe.d/uv c video")');
+
+    $ss = MockSS->new;
+    run_delta($ss, "<think>r</think>");
+    run_delta($ss, "k");
+    $out = run_delta($ss, "ernel");
+    is($out, 'ernel',
+        '"kernel" not split by heuristic (was: "k ernel")');
+
+    $ss = MockSS->new;
+    run_delta($ss, "<think>r</think>");
+    run_delta($ss, "d");
+    $out = run_delta($ss, "rivers");
+    is($out, 'rivers',
+        '"drivers" not split by heuristic (was: "d rivers")');
+
+    $ss = MockSS->new;
+    run_delta($ss, "<think>r</think>");
+    run_delta($ss, "Com");
+    $out = run_delta($ss, "patibility");
+    is($out, 'patibility',
+        '"Compatibility" not split (was: "Com patibility")');
+
+    $ss = MockSS->new;
+    run_delta($ss, "<think>r</think>");
+    run_delta($ss, "Com");
+    $out = run_delta($ss, "pliant");
+    is($out, 'pliant',
+        '"Compliant" not split (was: "Com pl iant")');
+
+    $ss = MockSS->new;
+    run_delta($ss, "<think>r</think>");
+    run_delta($ss, "f");
+    $out = run_delta($ss, "ps");
+    is($out, 'ps',
+        '"fps" not split (was: "f ps")');
+
+    $ss = MockSS->new;
+    run_delta($ss, "<think>r</think>");
+    run_delta($ss, "qu");
+    $out = run_delta($ss, "irks");
+    is($out, 'irks',
+        '"quirks" not split (was: "qu irks")');
+
+    # Cumulative multi-chunk scenario - several words in a row, all
+    # must stay glued. Simulates the streaming of a full paragraph
+    # where the tokenizer splits chunks at arbitrary positions and
+    # the renderer must NOT add heuristic spaces at letter-letter joins.
+    $ss = MockSS->new;
+    run_delta($ss, "<think>r</think>");
+    my @para_chunks = (
+        "The Det",
+        "ected uvc",
+        " video mod",
+        "ule k",
+        "ernel driver",
+    );
+    my $para = '';
+    for my $chunk (@para_chunks) {
+        $para .= run_delta($ss, $chunk);
+    }
+    is($para, 'The Detected uvc video module kernel driver',
+        'Multi-chunk paragraph joins verbatim - all words intact including "kernel"');
+
+    # Direct regression test for the worst broken case: "kernel" split
+    # at "k" / "ernel" with no leading space. Chunks MUST concatenate
+    # as "kernel" verbatim, not "k ernel".
+    $ss = MockSS->new;
+    run_delta($ss, "<think>r</think>");
+    run_delta($ss, "k");
+    $out = run_delta($ss, "ernel");
+    is($out, 'ernel',
+        'Critical: "kernel" tokens k + ernel stay glued (was: "k ernel")');
+
+    # CJK chunks stay glued (same as the thinking render path)
+    $ss = MockSS->new;
+    run_delta($ss, "<think>r</think>");
+    $out = run_delta($ss, '你好');
+    $out = run_delta($ss, '世界');
+    is($out, '世界',
+        'CJK chunks concatenate verbatim, no heuristic space');
 };
 
 done_testing();
