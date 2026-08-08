@@ -303,4 +303,50 @@ subtest 'resume tools_signature mismatch falls back to rebuild' => sub {
     is(scalar @result, 0, 'returns empty list on tools signature mismatch');
 };
 
+# Regression test: the resume fast path must work with the REAL CLIO::Session::State
+# object (a blessed hashref), not only with bare hashrefs from StubSession. A
+# previous bug used `ref($state) eq 'HASH'` which is FALSE for blessed refs
+# (ref() returns the class name), so the fast path silently returned empty in
+# production. This test pins the blessed-ref behaviour.
+subtest 'resume fast path works with blessed CLIO::Session::State (regression)' => sub {
+    my $real_state = CLIO::Session::State->new(session_id => 'regression-blessed', debug => 0);
+    $real_state->set_last_api_payload(
+        [
+            { role => 'system',    content => 'sys' },
+            { role => 'user',      content => 'q' },
+            { role => 'assistant', content => 'a' },
+        ],
+        model           => 'm',
+        provider        => 'anthropic',
+        context_window  => 200000,
+        tools_signature => $real_signature,
+    );
+
+    my $sess = StubSession->new(state => $real_state);
+    my ($msgs, $tools) = $reference_orch->_try_resume_from_payload($sess, { max_context_window_tokens => 200000 });
+    ok($msgs && @$msgs, 'got messages back from blessed State object (was the bug: returned empty)');
+    is(scalar @$msgs, 3, 'got 3 messages from blessed State');
+    ok($tools && ref($tools) eq 'ARRAY', 'got tools arrayref back');
+};
+
+subtest '_capture_api_payload works with blessed CLIO::Session::State (regression)' => sub {
+    my $real_state = CLIO::Session::State->new(session_id => 'regression-capture', debug => 0);
+    my $sess = StubSession->new(state => $real_state);
+    my $messages = [
+        { role => 'system',    content => 'sys' },
+        { role => 'user',      content => 'q' },
+        { role => 'assistant', content => 'a' },
+    ];
+    my $tools = [ { type => 'function', function => { name => 'noop', description => '', parameters => {} } } ];
+
+    eval { $reference_orch->_capture_api_payload($sess, $messages, $tools) };
+    is($@, '', '_capture_api_payload did not die on blessed State');
+
+    my $stored = $real_state->last_api_payload;
+    is(scalar @$stored, 3, 'payload was written to blessed State');
+    my $meta = $real_state->last_api_metadata;
+    is($meta->{provider}, 'anthropic', 'metadata.provider written');
+    ok($meta->{saved_at} > 0, 'metadata.saved_at written');
+};
+
 done_testing();
