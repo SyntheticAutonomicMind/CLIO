@@ -1075,6 +1075,13 @@ sub _build_turn_context {
             # process take the normal rebuild path.
             $self->{_tools_cache} = [@$cached_tools];
 
+            # Sync state's max_tokens to the current model's context window.
+            # Without this, add_message would trim against the OLD model's
+            # window (saved before the session ended) and over-fill the new
+            # model's window if it's smaller. The rebuild path below does the
+            # same sync - the fast path needs it too.
+            $self->_sync_state_max_tokens($session, $model_caps);
+
             log_info('WorkflowOrchestrator',
                 "Resume fast path: " . scalar(@$cached_messages) . " messages from cached payload");
             return ($cached_messages, [@$cached_tools]);
@@ -1090,20 +1097,10 @@ sub _build_turn_context {
 
     inject_context_files($session, \@messages, debug => $self->{debug});
 
-    # Update session state's max_tokens to match model's actual context window.
-    # This ensures State::add_message trims at the correct threshold instead
-    # of the default 128k, which would underutilize large-context models.
-    my $ctx_window = $model_caps->{max_context_window_tokens};
-    log_debug('WorkflowOrchestrator', "State max_tokens check: ctx_window=" . ($ctx_window // 'undef') . ", session=" . (defined $session ? ref($session) : 'undef'));
-    if ($ctx_window && $session && $session->can('state')) {
-        my $state = $session->state();
-        log_debug('WorkflowOrchestrator', "State object: " . (defined $state ? ref($state) . ", max_tokens=" . ($state->{max_tokens} // 'undef') : 'undef'));
-        if ($state && ($state->{max_tokens} // 0) != $ctx_window) {
-            $state->{max_tokens} = $ctx_window;
-            log_debug('WorkflowOrchestrator', "Updated session max_tokens to $ctx_window (model context window)");
-        }
-    }
-    
+    # Sync state's max_tokens to the current model's context window so
+    # State::add_message trims at the correct threshold.
+    $self->_sync_state_max_tokens($session, $model_caps);
+
     my $history = load_conversation_history($session, debug => $self->{debug});
 
     if ($history && @$history) {
@@ -1291,6 +1288,39 @@ sub invalidate_tool_cache {
     my ($self) = @_;
     delete $self->{_tools_cache};
     log_debug('WorkflowOrchestrator', "Tool definition cache invalidated");
+}
+
+=head2 _sync_state_max_tokens($session, $model_caps)
+
+Update Session::State's max_tokens to match the current model's context
+window so State::add_message trims at the correct threshold. Called from
+both the resume fast path and the normal rebuild path - missing it on the
+fast path causes add_message to trim against the OLD model's window,
+which over-fills the new model's window when resuming with a smaller-ctx
+model.
+
+No-op when:
+- $model_caps is missing or has no max_context_window_tokens
+- $session can't provide a state
+- state's max_tokens already matches
+
+=cut
+
+sub _sync_state_max_tokens {
+    my ($self, $session, $model_caps) = @_;
+
+    my $ctx_window = $model_caps->{max_context_window_tokens};
+    return unless $ctx_window;
+    return unless $session && $session->can('state');
+
+    my $state = $session->state();
+    return unless ref($state);
+
+    if (($state->{max_tokens} // 0) != $ctx_window) {
+        log_debug('WorkflowOrchestrator',
+            "Updated session max_tokens from $state->{max_tokens} to $ctx_window (model context window)");
+        $state->{max_tokens} = $ctx_window;
+    }
 }
 
 =head2 _capture_api_payload($session, \@messages, \@tools)

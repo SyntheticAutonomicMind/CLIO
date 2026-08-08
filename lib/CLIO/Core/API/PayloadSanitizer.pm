@@ -6,9 +6,11 @@ package CLIO::Core::API::PayloadSanitizer;
 use strict;
 use warnings;
 use utf8;
-use Exporter 'import';
-use Scalar::Util qw(looks_like_number);
+use Scalar::Util qw(blessed looks_like_number);
+use CLIO::Core::Logger qw(log_warning);
 use CLIO::Util::TextSanitizer qw(sanitize_text);
+use CLIO::Util::JSON qw(is_hashref is_arrayref);
+use Exporter 'import';
 
 our @EXPORT_OK = qw(sanitize_payload);
 
@@ -43,17 +45,23 @@ sub sanitize_payload {
 
     if (!defined $data) {
         return undef;
-    } elsif (ref($data) eq 'HASH') {
+    } elsif (is_hashref($data)) {
         my %sanitized;
         for my $key (keys %$data) {
             $sanitized{$key} = sanitize_payload($data->{$key});
         }
         return \%sanitized;
-    } elsif (ref($data) eq 'ARRAY') {
+    } elsif (is_arrayref($data)) {
         return [ map { sanitize_payload($_) } @$data ];
     } elsif (!ref($data)) {
         return looks_like_number($data) ? $data : sanitize_text($data);
     } else {
+        # Blessed ref (not hash/array): pass through unchanged. The caller
+        # is responsible for serialising it. We log once per process for
+        # visibility, since this is unusual.
+        log_warning('PayloadSanitizer',
+            'Passing through blessed ref of type ' . blessed($data) .
+            ' - caller is responsible for serialising') if blessed($data);
         return $data;
     }
 }

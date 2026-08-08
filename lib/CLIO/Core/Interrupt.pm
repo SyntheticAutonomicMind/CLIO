@@ -6,6 +6,7 @@ package CLIO::Core::Interrupt;
 use strict;
 use warnings;
 use utf8;
+use CLIO::Util::JSON qw(is_hashref);
 use Exporter 'import';
 
 our @EXPORT_OK = qw(
@@ -172,7 +173,7 @@ sub pending {
     my $session = $opts{session};
     return 0 unless $session && $session->can('state');
     my $state = $session->state();
-    return 0 unless $state && ref($state) eq 'HASH';
+    return 0 unless $state && is_hashref($state);
     return $state->{user_interrupted} ? 1 : 0;
 }
 
@@ -196,7 +197,7 @@ sub set {
 
     if ($session && $session->can('state')) {
         my $state = $session->state();
-        if ($state && ref($state) eq 'HASH') {
+        if ($state && is_hashref($state)) {
             $state->{user_interrupted} = 1;
             # Best-effort save so the flag survives a crash before the
             # workflow loop notices it. Failure is non-fatal.
@@ -230,7 +231,7 @@ sub clear {
     my $session = $opts{session};
     if ($session && $session->can('state')) {
         my $state = $session->state();
-        if ($state && ref($state) eq 'HASH') {
+        if ($state && is_hashref($state)) {
             $state->{user_interrupted} = 0;
         }
     }
@@ -278,7 +279,7 @@ sub install_alrm_handler {
         return if $ALRM_INSTALLED == 0;  # race: uninstall happened mid-fire
         return unless $session && $session->can('state');
         my $state = $session->state();
-        return unless $state && ref($state) eq 'HASH';
+        return unless $state && is_hashref($state);
         return if $state->{user_interrupted};  # already flagged
 
         # Non-blocking read of a single byte. Even if we are in a

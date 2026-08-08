@@ -8,6 +8,7 @@ use warnings;
 use utf8;
 use CLIO::Core::Logger qw(log_debug log_info log_warning log_error);
 use CLIO::Util::JSON qw(decode_json safe_decode_json);
+use Carp qw(croak);
 
 =head1 NAME
 
@@ -52,15 +53,7 @@ Arguments:
 sub new {
     my ($class, %args) = @_;
 
-    my $data_dir = $args{data_dir};
-    if (!$data_dir) {
-        # Default to the installed module directory
-        use File::Spec;
-        use File::Basename;
-        my $module_dir = File::Basename::dirname(__FILE__);
-        $data_dir = File::Spec->catdir($module_dir, 'model-data');
-        $data_dir = "/home/deck/repositories/CLIO/lib/CLIO/Core/model-data" unless -d $data_dir;
-    }
+    my $data_dir = $args{data_dir} || _detect_data_dir();
 
     my $self = {
         debug       => $args{debug} || 0,
@@ -69,8 +62,62 @@ sub new {
         _loaded     => 0,
     };
 
+    unless (-d $data_dir) {
+        croak "ModelDataLoader: model-data directory not found: $data_dir\n" .
+              "Pass data_dir => '/path/to/lib/CLIO/Core/model-data' explicitly, " .
+              "or run from a directory containing lib/CLIO/Core/model-data/.";
+    }
+
     bless $self, $class;
     return $self;
+}
+
+=head2 _detect_data_dir
+
+Locate the bundled model-data directory. Tries, in order:
+  1. Same directory as this module (works for both development and installed
+     layouts where model-data/ ships alongside ModelDataLoader.pm).
+  2. The script's directory under lib/CLIO/Core/model-data/ (catches installs
+     where __FILE__ came back as a bare basename).
+  3. CLIO_HOME/lib/CLIO/Core/model-data/ (installed-mode env override).
+
+Returns the first existing path, or undef if none resolve.
+
+=cut
+
+sub _detect_data_dir {
+    use File::Spec;
+    use File::Basename;
+    use Cwd qw(abs_path);
+
+    my $candidates = [];
+
+    # (1) Same directory as this module, resolved to absolute path.
+    my $module_path = abs_path(__FILE__);
+    if ($module_path) {
+        my $module_dir = File::Basename::dirname($module_path);
+        push @$candidates, File::Spec->catdir($module_dir, 'model-data');
+    }
+
+    # (2) Script directory layout (used when __FILE__ resolved to a bare
+    # basename because the module was loaded via `use lib ...`).
+    if ($ENV{CLIO_HOME} && -d $ENV{CLIO_HOME}) {
+        push @$candidates, File::Spec->catdir($ENV{CLIO_HOME}, 'lib', 'CLIO', 'Core', 'model-data');
+    }
+
+    # (3) FindBin::Bin - the directory of the main script. Falls through to
+    # `lib/CLIO/Core/model-data` underneath it (the installed-mode layout
+    # where CLIO lives in /usr/lib/clio/lib/CLIO/Core/...).
+    if ($main::FindBin::Bin && -d $main::FindBin::Bin) {
+        push @$candidates, File::Spec->catdir($main::FindBin::Bin, 'lib', 'CLIO', 'Core', 'model-data');
+    }
+
+    for my $candidate (@$candidates) {
+        return $candidate if -d $candidate;
+    }
+
+    # Return the first candidate anyway - the croak in new() will explain.
+    return $candidates->[0];
 }
 
 =head2 _ensure_loaded
@@ -330,51 +377,66 @@ Try to match a model name against known canonical names in the database.
 
 sub _match_canonical_name {
     my ($self, $name) = @_;
-    
+
+    $self->_ensure_loaded();
+
     # First try exact match in families
     return $name if exists $self->{_cache}{model_families}{$name};
-    
+
     # Try exact match in standalone models
     return $name if exists $self->{_cache}{standalone_models}{$name};
-    
+
     # Try exact match in family variants
     for my $family_name (keys %{$self->{_cache}{model_families}}) {
         my $family = $self->{_cache}{model_families}{$family_name};
         next unless $family->{variants};
         return $name if exists $family->{variants}{$name};
     }
-    
-    # Try case-insensitive match
+
+    # Try case-insensitive match. Iterate sorted by length descending so the
+    # most specific name wins (e.g. "qwen3" beats "qwen", "gpt-oss-120b" beats
+    # "gpt-oss"). Without this, Perl's randomized hash iteration order means
+    # the same model could resolve to different families across runs.
     my $lc_name = lc($name);
-    for my $family_name (keys %{$self->{_cache}{model_families}}) {
+    my @families_by_length = sort { length($b) <=> length($a) }
+                                   keys %{$self->{_cache}{model_families}};
+    for my $family_name (@families_by_length) {
         my $family = $self->{_cache}{model_families}{$family_name};
         return $family_name if lc($family_name) eq $lc_name;
         next unless $family->{variants};
-        for my $variant (keys %{$family->{variants}}) {
+        my @variants_by_length = sort { length($b) <=> length($a) }
+                                      keys %{$family->{variants}};
+        for my $variant (@variants_by_length) {
             return $variant if lc($variant) eq $lc_name;
         }
     }
-    
-    for my $standalone (keys %{$self->{_cache}{standalone_models}}) {
+
+    for my $standalone (sort { length($b) <=> length($a) }
+                            keys %{$self->{_cache}{standalone_models}}) {
         return $standalone if lc($standalone) eq $lc_name;
     }
-    
-    # Try fuzzy matching: check if canonical name is a substring
-    # (e.g., "deepseek-v4-flash" in "DeepSeek-V4-Flash-0731-UD-IQ3_XXS-1-of-4")
-    for my $family_name (keys %{$self->{_cache}{model_families}}) {
+
+    # Fuzzy matching: check if canonical name is a substring
+    # (e.g. "deepseek-v4-flash" in "DeepSeek-V4-Flash-0731-UD-IQ3_XXS-1-of-4").
+    # Same length-descending ordering applies: longer (more specific) names
+    # match first, so e.g. "gemma-3-12b-it" wins over "gemma-3".
+    for my $family_name (@families_by_length) {
         my $family = $self->{_cache}{model_families}{$family_name};
         if ($lc_name =~ /\Q$family_name\E/i) {
             return $family_name;
         }
         next unless $family->{variants};
-        for my $variant (keys %{$family->{variants}}) {
+        my @variants_by_length = sort { length($b) <=> length($a) }
+                                      keys %{$family->{variants}};
+        for my $variant (@variants_by_length) {
             if ($lc_name =~ /\Q$variant\E/i) {
                 return $variant;
             }
         }
     }
-    
-    for my $standalone (keys %{$self->{_cache}{standalone_models}}) {
+
+    for my $standalone (sort { length($b) <=> length($a) }
+                            keys %{$self->{_cache}{standalone_models}}) {
         if ($lc_name =~ /\Q$standalone\E/i) {
             return $standalone;
         }

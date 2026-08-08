@@ -671,13 +671,21 @@ sub _fit_summary_to_target {
         # Too small - pad with cache-stable filler. The filler must be
         # byte-deterministic so subsequent regenerations produce identical
         # bytes (cache hit on the filler portion too).
+        #
+        # Round the filler length to a 64-char bucket so that small shortfall
+        # jitter (driven by varying compress_messages output) doesn't shift
+        # the slot size. 64 chars is ~16 tokens at the typical ratio, well
+        # inside the 10% tolerance check above. Without bucketing, a 1-token
+        # shortfall change could shift filler by 4 chars and invalidate the
+        # cache that CSSS exists to protect.
         my $shortfall = $target_tokens - $current;
         my $ratio = CLIO::Memory::TokenEstimator::get_effective_ratio();
-        my $filler_chars = int($shortfall * $ratio);
-        $filler_chars = 1 if $filler_chars < 1;
+        my $BUCKET = 64;
+        my $filler_chars = int(($shortfall * $ratio + $BUCKET - 1) / $BUCKET) * $BUCKET;
+        $filler_chars = $BUCKET if $filler_chars < $BUCKET;
         $summary_content .= "\n<!-- csss:padding:" . ('x' x $filler_chars) . " -->\n";
         $current = CLIO::Memory::TokenEstimator::estimate_tokens($summary_content);
-        log_debug('YaRN', "CSSS: padded summary to $current tokens (target: $target_tokens)");
+        log_debug('YaRN', "CSSS: padded summary to $current tokens (target: $target_tokens, filler=$filler_chars)");
     }
 
     return $summary_content;

@@ -33,7 +33,7 @@ No CPAN installation required. Simply uses whatever is already on the system.
 
 use Exporter 'import';
 our @EXPORT_OK = qw(encode_json decode_json encode_json_pretty encode_json_canonical JSON_BACKEND
-    safe_decode_json safe_encode_json
+    safe_decode_json safe_encode_json is_hashref is_arrayref
 );
 
 # Detect the best available JSON backend at compile time
@@ -191,6 +191,47 @@ Returns the name of the JSON backend in use.
 
 sub JSON_BACKEND {
     return $_backend;
+}
+
+=head2 is_hashref / is_arrayref
+
+Test whether a value is a hashref or arrayref, INCLUDING blessed variants.
+
+Background: Perl's built-in ref() returns the class name for blessed
+references ("Foo::Bar"), NOT "HASH" / "ARRAY". The common idiom
+`ref($x) eq 'HASH'` is therefore FALSE for blessed hashes, which causes
+silent data leakage in guards. These helpers accept both plain and
+blessed refs.
+
+    is_hashref({})                           # 1
+    is_hashref(bless {}, 'Foo')              # 1
+    is_hashref([])                           # 0
+    is_hashref(undef)                        # 0
+    is_hashref("string")                     # 0
+
+    is_arrayref([])                          # 1
+    is_arrayref(bless [], 'Foo')             # 1
+    is_arrayref({})                          # 0
+
+Replace `ref($x) eq 'HASH'` with `is_hashref($x)` and similarly for arrays
+to avoid the silent-failure bug fixed in commit b5d93d3d.
+
+=cut
+
+sub is_hashref {
+    my ($x) = @_;
+    return 0 unless ref $x;
+    return 1 if ref($x) eq 'HASH';
+    return 1 if eval { $x->isa('HASH') };
+    return 0;
+}
+
+sub is_arrayref {
+    my ($x) = @_;
+    return 0 unless ref $x;
+    return 1 if ref($x) eq 'ARRAY';
+    return 1 if eval { $x->isa('ARRAY') };
+    return 0;
 }
 
 1;
