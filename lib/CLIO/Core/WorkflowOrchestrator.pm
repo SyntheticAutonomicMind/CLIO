@@ -1206,7 +1206,7 @@ sub _build_turn_context {
         return (\@messages, [@{$self->{_tools_cache}}]);  # Return a copy to prevent mutation
     }
 
-    my $tools = $self->_build_tools_for_api($session);
+    my $tools = $self->_build_tools_for_api();
 
     log_debug('WorkflowOrchestrator', "Loaded " . scalar(@$tools) . " tool definitions");
 
@@ -1228,7 +1228,7 @@ Returns: Arrayref of tool definition hashes.
 =cut
 
 sub _build_tools_for_api {
-    my ($self, $session) = @_;
+    my ($self) = @_;
 
     my $tools = $self->{tool_registry}->get_tool_definitions();
 
@@ -1348,7 +1348,7 @@ sub _capture_api_payload {
     my $model    = $self->{api_manager} ? $self->{api_manager}->get_current_model()    : undef;
     my $provider = $self->{api_manager} ? $self->{api_manager}->get_current_provider() : undef;
     my $caps     = $self->{api_manager} ? $self->{api_manager}->get_model_capabilities() : {};
-    my $ctx      = $caps->{max_context_window_tokens} || $state->{max_tokens} || 0;
+    my $ctx      = $caps->{max_context_window_tokens} // $state->{max_tokens} // 0;
 
     $state->set_last_api_payload(
         $messages_ref,
@@ -1397,22 +1397,38 @@ sub _tools_signature {
 
 sub _stable_json {
     my ($data) = @_;
-    return '' unless defined $data;
+    # Defer to CLIO::Util::JSON's canonical encoder for deterministic output
+    # (sorted keys, no whitespace). Falls back to a hand-rolled encoder if
+    # the canonical encoder can't handle a blessed ref in the data - tools
+    # are normally plain hashes, but plugin/MCP tools can occasionally wrap
+    # parameter schemas in objects.
+    require CLIO::Util::JSON;
+    my $encoded = eval { CLIO::Util::JSON::encode_json_canonical($data) };
+    return $encoded if defined $encoded && !$@;
+
+    # Fallback: hand-rolled encoder that quotes every scalar (so numbers
+    # and booleans don't break the byte-stable contract the SHA depends
+    # on) and tolerates blessed refs by stringifying.
+    return _stable_json_legacy($data);
+}
+
+sub _stable_json_legacy {
+    my ($data) = @_;
 
     if (ref($data) eq 'HASH') {
         my @parts;
         for my $k (sort keys %$data) {
-            push @parts, _stable_json($k) . ':' . _stable_json($data->{$k});
+            push @parts, _stable_json_legacy($k) . ':' . _stable_json_legacy($data->{$k});
         }
         return '{' . join(',', @parts) . '}';
     } elsif (ref($data) eq 'ARRAY') {
-        return '[' . join(',', map { _stable_json($_) } @$data) . ']';
+        return '[' . join(',', map { _stable_json_legacy($_) } @$data) . ']';
     } elsif (!defined $data) {
         return 'null';
     } elsif (ref($data)) {
-        return '?';
+        # Blessed or otherwise non-plain ref - stringify.
+        return '"' . _stable_json_legacy("$data") . '"';
     } else {
-        # Escape for stability - the value is treated as text.
         my $s = "$data";
         $s =~ s/([\\\"])/\\$1/g;
         return '"' . $s . '"';
@@ -1453,8 +1469,11 @@ sub _try_resume_from_payload {
         return;
     }
 
-    # Toolset drift: rebuild tools, compare to saved signature.
-    my ($tools) = $self->_build_tools_for_api($session);
+    # Toolset drift: rebuild tools, compare to saved signature. Cache the
+    # freshly-built tools even when we fall back to rebuild - this avoids
+    # building them twice (once here, once again in _build_turn_context).
+    my ($tools) = $self->_build_tools_for_api();
+    $self->{_tools_cache} = [@$tools];
     my $current_sig = $self->_tools_signature($tools);
     if (($metadata->{tools_signature} // '') ne ($current_sig // '')) {
         log_info('WorkflowOrchestrator',

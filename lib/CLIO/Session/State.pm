@@ -435,19 +435,13 @@ sub set_last_api_payload {
     my ($self, $payload, %opts) = @_;
     croak "payload must be an arrayref" unless ref($payload) eq 'ARRAY';
 
-    # Deep-clone the payload so later in-process mutation of the caller's
-    # @messages array doesn't corrupt the cached copy. Shallow per-message
-    # copy is enough because message content itself is treated as immutable
-    # after the API call - callers should never mutate a message hash.
-    my $copy = [];
-    for my $msg (@$payload) {
-        if (ref($msg) eq 'HASH') {
-            my %m = %$msg;
-            push @$copy, \%m;
-        } else {
-            push @$copy, $msg;
-        }
-    }
+    # Deep-clone so later in-process mutation of the caller's @messages
+    # array cannot corrupt the cached copy. Shallow copy of the top-level
+    # array isn't enough because message hashes contain nested arrayrefs
+    # (tool_calls) and hashrefs (tool_calls[i].function.arguments) that
+    # are mutable in practice - the WorkflowOrchestrator mutates
+    # assistant message tool_calls between API iterations.
+    my $copy = _deep_clone_messages($payload);
 
     $self->{last_api_payload} = $copy;
     $self->{last_api_metadata} = {
@@ -459,6 +453,67 @@ sub set_last_api_payload {
     };
 
     return $copy;
+}
+
+sub _deep_clone_messages {
+    my ($messages) = @_;
+    my $copy = [];
+    for my $msg (@$messages) {
+        if (ref($msg) eq 'HASH') {
+            my %m = %$msg;
+            # Recurse into known nested structures that may be mutated.
+            $m{tool_calls} = _deep_clone_messages_list($m{tool_calls}) if ref($m{tool_calls}) eq 'ARRAY';
+            $m{content}    = _deep_clone_content($m{content}) if ref($m{content});
+            push @$copy, \%m;
+        } else {
+            push @$copy, $msg;
+        }
+    }
+    return $copy;
+}
+
+sub _deep_clone_messages_list {
+    my ($items) = @_;
+    return [] unless ref($items) eq 'ARRAY';
+    my $copy = [];
+    for my $item (@$items) {
+        if (ref($item) eq 'HASH') {
+            my %h = %$item;
+            # tool_calls entries have function.arguments (hashref) - clone it.
+            if (ref($h{function}) eq 'HASH') {
+                my %fn = %{$h{function}};
+                $fn{arguments} = _deep_clone_json_value($fn{arguments}) if ref($fn{arguments});
+                $h{function} = \%fn;
+            }
+            push @$copy, \%h;
+        } else {
+            push @$copy, $item;
+        }
+    }
+    return $copy;
+}
+
+# Clone a tool message content value: in OpenAI format this is a string,
+# but in Anthropic it can be an arrayref of typed blocks (text, tool_use,
+# image). We preserve the structure but copy any nested hashes/arrays.
+sub _deep_clone_content {
+    my ($content) = @_;
+    return _deep_clone_json_value($content);
+}
+
+sub _deep_clone_json_value {
+    my ($v) = @_;
+    return $v unless ref($v);
+    if (ref($v) eq 'HASH') {
+        my %h = %$v;
+        for my $k (keys %h) { $h{$k} = _deep_clone_json_value($h{$k}); }
+        return \%h;
+    }
+    if (ref($v) eq 'ARRAY') {
+        return [ map { _deep_clone_json_value($_) } @$v ];
+    }
+    # Blessed or otherwise - leave alone, callers shouldn't mutate these.
+    return $v;
 }
 
 sub clear_last_api_payload {
