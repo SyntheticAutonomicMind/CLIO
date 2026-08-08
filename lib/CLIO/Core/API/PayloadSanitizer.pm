@@ -7,8 +7,18 @@ use strict;
 use warnings;
 use utf8;
 use Exporter 'import';
-use Scalar::Util qw(looks_like_number);
+use Scalar::Util qw(blessed looks_like_number);
+use CLIO::Core::Logger qw(log_warning);
 use CLIO::Util::TextSanitizer qw(sanitize_text);
+
+# Map of known JSON boolean class names to plain Perl boolean values.
+# These classes come from JSON::PP, JSON::XS, Cpanel::JSON::XS.
+my %JSON_BOOLEAN_CLASS = (
+    'JSON::PP::Boolean'     => 1,
+    'JSON::XS::Boolean'     => 1,
+    'Cpanel::JSON::XS::Boolean' => 1,
+    'Types::Serialiser::BooleanBase' => 1,  # Base class used by some backends
+);
 
 our @EXPORT_OK = qw(sanitize_payload);
 
@@ -54,6 +64,21 @@ sub sanitize_payload {
     } elsif (!ref($data)) {
         return looks_like_number($data) ? $data : sanitize_text($data);
     } else {
+        # Blessed ref (not hash/array): check for known JSON boolean types
+        # and convert to plain Perl boolean values for correct serialization.
+        my $class = blessed($data);
+        if ($class && $JSON_BOOLEAN_CLASS{$class}) {
+            # JSON::PP::Boolean, JSON::XS::Boolean, Cpanel::JSON::XS::Boolean
+            # all overload bool/num context: true -> 1, false -> 0
+            return $data ? 1 : 0;
+        }
+
+        # Unknown blessed ref: pass through unchanged. The caller
+        # is responsible for serialising it. We log once per process for
+        # visibility, since this is unusual.
+        log_warning('PayloadSanitizer',
+            'Passing through blessed ref of type ' . ($class // 'unknown') .
+            ' - caller is responsible for serialising') if $class;
         return $data;
     }
 }
