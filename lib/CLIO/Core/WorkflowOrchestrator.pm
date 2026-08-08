@@ -1310,7 +1310,10 @@ sub _capture_api_payload {
 
     return unless $session && $session->can('state');
     my $state = $session->state();
-    return unless ref($state) eq 'HASH';  # bare-hash session is unit-test only
+    # $state may be a blessed hashref (CLIO::Session::State) or a bare hash
+    # (unit tests). ref() returns the class name for blessed refs, so a
+    # bare 'ref' truthiness check is the portable test.
+    return unless ref($state);
 
     my $model    = $self->{api_manager} ? $self->{api_manager}->get_current_model()    : undef;
     my $provider = $self->{api_manager} ? $self->{api_manager}->get_current_provider() : undef;
@@ -1406,7 +1409,7 @@ sub _try_resume_from_payload {
 
     return unless $session && $session->can('state');
     my $state = $session->state();
-    return unless ref($state) eq 'HASH';
+    return unless ref($state);  # bare ref check works for blessed hash OR plain hash
 
     my $payload  = $state->{last_api_payload};
     my $metadata = $state->{last_api_metadata};
