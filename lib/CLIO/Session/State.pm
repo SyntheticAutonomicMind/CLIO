@@ -93,6 +93,16 @@ sub new {
         context_files => [],
         # Context management configuration
         max_tokens => $args{max_tokens} // 128000,           # Model context window (updated at runtime)
+        # Cached API payload (the exact @messages array last sent to the provider)
+        # On session resume this is loaded verbatim - no rebuild from history needed.
+        last_api_payload => [],       # Arrayref of message hashes
+        last_api_metadata => {        # Snapshot at save time, drives reuse decisions
+            model          => undef,  # Model ID at save time
+            provider       => undef,  # Provider name at save time
+            context_window => 0,      # Model context window at save time
+            tools_signature => undef, # Digest of tools array (MCP/plugin drift detection)
+            saved_at       => 0,      # Unix timestamp of save
+        },
     };
     bless $self, $class;
     if ($ENV{CLIO_DEBUG} || $self->{debug}) {
@@ -147,6 +157,14 @@ my $data = {
         session_name => $self->{session_name},  # Human-friendly session name
         loaded_skills => $self->{loaded_skills} || [],  # Skills merged into system prompt
         input_history => $self->{input_history} || [],  # User input readline history
+        last_api_payload => $self->{last_api_payload} || [],  # Exact @messages last sent to the API
+        last_api_metadata => $self->{last_api_metadata} || {   # Snapshot for reuse decisions
+            model          => undef,
+            provider       => undef,
+            context_window => 0,
+            tools_signature => undef,
+            saved_at       => 0,
+        },
     };
     if ($ENV{CLIO_DEBUG} || $self->{debug}) {
         require Data::Dumper;
@@ -344,6 +362,18 @@ sub load {
         loaded_skills => $data->{loaded_skills} || [],
         # User input readline history (persisted across sessions)
         input_history => $data->{input_history} || [],
+        # Cached API payload (last @messages sent to the provider) - drives the
+        # "reload current state" fast path on resume. Both fields are absent in
+        # sessions created before this feature shipped; the rebuild path runs
+        # until the next API call writes them.
+        last_api_payload => $data->{last_api_payload} || [],
+        last_api_metadata => $data->{last_api_metadata} || {
+            model          => undef,
+            provider       => undef,
+            context_window => 0,
+            tools_signature => undef,
+            saved_at       => 0,
+        },
     };
     bless $self, $class;
     
@@ -387,6 +417,61 @@ sub session_name {
         $self->{session_name} = $name;
     }
     return $self->{session_name};
+}
+
+=head2 last_api_payload / last_api_metadata
+
+Cache the exact messages array the agent last sent to the provider so that a
+resumed session can pick up with byte-identical context instead of rebuilding
+the history from scratch. See CLIO::Core::WorkflowOrchestrator for the
+fast-path that consumes these on session resume.
+
+=cut
+
+sub last_api_payload  { $_[0]->{last_api_payload} }
+sub last_api_metadata { $_[0]->{last_api_metadata} }
+
+sub set_last_api_payload {
+    my ($self, $payload, %opts) = @_;
+    croak "payload must be an arrayref" unless ref($payload) eq 'ARRAY';
+
+    # Deep-clone the payload so later in-process mutation of the caller's
+    # @messages array doesn't corrupt the cached copy. Shallow per-message
+    # copy is enough because message content itself is treated as immutable
+    # after the API call - callers should never mutate a message hash.
+    my $copy = [];
+    for my $msg (@$payload) {
+        if (ref($msg) eq 'HASH') {
+            my %m = %$msg;
+            push @$copy, \%m;
+        } else {
+            push @$copy, $msg;
+        }
+    }
+
+    $self->{last_api_payload} = $copy;
+    $self->{last_api_metadata} = {
+        model          => $opts{model}          // $self->{last_api_metadata}{model}          // undef,
+        provider       => $opts{provider}       // $self->{last_api_metadata}{provider}       // undef,
+        context_window => $opts{context_window} // $self->{last_api_metadata}{context_window} // 0,
+        tools_signature => $opts{tools_signature} // $self->{last_api_metadata}{tools_signature} // undef,
+        saved_at       => time(),
+    };
+
+    return $copy;
+}
+
+sub clear_last_api_payload {
+    my ($self) = @_;
+    $self->{last_api_payload} = [];
+    $self->{last_api_metadata} = {
+        model          => undef,
+        provider       => undef,
+        context_window => 0,
+        tools_signature => undef,
+        saved_at       => 0,
+    };
+    return 1;
 }
 
 =head2 _validate_and_repair_history

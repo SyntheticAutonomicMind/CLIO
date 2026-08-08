@@ -762,7 +762,14 @@ sub process_input {
         $self->{_bad_request_escalations} = 0;
         $session_error_count = 0;  # Reset on success to allow future errors
         delete $session->{_error_count} if $session;
-        
+
+        # Capture the exact @messages array just sent to the API. On session
+        # resume this becomes the "reload current state" snapshot - no need to
+        # re-trim history or rebuild the system prompt. Snapshot BEFORE the
+        # assistant response and tool results get appended below, so what we
+        # persist is "what the model just saw", not the in-flight expansion.
+        $self->_capture_api_payload($session, \@messages, $tools);
+
         # Record API usage for billing tracking
         if ($api_response->{usage} && $session) {
             if ($session->can('record_api_usage')) {
@@ -1045,6 +1052,35 @@ sub _build_turn_context {
 
     log_debug('WorkflowOrchestrator', "Processing input: '$user_input'");
 
+    # Fast path: if this is the FIRST message build of the process AND a
+    # cached API payload exists from a prior session, try to reuse it
+    # verbatim (or trimmed if the new model's context is smaller). This
+    # avoids rebuilding history, retrimming, and reconstructing system
+    # prompt for resumed sessions - exactly the context the model saw
+    # when the previous session ended.
+    #
+    # Guard with _tools_cache: once we've built tools in this process,
+    # we're past the first turn and must use the in-memory path.
+    my $model_caps = $self->{api_manager}
+        ? ($self->{api_manager}->get_model_capabilities() || {})
+        : {};
+    unless ($self->{_tools_cache}) {
+        my ($cached_messages, $cached_tools) = $self->_try_resume_from_payload($session, $model_caps);
+        if ($cached_messages && $cached_tools) {
+            # Append the new user input to the cached payload.
+            my $user_context = $self->{prompt_builder}->get_user_context($session);
+            push @$cached_messages, { role => 'user', content => $user_context . $user_input };
+
+            # Cache tools so subsequent _build_turn_context calls in this
+            # process take the normal rebuild path.
+            $self->{_tools_cache} = [@$cached_tools];
+
+            log_info('WorkflowOrchestrator',
+                "Resume fast path: " . scalar(@$cached_messages) . " messages from cached payload");
+            return ($cached_messages, [@$cached_tools]);
+        }
+    }
+
     # Build messages: system prompt + history + user input
     my @messages = ();
 
@@ -1054,11 +1090,6 @@ sub _build_turn_context {
 
     inject_context_files($session, \@messages, debug => $self->{debug});
 
-    my $model_caps = {};
-    if ($self->{api_manager}) {
-        $model_caps = $self->{api_manager}->get_model_capabilities() || {};
-    }
-    
     # Update session state's max_tokens to match model's actual context window.
     # This ensures State::add_message trims at the correct threshold instead
     # of the default 128k, which would underutilize large-context models.
@@ -1178,6 +1209,30 @@ sub _build_turn_context {
         return (\@messages, [@{$self->{_tools_cache}}]);  # Return a copy to prevent mutation
     }
 
+    my $tools = $self->_build_tools_for_api($session);
+
+    log_debug('WorkflowOrchestrator', "Loaded " . scalar(@$tools) . " tool definitions");
+
+    # Cache tools for subsequent calls (tools don't change within a session)
+    # Store a deep copy to prevent mutation by callers
+    $self->{_tools_cache} = [@$tools];
+
+    return (\@messages, $tools);
+}
+
+=head2 _build_tools_for_api($session)
+
+Build the full tool definitions array including core tool registry + MCP
+tools + plugin tools. Used by both _build_turn_context and the resume
+fast path (_try_resume_from_payload) so they stay in lockstep.
+
+Returns: Arrayref of tool definition hashes.
+
+=cut
+
+sub _build_tools_for_api {
+    my ($self, $session) = @_;
+
     my $tools = $self->{tool_registry}->get_tool_definitions();
 
     if ($self->{mcp_manager}) {
@@ -1222,13 +1277,7 @@ sub _build_turn_context {
         log_warning('WorkflowOrchestrator', "Plugin tool definition error: $@") if $@;
     }
 
-    log_debug('WorkflowOrchestrator', "Loaded " . scalar(@$tools) . " tool definitions");
-
-    # Cache tools for subsequent calls (tools don't change within a session)
-    # Store a deep copy to prevent mutation by callers
-    $self->{_tools_cache} = [@$tools];
-
-    return (\@messages, $tools);
+    return $tools;
 }
 
 =head2 invalidate_tool_cache
@@ -1242,6 +1291,177 @@ sub invalidate_tool_cache {
     my ($self) = @_;
     delete $self->{_tools_cache};
     log_debug('WorkflowOrchestrator', "Tool definition cache invalidated");
+}
+
+=head2 _capture_api_payload($session, \@messages, \@tools)
+
+Snapshot the messages array that was just sent to the provider. The snapshot
+includes a digest of the tools array so resume can detect when the toolset
+has drifted and decide to fall back to a rebuild.
+
+Called immediately after every successful API send (before the response is
+unfolded into the messages array) so the persisted snapshot is exactly what
+the model saw on its last turn.
+
+=cut
+
+sub _capture_api_payload {
+    my ($self, $session, $messages_ref, $tools_ref) = @_;
+
+    return unless $session && $session->can('state');
+    my $state = $session->state();
+    return unless ref($state) eq 'HASH';  # bare-hash session is unit-test only
+
+    my $model    = $self->{api_manager} ? $self->{api_manager}->get_current_model()    : undef;
+    my $provider = $self->{api_manager} ? $self->{api_manager}->get_current_provider() : undef;
+    my $caps     = $self->{api_manager} ? $self->{api_manager}->get_model_capabilities() : {};
+    my $ctx      = $caps->{max_context_window_tokens} || $state->{max_tokens} || 0;
+
+    $state->set_last_api_payload(
+        $messages_ref,
+        model           => $model,
+        provider        => $provider,
+        context_window  => $ctx,
+        tools_signature => $self->_tools_signature($tools_ref),
+    );
+
+    log_debug('WorkflowOrchestrator',
+        "Captured API payload: " . scalar(@$messages_ref) . " messages, "
+        . "model=$model, provider=$provider, ctx=$ctx");
+}
+
+=head2 _tools_signature(\@tools)
+
+Stable digest of a tools array for drift detection. Two tools arrays produce
+the same signature iff they describe the same tool set (name + description +
+parameter schema). Used by the resume fast path to detect MCP/plugin toolset
+changes between sessions.
+
+=cut
+
+sub _tools_signature {
+    my ($self, $tools) = @_;
+    return 'no-tools' unless $tools && ref($tools) eq 'ARRAY' && @$tools;
+
+    require Digest::SHA;
+    my $sha = Digest::SHA->new(256);
+
+    # Sort by name for order-invariance.
+    my @sorted = sort { ($a->{function}{name} // '') cmp ($b->{function}{name} // '') } @$tools;
+    for my $tool (@sorted) {
+        my $name = $tool->{function}{name} // '';
+        my $desc = $tool->{function}{description} // '';
+        my $params = $tool->{function}{parameters} // {};
+        # Encode to UTF-8 bytes so Digest::SHA doesn't emit "Wide character in
+        # subroutine entry" on tool descriptions that contain non-ASCII chars.
+        my $chunk = "$name\x00$desc\x00" . _stable_json($params) . "\x00";
+        utf8::encode($chunk) if utf8::is_utf8($chunk);
+        $sha->add($chunk);
+    }
+
+    return $sha->hexdigest;
+}
+
+sub _stable_json {
+    my ($data) = @_;
+    return '' unless defined $data;
+
+    if (ref($data) eq 'HASH') {
+        my @parts;
+        for my $k (sort keys %$data) {
+            push @parts, _stable_json($k) . ':' . _stable_json($data->{$k});
+        }
+        return '{' . join(',', @parts) . '}';
+    } elsif (ref($data) eq 'ARRAY') {
+        return '[' . join(',', map { _stable_json($_) } @$data) . ']';
+    } elsif (!defined $data) {
+        return 'null';
+    } elsif (ref($data)) {
+        return '?';
+    } else {
+        # Escape for stability - the value is treated as text.
+        my $s = "$data";
+        $s =~ s/([\\\"])/\\$1/g;
+        return '"' . $s . '"';
+    }
+}
+
+=head2 _try_resume_from_payload($session, $model_caps)
+
+Fast-path message builder for session resume. Returns a listref of messages
+to use as the base for the next API call, or undef if no usable payload
+exists (caller should fall back to the normal rebuild path).
+
+Reuse rules:
+- payload is non-empty AND
+- provider matches current provider AND
+- tools_signature matches current tools signature AND
+- context_window: payload used verbatim if current ctx >= saved ctx;
+  trimmed via trim_conversation_for_api if current ctx < saved ctx.
+
+=cut
+
+sub _try_resume_from_payload {
+    my ($self, $session, $model_caps) = @_;
+
+    return unless $session && $session->can('state');
+    my $state = $session->state();
+    return unless ref($state) eq 'HASH';
+
+    my $payload  = $state->{last_api_payload};
+    my $metadata = $state->{last_api_metadata};
+    return unless $payload && ref($payload) eq 'ARRAY' && @$payload;
+    return unless $metadata && ref($metadata) eq 'HASH' && $metadata->{saved_at};
+
+    my $current_provider = $self->{api_manager} ? $self->{api_manager}->get_current_provider() : undef;
+    if (($metadata->{provider} // '') ne ($current_provider // '')) {
+        log_info('WorkflowOrchestrator',
+            "Resume payload skipped: provider changed ($metadata->{provider} -> $current_provider)");
+        return;
+    }
+
+    # Toolset drift: rebuild tools, compare to saved signature.
+    my ($tools) = $self->_build_tools_for_api($session);
+    my $current_sig = $self->_tools_signature($tools);
+    if (($metadata->{tools_signature} // '') ne ($current_sig // '')) {
+        log_info('WorkflowOrchestrator',
+            "Resume payload skipped: tools drifted (saved=$metadata->{tools_signature}, current=$current_sig)");
+        return;
+    }
+
+    # Context window gate: bigger/newer ctx -> use verbatim.
+    # Smaller ctx -> trim using the normal path.
+    my $saved_ctx      = $metadata->{context_window} // 0;
+    my $current_ctx    = $model_caps->{max_context_window_tokens}
+                          // CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW();
+    my $messages = [ @$payload ];
+
+    if ($current_ctx >= $saved_ctx && $saved_ctx > 0) {
+        log_info('WorkflowOrchestrator',
+            "Resume using cached payload verbatim: " . scalar(@$messages)
+            . " messages, ctx=$current_ctx >= saved=$saved_ctx");
+        return ($messages, $tools);
+    }
+
+    # Smaller context - trim the cached payload like a normal history.
+    require CLIO::Core::ConversationManager;
+    my $system_prompt = '';
+    if ($messages->[0] && $messages->[0]{role} eq 'system') {
+        $system_prompt = $messages->[0]{content} // '';
+    }
+    $messages = CLIO::Core::ConversationManager::trim_conversation_for_api(
+        $messages, $system_prompt,
+        model_context_window => $current_ctx,
+        max_response_tokens  => $model_caps->{max_output_tokens}
+                                 // CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS(),
+        debug => $self->{debug},
+    );
+
+    log_info('WorkflowOrchestrator',
+        "Resume using cached payload (trimmed): " . scalar(@$messages)
+        . " messages, ctx=$current_ctx < saved=$saved_ctx");
+
+    return ($messages, $tools);
 }
 
 =head2 _capture_file_before
