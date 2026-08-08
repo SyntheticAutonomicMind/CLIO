@@ -281,16 +281,22 @@ sub search {
         if (-d $memory_dir) {
             opendir my $dh, $memory_dir or croak "Cannot open $memory_dir: $!";
             while (my $file = readdir $dh) {
+                # Allow ESC interrupt during memory search over many files.
                 next unless $file =~ /\.json$/;
-                
+
+                if ($self->check_interrupt($context)) {
+                    log_info('MemoryOps', "User interrupt during memory search");
+                    last;
+                }
+
                 my $path = File::Spec->catfile($memory_dir, $file);
                 open my $fh, '<:utf8', $path or next;
                 my $json = do { local $/; <$fh> };
                 close $fh;
-                
+
                 my $data = safe_decode_json($json);
                 next unless $data;
-                
+
                 if ($data->{content} =~ /\Q$query\E/i || $data->{key} =~ /\Q$query\E/i) {
                     push @matches, {
                         source => 'session_memory',
@@ -470,6 +476,14 @@ sub recall_sessions {
         my $sessions_searched = 0;
         
         SESSION: for my $session_path (@session_files) {
+            # Allow ESC interrupt during session history search. With many
+            # sessions on disk this loop can take many seconds; without
+            # polling the user waits for the entire history to be scanned.
+            if ($self->check_interrupt($context)) {
+                log_info('MemoryOps', "User interrupt during recall_sessions after $sessions_searched session(s)");
+                last SESSION;
+            }
+
             my $session_id = $session_path;
             $session_id =~ s/.*[\/\\]//;
             $session_id =~ s/\.json$//;
