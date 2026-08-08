@@ -4233,18 +4233,27 @@ sub _process_think_tags {
 
     # Defensive: track whether previous output ended with a letter so we can
     # recover when the model emits continuation tokens without their leading
-    # space. Some chat templates / tokenizers (notably Qwen3.6 via llama.cpp)
-    # emit adjacent word tokens as separate chunks (e.g. "my" then "todo"
-    # with no space between). Without this guard the chunks concatenate as
-    # "mytodo" instead of "my todo". The guard fires only when:
+    # space. Some chat templates / tokenizers (notably Qwen3.6 via llama.cpp,
+    # DeepSeek-R1 distills) emit adjacent word tokens as separate chunks
+    # (e.g. "my" then "todo" with no space between). Without this guard
+    # the chunks concatenate as "mytodo" instead of "my todo".
+    #
+    # The guard fires only when:
     #   - the new content starts with a letter, AND
     #   - the previous output ended with a letter, AND
-    #   - we are in OUTPUT mode (in_think_tag == 0)
-    # so it never inserts a space where punctuation/space/newline already
-    # separates the tokens.
+    #   - we are in OUTPUT mode (in_think_tag == 0),
+    # BUT NOT when both sides are uppercase letters - that case is almost
+    # always an acronym continuation ("L" + "TM" must stay "LTM", not
+    # "L TM"). Without this exclusion "LTM" was being rendered as
+    # "L TM" because the chat template stripped the leading space byte
+    # from the acronym-continuation token. With it the guard fires only
+    # for the genuine lowercase word-boundary case the user reported.
     my $prev_ended_letter = (length($ss->{_prev_output_end}) && $ss->{_prev_output_end} =~ /[A-Za-z]/);
     my $new_starts_letter = (length($content_delta) && $content_delta =~ /^[A-Za-z]/);
-    my $should_insert_space = ($prev_ended_letter && $new_starts_letter && !$ss->{in_think_tag});
+    my $both_uppercase_acronym = ($prev_ended_letter && $new_starts_letter
+        && $ss->{_prev_output_end} =~ /[A-Z]/ && $content_delta =~ /^[A-Z]/);
+    my $should_insert_space = ($prev_ended_letter && $new_starts_letter
+        && !$ss->{in_think_tag} && !$both_uppercase_acronym);
 
     while (length($work)) {
         if ($ss->{in_think_tag}) {

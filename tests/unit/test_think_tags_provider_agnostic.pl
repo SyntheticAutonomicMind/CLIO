@@ -496,14 +496,47 @@ subtest 'defensive space insertion between adjacent letter chunks' => sub {
     is($out, 'todo and conclude.',
         'No extra space on first chunk after close tag');
 
-    # Cumulative behavior: multiple consecutive letter-letter boundaries
+    # No false positive on acronym continuation (uppercase -> uppercase)
+    # Qwen3.6 and similar chat templates strip leading spaces from
+    # acronym-continuation tokens ("L" + "TM" = "LTM", not "L TM").
     $ss = MockSS->new;
     run_delta($ss, "<think>r</think>");
-    run_delta($ss, "I");
-    $out = run_delta($ss, "think");
-    is($out, ' think', 'Single space inserted between "I" and "think"');
+    run_delta($ss, "L");
+    $out = run_delta($ss, "TM should not have a space.");
+    is($out, 'TM should not have a space.',
+        'No extra space on acronym continuation (L + TM stays LTM)');
+
+    $ss = MockSS->new;
+    run_delta($ss, "<think>r</think>");
+    run_delta($ss, "HW");
+    $out = run_delta($ss, "Monitor");
+    is($out, 'Monitor',
+        'No extra space on multi-letter acronym continuation (HW + Monitor)');
+
+    # Uppercase -> lowercase still inserts space (acronym + word)
+    $ss = MockSS->new;
+    run_delta($ss, "<think>r</think>");
+    run_delta($ss, "Apple");
+    $out = run_delta($ss, "world");
+    is($out, ' world',
+        'Space inserted when prior chunk ended with uppercase but new starts with lowercase');
+
+    # Cumulative behavior: lowercase continuation still inserts space
+    $ss = MockSS->new;
+    run_delta($ss, "<think>r</think>");
+    run_delta($ss, "think");
     $out = run_delta($ss, "therefore");
     is($out, ' therefore', 'Single space inserted between "think" and "therefore"');
+
+    # Cumulative behavior with mixed-case acronym boundary
+    $ss = MockSS->new;
+    run_delta($ss, "<think>r</think>");
+    run_delta($ss, "the");
+    $out = run_delta($ss, "LTM");
+    is($out, ' LTM', 'Space inserted between "the" and acronym "LTM"');
+    $out = run_delta($ss, "module");
+    is($out, ' module',
+        'Space inserted between acronym "LTM" and next lowercase word');
 };
 
 done_testing();
