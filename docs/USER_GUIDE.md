@@ -260,8 +260,13 @@ These kinds of prompts help you see how CLIO investigates before it changes anyt
 | `Space` / `Any Key` | Continue to next page (long responses) |
 | `q` / `Q` | Quit pagination, return to prompt |
 | `Up` / `Down` (Arrows) | Navigate pages (non-streaming mode) |
-| `Ctrl+D` or `Ctrl+C` | Exit CLIO |
-| Any key | Interrupt workflow, return to prompt |
+| `ESC` | Cancel current AI response, prompt for new input |
+| `Ctrl+D` | Exit CLIO |
+
+> **Cancel vs. Exit:** `ESC` interrupts an in-flight AI response and prompts
+> you for a new direction without leaving the session. `Ctrl+C` always
+> terminates CLIO (the session is saved automatically). `Ctrl+D` is an
+> alias for `Ctrl+C` and exits CLIO the same way.
 
 **In Text Input:**
 
@@ -2490,17 +2495,16 @@ Would you like me to implement the fix?
 ### Keyboard Shortcuts
 
 **In Chat:**
-- `Ctrl+D` or type `exit` - End session
-- `Ctrl+C` - Cancel current AI response
-- `?` - Show help (when implemented)
-- `Up/Down Arrow` - History navigation (terminal-dependent)
+- `Ctrl+C` or `Ctrl+D` or type `exit` - End session (classic Unix behaviour; the session is saved automatically before CLIO quits)
+- `ESC` - Cancel current AI response and prompt for new input (only active while a response is streaming; at idle prompt `ESC` is harmless and ignored)
+- `Up` / `Down` Arrow - History navigation (terminal-dependent)
 
 **Command Line:**
 ```bash
 # Quick access
-alias c='clio --resume'     # Resume last session
+alias c='clio --resume'      # Resume last session
 alias cn='clio --new'        # New session
-alias cd='clio --debug'      # Debug mode
+alias cld='clio --debug'     # Debug mode (avoid 'cd' - shadows the shell builtin)
 ```
 
 ### Terminal Tips

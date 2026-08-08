@@ -28,9 +28,12 @@ CLIO::Core::Interrupt - Centralized interrupt detection for CLIO
 =head1 DESCRIPTION
 
 Single source of truth for "did the user ask to interrupt the agent?". The
-interrupt signal is ESC (0x1B) or Ctrl+C (0x03) pressed on the controlling
+interrupt signal is ESC (0x1B) pressed on the controlling
 TTY. Other keys (mouse events, focus events, resize sequences, arrow keys,
-function keys) are ignored and silently drained.
+function keys, Ctrl+C) are ignored and silently drained. Ctrl+C is left to
+the standard SIGINT handler so it terminates the session in classic Unix
+fashion - users who want to break out of CLIO press Ctrl+C, users who want
+to interrupt an in-flight AI response press ESC.
 
 Two paths to detection:
 
@@ -84,8 +87,11 @@ my $ALRM_INTERVAL = 1;  # Default 1s; overridden by install_alrm_handler
 
 =head2 check
 
-Non-blocking interrupt check. Returns 1 if the user has pressed ESC or
-Ctrl+C since the last C<clear>, 0 otherwise.
+Non-blocking interrupt check. Returns 1 if the user has pressed ESC
+since the last C<clear>, 0 otherwise. Ctrl+C is intentionally NOT
+treated as an interrupt - it falls through to the global SIGINT
+handler which terminates CLIO cleanly via the C<cleanup_handler>
+installed in the C<clio> script.
 
 Arguments:
 - session: Session object (optional but recommended)
@@ -134,11 +140,15 @@ sub check {
         set(session => $session);
         return 1;
     } elsif ($ord == 3) {
-        # Ctrl+C.
-        log_info('Interrupt', 'Ctrl+C detected');
+        # Ctrl+C is intentionally NOT treated as an interrupt - we leave
+        # it to the standard SIGINT handler so it terminates CLIO cleanly
+        # via the cleanup_handler installed in the clio script. This
+        # matches classic Unix behaviour where Ctrl+C breaks out of a
+        # foreground process. Drain the byte so it does not leak into
+        # readline and confuse subsequent input.
+        log_debug('Interrupt', 'Ctrl+C ignored (left to SIGINT handler)');
         while (defined(eval { ReadKey(-1) })) { }
-        set(session => $session);
-        return 1;
+        return 0;
     } else {
         # Any other key - drain and ignore.
         while (defined(eval { ReadKey(-1) })) { }
@@ -229,7 +239,7 @@ sub clear {
 
 =head2 install_alrm_handler
 
-Install the periodic ALRM handler that scans STDIN for ESC/Ctrl+C
+Install the periodic ALRM handler that scans STDIN for ESC
 between Perl opcodes. Safe to call when an old handler is already
 installed - it just replaces the current one.
 
@@ -276,14 +286,13 @@ sub install_alrm_handler {
         my $key = eval { ReadKey(-1) };
         if (defined $key && !$@) {
             my $ord = ord($key);
-            if ($ord == 27 || $ord == 3) {
+            if ($ord == 27) {
                 # Bare byte detection: the disambiguation between ESC
                 # (interrupt) and ESC [ (arrow key / escape sequence)
                 # happens later, in check(), which is not in signal
                 # context. This avoids the historical "blocking ReadKey
                 # in signal handler" footgun.
-                my $label = $ord == 27 ? 'ESC' : 'Ctrl+C';
-                log_debug('Interrupt', "ALRM scan: $label byte detected");
+                log_debug('Interrupt', "ALRM scan: ESC byte detected");
                 # Drain any extra bytes that arrived with this keypress
                 # - mouse/focus events and modifier sequences typically
                 # send 3-5 bytes starting with ESC. We drain here so
@@ -294,6 +303,17 @@ sub install_alrm_handler {
                 # Re-arm best-effort. Use copy of interval to avoid
                 # surprises if the next install_alrm_handler call
                 # mutates $ALRM_INTERVAL between now and alarm().
+                eval { alarm($ALRM_INTERVAL); };
+            } elsif ($ord == 3) {
+                # Ctrl+C byte detected: do NOT flag this as an
+                # interrupt. Leave it for the SIGINT handler so CLIO
+                # exits cleanly via cleanup_handler. If we consumed the
+                # byte here the SIGINT path would never fire and Ctrl+C
+                # would become a no-op instead of "break out of CLIO".
+                # We drain the byte but do not re-arm the alarm - the
+                # SIGINT path wins.
+                log_debug('Interrupt', 'ALRM scan: Ctrl+C byte detected, ignoring (SIGINT will fire)');
+                while (defined(eval { ReadKey(-1) })) { }
                 eval { alarm($ALRM_INTERVAL); };
             } else {
                 # Other key during scan - drain and ignore.
@@ -396,9 +416,10 @@ The new design splits the responsibility:
 
 =item ALRM handler
 
-Non-blocking read of a single byte. If it sees ESC or Ctrl+C, it sets
+Non-blocking read of a single byte. If it sees ESC, it sets
 the in-process flag and drains any extra bytes that arrived with the
-keypress. It does NOT block.
+keypress. It does NOT block. Ctrl+C is deliberately not handled here
+so the global SIGINT handler can terminate CLIO in classic Unix style.
 
 =item check (called from regular code)
 

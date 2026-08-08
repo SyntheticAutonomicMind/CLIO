@@ -75,9 +75,9 @@ sub display_help {
     push @help_lines, sprintf("  %-30s %s", $chat->colorize('Ctrl+U', 'help_command'), 'Delete to start of line');
     push @help_lines, sprintf("  %-30s %s", $chat->colorize('Up/Down', 'help_command'), 'Navigate command history');
     push @help_lines, sprintf("  %-30s %s", $chat->colorize('Tab', 'help_command'), 'Auto-complete commands/paths');
-    push @help_lines, sprintf("  %-30s %s", $chat->colorize('Any key', 'help_command'), 'Interrupt the agent');
-    push @help_lines, sprintf("  %-30s %s", $chat->colorize('Ctrl+C', 'help_command'), 'Cancel input or exit');
-    push @help_lines, sprintf("  %-30s %s", $chat->colorize('Ctrl+D', 'help_command'), 'Exit (on empty line)');
+    push @help_lines, sprintf("  %-30s %s", $chat->colorize('ESC', 'help_command'), 'Interrupt the agent (during streaming)');
+    push @help_lines, sprintf("  %-30s %s", $chat->colorize('Ctrl+C', 'help_command'), 'Exit CLIO (classic Unix behaviour)');
+    push @help_lines, sprintf("  %-30s %s", $chat->colorize('Ctrl+D', 'help_command'), 'Exit CLIO (alias for Ctrl+C)');
     push @help_lines, "";
 
     # API, Session, File/Git, Plugins, Todo, Specs, Memory, Profile,
