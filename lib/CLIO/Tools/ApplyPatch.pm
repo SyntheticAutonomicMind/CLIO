@@ -13,7 +13,7 @@ use File::Spec;
 use File::Path qw(make_path);
 use File::Basename qw(dirname);
 use CLIO::Util::JSON qw(encode_json);
-use CLIO::Core::Logger qw(log_debug log_warning);
+use CLIO::Core::Logger qw(log_debug log_warning log_info);
 use parent 'CLIO::Tools::Tool';
 
 =head1 NAME
@@ -223,6 +223,23 @@ sub _do_apply {
             }
         }
         
+        # Allow ESC interrupt between hunks. Without this, a large patch
+        # with many files blocks until every hunk finishes - the user
+        # cannot break out of a multi-file patch mid-flight.
+        if ($self->check_interrupt($context)) {
+            log_info('ApplyPatch', "User interrupt detected after " . scalar(@results) . " hunk(s); aborting remaining " . (scalar(@$hunks) - scalar(@results)) . " hunk(s)");
+            return $self->success_result(
+                encode_json({
+                    results => \@results,
+                    files_created => $files_created,
+                    files_modified => $files_modified,
+                    files_deleted => $files_deleted,
+                    interrupted => 1,
+                }),
+                action_description => "apply_patch: aborted by user after " . scalar(@results) . " of " . scalar(@$hunks) . " hunk(s)",
+            );
+        }
+
         my $result = $self->_apply_hunk($hunk);
         push @results, $result;
         
@@ -615,8 +632,19 @@ sub _apply_update {
     
     # Apply each chunk
     my $offset = 0;  # Track line offset from previous chunk applications
-    
+
     for my $chunk (@{$hunk->{chunks}}) {
+        # Allow ESC interrupt during multi-chunk file updates. A single
+        # _apply_update with many chunks can take seconds on large files;
+        # without polling the user waits for the whole file to finish.
+        if ($self->check_interrupt()) {
+            return $self->error_result(
+                "apply_patch aborted by user during $rel_path update",
+                type => 'update',
+                path => $rel_path,
+            );
+        }
+
         my $context = $chunk->{context};
         my @old = @{$chunk->{old_lines} || []};
         my @new = @{$chunk->{new_lines} || []};

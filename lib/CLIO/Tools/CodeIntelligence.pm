@@ -444,9 +444,9 @@ sub list_usages {
     
     # Try git grep first (much faster if in a git repo)
     if ($self->_has_git_grep()) {
-        @usages = $self->_git_grep_search($symbol_name, $file_paths, $context_lines);
+        @usages = $self->_git_grep_search($symbol_name, $file_paths, $context_lines, $context);
     } else {
-        @usages = $self->_file_grep_search($symbol_name, $file_paths, $context_lines);
+        @usages = $self->_file_grep_search($symbol_name, $file_paths, $context_lines, $context);
     }
     
     my $count = scalar(@usages);
@@ -491,31 +491,41 @@ sub _has_git_grep {
 }
 
 sub _git_grep_search {
-    my ($self, $symbol, $paths, $context) = @_;
-    
+    my ($self, $symbol, $paths, $context, $ext_context) = @_;
+
     my @results = ();
-    
+
     # Build git grep command
     my $context_flag = $context > 0 ? "-C$context" : "";
     my $paths_str = join(' ', map { quotemeta($_) } @$paths);
-    
+
     # Use git grep with line numbers and file names
     my $cmd = "git grep -n $context_flag -F " . quotemeta($symbol) . " -- $paths_str 2>$NULLDEV";
-    
+
     log_debug('CodeIntelligence', "Running: $cmd");
-    
+
     open my $fh, '-|', $cmd or return @results;
-    
+
     my $current_file = '';
     my @context_before = ();
-    
+    my $files_seen = 0;
+
     while (my $line = <$fh>) {
         chomp $line;
-        
+
+        # Allow ESC interrupt during git grep. Codebase searches can return
+        # thousands of matches; polling lets the user bail early.
+        if ($files_seen % 50 == 0 && $self->check_interrupt($ext_context)) {
+            log_info('CodeIntelligence', "User interrupt during git grep after " . scalar(@results) . " match(es)");
+            close $fh;
+            last;
+        }
+        $files_seen++;
+
         # Parse git grep output: file:line:content
         if ($line =~ /^([^:]+):(\d+):(.*)$/) {
             my ($file, $line_num, $content) = ($1, $2, $3);
-            
+
             push @results, {
                 file => $file,
                 line_number => int($line_num),
@@ -523,18 +533,18 @@ sub _git_grep_search {
                 context_before => [@context_before],
                 context_after => [],  # git grep doesn't provide easy context_after
             };
-            
+
             @context_before = ();
         }
     }
-    
+
     close $fh;
-    
+
     return @results;
 }
 
 sub _file_grep_search {
-    my ($self, $symbol, $paths, $context_lines) = @_;
+    my ($self, $symbol, $paths, $context_lines, $ext_context) = @_;
     
     my @results = ();
     my @files_to_search = ();
@@ -558,7 +568,15 @@ sub _file_grep_search {
     # Search each file
     foreach my $file (@files_to_search) {
         next unless -f $file && -r $file;
-        
+
+        # Allow ESC interrupt during code searches across many files. A
+        # codebase-wide grep can take many seconds; without polling the user
+        # waits for the entire search to complete.
+        if ($self->check_interrupt($ext_context)) {
+            log_info('CodeIntelligence', "User interrupt during search after " . scalar(@results) . " match(es)");
+            last;
+        }
+
         open my $fh, '<', $file or next;
         my @lines = <$fh>;
         close $fh;
