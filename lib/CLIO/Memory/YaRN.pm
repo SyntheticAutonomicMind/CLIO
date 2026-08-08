@@ -357,9 +357,23 @@ sub compress_messages {
     # Deduplicate and limit
     my %seen;
     @files_touched = grep { !$seen{$_}++ } @files_touched;
-    @files_touched = @files_touched[0..29] if @files_touched > 30;
-    @commits       = do { my %s; grep { !$s{$_}++ } reverse @commits };
-    @commits       = @commits[0..14] if @commits > 15;
+    # Cap policy: when a section exceeds its cap, drop the OLDEST items.
+    # Why: new items appear at the end of each section (push order), so dropping
+    # from the front keeps the section's text byte-stable for everything that
+    # was already there. CSSS relies on this to keep llama.cpp's prompt cache
+    # hit on the prefix portion of the summary. The previous code kept NEWEST
+    # items ([0..N] for commits after a reverse) - this made new commits
+    # appear at the TOP of the section, shifting every other item's position
+    # and invalidating the cache on the entire Git commits section.
+    # Commits dedup: previous code did `reverse; dedup; cap [0..14]` which
+    # kept the NEWEST occurrence of each commit. With append-only growth the
+    # same commit can be observed many times across dropped messages. We now
+    # dedup oldest-first (keep first occurrence) and cap at newest 15 by
+    # slicing [-15..-1], preserving oldest-first render order.
+    my %seen_commits;
+    @commits = grep { !$seen_commits{$_}++ } @commits;
+    @files_touched = @files_touched[-30..-1] if @files_touched > 30;
+    @commits       = @commits[-15..-1]      if @commits > 15;
     @decisions     = @decisions[-3..-1]     if @decisions > 3;
     # Keep last 5 collaboration exchanges (most recent are most relevant)
     @collaboration_exchanges = @collaboration_exchanges[-5..-1]

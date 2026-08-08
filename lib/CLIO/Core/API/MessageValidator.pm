@@ -197,8 +197,20 @@ sub validate_and_truncate {
     # from model capabilities. The estimation buffer in
     # compute_prompt_budget already covers next-burst headroom; no
     # additional percentage-based haircut is needed.
+    #
+    # Aggressive trim: target ~40% of prompt_budget (or 25% of effective_limit)
+    # so a single trim clears substantial headroom. Without this, with a 131K
+    # local model the prompt budget is ~108K and we trim back to ~108K every
+    # time, so each trim only sheds the latest few K of tokens. The prefix then
+    # shifts by only a tiny amount per trim, but the trim itself still costs a
+    # full re-prompt-process (no cache hit on the shifted middle). Better to do
+    # one large trim (large per-event reprocess) than many small trims (many
+    # small reprocesses that still sum to the same total work).
     my $post_trim_keep_limit = $prompt_budget;
-    $post_trim_keep_limit = int($effective_limit * 0.5) if $post_trim_keep_limit < $effective_limit * 0.5;
+    my $aggressive_target = int($prompt_budget * 0.4);
+    $post_trim_keep_limit = $aggressive_target if $post_trim_keep_limit > $aggressive_target;
+    my $effective_target = int($effective_limit * 0.25);
+    $post_trim_keep_limit = $effective_target if $post_trim_keep_limit > $effective_target;
     $post_trim_keep_limit = CLIO::Core::Defaults::DEFAULT_POST_TRIM_FLOOR() if $post_trim_keep_limit < CLIO::Core::Defaults::DEFAULT_POST_TRIM_FLOOR();
     log_debug('MessageValidator', "Post-trim keep target: $post_trim_keep_limit tokens (prompt budget for $model)");
 
@@ -248,10 +260,34 @@ sub validate_and_truncate {
     # use its current token count as the target slot size. Subsequent trims
     # regenerate the summary to fit this same slot, so llama.cpp's prefix
     # cache stays valid for everything before and after the summary slot.
+    #
+    # Slot growth: aggressive trim drops far more content per cycle than the
+    # old conservative trim, so the summary needs to absorb more tokens. The
+    # slot can grow up to MAX_CSSS_SLOT_TOKENS (12K) - one step at a time. A
+    # growth event invalidates the cache on the new bytes only; subsequent
+    # trims stay locked at the new size, preserving the cache hit. Without
+    # this, aggressive trim would force the slot into hard-truncation and
+    # silently drop captured state.
     my $summary_slot_target = 0;
     if ($summary_unit && $summary_unit->{tokens}) {
-        $summary_slot_target = $summary_unit->{tokens};
-        log_debug('MessageValidator', "CSSS: locking summary slot to $summary_slot_target tokens (existing summary)");
+        my $current_slot = $summary_unit->{tokens};
+        my $max_slot = CLIO::Core::Defaults::MAX_CSSS_SLOT_TOKENS();
+        # Detect whether the previous summary was hard-truncated by YaRN.pm
+        # (data loss marker). When aggressive trim drops more content than
+        # the slot can hold, the summary gets truncated; we use that signal
+        # to grow the slot by 25% (one step), then lock again. Without this,
+        # aggressive trim would force the slot into hard-truncation every
+        # cycle and silently drop captured state.
+        my $previous_content = $summary_unit->{messages}[0]{content} // '';
+        my $was_truncated = $previous_content =~ /\[Summary truncated to fit cache-stable slot/;
+        if ($was_truncated && $current_slot < $max_slot && $current_slot >= 1000) {
+            $summary_slot_target = int($current_slot * 1.25);
+            $summary_slot_target = $max_slot if $summary_slot_target > $max_slot;
+            log_debug('MessageValidator', "CSSS: growing summary slot $current_slot -> $summary_slot_target tokens (previous was hard-truncated, cap: $max_slot)");
+        } else {
+            $summary_slot_target = $current_slot;
+            log_debug('MessageValidator', "CSSS: locking summary slot to $summary_slot_target tokens (existing summary)");
+        }
     }
 
     if (@dropped_units) {

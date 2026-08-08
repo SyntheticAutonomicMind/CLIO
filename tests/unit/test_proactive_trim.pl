@@ -96,7 +96,11 @@ my $trimmed_count = scalar(@$trimmed);
 diag("After proactive trim: $total_messages -> $trimmed_count messages");
 
 ok($trimmed_count < $total_messages, "Messages were trimmed ($trimmed_count < $total_messages)");
-ok($trimmed_count > 10, "Trim kept a reasonable number of messages ($trimmed_count > 10)");
+# Aggressive trim (DEFAULT_POST_TRIM_FLOOR = 12000) keeps fewer messages than
+# the old conservative behavior. The summary slot grows to absorb the dropped
+# content, so the agent doesn't lose goals - it just has fewer verbatim
+# recent messages and a slightly larger summary.
+ok($trimmed_count >= 4, "Aggressive trim kept at least 4 messages ($trimmed_count)");
 
 # Test 3: First message should be system
 is($trimmed->[0]{role}, 'system', "System prompt preserved as first message");
@@ -131,8 +135,9 @@ diag("New proactive path: already trimmed to $trimmed_count messages");
 diag("If reactive still fires (estimation error), it only drops a handful");
 
 # Test 6: Verify the trim didn't produce too few messages (sanity check)
-# With 128K context and ~50% post-trim target, we should keep quite a few
-ok($trimmed_count >= 10, "Kept at least 10 messages ($trimmed_count)");
+# Aggressive trim drops more aggressively to bound cache invalidation. The
+# summary slot grows to absorb what was dropped so state is preserved.
+ok($trimmed_count >= 4, "Aggressive trim kept at least 4 messages ($trimmed_count)");
 
 # Test 7: Verify last user message is preserved (most recent context)
 my $last_user = undef;
@@ -161,6 +166,9 @@ my $small_trimmed = validate_and_truncate(
 my $small_count = scalar(@$small_trimmed);
 diag("32K context trim: $total_messages -> $small_count messages");
 ok($small_count < $trimmed_count, "Smaller context = more aggressive trimming ($small_count < $trimmed_count)");
-ok($small_count > 5, "Still keeps minimum messages ($small_count > 5)");
+# 32K context with aggressive trim drops to ~DEFAULT_POST_TRIM_FLOOR=12K.
+# On a small local-model context, trim is bounded by the floor, not by
+# message count.
+ok($small_count >= 2, "32K context still keeps a few messages ($small_count)");
 
 done_testing();
