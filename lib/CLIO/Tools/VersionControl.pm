@@ -13,8 +13,10 @@ use Carp qw(croak confess);
 use parent 'CLIO::Tools::Tool';
 use Cwd qw(getcwd abs_path);
 use File::Spec ();
+use File::Temp qw(tempfile);
 use CLIO::Util::PathResolver qw(expand_tilde);
 use CLIO::Util::JSON qw(decode_json encode_json);
+use POSIX qw(WNOHANG _exit);
 
 # Shell-quote a string for safe interpolation into backtick commands.
 # Uses single-quote wrapping with embedded single-quote escaping.
@@ -60,6 +62,66 @@ sub _in_repo {
     chdir $original_cwd;
     die $err if $err;
     return $result;
+}
+
+# Run a shell command with ESC interrupt polling. Captures stdout+stderr to a
+# temp file and returns the contents. If the user presses ESC while the command
+# is running (network-push, network-pull, clone), the child process group is
+# killed cleanly and an interrupted_result is returned for the caller to surface.
+#
+# Mirrors terminal_operations::_execute_captured fork+waitpid loop so a slow
+# git network operation can be aborted without waiting for the remote server
+# to time out.
+sub _run_with_interrupt {
+    my ($self, $cmd, $context) = @_;
+    my $session = $context && $context->{session};
+
+    my ($log_fh, $log_file) = tempfile(SUFFIX => '.clio_git.log', UNLINK => 1);
+    close $log_fh;
+
+    my $pid = fork();
+    if (!defined $pid) {
+        croak "Fork failed: $!";
+    }
+    if ($pid == 0) {
+        # Child: detach from controlling terminal and run the command.
+        POSIX::setpgid(0, 0);
+        open(STDIN, '<', '/dev/null') or POSIX::_exit(126);
+        my $escaped_log = _sq($log_file);
+        exec("/bin/sh", "-c", "($cmd) > $escaped_log 2>&1")
+            or POSIX::_exit(127);
+    }
+
+    # Parent: poll for completion, ESC interrupt, and timeouts.
+    my $exit_code = -1;
+    my $interrupted = 0;
+    my $start = time();
+
+    while (1) {
+        my $waited = waitpid($pid, POSIX::WNOHANG());
+        if ($waited > 0) {
+            $exit_code = $? >> 8;
+            last;
+        }
+        if ($self->check_interrupt($context)) {
+            log_info('VersionControl', "User interrupt detected, killing git pid $pid");
+            $interrupted = 1;
+            kill '-KILL', -$pid;  # Kill process group
+            waitpid($pid, 0);
+            $exit_code = 130;
+            last;
+        }
+        sleep 0.1;  # 100ms poll - matches ALRM interval for sub-second interrupt
+    }
+
+    my $output = '';
+    if (open my $fh, '<:encoding(UTF-8)', $log_file) {
+        local $/;
+        $output = <$fh>;
+        close $fh;
+    }
+
+    return ($exit_code, $output, $interrupted);
 }
 
 =head1 NAME
@@ -480,26 +542,38 @@ sub commit {
 
 sub push {
     my ($self, $params, $context) = @_;
-    
+
     my $repo_path = $params->{repository_path} || '.';
     my $remote = $params->{remote} || 'origin';
     my $branch = $params->{branch} || '';
     my $result;
-    
+
     eval {
         $result = _in_repo($repo_path, sub {
             my $cmd = "git push " . _sq($remote);
             $cmd .= " " . _sq($branch) if $branch;
             $cmd .= " 2>&1";
-            
-            my $output = `$cmd`;
+
+            my ($exit_code, $output, $interrupted) = $self->_run_with_interrupt($cmd, $context);
             my $target = $branch ? "$remote/$branch" : $remote;
-            
+
+            if ($interrupted) {
+                return $self->success_result(
+                    $output . "\n[Aborted by user]",
+                    action_description => "push to $target aborted by user",
+                    remote => $remote,
+                    branch => $branch || 'current',
+                    interrupted => 1,
+                    exit_code => $exit_code,
+                );
+            }
+
             return $self->success_result(
                 $output,
                 action_description => "pushing to $target",
                 remote => $remote,
                 branch => $branch || 'current',
+                exit_code => $exit_code,
             );
         });
     };
@@ -513,26 +587,38 @@ sub push {
 
 sub pull {
     my ($self, $params, $context) = @_;
-    
+
     my $repo_path = $params->{repository_path} || '.';
     my $remote = $params->{remote} || 'origin';
     my $branch = $params->{branch} || '';
     my $result;
-    
+
     eval {
         $result = _in_repo($repo_path, sub {
             my $cmd = "git pull " . _sq($remote);
             $cmd .= " " . _sq($branch) if $branch;
             $cmd .= " 2>&1";
-            
-            my $output = `$cmd`;
+
+            my ($exit_code, $output, $interrupted) = $self->_run_with_interrupt($cmd, $context);
             my $target = $branch ? "$remote/$branch" : $remote;
-            
+
+            if ($interrupted) {
+                return $self->success_result(
+                    $output . "\n[Aborted by user]",
+                    action_description => "pull from $target aborted by user",
+                    remote => $remote,
+                    branch => $branch || 'current',
+                    interrupted => 1,
+                    exit_code => $exit_code,
+                );
+            }
+
             return $self->success_result(
                 $output,
                 action_description => "pulling from $target",
                 remote => $remote,
                 branch => $branch || 'current',
+                exit_code => $exit_code,
             );
         });
     };

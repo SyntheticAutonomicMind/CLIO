@@ -170,8 +170,21 @@ Returns: 1 if flagged, 0 otherwise
 sub pending {
     my (%opts) = @_;
     my $session = $opts{session};
-    return 0 unless $session && $session->can('state');
-    my $state = $session->state();
+    return 0 unless $session;
+    # Accept either a blessed session object (with ->state method) or a
+    # bare hashref representing the state directly (test mocks and lightweight
+    # callers use this form). Order matters: check can('state') FIRST
+    # so blessed session objects with their own ->state() are not mistaken
+    # for state hashrefs. Blessed hashrefs with no state method fall through
+    # to the is_hashref branch.
+    my $state;
+    if (eval { $session->can('state') }) {
+        $state = $session->state();
+    } elsif (ref($session) eq 'HASH') {
+        $state = $session;
+    } else {
+        return 0;
+    }
     return 0 unless $state && ref($state) eq 'HASH';
     return $state->{user_interrupted} ? 1 : 0;
 }
