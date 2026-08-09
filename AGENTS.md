@@ -342,6 +342,37 @@ cd tests/unit && for t in test_<component>*.pl; do perl -I../../lib $t; done
 3. Verify exit code 0
 4. Include in commit
 
+
+### Detecting Uninitialized-Value Warnings (Whole Codebase)
+
+CLIO enables `use warnings;` per module template, but a warning only fires when the offending code path is actually executed at runtime. The unit suite can pass on a code path that's never exercised, and a regression can ship (e.g. typing `/` at the prompt used to emit `Use of uninitialized value within @parts in lc at CommandHandler.pm line 257` because no test exercised the slash-only input).
+
+Use `tests/run_strict_tests.pl` to re-run every test under `perl -W` and surface uninitialized-value (and other) warnings:
+
+```bash
+# Run all tests/unit/*.pl under -W
+perl tests/run_strict_tests.pl
+
+# Run a single test
+perl tests/run_strict_tests.pl tests/unit/test_command_handler.pl
+
+# Run under warnings FATAL=>'all' (any warning aborts the test)
+perl tests/run_strict_tests.pl --fatal tests/unit/test_command_handler.pl
+
+# Quiet mode (only print failing tests)
+perl tests/run_strict_tests.pl --quiet
+
+# Also flag "Subroutine ... redefined" warnings (off by default because
+# test scaffolding stubs CLIO::Compat::Terminal::GetTerminalSize and
+# Chat display methods).
+perl tests/run_strict_tests.pl --strict-redefine
+```
+
+The harness categorises warnings by source. CLIO warnings (paths containing `lib/CLIO/`) fail the run with a non-zero exit. Vendor warnings (perl core `/System/Library/Perl/`, CPAN) are reported as informational only - they are real Perl quirks (e.g. `File::Spec::Unix::_cached_tmpdir` warns about undef env-var caches) that CLIO cannot fix and should not block the run.
+
+When adding a test for a code path that you suspect might emit a warning, capture warnings via `$SIG{__WARN__}` and assert zero uninit warnings fired (see `tests/unit/test_command_handler.pl` for the pattern).
+
+
 ---
 
 ## Commit Format
