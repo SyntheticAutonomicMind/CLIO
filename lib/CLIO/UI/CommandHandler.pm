@@ -251,12 +251,13 @@ sub handle_command {
     
     # Remove leading slash
     $command =~ s/^\///;
-    
+
     # Split into command and args using shellwords to handle quoted arguments
     my @parts = shellwords($command);
-    my $cmd = lc(shift @parts);
+    my $cmd = shift(@parts) // '';
+    $cmd = lc($cmd) if length $cmd;
     my @args = @parts;
-    
+
     # Look up command (direct or alias)
     my $entry = $self->{_registry}{$cmd};
     
