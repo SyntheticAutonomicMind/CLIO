@@ -21,10 +21,41 @@ Supports multiple formats for compatibility with different LLM providers:
 - OpenAI structured format (already handled by APIManager)
 - `[tool_name operation]` + JSON block (CLIO legacy format)
 - `<tool_call>...</tool_call>` XML tags (llama.cpp, Qwen)
+- `<invoke name="...">...</invoke>` XML tags (MiniMax)
+- `<｜DSML｜...tool_calls>...<｜DSML｜...invoke name="...">...</invoke>...</｜DSML｜...tool_calls>` (DeepSeek V3.2/V4)
 - `CALL tool_name: {...}` format
 - JSON code blocks with tool calls
 
 Based on SAM's ToolCallExtractor.swift pattern.
+
+=head1 DSML FORMAT
+
+DeepSeek emits its tool calls as DSML markup when the chat template is
+served through paths that don't strip the DSML tokens before reaching
+the OpenAI-compat API layer (sglang without --tool-call-parser deepseekv32,
+vllm without --tool-parser-plugin deepseek_v32, NVIDIA proxy with NIM
+DeepSeek models, and certain local inference setups). When that happens
+the markup leaks into delta.content instead of the structured
+delta.tool_calls field, and clients that don't understand DSML render
+raw `<｜DSML｜...>` to the user and never invoke the tool.
+
+DSML uses U+FF5C FULLWIDTH VERTICAL LINE characters as delimiters:
+
+    <｜DSML｜tool_calls>
+    <｜DSML｜invoke name="get_weather">
+    <｜DSML｜parameter name="city" string="true">Shanghai</｜DSML｜parameter>
+    <｜DSML｜parameter name="unit" string="false">"celsius"</｜DSML｜parameter>
+    </｜DSML｜invoke>
+    </｜DSML｜tool_calls>
+
+The official DeepSeek V4 spec uses single-DSML for all wrappers, but the
+model in practice emits double-DSML (`<｜DSML｜｜DSML｜tool_calls>` and
+`<｜DSML｜｜DSML｜invoke>`) for the outer wrappers and single-DSML for
+parameter tags. Both forms are accepted; parameters are always single
+DSML. The `string="true"|"false"` attribute hints whether the value is
+a literal string (true) or a JSON-encoded value (false).
+
+Reference: https://docs.vllm.ai/en/latest/api/vllm/parser/deepseek_v32/
 
 =head1 SYNOPSIS
 
@@ -79,7 +110,18 @@ sub extract {
         log_debug('ToolCallExtractor', "Detected XML tool_call format");
         return $self->_extract_xml_format($content);
     }
-    
+
+    # 1a. DSML format: <｜DSML｜...tool_calls>...<｜DSML｜...invoke name="...">...</invoke>...</｜DSML｜...tool_calls>
+    # Checked before the plain XML invoke format because DSML markers are
+    # more specific; if the model emitted DSML (with or without the
+    # double-DSML wrapper variant) we want the DSML parser, not the
+    # plain-invoke parser that would otherwise match the inner <invoke>
+    # tags.
+    if ($content =~ /\x{FF5C}DSML\x{FF5C}/) {
+        log_debug('ToolCallExtractor', "Detected DSML tool_calls format");
+        return $self->_extract_dsml_format($content);
+    }
+
     # 1b. XML invoke format: <invoke name="...">...</invoke>
     if ($content =~ /<invoke\s+name=/i) {
         log_debug('ToolCallExtractor', "Detected XML invoke format");
@@ -236,6 +278,147 @@ sub _extract_invoke_format {
         tool_calls => \@tool_calls,
         cleaned_content => $cleaned,
         format => 'invoke'
+    };
+}
+
+=head2 _extract_dsml_format
+
+Extract DeepSeek DSML tool call format.
+
+Format:
+    <｜DSML｜tool_calls>
+    <｜DSML｜invoke name="tool_name">
+    <｜DSML｜parameter name="key" string="true">value</｜DSML｜parameter>
+    </｜DSML｜invoke>
+    </｜DSML｜tool_calls>
+
+Both single-DSML (`<｜DSML｜tool_calls>`, V3.2 spec) and double-DSML
+(`<｜DSML｜｜DSML｜tool_calls>`, V4 model output) wrappers are accepted.
+Parameters always use single-DSML.
+
+The `string="true"` attribute on a parameter means the value is a literal
+string and is taken verbatim. `string="false"` means the value is a
+JSON-encoded value (number, object, array, etc.) which is decoded.
+
+=cut
+
+sub _extract_dsml_format {
+    my ($self, $content) = @_;
+
+    my @tool_calls = ();
+    my $cleaned = $content;
+
+    # We build the regex patterns as strings and use qr// with /s only
+    # (never /g at the qr// level). Combining /g with string-interpolated
+    # ｜DSML｜ patterns inside qr// triggers a perl parser bug on the
+    # trailing flag, so we let /g be supplied at the match site instead.
+    #
+    # Whitespace inside tags is allowed (e.g. `<｜DSML｜invoke  name="x">`
+    # with extra spaces, `</invoke  >` before the closing angle) to match
+    # real-world model output - the official spec is strict but the model
+    # occasionally injects spaces, especially at token boundaries.
+    my $dsml         = "\x{FF5C}DSML\x{FF5C}";
+    my $block_start  = "<${dsml}(?:${dsml})?\\s*tool_calls\\s*>";
+    my $block_end    = "</${dsml}(?:${dsml})?\\s*tool_calls\\s*>";
+    my $invoke_open  = "<${dsml}(?:${dsml})?\\s*invoke\\s+name=\"([^\"]+)\"\\s*>";
+    my $invoke_close = "</${dsml}\\s*invoke\\s*>";
+    my $param_re     = qr/<${dsml}\s*parameter\s+name="([^"]+)"\s+string="(true|false)"\s*>(.*?)<\/${dsml}\s*parameter\s*>/s;
+
+    # Combined regex finds each invoke with its closing tag. Using /s
+    # so the body of an invoke (parameter values containing JSON or
+    # shell pipes) can span newlines; the explicit close tag is what
+    # terminates the non-greedy capture.
+    my $invoke_full = "$invoke_open(.*?)$invoke_close";
+
+    # Walk through every <｜DSML｜...tool_calls>...</｜DSML｜...tool_calls>
+    # block. Two passes: first collect complete blocks (open + matching
+    # close), then any unclosed opener to end-of-content (truncated stream).
+    # The second pass only fires when the first pass found nothing - if a
+    # complete block exists its opener is already consumed by pass 1, so
+    # pass 2 would otherwise double-count the same invokes.
+    my @blocks;
+    {
+        # Match complete <tool_calls>...</tool_calls> pairs.
+        my $pattern = "(${block_start})(.*?)(${block_end})";
+        while ($content =~ /$pattern/sg) {
+            push @blocks, { body => $2, complete => 1 };
+        }
+    }
+    if (!@blocks) {
+        # Match an unclosed opener to end-of-content (truncated stream).
+        my $pattern = "(${block_start})(.*)\\z";
+        while ($content =~ /$pattern/sg) {
+            my $body = $2;
+            next if length($body) == 0;
+            push @blocks, { body => $body, complete => 0 };
+        }
+    }
+
+    for my $block (@blocks) {
+        my $body = $block->{body};
+        log_debug('ToolCallExtractor', "Found DSML tool_calls block (complete=" . ($block->{complete} ? 1 : 0) . ")");
+
+        # Find each <｜DSML｜...invoke name="X">...</｜DSML｜invoke>.
+        # Parameters live inside each invoke's body.
+        while ($body =~ /$invoke_full/sg) {
+            my $tool_name = $1;
+            my $params_xml = $2;
+
+            log_debug('ToolCallExtractor', "Found DSML invoke: $tool_name");
+
+            my %params;
+            while ($params_xml =~ /$param_re/g) {
+                my ($pname, $ptype, $pvalue) = ($1, $2, $3);
+
+                if ($ptype eq 'true') {
+                    $params{$pname} = $pvalue;
+                }
+                else {
+                    # string="false" -> JSON value
+                    my $decoded = safe_decode_json($pvalue);
+                    if ($@ || !defined $decoded) {
+                        log_warning('ToolCallExtractor',
+                            "DSML parameter '$pname' marked string=false but value is not valid JSON ($pvalue); keeping raw value");
+                        $params{$pname} = $pvalue;
+                    }
+                    else {
+                        $params{$pname} = $decoded;
+                    }
+                }
+            }
+
+            next unless %params;
+
+            my $arguments_json = encode_json(\%params);
+
+            push @tool_calls, {
+                id => $self->_generate_id(),
+                type => 'function',
+                function => {
+                    name => $tool_name,
+                    arguments => $arguments_json
+                }
+            };
+        }
+    }
+
+    # Strip the entire DSML region(s) from cleaned_content. We delete any
+    # <｜DSML｜...tool_calls>...</｜DSML｜...tool_calls> blocks we matched
+    # plus any stray closing tags that lost their opener (defensive - the
+    # streaming pipeline should already have hidden these). Anything left
+    # in $cleaned is prose the model intended for the user.
+    my $block_pair_re = "${block_start}.*?${block_end}";
+    $cleaned =~ s/$block_pair_re//gs;
+    # Handle the malformed-but-completed case (block opener without
+    # matching close) by deleting from the opener to end-of-content.
+    $cleaned =~ s/$block_start.*\z//s;
+    $cleaned =~ s/$block_end//g;
+    $cleaned =~ s/^\s+|\s+$//g;
+
+    return {
+        tool_calls => \@tool_calls,
+        cleaned_content => $cleaned,
+        format => 'dsml'
     };
 }
 
