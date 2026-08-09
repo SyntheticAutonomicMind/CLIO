@@ -372,6 +372,46 @@ The harness categorises warnings by source. CLIO warnings (paths containing `lib
 
 When adding a test for a code path that you suspect might emit a warning, capture warnings via `$SIG{__WARN__}` and assert zero uninit warnings fired (see `tests/unit/test_command_handler.pl` for the pattern).
 
+### Adding Operation-Name Aliases to Tools
+
+When an LLM sends a tool call with a natural-language operation name that isn't in the canonical set (e.g. `list_directory` instead of `list_dir`), the tool returns `Unknown operation: ... Did you mean: list_dir?` and the call fails. The `dispatch_table` design in `lib/CLIO/Tools/Tool.pm:138-144` already supports aliases: "Aliases are supported by mapping multiple keys to the same method."
+
+To add an alias to a tool:
+
+1. Add the alias to `supported_operations` in the tool's `new()` method. This surfaces it in the JSON schema's `operation` enum and in error messages.
+2. Add the alias as a key in `dispatch_table` that maps to the same method name as the canonical entry.
+
+Example (in `lib/CLIO/Tools/FileOperations.pm`):
+
+```perl
+# supported_operations
+supported_operations => [qw(
+    read_file read          # read is an alias for read_file
+    list_dir list_directory  # list_directory is an alias for list_dir
+    ...
+)],
+
+# dispatch_table
+sub dispatch_table {
+    return {
+        read_file      => 'read_file',
+        read           => 'read_file',       # alias
+        list_dir       => 'list_dir',
+        list_directory => 'list_dir',        # alias
+        ...
+    };
+}
+```
+
+Add tests under `tests/unit/test_<tool>_aliases.pl` that invoke each alias with realistic parameters and assert the dispatch produces the expected result. See `tests/unit/test_file_operations_aliases.pl` for the pattern.
+
+Guidelines for choosing aliases:
+
+- Prefer unambiguous mappings: a single alias should point to one operation.
+- Skip aliases that could be confused with another operation (e.g. `read` could mean `read_file` or `read_tool_result`; pick the most common).
+- Short Unix-style names (`mv`, `mkdir`, `rm`) are good aliases when the canonical name is verbose.
+- Adding to `supported_operations` puts the alias in the JSON schema enum, so well-behaved LLMs learn about it from the system prompt. The `_suggest_operation` helper in `Tool.pm:161` also uses this list to produce "Did you mean" hints.
+
 
 ---
 
