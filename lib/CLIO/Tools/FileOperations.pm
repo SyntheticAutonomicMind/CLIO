@@ -19,6 +19,7 @@ use File::Path qw(make_path);
 use Cwd qw(abs_path getcwd);
 use Encode qw(decode);
 use File::Glob qw(:bsd_glob);
+use CLIO::Core::WorkflowOrchestrator;
 
 =head1 NAME
 
