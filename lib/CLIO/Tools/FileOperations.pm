@@ -132,12 +132,33 @@ AUTHORIZATION:
   
 -  create_directory - Create directory (with parents)
   Parameters: path (required)
+
+ALIASES: Each operation above also accepts common natural-language aliases
+(e.g. `list_dir` / `list_directory`, `read` / `read_file`, `delete` /
+`delete_file`, `mv` / `rename_file`, `mkdir` / `create_directory`,
+`bulk_replace` / `multi_replace_string`). The canonical names above are
+preferred for clarity; aliases exist so calling code that uses the more
+familiar English form still dispatches correctly.
 },
         supported_operations => [qw(
-            read_file list_dir file_exists get_file_info get_errors
-            file_search grep_search semantic_search read_tool_result
-            create_file write_file append_file replace_string multi_replace_string
-            insert_at_line delete_file rename_file create_directory
+            read_file read
+            list_dir list_directory
+            file_exists exists
+            get_file_info stat_file
+            get_errors
+            file_search find_files
+            grep_search search
+            semantic_search
+            read_tool_result read_result
+            create_file create
+            write_file write
+            append_file append
+            replace_string replace edit
+            multi_replace_string bulk_replace
+            insert_at_line insert_line insert
+            delete_file delete remove
+            rename_file rename mv
+            create_directory make_directory mkdir
         )],
         %opts,
     );
@@ -285,23 +306,44 @@ sub get_additional_parameters {
 sub dispatch_table {
     return {
         read_file           => 'read_file',
+        read                => 'read_file',
         list_dir            => 'list_dir',
+        list_directory      => 'list_dir',
         file_exists         => 'file_exists',
+        exists              => 'file_exists',
         get_file_info       => 'get_file_info',
+        stat_file           => 'get_file_info',
         get_errors          => 'get_errors',
         file_search         => 'file_search',
+        find_files          => 'file_search',
         grep_search         => 'grep_search',
+        search              => 'grep_search',
         semantic_search     => 'semantic_search',
         read_tool_result    => 'read_tool_result',
+        read_result         => 'read_tool_result',
         create_file         => 'create_file',
+        create              => 'create_file',
         write_file          => 'write_file',
+        write               => 'write_file',
         append_file         => 'append_file',
+        append              => 'append_file',
         replace_string      => 'replace_string',
+        replace             => 'replace_string',
+        edit                => 'replace_string',
         multi_replace_string => 'multi_replace_string',
+        bulk_replace        => 'multi_replace_string',
         insert_at_line      => 'insert_at_line',
+        insert_line         => 'insert_at_line',
+        insert              => 'insert_at_line',
         delete_file         => 'delete_file',
+        delete              => 'delete_file',
+        remove              => 'delete_file',
         rename_file         => 'rename_file',
+        rename              => 'rename_file',
+        mv                  => 'rename_file',
         create_directory    => 'create_directory',
+        make_directory      => 'create_directory',
+        mkdir               => 'create_directory',
     };
 }
 
