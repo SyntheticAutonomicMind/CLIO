@@ -13,6 +13,7 @@ use Carp qw(croak confess);
 use parent 'CLIO::Tools::Tool';
 use CLIO::Util::ConfigPath qw(get_config_dir);
 use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json);
+use CLIO::Util::PathResolver qw(strip_path_quotes);
 use File::Spec;
 
 =head1 NAME
@@ -189,7 +190,7 @@ sub store {
     
     my $key = $params->{key};
     my $content = $params->{content};
-    my $memory_dir = $params->{memory_dir} || '.clio/memory';
+    my $memory_dir = strip_path_quotes($params->{memory_dir}) || '.clio/memory';
     
     return $self->error_result("Missing 'key' parameter") unless $key;
     return $self->error_result("Missing 'content' parameter") unless $content;
@@ -232,7 +233,7 @@ sub retrieve {
     my ($self, $params, $context) = @_;
     
     my $key = $params->{key};
-    my $memory_dir = $params->{memory_dir} || '.clio/memory';
+    my $memory_dir = strip_path_quotes($params->{memory_dir}) || '.clio/memory';
     
     return $self->error_result("Missing 'key' parameter") unless $key;
     
@@ -269,7 +270,7 @@ sub search {
     my ($self, $params, $context) = @_;
     
     my $query = $params->{query};
-    my $memory_dir = $params->{memory_dir} || '.clio/memory';
+    my $memory_dir = strip_path_quotes($params->{memory_dir}) || '.clio/memory';
     
     return $self->error_result("Missing 'query' parameter") unless $query;
     
@@ -357,7 +358,7 @@ sub search {
 sub list_memories {
     my ($self, $params, $context) = @_;
     
-    my $memory_dir = $params->{memory_dir} || '.clio/memory';
+    my $memory_dir = strip_path_quotes($params->{memory_dir}) || '.clio/memory';
     
     my $result;
     eval {
@@ -392,7 +393,7 @@ sub delete {
     my ($self, $params, $context) = @_;
     
     my $key = $params->{key};
-    my $memory_dir = $params->{memory_dir} || '.clio/memory';
+    my $memory_dir = strip_path_quotes($params->{memory_dir}) || '.clio/memory';
     
     return $self->error_result("Missing 'key' parameter") unless $key;
     

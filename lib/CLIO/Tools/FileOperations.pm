@@ -14,7 +14,7 @@ use CLIO::Security::CommandAnalyzer qw(analyze_command);
 use parent 'CLIO::Tools::Tool';
 use File::Spec;
 use File::Basename;
-use CLIO::Util::PathResolver qw(expand_tilde);
+use CLIO::Util::PathResolver qw(expand_tilde strip_path_quotes);
 use File::Path qw(make_path);
 use Cwd qw(abs_path getcwd);
 use Encode qw(decode);
@@ -366,6 +366,27 @@ sub _get_path_authorizer {
     return $self->{path_authorizer};
 }
 
+=head2 _clean_path($path)
+
+Strip JSON-string-style quote artifacts from an AI-supplied path.
+
+LLMs sometimes emit tool calls like path=`"/home/foo/test.txt"` (with
+literal `"` chars) when they meant `/home/foo/test.txt`. CLIO's
+directory-creation helpers (`make_path`, `mkdir`) then treat the
+leading `"` as a directory name and create a literal `"` directory.
+
+Centralizes the fix in one place so every operation stays consistent.
+Returns the stripped path or the original (empty input passes through
+for downstream "missing path" handling).
+
+=cut
+
+sub _clean_path {
+    my ($self, $path) = @_;
+    return $path unless defined $path;
+    return strip_path_quotes($path);
+}
+
 sub _check_write_authorization {
     my ($self, $path, $operation, $context) = @_;
     
@@ -579,7 +600,7 @@ sub _check_sandbox {
 sub read_file {
     my ($self, $params, $context) = @_;
     
-    my $path = $params->{path};
+    my $path = $self->_clean_path($params->{path});
     my $start_line = $params->{start_line} || 1;
     my $end_line = $params->{end_line};
     
@@ -761,7 +782,7 @@ sub read_file {
 sub list_dir {
     my ($self, $params, $context) = @_;
     
-    my $path = $params->{path} || '.';
+    my $path = $self->_clean_path($params->{path}) || '.';
     my $recursive = $params->{recursive} || 0;
     
     # Sandbox check
@@ -838,7 +859,7 @@ sub list_dir {
 sub file_exists {
     my ($self, $params, $context) = @_;
     
-    my $path = $params->{path};
+    my $path = $self->_clean_path($params->{path});
     
     return $self->error_result("Missing 'path' parameter") unless $path;
     
@@ -865,7 +886,7 @@ sub file_exists {
 sub get_file_info {
     my ($self, $params, $context) = @_;
     
-    my $path = $params->{path};
+    my $path = $self->_clean_path($params->{path});
     
     return $self->error_result("Missing 'path' parameter") unless $path;
     
@@ -1009,7 +1030,7 @@ sub file_search {
     my ($self, $params, $context) = @_;
     
     my $pattern = $params->{pattern};
-    my $directory = $params->{directory} || '.';
+    my $directory = $self->_clean_path($params->{directory}) || '.';
     
     return $self->error_result("Missing 'pattern' parameter") unless $pattern;
     
@@ -1168,7 +1189,7 @@ sub grep_search {
     my $pattern = $params->{pattern} || '**/*';
     my $is_regex = $params->{is_regex} || 0;
     my $max_results = $params->{max_results} || 50;  # Prevent runaway searches
-    my $directory = $params->{directory} || $params->{path} || '.';
+    my $directory = $self->_clean_path($params->{directory}) || $self->_clean_path($params->{path}) || '.';
 
     return $self->error_result("Missing 'query' parameter") unless defined $query && length($query);
 
@@ -1737,7 +1758,7 @@ sub read_tool_result {
 sub create_file {
     my ($self, $params, $context) = @_;
     
-    my $path = $params->{path};
+    my $path = $self->_clean_path($params->{path});
     my $content = $params->{content};
     
     return $self->error_result("Missing 'path' parameter") unless $path;
@@ -1827,7 +1848,7 @@ sub create_file {
 sub write_file {
     my ($self, $params, $context) = @_;
     
-    my $path = $params->{path};
+    my $path = $self->_clean_path($params->{path});
     my $content = $params->{content};
     
     return $self->error_result("Missing 'path' parameter") unless $path;
@@ -1910,7 +1931,7 @@ sub write_file {
 sub append_file {
     my ($self, $params, $context) = @_;
     
-    my $path = $params->{path};
+    my $path = $self->_clean_path($params->{path});
     my $content = $params->{content};
     
     return $self->error_result("Missing 'path' parameter") unless $path;
@@ -1995,7 +2016,7 @@ sub append_file {
 sub replace_string {
     my ($self, $params, $context) = @_;
     
-    my $path = $params->{path};
+    my $path = $self->_clean_path($params->{path});
     my $old_string = $params->{old_string};
     my $new_string = $params->{new_string};
     
@@ -2101,7 +2122,12 @@ sub multi_replace_string {
     foreach my $i (0 .. $#$replacements) {
         my $rep = $replacements->[$i];
         my $idx = $i + 1;
-        
+
+        # Strip JSON-string-style quote artifacts from path so AI
+        # emitted "/path/to/file" doesn't become a literal "/path"
+        # directory under the workspace.
+        $rep->{path} = $self->_clean_path($rep->{path}) if exists $rep->{path};
+
         unless (ref($rep) eq 'HASH') {
             push @failed, {
                 index => $idx,
@@ -2204,7 +2230,7 @@ sub multi_replace_string {
 sub insert_at_line {
     my ($self, $params, $context) = @_;
     
-    my $path = $params->{path};
+    my $path = $self->_clean_path($params->{path});
     # Accept both 'line' (schema name) and 'line_number' (legacy/docs)
     my $line_number = $params->{line} // $params->{line_number};
     my $content = $params->{content};
@@ -2275,7 +2301,7 @@ sub insert_at_line {
 sub delete_file {
     my ($self, $params, $context) = @_;
     
-    my $path = $params->{path};
+    my $path = $self->_clean_path($params->{path});
     my $recursive = $params->{recursive} || 0;
     
     return $self->error_result("Missing 'path' parameter") unless $path;
@@ -2346,8 +2372,8 @@ sub delete_file {
 sub rename_file {
     my ($self, $params, $context) = @_;
     
-    my $old_path = $params->{old_path};
-    my $new_path = $params->{new_path};
+    my $old_path = $self->_clean_path($params->{old_path});
+    my $new_path = $self->_clean_path($params->{new_path});
     
     return $self->error_result("Missing 'old_path' parameter") unless $old_path;
     return $self->error_result("Missing 'new_path' parameter") unless $new_path;
@@ -2419,7 +2445,7 @@ sub rename_file {
 sub create_directory {
     my ($self, $params, $context) = @_;
     
-    my $path = $params->{path};
+    my $path = $self->_clean_path($params->{path});
     
     return $self->error_result("Missing 'path' parameter") unless $path;
     

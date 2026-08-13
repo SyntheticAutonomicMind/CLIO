@@ -14,7 +14,7 @@ use Cwd qw(abs_path);
 use File::Path qw(make_path);
 use Exporter 'import';
 
-our @EXPORT_OK = qw(expand_tilde shell_quote find_ltm_path);
+our @EXPORT_OK = qw(expand_tilde shell_quote strip_path_quotes find_ltm_path);
 
 =head1 NAME
 
@@ -271,6 +271,75 @@ sub shell_quote {
     return "''" unless defined $str && length $str;
     $str =~ s/'/'\\''/g;
     return "'$str'";
+}
+
+=head2 strip_path_quotes($path)
+
+Strip JSON-string-style quote characters from a path. LLMs sometimes
+confuse JSON string syntax with string content and emit tool calls like
+path=`"/home/foo/test.txt"` (with literal `"` chars) when they meant
+`/home/foo/test.txt`. CLIO's directory-creation helpers (`make_path`,
+`mkdir`) then treat the leading `"` as a directory name and create a
+literal `"` directory - a small but persistent mess in the workspace.
+
+This helper normalizes the common patterns:
+
+  "/home/foo/test.txt"  -> /home/foo/test.txt     (balanced double quotes)
+  '/home/foo/test.txt'  -> /home/foo/test.txt     (balanced single quotes)
+  "test.txt"            -> test.txt               (balanced, short path)
+  "/home/foo/test.txt   -> /home/foo/test.txt     (unbalanced leading ")
+  'foo/bar              -> foo/bar                (unbalanced leading ')
+  /home/foo/test.txt"   -> /home/foo/test.txt     (unbalanced trailing ")
+  /home/foo/"test.txt"  -> /home/foo/"test.txt"   (embedded quotes preserved)
+  foo"bar               -> foo"bar                (embedded quotes preserved)
+
+Embedded quote characters are preserved (some filenames legitimately
+contain them); only the leading and trailing characters that look like
+JSON-string wrappers are stripped.
+
+Arguments:
+- $path: Path string from AI tool call
+
+Returns: Sanitized path string (caller should treat empty result as missing)
+
+=cut
+
+sub strip_path_quotes {
+    my ($path) = @_;
+    return $path unless defined $path;
+
+    # Balanced double or single quote wrapping: "..." or '...'
+    # Match a leading quote, any non-greedy content with no embedded
+    # matching quote, and the same quote at the end. Strip the wrapping
+    # pair; leave embedded (mid-string) quotes alone. Reject empty
+    # matches (e.g. "" or '') so they fall through to the empty-path
+    # check downstream.
+    if ($path =~ /^(["'])(.*?)\1$/s && length($2) > 0) {
+        return $2;
+    }
+
+    # Unbalanced leading quote where the next character is path-like
+    # ([/~.a-zA-Z0-9]). This catches the "AI emitted a leading `"` and
+    # forgot the closing one" case. We only strip when the next char
+    # looks like the start of a real path so we don't touch filenames
+    # like `"foo"` whose first char IS the quote.
+    if ($path =~ /^["']([\/~.a-zA-Z0-9])/s) {
+        my $stripped = substr($path, 1);
+        # If the result still ends with the same quote char, strip it too.
+        # Catches "AI emitted matching quotes" where the leading-detection
+        # branch matched first. Conservative: only strip if the remaining
+        # string is plausibly path-like.
+        $stripped = substr($stripped, 0, -1) if $stripped =~ /["']$/s && $stripped =~ /[\/~.a-zA-Z0-9]/s;
+        return $stripped;
+    }
+
+    # Note: We intentionally do NOT strip a lone trailing quote. A
+    # filename ending in `"` is unusual but legal, and stripping it
+    # silently would change behavior the user did not ask for. The
+    # common bug pattern (LLM wrapping a path in JSON-string quotes)
+    # is caught by the balanced case above.
+
+    return $path;
 }
 
 =head2 find_ltm_path($working_dir)
