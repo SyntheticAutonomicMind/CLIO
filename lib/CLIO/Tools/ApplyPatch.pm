@@ -13,6 +13,7 @@ use File::Spec;
 use File::Path qw(make_path);
 use File::Basename qw(dirname);
 use CLIO::Util::JSON qw(encode_json);
+use CLIO::Util::PathResolver qw(strip_path_quotes);
 use CLIO::Core::Logger qw(log_debug log_warning log_info);
 use parent 'CLIO::Tools::Tool';
 
@@ -348,7 +349,7 @@ sub _parse_patch {
         
         # Add File
         if ($line =~ /^\*\*\*\s*Add\s+File:\s*(.+)$/i) {
-            my $path = $1;
+            my $path = strip_path_quotes($1);
             $path =~ s/^\s+|\s+$//g;
             $i++;
             
@@ -372,7 +373,7 @@ sub _parse_patch {
         
         # Delete File
         if ($line =~ /^\*\*\*\s*Delete\s+File:\s*(.+)$/i) {
-            my $path = $1;
+            my $path = strip_path_quotes($1);
             $path =~ s/^\s+|\s+$//g;
             
             push @hunks, {
@@ -385,14 +386,14 @@ sub _parse_patch {
         
         # Update File
         if ($line =~ /^\*\*\*\s*Update\s+File:\s*(.+)$/i) {
-            my $path = $1;
+            my $path = strip_path_quotes($1);
             $path =~ s/^\s+|\s+$//g;
             $i++;
             
             # Check for move directive
             my $move_path;
             if ($i < @lines && $lines[$i] =~ /^\*\*\*\s*Move\s+to:\s*(.+)$/i) {
-                $move_path = $1;
+                $move_path = strip_path_quotes($1);
                 $move_path =~ s/^\s+|\s+$//g;
                 $i++;
             }
