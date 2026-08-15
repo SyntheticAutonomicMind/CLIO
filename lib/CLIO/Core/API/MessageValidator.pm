@@ -471,17 +471,20 @@ sub _calculate_tool_tokens {
     my ($tools) = @_;
     return 0 unless $tools && ref($tools) eq 'ARRAY' && @$tools;
     
+    require CLIO::Memory::TokenEstimator;
+    my $ratio = CLIO::Memory::TokenEstimator::get_effective_ratio();
+    
     my $total = 0;
     for my $tool (@$tools) {
         my $tool_json = safe_encode_json($tool);
         if ($tool_json) {
-            $total += int(length($tool_json) / 2.5);
+            $total += int(length($tool_json) / $ratio);
         } else {
             $total += 600;
         }
     }
     
-    log_debug('MessageValidator', "Tool token budget: $total tokens for " . scalar(@$tools) . " tools");
+    log_debug('MessageValidator', "Tool token budget: $total tokens for " . scalar(@$tools) . " tools (ratio: $ratio)");
     return $total;
 }
 
