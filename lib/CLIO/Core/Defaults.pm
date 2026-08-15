@@ -85,7 +85,11 @@ use constant TOOL_RESULT_MAX_CHUNK        => 32768;   # Hard ceiling per chunk (
 use constant DEFAULT_BINARY_SAMPLE_SIZE   => 8192;    # Bytes to sample for binary detection
 
 # Conversation management
-use constant DEFAULT_POST_TRIM_FLOOR      => 32000;   # Minimum tokens to keep after trimming
+use constant DEFAULT_POST_TRIM_FLOOR      => 24000;   # Minimum tokens to keep after trimming
+                                                    # Balanced: earlier than 32K (less frequent trims)
+                                                    # but later than 12K (allows aggressive trim benefits).
+                                                    # With 131K local model: prompt budget ~108K,
+                                                    # trim at 24K leaves ~84K headroom per cycle.
 
 # Cache-Stable Summary Slot (CSSS) bounds.
 # MIN_CSSS_SLOT_TOKENS: Minimum slot size to ensure "Current task" + essential
