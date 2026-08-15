@@ -669,12 +669,28 @@ sub _fit_summary_to_target {
         if ($current > $target_tokens + $tolerance) {
             my $ratio = CLIO::Memory::TokenEstimator::get_effective_ratio();
             my $max_chars = int($target_tokens * $ratio * 0.95);
+            
+            # CRITICAL: Extract and preserve "Current task" before hard truncation.
+            # The Current task line is the agent's active context - losing it
+            # causes agents to forget what they were doing after aggressive trim.
+            my $current_task = '';
+            if ($summary_content =~ /Current task:\s*(.+?)(?:\n\n|\z)/s) {
+                $current_task = "Current task: $1\n\n";
+            }
+            
             if (length($summary_content) > $max_chars) {
-                $summary_content = substr($summary_content, 0, $max_chars);
+                # Reserve space for Current task + 100 char buffer
+                my $task_chars = length($current_task);
+                my $available_chars = $max_chars - $task_chars - 100;
+                $available_chars = 1000 if $available_chars < 1000;
+                
+                $summary_content = substr($summary_content, 0, $available_chars);
                 $summary_content =~ s/\s+\z//;
-                $summary_content .= "\n\n[Summary truncated to fit cache-stable slot of $target_tokens tokens]";
+                
+                # Prepend Current task (it was at the top of the summary originally)
+                $summary_content = $current_task . $summary_content . "\n\n[Summary truncated to fit cache-stable slot of $target_tokens tokens]";
                 $current = CLIO::Memory::TokenEstimator::estimate_tokens($summary_content);
-                log_warning('YaRN', "CSSS: hard-truncated summary to $current tokens (target: $target_tokens)");
+                log_warning('YaRN', "CSSS: hard-truncated summary to $current tokens (target: $target_tokens, preserved Current task)");
             }
         }
     }
