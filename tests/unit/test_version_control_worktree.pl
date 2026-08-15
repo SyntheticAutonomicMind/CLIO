@@ -43,10 +43,10 @@ ok(exists $params->{worktree_path}, 'worktree_path parameter defined');
 ok(exists $params->{create_branch}, 'create_branch parameter defined');
 ok(exists $params->{force}, 'force parameter defined');
 
-# Test 5: action parameter description includes worktree actions
-like($params->{action}{description}, qr/add/, 'action description includes add');
-like($params->{action}{description}, qr/remove/, 'action description includes remove');
-like($params->{action}{description}, qr/prune/, 'action description includes prune');
+# Test 5: sub_action parameter description includes worktree actions
+like($params->{sub_action}{description}, qr/add/, 'sub_action description includes add');
+like($params->{sub_action}{description}, qr/remove/, 'sub_action description includes remove');
+like($params->{sub_action}{description}, qr/prune/, 'sub_action description includes prune');
 
 # Test 6: route_operation routes worktree correctly
 # First test with non-git-repo to verify routing reaches the git repo check
@@ -209,10 +209,10 @@ my $merge_bad = $vc->route_operation('worktree', {
 ok($merge_bad->{error}, 'merge with unknown worktree returns error');
 like($merge_bad->{error}, qr/Could not find worktree/, 'error mentions worktree not found');
 
-# Test 20: action description includes merge and pr
+# Test 20: sub_action description includes merge and pr
 my $params_check = $vc->get_additional_parameters();
-like($params_check->{action}{description}, qr/merge/, 'action description includes merge');
-like($params_check->{action}{description}, qr/pr/, 'action description includes pr');
+like($params_check->{sub_action}{description}, qr/merge/, 'sub_action description includes merge');
+like($params_check->{sub_action}{description}, qr/pr/, 'sub_action description includes pr');
 
 # Ensure cwd is restored
 chdir $original_cwd;

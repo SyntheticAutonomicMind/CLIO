@@ -971,19 +971,19 @@ sub get_additional_parameters {
     return {
         command => {
             type => "string",
-            description => "[REQUIRED for exec, validate] Shell command to execute. Returns {output, exit_code, action_description} on success.",
+            description => "Shell command to execute (REQUIRED when operation=exec). Example: \"ls -la\" or \"git status\".",
         },
         timeout => {
             type => "integer",
-            description => "[OPTIONAL] Idle timeout in seconds. Default: 300. Command is killed only after this many seconds with no output. Active commands keep running. Hard ceiling 600s (configurable via CLIO_TERMINAL_MAX_TIMEOUT).",
+            description => "Idle timeout seconds (default: 300, max: 600). Active commands producing output are not killed.",
         },
         working_directory => {
             type => "string",
-            description => "[OPTIONAL] Working directory for command execution. Default: current directory.",
+            description => "Working directory for command (default: current directory).",
         },
         passthrough => {
             type => "boolean",
-            description => "[OPTIONAL] Force passthrough mode (direct terminal access, no output capture). Overrides config settings.",
+            description => "Use interactive TTY mode (default: false, uses captured output).",
         },
     };
 }
