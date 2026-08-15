@@ -96,27 +96,91 @@ sub get_additional_parameters {
     my ($self) = @_;
     
     return {
-        key => { type => "string", description => "Memory key" },
-        content => { type => "string", description => "Content to store" },
-        query => { type => "string", description => "Search query" },
-        max_sessions => { type => "integer", description => "Max sessions to search (default: 10)" },
-        max_results => { type => "integer", description => "Max matches to return (default: 5)" },
-        fact => { type => "string", description => "Discovery fact for LTM" },
-        confidence => { type => "number", description => "Confidence 0.0-1.0 (default: 0.8)" },
-        error => { type => "string", description => "Error description for solution" },
-        solution => { type => "string", description => "Solution description" },
-        pattern => { type => "string", description => "Pattern description for LTM" },
-        examples => { type => "array", items => { type => "string" }, description => "Example file paths" },
-        max_age_days => { type => "integer", description => "Max age for prune_ltm (default: 90)" },
-        min_confidence => { type => "number", description => "Min confidence for prune_ltm (default: 0.3)" },
-        max_discoveries => { type => "integer", description => "Max discoveries for prune_ltm (default: 50)" },
-        max_solutions => { type => "integer", description => "Max solutions for prune_ltm (default: 50)" },
-        max_patterns => { type => "integer", description => "Max patterns for prune_ltm (default: 30)" },
-        search_text => { type => "string", description => "Text to search in LTM" },
-        replacement => { type => "string", description => "Replacement text for update_ltm" },
-        entry_type => { type => "string", description => "LTM entry type filter" },
-        source_agent => { type => "string", description => "Agent ID for corroboration" },
-        source_session => { type => "string", description => "Session ID for corroboration" },
+        key => {
+            type => "string",
+            description => "[REQUIRED for store/retrieve/delete] Memory key for store/retrieve/delete operations.",
+        },
+        content => {
+            type => "string",
+            description => "[REQUIRED for store] Content to store in session memory.",
+        },
+        query => {
+            type        => "string",
+            description => "[REQUIRED] Search query for session history. Returns scored matches sorted by relevance.",
+        },
+        max_sessions => {
+            type        => "integer",
+            description => "[OPTIONAL] Max sessions to search (newest first). Default: 10.",
+        },
+        max_results => {
+            type        => "integer",
+            description => "[OPTIONAL] Max matches to return. Default: 5.",
+        },
+        fact => {
+            type => "string",
+            description => "[REQUIRED for add_discovery] Discovery fact to store in LTM. Auto-saves to .clio/ltm.json.",
+        },
+        confidence => {
+            type => "number",
+            description => "[OPTIONAL] Confidence level 0.0-1.0. Default: 0.8. Used for add_discovery/add_pattern.",
+        },
+        error => {
+            type => "string",
+            description => "[REQUIRED for add_solution] Error/problem description. Stored in .clio/ltm.json.",
+        },
+        solution => {
+            type => "string",
+            description => "[REQUIRED for add_solution] Solution description. Stored in .clio/ltm.json.",
+        },
+        pattern => {
+            type => "string",
+            description => "[REQUIRED for add_pattern] Pattern description to store in LTM.",
+        },
+        examples => {
+            type => "array",
+            items => { type => "string" },
+            description => "[OPTIONAL] Example file paths for add_solution/add_pattern.",
+        },
+        max_age_days => {
+            type => "integer",
+            description => "[OPTIONAL] Max age in days for prune_ltm. Default: 90.",
+        },
+        min_confidence => {
+            type => "number",
+            description => "[OPTIONAL] Minimum confidence threshold for prune_ltm. Default: 0.3.",
+        },
+        max_discoveries => {
+            type => "integer",
+            description => "[OPTIONAL] Max discoveries to keep for prune_ltm. Default: 50.",
+        },
+        max_solutions => {
+            type => "integer",
+            description => "[OPTIONAL] Max solutions to keep for prune_ltm. Default: 50.",
+        },
+        max_patterns => {
+            type => "integer",
+            description => "[OPTIONAL] Max patterns to keep for prune_ltm. Default: 30.",
+        },
+        search_text => {
+            type => "string",
+            description => "[REQUIRED for add_corroboration] Text to search for in LTM to find entry to corroborate.",
+        },
+        replacement => {
+            type => "string",
+            description => "[REQUIRED for update_ltm] Replacement text.",
+        },
+        entry_type => {
+            type => "string",
+            description => "[OPTIONAL for add_corroboration] Type filter: discovery, solution, pattern, workflow, failure.",
+        },
+        source_agent => {
+            type => "string",
+            description => "[OPTIONAL for add_corroboration] Agent ID providing corroboration. Default: CLIO_AGENT_ID env.",
+        },
+        source_session => {
+            type => "string",
+            description => "[OPTIONAL for add_corroboration] Session ID providing corroboration. Default: CLIO_SESSION_ID env.",
+        },
     };
 }
 
