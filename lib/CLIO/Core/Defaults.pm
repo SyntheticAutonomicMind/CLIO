@@ -39,6 +39,8 @@ our @EXPORT_OK = qw(
     DEFAULT_TOOL_OUTPUT_RESERVE
     DEFAULT_BINARY_SAMPLE_SIZE
     DEFAULT_POST_TRIM_FLOOR
+    MIN_CSSS_SLOT_TOKENS
+    MAX_CSSS_SLOT_TOKENS
     TOOL_RESULT_MAX_CHUNK
     OUTPUT_ESTIMATION_BUFFER
     OUTPUT_ESTIMATION_BUFFER_PCT
@@ -84,6 +86,17 @@ use constant DEFAULT_BINARY_SAMPLE_SIZE   => 8192;    # Bytes to sample for bina
 
 # Conversation management
 use constant DEFAULT_POST_TRIM_FLOOR      => 32000;   # Minimum tokens to keep after trimming
+
+# Cache-Stable Summary Slot (CSSS) bounds.
+# MIN_CSSS_SLOT_TOKENS: Minimum slot size to ensure "Current task" + essential
+# context fits even after aggressive trim. The first trim creates a naturally
+# small summary (no CSSS constraint); without a floor, CSSS locks to that small
+# size and starves subsequent summaries. 8K preserves ~2K for Current task +
+# ~6K for recent decisions/files/commits.
+# MAX_CSSS_SLOT_TOKENS: Hard ceiling on slot growth. Prevents unbounded growth
+# when aggressive trim drives more content into the summary than can fit.
+use constant MIN_CSSS_SLOT_TOKENS         => 8000;    # Minimum CSSS slot size (tokens)
+use constant MAX_CSSS_SLOT_TOKENS         => 12000;   # Maximum CSSS slot size (tokens)
 
 =head2 default_chunk_size($context_window)
 

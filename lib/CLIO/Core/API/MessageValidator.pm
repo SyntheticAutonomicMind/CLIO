@@ -240,6 +240,10 @@ sub validate_and_truncate {
         }
     }
     
+    # Calculate total tokens in dropped units for proactive CSSS slot growth
+    my $dropped_tokens = 0;
+    $dropped_tokens += $_->{tokens} for @dropped_units;
+    
     # Compress dropped units
     # Create merged summary only if there are dropped messages to compress.
     # If nothing was dropped, preserve the existing summary as-is.
@@ -248,10 +252,32 @@ sub validate_and_truncate {
     # use its current token count as the target slot size. Subsequent trims
     # regenerate the summary to fit this same slot, so llama.cpp's prefix
     # cache stays valid for everything before and after the summary slot.
+    #
+    # CRITICAL: The first trim has NO previous summary, so it creates a
+    # naturally small summary. If we lock CSSS to that small size, all
+    # subsequent trims are starved. Use MIN_CSSS_SLOT_TOKENS as a floor.
+    # Also allow proactive growth when dropped content significantly exceeds
+    # the current slot (1.5x), rather than waiting for hard truncation.
     my $summary_slot_target = 0;
     if ($summary_unit && $summary_unit->{tokens}) {
-        $summary_slot_target = $summary_unit->{tokens};
-        log_debug('MessageValidator', "CSSS: locking summary slot to $summary_slot_target tokens (existing summary)");
+        my $current_slot = $summary_unit->{tokens};
+        my $min_slot = CLIO::Core::Defaults::MIN_CSSS_SLOT_TOKENS();
+        # Use the larger of current slot or minimum floor
+        $summary_slot_target = $current_slot < $min_slot ? $min_slot : $current_slot;
+        log_debug('MessageValidator', "CSSS: base slot target $summary_slot_target (current: $current_slot, min: $min_slot)");
+        
+        # Proactive growth: if dropped content is > 1.5x slot, grow the slot
+        # before compression. This prevents the summary from being hard-truncated
+        # and silently dropping the "Current task" or other critical context.
+        if ($dropped_tokens > $summary_slot_target * 1.5) {
+            my $max_slot = CLIO::Core::Defaults::MAX_CSSS_SLOT_TOKENS();
+            my $new_slot = int($summary_slot_target * 1.5);
+            $new_slot = $max_slot if $new_slot > $max_slot;
+            if ($new_slot > $summary_slot_target) {
+                log_info('MessageValidator', "CSSS: proactive growth $summary_slot_target -> $new_slot (dropped: $dropped_tokens tokens, 1.5x threshold)");
+                $summary_slot_target = $new_slot;
+            }
+        }
     }
 
     if (@dropped_units) {
