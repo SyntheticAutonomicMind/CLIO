@@ -993,8 +993,6 @@ sub _is_git_repo {
 
 Define parameters specific to version_control tool.
 
-NOTE: Descriptions are minimal - detailed docs are in tool's main description.
-
 Returns: Hashref of parameter definitions
 
 =cut

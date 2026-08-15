@@ -51,7 +51,7 @@ Execute a CLIO task on a remote system.
 
 Parameters:
 - host (required): SSH connection target (user@hostname)
-- command (required): Task description for remote CLIO
+- task_description (required): Natural language task description for remote CLIO
 - model (optional): AI model to use on remote (defaults to current session model)
 - api_key (optional): API key for remote provider (auto-populated from session)
 - timeout (optional): Execution timeout in seconds (default: 300)
@@ -109,14 +109,14 @@ CLIO Distribution Method:
 
 Operations:
 -  execute_remote - Run a CLIO task on a remote system (PRIMARY OPERATION)
-   Takes: host, command
+   Takes: host, task_description
    Returns: Task output and any retrieved files
    Security: API key auto-populated from session, never exposed to agent
 
 -  execute_parallel - Run task on MULTIPLE devices simultaneously
-   Takes: targets (device names, group name, or 'all'), command
+   Takes: targets (device names, group name, or 'all'), task_description
    Returns: Aggregated results from all devices
-   Example: targets: "handhelds", command: "check disk space"
+   Example: targets: "handhelds", task_description: "check disk space"
 
 -  prepare_remote - Pre-stage CLIO on remote without executing
 
@@ -131,13 +131,13 @@ Operations:
 QUICK START:
   operation: "execute_remote"
   host: "user@hostname"  (SSH connection target)
-  command: "Natural language description of task"
+  task_description: "Natural language description of task"
   (model and api_key are auto-populated from your session)
   
 PARALLEL EXECUTION:
   operation: "execute_parallel"
   targets: "handhelds"  (group name, or array of device names, or "all")
-  command: "report disk space"
+  task_description: "report disk space"
   
 The tool will automatically:
 - SSH into the host
@@ -552,11 +552,11 @@ sub execute_remote {
 
 =head2 execute_parallel
 
-Execute a command on multiple devices in parallel.
+Execute a task on multiple devices in parallel.
 
 Parameters:
 - targets (required): Array of device names, group name, or 'all'
-- command (required): Task description for CLIO
+- task_description (required): Natural language task description for CLIO
 - model (optional): AI model to use (defaults to current session model)
 - timeout (optional): Timeout per device (default: 300)
 
@@ -1767,8 +1767,6 @@ SHELL
 =head2 get_additional_parameters
 
 Define tool-specific parameters.
-
-NOTE: Descriptions are minimal - detailed docs are in tool's main description.
 
 =cut
 

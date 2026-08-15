@@ -119,10 +119,10 @@ sub assert_guidance_category {
 # ============================================================
 print "--- branch ---\n";
 
-# The bug: action=create, name missing -> croak + eval wraps with "at file line N"
+# The bug: sub_action=create, name missing -> croak + eval wraps with "at file line N"
 my $r = $vc->route_operation('branch', {
     repository_path => $temp_repo,
-    action => 'create',
+    sub_action => 'create',
     # name intentionally omitted
 }, {});
 my $err = assert_clean_error(
@@ -135,7 +135,7 @@ assert_guidance_category(error => $err, tool_name => 'version_control', expected
 # delete without name
 $r = $vc->route_operation('branch', {
     repository_path => $temp_repo,
-    action => 'delete',
+    sub_action => 'delete',
 }, {});
 $err = assert_clean_error(
     result => $r,
@@ -147,7 +147,7 @@ assert_guidance_category(error => $err, tool_name => 'version_control', expected
 # switch without name
 $r = $vc->route_operation('branch', {
     repository_path => $temp_repo,
-    action => 'switch',
+    sub_action => 'switch',
 }, {});
 $err = assert_clean_error(
     result => $r,
@@ -159,7 +159,7 @@ assert_guidance_category(error => $err, tool_name => 'version_control', expected
 # invalid action
 $r = $vc->route_operation('branch', {
     repository_path => $temp_repo,
-    action => 'foo',
+    sub_action => 'foo',
 }, {});
 $err = assert_clean_error(
     result => $r,
@@ -171,7 +171,7 @@ assert_guidance_category(error => $err, tool_name => 'version_control', expected
 # list with name should still work (name is ignored for list)
 $r = $vc->route_operation('branch', {
     repository_path => $temp_repo,
-    action => 'list',
+    sub_action => 'list',
     name => 'whatever',
 }, {});
 ok($r && !$r->{error}, 'branch: list with extra name succeeds')
@@ -184,7 +184,7 @@ print "--- tag ---\n";
 
 $r = $vc->route_operation('tag', {
     repository_path => $temp_repo,
-    action => 'create',
+    sub_action => 'create',
 }, {});
 $err = assert_clean_error(
     result => $r,
@@ -195,7 +195,7 @@ assert_guidance_category(error => $err, tool_name => 'version_control', expected
 
 $r = $vc->route_operation('tag', {
     repository_path => $temp_repo,
-    action => 'delete',
+    sub_action => 'delete',
 }, {});
 $err = assert_clean_error(
     result => $r,
@@ -206,7 +206,7 @@ assert_guidance_category(error => $err, tool_name => 'version_control', expected
 
 $r = $vc->route_operation('tag', {
     repository_path => $temp_repo,
-    action => 'foo',
+    sub_action => 'foo',
 }, {});
 $err = assert_clean_error(
     result => $r,
@@ -222,7 +222,7 @@ print "--- stash ---\n";
 
 $r = $vc->route_operation('stash', {
     repository_path => $temp_repo,
-    action => 'foo',
+    sub_action => 'foo',
 }, {});
 $err = assert_clean_error(
     result => $r,
@@ -233,7 +233,7 @@ assert_guidance_category(error => $err, tool_name => 'version_control', expected
 
 $r = $vc->route_operation('stash', {
     repository_path => $temp_repo,
-    action => 'list',
+    sub_action => 'list',
 }, {});
 ok($r && !$r->{error}, 'stash: list succeeds')
     or diag("Error: " . ($r->{error} || ''));
@@ -245,7 +245,7 @@ print "--- worktree ---\n";
 
 $r = $vc->route_operation('worktree', {
     repository_path => $temp_repo,
-    action => 'add',
+    sub_action => 'add',
 }, {});
 $err = assert_clean_error(
     result => $r,
@@ -256,7 +256,7 @@ assert_guidance_category(error => $err, tool_name => 'version_control', expected
 
 $r = $vc->route_operation('worktree', {
     repository_path => $temp_repo,
-    action => 'remove',
+    sub_action => 'remove',
 }, {});
 $err = assert_clean_error(
     result => $r,
@@ -267,7 +267,7 @@ assert_guidance_category(error => $err, tool_name => 'version_control', expected
 
 $r = $vc->route_operation('worktree', {
     repository_path => $temp_repo,
-    action => 'merge',
+    sub_action => 'merge',
 }, {});
 $err = assert_clean_error(
     result => $r,
@@ -278,7 +278,7 @@ assert_guidance_category(error => $err, tool_name => 'version_control', expected
 
 $r = $vc->route_operation('worktree', {
     repository_path => $temp_repo,
-    action => 'pr',
+    sub_action => 'pr',
 }, {});
 $err = assert_clean_error(
     result => $r,
@@ -289,7 +289,7 @@ assert_guidance_category(error => $err, tool_name => 'version_control', expected
 
 $r = $vc->route_operation('worktree', {
     repository_path => $temp_repo,
-    action => 'foo',
+    sub_action => 'foo',
 }, {});
 $err = assert_clean_error(
     result => $r,
@@ -307,9 +307,10 @@ print "--- full pipeline (bug reproduction) ---\n";
 # at /Users/andrew/.local/clio/lib/CLIO/Core/ToolExecutor.pm line 358."
 # Simulate the WorkflowOrchestrator display path: result.error is wrapped
 # with the operation name and displayed to the user.
+# Reproduce: version_control(operation="branch", sub_action="create") with no `name`
 $r = $vc->route_operation('branch', {
     repository_path => $temp_repo,
-    action => 'create',
+    sub_action => 'create',
 }, {});
 
 # What the user sees in the action_detail line:

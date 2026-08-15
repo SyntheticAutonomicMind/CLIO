@@ -89,8 +89,6 @@ sub dispatch_table {
 
 Define parameters for memory_operations in JSON schema sent to AI.
 
-NOTE: Descriptions are minimal - detailed docs are in tool's main description.
-
 =cut
 
 sub get_additional_parameters {

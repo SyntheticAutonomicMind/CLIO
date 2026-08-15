@@ -91,7 +91,11 @@ AUTHORIZATION:
   Parameters: pattern (required), directory (optional, default: .)
   
 -  grep_search - Search file contents with regex
-  Parameters: query (required), pattern (optional), is_regex (optional)
+  Parameters: query (required), pattern (optional), directory (optional, default: .), is_regex (optional)
+  Note: `directory` scopes the search to a DIRECTORY (not a file). If you
+  need to search a single file, pass its directory as `directory` and use
+  `pattern` to target the filename (e.g. directory='lib', pattern='Foo.pm').
+  For full-shell grep on a single file, use terminal_operations instead.
   
 -  semantic_search - Hybrid keyword + symbol search across codebase
   Parameters: query (required), scope (optional)
@@ -182,10 +186,6 @@ rather than trying to have separate schemas per operation.
 This prevents AI from generating malformed JSON like {"offset":,}
 when it doesn't know if a parameter is required or not.
 
-NOTE: Descriptions are minimal here - detailed parameter docs are in
-the tool's main description (from new()). This keeps the JSON schema
-small for token efficiency on small-context models.
-
 =cut
 
 sub get_additional_parameters {
@@ -195,7 +195,7 @@ sub get_additional_parameters {
         # Common path parameters
         path => {
             type => "string",
-            description => "[REQUIRED for most operations] File or directory path. Used by read_file, list_dir, file_exists, get_file_info, write operations, etc. REQUIRED on EVERY call (including multi_replace_string items) - a missing path returns a parameter validation error, not a graceful fallback. For grep_search, this is a DIRECTORY not a file; combine with `pattern` (e.g. pattern: '*.pm') to scope the search.",
+            description => "[REQUIRED for most operations] File or directory path. Used by read_file, list_dir, file_exists, get_file_info, write operations, etc. REQUIRED on EVERY call (including multi_replace_string items) - a missing path returns a parameter validation error, not a graceful fallback. For grep_search, `path` is accepted as an alias for `directory` and must be a DIRECTORY (not a file) - to search a single file, pass its directory and use `pattern` to target the filename.",
         },
         paths => {
             type => "array",
@@ -230,7 +230,7 @@ sub get_additional_parameters {
         },
         directory => {
             type => "string",
-            description => "[OPTIONAL] Base directory for file_search. Also accepted by grep_search (or pass `path` as an alias) to scope the search. When passed as `path`, must be a DIRECTORY (not a file) - for single-file greps use terminal_operations `grep` instead.",
+            description => "[OPTIONAL] Base directory for file_search and grep_search. MUST be a directory (not a file). Defaults to current directory. For grep_search, you may also pass `path` as an alias for this parameter.",
         },
         is_regex => {
             type => "boolean",
@@ -1178,6 +1178,22 @@ sub grep_search {
     my $directory = $self->_clean_path($params->{directory}) || $self->_clean_path($params->{path}) || '.';
 
     return $self->error_result("Missing 'query' parameter") unless defined $query && length($query);
+
+    # Graceful file-path handling: if the model passed a FILE path as 'directory'
+    # or 'path' (a common mistake since 'path' is described as "File or directory
+    # path"), extract the file's directory and constrain the search to just that
+    # file by adjusting the pattern. This prevents the confusing "Directory not
+    # found" error that happens when a file path reaches file_search.
+    if (-f $directory) {
+        my $file_name = basename($directory);
+        $directory = dirname($directory) || '.';
+        $directory = $self->_clean_path($directory);
+        # Only constrain pattern if the user didn't already specify one
+        # (the pattern is a glob for filenames, so the file name is the right
+        # constraint regardless of what the user passed)
+        $pattern = $file_name;
+        log_debug('FileOp', "grep_search: file path detected, extracting directory ($directory) and constraining to $pattern");
+    }
 
     # Auto-detect regex intent when query contains metacharacters
     # Agents often pass regex patterns (e.g., "sdl|SDL") without setting is_regex

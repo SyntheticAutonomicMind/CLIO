@@ -174,11 +174,19 @@ The proactive trim in `MessageValidator` regenerates a `thread_summary` whenever
 **How CSSS works:**
 
 1. After the first trim, the summary's current token count becomes the **locked slot size**.
-2. On every subsequent trim, `YaRN::compress_messages` is called with `target_tokens => $slot_size`.
-3. `_fit_summary_to_target` (in `YaRN.pm`) adjusts the summary to fit:
-   - Too big: drops sections in least-critical-first order (tool_counts, decisions, files, commits, collab, user_requests), then hard-truncates as a last resort. The `Current task` line is always preserved.
+2. The slot is bounded by `MIN_CSSS_SLOT_TOKENS` (8K) and `MAX_CSSS_SLOT_TOKENS` (12K) to prevent starvation (slot too small to hold captured state) and unbounded growth.
+3. The slot can grow proactively: if the amount of content dropped in a trim exceeds 1.5x the current slot size, the slot is grown to absorb more tokens. This prevents aggressive trims from forcing the summary into hard-truncation and silently dropping captured state.
+4. On every subsequent trim, `YaRN::compress_messages` is called with `target_tokens => $slot_size`.
+5. `_fit_summary_to_target` (in `YaRN.pm`) adjusts the summary to fit:
+   - Too big: drops sections in least-critical-first order (tool_counts, decisions, files, commits, collab, user_requests), then hard-truncates as a last resort. The `Current task` line is always preserved (extracted before truncation and prepended after).
    - Too small: pads with a deterministic HTML comment (`<!-- csss:padding:xxxxx -->`) so byte-identical padding regenerates across calls.
-4. The summary is placed at the **end** of the conversation (after recent messages), so even summary content changes only invalidate the summary tokens themselves.
+6. The summary is placed at the **end** of the conversation (after recent messages), so even summary content changes only invalidate the summary tokens themselves.
+
+**Slot bounds:**
+
+- `MIN_CSSS_SLOT_TOKENS` (8192) in `lib/CLIO/Core/Defaults.pm` - prevents the first-trim slot from being too small to hold captured state
+- `MAX_CSSS_SLOT_TOKENS` (12000) in `lib/CLIO/Core/Defaults.pm` - hard ceiling on slot growth; one 25% step at a time
+- `DEFAULT_POST_TRIM_FLOOR` (24000) in `lib/CLIO/Core/Defaults.pm` - minimum tokens kept verbatim after trimming (compromise between 32K conservative and 12K aggressive)
 
 **Combined with summary-at-end ordering:**
 - Recent messages stay at constant positions across trims
@@ -202,6 +210,10 @@ The proactive trim in `MessageValidator` regenerates a `thread_summary` whenever
 ```
 
 **Tests:** `tests/unit/test_cache_stable_summary.pl` covers CSSS lock behavior, summary-at-end ordering, tool-reserve capping, and YaRN fit behavior.
+
+**Session resume and trim recovery:**
+
+When resuming a session, the orchestrator reuses the last API payload from `state->{last_api_payload}` (the exact `@messages` array last sent to the provider). If the saved payload is smaller than `MIN_CSSS_SLOT_TOKENS` and contains a `thread_summary` (indicating it was trimmed), the orchestrator falls back to a full history rebuild instead of reusing the truncated payload. This prevents the agent from resuming with an empty or near-empty context after aggressive trim.
 
 ---
 
