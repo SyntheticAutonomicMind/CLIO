@@ -1776,20 +1776,65 @@ sub get_additional_parameters {
     my ($self) = @_;
     
     return {
-        host => { type => "string", description => "SSH target (user\@hostname)" },
-        task_description => { type => "string", description => "Natural language task description for remote CLIO (e.g., 'check disk space', 'run tests')" },
-        model => { type => "string", description => "AI model (auto-populated)" },
-        api_key => { type => "string", description => "API key (auto-populated)" },
-        timeout => { type => "integer", description => "Timeout seconds (default: 300)" },
-        cleanup => { type => "boolean", description => "Cleanup after execution (default: true)" },
-        ssh_key => { type => "string", description => "SSH private key path" },
-        ssh_port => { type => "integer", description => "SSH port (default: 22)" },
-        output_files => { type => "array", items => { type => "string" }, description => "Output files to retrieve" },
-        api_provider => { type => "string", description => "API provider (auto-populated)" },
-        api_base => { type => "string", description => "API base URL (auto-populated)" },
-        working_dir => { type => "string", description => "Remote working dir (default: /tmp)" },
-        targets => { type => "array", items => { type => "string" }, description => "Devices for parallel execution" },
-        files => { type => "array", items => { type => "string" }, description => "Files to transfer/retrieve" },
+        host => {
+            type => "string",
+            description => "[REQUIRED for execute_remote, prepare_remote, cleanup_remote, check_remote] SSH connection target (e.g., user\@hostname).",
+        },
+        task_description => {
+            type => "string",
+            description => "[REQUIRED for execute_remote, execute_parallel] Natural language task description for remote CLIO (e.g., 'check disk space', 'run tests').",
+        },
+        model => {
+            type => "string",
+            description => "[OPTIONAL] AI model to use on remote. Auto-populated from current session model.",
+        },
+        api_key => {
+            type => "string",
+            description => "[OPTIONAL] API key for remote provider. Auto-populated from current session credentials.",
+        },
+        timeout => {
+            type => "integer",
+            description => "[OPTIONAL] Execution timeout in seconds. Default: 300.",
+        },
+        cleanup => {
+            type => "boolean",
+            description => "[OPTIONAL] Delete CLIO after execution. Default: true.",
+        },
+        ssh_key => {
+            type => "string",
+            description => "[OPTIONAL] Path to SSH private key.",
+        },
+        ssh_port => {
+            type => "integer",
+            description => "[OPTIONAL] SSH port. Default: 22.",
+        },
+        output_files => {
+            type => "array",
+            items => { type => "string" },
+            description => "[OPTIONAL] Array of output file paths to retrieve from remote after execution.",
+        },
+        api_provider => {
+            type => "string",
+            description => "[OPTIONAL] API provider. Auto-populated from current session.",
+        },
+        api_base => {
+            type => "string",
+            description => "[OPTIONAL] API base URL. Auto-populated from current session (for custom proxies).",
+        },
+        working_dir => {
+            type => "string",
+            description => "[OPTIONAL] Remote working dir (default: /tmp).",
+        },
+        targets => {
+            type => "array",
+            items => { type => "string" },
+            description => "[REQUIRED for execute_parallel] Devices for parallel execution (array of device names, group name, or 'all').",
+        },
+        files => {
+            type => "array",
+            items => { type => "string" },
+            description => "[REQUIRED for transfer_files, retrieve_files] Array of file paths to transfer/retrieve.",
+        },
     };
 }
 
