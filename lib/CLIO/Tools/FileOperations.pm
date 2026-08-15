@@ -193,37 +193,86 @@ sub get_additional_parameters {
     
     return {
         # Common path parameters
-        path => { type => "string", description => "File or directory path" },
-        paths => { type => "array", items => { type => "string" }, description => "Multiple file paths (for get_errors)" },
+        path => {
+            type => "string",
+            description => "[REQUIRED for most operations] File or directory path. Used by read_file, list_dir, file_exists, get_file_info, write operations, etc. REQUIRED on EVERY call (including multi_replace_string items) - a missing path returns a parameter validation error, not a graceful fallback. For grep_search, this is a DIRECTORY not a file; combine with `pattern` (e.g. pattern: '*.pm') to scope the search.",
+        },
+        paths => {
+            type => "array",
+            items => { type => "string" },
+            description => "[OPTIONAL for get_errors] Multiple file paths as an array. When provided, get_errors iterates each path and aggregates results in the 'per_file' field. Use 'path' (singular) for a single file.",
+        },
         
         # Read file parameters
-        start_line => { type => "integer", description => "Starting line number (1-indexed)" },
-        end_line => { type => "integer", description => "Ending line number (inclusive)" },
+        start_line => {
+            type => "integer",
+            description => "[OPTIONAL] Starting line number for read_file (1-indexed, inclusive).",
+        },
+        end_line => {
+            type => "integer",
+            description => "[OPTIONAL] Ending line number for read_file (inclusive).",
+        },
         
         # List directory parameters
-        recursive => { type => "boolean", description => "Recursive listing (default: false)" },
+        recursive => {
+            type => "boolean",
+            description => "[OPTIONAL] Whether to list directory contents recursively (list_dir). Default: false.",
+        },
         
         # Search parameters
-        query => { type => "string", description => "Search query or pattern" },
-        pattern => { type => "string", description => "Glob pattern for file_search" },
-        directory => { type => "string", description => "Base directory for file_search" },
-        is_regex => { type => "boolean", description => "Treat query as regex (default: false)" },
-        scope => { type => "string", description => "Directory for semantic_search" },
-        max_results => { type => "integer", description => "Maximum results to return" },
+        query => {
+            type => "string",
+            description => "[REQUIRED for grep_search, semantic_search] Search query or pattern. For semantic_search: use natural language keywords like 'authentication function'. For grep_search: literal text or regex.",
+        },
+        pattern => {
+            type => "string",
+            description => "[REQUIRED for file_search, OPTIONAL for grep_search] Glob pattern to filter which files to search (e.g., '**/*.pm', '*.pl').",
+        },
+        directory => {
+            type => "string",
+            description => "[OPTIONAL] Base directory for file_search. Also accepted by grep_search (or pass `path` as an alias) to scope the search. When passed as `path`, must be a DIRECTORY (not a file) - for single-file greps use terminal_operations `grep` instead.",
+        },
+        is_regex => {
+            type => "boolean",
+            description => "[OPTIONAL] Whether query is a regex pattern for grep_search. Default: false.",
+        },
+        scope => {
+            type => "string",
+            description => "[OPTIONAL] Directory to search for semantic_search. Default: current directory.",
+        },
+        max_results => {
+            type => "integer",
+            description => "[OPTIONAL] Maximum number of results to return from search.",
+        },
         
-        # Read tool result parameters
-        toolCallId => { type => "string", description => "Tool call ID for read_tool_result" },
-        offset => { type => "integer", description => "Byte offset for read_tool_result" },
-        length => { type => "integer", description => "Bytes to read for read_tool_result (max: 32768)" },
+        # Read tool result parameters (for chunked large results)
+        toolCallId => {
+            type => "string",
+            description => "[REQUIRED for read_tool_result] Tool call ID to retrieve stored result chunks. Look for [TOOL_RESULT_STORED] marker in previous output.",
+        },
+        offset => {
+            type => "integer",
+            description => "[OPTIONAL] Byte offset to start reading from read_tool_result. Default: 0.",
+        },
+        length => {
+            type => "integer",
+            description => "[OPTIONAL] Number of bytes to read for read_tool_result. Default: dynamic (scales with model context). Max: 32768.",
+        },
         
         # Write parameters - DUAL PARAMETER SUPPORT
         %{$self->add_dual_json_parameters('content', {
-            description => 'File content to write',
+            description => '[REQUIRED for create_file, write_file, append_file, insert_at_line] File content to write. (as string - escape JSON quotes if needed)',
             string_format => 'any',
         })},
         
-        old_string => { type => "string", description => "Text to find and replace" },
-        new_string => { type => "string", description => "Replacement text" },
+        old_string => {
+            type => "string",
+            description => "[REQUIRED for replace_string] Text to find and replace.",
+        },
+        new_string => {
+            type => "string",
+            description => "[REQUIRED for replace_string] Replacement text.",
+        },
         replacements => {
             type => "array",
             items => {
@@ -235,15 +284,24 @@ sub get_additional_parameters {
                 },
                 required => ["path", "old_string", "new_string"],
             },
-            description => "Batch replacements for multi_replace_string",
+            description => "[REQUIRED for multi_replace_string] Batch replacements for multi_replace_string.",
         },
         
         # insert_at_line parameters
-        line => { type => "integer", description => "Line number to insert at (1-indexed)" },
+        line => {
+            type => "integer",
+            description => "[REQUIRED for insert_at_line] Line number to insert at (1-indexed).",
+        },
         
         # Rename parameters
-        old_path => { type => "string", description => "Original file path" },
-        new_path => { type => "string", description => "New file path" },
+        old_path => {
+            type => "string",
+            description => "[REQUIRED for rename_file] Original file path.",
+        },
+        new_path => {
+            type => "string",
+            description => "[REQUIRED for rename_file] New file path.",
+        },
     };
 }
 

@@ -136,47 +136,72 @@ sub get_additional_parameters {
     return {
         todoList => {
             type => "array",
-            description => "Complete todo list for write",
+            description => "[REQUIRED for write - full list replacement] Complete array of all todos. IDs auto-assigned if omitted. Use write to create or replace entire list; use add to append.",
             items => {
                 type => "object",
                 properties => {
-                    id => { type => "integer", description => "Auto-assigned ID" },
-                    title => { type => "string", description => "Todo label (3-7 words)" },
-                    description => { type => "string", description => "Context, requirements, file paths" },
+                    id => {
+                        type => "integer",
+                        description => "[OPTIONAL] Unique ID. Auto-assigned if omitted (sequential from 1).",
+                    },
+                    title => {
+                        type => "string",
+                        description => "[REQUIRED] Todo label (3-7 words).",
+                    },
+                    description => {
+                        type => "string",
+                        description => "[REQUIRED] Context, requirements, file paths, etc.",
+                    },
                     status => {
                         type => "string",
                         enum => $status_enum,
-                        description => "Status (pending = not-started)",
+                        description => "[REQUIRED] Status. 'pending' is an alias for 'not-started'.",
                     },
                     priority => {
                         type => "string",
                         enum => $priority_enum,
-                        description => "Priority level",
+                        description => "[OPTIONAL] Priority level.",
                     },
-                    dependencies => { type => "array", items => { type => "integer" }, description => "Dependent todo IDs" },
-                    progress => { type => "number", description => "Progress 0.0-1.0" },
-                    blockedReason => { type => "string", description => "Reason if blocked" },
+                    dependencies => {
+                        type => "array",
+                        items => { type => "integer" },
+                        description => "[OPTIONAL] Array of todo IDs this task depends on.",
+                    },
+                    progress => {
+                        type => "number",
+                        description => "[OPTIONAL] Progress 0.0-1.0 as decimal.",
+                    },
+                    blockedReason => {
+                        type => "string",
+                        description => "[REQUIRED if status=blocked] Reason why task is blocked.",
+                    },
                 },
                 required => ["title", "description", "status"],
             },
         },
         newTodos => {
             type => "array",
-            description => "New todos to append (for add)",
+            description => "[REQUIRED for add - append to list] New todos to append to existing list. IDs auto-assigned if omitted. Use write to replace entire list; use add to append.",
             items => {
                 type => "object",
                 properties => {
-                    title => { type => "string", description => "Todo label" },
-                    description => { type => "string", description => "Context, requirements" },
+                    title => {
+                        type => "string",
+                        description => "[REQUIRED] Todo label (3-7 words).",
+                    },
+                    description => {
+                        type => "string",
+                        description => "[REQUIRED] Context, requirements, file paths, etc.",
+                    },
                     status => {
                         type => "string",
                         enum => $status_enum,
-                        description => "Status (default: not-started)",
+                        description => "[OPTIONAL] Status. Default: not-started. 'pending' is an alias for 'not-started'.",
                     },
                     priority => {
                         type => "string",
                         enum => $priority_enum,
-                        description => "Priority level",
+                        description => "[OPTIONAL] Priority level.",
                     },
                 },
                 required => ["title", "description"],
@@ -184,25 +209,40 @@ sub get_additional_parameters {
         },
         todoUpdates => {
             type => "array",
-            description => "Updates for existing todos",
+            description => "[REQUIRED for update] Array of {id, ...fields to change} objects.",
             items => {
                 type => "object",
                 properties => {
-                    id => { type => "integer", description => "Todo ID to update" },
+                    id => {
+                        type => "integer",
+                        description => "[REQUIRED] ID of todo to update. Must be a positive integer (1, 2, 3...). IDs are auto-assigned when creating todos with the write operation.",
+                    },
                     status => {
                         type => "string",
                         enum => $status_enum,
-                        description => "New status",
+                        description => "[OPTIONAL] New status. 'pending' is an alias for 'not-started'.",
                     },
-                    title => { type => "string", description => "New title" },
-                    description => { type => "string", description => "New description" },
-                    progress => { type => "number", description => "New progress 0.0-1.0" },
+                    title => {
+                        type => "string",
+                        description => "[OPTIONAL] New title.",
+                    },
+                    description => {
+                        type => "string",
+                        description => "[OPTIONAL] New description.",
+                    },
+                    progress => {
+                        type => "number",
+                        description => "[OPTIONAL] New progress 0.0-1.0.",
+                    },
                     priority => {
                         type => "string",
                         enum => $priority_enum,
-                        description => "New priority",
+                        description => "[OPTIONAL] New priority.",
                     },
-                    blockedReason => { type => "string", description => "Reason if blocked" },
+                    blockedReason => {
+                        type => "string",
+                        description => "[OPTIONAL] Reason for blocked status.",
+                    },
                 },
                 required => ["id"],
             },

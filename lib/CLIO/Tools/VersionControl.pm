@@ -1003,21 +1003,66 @@ sub get_additional_parameters {
     my ($self) = @_;
     
     return {
-        repository_path => { type => "string", description => "Path to git repository (default: .)" },
-        message => { type => "string", description => "Commit message" },
-        auto_stage => { type => "boolean", description => "Auto-stage all changes (default: true)" },
-        ref1 => { type => "string", description => "First ref for diff (default: HEAD)" },
-        ref2 => { type => "string", description => "Second ref for diff (e.g., HEAD~1)" },
-        file => { type => "string", description => "File path for blame or diff" },
-        sub_action => { type => "string", description => "Sub-action for branch/stash/tag/worktree: list, create, delete, switch, add, remove, save, apply, drop, prune, merge, pr (used with operation=branch|stash|tag|worktree)" },
-        name => { type => "string", description => "Branch, tag, or stash name" },
-        remote => { type => "string", description => "Remote name (default: origin)" },
-        branch => { type => "string", description => "Branch name for push/pull/worktree" },
-        limit => { type => "integer", description => "Log entries to show (default: 10)" },
-        index => { type => "integer", description => "Stash index for apply/drop (0 = most recent)" },
-        worktree_path => { type => "string", description => "Path for worktree operations" },
-        create_branch => { type => "boolean", description => "Create new branch when adding worktree" },
-        force => { type => "boolean", description => "Force worktree removal" },
+        repository_path => {
+            type => "string",
+            description => "[OPTIONAL] Path to git repository. Default: current directory.",
+        },
+        message => {
+            type => "string",
+            description => "[REQUIRED for commit] Commit message describing the changes.",
+        },
+        auto_stage => {
+            type => "boolean",
+            description => "[OPTIONAL for commit] When true (default), runs 'git add -A' before committing, picking up all tracked AND untracked files in the working tree. Set to 0 to commit only what is already staged. To commit specific files, run `git add <paths>` via terminal_operations first, then pass auto_stage=0.",
+        },
+        ref1 => {
+            type => "string",
+            description => "[OPTIONAL] First ref for diff. Default: 'HEAD' (working directory).",
+        },
+        ref2 => {
+            type => "string",
+            description => "[OPTIONAL] Second ref for diff (e.g., 'HEAD~1').",
+        },
+        file => {
+            type => "string",
+            description => "[REQUIRED for blame, OPTIONAL for diff] File path to annotate or diff.",
+        },
+        sub_action => {
+            type => "string",
+            description => "[REQUIRED for branch|stash|tag|worktree] Sub-action: list, create, delete, switch, add, remove, save, apply, drop, prune, merge, pr.",
+        },
+        name => {
+            type => "string",
+            description => "[OPTIONAL] Branch, tag, or stash name. Required for create/delete operations.",
+        },
+        remote => {
+            type => "string",
+            description => "[OPTIONAL] Remote name for push/pull. Default: 'origin'.",
+        },
+        branch => {
+            type => "string",
+            description => "[OPTIONAL] Branch name for push/pull or worktree operations.",
+        },
+        limit => {
+            type => "integer",
+            description => "[OPTIONAL] Number of log entries to show. Default: 10.",
+        },
+        index => {
+            type => "integer",
+            description => "[OPTIONAL] Stash index for apply/drop operations (0 = most recent).",
+        },
+        worktree_path => {
+            type => "string",
+            description => "[REQUIRED for worktree add/remove, OPTIONAL for other worktree actions] Path for worktree operations.",
+        },
+        create_branch => {
+            type => "boolean",
+            description => "[OPTIONAL] Create a new branch when adding a worktree. Use with branch parameter.",
+        },
+        force => {
+            type => "boolean",
+            description => "[OPTIONAL] Force removal of a worktree even if it has modifications.",
+        },
     };
 }
 
