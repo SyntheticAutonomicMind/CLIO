@@ -1481,18 +1481,26 @@ sub _try_resume_from_payload {
         return;
     }
 
-    # Minimum payload size gate: if the cached payload is too small
-    # (e.g., from aggressive trim), fall back to full history rebuild
-    # which will include more context from the session history.
+    # Minimum payload size gate: if the cached payload was aggressively
+    # trimmed (indicated by presence of thread_summary), and the total
+    # token count is very small, fall back to full history rebuild which
+    # will include more context from the session history.
     my $payload_tokens = 0;
+    my $has_thread_summary = 0;
     require CLIO::Memory::TokenEstimator;
     for my $msg (@$payload) {
-        $payload_tokens += CLIO::Memory::TokenEstimator::estimate_tokens($msg->{content} // '');
+        my $content = $msg->{content} // '';
+        $payload_tokens += CLIO::Memory::TokenEstimator::estimate_tokens($content);
+        $has_thread_summary = 1 if $content =~ /<thread_summary>/;
     }
+    
+    # Only reject small payloads if they contain a thread_summary (i.e., were
+    # trimmed). A naturally short conversation without trimming should still
+    # be usable via the fast path.
     my $min_resume_tokens = CLIO::Core::Defaults::MIN_CSSS_SLOT_TOKENS();
-    if ($payload_tokens < $min_resume_tokens) {
+    if ($has_thread_summary && $payload_tokens < $min_resume_tokens) {
         log_info('WorkflowOrchestrator',
-            "Resume payload too small ($payload_tokens < $min_resume_tokens tokens), falling back to full history rebuild");
+            "Resume payload too small ($payload_tokens < $min_resume_tokens tokens) and contains thread_summary (was trimmed), falling back to full history rebuild");
         return;
     }
 

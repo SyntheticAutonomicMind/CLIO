@@ -197,8 +197,12 @@ sub validate_and_truncate {
     # from model capabilities. The estimation buffer in
     # compute_prompt_budget already covers next-burst headroom; no
     # additional percentage-based haircut is needed.
+    #
+    # Ring-buffer / sliding window approach: target stays at prompt_budget.
+    # Trim only drops the OLDEST non-critical content when budget is exceeded.
+    # CSSS (Cache-Stable Summary Slot) handles cache stability for the summary.
+    # DEFAULT_POST_TRIM_FLOOR acts as absolute safety floor.
     my $post_trim_keep_limit = $prompt_budget;
-    $post_trim_keep_limit = int($effective_limit * 0.5) if $post_trim_keep_limit < $effective_limit * 0.5;
     $post_trim_keep_limit = CLIO::Core::Defaults::DEFAULT_POST_TRIM_FLOOR() if $post_trim_keep_limit < CLIO::Core::Defaults::DEFAULT_POST_TRIM_FLOOR();
     log_debug('MessageValidator', "Post-trim keep target: $post_trim_keep_limit tokens (prompt budget for $model)");
 
