@@ -39,7 +39,6 @@ our @EXPORT_OK = qw(
     DEFAULT_TOOL_OUTPUT_RESERVE
     DEFAULT_BINARY_SAMPLE_SIZE
     DEFAULT_POST_TRIM_FLOOR
-    MAX_CSSS_SLOT_TOKENS
     TOOL_RESULT_MAX_CHUNK
     OUTPUT_ESTIMATION_BUFFER
     OUTPUT_ESTIMATION_BUFFER_PCT
@@ -84,26 +83,7 @@ use constant TOOL_RESULT_MAX_CHUNK        => 32768;   # Hard ceiling per chunk (
 use constant DEFAULT_BINARY_SAMPLE_SIZE   => 8192;    # Bytes to sample for binary detection
 
 # Conversation management
-# Minimum tokens to keep after trimming. With a 131K-context local model the
-# prompt budget is ~108K, so the previous 32K floor let conversations grow to
-# 100K+ before triggering a trim - each trim then caused a massive cache
-# invalidation (the prompt prefix shifted left by tens of thousands of tokens).
-# A 12K floor gives the agent ~12K of recent context verbatim plus the
-# compressed thread_summary, while leaving plenty of headroom for steady-state
-# growth. The summary slot itself can grow up to 12K (see CSSS in
-# MessageValidator.pm + YaRN.pm), so the effective preserved context is
-# ~12K verbatim + ~12K summary = ~24K plus any tool/system overhead.
-use constant MAX_CSSS_SLOT_TOKENS       => 12000;   # Hard ceiling on the
-                                                    # summary slot size. CSSS
-                                                    # (YaRN.pm:compress_messages)
-                                                    # locks the slot after the
-                                                    # first trim, but the
-                                                    # MessageValidator can grow
-                                                    # it in 25% steps up to
-                                                    # this cap when aggressive
-                                                    # trim drives more content
-                                                    # into the summary.
-use constant DEFAULT_POST_TRIM_FLOOR      => 12000;
+use constant DEFAULT_POST_TRIM_FLOOR      => 32000;   # Minimum tokens to keep after trimming
 
 =head2 default_chunk_size($context_window)
 
