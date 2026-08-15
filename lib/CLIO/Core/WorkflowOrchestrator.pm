@@ -1481,6 +1481,21 @@ sub _try_resume_from_payload {
         return;
     }
 
+    # Minimum payload size gate: if the cached payload is too small
+    # (e.g., from aggressive trim), fall back to full history rebuild
+    # which will include more context from the session history.
+    my $payload_tokens = 0;
+    require CLIO::Memory::TokenEstimator;
+    for my $msg (@$payload) {
+        $payload_tokens += CLIO::Memory::TokenEstimator::estimate_tokens($msg->{content} // '');
+    }
+    my $min_resume_tokens = CLIO::Core::Defaults::MIN_CSSS_SLOT_TOKENS();
+    if ($payload_tokens < $min_resume_tokens) {
+        log_info('WorkflowOrchestrator',
+            "Resume payload too small ($payload_tokens < $min_resume_tokens tokens), falling back to full history rebuild");
+        return;
+    }
+
     # Context window gate: bigger/newer ctx -> use verbatim.
     # Smaller ctx -> trim using the normal path.
     my $saved_ctx      = $metadata->{context_window} // 0;
