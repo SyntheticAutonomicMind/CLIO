@@ -289,7 +289,7 @@ sub branch {
     my ($self, $params, $context) = @_;
 
     my $repo_path = $params->{repository_path} || '.';
-    my $action = $params->{action} || 'list';  # list, create, delete, switch
+    my $action = $params->{sub_action} || $params->{action} || 'list';  # list, create, delete, switch
     my $name = $params->{name} || '';
 
     # Validate parameters upfront with messages that match ToolErrorGuidance
@@ -555,7 +555,7 @@ sub stash {
     my ($self, $params, $context) = @_;
 
     my $repo_path = $params->{repository_path} || '.';
-    my $action = $params->{action} || 'list';  # save, list, apply, drop, clear
+    my $action = $params->{sub_action} || $params->{action} || 'list';  # save, list, apply, drop, clear
     my $index = $params->{index} // 0;
 
     # Validate parameters upfront. See branch() for rationale.
@@ -613,7 +613,7 @@ sub tag {
     my ($self, $params, $context) = @_;
 
     my $repo_path = $params->{repository_path} || '.';
-    my $action = $params->{action} || 'list';  # list, create, delete
+    my $action = $params->{sub_action} || $params->{action} || 'list';  # list, create, delete
     my $name = $params->{name} || '';
 
     # Validate parameters upfront. See branch() for rationale.
@@ -673,7 +673,7 @@ sub worktree {
     my ($self, $params, $context) = @_;
     
     my $repo_path = $params->{repository_path} || '.';
-    my $action = $params->{action} || 'list';  # list, add, remove, prune, merge, pr
+    my $action = $params->{sub_action} || $params->{action} || 'list';  # list, add, remove, prune, merge, pr
     my $worktree_path = $params->{worktree_path} || '';
     my $branch = $params->{branch} || '';
     my $force = $params->{force} || 0;
@@ -923,7 +923,7 @@ sub get_additional_parameters {
         ref1 => { type => "string", description => "First ref for diff (default: HEAD)" },
         ref2 => { type => "string", description => "Second ref for diff (e.g., HEAD~1)" },
         file => { type => "string", description => "File path for blame or diff" },
-        action => { type => "string", description => "Action: list, create, delete, switch, save, apply, drop, etc." },
+        sub_action => { type => "string", description => "Sub-action for branch/stash/tag/worktree: list, create, delete, switch, add, remove, save, apply, drop, prune, merge, pr (used with operation=branch|stash|tag|worktree)" },
         name => { type => "string", description => "Branch, tag, or stash name" },
         remote => { type => "string", description => "Remote name (default: origin)" },
         branch => { type => "string", description => "Branch name for push/pull/worktree" },
