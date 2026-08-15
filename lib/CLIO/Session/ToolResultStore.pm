@@ -488,9 +488,9 @@ sub findSimilarResults {
     
     return [] unless -d $tool_results_dir;
     
-    # Get all result files
+    # Get all result files - match any .txt file (models may generate tool_call_ids in various formats)
     opendir(my $dh, $tool_results_dir) or return [];
-    my @files = grep { /^call_.*\.txt$/ } readdir($dh);
+    my @files = grep { /\.txt$/ } readdir($dh);
     closedir($dh);
     
     # Extract tool call IDs (remove .txt extension)
