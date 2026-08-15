@@ -245,7 +245,7 @@ sub execute_remote {
     my ($self, $params, $context) = @_;
     
     my $host = $params->{host};
-    my $command = $params->{command};
+    my $command = $params->{task_description} || $params->{command};
     my $model = $params->{model};
     my $api_key = $params->{api_key};
     my $timeout = $params->{timeout} || 300;
@@ -568,7 +568,7 @@ sub execute_parallel {
     my ($self, $params, $context) = @_;
     
     my $targets = $params->{targets};  # Can be array, group name, or 'all'
-    my $command = $params->{command};
+    my $command = $params->{task_description} || $params->{command};
     my $model = $params->{model};
     my $timeout = $params->{timeout} || 300;
     my $api_key = $params->{api_key};
@@ -577,7 +577,7 @@ sub execute_parallel {
     
     # Validate required params
     unless ($targets && $command) {
-        return $self->error_result("Missing required parameters: targets, command");
+        return $self->error_result("Missing required parameters: targets, task_description");
     }
     
     # Auto-populate model from current session if not specified
@@ -1777,7 +1777,7 @@ sub get_additional_parameters {
     
     return {
         host => { type => "string", description => "SSH target (user\@hostname)" },
-        command => { type => "string", description => "Task description for remote CLIO" },
+        task_description => { type => "string", description => "Natural language task description for remote CLIO (e.g., 'check disk space', 'run tests')" },
         model => { type => "string", description => "AI model (auto-populated)" },
         api_key => { type => "string", description => "API key (auto-populated)" },
         timeout => { type => "integer", description => "Timeout seconds (default: 300)" },
