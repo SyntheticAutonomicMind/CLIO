@@ -185,33 +185,57 @@ sub get_additional_parameters {
 
 sub store {
     my ($self, $params, $context) = @_;
-    
+
     my $key = $params->{key};
     my $content = $params->{content};
     my $memory_dir = strip_path_quotes($params->{memory_dir}) || '.clio/memory';
-    
+
     return $self->error_result("Missing 'key' parameter") unless $key;
     return $self->error_result("Missing 'content' parameter") unless $content;
-    
+
+    # session_goals is routed to session state (not a separate file) so
+    # it survives context trims, is race-free across concurrent sessions,
+    # and is always visible in PromptBuilder::user_context without a load
+    # step. The file fallback stays for backward compatibility with
+    # sessions that have goals written before this routing was added.
+    if ($key eq 'session_goals' && $context && $context->{session}) {
+        my $session = $context->{session};
+        my $state = $session->can('state') ? $session->state() : undef;
+        if (ref($state) && $state->can('set_session_goals')) {
+            require CLIO::Util::JSON;
+            my $goals = eval { CLIO::Util::JSON::decode_json($content) };
+            if (ref($goals) eq 'ARRAY') {
+                $state->set_session_goals($goals);
+                my $action_desc = "storing session goals in session state";
+                return $self->success_result(
+                    "Session goals stored in session state",
+                    action_description => $action_desc,
+                    key => $key,
+                    count => scalar(@$goals),
+                );
+            }
+        }
+    }
+
     my $result;
     eval {
         mkdir $memory_dir unless -d $memory_dir;
-        
+
         my $file_path = File::Spec->catfile($memory_dir, "$key.json");
         open my $fh, '>:utf8', $file_path or croak "Cannot write $file_path: $!";
-        
+
         my $data = {
             key => $key,
             content => $content,
             timestamp => time(),
         };
-        
+
         # encode_json can handle UTF-8 data correctly
         print $fh encode_json($data);
         close $fh;
-        
+
         my $action_desc = "storing memory '$key'";
-        
+
         $result = $self->success_result(
             "Memory stored successfully",
             action_description => $action_desc,
@@ -219,36 +243,57 @@ sub store {
             path => $file_path,
         );
     };
-    
+
     if ($@) {
         return $self->error_result("Failed to store memory: " . $self->_clean_eval_error($@));
     }
-    
+
     return $result;
 }
 
 sub retrieve {
     my ($self, $params, $context) = @_;
-    
+
     my $key = $params->{key};
     my $memory_dir = strip_path_quotes($params->{memory_dir}) || '.clio/memory';
-    
+
     return $self->error_result("Missing 'key' parameter") unless $key;
-    
+
+    # session_goals lives in session state (not a separate file). Reads
+    # come from there first; the file is only a backward-compat fallback
+    # for sessions that wrote goals before the routing was added.
+    if ($key eq 'session_goals' && $context && $context->{session}) {
+        my $session = $context->{session};
+        my $state = $session->can('state') ? $session->state() : undef;
+        if (ref($state) && $state->can('get_session_goals')) {
+            my $goals = $state->get_session_goals();
+            if ($goals && @$goals) {
+                require CLIO::Util::JSON;
+                my $action_desc = "retrieving session goals from session state";
+                return $self->success_result(
+                    CLIO::Util::JSON::encode_json($goals),
+                    action_description => $action_desc,
+                    key => $key,
+                    count => scalar(@$goals),
+                );
+            }
+        }
+    }
+
     my $result;
     eval {
         my $file_path = File::Spec->catfile($memory_dir, "$key.json");
-        
+
         return $self->error_result("Memory not found: $key") unless -f $file_path;
-        
+
         open my $fh, '<:utf8', $file_path or croak "Cannot read $file_path: $!";
         my $json = do { local $/; <$fh> };
         close $fh;
-        
+
         my $data = decode_json($json);
-        
+
         my $action_desc = "retrieving memory '$key'";
-        
+
         $result = $self->success_result(
             $data->{content},
             action_description => $action_desc,
@@ -256,11 +301,11 @@ sub retrieve {
             timestamp => $data->{timestamp},
         );
     };
-    
+
     if ($@) {
         return $self->error_result("Failed to retrieve memory: " . $self->_clean_eval_error($@));
     }
-    
+
     return $result;
 }
 

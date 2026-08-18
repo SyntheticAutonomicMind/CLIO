@@ -103,6 +103,12 @@ sub new {
             tools_signature => undef, # Digest of tools array (MCP/plugin drift detection)
             saved_at       => 0,      # Unix timestamp of save
         },
+        # Session goals: persistent task-tracking goals managed by the model.
+        # Stored as an arrayref of {id, title, description, status, created_at}.
+        # Always injected into user_context by PromptBuilder (no loading step
+        # required) so the agent has its goals in view every turn. Survives
+        # context trims because the storage is the session file, not memory.
+        session_goals => [],  # Arrayref of goal hashes
     };
     bless $self, $class;
     if ($ENV{CLIO_DEBUG} || $self->{debug}) {
@@ -165,6 +171,7 @@ my $data = {
             tools_signature => undef,
             saved_at       => 0,
         },
+        session_goals => $self->{session_goals} || [],  # Persistent task goals (injected into user_context)
     };
     if ($ENV{CLIO_DEBUG} || $self->{debug}) {
         require Data::Dumper;
@@ -374,6 +381,10 @@ sub load {
             tools_signature => undef,
             saved_at       => 0,
         },
+        # Session goals: persistent task goals managed by the model. Always
+        # present in user_context every turn (no loading step). Survives
+        # context trims because storage is the session file.
+        session_goals => $data->{session_goals} || [],
     };
     bless $self, $class;
     
@@ -417,6 +428,37 @@ sub session_name {
         $self->{session_name} = $name;
     }
     return $self->{session_name};
+}
+
+=head2 session_goals / get_session_goals / set_session_goals
+
+Persistent task-tracking goals managed by the model. Goals live in the
+session file (not a separate memory file) so they:
+
+- Survive context trims (storage is the session, not memory)
+- Are race-free across concurrent sessions (each session has its own file)
+- Are always in PromptBuilder::user_context view (no loading step)
+- Persist across --resume (loaded with the session)
+
+Format: Arrayref of hashrefs {id, title, description, status, created_at}
+Status values: active, completed, blocked.
+
+=cut
+
+sub session_goals {
+    my ($self) = @_;
+    return $self->{session_goals} || [];
+}
+
+sub get_session_goals {
+    my ($self) = @_;
+    return $self->{session_goals} || [];
+}
+
+sub set_session_goals {
+    my ($self, $goals) = @_;
+    $self->{session_goals} = $goals || [];
+    return $self->{session_goals};
 }
 
 =head2 last_api_payload / last_api_metadata / section_signatures
