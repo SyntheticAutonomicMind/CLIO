@@ -283,9 +283,24 @@ sub validate_and_truncate {
     # Second pass: add deferred tool_results from NEWEST to OLDEST until the
     # budget is reached. This drops the oldest tool_results first (they're
     # the most expendable - the agent can re-call the tool if needed).
+    #
+    # CRITICAL: a tool_result must only be kept if its tool_call is in the
+    # kept dialog. The deinterleaved trim can produce orphaned tool_calls
+    # when the first-pass dialog walk keeps an older assistant-with-tool_calls
+    # but the second pass drops its older tool_result due to budget. Without
+    # this guard, Anthropic sees an assistant with tool_use blocks but no
+    # matching tool_result in the next message and rejects with:
+    #   "Each tool_use block must have a corresponding tool_result block
+    #    in the next message."
+    # This is the regression introduced by the deinterleaved trim layout
+    # (commit d4247744). The post-truncation validation below also strips
+    # orphan tool_calls from any assistant that slipped through, but skipping
+    # them here is the first line of defense - it keeps the prompt_stable
+    # prefix cleaner (no wasted tokens on results with no context).
     my @kept_tool_results;
     for my $i (reverse 0 .. $#deferred_tool_results) {
         my $tr = $deferred_tool_results[$i];
+        next unless $tr->{tool_call_id} && $included_tool_ids{$tr->{tool_call_id}};
         my $tr_tokens = estimate_tokens($tr->{content} // '') + 8;
         if ($current_tokens + $tr_tokens <= $post_trim_keep_limit) {
             unshift @kept_tool_results, $tr;
@@ -366,15 +381,75 @@ sub validate_and_truncate {
         log_debug('MessageValidator', "No dropped messages - preserving existing thread_summary");
     }
     
-    # Post-truncation validation
+    # Post-truncation validation: enforce tool_call/tool_result pairing.
+    # Two checks run here:
+    #   1. Drop orphaned tool_results whose tool_call was dropped (the
+    #      original check; protects against partial-unit truncation).
+    #   2. STRIP orphaned tool_calls from assistant messages whose
+    #      tool_result was dropped. Without this, Anthropic rejects the
+    #      request with: "Each tool_use block must have a corresponding
+    #      tool_result block in the next message." The deinterleaved trim
+    #      can produce this state if the second-pass tool_result drop
+    #      didn't see the corresponding tool_call (defense in depth - the
+    #      second pass also skips orphan tool_results, but this catches
+    #      any case that slipped through).
+    #
+    # Build the set of tool_call_ids that have results in the final
+    # conversation. tool_results live in @kept_tool_results (positions
+    # >= scalar(@dialog) in @conversation).
+    my %kept_tool_result_ids;
+    for my $msg (@kept_tool_results) {
+        if ($msg->{tool_call_id}) {
+             $kept_tool_result_ids{$msg->{tool_call_id}} = 1;
+        }
+    }
     my @validated;
+    my $stripped_orphans = 0;
     for my $msg (@conversation) {
         my $is_tool_result = $msg->{tool_call_id} || ($msg->{role} && $msg->{role} eq 'tool');
         if ($is_tool_result && $msg->{tool_call_id} && !$included_tool_ids{$msg->{tool_call_id}}) {
             log_debug('MessageValidator', "Dropping orphaned tool_result after truncation");
             next;
         }
+
+        # Strip orphan tool_calls from assistant messages. If ALL tool_calls
+        # in an assistant message are orphan, keep the message as plain
+        # text (the model may have spoken before/after the tool call).
+        if (($msg->{role} // '') eq 'assistant'
+            && $msg->{tool_calls}
+            && ref($msg->{tool_calls}) eq 'ARRAY'
+            && @{$msg->{tool_calls}}) {
+            my @matched;
+            my @orphan;
+            for my $tc (@{$msg->{tool_calls}}) {
+                if ($tc->{id} && $kept_tool_result_ids{$tc->{id}}) {
+                    push @matched, $tc;
+                } else {
+                    push @orphan, $tc;
+                }
+            }
+            if (@orphan) {
+                $stripped_orphans += scalar(@orphan);
+                if (@matched) {
+                    push @validated, {
+                        %$msg,
+                        tool_calls => \@matched,
+                    };
+                } else {
+                    # All tool_calls were orphan - keep the text content
+                    push @validated, {
+                        role => 'assistant',
+                        content => $msg->{content} // '',
+                    };
+                }
+                next;
+            }
+        }
+
         push @validated, $msg;
+    }
+    if ($stripped_orphans > 0) {
+        log_info('MessageValidator', "Stripped $stripped_orphans orphaned tool_calls (tool_results dropped by trim)");
     }
     
     # Combine: system + compressed summary + validated conversation
