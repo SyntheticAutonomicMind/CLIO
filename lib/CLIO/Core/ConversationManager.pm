@@ -420,8 +420,14 @@ sub trim_conversation_for_api {
     # with thread_summary generation. This is a simple budget-based tail keep.
     #
     # IMPORTANT: Preserve tool_call/tool_result pairs together - never split them.
-
-    my @kept = ();
+    #
+    # Cache stability: deinterleave so tool_results go to the END of the prompt.
+    # The dialog (user/assistant) stays at the front so the LCP cache match
+    # extends through sys + summary + dialog across trims. Tool_results are
+    # the most expendable (the agent can re-call the tool) so they're dropped
+    # first when budget is exceeded.
+    my @dialog = ();
+    my @deferred_tool_results = ();
 
     for my $i (reverse 0 .. $#messages) {
         my $msg = $messages[$i];
@@ -430,81 +436,62 @@ sub trim_conversation_for_api {
         if (($msg->{role} // '') eq 'system' && ($msg->{content} // '') =~ /<thread_summary>/) {
             next;
         }
-        
-        # Check if this is a tool_result that needs its tool_call partner
-        my $is_tool_result = ($msg->{role} // '') eq 'tool';
-        my $tool_call_id = $msg->{tool_call_id};
-        
-        # If this is a tool_result, check if we have its tool_call in the kept messages
-        # If not, we need to also keep the tool_call (which would be earlier in the array)
-        if ($is_tool_result && $tool_call_id) {
-            # Look for the matching tool_call in the remaining messages (earlier indices)
-            my $has_tool_call = 0;
-            for my $j (0 .. $i - 1) {
-                my $prev_msg = $messages[$j];
-                if (($prev_msg->{role} // '') eq 'assistant' && $prev_msg->{tool_calls}) {
-                    for my $tc (@{$prev_msg->{tool_calls}}) {
-                        if ($tc->{id} eq $tool_call_id) {
-                            $has_tool_call = 1;
-                            last;
-                        }
-                    }
-                }
-                last if $has_tool_call;
-            }
-            
-            # If we don't have the tool_call in kept messages, we need to include it
-            # This means we need to also include the assistant message with the tool_call
-            if (!$has_tool_call) {
-                # Find the assistant message with this tool_call
-                for my $j (0 .. $i - 1) {
-                    my $prev_msg = $messages[$j];
-                    if (($prev_msg->{role} // '') eq 'assistant' && $prev_msg->{tool_calls}) {
-                        for my $tc (@{$prev_msg->{tool_calls}}) {
-                            if ($tc->{id} eq $tool_call_id) {
-                                # Include this assistant message (and its tool_calls)
-                                my $assistant_tokens = CLIO::Memory::TokenEstimator::estimate_tokens($prev_msg->{content} // '');
-                                if ($kept_tokens + $msg_tokens + $assistant_tokens <= $target_tokens) {
-                                    unshift @kept, $prev_msg;
-                                    $kept_tokens += $assistant_tokens;
-                                }
-                                last;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        if ($kept_tokens + $msg_tokens <= $target_tokens) {
-            unshift @kept, $msg;
-            $kept_tokens += $msg_tokens;
+
+        # Deinterleave: classify as dialog or tool_result.
+        if (($msg->{role} // '') eq 'tool' || $msg->{tool_call_id}) {
+            # Defer tool_results - added in second pass with newest-first priority
+            unshift @deferred_tool_results, $msg;
         } else {
-            # Budget exhausted - stop adding older messages
-            last;
+            # Keep dialog if budget allows. Stop the walk when budget is
+            # exhausted: we don't want to add small old messages after a
+            # large recent message broke the budget. Older dialog is
+            # less valuable than newer dialog for LCP cache stability.
+            if ($kept_tokens + $msg_tokens <= $target_tokens) {
+                unshift @dialog, $msg;
+                $kept_tokens += $msg_tokens;
+            } else {
+                # Budget exhausted - stop walking through older messages
+                last;
+            }
         }
     }
+
+    # Second pass: add tool_results from NEWEST to OLDEST until budget is reached.
+    # Oldest tool_results are dropped first - they're the most expendable.
+    my @kept_tool_results;
+    for my $i (reverse 0 .. $#deferred_tool_results) {
+        my $tr = $deferred_tool_results[$i];
+        my $tr_tokens = CLIO::Memory::TokenEstimator::estimate_tokens($tr->{content} // '');
+        if ($kept_tokens + $tr_tokens <= $target_tokens) {
+            unshift @kept_tool_results, $tr;
+            $kept_tokens += $tr_tokens;
+        }
+    }
+
+    my @result = (@dialog, @kept_tool_results);
+    my @kept = @result;
 
     if ($debug) {
         log_debug('ConversationManager', "Trimmed: " . scalar(@messages) . " -> " . scalar(@kept) . " messages");
         log_debug('ConversationManager', "Token reduction: $history_tokens -> $kept_tokens tokens");
         log_debug('ConversationManager', "Final total with system: " . ($system_tokens + $kept_tokens) . " of $safe_threshold prompt budget");
+        log_debug('ConversationManager', sprintf(
+            "Deinterleave: %d dialog + %d tool_results kept, %d tool_results dropped",
+            scalar(@dialog), scalar(@kept_tool_results),
+            scalar(@deferred_tool_results) - scalar(@kept_tool_results)));
     }
 
-    # Re-attach preserved summary messages. The proactive trim in
-    # MessageValidator puts the summary at the END of the conversation
-    # ([system][recent][summary]) for cache stability. We follow the same
-    # order here so pre-flight and proactive trims produce consistent
-    # ordering - the proactive trim's _extract_preserved_units detects the
-    # summary regardless of position, but matching the order keeps the
-    # message array stable across trim passes and makes the data flow
-    # easier to reason about.
-    my @result = @kept;
+    # Cache-stable ordering: summary at position 1 (right after the system
+    # prompt) so the LCP match extends through sys + summary on every turn.
+    # Order: [system][summary][dialog][tool_results]
+    # The system prompt is at @result[0] from the walkback. We splice the
+    # preserved summary in at position 1 to keep sys + summary at the front.
     if (@preserved_summaries) {
-        for my $s (@preserved_summaries) {
-            push @result, $s->{msg};
+        my @summaries = map { $_->{msg} } @preserved_summaries;
+        splice @result, 1, 0, @summaries;
+        if ($debug) {
+            log_debug('ConversationManager', "Pre-flight trim placed " . scalar(@preserved_summaries) . " thread_summary message(s) at position 1 for LCP");
         }
-        log_debug('ConversationManager', "Pre-flight trim preserved " . scalar(@preserved_summaries) . " thread_summary message(s) for CSSS") if $debug;
     }
 
     return \@result if @result;

@@ -27,6 +27,26 @@ use CLIO::Providers qw(
 use CLIO::Core::Defaults qw(
     DEFAULT_LOCAL_CONTEXT_WINDOW DEFAULT_CONTEXT_WINDOW
 );
+use CLIO::Core::ModelDataLoader;
+
+# JSON defaults per provider (centralized model data inserts these).
+# The function checks JSON defaults first, then falls back to
+# DEFAULT_LOCAL_CONTEXT_WINDOW / DEFAULT_CONTEXT_WINDOW constants.
+my %PROVIDER_DEFAULT_CONTEXT = (
+    'sam'           => 32000,
+    'lmstudio'      => 32000,
+    'llama.cpp'     => 32000,
+    'openai'        => 128000,
+    'anthropic'     => 200000,
+    'google'        => 1048576,
+    'minimax'       => 1000000,
+    'zai'           => 200000,
+    'deepseek'      => 1048576,
+    'nvidia'        => 1048576,
+    'github_copilot' => 128000,
+    'openrouter'    => 128000,
+    'ollama_cloud'  => 128000,
+);
 
 # Each tier name + the providers that should belong to it.
 my @LOCAL_NAMES  = qw(sam lmstudio llama.cpp);
@@ -75,14 +95,17 @@ is(exposes_props('nonexistent_provider'), 0, "exposes_props(unknown) == 0");
 # ============================================================================
 # default_context_window
 # ============================================================================
+# Returns the JSON-declared default for each provider (per-provider
+# accurate values), or the constant fallback when JSON doesn't define
+# one. Constants provide a safe default for newly-added providers.
 for my $name (@LOCAL_NAMES) {
     is(default_context_window($name),
-        DEFAULT_LOCAL_CONTEXT_WINDOW(),
+        $PROVIDER_DEFAULT_CONTEXT{$name},
         "default_context_window($name) == DEFAULT_LOCAL_CONTEXT_WINDOW");
 }
 for my $name (@CLOUD_NAMES) {
     is(default_context_window($name),
-        DEFAULT_CONTEXT_WINDOW(),
+        $PROVIDER_DEFAULT_CONTEXT{$name},
         "default_context_window($name) == DEFAULT_CONTEXT_WINDOW");
 }
 
@@ -90,11 +113,13 @@ for my $name (@CLOUD_NAMES) {
 # to route to the local default. The function uses is_local_inference so
 # any non-empty provider name that triggers a "true" result works.
 {
-    # A fake provider name that's in the registry gets its own result
-    is(default_context_window('sam'),  DEFAULT_LOCAL_CONTEXT_WINDOW(),
-        "default_context_window sam -> local window");
-    is(default_context_window('openai'), DEFAULT_CONTEXT_WINDOW(),
-        "default_context_window openai -> cloud window");
+    # The function checks JSON defaults first - sam and openai both have
+    # max_context_tokens defined in provider-defaults.json so they get
+    # the per-provider value, not the constants.
+    is(default_context_window('sam'),  $PROVIDER_DEFAULT_CONTEXT{sam},
+        "default_context_window sam -> JSON-declared default");
+    is(default_context_window('openai'), $PROVIDER_DEFAULT_CONTEXT{openai},
+        "default_context_window openai -> JSON-declared default");
 }
 
 # ============================================================================

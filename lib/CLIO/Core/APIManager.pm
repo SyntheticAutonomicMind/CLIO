@@ -1161,31 +1161,14 @@ sub adapt_request_for_endpoint {
                         $thinking_type = 'enabled';
                     }
 
-                    # Add budget_tokens when thinking_effort is configured.
-                    # M3's thinking budget controls how much reasoning the
-                    # model produces before responding - with a small budget
-                    # M3 emits a brief planning line (e.g. "Planning user
-                    # location inquiry"); with a larger budget it produces
-                    # the full reasoning chain. Default to 4000 tokens (high)
-                    # when show_thinking is on so users actually see the
-                    # thinking they asked for.
+                    # M3's thinking.type=adaptive is the default thinking
+                    # mode for M3 (model decides depth). Only M2.x and
+                    # earlier models use type=enabled. Neither mode
+                    # exposes budget_tokens in the documented payload
+                    # shape - the model handles its own reasoning budget.
+                    # Omitting budget_tokens matches MiniMax's official
+                    # payload for both modes.
                     my $thinking = { type => $thinking_type };
-                    if ($reasoning_mode && $thinking_type ne 'disabled') {
-                        my $effort = $self->{config} ? ($self->{config}->get('thinking_effort') // 'high') : 'high';
-                        # M3's per-turn reasoning budget is the single biggest
-                        # knob for verbose thinking. The default values
-                        # (1000/2000/4000) produce planning one-liners
-                        # ("Planning X"); doubling them gets M3 to emit
-                        # the full reasoning chain the user asked for.
-                        my %budget = (
-                            low    => 2000,
-                            medium => 4000,
-                            high   => 8000,
-                        );
-                        my $budget_tokens = $budget{lc($effort)} // 8000;
-                        $thinking->{budget_tokens} = $budget_tokens;
-                        log_debug('APIManager', "MiniMax thinking budget: $budget_tokens tokens (effort=$effort)");
-                    }
                     $payload->{thinking} = $thinking;
                 } else {
                     $payload->{thinking} = { type => 'disabled' };
@@ -2689,6 +2672,43 @@ sub _build_payload {
         $uid =~ s/-//g;  # strip UUID hyphens
         $payload->{llama_user_id} = $uid;
         log_debug('APIManager', "Including llama_user_id: $uid (session-isolated SSD cache)");
+    }
+
+    # prompt_stable_prefix_tokens: tell the llama.cpp LCP matcher how many
+    # leading tokens form a stable prefix (system prompt). When CLIO trims
+    # the conversation, the recent messages shift but the system prompt at
+    # position 0 stays byte-identical. Passing this lets the server reject
+    # any slot whose stored prompt does not share the system prompt, so the
+    # LCP match survives the trim instead of collapsing to sim_best=0.24.
+    #
+    # The system prompt is the first message in the array. Its token count
+    # is a stable floor for the LCP match. We include any leading system
+    # messages that come before the first non-system role, since the
+    # trim_conversation_for_api() may have appended a thread_summary system
+    # message at the END of the history (which shifts with the tail) - we
+    # only want the LEADING system block.
+    if ($endpoint_config->{llama_user_id_supported} && $messages && @$messages) {
+        my $stable_tokens = 0;
+        for my $msg (@$messages) {
+            last unless (($msg->{role} // '') eq 'system');
+            my $content = $msg->{content} // '';
+            if (ref($content) eq 'ARRAY') {
+                # Multimodal: sum text parts only
+                for my $part (@$content) {
+                    if (ref($part) eq 'HASH' && ($part->{type} // '') eq 'text') {
+                        require CLIO::Memory::TokenEstimator;
+                        $stable_tokens += CLIO::Memory::TokenEstimator::estimate_tokens($part->{text} // '');
+                    }
+                }
+            } else {
+                require CLIO::Memory::TokenEstimator;
+                $stable_tokens += CLIO::Memory::TokenEstimator::estimate_tokens($content);
+            }
+        }
+        if ($stable_tokens > 0) {
+            $payload->{prompt_stable_prefix_tokens} = $stable_tokens;
+            log_debug('APIManager', "Including prompt_stable_prefix_tokens: $stable_tokens (leading system block)");
+        }
     }
 
     # Add previous_response_id for GitHub Copilot billing continuity

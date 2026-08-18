@@ -16,7 +16,7 @@
 use strict;
 use warnings;
 use lib './lib';
-use Test::More tests => 101;
+use Test::More tests => 118;
 use JSON::PP qw(encode_json decode_json);
 
 use_ok('CLIO::Providers::Anthropic');

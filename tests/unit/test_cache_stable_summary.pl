@@ -135,7 +135,7 @@ subtest 'CSSS locks summary slot size after first trim' => sub {
 };
 
 # ===== Test 2: Summary is at END of conversation =====
-subtest 'Summary placed at end of conversation' => sub {
+subtest 'Summary at position 1 (right after system prompt) for LCP cache stability' => sub {
     my @msgs = build_oversized_messages();
     my $tools = [{ type => 'function', function => { name => 'foo' } }];
 
@@ -151,9 +151,12 @@ subtest 'Summary placed at end of conversation' => sub {
 
     ok($summary_idx >= 0, "Summary exists in trimmed output");
 
-    my $last_idx = scalar(@$trimmed) - 1;
-    is($summary_idx, $last_idx,
-        "Summary is the LAST message (idx=$summary_idx, last=$last_idx) - cache-friendly ordering");
+    # Summary at position 1 (right after system prompt) so the LCP cache
+    # match extends through sys + summary on every turn. This is the layout
+    # that llama.cpp's server-context.cpp prompt_stable_prefix_tokens floor
+    # is designed for: "system prompt + thread_summary" as the stable prefix.
+    is($summary_idx, 1,
+        "Summary is at position 1 (right after system prompt): idx=$summary_idx - LCP-stable ordering");
 
     # First should be system prompt (the real system prompt, not summary)
     my $first_role = $trimmed->[0]{role};

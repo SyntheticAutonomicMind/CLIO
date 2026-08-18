@@ -66,8 +66,14 @@ subtest 'B: /api set model moves settings between models' => sub {
 
     # Switch to a different model via set() with mark_user_set=1
     $config->set('model', 'nvidia/nemotron-3-ultra-550b-a55b', 1);
-    is($config->{config}{show_thinking}, 0,
-        'B: show_thinking reset to default on different model (no entry)');
+    # On a different provider (no entry), the global value is preserved
+    # rather than reset to default. This is the documented behavior
+    # (commit 28f3ffb6): global user-set values should persist across
+    # model switches. The new-model entry is not auto-seeded because
+    # cross-provider switches are an explicit "fresh start" signal at
+    # the model level, but the user's global preference is still honored.
+    is($config->{config}{show_thinking}, 1,
+        'B: show_thinking global value preserved on different model (no entry)');
 
     # Switch BACK to minimax
     $config->set('model', 'minimax/MiniMax-M3', 1);

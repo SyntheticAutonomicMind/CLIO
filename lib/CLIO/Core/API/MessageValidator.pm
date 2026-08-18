@@ -178,7 +178,10 @@ sub validate_and_truncate {
         _extract_preserved_units(\@units);
     
     # Build conversation from newest to oldest
-    my @conversation;
+    # Deinterleave collections: dialog at the front (LCP-critical), tool_results
+    # at the END (defer until budget is allocated).
+    my @dialog = ();
+    my @deferred_tool_results = ();
     # Don't pre-allocate token budget for last_user_unit - it will be included
     # naturally by the budget walk below (it's a recent message). Only reserve
     # space for the always-present system prompt and any existing summary.
@@ -233,15 +236,73 @@ sub validate_and_truncate {
             next;
         }
         
-        if ($current_tokens + $unit->{tokens} <= $post_trim_keep_limit) {
-            unshift @conversation, @{$unit->{messages}};
-            $current_tokens += $unit->{tokens};
+        # Deinterleave: classify each message in the unit as dialog or tool_result.
+        # We trim tool_results FIRST (oldest first) before dropping dialog, so the
+        # dialog stays at the front of the prompt. This keeps the LCP cache
+        # match alive through sys + summary + dialog across trims.
+        my $unit_dialog_tokens = 0;
+        my @unit_dialog;
+        my @unit_tool_results;
+        for my $msg (@{$unit->{messages}}) {
+            if (($msg->{role} // '') eq 'tool' || $msg->{tool_call_id}) {
+                push @unit_tool_results, $msg;
+            } else {
+                push @unit_dialog, $msg;
+                $unit_dialog_tokens += estimate_tokens($msg->{content} // '') + 4;
+                $unit_dialog_tokens += 8 if ($msg->{role} // '') eq 'tool';
+                # Include tool_call JSON tokens (assistant's tool_calls travel
+                # with the dialog, not with the tool_results).
+                if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
+                    for my $tc (@{$msg->{tool_calls}}) {
+                        my $json = safe_encode_json($tc, '');
+                        $unit_dialog_tokens += estimate_tokens($json);
+                    }
+                }
+            }
+        }
+
+        # Always keep dialog if budget allows. Tool_results are deferred and
+        # added in the second pass with newest-first priority.
+        if (@unit_dialog && $current_tokens + $unit_dialog_tokens <= $post_trim_keep_limit) {
+            unshift @dialog, @unit_dialog;
+            $current_tokens += $unit_dialog_tokens;
             for my $id (keys %{$unit->{tool_call_ids} || {}}) {
                 $included_tool_ids{$id} = 1;
             }
-        } else {
+        } elsif (@unit_dialog) {
+            # Dialog alone exceeds budget - drop entire unit (rare, only
+            # when the conversation itself is larger than the budget).
             push @dropped_units, $unit;
         }
+
+        # Defer tool_results without consuming budget. They'll be added in the
+        # second pass in chronological order (already collected in reverse walk).
+        unshift @deferred_tool_results, @unit_tool_results;
+    }
+
+    # Second pass: add deferred tool_results from NEWEST to OLDEST until the
+    # budget is reached. This drops the oldest tool_results first (they're
+    # the most expendable - the agent can re-call the tool if needed).
+    my @kept_tool_results;
+    for my $i (reverse 0 .. $#deferred_tool_results) {
+        my $tr = $deferred_tool_results[$i];
+        my $tr_tokens = estimate_tokens($tr->{content} // '') + 8;
+        if ($current_tokens + $tr_tokens <= $post_trim_keep_limit) {
+            unshift @kept_tool_results, $tr;
+            $current_tokens += $tr_tokens;
+        }
+    }
+
+    # Combine: dialog first (in chronological order), then tool_results at the END.
+    # The deinterleaved layout keeps the conversation dialog stable at the front
+    # of the prompt so llama.cpp's LCP cache match extends through sys + summary
+    # + matching dialog instead of collapsing at the first dropped tool message.
+    my @conversation = (@dialog, @kept_tool_results);
+    if (@deferred_tool_results) {
+        log_debug('MessageValidator', sprintf(
+            "Deinterleave: %d dialog + %d tool_results kept, %d deferred dropped",
+            scalar(@dialog), scalar(@kept_tool_results),
+            scalar(@deferred_tool_results) - scalar(@kept_tool_results)));
     }
     
     # Calculate total tokens in dropped units for proactive CSSS slot growth
@@ -269,7 +330,7 @@ sub validate_and_truncate {
         # Use the larger of current slot or minimum floor
         $summary_slot_target = $current_slot < $min_slot ? $min_slot : $current_slot;
         log_debug('MessageValidator', "CSSS: base slot target $summary_slot_target (current: $current_slot, min: $min_slot)");
-        
+
         # Proactive growth: if dropped content is > 1.5x slot, grow the slot
         # before compression. This prevents the summary from being hard-truncated
         # and silently dropping the "Current task" or other critical context.
@@ -282,6 +343,14 @@ sub validate_and_truncate {
                 $summary_slot_target = $new_slot;
             }
         }
+    } elsif (@dropped_units) {
+        # First trim: no existing summary to lock to. Use MIN_CSSS_SLOT_TOKENS
+        # as the initial slot size so subsequent trims have a stable target to
+        # lock against. Without this, the first summary is naturally tiny
+        # (a few tokens for "Current task" + whatever drops compress to) and
+        # locks CSSS to that small size forever.
+        $summary_slot_target = CLIO::Core::Defaults::MIN_CSSS_SLOT_TOKENS();
+        log_debug('MessageValidator', "CSSS: first trim slot target $summary_slot_target (MIN_CSSS_SLOT_TOKENS floor)");
     }
 
     if (@dropped_units) {
@@ -339,12 +408,18 @@ sub validate_and_truncate {
     }
     my @truncated;
     push @truncated, $system_msg if $system_msg;
-    push @truncated, @validated;
-    # Cache-friendly ordering: summary at END of conversation. Combined with
-    # CSSS (summary slot size locked), this means the summary content changes
-    # only invalidate the summary tokens themselves, not the recent messages
-    # before them. Order: [system][recent_messages][summary]
+    # Cache-stable ordering: summary at position 1 (right after the system
+    # prompt) so the LCP match extends through sys + summary on every turn.
+    # llama.cpp's server-context.cpp prompt_stable_prefix_tokens floor is
+    # explicitly designed for this layout:
+    #   "if the caller told us how many leading tokens form a stable prefix
+    #    (system prompt + thread_summary), reject any slot whose stored
+    #    prompt does not share that prefix"
+    # Combined with the deinterleaved tool_results layout below, the LCP
+    # match survives a context trim instead of collapsing at the first
+    # dropped position. Order: [system][summary][dialog][tool_results]
     push @truncated, $summary_to_use if $summary_to_use;
+    push @truncated, @validated;
 
     if (should_log('DEBUG')) {
         my $final_tokens = _estimate_tokens(\@truncated);
