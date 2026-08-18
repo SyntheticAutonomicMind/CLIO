@@ -274,6 +274,14 @@ sub new {
         # Token estimation with adaptive learning
         learned_token_ratio => 2.5,  # Start with 2.5, learn from API responses
         
+        # Cache for prompt_stable_prefix_tokens keyed on MD5 of system
+        # prompt content. The stable prefix token count must NOT change
+        # between requests when the system prompt is byte-identical, even
+        # though the learned char/token ratio drifts. A changing value
+        # breaks llama.cpp's LCP cache match and forces full prompt
+        # reprocessing every turn (5+ min on local models).
+        _stable_prefix_cache => undef,
+
         # Rate limiter for concurrent request limiting
         rate_limiter => CLIO::Core::RateLimiter->get_instance(),
 
@@ -2729,25 +2737,89 @@ sub _build_payload {
     # "stable prefix dropped from 27540 to 23983" on every trim and
     # reprocess the entire prompt (5+ minutes per task).
     if ($endpoint_config->{llama_user_id_supported} && $messages && @$messages) {
-        my $stable_tokens = 0;
+        print STDERR "[DEBUG_DIAG][APIManager] stable_prefix_enter: messages=" . scalar(@$messages) . " first_role=" . (($messages->[0] && $messages->[0]{role}) // 'UNDEF') . " endpoint_keys=" . join(',', sort keys %$endpoint_config) . "\n";
         my $first_msg = $messages->[0];
         if ($first_msg && ($first_msg->{role} // '') eq 'system') {
             my $content = $first_msg->{content} // '';
+            # Flatten to text for hashing and estimation. arrayref content
+            # only contributes text parts; non-text parts (images) have no
+            # token budget in the LCP stable prefix.
+            my $text_content = '';
             if (ref($content) eq 'ARRAY') {
                 for my $part (@$content) {
                     if (ref($part) eq 'HASH' && ($part->{type} // '') eq 'text') {
-                        require CLIO::Memory::TokenEstimator;
-                        $stable_tokens += CLIO::Memory::TokenEstimator::estimate_tokens($part->{text} // '');
+                        $text_content .= ($part->{text} // '');
                     }
                 }
             } else {
-                require CLIO::Memory::TokenEstimator;
-                $stable_tokens = CLIO::Memory::TokenEstimator::estimate_tokens($content);
+                $text_content = $content;
             }
-        }
-        if ($stable_tokens > 0) {
-            $payload->{prompt_stable_prefix_tokens} = $stable_tokens;
-            log_debug('APIManager', "Including prompt_stable_prefix_tokens: $stable_tokens (system prompt only)");
+            if (length($text_content) > 0) {
+                # Cache the stable prefix token count by content signature.
+                # The system prompt at position 0 is byte-identical across
+                # requests, but CLIO::Memory::TokenEstimator::estimate_tokens
+                # uses get_effective_ratio() which returns the learned
+                # char/token ratio. That ratio drifts after every API
+                # response (via _learn_from_api_response -> set_learned_ratio).
+                # A drifting ratio produces a drifting
+                # prompt_stable_prefix_tokens on every turn (observed:
+                # 31335 -> 3323 -> 29559 -> 2915 -> 28999 -> 29148 -> 2927),
+                # which breaks llama.cpp's LCP cache match and forces the
+                # server to reprocess the entire prompt each turn.
+                #
+                # Caching on a signature of the content freezes the stable
+                # prefix token count for byte-identical system prompts.
+                # The learned ratio still flows through to all other
+                # estimation (MessageValidator trim, budget validation) -
+                # only the stable prefix hint is frozen. When the system
+                # prompt changes (e.g. tools added, MCP servers registered),
+                # the hash differs and we recalculate.
+                #
+                # Signature strategy: try Digest::MD5 first (core Perl module,
+                # ~1MB), fall back to Digest::SHA (also core), fall back to a
+                # pure-Perl fingerprint (length + prefix + suffix). The cache
+                # key only needs to detect changes in the system prompt content,
+                # not be cryptographically secure - any consistent signature works.
+                my $content_hash;
+                my $hash_source = 'fallback';
+                eval {
+                    require Digest::MD5;
+                    $content_hash = Digest::MD5::md5_hex($text_content);
+                    $hash_source = 'md5';
+                    1;
+                } or do {
+                    eval {
+                        require Digest::SHA;
+                        $content_hash = Digest::SHA::sha1_hex($text_content);
+                        $hash_source = 'sha1';
+                        1;
+                    };
+                };
+                if (!defined $content_hash) {
+                    $content_hash = sprintf("%d:%s:%s",
+                        length($text_content),
+                        substr($text_content, 0, 32),
+                        substr($text_content, -32));
+                    $hash_source = 'fallback';
+                }
+                print STDERR "[DEBUG_DIAG][APIManager] stable_prefix_hash: source=$hash_source hash=" . substr($content_hash, 0, 16) . "... text_len=" . length($text_content) . "\n";
+                if ($self->{_stable_prefix_cache}
+                    && $self->{_stable_prefix_cache}{hash} eq $content_hash) {
+                    $payload->{prompt_stable_prefix_tokens} = $self->{_stable_prefix_cache}{tokens};
+                    log_debug('APIManager', "Including prompt_stable_prefix_tokens: $self->{_stable_prefix_cache}{tokens} (cached, system prompt unchanged)");
+                } else {
+                    require CLIO::Memory::TokenEstimator;
+                    my $stable_tokens = CLIO::Memory::TokenEstimator::estimate_tokens($text_content);
+                    if ($stable_tokens > 0) {
+                        $payload->{prompt_stable_prefix_tokens} = $stable_tokens;
+                        log_debug('APIManager', "Including prompt_stable_prefix_tokens: $stable_tokens (system prompt changed, recalculated)");
+                        $self->{_stable_prefix_cache} = {
+                            hash   => $content_hash,
+                            tokens => $stable_tokens,
+                        };
+                    }
+                }
+            }
         }
     }
 
@@ -3275,6 +3347,11 @@ sub _prepare_api_request {
 
     # Log full request to debug log
     $self->_log_api_request($req, $final_endpoint, $provider_label, $model, $json, $is_streaming, $use_responses_api);
+
+    # TEMP DIAG: dump full payload to stderr so we can see exactly what we send
+    require CLIO::Util::JSON;
+    print STDERR "[DEBUG_DIAG][APIManager] payload_dump: " . CLIO::Util::JSON::encode_json($json) . "\n";
+    print STDERR "[DEBUG_DIAG][APIManager] endpoint_dump: $final_endpoint use_responses=$use_responses_api is_streaming=" . ($is_streaming ? 1 : 0) . "\n";
 
     return {
         req              => $req,
