@@ -14,7 +14,7 @@ use Cwd qw(abs_path);
 use File::Path qw(make_path);
 use Exporter 'import';
 
-our @EXPORT_OK = qw(expand_tilde shell_quote strip_path_quotes find_ltm_path);
+our @EXPORT_OK = qw(expand_tilde shell_quote strip_path_quotes find_ltm_path find_clio_dir);
 
 =head1 NAME
 
@@ -392,6 +392,49 @@ sub find_ltm_path {
     }
 
     return $canonical || File::Spec->catfile($working_dir, '.clio', 'ltm.json');
+}
+
+=head2 find_clio_dir($working_dir)
+
+Walk upward from $working_dir looking for a directory containing a
+`.clio/` subdirectory. Returns the path to the directory containing
+.clio/ (i.e. the project root), or $working_dir if none found.
+
+Stops at the project boundary (directory containing `.git`) so the
+search never walks past the repo root into user-home territory.
+
+Used by PromptBuilder, PromptManager, and MemoryOperations to anchor
+session-scoped files (goals, LTM, OpenSpec, memory) to the project root
+instead of the current working directory. This prevents data loss when
+CLIO is launched from a subdirectory or when the CWD changes between
+turns.
+
+Arguments:
+- $working_dir: Directory to start searching from (default: current dir)
+
+Returns:
+- String path to the directory containing .clio/, or $working_dir as
+  fallback if no .clio/ found within the project boundary.
+
+=cut
+
+sub find_clio_dir {
+    my ($working_dir) = @_;
+
+    $working_dir = abs_path($working_dir) || $working_dir || Cwd::getcwd();
+
+    my $dir = $working_dir;
+    my %visited;
+    while ($dir && !defined $visited{$dir}) {
+        $visited{$dir} = 1;
+        return $dir if -d File::Spec->catdir($dir, '.clio');
+        last if -d File::Spec->catdir($dir, '.git');
+        my $parent = abs_path(File::Spec->catdir($dir, '..'));
+        last if !$parent || $parent eq $dir;
+        $dir = $parent;
+    }
+
+    return $working_dir;
 }
 
 1;

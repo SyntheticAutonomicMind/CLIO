@@ -189,7 +189,23 @@ Returns: Text with conversation tags removed
 sub strip_conversation_tags {
     my ($text) = @_;
     return $text unless defined $text;
+
+    # Strip [conversation]...[/conversation] tags - these are control
+    # signals from ReadLine that must not leak into model context.
     $text =~ s/\[conversation\](.*?)\[\/conversation\]/$1/gs;
+
+    # Strip pipeline tags from history content. These tags mark pipeline
+    # sections (summary, user_context, session goals) in the API payload,
+    # but if they appear in a message's content (e.g. user pasted a
+    # previous API response), they'd confuse _strip_non_trailing_user_context
+    # on the next turn and cause the snapshot normalizer to mis-categorize
+    # the message. Strip them at the boundary so history and snapshot
+    # stay aligned.
+    $text =~ s/<thread_summary>.*?<\/thread_summary>//gs;
+    $text =~ s/<dynamicContext>.*?<\/dynamicContext>//gs;
+    $text =~ s/<userContext>.*?<\/userContext>//gs;
+    $text =~ s/<sessionGoals>.*?<\/sessionGoals>//gs;
+
     return $text;
 }
 

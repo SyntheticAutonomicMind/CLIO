@@ -214,4 +214,59 @@ my $orc = bless {}, 'CLIO::Core::WorkflowOrchestrator';
     }
 }
 
-print "1..10\n";
+# Test 8: trim notification is NOT stripped by user_context normalizer
+{
+    my @messages = (
+        make_msg('system', '# CLIO System Prompt...'),
+        make_msg('user',   'first user msg'),
+        make_msg('assistant', 'assistant response'),
+        make_msg('system', '[CONTEXT TRIM: 12 messages compressed] Older messages summarized below. ...'),
+        make_msg('assistant', 'recent response'),
+    );
+
+    my @normalized = $orc->_strip_non_trailing_user_context(@messages);
+
+    my $trim_count = 0;
+    for my $msg (@normalized) {
+        my $content = $msg->{content} // '';
+        if ($content =~ /^\[CONTEXT TRIM:/) {
+            $trim_count++;
+        }
+    }
+
+    if ($trim_count == 1) {
+        print "ok 11 - trim notification preserved by user_context normalizer\n";
+    } else {
+        print "not ok 11 - trim notification count after normalize: $trim_count (expected 1)\n";
+    }
+}
+
+# Test 9: user_context with <dynamicContext> tag in trim notification body is not stripped
+{
+    my @messages = (
+        make_msg('system', '# CLIO System Prompt...'),
+        make_msg('user',   'first user msg'),
+        make_msg('system', '[CONTEXT TRIM: 5 messages archived] To recover context use memory_operations(operation: "retrieve", key: "<dynamicContext>") ...'),
+    );
+
+    my @normalized = $orc->_strip_non_trailing_user_context(@messages);
+
+    # The trim notification should be preserved even though its body
+    # mentions <dynamicContext> as a string
+    my $trim_preserved = 0;
+    for my $msg (@normalized) {
+        my $content = $msg->{content} // '';
+        if ($content =~ /^\[CONTEXT TRIM:/) {
+            $trim_preserved = 1;
+            last;
+        }
+    }
+
+    if ($trim_preserved) {
+        print "ok 12 - trim notification preserved even when body mentions <dynamicContext>\n";
+    } else {
+        print "not ok 12 - trim notification incorrectly stripped\n";
+    }
+}
+
+print "1..12\n";

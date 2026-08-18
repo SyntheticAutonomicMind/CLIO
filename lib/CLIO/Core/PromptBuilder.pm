@@ -9,6 +9,7 @@ use utf8;
 
 use CLIO::Core::Logger qw(log_error log_warning log_info log_debug);
 use Cwd qw(getcwd);
+use File::Spec;
 
 =head1 NAME
 
@@ -748,7 +749,14 @@ sub _read_session_goals {
 
     my $goals_text = '';
     eval {
-        my $goals_file = '.clio/memory/session_goals.json';
+        # Anchor to the project root (directory containing .clio/) instead
+        # of the current working directory. CWD can change between turns
+        # (or between CLIO launches), but the goals file must be stable
+        # so the agent can recover its task context after a trim.
+        require CLIO::Util::PathResolver;
+        require Cwd;
+        my $clio_dir = CLIO::Util::PathResolver::find_clio_dir(Cwd::getcwd());
+        my $goals_file = File::Spec->catfile($clio_dir, '.clio', 'memory', 'session_goals.json');
         return '' unless -f $goals_file;
 
         require CLIO::Util::JSON;

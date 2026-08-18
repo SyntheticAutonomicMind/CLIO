@@ -258,7 +258,14 @@ sub get_dynamic_context {
     # OpenSpec context
     eval {
         require CLIO::Spec::Manager;
-        my $spec_mgr = CLIO::Spec::Manager->new(project_root => '.');
+        # Anchor to the project root (directory containing .clio/) instead
+        # of the current working directory. CWD can change but the spec
+        # file location must be stable so the agent has access to project
+        # specs across sessions.
+        require CLIO::Util::PathResolver;
+        require Cwd;
+        my $clio_dir = CLIO::Util::PathResolver::find_clio_dir(Cwd::getcwd());
+        my $spec_mgr = CLIO::Spec::Manager->new(project_root => $clio_dir);
         if ($spec_mgr->is_initialized()) {
             my $spec_context = $spec_mgr->get_spec_context();
             if ($spec_context && length($spec_context) > 0) {
@@ -1566,9 +1573,15 @@ sub _format_ltm_patterns {
         my $total = $consol_stats->{removed} + $consol_stats->{decayed} + $consol_stats->{deduped};
         if ($total > 0) {
             log_debug('PromptManager', "LTM consolidated: removed=$consol_stats->{removed}, decayed=$consol_stats->{decayed}, deduped=$consol_stats->{deduped}");
-            # Save consolidated LTM
+            # Save consolidated LTM. Anchor to the project root (directory
+            # containing .clio/) instead of the current working directory.
+            # CWD can change between turns but the LTM file must be stable
+            # so the agent can recover its knowledge after a trim.
             eval {
-                my $ltm_file = File::Spec->catfile(Cwd::getcwd(), '.clio', 'ltm.json');
+                require CLIO::Util::PathResolver;
+                require Cwd;
+                my $clio_dir = CLIO::Util::PathResolver::find_clio_dir(Cwd::getcwd());
+                my $ltm_file = File::Spec->catfile($clio_dir, '.clio', 'ltm.json');
                 $ltm->save($ltm_file);
             };
             log_warning('PromptManager', "Failed to save consolidated LTM: $@") if $@;

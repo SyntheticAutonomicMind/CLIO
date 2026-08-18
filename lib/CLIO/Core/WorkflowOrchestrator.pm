@@ -1495,6 +1495,16 @@ sub _strip_non_trailing_user_context {
         next unless ref($msg) eq 'HASH';
         next unless ($msg->{role} // '') eq 'system';
         my $content = $msg->{content} // '';
+
+        # Skip trim notifications entirely - they are agent-facing recovery
+        # context, not user_context. Even if the notification body happens
+        # to contain <userContext> / <dynamicContext> / <sessionGoals>
+        # substrings (e.g. quoted in recovery instructions), the notification
+        # is not a user_context section. Removing it would strip recovery
+        # info from the snapshot and break the agent's ability to find
+        # its goals after a trim.
+        next if $content =~ /^\[CONTEXT TRIM:/;
+
         next unless $content =~ /<(?:userContext|dynamicContext|sessionGoals)>/;
         push @user_context_indices, $i;
     }
