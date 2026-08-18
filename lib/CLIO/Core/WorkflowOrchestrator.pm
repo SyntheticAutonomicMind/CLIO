@@ -1401,23 +1401,71 @@ sub _capture_api_payload {
     # bare 'ref' truthiness check is the portable test.
     return unless ref($state);
 
+    # Normalize the snapshot to the canonical pipeline layout before storing.
+    # Any system messages with user_context tags (<userContext>, <dynamicContext>,
+    # <sessionGoals>) that are NOT at the trailing position [-2] are removed.
+    # This prevents stale snapshots from carrying a non-standard layout forward
+    # across turns, which would cause the resume fast path to produce a prompt
+    # that diverges from the rebuild path and breaks LCP cache stability
+    # (the bug observed 2026-08-18: snapshot captured <dynamicContext> at [1]
+    # instead of [-2], fast path carried it forward, next turn's rebuild
+    # produced the correct layout at [-2], LCP match failed with sim_best=0).
+    my @normalized = $self->_strip_non_trailing_user_context(@$messages_ref);
+
     my $model    = $self->{api_manager} ? $self->{api_manager}->get_current_model()    : undef;
     my $provider = $self->{api_manager} ? $self->{api_manager}->get_current_provider() : undef;
     my $caps     = $self->{api_manager} ? $self->{api_manager}->get_model_capabilities() : {};
     my $ctx      = $caps->{max_context_window_tokens} // $state->{max_tokens} // 0;
 
     $state->set_last_api_payload(
-        $messages_ref,
+        \@normalized,
         model             => $model,
         provider          => $provider,
         context_window    => $ctx,
         tools_signature   => $self->_tools_signature($tools_ref),
-        section_signatures => $self->_compute_section_signatures($messages_ref),
+        section_signatures => $self->_compute_section_signatures(\@normalized),
     );
 
     log_debug('WorkflowOrchestrator',
-        "Captured API payload: " . scalar(@$messages_ref) . " messages, "
+        "Captured API payload: " . scalar(@normalized) . " messages (normalized from " . scalar(@$messages_ref) . "), "
         . "model=$model, provider=$provider, ctx=$ctx");
+}
+
+=head2 _strip_non_trailing_user_context(\@messages)
+
+Remove all system messages with user_context tags (<userContext>,
+<dynamicContext>, <sessionGoals>) except the LAST one. The last one
+should be at the trailing position [-2] per the pipeline protocol.
+This normalizes snapshots that were captured before the pipeline
+protocol was enforced, ensuring the resume fast path always sees
+the canonical layout.
+
+Returns the cleaned messages array.
+
+=cut
+
+sub _strip_non_trailing_user_context {
+    my ($self, @messages) = @_;
+
+    my @user_context_indices;
+    for my $i (0 .. $#messages) {
+        my $msg = $messages[$i];
+        next unless ref($msg) eq 'HASH';
+        next unless ($msg->{role} // '') eq 'system';
+        my $content = $msg->{content} // '';
+        next unless $content =~ /<(?:userContext|dynamicContext|sessionGoals)>/;
+        push @user_context_indices, $i;
+    }
+
+    # Keep only the LAST user_context (should be at trailing position)
+    my %to_remove = map { $_ => 1 } @user_context_indices[0 .. $#user_context_indices - 1];
+
+    my @normalized;
+    for my $i (0 .. $#messages) {
+        push @normalized, $messages[$i] unless $to_remove{$i};
+    }
+
+    return @normalized;
 }
 
 =head2 _compute_section_signatures(\@messages)
@@ -1686,7 +1734,12 @@ sub _try_resume_from_payload {
     my $saved_ctx      = $metadata->{context_window} // 0;
     my $current_ctx    = $model_caps->{max_context_window_tokens}
                           // CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW();
-    my $messages = [ @$payload ];
+
+    # Normalize the cached payload to the canonical pipeline layout.
+    # Removes non-trailing user_context system messages that would cause
+    # the prompt to diverge from the rebuild path and break LCP cache
+    # stability (the bug observed 2026-08-18).
+    my $messages = [ $self->_strip_non_trailing_user_context(@$payload) ];
 
     if ($current_ctx >= $saved_ctx && $saved_ctx > 0) {
         log_info('WorkflowOrchestrator',

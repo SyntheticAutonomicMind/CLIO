@@ -2737,7 +2737,6 @@ sub _build_payload {
     # "stable prefix dropped from 27540 to 23983" on every trim and
     # reprocess the entire prompt (5+ minutes per task).
     if ($endpoint_config->{llama_user_id_supported} && $messages && @$messages) {
-        print STDERR "[DEBUG_DIAG][APIManager] stable_prefix_enter: messages=" . scalar(@$messages) . " first_role=" . (($messages->[0] && $messages->[0]{role}) // 'UNDEF') . " endpoint_keys=" . join(',', sort keys %$endpoint_config) . "\n";
         my $first_msg = $messages->[0];
         if ($first_msg && ($first_msg->{role} // '') eq 'system') {
             my $content = $first_msg->{content} // '';
@@ -2802,7 +2801,6 @@ sub _build_payload {
                         substr($text_content, -32));
                     $hash_source = 'fallback';
                 }
-                print STDERR "[DEBUG_DIAG][APIManager] stable_prefix_hash: source=$hash_source hash=" . substr($content_hash, 0, 16) . "... text_len=" . length($text_content) . "\n";
                 if ($self->{_stable_prefix_cache}
                     && $self->{_stable_prefix_cache}{hash} eq $content_hash) {
                     $payload->{prompt_stable_prefix_tokens} = $self->{_stable_prefix_cache}{tokens};
@@ -3350,8 +3348,6 @@ sub _prepare_api_request {
 
     # TEMP DIAG: dump full payload to stderr so we can see exactly what we send
     require CLIO::Util::JSON;
-    print STDERR "[DEBUG_DIAG][APIManager] payload_dump: " . CLIO::Util::JSON::encode_json($json) . "\n";
-    print STDERR "[DEBUG_DIAG][APIManager] endpoint_dump: $final_endpoint use_responses=$use_responses_api is_streaming=" . ($is_streaming ? 1 : 0) . "\n";
 
     return {
         req              => $req,
