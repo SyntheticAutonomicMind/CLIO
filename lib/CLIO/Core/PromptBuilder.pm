@@ -784,21 +784,40 @@ sub _read_session_goals {
 
     my $goals_text = '';
     eval {
-        my $goals_file = '.clio/memory/session_goals.json';
-        return '' unless -f $goals_file;
+        # Primary source: session state. Goals live in the session file
+        # (not a separate memory file) so they survive context trims,
+        # are race-free across concurrent sessions, and are always
+        # visible to the model in user_context (no loading step).
+        my $state = $session->can('state') ? $session->state() : undef;
+        my $goals = (ref($state) && $state->can('session_goals'))
+            ? $state->session_goals()
+            : undef;
 
-        require CLIO::Util::JSON;
-        my $json_text = do {
-            open my $fh, '<:encoding(UTF-8)', $goals_file or return '';
-            local $/;
-            <$fh>;
-        };
+        # Fallback: legacy file-based storage. Used by sessions created
+        # before session-state storage shipped. Read once and migrate to
+        # session state so future reads use the new path.
+        if (!defined $goals || !@$goals) {
+            require CLIO::Util::PathResolver;
+            require Cwd;
+            my $clio_dir = CLIO::Util::PathResolver::find_clio_dir(Cwd::getcwd());
+            my $goals_file = File::Spec->catfile($clio_dir, '.clio', 'memory', 'session_goals.json');
+            if (-f $goals_file) {
+                require CLIO::Util::JSON;
+                my $json_text = do {
+                    open my $fh, '<:encoding(UTF-8)', $goals_file or return '';
+                    local $/;
+                    <$fh>;
+                };
+                my $data = CLIO::Util::JSON::decode_json($json_text);
+                my $content = $data->{content} || '';
+                $goals = eval { CLIO::Util::JSON::decode_json($content) };
+                # Migrate to session state so future reads use the fast path.
+                if (ref($goals) eq 'ARRAY' && @$goals && ref($state) && $state->can('set_session_goals')) {
+                    $state->set_session_goals($goals);
+                }
+            }
+        }
 
-        my $data = CLIO::Util::JSON::decode_json($json_text);
-        my $content = $data->{content} || '';
-        return '' unless $content;
-
-        my $goals = eval { CLIO::Util::JSON::decode_json($content) };
         return '' unless $goals && ref($goals) eq 'ARRAY' && @$goals;
 
         # Filter to active goals only

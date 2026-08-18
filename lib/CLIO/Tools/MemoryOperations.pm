@@ -187,13 +187,13 @@ sub get_additional_parameters {
 
 sub store {
     my ($self, $params, $context) = @_;
-    
+
     my $key = $params->{key};
     my $content = $params->{content};
     my $memory_dir = strip_path_quotes($params->{memory_dir}) || '.clio/memory';
 
-    return $self->error_result("Missing required parameter: key") unless $key;
- return $self->error_result("Missing required parameter: content") unless $content;
+    return $self->error_result("Missing 'key' parameter") unless $key;
+    return $self->error_result("Missing 'content' parameter") unless $content;
 
     # session_goals is routed to session state (not a separate file) so
     # it survives context trims, is race-free across concurrent sessions,
@@ -222,22 +222,22 @@ sub store {
     my $result;
     eval {
         mkdir $memory_dir unless -d $memory_dir;
-        
+
         my $file_path = File::Spec->catfile($memory_dir, "$key.json");
         open my $fh, '>:utf8', $file_path or croak "Cannot write $file_path: $!";
-        
+
         my $data = {
             key => $key,
             content => $content,
             timestamp => time(),
         };
-        
+
         # encode_json can handle UTF-8 data correctly
         print $fh encode_json($data);
         close $fh;
-        
+
         my $action_desc = "storing memory '$key'";
-        
+
         $result = $self->success_result(
             "Memory stored successfully",
             action_description => $action_desc,
@@ -245,21 +245,21 @@ sub store {
             path => $file_path,
         );
     };
-    
+
     if ($@) {
         return $self->error_result("Failed to store memory: " . $self->_clean_eval_error($@));
     }
-    
+
     return $result;
 }
 
 sub retrieve {
     my ($self, $params, $context) = @_;
-    
+
     my $key = $params->{key};
     my $memory_dir = strip_path_quotes($params->{memory_dir}) || '.clio/memory';
 
- return $self->error_result("Missing required parameter: key") unless $key;
+    return $self->error_result("Missing 'key' parameter") unless $key;
 
     # session_goals lives in session state (not a separate file). Reads
     # come from there first; the file is only a backward-compat fallback
@@ -285,17 +285,17 @@ sub retrieve {
     my $result;
     eval {
         my $file_path = File::Spec->catfile($memory_dir, "$key.json");
-        
+
         return $self->error_result("Memory not found: $key") unless -f $file_path;
-        
+
         open my $fh, '<:utf8', $file_path or croak "Cannot read $file_path: $!";
         my $json = do { local $/; <$fh> };
         close $fh;
-        
+
         my $data = decode_json($json);
-        
+
         my $action_desc = "retrieving memory '$key'";
-        
+
         $result = $self->success_result(
             $data->{content},
             action_description => $action_desc,
@@ -303,18 +303,12 @@ sub retrieve {
             timestamp => $data->{timestamp},
         );
     };
-    
+
     if ($@) {
         return $self->error_result("Failed to retrieve memory: " . $self->_clean_eval_error($@));
     }
 
-    # Defensive: ensure we always return a proper result hashref. The eval
-    # block's return inside error_result("Memory not found") returns from
-    # the method directly (Perl behavior), but if the eval block exits
-    # normally without setting $result (edge case), we fall back to a
-    # clean error instead of returning undef to the ToolExecutor.
-    return $result if $result && ref($result) eq 'HASH';
-    return $self->error_result("Memory key not found: $key");
+    return $result;
 }
 
 sub search {
