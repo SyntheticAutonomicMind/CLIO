@@ -419,7 +419,7 @@ sub session_name {
     return $self->{session_name};
 }
 
-=head2 last_api_payload / last_api_metadata
+=head2 last_api_payload / last_api_metadata / section_signatures
 
 Cache the conversation state at end of turn so a resumed session can pick
 up with byte-identical context instead of rebuilding from scratch.
@@ -434,10 +434,18 @@ after rebuilding from session history. Otherwise the resume fast path and
 the rebuild path produce different prompts, breaking llama.cpp LCP cache
 stability (CachyLLama bug reported 2026-08-18).
 
+`section_signatures` is a hashref of SHA256 digests, one per pipeline
+protocol section. Lets future consumers detect per-section drift and
+selectively rebuild only the drifted sections (rather than discarding
+the entire snapshot). Sections: system_prompt, summary, context_files,
+dialog, tool_results, user_context, user_input. Sections that don't
+end (in the current snapshot) have no entry.
+
 =cut
 
 sub last_api_payload  { $_[0]->{last_api_payload} }
 sub last_api_metadata { $_[0]->{last_api_metadata} }
+sub section_signatures { $_[0]->{last_api_metadata}{section_signatures} }
 
 sub set_last_api_payload {
     my ($self, $payload, %opts) = @_;
@@ -457,6 +465,7 @@ sub set_last_api_payload {
         provider       => $opts{provider}       // $self->{last_api_metadata}{provider}       // undef,
         context_window => $opts{context_window} // $self->{last_api_metadata}{context_window} // 0,
         tools_signature => $opts{tools_signature} // $self->{last_api_metadata}{tools_signature} // undef,
+        section_signatures => $opts{section_signatures} // $self->{last_api_metadata}{section_signatures} // {},
         saved_at       => time(),
     };
 

@@ -2658,6 +2658,37 @@ sub _build_payload {
         }
     }
 
+    # Cache control marker: anchor the LCP cache to the stable anchor
+    # [0..2] = system_prompt + summary + context_files for providers that
+    # support OpenAI-style prompt caching (OpenAI gpt-4o/o-series,
+    # OpenRouter passthrough, GitHub Copilot Claude/GPT, NVIDIA NIM).
+    # The marker is placed on the LAST leading system message, so
+    # everything from [0] up to and including that message is cached.
+    # When [1] summary or [2] context_files is regenerated, the LCP
+    # break moves to that section (only that section's tokens are
+    # reprocessed), but the rest of the cache hit is preserved.
+    #
+    # Anthropic has its own cache_control handling in Anthropic.pm's
+    # build_request (concatenates all system messages into one
+    # system[] block with cache_control on the entry). llama.cpp uses
+    # prompt_stable_prefix_tokens below instead of cache_control.
+    if ($endpoint_config->{supports_cache_control} && $messages && @$messages) {
+        my $last_system_idx;
+        for my $i (0 .. $#$messages) {
+            last unless ($messages->[$i] && ($messages->[$i]{role} // '') eq 'system');
+            $last_system_idx = $i;
+        }
+        if (defined $last_system_idx) {
+            my $msgs = $messages;
+            # Mutate the message in place - $messages is the caller's
+            # array reference, so this propagates back through the
+            # JSON encoding that follows.
+            $msgs->[$last_system_idx]{cache_control} = { type => 'ephemeral' };
+            log_debug('APIManager',
+                "Placed cache_control marker on leading system message at index $last_system_idx");
+        }
+    }
+
     # Inject llama_user_id for local SSD-backed inference servers (llama.cpp,
     # LM Studio, SAM). Each CLIO session gets its own SSD cache directory
     # on the server (ssd-cache/u/<hash>/), preventing cross-session

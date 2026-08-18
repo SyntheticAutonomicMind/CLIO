@@ -1407,15 +1407,136 @@ sub _capture_api_payload {
 
     $state->set_last_api_payload(
         $messages_ref,
-        model           => $model,
-        provider        => $provider,
-        context_window  => $ctx,
-        tools_signature => $self->_tools_signature($tools_ref),
+        model             => $model,
+        provider          => $provider,
+        context_window    => $ctx,
+        tools_signature   => $self->_tools_signature($tools_ref),
+        section_signatures => $self->_compute_section_signatures($messages_ref),
     );
 
     log_debug('WorkflowOrchestrator',
         "Captured API payload: " . scalar(@$messages_ref) . " messages, "
         . "model=$model, provider=$provider, ctx=$ctx");
+}
+
+=head2 _compute_section_signatures(\@messages)
+
+Walk a pipeline-protocol messages array and produce SHA256 digests per
+section. Sections that don't exist in the array (e.g. no summary yet,
+no context files, no user_context) are omitted from the result hash.
+
+Section identification (canonical pipeline protocol order):
+- system_prompt: position 0, role=system, no [CONTEXT FILES] / <thread_summary> / <userContext> tag
+- summary: role=system, content has <thread_summary> tag
+- context_files: role=system, content has [CONTEXT FILES] tag
+- dialog: alternating user / assistant messages (every consecutive user/assistant pair)
+- tool_results: role=tool messages (with tool_call_id)
+- user_context: role=system, content has <userContext> / <dynamicContext> / <sessionGoals> tag
+- user_input: the LAST role=user message in the array
+
+Returned as a hashref suitable for storage in last_api_metadata. The
+hash is consumed by future per-section drift detection (Phase 5 of the
+pipeline protocol).
+
+=cut
+
+sub _compute_section_signatures {
+    my ($self, $messages) = @_;
+    return {} unless $messages && ref($messages) eq 'ARRAY' && @$messages;
+
+    require Digest::SHA;
+
+    my %sections = (
+        system_prompt => '',
+        summary       => '',
+        context_files => '',
+        dialog        => '',
+        tool_results  => '',
+        user_context  => '',
+        user_input    => '',
+    );
+
+    # Walk forward through messages, classifying each into a section.
+    # The order is the canonical pipeline protocol order; once we've
+    # moved past a section, we don't go back (e.g. summary comes before
+    # dialog, dialog comes before tool_results, etc.).
+    my $state = 'system';  # 'system' -> 'dialog' -> 'tools' -> 'user_ctx' -> 'user_input'
+    my $has_dialog = 0;
+    my $has_tools = 0;
+
+    for my $msg (@$messages) {
+        next unless ref($msg) eq 'HASH';
+        my $role = $msg->{role} // '';
+        my $content = $msg->{content} // '';
+
+        if ($role eq 'system') {
+            if ($content =~ /<thread_summary>/) {
+                $sections{summary} .= _stable_content($content);
+                $state = 'dialog';  # After summary, dialog begins
+            } elsif ($content =~ /\[CONTEXT FILES\]/) {
+                $sections{context_files} .= _stable_content($content);
+                $state = 'dialog';
+            } elsif ($content =~ /<(?:userContext|dynamicContext|sessionGoals)>/) {
+                $sections{user_context} .= _stable_content($content);
+                $state = 'user_ctx';
+            } elsif ($state eq 'system') {
+                # First system message with no tag -> system_prompt
+                $sections{system_prompt} .= _stable_content($content);
+                # Stay in 'system' state; subsequent system msgs with tags
+                # are still categorized by their tag.
+            } else {
+                # Subsequent system message without a known tag - treat as
+                # part of system_prompt (defensive: pipeline protocol says
+                # these should not exist, but if they do, attach them to
+                # the system anchor rather than discarding).
+                $sections{system_prompt} .= _stable_content($content);
+            }
+        } elsif ($role eq 'user' || $role eq 'assistant') {
+            $state = 'dialog';
+            $sections{dialog} .= _stable_content($content) . "\x00" . $role . "\x00";
+            $has_dialog = 1;
+        } elsif ($role eq 'tool' || $msg->{tool_call_id}) {
+            $state = 'tools';
+            $sections{tool_results} .= _stable_content($content) . "\x00" .
+                ($msg->{tool_call_id} // '') . "\x00";
+            $has_tools = 1;
+        }
+    }
+
+    # user_input is the LAST role=user message. We re-walk the array to
+    # find it (avoids the state-machine complexity of detecting end-of-dialog).
+    for my $i (reverse 0 .. $#$messages) {
+        my $msg = $messages->[$i];
+        next unless ref($msg) eq 'HASH';
+        if (($msg->{role} // '') eq 'user') {
+            $sections{user_input} = _stable_content($msg->{content} // '');
+            last;
+        }
+    }
+
+    # Drop empty sections (no occurrence in the array).
+    my %signatures;
+    for my $section (sort keys %sections) {
+        next unless length $sections{$section};
+        my $sha = Digest::SHA->new(256);
+        my $chunk = $sections{$section};
+        utf8::encode($chunk) if utf8::is_utf8($chunk);
+        $sha->add($chunk);
+        $signatures{$section} = $sha->hexdigest;
+    }
+
+    return \%signatures;
+}
+
+# Normalize a message's content for stable hashing. Strings are passed
+# through verbatim; arrayref content (multimodal) is JSON-canonicalized
+# so the hash is order-independent of any incidental key ordering.
+sub _stable_content {
+    my ($content) = @_;
+    return $content unless ref($content);
+    require CLIO::Util::JSON;
+    my $encoded = eval { CLIO::Util::JSON::encode_json_canonical($content) };
+    return defined $encoded ? $encoded : _stable_json_legacy($content);
 }
 
 =head2 _tools_signature(\@tools)

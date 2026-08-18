@@ -510,4 +510,147 @@ subtest 'resume strips stale trailing user_context and adds fresh (pipeline prot
     is($resumed->[-1]{content}, 'old_a1', 'stable core ends with last assistant message');
 };
 
+# Pipeline protocol phase 5: per-section signatures stored alongside the
+# payload. Each pipeline section (system_prompt, summary, context_files,
+# dialog, tool_results, user_context, user_input) gets a SHA256 digest of
+# its content. Future code can detect per-section drift and selectively
+# rebuild only the drifted sections.
+subtest 'section_signatures populated for all 7 sections (pipeline protocol phase 5)' => sub {
+    my $real_state = CLIO::Session::State->new(session_id => 'phase5-signatures', debug => 0);
+    my $sess = StubSession->new(state => $real_state);
+    my $tools = $real_tools;
+
+    my $messages = [
+        { role => 'system',    content => 'SYSTEM PROMPT' },
+        { role => 'system',    content => '<thread_summary>summary here</thread_summary>' },
+        { role => 'system',    content => '[CONTEXT FILES] file contents' },
+        { role => 'user',      content => 'q1' },
+        { role => 'assistant', content => 'a1', tool_calls => [
+            { id => 'tc_1', type => 'function', function => { name => 'file_operations', arguments => '{}' } },
+        ] },
+        { role => 'tool',      content => 'r1', tool_call_id => 'tc_1' },
+        { role => 'assistant', content => 'final' },
+        { role => 'system',    content => '<userContext>date: 2026-08-18</userContext>' },
+        { role => 'user',      content => 'q2' },
+    ];
+
+    $reference_orch->_capture_api_payload($sess, $messages, $tools);
+
+    my $sigs = $real_state->section_signatures;
+    ok($sigs && ref($sigs) eq 'HASH', 'section_signatures is a hashref');
+
+    # All 7 sections present
+    my @expected = qw(system_prompt summary context_files dialog tool_results user_context user_input);
+    for my $section (@expected) {
+        ok(exists $sigs->{$section}, "section_signatures has $section entry");
+        like($sigs->{$section}, qr/^[0-9a-f]{64}$/, "$section signature is a SHA256 hex digest");
+    }
+
+    # Each signature is unique (different content -> different digest)
+    my %seen;
+    for my $section (@expected) {
+        my $sig = $sigs->{$section};
+        ok(!$seen{$sig}, "$section signature is unique among sections (no accidental hash collision)")
+            or diag("Signature collision on $section: $sig");
+        $seen{$sig} = $section;
+    }
+};
+
+subtest 'section_signatures: same content produces same digest (stability)' => sub {
+    my $real_state = CLIO::Session::State->new(session_id => 'phase5-stable', debug => 0);
+    my $sess = StubSession->new(state => $real_state);
+    my $tools = $real_tools;
+
+    my $messages = [
+        { role => 'system',    content => 'SYSTEM PROMPT' },
+        { role => 'user',      content => 'q1' },
+        { role => 'assistant', content => 'a1' },
+        { role => 'user',      content => 'q2' },
+    ];
+
+    $reference_orch->_capture_api_payload($sess, $messages, $tools);
+    my $sigs1 = $real_state->section_signatures;
+
+    # Capture again with byte-identical content
+    $real_state->clear_last_api_payload;
+    $reference_orch->_capture_api_payload($sess, $messages, $tools);
+    my $sigs2 = $real_state->section_signatures;
+
+    for my $section (keys %$sigs1) {
+        is($sigs1->{$section}, $sigs2->{$section},
+            "$section digest is stable across identical captures");
+    }
+};
+
+subtest 'section_signatures: dialog change invalidates dialog but not system_prompt' => sub {
+    my $real_state = CLIO::Session::State->new(session_id => 'phase5-drift', debug => 0);
+    my $sess = StubSession->new(state => $real_state);
+    my $tools = $real_tools;
+
+    my $messages_v1 = [
+        { role => 'system', content => 'STABLE SYSTEM' },
+        { role => 'user',      content => 'q1' },
+        { role => 'assistant', content => 'a1' },
+        { role => 'user',      content => 'q2' },
+    ];
+
+    $reference_orch->_capture_api_payload($sess, $messages_v1, $tools);
+    my $sigs_v1 = $real_state->section_signatures;
+
+    # Add one more turn (dialog grew)
+    my $messages_v2 = [
+        { role => 'system', content => 'STABLE SYSTEM' },
+        { role => 'user',      content => 'q1' },
+        { role => 'assistant', content => 'a1' },
+        { role => 'user',      content => 'q2' },
+        { role => 'assistant', content => 'a2' },
+    ];
+
+    $real_state->clear_last_api_payload;
+    $reference_orch->_capture_api_payload($sess, $messages_v2, $tools);
+    my $sigs_v2 = $real_state->section_signatures;
+
+    is($sigs_v1->{system_prompt}, $sigs_v2->{system_prompt},
+        'system_prompt signature is unchanged when dialog grows');
+    isnt($sigs_v1->{dialog}, $sigs_v2->{dialog},
+        'dialog signature changed when dialog grew');
+};
+
+subtest 'section_signatures: user_context change invalidates user_context only' => sub {
+    my $real_state = CLIO::Session::State->new(session_id => 'phase5-user-ctx', debug => 0);
+    my $sess = StubSession->new(state => $real_state);
+    my $tools = $real_tools;
+
+    my $messages_v1 = [
+        { role => 'system', content => 'STABLE' },
+        { role => 'user',      content => 'q1' },
+        { role => 'assistant', content => 'a1' },
+        { role => 'system', content => '<userContext>date: 08:00</userContext>' },
+        { role => 'user',      content => 'q2' },
+    ];
+
+    $reference_orch->_capture_api_payload($sess, $messages_v1, $tools);
+    my $sigs_v1 = $real_state->section_signatures;
+
+    # Change user_context date (simulating date tick)
+    my $messages_v2 = [
+        { role => 'system', content => 'STABLE' },
+        { role => 'user',      content => 'q1' },
+        { role => 'assistant', content => 'a1' },
+        { role => 'system', content => '<userContext>date: 08:01 (CHANGED)</userContext>' },
+        { role => 'user',      content => 'q2' },
+    ];
+
+    $real_state->clear_last_api_payload;
+    $reference_orch->_capture_api_payload($sess, $messages_v2, $tools);
+    my $sigs_v2 = $real_state->section_signatures;
+
+    is($sigs_v1->{system_prompt}, $sigs_v2->{system_prompt},
+        'system_prompt signature unchanged when only user_context drifts');
+    is($sigs_v1->{dialog}, $sigs_v2->{dialog},
+        'dialog signature unchanged when only user_context drifts');
+    isnt($sigs_v1->{user_context}, $sigs_v2->{user_context},
+        'user_context signature changed (the dynamic anchor IS dynamic)');
+};
+
 done_testing();

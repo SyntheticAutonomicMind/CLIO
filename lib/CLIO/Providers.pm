@@ -87,6 +87,7 @@ my %PROVIDERS = (
         supports_tools => 1,
         supports_streaming => 1,
         supports_reasoning => 1,  # Claude 4, GPT-5, o-series exposed via /chat/completions
+        supports_cache_control => 1,  # Passes cache_control through to upstream Claude/GPT models
         chat_endpoint_suffix => '/chat/completions',
         copilot_models => 1,
         # Capability fetcher dispatch (replaces `provider =~ /^...$/i`
@@ -116,6 +117,7 @@ my %PROVIDERS = (
         supports_tools => 1,
         supports_streaming => 1,
         supports_reasoning => 1,  # o-series and gpt-5 accept reasoning_effort
+        supports_cache_control => 1,  # OpenAI prompt caching on gpt-4o/o1/o3/etc.
         endpoint => {
             path_suffix => '/chat/completions',
             temperature_range => [0.0, 2.0],
@@ -233,6 +235,7 @@ my %PROVIDERS = (
         requires_auth => 'apikey',
         supports_tools => 1,
         supports_streaming => 1,
+        supports_cache_control => 1,  # OpenRouter passes cache_control through to upstream
         endpoint => {
             path_suffix => '',
             temperature_range => [0.0, 2.0],
@@ -446,6 +449,7 @@ my %PROVIDERS = (
         supports_tools => 1,
         supports_streaming => 1,
         supports_reasoning => 1,  # Many NIM models support reasoning (DeepSeek V4, Nemotron Ultra, etc.)
+        supports_cache_control => 1,  # NIM OpenAI-compat accepts cache_control; some models use it
         keep_model_prefix => 1,  # NVIDIA model IDs include "nvidia/" namespace prefix
         # NVIDIA's /v1/models response omits most capability fields
         # (context_window, max_output_tokens). The NIM static map in
@@ -593,6 +597,14 @@ sub build_endpoint_config {
     # Propagate top-level provider flags into endpoint config for APIManager
     if ($provider && $provider->{supports_reasoning}) {
         $endpoint->{supports_reasoning} //= $provider->{supports_reasoning};
+    }
+    # Propagate supports_cache_control so APIManager can place cache_control
+    # markers on the stable-anchor system messages for prompt caching
+    # (OpenAI gpt-4o/o-series, OpenRouter passthrough, GitHub Copilot Claude/GPT,
+    # NVIDIA NIM). The marker anchors the LCP cache to the stable anchor
+    # [0..2] = system_prompt + summary + context_files.
+    if ($provider && $provider->{supports_cache_control}) {
+        $endpoint->{supports_cache_control} = 1;
     }
     # Propagate llama_user_id_supported so APIManager can inject the
     # session_id as llama_user_id for SSD-backed local inference servers.

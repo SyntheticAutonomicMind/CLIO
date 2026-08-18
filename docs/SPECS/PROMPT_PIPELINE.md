@@ -203,38 +203,37 @@ and the session history hasn't drifted.
 
 ---------------------------------------------------
 
-## Provider Adaptations
+## Provider Wire Formats
 
 Different providers handle the message array differently. The pipeline
 protocol preserves the seven sections in the internal representation;
-each provider adapts to its wire format at the boundary.
+each provider adapts to its wire format at the boundary. Cache-specific
+adaptations (cache_control markers, prompt_stable_prefix_tokens) are
+documented in [Provider Cache Adaptations](#provider-cache-adaptations)
+below.
 
 ### Anthropic (`lib/CLIO/Providers/Anthropic.pm`)
 
 Anthropic's Messages API has a top-level `system` field that is an
-array of `{type: "text", text: ..., cache_control: ...}` blocks.
-`convert_request` extracts all `role=system` messages from our array
-and concatenates them into the `system` field, with
-`cache_control: {type: "ephemeral"}` marking the cache breakpoint.
-
-Result: section boundaries are preserved at the wire level only as
-"where the cache breakpoint sits". Per-section cache control requires
-multiple cache_control markers, which is a future enhancement.
+array of `{type: "text", text: ...}` blocks. `convert_request` extracts
+all `role=system` messages from our array and concatenates them into
+the `system` field. Cache control is set on the block entry — see
+the Provider Cache Adaptations section.
 
 ### OpenAI Chat Completions (`lib/CLIO/Providers/Base.pm` and per-provider subclasses)
 
 OpenAI's `messages` array accepts multiple `role=system` messages.
-CLIO sends them as separate messages. OpenAI's `cache_control` (on
-supported models) can be applied per-message.
+CLIO sends them as separate messages. Providers that support
+`cache_control` get a marker placed on the last leading system
+message in `APIManager::_build_payload`.
 
 ### llama.cpp (`lib/CLIO/Providers/SAM.pm`, llama.cpp, LM Studio)
 
 llama.cpp's `prompt_stable_prefix_tokens` field tells the server how
 many leading tokens form a stable prefix. CLIO computes this as the
-sum of [0..2] tokens (system_prompt + summary + context_files).
-Everything from [3] onwards can change freely without invalidating the
-slot. Provider-specific modules set `prompt_stable_prefix_tokens` in
-the API payload before send.
+sum of leading system message tokens (typically the [0..2] stable
+anchor). Set in `APIManager::_build_payload` for `llama_user_id_supported`
+providers.
 
 ### OpenAI Responses API
 
@@ -244,9 +243,9 @@ the cache key.
 
 ### Google Gemini
 
-Gemini's caching API is configured per-request via `cachedContent`.
-The pipeline protocol's section structure maps to per-section cache
-breakpoints in future Gemini support.
+Gemini uses `cachedContent` for prompt caching. Future enhancement:
+per-section cache references using the same pipeline protocol
+abstractions.
 
 ---------------------------------------------------
 
@@ -339,18 +338,136 @@ trim policy must update these tests (and may need new subtests).
 
 ---------------------------------------------------
 
+## Snapshot Section Signatures
+
+Each captured snapshot includes a `section_signatures` field in
+`last_api_metadata`: a hashref mapping each pipeline section to its
+SHA256 digest. Sections that don't exist in the snapshot (e.g. no
+summary yet, no context files) are omitted.
+
+```perl
+$state->last_api_metadata->{section_signatures} = {
+    system_prompt => 'sha256...',
+    summary       => 'sha256...',
+    context_files => 'sha256...',
+    dialog        => 'sha256...',
+    tool_results  => 'sha256...',
+    user_context  => 'sha256...',
+    user_input    => 'sha256...',
+};
+```
+
+`WorkflowOrchestrator::_compute_section_signatures` walks the messages
+array and classifies each message into a section by content patterns:
+
+- **system_prompt**: position 0, role=system, no tag
+- **summary**: role=system, content has `<thread_summary>` tag
+- **context_files**: role=system, content has `[CONTEXT FILES]` tag
+- **dialog**: alternating user/assistant messages
+- **tool_results**: role=tool messages (with `tool_call_id`)
+- **user_context**: role=system, content has `<userContext>` /
+  `<dynamicContext>` / `<sessionGoals>` tag
+- **user_input**: the LAST role=user message
+
+Computed by `CLIO::Core::WorkflowOrchestrator::_compute_section_signatures`
+and stored by `_capture_api_payload`. Accessed via
+`CLIO::Session::State::section_signatures`.
+
+### Use Case
+
+Future consumers can compare signatures between turns to detect per-
+section drift:
+
+```perl
+my $stored = $state->section_signatures;
+# ... after rebuild ...
+if (($stored->{system_prompt} // '') ne ($current->{system_prompt} // '')) {
+    # Tools changed - need fresh system prompt
+}
+```
+
+Today the resume fast path uses only the full payload hash; signatures
+are defensive metadata for selective rebuild (a future optimization).
+
+---------------------------------------------------
+
+## Provider Cache Adaptations
+
+Different providers support different prompt caching mechanisms. The
+pipeline protocol's stable anchor [0..2] is the natural cache region
+across all of them.
+
+### OpenAI Chat Completions (`cache_control` marker)
+
+Providers that support OpenAI prompt caching receive a `cache_control`
+marker on the LAST leading system message — anchoring the cache to
+[0..N] where N is the position of the last system message before the
+first user/assistant message. This caches the entire stable anchor.
+
+Providers marked `supports_cache_control => 1` in `lib/CLIO/Providers.pm`:
+
+- `openai` (gpt-4o, gpt-4o-mini, o1, o3, o4-mini)
+- `openrouter` (passthrough to upstream)
+- `github_copilot` (passthrough to underlying Claude/GPT)
+- `nvidia` (NIM OpenAI-compat endpoint)
+
+Marker placement is in `APIManager::_build_payload`. The marker is added
+to the message in-place before JSON encoding.
+
+### Anthropic (concatenated `system[]` block)
+
+Anthropic's Messages API takes system instructions as a top-level
+`system` field, not as messages. `Anthropic::build_request` extracts
+all `role=system` messages from the array, concatenates them into one
+`system[]` block, and sets `cache_control: {type: 'ephemeral'}` on the
+entry. Per-section cache_control within the system block is a future
+enhancement.
+
+### llama.cpp (`prompt_stable_prefix_tokens`)
+
+For local inference servers (llama.cpp, LM Studio, SAM), the cache
+matching is done server-side via `prompt_stable_prefix_tokens`.
+`APIManager::_build_payload` computes this as the sum of leading
+system message tokens and includes it in the payload. The server uses
+this to reject any slot whose stored prompt doesn't share the leading
+prefix — a match check that survives trimming.
+
+Providers marked `llama_user_id_supported => 1` in `lib/CLIO/Providers.pm`:
+
+- `sam`, `llama_cpp`, `lm_studio`, `nvidia` (in some configurations)
+
+### Google Gemini
+
+Gemini uses `cachedContent` for prompt caching. Future enhancement:
+per-section `cachedContent` references. The pipeline protocol's
+section structure maps cleanly to this when implemented.
+
+### Cache Stability Impact
+
+| Provider | Cache region | Mechanism |
+|----------|--------------|-----------|
+| OpenAI Chat Completions | [0..N] system messages | `cache_control` marker on last leading system |
+| Anthropic | Whole `system[]` block | `cache_control: ephemeral` on the block entry |
+| llama.cpp | [0..M] tokens (M = leading system tokens) | `prompt_stable_prefix_tokens` field |
+| Google Gemini | (future) per-section `cachedContent` | TBD |
+
+The pipeline protocol's stable anchor layout means all four cache
+strategies anchor to the same byte region: [0..2] in pipeline order,
+which is the system_prompt + summary + context_files messages.
+
+---------------------------------------------------
+
 ## Future Work
 
-- **Per-section cache breakpoints** (Anthropic, OpenAI cached prompts):
-  place `cache_control` markers at section boundaries so each section
-  can be invalidated independently. Currently the whole `system` array
-  gets one breakpoint.
-- **Section signatures in metadata**: store hashes of each section's
-  content in `last_api_metadata` so the resume path can detect
-  per-section drift and only rebuild the drifted sections.
-- **Provider parity**: some providers (Google Gemini, NVIDIA NIM) need
-  per-section adaptation. The pipeline protocol provides the
-  internal abstraction; per-provider mapping is the next step.
+- **Per-section partial rebuild**: `section_signatures` enables
+  detecting which sections drifted between turns. The resume fast path
+  could selectively rebuild only the drifted sections (vs. the
+  current all-or-nothing fallback).
+- **Per-section Anthropic cache_control**: place cache_control on each
+  system message within the concatenated `system[]` block, so each
+  section gets its own cache lifetime.
+- **Google Gemini cachedContent**: per-section cache references using
+  the same section abstractions.
 - **Section [2] dedup**: when multiple context files have the same
   path, deduplicate before injection.
 

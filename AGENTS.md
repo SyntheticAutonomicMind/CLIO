@@ -1112,11 +1112,14 @@ Full spec: [`docs/SPECS/PROMPT_PIPELINE.md`](docs/SPECS/PROMPT_PIPELINE.md).
 
 - `tests/unit/test_cache_stable_layout.pl` — trim produces the cache-stable message ordering
 - `tests/unit/test_cache_stable_summary.pl` — CSSS slot lock behavior
-- `tests/unit/test_session_cached_payload.pl` — snapshot roundtrip + strip-and-replace on resume
+- `tests/unit/test_session_cached_payload.pl` — snapshot roundtrip + strip-and-replace on resume + per-section signatures
 - `tests/unit/test_conversation_manager_multimodal.pl` — system messages stay separate (no merge)
+- `tests/unit/test_conversation_manager.pl` — context_files injected as role=system
+- `tests/unit/test_provider_cache_control.pl` — `supports_cache_control` propagation + marker placement on last leading system message
 - `tests/integration/test_session_resume_cached_payload.pl` — end-to-end resume flow
 
-Any change to message ordering, role assignment, or trim policy must update these tests.
+Any change to message ordering, role assignment, trim policy, snapshot
+signatures, or provider cache adaptations must update these tests.
 
 ---
 
