@@ -2673,19 +2673,26 @@ sub _build_payload {
     # system[] block with cache_control on the entry). llama.cpp uses
     # prompt_stable_prefix_tokens below instead of cache_control.
     if ($endpoint_config->{supports_cache_control} && $messages && @$messages) {
-        my $last_system_idx;
+        # Anchor cache_control on the FIRST leading system message (the system
+        # prompt). The LAST leading system message is whichever volatile
+        # section lives at position [1] - context_files pre-trim (dropped by
+        # trim_conversation_for_api) or thread_summary post-trim (regenerated
+        # by CSSS). Anchoring to a volatile section causes the cache to
+        # invalidate on every trim and every CSSS regeneration.
+        my $first_system_idx;
         for my $i (0 .. $#$messages) {
-            last unless ($messages->[$i] && ($messages->[$i]{role} // '') eq 'system');
-            $last_system_idx = $i;
+            if ($messages->[$i] && ($messages->[$i]{role} // '') eq 'system') {
+                $first_system_idx = $i;
+                last;
+            } else {
+                last;
+            }
         }
-        if (defined $last_system_idx) {
+        if (defined $first_system_idx) {
             my $msgs = $messages;
-            # Mutate the message in place - $messages is the caller's
-            # array reference, so this propagates back through the
-            # JSON encoding that follows.
-            $msgs->[$last_system_idx]{cache_control} = { type => 'ephemeral' };
+            $msgs->[$first_system_idx]{cache_control} = { type => 'ephemeral' };
             log_debug('APIManager',
-                "Placed cache_control marker on leading system message at index $last_system_idx");
+                "Placed cache_control marker on system prompt at index $first_system_idx");
         }
     }
 
@@ -2707,24 +2714,26 @@ sub _build_payload {
 
     # prompt_stable_prefix_tokens: tell the llama.cpp LCP matcher how many
     # leading tokens form a stable prefix (system prompt). When CLIO trims
-    # the conversation, the recent messages shift but the system prompt at
+    # the conversation, recent messages shift but the system prompt at
     # position 0 stays byte-identical. Passing this lets the server reject
     # any slot whose stored prompt does not share the system prompt, so the
     # LCP match survives the trim instead of collapsing to sim_best=0.24.
     #
-    # The system prompt is the first message in the array. Its token count
-    # is a stable floor for the LCP match. We include any leading system
-    # messages that come before the first non-system role, since the
-    # trim_conversation_for_api() may have appended a thread_summary system
-    # message at the END of the history (which shifts with the tail) - we
-    # only want the LEADING system block.
+    # CRITICAL: only the system prompt at position 0 is included. The next
+    # leading system message is volatile:
+    #   - Pre-trim: context_files (injected by inject_context_files) - DROPPED
+    #     by trim_conversation_for_api
+    #   - Post-trim: thread_summary (CSSS slot) - content regenerates within
+    #     size budget
+    # Including either in the stable prefix causes the server to see
+    # "stable prefix dropped from 27540 to 23983" on every trim and
+    # reprocess the entire prompt (5+ minutes per task).
     if ($endpoint_config->{llama_user_id_supported} && $messages && @$messages) {
         my $stable_tokens = 0;
-        for my $msg (@$messages) {
-            last unless (($msg->{role} // '') eq 'system');
-            my $content = $msg->{content} // '';
+        my $first_msg = $messages->[0];
+        if ($first_msg && ($first_msg->{role} // '') eq 'system') {
+            my $content = $first_msg->{content} // '';
             if (ref($content) eq 'ARRAY') {
-                # Multimodal: sum text parts only
                 for my $part (@$content) {
                     if (ref($part) eq 'HASH' && ($part->{type} // '') eq 'text') {
                         require CLIO::Memory::TokenEstimator;
@@ -2733,12 +2742,12 @@ sub _build_payload {
                 }
             } else {
                 require CLIO::Memory::TokenEstimator;
-                $stable_tokens += CLIO::Memory::TokenEstimator::estimate_tokens($content);
+                $stable_tokens = CLIO::Memory::TokenEstimator::estimate_tokens($content);
             }
         }
         if ($stable_tokens > 0) {
             $payload->{prompt_stable_prefix_tokens} = $stable_tokens;
-            log_debug('APIManager', "Including prompt_stable_prefix_tokens: $stable_tokens (leading system block)");
+            log_debug('APIManager', "Including prompt_stable_prefix_tokens: $stable_tokens (system prompt only)");
         }
     }
 

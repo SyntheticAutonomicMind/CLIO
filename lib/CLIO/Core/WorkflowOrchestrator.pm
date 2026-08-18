@@ -886,13 +886,14 @@ sub process_input {
                     };
                 }
                 
-                # Inject a system-level continuation nudge (prefixed with user context for accurate time)
-                # Pipeline protocol: user_context is a separate role=system
-                # message at [-2], the nudge is the user_input at [-1].
-                push @messages, {
-                    role => 'system',
-                    content => $self->{prompt_builder}->get_user_context($session),
-                };
+                # Pipeline protocol: the dialogue is [sys, user, asst, tool, asst, ...].
+                # Inject a USER nudge (not a role=system message) so the
+                # alternation stays clean and the prompt_stable_prefix_tokens
+                # computed from leading system messages is unaffected.
+                # An earlier version of this handler also pushed a role=system
+                # user_context duplicate mid-dialog; that broke the LCP cache
+                # because the duplicate landed after the system prompt and
+                # before the user_input, mid-dialog.
                 push @messages, {
                     role => 'user',
                     content => "[SYSTEM: Your previous response ended without completing your work. " .

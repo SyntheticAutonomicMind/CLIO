@@ -44,8 +44,11 @@ subtest 'build_endpoint_config omits supports_cache_control for non-caching prov
     }
 };
 
-# APIManager._build_payload places cache_control on the last leading system
-# message when endpoint_config->{supports_cache_control} is true.
+# APIManager._build_payload places cache_control on the FIRST leading system
+# message (the system prompt) when endpoint_config->{supports_cache_control}
+# is true. Anchoring to the system prompt is the only stable choice across
+# trims: the trailing position [1] is volatile (context_files pre-trim,
+# thread_summary post-trim, both regenerate or get dropped).
 # Verify the behavior with a mock APIManager invocation.
 
 # Minimal APIManager stub for _build_payload testing.
@@ -67,18 +70,22 @@ sub apply_cache_control {
     my ($messages, $endpoint_config) = @_;
     return unless $endpoint_config->{supports_cache_control};
     return unless $messages && @$messages;
-    my $last_system_idx;
+    my $first_system_idx;
     for my $i (0 .. $#$messages) {
-        last unless ($messages->[$i] && ($messages->[$i]{role} // '') eq 'system');
-        $last_system_idx = $i;
+        if ($messages->[$i] && ($messages->[$i]{role} // '') eq 'system') {
+            $first_system_idx = $i;
+            last;
+        } else {
+            last;
+        }
     }
-    if (defined $last_system_idx) {
-        $messages->[$last_system_idx]{cache_control} = { type => 'ephemeral' };
+    if (defined $first_system_idx) {
+        $messages->[$first_system_idx]{cache_control} = { type => 'ephemeral' };
     }
     return $messages;
 }
 
-subtest 'cache_control marker placed on last leading system message' => sub {
+subtest 'cache_control marker placed on system prompt (first leading system)' => sub {
     my $messages = [
         { role => 'system', content => 'SYSTEM PROMPT' },
         { role => 'system', content => '<thread_summary>summary</thread_summary>' },
@@ -89,13 +96,13 @@ subtest 'cache_control marker placed on last leading system message' => sub {
 
     apply_cache_control($messages, $config);
 
-    # System message at index 0 (system_prompt) should NOT have cache_control
-    ok(!exists $messages->[0]{cache_control}, 'system_prompt at [0] has no cache_control');
+    # System prompt at index 0 should have cache_control (the stable anchor)
+    ok(exists $messages->[0]{cache_control}, 'system_prompt at [0] has cache_control marker');
+    is_deeply($messages->[0]{cache_control}, { type => 'ephemeral' },
+        'system_prompt cache_control is {type: ephemeral}');
 
-    # System message at index 1 (summary) should have cache_control
-    ok(exists $messages->[1]{cache_control}, 'summary at [1] has cache_control marker');
-    is_deeply($messages->[1]{cache_control}, { type => 'ephemeral' },
-        'summary cache_control is {type: ephemeral}');
+    # Summary at index 1 should NOT have cache_control (it's volatile)
+    ok(!exists $messages->[1]{cache_control}, 'summary at [1] has no cache_control');
 
     # Non-system messages should not have cache_control
     ok(!exists $messages->[2]{cache_control}, 'user message at [2] has no cache_control');
@@ -115,7 +122,7 @@ subtest 'cache_control omitted when supports_cache_control not set' => sub {
         'no cache_control placed when supports_cache_control not set');
 };
 
-subtest 'cache_control placed on context_files when no summary' => sub {
+subtest 'cache_control placed on system prompt even with context_files' => sub {
     my $messages = [
         { role => 'system', content => 'SYSTEM PROMPT' },
         { role => 'system', content => '[CONTEXT FILES] content' },
@@ -125,9 +132,10 @@ subtest 'cache_control placed on context_files when no summary' => sub {
 
     apply_cache_control($messages, $config);
 
-    ok(!exists $messages->[0]{cache_control}, 'system_prompt at [0] has no cache_control');
-    ok(exists $messages->[1]{cache_control},
-        'context_files at [1] has cache_control marker (no summary present, context_files is the last leading system msg)');
+    ok(exists $messages->[0]{cache_control},
+        'system_prompt at [0] has cache_control marker (anchor on stable prompt, not volatile context_files)');
+    ok(!exists $messages->[1]{cache_control},
+        'context_files at [1] has no cache_control (volatile, dropped by trim)');
 };
 
 subtest 'cache_control placement survives end-to-end payload build' => sub {
