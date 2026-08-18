@@ -2157,6 +2157,13 @@ sub _execute_tool_round {
 sub _prepare_tool_round {
     my ($self, $api_response, $messages, $session) = @_;
 
+    # Stash invalid-JSON tool_results here. Phase 1 fills this when it
+    # rejects a tool_call whose arguments can't be parsed/repaired. Phase 2
+    # flushes this AFTER pushing the assistant message so Anthropic's
+    # tool_use/tool_result position-pairing check passes. Cleared at the
+    # end of every call so no leak across iterations.
+    $self->{_deferred_invalid_tool_results} = [];
+
     # ── Phase 1: Validate tool_call argument JSON ────────────────────
     my @validated_tool_calls = ();
     my $had_validation_errors = 0;
@@ -2198,7 +2205,15 @@ sub _prepare_tool_round {
                 log_debug('WorkflowOrchestrator', "Malformed arguments: " . substr($arguments_str, 0, 200));
                 log_debug('WorkflowOrchestrator', "Could not repair JSON for tool '$tool_name' - tool call will be skipped");
 
-                push @$messages, {
+                # DEFER the tool_result push. The Phase-2 assistant message is
+                # built with @validated_tool_calls only (no invalid tool_calls),
+                # so pushing the tool_result BEFORE the assistant message
+                # orphans the tool_result: Anthropic's "tool_use block must have
+                # a corresponding tool_result in the next message" check fails
+                # because the tool_result lands in a user message BEFORE any
+                # assistant message carries the matching tool_use. Stash
+                # here and flush after the assistant message lands.
+                push @{$self->{_deferred_invalid_tool_results}}, {
                     role => 'tool',
                     tool_call_id => $tool_call->{id},
                     name => $tool_name,
@@ -2221,6 +2236,13 @@ sub _prepare_tool_round {
             role => 'assistant',
             content => $api_response->{content} || "I encountered an error with my tool calls. Let me try a different approach."
         };
+        # Discard any deferred invalid-JSON tool_results - with no
+        # assistant-with-tool_calls message in the conversation, they
+        # would be orphan. Anthropic rejects orphan tool_results (they
+        # require a preceding assistant with tool_use), so we drop them
+        # here. The assistant content above already tells the model to
+        # retry with valid JSON.
+        $self->{_deferred_invalid_tool_results} = [];
         return undef;
     }
 
@@ -2252,6 +2274,25 @@ sub _prepare_tool_round {
         $assistant_msg->{responses_reasoning_items} = $api_response->{responses_reasoning_items};
     }
     push @$messages, $assistant_msg;
+
+    # Flush deferred invalid-JSON tool_results now that the assistant message
+    # has been pushed. Order matters: tool_result (user with tool_result
+    # blocks in Anthropic's wire format) must come AFTER the assistant message
+    # that carried the matching tool_use blocks. Invalid tool_calls are NOT
+    # in the assistant message (they were dropped in Phase 1), so their
+    # tool_results would orphan otherwise - but Anthropic's pairing check
+    # is by position (next message), not by ID, so a tool_result before any
+    # assistant with tool_use triggers:
+    #   "tool_result for tool_use_id N found in user message that doesn't
+    #    immediately follow an assistant message with that tool_use"
+    # By flushing AFTER the assistant message we keep the pairing correct
+    # for the valid tool_calls, and the invalid-JSON tool_results are
+    # accepted as orphan tool_results (Anthropic ignores tool_results with
+    # no matching tool_use rather than rejecting the request).
+    if ($self->{_deferred_invalid_tool_results} && @{$self->{_deferred_invalid_tool_results}}) {
+        push @$messages, @{$self->{_deferred_invalid_tool_results}};
+        $self->{_deferred_invalid_tool_results} = [];
+    }
 
     # Delayed save: assistant message saved with first tool result to prevent orphans
     my $assistant_msg_pending = {
