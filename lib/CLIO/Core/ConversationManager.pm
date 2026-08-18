@@ -543,7 +543,14 @@ sub enforce_message_alternation {
         # Check if same role as previous (needs merging)
         # Do NOT merge tool messages - each has unique tool_call_id
         # Do NOT merge arrayref content into string - preserve it as a separate message
-        if (defined $last_role && $role eq $last_role && $role ne 'tool' && !$is_arrayref) {
+        # Do NOT merge system messages - each represents a distinct pipeline
+        # section (system_prompt, summary, context_files, user_context). Merging
+        # them concatenates content into one big system prompt, which couples
+        # their cache lifetimes: any section's regeneration invalidates the
+        # whole merged prompt for LCP cache purposes. Anthropic's
+        # _separate_system_prompt and OpenAI's per-message cache_control both
+        # rely on the sections being separate messages.
+        if (defined $last_role && $role eq $last_role && $role ne 'tool' && $role ne 'system' && !$is_arrayref) {
             my $has_content = 0;
             if (defined $msg->{content}) {
                 if (!ref($msg->{content})) {
