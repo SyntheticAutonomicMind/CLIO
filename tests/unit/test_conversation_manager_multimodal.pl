@@ -318,6 +318,78 @@ subtest 'arrayref content with multiple images' => sub {
 };
 
 # ===========================================
+# Pipeline protocol: system messages represent distinct sections
+# (system_prompt, summary, context_files, user_context) and must NOT be
+# merged by enforce_message_alternation. Merging them concatenates content
+# and couples cache lifetimes — any section's regeneration invalidates the
+# whole merged prompt for LCP purposes.
+# ===========================================
+
+subtest 'enforce_message_alternation does NOT merge consecutive system messages' => sub {
+    my $messages = [
+        make_msg('system', 'SYSTEM PROMPT: you are CLIO'),
+        make_msg('system', '<thread_summary>...</thread_summary>'),
+        make_msg('system', '[CONTEXT FILES] file contents...'),
+        make_msg('user', 'question'),
+        make_msg('assistant', 'answer'),
+        make_msg('system', '<userContext>date: 2026-08-18</userContext>'),
+        make_msg('user', 'next question'),
+    ];
+
+    my $result = enforce_message_alternation($messages, 'test');
+
+    # Should have 7 messages - all system messages stay separate
+    is(scalar(@$result), 7, 'all 7 messages preserved (no system merging)');
+
+    # Verify each system message survived separately
+    is($result->[0]{content}, 'SYSTEM PROMPT: you are CLIO', 'system_prompt section preserved');
+    is($result->[1]{content}, '<thread_summary>...</thread_summary>', 'summary section preserved');
+    is($result->[2]{content}, '[CONTEXT FILES] file contents...', 'context_files section preserved');
+    is($result->[5]{content}, '<userContext>date: 2026-08-18</userContext>', 'user_context section preserved');
+
+    # Roles should be intact
+    is($result->[0]{role}, 'system', 'position 0 is system');
+    is($result->[1]{role}, 'system', 'position 1 is system');
+    is($result->[2]{role}, 'system', 'position 2 is system');
+    is($result->[3]{role}, 'user', 'position 3 is user');
+    is($result->[4]{role}, 'assistant', 'position 4 is assistant');
+    is($result->[5]{role}, 'system', 'position 5 is system (user_context at fixed position)');
+    is($result->[6]{role}, 'user', 'position 6 is user (current user_input)');
+};
+
+subtest 'user messages DO still merge (regression guard)' => sub {
+    my $messages = [
+        make_msg('system', 'sys'),
+        make_msg('user', 'first'),
+        make_msg('user', 'second'),
+        make_msg('assistant', 'a'),
+    ];
+
+    my $result = enforce_message_alternation($messages, 'test');
+
+    is(scalar(@$result), 3, 'system separate, users merged into one');
+    is($result->[0]{role}, 'system', 'position 0 is system');
+    is($result->[1]{role}, 'user', 'position 1 is user (merged)');
+    like($result->[1]{content}, qr/first.*second/s, 'user messages merged');
+    is($result->[2]{role}, 'assistant', 'position 2 is assistant');
+};
+
+subtest 'assistant messages DO still merge (regression guard)' => sub {
+    my $messages = [
+        make_msg('system', 'sys'),
+        make_msg('user', 'q'),
+        make_msg('assistant', 'first'),
+        make_msg('assistant', 'second'),
+    ];
+
+    my $result = enforce_message_alternation($messages, 'test');
+
+    is(scalar(@$result), 3, 'system + user + merged assistant');
+    is($result->[2]{role}, 'assistant', 'position 2 is assistant (merged)');
+    like($result->[2]{content}, qr/first.*second/s, 'assistant messages merged');
+};
+
+# ===========================================
 # Mock session class for testing
 # ===========================================
 
