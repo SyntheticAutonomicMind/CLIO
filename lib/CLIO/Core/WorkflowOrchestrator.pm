@@ -763,12 +763,13 @@ sub process_input {
         $session_error_count = 0;  # Reset on success to allow future errors
         delete $session->{_error_count} if $session;
 
-        # Capture the exact @messages array just sent to the API. On session
-        # resume this becomes the "reload current state" snapshot - no need to
-        # re-trim history or rebuild the system prompt. Snapshot BEFORE the
-        # assistant response and tool results get appended below, so what we
-        # persist is "what the model just saw", not the in-flight expansion.
-        $self->_capture_api_payload($session, \@messages, $tools);
+        # Snapshot capture happens at the success-path return below, not here.
+        # At this point @messages still reflects only what was sent to the API
+        # for this iteration - the tool_results that _execute_tool_round will
+        # append on the next line have not yet been merged in. Capturing here
+        # would store a stale pre-tool state and cause the resume fast path
+        # to drop the tool_results on the next turn (the divergence bug fixed
+        # by moving snapshot capture to end-of-turn).
 
         # Record API usage for billing tracking
         if ($api_response->{usage} && $session) {
@@ -970,15 +971,26 @@ sub process_input {
             # workflow execution. This flag prevents Chat.pm from saving duplicates.
             messages_saved_during_workflow => (@tool_calls_made > 0) ? 1 : 0
         };
-        
+
+        # Capture the end-of-turn API payload. At this point @messages
+        # contains the full conversation: original prompt + assistant
+        # response + all tool_results (from _execute_tool_round) + the
+        # final assistant text (saved above). The resume fast path uses
+        # this snapshot to skip rebuilding from session history on the
+        # next turn. Capturing at end-of-turn (vs before tool execution)
+        # ensures the snapshot matches what a fresh rebuild from session
+        # history would produce - eliminating the resume/rebuild divergence
+        # that broke llama.cpp LCP cache stability.
+        $self->_capture_api_payload($session, \@messages, $tools);
+
         # previous_response_id should ALWAYS be included when available (see APIManager.pm).
         # Skipping it for tool calls was causing unnecessary credit charges.
-        
+
         # Include metrics if streaming was used
         if ($api_response->{metrics}) {
             $result->{metrics} = $api_response->{metrics};
         }
-        
+
         return $result;
     }
     
@@ -1002,7 +1014,13 @@ sub process_input {
     
     log_debug('WorkflowOrchestrator', "$error_msg");
     log_debug('WorkflowOrchestrator', "Tool calls made: " . scalar(@tool_calls_made));
-    
+
+    # Even on iteration-limit exit we want the snapshot to reflect whatever
+    # progress we made (tool_results saved to session history during this
+    # turn). Capturing here keeps the resume fast path consistent with
+    # session history state.
+    $self->_capture_api_payload($session, \@messages, $tools);
+
     return {
         success => 0,
         error => $error_msg,
@@ -1295,13 +1313,22 @@ sub invalidate_tool_cache {
 
 =head2 _capture_api_payload($session, \@messages, \@tools)
 
-Snapshot the messages array that was just sent to the provider. The snapshot
-includes a digest of the tools array so resume can detect when the toolset
-has drifted and decide to fall back to a rebuild.
+Snapshot the conversation state at end of turn so that session resume can
+pick up with byte-identical context instead of rebuilding from scratch.
 
-Called immediately after every successful API send (before the response is
-unfolded into the messages array) so the persisted snapshot is exactly what
-the model saw on its last turn.
+The snapshot captures the FULL @messages array AFTER tool execution has
+appended assistant responses and tool_results to it. This is the key
+contract: the snapshot must equal what load_conversation_history() would
+return after rebuilding from session history. Otherwise the resume fast
+path and the rebuild path produce different prompts, which breaks LCP
+cache stability (the bug CachyLLama reported on 2026-08-18).
+
+Call sites:
+- Success path return (line ~983) - normal turn completion
+- Iteration-limit exit (line ~1014) - max_iter reached but progress was made
+
+The snapshot includes a digest of the tools array so resume can detect
+when the toolset has drifted and decide to fall back to a rebuild.
 
 =cut
 
