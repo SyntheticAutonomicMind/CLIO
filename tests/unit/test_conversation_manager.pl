@@ -197,7 +197,11 @@ subtest 'inject_context_files - adds context to messages' => sub {
     inject_context_files($session, \@messages);
 
     is(scalar(@messages), 1, 'One context message injected');
-    is($messages[0]{role}, 'user', 'Context injected as user message');
+    # Pipeline protocol: context_files is role=system (was role=user).
+    # As a separate system section, its cache lifetime is independent of
+    # the dialog and tool_results around it. enforce_message_alternation
+    # does not merge system messages, so it stays distinct.
+    is($messages[0]{role}, 'system', 'Context injected as system message (pipeline protocol)');
     like($messages[0]{content}, qr/CONTEXT FILES/, 'Contains context header');
     like($messages[0]{content}, qr/This is context file content/, 'Contains file content');
 };

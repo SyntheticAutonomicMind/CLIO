@@ -651,10 +651,16 @@ sub enforce_message_alternation {
 
 =head2 inject_context_files
 
-Inject user-added context files into the messages array.
+Inject user-added context files into the messages array as a separate
+role=system message (the pipeline protocol's context_files section).
 
-Called after system prompt but before conversation history.
-Context files are added via /context add command.
+Called after system prompt but before conversation history. Context files
+are added via /context add command.
+
+Role=system (not user) so context_files has its own cache lifetime. When
+the user adds/removes a file, only this section invalidates - not the
+dialog or tool_results before/after it. enforce_message_alternation does
+not merge system messages, so context_files stays as a distinct section.
 
 Arguments:
 - $session: Session object (CLIO::Session::State)
@@ -705,8 +711,11 @@ sub inject_context_files {
     }
 
     if ($context_content) {
+        # Pipeline protocol: context_files is role=system (was role=user).
+        # As a separate system section, its cache lifetime is independent
+        # of the dialog and tool_results around it.
         my $context_message = {
-            role => 'user',
+            role => 'system',
             content => "[CONTEXT FILES]\n" .
                 "The following files were added to context by the user.\n" .
                 "Reference these files when relevant to the conversation.\n" .
