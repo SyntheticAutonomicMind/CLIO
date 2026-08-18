@@ -154,4 +154,64 @@ my $orc = bless {}, 'CLIO::Core::WorkflowOrchestrator';
     }
 }
 
-print "1..7\n";
+# Test 6: continuation nudge is stripped from snapshot
+{
+    my @messages = (
+        make_msg('system', '# CLIO System Prompt...'),
+        make_msg('user',   'first user msg'),
+        make_msg('assistant', 'assistant response'),
+        make_msg('user',   '[SYSTEM: Your previous response ended without completing your work. Please continue where you left off.]'),
+        make_msg('assistant', 'continued response'),
+        make_msg('user',   'real next user msg'),
+    );
+
+    my @cleaned = $orc->_strip_continuation_nudges(@messages);
+
+    my $nudge_count = 0;
+    for my $msg (@cleaned) {
+        my $content = $msg->{content} // '';
+        if ($content =~ /^\[SYSTEM: Your previous response ended without completing your work/) {
+            $nudge_count++;
+        }
+    }
+
+    if ($nudge_count == 0) {
+        print "ok 8 - continuation nudge stripped from snapshot\n";
+    } else {
+        print "not ok 8 - found $nudge_count continuation nudges (expected 0)\n";
+    }
+
+    # Regular user messages should still be there
+    my $real_user_count = 0;
+    for my $msg (@cleaned) {
+        next unless ($msg->{role} // '') eq 'user';
+        my $content = $msg->{content} // '';
+        next if $content =~ /^\[SYSTEM:/;
+        $real_user_count++;
+    }
+
+    if ($real_user_count == 2) {
+        print "ok 9 - real user messages preserved (got $real_user_count)\n";
+    } else {
+        print "not ok 9 - expected 2 real user messages, got $real_user_count\n";
+    }
+}
+
+# Test 7: array without nudges passes through unchanged
+{
+    my @messages = (
+        make_msg('system', '# CLIO System Prompt...'),
+        make_msg('user',   'first user msg'),
+        make_msg('assistant', 'reply'),
+    );
+
+    my @cleaned = $orc->_strip_continuation_nudges(@messages);
+
+    if (scalar(@cleaned) == scalar(@messages)) {
+        print "ok 10 - array without nudges passes through unchanged\n";
+    } else {
+        print "not ok 10 - array without nudges was modified\n";
+    }
+}
+
+print "1..10\n";

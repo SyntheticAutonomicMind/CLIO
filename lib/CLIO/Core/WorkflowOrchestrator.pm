@@ -1402,15 +1402,26 @@ sub _capture_api_payload {
     return unless ref($state);
 
     # Normalize the snapshot to the canonical pipeline layout before storing.
-    # Any system messages with user_context tags (<userContext>, <dynamicContext>,
-    # <sessionGoals>) that are NOT at the trailing position [-2] are removed.
-    # This prevents stale snapshots from carrying a non-standard layout forward
-    # across turns, which would cause the resume fast path to produce a prompt
-    # that diverges from the rebuild path and breaks LCP cache stability
-    # (the bug observed 2026-08-18: snapshot captured <dynamicContext> at [1]
-    # instead of [-2], fast path carried it forward, next turn's rebuild
-    # produced the correct layout at [-2], LCP match failed with sim_best=0).
+    # Two normalizations are applied:
+    #
+    # 1. Strip non-trailing user_context system messages (<userContext>,
+    #    <dynamicContext>, <sessionGoals>). Prevents stale snapshots from
+    #    carrying a non-standard layout forward across turns, which would
+    #    cause the resume fast path to produce a prompt that diverges from
+    #    the rebuild path and breaks LCP cache stability (the bug observed
+    #    2026-08-18: snapshot captured <dynamicContext> at [1] instead of
+    #    [-2], fast path carried it forward, next turn's rebuild produced
+    #    the correct layout at [-2], LCP match failed with sim_best=0).
+    #
+    # 2. Strip continuation nudges - ephemeral "[SYSTEM: Your previous
+    #    response ended without completing your work...]" user messages
+    #    pushed when the model gets stuck mid-workflow. These are NOT
+    #    persisted to session history, so the rebuild path never sees
+    #    them. Leaving them in the snapshot causes the fast path to
+    #    accumulate one nudge per stuck cycle, diverging from the rebuild
+    #    path after each cycle.
     my @normalized = $self->_strip_non_trailing_user_context(@$messages_ref);
+    @normalized   = $self->_strip_continuation_nudges(@normalized);
 
     my $model    = $self->{api_manager} ? $self->{api_manager}->get_current_model()    : undef;
     my $provider = $self->{api_manager} ? $self->{api_manager}->get_current_provider() : undef;
@@ -1429,6 +1440,37 @@ sub _capture_api_payload {
     log_debug('WorkflowOrchestrator',
         "Captured API payload: " . scalar(@normalized) . " messages (normalized from " . scalar(@$messages_ref) . "), "
         . "model=$model, provider=$provider, ctx=$ctx");
+}
+
+=head2 _strip_continuation_nudges(\@messages)
+
+Remove user messages that are continuation nudges - ephemeral
+"[SYSTEM: Your previous response ended without completing your work...]"
+messages pushed when the model gets stuck mid-workflow. These are NOT
+persisted to session history, so the rebuild path never sees them.
+Leaving them in the snapshot causes the fast path to accumulate one
+nudge per stuck cycle, diverging from the rebuild path after each cycle.
+
+Returns the cleaned messages array.
+
+=cut
+
+sub _strip_continuation_nudges {
+    my ($self, @messages) = @_;
+
+    my @cleaned;
+    for my $msg (@messages) {
+        if (ref($msg) eq 'HASH'
+            && ($msg->{role} // '') eq 'user') {
+            my $content = $msg->{content} // '';
+            if ($content =~ /^\[SYSTEM: Your previous response ended without completing your work/) {
+                next;
+            }
+        }
+        push @cleaned, $msg;
+    }
+
+    return @cleaned;
 }
 
 =head2 _strip_non_trailing_user_context(\@messages)
@@ -1738,8 +1780,11 @@ sub _try_resume_from_payload {
     # Normalize the cached payload to the canonical pipeline layout.
     # Removes non-trailing user_context system messages that would cause
     # the prompt to diverge from the rebuild path and break LCP cache
-    # stability (the bug observed 2026-08-18).
+    # stability (the bug observed 2026-08-18). Also strips continuation
+    # nudges that are not persisted to session history (the rebuild path
+    # never sees them, so the fast path must not carry them forward).
     my $messages = [ $self->_strip_non_trailing_user_context(@$payload) ];
+    $messages    = [ $self->_strip_continuation_nudges(@$messages) ];
 
     if ($current_ctx >= $saved_ctx && $saved_ctx > 0) {
         log_info('WorkflowOrchestrator',

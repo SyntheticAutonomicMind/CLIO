@@ -2670,11 +2670,12 @@ sub _build_payload {
     # [0..2] = system_prompt + summary + context_files for providers that
     # support OpenAI-style prompt caching (OpenAI gpt-4o/o-series,
     # OpenRouter passthrough, GitHub Copilot Claude/GPT, NVIDIA NIM).
-    # The marker is placed on the LAST leading system message, so
-    # everything from [0] up to and including that message is cached.
-    # When [1] summary or [2] context_files is regenerated, the LCP
-    # break moves to that section (only that section's tokens are
-    # reprocessed), but the rest of the cache hit is preserved.
+    # The marker is placed on the FIRST leading system message (the system
+    # prompt itself), so everything from [0] up to and including that
+    # message is cached. When [1] summary or [2] context_files is
+    # regenerated, the LCP break moves to that section (only that
+    # section's tokens are reprocessed), but the rest of the cache hit
+    # is preserved.
     #
     # Anthropic has its own cache_control handling in Anthropic.pm's
     # build_request (concatenates all system messages into one

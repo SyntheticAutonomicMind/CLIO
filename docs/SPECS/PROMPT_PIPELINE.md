@@ -400,9 +400,12 @@ across all of them.
 ### OpenAI Chat Completions (`cache_control` marker)
 
 Providers that support OpenAI prompt caching receive a `cache_control`
-marker on the LAST leading system message — anchoring the cache to
-[0..N] where N is the position of the last system message before the
-first user/assistant message. This caches the entire stable anchor.
+marker on the FIRST leading system message (the system prompt itself).
+This anchors the cache to [0] so the system prompt stays cached across
+turns even when summary/context_files/user_context are regenerated.
+Anchoring on the LAST system message would invalidate the cache on
+every CSSS regeneration or context_files change, since those are
+volatile sections in the pipeline layout.
 
 Providers marked `supports_cache_control => 1` in `lib/CLIO/Providers.pm`:
 
