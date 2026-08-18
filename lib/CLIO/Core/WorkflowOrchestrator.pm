@@ -887,14 +887,19 @@ sub process_input {
                 }
                 
                 # Inject a system-level continuation nudge (prefixed with user context for accurate time)
+                # Pipeline protocol: user_context is a separate role=system
+                # message at [-2], the nudge is the user_input at [-1].
+                push @messages, {
+                    role => 'system',
+                    content => $self->{prompt_builder}->get_user_context($session),
+                };
                 push @messages, {
                     role => 'user',
-                    content => $self->{prompt_builder}->get_user_context($session) .
-                               "[SYSTEM: Your previous response ended without completing your work. " .
+                    content => "[SYSTEM: Your previous response ended without completing your work. " .
                                "You were actively using tools and appear to have stopped mid-workflow. " .
                                "Please continue where you left off - review your recent tool results and proceed with your plan.]"
                 };
-                
+
                 # Don't count this as a full iteration
                 $iteration--;
                 next;
@@ -1085,9 +1090,27 @@ sub _build_turn_context {
     unless ($self->{_tools_cache}) {
         my ($cached_messages, $cached_tools) = $self->_try_resume_from_payload($session, $model_caps);
         if ($cached_messages && $cached_tools) {
-            # Append the new user input to the cached payload.
+            # Pipeline protocol: trailing [user_context, user_input] are
+            # dynamic and must be regenerated each turn. Strip the stale
+            # trailing pair from the snapshot, then append fresh.
+            # See _build_turn_context rebuild path below for the canonical
+            # implementation - the fast path mirrors it.
+            if (@$cached_messages && $cached_messages->[-1]{role} eq 'user') {
+                pop @$cached_messages;
+            }
+            if (@$cached_messages
+                && $cached_messages->[-1]{role} eq 'system'
+                && $cached_messages->[-1]{content} =~ /<(?:userContext|dynamicContext|sessionGoals)>/) {
+                pop @$cached_messages;
+            }
+
             my $user_context = $self->{prompt_builder}->get_user_context($session);
-            push @$cached_messages, { role => 'user', content => $user_context . $user_input };
+            if ($self->{non_interactive}) {
+                $user_context .= CLIO::Core::PromptBuilder::generate_non_interactive_section() . "\n\n";
+                log_debug('WorkflowOrchestrator', "Added non-interactive instruction to user context");
+            }
+            push @$cached_messages, { role => 'system', content => $user_context };
+            push @$cached_messages, { role => 'user',   content => $user_input };
 
             # Cache tools so subsequent _build_turn_context calls in this
             # process take the normal rebuild path.
@@ -1155,7 +1178,12 @@ sub _build_turn_context {
         log_debug('WorkflowOrchestrator', "Added non-interactive instruction to user context");
     }
 
-    push @messages, { role => 'user', content => $user_context . $user_input };
+    # Pipeline protocol: user_context is a separate role=system message at
+    # position [-2], user_input is at position [-1]. This keeps the dynamic
+    # date/time, dynamic context, and session goals in a fixed slot whose
+    # invalidation doesn't bleed backward into the stable dialog/tool_results.
+    push @messages, { role => 'system', content => $user_context };
+    push @messages, { role => 'user',   content => $user_input };
 
     # If image attachments are present, convert user message to array-format content
     # Only build multimodal content if the model supports vision
@@ -2731,7 +2759,12 @@ sub _compress_dropped_for_recovery {
 
     log_debug('WorkflowOrchestrator', "Recovery context created: " . length($recovery_content) . " chars from " . scalar(@$dropped_messages) . " dropped messages");
 
-    # Prepend user context for accurate time during recovery work
+    # Prepend user context for accurate time during recovery work.
+    # Note: this returns a single user message (not the [user_context, user]
+    # pair used elsewhere in the pipeline). Recovery is an exceptional path
+    # where we're rebuilding context after aggressive trimming, so the LCP
+    # benefits of the pipeline protocol don't apply. Callers push this as
+    # a single user message.
     $recovery_content = $user_context . $recovery_content;
 
     return {
