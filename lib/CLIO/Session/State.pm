@@ -421,10 +421,18 @@ sub session_name {
 
 =head2 last_api_payload / last_api_metadata
 
-Cache the exact messages array the agent last sent to the provider so that a
-resumed session can pick up with byte-identical context instead of rebuilding
-the history from scratch. See CLIO::Core::WorkflowOrchestrator for the
-fast-path that consumes these on session resume.
+Cache the conversation state at end of turn so a resumed session can pick
+up with byte-identical context instead of rebuilding from scratch.
+
+The snapshot is captured by WorkflowOrchestrator::process_input AFTER tool
+execution completes (so it includes the assistant response, tool_calls, and
+tool_results persisted during the turn). The resume fast path consumes this
+in CLIO::Core::WorkflowOrchestrator::_try_resume_from_payload.
+
+Contract: snapshot must equal what load_conversation_history would return
+after rebuilding from session history. Otherwise the resume fast path and
+the rebuild path produce different prompts, breaking llama.cpp LCP cache
+stability (CachyLLama bug reported 2026-08-18).
 
 =cut
 
