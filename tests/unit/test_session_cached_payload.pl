@@ -349,4 +349,81 @@ subtest '_capture_api_payload works with blessed CLIO::Session::State (regressio
     ok($meta->{saved_at} > 0, 'metadata.saved_at written');
 };
 
+# Regression test: snapshot captured AFTER tool execution must include
+# tool_results. The CachyLLama bug (2026-08-18) had _capture_api_payload
+# firing before tool execution, so the snapshot was missing tool_results.
+# On the next turn's resume fast path, the cache returned the pre-tool
+# state (no tool_results), while the rebuild path read session history
+# (with tool_results) — divergent prompts that broke llama.cpp LCP.
+#
+# This test simulates the full flow:
+#   1. Pre-tool state: [system, ..., user]
+#   2. Capture snapshot (pre-fix bug: this is what would be saved)
+#   3. Tool execution: append assistant + tool_results to @messages
+#   4. Re-capture snapshot (post-fix correct behavior)
+#   5. Resume: verify the post-fix snapshot includes the tool_results
+subtest 'snapshot includes tool_results captured after tool execution (regression)' => sub {
+    my $real_state = CLIO::Session::State->new(session_id => 'regression-end-of-turn', debug => 0);
+    my $sess = StubSession->new(state => $real_state);
+    # Use the REAL tools that _build_tools_for_api produces so the signature
+    # matches what _try_resume_from_payload will compute.
+    my $tools = $real_tools;
+
+    # Simulate the in-memory @messages array at end of a tool-using turn.
+    # This is what the orchestrator has AFTER _execute_tool_round completes
+    # and the final assistant message has been appended. The snapshot must
+    # reflect this exact state, not the pre-execution state.
+    my $end_of_turn_messages = [
+        { role => 'system',    content => 'sys' },
+        { role => 'user',      content => 'q1' },
+        { role => 'assistant', content => 'a1', tool_calls => [
+            { id => 'tc_1', type => 'function', function => { name => 'file_operations', arguments => '{}' } },
+        ] },
+        { role => 'tool',      content => 'result_1', tool_call_id => 'tc_1' },
+        { role => 'assistant', content => 'final answer' },
+    ];
+
+    $reference_orch->_capture_api_payload($sess, $end_of_turn_messages, $tools);
+
+    my $stored = $real_state->last_api_payload;
+    is(scalar @$stored, 5, 'snapshot has 5 messages (sys + user + assistant_with_tool_call + tool_result + final_assistant)');
+
+    # Verify the snapshot includes the tool_result (the missing piece in the bug)
+    my $has_tool_result = grep {
+        $_->{role} eq 'tool' && ($_->{tool_call_id} // '') eq 'tc_1'
+    } @$stored;
+    ok($has_tool_result, 'snapshot includes the tool_result message (was missing in pre-fix bug)');
+
+    # Verify the snapshot includes the final assistant message
+    my $has_final_assistant = grep {
+        $_->{role} eq 'assistant' && ($_->{content} // '') eq 'final answer'
+    } @$stored;
+    ok($has_final_assistant, 'snapshot includes the final assistant message');
+
+    # Now simulate a session resume: load the state, call the resume fast path.
+    # The fast path should return messages that include the tool_results and
+    # the final assistant — the same conversation state we just snapshotted.
+    my ($resumed_msgs, $resumed_tools) = $reference_orch->_try_resume_from_payload(
+        $sess,
+        { max_context_window_tokens => 200000 }
+    );
+    ok($resumed_msgs && @$resumed_msgs, 'resume returned messages');
+    is(scalar @$resumed_msgs, 5, 'resumed payload has same 5 messages as snapshot (no divergence)');
+
+    my $resumed_has_tool_result = grep {
+        $_->{role} eq 'tool' && ($_->{tool_call_id} // '') eq 'tc_1'
+    } @$resumed_msgs;
+    ok($resumed_has_tool_result, 'resumed payload includes tool_results (the bug fix)');
+
+    # Verify the snapshot's tool_call_id matches the resumed payload's
+    # tool_call_id — same UUID, byte-identical. This is what makes the LCP
+    # match work across resume.
+    my $snapshot_tr = (grep { $_->{role} eq 'tool' } @$stored)[0];
+    my $resumed_tr = (grep { $_->{role} eq 'tool' } @$resumed_msgs)[0];
+    is($snapshot_tr->{tool_call_id}, $resumed_tr->{tool_call_id},
+        'tool_call_id is byte-identical between snapshot and resumed payload');
+    is($snapshot_tr->{content}, $resumed_tr->{content},
+        'tool_result content is byte-identical between snapshot and resumed payload');
+};
+
 done_testing();
