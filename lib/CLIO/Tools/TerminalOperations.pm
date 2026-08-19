@@ -979,37 +979,6 @@ sub reset_session_grants {
     %_session_grants = ();
 }
 
-=head2 get_additional_parameters
-
-Define parameters specific to terminal_operations.
-
-Returns: Hashref of parameter definitions
-
-=cut
-
-sub get_additional_parameters {
-    my ($self) = @_;
-    
-    return {
-        command => {
-            type => "string",
-            description => "Shell command to execute (REQUIRED when operation=exec). Example: \"ls -la\" or \"git status\".",
-        },
-        timeout => {
-            type => "integer",
-            description => "Idle timeout seconds (default: 300, max: 600). Active commands producing output are not killed.",
-        },
-        working_directory => {
-            type => "string",
-            description => "Working directory for command (default: current directory).",
-        },
-        passthrough => {
-            type => "boolean",
-            description => "Use interactive TTY mode (default: false, uses captured output).",
-        },
-    };
-}
-
 =head2 _read_and_cleanup_log
 
 Read output from the script log file, sanitize it, and clean up.

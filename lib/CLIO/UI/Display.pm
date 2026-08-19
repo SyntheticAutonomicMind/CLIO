@@ -346,8 +346,6 @@ sub display_section_header {
     my $underline = box_char('horizontal') x $width;
 
     # Blank line before section for visual separation from previous content
-    # Use writeline (UTF-8, color codes, etc.)
-    # Use writeline (UTF-8, color codes, etc.)
     my $ok = 1;
     $ok &&= $chat->writeline('', markdown => 0);
     $ok &&= $chat->writeline($chat->colorize($text, 'command_subheader'), markdown => 0);

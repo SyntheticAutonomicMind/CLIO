@@ -36,10 +36,8 @@ Handles system utility commands including:
 - /performance, /perf - Show performance metrics
 - /multiline, /ml - Multi-line input mode
 
-Note: Complex commands like /todo, /memory, /billing, /context, /skills
+Note: Complex commands like /todo, /memory, /skills
 are still in Chat.pm pending further refactoring.
-
-Extracted from Chat.pm to improve maintainability.
 
 =cut
 
