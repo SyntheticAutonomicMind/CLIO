@@ -97,22 +97,22 @@ sub handle_api_command {
 
     # Backward compatibility
     if ($action eq 'key') {
-        $self->display_system_message("Note: Use '/api set key <value>' (new syntax)");
+        $self->display_warning_message("Deprecated syntax. Use '/api set key <value>' instead.");
         $self->{cfg}->handle_set('key', $args[0], 0);
         return;
     }
     if ($action eq 'base') {
-        $self->display_system_message("Note: Use '/api set base <url>' (new syntax)");
+        $self->display_warning_message("Deprecated syntax. Use '/api set base <url>' instead.");
         $self->{cfg}->handle_set('base', $args[0], $session_only);
         return;
     }
     if ($action eq 'model') {
-        $self->display_system_message("Note: Use '/api set model <name>' (new syntax)");
+        $self->display_warning_message("Deprecated syntax. Use '/api set model <name>' instead.");
         $self->{cfg}->handle_set('model', $args[0], $session_only);
         return;
     }
     if ($action eq 'provider') {
-        $self->display_system_message("Note: Use '/api set provider <name>' (new syntax)");
+        $self->display_warning_message("Deprecated syntax. Use '/api set provider <name>' instead.");
         $self->{cfg}->handle_set('provider', $args[0], $session_only);
         return;
     }

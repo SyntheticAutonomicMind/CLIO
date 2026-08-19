@@ -402,7 +402,6 @@ sub hide_busy_indicator {
     
     # Stop spinner if it exists and is running
     # Use is_running() (validates child process is alive)
-    # Use is_running() (validates child process is alive)
     if ($self->{spinner} && $self->{spinner}->is_running()) {
         $self->{spinner}->stop();
         log_debug('Chat', "Busy indicator stopped");

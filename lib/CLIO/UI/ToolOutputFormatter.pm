@@ -504,9 +504,9 @@ sub format_error {
     
     # Simplify common error messages for better UX
     if ($error_message =~ /Tool returned invalid result/) {
-        return "Invalid tool result, adapting.";
+        return "Invalid tool result.";
     } elsif ($error_message =~ /Failed to parse tool arguments/) {
-        return "Invalid arguments, retrying.";
+        return "Invalid arguments.";
     } else {
         # For multi-line messages, show the first line (the key message)
         # For single-line messages, truncate if very long
