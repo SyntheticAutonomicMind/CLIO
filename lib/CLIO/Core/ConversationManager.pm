@@ -413,6 +413,19 @@ sub trim_conversation_for_api {
         }
     }
 
+    # Preserve leading non-summary system messages (e.g. the system prompt
+    # carried through from the resume path or test fixtures). These are
+    # needed for the API call and must stay at position 0. Without this,
+    # the tail-preserving walk drops them when the budget exhausts (they
+    # are the oldest messages). Skip them in the walk below.
+    my @preserved_system_msgs;
+    for my $i (0 .. $#messages) {
+        my $msg = $messages[$i];
+        last if ($msg->{role} // '') ne 'system';
+        next if ($msg->{content} // '') =~ /<thread_summary>/;
+        push @preserved_system_msgs, $msg;
+    }
+
     # Tail-preserving trim: walk backwards from newest message, keeping
     # messages until token budget is exhausted. This ensures the most recent
     # context (current task) survives, not old completed tasks.
@@ -432,8 +445,8 @@ sub trim_conversation_for_api {
     for my $i (reverse 0 .. $#messages) {
         my $msg = $messages[$i];
         my $msg_tokens = CLIO::Memory::TokenEstimator::estimate_tokens($msg->{content} // '');
-        # Skip summary messages - they're preserved separately below
-        if (($msg->{role} // '') eq 'system' && ($msg->{content} // '') =~ /<thread_summary>/) {
+        # Skip summary and leading system messages - preserved separately below
+        if (($msg->{role} // '') eq 'system') {
             next;
         }
 
@@ -485,7 +498,7 @@ sub trim_conversation_for_api {
         }
     }
 
-    my @result = (@dialog, @kept_tool_results);
+    my @result = (@preserved_system_msgs, @dialog, @kept_tool_results);
     my @kept = @result;
 
     if ($debug) {
@@ -501,18 +514,23 @@ sub trim_conversation_for_api {
     # Cache-stable ordering: summary at position 1 (right after the system
     # prompt) so the LCP match extends through sys + summary on every turn.
     # Order: [system][summary][dialog][tool_results]
-    # The system prompt is pushed by _build_turn_context separately (before
-    # this trim_result lands), so the FINAL @messages layout is:
-    #   [system_prompt][...this @result...]
-    # For summary to be at @messages[1] (immediately after system_prompt),
-    # it must be at @result[0]. Splice at position 0 (the old code spliced
-    # at position 1, which placed summary AFTER the first dialog message -
-    # wrong, summary is supposed to lead the dynamic content).
+    #
+    # In the normal flow, load_conversation_history excludes the system
+    # prompt, so @result starts with dialog and the summary goes at
+    # position 0 (-> final position 1 after _build_turn_context prepends
+    # the system prompt). But if the history carries a leading non-summary
+    # system message (the resume path or tests), the summary must go
+    # AFTER it at position 1, not before it at position 0.
     if (@preserved_summaries) {
         my @summaries = map { $_->{msg} } @preserved_summaries;
-        splice @result, 0, 0, @summaries;
+        my $splice_pos = 0;
+        if (@result && ($result[0]{role} // '') eq 'system'
+            && ($result[0]{content} // '') !~ /<thread_summary>/) {
+            $splice_pos = 1;
+        }
+        splice @result, $splice_pos, 0, @summaries;
         if ($debug) {
-            log_debug('ConversationManager', "Pre-flight trim placed " . scalar(@preserved_summaries) . " thread_summary message(s) at position 1 for LCP");
+            log_debug('ConversationManager', "Pre-flight trim placed " . scalar(@preserved_summaries) . " thread_summary message(s) at position " . $splice_pos . " for LCP");
         }
     }
 
