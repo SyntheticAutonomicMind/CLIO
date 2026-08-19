@@ -595,9 +595,7 @@ sub handle_api_error {
         my @groups        = ();
         my $current_group = [];
 
-        for (my $i = 0; $i < @non_system; $i++) {
-            my $msg = $non_system[$i];
-
+        for my $msg (@non_system) {
             if ($msg->{role} eq 'user') {
                 push @groups, $current_group if @$current_group > 0;
                 $current_group = [$msg];

@@ -14,7 +14,6 @@ use File::Basename 'dirname';
 use CLIO::Util::JSON qw(encode_json decode_json);
 use File::Temp qw(tempdir);
 use File::Spec;
-use File::Path qw(make_path remove_tree);
 use CLIO::Core::Logger qw(should_log log_debug);
 use Carp qw(croak);
 use Scalar::Util qw(blessed);

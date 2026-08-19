@@ -3347,9 +3347,6 @@ sub _prepare_api_request {
     # Log full request to debug log
     $self->_log_api_request($req, $final_endpoint, $provider_label, $model, $json, $is_streaming, $use_responses_api);
 
-    # TEMP DIAG: dump full payload to stderr so we can see exactly what we send
-    require CLIO::Util::JSON;
-
     return {
         req              => $req,
         ua               => $ua,
@@ -3422,88 +3419,90 @@ sub _log_api_request {
     log_debug('APIManager', "=" x 80);
     log_debug('APIManager', "[$provider_label ${stream_label}REQUEST] Endpoint: $final_endpoint");
     log_debug('APIManager', "[$provider_label ${stream_label}REQUEST] Model: $model");
-    eval {
-        my $p = decode_json($json);
-        log_debug('APIManager', "[$provider_label ${stream_label}REQUEST] max_tokens: " . ($p->{max_tokens} || 'NOT SET'));
-        log_debug('APIManager', "[$provider_label ${stream_label}REQUEST] tools: " . (ref($p->{tools}) eq 'ARRAY' ? scalar(@{$p->{tools}}) . " tools" : 'none'));
-        log_debug('APIManager', "[$provider_label ${stream_label}REQUEST] messages: " . (ref($p->{messages}) eq 'ARRAY' ? scalar(@{$p->{messages}}) . " messages" : 'none'));
-        # Per-message summary: role, content size, first ~100 chars of text content
-        if (ref($p->{messages}) eq 'ARRAY') {
-            for (my $i = 0; $i < @{$p->{messages}}; $i++) {
-                my $msg = $p->{messages}[$i];
-                my $role = $msg->{role} // 'unknown';
-                my $size_info = '';
-                my $preview = '';
-                if (ref($msg->{content}) eq 'ARRAY') {
-                    # Multimodal content: count text/image parts
-                    my @text_parts = grep { ref($_) eq 'HASH' && ($_->{type} // '') eq 'text' } @{$msg->{content}};
-                    my $image_count = scalar(grep { ref($_) eq 'HASH' && ($_->{type} // '') eq 'image_url' } @{$msg->{content}});
-                    my $text_bytes = 0;
-                    for my $part (@text_parts) {
-                        $text_bytes += length($part->{text} // '');
+    if ($self->{debug}) {
+        eval {
+            my $p = decode_json($json);
+            log_debug('APIManager', "[$provider_label ${stream_label}REQUEST] max_tokens: " . ($p->{max_tokens} || 'NOT SET'));
+            log_debug('APIManager', "[$provider_label ${stream_label}REQUEST] tools: " . (ref($p->{tools}) eq 'ARRAY' ? scalar(@{$p->{tools}}) . " tools" : 'none'));
+            log_debug('APIManager', "[$provider_label ${stream_label}REQUEST] messages: " . (ref($p->{messages}) eq 'ARRAY' ? scalar(@{$p->{messages}}) . " messages" : 'none'));
+            # Per-message summary: role, content size, first ~100 chars of text content
+            if (ref($p->{messages}) eq 'ARRAY') {
+                for (my $i = 0; $i < @{$p->{messages}}; $i++) {
+                    my $msg = $p->{messages}[$i];
+                    my $role = $msg->{role} // 'unknown';
+                    my $size_info = '';
+                    my $preview = '';
+                    if (ref($msg->{content}) eq 'ARRAY') {
+                        # Multimodal content: count text/image parts
+                        my @text_parts = grep { ref($_) eq 'HASH' && ($_->{type} // '') eq 'text' } @{$msg->{content}};
+                        my $image_count = scalar(grep { ref($_) eq 'HASH' && ($_->{type} // '') eq 'image_url' } @{$msg->{content}});
+                        my $text_bytes = 0;
+                        for my $part (@text_parts) {
+                            $text_bytes += length($part->{text} // '');
+                        }
+                        $size_info = "multimodal: " . scalar(@text_parts) . " text + $image_count image ($text_bytes text bytes)";
+                        $preview = $text_parts[0]{text} // '';
+                    } elsif (defined $msg->{content}) {
+                        $size_info = length($msg->{content}) . " chars";
+                        $preview = $msg->{content};
                     }
-                    $size_info = "multimodal: " . scalar(@text_parts) . " text + $image_count image ($text_bytes text bytes)";
-                    $preview = $text_parts[0]{text} // '';
-                } elsif (defined $msg->{content}) {
-                    $size_info = length($msg->{content}) . " chars";
-                    $preview = $msg->{content};
+                    # Tool call summary for assistant messages
+                    my $tc_info = '';
+                    if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY' && @{$msg->{tool_calls}}) {
+                        my @tc_names = map { $_->{function}{name} // 'unknown' } @{$msg->{tool_calls}};
+                        $tc_info = ", tool_calls=[" . join(',', @tc_names) . "]";
+                    }
+                    # Tool result summary
+                    my $tr_info = '';
+                    if ($msg->{role} && $msg->{role} eq 'tool' && $msg->{name}) {
+                        $tr_info = ", tool_name=$msg->{name}";
+                    }
+                    my $preview_trim = $preview;
+                    $preview_trim =~ s/\s+/ /g;
+                    $preview_trim = substr($preview_trim, 0, 100);
+                    $preview_trim .= '...' if length($preview) > 100;
+                    log_debug('APIManager', sprintf("[%s %sREQUEST]   msg[%d] %s (%s)%s%s%s",
+                        $provider_label, $stream_label, $i, $role, $size_info, $tc_info, $tr_info,
+                        $preview_trim ? ": \"$preview_trim\"" : ''));
                 }
-                # Tool call summary for assistant messages
-                my $tc_info = '';
-                if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY' && @{$msg->{tool_calls}}) {
-                    my @tc_names = map { $_->{function}{name} // 'unknown' } @{$msg->{tool_calls}};
-                    $tc_info = ", tool_calls=[" . join(',', @tc_names) . "]";
-                }
-                # Tool result summary
-                my $tr_info = '';
-                if ($msg->{role} && $msg->{role} eq 'tool' && $msg->{name}) {
-                    $tr_info = ", tool_name=$msg->{name}";
-                }
-                my $preview_trim = $preview;
-                $preview_trim =~ s/\s+/ /g;
-                $preview_trim = substr($preview_trim, 0, 100);
-                $preview_trim .= '...' if length($preview) > 100;
-                log_debug('APIManager', sprintf("[%s %sREQUEST]   msg[%d] %s (%s)%s%s%s",
-                    $provider_label, $stream_label, $i, $role, $size_info, $tc_info, $tr_info,
-                    $preview_trim ? ": \"$preview_trim\"" : ''));
             }
-        }
-        # Tool definitions being sent
-        if (ref($p->{tools}) eq 'ARRAY') {
-            my @tool_names = map { $_->{function}{name} // $_->{name} // 'unknown' } @{$p->{tools}};
-            log_debug('APIManager', "[$provider_label ${stream_label}REQUEST] tool_names: " . join(', ', @tool_names));
-        }
-        # Input items for Responses API (alternative to messages)
-        if (ref($p->{input}) eq 'ARRAY') {
-            log_debug('APIManager', "[$provider_label ${stream_label}REQUEST] input_items: " . scalar(@{$p->{input}}));
-            for (my $i = 0; $i < @{$p->{input}}; $i++) {
-                my $item = $p->{input}[$i];
-                my $type = $item->{type} // 'unknown';
-                my $role = $item->{role} // '';
-                my $content = $item->{content};
-                my $size_info = '';
-                my $preview = '';
-                if (ref($content) eq 'ARRAY') {
-                    my @text_parts = grep { ref($_) eq 'HASH' && ($_->{type} // '') eq 'input_text' } @$content;
-                    $size_info = scalar(@text_parts) . " text parts";
-                    $preview = $text_parts[0]{text} // '' if @text_parts;
-                } elsif (defined $content) {
-                    $size_info = length($content) . " chars";
-                    $preview = $content;
-                }
-                my $preview_trim = $preview;
-                $preview_trim =~ s/\s+/ /g;
-                $preview_trim = substr($preview_trim, 0, 100);
-                $preview_trim .= '...' if length($preview) > 100;
-                my $role_str = $role ? " $role" : '';
-                log_debug('APIManager', sprintf("[%s %sREQUEST]   input[%d]%s %s (%s)%s",
-                    $provider_label, $stream_label, $i, $role_str, $type, $size_info,
-                    $preview_trim ? ": \"$preview_trim\"" : ''));
+            # Tool definitions being sent
+            if (ref($p->{tools}) eq 'ARRAY') {
+                my @tool_names = map { $_->{function}{name} // $_->{name} // 'unknown' } @{$p->{tools}};
+                log_debug('APIManager', "[$provider_label ${stream_label}REQUEST] tool_names: " . join(', ', @tool_names));
             }
-        }
-        # Total payload size for capacity planning
-        log_debug('APIManager', "[$provider_label ${stream_label}REQUEST] payload_size: " . length($json) . " bytes");
-    };
+            # Input items for Responses API (alternative to messages)
+            if (ref($p->{input}) eq 'ARRAY') {
+                log_debug('APIManager', "[$provider_label ${stream_label}REQUEST] input_items: " . scalar(@{$p->{input}}));
+                for (my $i = 0; $i < @{$p->{input}}; $i++) {
+                    my $item = $p->{input}[$i];
+                    my $type = $item->{type} // 'unknown';
+                    my $role = $item->{role} // '';
+                    my $content = $item->{content};
+                    my $size_info = '';
+                    my $preview = '';
+                    if (ref($content) eq 'ARRAY') {
+                        my @text_parts = grep { ref($_) eq 'HASH' && ($_->{type} // '') eq 'input_text' } @$content;
+                        $size_info = scalar(@text_parts) . " text parts";
+                        $preview = $text_parts[0]{text} // '' if @text_parts;
+                    } elsif (defined $content) {
+                        $size_info = length($content) . " chars";
+                        $preview = $content;
+                    }
+                    my $preview_trim = $preview;
+                    $preview_trim =~ s/\s+/ /g;
+                    $preview_trim = substr($preview_trim, 0, 100);
+                    $preview_trim .= '...' if length($preview) > 100;
+                    my $role_str = $role ? " $role" : '';
+                    log_debug('APIManager', sprintf("[%s %sREQUEST]   input[%d]%s %s (%s)%s",
+                        $provider_label, $stream_label, $i, $role_str, $type, $size_info,
+                        $preview_trim ? ": \"$preview_trim\"" : ''));
+                }
+            }
+            # Total payload size for capacity planning
+            log_debug('APIManager', "[$provider_label ${stream_label}REQUEST] payload_size: " . length($json) . " bytes");
+        };
+    }
     if ($self->{debug} && open my $fh, '>>', '/tmp/clio_api_debug.log') {
         print $fh "\n" . "=" x 80 . "\n";
         print $fh "[" . scalar(localtime) . "] $provider_label ${stream_label}REQUEST\n";
