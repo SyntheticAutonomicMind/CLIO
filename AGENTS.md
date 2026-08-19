@@ -209,7 +209,7 @@ The proactive trim in `MessageValidator` regenerates a `thread_summary` whenever
 [DEBUG][MessageValidator] CSSS: cache impact ~50/83000 tokens invalidated (summary slot)
 ```
 
-**Tests:** `tests/unit/test_cache_stable_summary.pl` covers CSSS lock behavior, summary-at-end ordering, tool-reserve capping, and YaRN fit behavior.
+**Tests:** `tests/unit/test_cache_stable_summary.pl` covers CSSS lock behavior, summary-at-end ordering, tool-reserve capping, and YaRN fit behavior. `tests/unit/test_user_context_anchor.pl` covers the user_context-at-any-position preservation that prevents the trim from silently dropping the chat template's `<system>` block (the CachyLLama full re-prompt bug observed 2026-08-18, where the validator dropped `dynamicContext` at msg[1] and the next request's chat template prefix diverged).
 
 **Session resume and trim recovery:**
 

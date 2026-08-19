@@ -105,7 +105,13 @@ context budget. Each section has a fixed trim priority:
   drop oldest when budget exceeded. Most expendable — the agent
   can re-call the tool if needed.
 - **[5] user_context** — NEVER trimmed. It's small and dynamic; not
-  a budget concern.
+  a budget concern. The validator preserves user_context system messages
+  at any position (msg[1], msg[N-2], etc.) so the chat template's
+  `<system>...</system>` block stays in the prefix region across trims.
+  Dropping it would change the rendered prompt's leading tokens and
+  break llama.cpp's LCP cache (the CachyLLama full re-prompt bug observed
+  2026-08-18, where a 5-minute per-task reprocess loop was traced back
+  to the validator silently dropping user_context at msg[1]).
 - **[6] user_input** — NEVER trimmed. Active request.
 
 `trim_conversation_for_api` (ConversationManager.pm) and
@@ -332,6 +338,12 @@ The pipeline protocol is covered by:
   as role=system.
 - `tests/integration/test_session_resume_cached_payload.pl` — end-to-end
   resume flow with a real provider.
+
+- `tests/unit/test_user_context_anchor.pl` — regression test for the
+  user_context-at-any-position trim fix (preserves the chat template
+  `<system>` block in the prefix region across trims).
+- `tests/unit/test_strip_non_trailing_user_context.pl` — verifies
+  `_strip_non_trailing_user_context` only removes duplicates.
 
 Adding new tests: any change to message ordering, role assignment, or
 trim policy must update these tests (and may need new subtests).

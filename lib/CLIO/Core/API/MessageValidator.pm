@@ -174,7 +174,7 @@ sub validate_and_truncate {
     
     # Extract system message and most recent user message
     my ($system_msg, $last_user_unit, $start_unit, $system_tokens, $last_user_tokens,
-        $summary_unit, $summary_tokens, $_unused) = 
+        $summary_unit, $summary_tokens, $preserved_user_contexts) =
         _extract_preserved_units(\@units);
     
     # Build conversation from newest to oldest
@@ -483,6 +483,14 @@ sub validate_and_truncate {
     }
     my @truncated;
     push @truncated, $system_msg if $system_msg;
+    # Preserve user_context anchors (<dynamicContext>/<userContext>/<sessionGoals>)
+    # at their original positions relative to system_msg. Without this, the
+    # chat template's <system>...</system> block disappears from the prefix
+    # when the trim drops user_context at msg[1], causing llama.cpp's LCP
+    # cache match to fail (the CachyLLama full re-prompt bug observed 2026-08-18).
+    for my $user_ctx_unit (@$preserved_user_contexts) {
+        push @truncated, $_ for @{$user_ctx_unit->{messages}};
+    }
     # Cache-stable ordering: summary at position 1 (right after the system
     # prompt) so the LCP match extends through sys + summary on every turn.
     # llama.cpp's server-context.cpp prompt_stable_prefix_tokens floor is
@@ -806,25 +814,36 @@ sub _group_into_units {
 
 sub _extract_preserved_units {
     my ($units) = @_;
-    
+
     my $system_msg;
     my $start_unit = 0;
     my $system_tokens = 0;
     my $summary_unit;         # Previous thread_summary (preserved across trims)
     my $summary_tokens = 0;
-    
+    my @preserved_user_contexts;  # user_context anchors (<dynamicContext>/<userContext>/<sessionGoals>)
+                                  # at non-trailing positions - preserved to keep chat template prefix
+                                  # stable across trims. Without this, dropping user_context at msg[1]
+                                  # causes the chat template's <system>...</system> block to disappear,
+   # which changes the prefix tokens and breaks llama.cpp's LCP cache (the CachyLLama
+   # full re-prompt bug observed 2026-08-18).
+
     # Extract system message
     if (@$units && @{$units->[0]{messages}} && $units->[0]{messages}[0]{role} eq 'system') {
         $system_msg = $units->[0]{messages}[0];
         $system_tokens = $units->[0]{tokens};
         $start_unit = 1;
     }
-    
-    # Find any thread_summary units between system msg and conversation
+
+    # Walk units between system_msg and the conversation start, preserving:
+    #   - thread_summary system messages (CSSS slot)
+    #   - user_context system messages (<dynamicContext>/<userContext>/<sessionGoals>)
+    #     These render as <system>...</system> blocks in the chat template. If
+    #     dropped, the chat template output diverges in the prefix region and
+    #     llama.cpp's LCP cache match fails (forcing a full re-prompt).
     for my $i ($start_unit .. $#$units) {
         my $unit = $units->[$i];
         next unless $unit && $unit->{messages} && @{$unit->{messages}};
-        
+
         my $first_msg = $unit->{messages}[0];
         my $content = $first_msg->{content} || '';
         if ($content =~ /<thread_summary>/) {
@@ -832,6 +851,16 @@ sub _extract_preserved_units {
             $summary_tokens = $unit->{tokens};
             $start_unit = $i + 1;
             log_debug('MessageValidator', "Preserving thread_summary ($summary_tokens tokens)");
+        } elsif ($first_msg->{role} && $first_msg->{role} eq 'system') {
+            # user_context anchor at this position - preserve it. Trailing
+            # user_context (at the end of @messages) is handled by the trim
+            # walk below since it falls within @remaining.
+            if ($content =~ /<(?:userContext|dynamicContext|sessionGoals)>/) {
+                push @preserved_user_contexts, $unit;
+                log_debug('MessageValidator', "Preserving user_context anchor at unit $i");
+            }
+            # Other system messages (e.g., context_files, recovery notices)
+            # between system_msg and the conversation - skip silently
         } elsif ($first_msg->{role} && $first_msg->{role} ne 'system') {
             # Hit a non-system, non-summary message - start of conversation
             $start_unit = $i;
@@ -859,9 +888,9 @@ sub _extract_preserved_units {
     if ($last_user_unit) {
         log_debug('MessageValidator', "Found most recent user message at unit $last_user_idx (tokens=$last_user_tokens)");
     }
-    
+
     return ($system_msg, $last_user_unit, $start_unit, $system_tokens, $last_user_tokens,
-            $summary_unit, $summary_tokens, undef);
+            $summary_unit, $summary_tokens, \@preserved_user_contexts);
 }
 
 sub _compress_dropped {
