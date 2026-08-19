@@ -152,8 +152,11 @@ subtest 'set_reasoning_mode - updates existing entry' => sub {
         cache_ttl  => 3600,
     );
 
-    # Seed an entry by hand
-    $mcm3->{cache}{'anthropic:test-model:'} = {
+    # Seed an entry by hand. Use the actual cache key (includes
+    # configured api_base) so the seed matches what set_reasoning_mode
+    # and get_capabilities look up.
+    my $seed_key = $mcm3->_build_cache_key('anthropic', 'Test-Model');
+    $mcm3->{cache}{$seed_key} = {
         provider           => 'anthropic',
         model              => 'Test-Model',
         context_window     => 200000,
