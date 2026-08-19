@@ -1169,15 +1169,23 @@ sub adapt_request_for_endpoint {
                         $thinking_type = 'enabled';
                     }
 
-                    # M3's thinking.type=adaptive is the default thinking
-                    # mode for M3 (model decides depth). Only M2.x and
-                    # earlier models use type=enabled. Neither mode
-                    # exposes budget_tokens in the documented payload
-                    # shape - the model handles its own reasoning budget.
-                    # Omitting budget_tokens matches MiniMax's official
-                    # payload for both modes.
-                    my $thinking = { type => $thinking_type };
-                    $payload->{thinking} = $thinking;
+                    # M3's thinking.type=adaptive respects budget_tokens to
+                    # decide reasoning depth. Without it, M3 emits a brief
+                    # planning one-liner ("Planning X", "Locating Y")
+                    # instead of the full reasoning chain - even when
+                    # show_thinking=1 and thinking_mode=enabled.
+                    # Map thinking_effort (low/medium/high, defaulting to
+                    # high when undef) to budget_tokens (2000/4000/8000).
+                    # Unknown effort strings fall back to the high default.
+                    my $thinking_effort = $self->{config}
+                        ? ($self->{config}->get('thinking_effort') // 'high')
+                        : 'high';
+                    my %budget_map = (low => 2000, medium => 4000, high => 8000);
+                    my $budget_tokens = $budget_map{lc($thinking_effort)} // 8000;
+                    $payload->{thinking} = {
+                        type => $thinking_type,
+                        budget_tokens => $budget_tokens,
+                    };
                 } else {
                     $payload->{thinking} = { type => 'disabled' };
                 }
