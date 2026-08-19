@@ -278,7 +278,7 @@ sub handle_api_error {
 
                 push @$messages, {
                     role    => 'system',
-                    content => "ERROR: Your previous tool call had invalid JSON parameters.\n\n" .
+                    content => "Your previous tool call had invalid JSON parameters.\n\n" .
                                "Common issues:\n" .
                                "- Missing parameter values (e.g., \"offset\":, instead of \"offset\":0)\n" .
                                "- Unescaped quotes in strings\n" .
