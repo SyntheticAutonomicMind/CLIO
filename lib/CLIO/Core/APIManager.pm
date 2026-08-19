@@ -2722,96 +2722,107 @@ sub _build_payload {
     }
 
     # prompt_stable_prefix_tokens: tell the llama.cpp LCP matcher how many
-    # leading tokens form a stable prefix (system prompt). When CLIO trims
-    # the conversation, recent messages shift but the system prompt at
-    # position 0 stays byte-identical. Passing this lets the server reject
-    # any slot whose stored prompt does not share the system prompt, so the
-    # LCP match survives the trim instead of collapsing to sim_best=0.24.
+    # leading tokens form a stable prefix. All leading system messages are
+    # included (system_prompt + thread_summary + context_files) because they
+    # only change on rare events: tools/MCP registration, CSSS regeneration,
+    # or context_files added/removed. Dialog at [3]+ changes every turn and
+    # tool_results at [4] shift with trimming - both are AFTER the stable
+    # prefix so they never invalidate the cache hint.
     #
-    # CRITICAL: only the system prompt at position 0 is included. The next
-    # leading system message is volatile:
-    #   - Pre-trim: context_files (injected by inject_context_files) - DROPPED
-    #     by trim_conversation_for_api
-    #   - Post-trim: thread_summary (CSSS slot) - content regenerates within
-    #     size budget
-    # Including either in the stable prefix causes the server to see
-    # "stable prefix dropped from 27540 to 23983" on every trim and
-    # reprocess the entire prompt (5+ minutes per task).
+    # CRITICAL: When this hint matches the cached slot's actual prefix length,
+    # the LCP matcher reports sim_best=1.0 because every cached token still
+    # matches. When trim causes the cached slot to be reprocessed (because
+    # sim_best dropped below --slot-prompt-similarity 0.20), CachyLLama builds
+    # a new slot. Without the hint covering summary+context_files, the OLD
+    # cached slot keeps matching against the truncated prompt and sim_best
+    # collapses to ~0.57 forever - the reprocessed slot never wins the LCP
+    # race (observed in scratch/run.log: sim_best dropped from 0.997 to
+    # 0.566 after a single trim and stayed there for 50+ subsequent turns).
     if ($endpoint_config->{llama_user_id_supported} && $messages && @$messages) {
-        my $first_msg = $messages->[0];
-        if ($first_msg && ($first_msg->{role} // '') eq 'system') {
-            my $content = $first_msg->{content} // '';
-            # Flatten to text for hashing and estimation. arrayref content
-            # only contributes text parts; non-text parts (images) have no
-            # token budget in the LCP stable prefix.
-            my $text_content = '';
-            if (ref($content) eq 'ARRAY') {
-                for my $part (@$content) {
-                    if (ref($part) eq 'HASH' && ($part->{type} // '') eq 'text') {
-                        $text_content .= ($part->{text} // '');
+        # Collect every leading system message (system_prompt + thread_summary
+        # + context_files). Stop at the first non-system message (dialog).
+        my @leading_system;
+        for my $msg (@$messages) {
+            last unless ($msg->{role} // '') eq 'system';
+            push @leading_system, $msg;
+        }
+        if (@leading_system) {
+            # Flatten to a single text blob for hashing and token estimation.
+            # arrayref content only contributes text parts; non-text parts
+            # (images) have no token budget in the LCP stable prefix.
+            my $combined_text = '';
+            for my $msg (@leading_system) {
+                my $content = $msg->{content} // '';
+                if (ref($content) eq 'ARRAY') {
+                    for my $part (@$content) {
+                        if (ref($part) eq 'HASH' && ($part->{type} // '') eq 'text') {
+                            $combined_text .= ($part->{text} // '') . "\n";
+                        }
                     }
+                } else {
+                    $combined_text .= $content . "\n";
                 }
-            } else {
-                $text_content = $content;
             }
-            if (length($text_content) > 0) {
+            if (length($combined_text) > 0) {
                 # Cache the stable prefix token count by content signature.
-                # The system prompt at position 0 is byte-identical across
-                # requests, but CLIO::Memory::TokenEstimator::estimate_tokens
-                # uses get_effective_ratio() which returns the learned
-                # char/token ratio. That ratio drifts after every API
-                # response (via _learn_from_api_response -> set_learned_ratio).
-                # A drifting ratio produces a drifting
-                # prompt_stable_prefix_tokens on every turn (observed:
-                # 31335 -> 3323 -> 29559 -> 2915 -> 28999 -> 29148 -> 2927),
-                # which breaks llama.cpp's LCP cache match and forces the
-                # server to reprocess the entire prompt each turn.
+                # CLIO::Memory::TokenEstimator::estimate_tokens uses
+                # get_effective_ratio() which returns the learned char/token
+                # ratio. That ratio drifts after every API response (via
+                # _learn_from_api_response -> set_learned_ratio). A drifting
+                # ratio produces a drifting prompt_stable_prefix_tokens on
+                # every turn (observed: 31335 -> 3323 -> 29559 -> 2915 ->
+                # 28999 -> 29148 -> 2927), which breaks llama.cpp's LCP cache
+                # match and forces the server to reprocess the entire prompt
+                # each turn.
                 #
-                # Caching on a signature of the content freezes the stable
-                # prefix token count for byte-identical system prompts.
-                # The learned ratio still flows through to all other
-                # estimation (MessageValidator trim, budget validation) -
-                # only the stable prefix hint is frozen. When the system
-                # prompt changes (e.g. tools added, MCP servers registered),
-                # the hash differs and we recalculate.
+                # Caching on a signature of the combined content freezes the
+                # stable prefix token count for byte-identical leading system
+                # messages. The learned ratio still flows through to all
+                # other estimation (MessageValidator trim, budget validation)
+                # - only the stable prefix hint is frozen. When any leading
+                # system message changes (tools added, CSSS regeneration,
+                # context_files added/removed), the hash differs and we
+                # recalculate.
                 #
-                # Signature strategy: try Digest::MD5 first (core Perl module,
-                # ~1MB), fall back to Digest::SHA (also core), fall back to a
+                # Signature strategy: try Digest::MD5 first (core Perl module),
+                # fall back to Digest::SHA (also core), fall back to a
                 # pure-Perl fingerprint (length + prefix + suffix). The cache
-                # key only needs to detect changes in the system prompt content,
-                # not be cryptographically secure - any consistent signature works.
+                # key only needs to detect changes in the leading system
+                # messages, not be cryptographically secure.
                 my $content_hash;
                 my $hash_source = 'fallback';
                 eval {
                     require Digest::MD5;
-                    $content_hash = Digest::MD5::md5_hex($text_content);
+                    $content_hash = Digest::MD5::md5_hex($combined_text);
                     $hash_source = 'md5';
                     1;
                 } or do {
                     eval {
                         require Digest::SHA;
-                        $content_hash = Digest::SHA::sha1_hex($text_content);
+                        $content_hash = Digest::SHA::sha1_hex($combined_text);
                         $hash_source = 'sha1';
                         1;
                     };
                 };
                 if (!defined $content_hash) {
                     $content_hash = sprintf("%d:%s:%s",
-                        length($text_content),
-                        substr($text_content, 0, 32),
-                        substr($text_content, -32));
+                        length($combined_text),
+                        substr($combined_text, 0, 32),
+                        substr($combined_text, -32));
                     $hash_source = 'fallback';
                 }
                 if ($self->{_stable_prefix_cache}
                     && $self->{_stable_prefix_cache}{hash} eq $content_hash) {
                     $payload->{prompt_stable_prefix_tokens} = $self->{_stable_prefix_cache}{tokens};
-                    log_debug('APIManager', "Including prompt_stable_prefix_tokens: $self->{_stable_prefix_cache}{tokens} (cached, system prompt unchanged)");
+                    log_debug('APIManager', "Including prompt_stable_prefix_tokens: $self->{_stable_prefix_cache}{tokens} (cached, leading system messages unchanged, "
+                        . scalar(@leading_system) . " msg(s) covered)");
                 } else {
                     require CLIO::Memory::TokenEstimator;
-                    my $stable_tokens = CLIO::Memory::TokenEstimator::estimate_tokens($text_content);
+                    my $stable_tokens = CLIO::Memory::TokenEstimator::estimate_tokens($combined_text);
                     if ($stable_tokens > 0) {
                         $payload->{prompt_stable_prefix_tokens} = $stable_tokens;
-                        log_debug('APIManager', "Including prompt_stable_prefix_tokens: $stable_tokens (system prompt changed, recalculated)");
+                        log_debug('APIManager', "Including prompt_stable_prefix_tokens: $stable_tokens (leading system messages changed, recalculated, "
+                            . scalar(@leading_system) . " msg(s) covered)");
                         $self->{_stable_prefix_cache} = {
                             hash   => $content_hash,
                             tokens => $stable_tokens,
