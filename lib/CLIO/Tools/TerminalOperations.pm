@@ -87,6 +87,28 @@ sub dispatch_table {
     };
 }
 
+sub get_additional_parameters {
+    my ($self) = @_;
+    return {
+        command => {
+            type => "string",
+            description => "Shell command to execute",
+        },
+        timeout => {
+            type => "integer",
+            description => "Idle timeout in seconds. Command killed after N seconds with no output. Default: 300 (5min). Active commands run until hard ceiling of 600s.",
+        },
+        passthrough => {
+            type => "boolean",
+            description => "Use interactive TTY mode instead of captured output. Default: false.",
+        },
+        working_directory => {
+            type => "string",
+            description => "Working directory for command. Defaults to current session working directory or '.'.",
+        },
+    };
+}
+
 sub execute_command {
     my ($self, $params, $context) = @_;
     
