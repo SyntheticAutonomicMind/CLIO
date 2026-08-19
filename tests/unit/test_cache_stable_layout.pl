@@ -87,8 +87,8 @@ sub build_mixed_conversation {
     return @msgs;
 }
 
-# ===== Test 1: Summary at position 1 (LCP-stable anchor) =====
-subtest 'Summary at position 1 anchors LCP match through sys + summary' => sub {
+# ===== Test 1: Summary at the END preserves LCP through stable prefix =====
+subtest 'Summary at END preserves LCP through stable prefix (sys + dialog + tool_results)' => sub {
     my @msgs = build_mixed_conversation();
     my $caps = {
         max_context_window_tokens => 131072,
@@ -111,8 +111,16 @@ subtest 'Summary at position 1 anchors LCP match through sys + summary' => sub {
 
     my ($summary_idx, $summary) = find_summary($trimmed);
     ok($summary_idx >= 0, "Summary exists in trimmed output");
-    is($summary_idx, 1,
-        "Summary is at position 1 (right after sys): idx=$summary_idx");
+    # Summary is at the END (after dialog + tool_results) so the LCP
+    # can extend through the stable prefix (sys + dialog + tool_results)
+    # before breaking at the summary content boundary. Placing it at
+    # position 1 broke llama.cpp's prompt_stable_prefix_tokens gate on
+    # the first trim (the bug observed 2026-08-19, cache hit ratio
+    # collapse from ~0.99 to ~0.58).
+    is($summary_idx, $#$trimmed,
+        "Summary is at the END (after dialog + tool_results): idx=$summary_idx of $#$trimmed");
+    isnt($summary_idx, 1,
+        'Summary is NOT at position 1 (would break LCP at chat template boundary)');
 
     # Estimate the prompt_stable_prefix_tokens this layout would produce
     # (sys + summary, both are leading system messages)
@@ -236,8 +244,8 @@ subtest 'Tool results dropped first when budget exceeded' => sub {
     ok($user_preserved, "Original user message preserved (dialog survives when tool_results are dropped)");
 };
 
-# ===== Test 4: LCP extends through sys + summary across trims =====
-subtest 'LCP position is stable across trims (sys + summary at fixed positions)' => sub {
+# ===== Test 4: LCP extends through sys + dialog + tool_results across trims =====
+subtest 'LCP position is stable across trims (sys at 0, summary at END)' => sub {
     my @msgs = build_mixed_conversation();
     my $caps = {
         max_context_window_tokens => 16000,
@@ -255,12 +263,20 @@ subtest 'LCP position is stable across trims (sys + summary at fixed positions)'
         model              => 'llama.cpp/test',
     );
 
-    # Layout invariant: sys always at 0, summary always at 1
+    # Layout invariant: sys always at 0, summary at END.
+    # Summary at END (not position 1) keeps the LCP gate happy:
+    # llama.cpp's prompt_stable_prefix_tokens is a minimum-prefix-match
+    # gate, so the hint can include the summary but the cached slot
+    # still matches through sys + dialog + tool_results before reaching
+    # the summary content. (Bug observed 2026-08-19: summary at position
+    # 1 forced the gate to include summary tokens that the cached slot
+    # didn't have yet, collapsing sim_best from ~0.99 to ~0.58.)
     is($trimmed->[0]{role}, 'system', "Position 0 always system prompt");
     my ($summary_idx, $summary) = find_summary($trimmed);
-    is($summary_idx, 1, "Summary always at position 1 (stable across turns)");
+    is($summary_idx, $#$trimmed,
+        "Summary always at the END (stable across turns): idx=$summary_idx of $#$trimmed");
 
-    diag("Layout invariant: sys + summary at positions 0 and 1, dialog from 2 onward, tool_results at END");
+    diag("Layout invariant: sys at 0, dialog + tool_results in middle, summary at END");
 };
 
 # ===== Test 5: Pre-flight trim also produces the cache-stable layout =====
@@ -302,7 +318,10 @@ subtest 'Pre-flight trim produces cache-stable layout' => sub {
 
     ok($summary_idx >= 0, "Pre-flight trim: summary exists");
     if ($summary_idx >= 0) {
-        is($summary_idx, 1, "Pre-flight trim: summary at position 1 (after system prompt)");
+        is($summary_idx, $#$trimmed,
+            "Pre-flight trim: summary at the END (after dialog + tool_results)");
+        isnt($summary_idx, 1,
+            "Pre-flight trim: summary is NOT at position 1 (would break LCP gate)");
     }
     if ($first_tr_idx >= 0 && $last_dialog_idx >= 0) {
         ok($last_dialog_idx < $first_tr_idx,

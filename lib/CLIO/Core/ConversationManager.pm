@@ -513,25 +513,27 @@ sub trim_conversation_for_api {
 
     # Cache-stable ordering: summary at position 1 (right after the system
     # prompt) so the LCP match extends through sys + summary on every turn.
-    # Order: [system][summary][dialog][tool_results]
+    # Order: [system][dialog][tool_results][summary]
     #
     # In the normal flow, load_conversation_history excludes the system
     # prompt, so @result starts with dialog and the summary goes at
-    # position 0 (-> final position 1 after _build_turn_context prepends
-    # the system prompt). But if the history carries a leading non-summary
-    # system message (the resume path or tests), the summary must go
-    # AFTER it at position 1, not before it at position 0.
+    # the END after dialog + tool_results. This keeps the LCP match alive
+    # through the stable prefix before breaking at the summary content.
+    # If the history carries a leading non-summary system message (the
+    # resume path or tests), the summary still goes at the END so the
+    # LCP can extend through every preserved system section before
+    # breaking at the summary boundary.
+    #
+    # Bug history: placing the summary at position 1 forced llama.cpp's
+    # prompt_stable_prefix_tokens gate to include summary tokens that
+    # the cached slot didn't have yet, collapsing sim_best from ~0.99
+    # to ~0.58 forever on the first trim of a long-running session.
     if (@preserved_summaries) {
         my @summaries = map { $_->{msg} } @preserved_summaries;
-        my $splice_pos = 0;
-        if (@result && ($result[0]{role} // '') eq 'system'
-            && ($result[0]{content} // '') !~ /<thread_summary>/) {
-            $splice_pos = 1;
-        }
-        splice @result, $splice_pos, 0, @summaries;
         if ($debug) {
-            log_debug('ConversationManager', "Pre-flight trim placed " . scalar(@preserved_summaries) . " thread_summary message(s) at position " . $splice_pos . " for LCP");
+            log_debug('ConversationManager', "Pre-flight trim placed " . scalar(@preserved_summaries) . " thread_summary message(s) at the END of @result for LCP stability");
         }
+        push @result, @summaries;
     }
 
     return \@result if @result;

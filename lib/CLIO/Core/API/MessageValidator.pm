@@ -491,18 +491,25 @@ sub validate_and_truncate {
     for my $user_ctx_unit (@$preserved_user_contexts) {
         push @truncated, $_ for @{$user_ctx_unit->{messages}};
     }
-    # Cache-stable ordering: summary at position 1 (right after the system
-    # prompt) so the LCP match extends through sys + summary on every turn.
+    # Cache-stable ordering: keep the summary at the END of the truncated
+    # messages so the LCP match can extend through the stable prefix
+    # (sys + dialog + tool_results + user_ctx + user_input) before
+    # breaking at the summary content boundary.
+    #
     # llama.cpp's server-context.cpp prompt_stable_prefix_tokens floor is
-    # explicitly designed for this layout:
-    #   "if the caller told us how many leading tokens form a stable prefix
-    #    (system prompt + thread_summary), reject any slot whose stored
-    #    prompt does not share that prefix"
+    # a minimum-prefix-match gate: if the cached slot's common_prefix with
+    # the new prompt is less than the hint, the slot is rejected. Placing
+    # the summary at position 1 (right after sys) forced the gate value to
+    # include the summary, and the cached slot (which doesn't have the
+    # summary yet on the first trim) always failed the gate, collapsing
+    # sim_best from ~0.99 to ~0.58 forever (the bug observed 2026-08-19,
+    # cache hit ratio collapse on first trim of a long-running session).
+    #
     # Combined with the deinterleaved tool_results layout below, the LCP
     # match survives a context trim instead of collapsing at the first
-    # dropped position. Order: [system][summary][dialog][tool_results]
-    push @truncated, $summary_to_use if $summary_to_use;
+    # dropped position. Order: [system][dialog][tool_results][summary]
     push @truncated, @validated;
+    push @truncated, $summary_to_use if $summary_to_use;
 
     if (should_log('DEBUG')) {
         my $final_tokens = _estimate_tokens(\@truncated);
