@@ -1077,24 +1077,19 @@ sub adapt_request_for_endpoint {
             || ($thinking_mode eq 'auto' && $show_thinking && $model_supports);
         if ($send_reasoning) {
             my $thinking_effort = $self->{config} ? ($self->{config}->get('thinking_effort') // 'medium') : 'medium';
-            # OpenRouter's `reasoning.max_tokens` is the provider's token cap
-            # on the model's internal thinking. Doubled from the obvious
-            # baseline (the same as MiniMax's budget_tokens) so models on
-            # OpenRouter emit full verbose reasoning instead of brief
-            # planning one-liners when the user has show_thinking on.
-            my %budget = (
-                low    => 2000,
-                medium => 4000,
-                high   => 8000,
-            );
-            my $effort_key = $thinking_effort;
-            my $max_tokens = $budget{$effort_key};
-            $max_tokens //= 8000;  # unknown effort -> default to high
+            # OpenRouter's `reasoning.effort` is the portable way to control
+            # reasoning depth. Both free and paid model variants support it,
+            # whereas `max_tokens` only works on some upstream providers
+            # (e.g. Together) and fails on others (e.g. Nvidia free tier).
+            # Validate effort - OpenRouter accepts low, medium, high, max.
+            # Unknown values default to high for maximum reasoning.
+            my %valid_effort = (low => 1, medium => 1, high => 1, max => 1);
+            $thinking_effort = 'high' unless $valid_effort{$thinking_effort};
             $payload->{reasoning} = {
-                enabled    => \1,
-                max_tokens  => $max_tokens,
+                enabled => \1,
+                effort   => $thinking_effort,
             };
-            log_debug('APIManager', "OpenRouter reasoning: effort=$thinking_effort, max_tokens=$max_tokens");
+            log_debug('APIManager', "OpenRouter reasoning: effort=$thinking_effort");
         }
     }
 
