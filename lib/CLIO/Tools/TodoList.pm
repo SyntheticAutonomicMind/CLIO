@@ -472,7 +472,29 @@ sub handle_update {
     $output .= "CURRENT STATE:\n";
     $output .= "  ✓ Completed: " . scalar(@completed) . "\n";
     $output .= "  🔄 In Progress: " . scalar(@in_progress) . "\n";
-    $output .= "  [ ] Not Started: " . scalar(@not_started) . "\n";
+$output .= "  [ ] Not Started: " . scalar(@not_started) . "\n";
+    my @with_summary = grep { defined $_->{taskSummary} && length $_->{taskSummary} > 0 } @$todos;
+    if (@with_summary) {
+        $output .= "   With task summary: " . scalar(@with_summary) . "\n";
+    }
+
+    if (scalar(@completed) == scalar(@$todos) && @$todos > 0) {
+        $output .= "\n All tasks completed!\n";
+    }
+
+    # Surface captured task summaries so the user can see the compressed
+    # history of completed todos without grepping through raw dialog.
+    if (@with_summary) {
+        $output .= "\nTASK SUMMARIES (compressed context for completed todos):\n";
+        for my $todo (sort { ($a->{completedAt} || 0) <=> ($b->{completedAt} || 0) } @with_summary) {
+            $output .= "\n  #$todo->{id}: $todo->{title}\n";
+            my $summary = $todo->{taskSummary} || '';
+            if (length($summary) > 500) {
+                $summary = substr($summary, 0, 500) . '...';
+            }
+            $output .= "    " . $summary . "\n";
+        }
+    }
     
     if (scalar(@completed) == scalar(@$todos) && @$todos > 0) {
         $output .= "\n🎉 All tasks completed!\n";

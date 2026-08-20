@@ -37,6 +37,20 @@ Based on SAM's TodoManager pattern.
 - blockedReason: String - required if status=blocked
 - createdAt: Timestamp
 - updatedAt: Timestamp
+- taskBoundaryId: String - optional, links to a <task_boundary> system message
+  emitted into the conversation when this todo transitioned to in-progress.
+  Populated by TodoList::handle_update on first transition to in-progress,
+  used by session resume to reconstruct task boundaries, and used by YaRN
+  to group dropped messages by task for task-aware compression.
+- taskSummary: String - optional, populated when the todo is completed.
+  Captures the YaRN-compressed summary of work done under this todo so the
+  model retains task context after the underlying dialog has been trimmed.
+- tokensCompressed: Integer - optional, tracks token savings from compression.
+
+**Task Boundary Lifecycle**:
+- transition to in-progress: emit <task_boundary id="..." name="..." status="active">
+- transition to completed/cancelled: emit <task_boundary id="..." name="..." status="completed">
+  and populate taskSummary with compressed dialog
 
 **Validation Rules**:
 1. Only ONE todo can be in-progress at a time
@@ -167,6 +181,13 @@ sub write {
     foreach my $todo (@$todos) {
         $todo->{createdAt} ||= $now;
         $todo->{updatedAt} = $now;
+        # taskBoundaryId/taskSummary/tokensCompressed are preserved across
+        # writes as opaque state - they are populated by handle_update on
+        # todo transitions and consumed by YaRN/session-resume. If a write
+        # replaces the list (e.g. /todo clear removes completed items), the
+        # old taskSummary on a removed todo dies with it; tasks that remain
+        # in the list keep their accumulated summary so future resumes can
+        # still see the task history.
     }
     
     # Save to disk

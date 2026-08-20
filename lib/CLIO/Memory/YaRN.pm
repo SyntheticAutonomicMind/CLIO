@@ -228,43 +228,46 @@ Returns: Hashref with compressed summary message
 sub compress_messages {
     my ($self, $messages, %opts) = @_;
 
-    return undef unless $messages && ref($messages) eq 'ARRAY' && @$messages;
+    # Empty $messages is valid when the caller wants to re-emit a previous
+    # summary (e.g. a check after a no-op trim). We only short-circuit on
+    # truly empty input with no previous summary to recycle.
+    my $previous_summary = $opts{previous_summary} || '';
+    return undef if !$messages && !$previous_summary;
+    $messages ||= [];
+    return undef unless ref($messages) eq 'ARRAY';
 
     my $original_task = $opts{original_task} || '';
-    my $previous_summary = $opts{previous_summary} || '';
     my $target_tokens = $opts{target_tokens};   # Cache-Stable Summary Slot: fit to N tokens
     my $message_count = scalar(@$messages);
 
     log_debug('YaRN', "Compressing $message_count messages" . ($target_tokens ? " (target: $target_tokens tokens)" : ''));
 
-    # Extraction buckets
-    my @user_requests;
-    my @commits;
-    my @files_touched;
-    my @decisions;
-    my @collaboration_exchanges;  # Agent question + user response pairs
-    my %tool_counts;
+    # Task-aware extraction buckets. If <task_boundary ...> markers are
+    # present in @messages, we group dropped messages by owning task.
+    # Without task markers we fall back to a single '_flat' bucket for
+    # backward compatibility with sessions that predate the todo integration.
+    my %task_buckets;  # task_id => bucket hash
+    my $has_task_boundaries = _scan_for_task_boundaries($messages);
+    my $current_task_id = $has_task_boundaries ? '_pre_task' : '_flat';
+    my %collab_tool_calls;  # tool_call_id => agent's question text (shared across tasks)
 
-    # Track collaboration tool_call IDs so we can pair them with responses
-    my %collab_tool_calls;  # tool_call_id => agent's question text
-
-    # Seed buckets from previous summary so accumulated history isn't lost across trim cycles
+    # Seed buckets from previous summary so accumulated history isn't lost
+    # across trim cycles. Pick parser based on whether previous summary used
+    # the task layout (<task ...> blocks) or the legacy flat layout.
     if ($previous_summary) {
-        _parse_previous_summary($previous_summary, {
-            commits                 => \@commits,
-            files_touched           => \@files_touched,
-            decisions               => \@decisions,
-            tool_counts             => \%tool_counts,
-            user_requests           => \@user_requests,
-            collaboration_exchanges => \@collaboration_exchanges,
-        });
-        # If previous summary had a preserved original request, carry it forward
+        if ($previous_summary =~ /<task\b/i) {
+            _parse_previous_task_summary($previous_summary, \%task_buckets);
+        } else {
+            my %flat = ();
+            _parse_previous_summary($previous_summary, \%flat);
+            $task_buckets{_flat} = \%flat;
+        }
+        # Carried-original + carried-task tokens used by find_substantive_task
         if ($previous_summary =~ /\[original\]\s*(.{1,500})/s) {
             my $orig = $1;
             $orig =~ s/\s+$//;
             $opts{_carried_original} = substr($orig, 0, 300);
         }
-        # If previous summary had a Current task, carry it forward
         if ($previous_summary =~ /Current task:\s*(.{1,500})/s) {
             my $prev_task = $1;
             $prev_task =~ s/\s+$//;
@@ -275,14 +278,62 @@ sub compress_messages {
         }
     }
 
+    # Walk the message stream. <task_boundary> markers switch the active
+    # bucket; everything between two markers belongs to the preceding task.
     for my $msg (@$messages) {
         my $role    = $msg->{role}    || '';
         my $content = $msg->{content} || '';
 
+        # Detect task boundary: switch the active bucket.
+        if ($role eq 'system' && $content =~ /<task_boundary\b([^>]*?)\/?>/) {
+            my $attrs = $1;
+            my $tid = 'unknown-task';
+            my $tname = '';
+            my $ttodo_id;
+            my $tstatus = 'active';
+            if ($attrs =~ /\bid="([^"]*)"/)      { $tid = $1; }
+            if ($attrs =~ /\bname="([^"]*)"/)    { $tname = $1; }
+            if ($attrs =~ /\btodo_id="([^"]*)"/) { $ttodo_id = $1; }
+            if ($attrs =~ /\bstatus="([^"]*)"/)  { $tstatus = $1; }
+
+            my $bucket = $task_buckets{$tid} ||= {
+                user_requests           => [],
+                commits                 => [],
+                files_touched           => [],
+                decisions               => [],
+                collaboration_exchanges => [],
+                tool_counts             => {},
+                name                    => '',
+                todo_id                 => undef,
+                status                  => 'unknown',
+                started_at              => undef,
+                completed_at            => undef,
+            };
+            $bucket->{name} = $tname;
+            $bucket->{todo_id} = $ttodo_id;
+            $bucket->{status} = $tstatus;
+            $current_task_id = $tid;
+            next;
+        }
+
+        my $bucket = $task_buckets{$current_task_id} ||= {
+            user_requests           => [],
+            commits                 => [],
+            files_touched           => [],
+            decisions               => [],
+            collaboration_exchanges => [],
+            tool_counts             => {},
+            name                    => '',
+            todo_id                 => undef,
+            status                  => 'unknown',
+            started_at              => undef,
+            completed_at            => undef,
+        };
+
         if ($role eq 'user') {
             my $summary = substr($content, 0, 300);
             $summary .= '...' if length($content) > 300;
-            push @user_requests, $summary;
+            push @{$bucket->{user_requests}}, $summary;
         }
         elsif ($role eq 'assistant') {
             # Collaboration/decision messages (identified by metadata or legacy text prefix)
@@ -291,12 +342,12 @@ sub compress_messages {
                 # Modern: collaboration metadata on message
                 my $dec = substr($content, 0, 300);
                 $dec =~ s/\s+/ /g;
-                push @decisions, substr($dec, 0, 250);
+                push @{$bucket->{decisions}}, substr($dec, 0, 250);
             } elsif ($content =~ /\[COLLABORATION\](.{1,300})/s) {
                 # Legacy: [COLLABORATION] text prefix (backward compat)
                 my $dec = $1;
                 $dec =~ s/\s+/ /g;
-                push @decisions, substr($dec, 0, 250);
+                push @{$bucket->{decisions}}, substr($dec, 0, 250);
             }
 
             # Tool calls - extract meaningful path/operation details
@@ -304,7 +355,7 @@ sub compress_messages {
                 for my $tc (@{$msg->{tool_calls}}) {
                     my $name     = $tc->{function}{name}      || 'unknown';
                     my $args_str = $tc->{function}{arguments} || '{}';
-                    $tool_counts{$name}++;
+                    $bucket->{tool_counts}{$name}++;
 
                     # Track interact calls to pair with responses
                     if ($name eq 'interact' && $tc->{id}) {
@@ -321,7 +372,7 @@ sub compress_messages {
                     # Capture file paths for file_operations and apply_patch
                     if ($name =~ /^(file_operations|apply_patch)$/) {
                         while ($args_str =~ /"(?:path|new_path|old_path)"\s*:\s*"([^"]+)"/g) {
-                            push @files_touched, $1 unless $1 =~ /^\./;
+                            push @{$bucket->{files_touched}}, $1 unless $1 =~ /^\./;
                         }
                     }
                 }
@@ -335,7 +386,7 @@ sub compress_messages {
                 # Keep more content for collaboration exchanges (1000 chars each)
                 $question = substr($question, 0, 1000) . '...' if length($question) > 1000;
                 $response = substr($response, 0, 1000) . '...' if length($response) > 1000;
-                push @collaboration_exchanges, {
+                push @{$bucket->{collaboration_exchanges}}, {
                     question => $question,
                     response => $response,
                 };
@@ -344,56 +395,143 @@ sub compress_messages {
 
             # Git commit results: [abc1234] Commit subject line
             while ($content =~ /^\[([a-f0-9]{7,12})\]\s+(.{1,100})/mg) {
-                push @commits, "$1: $2";
+                push @{$bucket->{commits}}, "$1: $2";
             }
             # git log --oneline output
             while ($content =~ /^([a-f0-9]{7,12})\s+(.{1,100})/mg) {
                 my $entry = "$1: $2";
-                push @commits, $entry unless grep { $_ eq $entry } @commits;
+                push @{$bucket->{commits}}, $entry
+                    unless grep { $_ eq $entry } @{$bucket->{commits}};
             }
         }
     }
 
-    # Deduplicate and limit
-    my %seen;
-    @files_touched = grep { !$seen{$_}++ } @files_touched;
-    @files_touched = @files_touched[0..29] if @files_touched > 30;
-    @commits       = do { my %s; grep { !$s{$_}++ } reverse @commits };
-    @commits       = @commits[0..14] if @commits > 15;
-    @decisions     = @decisions[-3..-1]     if @decisions > 3;
-    # Keep last 5 collaboration exchanges (most recent are most relevant)
-    @collaboration_exchanges = @collaboration_exchanges[-5..-1]
-        if @collaboration_exchanges > 5;
+    # Per-bucket dedup + limit.
+    for my $tid (keys %task_buckets) {
+        my $b = $task_buckets{$tid};
+        my %seen;
+        @{$b->{files_touched}} = grep { !$seen{$_}++ } @{$b->{files_touched}};
+        @{$b->{files_touched}} = @{$b->{files_touched}}[0..29] if @{$b->{files_touched}} > 30;
+        @{$b->{commits}}       = do { my %s; grep { !$s{$_}++ } reverse @{$b->{commits}} };
+        @{$b->{commits}}       = @{$b->{commits}}[0..14] if @{$b->{commits}} > 15;
+        @{$b->{decisions}}     = @{$b->{decisions}}[-3..-1] if @{$b->{decisions}} > 3;
+        @{$b->{collaboration_exchanges}} = @{$b->{collaboration_exchanges}}[-5..-1]
+            if @{$b->{collaboration_exchanges}} > 5;
+    }
 
-    # Always preserve the FIRST user request (the original session task).
-    # When trimming to last N, we risk losing the original task context
-    # that started the session. Keep it separately if we have many requests.
+    # Pick renderer: task-aware if we saw real task boundaries; legacy flat otherwise.
+    my $real_task_count = grep { $_ ne '_flat' && $_ ne '_pre_task' } keys %task_buckets;
+    my $use_task_layout = $real_task_count > 0 || $has_task_boundaries;
+
+    my $summary_content;
+    if ($use_task_layout) {
+        $summary_content = _render_task_summary(\%task_buckets,
+            original_task    => $original_task,
+            carried_task     => $opts{_carried_task},
+            carried_original => $opts{_carried_original},
+        );
+    }
+    else {
+        $summary_content = _render_flat_summary($task_buckets{_flat} || {},
+            original_task    => $original_task,
+            carried_task     => $opts{_carried_task},
+            carried_original => $opts{_carried_original},
+        );
+    }
+
+    # Cache-Stable Summary Slot (CSSS): if caller requested a target token size,
+    # fit the summary to that size. Truncate oldest items first if too big,
+    # pad with neutral filler if too small. This keeps the summary at a constant
+    # byte length across trim cycles, so llama.cpp's prompt cache can reuse
+    # everything before and after the summary slot.
+    if ($target_tokens && $target_tokens > 0) {
+        $summary_content = _fit_summary_to_target($summary_content, $target_tokens);
+    }
+
+    # Estimate token counts
+    my $original_tokens = 0;
+    for my $msg (@$messages) {
+        $original_tokens += int(length($msg->{content} || '') / 2.5);
+    }
+    my $compressed_tokens = int(length($summary_content) / 2.5);
+
+    if ($original_tokens > 0) {
+        log_debug('YaRN', "Compression: $original_tokens -> $compressed_tokens tokens (" .
+            sprintf("%.1f", 100 * ($original_tokens - $compressed_tokens) / $original_tokens) . "% reduction)");
+    }
+
+    return {
+        role    => 'system',
+        content => $summary_content,
+        _metadata => {
+            compressed_count   => $message_count,
+            original_tokens    => $original_tokens,
+            compressed_tokens  => $compressed_tokens,
+            compression_ratio  => $original_tokens > 0
+                ? $compressed_tokens / $original_tokens : 0,
+        },
+    };
+}
+
+# Returns 1 if @messages contains any <task_boundary ...> markers.
+sub _scan_for_task_boundaries {
+    my ($messages) = @_;
+    for my $msg (@$messages) {
+        next unless ($msg->{role} // '') eq 'system';
+        my $c = $msg->{content} // '';
+        return 1 if $c =~ /<task_boundary\b/;
+    }
+    return 0;
+}
+
+=head2 _render_flat_summary
+
+Legacy flat-list renderer. Kept for sessions that never had task boundaries
+(messages emitted before the todo integration). Renders the same layout
+compress_messages used to emit: Current task, collaboration, requests,
+commits, files, decisions, tool counts.
+
+Arguments:
+    $bucket              - Hashref with user_requests/commits/files_touched/etc.
+    %opts                - original_task, carried_task, carried_original, previous_summary
+
+Returns:
+    Rendered <thread_summary>...</thread_summary> string.
+
+=cut
+
+sub _render_flat_summary {
+    my ($bucket, %opts) = @_;
+
+    my $original_task    = $opts{original_task}     || '';
+    my $carried_task     = $opts{carried_task}      || '';
+    my $carried_original = $opts{carried_original}  || '';
+
+    my @user_requests           = @{$bucket->{user_requests}           || []};
+    my @commits                 = @{$bucket->{commits}                 || []};
+    my @files_touched           = @{$bucket->{files_touched}           || []};
+    my @decisions               = @{$bucket->{decisions}               || []};
+    my @collaboration_exchanges = @{$bucket->{collaboration_exchanges} || []};
+    my %tool_counts             = %{$bucket->{tool_counts}             || {}};
+
     my $first_user_request;
     if (@user_requests > 8) {
         $first_user_request = $user_requests[0];
         @user_requests = @user_requests[-7..-1];
     }
-    # Use carried original from previous summary if available (survives cycles)
-    if ($opts{_carried_original}) {
-        my $carried = $opts{_carried_original};
-        unless (grep { $_ eq $carried } @user_requests) {
-            $first_user_request = $carried unless $first_user_request;
+    if ($carried_original) {
+        unless (grep { $_ eq $carried_original } @user_requests) {
+            $first_user_request = $carried_original unless $first_user_request;
         }
     }
-    # Cap at 8 total (up from 5)
 
-    # Find a substantive task description. Short confirmations like "yes" or
-    # "go ahead" are useless as task context - scan user_requests for better.
-    # Prefer a carried task from previous summary over the caller's original_task
-    # (which is often the most recent user message, not the real task).
     my @all_requests = @user_requests;
     unshift @all_requests, $first_user_request if $first_user_request;
     my $effective_task = find_substantive_task(
-        $opts{_carried_task} || $original_task,
+        $carried_task || $original_task,
         \@all_requests
     );
 
-    # Build summary
     my @parts;
     push @parts, "<thread_summary>";
     push @parts, "";
@@ -403,7 +541,6 @@ sub compress_messages {
         push @parts, "";
     }
 
-    # Collaboration exchanges go FIRST - they represent active design discussions
     if (@collaboration_exchanges) {
         push @parts, "Active discussion (agent-user collaboration exchanges):";
         for my $i (0..$#collaboration_exchanges) {
@@ -417,7 +554,6 @@ sub compress_messages {
 
     if (@user_requests || $first_user_request) {
         push @parts, "Recent user requests:";
-        # Include original request first if it was preserved separately
         if ($first_user_request && !grep { $_ eq $first_user_request } @user_requests) {
             push @parts, "- [original] $first_user_request";
         }
@@ -453,40 +589,224 @@ sub compress_messages {
 
     push @parts, "</thread_summary>";
 
-    my $summary_content = join("\n", @parts);
+    return join("\n", @parts);
+}
 
-    # Cache-Stable Summary Slot (CSSS): if caller requested a target token size,
-    # fit the summary to that size. Truncate oldest items first if too big,
-    # pad with neutral filler if too small. This keeps the summary at a constant
-    # byte length across trim cycles, so llama.cpp's prompt cache can reuse
-    # everything before and after the summary slot.
-    if ($target_tokens && $target_tokens > 0) {
-        $summary_content = _fit_summary_to_target($summary_content, $target_tokens);
+=head2 _render_task_summary
+
+Task-aware renderer. Emits one <task>...</task> block per task bucket,
+preserving the per-task semantics that the legacy flat layout could not
+capture.
+
+Arguments:
+    $task_buckets - Hashref of task_id => bucket hash
+    %opts         - original_task, carried_task, carried_original
+
+Returns:
+    Rendered <thread_summary>...</thread_summary> string.
+
+=cut
+
+sub _render_task_summary {
+    my ($task_buckets, %opts) = @_;
+
+    my $original_task    = $opts{original_task}    || '';
+    my $carried_task     = $opts{carried_task}     || '';
+    my $carried_original = $opts{carried_original} || '';
+
+    # Order tasks oldest-first by started_at; sentinel keys are dropped.
+    my @ordered_task_ids;
+    for my $tid (sort keys %$task_buckets) {
+        next if $tid eq '_flat' || $tid eq '_pre_task';
+        push @ordered_task_ids, $tid;
+    }
+    @ordered_task_ids = sort {
+        my $aa = $task_buckets->{$a}{started_at} || 0;
+        my $bb = $task_buckets->{$b}{started_at} || 0;
+        $aa <=> $bb;
+    } @ordered_task_ids;
+
+    # Most-recent task's name seeds the Current task line.
+    my $most_recent_task_id = $ordered_task_ids[-1];
+    my $most_recent_name = $most_recent_task_id
+        ? ($task_buckets->{$most_recent_task_id}{name} || '')
+        : '';
+
+    my @all_user_requests;
+    for my $tid (@ordered_task_ids) {
+        push @all_user_requests, @{$task_buckets->{$tid}{user_requests} || []};
+    }
+    my $effective_task = find_substantive_task(
+        $carried_task || $original_task || $most_recent_name,
+        \@all_user_requests
+    );
+
+    my @parts;
+    push @parts, "<thread_summary>";
+    push @parts, "";
+
+    if ($effective_task) {
+        push @parts, "Current task: " . substr($effective_task, 0, 300);
+        push @parts, "";
     }
 
-    # Estimate token counts
-    my $original_tokens = 0;
-    for my $msg (@$messages) {
-        $original_tokens += int(length($msg->{content} || '') / 2.5);
-    }
-    my $compressed_tokens = int(length($summary_content) / 2.5);
-
-    if ($original_tokens > 0) {
-        log_debug('YaRN', "Compression: $original_tokens -> $compressed_tokens tokens (" .
-            sprintf("%.1f", 100 * ($original_tokens - $compressed_tokens) / $original_tokens) . "% reduction)");
+    # Render one <task> block per task, oldest first so the most recent
+    # task is at the end (stable reading order).
+    for my $tid (@ordered_task_ids) {
+        my $b = $task_buckets->{$tid};
+        push @parts, _render_single_task_block($tid, $b);
+        push @parts, "";
     }
 
-    return {
-        role    => 'system',
-        content => $summary_content,
-        _metadata => {
-            compressed_count   => $message_count,
-            original_tokens    => $original_tokens,
-            compressed_tokens  => $compressed_tokens,
-            compression_ratio  => $original_tokens > 0
-                ? $compressed_tokens / $original_tokens : 0,
-        },
-    };
+    push @parts, "</thread_summary>";
+
+    return join("\n", @parts);
+}
+
+# Render a single <task id="..." status="...">...</task> block from a
+# task bucket. The block is a self-contained summary of one task's work.
+sub _render_single_task_block {
+    my ($tid, $b) = @_;
+
+    my @lines;
+    my $status = $b->{status} || 'completed';
+    push @lines, qq{<task id="$tid" status="$status">};
+
+    if ($b->{name}) {
+        push @lines, "Task: " . $b->{name};
+    }
+
+    my @collab = @{$b->{collaboration_exchanges} || []};
+    @collab = @collab[-3..-1] if @collab > 3;
+    if (@collab) {
+        push @lines, "Active discussion:";
+        for my $ex (@collab) {
+            push @lines, "  Agent asked: " . substr($ex->{question}, 0, 300);
+            push @lines, "  User replied: " . substr($ex->{response} // '', 0, 300);
+        }
+    }
+
+    if (@{$b->{decisions} || []}) {
+        push @lines, "Decisions:";
+        push @lines, "- $_" for @{$b->{decisions}};
+    }
+
+    if (@{$b->{files_touched} || []}) {
+        push @lines, "Files:";
+        push @lines, "- $_" for @{$b->{files_touched}};
+    }
+
+    if (@{$b->{commits} || []}) {
+        push @lines, "Commits:";
+        push @lines, "- $_" for @{$b->{commits}};
+    }
+
+    if (%{$b->{tool_counts} || {}}) {
+        my @tool_lines;
+        for my $tool (sort keys %{$b->{tool_counts}}) {
+            push @tool_lines, "$tool: $b->{tool_counts}{$tool}";
+        }
+        push @lines, "Tools: " . join(", ", @tool_lines);
+    }
+
+    push @lines, "</task>";
+    return join("\n", @lines);
+}
+
+# Parse a previously-rendered <thread_summary> that uses the task layout.
+# Seeds %task_buckets in place; one entry per <task id="..."> block.
+sub _parse_previous_task_summary {
+    my ($summary_text, $task_buckets) = @_;
+
+    return unless $summary_text && $task_buckets;
+
+    # Match each <task id="..." status="...">...</task> block. The content
+    # of each block is rendered as a sequence of lines that begin with one
+    # of the known section labels ("Task:", "Decisions:", "Files:", etc.)
+    # or with "  Agent asked:" / "  User replied:" for collaboration.
+    while ($summary_text =~ /<task\s+([^>]*?)>(.*?)<\/task>/sg) {
+        my $attrs = $1;
+        my $body = $2;
+        my $tid = 'unknown-task';
+        my $tstatus = 'completed';
+        if ($attrs =~ /\bid="([^"]*)"/)     { $tid = $1; }
+        if ($attrs =~ /\bstatus="([^"]*)"/) { $tstatus = $1; }
+
+        my $bucket = $task_buckets->{$tid} ||= {
+            user_requests           => [],
+            commits                 => [],
+            files_touched           => [],
+            decisions               => [],
+            collaboration_exchanges => [],
+            tool_counts             => {},
+            name                    => '',
+            todo_id                 => undef,
+            status                  => $tstatus,
+            started_at              => undef,
+            completed_at            => undef,
+        };
+
+        # Extract the task name (rendered as "Task: <name>" on its own line).
+        if ($body =~ /^Task:\s*(.+)$/m) {
+            $bucket->{name} = $1;
+        }
+
+        # Extract collaboration exchanges (must be parsed as a pair).
+        my @collab_q;
+        my @collab_r;
+        for my $line (split /\n/, $body) {
+            if    ($line =~ /^\s*Agent asked:\s*(.*)$/) { push @collab_q, $1; }
+            elsif ($line =~ /^\s*User replied:\s*(.*)$/) { push @collab_r, $1; }
+        }
+        for (my $i = 0; $i < @collab_q; $i++) {
+            push @{$bucket->{collaboration_exchanges}}, {
+                question => $collab_q[$i],
+                response => $collab_r[$i] // '',
+            };
+        }
+
+        # Extract sections: lines after the label up to the next label or end.
+        my %section_re = (
+            Decisions => qr/^Decisions:\s*$/,
+            Files     => qr/^Files:\s*$/,
+            Commits   => qr/^Commits:\s*$/,
+            Tools     => qr/^Tools:\s*$/,
+        );
+        my %sections = (
+            Decisions => [],
+            Files     => [],
+            Commits   => [],
+            Tools     => [],
+        );
+        my $current_label;
+        for my $line (split /\n/, $body) {
+            my $matched;
+            for my $label (keys %section_re) {
+                if ($line =~ $section_re{$label}) {
+                    $matched = $label;
+                    last;
+                }
+            }
+            if ($matched) {
+                $current_label = $matched;
+            }
+            elsif ($current_label && $line =~ /^- (.+)$/) {
+                push @{$sections{$current_label}}, $1;
+            }
+            elsif ($current_label && $current_label eq 'Tools' && $line =~ /^Tools:\s*(.+)$/) {
+                # Tools are rendered as a single comma-joined line, not bullets.
+                for my $pair (split /\s*,\s*/, $1) {
+                    if ($pair =~ /^([^:]+):\s*(\d+)/) {
+                        $bucket->{tool_counts}{$1} = ($bucket->{tool_counts}{$1} || 0) + $2;
+                    }
+                }
+                $current_label = undef;
+            }
+        }
+        push @{$bucket->{decisions}},     @{$sections{Decisions}};
+        push @{$bucket->{files_touched}}, @{$sections{Files}};
+        push @{$bucket->{commits}},       @{$sections{Commits}};
+    }
 }
 
 =head2 find_substantive_task
@@ -634,34 +954,81 @@ sub _fit_summary_to_target {
     return $summary_content if abs($current - $target_tokens) <= $tolerance;
 
     if ($current > $target_tokens) {
-        # Too big - drop sections from least-critical to most-critical.
-        # The Current task section is NEVER dropped (it's the agent's
-        # active task context).
         log_debug('YaRN', "CSSS: summary $current tokens > target $target_tokens, trimming");
-        my @sections = _parse_summary_sections($summary_content);
 
-        # Map drop-key back to its header prefix. (Same mapping that
-        # _parse_summary_sections uses to identify section boundaries.)
-        my %key_to_prefix = (
-            tool_counts    => 'Tool usage',
-            decisions      => 'Key decisions',
-            files          => 'Files created/modified',
-            commits        => 'Git commits',
-            collab         => 'Active discussion',
-            user_requests  => 'Recent user requests',
-        );
-        my @drop_order = qw(tool_counts decisions files commits collab user_requests);
-        for my $key (@drop_order) {
-            my $prefix = $key_to_prefix{$key};
-            my $idx = _find_section_index(\@sections, $prefix);
-            next if $idx < 0;
-            splice @sections, $idx, 1;
-            my $candidate = _render_sections(\@sections);
-            my $size = CLIO::Memory::TokenEstimator::estimate_tokens($candidate);
-            if ($size <= $target_tokens + $tolerance) {
-                $summary_content = $candidate;
-                $current = $size;
-                last;
+        # Two-pass strategy: first try to fit by trimming task blocks, then
+        # if still too big, fall back to dropping sections within the most
+        # recent task. The "Current task" line is NEVER dropped.
+        if ($summary_content =~ /<task\b/i) {
+            my @task_blocks = _parse_task_blocks($summary_content);
+            my $current_task_line = '';
+            if ($summary_content =~ /(Current task:[^\n]*\n)/) {
+                $current_task_line = $1;
+            }
+
+            # Drop whole task blocks oldest-first, never dropping the most
+            # recent task (the agent is currently working on it).
+            # We also always keep at least the most-recent task block, even
+            # if dropping it would fit the budget - losing active context
+            # is worse than running slightly over budget.
+            #
+            # Strategy: try the full set, drop one at a time until we fit
+            # (or hit the keep-at-least-most-recent floor). The candidate
+            # is rendered once per iteration to measure.
+            my $fit_achieved = 0;
+            while (@task_blocks > 1) {
+                my $candidate = _render_with_task_blocks($current_task_line, \@task_blocks);
+                my $size = CLIO::Memory::TokenEstimator::estimate_tokens($candidate);
+                if ($size <= $target_tokens + $tolerance) {
+                    $summary_content = $candidate;
+                    $current = $size;
+                    $fit_achieved = 1;
+                    last;
+                }
+                shift @task_blocks;  # Drop oldest, try again
+            }
+            # If we never achieved fit but the final set is still too big,
+            # we leave it as-is and fall through to the section-level
+            # drops and hard-truncate safety net below.
+            if (!$fit_achieved) {
+                $summary_content = _render_with_task_blocks($current_task_line, \@task_blocks);
+                $current = CLIO::Memory::TokenEstimator::estimate_tokens($summary_content);
+            }
+
+            # If still too big with only the most recent task, trim its
+            # internal sections (Tools first, then Commits, then Files).
+            if ($current > $target_tokens + $tolerance && @task_blocks == 1) {
+                my $trimmed = _trim_most_recent_task($task_blocks[0], $target_tokens);
+                $summary_content = _render_with_task_blocks($current_task_line, [$trimmed])
+                    if $trimmed;
+                $current = CLIO::Memory::TokenEstimator::estimate_tokens($summary_content);
+            }
+        }
+
+        # Legacy fall-through: section-level drops for non-task summaries.
+        if ($current > $target_tokens + $tolerance) {
+            my @sections = _parse_summary_sections($summary_content);
+            my %key_to_prefix = (
+                tool_counts    => 'Tool usage',
+                decisions      => 'Key decisions',
+                files          => 'Files created/modified',
+                commits        => 'Git commits',
+                collab         => 'Active discussion',
+                user_requests  => 'Recent user requests',
+            );
+            my @drop_order = qw(tool_counts decisions files commits collab user_requests);
+            for my $key (@drop_order) {
+                my $prefix = $key_to_prefix{$key};
+                my $idx = _find_section_index(\@sections, $prefix);
+                next if $idx < 0;
+                splice @sections, $idx, 1;
+                my $candidate = _render_sections(\@sections);
+                my $size = CLIO::Memory::TokenEstimator::estimate_tokens($candidate);
+                if ($size <= $target_tokens + $tolerance) {
+                    $summary_content = $candidate;
+                    $current = $size;
+                    last;
+                }
             }
         }
 
@@ -669,25 +1036,21 @@ sub _fit_summary_to_target {
         if ($current > $target_tokens + $tolerance) {
             my $ratio = CLIO::Memory::TokenEstimator::get_effective_ratio();
             my $max_chars = int($target_tokens * $ratio * 0.95);
-            
+
             # CRITICAL: Extract and preserve "Current task" before hard truncation.
-            # The Current task line is the agent's active context - losing it
-            # causes agents to forget what they were doing after aggressive trim.
             my $current_task = '';
             if ($summary_content =~ /Current task:\s*(.+?)(?:\n\n|\z)/s) {
                 $current_task = "Current task: $1\n\n";
             }
-            
+
             if (length($summary_content) > $max_chars) {
-                # Reserve space for Current task + 100 char buffer
                 my $task_chars = length($current_task);
                 my $available_chars = $max_chars - $task_chars - 100;
                 $available_chars = 1000 if $available_chars < 1000;
-                
+
                 $summary_content = substr($summary_content, 0, $available_chars);
                 $summary_content =~ s/\s+\z//;
-                
-                # Prepend Current task (it was at the top of the summary originally)
+
                 $summary_content = $current_task . $summary_content . "\n\n[Summary truncated to fit cache-stable slot of $target_tokens tokens]";
                 $current = CLIO::Memory::TokenEstimator::estimate_tokens($summary_content);
                 log_warning('YaRN', "CSSS: hard-truncated summary to $current tokens (target: $target_tokens, preserved Current task)");
@@ -698,13 +1061,6 @@ sub _fit_summary_to_target {
         # Too small - pad with cache-stable filler. The filler must be
         # byte-deterministic so subsequent regenerations produce identical
         # bytes (cache hit on the filler portion too).
-        #
-        # Round the filler length to a 64-char bucket so that small shortfall
-        # jitter (driven by varying compress_messages output) doesn't shift
-        # the slot size. 64 chars is ~16 tokens at the typical ratio, well
-        # inside the 10% tolerance check above. Without bucketing, a 1-token
-        # shortfall change could shift filler by 4 chars and invalidate the
-        # cache that CSSS exists to protect.
         my $shortfall = $target_tokens - $current;
         my $ratio = CLIO::Memory::TokenEstimator::get_effective_ratio();
         my $BUCKET = 64;
@@ -716,6 +1072,56 @@ sub _fit_summary_to_target {
     }
 
     return $summary_content;
+}
+
+# Split a <thread_summary>...</thread_summary> body into a list of task-block
+# strings, oldest-first, EXCLUDING the <thread_summary> wrapper itself.
+# Each element is the raw text of one <task id="...">...</task> block.
+sub _parse_task_blocks {
+    my ($summary_content) = @_;
+    my @blocks;
+    while ($summary_content =~ /(<task\s+[^>]*?>.*?<\/task>)/sg) {
+        push @blocks, $1;
+    }
+    return @blocks;
+}
+
+# Reassemble a <thread_summary> with the given task blocks (and the
+# preserved "Current task" line if present).
+sub _render_with_task_blocks {
+    my ($current_task_line, $task_blocks) = @_;
+
+    my $out = "<thread_summary>\n\n";
+    if ($current_task_line) {
+        $out .= $current_task_line . "\n";
+    }
+    for my $block (@$task_blocks) {
+        $out .= "\n" . $block . "\n";
+    }
+    $out .= "</thread_summary>";
+    return $out;
+}
+
+# Trim the most-recent (and only remaining) task block to fit a target.
+# Drops sections in least-critical-first order within the task block.
+sub _trim_most_recent_task {
+    my ($task_block, $target_tokens) = @_;
+
+    require CLIO::Memory::TokenEstimator;
+    my $tolerance = int($target_tokens * 0.10);
+
+    # Sections within a <task> block, ordered least-critical first.
+    my @drop_order = qw(Tools Commits Files Decisions);
+    for my $section (@drop_order) {
+        # Strip the section (label line + body lines up to next label or </task>).
+        my $stripped = $task_block;
+        $stripped =~ s/^$section:.*?(?=\n[A-Z][a-z]+:|\n?<\/task>|\z)//sm;
+        my $size = CLIO::Memory::TokenEstimator::estimate_tokens($stripped);
+        if ($size <= $target_tokens + $tolerance) {
+            return $stripped;
+        }
+    }
+    return $task_block;
 }
 
 # Parse a rendered thread_summary into ordered sections. Returns an array of
