@@ -424,18 +424,23 @@ sub list_usages {
     my $file_paths = $params->{file_paths};
     my $context_lines = $params->{context_lines} || 0;
     
-    # Default to git repo root if no paths specified
-    if (!$file_paths || !@$file_paths) {
+    # Normalize file_paths to an array. Handle three cases:
+    # 1. undefined/empty -> default to git repo root
+    # 2. string (single path) -> wrap in array
+    # 3. arrayref -> use as-is
+    if (!defined $file_paths || (ref($file_paths) ne 'ARRAY' && !length($file_paths))) {
+        # No paths specified - default to git repo root
         my $git_root = `git rev-parse --show-toplevel 2>$NULLDEV`;
         chomp $git_root if $git_root;
         $file_paths = [$git_root || '.'];
+    } elsif (ref($file_paths) ne 'ARRAY') {
+        # Single string path - wrap in array
+        $file_paths = [$file_paths];
     }
     
     return $self->error_result("Missing 'symbol_name' parameter", 
         action_description => "Error: Missing 'symbol_name' parameter"
     ) unless $symbol_name;
-    return $self->error_result("'file_paths' must be an array") 
-        unless ref($file_paths) eq 'ARRAY';
     
     log_debug('CodeIntelligence', "Searching for symbol: $symbol_name");
     log_debug('CodeIntelligence', "Search paths: " . join(', ', @$file_paths));
