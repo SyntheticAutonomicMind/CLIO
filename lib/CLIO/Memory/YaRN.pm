@@ -636,10 +636,16 @@ sub _render_task_summary {
     for my $tid (@ordered_task_ids) {
         push @all_user_requests, @{$task_buckets->{$tid}{user_requests} || []};
     }
-    my $effective_task = find_substantive_task(
-        $carried_task || $original_task || $most_recent_name,
-        \@all_user_requests
-    );
+    # When called with task-aware extraction, prefer the most recent task's
+    # name as the Current task line. find_substantive_task can pull a very
+    # long user message (truncated for display via substr) but for the
+    # Current task line we want the concise task name, not a substring of
+    # the latest user prompt.
+    my $effective_task = $most_recent_name
+        || find_substantive_task(
+            $carried_task || $original_task,
+            \@all_user_requests
+        );
 
     my @parts;
     push @parts, "<thread_summary>";

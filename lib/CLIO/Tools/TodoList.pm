@@ -439,8 +439,30 @@ sub handle_update {
         sessions_dir => '.clio/sessions',
     );
     
+    # Detect status transitions BEFORE applying updates so we can capture
+    # the previous status for each todo. This drives task boundary emission
+    # AND task-summary compression: any-not-started->in-progress opens a
+    # new task block; in-progress->completed closes it (and we compress
+    # the dialog that belongs to that task into the todo's taskSummary).
+    my $existing_todos = $store->read();
+    my %prev_status = map {
+        defined $_->{id} ? ($_->{id} => $_->{status} // 'not-started') : ()
+    } @$existing_todos;
+
+    # Lazy require the Session manager so unit tests that bypass the
+    # normal dispatch don't crash here.
+    my $session_mgr;
+    eval { require CLIO::Session::Manager; };
+    if (!$@) {
+        $session_mgr = CLIO::Session::Manager->new(
+            session_id => $session_id,
+            sessions_dir => '.clio/sessions',
+            debug => $self->{debug},
+        );
+    }
+
     my ($success, $result) = $store->update($updates);
-    
+
     unless ($success) {
         return $self->error_result($result);
     }
@@ -472,7 +494,7 @@ sub handle_update {
     $output .= "CURRENT STATE:\n";
     $output .= "  ✓ Completed: " . scalar(@completed) . "\n";
     $output .= "  🔄 In Progress: " . scalar(@in_progress) . "\n";
-$output .= "  [ ] Not Started: " . scalar(@not_started) . "\n";
+    $output .= "  [ ] Not Started: " . scalar(@not_started) . "\n";
     my @with_summary = grep { defined $_->{taskSummary} && length $_->{taskSummary} > 0 } @$todos;
     if (@with_summary) {
         $output .= "   With task summary: " . scalar(@with_summary) . "\n";
@@ -495,11 +517,54 @@ $output .= "  [ ] Not Started: " . scalar(@not_started) . "\n";
             $output .= "    " . $summary . "\n";
         }
     }
-    
-    if (scalar(@completed) == scalar(@$todos) && @$todos > 0) {
-        $output .= "\n🎉 All tasks completed!\n";
+
+    # When a todo is being completed, compress the dialog that belongs to
+    # its task and persist the result as taskSummary. This is the seam
+    # between the TodoStore and YaRN compression - the todo lifecycle
+    # drives when summaries are produced.
+    my @completing_now;
+    for my $update (@$updates) {
+        next unless ($update->{status} // '') eq 'completed';
+        next unless defined $update->{id};
+        my $prev = $prev_status{$update->{id}} // 'not-started';
+        next unless $prev eq 'in-progress';
+        push @completing_now, $update->{id};
     }
-    
+
+    if (@completing_now) {
+        # Acquire history. session_mgr is built earlier; if it's undef
+        # (e.g. a test that doesn't load Session::Manager), we just skip
+        # the compression step. This is non-fatal.
+        if ($session_mgr && $session_mgr->can('get_conversation_history')) {
+            my $history = $session_mgr->get_conversation_history();
+            if ($history && @$history) {
+                my $task_summaries = $self->_compress_completed_tasks(
+                    $history, \@completing_now, $todos,
+                );
+                # task_summaries is { todo_id => summary_string }
+                for my $todo_id (@completing_now) {
+                    next unless $task_summaries && $task_summaries->{$todo_id};
+                    my ($todo) = grep { defined $_->{id} && $_->{id} == $todo_id } @$todos;
+                    next unless $todo;
+                    my $summary = $task_summaries->{$todo_id};
+                    my ($ok, $err) = $store->update([{
+                        id => $todo_id,
+                        taskSummary => $summary,
+                        completedAt => time(),
+                    }]);
+                    if ($ok) {
+                        log_debug('TodoList', "Persisted taskSummary for todo #$todo_id (" .
+                            length($summary) . " chars)");
+                    } else {
+                        log_warning('TodoList', "Failed to persist taskSummary for todo #$todo_id: $err");
+                    }
+                }
+            }
+        } else {
+            log_debug('TodoList', "Skipping task summary compression - session manager not available");
+        }
+    }
+
     # Build detailed action description showing what changed
     my @action_details;
     foreach my $update (@$updates) {
@@ -541,6 +606,103 @@ $output .= "  [ ] Not Started: " . scalar(@not_started) . "\n";
         : "updating todos: " . join(", ", @action_details);
     
     return $self->success_result($output, action_description => $action_desc);
+}
+
+=head2 _compress_completed_tasks($history, \@completing_ids, \@todos)
+
+For each todo that just transitioned to 'completed', compress the dialog
+that belongs to its task and return a hashref mapping todo_id to a
+summary string suitable for storage as taskSummary.
+
+The compression strategy: walk the dialog and split it into per-task
+fragments using <task_boundary> markers (the same mechanism YaRN uses
+internally). For each completed todo, find the messages between its
+opening and closing <task_boundary> tags and compress them with YaRN.
+
+Returns: { todo_id => summary_string }
+
+=cut
+
+sub _compress_completed_tasks {
+    my ($self, $history, $completing_ids, $todos) = @_;
+
+    return undef unless $history && @$history;
+    return {} unless $completing_ids && @$completing_ids;
+
+    require CLIO::Memory::YaRN;
+
+    # Map task_boundary_id -> todo_id so we can attach the right summary.
+    # TodoList::handle_update emits boundaries with id="task-<todo_id>-<ts>".
+    my %boundary_to_todo;
+    for my $todo (@$todos) {
+        next unless $todo->{taskBoundaryId};
+        $boundary_to_todo{$todo->{taskBoundaryId}} = $todo->{id};
+    }
+
+    # Walk history and group messages by task_boundary_id.
+    # The first <task_boundary ...> starts the bucket. Messages that come
+    # before any boundary go into '_pre_task' (we don't summarize those -
+    # they're the original user request and should remain verbatim).
+    my %fragments;   # todo_id_or_unknown => [messages...]
+    my $current_bid = '_pre_task';
+    my $last_closing_tid;  # The todo whose task just ended.
+
+    for my $msg (@$history) {
+        my $content = $msg->{content} // '';
+        my $role    = $msg->{role}    // '';
+
+        # Track task boundaries. Closing boundaries close the active bucket
+        # and capture its owner (the todo that just completed).
+        if ($role eq 'system' && $content =~ /<task_boundary\b([^>]*?)\/?>/) {
+            my $attrs = $1;
+            my $bid   = '_unknown';
+            my $bstatus = 'active';
+            if ($attrs =~ /\bid="([^"]*)"/)     { $bid = $1; }
+            if ($attrs =~ /\bstatus="([^"]*)"/) { $bstatus = $1; }
+
+            if ($bstatus eq 'completed' && $boundary_to_todo{$bid}) {
+                $last_closing_tid = $boundary_to_todo{$bid};
+                # Map the bucket by its boundary id, which we keyed on
+                # when the active boundary was emitted.
+                $current_bid = $bid;
+                # Don't reset to '_pre_task' - subsequent messages still
+                # belong to the just-completed task until something else
+                # opens. The next <task_boundary> (active) will switch.
+                next;
+            }
+            elsif ($bstatus eq 'active') {
+                $current_bid = $bid;
+                $last_closing_tid = undef;
+                next;
+            }
+        }
+
+        # Skip task_boundary system messages themselves (they're metadata,
+        # not dialog content).
+        next if $role eq 'system' && $content =~ /<task_boundary/;
+
+        # Otherwise append to the current bucket.
+        push @{$fragments{$current_bid}}, $msg;
+    }
+
+    my $yarn = CLIO::Memory::YaRN->new(debug => $self->{debug});
+    my %summaries;
+
+    for my $todo_id (@$completing_ids) {
+        # Find the bucket that ended when this todo was completed.
+        # Look up the todo's boundary_id; the fragment is keyed by that id.
+        my ($todo) = grep { defined $_->{id} && $_->{id} == $todo_id } @$todos;
+        next unless $todo;
+        my $bid = $todo->{taskBoundaryId};
+        next unless $bid && $fragments{$bid};
+
+        my $messages = $fragments{$bid};
+        my $compressed = $yarn->compress_messages($messages);
+        next unless $compressed && $compressed->{content};
+        $summaries{$todo_id} = $compressed->{content};
+    }
+
+    return \%summaries;
 }
 
 sub handle_add {
