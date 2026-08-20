@@ -569,6 +569,12 @@ sub process_input {
             my $pre_count = scalar(@messages);
             my $model = $self->{api_manager}->get_current_model();
             my $caps = $self->{api_manager}->get_model_capabilities($model);
+            # Trim proactively at 68% of context window instead of waiting for the
+            # full prompt budget (~95K for 128K context). This keeps the head stable,
+            # drops smaller chunks from the tail, and lets CSSS summary absorb the
+            # dropped content. 68% = ~87K for 128K context, leaving ~41K headroom.
+            my $ctx_window = $caps->{max_context_window_tokens} // 128000;
+            my $trim_threshold = int($ctx_window * 0.68);
             my $trimmed = validate_and_truncate(
                 messages           => \@messages,
                 model_capabilities => $caps,
@@ -578,6 +584,7 @@ sub process_input {
                 api_base           => $self->{api_manager}{api_base},
                 debug              => $self->{debug},
                 model              => $model,
+                trim_threshold     => $trim_threshold,
             );
             if ($trimmed && scalar(@$trimmed) < $pre_count) {
                 # DIAGNOSTIC: Dump state before and after proactive trim (CLIO_TRIM_DIAG=1 to enable)

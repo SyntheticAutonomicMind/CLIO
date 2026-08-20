@@ -78,6 +78,7 @@ sub validate_and_truncate {
     my $api_base = $args{api_base} || '';
     my $debug = $args{debug};
     my $model = $args{model} || 'unknown';
+    my $trim_threshold = $args{trim_threshold};  # Optional: override trim threshold in tokens
     
     # Determine max prompt tokens
     require CLIO::Providers;
@@ -128,6 +129,13 @@ sub validate_and_truncate {
     # reduce the available budget for messages.
     my $effective_limit = $prompt_budget - $tool_tokens;
     $effective_limit = 1000 if $effective_limit < 1000;
+
+    # Allow caller to override the trim threshold (e.g., to trim earlier at a
+    # lower percentage of context window). If provided, use it as the limit.
+    if (defined $trim_threshold && $trim_threshold > 0) {
+        $effective_limit = $trim_threshold;
+        log_debug('MessageValidator', "Using caller-provided trim threshold: $trim_threshold tokens");
+    }
 
     log_debug('MessageValidator', "Token budget: max=$max_prompt, tools=$tool_tokens, budget=$prompt_budget, effective=$effective_limit");
     
