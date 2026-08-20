@@ -13,7 +13,7 @@ use strict;
 use warnings;
 use FindBin qw($RealBin);
 use lib "$RealBin/../../lib";
-use Test::More tests => 24;
+use Test::More tests => 28;
 
 use CLIO::Core::APIManager;
 
@@ -57,8 +57,13 @@ sub _run_adapt {
 }
 
 # ============================================================
-# OpenRouter: reasoning.{enabled, effort, max_tokens}
+# OpenRouter: reasoning.{enabled, effort}
 # ============================================================
+#
+# OpenRouter's reasoning.max_tokens only works on some upstream providers
+# (e.g. Together) and fails on others (e.g. Nvidia free tier). The
+# portable approach is to use reasoning.effort which works across all
+# upstream providers. Both free and paid model variants support effort.
 
 sub _openrouter_cfg {
     return {
@@ -69,7 +74,7 @@ sub _openrouter_cfg {
     };
 }
 
-# Case 1: OpenRouter + high effort -> enabled, effort=high, max_tokens=8000
+# Case 1: OpenRouter + high effort -> enabled, effort=high
 {
     my $payload = { model => 'openrouter/anthropic/claude-3.7-sonnet', messages => [] };
     _run_adapt(
@@ -83,11 +88,11 @@ sub _openrouter_cfg {
         'OpenRouter+high: reasoning.enabled is true');
     is($payload->{reasoning}{effort}, 'high',
         'OpenRouter+high: reasoning.effort is high');
-    is($payload->{reasoning}{max_tokens}, 8000,
-        'OpenRouter+high: reasoning.max_tokens is 8000');
+    ok(!exists $payload->{reasoning}{max_tokens},
+        'OpenRouter+high: NO max_tokens (portable effort only)');
 }
 
-# Case 2: OpenRouter + low -> max_tokens=2000
+# Case 2: OpenRouter + low -> effort=low
 {
     my $payload = { model => 'openrouter/anthropic/claude-3.7-sonnet', messages => [] };
     _run_adapt(
@@ -96,11 +101,13 @@ sub _openrouter_cfg {
         thinking_mode => 'enabled',
         effort => 'low',
     );
-    is($payload->{reasoning}{max_tokens}, 2000,
-        'OpenRouter+low: reasoning.max_tokens is 2000');
+    is($payload->{reasoning}{effort}, 'low',
+        'OpenRouter+low: reasoning.effort is low');
+    ok(!exists $payload->{reasoning}{max_tokens},
+        'OpenRouter+low: NO max_tokens');
 }
 
-# Case 3: OpenRouter + medium -> max_tokens=4000
+# Case 3: OpenRouter + medium -> effort=medium
 {
     my $payload = { model => 'openrouter/anthropic/claude-3.7-sonnet', messages => [] };
     _run_adapt(
@@ -109,11 +116,13 @@ sub _openrouter_cfg {
         thinking_mode => 'enabled',
         effort => 'medium',
     );
-    is($payload->{reasoning}{max_tokens}, 4000,
-        'OpenRouter+medium: reasoning.max_tokens is 4000');
+    is($payload->{reasoning}{effort}, 'medium',
+        'OpenRouter+medium: reasoning.effort is medium');
+    ok(!exists $payload->{reasoning}{max_tokens},
+        'OpenRouter+medium: NO max_tokens');
 }
 
-# Case 4: OpenRouter + effort undef defaults to high budget (8000)
+# Case 4: OpenRouter + effort undef defaults to medium
 {
     my $payload = { model => 'openrouter/anthropic/claude-3.7-sonnet', messages => [] };
     _run_adapt(
@@ -122,11 +131,13 @@ sub _openrouter_cfg {
         thinking_mode => 'enabled',
         effort => undef,
     );
-    is($payload->{reasoning}{max_tokens}, 4000,
-        'OpenRouter+effort undef: defaults to medium budget (4000) - matches old default-reasoning_effort behavior');
+    is($payload->{reasoning}{effort}, 'medium',
+        'OpenRouter+effort undef: defaults to medium effort');
+    ok(!exists $payload->{reasoning}{max_tokens},
+        'OpenRouter+effort undef: NO max_tokens');
 }
 
-# Case 5: OpenRouter + unknown effort falls back to high default (8000)
+# Case 5: OpenRouter + unknown effort falls back to high
 {
     my $payload = { model => 'openrouter/anthropic/claude-3.7-sonnet', messages => [] };
     _run_adapt(
@@ -135,8 +146,10 @@ sub _openrouter_cfg {
         thinking_mode => 'enabled',
         effort => 'turbo',
     );
-    is($payload->{reasoning}{max_tokens}, 8000,
-        'OpenRouter+unknown effort: falls back to high default (8000)');
+    is($payload->{reasoning}{effort}, 'high',
+        'OpenRouter+unknown effort: falls back to high effort');
+    ok(!exists $payload->{reasoning}{max_tokens},
+        'OpenRouter+unknown effort: NO max_tokens');
 }
 
 # Case 6: OpenRouter + thinking_mode=disabled -> no reasoning param
@@ -329,6 +342,6 @@ sub _zai_cfg {
     );
     is($payload->{reasoning}{effort}, 'max',
         'OpenRouter+max: effort passes through verbatim');
-    is($payload->{reasoning}{max_tokens}, 8000,
-        'OpenRouter+max: budget defaults to high (8000)');
+    ok(!exists $payload->{reasoning}{max_tokens},
+        'OpenRouter+max: NO max_tokens');
 }
