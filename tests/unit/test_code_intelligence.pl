@@ -122,6 +122,18 @@ run_test(
     }
 );
 
+# Test 4b: list_usages - file_paths as string (not arrayref)
+# Regression: previously crashed with "Can't use string as ARRAY ref"
+run_test(
+    "list_usages - file_paths as string (not arrayref)",
+    { operation => 'list_usages', symbol_name => 'use strict', file_paths => 'lib/CLIO/Tools' },
+    1,  # Should succeed by wrapping the string in an array
+    sub {
+        my $result = shift;
+        return $result->{success} && $result->{count} > 0;
+    }
+);
+
 print "\n### search_history Tests ###\n";
 
 # Test 5: search_history - missing query
