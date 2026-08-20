@@ -11,6 +11,7 @@ binmode(STDERR, ':encoding(UTF-8)');
 use CLIO::Core::Logger qw(log_debug);
 use parent 'CLIO::Tools::Tool';
 use CLIO::Session::TodoStore;
+use CLIO::UI::Terminal qw(ui_char);
 
 =head1 NAME
 
@@ -280,62 +281,136 @@ sub handle_read {
         );
     }
     
-    # Generate summary
-    my $total = scalar(@$todos);
-    my @completed = grep { defined $_->{status} && $_->{status} eq 'completed' } @$todos;
-    my @in_progress = grep { defined $_->{status} && $_->{status} eq 'in-progress' } @$todos;
-    my @not_started = grep { defined $_->{status} && $_->{status} eq 'not-started' } @$todos;
-    my @blocked = grep { defined $_->{status} && $_->{status} eq 'blocked' } @$todos;
-
-    my $output = "Todo list: $total items\n\n";
-    $output .= "STATUS SUMMARY:\n";
-    $output .= "  ✓ Completed: " . scalar(@completed) . "\n";
-    $output .= "  🔄 In Progress: " . scalar(@in_progress) . "\n";
-    $output .= "  [ ] Not Started: " . scalar(@not_started) . "\n";
-    $output .= "  ⚠️ Blocked: " . scalar(@blocked) . "\n" if @blocked;
+    # Build the structured output. _render_status_counts and
+    # _render_todo_row use ui_char() so markers fall back through
+    # Unicode -> CP437 -> ASCII instead of hardcoding emoji.
+    my $output = "Todo list: " . scalar(@$todos) . " items\n\n";
+    $output .= $self->_render_status_counts(@$todos);
     $output .= "\n";
-    
-    # List todos by status
-    if (@in_progress) {
+
+    if (@{[ grep { ($_->{status} // "") eq "in-progress" } @$todos ]}) {
         $output .= "IN PROGRESS:\n";
-        foreach my $todo (@in_progress) {
-            $output .= "  🔄 #$todo->{id}: $todo->{title}\n";
-            $output .= "     $todo->{description}\n";
+        for my $todo (@{[ grep { ($_->{status} // "") eq "in-progress" } @$todos ]}) {
+            $output .= $self->_render_todo_row($todo, "in_progress");
+            $output .= "     $todo->{description}\n" if $todo->{description};
         }
         $output .= "\n";
     }
-    
-    if (@not_started) {
+
+    if (@{[ grep { ($_->{status} // "") eq "not-started" } @$todos ]}) {
         $output .= "NOT STARTED:\n";
-        foreach my $todo (@not_started) {
-            my $priority = $todo->{priority} ? " [$todo->{priority}]" : "";
-            $output .= "  [ ] #$todo->{id}: $todo->{title}$priority\n";
+        for my $todo (@{[ grep { ($_->{status} // "") eq "not-started" } @$todos ]}) {
+            $output .= $self->_render_todo_row($todo, "not_started");
         }
         $output .= "\n";
     }
-    
-    if (@completed) {
+
+    if (@{[ grep { ($_->{status} // "") eq "completed" } @$todos ]}) {
         $output .= "COMPLETED:\n";
-        foreach my $todo (@completed) {
-            $output .= "  ✓ #$todo->{id}: $todo->{title}\n";
+        for my $todo (@{[ grep { ($_->{status} // "") eq "completed" } @$todos ]}) {
+            $output .= $self->_render_todo_row($todo, "completed");
         }
         $output .= "\n";
     }
-    
-    if (@blocked) {
+
+    if (@{[ grep { ($_->{status} // "") eq "blocked" } @$todos ]}) {
         $output .= "BLOCKED:\n";
-        foreach my $todo (@blocked) {
-            $output .= "  ⚠️ #$todo->{id}: $todo->{title}\n";
-            $output .= "     Reason: $todo->{blockedReason}\n";
+        for my $todo (@{[ grep { ($_->{status} // "") eq "blocked" } @$todos ]}) {
+            $output .= $self->_render_todo_row($todo, "blocked");
+            $output .= "     Reason: $todo->{blockedReason}\n" if $todo->{blockedReason};
         }
         $output .= "\n";
     }
-    
-    my $summary = "$total items: " . scalar(@completed) . " done, " . 
-                  scalar(@in_progress) . " in progress, " . scalar(@not_started) . " pending";
+
+    my @counts = $self->_count_statuses(@$todos);
+    my $summary = "@{[ scalar @$todos ]} items: $counts[0] done, $counts[1] in progress, $counts[2] pending";
     my $action_desc = "reading todo list ($summary)";
-    
+
     return $self->success_result($output, action_description => $action_desc, todos => $todos);
+}
+
+=head2 _render_status_counts(@todos)
+
+Render a one-line-per-status count block. Uses ui_char() so the markers
+fall back through Unicode -> CP437 -> ASCII. No hardcoded emoji, no
+mixed conventions - every status row gets a consistent column-aligned
+prefix.
+
+Arguments:
+    @todos - Array of todo hashes (each must have 'status' key)
+
+Returns: Multi-line string with status counts.
+
+=cut
+
+sub _render_status_counts {
+    my ($self, @todos) = @_;
+    my ($completed, $in_progress, $not_started, $blocked) = $self->_count_statuses(@todos);
+
+    my $check   = ui_char('check');
+    my $info    = ui_char('info');
+    my $warn    = ui_char('cross_mark');
+    my $pending = '   ';  # No character defined for not-started; aligned-space prefix.
+
+    my $out = '';
+    $out .= sprintf("   %s Completed:   %d\n", $check,   $completed);
+    $out .= sprintf("   %s In Progress: %d\n", $info,    $in_progress);
+    $out .= sprintf("   %s Not Started: %d\n", $pending, $not_started);
+    $out .= sprintf("   %s Blocked:     %d\n", $warn,    $blocked) if $blocked;
+    return $out;
+}
+
+=head2 _count_statuses(@todos)
+
+Tally todos by status. Returns (completed, in_progress, not_started, blocked).
+
+=cut
+
+sub _count_statuses {
+    my ($self, @todos) = @_;
+    my $completed   = scalar grep { ($_->{status} // '') eq 'completed' }    @todos;
+    my $in_progress = scalar grep { ($_->{status} // '') eq 'in-progress' }  @todos;
+    my $not_started = scalar grep { ($_->{status} // '') eq 'not-started' }  @todos;
+    my $blocked     = scalar grep { ($_->{status} // '') eq 'blocked' }      @todos;
+    return ($completed, $in_progress, $not_started, $blocked);
+}
+
+=head2 _render_todo_row($todo, $status_marker)
+
+Render a single todo row using the project's standard marker convention.
+Marker is one of: 'completed', 'in_progress', 'not_started', 'blocked'.
+Priority, if set, is appended in brackets.
+
+=cut
+
+sub _render_todo_row {
+    my ($self, $todo, $status_marker) = @_;
+
+    my %markers = (
+        completed   => ui_char('check'),
+        in_progress => ui_char('info'),
+        not_started => '   ',  # Aligned-space; no glyph defined for pending.
+        blocked     => ui_char('cross_mark'),
+    );
+    my $marker = $markers{$status_marker} // '   ';
+
+    my $priority = $todo->{priority} ? " [$todo->{priority}]" : '';
+    return sprintf("   %s #%d: %s%s\n", $marker, $todo->{id}, $todo->{title}, $priority);
+}
+
+=head2 _all_completed_message(@todos)
+
+Returns a celebration-style line if every todo is completed, undef
+otherwise. Centralized so handle_write / handle_update / handle_read
+all show the same signal.
+
+=cut
+
+sub _all_completed_message {
+    my ($self, @todos) = @_;
+    my ($completed, $in_progress, $not_started, $blocked) = $self->_count_statuses(@todos);
+    return unless @todos && $completed == scalar(@todos);
+    return "All " . scalar(@todos) . " tasks completed.\n";
 }
 
 sub handle_write {
@@ -387,32 +462,30 @@ sub handle_write {
     }
     
     my $total = scalar(@$todo_list);
-    my @completed = grep { defined $_->{status} && $_->{status} eq 'completed' } @$todo_list;
-    my @in_progress = grep { defined $_->{status} && $_->{status} eq 'in-progress' } @$todo_list;
-    my @not_started = grep { defined $_->{status} && $_->{status} eq 'not-started' } @$todo_list;
 
     my $output = "Todo list updated: $total items\n\n";
-    
+
     if ($existing_completed > 0) {
-        $output .= "PREVIOUS STATE: $existing_completed completed\n";
+        $output .= "PREVIOUS STATE: $existing_completed completed\n\n";
     }
-    
+
     $output .= "NEW STATE:\n";
-    $output .= "  ✓ Completed: " . scalar(@completed) . "\n";
-    $output .= "  🔄 In Progress: " . scalar(@in_progress) . "\n";
-    $output .= "  [ ] Not Started: " . scalar(@not_started) . "\n\n";
-    
+    $output .= $self->_render_status_counts(@$todo_list);
+    $output .= "\n";
+
+    my @in_progress = grep { ($_->{status} // '') eq 'in-progress' } @$todo_list;
+    my @not_started = grep { ($_->{status} // '') eq 'not-started' } @$todo_list;
     if (@in_progress) {
         $output .= "Now working on: " . join(", ", map { $_->{title} } @in_progress) . "\n";
     }
     elsif (@not_started) {
         $output .= "Todo list ready. " . scalar(@not_started) . " item(s) not started.\n";
     }
-    
-    if (scalar(@completed) == $total && $total > 0) {
-        $output .= "\n🎉 All tasks completed!\n";
+
+    if (my $msg = $self->_all_completed_message(@$todo_list)) {
+        $output .= "\n$msg";
     }
-    
+
     # Build specific action description
     my $action_desc;
     if ($total == 0) {
@@ -460,7 +533,7 @@ sub handle_update {
     if (@{$result->{applied}}) {
         $output .= "UPDATES APPLIED:\n";
         foreach my $update (@{$result->{applied}}) {
-            $output .= "  ✓ $update\n";
+            $output .= "   $update\n";
         }
         $output .= "\n";
     }
@@ -468,24 +541,23 @@ sub handle_update {
     if (@{$result->{failed}}) {
         $output .= "FAILED UPDATES:\n";
         foreach my $failure (@{$result->{failed}}) {
-            $output .= "  ✗ $failure\n";
+            $output .= "   $failure\n";
         }
         $output .= "\n";
     }
     
     # Show current state
     my $todos = $store->read();
-    my @completed = grep { defined $_->{status} && $_->{status} eq 'completed' } @$todos;
-    my @in_progress = grep { defined $_->{status} && $_->{status} eq 'in-progress' } @$todos;
-    my @not_started = grep { defined $_->{status} && $_->{status} eq 'not-started' } @$todos;
 
     $output .= "CURRENT STATE:\n";
-    $output .= "  ✓ Completed: " . scalar(@completed) . "\n";
-    $output .= "  🔄 In Progress: " . scalar(@in_progress) . "\n";
-    $output .= "  [ ] Not Started: " . scalar(@not_started) . "\n";
-    
-    if (scalar(@completed) == scalar(@$todos) && @$todos > 0) {
-        $output .= "\n🎉 All tasks completed!\n";
+    $output .= $self->_render_status_counts(@$todos);
+    my @with_summary = grep { defined $_->{taskSummary} && length $_->{taskSummary} > 0 } @$todos;
+    if (@with_summary) {
+        $output .= "   With task summary: " . scalar(@with_summary) . "\n";
+    }
+
+    if (my $msg = $self->_all_completed_message(@$todos)) {
+        $output .= "\n$msg";
     }
     
     # Build detailed action description showing what changed
