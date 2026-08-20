@@ -984,15 +984,51 @@ sub process_input {
             messages_saved_during_workflow => (@tool_calls_made > 0) ? 1 : 0
         };
 
+        # Push the assistant's final response to @messages BEFORE capturing
+        # the snapshot. The response was already saved to session history
+        # above via add_message, but it was NOT in @messages — meaning the
+        # cached payload was missing the model's last response. On resume,
+        # the model wouldn't see what it already said, causing it to ignore
+        # new user input and continue previous work. This push ensures the
+        # snapshot is complete and matches what a rebuild from session history
+        # would produce.
+        if (length($final_content) > 0) {
+            my $assistant_msg = {
+                role    => 'assistant',
+                content => sanitize_text($final_content),
+            };
+            # Carry reasoning metadata for next-turn replay (Anthropic
+            # thinking continuity, OpenAI Responses reasoning chaining,
+            # OpenRouter reasoning_details). Mirrors the metadata attached
+            # when the response is saved to session history above.
+            if ($api_response->{reasoning_content}) {
+                $assistant_msg->{reasoning_content} = $api_response->{reasoning_content};
+            } elsif ($api_response->{accumulated_reasoning}) {
+                $assistant_msg->{reasoning_content} = $api_response->{accumulated_reasoning};
+            }
+            if ($api_response->{reasoning_details}) {
+                $assistant_msg->{reasoning_details} = $api_response->{reasoning_details};
+            }
+            if ($api_response->{reasoning_blocks} && ref($api_response->{reasoning_blocks}) eq 'ARRAY') {
+                $assistant_msg->{reasoning_blocks} = $api_response->{reasoning_blocks};
+            }
+            if ($api_response->{responses_reasoning_items} && ref($api_response->{responses_reasoning_items}) eq 'ARRAY') {
+                $assistant_msg->{responses_reasoning_items} = $api_response->{responses_reasoning_items};
+            }
+            push @messages, $assistant_msg;
+            log_debug('WorkflowOrchestrator', "Added final assistant response to @messages before snapshot capture (" . length($final_content) . " chars)");
+        }
+
         # Capture the end-of-turn API payload. At this point @messages
         # contains the full conversation: original prompt + assistant
         # response + all tool_results (from _execute_tool_round) + the
-        # final assistant text (saved above). The resume fast path uses
-        # this snapshot to skip rebuilding from session history on the
-        # next turn. Capturing at end-of-turn (vs before tool execution)
-        # ensures the snapshot matches what a fresh rebuild from session
-        # history would produce - eliminating the resume/rebuild divergence
-        # that broke llama.cpp LCP cache stability.
+        # final assistant text (now also in @messages, pushed above).
+        # The resume fast path uses this snapshot to skip rebuilding from
+        # session history on the next turn. Capturing at end-of-turn (vs
+        # before tool execution) ensures the snapshot includes the
+        # complete turn state — including the final assistant response —
+        # so resumed sessions show the model its own previous response
+        # and can properly answer new user input.
         $self->_capture_api_payload($session, \@messages, $tools);
 
         # previous_response_id should ALWAYS be included when available (see APIManager.pm).
@@ -1005,10 +1041,10 @@ sub process_input {
 
         return $result;
     }
-    
+
     # Hit iteration limit
     my $elapsed_time = time() - $start_time;
-    
+
     # Capture final process stats
     $self->{process_stats}->capture('session_end', {
         iterations => $iteration,
@@ -1016,14 +1052,14 @@ sub process_input {
         tool_calls => scalar(@tool_calls_made),
         hit_limit => 1,
     }) if $self->{process_stats};
-    
+
     my $error_msg = sprintf(
         "Iteration limit (%d) reached after %.1fs. " .
         "To remove the limit, run: /api set max_iterations 0",
         $self->{max_iterations},
         $elapsed_time
     );
-    
+
     log_debug('WorkflowOrchestrator', "$error_msg");
     log_debug('WorkflowOrchestrator', "Tool calls made: " . scalar(@tool_calls_made));
 
@@ -1097,18 +1133,43 @@ sub _build_turn_context {
     unless ($self->{_tools_cache}) {
         my ($cached_messages, $cached_tools) = $self->_try_resume_from_payload($session, $model_caps);
         if ($cached_messages && $cached_tools) {
-            # Pipeline protocol: trailing [user_context, user_input] are
-            # dynamic and must be regenerated each turn. Strip the stale
-            # trailing pair from the snapshot, then append fresh.
-            # See _build_turn_context rebuild path below for the canonical
-            # implementation - the fast path mirrors it.
-            if (@$cached_messages && $cached_messages->[-1]{role} eq 'user') {
-                pop @$cached_messages;
+            # Pipeline protocol: [user_context, user_input] are the dynamic
+            # trailing pair from the previous turn. After Fix 1 (assistant
+            # response is now pushed before capture), the payload may end
+            # with any of these layouts:
+            #   [user_context, user_input]                                 (no tools, no response — old format)
+            #   [user_context, user_input, assistant_response]             (no tools, with response)
+            #   [user_context, user_input, assistant_tc, tool_results, assistant_response]
+            #   [user_context, user_input, assistant_tc, tool_results]     (iteration limit)
+            #
+            # Strip ONLY the user_context system message — the dynamic
+            # date/time block. Keep user_input and everything after it
+            # (assistant_response, tool_calls, tool_results) because those
+            # are part of the dialog and must be visible to the model on
+            # resume. The previous code either popped only the last 2
+            # messages (failing when payload ended with assistant/tool
+            # content) or stripped everything from user_context onwards
+            # (removing the assistant response we just added in Fix 1,
+            # causing the "agent ignores new user input" bug). Removing
+            # just user_context produces the same layout as the rebuild
+            # path: [...dialog..., assistant_response, new_user_context,
+            # new_user_input].
+            my $strip_idx = undef;
+            for (my $i = $#{$cached_messages}; $i >= 0; $i--) {
+                if ($cached_messages->[$i]{role} eq 'system'
+                    && ($cached_messages->[$i]{content} // '') =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
+                    $strip_idx = $i;
+                    last;
+                }
             }
-            if (@$cached_messages
-                && $cached_messages->[-1]{role} eq 'system'
-                && $cached_messages->[-1]{content} =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
-                pop @$cached_messages;
+            if (defined $strip_idx) {
+                splice(@$cached_messages, $strip_idx, 1);
+                log_debug('WorkflowOrchestrator',
+                    "Stripped stale user_context system message from resume payload (index $strip_idx)");
+            } else {
+                log_warning('WorkflowOrchestrator',
+                    "Resume fast path: could not find user_context to strip; " .
+                    "stale date/time may appear in resumed prompt");
             }
 
             my $user_context = $self->{prompt_builder}->get_user_context($session);
@@ -1382,15 +1443,17 @@ Snapshot the conversation state at end of turn so that session resume can
 pick up with byte-identical context instead of rebuilding from scratch.
 
 The snapshot captures the FULL @messages array AFTER tool execution has
-appended assistant responses and tool_results to it. This is the key
-contract: the snapshot must equal what load_conversation_history() would
-return after rebuilding from session history. Otherwise the resume fast
-path and the rebuild path produce different prompts, which breaks LCP
-cache stability (the bug CachyLLama reported on 2026-08-18).
+appended assistant responses and tool_results to it, AND after the
+final assistant text response has been pushed to @messages. This is
+the key contract: the snapshot must equal what load_conversation_history()
+would return after rebuilding from session history. Otherwise the resume
+fast path and the rebuild path produce different prompts, which breaks
+LCP cache stability and causes resumed sessions to miss the model's
+previous response — making the agent appear to ignore new user input.
 
 Call sites:
-- Success path return (line ~983) - normal turn completion
-- Iteration-limit exit (line ~1014) - max_iter reached but progress was made
+- Success path return - normal turn completion
+- Iteration-limit exit - max_iter reached but progress was made
 
 The snapshot includes a digest of the tools array so resume can detect
 when the toolset has drifted and decide to fall back to a rebuild.

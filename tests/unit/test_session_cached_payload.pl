@@ -472,7 +472,63 @@ subtest 'resume strips stale trailing user_context and adds fresh (pipeline prot
     my $sess = StubSession->new(state => $real_state);
     my $tools = $real_tools;
 
-    # Snapshot from previous turn has stale user_context + user_input at the end
+    # Snapshot from previous turn now includes the final assistant response
+    # (Fix: assistant response is pushed to @messages before capture).
+    # Layout: [sys, dialog..., user_context, user_input, assistant_response]
+    my $snapshot = [
+        { role => 'system',    content => 'SYSTEM PROMPT' },
+        { role => 'user',      content => 'old_q1' },
+        { role => 'assistant', content => 'old_a1' },
+        { role => 'system',    content => "<userContext>\nDate: 2026-08-17 (STALE)\n</userContext>" },
+        { role => 'user',      content => 'old_q2 (STALE)' },
+        { role => 'assistant', content => 'old_a2 (STALE ASSISTANT RESPONSE)' },
+    ];
+
+    $reference_orch->_capture_api_payload($sess, $snapshot, $tools);
+
+    # Simulate the resume fast path's strip-and-replace logic.
+    # The new stripping scans backward for user_context + user pair and
+    # removes everything from there (including trailing assistant/tool content).
+    my ($resumed, $resumed_tools) = $reference_orch->_try_resume_from_payload(
+        $sess,
+        { max_context_window_tokens => 200000 }
+    );
+    ok($resumed && @$resumed, 'resume returned messages');
+
+    # The new snapshot includes the assistant response (6 messages)
+    is(scalar @$resumed, 6, 'snapshot has 6 messages including assistant response');
+
+    # Simulate the NEW stripping logic from _build_turn_context:
+    # Strip ONLY the user_context system message, keep everything else.
+    my $strip_idx = undef;
+    for (my $i = $#{$resumed}; $i >= 0; $i--) {
+        if ($resumed->[$i]{role} eq 'system'
+            && ($resumed->[$i]{content} // '') =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
+            $strip_idx = $i;
+            last;
+        }
+    }
+    ok(defined $strip_idx, 'found user_context for stripping');
+    splice(@$resumed, $strip_idx, 1);
+
+    # After stripping only user_context, user_input + assistant_response remain
+    is(scalar @$resumed, 5, 'after stripping only user_context, 5 messages remain');
+    is($resumed->[-2]{role}, 'user', 'user_input still present after stripping');
+    is($resumed->[-2]{content}, 'old_q2 (STALE)', 'user_input content preserved');
+    is($resumed->[-1]{role}, 'assistant', 'assistant_response still present after stripping');
+    is($resumed->[-1]{content}, 'old_a2 (STALE ASSISTANT RESPONSE)', 'assistant_response content preserved');
+};
+
+# Regression test: the OLD payload format (without assistant response at
+# end) must still be handled correctly by the new stripping logic. This
+# verifies backward compatibility — old session files saved before the
+# fix should still strip properly.
+subtest 'resume handles old payload format without assistant response (backward compat)' => sub {
+    my $real_state = CLIO::Session::State->new(session_id => 'backward-compat', debug => 0);
+    my $sess = StubSession->new(state => $real_state);
+    my $tools = $real_tools;
+
+    # Old format: ends with [user_context, user_input] (no assistant response)
     my $snapshot = [
         { role => 'system',    content => 'SYSTEM PROMPT' },
         { role => 'user',      content => 'old_q1' },
@@ -483,31 +539,90 @@ subtest 'resume strips stale trailing user_context and adds fresh (pipeline prot
 
     $reference_orch->_capture_api_payload($sess, $snapshot, $tools);
 
-    # Simulate the resume fast path's strip-and-replace logic
     my ($resumed, $resumed_tools) = $reference_orch->_try_resume_from_payload(
         $sess,
         { max_context_window_tokens => 200000 }
     );
     ok($resumed && @$resumed, 'resume returned messages');
+    is(scalar @$resumed, 5, 'snapshot has 5 messages (old format)');
 
-    # The fast path appends fresh user_context + user_input (the actual
-    # _build_turn_context code does this). Simulate it here by adding them.
-    # (The full logic is in _build_turn_context; this test verifies the
-    # snapshot doesn't include stale user_context that would survive into
-    # the resumed prompt.)
-    is(scalar @$resumed, 5, 'snapshot had 5 messages including stale user_context + user_input');
+    # Simulate the new stripping logic
+    my $strip_idx = undef;
+    for (my $i = $#{$resumed}; $i >= 0; $i--) {
+        if ($resumed->[$i]{role} eq 'system'
+            && ($resumed->[$i]{content} // '') =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
+            $strip_idx = $i;
+            last;
+        }
+    }
+    ok(defined $strip_idx, 'found user_context for stripping (old format)');
+    splice(@$resumed, $strip_idx, 1);
 
-    # The strip step in _build_turn_context removes the trailing pair
-    my $last_user = pop @$resumed;
-    is($last_user->{content}, 'old_q2 (STALE)', 'trailing user_input was the stale input');
+    is(scalar @$resumed, 4, 'after stripping only user_context, 4 messages remain');
+    is($resumed->[-1]{role}, 'user', 'user_input still present');
+    is($resumed->[-1]{content}, 'old_q2 (STALE)', 'user_input content preserved');
+};
 
-    my $last_system = pop @$resumed;
-    like($last_system->{content}, qr/userContext/, 'trailing system was the stale user_context');
-    like($last_system->{content}, qr/2026-08-17/, 'stale date detected');
+# Regression test: tool-calling turn where the payload ends with
+# [user_context, user_input, assistant_tool_call, tool_results, assistant_response].
+# The stripping must remove ALL of these (from user_context onwards),
+# not just the last 2 messages. This is the case that caused the
+# "agent ignores new user input on resume" bug — the old 2-pop code
+# left stale user_input + user_context in the resumed prompt.
+subtest 'resume strips tool_calling turn payload ending with assistant response' => sub {
+    my $real_state = CLIO::Session::State->new(session_id => 'tool-turn-strip', debug => 0);
+    my $sess = StubSession->new(state => $real_state);
+    my $tools = $real_tools;
 
-    # Now the snapshot is stripped to [0..2] - the stable core
-    is(scalar @$resumed, 3, 'after stripping trailing pair, 3 stable messages remain');
-    is($resumed->[-1]{content}, 'old_a1', 'stable core ends with last assistant message');
+    # Payload from a tool-calling turn (after Fix 1):
+    # [sys, user_q1, assistant_a1, user_context, user_q2, assistant_tc, tool_result, assistant_final]
+    my $snapshot = [
+        { role => 'system',    content => 'SYSTEM PROMPT' },
+        { role => 'user',      content => 'q1' },
+        { role => 'assistant', content => 'a1' },
+        { role => 'system',    content => "<userContext>date: 2026-08-17</userContext>" },
+        { role => 'user',      content => 'q2' },
+        { role => 'assistant', content => 'tool call text', tool_calls => [
+            { id => 'tc_1', type => 'function', function => { name => 'file_operations', arguments => '{}' } },
+        ] },
+        { role => 'tool',      content => 'result_1', tool_call_id => 'tc_1' },
+        { role => 'assistant', content => 'final answer after tools' },
+    ];
+
+    $reference_orch->_capture_api_payload($sess, $snapshot, $tools);
+
+    my ($resumed, $resumed_tools) = $reference_orch->_try_resume_from_payload(
+        $sess,
+        { max_context_window_tokens => 200000 }
+    );
+    ok($resumed && @$resumed, 'resume returned messages');
+    is(scalar @$resumed, 8, 'snapshot has 8 messages (tool-calling turn with final response)');
+
+    # Verify the assistant final response IS in the snapshot
+    my $has_final = grep {
+        $_->{role} eq 'assistant' && ($_->{content} // '') eq 'final answer after tools'
+    } @$resumed;
+    ok($has_final, 'snapshot includes final assistant response (Fix 1)');
+
+    # Simulate the new stripping logic (strip only user_context)
+    my $strip_idx = undef;
+    for (my $i = $#{$resumed}; $i >= 0; $i--) {
+        if ($resumed->[$i]{role} eq 'system'
+            && ($resumed->[$i]{content} // '') =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
+            $strip_idx = $i;
+            last;
+        }
+    }
+    ok(defined $strip_idx, 'found user_context for stripping in tool-call payload');
+    splice(@$resumed, $strip_idx, 1);
+
+    is(scalar @$resumed, 7, 'after stripping only user_context, 7 messages remain');
+    is($resumed->[-4]{role}, 'user', 'user_input preserved');
+    is($resumed->[-4]{content}, 'q2', 'user_input content preserved');
+    is($resumed->[-3]{role}, 'assistant', 'assistant_tool_call preserved');
+    is($resumed->[-2]{role}, 'tool', 'tool_result preserved');
+    is($resumed->[-1]{role}, 'assistant', 'final assistant response preserved');
+    is($resumed->[-1]{content}, 'final answer after tools', 'final assistant response content preserved');
 };
 
 # Pipeline protocol phase 5: per-section signatures stored alongside the
