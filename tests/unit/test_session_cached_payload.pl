@@ -264,12 +264,16 @@ subtest 'resume returns undef when provider differs' => sub {
 };
 
 subtest 'resume trims payload when current ctx is smaller' => sub {
-    # Build a large payload so trim has work to do.
+    # Build a large payload so trim has work to do. Each message must
+    # be large enough to overflow the 8000-token budget; previous test
+    # used 'filler-' x 80 which only produces ~140 tokens per message
+    # and never overflowed the budget.
     my @big_history;
     for my $i (1..40) {
-        push @big_history, { role => 'user',      content => ('filler-' x 80) };
-        push @big_history, { role => 'assistant', content => ('response-' x 80) };
+        push @big_history, { role => 'user',      content => ('filler-' x 4000) };      # ~7000 tokens
+        push @big_history, { role => 'assistant', content => ('response-' x 4000) };    # ~7000 tokens
     }
+    # Total: 40 * 2 * 7000 = 560,000 tokens of dialog. Way over any 8000-ctx budget.
     my $state_h = {
         last_api_payload => [
             { role => 'system', content => 'sys' },
@@ -288,6 +292,81 @@ subtest 'resume trims payload when current ctx is smaller' => sub {
     my ($msgs, $tools) = $small_orch->_try_resume_from_payload($sess, { max_context_window_tokens => 8000, max_output_tokens => 2000 });
     ok($msgs && @$msgs, 'got trimmed messages');
     ok(scalar @$msgs < 81, 'trimmed down from full payload (was 81 msgs, got ' . scalar(@$msgs) . ')');
+};
+
+# Regression test for the CachyLLama bug (2026-08-20): cached payload of 159743
+# tokens sent to a 131072-ctx llama.cpp model caused HTTP 400 "request exceeds
+# context size" with no recovery. The fast path returned the payload verbatim
+# because the saved context_window equalled the current one, but the payload
+# had grown past the actual prompt budget between turns (previous turn had
+# tools that pushed @messages past the threshold).
+#
+# The fix: the fast path ALWAYS trims the cached payload against the current
+# model's prompt budget (using validate_and_truncate), regardless of whether
+# the saved context_window is bigger or smaller than the current one. The
+# gate `current_ctx >= saved_ctx` is removed.
+subtest 'resume trims oversized payload even when saved_ctx == current_ctx (regression)' => sub {
+    # Simulate the CachyLLama case: saved_ctx matches current_ctx (both 131072),
+    # but the cached payload has grown past the budget.
+    my @huge_history;
+    # 100K tokens worth of filler to overflow any reasonable budget.
+    for my $i (1..200) {
+        push @huge_history, { role => 'user',      content => ('filler-' x 500) };       # ~2500 tokens
+        push @huge_history, { role => 'assistant', content => ('response-' x 500) };     # ~2500 tokens
+    }
+    # Total: 200 * 2 * 2500 = 1,000,000 tokens of dialog. Way over any budget.
+    my $state_h = {
+        last_api_payload => [
+            { role => 'system', content => 'sys' },
+            @huge_history,
+        ],
+        last_api_metadata => {
+            model => 'm', provider => 'llama.cpp', context_window => 131072,
+            tools_signature => $real_signature, saved_at => time(),
+        },
+    };
+    my $sess = StubSession->new(state => $state_h);
+    my $orch = CLIO::Core::WorkflowOrchestrator->new(
+        debug => 0,
+        api_manager => StubAPIManager->new(provider => 'llama.cpp', caps => { max_context_window_tokens => 131072, max_output_tokens => 32768 }),
+    );
+    my ($msgs, $tools) = $orch->_try_resume_from_payload(
+        $sess,
+        { max_context_window_tokens => 131072, max_output_tokens => 32768 }
+    );
+    ok($msgs && @$msgs, 'got messages back');
+    # CRITICAL: payload MUST have been trimmed. With 1M tokens of filler and
+    # a 131072 ctx model (90% threshold = ~117964), the result must be a small
+    # fraction of the input.
+    ok(scalar(@$msgs) < 401, 'payload was trimmed (got ' . scalar(@$msgs) . ' messages, was 401)');
+    ok(scalar(@$msgs) >= 1, 'at least one message preserved after trimming');
+};
+
+subtest 'resume preserves payload when it fits current budget' => sub {
+    # Small payload that fits the budget - should pass through verbatim
+    # (only the user_context strip happens).
+    my $state_h = {
+        last_api_payload => [
+            { role => 'system', content => 'sys' },
+            { role => 'user',   content => 'q' },
+            { role => 'assistant', content => 'a' },
+        ],
+        last_api_metadata => {
+            model => 'm', provider => 'anthropic', context_window => 200000,
+            tools_signature => $real_signature, saved_at => time(),
+        },
+    };
+    my $sess = StubSession->new(state => $state_h);
+    my $orch = CLIO::Core::WorkflowOrchestrator->new(
+        debug => 0,
+        api_manager => StubAPIManager->new(provider => 'anthropic', caps => { max_context_window_tokens => 200000, max_output_tokens => 16384 }),
+    );
+    my ($msgs, $tools) = $orch->_try_resume_from_payload(
+        $sess,
+        { max_context_window_tokens => 200000, max_output_tokens => 16384 }
+    );
+    ok($msgs && @$msgs, 'got messages back');
+    is(scalar @$msgs, 3, 'small payload preserved verbatim (3 messages)');
 };
 
 subtest 'resume tools_signature mismatch falls back to rebuild' => sub {

@@ -2165,17 +2165,17 @@ sub _preflight_validate_messages {
 
 sub _learn_from_api_response {
     my ($self, $usage, $messages) = @_;
-    
+
     return unless $usage && $messages;
     return unless $usage->{prompt_tokens};
-    
+
     my $actual_tokens = $usage->{prompt_tokens};
-    
+
     # Calculate total character count of messages
     my $total_chars = 0;
     for my $msg (@$messages) {
         $total_chars += length($msg->{content} || '');
-        
+
         # Include tool_calls size
         if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
             for my $tc (@{$msg->{tool_calls}}) {
@@ -2184,35 +2184,84 @@ sub _learn_from_api_response {
             }
         }
     }
-    
+
     return if $total_chars == 0;  # Avoid division by zero
-    
+
     # Calculate actual char/token ratio from this response
     my $actual_ratio = $total_chars / $actual_tokens;
-    
+
     # Weighted average: 80% old ratio + 20% new observation
     # This smooths out variance while still adapting to patterns
     my $old_ratio = $self->{learned_token_ratio};
     my $new_ratio = ($old_ratio * 0.8) + ($actual_ratio * 0.2);
-    
+
     # Clamp ratio to reasonable bounds (1.5 to 4.0)
     # Prevents outliers from skewing too far
     $new_ratio = 1.5 if $new_ratio < 1.5;
     $new_ratio = 4.0 if $new_ratio > 4.0;
-    
+
     if ($self->{debug}) {
         printf STDERR "[DEBUG][APIManager] Token learning: actual=%d, chars=%d, ratio=%.2f, old_learned=%.2f, new_learned=%.2f\n",
             $actual_tokens, $total_chars, $actual_ratio, $old_ratio, $new_ratio;
     }
-    
+
     $self->{learned_token_ratio} = $new_ratio;
-    
+
     # Propagate learned ratio to TokenEstimator so ALL token estimation
     # across the codebase (ConversationManager trim, State trim, etc.)
     # benefits from the API feedback, not just MessageValidator
     require CLIO::Memory::TokenEstimator;
     CLIO::Memory::TokenEstimator::set_learned_ratio($new_ratio);
-    
+
+    # ALSO compute and store the drift ratio (actual_tokens / estimated_tokens)
+    # so the resume fast path can tighten its threshold for THIS model. Without
+    # this, a model whose tokenizer produces very different tokens than the
+    # chars/token heuristic assumes will keep failing the resume fast path
+    # every cycle until something else forces a fallback (the CachyLLama bug
+    # on 2026-08-20: 104K estimated, 163K actual, ratio 1.56x).
+    #
+    # Each model's tokenizer behaves differently — observed:
+    #   Qwen3.x:        ratio ~3.5 (chars/token, estimate matches)
+    #   Llama-3:        ratio ~3.0
+    #   llama.cpp UD-Q5_K_XL Quant: ratio ~1.5-1.6 (estimate undercounts!)
+    # We can't predict this without a successful API response, so save it on
+    # success and apply on resume.
+    if ($self->{session} && $self->{session}->can('state')) {
+        my $state = $self->{session}->state();
+        if (ref($state)) {
+            require CLIO::Memory::TokenEstimator;
+            my $estimated_tokens = 0;
+            for my $msg (@$messages) {
+                $estimated_tokens += CLIO::Memory::TokenEstimator::estimate_tokens($msg->{content} || '');
+                if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
+                    for my $tc (@{$msg->{tool_calls}}) {
+                        my $json = encode_json($tc);
+                        $estimated_tokens += CLIO::Memory::TokenEstimator::estimate_tokens($json);
+                    }
+                }
+            }
+
+            if ($estimated_tokens > 0 && $actual_tokens > 0) {
+                my $drift = $actual_tokens / $estimated_tokens;
+                # Clamp at the same 4.0 ceiling used for the chars/token ratio
+                # to prevent outliers (a single bad sample, signature-whitespace
+                # anomalies, etc.) from poisoning subsequent resumes.
+                $drift = 4.0 if $drift > 4.0;
+                $drift = 1.0 if $drift < 1.0;
+
+                if ($state->{last_api_metadata}) {
+                    $state->{last_api_metadata}{actual_tokens}        = int($actual_tokens);
+                    $state->{last_api_metadata}{estimate_drift_ratio} = $drift;
+                }
+                if ($self->{debug}) {
+                    log_debug('APIManager', sprintf(
+                        "Drift ratio learned: estimated=%d, actual=%d, drift=%.3f (saved to state for next resume)",
+                        $estimated_tokens, $actual_tokens, $drift));
+                }
+            }
+        }
+    }
+
     return $new_ratio;
 }
 

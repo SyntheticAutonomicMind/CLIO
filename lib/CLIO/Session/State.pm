@@ -508,6 +508,25 @@ sub set_last_api_payload {
         context_window => $opts{context_window} // $self->{last_api_metadata}{context_window} // 0,
         tools_signature => $opts{tools_signature} // $self->{last_api_metadata}{tools_signature} // undef,
         section_signatures => $opts{section_signatures} // $self->{last_api_metadata}{section_signatures} // {},
+        # Estimated token count for this payload using the local
+        # estimate_tokens heuristic. Used by _try_resume_from_payload
+        # to detect when the local estimate has drifted from reality
+        # (e.g. a tokenizer mismatch causes the estimate to
+        # undercount actual server-reported prompt_tokens). When
+        # drift > 20% (estimated < actual by 1.2x or more) we tighten
+        # the trim threshold so subsequent resumes fit on the first try
+        # instead of round-tripping a 400.
+        estimated_tokens       => $opts{estimated_tokens}       // $self->{last_api_metadata}{estimated_tokens}       // 0,
+        # Real prompt token count from a successful API response, when
+        # available. Saves a server round-trip when calculating the
+        # estimate/actual drift ratio on resume.
+        actual_tokens          => $opts{actual_tokens}          // $self->{last_api_metadata}{actual_tokens}          // 0,
+        # Computed drift ratio (actual_tokens / estimated_tokens).
+        # 1.0 = perfect match. >1.2 = underestimate, tighten threshold.
+        # Cap at 4.0 to prevent runaway values from outliers (each model's
+        # tokenizer behaves differently; a single bad sample shouldn't
+        # poison subsequent turns).
+        estimate_drift_ratio   => $opts{estimate_drift_ratio}   // $self->{last_api_metadata}{estimate_drift_ratio}   // 1.0,
         saved_at       => time(),
     };
 

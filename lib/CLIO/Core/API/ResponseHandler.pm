@@ -319,6 +319,12 @@ sub _handle_error_response_impl {
     my $retry_info = '';
     my $is_retryable_error = 0;
     my $error_type = undef;
+    # Server-reported context size + prompt token count from token-limit errors.
+    # Forwarded to trim_for_token_limit so it can compute a precise cut target
+    # instead of relying on the local estimate (which can be off 1.5x+ when
+    # learned_token_ratio drifts from the model's tokenizer).
+    my $srv_ctx         = undef;
+    my $srv_prompt_toks = undef;
 
     # Handle rate limiting (429)
     if ($status == 429) {
@@ -898,14 +904,68 @@ sub _handle_error_response_impl {
         $error = $retry_info;
     }
     # Handle token limit exceeded (400)
-    elsif ($status == 400 && $error =~ /model_max_prompt_tokens_exceeded|context_length_exceeded|prompt token count.*exceeds/i) {
+    #
+    # The regex below matches all known provider patterns for "the request is too large
+    # for this model's context window". Each provider uses different wording:
+    #   - llama.cpp:           "request (N tokens) exceeds the available context size (M tokens)"
+    #   - llama.cpp (alt):     "context window is full" / "context size exceeded"
+    #   - OpenAI chat:         "model_max_prompt_tokens_exceeded" + generic "Prompt token count exceeds ..."
+    #   - OpenAI Responses:    "context_length_exceeded"
+    #   - Anthropic:           "prompt is too long", "input is too long", "max input tokens exceeded"
+    #   - Generic OpenAI-compatible: "exceeds the maximum context length", "max_tokens ... exceeded"
+    #
+    # Bug fix 2026-08-20 (CachyLLama): The previous regex only matched
+    # Anthropic/OpenAI patterns. llama.cpp's "exceeds the available context size" fell
+    # through to the generic 400 bad_request handler, never triggered trim_for_token_limit,
+    # spun the retry loop 3x with no recovery, then bailed with a "persistent 400" dump.
+    # The new regex includes all known provider variants.
+    #
+    # When matched, we ALSO extract the server-reported context size and prompt token
+    # count from error_obj (when present) and stash them on $result as n_ctx /
+    # n_prompt_tokens. trim_for_token_limit uses these to compute a precise cut
+    # target (`int(n_ctx * 0.85)`) instead of relying on the local estimate, which
+    # can be off by 1.5x+ when the learned_char_per_token ratio drifts from reality.
+    #
+    # IMPORTANT: We DO NOT use /x modifier. /x makes Perl ignore whitespace in the regex
+    # but it ALSO requires \s+ for every literal space, breaking "prompt token count"
+    # which expects literal spaces. Instead, we keep the regex on a single line so
+    # whitespace inside is literal (matches the input's spaces). Previous /x
+    # implementation failed on "Prompt token count exceeds ..." for this reason.
+    elsif ($status == 400
+        && $error =~ /model_max_prompt_tokens_exceeded|context_length_exceeded|prompt token count.*exceeds|exceeds?\s+(?:the\s+)?(?:available\s+)?context\s*(?:size|window|length)|prompt\s+is\s+too\s+long|input\s+is\s+too\s+long|max(?:imum)?\s+(?:input|prompt|context)\s+(?:tokens?|length)|too\s+many\s+(?:input\s+)?tokens?|context\s+window\s+(?:is\s+)?full/i) {
         $is_retryable_error = 1;
         $retryable = 1;
         $retry_after = 0;
         $error_type = 'token_limit_exceeded';
-        $error = "Token limit exceeded: The conversation history is too long for the model's context window. "
-               . "Will attempt to trim conversation history and retry.";
-        log_info('ResponseHandler', "Token limit exceeded - will retry after trimming");
+
+        # Extract server-reported context size and prompt token count when available.
+        # llama.cpp error_obj: {"code":400, "message":"...exceeds the available context size (M tokens)...",
+        #                       "n_prompt_tokens":N, "n_ctx":M, "type":"exceed_context_size_error"}
+        # Some providers use different key names; we accept the common variants.
+        if ($error_obj && ref($error_obj) eq 'HASH') {
+            for my $ctx_key (qw(n_ctx n_ctx_tokens context_size context_window max_context_length)) {
+                if (defined $error_obj->{$ctx_key} && $error_obj->{$ctx_key} =~ /^\d+$/) {
+                    $srv_ctx = int($error_obj->{$ctx_key});
+                    last;
+                }
+            }
+            for my $pt_key (qw(n_prompt_tokens prompt_tokens input_tokens total_tokens)) {
+                if (defined $error_obj->{$pt_key} && $error_obj->{$pt_key} =~ /^\d+$/) {
+                    $srv_prompt_toks = int($error_obj->{$pt_key});
+                    last;
+                }
+            }
+        }
+
+        if ($srv_ctx && $srv_prompt_toks) {
+            $error = "Token limit exceeded: server reports request was $srv_prompt_toks tokens but context window is $srv_ctx tokens. "
+                   . "Will attempt to trim conversation history and retry.";
+            log_info('ResponseHandler', "Token limit exceeded (server-reported: $srv_prompt_toks tokens > $srv_ctx ctx) - will retry after precise cut");
+        } else {
+            $error = "Token limit exceeded: The conversation history is too long for the model's context window. "
+                   . "Will attempt to trim conversation history and retry.";
+            log_info('ResponseHandler', "Token limit exceeded - will retry after trimming (no server-reported sizes)");
+        }
     }
     # Handle malformed tool call JSON (400)
     elsif ($status == 400 && ($error =~ /invalid.*json.*tool.*call|tool.*call.*invalid.*json/i ||
@@ -1173,7 +1233,9 @@ sub _handle_error_response_impl {
         }
     }
 
-    # Build result via helper
+    # Build result via helper. When we detected a server-reported token-limit
+    # error, forward the server's n_ctx and n_prompt_tokens so downstream
+    # trim_for_token_limit can compute a precise cut target.
     my $result = $self->_build_error_result(
         is_streaming             => $is_streaming,
         error                    => $error,
@@ -1182,6 +1244,8 @@ sub _handle_error_response_impl {
         error_type               => $error_type,
         detected_rate_limit_code => $detected_rate_limit_code,
         error_obj                => $error_obj,
+        n_ctx                    => $srv_ctx,
+        n_prompt_tokens          => $srv_prompt_toks,
     );
     return $result;
 
@@ -1328,6 +1392,8 @@ sub _build_error_result {
     my $error_type               = $state{error_type};
     my $detected_rate_limit_code = $state{detected_rate_limit_code};
     my $error_obj                = $state{error_obj};
+    my $n_ctx                    = $state{n_ctx};
+    my $n_prompt_tokens          = $state{n_prompt_tokens};
 
     my $result;
     if ($is_streaming) {
@@ -1344,6 +1410,11 @@ sub _build_error_result {
         $result->{rate_limit_code} = $detected_rate_limit_code if $detected_rate_limit_code;
         # Pass error_obj for richer error messaging (e.g. GitHub rate limit codes)
         $result->{error_obj} = $error_obj if $error_obj;
+        # Forward server-reported context size + prompt token count to trim_for_token_limit
+        # so it can compute a precise cut target instead of relying on the local estimate
+        # (the local estimate can be off by 1.5x+ when learned_token_ratio drifts).
+        $result->{n_ctx}           = $n_ctx           if defined $n_ctx;
+        $result->{n_prompt_tokens} = $n_prompt_tokens if defined $n_prompt_tokens;
         if ($self->{last_failed_tool}) {
             $result->{failed_tool} = $self->{last_failed_tool};
             delete $self->{last_failed_tool};

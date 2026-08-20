@@ -28,6 +28,7 @@ use CLIO::Core::PromptBuilder;
 use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json safe_encode_json);
 use CLIO::Core::Diagnostics qw(dump_diagnostic deduplicate_paragraphs);
 use CLIO::Core::API::ErrorHandler;
+use CLIO::Memory::TokenEstimator qw(get_effective_ratio estimate_tokens);
 use Encode qw(encode_utf8);  # For handling Unicode in JSON
 use Time::HiRes qw(time sleep);
 use Digest::MD5 qw(md5_hex);
@@ -569,11 +570,14 @@ sub process_input {
             my $pre_count = scalar(@messages);
             my $model = $self->{api_manager}->get_current_model();
             my $caps = $self->{api_manager}->get_model_capabilities($model);
-            # Trim proactively at 90% of context window instead of waiting for the
-            # full prompt budget. This keeps the head stable, drops smaller chunks
-            # from the tail, and lets CSSS summary absorb the dropped content.
+            # Trim proactively at 90% of context window. When the local
+            # token estimate has been observed to drift from actual
+            # server-reported counts (saved via _learn_from_api_response
+            # -> last_api_metadata.estimate_drift_ratio), tighten the
+            # threshold proportionally so we hit the model budget on
+            # the first try instead of round-tripping a 400.
             my $ctx_window = $caps->{max_context_window_tokens} // 128000;
-            my $trim_threshold = int($ctx_window * 0.90);
+            my $trim_threshold = $self->_compute_drift_aware_threshold($ctx_window, $session);
             my $trimmed = validate_and_truncate(
                 messages           => \@messages,
                 model_capabilities => $caps,
@@ -1437,6 +1441,95 @@ sub _sync_state_max_tokens {
     }
 }
 
+=head2 _compute_drift_aware_threshold($ctx_window, $session)
+
+Compute a trim threshold in ESTIMATED tokens that accounts for the local
+estimator's known drift relative to the model's actual tokenizer.
+
+Every successful API response saves a ratio (last_api_metadata.estimate_drift_ratio)
+of actual_tokens / estimated_tokens. When that ratio exceeds 1.2 (estimate
+undercounts actual by 20% or more), the trim threshold has to be tightened
+to avoid sending oversized payloads that the provider will reject.
+
+Formula:
+  adjusted_threshold = int(ctx_window * 0.90 / max(1.0, drift_ratio))
+
+Example (CachyLLama, 2026-08-20):
+  ctx_window = 131072
+  drift_ratio = 1.56 (164K actual / 104K estimated)
+  raw_threshold = 131072 * 0.90 = 117964 estimated
+  adjusted_threshold = 117964 / 1.56 = 75618 estimated
+
+The adjusted_threshold corresponds to ~117964 ACTUAL tokens (at the
+observed drift), which fits 90% of ctx on the server.
+
+Without this adjustment the proactive trim at 90% of ctx would ship a
+payload that the server sees as ~131072 * 0.90 * 1.56 = ~184K tokens,
+oversized by ~53K and rejected with HTTP 400.
+
+The drift ratio is saved only when we have a successful API response with
+usage.prompt_tokens. Until then, we use the raw 0.90 ratio (safe default
+for models whose tokenizer matches the chars/4.0 heuristic). After the
+first successful response, the ratio is applied on every subsequent
+trim.
+
+Returns: integer trim threshold in ESTIMATED tokens.
+
+=cut
+
+sub _compute_drift_aware_threshold {
+    my ($self, $ctx_window, $session) = @_;
+
+    my $raw_threshold = int($ctx_window * 0.90);
+
+    # Read drift ratio from session state. Default to 1.0 (no drift) if
+    # we have no successful-response data yet — this matches the legacy
+    # behavior and is safe for models whose tokenizer matches the
+    # chars/token heuristic (Qwen3.x, Llama-3, etc.).
+    my $drift_ratio = 1.0;
+    my $ratio_source = 'default';
+    if ($session && $session->can('state')) {
+        my $state = $session->state();
+        if (ref($state) && $state->{last_api_metadata}
+            && $state->{last_api_metadata}{estimate_drift_ratio}) {
+            my $saved = $state->{last_api_metadata}{estimate_drift_ratio};
+            if ($saved >= 1.2) {
+                # Trust the saved ratio only if it was observed recently
+                # (< 1 hour old). Drift can change if the model is replaced
+                # or the message mix shifts (CJK content, code blocks).
+                my $age = time() - ($state->{last_api_metadata}{saved_at} // 0);
+                if ($age < 3600) {
+                    $drift_ratio = $saved;
+                    $ratio_source = 'saved';
+                }
+            } elsif ($saved && $saved > 0 && $saved < 1.2) {
+                # Saved ratio is close to 1.0 — model is well-calibrated.
+                # Use it but the impact is minor.
+                $drift_ratio = $saved;
+                $ratio_source = 'saved (well-calibrated)';
+            }
+        }
+    }
+
+    # Only tighten — never loosen below the raw 0.90 threshold.
+    # Use max(1.0, drift) to handle outliers that produced drift < 1.0
+    # (estimate overcounts), which is rare and shouldn't increase the
+    # prompt budget above the model's actual capacity.
+    my $adjusted_threshold = $raw_threshold;
+    if ($drift_ratio > 1.0) {
+        $adjusted_threshold = int($raw_threshold / $drift_ratio);
+    }
+
+    if ($self->{debug} && $drift_ratio != 1.0) {
+        log_debug('WorkflowOrchestrator', sprintf(
+            "Drift-aware threshold: ctx=%d, raw=%d (90%%), drift=%.3f (%s) -> adjusted=%d (%.0f%% of ctx)",
+            $ctx_window, $raw_threshold, $drift_ratio, $ratio_source,
+            $adjusted_threshold, ($adjusted_threshold / $ctx_window) * 100));
+    }
+
+    return $adjusted_threshold;
+}
+
 =head2 _capture_api_payload($session, \@messages, \@tools)
 
 Snapshot the conversation state at end of turn so that session resume can
@@ -1461,7 +1554,7 @@ when the toolset has drifted and decide to fall back to a rebuild.
 =cut
 
 sub _capture_api_payload {
-    my ($self, $session, $messages_ref, $tools_ref) = @_;
+    my ($self, $session, $messages_ref, $tools_ref, %opts) = @_;
 
     return unless $session && $session->can('state');
     my $state = $session->state();
@@ -1497,6 +1590,21 @@ sub _capture_api_payload {
     my $caps     = $self->{api_manager} ? $self->{api_manager}->get_model_capabilities() : {};
     my $ctx      = $caps->{max_context_window_tokens} // $state->{max_tokens} // 0;
 
+    # Compute the locally-estimated token count for this snapshot.
+    # Saved in metadata so _try_resume_from_payload can detect when the
+    # local estimate has drifted from the model's actual tokenizer
+    # (observed drift of 1.5x+ on llama.cpp's UD-Q5_K_XL quant, where
+    # local estimate undercounts by ~56% — the resume fast path would
+    # otherwise reuse a "fits in 90%" payload that's actually 56% over).
+    # When _learn_from_api_response gets real usage.prompt_tokens from a
+    # successful response, we compute estimated / actual ratio and store
+    # it in state. The next resume applies that ratio to the threshold.
+    my $estimated_tokens = 0;
+    for my $msg (@normalized) {
+        my $content = $msg->{content} // '';
+        $estimated_tokens += estimate_tokens($content);
+    }
+
     $state->set_last_api_payload(
         \@normalized,
         model             => $model,
@@ -1504,11 +1612,18 @@ sub _capture_api_payload {
         context_window    => $ctx,
         tools_signature   => $self->_tools_signature($tools_ref),
         section_signatures => $self->_compute_section_signatures(\@normalized),
+        estimated_tokens  => $estimated_tokens,
+        # Forward actual_tokens from caller (populated by APIManager when
+        # the API response carries usage.prompt_tokens) so the next resume
+        # can compute the drift ratio without an extra API call.
+        actual_tokens     => $opts{actual_tokens},
+        estimate_drift_ratio => $opts{estimate_drift_ratio},
     );
 
     log_debug('WorkflowOrchestrator',
         "Captured API payload: " . scalar(@normalized) . " messages (normalized from " . scalar(@$messages_ref) . "), "
-        . "model=$model, provider=$provider, ctx=$ctx");
+        . "model=$model, provider=$provider, ctx=$ctx, estimated=$estimated_tokens tokens"
+        . ($opts{actual_tokens} ? ", actual=$opts{actual_tokens} tokens (drift=$opts{estimate_drift_ratio})" : ''));
 }
 
 =head2 _strip_continuation_nudges(\@messages)
@@ -1791,8 +1906,23 @@ Reuse rules:
 - payload is non-empty AND
 - provider matches current provider AND
 - tools_signature matches current tools signature AND
-- context_window: payload used verbatim if current ctx >= saved ctx;
-  trimmed via trim_conversation_for_api if current ctx < saved ctx.
+- payload token count fits the current model's prompt budget.
+
+The last rule is critical: the cached payload can grow beyond the model's
+actual context window between turns (e.g. when a previous turn ran tools
+that pushed @messages past the budget but the API call succeeded because
+the response was short). Returning such a payload verbatim causes the
+provider to reject with HTTP 400 "request exceeds context size" — exactly
+the bug observed on llama.cpp resume (159743 tokens sent to a 131072 ctx
+model on 2026-08-20, fix committed after).
+
+The fast path's value is LCP cache hit on llama.cpp (skip 30-60s prompt
+processing when the prefix is byte-identical to the prior turn). That
+benefit only matters when the payload is actually reusable — and it isn't
+reusable when it exceeds the current model's budget. We always trim the
+payload against the CURRENT model's prompt budget (computed via
+compute_prompt_budget with the active tools), regardless of whether the
+saved context_window is bigger or smaller than the current one.
 
 =cut
 
@@ -1850,8 +1980,24 @@ sub _try_resume_from_payload {
         return;
     }
 
-    # Context window gate: bigger/newer ctx -> use verbatim.
-    # Smaller ctx -> trim using the normal path.
+    # Context window gate: the payload must fit the CURRENT model's
+    # prompt budget, regardless of whether the saved context_window is
+    # bigger or smaller. The old `current_ctx >= saved_ctx` gate was
+    # wrong because the cached payload can grow beyond the model's
+    # actual context window between turns (e.g. previous turn ran
+    # tools, response was short, API accepted, but the budget was
+    # exhausted). Returning such a payload verbatim caused llama.cpp to
+    # reject with 400 "request exceeds context size" — the bug
+    # observed on 2026-08-20 (159743 tokens sent to a 131072 ctx
+    # model, aborting the resume with no recovery).
+    #
+    # The fast path's value is LCP cache hit on llama.cpp. That
+    # benefit only applies when the payload is actually reusable,
+    # and it isn't reusable when it exceeds the current model's
+    # budget. We always trim against the current model's prompt
+    # budget using validate_and_truncate (same routine as the
+    # proactive trim in process_input), with the 90% threshold
+    # that the main loop uses so behavior matches.
     my $saved_ctx      = $metadata->{context_window} // 0;
     my $current_ctx    = $model_caps->{max_context_window_tokens}
                           // CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW();
@@ -1865,30 +2011,35 @@ sub _try_resume_from_payload {
     my $messages = [ $self->_strip_non_trailing_user_context(@$payload) ];
     $messages    = [ $self->_strip_continuation_nudges(@$messages) ];
 
-    if ($current_ctx >= $saved_ctx && $saved_ctx > 0) {
-        log_info('WorkflowOrchestrator',
-            "Resume using cached payload verbatim: " . scalar(@$messages)
-            . " messages, ctx=$current_ctx >= saved=$saved_ctx");
-        return ($messages, $tools);
-    }
+    my $pre_count = scalar(@$messages);
 
-    # Smaller context - trim the cached payload like a normal history.
-    require CLIO::Core::ConversationManager;
-    my $system_prompt = '';
-    if ($messages->[0] && $messages->[0]{role} eq 'system') {
-        $system_prompt = $messages->[0]{content} // '';
-    }
-    $messages = CLIO::Core::ConversationManager::trim_conversation_for_api(
-        $messages, $system_prompt,
-        model_context_window => $current_ctx,
-        max_response_tokens  => $model_caps->{max_output_tokens}
-                                 // CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS(),
-        debug => $self->{debug},
+    # Always trim against the CURRENT model's prompt budget. Use the
+    # SAME drift-aware threshold as the proactive trim in process_input
+    # so the fast path produces prompts consistent with the rebuild path.
+    my $trim_threshold = $self->_compute_drift_aware_threshold($current_ctx, $session);
+    my $trimmed = validate_and_truncate(
+        messages           => $messages,
+        model_capabilities => $model_caps,
+        tools              => $tools,
+        token_ratio        => $self->{api_manager} ? $self->{api_manager}{learned_token_ratio} : undef,
+        config             => $self->{api_manager} ? $self->{api_manager}{config} : undef,
+        api_base           => $self->{api_manager} ? $self->{api_manager}{api_base} : '',
+        debug              => $self->{debug},
+        model              => $self->{api_manager} ? $self->{api_manager}->get_current_model() : 'unknown',
+        trim_threshold     => $trim_threshold,
     );
 
-    log_info('WorkflowOrchestrator',
-        "Resume using cached payload (trimmed): " . scalar(@$messages)
-        . " messages, ctx=$current_ctx < saved=$saved_ctx");
+    if ($trimmed && scalar(@$trimmed) < $pre_count) {
+        log_info('WorkflowOrchestrator',
+            "Resume fast path: trimmed payload to fit current model "
+            . "(ctx=$current_ctx, threshold=$trim_threshold, "
+            . "saved_ctx=$saved_ctx): $pre_count -> " . scalar(@$trimmed) . " messages");
+        $messages = $trimmed;
+    } else {
+        log_info('WorkflowOrchestrator',
+            "Resume using cached payload verbatim: " . scalar(@$messages)
+            . " messages (fits current budget: ctx=$current_ctx, threshold=$trim_threshold)");
+    }
 
     return ($messages, $tools);
 }
