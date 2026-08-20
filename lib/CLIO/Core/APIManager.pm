@@ -1092,7 +1092,6 @@ sub adapt_request_for_endpoint {
             $max_tokens //= 8000;  # unknown effort -> default to high
             $payload->{reasoning} = {
                 enabled    => \1,
-                effort     => $thinking_effort,
                 max_tokens  => $max_tokens,
             };
             log_debug('APIManager', "OpenRouter reasoning: effort=$thinking_effort, max_tokens=$max_tokens");
