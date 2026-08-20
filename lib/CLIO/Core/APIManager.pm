@@ -2724,15 +2724,22 @@ sub _build_payload {
     }
 
     # prompt_stable_prefix_tokens: tell the llama.cpp LCP matcher how many
-    # leading tokens form a stable prefix. All leading system messages are
-    # included (system_prompt + thread_summary + context_files) because they
-    # only change on rare events: tools/MCP registration, CSSS regeneration,
-    # or context_files added/removed. Dialog at [3]+ changes every turn and
-    # tool_results at [4] shift with trimming - both are AFTER the stable
-    # prefix so they never invalidate the cache hint.
+    # leading tokens form a stable prefix. Static leading system messages
+    # are included (system_prompt + thread_summary + context_files) because
+    # they only change on rare events: tools/MCP registration, CSSS
+    # regeneration, or context_files added/removed. Dialog at [3]+ changes
+    # every turn and tool_results at [4] shift with trimming - both are
+    # AFTER the stable prefix so they never invalidate the cache hint.
     #
-    # CRITICAL: When this hint matches the cached slot's actual prefix length,
-    # the LCP matcher reports sim_best=1.0 because every cached token still
+    # user_context (<userContext>/<dynamicContext>/<sessionGoals>) is EXCLUDED
+    # even when it appears at a leading position (session start, or after
+    # proactive trim drops dialog). It contains date/time + LTM snapshots
+    # that change every minute/turn; including it makes the hint drift and
+    # permanently collapses the LCP cache (server.log: stable_prefix went
+    # 29032 -> 24168 on minute rollover, sim_best 0.973 -> 0.240 forever).
+    #
+    # When this hint matches the cached slot's actual prefix length, the
+    # LCP matcher reports sim_best=1.0 because every cached token still
     # matches. When trim causes the cached slot to be reprocessed (because
     # sim_best dropped below --slot-prompt-similarity 0.20), CachyLLama builds
     # a new slot. Without the hint covering summary+context_files, the OLD
@@ -2741,12 +2748,45 @@ sub _build_payload {
     # race (observed in scratch/run.log: sim_best dropped from 0.997 to
     # 0.566 after a single trim and stayed there for 50+ subsequent turns).
     if ($endpoint_config->{llama_user_id_supported} && $messages && @$messages) {
-        # Collect every leading system message (system_prompt + thread_summary
-        # + context_files). Stop at the first non-system message (dialog).
+        # Collect every leading system message EXCEPT user_context.
+        # Static leading systems: system_prompt, thread_summary, context_files.
+        # user_context must be skipped even if it appears at a leading position
+        # (session start: [sys][user_ctx][user_input], or post-trim when
+        #  dialog is dropped: [sys][user_ctx][user_input][summary]).
+        # user_context contains date/time + LTM snapshots that change every
+        # minute/turn. Including it in the stable prefix makes the hint
+        # drift -> cache hash mismatch -> sim_best collapses -> LRU fallback
+        # -> full prompt reprocessing every turn (server.log: 97.44s permanent
+        # collapse at stable_prefix=29032 -> 24168 when minute ticked over).
         my @leading_system;
+        my $skipped_user_context = 0;
         for my $msg (@$messages) {
             last unless ($msg->{role} // '') eq 'system';
+            my $content = $msg->{content} // '';
+            if (ref($content) eq 'ARRAY') {
+                # Flatten arrayref content (multimodal) for tag detection
+                my $flat = '';
+                for my $part (@$content) {
+                    if (ref($part) eq 'HASH' && ($part->{type} // '') eq 'text') {
+                        $flat .= ($part->{text} // '');
+                    } elsif (!ref($part)) {
+                        $flat .= $part;
+                    }
+                }
+                $content = $flat;
+            }
+            if ($content =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
+                $skipped_user_context++;
+                next;
+            }
             push @leading_system, $msg;
+        }
+        if ($skipped_user_context && should_log('DEBUG')) {
+            log_warning('APIManager',
+                "Stable prefix: excluded $skipped_user_context user_context message(s) "
+                . "from prompt_stable_prefix_tokens (dynamic content at leading "
+                . "position). Retained " . scalar(@leading_system) . " static "
+                . "leading system msg(s). Prevents LCP collapse on minute rollover.");
         }
         if (@leading_system) {
             # Flatten to a single text blob for hashing and token estimation.
@@ -2823,6 +2863,23 @@ sub _build_payload {
                     my $stable_tokens = CLIO::Memory::TokenEstimator::estimate_tokens($combined_text);
                     if ($stable_tokens > 0) {
                         $payload->{prompt_stable_prefix_tokens} = $stable_tokens;
+                        # Cache miss diagnostic: log when the stable prefix changes
+                        # between turns. This is the CLIO-side signal that corresponds
+                        # to the server-side LCP collapse observed in server.log:
+                        #   - stable prefix unchanged -> sim_best stays ~1.0 (cache hit)
+                        #   - stable prefix CHANGED  -> sim_best collapses to ~0.2-0.5 (cache miss)
+                        # Without this log, the user has no visibility into why the cache
+                        # stopped hitting - they only see it in the llama.cpp server log.
+                        my $old_tokens = $self->{_stable_prefix_cache}{tokens} // 0;
+                        if ($old_tokens > 0) {
+                            log_warning('APIManager',
+                                "CACHE MISS: prompt_stable_prefix_tokens changed " .
+                                "$old_tokens -> $stable_tokens (" .
+                                ($stable_tokens - $old_tokens) . " tokens delta). " .
+                                "Leading system content hash changed - llama.cpp LCP cache " .
+                                "will not match the existing slot. " .
+                                scalar(@leading_system) . " static leading system msg(s) covered.");
+                        }
                         log_debug('APIManager', "Including prompt_stable_prefix_tokens: $stable_tokens (leading system messages changed, recalculated, "
                             . scalar(@leading_system) . " msg(s) covered)");
                         $self->{_stable_prefix_cache} = {

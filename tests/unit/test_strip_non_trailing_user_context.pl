@@ -25,7 +25,7 @@ sub make_msg {
 sub has_user_context_tag {
     my ($msg) = @_;
     my $content = $msg->{content} // '';
-    return $content =~ /<(?:userContext|dynamicContext|sessionGoals)>/;
+    return $content =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/;
 }
 
 # Build a minimal WorkflowOrchestrator-like object that exposes the

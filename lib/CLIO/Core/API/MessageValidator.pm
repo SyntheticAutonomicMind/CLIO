@@ -182,7 +182,8 @@ sub validate_and_truncate {
     
     # Extract system message and most recent user message
     my ($system_msg, $last_user_unit, $start_unit, $system_tokens, $last_user_tokens,
-        $summary_unit, $summary_tokens, $preserved_user_contexts) =
+        $summary_unit, $summary_tokens, $preserved_user_contexts,
+        $preserved_general_system) =
         _extract_preserved_units(\@units);
     
     # Build conversation from newest to oldest
@@ -491,6 +492,18 @@ sub validate_and_truncate {
     }
     my @truncated;
     push @truncated, $system_msg if $system_msg;
+    # Preserve general static system messages (context_files, recovery notices)
+    # at their original leading position. Without this, trimming drops them,
+    # changing the prompt_stable_prefix_tokens hint and permanently collapsing
+    # the LCP cache (server.log: stable prefix dropped 29032 -> 24168 on first
+    # trim when context_files were silently skipped).
+    if (@$preserved_general_system) {
+        log_debug('MessageValidator', "Preserving " . scalar(@$preserved_general_system) .
+            " general system message(s) at leading position for cache stability");
+        for my $gs_unit (@$preserved_general_system) {
+            push @truncated, $_ for @{$gs_unit->{messages}};
+        }
+    }
     # Preserve user_context anchors (<dynamicContext>/<userContext>/<sessionGoals>)
     # at their original positions relative to system_msg. Without this, the
     # chat template's <system>...</system> block disappears from the prefix
@@ -841,6 +854,14 @@ sub _extract_preserved_units {
                                   # causes the chat template's <system>...</system> block to disappear,
    # which changes the prefix tokens and breaks llama.cpp's LCP cache (the CachyLLama
    # full re-prompt bug observed 2026-08-18).
+    my @preserved_general_system;  # Other static system messages (context_files,
+                                  # recovery notices) at non-trailing positions.
+                                  # Previously these were silently dropped, which
+                                  # changed the stable prefix token count on the
+                                  # first trim (e.g. 29032 -> 24168 when context_files
+                                  # were removed), causing sim_best to collapse.
+                                  # Now they are preserved at their leading position
+                                  # so the stable prefix stays constant across trims.
 
     # Extract system message
     if (@$units && @{$units->[0]{messages}} && $units->[0]{messages}[0]{role} eq 'system') {
@@ -870,12 +891,21 @@ sub _extract_preserved_units {
             # user_context anchor at this position - preserve it. Trailing
             # user_context (at the end of @messages) is handled by the trim
             # walk below since it falls within @remaining.
-            if ($content =~ /<(?:userContext|dynamicContext|sessionGoals)>/) {
+            if ($content =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
                 push @preserved_user_contexts, $unit;
                 log_debug('MessageValidator', "Preserving user_context anchor at unit $i");
             }
-            # Other system messages (e.g., context_files, recovery notices)
-            # between system_msg and the conversation - skip silently
+            # Other system messages (context_files, recovery notices, etc.)
+            # between system_msg and the conversation. Preserve them at their
+            # leading position to keep the stable prefix constant across
+            # trims. Previously these were skipped silently (dropped), which
+            # caused context_files (~4864 tokens) to vanish from the prompt
+            # on the first trim, changing prompt_stable_prefix_tokens from
+            # 29032 to 24168 and permanently collapsing the LCP cache hit.
+            else {
+                push @preserved_general_system, $unit;
+                log_debug('MessageValidator', "Preserving general system message at unit $i (content starts with: " . substr($content, 0, 30) . ")");
+            }
         } elsif ($first_msg->{role} && $first_msg->{role} ne 'system') {
             # Hit a non-system, non-summary message - start of conversation
             $start_unit = $i;
@@ -905,7 +935,7 @@ sub _extract_preserved_units {
     }
 
     return ($system_msg, $last_user_unit, $start_unit, $system_tokens, $last_user_tokens,
-            $summary_unit, $summary_tokens, \@preserved_user_contexts);
+            $summary_unit, $summary_tokens, \@preserved_user_contexts, \@preserved_general_system);
 }
 
 sub _compress_dropped {

@@ -569,12 +569,11 @@ sub process_input {
             my $pre_count = scalar(@messages);
             my $model = $self->{api_manager}->get_current_model();
             my $caps = $self->{api_manager}->get_model_capabilities($model);
-            # Trim proactively at 68% of context window instead of waiting for the
-            # full prompt budget (~95K for 128K context). This keeps the head stable,
-            # drops smaller chunks from the tail, and lets CSSS summary absorb the
-            # dropped content. 68% = ~87K for 128K context, leaving ~41K headroom.
+            # Trim proactively at 90% of context window instead of waiting for the
+            # full prompt budget. This keeps the head stable, drops smaller chunks
+            # from the tail, and lets CSSS summary absorb the dropped content.
             my $ctx_window = $caps->{max_context_window_tokens} // 128000;
-            my $trim_threshold = int($ctx_window * 0.68);
+            my $trim_threshold = int($ctx_window * 0.90);
             my $trimmed = validate_and_truncate(
                 messages           => \@messages,
                 model_capabilities => $caps,
@@ -1108,7 +1107,7 @@ sub _build_turn_context {
             }
             if (@$cached_messages
                 && $cached_messages->[-1]{role} eq 'system'
-                && $cached_messages->[-1]{content} =~ /<(?:userContext|dynamicContext|sessionGoals)>/) {
+                && $cached_messages->[-1]{content} =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
                 pop @$cached_messages;
             }
 
@@ -1512,7 +1511,7 @@ sub _strip_non_trailing_user_context {
         # its goals after a trim.
         next if $content =~ /^\[CONTEXT TRIM:/;
 
-        next unless $content =~ /<(?:userContext|dynamicContext|sessionGoals)>/;
+        next unless $content =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/;
         push @user_context_indices, $i;
     }
 
@@ -1584,7 +1583,7 @@ sub _compute_section_signatures {
             } elsif ($content =~ /\[CONTEXT FILES\]/) {
                 $sections{context_files} .= _stable_content($content);
                 $state = 'dialog';
-            } elsif ($content =~ /<(?:userContext|dynamicContext|sessionGoals)>/) {
+            } elsif ($content =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
                 $sections{user_context} .= _stable_content($content);
                 $state = 'user_ctx';
             } elsif ($state eq 'system') {
