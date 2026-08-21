@@ -3,13 +3,13 @@
 #
 # Verifies:
 # - retry_count is correctly dereferenced when passed as a SCALAR ref
-#   (the bug where \$retry_count numified to ~94 trillion, skipping the
-#    precise-cut ==1 branch and always bailing from the else branch)
+#   (the bug where \$retry_count numified to ~94 trillion)
 # - Server-reported n_prompt_tokens/n_ctx produce a drift ratio that
 #   scales the trim walk's local estimates to actual tokens
+# - The drift ratio is saved to state and loaded back on retry 2
 # - The trim walk actually removes messages (trimmed_count > 0)
 # - retry_count==3 with minimal context bails correctly
-# - retry_count==2 uses the 25% cut strategy
+# - retry_count==2 uses the 75% cut strategy (drift-aware, unified walk)
 
 use strict;
 use warnings;
@@ -208,7 +208,7 @@ subtest 'retry_count==3 with minimal context bails correctly' => sub {
     like($result->{response}{error}, qr/Token limit exceeded/, 'Error about token limit');
 };
 
-subtest 'retry_count==2 keeps approximately last 25%' => sub {
+subtest 'retry_count==2 uses drift-aware 75% cut' => sub {
     my $messages = build_large_messages(40);
     my $original = scalar @$messages;
     my $wo = make_wo();
@@ -285,6 +285,48 @@ subtest 'keep_budget floor prevents over-trim' => sub {
     # keep_budget = int(1000 * 0.90) = 900, clamped to MIN_CSSIS (8000)
     # This is very small but shouldn't cause a crash
     ok(!exists $result->{bail} || exists $result->{bail}, 'Does not crash with tiny ctx');
+};
+
+subtest 'retry_count==2 loads drift ratio from saved state' => sub {
+    # Simulate a retry 2 where the server did NOT report token counts
+    # this time, but the drift ratio was saved during retry 1.
+    my $state = {
+        last_api_metadata => {
+            estimate_drift_ratio => 3.5,
+            actual_tokens       => 140000,
+            estimated_tokens    => 37837,
+        },
+    };
+    my $session = bless { _state => $state }, 'MockTrimSession2';
+    no strict 'refs';
+    *MockTrimSession2::can = sub { my ($self, $m) = @_; return $m eq 'state'; };
+    *MockTrimSession2::state = sub { return $_[0]{_state} };
+    use strict 'refs';
+
+    my $messages = build_large_messages(10);
+    my $original = scalar @$messages;
+    my $wo = make_wo();
+
+    my $rc = 2;
+    my $result = CLIO::Core::API::ErrorHandler::trim_for_token_limit(
+        $wo,
+        messages          => $messages,
+        retry_count       => \$rc,
+        session           => $session,
+        iteration         => 1,
+        tool_calls_made   => [],
+        max_retries       => 3,
+        max_server_retries=> 0,
+        max_session_errors=> 10,
+        max_rate_limit_retries => 0,
+        error             => 'request exceeds context size',
+        n_ctx             => 131072,
+        # No n_prompt_tokens -> should load drift from state
+    );
+
+    ok(!exists $result->{bail}, 'No bail on retry 2 with saved state');
+    my $after = scalar @$messages;
+    ok($after < $original, "Trimmed on retry 2 using saved drift (before=$original, after=$after)");
 };
 
 done_testing();
