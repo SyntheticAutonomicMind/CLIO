@@ -278,6 +278,56 @@ like($enhanced, qr/file not found|doesn.t exist|not exist/i,
 like($enhanced, qr/CHECK.*PATH|absolute|relative/i,
     'guidance: provides actionable file_not_found guidance');
 
+# ── Layer 4: FileOperations read_file race-condition fix ────────
+
+print "\n--- Layer 4: FileOperations.read_file line-count race fix ---\n";
+
+require_ok('CLIO::Tools::FileOperations');
+my $fo = CLIO::Tools::FileOperations->new(debug => 0);
+
+# Test: read_file with a directory path - was returning success=0 from -f check
+# now still works
+$r = $fo->read_file({
+    operation => 'read_file',
+    path => '/tmp',  # A directory, not a file
+}, {});
+is($r->{success}, 0, 'fo.read_file on directory: success=0');
+like($r->{error}, qr/File not found|not a regular file/i,
+    'fo.read_file on directory: clean error message');
+
+# Test: read_file with non-existent path
+$r = $fo->read_file({
+    operation => 'read_file',
+    path => '/no/such/file/exists/here.txt',
+}, {});
+is($r->{success}, 0, 'fo.read_file nonexistent: success=0');
+like($r->{error}, qr/File not found/i,
+    'fo.read_file nonexistent: clean error message');
+unlike($r->{error}, qr/ at \S+ line \d+/,
+    'fo.read_file nonexistent: no caller-location leak');
+
+# Test: read_file with start_line out of bounds on real file
+my $test_file = '/tmp/test_read_file_' . $$ . '.txt';
+open my $tfh, '>', $test_file or die;
+print $tfh "line1\nline2\nline3\n";
+close $tfh;
+
+$r = $fo->read_file({
+    operation => 'read_file',
+    path => $test_file,
+    start_line => 100,  # way past EOF
+}, {});
+is($r->{success}, 0, 'fo.read_file start_line past EOF: success=0');
+like($r->{error}, qr/Line range out of bounds/i,
+    'fo.read_file start_line past EOF: clean error');
+
+unlink $test_file;
+
+# Critical: read_file with start_line out of bounds exercises the line-count
+# path. If the eval wrapping was missing, this could still croak on the
+# line-count open() call. We can't easily simulate the race (file deleted
+# between -f and open), but we verify the eval path is correctly wired.
+
 done_testing();
 
 print "\n=== Tool Execution Exception Recovery Tests COMPLETE ===\n";
