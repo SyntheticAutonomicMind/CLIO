@@ -1098,20 +1098,30 @@ sub adapt_request_for_endpoint {
     # thinking format just requires setting that one flag in Providers.pm
     # rather than editing this exclusion list.
     elsif (!$endpoint_config->{native_thinking_format}) {
-        my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
-        my $thinking_mode = $self->{config} ? ($self->{config}->get('thinking_mode') // 'auto') : 'auto';
-        my $model = $payload->{model} // '';
-        my $reasoning_mode = $model ? $self->_get_reasoning_mode($model) : undef;
-        # thinking_mode=auto: gate on show_thinking (legacy behavior).
-        # thinking_mode=enabled: force ON (preserves the model's native
-        # mode - effort for OpenAI/DeepSeek/NVIDIA/Copilot).
-        # thinking_mode=disabled: never send reasoning_effort.
-        my $send_reasoning = ($thinking_mode eq 'enabled' && $reasoning_mode)
-            || ($thinking_mode eq 'auto' && $show_thinking && $reasoning_mode);
-        if ($send_reasoning) {
-            my $thinking_effort = $self->{config} ? ($self->{config}->get('thinking_effort') // 'medium') : 'medium';
-            $payload->{reasoning_effort} = $thinking_effort;
-            log_debug('APIManager', "Added reasoning_effort=$thinking_effort for $model (mode=$reasoning_mode)");
+        # Local inference providers (llama.cpp, LM Studio, Ollama) must
+        # never receive reasoning_effort: their server maps both
+        # reasoning_effort and max_tokens into reasoning.* subkeys,
+        # causing a 400 conflict. Models that support reasoning think
+        # automatically; no param is needed.
+        if ($endpoint_config->{requires_no_reasoning}) {
+            log_debug('APIManager', "Skipping reasoning_effort: provider opts out via requires_no_reasoning");
+        }
+        else {
+            my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
+            my $thinking_mode = $self->{config} ? ($self->{config}->get('thinking_mode') // 'auto') : 'auto';
+            my $model = $payload->{model} // '';
+            my $reasoning_mode = $model ? $self->_get_reasoning_mode($model) : undef;
+            # thinking_mode=auto: gate on show_thinking (legacy behavior).
+            # thinking_mode=enabled: force ON (preserves the model's native
+            # mode - effort for OpenAI/DeepSeek/NVIDIA/Copilot).
+            # thinking_mode=disabled: never send reasoning_effort.
+            my $send_reasoning = ($thinking_mode eq 'enabled' && $reasoning_mode)
+                || ($thinking_mode eq 'auto' && $show_thinking && $reasoning_mode);
+            if ($send_reasoning) {
+                my $thinking_effort = $self->{config} ? ($self->{config}->get('thinking_effort') // 'medium') : 'medium';
+                $payload->{reasoning_effort} = $thinking_effort;
+                log_debug('APIManager', "Added reasoning_effort=$thinking_effort for $model (mode=$reasoning_mode)");
+            }
         }
     }
 
