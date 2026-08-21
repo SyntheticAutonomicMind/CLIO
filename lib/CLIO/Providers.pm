@@ -189,6 +189,12 @@ my %PROVIDERS = (
             temperature_range => [0.0, 2.0],
             supports_tools => 1,
             sampling_defaults => { temperature => 1.0, top_p => 0.95, top_k => 20 },
+            # Local inference servers map both reasoning_effort and
+            # max_tokens into reasoning.* subkeys, causing "Only one of
+            # 'reasoning.effort' and 'reasoning.max_tokens' can be
+            # specified" 400s. Models that genuinely support reasoning
+            # (e.g. deepseek-r1) think automatically; no param needed.
+            requires_no_reasoning => 1,
         },
     },
 
@@ -210,6 +216,7 @@ my %PROVIDERS = (
             temperature_range => [0.0, 2.0],
             supports_tools => 1,
             sampling_defaults => { temperature => 1.0, top_p => 0.95, top_k => 20 },
+            requires_no_reasoning => 1,
         },
     },
     
@@ -225,6 +232,7 @@ my %PROVIDERS = (
             path_suffix => '',
             temperature_range => [0.0, 2.0],
             supports_tools => 1,
+            requires_no_reasoning => 1,
         },
     },
     
