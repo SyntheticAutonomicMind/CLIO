@@ -9,10 +9,11 @@ use utf8;
 use CLIO::UI::Terminal qw(ui_char);
 use CLIO::Core::Logger qw(log_error log_warning log_info log_debug should_log);
 use CLIO::Core::Logger qw(log_error log_warning log_info log_debug);
-use CLIO::Memory::TokenEstimator qw(estimate_tokens compute_prompt_budget);
+use CLIO::Memory::TokenEstimator qw(estimate_tokens compute_prompt_budget get_effective_ratio);
+use CLIO::Util::JSON qw(safe_encode_json);
 use CLIO::Util::RateLimit qw(get_rate_limit_type_name);
 use CLIO::Core::Diagnostics qw(dump_diagnostic display_rate_limit_info get_tool_specific_guidance);
-use CLIO::Core::Defaults qw(DEFAULT_CONTEXT_WINDOW);
+use CLIO::Core::Defaults qw(DEFAULT_CONTEXT_WINDOW MIN_CSSS_SLOT_TOKENS);
 use Time::HiRes qw(sleep);
 
 =head1 NAME
@@ -668,6 +669,13 @@ sub trim_for_token_limit {
 
     my $messages        = $args{messages};
     my $retry_count     = $args{retry_count};
+    # Dereference if passed as scalar ref: handle_api_error forwards
+    # retry_count => \$retry_count (reference) so the caller can track it.
+    # Using the reference as a value causes Perl to numify it to a
+    # memory address (~94 trillion), making == 1 and == 2 always FALSE
+    # and > 2 always TRUE — the precise-cut and 25%-cut branches become
+    # dead code and every 400 immediately bails. (Fixed 2026-08-20.)
+    $retry_count = $$retry_count if ref($retry_count) eq 'SCALAR';
     my $session         = $args{session};
     my $tool_calls_made = $args{tool_calls_made};
     my $iteration       = $args{iteration};
@@ -676,7 +684,7 @@ sub trim_for_token_limit {
     my $error           = $args{error};
     # Server-reported context size and prompt token count from the 400 error object.
     # When present, these pin the cut target precisely: server reported N tokens over
-    # M tokens of context, so trim to M * 0.85. Without these, the cut target is an
+    # M tokens of context, so trim to M * 0.90. Without these, the cut target is an
     # estimate from compute_prompt_budget, which can be off by 1.5x+ when the
     # learned char/token ratio drifts from the model's actual tokenizer ratio
     # (observed on llama.cpp: estimate 104K, actual 163K, ratio off by 1.56x).
@@ -739,26 +747,19 @@ sub trim_for_token_limit {
     }
 
     if ($retry_count == 1) {
-        # First retry: keep recent messages that fit in the model's
-        # prompt budget (context - output - estimation buffer).
-        # The model's actual output cap is used, not a fixed percentage.
+        # First retry: precise cut using server-reported sizes.
         #
-        # When the server reported a precise n_ctx and n_prompt_tokens in the 400
-        # error_obj, USE THEM to compute the cut target. The local
-        # compute_prompt_budget estimate can drift from reality when the
-        # learned char/token ratio is wrong (each model's tokenizer behaves
-        # differently — observed 1.5-2x drift). Server-reported sizes are
-        # exact and let us cut to a target that fits on retry.
-        #
-        # Cut target: 90% of ctx (matches the proactive trim ratio in
-        # process_input and _try_resume_from_payload). Anything below
-        # MIN_CSSS_SLOT_TOKENS would be too aggressive (would drop the
-        # entire dialog including the active user's last request).
+        # When the server reported n_ctx and n_prompt_tokens in the 400 error,
+        # we know the ACTUAL token count (n_prompt_tokens) and the context
+        # window (n_ctx). The local estimate_tokens() heuristic can be off by
+        # 1.5x+ (observed 104K estimated vs 163K actual on llama.cpp
+        # UD-Q5_K_XL). We compute a drift ratio and scale every local
+        # estimate in the trim walk so the cut target is in actual tokens,
+        # matching the server's view.
         my $keep_budget;
+        # Actual-token budget for the entire prompt (messages + system + tools).
+        # 90% of ctx leaves 10% for output (matches proactive trim ratio).
         if (defined $srv_ctx && $srv_ctx > 0 && defined $srv_prompt_toks && $srv_prompt_toks > 0) {
-            # 90% of context window in ACTUAL tokens. We can compute the cut
-            # target in actual tokens now because the server told us both
-            # numbers — the estimate is no longer needed.
             $keep_budget = int($srv_ctx * 0.90);
             require CLIO::Core::Defaults;
             my $floor = CLIO::Core::Defaults::MIN_CSSS_SLOT_TOKENS();
@@ -769,20 +770,97 @@ sub trim_for_token_limit {
         } else {
             my $_retry_caps = $wo->{api_manager}
                 ? ($wo->{api_manager}->get_model_capabilities() || {}) : {};
-            require CLIO::Memory::TokenEstimator;
             $keep_budget = CLIO::Memory::TokenEstimator::compute_prompt_budget($_retry_caps);
             $keep_budget = 40000 if $keep_budget < 40000;
         }
 
+        # Compute drift ratio: server-reported actual tokens / local estimate.
+        # Local estimate = system_prompt + all non_system messages + tool defs.
+        # This lets us convert local estimate_tokens() calls in the walk to
+        # actual-token estimates that are comparable to keep_budget.
+        my $drift_ratio = 1.0;
+        if (defined $srv_prompt_toks && $srv_prompt_toks > 0) {
+            require CLIO::Memory::TokenEstimator;
+            my $local_total = 0;
+            if ($system_prompt) {
+                $local_total += CLIO::Memory::TokenEstimator::estimate_tokens($system_prompt->{content} || '');
+            }
+            for my $msg (@non_system) {
+                # Match MessageValidator._estimate_tokens overhead: 4 base + 8 for tool
+                $local_total += CLIO::Memory::TokenEstimator::estimate_tokens($msg->{content} || '') + 4;
+                $local_total += 8 if ($msg->{role} // '') eq 'tool';
+                if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
+                    for my $tc (@{$msg->{tool_calls}}) {
+                        my $json = safe_encode_json($tc, '');
+                        $local_total += CLIO::Memory::TokenEstimator::estimate_tokens($json || '');
+                    }
+                }
+            }
+            # Include tool definition tokens (estimated from cached tools)
+            my $tools = $wo->{_tools_cache};
+            if ($tools && ref($tools) eq 'ARRAY' && @$tools) {
+                my $tool_chars = 0;
+                for my $t (@$tools) {
+                    my $tjson = safe_encode_json($t, '');
+                    $tool_chars += length($tjson // '');
+                }
+                my $ratio = CLIO::Memory::TokenEstimator::get_effective_ratio();
+                $local_total += int($tool_chars / $ratio) if $ratio > 0;
+            }
+            if ($local_total > 0) {
+                $drift_ratio = $srv_prompt_toks / $local_total;
+                $drift_ratio = 4.0 if $drift_ratio > 4.0;
+                $drift_ratio = 1.0 if $drift_ratio < 1.0;
+                log_info('ErrorHandler', sprintf(
+                    "Drift ratio: server=%d actual, local=%d estimated, drift=%.3f (scaling trim walk)",
+                    $srv_prompt_toks, $local_total, $drift_ratio));
+            }
+
+            # Save drift ratio to state so future resumes and retries use it
+            if ($session && $session->can('state')) {
+                my $state = $session->state();
+                if (ref($state) && $state->{last_api_metadata}) {
+                    $state->{last_api_metadata}{estimate_drift_ratio} = $drift_ratio;
+                    $state->{last_api_metadata}{actual_tokens} = int($srv_prompt_toks);
+                    $state->{last_api_metadata}{estimated_tokens} = int($local_total);
+                    log_debug('ErrorHandler', sprintf(
+                        "Saved drift ratio %.3f to state (actual=%d, estimated=%d)",
+                        $drift_ratio, $srv_prompt_toks, $local_total));
+                }
+            }
+        }
+
+        # Subtract system prompt and tool tokens (in actual tokens) from
+        # keep_budget to get the message-only budget for the trim walk.
+        my $system_actual = 0;
+        if ($system_prompt) {
+            $system_actual = estimate_tokens($system_prompt->{content} || '') * $drift_ratio;
+        }
+        my $tool_actual = 0;
+        my $tools = $wo->{_tools_cache};
+        if ($tools && ref($tools) eq 'ARRAY' && @$tools) {
+            my $tool_chars = 0;
+            for my $t (@$tools) {
+                my $tjson = safe_encode_json($t, '');
+                $tool_chars += length($tjson // '');
+            }
+            my $ratio = CLIO::Memory::TokenEstimator::get_effective_ratio() || 4.0;
+            my $tool_local = $tool_chars / $ratio;
+            $tool_actual = $tool_local * $drift_ratio;
+        }
+        my $msg_budget = $keep_budget - $system_actual - $tool_actual;
+        if ($msg_budget < CLIO::Core::Defaults::MIN_CSSS_SLOT_TOKENS()) {
+            $msg_budget = CLIO::Core::Defaults::MIN_CSSS_SLOT_TOKENS();
+        }
+        log_debug('ErrorHandler', sprintf(
+            "Trim walk budget: keep_budget=%d (actual), system=%d, tools=%d, msg_budget=%d (actual, after sys+tool)",
+            $keep_budget, int($system_actual), int($tool_actual), $msg_budget));
+
         my $kept_tokens = 0;
         my $start_idx   = $original_count;
         for (my $i = $original_count - 1; $i >= 0; $i--) {
-            # Scale local estimate by the observed drift ratio (when available)
-            # so the trim walk compares apples to apples. Without this, a model
-            # where the estimate undercounts by 1.5x would still hit the budget
-            # locally but produce an oversized payload that the server rejects.
-            my $msg_tokens = estimate_tokens($non_system[$i]{content} || '') + 10;
-            if ($kept_tokens + $msg_tokens <= $keep_budget) {
+            my $msg_tokens = (estimate_tokens($non_system[$i]{content} || '') + 10) * $drift_ratio;
+            if ($kept_tokens + $msg_tokens <= $msg_budget) {
                 $kept_tokens += $msg_tokens;
                 $start_idx = $i;
             } else {
@@ -819,12 +897,11 @@ sub trim_for_token_limit {
                 next if $seen{$idx}++;
                 push @preserved, $non_system[$idx];
             }
-            push @preserved, @non_system[$start_idx..-1];
+            push @preserved, @non_system[$start_idx .. $#non_system];
             @non_system = @preserved;
         } else {
-            @non_system = @non_system[$start_idx..-1];
+            @non_system = @non_system[$start_idx .. $#non_system];
         }
-
         if (@dropped_messages) {
             my $compressed = CLIO::Core::WorkflowOrchestrator::_compress_dropped_for_recovery(
                 \@dropped_messages, $last_user_msg, $session, $messages, $wo->{prompt_builder}

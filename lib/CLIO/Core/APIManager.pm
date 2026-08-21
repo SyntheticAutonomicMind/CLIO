@@ -2113,6 +2113,31 @@ sub validate_and_truncate_messages {
     
     $model ||= $self->get_current_model();
     my $caps = $self->get_model_capabilities($model);
+
+    # Pass a drift-aware trim threshold so the MessageValidator's trim walk
+    # uses actual-token estimates, not just local char/token estimates.
+    # When a prior API response (success or 400) saved a drift ratio to
+    # state, tighten the keep budget proportionally so we don't send a
+    # payload the server will reject with "request exceeds context size".
+    my $trim_threshold;
+    if ($self->{session} && $self->{session}->can('state')) {
+        my $state = $self->{session}->state();
+        if (ref($state) && $state->{last_api_metadata}
+            && $state->{last_api_metadata}{estimate_drift_ratio}) {
+            my $saved = $state->{last_api_metadata}{estimate_drift_ratio};
+            my $ctx_window = $caps->{max_context_window_tokens} // DEFAULT_CONTEXT_WINDOW;
+            if ($saved >= 1.2) {
+                my $age = time() - ($state->{last_api_metadata}{saved_at} // 0);
+                if ($age < 3600) {
+                    $trim_threshold = int($ctx_window * 0.90 / $saved);
+                    log_debug('APIManager', sprintf(
+                        "Drift-aware trim threshold: ctx=%d, drift=%.3f -> threshold=%d (local est, ~%d actual)",
+                        $ctx_window, $saved, $trim_threshold,
+                        int($trim_threshold * $saved)));
+                }
+            }
+        }
+    }
     
     return validate_and_truncate(
         messages           => $messages,
@@ -2123,6 +2148,7 @@ sub validate_and_truncate_messages {
         api_base           => $self->{api_base},
         debug              => $self->{debug},
         model              => $model,
+        trim_threshold     => $trim_threshold,
     );
 }
 
