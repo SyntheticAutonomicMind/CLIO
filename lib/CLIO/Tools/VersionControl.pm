@@ -36,7 +36,27 @@ sub _in_repo {
         return $code->();
     }
     my $original_cwd = getcwd();
-    chdir $repo_path or croak "Cannot chdir to $repo_path: $!";
+    # chdir failure is an EXPECTED user error (non-existent / hallucinated
+    # repository_path), not an exceptional condition. croak() here used to
+    # propagate all the way up through Tool::execute, bypassing the eval
+    # blocks in every operation handler and the ToolErrorGuidance pipeline,
+    # ultimately surfacing as SimpleAIAgent's generic "I'm experiencing
+    # technical difficulties. Please try again." message.
+    #
+    # die() with a plain string (no Carp caller-location suffix) lets the
+    # existing eval{} blocks in each operation handler catch it cleanly.
+    # Those handlers wrap the message via _clean_eval_error() and forward
+    # to error_result(), producing "Git status failed: Cannot chdir to
+    # /Users/andrew/ALICE: No such file or directory" - which
+    # ToolErrorGuidance then categorizes as file_not_found with proper
+    # guidance.
+    #
+    # If a future caller of _in_repo is NOT wrapped in eval, Tool::execute's
+    # new defense-in-depth eval catches the die and converts it to an
+    # error_result anyway. Two layers of protection.
+    unless (chdir $repo_path) {
+        die "Cannot chdir to $repo_path: $!";
+    }
     my $result = eval { $code->() };
     my $err = $@;
     chdir $original_cwd;

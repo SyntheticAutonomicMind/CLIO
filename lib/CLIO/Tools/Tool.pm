@@ -105,7 +105,39 @@ sub execute {
     # Route to operation handler
     log_debug("Tool:$self->{name}", "Routing to operation: $operation");
     
-    return $self->route_operation($operation, $params, $context);
+    # DEFENSE-IN-DEPTH: wrap the dispatch in eval{} so any unexpected
+    # die/croak from before_route() or the dispatched method converts
+    # into a proper error_result() instead of propagating up and taking
+    # down the entire conversation (which previously surfaced as the
+    # generic "I'm experiencing technical difficulties. Please try again."
+    # from SimpleAIAgent's outermost eval).
+    #
+    # Common real-world triggers that this catches:
+    #   - VersionControl._in_repo croaking on chdir failure for a
+    #     non-existent repository_path (e.g. hallucinated macOS path)
+    #   - FileOperations.open/unlink croaking on permission/path errors
+    #     in code paths that forgot to wrap
+    #   - Any third-party tool that uses bare die/croak instead of
+    #     error_result()
+    #
+    # The cleaned error message preserves the underlying cause (after
+    # _clean_eval_error strips Carp caller-location suffixes), and the
+    # returned error_result() flows through the existing ToolErrorGuidance
+    # pipeline so the AI sees a categorized, schema-aware recovery message.
+    my $result;
+    eval {
+        $result = $self->route_operation($operation, $params, $context);
+    };
+    if ($@) {
+        my $clean_err = $self->_clean_eval_error($@);
+        log_debug("Tool:$self->{name}", "Caught uncaught exception during dispatch: $clean_err");
+        return $self->error_result(
+            defined $clean_err && length $clean_err
+                ? $clean_err
+                : "Tool execution failed unexpectedly (no error message)"
+        );
+    }
+    return $result;
 }
 
 =head2 dispatch_table
