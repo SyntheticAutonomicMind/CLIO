@@ -628,11 +628,25 @@ sub read_file {
     # Count total lines so we can give a helpful error when start_line is
     # Count total lines so we can give a helpful error when start_line is
     # past EOF (previously returned silent empty output with success=1).
+    # Wrapped in eval{} because the prior -f/-r checks can race with the
+    # actual open() call (e.g. file deleted between stat and open, or
+    # permission revoked). Without eval the croak used to propagate up
+    # to SimpleAIAgent's outermost catch, surfacing as the generic
+    # "I'm experiencing technical difficulties" message and killing the
+    # conversation. Now we surface a proper error_result and ToolErrorGuidance
+    # can categorize it.
     my $total_lines = 0;
-    {
+    my $line_count_error;
+    eval {
         open my $lc_fh, '<:raw', $path or croak "Cannot open $path: $!";
         while (<$lc_fh>) { $total_lines++ }
         close $lc_fh;
+    };
+    if ($@) {
+        $line_count_error = $self->_clean_eval_error($@);
+    }
+    if ($line_count_error) {
+        return $self->error_result("Cannot read $path: $line_count_error");
     }
 
     if ($start_line > $total_lines) {
