@@ -1100,245 +1100,13 @@ sub adapt_request_for_endpoint {
         delete $payload->{previous_response_id};
     }
     
-    # Add reasoning support for OpenRouter endpoints
-    # Only enable when thinking display is on - reasoning tokens are charged as output tokens
-    # Check model capabilities for reasoning support instead of hardcoded model patterns
-    if ($endpoint_config->{openrouter}) {
-        my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
-        my $thinking_mode = $self->{config} ? ($self->{config}->get('thinking_mode') // 'auto') : 'auto';
-        my $model_supports = $endpoint_config->{supports_reasoning}
-            || ($payload->{model} && $self->_model_supports_reasoning($payload->{model}));
-        # thinking_mode=auto: gate on show_thinking (legacy behavior).
-        # thinking_mode=enabled: force ON regardless of show_thinking.
-        # thinking_mode=disabled: never send reasoning params.
-        my $send_reasoning = ($thinking_mode eq 'enabled' && $model_supports)
-            || ($thinking_mode eq 'auto' && $show_thinking && $model_supports);
-        if ($send_reasoning) {
-            my $thinking_effort = $self->{config} ? ($self->{config}->get('thinking_effort') // 'medium') : 'medium';
-            # OpenRouter's `reasoning.effort` is the portable way to control
-            # reasoning depth. Both free and paid model variants support it,
-            # whereas `max_tokens` only works on some upstream providers
-            # (e.g. Together) and fails on others (e.g. Nvidia free tier).
-            # Validate effort - OpenRouter accepts low, medium, high, max.
-            # Unknown values default to high for maximum reasoning.
-            my %valid_effort = (low => 1, medium => 1, high => 1, max => 1);
-            $thinking_effort = 'high' unless $valid_effort{$thinking_effort};
-            $payload->{reasoning} = {
-                enabled => \1,
-                effort   => $thinking_effort,
-            };
-            log_debug('APIManager', "OpenRouter reasoning: effort=$thinking_effort");
-        }
-    }
-
-    # Add reasoning for OpenAI-compatible Chat Completions providers
-    # (OpenAI, DeepSeek, NVIDIA, GitHub Copilot, and any other provider
-    # using the standard /chat/completions path). Uses reasoning_effort
-    # parameter, gated on model capabilities instead of model-name regex.
-    # Excludes providers whose endpoint_config declares
-    # native_thinking_format => 1 - those providers handle reasoning via
-    # their own params (e.g. Anthropic `thinking: {type}`, MiniMax
-    # `reasoning_split + thinking: {type}`, Z.AI `thinking: {type}`,
-    # OpenRouter `reasoning: {enabled, effort}`), so we don't double-send
-    # the OpenAI param on top. Adding a new provider with its own
-    # thinking format just requires setting that one flag in Providers.pm
-    # rather than editing this exclusion list.
-    elsif (!$endpoint_config->{native_thinking_format}) {
-        # Local inference providers (llama.cpp, LM Studio, Ollama) must
-        # never receive reasoning_effort: their server maps both
-        # reasoning_effort and max_tokens into reasoning.* subkeys,
-        # causing a 400 conflict. Models that support reasoning think
-        # automatically; no param is needed.
-        if ($endpoint_config->{requires_no_reasoning}) {
-            log_debug('APIManager', "Skipping reasoning_effort: provider opts out via requires_no_reasoning");
-        }
-        else {
-            my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
-            my $thinking_mode = $self->{config} ? ($self->{config}->get('thinking_mode') // 'auto') : 'auto';
-            my $model = $payload->{model} // '';
-            my $reasoning_mode = $model ? $self->_get_reasoning_mode($model) : undef;
-            # thinking_mode=auto: gate on show_thinking (legacy behavior).
-            # thinking_mode=enabled: force ON (preserves the model's native
-            # mode - effort for OpenAI/DeepSeek/NVIDIA/Copilot).
-            # thinking_mode=disabled: never send reasoning_effort.
-            my $send_reasoning = ($thinking_mode eq 'enabled' && $reasoning_mode)
-                || ($thinking_mode eq 'auto' && $show_thinking && $reasoning_mode);
-            if ($send_reasoning) {
-                my $thinking_effort = $self->{config} ? ($self->{config}->get('thinking_effort') // 'medium') : 'medium';
-                $payload->{reasoning_effort} = $thinking_effort;
-                log_debug('APIManager', "Added reasoning_effort=$thinking_effort for $model (mode=$reasoning_mode)");
-            }
-        }
-    }
-
-    # Add reasoning_split for MiniMax to separate thinking into reasoning_details field
-    if ($endpoint_config->{minimax}) {
-        $payload->{reasoning_split} = \1;  # JSON true
-
-        # MiniMax-M3 uses thinking: {type: "adaptive"} for deep reasoning
-        # M2.x models (2.0+) also support interleaved thinking natively via
-        # {type: "enabled"} per MiniMax's docs.
-        # Use model capabilities to determine reasoning mode instead of model-name regex.
-        if ($payload->{model}) {
-            my $reasoning_mode = $self->_get_reasoning_mode($payload->{model});
-            if ($reasoning_mode) {
-                my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
-                my $thinking_mode = $self->{config} ? ($self->{config}->get('thinking_mode') // 'auto') : 'auto';
-                # thinking_mode=auto: gate on show_thinking (legacy).
-                # thinking_mode=enabled: force ON.
-                # thinking_mode=disabled: send type=disabled.
-                my $send_thinking = $thinking_mode eq 'enabled'
-                    || ($thinking_mode eq 'auto' && $show_thinking);
-                if ($send_thinking) {
-                    # thinking_mode=enabled is a user override: force the
-                    # model's thinking ON. For M2.x models this maps to
-                    # {type:"enabled"} (their accepted native value).
-                    # For M3, the API only accepts {type:"adaptive"} or
-                    # {type:"disabled"}; sending {type:"enabled"} returns
-                    # HTTP 400 with "invalid params, invalid thinking.type:
-                    # 'enabled' (allowed: adaptive, disabled) (2013)".
-                    # Adaptive is M3's "thinking on" mode - the model
-                    # decides whether to think deeply or briefly, but the
-                    # parameter signals thinking is available.
-                    my $thinking_type;
-                    if ($thinking_mode eq 'enabled') {
-                        $thinking_type = ($reasoning_mode eq 'adaptive') ? 'adaptive' : 'enabled';
-                    }
-                    elsif ($reasoning_mode eq 'adaptive') {
-                        $thinking_type = 'adaptive';
-                    }
-                    else {
-                        $thinking_type = 'enabled';
-                    }
-
-                    # Add budget_tokens when thinking_effort is configured.
-                    # M3's thinking budget controls how much reasoning the
-                    # model produces before responding - with a small budget
-                    # M3 emits a brief planning line (e.g. "Planning user
-                    # location inquiry"); with a larger budget it produces
-                    # the full reasoning chain. Default to 4000 tokens (high)
-                    # when show_thinking is on so users actually see the
-                    # thinking they asked for.
-                    my $thinking = { type => $thinking_type };
-                    if ($reasoning_mode && $thinking_type ne 'disabled') {
-                        my $effort = $self->{config} ? ($self->{config}->get('thinking_effort') // 'high') : 'high';
-                        # M3's per-turn reasoning budget is the single biggest
-                        # knob for verbose thinking. The default values
-                        # (1000/2000/4000) produce planning one-liners
-                        # ("Planning X"); doubling them gets M3 to emit
-                        # the full reasoning chain the user asked for.
-                        my %budget = (
-                            low    => 2000,
-                            medium => 4000,
-                            high   => 8000,
-                        );
-                        my $budget_tokens = $budget{lc($effort)} // 8000;
-                        $thinking->{budget_tokens} = $budget_tokens;
-                        log_debug('APIManager', "MiniMax thinking budget: $budget_tokens tokens (effort=$effort)");
-                    }
-                    $payload->{thinking} = $thinking;
-                } else {
-                    $payload->{thinking} = { type => 'disabled' };
-                }
-            }
-        }
-        
-        # Apply provider-recommended sampling defaults (from Providers.pm registry)
-        if (my $sd = $endpoint_config->{sampling_defaults}) {
-            for my $param (qw(temperature top_p top_k)) {
-                next unless defined $sd->{$param};
-                # Only fill in defaults for params the caller didn't set.
-                # We never inject defaults ourselves anymore, so no override
-                # branch is needed (see _build_payload).
-                next if exists $payload->{$param};
-                $payload->{$param} = $sd->{$param};
-            }
-        }
-        
-        # MiniMax uses max_completion_tokens (not max_tokens)
-        if (exists $payload->{max_tokens}) {
-            $payload->{max_completion_tokens} = delete $payload->{max_tokens};
-        }
-        
-        # Transform tool messages to MiniMax format
-        # MiniMax requires tool results as: content => [{name, type, text}]
-        # and assistant messages with tool_calls must have content => ""
-        if ($payload->{messages} && ref($payload->{messages}) eq 'ARRAY') {
-            $payload->{messages} = _transform_messages_for_minimax($payload->{messages});
-        }
-    }
-
-    # Z.AI-specific adaptations
-    # - Enable thinking parameter for chain-of-thought reasoning
-    # - Strip OpenAI-specific stream_options (not supported by Z.AI)
-    # - Apply provider-recommended sampling defaults
-    # - Clear thinking from prior turns (reduces context/cost unless user opts in)
-    if ($endpoint_config->{zai}) {
-        # Enable Z.AI thinking parameter for chain-of-thought
-        # Uses model capabilities to check reasoning support
-        my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
-        my $thinking_mode = $self->{config} ? ($self->{config}->get('thinking_mode') // 'auto') : 'auto';
-        my $reasoning_mode = $payload->{model} ? $self->_get_reasoning_mode($payload->{model}) : undef;
-        # thinking_mode=auto: gate on show_thinking (legacy).
-        # thinking_mode=enabled: force ON.
-        # thinking_mode=disabled: skip (Z.AI has no "disabled" type so the
-        # only way to opt out is to not send the parameter).
-        my $send_thinking = ($thinking_mode eq 'enabled' && $reasoning_mode)
-            || ($thinking_mode eq 'auto' && $show_thinking && $reasoning_mode);
-        if ($send_thinking) {
-            $payload->{thinking} = { type => 'enabled' };
-            # Z.AI also accepts a top-level `reasoning_effort` parameter
-            # (per docs.z.ai/guides/overview/concept-param) that controls
-            # how much computation the model applies to the thinking phase.
-            # Allowed values on GLM-5.2+: max, xhigh, high, medium, low,
-            # minimal, none. Defaults to max. We forward the user's
-            # thinking_effort directly, since Z.AI's enum overlaps ours.
-            # xhigh is mapped to max since Z.AI treats them as the top tier.
-            my $zai_effort = $self->{config} ? ($self->{config}->get('thinking_effort') // 'high') : 'high';
-            $zai_effort = 'max' if $zai_effort eq 'xhigh';
-            # CLIO's thinking_effort values that don't map to a Z.AI enum.
-            $zai_effort = 'high' unless $zai_effort =~ /^(?:max|xhigh|high|medium|low|minimal|none)$/;
-            $payload->{reasoning_effort} = $zai_effort;
-            log_debug('APIManager', "Z.AI thinking: type=enabled, reasoning_effort=$zai_effort");
-        }
-
-        # Remove OpenAI-specific stream_options (Z.AI doesn't support it)
-        delete $payload->{stream_options};
-
-        # Track peak-hour multiplier for Coding Plan users (GLM-5.x models cost 3x during peak)
-        # Peak hours: 14:00-18:00 CST (UTC+8) = 06:00-10:00 UTC
-        if ($endpoint_config->{coding_plan} && $payload->{model}) {
-            my $model_lc = lc($payload->{model});
-            if ($model_lc =~ /^glm-5/) {
-                my @now = gmtime(time());
-                my $utc_hour = $now[2];
-                my $cst_hour = ($utc_hour + 8) % 24;
-                if ($cst_hour >= 14 && $cst_hour < 18) {
-                    if ($self->{session}) {
-                        my $state = $self->{session}->can('state') ? $self->{session}->state() : $self->{session};
-                        $state->{zai_peak_hour} = 1;
-                        $state->{zai_peak_multiplier} = 3;
-                    }
-                    log_debug('APIManager', "Z.AI Coding Plan: Peak hours active (CST 14:00-18:00), GLM-5.x costs 3x quota");
-                } else {
-                    if ($self->{session}) {
-                        my $state = $self->{session}->can('state') ? $self->{session}->state() : $self->{session};
-                        $state->{zai_peak_hour} = 0;
-                        $state->{zai_peak_multiplier} = 2;
-                    }
-                }
-            }
-        }
-    }
-
-    # DeepSeek-specific adaptations
-    # - Enable reasoning_split so reasoning comes back via reasoning_details field
-    #   (not raw streaming field, making it easier to track and pass back)
-    # - Strip OpenAI-specific stream_options (not supported by DeepSeek)
-    if ($endpoint_config->{deepseek}) {
-        # Remove stream_options (DeepSeek doesn't support it)
-        delete $payload->{stream_options};
-    }
+    # Data-driven reasoning parameter injection.
+    # Driven by reasoning_schema from provider-defaults.json (propagated
+    # via build_endpoint_config). Replaces the 5 provider-specific
+    # if-blocks (OpenRouter, OpenAI-compat, MiniMax, Z.AI, DeepSeek)
+    # with a unified dispatcher handling all param formats: effort,
+    # nested, think_object, mixed, disabled, native.
+    $self->_inject_reasoning_params($payload, $endpoint_config);
 
     # Sampling parameter priority (highest to lowest):
     #   1. Caller opts (already in $payload from _build_payload)
@@ -1368,7 +1136,207 @@ sub adapt_request_for_endpoint {
 
     return $payload;
 }
-# Check if string ends with a valid partial think-tag open prefix.
+
+=head2 _inject_reasoning_params($payload, $endpoint_config)
+
+Data-driven reasoning parameter injection.
+
+Reads reasoning_schema from endpoint_config (propagated from
+provider-defaults.json via build_endpoint_config) and injects the
+appropriate thinking/reasoning parameters into $payload.
+
+Schema modes:
+  disabled     - Never send reasoning params (llama.cpp, LM Studio,
+                 Ollama, SAM). Models that support reasoning think
+                 automatically; no param is needed.
+  native       - Handled by provider's native API (Anthropic, Google).
+                 Skip OpenAI-compat injection here.
+  effort       - Top-level string param (OpenAI, DeepSeek, NVIDIA,
+                 GitHub Copilot). Sets $payload->{reasoning_effort}.
+  nested       - Nested object (OpenRouter). Sets
+                 $payload->{reasoning} = {enabled, effort}.
+  think_object - MiniMax-style thinking object. Sets
+                 $payload->{thinking} = {type, budget_tokens}.
+                 Always sends a thinking param when the model
+                 supports reasoning (type=disabled when the user
+                 hasn't opted in).
+  mixed        - Z.AI-style: thinking object + top-level effort. Sets
+                 $payload->{thinking} = {type: enabled} and
+                 $payload->{reasoning_effort} = value.
+
+Side-effect flags (always applied regardless of thinking gate):
+  delete_stream_options  - Remove stream_options from payload
+  max_tokens_rename       - Rename max_tokens to specified param
+  reasoning_split         - Add reasoning_split => true
+  message_transform       - Apply message format transform (e.g. "minimax")
+  coding_plan_peak        - Track Z.AI peak-hour pricing multiplier
+
+=cut
+
+sub _inject_reasoning_params {
+    my ($self, $payload, $endpoint_config) = @_;
+
+    my $schema = $endpoint_config->{reasoning_schema};
+    return unless $schema && ref($schema) eq 'HASH';
+
+    my $mode = $schema->{mode} || 'disabled';
+
+    # --- Side-effect adaptations (always applied) ---
+
+    if ($schema->{delete_stream_options}) {
+        delete $payload->{stream_options};
+    }
+
+    if ($schema->{max_tokens_rename} && exists $payload->{max_tokens}) {
+        $payload->{$schema->{max_tokens_rename}} = delete $payload->{max_tokens};
+    }
+
+    if ($schema->{reasoning_split}) {
+        $payload->{reasoning_split} = \1;
+    }
+
+    if ($schema->{message_transform} && $schema->{message_transform} eq 'minimax') {
+        if ($payload->{messages} && ref($payload->{messages}) eq 'ARRAY') {
+            $payload->{messages} = _transform_messages_for_minimax($payload->{messages});
+        }
+    }
+
+    # Peak-hour tracking for Z.AI Coding Plan (GLM-5.x costs 3x
+    # 14:00-18:00 CST / 06:00-10:00 UTC)
+    if ($schema->{coding_plan_peak} && $endpoint_config->{coding_plan} && $payload->{model}) {
+        my $model_lc = lc($payload->{model});
+        if ($model_lc =~ /^glm-5/) {
+            my @now = gmtime(time());
+            my $utc_hour = $now[2];
+            my $cst_hour = ($utc_hour + 8) % 24;
+            if ($self->{session}) {
+                my $state = $self->{session}->can('state') ? $self->{session}->state() : $self->{session};
+                if ($cst_hour >= 14 && $cst_hour < 18) {
+                    $state->{zai_peak_hour} = 1;
+                    $state->{zai_peak_multiplier} = 3;
+                    log_debug('APIManager', "Z.AI Coding Plan: Peak hours active (CST 14:00-18:00), GLM-5.x costs 3x quota");
+                } else {
+                    $state->{zai_peak_hour} = 0;
+                    $state->{zai_peak_multiplier} = 2;
+                }
+            }
+        }
+    }
+
+    # --- Param injection (gated on mode + user config) ---
+
+    # Skip param injection for providers that opt out or use native API
+    return if $mode eq 'disabled' || $mode eq 'native';
+    return if $endpoint_config->{requires_no_reasoning};
+
+    # Read user config for thinking control
+    my $show_thinking = $self->{config} ? $self->{config}->get('show_thinking') : 0;
+    my $thinking_mode = $self->{config} ? ($self->{config}->get('thinking_mode') // 'auto') : 'auto';
+    my $model = $payload->{model} // '';
+
+    # Determine if the model supports reasoning
+    my $reasoning_mode = $model ? $self->_get_reasoning_mode($model) : undef;
+    my $model_supports;
+    if ($mode eq 'nested') {
+        # OpenRouter: endpoint-level supports_reasoning OR model-level
+        $model_supports = $endpoint_config->{supports_reasoning}
+            || ($model && $self->_model_supports_reasoning($model));
+    } else {
+        # effort / think_object / mixed: check model-level reasoning_mode
+        $model_supports = $reasoning_mode ? 1 : 0;
+    }
+
+    # Unified gate (same for all modes):
+    # thinking_mode=enabled: force ON (requires model support)
+    # thinking_mode=auto:    gate on show_thinking (requires model support)
+    # thinking_mode=disabled: never send reasoning params
+    my $send = ($thinking_mode eq 'enabled' && $model_supports)
+        || ($thinking_mode eq 'auto' && $show_thinking && $model_supports);
+
+    # For think_object mode, the model always expects a thinking param
+    # (even type=disabled) when it supports reasoning. The unified
+    # $send gate above is the user-intent check; model_supports gates
+    # whether we send at all.
+    if ($mode eq 'think_object' && $model_supports && !$send) {
+        $payload->{$schema->{think_param}} = { type => $schema->{disabled_type} // 'disabled' };
+        log_debug('APIManager', "Added $schema->{think_param}={type:disabled} (thinking off, model supports it)");
+        return;
+    }
+
+    return unless $send;
+
+    # Resolve and validate the effort value
+    my $effort = $self->{config}
+        ? ($self->{config}->get('thinking_effort') // $schema->{default_effort})
+        : $schema->{default_effort};
+
+    # Apply value mapping (e.g. Z.AI xhigh -> max, turbo -> high)
+    if ($schema->{value_map} && exists $schema->{value_map}{$effort}) {
+        $effort = $schema->{value_map}{$effort};
+    }
+
+    # Validate against allowed values
+    if ($schema->{values} && ref($schema->{values}) eq 'ARRAY') {
+        my %valid = map { $_ => 1 } @{$schema->{values}};
+        unless ($valid{$effort}) {
+            $effort = $schema->{invalid_effort_default} || $schema->{default_effort};
+        }
+    }
+
+    # Dispatch on mode for param injection
+    if ($mode eq 'effort') {
+        $payload->{$schema->{param}} = $effort;
+        log_debug('APIManager', "Added $schema->{param}=$effort for $model");
+    }
+    elsif ($mode eq 'nested') {
+        $payload->{$schema->{param}} = {
+            $schema->{enabled_field} => \1,
+            $schema->{effort_field}  => $effort,
+        };
+        log_debug('APIManager', "Added $schema->{param}={$schema->{enabled_field}:true, $schema->{effort_field}:$effort}");
+    }
+    elsif ($mode eq 'think_object') {
+        # MiniMax: thinking.type depends on reasoning_mode
+        my $thinking_type;
+        if ($thinking_mode eq 'enabled') {
+            $thinking_type = ($reasoning_mode eq 'adaptive') ? 'adaptive' : 'enabled';
+        } elsif ($reasoning_mode eq 'adaptive') {
+            $thinking_type = 'adaptive';
+        } else {
+            $thinking_type = 'enabled';
+        }
+
+        # MiniMax thinking object: type only, no budget_tokens.
+        # The model uses its default thinking budget when type=adaptive.
+        # budget_tokens can be re-enabled per-model by adding
+        # send_budget_tokens => 1 to the schema when a specific model
+        # requires an explicit thinking budget.
+        my $thinking = { type => $thinking_type };
+        if ($schema->{send_budget_tokens}) {
+            my $budget_map = $schema->{budget_map} || {};
+            $thinking->{budget_tokens} = $budget_map->{lc($effort)} // $schema->{default_budget};
+        }
+        $payload->{$schema->{think_param}} = $thinking;
+        log_debug('APIManager', "Added $schema->{think_param}={type:$thinking_type}");
+    }
+    elsif ($mode eq 'mixed') {
+        # Z.AI: thinking object + reasoning_effort
+        # Build thinking object from schema's think_value (data-driven)
+        my $thinking = {};
+        if ($schema->{think_value} && ref($schema->{think_value}) eq 'HASH') {
+            for my $k (keys %{$schema->{think_value}}) {
+                $thinking->{$k} = $schema->{think_value}{$k};
+            }
+        } else {
+            $thinking->{type} = 'enabled';
+        }
+        $payload->{$schema->{think_param}} = $thinking;
+        $payload->{$schema->{effort_param}} = $effort;
+        log_debug('APIManager', "Added $schema->{think_param}={type:enabled}, $schema->{effort_param}=$effort");
+    }
+
+    return;
+}
 # Handles <think>, <thinking>, [think], [thinking] and their partial
 # forms (e.g. <, <t, <th, <thi, <thin, <think, <thinki, <thinkin,
 # <thinking and the [ bracket variants).

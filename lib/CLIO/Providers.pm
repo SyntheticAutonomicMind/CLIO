@@ -629,6 +629,16 @@ sub build_endpoint_config {
         $endpoint->{llama_user_id_supported} = 1;
     }
 
+    # Propagate reasoning_schema from provider-defaults JSON so
+    # APIManager can drive param injection data-first instead of
+    # hardcoded if-blocks per provider.
+    if (!$endpoint->{reasoning_schema}) {
+        my $json_defaults = _get_json_provider_defaults($provider_name);
+        if ($json_defaults && $json_defaults->{reasoning_schema}) {
+            $endpoint->{reasoning_schema} = $json_defaults->{reasoning_schema};
+        }
+    }
+
     # Add dynamic auth
     $endpoint->{auth_header} = 'Authorization';
     $endpoint->{auth_value}  = "Bearer $api_key";
