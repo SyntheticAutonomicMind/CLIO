@@ -98,13 +98,26 @@ sub handle_set {
     }
     elsif ($setting eq 'thinking_effort') {
         my $level = lc($value // '');
-        # Accepted values are provider+model dependent. Anthropic adaptive
-        # (4.6+) supports xhigh in addition to low/medium/high; OpenAI and
-        # Google accept low/medium/high. We validate the broader set here
-        # and let the provider reject unsupported values at request time.
-        unless ($level =~ /^(low|medium|high|xhigh|max)$/) {
+        # Validate against the current provider's allowed values.
+        # Each provider's reasoning_schema (from provider-defaults.json)
+        # lists its accepted values; we validate before setting so the
+        # user gets immediate feedback rather than a deferred API error.
+        my $schema = $self->_get_current_provider_schema();
+        my $valid;
+        if ($schema && $schema->{values} && ref($schema->{values}) eq 'ARRAY') {
+            $valid = { map { $_ => 1 } @{$schema->{values}} };
+        }
+        # Fall back to the broad set if no schema is available
+        $valid = { map { $_ => 1 } qw(low medium high xhigh max) } unless $valid;
+
+        unless ($valid->{$level}) {
             $self->display_error_message("Invalid thinking_effort value: '$value'");
-            $self->writeline("Valid values: low, medium, high, xhigh, max (xhigh and max require Anthropic 4.6+ adaptive)", markdown => 0);
+            if ($schema && $schema->{values} && ref($schema->{values}) eq 'ARRAY') {
+                my $vals = join(', ', @{$schema->{values}});
+                $self->writeline("Valid values for this provider: $vals", markdown => 0);
+            } else {
+                $self->writeline("Valid values: low, medium, high, xhigh, max (xhigh and max require Anthropic 4.6+ adaptive)", markdown => 0);
+            }
             return;
         }
         if ($session_only) {
@@ -134,6 +147,20 @@ sub handle_set {
             $self->writeline("            Mythos Preview (overridden to adaptive with warning).", markdown => 0);
             return;
         }
+
+        # Warn when enabling thinking on a provider that doesn't support it
+        if ($mode eq 'enabled') {
+            my $schema = $self->_get_current_provider_schema();
+            if ($schema && $schema->{mode} eq 'disabled') {
+                $self->display_warning_message(
+                    "Provider does not support reasoning params. "
+                    . "thinking_mode=enabled has no effect on local inference servers "
+                    . "(llama.cpp, LM Studio, Ollama, SAM). Set show_thinking=1 instead "
+                    . "to display the model's built-in thinking output."
+                );
+            }
+        }
+
         if ($session_only) {
             $self->_write_session_override('thinking_mode', $mode);
         } else {
@@ -177,267 +204,6 @@ sub handle_set {
         $self->display_error_message("Unknown setting: $setting");
         $self->writeline("Valid settings: model, provider, base, key, thinking, thinking_effort, thinking_mode, temperature, top_p, top_k, github_pat, serpapi_key, search_engine, search_provider, context_window, max_output, max_prompt, tools, vision, reasoning", markdown => 0);
     }
-}
-
-=head2 handle_route
-
-Handle /api route commands for named model routing profiles.
-
-Commands:
-  /api route add <name> <model1> [model2 model3 ...]
-  /api route list
-  /api route use <name>
-  /api route replace <name> <model1> [model2 model3 ...]
-  /api route remove <name>
-
-=cut
-
-sub handle_route {
-    my ($self, @args) = @_;
-
-    my $action = shift @args || '';
-    $action = lc($action // '');
-
-    unless ($action) {
-        $self->display_error_message("Usage: /api route <add|list|use|replace|remove> [name] [models...]");
-        return;
-    }
-
-    if ($action eq 'add') {
-        $self->_route_add(@args);
-    }
-    elsif ($action eq 'list') {
-        $self->_route_list();
-    }
-    elsif ($action eq 'use') {
-        $self->_route_use(@args);
-    }
-    elsif ($action eq 'replace') {
-        $self->_route_replace(@args);
-    }
-    elsif ($action eq 'remove' || $action eq 'rm') {
-        $self->_route_remove(@args);
-    }
-    else {
-        $self->display_error_message("Unknown route action: $action");
-        $self->writeline("Valid actions: add, list, use, remove", markdown => 0);
-    }
-}
-
-=head2 _route_add($name, @models)
-
-Save a named model routing profile.
-
-  /api route add <name> <model1> [model2 model3 ...]
-
-Example:
-  /api route add laguna-free openrouter/poolside/laguna-s-2.1:free kilo/poolside/laguna-s-2.1:free vercel/poolside/laguna-s-2.1-free
-
-=cut
-
-sub _route_add {
-    my ($self, $name, @models) = @_;
-
-    unless ($name && length($name)) {
-        $self->display_error_message("Usage: /api route add <name> <model1> [model2 ...]");
-        return;
-    }
-
-    @models = grep { defined && length } @models;
-    unless (@models >= 1) {
-        $self->display_error_message("Must specify at least one model");
-        $self->writeline("Example: /api route add laguna-free openrouter/foo:free kilo/bar:free", markdown => 0);
-        return;
-    }
-
-    # Validate each model has a valid provider prefix
-    for my $m (@models) {
-        my ($provider, $api_model) = $self->_resolve_model_details($m);
-        if ($provider eq ($self->{config}->get('provider') || '')) {
-            # Same provider - fine
-        } else {
-            my ($has_auth, $auth_error) = $self->_check_provider_auth($provider);
-            unless ($has_auth) {
-                $self->display_error_message($auth_error);
-                $self->display_system_message("Set it with: /api set provider $provider && /api set key <your-key>");
-                return;
-            }
-        }
-    }
-
-    $self->{config}->set_model_route($name, \@models);
-    if ($self->{config}->save()) {
-        $self->display_system_message("Route '$name' saved with " . scalar(@models) . " models");
-    } else {
-        $self->display_system_message("Route '$name' saved (warning: failed to save)");
-    }
-    $self->_get_auth_helper()->reinit_api_manager();
-}
-
-=head2 _route_replace($name, @models)
-
-Replace an existing named routing profile's model list. Unlike
-C<_route_add>, which silently creates/overwrites, C<_route_replace>
-requires the route to already exist - it refuses to silently create
-a new profile with the wrong command.
-
-  /api route replace <name> <model1> [model2 model3 ...]
-
-Example:
-  /api route replace laguna-free openrouter/foo:free kilo/bar:free
-
-=cut
-
-sub _route_replace {
-    my ($self, $name, @models) = @_;
-
-    unless ($name && length($name)) {
-        $self->display_error_message("Usage: /api route replace <name> <model1> [model2 ...]");
-        return;
-    }
-
-    # Refuse to silently create a new route with the replace syntax.
-    my $existing = $self->{config}->get_model_route($name);
-    unless ($existing) {
-        $self->display_error_message("Route '$name' not found");
-        $self->display_system_message("Create it with: /api route add $name <model1> [model2 ...]");
-        return;
-    }
-
-    @models = grep { defined && length } @models;
-    unless (@models >= 1) {
-        $self->display_error_message("Must specify at least one model");
-        $self->writeline("Example: /api route replace $name openrouter/foo:free kilo/bar:free", markdown => 0);
-        return;
-    }
-
-    # Validate each model has a valid provider prefix (same as _route_add).
-    for my $m (@models) {
-        my ($full_model, $display_model, $target_provider, $api_model) =
-            $self->_resolve_model_details($m);
-        if ($target_provider eq ($self->{config}->get('provider') || '')) {
-            # Same provider - fine
-        } else {
-            my ($has_auth, $auth_error) = $self->_check_provider_auth($target_provider);
-            unless ($has_auth) {
-                $self->display_error_message($auth_error);
-                $self->display_system_message("Set it with: /api set provider $target_provider && /api set key <your-key>");
-                return;
-            }
-        }
-    }
-
-    $self->{config}->set_model_route($name, \@models);
-    if ($self->{config}->save()) {
-        $self->display_system_message("Route '$name' replaced with " . scalar(@models) . " models");
-    } else {
-        $self->display_system_message("Route '$name' replaced (warning: failed to save)");
-    }
-    $self->_get_auth_helper()->reinit_api_manager();
-}
-
-=head2 _route_list
-
-List all saved routing profiles.
-
-=cut
-
-sub _route_list {
-    my ($self) = @_;
-    my %routes = $self->{config}->list_model_routes();
-
-    unless (%routes) {
-        $self->display_system_message("No routing profiles saved. Create one with:");
-        $self->writeline("  /api route add <name> <model1> [model2 model3 ...]", markdown => 0);
-        return;
-    }
-
-    $self->display_command_header("ROUTING PROFILES");
-    for my $name (sort keys %routes) {
-        my $models = $routes{$name};
-        my $display = join(", ", @$models);
-        $self->display_key_value($name, $display);
-    }
-}
-
-=head2 _route_use($name)
-
-Activate a named routing profile.
-
-  /api route use <name>
-
-=cut
-
-sub _route_use {
-    my ($self, $name) = @_;
-
-    unless ($name && length($name)) {
-        $self->display_error_message("Usage: /api route use <name>");
-        return;
-    }
-
-    my $routes = { $self->{config}->list_model_routes() };
-    unless (exists $routes->{lc($name)}) {
-        $self->display_error_message("Route '$name' not found. Create one with /api route add");
-        # Try to list available routes
-        if (%$routes) {
-            $self->writeline("Available routes: " . join(", ", sort keys %$routes), markdown => 0);
-        }
-        return;
-    }
-
-    my $models = $self->{config}->get_model_route($name);
-    $self->{config}->set_model_candidates($models);
-    $self->{config}->set_model_routing_index(0);
-    $self->{config}->set('route_name', $name, 0);
-
-    # Set the first model as active
-    my ($full_model, $display_model, $target_provider, $api_model) =
-        $self->_resolve_model_details($models->[0]);
-
-    $self->_set_api_setting('model', $full_model, 0);
-    $self->{config}->save();
-
-    $self->display_system_message("Route '$name' activated (" . scalar(@$models) . " models)");
-    $self->display_system_message("Active model: $display_model");
-    $self->display_system_message("On API errors, CLIO will automatically try the next model");
-
-    $self->_get_auth_helper()->reinit_api_manager();
-    $self->_update_billing_state($full_model, $target_provider);
-    $self->_post_set_model_validation($full_model, $api_model);
-}
-
-=head2 _route_remove($name)
-
-Remove a named routing profile.
-
-  /api route remove <name>
-
-=cut
-
-sub _route_remove {
-    my ($self, $name) = @_;
-
-    unless ($name && length($name)) {
-        $self->display_error_message("Usage: /api route remove <name>");
-        return;
-    }
-
-    my $deleted = $self->{config}->delete_model_route($name);
-    unless ($deleted) {
-        $self->display_error_message("Route '$name' not found");
-        return;
-    }
-
-    # Clear active route_name if it matches
-    my $current_route = $self->{config}->get('route_name');
-    if (defined $current_route && lc($current_route // '') eq lc($name)) {
-        $self->{config}->set('route_name', undef, 0);
-    }
-
-    $self->{config}->save();
-    $self->display_system_message("Route '$name' removed");
-    $self->_get_auth_helper()->reinit_api_manager();
 }
 
 =head2 _get_current_provider_schema
@@ -1370,6 +1136,26 @@ sub display_config {
             $reasoning_mode = $caps->{reasoning_mode} if $caps;
         }
     }
+
+    # Show provider reasoning schema (data-driven param format)
+    my $schema = $self->_get_current_provider_schema();
+    my $schema_mode = $schema->{mode} // 'N/A';
+    my $schema_label = "unknown";
+    if ($schema_mode eq 'disabled') {
+        $schema_label = 'disabled (local inference - no reasoning params)';
+    } elsif ($schema_mode eq 'native') {
+        $schema_label = 'native (handled by provider API)';
+    } elsif ($schema_mode eq 'effort') {
+        $schema_label = "effort ($schema->{param})";
+    } elsif ($schema_mode eq 'nested') {
+        $schema_label = "nested ($schema->{param})" . ($schema->{values} ? " values: " . join(',', @{$schema->{values}}) : "");
+    } elsif ($schema_mode eq 'think_object') {
+        $schema_label = "think_object ($schema->{think_param})";
+    } elsif ($schema_mode eq 'mixed') {
+        $schema_label = "mixed ($schema->{think_param} + $schema->{effort_param})";
+    }
+    $self->display_key_value("Reasoning Schema", $schema_label, 16);
+
     if ($reasoning_mode) {
         $self->display_key_value("Reason Mode", $reasoning_mode, 16);
     }

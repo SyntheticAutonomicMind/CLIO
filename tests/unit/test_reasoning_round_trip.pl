@@ -156,6 +156,7 @@ use_ok('CLIO::Core::APIManager');
 {
     require CLIO::Core::Config;
     my $config = CLIO::Core::Config->new();
+    $config->set('provider', 'anthropic');
     my $mgr = CLIO::Core::APIManager->new(
         provider => 'anthropic',
         model => 'claude-sonnet-4.5',
@@ -163,6 +164,8 @@ use_ok('CLIO::Core::APIManager');
     );
     ok($mgr->_endpoint_supports_thinking(), 'Anthropic supports thinking');
 
+    $config->set('provider', 'github_copilot');
+    $config->set('model', 'gpt-4o');
     $mgr = CLIO::Core::APIManager->new(
         provider => 'github_copilot',
         model => 'gpt-4o',
@@ -170,6 +173,7 @@ use_ok('CLIO::Core::APIManager');
     );
     ok($mgr->_endpoint_supports_thinking(), 'github_copilot supports thinking (via OpenAI reasoning_effort)');
 
+    $config->set('provider', 'google');
     $mgr = CLIO::Core::APIManager->new(
         provider => 'google',
         model => 'gemini-2.5-flash',
@@ -467,6 +471,7 @@ use_ok('CLIO::Core::APIManager');
 {
     require CLIO::Core::Config;
     my $config = CLIO::Core::Config->new();
+    $config->set('provider', 'anthropic');
     # show_thinking defaults to 0
     my $mgr = CLIO::Core::APIManager->new(
         provider => 'anthropic',
