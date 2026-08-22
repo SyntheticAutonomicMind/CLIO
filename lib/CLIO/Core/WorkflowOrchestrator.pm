@@ -1137,52 +1137,61 @@ sub _build_turn_context {
     unless ($self->{_tools_cache}) {
         my ($cached_messages, $cached_tools) = $self->_try_resume_from_payload($session, $model_caps);
         if ($cached_messages && $cached_tools) {
-            # Pipeline protocol: [user_context, user_input] are the dynamic
-            # trailing pair from the previous turn. After Fix 1 (assistant
-            # response is now pushed before capture), the payload may end
-            # with any of these layouts:
+            # Pipeline protocol: user_context is a role=system message that
+            # carries dynamic content (date/time, LTM, session goals). After
+            # Fix 1 (assistant response is now pushed before capture), the
+            # payload may end with any of these layouts:
             #   [user_context, user_input]                                 (no tools, no response — old format)
             #   [user_context, user_input, assistant_response]             (no tools, with response)
             #   [user_context, user_input, assistant_tc, tool_results, assistant_response]
             #   [user_context, user_input, assistant_tc, tool_results]     (iteration limit)
             #
-            # Strip ONLY the user_context system message — the dynamic
-            # date/time block. Keep user_input and everything after it
-            # (assistant_response, tool_calls, tool_results) because those
-            # are part of the dialog and must be visible to the model on
-            # resume. The previous code either popped only the last 2
-            # messages (failing when payload ended with assistant/tool
-            # content) or stripped everything from user_context onwards
-            # (removing the assistant response we just added in Fix 1,
-            # causing the "agent ignores new user input" bug). Removing
-            # just user_context produces the same layout as the rebuild
-            # path: [...dialog..., assistant_response, new_user_context,
-            # new_user_input].
-            my $strip_idx = undef;
-            for (my $i = $#{$cached_messages}; $i >= 0; $i--) {
-                if ($cached_messages->[$i]{role} eq 'system'
-                    && ($cached_messages->[$i]{content} // '') =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
-                    $strip_idx = $i;
-                    last;
-                }
-            }
-            if (defined $strip_idx) {
-                splice(@$cached_messages, $strip_idx, 1);
-                log_debug('WorkflowOrchestrator',
-                    "Stripped stale user_context system message from resume payload (index $strip_idx)");
-            } else {
-                log_warning('WorkflowOrchestrator',
-                    "Resume fast path: could not find user_context to strip; " .
-                    "stale date/time may appear in resumed prompt");
-            }
-
+            # Replace user_context IN-PLACE rather than stripping and
+            # re-appending. The old strip-and-reappend approach moved
+            # user_context from its position (between dialog and user_input)
+            # to the end of the array, changing the message TYPE at that
+            # position (system -> user) and breaking OpenRouter's byte-level
+            # prefix cache — the cached prefix collapsed to just
+            # sys + ctx_files + dialog instead of extending through the
+            # full conversation.
+            #
+            # In-place replacement preserves the physical ordering so the
+            # LCP prefix match extends through the same positions as the
+            # previous turn's wire prompt. Only the user_context content
+            # itself changes (date/time), which is an unavoidable ~300-token
+            # invalidation at the end of the dialog — not a position change.
+            #
+            # Keep user_input and everything after it (assistant_response,
+            # tool_calls, tool_results) because those are part of the dialog
+            # and must be visible to the model on resume. Only the stale
+            # user_context content is replaced with the fresh version.
             my $user_context = $self->{prompt_builder}->get_user_context($session);
             if ($self->{non_interactive}) {
                 $user_context .= CLIO::Core::PromptBuilder::generate_non_interactive_section() . "\n\n";
                 log_debug('WorkflowOrchestrator', "Added non-interactive instruction to user context");
             }
-            push @$cached_messages, { role => 'system', content => $user_context };
-            push @$cached_messages, { role => 'user',   content => $user_input };
+
+            my $uc_replaced = 0;
+            for my $i (0 .. $#{$cached_messages}) {
+                if ($cached_messages->[$i]{role} eq 'system'
+                    && ($cached_messages->[$i]{content} // '') =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
+                    $cached_messages->[$i]{content} = $user_context;
+                    $uc_replaced = 1;
+                    log_debug('WorkflowOrchestrator',
+                        "Replaced stale user_context in-place at index $i (preserving cache-stable ordering)");
+                    last;
+                }
+            }
+            if (!$uc_replaced) {
+                log_warning('WorkflowOrchestrator',
+                    "Resume fast path: could not find user_context to replace; " .
+                    "appending fresh one at end");
+                push @$cached_messages, { role => 'system', content => $user_context };
+            }
+
+            # Append the new user_input at the end. This is the fresh
+            # request that the model needs to respond to.
+            push @$cached_messages, { role => 'user', content => $user_input };
 
             # Cache tools so subsequent _build_turn_context calls in this
             # process take the normal rebuild path.

@@ -3194,15 +3194,26 @@ sub _fetch_openai_compatible_capabilities {
     if ($m) {
         my $permuted_model = $m->{permuted_model} || undef;
         
-        # Extract context window
+        # Extract context window.
+        # Field-name flexibility: OpenRouter returns context_length (and
+        # also top_provider.context_length); OpenAI returns context_window;
+        # some proxies use max_tokens or max_context_tokens. Take the first
+        # defined value in priority order, matching what /api models does
+        # (see CLIO/UI/Commands/API/Models.pm:323 which already checks
+        # context_length).
         my $context_window = $m->{context_window}
+            || $m->{context_length}
+            || ($m->{top_provider} && $m->{top_provider}{context_length})
             || $m->{max_tokens}
             || $m->{max_context_tokens}
             || undef;
-        
-        # OpenAI-compatible often provides max_tokens as total context
-        if (!$context_window && $permuted_model && $permuted_model->{context_window}) {
-            $context_window = $permuted_model->{context_window};
+
+        # Check permuted_model fallbacks (OpenRouter's permuted_model may
+        # carry either field name).
+        if (!$context_window && $permuted_model) {
+            $context_window = $permuted_model->{context_window}
+                || $permuted_model->{context_length}
+                || $permuted_model->{max_context_tokens};
         }
         
         # For local inference servers, /v1/models only exposes the model's

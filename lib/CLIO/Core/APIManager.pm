@@ -2177,7 +2177,7 @@ sub _preflight_validate_messages {
 
 
 sub _learn_from_api_response {
-    my ($self, $usage, $messages) = @_;
+    my ($self, $usage, $messages, $tools) = @_;
 
     return unless $usage && $messages;
     return unless $usage->{prompt_tokens};
@@ -2194,6 +2194,26 @@ sub _learn_from_api_response {
             for my $tc (@{$msg->{tool_calls}}) {
                 my $json = encode_json($tc);
                 $total_chars += length($json);
+            }
+        }
+    }
+
+    # Include tool DEFINITION tokens in the estimate.
+    # The API's usage.prompt_tokens counts the entire prompt, including
+    # the tools array (schema descriptions, parameter definitions). The
+    # char-based estimate above only counts message content + tool_call
+    # JSON. Without this correction, the drift ratio is inflated by the
+    # tool definition size (CLIO has 16+ tools, each with detailed schemas
+    # totaling ~20-40K tokens). At the 4.0 drift clamp ceiling, this
+    # tightens the trim threshold from ~115K to ~29K, trimming the dialog
+    # to ~22K and collapsing the cache prefix to ~25K (the 24,992 value
+    # observed in the OpenRouter/Poolside session on 2026-08-22).
+    if ($tools && ref($tools) eq 'ARRAY' && @$tools) {
+        my $tool_ratio = CLIO::Memory::TokenEstimator::get_effective_ratio();
+        for my $tool (@$tools) {
+            my $tool_json = CLIO::Util::JSON::safe_encode_json($tool);
+            if (defined $tool_json && length($tool_json) > 0) {
+                $total_chars += length($tool_json);
             }
         }
     }
@@ -3865,7 +3885,7 @@ sub _process_non_streaming_response {
         if ($data->{usage}) {
             $tokens_in  ||= $data->{usage}{prompt_tokens} || $data->{usage}{input_tokens} || 0;
             $tokens_out ||= $data->{usage}{completion_tokens} || $data->{usage}{output_tokens} || 0;
-            $self->_learn_from_api_response($data->{usage}, $messages);
+            $self->_learn_from_api_response($data->{usage}, $messages, $opts->{tools});
         }
 
         $self->{performance_monitor}->record_api_call($self->{api_base}, $model,
@@ -5041,7 +5061,7 @@ sub _resolve_streaming_usage {
 
     if ($s->{streaming_usage}) {
         log_debug('APIManager', "Real usage: prompt=$s->{streaming_usage}{prompt_tokens}, completion=$s->{streaming_usage}{completion_tokens}");
-        $self->_learn_from_api_response($s->{streaming_usage}, $s->{messages});
+        $self->_learn_from_api_response($s->{streaming_usage}, $s->{messages}, $s->{opts}{tools});
         return $s->{streaming_usage};
     }
 

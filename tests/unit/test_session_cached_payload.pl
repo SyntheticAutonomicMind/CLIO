@@ -546,7 +546,7 @@ subtest 'user_context is a separate role=system message at [-2] (pipeline protoc
     unlike($stored->[-1]{content}, qr/userContext/, 'user_input does NOT contain userContext prefix (the bug we just fixed)');
 };
 
-subtest 'resume strips stale trailing user_context and adds fresh (pipeline protocol)' => sub {
+subtest 'resume replaces user_context in-place and appends fresh user_input (pipeline protocol)' => sub {
     my $real_state = CLIO::Session::State->new(session_id => 'pipeline-strip', debug => 0);
     my $sess = StubSession->new(state => $real_state);
     my $tools = $real_tools;
@@ -577,25 +577,32 @@ subtest 'resume strips stale trailing user_context and adds fresh (pipeline prot
     # The new snapshot includes the assistant response (6 messages)
     is(scalar @$resumed, 6, 'snapshot has 6 messages including assistant response');
 
-    # Simulate the NEW stripping logic from _build_turn_context:
-    # Strip ONLY the user_context system message, keep everything else.
-    my $strip_idx = undef;
-    for (my $i = $#{$resumed}; $i >= 0; $i--) {
+    # Simulate the in-place replacement logic from _build_turn_context.
+    # Replaces user_context at its existing position (preserving cache-stable
+    # ordering) and appends fresh user_input at the end.
+    my $uc_replaced = 0;
+    for my $i (0 .. $#{$resumed}) {
         if ($resumed->[$i]{role} eq 'system'
             && ($resumed->[$i]{content} // '') =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
-            $strip_idx = $i;
+            $resumed->[$i]{content} = '<userContext>FRESH (in-place)</userContext>';
+            $uc_replaced = 1;
             last;
         }
     }
-    ok(defined $strip_idx, 'found user_context for stripping');
-    splice(@$resumed, $strip_idx, 1);
+    ok($uc_replaced, 'found user_context for in-place replacement');
+    push @$resumed, { role => 'user', content => 'fresh user_input' };
 
-    # After stripping only user_context, user_input + assistant_response remain
-    is(scalar @$resumed, 5, 'after stripping only user_context, 5 messages remain');
-    is($resumed->[-2]{role}, 'user', 'user_input still present after stripping');
-    is($resumed->[-2]{content}, 'old_q2 (STALE)', 'user_input content preserved');
-    is($resumed->[-1]{role}, 'assistant', 'assistant_response still present after stripping');
-    is($resumed->[-1]{content}, 'old_a2 (STALE ASSISTANT RESPONSE)', 'assistant_response content preserved');
+    # In-place replacement: user_context stays at its position, old content
+    # preserved, new user_input appended at end.
+    is(scalar @$resumed, 7, 'after in-place replacement + new user_input, 7 messages total');
+    is($resumed->[3]{role}, 'system', 'user_context stayed at position [3] (not moved)');
+    like($resumed->[3]{content}, qr/FRESH/, 'user_context content is fresh');
+    is($resumed->[4]{role}, 'user', 'old user_input preserved at [4]');
+    is($resumed->[4]{content}, 'old_q2 (STALE)', 'old user_input content preserved');
+    is($resumed->[5]{role}, 'assistant', 'assistant_response preserved at [5]');
+    is($resumed->[5]{content}, 'old_a2 (STALE ASSISTANT RESPONSE)', 'assistant_response content preserved');
+    is($resumed->[-1]{role}, 'user', 'fresh user_input appended at end');
+    is($resumed->[-1]{content}, 'fresh user_input', 'fresh user_input content correct');
 };
 
 # Regression test: the OLD payload format (without assistant response at
@@ -625,30 +632,39 @@ subtest 'resume handles old payload format without assistant response (backward 
     ok($resumed && @$resumed, 'resume returned messages');
     is(scalar @$resumed, 5, 'snapshot has 5 messages (old format)');
 
-    # Simulate the new stripping logic
-    my $strip_idx = undef;
-    for (my $i = $#{$resumed}; $i >= 0; $i--) {
+    # Simulate the in-place replacement logic from _build_turn_context
+    # (handles old format without assistant response).
+    my $uc_replaced = 0;
+    for my $i (0 .. $#{$resumed}) {
         if ($resumed->[$i]{role} eq 'system'
             && ($resumed->[$i]{content} // '') =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
-            $strip_idx = $i;
+            $resumed->[$i]{content} = '<userContext>FRESH (in-place)</userContext>';
+            $uc_replaced = 1;
             last;
         }
     }
-    ok(defined $strip_idx, 'found user_context for stripping (old format)');
-    splice(@$resumed, $strip_idx, 1);
+    ok($uc_replaced, 'found user_context for in-place replacement (old format)');
+    push @$resumed, { role => 'user', content => 'fresh user_input' };
 
-    is(scalar @$resumed, 4, 'after stripping only user_context, 4 messages remain');
-    is($resumed->[-1]{role}, 'user', 'user_input still present');
-    is($resumed->[-1]{content}, 'old_q2 (STALE)', 'user_input content preserved');
+    is(scalar @$resumed, 6, 'after in-place replacement + new user_input, 6 messages total');
+    # old user_input was at [-1] in the 4-msg payload (after stripping);
+    # now user_context is replaced in-place at [3], old user_input at [4],
+    # and new user_input appended at [-1]
+    is($resumed->[3]{role}, 'system', 'user_context replaced in-place at [3]');
+    like($resumed->[3]{content}, qr/FRESH/, 'user_context content is fresh');
+    is($resumed->[4]{role}, 'user', 'old user_input preserved at [4]');
+    is($resumed->[4]{content}, 'old_q2 (STALE)', 'old user_input content preserved');
+    is($resumed->[-1]{role}, 'user', 'fresh user_input appended at end');
+    is($resumed->[-1]{content}, 'fresh user_input', 'fresh user_input content correct');
 };
 
 # Regression test: tool-calling turn where the payload ends with
-# [user_context, user_input, assistant_tool_call, tool_results, assistant_response].
-# The stripping must remove ALL of these (from user_context onwards),
-# not just the last 2 messages. This is the case that caused the
-# "agent ignores new user input on resume" bug — the old 2-pop code
-# left stale user_input + user_context in the resumed prompt.
-subtest 'resume strips tool_calling turn payload ending with assistant response' => sub {
+# [user_input, assistant_tool_call, tool_results, assistant_response]
+# after the user_context is replaced in-place. The in-place replacement
+# preserves the physical message ordering (user_context stays at its
+# position between dialog and user_input) so the LCP cache prefix match
+# extends through the same positions as the previous turn's wire prompt.
+subtest 'resume replaces user_context in-place for tool-calling turn (preserves ordering)' => sub {
     my $real_state = CLIO::Session::State->new(session_id => 'tool-turn-strip', debug => 0);
     my $sess = StubSession->new(state => $real_state);
     my $tools = $real_tools;
@@ -683,25 +699,32 @@ subtest 'resume strips tool_calling turn payload ending with assistant response'
     } @$resumed;
     ok($has_final, 'snapshot includes final assistant response (Fix 1)');
 
-    # Simulate the new stripping logic (strip only user_context)
-    my $strip_idx = undef;
-    for (my $i = $#{$resumed}; $i >= 0; $i--) {
+    # Simulate the in-place replacement logic from _build_turn_context
+    # (tool-calling turn). Replaces user_context at its position and
+    # appends fresh user_input at the end.
+    my $uc_replaced = 0;
+    for my $i (0 .. $#{$resumed}) {
         if ($resumed->[$i]{role} eq 'system'
             && ($resumed->[$i]{content} // '') =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
-            $strip_idx = $i;
+            $resumed->[$i]{content} = '<userContext>FRESH (in-place)</userContext>';
+            $uc_replaced = 1;
             last;
         }
     }
-    ok(defined $strip_idx, 'found user_context for stripping in tool-call payload');
-    splice(@$resumed, $strip_idx, 1);
+    ok($uc_replaced, 'found user_context for in-place replacement in tool-call payload');
+    push @$resumed, { role => 'user', content => 'fresh user_input' };
 
-    is(scalar @$resumed, 7, 'after stripping only user_context, 7 messages remain');
-    is($resumed->[-4]{role}, 'user', 'user_input preserved');
-    is($resumed->[-4]{content}, 'q2', 'user_input content preserved');
-    is($resumed->[-3]{role}, 'assistant', 'assistant_tool_call preserved');
-    is($resumed->[-2]{role}, 'tool', 'tool_result preserved');
-    is($resumed->[-1]{role}, 'assistant', 'final assistant response preserved');
-    is($resumed->[-1]{content}, 'final answer after tools', 'final assistant response content preserved');
+    is(scalar @$resumed, 9, 'after in-place replacement + new user_input, 9 messages total');
+    is($resumed->[3]{role}, 'system', 'user_context at position [3] (in-place, not moved)');
+    like($resumed->[3]{content}, qr/FRESH/, 'user_context content is fresh');
+    is($resumed->[4]{role}, 'user', 'user_input at [4] preserved');
+    is($resumed->[4]{content}, 'q2', 'user_input content preserved');
+    is($resumed->[5]{role}, 'assistant', 'assistant_tool_call at [5] preserved');
+    is($resumed->[6]{role}, 'tool', 'tool_result at [6] preserved');
+    is($resumed->[7]{role}, 'assistant', 'final assistant response at [7] preserved');
+    is($resumed->[7]{content}, 'final answer after tools', 'final assistant response content preserved');
+    is($resumed->[-1]{role}, 'user', 'fresh user_input appended at end');
+    is($resumed->[-1]{content}, 'fresh user_input', 'fresh user_input content correct');
 };
 
 # Pipeline protocol phase 5: per-section signatures stored alongside the
