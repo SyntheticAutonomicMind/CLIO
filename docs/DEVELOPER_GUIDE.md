@@ -13,8 +13,10 @@
 5. [Adding New Tools](#adding-new-tools)
 6. [Adding New AI Providers](#adding-new-ai-providers)
 7. [Testing](#testing)
-9. [Code Standards](#code-standards)
-10. [Contribution Workflow](#contribution-workflow)
+8. [Unified Model Capability System](#unified-model-capability-system)
+9. [Prompt Pipeline Protocol](#prompt-pipeline-protocol)
+10. [Code Standards](#code-standards)
+11. [Contribution Workflow](#contribution-workflow)
 
 ---------------------------------------------------
 
@@ -105,29 +107,29 @@ graph TD
 
 **User Input Flow:**
 ```text
-User Input → Chat → WorkflowOrchestrator → APIManager → AI Provider
-                                     ↓
+User Input -> Chat -> WorkflowOrchestrator -> APIManager -> AI Provider
+                                     v
                               Tool Selection
-                                     ↓
+                                     v
                              Tool Execution
-                                     ↓
+                                     v
                             Result Collection
-                                     ↓
+                                     v
                           AI Response Generation
-                                     ↓
+                                     v
                             Markdown Rendering
-                                     ↓
+                                     v
                               User Output
 ```
 
 **Tool Execution Flow:**
 ```text
-AI Request → Tool Registry → Route to Tool → Execute Operation
-                                                    ↓
+AI Request -> Tool Registry -> Route to Tool -> Execute Operation
+                                                    v
                                               Return Result
-                                                    ↓
+                                                    v
                                            Action Description
-                                                    ↓
+                                                    v
                                             Back to AI Agent
 ```
 
@@ -154,7 +156,8 @@ clio/
           PromptBuilder.pm  # Prompt construction utilities
           InstructionsReader.pm  # Custom instructions reader
           ConversationManager.pm  # Conversation history management
-          ModelRegistry.pm  # AI model metadata and management
+          ModelCapabilitiesManager.pm  # AI model capabilities
+          ModelDataLoader.pm  # Unified model capability data loader
           ToolCallExtractor.pm  # Extract tool calls from AI responses
           ToolErrorGuidance.pm  # Contextual error recovery hints
           ErrorContext.pm   # Error taxonomy and structured context
@@ -243,7 +246,11 @@ clio/
           Manager.pm        # Profile storage and injection
       Providers/            # Native API providers
           Base.pm           # Provider base class
+          Anthropic.pm      # Anthropic native API
           Google.pm         # Google Gemini native API
+          NVIDIA.pm         # NVIDIA NIM native API
+          # Other providers (DeepSeek, MiniMax, Z.AI, OpenRouter, Ollama Cloud,
+          # GitHub Copilot, etc.) are configured in Providers.pm directly
       MCP/                  # Model Context Protocol
           Manager.pm        # MCP server management
           Client.pm         # MCP client
@@ -273,7 +280,7 @@ clio/
       Compat/               # Compatibility layers
           HTTP.pm  Terminal.pm
   docs/                     # User documentation
-  styles/                   # Color style files (25 themes)
+  styles/                   # Color style files (26 themes)
   tests/                    # Test suites
   sessions/                 # Saved sessions (gitignored)
 ```
@@ -349,11 +356,24 @@ find lib -name "*.pm" -exec perl -I lib -c {} \;
 **Testing:**
 
 ```bash
-# Run test suite (when implemented)
+# Run test suite
 prove -I lib t/
 
 # Manual testing
 ./clio --new
+```
+
+**Uninitialized-value detection:**
+
+```bash
+# Run all tests under perl -W to surface uninitialized warnings
+perl tests/run_strict_tests.pl
+
+# Run single test with warnings as fatal
+perl tests/run_strict_tests.pl --fatal tests/unit/test_command_handler.pl
+
+# Quiet mode (only show failures)
+perl tests/run_strict_tests.pl --quiet
 ```
 
 ---------------------------------------------------
@@ -566,6 +586,45 @@ return $self->operation_success($result_data, "Custom success message");
 return $self->operation_error("Error message explaining what went wrong");
 ```
 
+**Adding Operation-Name Aliases:**
+
+When an LLM sends a tool call with a natural-language operation name that isn't in the canonical set (e.g., `list_directory` instead of `list_dir`), the tool returns `Unknown operation: ... Did you mean: list_dir?` and the call fails. The `dispatch_table` design in `lib/CLIO/Tools/Tool.pm:138-144` already supports aliases: "Aliases are supported by mapping multiple keys to the same method."
+
+To add an alias to a tool:
+
+1. Add the alias to `supported_operations` in the tool's `new()` method. This surfaces it in the JSON schema's `operation` enum and in error messages.
+2. Add the alias as a key in `dispatch_table` that maps to the same method name as the canonical entry.
+
+Example (in `lib/CLIO/Tools/FileOperations.pm`):
+
+```perl
+# supported_operations
+supported_operations => [qw(
+    read_file read          # read is an alias for read_file
+    list_dir list_directory  # list_directory is an alias for list_dir
+    ...
+)],
+
+# dispatch_table
+sub dispatch_table {
+    return {
+        read_file      => 'read_file',
+        read           => 'read_file',       # alias
+        list_dir       => 'list_dir',
+        list_directory => 'list_dir',        # alias
+        ...
+    };
+}
+```
+
+Add tests under `tests/unit/test_<tool>_aliases.pl` that invoke each alias with realistic parameters and assert the dispatch produces the expected result. See `tests/unit/test_file_operations_aliases.pl` for the pattern.
+
+Guidelines for choosing aliases:
+- Prefer unambiguous mappings: a single alias should point to one operation.
+- Skip aliases that could be confused with another operation (e.g., `read` could mean `read_file` or `read_tool_result`; pick the most common).
+- Short Unix-style names (`mv`, `mkdir`, `rm`) are good aliases when the canonical name is verbose.
+- Adding to `supported_operations` puts the alias in the JSON schema enum, so well-behaved LLMs learn about it from the system prompt.
+
 ---------------------------------------------------
 
 ## Adding New AI Providers
@@ -577,7 +636,7 @@ CLIO's provider system is built into APIManager.pm. Each provider is defined by 
 **Key files to modify:**
 - `lib/CLIO/Core/APIManager.pm` - Add provider config, endpoint logic
 - `lib/CLIO/Core/API/ResponseHandler.pm` - Handle provider-specific response formats
-- `lib/CLIO/Core/ModelRegistry.pm` - Add model definitions and metadata
+- `lib/CLIO/Core/ModelCapabilitiesManager.pm` - Add model definitions and metadata
 - `lib/CLIO/Core/Config.pm` - Add provider defaults (base URL, etc.)
 
 **Step 1: Add provider config in Config.pm**
@@ -595,15 +654,17 @@ myprovider => {
 
 In `_prepare_api_request()`, add a case for your provider to build the correct URL, headers, and payload format. Most providers follow the OpenAI chat completions format (`/chat/completions` endpoint with messages array).
 
-**Step 3: Add model metadata in ModelRegistry**
+**Step 3: Add model metadata in ModelCapabilitiesManager**
 
 Define available models with their context windows and capabilities:
 
 ```perl
 'my-model-latest' => {
     context_window => 128000,
+    max_output_tokens => 16384,
     supports_tools => 1,
     supports_streaming => 1,
+    reasoning_mode => 'effort',  # or 'enabled', 'adaptive', undef
 },
 ```
 
@@ -613,7 +674,72 @@ If the provider returns tool calls, reasoning content, or error codes differentl
 
 **Step 5: Add to PROVIDERS.md documentation**
 
-**Reference implementation:** See the MiniMax provider (commits `72e7080` through `93556e1`) for a recent example of adding a new provider with Token Plan billing, static model lists, and reasoning content support.
+**Reference implementation:** See the MiniMax provider for a recent example of adding a new provider with Token Plan billing, static model lists, and reasoning content support.
+
+---------------------------------------------------
+
+## Unified Model Capability System
+
+Since commit `df34c34` (2026-08-03), CLIO maintains unified model capability data in JSON files instead of hardcoded maps:
+
+| File | Purpose |
+|------|---------|
+| `lib/CLIO/Core/model-data/models.json` | Primary model capability database |
+| `lib/CLIO/Core/model-data/provider-defaults.json` | Provider fallback defaults |
+| `lib/CLIO/Core/model-data/heuristics.json` | Pattern-based fallback rules |
+| `lib/CLIO/Core/model-data/provider-mapping.json` | Provider-to-model ID mappings |
+
+**Key modules:**
+- `ModelDataLoader.pm` - Loads and caches the JSON data
+- `ModelCapabilitiesManager.pm` - Queries capabilities (with provider API fallback)
+- `ModelDataTester.pm` - Test script for verifying model data
+
+When adding new models or providers:
+1. Add entries to `models.json` and `provider-mapping.json`
+2. Run `perl -I./lib lib/CLIO/Core/ModelDataTester.pm <provider> <model>` to verify
+3. The system automatically falls back to provider API `/models` endpoints, then heuristics, then provider defaults.
+
+---------------------------------------------------
+
+## Prompt Pipeline Protocol
+
+Every API request CLIO sends follows a fixed seven-slot layout for LCP (Longest Common Prefix) cache stability:
+
+```
+[0] system_prompt      Static (built once per session; includes tools schema)
+[1] summary            CSSS slot; regenerates within size budget
+[2] context_files      User-added files (stable until /context add|remove)
+[3] dialog             user / assistant alternating (chronological)
+[4] tool_results       Deinterleaved to END; oldest first
+[5] user_context       Dynamic (date/time, working dir, LTM, session goals)
+[6] user_input         Current turn's raw user input (no prefix)
+```
+
+**Key invariants:**
+- Sections [0..2] are the **stable anchor** - only invalidate when tools change, summary regenerates, or context files change
+- Section [5] is the **dynamic anchor** - changes every minute (date/time cache). When it changes, only [5] onwards is reprocessed
+- Section [6] is always fresh
+
+**System messages are NOT merged.** `ConversationManager::enforce_message_alternation` excludes `role=system` from its merge rule. Each section [0], [1], [2], [5] is its own message.
+
+**Trim policy:**
+- [0], [1], [5], [6] - NEVER trimmed (anchors + active request)
+- [2] - trimmed with dialog budget walk
+- [3] - primary trim target (oldest dialog dropped first)
+- [4] - secondary trim target (oldest tool_results dropped first)
+
+Full specification: [`docs/SPECS/PROMPT_PIPELINE.md`](docs/SPECS/PROMPT_PIPELINE.md)
+
+**Tests covering the protocol:**
+- `tests/unit/test_cache_stable_layout.pl`
+- `tests/unit/test_cache_stable_summary.pl`
+- `tests/unit/test_session_cached_payload.pl`
+- `tests/unit/test_conversation_manager_multimodal.pl`
+- `tests/unit/test_conversation_manager.pl`
+- `tests/unit/test_provider_cache_control.pl`
+- `tests/integration/test_session_resume_cached_payload.pl`
+
+Any change to message ordering, role assignment, trim policy, snapshot signatures, or provider cache adaptations must update these tests.
 
 ---------------------------------------------------
 
@@ -647,12 +773,12 @@ echo "read a file that doesn't exist" | ./clio --new --exit
 echo "search for TODO in all Perl files, create a summary" | ./clio --new --exit
 ```
 
-### Automated Testing (Future)
+### Automated Testing
 
-**Unit tests** (`t/unit/`):
+**Unit tests** (`tests/unit/`):
 
 ```perl
-# t/unit/tools/file_operations.t
+# tests/unit/tools/file_operations.t
 use Test::More tests => 5;
 use CLIO::Tools::FileOperations;
 
@@ -671,10 +797,10 @@ like($result->{data}, qr/content/, 'read_file returns content');
 done_testing();
 ```
 
-**Integration tests** (`t/integration/`):
+**Integration tests** (`tests/integration/`):
 
 ```perl
-# t/integration/session_persistence.t
+# tests/integration/session_persistence.t
 use Test::More;
 use CLIO::Session::Manager;
 
@@ -694,6 +820,22 @@ my $loaded = $mgr->load($session->id());
 is($loaded->id(), $session->id(), 'Session ID preserved');
 
 done_testing();
+```
+
+**Running tests:**
+
+```bash
+# All unit tests
+perl tests/run_all_tests.pl
+
+# Single unit test
+perl -I./lib tests/unit/test_file_operations.pl
+
+# Integration tests
+perl -I./lib tests/integration/test_collaborative_team.pl
+
+# Performance benchmarks
+perl -I./lib tests/benchmark.pl
 ```
 
 ---------------------------------------------------
@@ -781,12 +923,12 @@ log_debug('MyModule', 'Details: ' . $detail) if should_log('DEBUG');
 **No CPAN Dependencies:**
 
 ```perl
-# ✅ Use core modules
+# [OK] Use core modules
 use JSON::PP;      # Core since 5.14
 use HTTP::Tiny;    # Core since 5.14
 use File::Spec;    # Core
 
-# ❌ Don't use CPAN modules
+# [FAIL] Don't use CPAN modules
 use Moo;           # Not core
 use LWP::UserAgent # Not core
 ```
@@ -927,9 +1069,9 @@ git commit -m "feat(tools): add MyNewTool for X functionality
 [how you fixed or built it]
 
 **Testing:**
-✅ Syntax: PASS (perl -c)
-✅ Manual: [what you tested]
-✅ Edge cases: [what you verified]"
+[OK] Syntax: PASS (perl -c)
+[OK] Manual: [what you tested]
+[OK] Edge cases: [what you verified]"
 ```
 
 **Commit message format:**
@@ -986,6 +1128,7 @@ Then open a Pull Request on GitHub.
 - `docs/PERFORMANCE.md` - Performance benchmarks and optimization
 - `docs/FORMULA_RENDERING.md` - Mathematical formula rendering
 - `docs/STYLE_GUIDE.md` / `docs/STYLE_QUICKREF.md` - Color theme reference
+- `docs/SPECS/PROMPT_PIPELINE.md` - Prompt pipeline protocol specification
 
 **Code Examples:**
 - `lib/CLIO/Tools/FileOperations.pm` - Comprehensive tool example

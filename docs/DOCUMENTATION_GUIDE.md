@@ -78,7 +78,7 @@ my $config = CLIO::Core::Config->new();
 ```json
 {
   "provider": "minimax",
-  "model": "minimax-m2.7"
+  "model": "minimax/MiniMax-M3"
 }
 ```
 ````
@@ -237,7 +237,7 @@ Output:
 ```text
 API Configuration:
   Provider: minimax
-  Model: minimax-m2.7
+  Model: minimax/MiniMax-M3
 ```
 
 ---
@@ -378,7 +378,7 @@ You should see detailed logs:
 ```text
 [DEBUG][Config] Loading configuration from ~/.clio/config.json
 [DEBUG][Config] Provider: github_copilot
-[DEBUG][APIManager] Initializing with model minimax-m2.7
+[DEBUG][APIManager] Initializing with model minimax/MiniMax-M3
 ```
 
 ---

@@ -82,6 +82,21 @@ Supported formats: `http://`, `https://`, `socks5://`, `socks5h://`, `socks4://`
 
 ---
 
+## Unified Model Capability Data
+
+CLIO maintains unified model capability data in JSON files for consistent, accurate model metadata across all providers:
+
+| File | Purpose |
+|------|---------|
+| `lib/CLIO/Core/model-data/models.json` | Primary model capability database |
+| `lib/CLIO/Core/model-data/provider-defaults.json` | Provider fallback defaults |
+| `lib/CLIO/Core/model-data/heuristics.json` | Pattern-based fallback rules |
+| `lib/CLIO/Core/model-data/provider-mapping.json` | Provider-to-model ID mappings |
+
+This data powers `/api models` display, context window calculations, and automatic reasoning/thinking parameter injection. See [FEATURES.md](FEATURES.md#model-capabilities) for details.
+
+---
+
 ## Cloud Providers
 
 ### GitHub Copilot
@@ -220,7 +235,13 @@ clio --new
 /config save
 ```
 
-**Available model families:** DeepSeek Coder, DeepSeek Chat, DeepSeek Reasoner. Use `/api models` for the current list.
+**Available model families:** DeepSeek Coder, DeepSeek Chat, DeepSeek Reasoner (V4 series). Use `/api models` for the current list.
+
+**Concurrency Limits:** DeepSeek uses hard concurrency limits (not RPM) per their docs:
+- `deepseek-v4-pro`: 500 concurrent connections per account
+- `deepseek-v4-flash`: 2500 concurrent connections per account
+
+CLIO configures these via `model_concurrency` in Providers.pm and applies them at APIManager startup.
 
 ---
 
@@ -248,6 +269,8 @@ Models use the `provider/model` format:
 /api set model openai/<model-name>
 /api set model deepseek/<model-name>
 ```
+
+**Reasoning Support:** OpenRouter returns reasoning metadata that CLIO parses into standard capability format. Use `/api set thinking_effort low|medium|high` to control reasoning effort.
 
 ---
 
@@ -311,7 +334,7 @@ clio --new
 
 The only difference between `minimax` and `minimax_token` is the API endpoint.
 
-**Available model families:** MiniMax M2 series. Use `/api models` for the current list.
+**Available model families:** MiniMax M3 series. Use `/api models` for the current list.
 
 **Sampling defaults:** CLIO automatically applies MiniMax's recommended sampling parameters (`temperature=1.0`, `top_p=0.95`, `top_k=40`) when using this provider. These can be overridden per-session or globally:
 
@@ -320,7 +343,7 @@ The only difference between `minimax` and `minimax_token` is the API endpoint.
 /api set temperature reset      # Revert to MiniMax default (1.0)
 ```
 
-**Reasoning:** MiniMax M2 supports interleaved thinking natively. Enable display with `/api set thinking on` and control depth with `/api set thinking_effort low|medium|high`.
+**Reasoning:** MiniMax M3 supports interleaved thinking natively. Enable display with `/api set thinking on` and control depth with `/api set thinking_effort low|medium|high`. The `thinking.type` parameter is automatically injected based on model capabilities.
 
 **Check Quota (Token Plan only):**
 ```bash
@@ -374,7 +397,7 @@ clio --new
 
 **OCR:** GLM-OCR ($0.03 / 1M tokens)
 
-**Reasoning:** GLM-4.5+ supports chain-of-thought reasoning. Enable with `/api set thinking on` and control depth with `/api set thinking_effort low|medium|high`.
+**Reasoning:** GLM-4.5+ supports chain-of-thought reasoning. Enable with `/api set thinking on` and control depth with `/api set thinking_effort low|medium|high`. The `thinking.type` parameter is automatically injected based on model capabilities.
 
 **Rate Limits:** Z.AI uses numeric error codes in JSON response body (no standard headers):
 - `1302` - Concurrency limit
@@ -443,9 +466,16 @@ clio --new
 **Example models:**
 | Model | Context | Best For |
 |-------|---------|----------|
-| nvidia/nemotron-3-ultra-550b-a55b | 128K | Flagship reasoning |
+| nvidia/nemotron-4-ultra-253b | 128K | Flagship reasoning |
 | nvidia/nemotron-3-ultra-550b-a55b | 128K | Coding, analysis |
 | meta/llama-3.1-405b-instruct | 128K | General purpose |
+
+**Rate Limits:** NVIDIA NIM uses worker concurrency limits (no standard headers). SSE error chunks indicate capacity issues:
+```json
+{"error": {"code": 500, "message": "ResourceExhausted: Worker local total request limit reached (74/32)"}}
+```
+
+CLIO surfaces these as retryable rate_limit errors with 30s retry delay.
 
 ---
 
@@ -487,6 +517,8 @@ No API key needed - connects to `http://localhost:8080` by default.
 ```bash
 /api set api_base http://localhost:9000/v1/chat/completions
 ```
+
+**Capability Detection:** CLIO can auto-detect model capabilities via `/props` endpoint for runtime context window.
 
 ---
 
@@ -605,12 +637,12 @@ Configuration precedence: `/api set` commands > environment variables > defaults
 
 ## Provider Comparison
 
-| Feature | GitHub Copilot | Anthropic | OpenAI | Google | DeepSeek | NVIDIA NIM | Local |
-|---------|---------------|----------|-------|--------|----------|------------|-------|
-| **Setup Ease** | OAuth login | API key | API key | API key | API key | API key | Run server |
-| **Model Variety** | Multiple | Claude family | GPT + o-series | Gemini family | DeepSeek family | Nemotron, Llama | Any GGUF |
-| **Privacy** | Cloud | Cloud | Cloud | Cloud | Cloud | Cloud | Local |
-| **Offline** | No | No | No | No | No | No | Yes |
+| Feature | GitHub Copilot | Anthropic | OpenAI | Google | DeepSeek | NVIDIA NIM | MiniMax | Local |
+|---------|---------------|----------|-------|--------|----------|------------|---------|-------|
+| **Setup Ease** | OAuth login | API key | API key | API key | API key | API key | API key | Run server |
+| **Model Variety** | Multiple | Claude family | GPT + o-series | Gemini family | DeepSeek family | Nemotron, Llama | MiniMax M3 | Any GGUF |
+| **Privacy** | Cloud | Cloud | Cloud | Cloud | Cloud | Cloud | Cloud | Local |
+| **Offline** | No | No | No | No | No | No | No | Yes |
 
 ---
 
@@ -619,3 +651,4 @@ Configuration precedence: `/api set` commands > environment variables > defaults
 - [Installation Guide](INSTALLATION.md) - Getting CLIO installed
 - [User Guide](USER_GUIDE.md) - Complete CLIO usage reference
 - [Features](FEATURES.md) - All CLIO capabilities
+- [Model Capabilities](FEATURES.md#model-capabilities) - Unified capability system

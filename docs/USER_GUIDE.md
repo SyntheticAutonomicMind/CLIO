@@ -84,7 +84,6 @@ That means CLIO can help with real development work, not just produce text.
 - ANSI-compatible terminal emulator
 
 **AI Provider Requirements:**
-- OpenRouter API key with MiniMax (recommended), OR
 - GitHub Copilot subscription (supports GPT, Claude, and more), OR
 - API key from any supported provider: OpenAI, Anthropic, Google Gemini, DeepSeek, MiniMax, OR
 - Local model server: llama.cpp, LM Studio, or SAM (no API key needed)
@@ -128,57 +127,32 @@ USAGE:
 
 ### Configuration
 
-**GitHub Copilot Setup** (Default - Recommended)
-
-No environment variables needed! Just start CLIO and login:
+Connect CLIO to a provider:
 
 ```bash
 ./clio
-: /api login
-# Follow browser prompts to authorize with GitHub
-# Tokens are saved automatically to ~/.clio/github_tokens.json
+: /api set provider <provider-name>
+: /api set key <your-api-key>    # Key-based providers
+# or
+: /api login                      # OAuth-based providers (browser auth)
+: /config save
 ```
 
-**Want More AI Models?**
+Run `/api models` after configuring to see available models.
 
-The default OAuth authentication provides access to dozens of models. For additional preview models, use a Personal Access Token (PAT):
+See [PROVIDERS.md](PROVIDERS.md) for setup details for each provider.
 
-1. **Create a PAT at GitHub:**
-   - Go to https://github.com/settings/tokens
-   - Click "Generate new token (classic)"
-   - Select scopes: `copilot` and `manage_billing:copilot`
-   - Generate and copy the token
+**Session-Specific Settings**
 
-2. **Set the PAT in CLIO:**
-   ```bash
-   ./clio
-   : /api set github_pat ghp_your_token_here
-   ```
-
-3. **Verify you have more models:**
-   ```bash
-   : /api models
-   # Should show additional preview and premium models
-   ```
-
-**Note:** PAT authentication takes priority over OAuth when both are configured. To revert to OAuth, clear the PAT with `/api set github_pat ""`.
-
-**Alternative Provider Setup**
-
-Use `/api` commands interactively:
+Use `/api` commands interactively. All save globally by default, or use `--session` for the current session only:
 
 ```bash
-./clio
-: /api set provider openai
-: /api set key YOUR_OPENAI_API_KEY
+: /api set provider <provider-name>    # Global
+: /api set key <your-api-key>
 : /api set model <model-name>
-```
 
-All `/api set` commands save globally by default. To set a value for the current session only, add `--session`:
-
-```bash
-: /api set model gpt-4.1 --session       # Only affects this session
-: /api set provider llama.cpp --session   # Only affects this session
+: /api set provider <provider-name> --session   # Current session only
+: /api set model <model-name> --session
 ```
 
 Use `/api show` to see your current configuration and whether any values are session overrides.
@@ -1146,7 +1120,7 @@ YOU: /subagent spawn "refactor auth module" --persistent
 
 CLIO: [OK] Spawned sub-agent: agent-1 (PERSISTENT MODE)
       Task: refactor auth module
-      Model: minimax-m2.7
+      Model: minimax/MiniMax-M3
 
 [Agent works autonomously... then has a question]
 
@@ -1174,11 +1148,11 @@ CLIO: ────────────────────────�
 **Example Multi-Agent Workflow:**
 
 ```text
-YOU: /subagent spawn "analyze lib/Module/A.pm" --model minimax/minimax-m2.7
+YOU: /subagent spawn "analyze lib/Module/A.pm" --model minimax/MiniMax-M3
 
 CLIO: [OK] Spawned sub-agent: agent-1
       Task: analyze lib/Module/A.pm and document key patterns
-      Model: minimax/minimax-m2.7
+      Model: minimax/MiniMax-M3
       
       Use /subagent list to monitor progress
 

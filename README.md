@@ -2,7 +2,7 @@
 
 **A terminal-native AI coding tool that reads your code, edits files, runs commands, uses git, and works through tasks with you.**
 
-I built CLIO for myself. I spend more time in terminal sessions than I do using GUIs, and I wanted a terminal-first AI development tool that worked the way I work. It didn't really exist, so I built it. Starting with version 20260119.1, CLIO has been building itself - all development on SAM, CLIO, and ALICE is done through pair programming with AI agents using CLIO.
+I built CLIO for myself. I spend more time in terminal sessions than I do using GUIs, and I wanted a terminal-first AI development tool that worked the way I work. It didn't really exist, so I built it. Since early 2026, CLIO has been building itself - all development on SAM, CLIO, and ALICE is done through pair programming with AI agents using CLIO.
 
 [![GPL-3.0 License](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE) [![Perl 5.32+](https://img.shields.io/badge/perl-5.32%2B-blue)](docs/DEPENDENCIES.md) [![Discussions](https://img.shields.io/badge/discussions-join-brightgreen)](https://github.com/orgs/SyntheticAutonomicMind/discussions)
 
@@ -71,7 +71,7 @@ CLIO ships with 15 provider configurations. All API providers are OpenAI-compati
 
 | Provider | Auth | Best For |
 |----------|------|----------|
-| **GitHub Copilot** | OAuth | Multiple models (GPT, Claude, MiniMax), easiest setup |
+| **GitHub Copilot** | OAuth | Multiple models (GPT, Claude, MiniMax) |
 | **Anthropic** | API Key | Claude models, extended thinking, native API |
 | **OpenAI** | API Key | GPT and o-series models |
 | **Google Gemini** | API Key | Large context (1M+), multimodal, native API |
@@ -155,7 +155,7 @@ For detailed options, see [docs/INSTALLATION.md](docs/INSTALLATION.md).
 
 ### Configure AI Provider
 
-**GitHub Copilot** (Recommended - no config needed)
+**GitHub Copilot**
 ```bash
 ./clio
 : /api login
@@ -169,6 +169,8 @@ For detailed options, see [docs/INSTALLATION.md](docs/INSTALLATION.md).
 : /api set key YOUR_API_KEY
 : /config save
 ```
+
+Run `/api models` after configuring a provider to see available models.
 
 ### First Prompt
 
@@ -192,6 +194,7 @@ Find the bug causing the login endpoint to return 500 when the session is expire
 ./clio --debug        # Debug mode
 ./clio --enable file_operations  # Restrict to specific tools
 ./clio --disable web_operations  # Block specific tools
+./clio --sandbox --new  # Sandbox mode (restricts file access)
 ```
 
 ---

@@ -63,7 +63,7 @@ CLIO's `--input --exit` mode enables integration into any CI/CD pipeline, shell 
 clio --input "analyze this codebase for security issues" --exit
 
 # With a specific model
-clio --model minimax-m2.7 --input "review the latest commit" --exit
+clio --model minimax/MiniMax-M3 --input "review the latest commit" --exit
 
 # In sandbox mode (restricts file access)
 clio --sandbox --input "check for broken tests" --exit

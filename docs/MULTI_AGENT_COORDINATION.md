@@ -76,48 +76,48 @@ Puppeteer scans for child projects in two ways:
 
 The scan runs at session start (via PromptManager) and populates the agent's system prompt with a list of available projects and their capabilities.
 
-### Example Topology
+### Current CLIO Topology
 
 ```mermaid
 graph TD
-    Root["ecosystem/"]
+    Root["CLIO/"]
     Root --> Clio[".clio/<br/>Primary project config"]
     Clio --> ClioInst["instructions.md"]
     Clio --> ClioLtm["ltm.json"]
-    Root --> Gitmodules[".gitmodules<br/>Submodule definitions"]
-    Root --> SAM["SAM/<br/>Child project (submodule)"]
-    SAM --> SClio[".clio/"]
-    SClio --> SInst["instructions.md<br/>SAM-specific dev instructions"]
-    SClio --> SLtm["ltm.json<br/>SAM-specific learned patterns"]
-    Root --> ALICE["ALICE/<br/>Child project (submodule)"]
-    ALICE --> AClio[".clio/"]
-    AClio --> AInst["instructions.md"]
-    AClio --> ALtm["ltm.json"]
-    Root --> Utils["utils/<br/>Regular directory (no .clio/)"]
+    Root --> Lib["lib/"]
+    Lib --> LClio[".clio/"]
+    LClio --> LInst["instructions.md<br/>lib-specific dev instructions"]
+    LClio --> LLtm["ltm.json<br/>lib-specific learned patterns"]
+    Root --> Scratch["scratch/<br/>Working docs (gitignored)"]
+    Scratch --> SClio[".clio/"]
+    SClio --> SInst["instructions.md"]
+    SClio --> SLtm["ltm.json"]
+    Root --> Scripts["scripts/"]
+    Scripts --> ScClio[".clio/"]
+    ScClio --> ScInst["instructions.md"]
+    ScClio --> ScLtm["ltm.json"]
 
     style Root fill:#e1f5ff
     style Clio fill:#fff3e0
-    style SAM fill:#f3e5f5
-    style ALICE fill:#e8f5e9
-    style Utils fill:#fce4ec
+    style Lib fill:#f3e5f5
+    style Scratch fill:#e8f5e9
+    style Scripts fill:#fce4ec
 ```
 
 The primary agent's system prompt automatically includes:
 
 ```text
-```
 ## Puppeteer Topology
 
-This project manages 2 child project(s):
+This project manages 3 child project(s):
 
-- **ALICE** (ALICE) [LTM, instructions, submodule]
-- **SAM** (SAM) [LTM, instructions, submodule]
+- **lib** (lib)
+- **scratch** (scratch) [LTM]
+- **scripts** (scripts)
 
 To delegate work to a project, spawn a sub-agent with working_dir:
-agent_operations(operation: "spawn", task: "...", working_dir: "./SAM")
+agent_operations(operation: "spawn", task: "...", working_dir: "./ProjectName")
 The child agent will load that project's .clio/ context (LTM, instructions, memory).
-```text
-
 ```
 ### Spawning Project-Scoped Agents
 
@@ -125,7 +125,7 @@ There are three ways to delegate work to a child project:
 
 **Via `/subagent` command with `--project`:**
 ```bash
-/subagent spawn "run tests and fix failures" --project SAM
+/subagent spawn "run tests and fix failures" --project lib
 ```
 
 The `--project` flag resolves the project name through Puppeteer's topology, finds the absolute path, and sets the working directory.
@@ -142,7 +142,7 @@ The `--dir` flag works with any directory, not just detected projects. This is u
 {
   "operation": "spawn",
   "task": "fix failing integration tests",
-  "working_dir": "./SAM"
+  "working_dir": "./lib"
 }
 ```
 
@@ -171,8 +171,9 @@ Shows all detected child projects with their capabilities:
   Puppeteer Topology
 
   Project        Path       Source      LTM  Instructions
-  ALICE          ./ALICE    submodule    ✓       ✓
-  SAM        ./SAM  submodule    ✓       ✓
+  lib            ./lib      directory           
+  scratch        ./scratch  directory       ✓
+  scripts        ./scripts  directory           
 ```
 
 ---
@@ -185,7 +186,7 @@ When sub-agents (especially project-scoped ones) run inside a session, their sta
 
 ```mermaid
 graph TD
-    CA["Child Agent (SAM/)"]
+    CA["Child Agent (lib/)"]
     Broker["Broker (status_update message)"]
     Primary["Primary CLIO Session"]
     HostApp["Host Application (custom GUI)"]
@@ -217,7 +218,7 @@ Three new OSC event types enable host applications to render full agent hierarch
 
 ```json
 // Agent spawned
-clio:agent:{"action":"spawn","id":"agent-1","task":"fix tests","project":"SAM"}
+clio:agent:{"action":"spawn","id":"agent-1","task":"fix tests","project":"lib"}
 
 // Agent status change (relayed from broker)
 clio:agent:{"action":"status","id":"agent-1","state":"tools","tool":"terminal_operations"}
@@ -226,7 +227,7 @@ clio:agent:{"action":"status","id":"agent-1","state":"tools","tool":"terminal_op
 clio:agent:{"action":"exit","id":"agent-1","exit_code":0}
 
 // Full tree snapshot
-clio:tree:{"primary":{"state":"idle"},"agents":[{"id":"agent-1","task":"fix tests","project":"SAM","state":"tools"}]}
+clio:tree:{"primary":{"state":"idle"},"agents":[{"id":"agent-1","task":"fix tests","project":"lib","state":"tools"}]}
 ```
 
 ### Broker Relay Details
@@ -245,7 +246,7 @@ The relay works through two mechanisms:
 
 - Agent spawns, executes single task, exits
 - Uses `exec` to replace process with full CLIO
-- Default model: `gpt-4.1` (via GitHub Copilot) or `minimax-m2.7` (via MiniMax)
+- Default model: `minimax/MiniMax-M3` (via MiniMax) or `github_copilot` models
 - Iteration limit: 75 (non-interactive default)
 - Good for: Independent parallel tasks
 
@@ -270,10 +271,10 @@ The relay works through two mechanisms:
 /subagent spawn "refactor auth module" --persistent
 
 # Specify model
-/subagent spawn "add tests" --model minimax/minimax-m2.7
+/subagent spawn "add tests" --model minimax/MiniMax-M3
 
 # Project-scoped (Puppeteer)
-/subagent spawn "run tests" --project SAM
+/subagent spawn "run tests" --project lib
 
 # Arbitrary directory
 /subagent spawn "check deps" --dir ../other-project
@@ -607,7 +608,7 @@ perl -I./lib tests/integration/test_collaborative_team.pl
 /subagent projects
 
 # Spawn project-scoped agent
-/subagent spawn "run tests" --project ChildProject
+/subagent spawn "run tests" --project lib
 
 # Check inbox for completion
 /subagent inbox
@@ -752,7 +753,8 @@ sequenceDiagram
 - [REMOTE_EXECUTION.md](REMOTE_EXECUTION.md) - Remote agent execution
 - [USER_GUIDE.md](USER_GUIDE.md) - User documentation
 - [AGENTS.md](../AGENTS.md) - Development reference
+- [PUPPETEER_MODE.md](PUPPETEER_MODE.md) - User-facing Puppeteer guide
 
 ---
 
-*Last updated: 2026-04-14*
+*Last updated: 2026-08-23*

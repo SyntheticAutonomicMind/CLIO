@@ -393,20 +393,16 @@ Or within a conversation:
 
 ### GitHub Copilot Setup
 
-GitHub Copilot is supported as an optional provider. For the recommended option, use OpenRouter with MiniMax:
+GitHub Copilot is supported as an optional provider.
 
-**Recommended: OpenRouter with MiniMax**
-```text
-/api provider openrouter
-/api set key <your-openrouter-key>
-```
-
-**Optional: GitHub Copilot** (requires GitHub Copilot subscription)
+**GitHub Copilot** (requires GitHub Copilot subscription)
 ```text
 /api login
 ```
 
 This opens a browser for GitHub authorization. Once authenticated, tokens are managed automatically - including refresh when they expire.
+
+**Other providers** (MiniMax, OpenRouter, Anthropic, OpenAI, etc.) can be configured with `/api set provider <name>` and `/api set key <key>`. Run `/api models` after configuring a provider to see available models.
 
 ### Model Selection
 
@@ -486,6 +482,54 @@ Supported image formats: PNG, JPEG, GIF, WebP.
 Vision support depends on the model. Most modern models (GPT-4o, Gemini 2.5, Claude 3.5, GLM-5.x) support images. CLIO automatically detects vision capability from the model's metadata and only sends images when the model supports them.
 
 For terminals that support inline images (kitty, iTerm), CLIO can also display images received from the model inline. On other terminals, images are saved to `~/.clio/images/` and the path is shown.
+
+---
+
+## Unified Model Capability System
+
+CLIO maintains unified model capability data in JSON files for consistent, accurate model metadata across all providers.
+
+### Data Files
+
+| File | Purpose |
+|------|---------|
+| `lib/CLIO/Core/model-data/models.json` | Primary model capability database |
+| `lib/CLIO/Core/model-data/provider-defaults.json` | Provider fallback defaults |
+| `lib/CLIO/Core/model-data/heuristics.json` | Pattern-based fallback rules |
+| `lib/CLIO/Core/model-data/provider-mapping.json` | Provider-to-model ID mappings |
+
+### What's Stored
+
+Each model entry includes:
+- `context_window` - Maximum context tokens
+- `max_output_tokens` - Maximum output tokens per request
+- `supports_tools` - Boolean for tool/function calling
+- `supports_streaming` - Boolean for streaming responses
+- `supports_vision` - Boolean for image input
+- `reasoning_mode` - How thinking/reasoning works: `effort`, `enabled`, `adaptive`, or `none`
+
+### How It Works
+
+1. **Primary lookup** - `models.json` provides authoritative capabilities
+2. **Provider API fallback** - If not in models.json, CLIO queries the provider's `/models` endpoint
+3. **Heuristic fallback** - Pattern matching (e.g., "gemma3" → 128K context) via `heuristics.json`
+4. **Provider defaults** - Final fallback via `provider-defaults.json`
+
+### Benefits
+
+- **Consistent `/api models` display** - All models show accurate context/output caps
+- **Automatic reasoning injection** - `thinking.type` / `reasoning_effort` injected based on `reasoning_mode`
+- **Prompt budget calculation** - Uses actual model caps, not percentages
+- **Single source of truth** - Eliminates drift between static maps and reality
+
+### Maintenance
+
+When providers add/remove models:
+1. Update `models.json` and `provider-mapping.json`
+2. Run `perl -I./lib lib/CLIO/Core/ModelDataTester.pm <provider> <model>` to verify
+3. The system automatically falls back to provider API, then heuristics, then defaults
+
+This data powers `/api models` display, context window calculations, and automatic reasoning/thinking parameter injection.
 
 ---
 
@@ -639,26 +683,43 @@ A typical profile includes:
 
 ## 7. Context Management
 
-CLIO manages a limited context window (the amount of conversation the AI can "see" at once). This is critical for long sessions. For the full technical details, see [Memory Architecture](MEMORY.md).
+CLIO manages a limited context window (the amount of conversation the AI can "see" at once) using a **unified drift-aware walk** with the **Cache-Stable Summary Slot (CSSS)** for LCP (Longest Common Prefix) cache stability. For the full technical details, see [Memory Architecture](MEMORY.md) and [Prompt Pipeline Protocol](SPECS/PROMPT_PIPELINE.md).
 
-### Three-Layer Trimming
+### Unified Trim Strategy
 
-1. **Proactive trimming** - Before each API call, CLIO estimates token usage and trims older messages if approaching 75% of the model's context window. This preserves the most recent and most important messages.
+The `MessageValidator` performs a single budget walk before each API call, using a capability-based prompt budget (`context_window - max_output_tokens - estimation_buffer`). The walk proceeds from newest to oldest, preserving messages until the budget is exhausted.
 
-2. **Validation trimming** - Just before sending to the API, messages are validated for token limits with smart unit-based truncation. Dropped messages are compressed into a summary.
+Key parameters:
+- **Safe context threshold:** 68% of the model's max context (proactive trim trigger)
+- **Post-trim floor:** 24,000 tokens minimum kept verbatim after trim
+- **Estimation buffer:** 8,192 + 5% of context (capped at 51,200)
 
-3. **Reactive trimming** - If the API returns a token limit error despite proactive trimming, CLIO progressively trims (50%, then 25%, then minimal) and creates a compressed summary of what was dropped, including the current task state.
+**Tool output reserve optimization:** When the model supports tools AND tools are present in the request, the output reserve is capped at 8,192 tokens instead of the model's full `max_output_tokens` (often 32K+). Tool-calling responses rarely exceed a few hundred tokens; reserving the full output cap wastes prompt budget.
+
+### CSSS (Cache-Stable Summary Slot)
+
+The CSSS locks the summary's token budget across trim cycles to maximize LCP cache hits with local inference providers (llama.cpp).
+
+How it works:
+1. **First trim:** Summary token count becomes the locked slot size (bounded 8K-12K)
+2. **Subsequent trims:** `YaRN::compress_messages` targets the locked slot size
+3. **Proactive growth:** If a single trim drops >1.5x the current slot, the slot grows to absorb more tokens
+4. **Padding:** If summary is smaller than slot, deterministic HTML comment padding fills the gap
+
+This keeps the summary at a stable position in the prompt, so even when it regenerates, only the summary tokens themselves are reprocessed.
 
 ### What Gets Preserved
 
-When trimming is needed, CLIO prioritizes:
-- **System prompt** (always kept)
-- **Most recent user message** (the current task anchor - what you're working on NOW)
-- **Thread summary** (compressed record of dropped messages, preserved across trim cycles)
-- **Recent messages** (most recent context, budget-walked newest to oldest)
-- **Tool call/result pairs** (kept together to avoid orphans)
+When trimming is needed, CLIO prioritizes (in order):
+1. **System prompt** - NEVER trimmed (stable anchor [0])
+2. **Summary (CSSS slot)** - NEVER trimmed (stable anchor [1])
+3. **Context files** - Trimmed with dialog budget walk (stable anchor [2])
+4. **Most recent user message** - The current task anchor (section [6])
+5. **Thread summary** - Compressed record of dropped messages, preserved across trim cycles
+6. **Recent messages** - Most recent context, budget-walked newest to oldest
+7. **Tool call/result pairs** - Kept together to avoid orphans
 
-**Note on task continuity:** CLIO preserves the **most recent** user message as the task anchor, not the session-start message. In long sessions with multiple task transitions, the original session-start message is stale and already captured in the thread summary. Preserving the most recent message keeps the AI focused on what you're working on now.
+The deinterleaved layout puts tool_results at the END specifically so they get dropped before dialog when budget is tight. Tool results are the most expendable - the agent can re-call the tool.
 
 ### Context Recovery
 
@@ -667,11 +728,20 @@ When aggressive trimming occurs, CLIO injects recovery context that includes:
 - The current todo/task state (what the AI was working on)
 - Recent git activity (commits, working tree status)
 
-Context recovery is **seamless** - the AI continues working without announcing that trimming occurred. Thread summaries accumulate across trim cycles, building a running record of the full session history.
+Context recovery is **transparent** - the AI continues working without announcing that trimming occurred. Thread summaries accumulate across trim cycles, building a running record of the full session history.
 
 ### Token Estimation
 
-CLIO estimates token counts using a learned character-to-token ratio that calibrates itself against actual API responses over time.
+CLIO estimates token counts using a learned character-to-token ratio that calibrates itself against actual API responses over time. The `TokenEstimator` module learns the ratio from `usage` fields in API responses and applies it to future estimates.
+
+### Resume Fast Path
+
+The orchestrator captures the end-of-turn API payload (`last_api_payload`) for instant session resume. On resume:
+1. Fresh `user_context` (date/time, working dir) and `user_input` are generated
+2. The rest of the payload (sections [0..4]) is reused byte-identically
+3. This keeps the LCP cache alive across `--resume` - no reprocessing of the stable anchor
+
+If the saved payload is smaller than `MIN_CSSS_SLOT_TOKENS` (8192) and contains a `thread_summary`, the orchestrator falls back to a full history rebuild instead of reusing the truncated payload. This prevents resuming with an empty or near-empty context after aggressive trim.
 
 ---
 

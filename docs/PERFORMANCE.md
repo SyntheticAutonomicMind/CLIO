@@ -70,32 +70,75 @@ Caches are invalidated when the underlying state changes (e.g., theme switch, to
 
 ## Context Window Management
 
-CLIO manages the AI context window automatically with a two-tier trimming system:
+CLIO manages the AI context window automatically using a **unified drift-aware walk** with the **Cache-Stable Summary Slot (CSSS)** for LCP cache stability.
 
-### Proactive Trimming
+### Unified Trim Strategy
 
-The `MessageValidator` trims messages before each API call using a token-budget walk. It walks backward from the newest message, keeping messages until the budget is exhausted. This runs every iteration after the first.
+The `MessageValidator` performs a single budget walk before each API call, using the capability-based prompt budget (`ctx_window - max_output_tokens - estimation_buffer`). The walk proceeds from newest to oldest, preserving messages until the budget is exhausted.
 
-- **Safe context threshold:** 75% of the model's max context (`SAFE_CONTEXT_PERCENT = 0.75`)
-- **Strategy:** Budget walk from newest, preserves most recent user message
-- **Thread summary:** Compressed summary of dropped messages injected as context
+Key parameters:
+- **Safe context threshold:** 68% of the model's max context (proactive trim trigger)
+- **Post-trim floor:** 24,000 tokens minimum kept verbatim after trim
+- **Estimation buffer:** 8,192 + 5% of context (capped at 51,200)
 
-### Reactive Trimming
+### CSSS (Cache-Stable Summary Slot)
 
-If an API call returns `token_limit_exceeded` despite proactive trimming:
+The CSSS locks the summary's token budget across trim cycles to maximize LCP (Longest Common Prefix) cache hits with local inference providers (llama.cpp).
 
-1. **Escalation 1:** Keep messages fitting 50% of max prompt tokens
-2. **Escalation 2:** Aggressive trim with compressed recovery context
-3. **Escalation 3:** Emergency reset to system prompt + last user message
+How it works:
+1. **First trim:** Summary token count becomes the locked slot size (bounded 8K-12K)
+2. **Subsequent trims:** `YaRN::compress_messages` targets the locked slot size
+3. **Proactive growth:** If a single trim drops >1.5x the current slot, the slot grows to absorb more tokens
+4. **Padding:** If summary is smaller than slot, deterministic HTML comment padding fills the gap
 
-Each escalation injects a thread summary and recovery context (git state, todo state) so the agent can continue without interruption.
+This keeps the summary at a stable position in the prompt, so even when it regenerates, only the summary tokens themselves are reprocessed.
 
-### Key Design Decisions
+### Prompt Budget Calculation
 
-- The **most recent** user message is always preserved (not the first)
-- Thread summaries extract file paths, git commits, and collaboration decisions
-- Recovery injection includes git recent commits and working tree status
-- The agent is instructed to continue without announcing recovery
+The prompt budget is computed per-request using `TokenEstimator::compute_prompt_budget($caps, tools => $tools)`:
+
+```perl
+$budget = $context_window - $max_output_tokens - $estimation_buffer
+```
+
+Where `estimation_buffer = 8192 + int($context_window * 0.05)` capped at 51200.
+
+**Tool output reserve optimization:** When the model supports tools AND tools are present in the request, the output reserve is capped at `DEFAULT_TOOL_OUTPUT_RESERVE` (8192 tokens) instead of the model's full `max_output_tokens` (often 32K+). Tool-calling responses rarely exceed a few hundred tokens; reserving the full output cap wastes ~24K of prompt budget.
+
+### What Gets Preserved
+
+When trimming is needed, CLIO prioritizes (in order):
+1. **System prompt** - NEVER trimmed (stable anchor [0])
+2. **Summary (CSSS slot)** - NEVER trimmed (stable anchor [1])
+3. **Context files** - Trimmed with dialog budget walk (stable anchor [2])
+4. **Most recent user message** - The current task anchor (section [6])
+5. **Thread summary** - Compressed record of dropped messages, preserved across trim cycles
+6. **Recent messages** - Most recent context, budget-walked newest to oldest
+7. **Tool call/result pairs** - Kept together to avoid orphans
+
+The deinterleaved layout puts tool_results at the END specifically so they get dropped before dialog when budget is tight. Tool results are the most expendable - the agent can re-call the tool.
+
+### Context Recovery
+
+When aggressive trimming occurs, CLIO injects recovery context that includes:
+- A thread summary of dropped messages (user requests, tool operations, key events)
+- The current todo/task state (what the AI was working on)
+- Recent git activity (commits, working tree status)
+
+Context recovery is **transparent** - the AI continues working without announcing that trimming occurred. Thread summaries accumulate across trim cycles, building a running record of the full session history.
+
+### Token Estimation
+
+CLIO estimates token counts using a learned character-to-token ratio that calibrates itself against actual API responses over time. The `TokenEstimator` module learns the ratio from `usage` fields in API responses and applies it to future estimates.
+
+### Resume Fast Path
+
+The orchestrator captures the end-of-turn API payload (`last_api_payload`) for instant session resume. On resume:
+1. Fresh `user_context` (date/time, working dir) and `user_input` are generated
+2. The rest of the payload (sections [0..4]) is reused byte-identically
+3. This keeps the LCP cache alive across `--resume` - no reprocessing of the stable anchor
+
+If the saved payload is smaller than `MIN_CSSS_SLOT_TOKENS` (8192) and contains a `thread_summary`, the orchestrator falls back to a full history rebuild instead of reusing the truncated payload. This prevents resuming with an empty or near-empty context after aggressive trim.
 
 ## Memory Usage
 

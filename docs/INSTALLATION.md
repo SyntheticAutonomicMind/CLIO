@@ -79,9 +79,9 @@ CLIO uses only **core Perl modules** - no CPAN dependencies:
 You need at least one AI provider. See [PROVIDERS.md](PROVIDERS.md) for the full list.
 
 **Common choices:**
-- **GitHub Copilot** - easiest starting point, access to multiple models
+- **GitHub Copilot** - OAuth browser login, access to multiple models
 - **Local models** - llama.cpp, LM Studio, or SAM
-- **API providers** - OpenAI, Google, DeepSeek, OpenRouter, MiniMax, Z.AI
+- **API providers** - OpenAI, Google, DeepSeek, OpenRouter, MiniMax, Z.AI, NVIDIA
 
 ---
 
@@ -177,23 +177,22 @@ After installation, start CLIO:
 clio --new
 ```
 
-### GitHub Copilot (Recommended)
+### Connect a Provider
 
-This is the easiest way to get started:
-
-```bash
-/api set provider github_copilot
-/api login
-# Browser opens -> authorize -> done
-```
-
-### OpenAI / Other API Providers
+Pick a provider from [`docs/PROVIDERS.md`](docs/PROVIDERS.md) and connect it:
 
 ```bash
-/api set provider openai
-/api set key sk-...your-key...
+clio --new
+/api set provider <provider-name>
+/api set key <your-api-key>      # Key-based providers
+# or
+/api login                       # OAuth-based providers (browser auth)
 /config save
 ```
+
+Run `/api models` after configuring to see available models.
+
+For local providers (llama.cpp, LM Studio, SAM), no API key is needed - just point CLIO at your server endpoint.
 
 ### Local Models (llama.cpp, LM Studio)
 
@@ -337,4 +336,3 @@ Use WSL for the smoothest experience. Native Windows support is improving, but W
 - [Dependencies](DEPENDENCIES.md) - Required and optional dependencies
 - [User Guide](USER_GUIDE.md) - Getting started guide
 - [Providers](PROVIDERS.md) - API provider setup
-

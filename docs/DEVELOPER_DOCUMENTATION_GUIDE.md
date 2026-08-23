@@ -199,13 +199,13 @@ $self->{rate_limit_until} = time() + $retry_after;
 
 ### Explain WHY, Not WHAT
 
-❌ **Don't:**
+[FAIL] **Don't:**
 ```perl
 # Set the provider to google
 $config->set('provider', 'google');
 ```
 
-✅ **Do:**
+[OK] **Do:**
 ```perl
 # Google Gemini uses a different endpoint structure and requires
 # cross-provider routing when auth is via github_copilot
@@ -245,13 +245,13 @@ if ($command =~ /^\[([A-Z_]+):(.+)\]$/) {
 
 ### Variable Names Should Be Self-Documenting
 
-❌ **Don't:**
+[FAIL] **Don't:**
 ```perl
 my $x = $session->{last_github_copilot_response_id};  # Response ID
 my $t = time();  # Current timestamp
 ```
 
-✅ **Do:**
+[OK] **Do:**
 ```perl
 my $response_id = $session->{last_github_copilot_response_id};
 my $current_time = time();
@@ -581,13 +581,13 @@ print STDERR "[TRACE][ModuleName] Detail: $detail\n" if should_log('DEBUG');
 
 ### Helpful Debug Messages
 
-❌ **Don't:**
+[FAIL] **Don't:**
 ```perl
 print STDERR "Error\n";
 print STDERR "Processing...\n";
 ```
 
-✅ **Do:**
+[OK] **Do:**
 ```perl
 print STDERR "[ERROR][APIManager] Request failed: $error\n";
 print STDERR "[DEBUG][APIManager] Sending request to $endpoint with model $model\n";
@@ -616,15 +616,15 @@ Error messages shown to users should be:
 
 **Clear and actionable:**
 
-❌ **Don't:** "Error: 401"
+[FAIL] **Don't:** "Error: 401"
 
-✅ **Do:** "Authentication failed. Check your API key with `/api key YOUR_KEY`"
+[OK] **Do:** "Authentication failed. Check your API key with `/api key YOUR_KEY`"
 
 **Specific about the problem:**
 
-❌ **Don't:** "Configuration error"
+[FAIL] **Don't:** "Configuration error"
 
-✅ **Do:** "Provider 'google' requires an API key. Set it with `/api key YOUR_KEY`"
+[OK] **Do:** "Provider 'google' requires an API key. Set it with `/api key YOUR_KEY`"
 
 **Include next steps:**
 
@@ -670,9 +670,9 @@ type(scope): brief description
 [How you fixed or built it]
 
 **Testing:**
-✅ Syntax: PASS (perl -c file.pm)
-✅ Manual: [what you tested]
-✅ Edge cases: [what you verified]
+[OK] Syntax: PASS (perl -c file.pm)
+[OK] Manual: [what you tested]
+[OK] Edge cases: [what you verified]
 ```
 
 **Types:**
@@ -702,9 +702,9 @@ Created CLIO::Providers.pm with all provider definitions in one place.
 Refactored Config.pm to use Providers for all provider data.
 
 **Testing:**
-✅ Syntax: PASS (perl -c lib/CLIO/Providers.pm)
-✅ Manual: Tested provider switching, config save/load
-✅ Edge cases: Invalid provider names, missing provider data
+[OK] Syntax: PASS (perl -c lib/CLIO/Providers.pm)
+[OK] Manual: Tested provider switching, config save/load
+[OK] Edge cases: Invalid provider names, missing provider data
 ```
 
 ```text
@@ -719,10 +719,36 @@ Refactored to use writeline() like other commands (/help, etc.).
 Added interactive mode detection to skip pagination in pipes.
 
 **Testing:**
-✅ Syntax: PASS (perl -c lib/CLIO/UI/Chat.pm)
-✅ Manual: Tested /models in terminal and pipe mode
-✅ Edge cases: Long model lists, terminal resize
+[OK] Syntax: PASS (perl -c lib/CLIO/UI/Chat.pm)
+[OK] Manual: Tested /models in terminal and pipe mode
+[OK] Edge cases: Long model lists, terminal resize
 ```
+
+---------------------------------------------------
+
+## Module Naming Conventions
+
+| Prefix | Purpose | Examples |
+|--------|---------|----------|
+| `CLIO::Core::` | System core | APIManager, WorkflowOrchestrator, ToolExecutor, Config, PromptManager, ModelCapabilitiesManager, ModelDataLoader |
+| `CLIO::Core::API::` | APIManager sub-modules | ResponseHandler, MessageValidator, ErrorHandler, PayloadSanitizer |
+| `CLIO::Tools::` | AI-callable tools | FileOperations, VersionControl, TerminalOperations, MemoryOperations, Interact, ApplyPatch, CodeIntelligence, RemoteExecution, SubAgentOperations, TodoList, WebOperations, SkillOperations, MCPBridge, PluginBridge, Registry, Tool |
+| `CLIO::UI::` | Terminal interface | Chat, Markdown, Theme, ANSI, CommandHandler, DiffRenderer, Display, HostProtocol, Multiplexer, PaginationManager, ProgressSpinner, StreamingController, Terminal, ToolOutputFormatter |
+| `CLIO::UI::Commands::` | Slash command handlers | AI, API, Billing, Config, Context, Device, File, Git, Log, Memory, Mux, Profile, Project, Prompt, Session, Skills, Spec, Stats, SubAgent, System, Todo, Update |
+| `CLIO::Session::` | Session management | Manager, State, FileVault, Lock, Export, TodoStore, ToolResultStore |
+| `CLIO::Memory::` | Context/memory | ShortTerm, LongTerm, YaRN, TokenEstimator |
+| `CLIO::Providers::` | Provider registry + native providers | Anthropic, Google, NVIDIA, Base (15 providers configured in Providers.pm) |
+| `CLIO::Coordination::` | Multi-agent coordination | Broker, Client, SubAgent |
+| `CLIO::MCP::` | Model Context Protocol | Manager, Client, Transport::Stdio, Transport::HTTP, Auth::OAuth |
+| `CLIO::Profile::` | User profiling | Analyzer, Manager |
+| `CLIO::Protocols::` | Complex workflows | Puppeteer |
+| `CLIO::Security::` | Auth/authz | Auth, Authz, AuthorizationRelay, CommandAnalyzer, InvisibleCharFilter, PathAuthorizer, SecretRedactor |
+| `CLIO::Logging::` | Structured logging | Logger, ProcessStats, ToolLogger |
+| `CLIO::Compat::` | Compatibility | Terminal (ReadKey, ReadMode), HTTP |
+| `CLIO::Util::` | Utilities | PathResolver, TextSanitizer, JSONRepair, JSON, YAML, ImageAttachment, ImageDisplay, ConfigPath, AtomicWrite, RateLimit, GitIgnore, AnthropicXMLParser, CABundle, Curl, InputHelpers, Proxy, UUID |
+| `CLIO::Spec::` | OpenSpec integration | Manager (spec lifecycle management) |
+| `CLIO::Code::` | Code intelligence | TreeSitter |
+| `CLIO::Test::` | Test infrastructure | MockAPI |
 
 ---------------------------------------------------
 

@@ -110,7 +110,6 @@ If you want instructions that work across multiple AI tools:
 cat > AGENTS.md << 'EOF'
 # AGENTS.md
 
-```
 ## Setup Commands
 
 - Install: `pip install -r requirements.txt`
@@ -122,9 +121,8 @@ cat > AGENTS.md << 'EOF'
 - Follow PEP 8
 - Use type hints
 EOF
-```text
-
 ```
+
 ### Option 2: Use Both (Recommended for CLIO Power Users)
 
 If you want both universal instructions AND CLIO-specific behavior:
@@ -134,7 +132,6 @@ If you want both universal instructions AND CLIO-specific behavior:
 cat > AGENTS.md << 'EOF'
 # AGENTS.md
 
-```
 ## Project Overview
 ...
 EOF
@@ -147,9 +144,8 @@ cat > .clio/instructions.md << 'EOF'
 ## Methodology
 This project uses The Unbroken Method...
 EOF
-```text
-
 ```
+
 ### Option 3: Use .clio/instructions.md Only
 
 If you only use CLIO (not other AI tools):
@@ -300,9 +296,9 @@ This means:
 ### 2. Per-Session Application
 
 The instructions apply **during the session**, not permanently:
-- Start new session in project directory → instructions loaded automatically
-- Start session in different directory → different instructions (or none)
-- Resume session → instructions from when session was created
+- Start new session in project directory -> instructions loaded automatically
+- Start session in different directory -> different instructions (or none)
+- Resume session -> instructions from when session was created
 
 ### 3. Opt-Out
 
@@ -319,7 +315,7 @@ clio --incognito --new
 
 ## Best Practices
 
-### ✓ DO:
+### DO:
 - **Keep instructions focused** - 1-3 key points per section
 - **Use examples** - Show what you want, not just describe it
 - **Reference existing files** - "See lib/CLIO/Module.pm for patterns"
@@ -327,7 +323,7 @@ clio --incognito --new
 - **Update instructions** - As project evolves, keep instructions current
 - **Make instructions searchable** - Use clear section headers
 
-### ✗ DON'T:
+### DON'T:
 - **Repeat system prompt** - CLIO already knows about file operations, git, etc.
 - **Make instructions too long** - Keep under 1000 words if possible
 - **Use unsupported syntax** - Plain markdown only, no special formats
@@ -426,6 +422,16 @@ Follow The Unbroken Method (see ai-assisted/THE_UNBROKEN_METHOD.md):
 6. Structured Handoffs - Pass context to next session
 7. Learning from Failure - Document lessons learned
 
+## Session Start Protocol
+
+Run this BEFORE responding to any user request, every session:
+
+1. `git status --short` - see what is already modified in the working tree.
+2. For any unstaged or staged files, `memory_operations(operation: "recall_sessions", query: "FILENAME")` to learn what was being done with them.
+3. If a file is modified in the tree and you do not know why, it is part of this session's work until proven otherwise. Investigate before treating anything as out of scope.
+
+**The ownership rule.** There is no "out of scope" for files that were already modified when the session opened. Unbroken Method Pillar 2 ("No out of scope") applies to all code in the tree, not just code the user explicitly mentions. Never label in-tree work as "pre-existing" or "not my responsibility" without explicit confirmation from the user and a concrete handoff plan.
+
 ## Code Standards
 
 - Perl 5.32+ (use strict, warnings)
@@ -440,6 +446,13 @@ Follow The Unbroken Method (see ai-assisted/THE_UNBROKEN_METHOD.md):
 - Syntax check: perl -c lib/CLIO/Module.pm
 - Run tests: ./tests/run_all_tests.pl
 - All must pass before committing
+
+## Prompt Pipeline Protocol
+
+Every API request follows a seven-slot layout for LCP cache stability:
+[0] system_prompt | [1] summary (CSSS) | [2] context_files | [3] dialog | [4] tool_results | [5] user_context | [6] user_input
+
+See docs/SPECS/PROMPT_PIPELINE.md for full specification.
 ```
 
 ---------------------------------------------------
@@ -491,16 +504,29 @@ Use memory_operations to:
 - Share knowledge with other agents
 ```
 
+### With Session Goals
+
+Track cross-session objectives:
+
+```markdown
+## Session Goals
+
+Use memory_operations to manage session goals:
+- Store: memory_operations(operation: "store", key: "session_goals", content: '[{"id":1,"title":"Fix auth bug","status":"active"}]')
+- Retrieve: memory_operations(operation: "retrieve", key: "session_goals")
+- Goals appear in <sessionGoals> tags in user context
+```
+
 ---------------------------------------------------
 
 ## Summary
 
 Custom instructions let you:
-- ✓ Enforce project-specific standards automatically
-- ✓ Pass knowledge to AI without repeating it every session
-- ✓ Adapt CLIO's behavior to your project's needs
-- ✓ Enable team consistency when working with multiple agents
-- ✓ Document methodology and best practices in one place
+-  Enforce project-specific standards automatically
+-  Pass knowledge to AI without repeating it every session
+-  Adapt CLIO's behavior to your project's needs
+-  Enable team consistency when working with multiple agents
+-  Document methodology and best practices in one place
 
 **Get started:** Create `.clio/instructions.md` in your project and start customizing!
 

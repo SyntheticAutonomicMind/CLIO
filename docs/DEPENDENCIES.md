@@ -83,6 +83,8 @@ No installation needed - these ship with Perl 5.32+:
 | Module | Purpose |
 |--------|---------|
 | `JSON::PP` | JSON parsing (auto-upgraded to JSON::XS if available) |
+| `HTTP::Tiny` | HTTP client for API requests |
+| `MIME::Base64` | Base64 encoding/decoding |
 | `File::*` | File operations (Spec, Path, Basename, Copy, Find, Temp) |
 | `Time::HiRes`, `Time::Piece` | Time operations |
 | `Digest::MD5` | Checksums |
@@ -183,4 +185,6 @@ xcode-select --install # macOS
 - [Installation Guide](INSTALLATION.md) - Installation instructions
 - [Developer Guide](DEVELOPER_GUIDE.md) - Development setup
 - [Architecture](ARCHITECTURE.md) - System design
-
+- [MCP](MCP.md) - Model Context Protocol setup
+- [Remote Execution](REMOTE_EXECUTION.md) - Distributed AI workflows
+- [Sandbox](SANDBOX.md) - Container isolation

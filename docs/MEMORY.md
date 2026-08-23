@@ -46,7 +46,7 @@ Short-Term Memory is the sliding window of recent messages that forms the AI's w
 
 - **Fixed-size FIFO** - Oldest messages are dropped first when the window is full
 - **Defensive normalization** - Handles legacy formats, strips conversation markup, validates message structure
-- **Embedded in session files** - STM state is saved as part of the session JSON, allowing seamless session resume
+- **Embedded in session files** - STM state is saved as part of the session JSON, allowing session resume without data loss
 
 STM is not something users interact with directly. It operates transparently as part of the context management pipeline.
 
@@ -83,7 +83,7 @@ When the context window needs trimming, `compress_messages()` takes the messages
 
 The result is a single system message wrapped in `<thread_summary>` tags that gets injected into the trimmed context. Critically, the `<thread_summary>` is **preserved across multiple trim cycles** - each new compression merges with the previous summary, building an accumulating record of the entire session.
 
-### Seamless Recovery
+### Transparent Recovery
 
 After context trimming, CLIO agents continue working without announcing that context was lost. The thread_summary provides enough continuity that no recovery stumbling is needed:
 
@@ -322,26 +322,42 @@ These memory components work together in a coordinated pipeline to keep the AI e
 
 AI models have a fixed context window (e.g., 128K tokens for Claude Sonnet, 200K for Claude Opus). A long session with many tool calls can easily exceed this. CLIO's context management prevents overflow without losing critical information.
 
-### Three-Stage Trimming
+### Unified Trim Strategy
 
-```text
-Stage 1: Proactive Trim (before API call, every iteration)
-  WorkflowOrchestrator checks messages against 75% of context window
-  If over: MessageValidator drops oldest message units (budget-walk newest to oldest)
-  Dropped messages -> YaRN compression -> thread_summary injected
-  thread_summary is preserved and merged across successive trim cycles
+The `MessageValidator` performs a single budget walk before each API call, using a capability-based prompt budget (`context_window - max_output_tokens - estimation_buffer`). The walk proceeds from newest to oldest, preserving messages until the budget is exhausted.
 
-Stage 2: Validation Trim (just before sending to API)
-  Final check against effective token limit
-  Smart unit-based truncation (keeps tool call/result pairs together)
-  Post-trim target: 50% of max prompt tokens
+Key parameters:
+- **Safe context threshold:** 68% of the model's max context (proactive trim trigger)
+- **Post-trim floor:** 24,000 tokens minimum kept verbatim after trim
+- **Estimation buffer:** 8,192 + 5% of context (capped at 51,200)
 
-Stage 3: Reactive Trim (after API rejection)
-  If API returns token_limit_exceeded despite proactive trim:
-  Progressive reduction across up to 3 retry attempts (50% -> 25% -> minimal)
-  Each retry injects recovery context (YaRN summary + todo state + git activity)
-  Most recent user message preserved as the current task anchor
-```
+**Tool output reserve optimization:** When the model supports tools AND tools are present in the request, the output reserve is capped at 8,192 tokens instead of the model's full `max_output_tokens` (often 32K+). Tool-calling responses rarely exceed a few hundred tokens; reserving the full output cap wastes prompt budget.
+
+### CSSS (Cache-Stable Summary Slot)
+
+The CSSS locks the summary's token budget across trim cycles to maximize LCP cache hits with local inference providers (llama.cpp).
+
+How it works:
+1. **First trim:** Summary token count becomes the locked slot size (bounded 8K-12K)
+2. **Subsequent trims:** `YaRN::compress_messages` targets the locked slot size
+3. **Proactive growth:** If a single trim drops >1.5x the current slot, the slot grows to absorb more tokens
+4. **Padding:** If summary is smaller than slot, deterministic HTML comment padding fills the gap
+
+This keeps the summary at a stable position in the prompt, so even when it regenerates, only the summary tokens themselves are reprocessed.
+
+### What Gets Preserved During Trimming
+
+When messages must be dropped, CLIO prioritizes keeping:
+
+1. **System prompt** - Always preserved (stable anchor [0])
+2. **Summary (CSSS slot)** - NEVER trimmed (stable anchor [1])
+3. **Context files** - Trimmed with dialog budget walk (stable anchor [2])
+4. **Most recent user message** - The current task anchor (newest user message, not the session-start message) (section [6])
+5. **Recent messages** - Most recent conversation context (budget-walked newest to oldest)
+6. **Tool call/result pairs** - Kept together to avoid orphaned results
+7. **Thread summary** - Compressed history of dropped messages, injected before the conversation
+
+The deinterleaved layout puts tool_results at the END specifically so they get dropped before dialog when budget is tight. Tool results are the most expendable - the agent can re-call the tool.
 
 ### Token Estimation
 
@@ -351,15 +367,14 @@ Token estimation uses a character-to-token ratio that starts at a conservative d
 
 The learned ratio is critical - an inaccurate ratio means proactive trimming either fires too aggressively (wasting context) or too late (causing API rejections).
 
-### What Gets Preserved During Trimming
+### Resume Fast Path
 
-When messages must be dropped, CLIO prioritizes keeping:
+The orchestrator captures the end-of-turn API payload (`last_api_payload`) for instant session resume. On resume:
+1. Fresh `user_context` (date/time, working dir) and `user_input` are generated
+2. The rest of the payload (sections [0..4]) is reused byte-identically
+3. This keeps the LCP cache alive across `--resume` - no reprocessing of the stable anchor
 
-1. **System prompt** - Always preserved
-2. **Most recent user message** - The current task anchor (newest user message, not the session-start message)
-3. **Recent messages** - Most recent conversation context (budget-walked newest to oldest)
-4. **Tool call/result pairs** - Kept together to avoid orphaned results
-5. **Thread summary** - Compressed history of dropped messages, injected before the conversation
+If the saved payload is smaller than `MIN_CSSS_SLOT_TOKENS` (8192) and contains a `thread_summary`, the orchestrator falls back to a full history rebuild instead of reusing the truncated payload. This prevents resuming with an empty or near-empty context after aggressive trim.
 
 ---
 
@@ -480,8 +495,8 @@ The memory system isn't just infrastructure - it's actively used by agents throu
 
 ### When Context Gets Full
 
-1. **Proactive trim** fires when approaching 75% of the model's context window
-2. Oldest messages are compressed via YaRN into a summary
+1. **Unified trim** fires when approaching 68% of the model's context window
+2. Oldest messages are compressed via YaRN into the CSSS-locked summary slot
 3. The summary is injected as a system message so the AI knows what was dropped
 4. A progress checkpoint is written to `.clio/memory/session_progress.md`
 

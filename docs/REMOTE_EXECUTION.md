@@ -53,7 +53,7 @@ CLIO will:
    - Perl 5.32+ installed
    - curl or wget available
    - ~50MB free disk space in /tmp
-3. **GitHub Copilot** (or other API provider) - For AI model access
+3. **AI Provider** - For AI model access (GitHub Copilot, MiniMax, etc.)
 
 ---
 
@@ -156,9 +156,9 @@ ssh user@remote-host exit
 
 CLIO automatically validates SSH setup before executing remote tasks:
 
-✓ Checks if ssh-agent is running  
-✓ Verifies passwordless connection to remote  
-✓ Provides clear guidance if setup incomplete
+ Checks if ssh-agent is running  
+ Verifies passwordless connection to remote  
+ Provides clear guidance if setup incomplete
 
 **Example Error:**
 
@@ -260,7 +260,7 @@ ssh-copy-id user@host3
 # Test all connections
 for host in host1 host2 host3; do
   echo "Testing $host..."
-  ssh user@$host exit && echo "✓ $host OK" || echo "✗ $host FAILED"
+  ssh user@$host exit && echo " $host OK" || echo " $host FAILED"
 done
 ```
 
@@ -304,7 +304,7 @@ Execute an AI-powered task on a remote system.
 |-----------|----------|---------|-------------|
 | `host` | Yes | - | SSH target (user@hostname) |
 | `command` | Yes | - | Natural language task description |
-| `model` | No | Current model | AI model to use (e.g., minimax/minimax-m2.7) |
+| `model` | No | Current model | AI model to use (e.g., minimax/MiniMax-M3) |
 | `api_key` | No | Auto | API key (auto-populated from GitHub token) |
 | `timeout` | No | 300 | Max execution time in seconds |
 | `cleanup` | No | true | Delete CLIO after execution |
@@ -528,7 +528,7 @@ Execute on all handhelds: report CPU architecture and available disk space
 ```
 Omit the model specification to use your configured default, or specify explicitly:
 ```text
-Execute on all handhelds with minimax/minimax-m2.7: report disk space
+Execute on all handhelds with minimax/MiniMax-M3: report disk space
 ```
 
 This uses `execute_parallel` internally, forking one process per target and aggregating results.
@@ -575,7 +575,7 @@ When disabled, the `remote_execution` tool is not available to the AI agent.
   "operation": "execute_remote",
   "host": "user@hostname",
   "command": "task description",
-  "model": "minimax/minimax-m2.7",
+  "model": "minimax/MiniMax-M3",
   "api_key": "auto-populated",
   "api_provider": "github_copilot",
   "timeout": 300,
