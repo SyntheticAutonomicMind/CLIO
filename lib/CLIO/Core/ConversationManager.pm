@@ -18,6 +18,7 @@ our @EXPORT_OK = qw(
     load_conversation_history
     trim_conversation_for_api
     enforce_message_alternation
+    reinterleave_tool_results
     inject_context_files
     generate_tool_call_id
     repair_tool_call_json
@@ -541,6 +542,105 @@ sub trim_conversation_for_api {
     return $history;
 }
 
+=head2 reinterleave_tool_results
+
+Restore in-order adjacency of tool_results to their tool_calls.
+
+The cache-stable internal layout deinterleaves tool_results to the END of
+the message array (see the Prompt Pipeline Protocol — section [4]).  That
+layout is ideal for trimming (drop whole tool_results from the end) and
+for LLM prompt-cache stability, but no provider accepts it on the wire:
+Anthropic requires every C<tool_use> block to have a matching C<tool_result>
+block in the *immediately following* user message; OpenAI-compatible APIs
+require the same adjacency.  Sending deinterleaved tool_results therefore
+produces HTTP 400 rejections on resume and on any turn where the proactive
+trim fires.
+
+This function walks the message array, collects every tool result message
+(role C<tool> with C<tool_call_id>), and re-inserts each one directly after
+the assistant message that owns the matching tool_call.  Already-interleaved
+input is returned unchanged (the tool_results are skipped in the walk and
+re-inserted at their original position — a structural no-op).  Any stray
+tool_result without a matching tool_call in the retained dialog is appended
+at the end so it is not silently dropped.
+
+Arguments:
+- $messages: Arrayref of messages (OpenAI-style roles)
+
+Returns:
+- Arrayref of messages with tool_results adjacent to their tool_calls
+
+=cut
+
+sub reinterleave_tool_results {
+    my ($messages) = @_;
+
+    return $messages unless $messages && ref($messages) eq 'ARRAY' && @$messages;
+
+    # Build a map: tool_call_id -> [tool_result messages]
+    # A tool_result is any message with role eq 'tool' AND a tool_call_id.
+    # These are the OpenAI-format function-result blocks that must sit
+    # immediately after the assistant message carrying the matching
+    # tool_call id.
+    my %results_by_id;
+    my $tool_msg_count = 0;
+    for my $msg (@$messages) {
+        if (($msg->{role} // '') eq 'tool' && $msg->{tool_call_id}) {
+            push @{$results_by_id{$msg->{tool_call_id}}}, $msg;
+            $tool_msg_count++;
+        }
+    }
+
+    # No tool messages at all - nothing to reorder (fast path, no-op)
+    return $messages unless $tool_msg_count > 0;
+
+    # Walk non-tool messages in order, emitting each and then inserting
+    # any matching tool_results immediately after an assistant that has
+    # tool_calls for them.  This restores the interleaved layout that
+    # providers require (tool_result must be the very next message after
+    # the assistant's tool_use block), regardless of whether the input
+    # was already interleaved (no-op) or deinterleaved by a prior trim
+    # (tool_results parked at the end for LCP cache stability).
+    my @interleaved;
+    for my $msg (@$messages) {
+        # Skip tool messages here - they will be re-inserted after their
+        # corresponding tool_calling assistant message below.
+        if (($msg->{role} // '') eq 'tool' && $msg->{tool_call_id}) {
+            next;
+        }
+
+        push @interleaved, $msg;
+
+        # If this assistant message carries tool_calls, emit the matching
+        # tool_results right after it (in tool_call order, which is the
+        # order Anthropic/OpenAI expect).
+        if (($msg->{role} // '') eq 'assistant'
+            && $msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
+            for my $tc (@{$msg->{tool_calls}}) {
+                my $tid = $tc->{id};
+                if ($tid && exists $results_by_id{$tid}) {
+                    # Splice in the matching results in their original
+                    # order (multiple results for one call are rare but
+                    # handled), then delete the key so they are not
+                    # re-emitted at the end as orphans.
+                    push @interleaved, @{delete $results_by_id{$tid}};
+                }
+            }
+        }
+    }
+
+    # Any leftover tool_results (no matching tool_call in the retained
+    # dialog — e.g. the assistant's tool_call was dropped by a prior
+    # orphan-strip but the result survived, or the tool_call is in a
+    # system context message) are appended at the end so they are
+    # not silently lost.
+    for my $tid (sort keys %results_by_id) {
+        push @interleaved, @{$results_by_id{$tid}};
+    }
+
+    return \@interleaved;
+}
+
 =head2 enforce_message_alternation
 
 Enforce strict user/assistant alternation.
@@ -568,6 +668,16 @@ sub enforce_message_alternation {
     return $messages unless $messages && @$messages;
 
     log_debug('ConversationManager', "Enforcing message alternation");
+
+    # Re-interleave tool_results back adjacent to their tool_calls BEFORE the
+    # merge pass.  The cache-stable internal layout deinterleaves tool_results
+    # to the end of the array; no provider accepts that on the wire (Anthropic
+    # requires tool_result blocks in the user message immediately following the
+    # assistant's tool_use block; OpenAI-compatible APIs require the same
+    # adjacency).  This no-ops on already-interleaved input and restores
+    # correct ordering on deinterleaved input from a prior trim or a cached
+    # resume snapshot.
+    $messages = reinterleave_tool_results($messages);
 
     my @alternating = ();
     my $last_role = undef;

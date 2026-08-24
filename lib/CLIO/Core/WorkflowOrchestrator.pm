@@ -19,6 +19,7 @@ use CLIO::Core::ConversationManager qw(
     load_conversation_history
     trim_conversation_for_api
     enforce_message_alternation
+    reinterleave_tool_results
     inject_context_files
     generate_tool_call_id
     repair_tool_call_json
@@ -1608,6 +1609,18 @@ sub _capture_api_payload {
     # sneaks in once is sanitized at capture time, not on every resume.
     @normalized   = $self->_strip_orphan_tool_calls(@normalized);
 
+    # Re-interleave tool_results back adjacent to their tool_calls.  The
+    # cache-stable internal layout (and the proactive trim inside
+    # validate_and_truncate) parks tool_results at the END of the array
+    # for LCP cache stability.  That layout is invalid on the wire — every
+    # provider (Anthropic, OpenAI, Google, llama.cpp, etc.) requires a
+    # tool_result to be the message immediately following its tool_call.
+    # Stripping orphans above removed unmatched pairs; this restores the
+    # correct in-order adjacency so the stored snapshot is always
+    # provider-safe and the resume fast path never sends a deinterleaved
+    # payload.  Already-interleaved input is a structural no-op.
+    @normalized = @{ reinterleave_tool_results(\@normalized) };
+
     my $model    = $self->{api_manager} ? $self->{api_manager}->get_current_model()    : undef;
     my $provider = $self->{api_manager} ? $self->{api_manager}->get_current_provider() : undef;
     my $caps     = $self->{api_manager} ? $self->{api_manager}->get_model_capabilities() : {};
@@ -2119,6 +2132,29 @@ sub _try_resume_from_payload {
         log_info('WorkflowOrchestrator',
             "Resume fast path: stripped orphan tool_calls from payload "
             . "($pre_orphan_strip_count -> " . scalar(@$messages) . " messages)");
+    }
+
+    # Re-interleave tool_results back adjacent to their tool_calls.
+    # Old snapshots (saved before _capture_api_payload re-interleaves
+    # at capture time) and any snapshot that was deinterleaved by a prior
+    # trim will have tool_results parked at the END of the array.  No
+    # provider accepts that on the wire — Anthropic rejects with
+    #   "tool_use ids were found without tool_result blocks immediately after"
+    # and OpenAI-compatible APIs have the same adjacency requirement.
+    # This no-ops on already-interleaved payloads and restores correct
+    # ordering on deinterleaved ones, so the resume fast path always
+    # returns provider-safe message ordering regardless of how the
+    # snapshot was stored.  Called here as belt-and-suspenders: the
+    # real guarantee is enforce_message_alternation (which also
+    # re-interleaves before every API call), but this keeps the snapshot
+    # shape correct for any caller that inspects it without running
+    # alternation first.
+    my $pre_reinterleave_count = scalar(@$messages);
+    $messages = reinterleave_tool_results($messages);
+    if (scalar(@$messages) != $pre_reinterleave_count) {
+        log_info('WorkflowOrchestrator',
+            "Resume fast path: re-interleaved tool_results to match tool_calls "
+            . "($pre_reinterleave_count -> " . scalar(@$messages) . " messages reordered)");
     }
 
     return ($messages, $tools);
