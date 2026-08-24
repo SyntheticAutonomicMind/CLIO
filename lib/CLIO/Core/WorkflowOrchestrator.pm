@@ -23,7 +23,7 @@ use CLIO::Core::ConversationManager qw(
     generate_tool_call_id
     repair_tool_call_json
 );
-use CLIO::Core::API::MessageValidator qw(validate_and_truncate);
+use CLIO::Core::API::MessageValidator qw(validate_and_truncate validate_tool_message_pairs);
 use CLIO::Core::PromptBuilder;
 use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json safe_encode_json);
 use CLIO::Core::Diagnostics qw(dump_diagnostic deduplicate_paragraphs);
@@ -1593,6 +1593,20 @@ sub _capture_api_payload {
     #    path after each cycle.
     my @normalized = $self->_strip_non_trailing_user_context(@$messages_ref);
     @normalized   = $self->_strip_continuation_nudges(@normalized);
+    # Strip orphan tool_calls from the snapshot. If a tool_call was
+    # emitted by the assistant but its tool_result was dropped by a prior
+    # trim, the snapshot contains a tool_use block that would be sent
+    # without its matching tool_result block on the next resume. Anthropic
+    # rejects this with:
+    #   "tool_use ids were found without tool_result blocks immediately after"
+    # The proactive trim in process_input already calls validate_and_truncate
+    # which strips orphans, but the snapshot is captured AFTER that trim so
+    # it should be clean. This is belt-and-suspenders for any code path
+    # that builds @messages with tool_calls but skips the trim (e.g. the
+    # iteration-limit exit path captures whatever @messages currently has).
+    # Stored snapshots stay clean across resume cycles - any orphan that
+    # sneaks in once is sanitized at capture time, not on every resume.
+    @normalized   = $self->_strip_orphan_tool_calls(@normalized);
 
     my $model    = $self->{api_manager} ? $self->{api_manager}->get_current_model()    : undef;
     my $provider = $self->{api_manager} ? $self->{api_manager}->get_current_provider() : undef;
@@ -1711,6 +1725,41 @@ sub _strip_non_trailing_user_context {
     }
 
     return @normalized;
+}
+
+=head2 _strip_orphan_tool_calls(\@messages)
+
+Strip orphan tool_calls from an array of messages. An orphan tool_call is
+an assistant's tool_call block whose matching tool_result message is
+missing (or whose position would be invalid in the wire payload).
+
+Anthropic's API rejects requests where the assistant message carries a
+tool_use block but the next user message does not contain a matching
+tool_result block:
+    "tool_use ids were found without tool_result blocks immediately after"
+
+This is the regression observed on resume (2026-08-24): snapshots saved
+by older sessions can contain an assistant-with-tool_calls whose
+tool_result was dropped by a prior trim. The snapshot is also used as
+the cached payload for the resume fast path (_try_resume_from_payload),
+so the next turn's API call would send the orphan tool_use unless we
+strip it here.
+
+Wraps CLIO::Core::API::MessageValidator::validate_tool_message_pairs,
+which already implements selective orphan stripping:
+   - orphan tool_results are dropped entirely (no matching tool_call)
+   - orphan tool_calls are stripped from assistant messages
+   - if ALL tool_calls in an assistant are orphan, the message is kept
+     as a plain text response (so the model's spoken words survive)
+
+Returns the cleaned messages array.
+
+=cut
+
+sub _strip_orphan_tool_calls {
+    my ($self, @messages) = @_;
+    my $cleaned = validate_tool_message_pairs(\@messages);
+    return @$cleaned;
 }
 
 =head2 _compute_section_signatures(\@messages)
@@ -2048,6 +2097,28 @@ sub _try_resume_from_payload {
         log_info('WorkflowOrchestrator',
             "Resume using cached payload verbatim: " . scalar(@$messages)
             . " messages (fits current budget: ctx=$current_ctx, threshold=$trim_threshold)");
+    }
+
+    # Strip orphan tool_calls from the resumed payload. The trim path
+    # inside validate_and_truncate already runs validate_tool_message_pairs
+    # (which strips orphans), but only when trim actually fired. If the
+    # payload fits the budget the trim block above is skipped entirely
+    # and we return the cached snapshot verbatim - any orphan tool_calls
+    # in the snapshot would land on the wire and Anthropic rejects with:
+    #   "tool_use ids were found without tool_result blocks immediately after"
+    # This is the regression observed on resume (2026-08-24): snapshots
+    # captured between turns where a prior trim had dropped the tool_result
+    # but kept the assistant-with-tool_calls. The snapshot now sanitizes
+    # itself at capture time (see _capture_api_payload), but old sessions
+    # saved before that fix still have orphan tool_calls. This call
+    # protects every resume against both old and new snapshots.
+    my $pre_orphan_strip_count = scalar(@$messages);
+    my $stripped = validate_tool_message_pairs($messages);
+    $messages = $stripped;
+    if (scalar(@$messages) != $pre_orphan_strip_count) {
+        log_info('WorkflowOrchestrator',
+            "Resume fast path: stripped orphan tool_calls from payload "
+            . "($pre_orphan_strip_count -> " . scalar(@$messages) . " messages)");
     }
 
     return ($messages, $tools);
