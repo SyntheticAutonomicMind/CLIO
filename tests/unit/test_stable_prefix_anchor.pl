@@ -61,7 +61,7 @@ sub compute_stable_prefix {
                 }
             }
         }
-        if ($flat =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
+        if ($flat =~ /^\s*<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
             $skipped_user_context++;
             next;
         }
@@ -374,6 +374,55 @@ subtest 'user_context at leading position after trim is excluded' => sub {
     diag("Prefix: $prefix tokens (system_prompt+newline alone: $sys_tokens)");
     is($prefix, $sys_tokens,
         'user_context at [1] excluded even when summary at [3] (post-trim layout)');
+};
+
+# =================================================================
+# Test 9: system_prompt with <sessionGoals> in instruction text is
+# retained as static system message (NOT falsely excluded as
+# user_context). The regex must be anchored to ^ so it only matches
+# messages whose content STARTS with <userContext>/<dynamicContext>/
+# <sessionGoals> (actual user_context messages), not system_prompt
+# which merely MENTIONS <sessionGoals> in its instructions.
+#
+# Bug: the unanchored regex <(?:userContext|dynamicContext|sessionGoals)[\s>]
+# matches <sessionGoals> ANYWHERE in content. PromptManager.pm:1183
+# embeds "Session goals appear in <sessionGoals> tags..." in the system
+# prompt instructions. This caused system_prompt to be falsely excluded
+# from prompt_stable_prefix_tokens (debug.log: "Retained 0" on ALL 19
+# turns). Without the stable prefix hint, llama.cpp's LCP anchor was
+# never set, so CSSS summary regeneration broke the entire cache match.
+# =================================================================
+subtest 'system_prompt with inline <sessionGoals> text retained as static' => sub {
+    # system_prompt contains <sessionGoals> in INSTRUCTION text
+    # (mirrors PromptManager.pm:1183), NOT as a wrapper tag at the start.
+    my $system_prompt = "You are CLIO.\nSession goals appear in <sessionGoals> tags in the user context on every turn.\nDo your best.\n" . ("Instruction text. " x 500);
+
+    # user_context message starts with <userContext> (a real wrapper tag)
+    my $user_context = "<userContext>\nDate: 2026-08-25 17:31:00 GMT\nWorking dir: /home/deck/repositories/CLIO\n</userContext>";
+
+    my $messages = [
+        { role => 'system', content => $system_prompt },
+        { role => 'system', content => $user_context },
+        { role => 'user',   content => 'What should I do next?' },
+    ];
+
+    my $prefix = compute_stable_prefix($messages);
+    my $sys_tokens = CLIO::Memory::TokenEstimator::estimate_tokens($system_prompt . "\n");
+
+    diag("Stable prefix: $prefix tokens (system_prompt alone: $sys_tokens)");
+    cmp_ok($prefix, '>', 0, 'Stable prefix is non-zero (system_prompt retained)');
+    is($prefix, $sys_tokens,
+        'system_prompt retained even though it contains <sessionGoals> in its text');
+
+    # Verify the regex logic directly: system_prompt should NOT match
+    $system_prompt =~ /^\s*<(?:userContext|dynamicContext|sessionGoals)[\s>]/ ?
+        fail('system_prompt falsely matches anchored user_context regex') :
+        pass('system_prompt does NOT match anchored regex (contains <sessionGoals> in mid-text only)');
+
+    # Verify user_context DOES match the anchored regex
+    $user_context =~ /^\s*<(?:userContext|dynamicContext|sessionGoals)[\s>]/ ?
+        pass('user_context IS excluded by anchored regex') :
+        fail('user_context NOT excluded by anchored regex');
 };
 
 done_testing();

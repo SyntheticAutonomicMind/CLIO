@@ -895,7 +895,7 @@ sub _extract_preserved_units {
             # user_context anchor at this position - preserve it. Trailing
             # user_context (at the end of @messages) is handled by the trim
             # walk below since it falls within @remaining.
-            if ($content =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
+            if ($content =~ /^\s*<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
                 push @preserved_user_contexts, $unit;
                 log_debug('MessageValidator', "Preserving user_context anchor at unit $i");
             }

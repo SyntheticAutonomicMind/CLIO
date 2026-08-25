@@ -2101,31 +2101,28 @@ sub validate_and_truncate_messages {
     $model ||= $self->get_current_model();
     my $caps = $self->get_model_capabilities($model);
 
-    # Pass a drift-aware trim threshold so the MessageValidator's trim walk
-    # uses actual-token estimates, not just local char/token estimates.
-    # When a prior API response (success or 400) saved a drift ratio to
-    # state, tighten the keep budget proportionally so we don't send a
-    # payload the server will reject with "request exceeds context size".
-    my $trim_threshold;
-    if ($self->{session} && $self->{session}->can('state')) {
-        my $state = $self->{session}->state();
-        if (ref($state) && $state->{last_api_metadata}
-            && $state->{last_api_metadata}{estimate_drift_ratio}) {
-            my $saved = $state->{last_api_metadata}{estimate_drift_ratio};
-            my $ctx_window = $caps->{max_context_window_tokens} // DEFAULT_CONTEXT_WINDOW;
-            if ($saved >= 1.2) {
-                my $age = time() - ($state->{last_api_metadata}{saved_at} // 0);
-                if ($age < 3600) {
-                    $trim_threshold = int($ctx_window * 0.90 / $saved);
-                    log_debug('APIManager', sprintf(
-                        "Drift-aware trim threshold: ctx=%d, drift=%.3f -> threshold=%d (local est, ~%d actual)",
-                        $ctx_window, $saved, $trim_threshold,
-                        int($trim_threshold * $saved)));
-                }
-            }
-        }
-    }
-    
+    # Always compute the SAME drift-aware threshold as the proactive trim
+    # in WorkflowOrchestrator.process_input (which calls
+    # _compute_drift_aware_threshold). Previously this only computed the
+    # threshold when drift >= 1.2, leaving trim_threshold undef for
+    # well-calibrated models (Qwen3.6, Llama-3, etc.). The resulting
+    # fallback to effective_limit = prompt_budget - tool_tokens (~96K)
+    # was ~21K LOWER than the proactive threshold (117964), causing a
+    # double-trim:
+    #   1. Proactive trim at 117K: deinterleaves tool_results to end (if over)
+    #   2. enforce_message_alternation: reinterleaves back to interleaved order
+    #   3. Reactive trim at 96K: deinterleaves AGAIN (lower threshold, drops more)
+    # The double-deinterleave restructured the prompt layout on every turn
+    # after the first trim, permanently breaking the LCP between the slot's
+    # cached prompt and the new task (f_keep collapsed to ~0.32).
+    # Fix: always pass the same drift-aware threshold so both trims agree.
+    my $ctx_window = $caps->{max_context_window_tokens} // DEFAULT_CONTEXT_WINDOW;
+    my $trim_threshold = $self->_compute_drift_aware_threshold($ctx_window, $self->{session});
+
+    log_debug('APIManager', sprintf(
+        "Reactive trim threshold: ctx=%d, drift-aware=%d (matches proactive trim in process_input)",
+        $ctx_window, $trim_threshold));
+
     return validate_and_truncate(
         messages           => $messages,
         model_capabilities => $caps,
@@ -2137,6 +2134,47 @@ sub validate_and_truncate_messages {
         model              => $model,
         trim_threshold     => $trim_threshold,
     );
+}
+
+=head2 _compute_drift_aware_threshold($ctx_window, $session)
+
+Compute a drift-aware trim threshold (mirrors WorkflowOrchestrator's
+version, needed here so validate_and_truncate_messages uses the SAME
+threshold as the proactive trim). For well-calibrated models (drift <= 1.0),
+returns int(ctx * 0.90). For high-drift models (drift >= 1.2, saved
+within the last hour), tightens proportionally to avoid sending oversized
+payloads that the server rejects with HTTP 400.
+
+=cut
+
+sub _compute_drift_aware_threshold {
+    my ($self, $ctx_window, $session) = @_;
+
+    my $raw_threshold = int($ctx_window * 0.90);
+
+    my $drift_ratio = 1.0;
+    if ($session && $session->can('state')) {
+        my $state = $session->state();
+        if (ref($state) && $state->{last_api_metadata}
+            && $state->{last_api_metadata}{estimate_drift_ratio}) {
+            my $saved = $state->{last_api_metadata}{estimate_drift_ratio};
+            if ($saved >= 1.2) {
+                my $age = time() - ($state->{last_api_metadata}{saved_at} // 0);
+                if ($age < 3600) {
+                    $drift_ratio = $saved;
+                }
+            } elsif ($saved && $saved > 0 && $saved < 1.2) {
+                $drift_ratio = $saved;
+            }
+        }
+    }
+
+    my $adjusted_threshold = $raw_threshold;
+    if ($drift_ratio > 1.0) {
+        $adjusted_threshold = int($raw_threshold / $drift_ratio);
+    }
+
+    return $adjusted_threshold;
 }
 
 =head2 get_last_trimmed_messages
@@ -2857,7 +2895,7 @@ sub _build_payload {
                 }
                 $content = $flat;
             }
-            if ($content =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
+            if ($content =~ /^\s*<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
                 $skipped_user_context++;
                 next;
             }
