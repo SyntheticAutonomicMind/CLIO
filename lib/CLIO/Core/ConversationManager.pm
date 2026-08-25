@@ -11,6 +11,7 @@ use Carp qw(croak);
 use CLIO::Core::Logger qw(log_error log_warning log_info log_debug);
 use CLIO::Util::JSON qw(decode_json);
 use CLIO::Memory::TokenEstimator;
+use CLIO::Core::API::MessageValidator qw(validate_tool_message_pairs);
 use Digest::MD5 qw(md5_hex);
 
 use Exporter 'import';
@@ -362,7 +363,7 @@ sub trim_conversation_for_api {
         if ($debug) {
             log_debug('ConversationManager', "History OK: $history_tokens tokens (total: $current_total of $safe_threshold prompt budget, model context: $model_context)");
         }
-        return $history;
+        return validate_tool_message_pairs($history);
     }
 
     if ($debug) {
@@ -537,9 +538,16 @@ sub trim_conversation_for_api {
         push @result, @summaries;
     }
 
-    return \@result if @result;
+    # Strip orphan tool_calls (tool_calls whose tool_results were dropped
+    # by the budget walk above). The trim's second-pass guard only ensures
+    # kept tool_results have matching tool_calls; it does NOT strip the
+    # reverse (tool_calls whose results were dropped). Without this, the
+    # assistant messages with tool_calls but no matching tool_results would
+    # be sent to the API, and Anthropic rejects:
+    #   "tool_use ids were found without tool_result blocks immediately after"
+    return validate_tool_message_pairs(\@result) if @result;
 
-    return $history;
+    return validate_tool_message_pairs($history);
 }
 
 =head2 reinterleave_tool_results
@@ -668,6 +676,21 @@ sub enforce_message_alternation {
     return $messages unless $messages && @$messages;
 
     log_debug('ConversationManager', "Enforcing message alternation");
+
+    # Strip orphan tool_calls before re-interleaving. An orphan tool_call is
+    # an assistant message with tool_calls whose matching tool_result was
+    # dropped (e.g. by a prior trim, context truncation, or a stale session
+    # snapshot). validate_and_truncate in the proactive trim path already
+    # strips these, but enforce_message_alternation is the LAST line of
+    # defense before the API call and runs EVERY iteration — including
+    # iteration 1 where the proactive trim is skipped (it only fires when
+    # iteration > 1). If an orphan tool_call survives to the wire, Anthropic
+    # rejects with:
+    #   "tool_use ids were found without tool_result blocks immediately after"
+    # Calling validate_tool_message_pairs here catches orphans from ANY
+    # source (trim_conversation_for_api, load_conversation_history edge cases,
+    # stale snapshots, etc.) before they reach the provider.
+    $messages = validate_tool_message_pairs($messages);
 
     # Re-interleave tool_results back adjacent to their tool_calls BEFORE the
     # merge pass.  The cache-stable internal layout deinterleaves tool_results
