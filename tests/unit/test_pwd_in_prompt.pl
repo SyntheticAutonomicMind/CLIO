@@ -40,7 +40,10 @@ if ($section) {
 
     print "# Sample from section:\n";
     my @lines = split /\n/, $section;
-    for my $line (grep { /Working Directory|userContext|Language/ } @lines[0..15]) {
+    # grep against @lines[0..15] - some entries are undef when the section
+    # has fewer than 16 lines (e.g. the 5-line userContext in the fixture).
+    # Default to '' so the regex doesn't fire on undef under `perl -W`.
+    for my $line (grep { defined $_ && /Working Directory|userContext|Language/ } @lines[0..15]) {
         print "#   $line\n";
     }
 } else {

@@ -4550,7 +4550,15 @@ Returns the filtered content_delta (may be empty string).
 sub _process_think_tags {
     my ($self, $content_delta, $ss) = @_;
 
-    my $work = $ss->{think_buffer} . $content_delta;
+    # Default undef fields - callers that exercise _finalize_streaming_response
+    # with a synthetic $ss (e.g. tests/unit/test_sse_error_surfacing.pl
+    # test 10) do not populate every key, so unguarded concatenation here
+    # would emit "Use of uninitialized value in concatenation (.) or string"
+    # under `perl -W`.
+    my $think_buffer = $ss->{think_buffer} // '';
+    my $delta        = $content_delta // '';
+
+    my $work = $think_buffer . $delta;
     $ss->{think_buffer} = '';
     my $output = '';
 

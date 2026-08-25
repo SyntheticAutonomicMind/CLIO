@@ -526,23 +526,31 @@ sub handle_api_error {
         };
     }
 
-    # Track consecutive identical errors
-    if ($error eq $wo->{last_error}) {
-        $wo->{consecutive_errors}++;
-        log_debug('ErrorHandler', "Consecutive error count: $wo->{consecutive_errors}/$wo->{max_consecutive_errors}");
+    # Track consecutive identical errors.
+    # Guard $wo access because callers under unit tests pass undef for $wo
+    # (the lazy-require contract is exercised in isolation); this keeps the
+    # debug-and-stats path warning-free under `perl -W`.
+    my $last_error           = $wo ? ($wo->{last_error}           // '') : '';
+    my $consecutive_errors   = $wo ? ($wo->{consecutive_errors}   // 0)  : 0;
+    my $max_consecutive      = $wo ? ($wo->{max_consecutive_errors} // 3) : 3;
+    if ($error eq $last_error) {
+        $consecutive_errors++;
+        log_debug('ErrorHandler', "Consecutive error count: $consecutive_errors/$max_consecutive");
     } else {
-        $wo->{consecutive_errors} = 1;
-        $wo->{last_error} = $error;
+        $consecutive_errors = 1;
+        $last_error = $error;
     }
 
-    if ($wo->{consecutive_errors} >= $wo->{max_consecutive_errors}) {
-        log_debug('ErrorHandler', "Same error occurred $wo->{consecutive_errors} times in a row. Breaking loop.");
+    if ($consecutive_errors >= $max_consecutive) {
+        log_debug('ErrorHandler', "Same error occurred $consecutive_errors times in a row. Breaking loop.");
         log_debug('ErrorHandler', "Persistent error: $error");
         log_debug('ErrorHandler', "This likely indicates a bug in the request construction or API incompatibility.");
         log_debug('ErrorHandler', "Check /tmp/clio_json_errors.log for details.");
 
-        $wo->{consecutive_errors} = 0;
-        $wo->{last_error} = '';
+        if ($wo) {
+            $wo->{consecutive_errors} = 0;
+            $wo->{last_error} = '';
+        }
         return {
             success         => 0,
             error           => $error,

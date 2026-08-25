@@ -140,6 +140,10 @@ my $t = CLIO::UI::Theme->new(debug => 0, base_dir => $repo);
         my ($code) = @_;
         my $captured = '';
         open my $out, '>', \$captured or die $!;
+        # Default PerlIO layers on an in-memory scalar are bytes; without
+        # UTF-8 encoding, printing the Unicode hrule (\x{2500}) triggers
+        # "Wide character in print" under `perl -W`.
+        binmode $out, ':encoding(UTF-8)';
         my $saved = select($out);
         local $| = 1;
         $code->();
