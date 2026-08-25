@@ -49,7 +49,11 @@ if ($source =~ /sub _resolve_local_model \{[^}]*?return undef unless \$api_base;
 # return undef on the basis of a localhost check.
 if ($source =~ /sub _resolve_local_model \{[\s\S]*?\n\}/s) {
     my $sub = $1;
-    if ($sub =~ /localhost|127\.0\.0\.1/) {
+    # $1 may be undef if the regex engine somehow doesn't anchor (e.g. if
+    # the source ever loses its trailing \n}). Default to '' so the
+    # inner pattern match fires on empty string under `perl -W` instead
+    # of emitting "Use of uninitialized value $sub in pattern match (m//)".
+    if (($sub // '') =~ /localhost|127\.0\.0\.1/) {
         fail("_resolve_local_model body still references 'localhost' or '127.0.0.1'");
     } else {
         pass("No 'localhost' guard in _resolve_local_model body");

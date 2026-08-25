@@ -66,6 +66,25 @@ if (!@targets) {
     closedir $dh;
 }
 
+# `targets` may contain bare filenames (auto-discovery from tests/unit/),
+# paths relative to the repo root, or absolute paths. Normalize each entry
+# once into an absolute path so the per-test runner can use it directly
+# without re-applying $repo_root.
+my $unit_dir_for_discovery = "$repo_root/tests/unit";
+@targets = map {
+    if (File::Spec->file_name_is_absolute($_)) {
+        $_;
+    } elsif (-f $_) {
+        abs_path($_);
+    } elsif (-f "$repo_root/$_") {
+        abs_path("$repo_root/$_");
+    } elsif (-f "$unit_dir_for_discovery/$_") {
+        abs_path("$unit_dir_for_discovery/$_");
+    } else {
+        $_;  # runner will report missing
+    }
+} @targets;
+
 print "Strict test run: ", scalar(@targets), " test(s)";
 print $fatal ? " (warnings FATAL=>'all')\n" : " (-W)\n";
 
@@ -87,9 +106,7 @@ my @warning_patterns = (
     unless $strict_redefine;
 
 for my $test (@targets) {
-    my $abs = File::Spec->file_name_is_absolute($test)
-        ? $test
-        : "$repo_root/$test";
+    my $abs = $test;  # already normalized to an absolute path
     unless (-f $abs) {
         print STDERR "  ! missing: $abs\n";
         $total_failures++;

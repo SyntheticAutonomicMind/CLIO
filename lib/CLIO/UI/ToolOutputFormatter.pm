@@ -6,6 +6,12 @@ package CLIO::UI::ToolOutputFormatter;
 use strict;
 use warnings;
 use utf8;
+# ToolOutputFormatter prints Unicode box-drawing characters (e.g. \x{2500}
+# for hrule). Without UTF-8 STDOUT encoding, `perl -W` reports
+# "Wide character in print" on every hrule emit. Match the convention used
+# in CLIO::UI::Chat.pm / CLIO::UI::Markdown.pm so the warnings go away
+# whether or not the caller already called configure_io_encoding().
+use open ':std', ':encoding(UTF-8)';
 use CLIO::UI::Terminal qw(box_char ui_char supports_unicode);
 use CLIO::Compat::Terminal qw(GetTerminalSize);
 

@@ -6,6 +6,7 @@ package CLIO::Core::Logger;
 use strict;
 use warnings;
 use utf8;
+use open ':std', ':encoding(UTF-8)';
 use Exporter 'import';
 use POSIX qw(strftime);
 
