@@ -39,6 +39,8 @@ sub new {
         name => 'web_operations',
         description => q{Web operations: fetch URLs and search.
 
+REQUIRES the 'operation' parameter on every call. 'url' is required for fetch_url; 'query' is required for search_web.
+
 Operations:
 -  fetch_url - Fetch content from URL
    Parameters: url (required), timeout (optional, default 30s)
