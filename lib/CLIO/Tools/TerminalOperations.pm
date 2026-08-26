@@ -100,19 +100,19 @@ sub get_additional_parameters {
     return {
         command => {
             type => "string",
-            description => "Shell command to execute",
+            description => "[REQUIRED for both exec and validate] Shell command string. Example: 'ls -la' or 'git status'.",
         },
         timeout => {
             type => "integer",
-            description => "Idle timeout in seconds. Command killed after N seconds with no output. Default: 300 (5min). Active commands run until hard ceiling of 600s.",
+            description => "[OPTIONAL] Idle timeout in seconds. Command killed after N seconds with no output. Default: 300 (5min). Active commands run until hard ceiling of 600s.",
         },
         passthrough => {
             type => "boolean",
-            description => "Use interactive TTY mode instead of captured output. Default: false.",
+            description => "[OPTIONAL] Use interactive TTY mode instead of captured output. Default: false. Use only when the command needs user interaction (signing, prompts).",
         },
         working_directory => {
             type => "string",
-            description => "Working directory for command. Defaults to current session working directory or '.'.",
+            description => "[OPTIONAL] Working directory for command. Defaults to current session working directory or '.'.",
         },
     };
 }

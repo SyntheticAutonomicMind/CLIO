@@ -107,7 +107,7 @@ sub get_additional_parameters {
     return {
         name => {
             type => 'string',
-            description => 'Skill name to load (required for load operation).',
+            description => '[REQUIRED for load] Skill name to load. Not needed for list. Use the exact name from the catalog (call operation=list first to see available skills).',
         },
     };
 }
