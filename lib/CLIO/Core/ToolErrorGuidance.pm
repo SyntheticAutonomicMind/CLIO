@@ -158,6 +158,10 @@ sub _categorize_error {
     return 'invalid_json' if $error =~ /json|parse error/i;
     return 'missing_ui' if $error =~ /ui.*not available/i;
     return 'invalid_value' if $error =~ /invalid.*value|must be|should be/i;
+    # Remote execution input validation. Common agent mistakes when calling
+    # remote_execution: empty host, missing port range, bad path. These are
+    # distinct from "the tool failed" - they're "your inputs were bad".
+    return 'invalid_value' if $error =~ /invalid host|invalid ssh port|invalid ssh key|invalid file path/i;
     # Invalid regex pattern (grep_search). Agent should fix the pattern, not
     # retry with the same regex.
     return 'invalid_regex' if $error =~ /invalid regex|invalid regex pattern/i;
