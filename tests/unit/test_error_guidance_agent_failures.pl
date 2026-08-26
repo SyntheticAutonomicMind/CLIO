@@ -66,7 +66,7 @@ my @cases = (
     [q{Permission denied},                       'permission_denied'],
     [q{Cannot find match position for chunk},    'edit_content_mismatch'],
 
-    # Audit-pass additions (2026-08-26 follow-up):
+    # Audit-followup additions (2026-08-26 follow-up):
     [q{Working directory does not exist: /tmp/foo}, 'directory_not_found'],
     [q{Directory not found: /tmp/foo},              'directory_not_found'],
     [q{No such file or directory},                  'directory_not_found'],
@@ -85,6 +85,13 @@ my @cases = (
     [q{Sandbox mode: web operations are disabled},  'sandbox_blocked'],
     [q{Invalid status 'doing_it'},                  'invalid_value'],
     [q{Invalid value for host: empty},              'invalid_value'],
+    [q{Skill 'code-review' not found. Use operation: list to see available skills.}, 'skill_not_found'],
+    [q{Operation not implemented: foo},             'invalid_operation'],
+    [q{Invalid skill name: foo bar},               'invalid_value'],
+    [q{Invalid host: contains disallowed characters}, 'invalid_value'],
+    [q{Invalid SSH port: must be numeric 1-65535}, 'invalid_value'],
+    [q{Invalid SSH key path},                       'invalid_value'],
+    [q{Invalid file path},                          'invalid_value'],
 );
 
 for my $case (@cases) {
