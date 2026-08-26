@@ -172,6 +172,10 @@ sub _categorize_error {
     # either disable sandbox or pick a different operation.
     return 'sandbox_blocked' if $error =~ /sandbox mode|sandbox.*disabled|sandbox.*blocked/i;
     return 'insufficient_params' if $error =~ /insufficient|need/i;
+    # file_not_found is intentionally AFTER the more-specific skill_not_found
+    # and directory_not_found rules so the agent gets targeted guidance
+    # instead of the generic "check the path" advice.
+    return 'skill_not_found' if $error =~ /skill.*not found|skill not installed/i;
     return 'file_not_found' if $error =~ /cannot.*find|not found|no such file/i;
     return 'permission_denied' if $error =~ /permission|denied|access/i;
 
@@ -206,6 +210,15 @@ sub _categorize_error {
     # agent should not retry - it needs to take an alternative path.
     return 'system_unavailable' if $error =~ /unavailable|system not available|not available/i;
 
+    # Operation not implemented (defensive guard for tools that don't
+    # handle a particular operation). Agent should check the schema's
+    # operation enum for valid operations.
+    return 'invalid_operation' if $error =~ /operation not implemented/i;
+
+    # Skill name validation. Agent should use only alphanumeric, dash,
+    # underscore, dot, slash.
+    return 'invalid_value' if $error =~ /invalid skill name/i;
+
     return 'generic_error';
 }
 
@@ -213,11 +226,20 @@ sub _categorize_error {
 
 Get guidance text specific to the error category.
 
+Arguments:
+- $category: Category from _categorize_error
+- $tool_name: Name of the tool that failed
+- $error: Original error string
+- $attempted: Hashref of parameters the agent tried
+- $tool_def: Full tool definition (for schema-aware hints)
+
+Returns: Multi-line string with the guidance text.
+
 =cut
 
 sub _get_category_guidance {
     my ($self, $category, $tool_name, $error, $attempted, $tool_def) = @_;
-    
+
     my %guidance = (
         edit_content_mismatch => sub {
             return "WHAT WENT WRONG: Your edit failed because the file's current content has changed since you last read it.\n" .
@@ -400,6 +422,12 @@ sub _get_category_guidance {
             return "WHAT WENT WRONG: Your grep_search 'is_regex=true' pattern is not a valid Perl regex.\n" .
                    "HOW TO FIX: Fix the regex syntax. Common issues: unescaped brackets, unmatched parens, unescaped metacharacters like . * + ?.\n" .
                    "Test the pattern with terminal_operations: exec 'perl -e \"print \\\"ok\\\" if /<pattern>/\"' first if you are unsure.";
+        },
+
+        skill_not_found => sub {
+            return "WHAT WENT WRONG: The skill name you provided is not in the catalog.\n" .
+                   "HOW TO FIX: Call skill_operations with operation='list' (no 'name' parameter) to see all available skills, then retry with the exact name from the catalog. " .
+                   "Skill names are case-sensitive and must match exactly.";
         },
 
         sandbox_blocked => sub {
