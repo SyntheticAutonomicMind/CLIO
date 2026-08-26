@@ -26,6 +26,24 @@ my $CLIO = "./clio";
 my $SCRATCH_DIR = "scratch/e2e-test-" . time();
 my $TIMEOUT = 120;  # 2 minutes per test
 
+# This test spawns real sub-agents against a live API. Without a configured
+# provider (GitHub Copilot, OpenAI, or any provider with credentials), the
+# test will fail because the sub-agent has no model to call. Detect this
+# up-front and skip with a clear message rather than producing a confusing
+# "Test N: FAIL" with no actionable cause.
+my $has_api = 0;
+for my $env_var (qw(OPENAI_API_KEY ANTHROPIC_API_KEY GITHUB_COPILOT_TOKEN ZAI_API_KEY)) {
+    if ($ENV{$env_var}) { $has_api = 1; last; }
+}
+unless ($has_api || -f "$ENV{HOME}/.config/clio/credentials.json" || -f ".clio/credentials.json") {
+    print "\n" . "=" x 60 . "\n";
+    print "  SKIP: test_e2e_subagent.pl requires API credentials\n";
+    print "  Set one of: OPENAI_API_KEY, ANTHROPIC_API_KEY, GITHUB_COPILOT_TOKEN, ZAI_API_KEY\n";
+    print "  or configure credentials in ~/.config/clio/credentials.json\n";
+    print "=" x 60 . "\n\n";
+    exit 0;
+}
+
 print "\n" . "=" x 60 . "\n";
 print "  CLIO Sub-Agent End-to-End Tests\n";
 print "=" x 60 . "\n\n";
