@@ -143,14 +143,28 @@ sub get_tool {
         'stash'           => { tool => 'version_control', operation => 'stash' },
         'shell'           => { tool => 'terminal_operations', operation => 'exec' },
         'exec'            => { tool => 'terminal_operations', operation => 'exec' },
+        # Added 2026-08-26 audit: agents commonly say 'run X' or 'bash X' instead of
+        # 'exec X' or 'shell X'. Added to get_alias_info() above too.
+        'run'             => { tool => 'terminal_operations', operation => 'exec' },
+        'bash'            => { tool => 'terminal_operations', operation => 'exec' },
+        'cmd'             => { tool => 'terminal_operations', operation => 'exec' },
         'store'           => { tool => 'memory_operations', operation => 'store' },
         'retrieve'        => { tool => 'memory_operations', operation => 'retrieve' },
         'search'          => { tool => 'memory_operations', operation => 'search' },
         'recall_sessions' => { tool => 'memory_operations', operation => 'recall_sessions' },
         'list'            => { tool => 'memory_operations', operation => 'list' },
         'delete'          => { tool => 'memory_operations', operation => 'delete' },
+        # Added 2026-08-26 audit: 'get' (retrieve), 'save' (store), 'forget' (delete).
+        'get'             => { tool => 'memory_operations', operation => 'retrieve' },
+        'save'            => { tool => 'memory_operations', operation => 'store' },
+        'forget'          => { tool => 'memory_operations', operation => 'delete' },
         'search_web'      => { tool => 'web_operations', operation => 'search_web' },
         'fetch_url'       => { tool => 'web_operations', operation => 'fetch_url' },
+        # Added 2026-08-26: 'curl' / 'wget' / 'http' for fetch_url; 'google' for search_web.
+        'curl'            => { tool => 'web_operations', operation => 'fetch_url' },
+        'wget'            => { tool => 'web_operations', operation => 'fetch_url' },
+        'http'            => { tool => 'web_operations', operation => 'fetch_url' },
+        'google'          => { tool => 'web_operations', operation => 'search_web' },
         'todo'            => { tool => 'todo_operations', operation => 'write' },
         'todos'           => { tool => 'todo_operations', operation => 'read' },
         'list_usages'    => { tool => 'code_intelligence', operation => 'list_usages' },
@@ -228,14 +242,28 @@ sub get_alias_info {
         'stash'           => { tool => 'version_control', operation => 'stash' },
         'shell'           => { tool => 'terminal_operations', operation => 'exec' },
         'exec'            => { tool => 'terminal_operations', operation => 'exec' },
+        # Added 2026-08-26 audit: agents commonly say 'run X' or 'bash X' instead of
+        # 'exec X' or 'shell X'. Added to get_alias_info() above too.
+        'run'             => { tool => 'terminal_operations', operation => 'exec' },
+        'bash'            => { tool => 'terminal_operations', operation => 'exec' },
+        'cmd'             => { tool => 'terminal_operations', operation => 'exec' },
         'store'           => { tool => 'memory_operations', operation => 'store' },
         'retrieve'        => { tool => 'memory_operations', operation => 'retrieve' },
         'search'          => { tool => 'memory_operations', operation => 'search' },
         'recall_sessions' => { tool => 'memory_operations', operation => 'recall_sessions' },
         'list'            => { tool => 'memory_operations', operation => 'list' },
         'delete'          => { tool => 'memory_operations', operation => 'delete' },
+        # Added 2026-08-26 audit: 'get' (retrieve), 'save' (store), 'forget' (delete).
+        'get'             => { tool => 'memory_operations', operation => 'retrieve' },
+        'save'            => { tool => 'memory_operations', operation => 'store' },
+        'forget'          => { tool => 'memory_operations', operation => 'delete' },
         'search_web'      => { tool => 'web_operations', operation => 'search_web' },
         'fetch_url'       => { tool => 'web_operations', operation => 'fetch_url' },
+        # Added 2026-08-26: 'curl' / 'wget' / 'http' for fetch_url; 'google' for search_web.
+        'curl'            => { tool => 'web_operations', operation => 'fetch_url' },
+        'wget'            => { tool => 'web_operations', operation => 'fetch_url' },
+        'http'            => { tool => 'web_operations', operation => 'fetch_url' },
+        'google'          => { tool => 'web_operations', operation => 'search_web' },
         'todo'            => { tool => 'todo_operations', operation => 'write' },
         'todos'           => { tool => 'todo_operations', operation => 'read' },
         'list_usages'     => { tool => 'code_intelligence', operation => 'list_usages' },
@@ -244,10 +272,33 @@ sub get_alias_info {
         'collab'          => { tool => 'interact', operation => 'request_input' },
         'interact'        => { tool => 'interact', operation => 'request_input' },
         'user_collaboration' => { tool => 'interact', operation => 'request_input' },
+        'ask_user'        => { tool => 'interact', operation => 'request_input' },
+        'confirm'         => { tool => 'interact', operation => 'request_input' },
+        'question'        => { tool => 'interact', operation => 'request_input' },
         'spawn'           => { tool => 'agent_operations', operation => 'spawn' },
         'agents'          => { tool => 'agent_operations', operation => 'list' },
         'inbox'           => { tool => 'agent_operations', operation => 'inbox' },
         'patch'           => { tool => 'apply_patch', operation => 'patch' },
+
+        # terminal_operations aliases: natural-language verbs for "run a shell command".
+        # Added 2026-08-26 audit: agents commonly say 'run X' or 'bash X' instead of
+        # 'exec X' or 'shell X'.
+        'run'             => { tool => 'terminal_operations', operation => 'exec' },
+        'bash'            => { tool => 'terminal_operations', operation => 'exec' },
+        'cmd'             => { tool => 'terminal_operations', operation => 'exec' },
+
+        # memory_operations aliases: 'forget' / 'get' / 'save' are common natural
+        # verbs that didn't have aliases before. 'forget' -> delete is intentional;
+        # 'save' -> store mirrors how 'save_to_memory' is sometimes phrased.
+        'get'             => { tool => 'memory_operations', operation => 'retrieve' },
+        'save'            => { tool => 'memory_operations', operation => 'store' },
+        'forget'          => { tool => 'memory_operations', operation => 'delete' },
+
+        # web_operations aliases: 'curl' / 'wget' / 'fetch' are common synonyms.
+        'curl'            => { tool => 'web_operations', operation => 'fetch_url' },
+        'wget'            => { tool => 'web_operations', operation => 'fetch_url' },
+        'http'            => { tool => 'web_operations', operation => 'fetch_url' },
+        'google'          => { tool => 'web_operations', operation => 'search_web' },
     );
 
     return $OPERATION_ALIASES{$name};
